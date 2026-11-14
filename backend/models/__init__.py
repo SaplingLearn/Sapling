@@ -213,11 +213,16 @@ class UpdateCourseColorBody(BaseModel):
 # ── Social ────────────────────────────────────────────────────────────────────
 
 class CreateRoomBody(BaseModel):
+    # BOUNDED for the same reason as SendMessageBody's image dimensions
+    # (#315): a room's name and topic render in EVERY member's room list, and
+    # a public room's name renders in the public room list shown to everyone.
+    # Unbounded, one member could post a 100,000-character room name — which
+    # was accepted — and wreck that list for people who never joined.
     user_id: str = "user_andres"
-    room_name: str = "Study Room"
+    room_name: str = Field(default="Study Room", max_length=100)
     # #405 semantics: optional labeling + the public flag (false = invite-only).
-    topic: str | None = None
-    course: str | None = None
+    topic: str | None = Field(default=None, max_length=200)
+    course: str | None = Field(default=None, max_length=100)
     is_public: bool = False
 
 
@@ -228,7 +233,10 @@ class PublicJoinBody(BaseModel):
 
 class JoinRoomBody(BaseModel):
     user_id: str = "user_andres"
-    invite_code: str
+    # The code goes into a PostgREST filter; an unbounded value makes the
+    # query URL too long to send, which surfaces as a 500 rather than "no
+    # such room". Real codes are six characters.
+    invite_code: str = Field(..., max_length=64)
 
 
 class MatchBody(BaseModel):
@@ -241,9 +249,14 @@ class LeaveRoomBody(BaseModel):
 
 class SendMessageBody(BaseModel):
     user_id: str
-    user_name: str
-    text: Optional[str] = None
-    image_url: Optional[str] = None
+    # IGNORED by the server since the impersonation fix — the display name is
+    # resolved from the sender's profile (services/social/messages.py). Kept
+    # on the model, and bounded, so existing clients keep working.
+    user_name: str = Field(..., max_length=100)
+    # The transcript renders this to every member, so an unbounded message is
+    # a layout weapon against the room, not just a big row (#315's reasoning).
+    text: Optional[str] = Field(default=None, max_length=4_000)
+    image_url: Optional[str] = Field(default=None, max_length=2_000)
     # Intrinsic pixel size of image_url, measured client-side at upload (#315).
     # Optional: older clients omit them and the UI falls back to unreserved
     # layout, exactly as before.
@@ -261,12 +274,15 @@ class SendMessageBody(BaseModel):
 
 class EditMessageBody(BaseModel):
     user_id: str
-    text: str
+    text: str = Field(..., max_length=4_000)  # as SendMessageBody.text
 
 
 class ToggleReactionBody(BaseModel):
     user_id: str
-    emoji: str
+    # The value goes into a PostgREST filter on the toggle lookup, so an
+    # unbounded "emoji" built a query URL too long to send and answered 500.
+    # 64 leaves room for a multi-codepoint ZWJ sequence.
+    emoji: str = Field(..., max_length=64)
 
 
 class FriendRequestBody(BaseModel):
@@ -295,17 +311,19 @@ class SubmitFeedbackBody(BaseModel):
     user_id: str
     type: str  # 'global' | 'session'
     rating: int
-    selected_options: list[str] = []
-    comment: Optional[str] = None
+    selected_options: list[str] = Field(default=[], max_length=50)
+    comment: Optional[str] = Field(default=None, max_length=5_000)
     session_id: Optional[str] = None
-    topic: Optional[str] = None
+    topic: Optional[str] = Field(default=None, max_length=200)
 
 
 class SubmitIssueReportBody(BaseModel):
+    # Free text an admin reads in the dashboard. Unbounded, a 500,000-char
+    # description was accepted and stored (verified against the running app).
     user_id: str
-    topic: str
-    description: str
-    screenshot_urls: list[str] = []
+    topic: str = Field(..., max_length=200)
+    description: str = Field(..., max_length=10_000)
+    screenshot_urls: list[str] = Field(default=[], max_length=10)
 
 
 # ── Documents ──────────────────────────────────────────────────────────────────
