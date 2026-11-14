@@ -442,6 +442,24 @@ describe("a generation that fails", () => {
     await act(async () => run.resolve(finishedGuide()));
     expect(screen.getByTestId("guide-title")).toBeInTheDocument();
   });
+
+  it("says why when the server cannot read the guide, with no Retry that would only ask again", async () => {
+    // What the server sends for a guide it cannot read: failed, with nothing in it.
+    mocks.getGuide.mockResolvedValue({ ...newGuide(finishedGuide()), status: "failed" });
+    const unreadable = Object.assign(
+      new Error(JSON.stringify({ detail: "This guide cannot be read, so it was left as it is." })),
+      { status: 422 },
+    );
+    mocks.generateGuide.mockRejectedValue(unreadable);
+    const user = userEvent.setup();
+    renderReader();
+
+    await user.click(await screen.findByTestId("guide-generation-retry"));
+    await waitFor(() =>
+      expect(screen.getByTestId("guide-generation-error")).toHaveTextContent("This guide cannot be read, so it was left as it is."));
+    expect(screen.queryByTestId("guide-generation-retry")).not.toBeInTheDocument();
+    expect(mocks.generateGuide).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("a section that could not be written", () => {

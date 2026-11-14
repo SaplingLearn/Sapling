@@ -106,22 +106,29 @@ export interface Failure {
  * `status` is the guide's as the server has it once the run has stopped, or
  * null when it could not be read.
  *
+ * A 422 is the server saying the request itself cannot work (an Update with
+ * nothing new to add, a resume of a guide it cannot read): asked again, it
+ * would get the same answer.
+ *
  * A guide that is `generating` or `failed` is partly written. Only a resume
- * finishes it, so Retry is always there and asks for one, whatever stopped
- * the run: the banner cannot be put away, and without Retry the student
- * could do nothing short of a reload.
+ * finishes it, so Retry is there and asks for one, whatever stopped the run:
+ * the banner cannot be put away, and without Retry the student could do
+ * nothing short of a reload. The one exception is a resume the server
+ * refused with a 422: Retry would be that same resume, so there is none and
+ * the banner says why.
  *
  * A guide that is still `ready` was not replaced: an Update or a Regenerate
  * saves nothing until its first section is written. Retry asks for the same
- * thing again, unless the server said that cannot help. A 422 is the server
- * saying the request itself cannot work (an Update with nothing new to add):
- * Retry would get the same answer.
+ * thing again, unless the server said that cannot help.
  */
 export function failureOf(err: unknown, mode: GenerateMode, status: GuideStatus | null): Failure {
   const streamed = err instanceof GuideGenerationError;
   const message = streamed ? err.message : humanizeError(err, FAILED);
-  if (status === "generating" || status === "failed") return { message, retry: "resume", dismissible: false };
-  const retryable = streamed ? err.retryable : statusOf(err) !== 422;
+  const refused = !streamed && statusOf(err) === 422;
+  if (status === "generating" || status === "failed") {
+    return { message, retry: refused && mode === "resume" ? null : "resume", dismissible: false };
+  }
+  const retryable = streamed ? err.retryable : !refused;
   return { message, retry: retryable ? mode : null, dismissible: status === "ready" };
 }
 
