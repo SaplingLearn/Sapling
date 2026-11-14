@@ -433,16 +433,37 @@ def public_route_limit(request, per_address: AbuseLimit, shared: AbuseLimit) -> 
     return shared, "shared"
 
 
-async def read_within_limit(upload: UploadFile, max_bytes: int) -> bytes:
-    """Read at most ``max_bytes`` (+1 to detect overflow) from an UploadFile so
-    an oversize upload can't be pulled fully into memory before we reject it.
+#: How much of an upload `read_within_limit` reads at a time.
+_UPLOAD_CHUNK = 1024 * 1024
 
-    Raises 413 if the upload exceeds ``max_bytes``.
+
+async def read_within_limit(
+    upload: UploadFile,
+    max_bytes: int,
+    *,
+    status_code: int = 413,
+    detail: str | None = None,
+) -> bytes:
+    """Read an UploadFile in 1 MB chunks, refusing it as soon as it passes
+    ``max_bytes`` — never more than one chunk past the cap is read, so an
+    oversize upload is never pulled into memory whole. The one capped upload
+    reader: every upload route reads through it.
+
+    Raises ``status_code`` (413 by default) with ``detail`` (default "File too
+    large. Maximum size is N MB.") past the cap; a route that has always
+    answered differently passes its own.
     """
-    data = await upload.read(max_bytes + 1)
-    if len(data) > max_bytes:
-        raise HTTPException(
-            status_code=413,
-            detail=f"File too large. Maximum size is {max_bytes // (1024 * 1024)} MB.",
-        )
-    return data
+    parts: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await upload.read(_UPLOAD_CHUNK)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            raise HTTPException(
+                status_code=status_code,
+                detail=detail or f"File too large. Maximum size is {max_bytes // (1024 * 1024)} MB.",
+            )
+        parts.append(chunk)
+    return b"".join(parts)

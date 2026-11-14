@@ -7,8 +7,9 @@ extension it is named with AND its signature agree on an allowed type. Office
 documents are zip archives, so a DOCX/PPTX is also checked for the part that
 makes it one (``word/document.xml`` / ``ppt/presentation.xml``).
 
-:func:`read_upload_capped` reads in chunks and stops at the cap, so an oversize
-upload is refused without ever being held in memory whole.
+:func:`read_checked_upload` reads through
+``services/request_limits.py::read_within_limit``, which stops at the cap, so an
+oversize upload is refused without ever being held in memory whole.
 """
 from __future__ import annotations
 
@@ -17,6 +18,8 @@ import zipfile
 from typing import Iterable, Optional
 
 from fastapi import HTTPException, UploadFile
+
+from services.request_limits import read_within_limit
 
 PDF = "application/pdf"
 DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -42,7 +45,6 @@ EXTENSIONS: dict[str, tuple[str, ...]] = {
 #: The canonical extension each image type is stored under.
 IMAGE_EXTENSION = {PNG: "png", JPEG: "jpg", GIF: "gif", WEBP: "webp"}
 
-_CHUNK = 1024 * 1024
 #: A PDF's header may follow a little leading junk; readers accept it within 1 KB.
 _PDF_HEADER_WINDOW = 1024
 
@@ -140,24 +142,10 @@ async def read_checked_upload(
     allowed = tuple(allowed)
     if extension_of(upload.filename) not in {e for t in allowed for e in EXTENSIONS[t]}:
         raise HTTPException(status_code=400, detail=unsupported_detail)
-    data = await read_upload_capped(upload, max_bytes, status_code=oversize_status)
+    data = await read_within_limit(
+        upload, max_bytes, status_code=oversize_status, detail=too_large_detail(max_bytes),
+    )
     content_type = matching_type(upload.filename, data, allowed)
     if content_type is None:
         raise HTTPException(status_code=400, detail=unsupported_detail)
     return data, content_type
-
-
-async def read_upload_capped(upload: UploadFile, max_bytes: int, *, status_code: int = 413) -> bytes:
-    """Read ``upload`` in 1 MB chunks, refusing it (``status_code``) as soon as
-    it passes ``max_bytes`` — never more than one chunk past the cap is read."""
-    parts: list[bytes] = []
-    total = 0
-    while True:
-        chunk = await upload.read(_CHUNK)
-        if not chunk:
-            break
-        total += len(chunk)
-        if total > max_bytes:
-            raise HTTPException(status_code=status_code, detail=too_large_detail(max_bytes))
-        parts.append(chunk)
-    return b"".join(parts)

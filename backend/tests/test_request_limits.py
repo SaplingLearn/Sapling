@@ -108,3 +108,82 @@ class TestClaimAndRefund:
         for _ in range(3):
             assert request_limits.check_rate_limit("k", limit=3, window_sec=60) is None
         assert request_limits.check_rate_limit("k", limit=3, window_sec=60) is not None
+
+
+class TestReadWithinLimit:
+    """The one capped upload reader (every upload route reads through it)."""
+
+    @staticmethod
+    def _upload(data: bytes):
+        import io
+
+        from fastapi import UploadFile
+
+        return UploadFile(io.BytesIO(data), filename="f.bin")
+
+    @staticmethod
+    def _run(coro):
+        import asyncio
+
+        return asyncio.run(coro)
+
+    def test_returns_the_bytes_within_the_cap(self):
+        data = b"x" * 2048
+        assert self._run(request_limits.read_within_limit(self._upload(data), 2048)) == data
+
+    def test_default_refusal_is_413_with_the_size(self):
+        import pytest
+        from fastapi import HTTPException
+
+        with pytest.raises(HTTPException) as exc:
+            self._run(request_limits.read_within_limit(self._upload(b"x" * (2 * 1024 * 1024 + 1)), 2 * 1024 * 1024))
+        assert exc.value.status_code == 413
+        assert exc.value.detail == "File too large. Maximum size is 2 MB."
+
+    def test_caller_chooses_status_and_detail(self):
+        import pytest
+        from fastapi import HTTPException
+
+        with pytest.raises(HTTPException) as exc:
+            self._run(request_limits.read_within_limit(
+                self._upload(b"x" * 11), 10, status_code=400, detail="too big",
+            ))
+        assert (exc.value.status_code, exc.value.detail) == (400, "too big")
+
+    def test_stops_reading_one_chunk_past_the_cap(self, monkeypatch):
+        import pytest
+        from fastapi import HTTPException, UploadFile
+
+        reads = []
+        real_read = UploadFile.read
+
+        async def counting_read(self, size=-1):
+            data = await real_read(self, size)
+            reads.append(len(data))
+            return data
+
+        monkeypatch.setattr(UploadFile, "read", counting_read)
+        with pytest.raises(HTTPException):
+            self._run(request_limits.read_within_limit(self._upload(b"x" * (8 * 1024 * 1024)), 1024 * 1024))
+        assert sum(reads) <= 2 * 1024 * 1024
+
+
+def test_checked_upload_keeps_its_own_oversize_detail():
+    """services/upload_validation reads through read_within_limit but keeps
+    its route-facing wording and status (documents 400, calendar 413)."""
+    import asyncio
+    import io
+
+    import pytest
+    from fastapi import HTTPException, UploadFile
+
+    from services import upload_validation as uv
+    from tests.upload_fixtures import PDF_BYTES
+
+    upload = UploadFile(io.BytesIO(PDF_BYTES + b"0" * (1024 * 1024)), filename="s.pdf")
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(uv.read_checked_upload(
+            upload, allowed=(uv.PDF,), max_bytes=1024 * 1024, unsupported_detail="no",
+        ))
+    assert exc.value.status_code == 413
+    assert exc.value.detail == "File exceeds the 1 MB limit. Please upload a smaller file."

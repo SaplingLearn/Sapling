@@ -37,8 +37,8 @@ from services.extraction_service import extract_text_from_file
 from services.agent_events import SSE_CACHE_CONTROL
 from services.request_context import current_request_id
 from services import abuse_limits
-from services.request_limits import aenforce_abuse_limit
-from services.upload_validation import DOCX, PDF, PPTX, extension_of, matching_type, read_upload_capped
+from services.request_limits import aenforce_abuse_limit, read_within_limit
+from services.upload_validation import DOCX, PDF, PPTX, extension_of, matching_type, too_large_detail
 from models import ScanConceptsBody, UpdateDocumentBody
 from services.durable import workflow_id
 from services.document_indexing import schedule_document_index
@@ -234,7 +234,9 @@ async def _read_upload(file: UploadFile) -> tuple[str, bytes, str]:
             status_code=400,
             detail=f"Unsupported file type '{ext or file.content_type}'. Only PDF, DOCX, and PPTX are accepted.",
         )
-    file_bytes = await read_upload_capped(file, MAX_FILE_SIZE, status_code=400)
+    file_bytes = await read_within_limit(
+        file, MAX_FILE_SIZE, status_code=400, detail=too_large_detail(MAX_FILE_SIZE),
+    )
     content_type = matching_type(filename, file_bytes, ALLOWED_CONTENT_TYPES)
     if content_type is None:
         raise HTTPException(status_code=400, detail=MISMATCHED_FILE_DETAIL)
