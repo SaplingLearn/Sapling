@@ -35,6 +35,13 @@ How matching works (every list below is a regex over `normalize(text)`):
    (never explicit phrases) anywhere in the text when it names an academic
    topic ("Durkheim", "euthanasia", "theory of suicide").
 
+5. `detect(text, source="document")` (a stored note or card, never a typed
+   message) sets quotations aside: a match entirely inside "...", “...”,
+   '...' or a `>` block-quote line does not count unless the quotation's own
+   sentence speaks in the first person outside it. The quotations are found
+   on the RAW text (normalizing drops quote marks) and carried through as
+   marker tokens.
+
 Phrases are word-bounded: a pattern never matches inside a longer word.
 
 To extend: add a `Phrase` to EXPLICIT (pick its category; write it against
@@ -339,44 +346,121 @@ _SENTENCE_BREAK = re.compile(r"[.!?;:\n\r]+")
 #: pattern reads it as a space, exactly as before.
 _CLAUSE_BREAK = re.compile(r"(?:[,()\[\]{}–—]|(?<!\S)-+(?!\S))+")
 _CLAUSE = ","
-_NON_WORD = re.compile(r"[^a-z0-9|,]+")
+#: Where a quotation opens and closes (documents only); never in `text`.
+_QUOTE_OPEN, _QUOTE_CLOSE = "\x01", "\x02"
+_NON_WORD = re.compile(r"[^a-z0-9|,\x01\x02]+")
+#: `_SENTENCE_BREAK` for marked text: a marker inside a run of sentence
+#: punctuation (`."` closing a quote, then `:`) does not split the run.
+_SENTENCE_BREAK_MARKED = re.compile(r"[.!?;:\n\r](?:[\x01\x02]*[.!?;:\n\r])*")
+_MARKERS = re.compile(r"[\x01\x02]")
 _REPEATED_LETTER = re.compile(r"([a-z])\1{2,}")
+
+#: Longest quotation set aside in a document. A longer "quotation" is more
+#: likely a stray mark than a quote, so it is screened like the rest.
+_QUOTE_MAX = 600
+#: A quote opens at the start, after whitespace, a bracket, a colon or a dash,
+#: and closes before anything but a letter or digit: never mid-word, so an
+#: apostrophe ("I'm", "can't") is never a quote mark.
+_OPENS = r"(?<![^\s(\[{:—–-])"
+_CLOSES = r"(?![^\W_])"
+#: A single quote mark is DROPPED by normalizing (it reads as an apostrophe),
+#: so its close must not be followed by a letter even after more of them.
+_CLOSES_SINGLE = r"(?![’‘ʼ`´']*[^\W_])"
+#: An elided word ("'cause", "'til") opens nothing.
+_ELISION = r"(?:cause|cos|coz|cuz|til|till|em|bout|round|n|tis|twas)(?![a-z])"
+_QUOTED = re.compile(
+    rf'{_OPENS}"(?=\S)([^"\n]{{1,{_QUOTE_MAX}}})(?<=\S)"{_CLOSES}'
+    rf"|“([^“”\n]{{1,{_QUOTE_MAX}}})”"
+    rf"|„([^“”„\n]{{1,{_QUOTE_MAX}}})[“”]"
+    rf"|{_OPENS}['‘](?!{_ELISION})(?=\S)([^'‘’\n]{{1,{_QUOTE_MAX}}})(?<=\S)['’]{_CLOSES_SINGLE}",
+    re.IGNORECASE,
+)
+#: A Markdown block quote: the rest of a line that starts with `>`.
+_BLOCK_QUOTE = re.compile(r"^[ \t]*>(.*)$", re.MULTILINE)
 
 
 @dataclass(frozen=True)
 class _Forms:
     """`text` is `normalize`'s form. `clause` is the same with a `,` token at
     each clause break; `commas` are those tokens' offsets in `clause`, which
-    map a `clause` offset back onto `text`."""
+    map a `clause` offset back onto `text`. `quoted` are the (start, end)
+    spans of `text` that sat inside a quotation (documents only)."""
 
     text: str
     clause: str
     commas: tuple[int, ...]
+    quoted: tuple[tuple[int, int], ...] = ()
 
     def from_clause(self, index: int) -> int:
         # Each `,` token before `index` added two characters (it and a space).
         return index - 2 * bisect_left(self.commas, index)
 
 
-def _forms(text: str) -> _Forms:
-    folded = unicodedata.normalize("NFKD", text[:MAX_SCREEN_CHARS]).casefold()
+def _mark_quotations(text: str) -> str:
+    """`text` with a quote marker token around every quotation, found on the
+    RAW text (normalizing drops the quote marks)."""
+    spans = sorted(
+        [m.span(1) for m in _BLOCK_QUOTE.finditer(text) if m.group(1).strip()]
+        + [next(m.span(g) for g in range(1, 5) if m.group(g) is not None)
+           for m in _QUOTED.finditer(text)]
+    )
+    merged: list[list[int]] = []
+    for start, end in spans:
+        if merged and start <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+    parts, last = [], 0
+    for start, end in merged:
+        parts += [text[last:start], _QUOTE_OPEN, text[start:end], _QUOTE_CLOSE]
+        last = end
+    return "".join(parts) + text[last:]
+
+
+def _forms(text: str, *, quotes: bool = False) -> _Forms:
+    # A marker character the student typed is just a non-word character.
+    text = text[:MAX_SCREEN_CHARS].replace(_QUOTE_OPEN, " ").replace(_QUOTE_CLOSE, " ")
+    if quotes:
+        text = _mark_quotations(text)
+    folded = unicodedata.normalize("NFKD", text).casefold()
     folded = "".join(ch for ch in folded if not unicodedata.combining(ch))
     folded = _INVISIBLE.sub("", folded)
     folded = _APOSTROPHES.sub("", folded)
-    folded = _SENTENCE_BREAK.sub(" | ", folded)
+    if quotes:
+        folded = _SENTENCE_BREAK_MARKED.sub(
+            lambda m: " | " + "".join(f" {c} " for c in _MARKERS.findall(m.group())), folded)
+    else:
+        folded = _SENTENCE_BREAK.sub(" | ", folded)
     folded = _CLAUSE_BREAK.sub(f" {_CLAUSE} ", folded)
     folded = _NON_WORD.sub(" ", folded)
     folded = _REPEATED_LETTER.sub(r"\1", folded)
-    tokens = folded.split()
-    clause = " ".join(tokens)
+    if quotes:
+        folded = _MARKERS.sub(lambda m: f" {m.group()} ", folded)
+    words: list[str] = []  # `text`'s tokens
+    clause: list[str] = []  # `clause`'s tokens
     commas: list[int] = []
-    offset = 0
-    for token in tokens:
+    quoted: list[tuple[int, int]] = []
+    c_len = n_len = 0  # length of each joined form so far
+    opened: int | None = None
+    for token in folded.split():
+        if token == _QUOTE_OPEN:
+            opened = n_len + 1 if words else 0
+            continue
+        if token == _QUOTE_CLOSE:
+            if opened is not None and n_len > opened:
+                quoted.append((opened, n_len))
+            opened = None
+            continue
+        c_len += 1 if clause else 0
         if token == _CLAUSE:
-            commas.append(offset)
-        offset += len(token) + 1
-    norm = " ".join(t for t in tokens if t != _CLAUSE) if commas else clause
-    return _Forms(text=norm, clause=clause, commas=tuple(commas))
+            commas.append(c_len)
+        else:
+            n_len += (1 if words else 0) + len(token)
+            words.append(token)
+        clause.append(token)
+        c_len += len(token)
+    return _Forms(text=" ".join(words), clause=" ".join(clause), commas=tuple(commas),
+                  quoted=tuple(quoted))
 
 
 def normalize(text: str) -> str:
@@ -403,11 +487,23 @@ def _guarded(span: tuple[int, int], guards: list[tuple[int, int]]) -> bool:
     return any(g_start < end and start < g_end for g_start, g_end in guards)
 
 
-def detect(text: str | None) -> CrisisMatch | None:
-    """The most severe crisis phrase in `text`, or None. Never raises on str."""
+#: What is screened: a "message" the student typed (all of it), or a
+#: "document" (a note, a card) whose quotations are not the student's words.
+Source = Literal["message", "document"]
+
+
+def detect(text: str | None, *, source: Source = "message") -> CrisisMatch | None:
+    """The most severe crisis phrase in `text`, or None. Never raises on str.
+
+    `source="document"` sets quotations aside: a match entirely inside one
+    ("...", “...”, '...', a `>` block-quote line) does not count, unless the
+    quotation's own sentence speaks in the first person outside it ("I keep
+    thinking 'I want to die'"). Lecture notes quote patients and plays; a
+    student's own words are not in quotation marks. A typed message is always
+    screened whole."""
     if not text or not text.strip():
         return None
-    forms = _forms(text)
+    forms = _forms(text, quotes=source == "document")
     norm = forms.text
     if not norm:
         return None
@@ -424,14 +520,17 @@ def detect(text: str | None) -> CrisisMatch | None:
             ]
         return _guarded(span, guards)
 
+    def set_aside(span: tuple[int, int]) -> bool:
+        return _quoted_by_someone_else(norm, span, forms.quoted)
+
     for phrase, regex in _EXPLICIT:
         for m in regex.finditer(norm):
-            if not guarded(m.span()):
+            if not guarded(m.span()) and not set_aside(m.span()):
                 return CrisisMatch(phrase.category, "explicit", phrase.label)
     topic = None  # likewise: a TOPIC_GUARD is read only for a candidate mention
     for phrase, regex in _MENTIONS:
         for m in regex.finditer(norm):
-            if guarded(m.span()):
+            if guarded(m.span()) or set_aside(m.span()):
                 continue
             if topic is None:
                 topic = any(g.search(norm) for g in _TOPIC_GUARDS)
@@ -444,9 +543,24 @@ def detect(text: str | None) -> CrisisMatch | None:
     return None
 
 
-def detect_any(texts: Iterable[str | None]) -> CrisisMatch | None:
+def _quoted_by_someone_else(
+    norm: str, span: tuple[int, int], quoted: tuple[tuple[int, int], ...]
+) -> bool:
+    """`span` lies inside one quotation whose sentence, outside the quotation,
+    has no first-person word ("a patient says '...'", not "I said '...'")."""
+    start, end = span
+    for q_start, q_end in quoted:
+        if q_start <= start and end <= q_end:
+            before = norm.rfind("|", 0, q_start) + 1
+            after = norm.find("|", q_end)
+            outside = norm[before:q_start] + " " + norm[q_end:len(norm) if after == -1 else after]
+            return not _FIRST_PERSON.search(outside)
+    return False
+
+
+def detect_any(texts: Iterable[str | None], *, source: Source = "message") -> CrisisMatch | None:
     """The most severe match across several fields of one request."""
-    found = [m for m in map(detect, texts) if m is not None]
+    found = [m for m in (detect(t, source=source) for t in texts) if m is not None]
     if not found:
         return None
     return min(found, key=lambda m: CATEGORIES.index(m.category))

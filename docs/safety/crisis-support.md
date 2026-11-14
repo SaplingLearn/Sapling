@@ -178,6 +178,17 @@ sentence breaks, stretched letters squeezed):
 When several categories match, the most severe is reported: `acute_danger`,
 then `suicidal_ideation`, then `self_harm`.
 
+**Notes are screened as documents** (`source="document"`). A match that sits
+entirely inside a quotation (`"..."`, `“...”`, `'...'`, or a `>` block-quote
+line) does not count, so lecture notes quoting a patient ("a patient says 'I
+want to kill myself'") or a play can still be summarized. It still counts
+when the quotation's own sentence speaks in the first person outside it ("I
+keep thinking 'I want to die'"). An apostrophe ("I'm", "'cause", "students'")
+is never a quote mark, an unclosed or multi-line quote sets nothing aside,
+and a quotation over 600 characters is screened like the rest. What the
+student TYPES (a chat message, a topic, a description) is always screened
+whole.
+
 **To extend:** add a `Phrase` to `EXPLICIT` (choose its category, write the
 pattern against the normalized form, reuse `_MYSELF` / `_INTENT`), or a
 pattern to `GUARDS` / `NEGATION_GUARDS` / `TOPIC_GUARDS` for a new false
@@ -195,9 +206,13 @@ negatives.
 - **False positives remain.** A literature or psychology question that uses
   an explicit first-person phrase ("the speaker says 'I want to die'") gets
   the card. So can a quiz option about suicide quoted in the quiz's "Ask
-  about this" opening message, pasted notes or a poem with a first-person
+  about this" opening message, a note or poem with an UNQUOTED first-person
   line, or a first-person sentence in lecture notes that names suicide with
-  no topic word. The card says the student can keep studying, and their next
+  no topic word.
+- **Quotations in notes are set aside**, so a student who writes their own
+  crisis line in quotation marks in a note, with no first-person word
+  around it, is not screened there. Their messages to the tutor and the note
+  chat are screened whole. The card says the student can keep studying, and their next
   message is screened afresh.
 - **A model-based screen** would catch indirect language. It would also need
   its own labelled eval set, measured false-negative and false-positive

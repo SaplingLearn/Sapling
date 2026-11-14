@@ -331,3 +331,57 @@ def test_long_notes_are_screened_whole():
     filler = "Lecture notes on hash tables and collisions. " * 2000
     assert detect(filler + "I want to end my life.") is not None
     assert detect(filler) is None
+
+
+# ── Documents: a quotation is not the student's own words ──────────────────
+
+#: Note text that QUOTES crisis language (a case study, a play, a poem). With
+#: source="document" a match inside the quotation does not count, unless the
+#: quotation's own sentence speaks in the first person.
+QUOTED_IN_NOTES: list[str] = [
+    'PSYCH 101 week 4: depression. A patient says "I want to kill myself" and the clinician asks about a plan.',
+    "Macbeth, Act 5: “I want to die” is the line we discussed.",
+    "Romantic poetry. The speaker's refrain, 'I wish I were dead', closes each stanza.",
+    "Abnormal psych lecture\n> I want to end my life\nThe quoted patient met criteria for MDD.",
+    'Case study: the client reported "my self-harm got worse" after the move.',
+    "Lecture: „I want to die“ is the German-style quote example.",
+]
+
+#: Crisis language in a note that is still the student's own: outside any
+#: quotation, or quoted inside a sentence that speaks in the first person.
+STILL_SCREENED_IN_NOTES: list[str] = [
+    "Notes for class. I want to kill myself.",
+    'He said "see you later" and I want to kill myself.',
+    "I'm so tired and I can't do this, I want to kill myself, it's too much",
+    # an elision is not an opening quote; a plural possessive is not a close
+    "'Cause I want to kill myself, honestly, my friends' notes don't help",
+    'Today was awful. "Whatever." I want to die.',
+    'I keep thinking "I want to kill myself" every night',
+    'I wrote "I want to die" in my journal again',
+    # an unclosed or line-spanning quote hides nothing
+    'The quote starts here "and then\nI want to kill myself',
+    'A stray " mark, then I want to kill myself',
+]
+
+
+@pytest.mark.parametrize("text", QUOTED_IN_NOTES)
+def test_a_document_quoting_crisis_language_does_not_match(text):
+    assert detect(text) is not None, "a typed message is screened in full"
+    assert detect(text, source="document") is None
+
+
+@pytest.mark.parametrize("text", STILL_SCREENED_IN_NOTES)
+def test_a_documents_own_crisis_language_still_matches(text):
+    assert detect(text, source="document") is not None
+
+
+def test_detect_any_passes_the_source_on():
+    quoted = QUOTED_IN_NOTES[0]
+    assert detect_any([quoted]) is not None
+    assert detect_any([None, quoted], source="document") is None
+    assert detect_any([quoted, "I want to end my life"], source="document") is not None
+
+
+def test_quotes_never_change_the_normalized_form():
+    for text in (*QUOTED_IN_NOTES, *STILL_SCREENED_IN_NOTES):
+        assert crisis_detection._forms(text, quotes=True).text == normalize(text)
