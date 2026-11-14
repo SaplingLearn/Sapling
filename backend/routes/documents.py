@@ -224,7 +224,14 @@ async def _read_upload(file: UploadFile) -> tuple[str, bytes]:
             status_code=400,
             detail=f"Unsupported file type '{ext or file.content_type}'. Only PDF, DOCX, and PPTX are accepted.",
         )
-    file_bytes = await file.read()
+    # Read at most MAX_FILE_SIZE + 1 bytes. `await file.read()` with no
+    # argument pulled the WHOLE upload into one bytes object and only then
+    # compared it to the cap — so a multi-gigabyte "PDF" was fully
+    # materialised in memory before being rejected, which is an OOM, not a
+    # 400. The +1 is what makes the overflow detectable. (Same shape as
+    # services/request_limits.py::read_within_limit; done inline here to keep
+    # this route's 400 and its MAX_FILE_SIZE-derived copy, which tests pin.)
+    file_bytes = await file.read(MAX_FILE_SIZE + 1)
     if len(file_bytes) > MAX_FILE_SIZE:
         raise HTTPException(
             status_code=400,

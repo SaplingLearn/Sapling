@@ -57,6 +57,7 @@ from services.request_context import (
     current_request_id,
     privacy_signal_in,
 )
+from services.body_limit import BodySizeLimitMiddleware
 from services.encryption_canary import verify_encryption_key
 from services.storage_service import (
     ALLOWED_CONTENT_TYPES,
@@ -272,6 +273,11 @@ _allowed_origins = list({
     "https://www.saplinglearn.com",
     *_extra,
 } - {""})
+
+# Body ceiling (testathon hardening). Added BEFORE CORSMiddleware so it sits
+# INSIDE it: a 413 from here still comes back with the CORS headers a browser
+# needs in order to read it. See services/body_limit.py for the two limits.
+app.add_middleware(BodySizeLimitMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
