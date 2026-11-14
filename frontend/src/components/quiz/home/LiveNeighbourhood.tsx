@@ -21,6 +21,7 @@
 
 import React from "react";
 import { KnowledgeGraph2D } from "@/components/graph/KnowledgeGraph2D";
+import { useGraphSize } from "@/components/graph/useGraphSize";
 import type { GraphEdge, GraphNode } from "@/lib/data";
 import { siblingsFor } from "@/lib/graph/neighbourhood";
 
@@ -58,23 +59,9 @@ export function LiveNeighbourhood({ centreId, nodes, edges, onPick, ariaLabel }:
     };
   }, [centreId, nodes, edges]);
 
-  // Callback ref, as on the dashboard: the window can mount after the first
-  // render (the skeleton comes first), and a plain ref + effect would miss it.
-  const [size, setSize] = React.useState(FALLBACK_SIZE);
-  const observer = React.useRef<ResizeObserver | null>(null);
-  const measure = React.useCallback((el: HTMLDivElement | null) => {
-    observer.current?.disconnect();
-    observer.current = null;
-    if (!el || typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(entries => {
-      for (const entry of entries) {
-        const { width, height } = entry.contentRect;
-        if (width > 0 && height > 0) setSize({ w: width, h: height });
-      }
-    });
-    ro.observe(el);
-    observer.current = ro;
-  }, []);
+  // Measured as the window mounts (it can come after a skeleton), before the
+  // first paint; the graph waits for it (`useGraphSize`).
+  const [measure, size] = useGraphSize<HTMLDivElement>(FALLBACK_SIZE);
 
   const pick = React.useCallback(
     (n: GraphNode) => {
@@ -91,15 +78,17 @@ export function LiveNeighbourhood({ centreId, nodes, edges, onPick, ariaLabel }:
       aria-label={ariaLabel}
       data-testid="quiz-neighbourhood"
     >
-      <KnowledgeGraph2D
-        nodes={fragment.nodes}
-        edges={fragment.edges}
-        width={size.w}
-        height={size.h}
-        highlightId={centreId}
-        onNodeClick={pick}
-        initialZoom={INITIAL_ZOOM}
-      />
+      {size && (
+        <KnowledgeGraph2D
+          nodes={fragment.nodes}
+          edges={fragment.edges}
+          width={size.w}
+          height={size.h}
+          highlightId={centreId}
+          onNodeClick={pick}
+          initialZoom={INITIAL_ZOOM}
+        />
+      )}
     </div>
   );
 }
