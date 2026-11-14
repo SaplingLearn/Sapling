@@ -250,6 +250,20 @@ def test_save_can_keep_only_the_answers_that_survive(db):
     assert after.answers == kept
 
 
+@pytest.mark.parametrize("answers", [{}, {"s1-i2": CheckAnswer(option_id="b", correct=True)}])
+def test_an_update_leaves_answers_it_could_not_read_as_they_are(db, answers):
+    """Unreadable answers load as none, so an Update's or a Regenerate's
+    replacement would erase what the right key could still open: the content
+    is written, the answers column is not."""
+    db.add("g1", answers="bm90LWNpcGhlcnRleHQtbm90LWNpcGhlcnRleHQ=")
+    guide = run(store.aload_guide(ME, "g1"))
+    assert guide.answers_unreadable
+
+    run(store.asave_content(guide, _content("Rewritten"), answers=answers))
+
+    assert db.stored("g1")["answers"] == "bm90LWNpcGhlcnRleHQtbm90LWNpcGhlcnRleHQ="
+
+
 def test_save_refuses_a_column_it_does_not_own(db):
     db.add("g1")
     guide = run(store.aload_guide(ME, "g1"))

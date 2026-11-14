@@ -305,12 +305,18 @@ async def asave_content(
     ``previous_content`` (Update and Regenerate keep one step back).
     ``answers`` replaces the check answers: the ones that survive an Update,
     or none after a Regenerate. Left as None, the answers are not touched.
+    Stored answers that could not be read are not touched either: they
+    loaded as none, so the replacement would erase what the right key could
+    still open (section ids are never reused, so a recovered answer can only
+    land on the question it was given for).
 
     An unreadable row is never written over (``GuideInvalid``): its stored
     content may only need the right key to read again. Returns the row as
     written."""
     if guide.unreadable:
         raise GuideInvalid(GUIDE_UNREADABLE_DETAIL)
+    if guide.answers_unreadable:
+        answers = None
     unknown = sorted(set(columns) - _SAVE_COLUMNS)
     if unknown:
         raise TypeError(f"asave_content cannot write {', '.join(unknown)}")
