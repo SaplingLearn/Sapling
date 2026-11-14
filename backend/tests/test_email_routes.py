@@ -71,6 +71,7 @@ def unsub_tables(monkeypatch):
     factory, made = _factory()
     monkeypatch.setattr(email_service, "table", factory)
     factory("email_suppressions")
+    factory("email_alert_suppressions")
     return made
 
 
@@ -91,8 +92,9 @@ def test_unsubscribe_post_suppresses_the_hash(unsub_tables):
     assert r.status_code == 200
     assert "You&#x27;re unsubscribed</h1>" in r.text
     call = unsub_tables["email_suppressions"].upsert.call_args
-    assert call.args[0] == {"recipient_hash": _h("a@bu.edu"), "reason": "unsubscribe", "scope": "all"}
-    assert call.kwargs == {"on_conflict": "recipient_hash,scope", "ignore_duplicates": True}
+    assert call.args[0] == {"recipient_hash": _h("a@bu.edu"), "reason": "unsubscribe"}
+    assert call.kwargs == {"on_conflict": "recipient_hash", "ignore_duplicates": True}
+    unsub_tables["email_alert_suppressions"].upsert.assert_not_called()
 
 
 def test_the_ops_alert_link_stops_ops_alerts_only(unsub_tables):
@@ -100,12 +102,13 @@ def test_the_ops_alert_link_stops_ops_alerts_only(unsub_tables):
     page = client.get(f"/api/email/unsubscribe?t={token}&scope=ops_alert")
     assert page.status_code == 200 and "admin alerts" in page.text
     assert f'action="/api/email/unsubscribe?t={token}&amp;scope=ops_alert"' in page.text
-    unsub_tables["email_suppressions"].upsert.assert_not_called()
+    unsub_tables["email_alert_suppressions"].upsert.assert_not_called()
 
     r = client.post(f"/api/email/unsubscribe?t={token}&scope=ops_alert")
     assert r.status_code == 200 and "admin alerts" in r.text
-    call = unsub_tables["email_suppressions"].upsert.call_args
-    assert call.args[0] == {"recipient_hash": _h("a@bu.edu"), "reason": "unsubscribe", "scope": "ops_alert"}
+    call = unsub_tables["email_alert_suppressions"].upsert.call_args
+    assert call.args[0] == {"recipient_hash": _h("a@bu.edu"), "reason": "unsubscribe"}
+    unsub_tables["email_suppressions"].upsert.assert_not_called()
 
 
 @pytest.mark.parametrize("method", ["get", "post"])
@@ -119,6 +122,7 @@ def test_a_link_cannot_be_rescoped(unsub_tables, method):
         r = getattr(client, method)(f"/api/email/unsubscribe?{query}")
         assert r.status_code == 400, query
     unsub_tables["email_suppressions"].upsert.assert_not_called()
+    unsub_tables["email_alert_suppressions"].upsert.assert_not_called()
 
 
 def test_rfc8058_one_click_post(unsub_tables):
@@ -393,9 +397,9 @@ def test_audiences_dedupe_and_exclude_suppressed(audience_tables):
     users_call = audience_tables["users"].select_with_count.call_args
     assert users_call.kwargs["filters"] == {"is_approved": "eq.true", "deleted_at": "is.null"}
     # Only a suppression of every (non-ops) kind keeps an address out of a
-    # broadcast; an ops-only unsubscribe does not.
-    supp_call = audience_tables["email_suppressions"].select_with_count.call_args
-    assert supp_call.kwargs["filters"] == {"scope": "eq.all"}
+    # broadcast; an ops-only unsubscribe (its own table) is never read here.
+    audience_tables["email_suppressions"].select_with_count.assert_called()
+    assert "email_alert_suppressions" not in audience_tables
 
 
 def test_test_send_goes_to_the_admin_only(monkeypatch, sent):
@@ -717,7 +721,7 @@ def test_unsuppress_removes_the_hash_and_audits_without_the_address(monkeypatch)
     # The admin undo lifts the broadcast/newsletter suppression only: it never
     # re-enrols an admin in the ops alerts they stopped.
     assert made["email_suppressions"].delete.call_args.kwargs["filters"] == {
-        "recipient_hash": f"eq.{_h('a@bu.edu')}", "scope": "eq.all",
+        "recipient_hash": f"eq.{_h('a@bu.edu')}",
     }
     kw = audit.call_args.kwargs
     assert kw["action"] == "email.unsuppress" and kw["target_id"] == _h("a@bu.edu")

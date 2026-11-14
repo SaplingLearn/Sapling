@@ -5,6 +5,8 @@ the address in the database" contract: claim the dedupe key first, honour the
 suppression list for every kind, and only then (and only with a key) talk to
 Resend. Everything is hermetic: `table()` and the Resend httpx client are fakes.
 """
+import pathlib
+import re
 from unittest.mock import MagicMock
 
 import httpx
@@ -33,6 +35,7 @@ def tables(monkeypatch):
         return made[name]
 
     factory("email_suppressions")
+    factory("email_alert_suppressions")
     factory("email_sends").upsert.return_value = [{"id": "send-1"}]
     monkeypatch.setattr(email_service, "table", factory)
     email_service.clear_opt_out_cache()
@@ -325,8 +328,9 @@ def test_unsuppress_deletes_the_hash(tables):
     tables["email_suppressions"].delete.return_value = [{"recipient_hash": rhash}]
     assert email_service.unsuppress(rhash) is True
     assert tables["email_suppressions"].delete.call_args.kwargs["filters"] == {
-        "recipient_hash": f"eq.{rhash}", "scope": "eq.all",
+        "recipient_hash": f"eq.{rhash}",
     }
+    tables["email_alert_suppressions"].delete.assert_not_called()
     tables["email_suppressions"].delete.return_value = []
     assert email_service.unsuppress(rhash) is False
 
@@ -388,21 +392,27 @@ def test_suppressed_recipient_is_recorded_and_not_sent(tables, resend):
     assert tables["email_sends"].upsert.call_args.args[0]["status"] == "suppressed"
     assert tables["email_suppressions"].select.call_args.kwargs["filters"] == {
         "recipient_hash": f"eq.{email_service.recipient_hash(TO)}",
-        "scope": "eq.all",
     }
+    tables["email_alert_suppressions"].select.assert_not_called()
+
+
+#: Where each scope's suppressions live: `all` in the original table (left
+#: exactly as it was, so a backend mid-deploy keeps working), `ops_alert` in
+#: its own.
+SCOPE_TABLES = {"all": "email_suppressions", "ops_alert": "email_alert_suppressions"}
 
 
 def _suppressed_for(tables, *scopes):
-    """email_suppressions holds TO's hash under `scopes` only."""
+    """TO's hash is suppressed under `scopes` only (each in its own table)."""
     rhash = email_service.recipient_hash(TO)
 
-    def select(columns, filters=None, **_):
-        scope = (filters or {}).get("scope", "").removeprefix("eq.")
-        if filters.get("recipient_hash") == f"eq.{rhash}" and scope in scopes:
-            return [{"recipient_hash": rhash}]
-        return []
+    for scope, name in SCOPE_TABLES.items():
+        def select(columns, filters=None, _held=scope in scopes, **_):
+            if _held and (filters or {}).get("recipient_hash") == f"eq.{rhash}":
+                return [{"recipient_hash": rhash}]
+            return []
 
-    tables["email_suppressions"].select.side_effect = select
+        tables[name].select.side_effect = select
 
 
 def test_a_broadcast_unsubscribe_does_not_stop_ops_alerts(tables, resend):
@@ -413,7 +423,10 @@ def test_a_broadcast_unsubscribe_does_not_stop_ops_alerts(tables, resend):
     _opted_out(tables)
     assert _send(kind="ops_alert", dedupe_key="ops_alert:x") == "sent"
     assert tables["email_sends"].upsert.call_args.args[0]["status"] == "queued"
-    assert tables["email_suppressions"].select.call_args.kwargs["filters"]["scope"] == "eq.ops_alert"
+    tables["email_suppressions"].select.assert_not_called()
+    assert tables["email_alert_suppressions"].select.call_args.kwargs["filters"] == {
+        "recipient_hash": f"eq.{email_service.recipient_hash(TO)}",
+    }
     tables["user_settings"].select_with_count.assert_not_called()
 
 
@@ -447,13 +460,59 @@ def test_a_scoped_token_verifies_only_for_its_own_scope(tables):
 def test_suppress_and_unsuppress_are_scoped(tables):
     rhash = email_service.recipient_hash(TO)
     email_service.suppress(rhash, "unsubscribe", scope="ops_alert")
-    call = tables["email_suppressions"].upsert.call_args
-    assert call.args[0] == {"recipient_hash": rhash, "reason": "unsubscribe", "scope": "ops_alert"}
-    assert call.kwargs["on_conflict"] == "recipient_hash,scope"
+    call = tables["email_alert_suppressions"].upsert.call_args
+    assert call.args[0] == {"recipient_hash": rhash, "reason": "unsubscribe"}
+    assert call.kwargs == {"on_conflict": "recipient_hash", "ignore_duplicates": True}
     email_service.unsuppress(rhash, scope="ops_alert")
-    assert tables["email_suppressions"].delete.call_args.kwargs["filters"] == {
-        "recipient_hash": f"eq.{rhash}", "scope": "eq.ops_alert",
+    assert tables["email_alert_suppressions"].delete.call_args.kwargs["filters"] == {
+        "recipient_hash": f"eq.{rhash}",
     }
+    tables["email_suppressions"].upsert.assert_not_called()
+    tables["email_suppressions"].delete.assert_not_called()
+
+
+def test_an_all_scope_suppression_writes_exactly_what_it_always_did(tables):
+    """email_suppressions keeps its original shape and key, so the write is
+    the one a backend from before scopes makes: no `scope` column, conflict
+    on recipient_hash (a deploy runs the migration first, and the old backend
+    serving meanwhile must not 500 an unsubscribe)."""
+    rhash = email_service.recipient_hash(TO)
+    email_service.suppress(rhash, "unsubscribe")
+    call = tables["email_suppressions"].upsert.call_args
+    assert call.args[0] == {"recipient_hash": rhash, "reason": "unsubscribe"}
+    assert call.kwargs == {"on_conflict": "recipient_hash", "ignore_duplicates": True}
+    tables["email_alert_suppressions"].upsert.assert_not_called()
+
+
+def test_an_unknown_scope_is_refused(tables):
+    with pytest.raises(ValueError):
+        email_service.suppress("a" * 64, scope="everything")
+    with pytest.raises(ValueError):
+        email_service.is_suppressed("a" * 64, scope="everything")
+
+
+_MIGRATIONS = pathlib.Path(__file__).resolve().parents[1] / "db" / "migrations"
+
+
+def test_the_ops_scope_migration_leaves_email_suppressions_untouched():
+    """Only the original email migration may alter email_suppressions: any
+    later change to its key breaks the backend still serving mid-deploy."""
+    alters = re.compile(r"ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:public\.)?email_suppressions\b", re.I)
+    touching = sorted(
+        p.name for p in _MIGRATIONS.glob("*.sql")
+        if alters.search(re.sub(r"--[^\n]*", "", p.read_text()))
+    )
+    assert touching == ["20261022063145_email.sql"]
+
+
+def test_the_ops_scope_table_is_service_only():
+    (mig,) = _MIGRATIONS.glob("*_email_alert_suppressions.sql")
+    sql = re.sub(r"--[^\n]*", "", mig.read_text())
+    assert re.search(r"CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+public\.email_alert_suppressions", sql)
+    assert re.search(r"recipient_hash\s+TEXT\s+PRIMARY\s+KEY", sql, re.I)
+    assert "ENABLE ROW LEVEL SECURITY" in sql
+    assert re.search(r"REVOKE\s+ALL\s+ON\s+public\.email_alert_suppressions\s+FROM\s+anon,\s*authenticated", sql)
+    assert re.search(r"GRANT\s+SELECT,\s*INSERT,\s*UPDATE,\s*DELETE\s+ON\s+public\.email_alert_suppressions\s+TO\s+service_role", sql)
 
 
 def test_the_ops_alert_template_carries_the_link_it_is_given():

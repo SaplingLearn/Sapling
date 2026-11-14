@@ -63,7 +63,7 @@ Resend's docs don't say whether a failed response is stored against a key,
 which is why a definitive failure moves to a new key.
 
 **Privacy:** the email tables (`email_sends`, `email_suppressions`,
-`email_broadcasts`) never store an address, only `recipient_hash`, an HMAC
+`email_alert_suppressions`, `email_broadcasts`) never store an address, only `recipient_hash`, an HMAC
 keyed off `SESSION_SECRET`. **Rotating `SESSION_SECRET` orphans every
 suppression and invalidates every unsubscribe link**, so don't rotate it
 casually.
@@ -72,15 +72,20 @@ casually.
 headers (`List-Unsubscribe` / `List-Unsubscribe-Post`). The link is
 `{FRONTEND_URL}/api/email/unsubscribe?t=…`, which the frontend proxies to the
 backend. GET shows a confirm page and POST suppresses, because mail scanners
-prefetch GETs. A suppression has a **scope** (`email_suppressions.scope`,
-`email_service.suppression_scope`):
+prefetch GETs. A suppression has a **scope**
+(`email_service.suppression_scope`), and each scope has its own table
+(`email_service.SUPPRESSION_TABLES`):
 
-| scope | set by | stops |
-| --- | --- | --- |
-| `all` | the link in any email but an ops alert | every kind except `ops_alert` |
-| `ops_alert` | the link in an ops alert (`…&scope=ops_alert`) | `ops_alert` only |
+| scope | table | set by | stops |
+| --- | --- | --- | --- |
+| `all` | `email_suppressions` | the link in any email but an ops alert | every kind except `ops_alert` |
+| `ops_alert` | `email_alert_suppressions` | the link in an ops alert (`…&scope=ops_alert`) | `ops_alert` only |
 
-An address can hold both. The token's signature binds its scope, so a
+An address can be in both. The two tables have the same columns and key
+(`recipient_hash`). The ops-alert scope got a table of its own rather than a
+column on `email_suppressions` so that table never changes shape: a deploy
+migrates before the new backend starts, and the old backend serving meanwhile
+writes `email_suppressions` exactly as it always has. The token's signature binds its scope, so a
 broadcast link cannot be edited into an ops-alert one or the other way round.
 A send to a suppressed address (for that kind's scope) returns and records
 `suppressed`, including over an earlier `skipped`/`failed` row for the same
@@ -91,7 +96,7 @@ key, and a broadcast's audience leaves out only `all`-scope suppressions.
 list and returns `{"removed": true|false}`. It leaves an `ops_alert`
 suppression alone, so lifting someone's broadcast unsubscribe never re-enrols
 them in the alerts they stopped; lifting an `ops_alert` row is a manual
-delete from `email_suppressions` for now. The audit log records the hash,
+delete from `email_alert_suppressions` for now. The audit log records the hash,
 never the address. There is no admin UI for
 it yet.
 
