@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, UploadFile, File, Query
+from fastapi.responses import StreamingResponse
 
 from services.chunk_visibility import resync_user_chunk_visibility
 from services.course_context_service import refresh_course_context
@@ -41,6 +42,7 @@ from services.profile import (
     replace_featured_achievements,
 )
 from services.profile import users as _users
+from services.profile.full_export import stream_export
 from services.profile.achievements import _get_featured_achievements  # noqa: F401  (re-export, #118)
 from services.profile.cosmetics import _get_equipped_cosmetics
 from services.profile.users import (  # noqa: F401  (re-export, #118)
@@ -486,7 +488,20 @@ def delete_account(
 
 @router.post("/{user_id}/export")
 def export_data(user_id: str, request: Request):
+    """The student's full data export, decrypted, streamed as one JSON
+    document (services/profile/full_export.py has what is in it and why)."""
     # #756: a removed (unapproved) student may still export their data.
     require_self(user_id, request, allow_unapproved=True)
 
-    return _export_account_data(user_id)
+    # The legacy keys first, BEFORE the response starts: a missing or deleted
+    # account is a 404, not a broken stream.
+    head = _export_account_data(user_id)
+    return StreamingResponse(
+        stream_export(user_id, head),
+        media_type="application/json",
+        headers={
+            "Content-Disposition": 'attachment; filename="sapling-export.json"',
+            # Decrypted personal data: never stored by a browser or proxy.
+            "Cache-Control": "no-store",
+        },
+    )
