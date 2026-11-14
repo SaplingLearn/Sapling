@@ -155,6 +155,14 @@ export function edgeWidthFor(strength: number): number {
   return 2.2 + (strength || 0.5) * 2.8;
 }
 
+/** Edge stroke width for the thin-line variants (`orb`, `constellation`):
+ *  0.5 … 1.7, the hairline they were drawn with before links became bars.
+ *  Their arrowheads are sized in stroke widths, so a bar there would blow
+ *  them up several times over. */
+export function thinEdgeWidthFor(strength: number): number {
+  return 0.5 + (strength || 0.5) * 1.2;
+}
+
 /** The tree's concept-label rule: anything longer than `max` is cut to
  *  `max - 1` characters plus an ellipsis. Mirrored by `e2e/graph.spec.ts`. */
 export function truncateLabel(name: string, max = 18): string {

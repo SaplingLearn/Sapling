@@ -9,6 +9,7 @@ import {
   opacityFor,
   radiusFor,
   shadeFor,
+  thinEdgeWidthFor,
   tierFor,
   truncateLabel,
   MASTERY_PALETTE,
@@ -131,6 +132,22 @@ describe("opacityFor / TIER_OPACITY", () => {
 
   it("falls back to 0.6 for an unrecognised tier, as the renderer's `|| 0.6` did", () => {
     expect(opacityFor("nonsense")).toBe(0.6);
+  });
+});
+
+describe("thinEdgeWidthFor", () => {
+  // The thin-line variants keep their hairlines (and the arrowheads sized
+  // in stroke widths keep their size): 0.5 at the faintest, 1.7 at the strongest.
+  it.each([
+    [0.1, 0.62],
+    [0.5, 1.1],
+    [1, 1.7],
+  ])("strength %s → %s", (strength, width) => {
+    expect(thinEdgeWidthFor(strength)).toBeCloseTo(width, 10);
+  });
+
+  it("substitutes 0.5 for a falsy strength, as edgeWidthFor does", () => {
+    expect(thinEdgeWidthFor(0)).toBeCloseTo(1.1, 10);
   });
 });
 

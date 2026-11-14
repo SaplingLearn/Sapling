@@ -60,17 +60,34 @@ export function wobbleFor(r: number): number {
   return Math.max(0.07, Math.min(0.13, 0.055 + 0.6 / size));
 }
 
-const profileCache = new Map<string, BlobProfile>();
-const PROFILE_CACHE_MAX = 4000;
+/**
+ * Memo entries per node id, newest first, a few kept each. Keyed by the id and
+ * then the numbers themselves, so a lookup builds no string: links look their
+ * ends' profiles up on every simulation tick, and nodes their outlines on
+ * every zoom frame.
+ */
+const PER_NODE = 4;
+const NODES_KEPT = 4000;
+function remember<E>(cache: Map<string, E[]>, nodeId: string, entry: E): void {
+  let list = cache.get(nodeId);
+  if (!list) {
+    if (cache.size >= NODES_KEPT) cache.clear();
+    list = [];
+    cache.set(nodeId, list);
+  }
+  list.unshift(entry);
+  if (list.length > PER_NODE) list.length = PER_NODE;
+}
+
+const profileCache = new Map<string, Array<{ wobble: number; profile: BlobProfile }>>();
 
 /**
  * The outline harmonics for one node. `wobble` is the largest fraction of the
  * radius the outline can leave the circle by (`wobbleFor`).
  */
 export function blobProfile(nodeId: string, wobble: number): BlobProfile {
-  const key = `${nodeId}|${wobble.toFixed(4)}`;
-  const hit = profileCache.get(key);
-  if (hit) return hit;
+  const list = profileCache.get(nodeId);
+  if (list) for (const e of list) if (e.wobble === wobble) return e.profile;
   const rand = seeded(hashSeed(`blob:${nodeId}`));
   // Weights fall with frequency: the shape is mostly an oval-ish lean (2θ)
   // with a little three- and four-lobed irregularity on top.
@@ -86,8 +103,7 @@ export function blobProfile(nodeId: string, wobble: number): BlobProfile {
     a4: w4 * k,
     p4: rand() * Math.PI * 2,
   };
-  if (profileCache.size >= PROFILE_CACHE_MAX) profileCache.clear();
-  profileCache.set(key, profile);
+  remember(profileCache, nodeId, { wobble, profile });
   return profile;
 }
 
@@ -141,21 +157,20 @@ export function blobPath(p: BlobProfile, r: number, cx = 0, cy = 0): string {
   return d + "Z";
 }
 
-const pathCache = new Map<string, string>();
-const PATH_CACHE_MAX = 6000;
+const pathCache = new Map<string, Array<{ r: number; wobble: number; d: string }>>();
 
 /**
  * `blobPath` for a node about the origin, memoised on (id, radius, wobble).
  * A graph re-renders on every hover and zoom step; the outline of a node that
- * did not change size is reused instead of rebuilt.
+ * did not change size is reused instead of rebuilt. A mark drawn at a size
+ * that follows the zoom asks for its resting size and is scaled
+ * (`KnowledgeGraph2D`), so zooming never builds new outlines.
  */
 export function nodeBlobPath(nodeId: string, r: number, wobble: number): string {
-  const key = `${nodeId}|${r.toFixed(2)}|${wobble.toFixed(4)}`;
-  const hit = pathCache.get(key);
-  if (hit !== undefined) return hit;
+  const list = pathCache.get(nodeId);
+  if (list) for (const e of list) if (e.r === r && e.wobble === wobble) return e.d;
   const d = blobPath(blobProfile(nodeId, wobble), r);
-  if (pathCache.size >= PATH_CACHE_MAX) pathCache.clear();
-  pathCache.set(key, d);
+  remember(pathCache, nodeId, { r, wobble, d });
   return d;
 }
 

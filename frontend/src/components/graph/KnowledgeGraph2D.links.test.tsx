@@ -15,7 +15,7 @@ import { cleanup, fireEvent, render } from "@testing-library/react";
 import React from "react";
 import type { GraphEdge, GraphNode } from "@/lib/data";
 import { blobProfile, rimRadius, wobbleFor } from "@/lib/graph/blobShape";
-import { edgeWidthFor, radiusFor } from "@/lib/graph/nodeStyle";
+import { edgeWidthFor, radiusFor, thinEdgeWidthFor } from "@/lib/graph/nodeStyle";
 import { importanceRadii, splitEdges } from "@/lib/graph/radialLayout";
 import { KnowledgeGraph2D } from "./KnowledgeGraph2D";
 import { ANCHOR_WIDTH, ARROW_REF_X, ARROW_SIZE } from "./knowledgeGraph2DPaint";
@@ -221,6 +221,43 @@ describe("KnowledgeGraph2D links — the hand-drawn bar", () => {
     );
     expect(edgesOf(mastery.container).map((e) => e.getAttribute("stroke-width"))).toEqual(widths);
     for (const e of edgesOf(mastery.container)) expect(e.getAttribute("stroke")).toMatch(/^url\(#/);
+  });
+
+  it.each(["orb", "constellation"] as const)("keeps the %s variant's links thin lines, not bars", (variant) => {
+    const { container } = render(
+      <KnowledgeGraph2D nodes={NODES} edges={EDGES} width={500} height={400} variant={variant} />,
+    );
+    const widths = edgesOf(container).map((e) => Number(e.getAttribute("stroke-width")));
+    expect(widths.length).toBeGreaterThan(0);
+    for (const w of widths) expect(w).toBeLessThanOrEqual(thinEdgeWidthFor(1) + 1e-9);
+    expect(widths).toContain(thinEdgeWidthFor(0.9));
+  });
+
+  it("zooms without building new node outlines: each is scaled, its rim kept as wide", () => {
+    // Far out, a legible mark is drawn larger than its resting size (it keeps
+    // a smallest size on screen), and that size changes on every zoom step.
+    const { container } = render(
+      <KnowledgeGraph2D nodes={NODES} edges={EDGES} width={500} height={400} legible />,
+    );
+    const marks = () =>
+      Array.from(container.querySelectorAll('[data-testid="graph-node-circle"]')).map((m) => ({
+        d: m.getAttribute("d"),
+        r: Number(m.getAttribute("data-r")),
+        scale: Number(/scale\(([-\d.e]+)\)/.exec(m.getAttribute("transform") ?? "")?.[1] ?? 1),
+        stroke: Number(m.getAttribute("stroke-width")),
+      }));
+    const before = marks();
+    fireEvent.click(container.querySelector('[data-testid="graph-zoom-out"]')!);
+    fireEvent.click(container.querySelector('[data-testid="graph-zoom-out"]')!);
+    const after = marks();
+    expect(after.some((m, i) => m.r !== before[i].r)).toBe(true);
+    after.forEach((m, i) => {
+      // The same outline…
+      expect(m.d).toBe(before[i].d);
+      // …scaled to the size drawn, its rim still 1.5 (2.5 on a course) wide on the graph.
+      expect(m.scale).toBeGreaterThanOrEqual(1);
+      expect([1.5, 2.5]).toContainEqual(Number((m.stroke * m.scale).toFixed(9)));
+    });
   });
 
   it("gives directed links an arrowhead in legible mode, sized in the graph's own units", () => {

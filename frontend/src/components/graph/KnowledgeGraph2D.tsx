@@ -15,6 +15,7 @@ import {
   COURSE_NODE_R,
   courseLabel,
   edgeWidthFor,
+  thinEdgeWidthFor,
   masteryFillFor,
   radiusFor,
   shadeFor,
@@ -1489,7 +1490,7 @@ function KnowledgeGraph2DImpl({
     const gradId = `${gradPrefix}-e${i}`;
     const width = organic
       ? l.anchor ? ANCHOR_WIDTH : edgeWidthFor(l.strength)
-      : mastery ? edgeWidthFor(l.strength) * 1.6 : edgeWidthFor(l.strength);
+      : mastery ? thinEdgeWidthFor(l.strength) * 1.6 : thinEdgeWidthFor(l.strength);
     const related = l.relationship_type === "related";
     return (
       <React.Fragment key={i}>
@@ -1547,7 +1548,10 @@ function KnowledgeGraph2DImpl({
     const isPinned = isDragPinned(n);
     // The outline's irregularity follows the resting radius, so a node keeps
     // its shape while the legible zoom floor draws it larger.
-    const wobble = wobbleFor(nodeRadius(n));
+    const rest = nodeRadius(n);
+    const wobble = wobbleFor(rest);
+    // How much larger than at rest the mark is drawn (1 unless legible and far out).
+    const grown = rest > 0 && r !== rest ? r / rest : 1;
     return (
       <g
         key={n.id}
@@ -1661,14 +1665,18 @@ function KnowledgeGraph2DImpl({
         ) : organic ? (
           // The hand-drawn mark: the node's own imperfect outline, one flat
           // colour. `data-r` says what the circle's `r` used to.
+          // The outline is built at the node's resting size and scaled to
+          // the size drawn (larger, far out in legible mode), so a zoom step
+          // reuses every outline; its stroke is scaled back to stay as wide.
           <path
             data-testid="graph-node-circle"
             data-r={r}
-            d={nodeBlobPath(n.id, r, wobble)}
+            d={nodeBlobPath(n.id, rest, wobble)}
+            transform={grown === 1 ? undefined : `scale(${grown})`}
             fill={color}
             opacity={op}
             stroke={color}
-            strokeWidth={n.is_subject_root ? 2.5 : 1.5}
+            strokeWidth={(n.is_subject_root ? 2.5 : 1.5) / grown}
             strokeOpacity={nodeStrokeOpacity(isPinned, isHovered, true)}
             strokeLinejoin="round"
           />

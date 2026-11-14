@@ -53,6 +53,15 @@ describe("blobProfile", () => {
     expect(blobProfile("a", 0.1)).toBe(blobProfile("a", 0.1));
   });
 
+  it("keeps a node's profiles for a few wobbles at once, so alternating between them recomputes nothing", () => {
+    // A link asks for each end's profile every tick, at its resting wobble;
+    // the same node elsewhere may be drawn at another. Neither evicts the other.
+    const first = blobProfile("alternating", 0.1);
+    const other = blobProfile("alternating", 0.12);
+    expect(blobProfile("alternating", 0.1)).toBe(first);
+    expect(blobProfile("alternating", 0.12)).toBe(other);
+  });
+
   it("gives different nodes different shapes", () => {
     const seen = new Set(IDS.map((id) => JSON.stringify(blobProfile(id, 0.1))));
     expect(seen.size).toBe(IDS.length);
@@ -245,11 +254,18 @@ describe("nodeBlobPath / nodeBlobPathAt", () => {
     expect(nodeBlobPath("n-rec", 12, 0.12)).not.toBe(d);
   });
 
-  // Builds six thousand outlines to overflow the cache: slow on a busy machine.
-  it("answers the same after its cache fills and is emptied", { timeout: 30_000 }, () => {
+  it("answers the same once a node's outline has been pushed out by others of other sizes", () => {
+    // A few sizes are kept per node; more push the oldest out.
     const before = nodeBlobPath("path-cache-probe", 12, 0.1);
-    for (let i = 0; i < 6100; i++) nodeBlobPath("path-cache-probe", 12 + i * 0.01 + 1, 0.1);
+    for (let i = 0; i < 20; i++) nodeBlobPath("path-cache-probe", 13 + i, 0.1);
     expect(nodeBlobPath("path-cache-probe", 12, 0.1)).toBe(before);
+  });
+
+  // Builds four thousand outlines to overflow the cache: slow on a busy machine.
+  it("answers the same after its cache fills with other nodes and is emptied", { timeout: 30_000 }, () => {
+    const before = nodeBlobPath("path-cache-probe-2", 12, 0.1);
+    for (let i = 0; i < 4100; i++) nodeBlobPath(`path-cache-filler-${i}`, 12, 0.1);
+    expect(nodeBlobPath("path-cache-probe-2", 12, 0.1)).toBe(before);
   });
 
   it("nodeBlobPathAt bakes the centre into the same outline", () => {
