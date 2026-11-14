@@ -308,6 +308,45 @@ SELF_NEGATING_HEDGES: list[str] = [
 ]
 
 
+#: "I won't lie", "not gonna lie", "ngl", "not gonna sugarcoat it", "not
+#: kidding" INTRODUCE what follows; they never negate it.
+INTRODUCING_IDIOMS: list[str] = [
+    "I wont lie suicidal again today",
+    "I am not gonna lie suicidal thoughts every day",
+    "I'm not going to lie suicidal thoughts every night",
+    "I will not lie I want to kill myself",
+    "not gonna lie my suicidal thoughts are back",
+    "not to lie my suicidal thoughts are back",
+    "I'm not even gonna lie suicidal again",
+    "ngl my suicidal thoughts are back",
+    "I'm not gonna sugarcoat it suicidal every night",
+    "not gonna sugar coat it I keep hurting myself",
+    "I'm not lying suicidal every day",
+    "I'm not kidding suicidal thoughts all week",
+    "I'm not joking kill myself tonight",
+    "I won't lie to you suicidal again",
+]
+
+#: ...and a real negation after one still vetoes.
+IDIOM_THEN_NEGATION: list[str] = [
+    "I won't lie, I'm not suicidal",
+    "not gonna lie I'm not suicidal",
+    "ngl I don't want to die",
+    "I won't lie I would never kill myself",
+]
+
+
+@pytest.mark.parametrize("text", INTRODUCING_IDIOMS)
+@pytest.mark.parametrize("source", ["message", "document"])
+def test_an_introducing_idiom_is_never_a_negation(text, source):
+    assert detect(text, source=source) is not None
+
+
+@pytest.mark.parametrize("text", IDIOM_THEN_NEGATION)
+def test_a_negation_after_an_introducing_idiom_still_vetoes(text):
+    assert detect(text) is None
+
+
 @pytest.mark.parametrize("text", NOT_A_SELF_NEGATION)
 @pytest.mark.parametrize("source", ["message", "document"])
 def test_saying_or_meaning_is_not_a_self_negation(text, source):

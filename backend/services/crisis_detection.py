@@ -31,9 +31,11 @@ How matching works (every list below is a regex over `normalize(text)`):
    inhibitor", "kill switch" never matches at all). A negation
    (NEGATION_GUARDS) reaches only within its own clause: a comma, dash,
    bracket, joining word ("but", "and") or new first-person subject ends it,
-   so "I'm not okay, I'll kill myself" still matches, and only a hedge about
-   one's own state ("I don't think I'm suicidal") negates: "I'm not saying
-   I'll kill myself" is a warning sign. TOPIC_GUARDS veto MENTIONS
+   so "I'm not okay, I'll kill myself" still matches; "I won't lie", "not
+   gonna lie", "not kidding" introduce a statement and negate nothing; and
+   only a hedge about one's own state ("I don't think I'm suicidal")
+   negates: "I'm not saying I'll kill myself" is a warning sign. TOPIC_GUARDS
+   veto MENTIONS
    (never explicit phrases) anywhere in the text when it names an academic
    topic ("Durkheim", "euthanasia", "theory of suicide").
 
@@ -267,13 +269,22 @@ _GAP_WORD = (
     r"|i|im|ill|id|ive)(?![a-z0-9]))[a-z]+"
 )
 
+#: Idioms whose negation INTRODUCES what follows instead of negating it ("I
+#: won't lie", "not gonna lie", "not gonna sugarcoat it", "I'm not kidding"):
+#: a negation word that opens one negates nothing, whatever comes after.
+_INTRODUCES = (
+    r"(?:even |ever )?(?:gonna |gona |going to |go |to )?"
+    r"(?:lie|lying|kid|kidding|joke|joking|sugarcoat|sugarcoating|sugar coat|sugar coating"
+    r"|exaggerate|exaggerating)(?![a-z0-9])"
+)
+
 #: NEGATION_GUARDS veto like GUARDS, but are matched over the CLAUSE form of
 #: the text (`_Forms.clause`), where a comma, dash or bracket is a `,` token
 #: no gap word can cross: "I'm not okay, I'll kill myself" is not negated.
 NEGATION_GUARDS: tuple[str, ...] = (
     # "I'm not suicidal", "I would never(, ever) kill myself" say the opposite
     # (up to two words between the negation and the phrase, same clause).
-    rf"{_NEGATION}(?: ,)?(?: ever)?(?: {_GAP_WORD}){{0,2}} {_NEGATED}",
+    rf"{_NEGATION}(?! {_INTRODUCES})(?: ,)?(?: ever)?(?: {_GAP_WORD}){{0,2}} {_NEGATED}",
     # A hedge about one's own STATE: "I don't think I'm suicidal". Never about
     # an act or a plan ("I don't think I'll kill myself tonight"), and never
     # "not saying"/"don't mean" ("I'm not saying I'll kill myself" is a
