@@ -711,30 +711,44 @@ def test_resume_unknown_broadcast_is_404(monkeypatch, bid):
 # ── Un-suppress ─────────────────────────────────────────────────────────────
 
 
-def test_unsuppress_removes_the_hash_and_audits_without_the_address(monkeypatch):
+def _unsuppress_tables(monkeypatch, *, held):
+    """The address is on the suppression tables of the scopes in `held`."""
     factory, made = _factory()
-    factory("email_suppressions").delete.return_value = [{"recipient_hash": _h("a@bu.edu")}]
+    for scope, name in email_service.SUPPRESSION_TABLES.items():
+        factory(name).delete.return_value = [{"recipient_hash": _h("a@bu.edu")}] if scope in held else []
     monkeypatch.setattr(email_service, "table", factory)
+    return made
+
+
+def test_unsuppress_removes_the_hash_and_audits_without_the_address(monkeypatch):
+    made = _unsuppress_tables(monkeypatch, held={"all"})
     with patch("routes.admin_email.log_admin_action") as audit:
         r = client.post("/api/admin/email/suppressions/remove", json={"email": "  A@BU.edu "})
-    assert r.status_code == 200 and r.json() == {"removed": True}
-    # The admin undo lifts the broadcast/newsletter suppression only: it never
-    # re-enrols an admin in the ops alerts they stopped.
-    assert made["email_suppressions"].delete.call_args.kwargs["filters"] == {
-        "recipient_hash": f"eq.{_h('a@bu.edu')}",
-    }
+    assert r.status_code == 200 and r.json() == {"removed": True, "scopes": ["all"]}
+    for name in ("email_suppressions", "email_alert_suppressions"):
+        assert made[name].delete.call_args.kwargs["filters"] == {"recipient_hash": f"eq.{_h('a@bu.edu')}"}
     kw = audit.call_args.kwargs
     assert kw["action"] == "email.unsuppress" and kw["target_id"] == _h("a@bu.edu")
+    assert kw["payload"] == {"removed": True, "scopes": ["all"]}
     assert "bu.edu" not in repr(kw).lower()
 
 
-def test_unsuppress_not_on_the_list(monkeypatch):
-    factory, _ = _factory()
-    factory("email_suppressions").delete.return_value = []
-    monkeypatch.setattr(email_service, "table", factory)
+@pytest.mark.parametrize("held", [{"ops_alert"}, {"all", "ops_alert"}])
+def test_unsuppress_lifts_an_ops_alert_unsubscribe_too(monkeypatch, held):
+    """An accidental ops-alert unsubscribe (or a mail client's one-click
+    List-Unsubscribe POST) is undone from the admin page, not by hand SQL."""
+    made = _unsuppress_tables(monkeypatch, held=held)
     with patch("routes.admin_email.log_admin_action"):
         r = client.post("/api/admin/email/suppressions/remove", json={"email": "a@bu.edu"})
-    assert r.json() == {"removed": False}
+    assert r.json() == {"removed": True, "scopes": sorted(held)}
+    made["email_alert_suppressions"].delete.assert_called_once()
+
+
+def test_unsuppress_not_on_the_list(monkeypatch):
+    _unsuppress_tables(monkeypatch, held=set())
+    with patch("routes.admin_email.log_admin_action"):
+        r = client.post("/api/admin/email/suppressions/remove", json={"email": "a@bu.edu"})
+    assert r.json() == {"removed": False, "scopes": []}
 
 
 def test_unsuppress_rejects_a_non_address(monkeypatch):
@@ -742,7 +756,7 @@ def test_unsuppress_rejects_a_non_address(monkeypatch):
     monkeypatch.setattr(email_service, "table", factory)
     r = client.post("/api/admin/email/suppressions/remove", json={"email": "nobody"})
     assert r.status_code == 422
-    assert "email_suppressions" not in made
+    assert not set(made) & set(email_service.SUPPRESSION_TABLES.values())
 
 
 def test_audiences_exclude_accounts_with_email_notifications_off(audience_tables, monkeypatch):

@@ -237,6 +237,14 @@ def unsuppress(rhash: str, scope: str = SUPPRESSION_SCOPE_ALL) -> bool:
     ))
 
 
+def unsuppress_all_scopes(rhash: str) -> list[str]:
+    """The admin undo: lift `rhash` from EVERY scope's suppression table (an
+    accidental ops-alert unsubscribe, or a mail client's one-click POST on an
+    alert, is as much a mistake to undo as a broadcast one). Returns the
+    scopes a row was removed from, sorted. Raises on a DB error."""
+    return sorted(scope for scope in SUPPRESSION_TABLES if unsuppress(rhash, scope))
+
+
 # ── Notification opt-out (user_settings.notification_email) ──────────────────
 
 #: The opt-out set is read at most this often per process, so a broadcast

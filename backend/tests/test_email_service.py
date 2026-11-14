@@ -701,3 +701,11 @@ def test_template_images_load_from_the_asset_base(monkeypatch):
     _, html, _ = email_templates.broadcast("Hi", "Body", unsubscribe_url="https://u.example")
     assert 'src="https://saplinglearn.com/email/header.jpg"' in html
     assert "staging.example/email/" not in html
+
+
+def test_unsuppress_all_scopes_lifts_the_hash_from_every_table(tables):
+    rhash = email_service.recipient_hash(TO)
+    tables["email_alert_suppressions"].delete.return_value = [{"recipient_hash": rhash}]
+    assert email_service.unsuppress_all_scopes(rhash) == ["ops_alert"]
+    for name in SCOPE_TABLES.values():
+        assert tables[name].delete.call_args.kwargs["filters"] == {"recipient_hash": f"eq.{rhash}"}

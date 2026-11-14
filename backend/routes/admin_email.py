@@ -524,18 +524,21 @@ class UnsuppressBody(BaseModel):
 
 @router.post("/suppressions/remove")
 def unsuppress_address(body: UnsuppressBody, request: Request):
-    """Take an address off the suppression list (it unsubscribed by mistake,
-    or asked to be mailed again). The address is only hashed, never stored or
-    audited; a later send of a key that was recorded `suppressed` re-claims it."""
+    """Take an address off the suppression lists, every scope (it
+    unsubscribed by mistake, from ordinary email or from the ops alerts, or
+    asked to be mailed again). `scopes` names the ones it was lifted from. The
+    address is only hashed, never stored or audited; a later send of a key
+    that was recorded `suppressed` re-claims it."""
     require_admin(request)
     address = body.email.strip()
     if "@" not in address:
         raise HTTPException(status_code=422, detail="That isn't an email address.")
     rhash = email_service.recipient_hash(address)
-    removed = email_service.unsuppress(rhash)
+    scopes = email_service.unsuppress_all_scopes(rhash)
+    result = {"removed": bool(scopes), "scopes": scopes}
     log_admin_action(
         actor_id=get_session_user_id(request), action="email.unsuppress",
         target_type="email_suppression", target_id=rhash,
-        payload={"removed": removed},
+        payload=result,
     )
-    return {"removed": removed}
+    return result

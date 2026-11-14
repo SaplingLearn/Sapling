@@ -92,13 +92,12 @@ A send to a suppressed address (for that kind's scope) returns and records
 key, and a broadcast's audience leaves out only `all`-scope suppressions.
 
 **Undoing a suppression:** `POST /api/admin/email/suppressions/remove` with
-`{"email": "…"}` (admin only) takes the address's `all` suppression off the
-list and returns `{"removed": true|false}`. It leaves an `ops_alert`
-suppression alone, so lifting someone's broadcast unsubscribe never re-enrols
-them in the alerts they stopped; lifting an `ops_alert` row is a manual
-delete from `email_alert_suppressions` for now. The audit log records the hash,
-never the address. There is no admin UI for
-it yet.
+`{"email": "…"}` (admin only) takes the address off **both** suppression
+tables, so an accidental ops-alert unsubscribe (or a mail client's one-click
+`List-Unsubscribe` POST on an alert) is undone the same way as a broadcast one.
+It returns `{"removed": true|false, "scopes": [...]}`, `scopes` naming the
+scopes (`all`, `ops_alert`) it was lifted from. The audit log records the hash
+and those scopes, never the address. There is no admin UI for it yet.
 
 ## Broadcasts
 
