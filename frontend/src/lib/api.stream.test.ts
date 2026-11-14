@@ -244,6 +244,14 @@ describe('shouldFallBackToJson (the client rung-3 ladder decision, #151a)', () =
     expect(shouldFallBackToJson(new Error('HTTP 413'))).toBe(false);
   });
 
+  it('is false for a 429 or 422 (the JSON route spends the same budget / refuses the same body)', async () => {
+    const { ApiError, shouldFallBackToJson } = await import('./api');
+    const limited = Object.assign(new Error('{"detail":"Slow down. Try again in 30 seconds."}'), { status: 429 });
+    expect(shouldFallBackToJson(limited)).toBe(false);
+    expect(shouldFallBackToJson(new ApiError('{"detail":"too long"}', 422))).toBe(false);
+    expect(shouldFallBackToJson(new ApiError('{"detail":"boom"}', 502))).toBe(true);
+  });
+
   it('is true for transport-ish failures with no status', async () => {
     const { shouldFallBackToJson } = await import('./api');
     expect(shouldFallBackToJson(new TypeError('Failed to fetch'))).toBe(true);

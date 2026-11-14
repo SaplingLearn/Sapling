@@ -427,17 +427,23 @@ export class ChatStreamError extends Error {
  * false when:
  *  - the backend said so (`ChatStreamError.retryable === false` — tool
  *    writes landed; a re-run would double-apply them), or
- *  - the failure was an HTTP 413 (request too large / processing budget —
- *    the JSON route fails the exact same way, so falling back just doubles
- *    the wait before the same error).
+ *  - the failure was an HTTP 413 (request too large / processing budget),
+ *    422 (a request the server refuses, e.g. a message over its length cap)
+ *    or 429 (rate limited: the JSON route spends the same per-student
+ *    budget) — the JSON route fails the exact same way, so falling back
+ *    just doubles the wait before the same error.
  *
  * Everything else (transport failures, idle timeouts, 5xx before any
  * token) stays retryable — the transparent JSON fallback is the whole
  * point of the ladder.
  */
+/** Statuses the JSON route answers identically (see shouldFallBackToJson). */
+const NO_JSON_FALLBACK = new Set([413, 422, 429]);
+
 export function shouldFallBackToJson(err: unknown): boolean {
   if (err instanceof ChatStreamError) return err.retryable;
-  return statusOf(err) !== 413;
+  const status = statusOf(err);
+  return status === undefined || !NO_JSON_FALLBACK.has(status);
 }
 
 export interface StreamChatHandlers {

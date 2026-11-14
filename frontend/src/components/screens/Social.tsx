@@ -44,6 +44,7 @@ import {
   type StudentRow,
 } from "@/lib/api";
 import type { PublicRoom, RoomMessageRow, RoomOverviewData, Friend } from "@/lib/types";
+import { ROOM_MESSAGE_MAX } from "@/lib/inputLimits";
 
 type IncomingFriendRequest = { id: string; from_user_id: string; name: string; created_at: string };
 type OutgoingFriendRequest = { id: string; to_user_id: string; name: string; created_at: string };
@@ -1135,6 +1136,7 @@ function RoomChat({ roomId, members, realtimePlan, realtimeEpoch }: {
           <textarea
             ref={inputRef}
             data-testid="social-chat-input"
+            maxLength={ROOM_MESSAGE_MAX}
             value={input}
             rows={1}
             onChange={(e) => onInputChange(e.target.value)}
