@@ -207,6 +207,23 @@ def test_room_messages_are_tombstoned_and_rooms_stay_coherent(db, storage, revok
     assert (ap.CHAT_IMAGES_BUCKET, [f"r1/{U}-1-pic.png"]) in storage
 
 
+def test_photos_in_a_room_the_student_was_last_in_are_deleted(db, storage, revoked, events):
+    """Leaving deletes a room whose last member the student was, and its
+    messages cascade with it: the image paths must be collected first, or the
+    photos stay in the public bucket with nothing left naming them."""
+    _seed_account(db, U, deleted_at=LONG_AGO)
+    db.add("rooms", id="solo", owner_id=U, created_by=U, updated_at=None)
+    db.add("room_members", room_id="solo", user_id=U, joined_at="2026-01-01")
+    db.add("room_messages", id="ms", room_id="solo", user_id=U, user_name="Ada",
+           text="enc", image_url=_chat_url(f"solo/{U}-7-pic.png"), is_deleted=False)
+
+    ap.purge_account(U, now=NOW)
+
+    assert db.of("rooms", id="solo") == []  # the room went with the student
+    sent = [p for bucket, paths in storage if bucket == ap.CHAT_IMAGES_BUCKET for p in paths]
+    assert f"solo/{U}-7-pic.png" in sent
+
+
 def test_files_and_the_google_grant_go(db, storage, revoked, events):
     _seed_account(db, U, deleted_at=LONG_AGO)
 

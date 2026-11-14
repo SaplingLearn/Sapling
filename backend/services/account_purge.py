@@ -11,15 +11,17 @@ services/account_purge_sweeper.py claims the account and runs
    documents with their chunks withdrawn the #629/#630 way — a shared chunk a
    classmate still holds survives for them);
 2. removes the credentials again (and revokes the Google grant, best effort);
-3. leaves every study room (ownership passes to the earliest member; a room
-   left empty is deleted, `services/social/rooms.py::leave_room`);
-4. TOMBSTONES the student's room messages instead of deleting them: text,
+3. TOMBSTONES the student's room messages instead of deleting them: text,
    image and author name are cleared (`is_deleted`, `user_name` =
    `TOMBSTONE_NAME`), exactly what "delete message" already does, so
    classmates' transcripts keep their order and their replies keep a
    "deleted message" to point at rather than losing rows mid-thread; the
    attached chat images are deleted from storage, and the rooms' cached AI
-   summaries (which may quote the student) are dropped;
+   summaries (which may quote the student) are dropped. This comes BEFORE
+   step 4: a room the student was the last member of is deleted there, and
+   its messages (with the image URLs naming the files) cascade with it;
+4. leaves every study room (ownership passes to the earliest member; a room
+   left empty is deleted, `services/social/rooms.py::leave_room`);
 5. deletes reactions, the room activity feed, friendships and friend
    requests, feedback and issue reports (+ their screenshots), cosmetics,
    roles, settings, the profile (+ the avatar files), the waitlist/newsletter
@@ -270,8 +272,11 @@ def purge_account(user_id: str, *, now: datetime | None = None) -> dict[str, int
     try:
         counts = account_wipe.wipe_account_data(user_id)
         account_credentials.revoke_google_tokens(account_credentials.remove_credentials(user_id))
-        counts["room_members"] = _leave_rooms(user_id)
+        # Messages BEFORE leaving: leaving deletes a room the student was the
+        # last member of, its messages cascade, and their image_url (the only
+        # record of which chat-images files are the student's) goes with them.
         counts["room_messages"] = _tombstone_messages(user_id)
+        counts["room_members"] = _leave_rooms(user_id)
         _delete_files(user_id)
         counts["course_chunk_contributors"] += _drop_leftover_contributions(user_id)
         for name, column in PURGE_DELETES:
