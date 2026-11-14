@@ -1,9 +1,10 @@
 import logging
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from pydantic import BaseModel, EmailStr, field_validator
 from db.connection import table
-from services import email_service
+from services import abuse_limits, email_service
+from services.request_limits import client_ip, enforce_abuse_limit
 
 logger = logging.getLogger("newsletter")
 
@@ -23,7 +24,9 @@ class SubscribeRequest(BaseModel):
 
 
 @router.post("/subscribe")
-def subscribe(body: SubscribeRequest, background_tasks: BackgroundTasks):
+def subscribe(body: SubscribeRequest, background_tasks: BackgroundTasks, request: Request):
+    # Public: the budget is per client address (see request_limits.client_ip).
+    enforce_abuse_limit(abuse_limits.NEWSLETTER_SUBSCRIBE, client_ip(request))
     try:
         table("newsletter_emails").upsert(
             {"email": body.email},

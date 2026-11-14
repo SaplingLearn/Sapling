@@ -13,6 +13,7 @@ import {
   streamChat,
   type StreamChatHandlers,
 } from "@/lib/api";
+import { readableError } from "@/lib/errorMessage";
 
 /** The tutor mode a "why was I wrong" question wants. */
 export const TUTOR_MODE = "socratic";
@@ -107,5 +108,6 @@ export async function chatWithFallback(
 
 /** The inline error copy for a failed turn. */
 export function askErrorCopy(err: unknown): string {
-  return err instanceof Error ? err.message : "The tutor is unavailable.";
+  // readableError: a 429 or 422 body shows its detail, never the raw JSON.
+  return err instanceof Error ? readableError(err, "The tutor is unavailable.") : "The tutor is unavailable.";
 }

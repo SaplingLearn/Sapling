@@ -1,26 +1,61 @@
 import re
-from typing import Optional, Union, List, Literal
+from typing import Annotated, Optional, Union, List, Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from services.quiz.config import QUIZ_MIN_QUESTIONS, QUIZ_MAX_QUESTIONS
 
 
+# ── Request-body bounds ───────────────────────────────────────────────────────
+#
+# Every free-text field a client sends is bounded, so one request cannot carry
+# megabytes into an encrypted column, a prompt or a room transcript (a 422
+# before the handler runs). The limits are generous for real use; where the
+# frontend caps an input (`maxLength`), it uses the same number.
+
+#: Any identifier (user, session, course, room, message, document...). Real ids
+#: are UUIDs or `user_<google id>`; 256 is far past both.
+ID_MAX = 256
+#: One tutor chat / note chat message.
+CHAT_MESSAGE_MAX = 8000
+#: A tutor session's topic as sent on start (a concept or course name).
+TOPIC_MAX = 500
+#: One study-room message.
+ROOM_MESSAGE_MAX = 4000
+#: A profile bio.
+BIO_MAX = 500
+#: Short labels: names, titles, locations, feedback topics.
+SHORT_TEXT_MAX = 200
+#: Feedback comments and issue-report descriptions.
+LONG_TEXT_MAX = 10_000
+#: A URL a client sends (screenshots, assets).
+URL_MAX = 2048
+
+Id = Annotated[str, Field(max_length=ID_MAX)]
+ShortText = Annotated[str, Field(max_length=SHORT_TEXT_MAX)]
+LongText = Annotated[str, Field(max_length=LONG_TEXT_MAX)]
+Url = Annotated[str, Field(max_length=URL_MAX)]
+
+#: sessions.mode is CHECK-constrained to these (and agents/chat_tutor.py
+#: serves exactly these three).
+TutorMode = Literal["socratic", "expository", "teachback"]
+
+
 # ── Learn ─────────────────────────────────────────────────────────────────────
 
 class StartSessionBody(BaseModel):
-    user_id: str = "user_andres"
-    topic: str = ""
-    mode: str = "socratic"
+    user_id: Id = "user_andres"
+    topic: str = Field(default="", max_length=TOPIC_MAX)
+    mode: TutorMode = "socratic"
     use_shared_context: bool = True
-    course_id: Optional[str] = None  # Direct course_id lookup instead of resolving from topic
+    course_id: Optional[Id] = None  # Direct course_id lookup instead of resolving from topic
     model_pref: Optional[Literal["fast", "smart"]] = None  # "fast" (default, gemini-2.5-flash) or "smart" (gemini-2.5-pro)
 
 
 class ChatBody(BaseModel):
-    session_id: str
-    user_id: str = "user_andres"
-    message: str
-    mode: str = "socratic"
+    session_id: Id
+    user_id: Id = "user_andres"
+    message: str = Field(max_length=CHAT_MESSAGE_MAX)
+    mode: TutorMode = "socratic"
     use_shared_context: bool = True
     model_pref: Optional[Literal["fast", "smart"]] = None  # "fast" (default, gemini-2.5-flash) or "smart" (gemini-2.5-pro)
     # #761: client-minted id for ONE student turn, sent unchanged on the
@@ -32,20 +67,23 @@ class ChatBody(BaseModel):
 
 
 class EndSessionBody(BaseModel):
-    session_id: str
-    user_id: str = ""  # Required to discard a lazy (not-yet-persisted) session safely
+    session_id: Id
+    user_id: Id = ""  # Required to discard a lazy (not-yet-persisted) session safely
 
 
 class RenameSessionBody(BaseModel):
-    user_id: str
-    topic: str
+    user_id: Id
+    # The route answers 1-120 characters (the frontend's maxLength) with its
+    # own 400; this only bounds what is parsed at all.
+    topic: str = Field(max_length=TOPIC_MAX)
 
 
 class ActionBody(BaseModel):
-    session_id: str
-    user_id: str = "user_andres"
-    action_type: str = "hint"
-    mode: str = "socratic"
+    session_id: Id
+    user_id: Id = "user_andres"
+    # The prompts services/tutor/turns.py::_action_turn knows.
+    action_type: Literal["hint", "confused", "skip"] = "hint"
+    mode: TutorMode = "socratic"
     use_shared_context: bool = True
     model_pref: Optional[Literal["fast", "smart"]] = None  # "fast" (default, gemini-2.5-flash) or "smart" (gemini-2.5-pro)
 
@@ -54,13 +92,13 @@ class ActionBody(BaseModel):
 
 class GenerateQuizBody(BaseModel):
     question_format: Literal["multiple_choice", "short_answer", "numeric", "symbolic", "mixed"] = "multiple_choice"
-    user_id: str = "user_andres"
-    concept_node_id: str
+    user_id: Id = "user_andres"
+    concept_node_id: Id
     # Bounds come from services/quiz_config.py — the same constants
     # GET /api/quiz/config serves, so the client can't offer a value
     # this model rejects (#540 A2).
     num_questions: int = Field(default=5, ge=QUIZ_MIN_QUESTIONS, le=QUIZ_MAX_QUESTIONS)
-    difficulty: str = "medium"
+    difficulty: str = Field(default="medium", max_length=32)
     use_shared_context: bool = True
     # Mirrors the Learn-route fast/smart toggle so quiz generation has
     # the same per-request model-quality choice as chat tutoring.
@@ -72,7 +110,7 @@ class GenerateQuizBody(BaseModel):
     # questions should be RE-SERVED verbatim instead of regenerated. The
     # server derives which items those were from that attempt's own
     # `quiz_responses` rows, so the client only has to name the attempt.
-    source_attempt_id: Optional[str] = None
+    source_attempt_id: Optional[Id] = None
     # Optional override for that derivation: the identities
     # (`services/quiz_identity.py::question_hash`) to re-serve. Hashes are
     # internal — the client projection strips them — so nothing sends this
@@ -80,7 +118,7 @@ class GenerateQuizBody(BaseModel):
     # wants back. Validated against the source attempt (anything that
     # attempt never held is simply not recoverable), and capped at one
     # quiz's worth, which is the most an attempt can hold.
-    missed_question_hashes: Optional[list[str]] = Field(
+    missed_question_hashes: Optional[list[Id]] = Field(
         default=None, max_length=QUIZ_MAX_QUESTIONS,
     )
     # DEPRECATED (#541 C3; default flipped false #546 — 2026-08-23).
@@ -151,36 +189,40 @@ class AnswerQuestionBody(BaseModel):
 
 
 class AnswerItem(BaseModel):
-    question_id: Union[int, str]
-    selected_label: str
+    question_id: Union[int, Id]
+    selected_label: ShortText
 
 
 class SubmitQuizBody(BaseModel):
-    quiz_id: str
-    answers: list[AnswerItem]
+    quiz_id: Id
+    answers: list[AnswerItem] = Field(max_length=QUIZ_MAX_QUESTIONS * 4)
 
 
 # ── Calendar ──────────────────────────────────────────────────────────────────
 
+#: Assignments one save may carry (a syllabus lists far fewer).
+ASSIGNMENTS_PER_SAVE_MAX = 500
+
+
 class AssignmentItem(BaseModel):
-    title: str
-    course_id: str = ""  # Changed from course_name to course_id
-    due_date: str
-    assignment_type: str = "other"
-    notes: Optional[str] = None
+    title: str = Field(max_length=500)
+    course_id: Id = ""  # Changed from course_name to course_id
+    due_date: str = Field(max_length=64)
+    assignment_type: str = Field(default="other", max_length=64)
+    notes: Optional[str] = Field(default=None, max_length=LONG_TEXT_MAX)
 
 
 class SaveAssignmentsBody(BaseModel):
-    user_id: str = "user_andres"
-    assignments: list[AssignmentItem]
+    user_id: Id = "user_andres"
+    assignments: list[AssignmentItem] = Field(max_length=ASSIGNMENTS_PER_SAVE_MAX)
 
 
 class StudyBlockBody(BaseModel):
-    user_id: str = "user_andres"
+    user_id: Id = "user_andres"
 
 
 class SyncBody(BaseModel):
-    user_id: str = "user_andres"
+    user_id: Id = "user_andres"
 
 
 class ImportSaveBody(BaseModel):
@@ -189,7 +231,16 @@ class ImportSaveBody(BaseModel):
     as Sapling assignments. The frontend maps Google event fields to
     AssignmentItem shape before posting here.
     """
-    assignments: list[AssignmentItem]
+    assignments: list[AssignmentItem] = Field(max_length=ASSIGNMENTS_PER_SAVE_MAX)
+
+
+class UpdateCalendarAssignmentBody(BaseModel):
+    """PATCH /api/calendar/assignments/{id}: the fields a student may change.
+    Omitted fields are left alone; ``due_date: ""`` clears the date."""
+    user_id: Optional[Id] = None
+    title: Optional[str] = Field(default=None, max_length=500)
+    due_date: Optional[str] = Field(default=None, max_length=64)
+    assignment_type: Optional[str] = Field(default=None, max_length=64)
 
 
 # ── Graph (Courses) ─────────────────────────────────────────────────────────
@@ -200,43 +251,43 @@ class AddCourseBody(BaseModel):
     ``course_id`` is the abstract catalog course id; enrollment resolves it to a
     current-term offering (see services/academics.resolve_offering).
     """
-    course_id: str
-    color: Optional[str] = None
-    nickname: Optional[str] = None
+    course_id: Id
+    color: Optional[str] = Field(default=None, max_length=64)
+    nickname: Optional[ShortText] = None
 
 
 class UpdateCourseColorBody(BaseModel):
     """Body for updating a course enrollment's color."""
-    color: str
+    color: str = Field(max_length=64)
 
 
 # ── Social ────────────────────────────────────────────────────────────────────
 
 class CreateRoomBody(BaseModel):
-    user_id: str = "user_andres"
-    room_name: str = "Study Room"
+    user_id: Id = "user_andres"
+    room_name: ShortText = "Study Room"
     # #405 semantics: optional labeling + the public flag (false = invite-only).
-    topic: str | None = None
-    course: str | None = None
+    topic: ShortText | None = None
+    course: ShortText | None = None
     is_public: bool = False
 
 
 class PublicJoinBody(BaseModel):
     """Body for the invite-less join of a public room (#405)."""
-    user_id: str
+    user_id: Id
 
 
 class JoinRoomBody(BaseModel):
-    user_id: str = "user_andres"
-    invite_code: str
+    user_id: Id = "user_andres"
+    invite_code: str = Field(max_length=64)
 
 
 class MatchBody(BaseModel):
-    user_id: str = "user_andres"
+    user_id: Id = "user_andres"
 
 
 class LeaveRoomBody(BaseModel):
-    user_id: str
+    user_id: Id
 
 
 # The Supabase Storage bucket the Social chat uploads room images to
@@ -287,11 +338,12 @@ def room_image_url_error(url: str) -> Optional[str]:
 
 
 class SendMessageBody(BaseModel):
-    user_id: str
-    user_name: str
-    text: Optional[str] = None
-    # Only the app's own room-image bucket (room_image_url_error); anything
-    # else is a 422 before it reaches the DB.
+    user_id: Id
+    # Ignored: the sender's name is resolved server-side from their profile
+    # (services/social/messages.py::send_room_message), so a member cannot post
+    # under someone else's name. Still accepted so older clients keep working.
+    user_name: Optional[ShortText] = None
+    text: Optional[str] = Field(default=None, max_length=ROOM_MESSAGE_MAX)
     image_url: Optional[str] = None
 
     @field_validator("image_url")
@@ -315,79 +367,94 @@ class SendMessageBody(BaseModel):
     # while keeping the ratio sane.
     image_width: Optional[int] = Field(default=None, gt=0, le=20000)
     image_height: Optional[int] = Field(default=None, gt=0, le=20000)
-    reply_to_id: Optional[str] = None
+    reply_to_id: Optional[Id] = None
 
 
 class EditMessageBody(BaseModel):
-    user_id: str
-    text: str
+    user_id: Id
+    text: str = Field(max_length=ROOM_MESSAGE_MAX)
 
 
 class ToggleReactionBody(BaseModel):
-    user_id: str
-    emoji: str
+    user_id: Id
+    # One emoji, which may be several code points (skin tone, ZWJ sequences).
+    emoji: str = Field(min_length=1, max_length=32)
 
 
 class FriendRequestBody(BaseModel):
-    from_user_id: str
-    to_user_id: str
+    from_user_id: Id
+    to_user_id: Id
 
 
 class ExportBody(BaseModel):
     # No default — caller must always supply the real user_id.
     # Prevents accidental exports under the wrong account.
-    user_id: str
-    assignment_ids: list[str]
+    user_id: Id
+    assignment_ids: list[Id] = Field(max_length=ASSIGNMENTS_PER_SAVE_MAX)
 
 
 # ── Learn (mode switch) ─────────────────────────────────────────────────────
 
 class ModeSwitchBody(BaseModel):
-    session_id: str
-    user_id: str = "user_andres"
-    new_mode: str
+    session_id: Id
+    user_id: Id = "user_andres"
+    new_mode: TutorMode
 
 
 # ── Feedback ──────────────────────────────────────────────────────────────────
 
 class SubmitFeedbackBody(BaseModel):
-    user_id: str
-    type: str  # 'global' | 'session'
-    rating: int
-    selected_options: list[str] = []
-    comment: Optional[str] = None
-    session_id: Optional[str] = None
-    topic: Optional[str] = None
+    user_id: Id
+    type: Literal["global", "session"]
+    rating: int = Field(ge=1, le=5)
+    selected_options: list[ShortText] = Field(default_factory=list, max_length=20)
+    comment: Optional[LongText] = None
+    session_id: Optional[Id] = None
+    topic: Optional[ShortText] = None
 
 
 class SubmitIssueReportBody(BaseModel):
-    user_id: str
-    topic: str
-    description: str
-    screenshot_urls: list[str] = []
+    user_id: Id
+    topic: ShortText
+    description: LongText
+    # The report UI attaches at most 5 (ReportIssueFlow's MAX_SCREENSHOTS).
+    screenshot_urls: list[Url] = Field(default_factory=list, max_length=10)
 
 
 # ── Documents ──────────────────────────────────────────────────────────────────
 
 class UploadDocumentBody(BaseModel):
     """Body for document upload."""
-    course_id: str
-    user_id: str
+    course_id: Id
+    user_id: Id
+
+
+class UpdateDocumentBody(BaseModel):
+    """PATCH /api/documents/doc/{id}. ``category`` stays a bounded string, not
+    a Literal, so an unknown one keeps its 400 (the route's contract)."""
+    user_id: Optional[Id] = None
+    category: Optional[str] = Field(default=None, max_length=64)
+
+
+class ScanConceptsBody(BaseModel):
+    """The two /scan-concepts routes. ``user_id`` is optional here so a
+    missing one keeps the route's own 400."""
+    user_id: Optional[Id] = None
 
 
 # ── Onboarding ────────────────────────────────────────────────────────────────
 
 class OnboardingBody(BaseModel):
-    user_id: str
-    first_name: str
-    last_name: str
-    year: str
+    user_id: Id
+    first_name: ShortText
+    last_name: ShortText
+    year: str = Field(max_length=64)
     # The redesigned onboarding (school -> year + courses) no longer asks for
     # majors or a learning style; both stay accepted for older clients.
-    majors: list[str] = []
-    minors: list[str] = []
-    course_ids: list[str] = Field(min_length=1)  # abstract catalog course ids; enroll resolves each to a current-term offering
-    learning_style: Optional[str] = None
+    majors: list[ShortText] = Field(default_factory=list, max_length=20)
+    minors: list[ShortText] = Field(default_factory=list, max_length=20)
+    course_ids: list[Id] = Field(min_length=1, max_length=50)  # abstract catalog course ids; enroll resolves each to a current-term offering
+    learning_style: Optional[str] = Field(default=None, max_length=64)
 
 
 # ── Profile & Settings ───────────────────────────────────────────────────────
@@ -396,10 +463,9 @@ class UpdateProfileBody(BaseModel):
     # Profile fields now live on user_profiles (see migration 0024). `display_name`
     # was a user_settings duplicate of the profile `name` and was dropped; profile
     # name is set during onboarding / OAuth, not via this patch body.
-    username: Optional[str] = None
-    bio: Optional[str] = None
-    location: Optional[str] = None
-    # Rendered as a link on the public profile: http(s) only (normalise_website).
+    username: Optional[str] = Field(default=None, max_length=64)
+    bio: Optional[str] = Field(default=None, max_length=BIO_MAX)
+    location: Optional[ShortText] = None
     website: Optional[str] = None
 
     @field_validator("website")
@@ -447,14 +513,14 @@ def normalise_website(value: str) -> str:
 
 
 class UpdateSettingsBody(BaseModel):
-    profile_visibility: Optional[str] = None
+    profile_visibility: Optional[str] = Field(default=None, max_length=32)
     activity_status_visible: Optional[bool] = None
     notification_email: Optional[bool] = None
     notification_push: Optional[bool] = None
     notification_in_app: Optional[bool] = None
-    theme: Optional[str] = None
-    font_size: Optional[str] = None
-    accent_color: Optional[str] = None
+    theme: Optional[str] = Field(default=None, max_length=32)
+    font_size: Optional[str] = Field(default=None, max_length=32)
+    accent_color: Optional[str] = Field(default=None, max_length=64)
     # #72: Class Intel opt-out (user_settings.share_class_context, 0037)
     share_class_context: Optional[bool] = None
     # ADR 0028: third-party (PostHog) analytics opt-out
@@ -465,20 +531,20 @@ class UpdateSettingsBody(BaseModel):
 
 
 class EquipCosmeticBody(BaseModel):
-    slot: str
-    cosmetic_id: Optional[str] = None
+    slot: str = Field(max_length=64)
+    cosmetic_id: Optional[Id] = None
 
 
 class SetFeaturedRoleBody(BaseModel):
-    role_id: Optional[str] = None
+    role_id: Optional[Id] = None
 
 
 class SetFeaturedAchievementsBody(BaseModel):
-    achievement_ids: List[str] = Field(max_length=5)
+    achievement_ids: List[Id] = Field(max_length=5)
 
 
 class DeleteAccountBody(BaseModel):
-    confirmation: str
+    confirmation: str = Field(max_length=SHORT_TEXT_MAX)
 
 
 class AvatarUploadResponse(BaseModel):
@@ -503,7 +569,7 @@ class PublicProfileResponse(BaseModel):
 class SettingsResponse(BaseModel):
     # display_name/username/bio/location/website were dropped from user_settings in
     # migration 0024 (now owned by user_profiles — one source of truth per field).
-    user_id: str
+    user_id: Id
     profile_visibility: str = "public"
     activity_status_visible: bool = True
     notification_email: bool = True
@@ -517,67 +583,68 @@ class SettingsResponse(BaseModel):
 # ── Roles (Admin) ────────────────────────────────────────────────────────────
 
 class CreateRoleBody(BaseModel):
-    name: str
-    slug: str
-    color: str
-    icon: Optional[str] = None
-    description: Optional[str] = None
+    name: ShortText
+    slug: ShortText
+    color: str = Field(max_length=64)
+    icon: Optional[Url] = None
+    description: Optional[LongText] = None
     is_staff_assigned: bool = True
     is_earnable: bool = False
     display_priority: int = 0
 
 
 class AssignRoleBody(BaseModel):
-    user_id: str
-    role_id: str
+    user_id: Id
+    role_id: Id
 
 
 class RevokeRoleBody(BaseModel):
-    user_id: str
-    role_id: str
+    user_id: Id
+    role_id: Id
 
 
 # ── Achievements (Admin) ─────────────────────────────────────────────────────
 
 class CreateAchievementBody(BaseModel):
-    name: str
-    slug: str
-    description: Optional[str] = None
-    icon: Optional[str] = None
-    category: str = "milestone"
-    rarity: str = "common"
+    name: ShortText
+    slug: ShortText
+    description: Optional[LongText] = None
+    icon: Optional[Url] = None
+    category: ShortText = "milestone"
+    rarity: ShortText = "common"
     is_secret: bool = False
 
 
 class CreateAchievementTriggerBody(BaseModel):
-    achievement_id: str
-    trigger_type: str
+    achievement_id: Id
+    trigger_type: ShortText
     trigger_threshold: int
 
 
 class GrantAchievementBody(BaseModel):
-    user_id: str
-    achievement_id: str
+    user_id: Id
+    achievement_id: Id
 
 
 class UpdateAchievementTriggerBody(BaseModel):
-    trigger_type: Optional[str] = None
+    trigger_type: Optional[ShortText] = None
     trigger_threshold: Optional[int] = None
 
 
 class LinkAchievementCosmeticBody(BaseModel):
-    achievement_id: str
-    cosmetic_id: str
+    achievement_id: Id
+    cosmetic_id: Id
 
 
 class LinkRoleCosmeticBody(BaseModel):
-    role_id: str
-    cosmetic_id: str
+    role_id: Id
+    cosmetic_id: Id
 
 
 class AchievementIconBody(BaseModel):
-    file_base64: str
-    content_type: str
+    # A 5 MB image is ~6.7 M base64 characters; 8 M leaves room for a data-URL prefix.
+    file_base64: str = Field(max_length=8_000_000)
+    content_type: str = Field(max_length=100)
 
 
 class CosmeticAssetBody(BaseModel):
@@ -595,13 +662,49 @@ class UpdateXpRuleBody(BaseModel):
 # ── Cosmetics (Admin) ────────────────────────────────────────────────────────
 
 class CreateCosmeticBody(BaseModel):
-    type: str
-    name: str
-    slug: str
-    asset_url: Optional[str] = None
-    css_value: Optional[str] = None
-    rarity: str = "common"
-    unlock_source: Optional[str] = None
+    type: ShortText
+    name: ShortText
+    slug: ShortText
+    asset_url: Optional[Url] = None
+    css_value: Optional[str] = Field(default=None, max_length=LONG_TEXT_MAX)
+    rarity: ShortText = "common"
+    unlock_source: Optional[ShortText] = None
+
+
+# PATCH bodies for the admin catalog. Every field is optional; the route sends
+# only the ones the client set (``model_dump(exclude_unset=True)``) to the
+# service, which keeps its own allow-list and its "No valid fields" 400.
+
+class UpdateRoleBody(BaseModel):
+    name: Optional[ShortText] = None
+    color: Optional[str] = Field(default=None, max_length=64)
+    icon: Optional[Url] = None
+    description: Optional[LongText] = None
+    is_staff_assigned: Optional[bool] = None
+    is_earnable: Optional[bool] = None
+    display_priority: Optional[int] = Field(default=None, ge=-1_000_000, le=1_000_000)
+
+
+class UpdateAchievementBody(BaseModel):
+    name: Optional[ShortText] = None
+    description: Optional[LongText] = None
+    icon: Optional[Url] = None
+    icon_url: Optional[Url] = None
+    category: Optional[ShortText] = None
+    rarity: Optional[ShortText] = None
+    is_secret: Optional[bool] = None
+    xp_reward: Optional[int] = Field(default=None, ge=0, le=1_000_000)
+    sort_order: Optional[int] = Field(default=None, ge=-1_000_000, le=1_000_000)
+    # The service answers anything but draft/live with its own 422.
+    status: Optional[str] = Field(default=None, max_length=32)
+
+
+class UpdateCosmeticBody(BaseModel):
+    name: Optional[ShortText] = None
+    asset_url: Optional[Url] = None
+    css_value: Optional[str] = Field(default=None, max_length=LONG_TEXT_MAX)
+    rarity: Optional[ShortText] = None
+    unlock_source: Optional[ShortText] = None
 
 
 # ── Gradebook ────────────────────────────────────────────────────────────────
@@ -613,38 +716,38 @@ AssignmentType = Literal["homework", "exam", "reading", "project", "quiz", "othe
 
 
 class CategoryItem(BaseModel):
-    id: Optional[str] = None              # null on create
-    name: str
+    id: Optional[Id] = None              # null on create
+    name: ShortText
     weight: float = Field(ge=0, le=100)
     sort_order: int = 0
     drop_lowest: int = Field(default=0, ge=0)  # gradebook_categories.drop_lowest
 
 
 class CreateCategoryBody(BaseModel):
-    user_id: str
-    semester: Optional[str] = None        # term label; default = current term
-    name: str
+    user_id: Id
+    semester: Optional[ShortText] = None        # term label; default = current term
+    name: ShortText
     weight: float = Field(ge=0, le=100)
     drop_lowest: int = Field(default=0, ge=0)
 
 
 class BulkUpdateCategoriesBody(BaseModel):
-    user_id: str
-    semester: Optional[str] = None
-    categories: list[CategoryItem]        # full replacement set
+    user_id: Id
+    semester: Optional[ShortText] = None
+    categories: list[CategoryItem] = Field(max_length=100)  # full replacement set
 
 
 class CreateAssignmentBody(BaseModel):
-    user_id: str
-    course_id: str
-    semester: Optional[str] = None
-    title: str
-    category_id: Optional[str] = None
+    user_id: Id
+    course_id: Id
+    semester: Optional[ShortText] = None
+    title: str = Field(max_length=500)
+    category_id: Optional[Id] = None
     points_possible: Optional[float] = Field(default=None, gt=0)
     points_earned: Optional[float] = Field(default=None, ge=0)
-    due_date: Optional[str] = None
+    due_date: Optional[str] = Field(default=None, max_length=64)
     assignment_type: Optional[AssignmentType] = None
-    notes: Optional[str] = None
+    notes: Optional[LongText] = None
     curve_class_mean: Optional[float] = Field(default=None, ge=0, le=1)
     curve_class_sd: Optional[float] = Field(default=None, ge=0, le=1)
     curve_avg_target: Optional[float] = Field(default=None, ge=0, le=1)
@@ -652,14 +755,14 @@ class CreateAssignmentBody(BaseModel):
 
 
 class UpdateAssignmentBody(BaseModel):
-    user_id: str
-    title: Optional[str] = None
-    category_id: Optional[str] = None
+    user_id: Id
+    title: Optional[str] = Field(default=None, max_length=500)
+    category_id: Optional[Id] = None
     points_possible: Optional[float] = Field(default=None, gt=0)
     points_earned: Optional[float] = Field(default=None, ge=0)
-    due_date: Optional[str] = None
+    due_date: Optional[str] = Field(default=None, max_length=64)
     assignment_type: Optional[AssignmentType] = None
-    notes: Optional[str] = None
+    notes: Optional[LongText] = None
     curve_class_mean: Optional[float] = Field(default=None, ge=0, le=1)
     curve_class_sd: Optional[float] = Field(default=None, ge=0, le=1)
     curve_avg_target: Optional[float] = Field(default=None, ge=0, le=1)
@@ -667,7 +770,7 @@ class UpdateAssignmentBody(BaseModel):
 
 
 class CurveSettingsBody(BaseModel):
-    user_id: str
+    user_id: Id
     curve_mode: Literal["raw", "curved"] = "raw"
     curve_avg_target: Optional[float] = Field(default=None, ge=0, le=1)
     curve_sd_delta: Optional[float] = Field(default=None, ge=0, le=1)
@@ -675,31 +778,31 @@ class CurveSettingsBody(BaseModel):
 
 class LetterScaleTier(BaseModel):
     min: float = Field(ge=0, le=100)
-    letter: str
+    letter: str = Field(max_length=8)
 
 
 class SetLetterScaleBody(BaseModel):
-    user_id: str
-    semester: Optional[str] = None
-    scale: Optional[list[LetterScaleTier]] = None  # null clears the override
+    user_id: Id
+    semester: Optional[ShortText] = None
+    scale: Optional[list[LetterScaleTier]] = Field(default=None, max_length=50)  # null clears the override
 
 
 class SetCurveBody(BaseModel):
     """Per-enrollment bell-curve policy (enrollments.curve_*)."""
-    user_id: str
-    semester: Optional[str] = None
+    user_id: Id
+    semester: Optional[ShortText] = None
     curve_mode: Literal["raw", "curved"] = "raw"
     curve_avg_target: Optional[float] = None
     curve_sd_delta: Optional[float] = None
 
 
 class SyllabusApplyBody(BaseModel):
-    user_id: str
-    course_id: str
-    semester: Optional[str] = None
-    doc_id: str
-    categories: list[CategoryItem]
-    assignments: list[dict]               # uses the same shape as syllabus extraction
+    user_id: Id
+    course_id: Id
+    semester: Optional[ShortText] = None
+    doc_id: Id
+    categories: list[CategoryItem] = Field(max_length=100)
+    assignments: list[dict] = Field(max_length=ASSIGNMENTS_PER_SAVE_MAX)            # uses the same shape as syllabus extraction
 
 
 # ── Newsletter & Allowlist (Admin) ──────────────────────────────────────────

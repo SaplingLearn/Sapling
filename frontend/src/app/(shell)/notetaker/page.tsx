@@ -29,6 +29,7 @@ import { useToast } from "@/components/ToastProvider";
 import { humanizeError } from "@/lib/errorMessage";
 import { quizHrefForNote } from "@/lib/quiz/noteHref";
 import { useNoteAutosave, type AutosaveStatus } from "@/lib/notes/useNoteAutosave";
+import { CHAT_MESSAGE_MAX, NOTE_BODY_MAX, NOTE_TITLE_MAX } from "@/lib/inputLimits";
 import {
   layoutRowStyle,
   notesListRailStyle,
@@ -964,6 +965,7 @@ function NoteEditor({
       >
         <input
           value={note.title}
+          maxLength={NOTE_TITLE_MAX}
           onChange={(e) => onChange({ title: e.target.value })}
           placeholder="Untitled note"
           className="h-serif"
@@ -1003,6 +1005,7 @@ function NoteEditor({
       >
         <textarea
           value={note.body}
+          maxLength={NOTE_BODY_MAX}
           onChange={(e) => onChange({ body: e.target.value })}
           placeholder="Start writing — Sapling will pick up concepts as you go."
           className="body-serif"
@@ -1921,6 +1924,7 @@ function AIChatPanel({ noteId, userId }: { noteId: string; userId: string }) {
       >
         <input
           value={input}
+          maxLength={CHAT_MESSAGE_MAX}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {

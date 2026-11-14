@@ -3,6 +3,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { Icon } from "../Icon";
+import { CHAT_MESSAGE_MAX } from "@/lib/inputLimits";
 
 // MarkdownChat statically imports mermaid, katex, highlight.js, and the
 // remark/rehype stack. Static-importing it from a client component still
@@ -234,6 +235,7 @@ const ChatInputBar = React.memo(function ChatInputBar({
       >
         <textarea
           data-testid="tutor-input"
+          maxLength={CHAT_MESSAGE_MAX}
           aria-label="Message"
           value={text}
           onChange={e => setText(e.target.value)}
