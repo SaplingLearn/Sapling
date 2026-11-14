@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import json
+import re
+import time
 
 import pytest
 
 from models.study_guide import BLOCK_TYPES, QUIZ_HISTORY_SOURCE, Paragraph
+from services.study_guides import markup
 from services.study_guides.markup import parse_block, parse_section, put_back
 
 SOURCES = {"S1": "document:doc-1", "S2": "document:doc-2", "S3": QUIZ_HISTORY_SOURCE}
@@ -585,3 +588,35 @@ def test_a_rewritten_block_goes_back_where_it_was():
         "prose",
         "formula",
     ]
+
+
+# ── Citations: the pattern ────────────────────────────────────────────────────
+
+#: The pattern as it was, before a match could only start where a run of
+#: spaces starts. It must find exactly what the current one finds.
+_QUADRATIC_CITATION = re.compile(r"\s*\[\s*(S\d+(?:\s*,\s*S\d+)*)\s*\]", re.IGNORECASE)
+
+
+@pytest.mark.parametrize("text", [
+    "Recursion calls itself [S1].",
+    "Recursion calls itself  [S1, S2] and stops [s3].",
+    "[S1] opens the paragraph.",
+    "One\n[S2]\ttwo  \n [S1 , S3 ]",
+    "An index a[S1] in prose, and [S1][S2] side by side.",
+    "Not a citation: [S] [1] [S1,] [ S1 S2 ].",
+    "   [S4]   ",
+])
+def test_citations_match_where_they_always_did(text):
+    found = [(m.span(), m.group(1)) for m in markup.CITATION.finditer(text)]
+    assert found == [(m.span(), m.group(1)) for m in _QUADRATIC_CITATION.finditer(text)]
+    assert markup.CITATION.sub("", text) == _QUADRATIC_CITATION.sub("", text)
+
+
+def test_a_long_run_of_spaces_is_read_in_linear_time():
+    """A degenerate reply: the old pattern took about ten seconds over 60,000
+    spaces, on the event loop. This one takes milliseconds over 200,000."""
+    text = "Recursion" + " " * 200_000 + "calls itself [S1]."
+    started = time.perf_counter()
+    paragraph = markup._paragraph(text, {"S1": "document:d1"})
+    assert time.perf_counter() - started < 1.0
+    assert paragraph["citations"] == ["document:d1"]

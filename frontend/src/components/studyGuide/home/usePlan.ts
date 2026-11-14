@@ -8,7 +8,8 @@ import type { GuidePlan, GuideRequest } from "@/lib/studyGuide/types";
 export const PLAN_DEBOUNCE_MS = 300;
 
 export interface PlanState {
-  /** The outline for the choices, or the last one while the next is planned. */
+  /** The outline for the choices, or the last one for the same class and term
+   *  while the next is planned. */
   plan: GuidePlan | null;
   /** The outline shown is not yet the one for the current choices. */
   loading: boolean;
@@ -45,5 +46,9 @@ export function usePlan(userId: string, request: GuideRequest | null): PlanState
 
   if (!request) return { plan: null, loading: false, failed: false };
   const current = answer?.request === request;
-  return { plan: answer?.plan ?? null, loading: !current, failed: current && answer?.plan === null };
+  // The last outline stands in while the next is planned only for the same
+  // class and term. Another class's sections under this one's choices are not
+  // a late answer but a wrong one.
+  const sameClass = answer?.request.course_id === request.course_id && answer?.request.semester === request.semester;
+  return { plan: sameClass ? answer?.plan ?? null : null, loading: !current, failed: current && answer?.plan === null };
 }

@@ -282,7 +282,7 @@ describe("another run holds the guide", () => {
     // Both requests passed prepare; the other one won the claim, so this
     // stream opened and ended with the 409 as an event.
     vi.useFakeTimers();
-    const held = new GuideGenerationError("Another tab is writing this guide.", true, 409);
+    const held = new GuideGenerationError("Another tab is writing this guide.", true, null, 409);
     mocks.generateGuide.mockRejectedValueOnce(held).mockResolvedValueOnce(finishedGuide());
     mocks.getGuide.mockResolvedValueOnce(newGuide(finishedGuide())).mockResolvedValue(partial());
     renderReader();
@@ -311,6 +311,72 @@ describe("another run holds the guide", () => {
     expect(screen.queryByTestId("guide-generating")).not.toBeInTheDocument();
     await flush(RETRY_MS * 2);
     expect(mocks.generateGuide).toHaveBeenCalledTimes(2);
+  });
+
+  // Two requests raced for the claim and this one lost: its stream was
+  // already open, so it hears it as an `error` event, not a 409.
+  it.each([
+    ["busy", new GuideGenerationError("Another tab is writing this guide.", true, "busy")],
+    ["overtaken", new GuideGenerationError("Another request took over writing this guide.", true, "overtaken")],
+    ["busy, from a server that sends no code", new GuideGenerationError("Another tab is writing this guide.", true)],
+    ["overtaken, from a server that sends no code", new GuideGenerationError("Another request took over writing this guide.", true)],
+  ])("follows the other run when this one's stream lost the guide to it (%s)", async (_, lost) => {
+    vi.useFakeTimers();
+    mocks.generateGuide.mockRejectedValueOnce(lost).mockReturnValueOnce(deferred<GuideDetail>().promise);
+    mocks.getGuide.mockResolvedValueOnce(newGuide(finishedGuide())).mockResolvedValue(partial());
+    renderReader();
+    await flush();
+
+    expect(screen.getByTestId("guide-generating")).toHaveTextContent("This guide is being written in another tab");
+    expect(screen.queryByTestId("guide-generation-error")).not.toBeInTheDocument();
+    await flush(RETRY_MS);
+    expect(mocks.generateGuide).toHaveBeenCalledTimes(2);
+    expect(mocks.generateGuide).toHaveBeenLastCalledWith("u1", GUIDE_ID, "resume", expect.any(Object));
+  });
+
+  it("shows the error banner for a stream error with another code, even in the same words", async () => {
+    vi.useFakeTimers();
+    mocks.generateGuide.mockRejectedValueOnce(new GuideGenerationError("Another tab is writing this guide.", true, "other"));
+    mocks.getGuide.mockResolvedValueOnce(newGuide(finishedGuide())).mockResolvedValue(partial());
+    renderReader();
+    await flush();
+
+    expect(screen.getByTestId("guide-generation-error")).toHaveTextContent("Another tab is writing this guide.");
+    await flush(RETRY_MS * 2);
+    expect(mocks.generateGuide).toHaveBeenCalledTimes(1);
+  });
+
+  // The other run keeps a ready guide `ready` while it retries a failed
+  // section, and a failed guide `failed` until its first save: neither is
+  // finished, so this resume waits on that run rather than ending on it.
+  it.each([
+    ["a ready guide with a failed section, from its Try again", "ready", "guide-section-retry-s3"],
+    ["a failed guide, from the banner's Retry", "failed", "guide-generation-retry"],
+  ] as const)("waits for the other run on %s, and says it is ready only once it is", async (_, status, button) => {
+    vi.useFakeTimers();
+    const unfinished = () => {
+      const guide = fixtureGuide({ status, read_sections: [] });
+      Object.assign(sectionOf(guide, "s3"), { status: "failed", items: [] });
+      return guide;
+    };
+    mocks.generateGuide.mockRejectedValue(conflict());
+    mocks.getGuide.mockResolvedValueOnce(unfinished()).mockResolvedValueOnce(unfinished()).mockResolvedValue(finishedGuide());
+    renderReader();
+    await flush();
+    await act(async () => screen.getByTestId(button).click());
+    await flush();
+
+    expect(mocks.generateGuide).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("guide-generating")).toHaveTextContent("This guide is being written in another tab");
+    expect(screen.queryByTestId("guide-generation-error")).not.toBeInTheDocument();
+    expect(screen.queryByText("Guide ready.")).not.toBeInTheDocument();
+
+    // Asked again, still held: the re-read is finished now.
+    await flush(RETRY_MS);
+    expect(mocks.generateGuide).toHaveBeenCalledTimes(2);
+    expect(screen.getByText("Guide ready.")).toBeInTheDocument();
+    expect(screen.queryByTestId("guide-generating")).not.toBeInTheDocument();
+    expect(within(screen.getByTestId("guide-section-s3")).queryByText("This section could not be written.")).not.toBeInTheDocument();
   });
 
   it("stops when the reader is left while it waits", async () => {
@@ -394,6 +460,24 @@ describe("a generation that fails", () => {
 
     await act(async () => run.resolve(finishedGuide()));
     expect(screen.getByTestId("guide-title")).toBeInTheDocument();
+  });
+
+  it("says why when the server cannot read the guide, with no Retry that would only ask again", async () => {
+    // What the server sends for a guide it cannot read: failed, with nothing in it.
+    mocks.getGuide.mockResolvedValue({ ...newGuide(finishedGuide()), status: "failed" });
+    const unreadable = Object.assign(
+      new Error(JSON.stringify({ detail: "This guide cannot be read, so it was left as it is." })),
+      { status: 422 },
+    );
+    mocks.generateGuide.mockRejectedValue(unreadable);
+    const user = userEvent.setup();
+    renderReader();
+
+    await user.click(await screen.findByTestId("guide-generation-retry"));
+    await waitFor(() =>
+      expect(screen.getByTestId("guide-generation-error")).toHaveTextContent("This guide cannot be read, so it was left as it is."));
+    expect(screen.queryByTestId("guide-generation-retry")).not.toBeInTheDocument();
+    expect(mocks.generateGuide).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -531,5 +615,26 @@ describe("regenerating the whole guide", () => {
     expect(screen.getByTestId("guide-title")).toHaveTextContent("Loops, rewritten");
     expect(screen.queryByTestId("guide-generating")).not.toBeInTheDocument();
     expect(screen.queryByTestId("guide-generation-error")).not.toBeInTheDocument();
+  });
+
+  it("reads the guide when the run saved it but could not read it back, and never writes it again", async () => {
+    const rewritten = { ...finishedGuide(), title: "Loops, rewritten" };
+    rewritten.content = { ...rewritten.content, title: rewritten.title };
+    // The run's `done` carries no guide.
+    mocks.generateGuide.mockResolvedValue(null);
+    mocks.getGuide.mockResolvedValueOnce(fixtureGuide()).mockResolvedValue(rewritten);
+    const user = userEvent.setup();
+    renderReader();
+    await screen.findByTestId("guide-title");
+
+    await user.click(screen.getByTestId("guide-menu"));
+    await user.click(screen.getByTestId("guide-menu-regenerate"));
+
+    expect(await screen.findByText("Guide ready.")).toBeInTheDocument();
+    expect(screen.getByTestId("guide-title")).toHaveTextContent("Loops, rewritten");
+    expect(screen.queryByTestId("guide-generating")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("guide-generation-error")).not.toBeInTheDocument();
+    expect(mocks.generateGuide).toHaveBeenCalledTimes(1);
+    expect(mocks.getGuide).toHaveBeenCalledTimes(2);
   });
 });

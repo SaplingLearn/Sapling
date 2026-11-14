@@ -105,14 +105,16 @@ async def aregenerate_block(user_id: str, guide_id: str, block_id: str) -> Block
     try:
         guide, section, block, inputs = await _aread(user_id, guide_id, block_id, charge)
         rewritten = await _arewritten(guide, section, block, inputs)
-        saved = await store.asave_content(
-            guide, _with_block(guide.content, section, rewritten), claim=claim,
+        # The save gives the claim back in the same write.
+        await store.asave_content(
+            guide, _with_block(guide.content, section, rewritten), claim=claim, release=True,
         )
-        claim = saved.generating_at
+        claim = None
     except store.ClaimLost as lost:
         raise GuideBusy(BUSY_DETAIL) from lost
     finally:
-        await arelease_guide(user_id, guide_id, claim)
+        if claim:
+            await arelease_guide(user_id, guide_id, claim)
     events_service.log_event(
         "study_guide.block_regenerated",
         category="usage",

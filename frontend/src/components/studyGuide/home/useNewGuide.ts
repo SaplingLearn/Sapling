@@ -144,7 +144,13 @@ export function useNewGuide({ userId, courses, semester }: NewGuideInput): NewGu
     pickSuggested: () => setSelected(suggestedIds(scope, materials)),
     pickAll: () => setSelected(allIds(materials)),
     pickNone: () => setSelected([]),
-    retry: () => setAttempt(n => n + 1),
+    // Back to loading: the failure (and its Try again) goes while the class is
+    // read again, so one retry is in flight at a time. The effect's request
+    // token still drops the answer to any earlier read.
+    retry: () => {
+      setLoaded(null);
+      setAttempt(n => n + 1);
+    },
     refreshMaterials,
   };
 }

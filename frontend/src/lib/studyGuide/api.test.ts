@@ -90,6 +90,13 @@ describe("generateGuide", () => {
     await expect(generateGuide("u1", "g1", "resume")).resolves.toBe(GUIDE);
   });
 
+  it("resolves with no guide at a `done` without one: the run saved it but could not read it back", async () => {
+    streams(event("done", "done", "Guide ready", { guide: null }), event("status", "x", "After the end", {}));
+    const given = handlers();
+    await expect(generateGuide("u1", "g1", "regenerate", given)).resolves.toBeNull();
+    expect(given.onStatus).not.toHaveBeenCalled();
+  });
+
   it("rejects with the stream's error and whether trying again can help", async () => {
     streams(event("error", "error", "You are out of AI credit for today.", { retryable: false }), DONE);
     const refused = await failure(generateGuide("u1", "g1", "regenerate"));
@@ -98,6 +105,14 @@ describe("generateGuide", () => {
 
     streams(event("error", "error", "The guide could not be written.", { retryable: true }));
     expect((await failure(generateGuide("u1", "g1", "resume"))).retryable).toBe(true);
+  });
+
+  it("carries the error's code when the server sends one", async () => {
+    streams(event("error", "error", "Another tab is writing this guide.", { retryable: true, code: "busy" }));
+    expect((await failure(generateGuide("u1", "g1", "resume"))).code).toBe("busy");
+
+    streams(event("error", "error", "The guide could not be written.", { retryable: true }));
+    expect((await failure(generateGuide("u1", "g1", "resume"))).code).toBeNull();
   });
 
   it("treats an error that does not say as one worth retrying, and words one with no message", async () => {

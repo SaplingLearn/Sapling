@@ -27,11 +27,17 @@ export interface NewGuideModalProps {
   courses: EnrolledCourse[];
   /** The course list has answered. */
   coursesReady: boolean;
+  /** The course list could not be read. */
+  coursesFailed: boolean;
+  /** Reads the course list again. */
+  onRetryCourses: () => void;
   /** The active term's label, "" when no term is picked. */
   semester: string;
   onClose: () => void;
   /** The guide's row exists: the reader takes it from here. */
   onCreated: (guideId: string) => void;
+  /** The guide's row was created after the dialog closed: it exists, unopened. */
+  onCreatedLater: () => void;
 }
 
 /**
@@ -39,10 +45,12 @@ export interface NewGuideModalProps {
  * from, beside the outline those choices plan. Mounted while open, so every
  * opening starts from the defaults.
  */
-export function NewGuideModal({ userId, courses, coursesReady, semester, onClose, onCreated }: NewGuideModalProps) {
+export function NewGuideModal({
+  userId, courses, coursesReady, coursesFailed, onRetryCourses, semester, onClose, onCreated, onCreatedLater,
+}: NewGuideModalProps) {
   const guide = useNewGuide({ userId, courses, semester });
   const plan = usePlan(userId, guide.request);
-  const create = useCreateGuide(userId, onCreated);
+  const create = useCreateGuide(userId, onCreated, onCreatedLater);
   const [uploading, setUploading] = React.useState(false);
   const { form, request } = guide;
 
@@ -53,7 +61,7 @@ export function NewGuideModal({ userId, courses, coursesReady, semester, onClose
           <div className={m.body}>
             <div className={m.form}>
               <div className={m.pair} onKeyDown={closeOpenList}>
-                <ClassField courses={courses} ready={coursesReady} value={form.courseId} onChange={guide.pickCourse} />
+                <ClassField courses={courses} ready={coursesReady} failed={coursesFailed} onRetry={onRetryCourses} value={form.courseId} onChange={guide.pickCourse} />
                 <ScopeField scopes={guide.scopes} placeholder={scopePlaceholder(guide)} value={form.scope ? scopeKey(form.scope) : ""} onChange={guide.pickScope} />
               </div>
               <div className={m.choices}>

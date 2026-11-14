@@ -174,8 +174,15 @@ export function useStudyRecords(userId: string): StudyRecords {
  * it survives a course switch and the hub has concepts before categories.
  * A `reload` of the course already shown keeps `ready` true: that one
  * deliberately leaves what is on screen until the new answer lands.
+ *
+ * The topics and the key they were read for are ONE state. Kept apart, the
+ * topics were cleared on a switch while the key stayed, so going A, B, then
+ * back to A before B's read settled read as ready with A's outline gone.
  */
 type OutlineRefresh = { settled: boolean; topics: Promise<ChecklistTopic[] | null> };
+/** An outline in hand, and the key whose read it is ("" for none). */
+type ShownOutline = { key: string; topics: ChecklistTopic[] };
+const NO_OUTLINE: ShownOutline = { key: "", topics: [] };
 
 export function useCourseOutline(
   userId: string,
@@ -183,23 +190,17 @@ export function useCourseOutline(
   semester: string,
   semesterReady: boolean,
 ): { outline: ChecklistTopic[]; ready: boolean; reload: (courseId: string) => void } {
-  const [outline, setOutline] = React.useState<ChecklistTopic[]>([]);
-  /** The key whose read last settled ("" for none): `ready` is this matching. */
-  const [loadedFor, setLoadedFor] = React.useState("");
+  const [shown, setShown] = React.useState<ShownOutline>(NO_OUTLINE);
   const [reads, setReads] = React.useState(0);
   const refreshes = React.useRef(new Map<string, OutlineRefresh>());
-  /** The course and term whose outline is on screen ("" for none). */
-  const shownFor = React.useRef("");
   /** What this render is for; `ready` and the effect agree by construction. */
   const key = userId && cid && semesterReady ? `${userId}|${cid}|${semester}` : "";
 
   React.useEffect(() => {
-    if (!userId || !cid || !semesterReady) { shownFor.current = ""; setOutline([]); setLoadedFor(""); return; }
+    if (!userId || !cid || !semesterReady) { setShown(NO_OUTLINE); return; }
     // Latest request wins: a course or semester change, or a reload, drops
     // everything the previous read still has in flight, its refresh included.
     let live = true;
-    if (shownFor.current !== key) setOutline([]);
-    shownFor.current = key;
     const sem = semester || undefined;
     /** The course's one refresh attempt, if it can still add to this read:
      *  started now, or already under way. null once it has finished. */
@@ -221,14 +222,18 @@ export function useCourseOutline(
     getTopicChecklist(userId, cid, sem)
       .then(r => {
         if (!live) return;
-        setOutline(r.topics || []);
-        setLoadedFor(key);
+        setShown({ key, topics: r.topics || [] });
         if (!r.needs_refresh) return;
-        pendingRefresh()?.then(topics => { if (live && topics) setOutline(topics); });
+        pendingRefresh()?.then(topics => { if (live && topics) setShown({ key, topics }); });
       })
       // Settled on failure too: a course whose checklist cannot be read has
       // no categories to wait for, and the layer fallback is then the answer.
-      .catch(err => { if (live) { console.error("study checklist load failed", err); setLoadedFor(key); } });
+      // A failed reload keeps what is on screen.
+      .catch(err => {
+        if (!live) return;
+        console.error("study checklist load failed", err);
+        setShown(prev => (prev.key === key ? prev : { key, topics: [] }));
+      });
     return () => { live = false; };
   }, [key, userId, cid, semester, semesterReady, reads]);
 
@@ -238,6 +243,8 @@ export function useCourseOutline(
   }, [userId, semester]);
 
   // `key` is "" when the hook is gated off (no user, course or term); nothing
-  // has been read for that, so it is not ready either.
-  return { outline, ready: key !== "" && loadedFor === key, reload };
+  // has been read for that, so it is not ready either. An outline read for
+  // another key is not shown: the course in hand has none yet.
+  const ready = key !== "" && shown.key === key;
+  return { outline: ready ? shown.topics : NO_OUTLINE.topics, ready, reload };
 }

@@ -22,6 +22,7 @@ from services.academics import (
     user_offering_ids_for_course,
 )
 from services.encryption import decrypt_if_present, decrypt_json, encrypt_json
+from services.exam_proximity import is_assessment
 from services.request_limits import check_rate_limit
 
 logger = logging.getLogger(__name__)
@@ -102,20 +103,29 @@ def _tracked_graph(user_id: str, course_id: str) -> tuple[list[dict], list[tuple
     return nodes, relationships
 
 
-def _assessments(scope: dict, columns: str) -> tuple[list[dict], int]:
-    """Every exam/quiz of the enrollment, independent of today's date.
+#: Assignments read to find an enrollment's exams and quizzes. `other` rows
+#: are kept or not by their title (`is_assessment`), so more are read than kept.
+ASSESSMENT_READ_LIMIT = MAX_ASSESSMENTS * 4
+
+
+def _assessments(scope: dict, columns: str) -> tuple[list[dict], bool]:
+    """Every exam/quiz of the enrollment (`is_assessment`), independent of
+    today's date, and whether any was left out.
 
     The evidence (and so its hash) must not move as days pass; the upcoming
     window is applied only when presenting (see present()). Keeps the latest
     MAX_ASSESSMENTS, returned in due-date order.
     """
-    rows, count = table("assignments").select_with_count(columns, filters={
+    rows = table("assignments").select(columns, filters={
         "enrollment_id": f"eq.{scope['enrollment_id']}",
-        "assignment_type": "in.(exam,quiz)", "due_date": "not.is.null",
-    }, order="due_date.desc,id", limit=MAX_ASSESSMENTS)
-    rows = [r for r in rows if r.get("due_date")]
-    rows.sort(key=lambda r: (r["due_date"], r["id"]))
-    return rows, count
+        "or": "(assignment_type.in.(exam,quiz,other),assignment_type.is.null)",
+        "due_date": "not.is.null",
+    }, order="due_date.desc,id", limit=ASSESSMENT_READ_LIMIT) or []
+    kept = [r for r in rows if r.get("due_date") and is_assessment(r)]
+    left_out = len(kept) > MAX_ASSESSMENTS or len(rows) >= ASSESSMENT_READ_LIMIT
+    kept = kept[:MAX_ASSESSMENTS]
+    kept.sort(key=lambda r: (r["due_date"], r["id"]))
+    return kept, left_out
 
 
 def build_snapshot(user_id: str, scope: dict, today: date | None = None, *, evidence: bool = True) -> dict:
@@ -182,7 +192,7 @@ def build_snapshot(user_id: str, scope: dict, today: date | None = None, *, evid
         ])) if evidence else None
         add_source(f"document:{row['id']}", row["file_name"], text)
 
-    assessments, assessment_count = _assessments(
+    assessments, assessments_left_out = _assessments(
         scope, "id,title,due_date,assignment_type,notes" if evidence else "id,title,due_date,assignment_type",
     )
     for row in assessments:
@@ -208,7 +218,7 @@ def build_snapshot(user_id: str, scope: dict, today: date | None = None, *, evid
         return {"payload": payload, "nodes": nodes}
     digest = hashlib.sha256(json.dumps({"version": PROMPT_VERSION, **payload}, sort_keys=True).encode()).hexdigest()
     return {"payload": payload, "hash": digest, "nodes": nodes,
-            "truncated": truncated or doc_count > MAX_DOCUMENTS or assessment_count > MAX_ASSESSMENTS}
+            "truncated": truncated or doc_count > MAX_DOCUMENTS or assessments_left_out}
 
 
 def _cache(scope: dict) -> dict | None:

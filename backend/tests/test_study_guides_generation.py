@@ -313,10 +313,12 @@ def test_a_finished_guide_is_ready_with_no_queued_section_and_the_claim_free(wor
     assert row["previous_content"] is None and row["answers"] is None
     assert [s.status for s in world.content().sections] == ["written"] * 3
     # The claim was held for the whole run, refreshed along the way, and
-    # given up with the last save: the guide is free when `done` arrives.
+    # given up with the last save, which lands before the last status goes
+    # out: the guide is ready and free by the `check` step.
     held = [r["generating_at"] for r in rows]
-    assert all(held[:-1]) and len(set(held)) > 3
-    assert (events[-1].type, held[-1], rows[-1]["status"]) == ("done", None, "ready")
+    assert all(held[:-2]) and len(set(held)) > 3
+    assert _shape(events)[-2:] == [("status", "check"), ("done", "done")]
+    assert [(r["generating_at"], r["status"]) for r in rows[-2:]] == [(None, "ready")] * 2
     assert events[-1].data == {
         "guide": {"id": GUIDE, "status": "ready", "generated_at": row["generated_at"]},
     }
@@ -860,6 +862,47 @@ def test_content_from_before_the_read_was_kept_is_dated_no_later_than_it_was(wor
     assert (world.stored()["status"], world.stored()["generated_at"]) == ("ready", MADE_AT)
 
 
+def test_a_lecture_uploaded_while_an_update_writes_is_new_after_it(world, monkeypatch):
+    """The Update read its lectures before it started writing. One uploaded
+    while it wrote was not read, so the next Update must still find it."""
+    _updatable(world)
+    world.documents["doc-3"] = ("lecture-10.pdf", "Scope is lexical.", ["Scope"])
+
+    def upload_while_writing(section):
+        world.lectures.append({"id": "doc-3", "offering_id": OFFERING,
+                               "created_at": datetime.now(timezone.utc).isoformat()})
+        return [_prose(section.id)]
+
+    Script(monkeypatch, sections={"Types": upload_while_writing},
+           outline=_outline(_planned("Recursion", keep_id="s1"), _planned("Types")))
+
+    events, _ = run(_follow(world, "update"))
+
+    assert events[-1].type == "done"
+    guide = run(store.aload_guide(ME, GUIDE))
+    assert guide.material_ids == ["doc-1", "doc-2"]
+    assert run(generation.anew_lectures(guide)) == ["doc-3"]
+
+
+def test_a_lecture_uploaded_before_a_new_guide_is_first_opened_is_new_after_it(world, monkeypatch):
+    """The guide was made from the materials chosen when it was created. A
+    lecture uploaded before the student first opened it (which is when the
+    guide is written) was never read, so it is new once the guide is."""
+    world.guide()
+    world.documents["doc-2"] = ("lecture-9.pdf", "Types are checked at run time.", ["Types"])
+    world.lectures = [{"id": "doc-2", "offering_id": OFFERING,
+                       "created_at": datetime.now(timezone.utc).isoformat()}]
+    Script(monkeypatch, outline=_outline(_planned("One")))
+
+    events, _ = run(_follow(world))
+
+    row = world.stored()
+    assert events[-1].type == "done" and row["status"] == "ready"
+    # Dated from when the guide was made, not from when it was written.
+    assert row["generated_at"] == row["created_at"]
+    assert run(generation.anew_lectures(run(store.aload_guide(ME, GUIDE)))) == ["doc-2"]
+
+
 def test_a_failed_first_section_is_not_saved_until_a_later_one_is_written(world, monkeypatch):
     old = _ready(world)
     Script(monkeypatch, outline=_outline(_planned("One"), _planned("Two")),
@@ -1379,10 +1422,11 @@ def test_two_prepared_runs_cannot_both_write(world, monkeypatch):
 
     lost, still_held, charged, won = run(scenario())
 
-    # The 409 prepare would have answered with, so the reader waits on the
-    # other run instead of showing a failure.
+    # The 409 prepare would have answered with, and `code` naming why: the
+    # reader waits on the other run instead of showing a failure.
     assert [(e.type, e.message, e.data) for e in lost] == [
-        ("error", "Another tab is writing this guide.", {"retryable": True, "status": 409})]
+        ("error", "Another tab is writing this guide.",
+         {"retryable": True, "status": 409, "code": "busy"})]
     assert still_held and charged == 1
     assert won[-1].type == "done" and len(script.outline_calls) == 1
 
@@ -1412,6 +1456,48 @@ def test_a_run_prepared_before_another_finished_does_not_write_the_guide_again(w
     assert world.stored()["content"] == finished["content"]
     assert world.stored()["generated_at"] == finished["generated_at"]
     # The run that did nothing was not counted.
+    assert len(request_limits._rate_state[f"study-guide-generate:{ME}"]) == 1
+
+
+async def _unreadable_detail(guide):
+    raise RuntimeError("the database timed out")
+
+
+def test_a_finished_guide_ends_with_done_even_when_it_cannot_be_read_back(world, monkeypatch):
+    """The last save made the guide ready and gave the claim up. A read that
+    fails after it (building `done`) must not report a failed run: a Retry of
+    a Regenerate would pay for the whole guide again, and push the guide it
+    just wrote into `previous_content`."""
+    _ready(world)
+    Script(monkeypatch, outline=_outline(_planned("One")))
+    monkeypatch.setattr(generation, "abuild_detail", _unreadable_detail)
+
+    events, _ = run(_follow(world, "regenerate"))
+
+    assert (events[-1].type, events[-1].data) == ("done", {"guide": None})
+    assert all(event.type != "error" for event in events)
+    row = world.stored()
+    assert (row["status"], row["generating_at"]) == ("ready", None)
+
+
+def test_a_run_that_finds_the_work_done_is_not_counted_even_when_the_guide_cannot_be_read_back(
+    world, monkeypatch,
+):
+    world.guide()
+    Script(monkeypatch, outline=_outline(_planned("One")))
+
+    async def scenario():
+        first = generation.stream_generation(await generation.aprepare_generation(ME, GUIDE, "resume"))
+        second = generation.stream_generation(await generation.aprepare_generation(ME, GUIDE, "resume"))
+        won = [event async for event in first]
+        monkeypatch.setattr(generation, "abuild_detail", _unreadable_detail)
+        late = [event async for event in second]
+        return won, late
+
+    won, late = run(scenario())
+
+    assert won[-1].type == "done"
+    assert [(event.type, event.data) for event in late] == [("done", {"guide": None})]
     assert len(request_limits._rate_state[f"study-guide-generate:{ME}"]) == 1
 
 
@@ -1459,7 +1545,7 @@ def test_a_run_writes_from_the_row_as_it_is_under_the_claim(world, monkeypatch):
     ("gone", "message", "data"),
     [
         # Nothing to claim: the reader asks again and is told it is gone.
-        ("deleted", "Another tab is writing this guide.", {"retryable": True, "status": 409}),
+        ("deleted", "Another tab is writing this guide.", {"retryable": True, "status": 409, "code": "busy"}),
         ("unreadable", store.GUIDE_UNREADABLE_DETAIL, {"retryable": False}),
     ],
 )
@@ -1646,6 +1732,63 @@ def test_the_claim_is_released_when_the_request_is_cancelled_mid_section(world, 
     assert [s.status for s in world.content().sections] == ["queued", "queued"]
 
 
+def test_a_reader_that_leaves_at_the_last_step_still_leaves_the_guide_ready(world, monkeypatch):
+    """The stream is closed at the `check` step, the last before `done`:
+    every section is written, so the guide must not be left `generating`
+    for the next open to spend a generation on."""
+    world.guide()
+    Script(monkeypatch, outline=_outline(_planned("One")))
+
+    async def scenario():
+        stream = generation.stream_generation(
+            await generation.aprepare_generation(ME, GUIDE, "resume"))
+        async for event in stream:
+            if (event.type, event.step) == ("status", "check"):
+                break
+        await stream.aclose()
+
+    run(scenario())
+
+    row = world.stored()
+    assert (row["status"], row["generating_at"]) == ("ready", None)
+
+
+def test_a_claim_that_landed_as_the_request_was_cancelled_is_still_given_back(world, monkeypatch):
+    """With the native async DB client a cancelled request can still land.
+    A token the run wrote but never learned would keep the guide held until
+    the claim goes stale, so the writes that move the token run to the end."""
+    world.guide()
+    Script(monkeypatch, outline=_outline(_planned("One")))
+    landed: list[str] = []
+    update = world.db.aupdate
+
+    async def lands_then_answers_late(patch, *args, **kwargs):
+        rows = await update(patch, *args, **kwargs)
+        if not landed and patch == {"generating_at": rows[0]["generating_at"] if rows else None}:
+            landed.append(rows[0]["generating_at"])
+            await anyio.sleep(0.05)  # the response is still on its way
+        return rows
+
+    monkeypatch.setattr(world.db, "aupdate", lands_then_answers_late)
+
+    async def scenario():
+        prepared = await generation.aprepare_generation(ME, GUIDE, "resume")
+        with anyio.CancelScope() as request:
+            async with anyio.create_task_group() as tasks:
+                async def consume():
+                    async for _ in generation.stream_generation(prepared):
+                        pass
+                tasks.start_soon(consume)
+                while not landed:
+                    await anyio.sleep(0)
+                request.cancel()
+
+    anyio.run(scenario)
+
+    assert landed and landed[0] is not None
+    assert world.stored()["generating_at"] is None
+
+
 def test_an_overtaken_run_stops_without_writing_or_releasing(world, monkeypatch):
     """The run went silent past the stale window and another request took the
     guide. Its next write finds its token gone: it ends there."""
@@ -1664,7 +1807,7 @@ def test_an_overtaken_run_stops_without_writing_or_releasing(world, monkeypatch)
     events, _ = run(_follow(world))
 
     assert _shape(events)[-1] == ("error", "error")
-    assert events[-1].data == {"retryable": True}
+    assert events[-1].data == {"retryable": True, "code": "overtaken"}
     assert events[-1].message == "Another request took over writing this guide."
     row = world.stored()
     # The new holder's claim is untouched, and section two was never saved.

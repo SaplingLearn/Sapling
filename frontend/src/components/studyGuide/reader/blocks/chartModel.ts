@@ -64,5 +64,26 @@ export function ticks([min, max]: Domain, count: number): number[] {
   return Array.from({ length: count }, (_, i) => min + ((max - min) * i) / (count - 1));
 }
 
-/** A tick as a short number: whole when it is, one decimal otherwise. */
-export const tickLabel = (value: number) => (Number.isInteger(value) ? String(value) : value.toFixed(1));
+/**
+ * The fewest decimals that write `step` exactly, up to three significant
+ * digits of it: enough that ticks a step apart never share a label.
+ */
+function decimalsFor(step: number): number {
+  const most = Math.max(0, 2 - Math.floor(Math.log10(step)));
+  for (let decimals = 0; decimals < most; decimals++) {
+    const scaled = step * 10 ** decimals;
+    if (Math.abs(scaled - Math.round(scaled)) < 1e-6) return decimals;
+  }
+  return most;
+}
+
+/**
+ * Evenly spaced ticks as short numbers. Their decimals come from the step
+ * between them, so 0.25 reads "0.25", not "0.3", and the ticks of a narrow
+ * domain stay apart; trailing zeros are dropped, so a whole tick is whole.
+ */
+export function tickLabels(values: number[]): string[] {
+  const step = values.length > 1 ? Math.abs(values[1] - values[0]) : 0;
+  const decimals = step > 0 ? decimalsFor(step) : 0;
+  return values.map(value => String(Number(value.toFixed(decimals))));
+}

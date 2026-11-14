@@ -104,19 +104,23 @@ function Prereqs({ prereqs, gapOn }: { prereqs: Concept[]; gapOn: Concept | null
   const fit = chipsThatFit(prereqs.map(t => t.name), gapOn ? GAP_MARK_W : 0);
   const rest = prereqs.slice(fit);
   return (
-    <div style={{ display: "flex", flexWrap: "nowrap", alignItems: "center", gap: PREREQ_GAP, height: 22, minWidth: 0, overflow: "hidden", fontSize: "var(--fs-sm)", color: "rgba(255,255,255,0.86)" }}>
+    <div style={{ display: "flex", flexWrap: "nowrap", alignItems: "center", gap: PREREQ_GAP, height: 22, minWidth: 0, fontSize: "var(--fs-sm)", color: "rgba(255,255,255,0.86)" }}>
       {gapOn && <GapWarning concept={gapOn} />}
-      {prereqs.length === 0 && <span style={{ flexShrink: 0, whiteSpace: "nowrap" }}>No prerequisites</span>}
-      {/* minWidth 0 + ellipsis on each chip: two are shown whether or not they
-          fit (chipsThatFit), so one that does not must truncate visibly — the
-          row clips, and a hard cut mid-word reads as a rendering bug. The
-          title carries the full name either way. */}
-      {prereqs.slice(0, fit).map(t => (
-        <span key={t.id} title={`${t.name} · ${ST_LABEL[t.st]}`} style={{ ...CHIP, gap: 5, minWidth: 0, background: "rgba(255,255,255,0.12)" }}>
-          <StatusDot st={t.st} size={7} />
-          <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>{t.name}</span>
-        </span>
-      ))}
+      {/* Only the chips clip. The gap mark and "+N more" open their pop-ups
+          below the line, and a line that clipped hid both. */}
+      <span style={{ display: "flex", alignItems: "center", gap: PREREQ_GAP, minWidth: 0, overflow: "hidden" }}>
+        {prereqs.length === 0 && <span style={{ flexShrink: 0, whiteSpace: "nowrap" }}>No prerequisites</span>}
+        {/* minWidth 0 + ellipsis on each chip: two are shown whether or not they
+            fit (chipsThatFit), so one that does not must truncate visibly — the
+            row clips, and a hard cut mid-word reads as a rendering bug. The
+            title carries the full name either way. */}
+        {prereqs.slice(0, fit).map(t => (
+          <span key={t.id} title={`${t.name} · ${ST_LABEL[t.st]}`} style={{ ...CHIP, gap: 5, minWidth: 0, background: "rgba(255,255,255,0.12)" }}>
+            <StatusDot st={t.st} size={7} />
+            <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>{t.name}</span>
+          </span>
+        ))}
+      </span>
       {rest.length > 0 && <MorePrereqs rest={rest} />}
     </div>
   );
@@ -178,8 +182,15 @@ export function FocusCard({ concept, upNext, masteredExam, prereqs, cardCount, q
   );
 }
 
-/** The block with nothing to work on: every concept mastered, or none yet. */
-export function FocusEmpty({ hasConcepts }: { hasConcepts: boolean }) {
+/**
+ * The block with nothing to work on: every concept mastered, or none yet.
+ * `pending` while what the selected exam covers is still being read: the
+ * block keeps its place and says nothing, as the roadmap under it does.
+ */
+export function FocusEmpty({ hasConcepts, pending = false }: { hasConcepts: boolean; pending?: boolean }) {
+  if (pending) {
+    return <div key="pending" className={s.focusEmpty} data-testid="focus-pending" aria-busy="true" data-flip="focus-empty:pending" data-flip-how="fade" style={BLOCK} />;
+  }
   const [title, body] = hasConcepts
     ? ["Every concept is mastered", "Keep them fresh with a mixed quiz before the exam."]
     : ["No concepts yet", "Upload course material in the Library to build this course's roadmap."];

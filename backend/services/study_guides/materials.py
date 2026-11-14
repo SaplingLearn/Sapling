@@ -6,14 +6,15 @@ Only the student's own ``documents`` rows are read, never the shared
 """
 from __future__ import annotations
 
-import json
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import datetime
+from typing import Any
 
 from db.connection import pg_quote_value, table
 from models.study_guide import MaterialOption, Source
-from services.encryption import decrypt
+from services.encryption import decrypt, decrypt_json_column
 from services.study_guides.scopes import MAX_ID_CHARS, Scope
 
 logger = logging.getLogger(__name__)
@@ -90,13 +91,16 @@ def suggest_materials(
     The whole course takes everything. An exam or assignment takes what was
     uploaded since the exam before it, up to its own date, and never the
     syllabus. With no date, or nothing in that window, it takes every
-    material but the syllabus.
+    material but the syllabus. Past the `MAX_SOURCES` a guide reads, the
+    newest are suggested: the oldest material is the one left out, as the
+    source budget leaves it out (`_arows`).
     """
     if scope.kind == "course":
-        return [m.id for m in materials]
-    usable = [m for m in materials if m.category != SYLLABUS]
-    window = _since_last_exam(usable, scope, scopes) if scope.due_date else []
-    return [m.id for m in window or usable]
+        chosen = materials
+    else:
+        usable = [m for m in materials if m.category != SYLLABUS]
+        chosen = (_since_last_exam(usable, scope, scopes) if scope.due_date else []) or usable
+    return [m.id for m in chosen][-MAX_SOURCES:]
 
 
 # ── Source text for the prompt ────────────────────────────────────────────────
@@ -126,9 +130,30 @@ async def _arows(
     ) or []
 
 
-def _notes(value: str | None) -> list[tuple[str, str]]:
-    """Decrypted ``concept_notes`` as (name, description) pairs."""
-    raw = json.loads(decrypt(value)) if value else []
+def _column(row: dict, column: str, read: Callable[[Any], Any]) -> Any:
+    """``read`` of one column of a document, or None when it is empty or
+    cannot be read (a wrong key, a damaged value, not JSON). An unreadable
+    column is left out with a warning and costs the document only that
+    column; its value is never used as text."""
+    value = row.get(column)
+    if not value:
+        return None
+    try:
+        return read(value)
+    except Exception as exc:
+        logger.warning(
+            "study guide: document %s %s did not decrypt (%s); left out",
+            row.get("id"), column, type(exc).__name__,
+        )
+        return None
+
+
+def _notes(row: dict) -> list[tuple[str, str]]:
+    """The document's ``concept_notes`` as (name, description) pairs. Notes
+    stored before encryption (plain JSON) read as they are
+    (``decrypt_json_column``); notes that are not a list of notes (a sentence
+    some old rows hold) are none."""
+    raw = _column(row, "concept_notes", decrypt_json_column)
     if not isinstance(raw, list):
         return []
     pairs = [
@@ -138,8 +163,13 @@ def _notes(value: str | None) -> list[tuple[str, str]]:
     return [(name, description) for name, description in pairs if name]
 
 
+def _text(row: dict, column: str) -> str:
+    text = _column(row, column, decrypt)
+    return text.strip() if isinstance(text, str) else ""
+
+
 def _concepts(row: dict) -> list[str]:
-    return [name for name, _ in _notes(row.get("concept_notes"))]
+    return [name for name, _ in _notes(row)]
 
 
 def _kind(file_name: str) -> str:
@@ -154,10 +184,12 @@ def _note_lines(notes: list[tuple[str, str]]) -> str:
 
 def _unlabelled(row: dict) -> SourceText:
     """One row as a source with its whole text, before labels and budget.
-    Old rows have no ``extracted_text``; they read from the other two."""
-    notes = _notes(row.get("concept_notes"))
-    summary = decrypt(row["summary"]).strip() if row.get("summary") else ""
-    body = decrypt(row["extracted_text"]).strip() if row.get("extracted_text") else ""
+    Old rows have no ``extracted_text``; they read from the other two. Each
+    column is read on its own, so one that does not decrypt costs only
+    itself."""
+    notes = _notes(row)
+    summary = _text(row, "summary")
+    body = _text(row, "extracted_text")
     parts = [f"Summary: {summary}" if summary else "", _note_lines(notes), body]
     return SourceText(
         label="",
@@ -172,8 +204,9 @@ def _unlabelled(row: dict) -> SourceText:
 
 
 def _decrypted(rows: list[dict], read) -> list:
-    """``read(row)`` for every row that decrypts. One that does not is left
-    out with a warning, so a single bad row cannot fail the guide."""
+    """``read(row)`` for every row that can be read. One that cannot is left
+    out with a warning, so a single bad row cannot fail the guide (a column
+    that does not decrypt is already left out on its own, `_column`)."""
     out = []
     for row in rows:
         try:

@@ -1,7 +1,7 @@
 import type { ChartBlock, ChartMarker } from "@/lib/studyGuide/types";
 
 import s from "./blocks.module.css";
-import { CHART, chartScale, linePath, shownIn, tickLabel, ticks, type ChartScale, type ChartView } from "./chartModel";
+import { CHART, chartScale, linePath, shownIn, tickLabels, ticks, type ChartScale, type ChartView } from "./chartModel";
 
 /** One colour per series, in order. */
 export const SERIES_COLORS = ["var(--brand-forest)", "var(--info)", "var(--warn)", "var(--c-plum)"];
@@ -11,22 +11,26 @@ const { left, right, top, bottom } = CHART;
 /** Grid lines and the two axes. The numbers are left off an illustrative chart. */
 function Axes({ block, scale }: { block: ChartBlock; scale: ChartScale }) {
   const numbered = !block.illustrative;
+  const ys = ticks(scale.yDomain, 5);
+  const yLabels = tickLabels(ys);
+  const xs = ticks(scale.xDomain, 3);
+  const xLabels = tickLabels(xs);
   return (
     <>
-      {ticks(scale.yDomain, 5).slice(1).map(value => (
+      {ys.slice(1).map((value, i) => (
         <g key={value}>
           <line x1={left} x2={right} y1={scale.y(value)} y2={scale.y(value)} className={s.chartGrid} />
           {numbered && (
             <text x={left - 8} y={scale.y(value) + 4} textAnchor="end" className={s.chartTick}>
-              {tickLabel(value)}
+              {yLabels[i + 1]}
             </text>
           )}
         </g>
       ))}
       {numbered &&
-        ticks(scale.xDomain, 3).map(value => (
+        xs.map((value, i) => (
           <text key={value} x={scale.x(value)} y={bottom + 18} textAnchor="middle" className={s.chartTick}>
-            {tickLabel(value)}
+            {xLabels[i]}
           </text>
         ))}
       <line x1={left} x2={right} y1={bottom} y2={bottom} className={s.chartAxis} />
@@ -34,7 +38,10 @@ function Axes({ block, scale }: { block: ChartBlock; scale: ChartScale }) {
       <text x={right} y={bottom + 36} textAnchor="end" className={s.chartAxisLabel}>
         {block.x_label}
       </text>
-      <text x={left - 8} y={top - 6} textAnchor="end" className={s.chartAxisLabel}>
+      {/* From the drawing's left edge, over the margin above the plot. Ending
+          it at the axis put any label past ~9 characters off the left edge,
+          and a label may run to 32. */}
+      <text x={8} y={top - 6} textAnchor="start" className={s.chartAxisLabel}>
         {block.y_label}
       </text>
     </>

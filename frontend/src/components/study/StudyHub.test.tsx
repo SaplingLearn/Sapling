@@ -624,6 +624,30 @@ describe("StudyHub generates the course's topic outline", () => {
       expect(roadmapText("Foundations")).toBeTruthy();
     });
 
+    it("back on a course before the other's outline came in, it shows its own outline, never the fallback", async () => {
+      let landC1!: () => void;
+      let c1Reads = 0;
+      vi.mocked(getTopicChecklist).mockImplementation(async (_u: string, cid: string) => {
+        if (cid === "c2") return new Promise(() => {}) as never; // never answers
+        c1Reads += 1;
+        if (c1Reads === 1) return { topics: CATEGORISED, needs_refresh: false } as never;
+        return new Promise(res => { landC1 = () => res({ topics: CATEGORISED, needs_refresh: false }); }) as never;
+      });
+      renderHub({ courses: [COURSE, COURSE2] });
+      await hubLoaded();
+      await waitFor(() => expect(roadmapText("Programming Fundamentals")).toBeTruthy());
+      pickCourse("MA225");
+      pickCourse("CS101");
+      // Calculus's read never settled, and CS101 is being read again. The
+      // outline in hand is still CS101's own, so it shows; nothing is drawn
+      // under the layer fallback as if CS101 had no categories.
+      expect(roadmapText("Foundations")).toBeNull();
+      expect(roadmapText("Programming Fundamentals")).toBeTruthy();
+      await act(async () => landC1());
+      expect(roadmapText("Programming Fundamentals")).toBeTruthy();
+      expect(roadmapText("Foundations")).toBeNull();
+    });
+
     it("an outline that lands after the student left its course is not applied to the next one", async () => {
       const land = pendingRefresh();
       renderHub({ courses: [COURSE, COURSE2] });
@@ -741,6 +765,30 @@ describe("StudyHub readiness follows the selected exam", () => {
     expect(screen.getByTestId("readiness-pct").textContent).toBe("47%"); // mean of 96, 60, 30, 0
     expect(squares()).toHaveLength(4);
     expect(legend()).toEqual(["1 Mastered", "1 Learning", "1 Struggling", "1 Not Started"]);
+  });
+
+  it("names the exam over no figure, and Up Next waits, until the outline that says what it covers is in", async () => {
+    let land!: () => void;
+    vi.mocked(getTopicChecklist).mockReturnValue(new Promise(res => {
+      land = () => res({ topics: [
+        topic("t-loop", "Loops", null, "loop", ["e2"]),
+        topic("t-rec", "Recursion", null, "rec", ["e2"]),
+      ], needs_refresh: false });
+    }) as never);
+    renderHub();
+    expect(await hubLoaded()).toBeTruthy();
+    // Not the whole course's 47% under the exam's name, nor a note that
+    // nothing is linked to it: the outline that would say is still being read.
+    expect(screen.getByTestId("readiness-pct").textContent).toBe("–");
+    expect(unlinkedNote()).toBeNull();
+    expect(screen.queryByTestId("focus-card")).toBeNull();
+    expect(screen.getByTestId("focus-pending")).toHaveAttribute("aria-busy", "true");
+
+    await act(async () => land());
+    await waitFor(() => expect(screen.getByTestId("readiness-pct").textContent).toBe("45%")); // mean of 60 and 30
+    expect(unlinkedNote()).toBeNull();
+    expect(within(screen.getByTestId("focus-card")).getByText("Recursion")).toBeTruthy();
+    expect(screen.queryByTestId("focus-pending")).toBeNull();
   });
 });
 

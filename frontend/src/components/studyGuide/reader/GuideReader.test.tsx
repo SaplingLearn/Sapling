@@ -315,6 +315,16 @@ describe("the chart block", () => {
     expect(within(block("s1-i2")).queryByText(/Illustrative shape/)).not.toBeInTheDocument();
     expect(within(block("s1-i2")).getAllByText("10").length).toBeGreaterThan(0);
   });
+
+  it("starts the y axis label inside the drawing, so a long one runs on to the right, not off the edge", async () => {
+    const guide = fixtureGuide();
+    const chart = guide.content.sections[0].items[1] as Extract<Block, { type: "chart" }>;
+    chart.y_label = "Quantity demanded per week, units";
+    await open(guide);
+    const label = within(block("s1-i2")).getByText("Quantity demanded per week, units");
+    expect(label).toHaveAttribute("text-anchor", "start");
+    expect(Number(label.getAttribute("x"))).toBeGreaterThanOrEqual(0);
+  });
 });
 
 describe("the worked example", () => {
@@ -379,14 +389,10 @@ describe("the other blocks", () => {
 });
 
 describe("the check block", () => {
-  it("shows the nudge for a wrong pick and lets the student pick again", async () => {
+  it("shows the nudge for a wrong pick, and keeps that first answer when another is picked", async () => {
     mocks.answerCheck.mockResolvedValueOnce(answer({ correct: false })).mockResolvedValueOnce(
-      answer({
-        correct: true,
-        explanation: "0, 2, 4 and 6 pass the test.",
-        counted: false,
-        mastery: { concept: "Loops", before: "struggling", after: "learning" },
-      }),
+      // Only the first answer counts: the server keeps it, and says this one did not.
+      answer({ correct: true, explanation: "0, 2, 4 and 6 pass the test.", counted: false }),
     );
     const user = await open();
     expect(within(block("s1-i8")).getByText("Counts toward mastery")).toBeInTheDocument();
@@ -402,11 +408,29 @@ describe("the check block", () => {
 
     await user.click(screen.getByTestId("guide-check-option-s1-i8-b"));
 
-    await waitFor(() => expect(screen.getByTestId("guide-check-result-s1-i8")).toHaveTextContent("Correct."));
-    expect(screen.getByTestId("guide-check-result-s1-i8")).toHaveTextContent("0, 2, 4 and 6 pass the test.");
-    expect(screen.getByTestId("guide-check-result-s1-i8")).toHaveTextContent("Loops: Struggling to Learning");
+    // What shows is what a reload will show: the first answer.
+    await waitFor(() => expect(mocks.answerCheck).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByTestId("guide-check-option-s1-i8-b")).toBeEnabled());
+    expect(screen.getByTestId("guide-check-result-s1-i8")).toHaveTextContent("Not quite. Count the values of i that pass the test.");
+    expect(screen.getByTestId("guide-check-option-s1-i8-a")).toHaveAccessibleName(/your answer, incorrect/);
+    expect(screen.getByTestId("guide-check-option-s1-i8-b")).not.toHaveAccessibleName(/correct answer/);
+  });
+
+  it("shows the mastery a first answer moved, everywhere the guide shows it", async () => {
+    mocks.answerCheck.mockResolvedValue(
+      answer({
+        correct: true,
+        explanation: "0, 2, 4 and 6 pass the test.",
+        mastery: { concept: "Loops", before: "struggling", after: "learning" },
+      }),
+    );
+    const user = await open();
+    await user.click(screen.getByTestId("guide-check-option-s1-i8-b"));
+
+    const result = await screen.findByTestId("guide-check-result-s1-i8");
+    expect(result).toHaveTextContent("Correct. 0, 2, 4 and 6 pass the test.");
+    expect(result).toHaveTextContent("Loops: Struggling to Learning");
     expect(screen.getByTestId("guide-check-option-s1-i8-b")).toHaveAccessibleName(/correct answer/);
-    // Mastery moved everywhere the guide shows it.
     expect(screen.getByTestId("guide-outline-s1")).toHaveTextContent("Learning");
     expect(screen.getByTestId("guide-concept-s1-i7-1")).toHaveTextContent("Learning");
   });

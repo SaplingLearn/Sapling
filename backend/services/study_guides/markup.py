@@ -51,8 +51,12 @@ _MATH_FIELDS = ("latex", "math")
 _COORDINATE_FIELDS = ("x", "y")
 #: `## A heading` or a `---` rule: a model's habit, not part of the markup.
 _NOISE = re.compile(r"\s{0,3}(#{1,6}\s.*|([-*_])(\s*\2){2,})\s*")
-#: `[S1]` or `[S1, S3]`, with the space before it.
-CITATION = re.compile(r"\s*\[\s*(S\d+(?:\s*,\s*S\d+)*)\s*\]", re.IGNORECASE)
+#: `[S1]` or `[S1, S3]`, with the space before it. A match starts only where
+#: a run of spaces starts (`(?<!\s)`): without that, a long run that is not
+#: followed by a citation was tried again from every space in it, so a
+#: degenerate model reply (tens of thousands of spaces) stalled the event
+#: loop for seconds.
+CITATION = re.compile(r"(?<!\s)\s*\[\s*(S\d+(?:\s*,\s*S\d+)*)\s*\]", re.IGNORECASE)
 _TYPE_IN_BROKEN_JSON = re.compile(r'"type"\s*:\s*"(\w+)"')
 _PASSAGE_PARAGRAPHS = 3
 #: Fields the server decides, whatever the model wrote: `id` here, `source_id`

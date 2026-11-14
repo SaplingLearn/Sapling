@@ -6,7 +6,7 @@
  * The pure rules behind it are pinned in newGuideModel.test.ts.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
@@ -38,10 +38,11 @@ import { PLAN_DEBOUNCE_MS } from "./usePlan";
 
 const onClose = vi.fn();
 const onCreated = vi.fn();
+const onCreatedLater = vi.fn();
 
 function renderModal(props: Partial<NewGuideModalProps> = {}) {
   return render(
-    <NewGuideModal userId="u1" courses={[CS, MATH]} coursesReady semester="" onClose={onClose} onCreated={onCreated} {...props} />,
+    <NewGuideModal userId="u1" courses={[CS, MATH]} coursesReady coursesFailed={false} onRetryCourses={() => {}} semester="" onClose={onClose} onCreated={onCreated} onCreatedLater={onCreatedLater} {...props} />,
   );
 }
 
@@ -84,6 +85,7 @@ beforeEach(() => {
   resetMocks();
   onClose.mockReset();
   onCreated.mockReset();
+  onCreatedLater.mockReset();
 });
 afterEach(cleanup);
 
@@ -138,6 +140,23 @@ describe("class and scope", () => {
     await screen.findByTestId("guide-new-material-d1");
     expect(mocks.options).toHaveBeenCalledTimes(2);
   });
+
+  it("shows the class loading again on Try again, with no second Try again while it does", async () => {
+    mocks.options.mockRejectedValueOnce(new Error("500"));
+    renderModal();
+    const retry = await screen.findByTestId("guide-new-options-retry");
+    const again = deferred<GuideOptions>();
+    mocks.options.mockReturnValueOnce(again.promise);
+    await userEvent.setup().click(retry);
+
+    expect(screen.queryByTestId("guide-new-options-retry")).toBeNull();
+    expect(screen.getByTestId("guide-new-outline")).toHaveTextContent("Loading this class's materials");
+    expect(mocks.options).toHaveBeenCalledTimes(2);
+
+    await act(async () => again.resolve(OPTIONS));
+    expect(await screen.findByTestId("guide-new-material-d1")).toBeTruthy();
+    expect(mocks.options).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe("goal and depth", () => {
@@ -152,6 +171,16 @@ describe("goal and depth", () => {
     expect(on("guide-new-goal-exam_prep")).toBe("false");
     expect(on("guide-new-depth-cram")).toBe("true");
     expect(on("guide-new-depth-standard")).toBe("false");
+  });
+
+  it("are each a group named by its label, so a pressed option says what it is a choice of", async () => {
+    await modal();
+    const goal = screen.getByRole("group", { name: "Goal" });
+    expect(goal).toBe(screen.getByTestId("guide-new-goal"));
+    expect(within(goal).getAllByRole("button").map(button => button.textContent)).toEqual(["Practice", "Review", "Exam prep"]);
+    const depth = screen.getByRole("group", { name: "Depth" });
+    expect(depth).toBe(screen.getByTestId("guide-new-depth"));
+    expect(within(depth).getByRole("button", { name: "Standard", pressed: true })).toBeTruthy();
   });
 });
 
@@ -191,6 +220,7 @@ describe("materials", () => {
   });
 
   it("stops at 30: past it a tile turns off but not on, and a note says why", async () => {
+    // Listed oldest first, as the class sends them: d1 is the oldest.
     const materials = Array.from({ length: MAX_MATERIALS + 2 }, (_, i) => material(`d${i + 1}`));
     mocks.options.mockResolvedValue({
       scopes: [{ kind: "course", id: null, title: "Whole course", due_date: null, suggested_material_ids: [] }],
@@ -199,19 +229,20 @@ describe("materials", () => {
     const user = await modal();
     expect(screen.queryByTestId("guide-new-materials-cap")).toBeNull();
 
+    // All takes the newest 30: the two oldest are what is left out.
     await user.click(screen.getByTestId("guide-new-materials-all"));
-    expect(selected()).toHaveLength(30);
+    expect(selected()).toEqual(materials.slice(2).map(m => m.id));
     expect(screen.getByTestId("guide-new-materials-cap")).toHaveTextContent("A guide uses up to 30 materials.");
-    expect(tile("d31")).toHaveAttribute("aria-disabled", "true");
-    await user.click(tile("d31"));
-    expect(tile("d31")).toHaveAttribute("aria-pressed", "false");
+    expect(tile("d1")).toHaveAttribute("aria-disabled", "true");
+    await user.click(tile("d1"));
+    expect(tile("d1")).toHaveAttribute("aria-pressed", "false");
     expect(selected()).toHaveLength(30);
 
     // One off makes room for one on.
-    await user.click(tile("d1"));
+    await user.click(tile("d32"));
     expect(screen.queryByTestId("guide-new-materials-cap")).toBeNull();
-    await user.click(tile("d31"));
-    expect(tile("d31")).toHaveAttribute("aria-pressed", "true");
+    await user.click(tile("d1"));
+    expect(tile("d1")).toHaveAttribute("aria-pressed", "true");
     expect(selected()).toHaveLength(30);
     await waitFor(() => expect(lastPlanRequest().material_ids).toHaveLength(30));
   });
@@ -302,6 +333,27 @@ describe("planned outline", () => {
     await waitFor(() => expect(screen.getByTestId("guide-new-outline-minutes")).toHaveTextContent("about 4 min"));
     expect(screen.getByTestId("guide-new-outline-section-0")).toHaveTextContent("100%");
     expect(screen.queryByTestId("guide-new-outline-section-1")).toBeNull();
+  });
+
+  it("never shows another class's outline while the new class's is planned", async () => {
+    const user = await modal();
+    await screen.findByTestId("guide-new-outline-section-0");
+    const limits = deferred<GuidePlan>();
+    mocks.options.mockResolvedValue({
+      scopes: [{ kind: "course", id: null, title: "Whole course", due_date: null, suggested_material_ids: ["m1"] }],
+      materials: [material("m1", "Limits notes.pdf")],
+    });
+    mocks.plan.mockReturnValue(limits.promise);
+    await user.click(screen.getByTestId("guide-new-class"));
+    await user.click(screen.getByTestId("guide-new-class-option-c2"));
+    await screen.findByTestId("guide-new-material-m1");
+    await waitFor(() => expect(lastPlanRequest().course_id).toBe("c2"));
+    // CS101's sections are gone: the outline waits for Calculus's own.
+    expect(screen.queryByTestId("guide-new-outline-section-0")).toBeNull();
+    expect(screen.getByTestId("guide-new-outline")).toHaveAttribute("aria-busy", "true");
+
+    await act(async () => limits.resolve({ sections: [{ title: "Limits", tier: "learning", weight: 100 }], minutes: 5 }));
+    expect(await screen.findByTestId("guide-new-outline-section-0")).toHaveTextContent("Limits");
   });
 
   it("aborts the call before it, and a late answer to it is ignored", async () => {

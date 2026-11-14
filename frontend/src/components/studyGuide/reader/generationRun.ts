@@ -13,20 +13,24 @@ export const RETRY_MS = 3000;
 /** How many times an Update or a Regenerate asks for a held guide before it gives up. */
 export const MAX_TRIES = 10;
 
-/** Resolves after `ms`, or rejects as soon as the signal aborts. */
+/**
+ * Resolves after `ms`, or rejects as soon as the signal aborts. Its abort
+ * listener goes when the wait ends: a resume can wait on the same signal
+ * every few seconds for as long as another run holds the guide.
+ */
 function wait(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     // An abort that has already happened fires no event.
     if (signal.aborted) return reject(signal.reason);
-    const timer = setTimeout(resolve, ms);
-    signal.addEventListener(
-      "abort",
-      () => {
-        clearTimeout(timer);
-        reject(signal.reason);
-      },
-      { once: true },
-    );
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal.reason);
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal.addEventListener("abort", onAbort, { once: true });
   });
 }
 
@@ -40,28 +44,53 @@ export interface Run {
   onHeld: (fresh: GuideDetail) => void;
 }
 
+/** The codes of a stream's `error` event that mean another request holds the guide. */
+const HELD_CODES = ["busy", "overtaken"];
+/** The messages of those events, from a server that sends no code. */
+const HELD_MESSAGES = ["Another tab is writing this guide.", "Another request took over writing this guide."];
+
 /**
- * Write the guide and resolve with it once it is done.
+ * Another request holds the guide. Most often the server says so with a 409
+ * before the stream starts. When two requests race for the claim, the one
+ * that loses has already been answered 200, so it hears it as the stream's
+ * `error` event instead: "busy" when the other took the claim first,
+ * "overtaken" when the other took it over from this one.
+ */
+function heldElsewhere(err: unknown): boolean {
+  if (statusOf(err) === 409) return true;
+  if (!(err instanceof GuideGenerationError)) return false;
+  return err.code ? HELD_CODES.includes(err.code) : HELD_MESSAGES.includes(err.message);
+}
+
+/**
+ * Write the guide and resolve with it once it is done. A run that saved the
+ * guide but could not read it back ends with no guide: it is finished all the
+ * same, so the guide is read here, as after a 409, rather than written again.
  *
- * A 409 means another run holds the guide. Re-read it, so what that run has
- * written shows, then wait and ask again. Asking again, not only re-reading,
- * is what picks the guide up when the tab that was writing it closes: its
- * claim lapses and this request takes it.
+ * A 409, or a stream that lost the guide to another request
+ * (`heldElsewhere`), means another run holds the guide. Re-read it, so what
+ * that run has written shows, then wait and ask again. Asking again, not only
+ * re-reading, is what picks the guide up when the tab that was writing it
+ * closes: its claim lapses and this request takes it.
  *
- * A resume has nothing left to do once that run has finished, so the guide it
- * re-reads is its result. An Update or a Regenerate still has its own work to
- * do (the guide may only have been held while one block was rewritten): it
- * keeps asking for the same thing, and gives up after `MAX_TRIES`.
+ * A resume has nothing left to do once that run has finished the guide, so a
+ * finished guide it re-reads is its result. Only a finished one: a run that
+ * retries a failed section leaves the guide `ready` while it does, and one
+ * that resumes a `failed` guide leaves it `failed` until its first save.
+ * Either is still being written, so the resume keeps waiting on it. An Update
+ * or a Regenerate still has its own work to do (the guide may only have been
+ * held while one block was rewritten): it keeps asking for the same thing,
+ * and gives up after `MAX_TRIES`.
  */
 export async function writeGuide({ userId, guideId, mode, handlers, onHeld }: Run): Promise<GuideDetail> {
   for (let tries = 1; ; tries++) {
     try {
-      return await generateGuide(userId, guideId, mode, handlers);
+      return (await generateGuide(userId, guideId, mode, handlers)) ?? (await getGuide(userId, guideId));
     } catch (err) {
-      if (statusOf(err) !== 409) throw err;
+      if (!heldElsewhere(err)) throw err;
     }
     const fresh = await getGuide(userId, guideId);
-    if (mode === "resume" && fresh.status !== "generating") return fresh;
+    if (mode === "resume" && isFinished(fresh)) return fresh;
     if (mode !== "resume" && tries >= MAX_TRIES) throw new GuideGenerationError(STILL_HELD, true);
     onHeld(fresh);
     await wait(RETRY_MS, handlers.signal);
@@ -81,22 +110,29 @@ export interface Failure {
  * `status` is the guide's as the server has it once the run has stopped, or
  * null when it could not be read.
  *
+ * A 422 is the server saying the request itself cannot work (an Update with
+ * nothing new to add, a resume of a guide it cannot read): asked again, it
+ * would get the same answer.
+ *
  * A guide that is `generating` or `failed` is partly written. Only a resume
- * finishes it, so Retry is always there and asks for one, whatever stopped
- * the run: the banner cannot be put away, and without Retry the student
- * could do nothing short of a reload.
+ * finishes it, so Retry is there and asks for one, whatever stopped the run:
+ * the banner cannot be put away, and without Retry the student could do
+ * nothing short of a reload. The one exception is a resume the server
+ * refused with a 422: Retry would be that same resume, so there is none and
+ * the banner says why.
  *
  * A guide that is still `ready` was not replaced: an Update or a Regenerate
  * saves nothing until its first section is written. Retry asks for the same
- * thing again, unless the server said that cannot help. A 422 is the server
- * saying the request itself cannot work (an Update with nothing new to add):
- * Retry would get the same answer.
+ * thing again, unless the server said that cannot help.
  */
 export function failureOf(err: unknown, mode: GenerateMode, status: GuideStatus | null): Failure {
   const streamed = err instanceof GuideGenerationError;
   const message = streamed ? err.message : humanizeError(err, FAILED);
-  if (status === "generating" || status === "failed") return { message, retry: "resume", dismissible: false };
-  const retryable = streamed ? err.retryable : statusOf(err) !== 422;
+  const refused = !streamed && statusOf(err) === 422;
+  if (status === "generating" || status === "failed") {
+    return { message, retry: refused && mode === "resume" ? null : "resume", dismissible: false };
+  }
+  const retryable = streamed ? err.retryable : !refused;
   return { message, retry: retryable ? mode : null, dismissible: status === "ready" };
 }
 

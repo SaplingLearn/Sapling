@@ -26,9 +26,10 @@ import { CS, MATH, OPTIONS, deferred, mocks, resetMocks } from "./testKit";
 
 const onClose = vi.fn();
 const onCreated = vi.fn();
+const onCreatedLater = vi.fn();
 
 const renderModal = () =>
-  render(<NewGuideModal userId="u1" courses={[CS, MATH]} coursesReady semester="" onClose={onClose} onCreated={onCreated} />);
+  render(<NewGuideModal userId="u1" courses={[CS, MATH]} coursesReady coursesFailed={false} onRetryCourses={() => {}} semester="" onClose={onClose} onCreated={onCreated} onCreatedLater={onCreatedLater} />);
 
 /** The dialog with CS101's options in. */
 async function modal() {
@@ -41,6 +42,7 @@ beforeEach(() => {
   resetMocks();
   onClose.mockReset();
   onCreated.mockReset();
+  onCreatedLater.mockReset();
 });
 afterEach(cleanup);
 
@@ -94,5 +96,20 @@ describe("closing while the guide is being created", () => {
 
     await act(async () => created.resolve({ id: "g-new" }));
     expect(onCreated).not.toHaveBeenCalled();
+    // The row exists all the same: the home is told, so it can list it.
+    expect(onCreatedLater).toHaveBeenCalledTimes(1);
+  });
+
+  it("tells the home nothing when that create fails", async () => {
+    const created = deferred<{ id: string }>();
+    mocks.create.mockReturnValue(created.promise);
+    const { user, unmount } = await modal();
+    await user.click(screen.getByTestId("guide-new-generate"));
+    await user.click(screen.getByTestId("guide-new-cancel"));
+    unmount();
+
+    await act(async () => created.reject(new Error("500")));
+    expect(onCreated).not.toHaveBeenCalled();
+    expect(onCreatedLater).not.toHaveBeenCalled();
   });
 });

@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from config import get_mastery_tier
 from db.connection import pg_quote_value, table
 from models.study_guide import Tier
+from services.concept_edges import normalize as concept_key
 from services.encryption import decrypt_json_column
 from services.tool_signals import Expect, report_empty_result_async
 
@@ -35,11 +36,6 @@ class QuizMistake:
     id: str
     concept: str
     text: str
-
-
-def concept_key(name: str) -> str:
-    """A concept name for matching: case and spacing do not count."""
-    return " ".join(name.split()).casefold()
 
 
 async def _anodes(user_id: str, course_id: str) -> list[dict]:

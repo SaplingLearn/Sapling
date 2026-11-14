@@ -82,12 +82,14 @@ describe("the selection", () => {
     expect(suggestedIds(null, many(3))).toEqual([]);
   });
 
-  it("never selects more than the cap", () => {
+  it("never selects more than the cap, and past it leaves out the oldest", () => {
+    // A class lists its materials oldest first: d1 is the oldest, d35 the newest.
     const materials = many(MAX_MATERIALS + 5);
+    const newest = materials.slice(5).map(m => m.id);
     const everything = { ...COURSE, suggested_material_ids: materials.map(m => m.id) };
-    expect(suggestedIds(everything, materials)).toHaveLength(MAX_MATERIALS);
+    expect(suggestedIds(everything, materials)).toEqual(newest);
+    expect(allIds(materials)).toEqual(newest);
     expect(allIds(materials)).toHaveLength(MAX_MATERIALS);
-    expect(allIds(materials)[0]).toBe("d1");
     expect(allIds(many(2))).toEqual(["d1", "d2"]);
   });
 
@@ -111,10 +113,17 @@ describe("the selection", () => {
     expect(withNewMaterials([], before, before)).toEqual([]);
   });
 
-  it("keeps the cap when an upload would pass it", () => {
+  it("keeps the cap when an upload would pass it, leaving out the oldest", () => {
     const before = many(MAX_MATERIALS);
     const after = [...before, material("new")];
-    expect(withNewMaterials(allIds(before), before, after)).toEqual(allIds(before));
+    expect(withNewMaterials(allIds(before), before, after)).toEqual([...allIds(before).slice(1), "new"]);
+  });
+
+  it("leaves out the oldest past the cap whatever order the tiles were picked in", () => {
+    const before = many(MAX_MATERIALS);
+    const after = [...before, material("new")];
+    const picked = [...allIds(before)].reverse();
+    expect(withNewMaterials(picked, before, after)).toEqual([...allIds(before).slice(1), "new"]);
   });
 
   it("orders the picked ids as the class lists its materials", () => {

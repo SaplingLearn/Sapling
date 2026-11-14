@@ -37,6 +37,12 @@ class MemoryTable:
                 if row.get("due_date", "") > expression.split("lte.")[1].rstrip(")"):
                     return False
                 continue
+            if key == "or":
+                # The one `or` sent: `(assignment_type.in.(...),assignment_type.is.null)`.
+                kinds = expression.split("in.(")[1].split(")")[0].split(",")
+                if row.get("assignment_type") is not None and row["assignment_type"] not in kinds:
+                    return False
+                continue
             op, value = expression.split(".", 1)
             actual = row.get(key)
             if op == "eq" and actual != value:
@@ -203,6 +209,40 @@ def test_mastery_updates_do_not_regenerate_but_new_materials_do(state):
     result = svc.refresh_checklist("u", "course")
     assert len(calls) == 2
     assert next(t for t in result["topics"] if t["name"] == "Functions")["checked"]
+
+
+def test_a_syllabus_exam_stored_as_other_is_an_assessment(state):
+    """A syllabus import stores every assignment as `other`. The Study page
+    makes "Midterm 1" an exam tab by its title, so the outline must see it
+    too, or no topic is ever linked to that tab."""
+    db, calls = state
+    db["assignments"].extend([
+        {"id": "mid", "enrollment_id": "enr", "title": "Midterm 1", "assignment_type": "other", "due_date": "2026-10-20"},
+        {"id": "untyped-quiz", "enrollment_id": "enr", "title": "Quiz 3", "assignment_type": None, "due_date": "2026-10-22"},
+        {"id": "pset", "enrollment_id": "enr", "title": "Problem set 3", "assignment_type": "other", "due_date": "2026-10-21"},
+        {"id": "review", "enrollment_id": "enr", "title": "Exam review sheet", "assignment_type": "homework", "due_date": "2026-10-19"},
+    ])
+    svc.refresh_checklist("u", "course", "Fall 2026")
+    assert [a["id"] for a in calls[0]["assessments"]] == ["exam", "mid", "untyped-quiz", "late"]
+
+
+@pytest.mark.parametrize(("kind", "title", "expected"), [
+    ("exam", "Anything", True),
+    ("quiz", "Weekly check", True),
+    ("other", "Midterm 1", True),
+    ("other", "FINAL EXAM", True),
+    ("other", "Final project", True),  # the Study page calls this an exam too
+    (None, "Quiz 3", True),
+    ("other", "Examples of recursion", False),
+    ("other", "Problem set 3", False),
+    ("homework", "Exam review sheet", False),
+    ("reading", "Final chapter", False),
+    ("project", "Quiz app", False),
+])
+def test_an_assessment_is_what_the_study_page_calls_an_exam_or_a_quiz(kind, title, expected):
+    """`exam_proximity.is_assessment`, as the checklist uses it. Mirrors
+    `classifyAssessment` (frontend/src/components/study/studyModel.ts)."""
+    assert svc.is_assessment({"assignment_type": kind, "title": title}) is expected
 
 
 def test_sources_and_assessments_are_owner_offering_scoped(state):
