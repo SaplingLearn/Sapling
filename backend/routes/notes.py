@@ -122,19 +122,28 @@ def _course_offering_ids(user_id: str, course_id: str) -> list[str]:
     return ids if ids is not None else user_offering_ids_for_course(user_id, course_id)
 
 
+# A note is long-form by design, so the body's ceiling is generous — but it
+# was absent entirely, and a 300,000-character title was accepted and then
+# rendered in the notes list. Bound both.
+NOTE_TITLE_MAX = 300
+NOTE_BODY_MAX = 100_000
+NOTE_TAGS_MAX = 50
+NOTE_TAG_MAX = 50
+
+
 class CreateNoteBody(BaseModel):
     user_id: str
     course_id: str
-    title: str = ""
-    body: str = ""
-    tags: list[str] = Field(default_factory=list)
+    title: str = Field(default="", max_length=NOTE_TITLE_MAX)
+    body: str = Field(default="", max_length=NOTE_BODY_MAX)
+    tags: list[str] = Field(default_factory=list, max_length=NOTE_TAGS_MAX)
 
 
 class UpdateNoteBody(BaseModel):
     user_id: str
-    title: str | None = None
-    body: str | None = None
-    tags: list[str] | None = None
+    title: str | None = Field(default=None, max_length=NOTE_TITLE_MAX)
+    body: str | None = Field(default=None, max_length=NOTE_BODY_MAX)
+    tags: list[str] | None = Field(default=None, max_length=NOTE_TAGS_MAX)
     course_id: str | None = None
 
 

@@ -15,7 +15,7 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from routes._errors import domain_status
 from services.auth_guard import require_self
@@ -77,9 +77,14 @@ class FlashcardRatingBody(BaseModel):
     rating: int  # 1 = forgot, 2 = hard, 3 = easy
 
 
+# A card's two faces are rendered during review; 300,000 characters each was
+# accepted through /import/commit.
+CARD_FACE_MAX = 5_000
+
+
 class CardInput(BaseModel):
-    front: str
-    back: str
+    front: str = Field(..., max_length=CARD_FACE_MAX)
+    back: str = Field(..., max_length=CARD_FACE_MAX)
 
 
 class ImportParseBody(BaseModel):
@@ -92,7 +97,7 @@ class ImportParseBody(BaseModel):
 class ImportCommitBody(BaseModel):
     user_id: str
     course_id: str | None = None
-    topic: str
+    topic: str = Field(..., max_length=200)
     cards: list[CardInput]
     dedup: bool = True
 

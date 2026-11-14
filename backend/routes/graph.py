@@ -3,7 +3,7 @@ import uuid
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request, Query
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field, ValidationError
 from typing import Optional
 from pydantic_ai.exceptions import AgentRunError
 
@@ -115,9 +115,14 @@ class AddNodeBody(BaseModel):
     ``anchor_node_id`` optionally links the new node to an existing one (the
     client defaults it to the focused concept/root).
     """
-    concept_name: str
-    course_id: str
-    anchor_node_id: Optional[str] = None
+    # BOUNDED. `graph_nodes` carries a UNIQUE (user_id, course_id,
+    # concept_name), and a btree index entry cannot exceed ~2704 bytes — so
+    # an over-long name made the upsert fail inside Postgres and the request
+    # answered 500. Verified: 300,000 characters reproduced it every time.
+    # 200 is far more than any real concept name and well under the limit.
+    concept_name: str = Field(..., max_length=200)
+    course_id: str = Field(..., max_length=128)
+    anchor_node_id: Optional[str] = Field(default=None, max_length=128)
 
 
 @router.post("/{user_id}/nodes")

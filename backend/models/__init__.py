@@ -536,10 +536,17 @@ class CategoryItem(BaseModel):
     drop_lowest: int = Field(default=0, ge=0)  # gradebook_categories.drop_lowest
 
 
+# Gradebook free text, all rendered in the gradebook table. Each was
+# unbounded; 300,000 characters was accepted for a category name and an
+# assignment title alike.
+GRADEBOOK_NAME_MAX = 200
+GRADEBOOK_NOTES_MAX = 5_000
+
+
 class CreateCategoryBody(BaseModel):
     user_id: str
     semester: Optional[str] = None        # term label; default = current term
-    name: str
+    name: str = Field(..., max_length=GRADEBOOK_NAME_MAX)
     weight: float = Field(ge=0, le=100)
     drop_lowest: int = Field(default=0, ge=0)
 
@@ -554,13 +561,13 @@ class CreateAssignmentBody(BaseModel):
     user_id: str
     course_id: str
     semester: Optional[str] = None
-    title: str
+    title: str = Field(..., max_length=GRADEBOOK_NAME_MAX)
     category_id: Optional[str] = None
     points_possible: Optional[float] = Field(default=None, gt=0)
     points_earned: Optional[float] = Field(default=None, ge=0)
     due_date: Optional[str] = None
     assignment_type: Optional[AssignmentType] = None
-    notes: Optional[str] = None
+    notes: Optional[str] = Field(default=None, max_length=GRADEBOOK_NOTES_MAX)
     curve_class_mean: Optional[float] = Field(default=None, ge=0, le=1)
     curve_class_sd: Optional[float] = Field(default=None, ge=0, le=1)
     curve_avg_target: Optional[float] = Field(default=None, ge=0, le=1)
@@ -569,13 +576,13 @@ class CreateAssignmentBody(BaseModel):
 
 class UpdateAssignmentBody(BaseModel):
     user_id: str
-    title: Optional[str] = None
+    title: Optional[str] = Field(default=None, max_length=GRADEBOOK_NAME_MAX)
     category_id: Optional[str] = None
     points_possible: Optional[float] = Field(default=None, gt=0)
     points_earned: Optional[float] = Field(default=None, ge=0)
     due_date: Optional[str] = None
     assignment_type: Optional[AssignmentType] = None
-    notes: Optional[str] = None
+    notes: Optional[str] = Field(default=None, max_length=GRADEBOOK_NOTES_MAX)
     curve_class_mean: Optional[float] = Field(default=None, ge=0, le=1)
     curve_class_sd: Optional[float] = Field(default=None, ge=0, le=1)
     curve_avg_target: Optional[float] = Field(default=None, ge=0, le=1)
