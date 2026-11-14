@@ -85,6 +85,15 @@ def _cloze(text):
     return {"user_id": "u1", "paragraph": text}
 
 
+def _topic(text):
+    return {"user_id": "u1", "topic": text, "count": 5}
+
+
+def _cleanup(text):
+    return {"user_id": "u1", "cards": [{"front": "What is a heap?", "back": "A tree."},
+                                       {"front": text, "back": "An answer."}]}
+
+
 TURN = {"graph_update": {}, "mastery_changes": []}
 START = {"session_id": None, "graph_state": None}
 
@@ -116,6 +125,12 @@ CASES: list[Case] = [
          "services.flashcards.import_flow.import_generate", neutral={"cards": []}),
     Case("flashcard_import_cloze", "/api/flashcards/import/cloze", _cloze,
          "services.flashcards.import_flow.import_cloze", neutral={"cards": []}),
+    Case("flashcard_generate", "/api/flashcards/generate", _topic,
+         "services.flashcards.generation.generate", neutral={"flashcards": []}),
+    # The student's own cards come back unchanged: a client that ignores the
+    # card keeps its deck as it was.
+    Case("flashcard_import_cleanup", "/api/flashcards/import/cleanup", _cleanup,
+         "services.flashcards.import_flow.import_cleanup", neutral={"cards": _cleanup(CRISIS)["cards"]}),
 ]
 IDS = [c.id for c in CASES]
 
@@ -392,8 +407,10 @@ def real_limiters(monkeypatch):
 
 
 #: The covered routes with a rate limiter of their own on main (the tutor and
-#: notes routes are budgeted at the model chokepoint only).
-RATE_LIMITED = [c for c in CASES if c.path.startswith("/api/flashcards/")]
+#: notes routes and flashcard generation are budgeted at the model chokepoint
+#: only).
+RATE_LIMITED = [c for c in CASES
+                if c.path.startswith("/api/flashcards/") and c.path != "/api/flashcards/generate"]
 
 
 def _post_real(case: Case, text: str):
@@ -491,6 +508,112 @@ def test_the_screen_precedes_every_limiter_on_the_route(path, route):
     screen = source.index("crisis_support.screen")
     early = [m.group(0) for m in _LIMITER_CALL.finditer(source) if m.start() < screen]
     assert early == [], (path, early)
+
+
+# ── The inventory: no student text reaches a model unscreened ──────────────
+#
+# Every write route in a module that fronts a model, whose body carries free
+# text (a string that is not an id), is either SCREENED (its handler calls
+# crisis_support.screen and it has a Case above) or listed in NOT_SCREENED
+# with why no model reads that text as the student's message. A new route
+# with a text field fails here until it is one or the other. (Routes that
+# read STORED text, like the notes agent actions, have no text field: they
+# are pinned by CASES and test_every_covered_route_is_found.)
+
+#: The route modules whose handlers run a model on the student's request.
+MODEL_ROUTE_MODULES = ("learn", "notes", "flashcards", "quiz", "graph", "study_guide")
+
+NOT_SCREENED: dict[str, str] = {
+    "learn PATCH /sessions/{session_id}": "renames a session; no model",
+    "notes POST ": "creates a note; no model (its agent actions screen the stored note)",
+    "notes PATCH /{note_id}": "edits a note; no model (its agent actions screen the stored note)",
+    "flashcards POST /sets": "saves a set's name and concepts; no model",
+    "flashcards POST /import/commit": "writes the reviewed cards; no model",
+    "flashcards POST /import/parse": "uploaded course material (a file or URL), not screened (docs)",
+    "quiz POST /generate": "a difficulty choice, not text",
+    "quiz POST /attempts/{attempt_id}/answer": "graded deterministically; owner decision (docs)",
+    "quiz POST /submit": "the chosen options' labels, not text",
+    "graph POST /{user_id}/courses": "a course colour",
+    "graph PATCH /{user_id}/courses/{course_id}/color": "a course colour",
+    "graph POST /{user_id}/nodes": "adds a concept to the map; no model",
+    "graph PATCH /{user_id}/nodes/{node_id}/color": "a concept colour",
+    "graph POST /{user_id}/concept-description": "a concept name off the student's map (docs)",
+    "study_guide POST /{user_id}/plan": "ids and choices (course, term, scope, materials)",
+    "study_guide POST /{user_id}/guides": "ids and choices (course, term, scope, materials)",
+}
+
+
+def _free_text_fields(model, prefix: str = "") -> list[str]:
+    """The str fields of a body model (nested models and lists of them too),
+    ids (`models.Id`) left out."""
+    import typing
+
+    from pydantic import BaseModel
+
+    from models import ID_MAX
+
+    def models_in(annotation):
+        return [a for a in (annotation, *typing.get_args(annotation))
+                if inspect.isclass(a) and issubclass(a, BaseModel)]
+
+    found: list[str] = []
+    for name, f in model.model_fields.items():
+        args = (f.annotation, *typing.get_args(f.annotation))
+        if str in args:
+            if [m.max_length for m in f.metadata if hasattr(m, "max_length")] != [ID_MAX]:
+                found.append(prefix + name)
+            continue
+        for arg in args:
+            for nested in models_in(arg):
+                found += _free_text_fields(nested, f"{prefix}{name}.")
+    return found
+
+
+def _text_routes():
+    """(key, route, free-text fields) for every write route of the model route
+    modules whose body carries free text, read off each module's own router."""
+    import importlib
+    import typing
+
+    from pydantic import BaseModel
+
+    for module in MODEL_ROUTE_MODULES:
+        router = importlib.import_module(f"routes.{module}").router
+        for route in router.routes:
+            for method in sorted(getattr(route, "methods", set()) & {"POST", "PUT", "PATCH"}):
+                hints = typing.get_type_hints(route.endpoint)
+                fields = [f for hint in hints.values()
+                          if inspect.isclass(hint) and issubclass(hint, BaseModel)
+                          for f in _free_text_fields(hint)]
+                if fields:
+                    yield f"{module} {method} {route.path}", route, list(dict.fromkeys(fields))
+
+
+def test_no_student_text_reaches_a_model_unscreened():
+    covered = {c.path.replace("/n1/", "/{note_id}/") for c in CASES}
+    unscreened, untested, seen = [], [], set()
+    for key, route, fields in _text_routes():
+        seen.add(key)
+        screened = "crisis_support.screen" in inspect.getsource(route.endpoint)
+        module, _, path = key.split(" ", 2)
+        prefix = "/api/" + module.replace("_", "-")
+        if screened and prefix + path not in covered:
+            untested.append(key)
+        if not screened and key not in NOT_SCREENED:
+            unscreened.append((key, fields))
+    assert unscreened == [], (
+        "these routes take student text and do not call crisis_support.screen: screen them "
+        "(docs/safety/crisis-support.md, 'Adding a surface') or say in NOT_SCREENED why no "
+        f"model reads it: {unscreened}"
+    )
+    assert untested == [], f"screened but no Case in CASES: {untested}"
+    stale = sorted(k for k in NOT_SCREENED if k not in seen)
+    assert stale == [], f"NOT_SCREENED names routes that no longer take text: {stale}"
+    screened_now = sorted(
+        k for k, route, _ in _text_routes()
+        if k in NOT_SCREENED and "crisis_support.screen" in inspect.getsource(route.endpoint)
+    )
+    assert screened_now == [], f"screened now, drop from NOT_SCREENED: {screened_now}"
 
 
 # ── The screen itself ───────────────────────────────────────────────────────

@@ -1004,7 +1004,8 @@ export const generateFlashcards = (
   semester?: string,
   courseId?: string,
 ) =>
-  fetchJSON<GenerateFlashcardsResponse>('/api/flashcards/generate', {
+  // docs/safety/crisis-support.md: a crisis answer carries `crisis_support` and no cards.
+  fetchJSON<GenerateFlashcardsResponse & WithCrisisSupport>('/api/flashcards/generate', {
     method: 'POST',
     body: JSON.stringify({ user_id: userId, topic, count, semester, course_id: courseId }),
   });
@@ -1080,8 +1081,10 @@ export const importGenerate = (
     }),
   });
 
+// A crisis answer (docs/safety/crisis-support.md) carries `crisis_support` and
+// the cards that were sent, unchanged.
 export const importCleanup = (userId: string, cards: ImportCard[]) =>
-  fetchJSON<{ cards: ImportCard[] }>(`/api/flashcards/import/cleanup`, {
+  fetchJSON<{ cards: ImportCard[] } & WithCrisisSupport>(`/api/flashcards/import/cleanup`, {
     method: "POST",
     body: JSON.stringify({ user_id: userId, cards }),
   });

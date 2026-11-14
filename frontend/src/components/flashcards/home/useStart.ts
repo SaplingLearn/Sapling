@@ -14,6 +14,7 @@
  */
 import React from "react";
 import { generateFlashcards } from "@/lib/api";
+import { useCrisisSupport } from "../../safety/CrisisSupportCard";
 import { humanizeError, statusOf } from "@/lib/errorMessage";
 import { useLatestRequest, type RequestToken } from "@/lib/useLatestRequest";
 import { useToast } from "../../ToastProvider";
@@ -86,8 +87,13 @@ export function useStart(input: StartInput) {
   // state through this.
   const live = React.useRef(input);
   React.useEffect(() => { live.current = input; });
+  // docs/safety/crisis-support.md: a generation the crisis screen answered
+  // shows the card and ends the run (nothing more is made, nothing starts).
+  const crisis = useCrisisSupport();
+  const { intercept } = crisis;
 
-  /** Generates for each name in turn; resolves with the cards that were made. */
+  /** Generates for each name in turn; resolves with the cards that were made,
+   *  or null when the crisis screen answered (the run ends there). */
   const generate = React.useCallback(async (names: string[], perConcept: number, run: RequestToken) => {
     const { userId, courseId, semester } = live.current;
     const made: Card[] = [];
@@ -98,6 +104,7 @@ export function useStart(input: StartInput) {
       setProgress({ name: names[i], at: i + 1, of: names.length });
       try {
         const r = await generateFlashcards(userId, names[i], perConcept, semester || undefined, courseId || undefined);
+        if (run.isCurrent() && intercept(r)) return null;
         const cards = r.flashcards || [];
         if (!cards.length) none.push(names[i]);
         made.push(...cards);
@@ -110,7 +117,7 @@ export function useStart(input: StartInput) {
     }
     if (none.length && run.isCurrent()) toast.warn(noCardsMessage(none));
     return made;
-  }, [toast]);
+  }, [toast, intercept]);
 
   /** Resolves true when a review was started. */
   const start = React.useCallback(async (plan: StartPlan): Promise<boolean> => {
@@ -131,7 +138,7 @@ export function useStart(input: StartInput) {
       const missing = plan.onlyDue ? [] : (plan.generate ?? plan.names).filter(name => !countsFor(have, name).cards);
       if (missing.length) {
         const made = await generate(missing, plan.perConcept, run);
-        if (!run.isCurrent()) return false;
+        if (!run.isCurrent() || made === null) return false;
         if (made.length) {
           // The re-read list is the truth; what the generate calls returned
           // stands in for anything it does not (yet) hold, or for a re-read
@@ -171,5 +178,5 @@ export function useStart(input: StartInput) {
 
   const clearNotice = React.useCallback(() => setNotice(null), []);
 
-  return { start, cancel, clearNotice, progress, running, notice };
+  return { start, cancel, clearNotice, progress, running, notice, crisisDialog: crisis.dialog };
 }

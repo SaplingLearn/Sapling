@@ -62,6 +62,7 @@ vi.mock("@/lib/flashcardSetsApi", async importOriginal => ({
   suggestFlashcardSet: vi.fn(),
 }));
 
+import crisisFixture from "@/test-utils/crisisSupport.json";
 import type { getGraph } from "@/lib/api";
 import type { FlashcardSetSuggestion } from "@/lib/flashcardSetsApi";
 import type { TopicChecklist } from "@/lib/topicChecklistApi";
@@ -483,6 +484,23 @@ describe("Flashcards home: decks", () => {
     await waitFor(() => expect(homeStatus()).toMatch(/No cards could be made for this selection/));
     expect(screen.queryByText(/Card 1 of/)).toBeNull();
     expect(screen.getByRole("button", { name: "Review Just sorting" })).toBeEnabled();
+  });
+
+  it("a generation the crisis screen answered shows the card, makes nothing more and starts nothing", async () => {
+    // docs/safety/crisis-support.md
+    mocks.generate.mockResolvedValue({ flashcards: [], reply: "the card as text", crisis_support: crisisFixture } as never);
+    mocks.sets.mockResolvedValue({ sets: [savedSet({ id: "s6", name: "Sorting and trees", concepts: ["Sorting", "Trees"], exam_id: null })] });
+    const user = await home();
+
+    await user.click(screen.getByRole("button", { name: "Review Sorting and trees" }));
+
+    expect(await screen.findByRole("dialog")).toHaveTextContent(crisisFixture.title);
+    expect(mocks.generate).toHaveBeenCalledTimes(1); // the run stopped at the card
+    expect(screen.queryByText(/Card 1 of/)).toBeNull();
+    expect(screen.queryByText(/No cards could be made/)).toBeNull();
+    await user.click(screen.getByTestId("crisis-support-dismiss"));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(screen.getByRole("button", { name: "Review Sorting and trees" })).toBeEnabled();
   });
 
   it("the deck's body, or Edit in its menu, opens the builder with the set loaded", async () => {

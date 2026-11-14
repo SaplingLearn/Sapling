@@ -214,6 +214,9 @@ def generate(body: GenerateFlashcardsBody, request: Request):
     Generate AI flashcards grounded in the student's actual course material.
     Pulls library documents + weak concepts from the knowledge graph automatically.
     """
+    # docs/safety/crisis-support.md: first, before the budget; no cards are made
+    if crisis := crisis_support.screen(request, body.user_id, "flashcard_generate", body.topic):
+        return crisis_support.json_body(crisis, flashcards=[])
     require_self(body.user_id, request)
     with _flashcard_errors():
         return generation.generate(
@@ -338,10 +341,18 @@ def import_generate(body: ImportGenerateBody, request: Request):
 
 @router.post("/import/cleanup")
 def import_cleanup(body: ImportCleanupBody, request: Request):
+    # docs/safety/crisis-support.md: first, before the import limiter and the
+    # budget. The student's cards are screened as a document (a quotation in
+    # one is set aside) and come back unchanged, so a client that ignores the
+    # card keeps its deck as it was.
+    cards = _card_inputs(body.cards)
+    if crisis := crisis_support.screen(
+        request, body.user_id, "flashcard_import_cleanup",
+        *(text for card in cards for text in (card["front"], card["back"])), source="document",
+    ):
+        return crisis_support.json_body(crisis, cards=cards)
     require_self(body.user_id, request)
-    return _rate_limited_import(
-        import_flow.import_cleanup, body.user_id, _card_inputs(body.cards),
-    )
+    return _rate_limited_import(import_flow.import_cleanup, body.user_id, cards)
 
 
 @router.post("/import/cloze")

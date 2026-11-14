@@ -84,13 +84,16 @@ PostHog, not to Logfire.
 | `flashcard_set_suggest` | `POST /api/flashcards/sets/suggest` | `description` | sorting a described set |
 | `flashcard_import_paste` | `POST /api/flashcards/import/generate` (`source: "paste"`) | `text` | generating cards from pasted text |
 | `flashcard_import_cloze` | `POST /api/flashcards/import/cloze` | `paragraph` | generating cloze cards |
+| `flashcard_generate` | `POST /api/flashcards/generate` | `topic` | generating cards for a topic |
+| `flashcard_import_cleanup` | `POST /api/flashcards/import/cleanup` | every card's front and back, as a document | rewriting the cards (they come back unchanged) |
 
 Frontend surfaces that render the card: the tutor (`Learn.tsx`: chat turns
 inline, a session start as a dialog over the picker), the quiz's "Ask about
 this" panel (`AskPanel`), the study guide's "ask the tutor"
 (`useTutorHandoff`, a dialog; the tutor is not opened), the notetaker (chat
 inline; Summarize, Extract concepts and Send to tutor as a dialog), and the
-flashcards hero ("What do you want to study?"), AI-generate tab and cloze tab
+flashcards hero ("What do you want to study?"), AI-generate tab, cloze tab,
+import "Clean up with AI" and the review start that generates cards
 (dialogs).
 
 **Checked and not covered** (no student-written text reaches a model there):
@@ -106,12 +109,13 @@ flashcards hero ("What do you want to study?"), AI-generate tab and cloze tab
 - `/api/notes/{id}/generate-quiz` picks a linked concept; no model runs.
 - Study guides take choices (scope, goal, depth, materials), not text; their
   "ask the tutor" rides the tutor chat, which is covered.
-- `/api/flashcards/generate` and `/api/graph/{user}/concept-description` take
-  a concept name off the student's map, not a message.
+- `/api/graph/{user}/concept-description` takes a concept name off the
+  student's map, not a message.
 - Uploaded course material is not screened: document uploads, library
   documents (`import/generate` with `source: "library_doc"`), Anki / xlsx /
-  URL / OCR imports (`import/parse`) and their clean-up (`import/cleanup`).
-  Screening course readings would mostly flag the readings.
+  URL / OCR imports (`import/parse`). Screening course readings would mostly
+  flag the readings. (Their clean-up, `import/cleanup`, IS screened: the cards
+  are the student's deck by then, and a quotation in a card is set aside.)
 - Study-room chat (`/api/social/rooms/{id}/messages`) is peer to peer. No
   model reads it.
 - Feedback and issue reports reach no model.
@@ -137,6 +141,10 @@ flashcards hero ("What do you want to study?"), AI-generate tab and cloze tab
   statement, returns the card with the route's neutral keys, adds a `Case` to
   `test_crisis_support_routes.py` (`test_every_surface_is_covered` fails
   until it does) and renders the card on its frontend surface.
+  `test_no_student_text_reaches_a_model_unscreened` reads every write route
+  of the modules that run a model (`MODEL_ROUTE_MODULES`): a route whose body
+  carries free text must call the screen or be listed in `NOT_SCREENED` with
+  why no model reads that text.
 - **A new limiter on a covered route** (rate limit, budget, quota) goes
   AFTER the screen. `test_the_screen_precedes_every_limiter_on_the_route`
   fails if any call whose name reads as a limit, budget, quota or throttle

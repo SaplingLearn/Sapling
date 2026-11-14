@@ -1,6 +1,7 @@
 "use client";
 import React from "react";
 import Dialog from "../Dialog";
+import { useCrisisSupport } from "../safety/CrisisSupportCard";
 import { CustomSelect } from "../CustomSelect";
 import { Icon } from "../Icon";
 import { useToast } from "../ToastProvider";
@@ -153,6 +154,8 @@ function useCleanup(cards: ParsedCard[], onChange: (next: ParsedCard[]) => void)
   const { userId } = useUser();
   const [cleaning, setCleaning] = React.useState(false);
   const req = useLatestRequest();
+  // docs/safety/crisis-support.md: cards the crisis screen answered
+  const crisis = useCrisisSupport();
 
   const cleanup = async () => {
     if (!userId) return;
@@ -163,6 +166,7 @@ function useCleanup(cards: ParsedCard[], onChange: (next: ParsedCard[]) => void)
     try {
       const res = await importCleanup(userId, valid);
       if (!run.isCurrent()) return;
+      if (crisis.intercept(res)) return; // nothing was rewritten; the deck stays
       onChange(numberedCards(res.cards));
       toast.success("Cleaned up.");
     } catch (err) {
@@ -172,7 +176,7 @@ function useCleanup(cards: ParsedCard[], onChange: (next: ParsedCard[]) => void)
     }
   };
 
-  return { cleaning, cleanup };
+  return { cleaning, cleanup, crisisDialog: crisis.dialog };
 }
 
 function ModalHeader({ titleId, onClose }: { titleId: string; onClose: () => void }) {
@@ -334,11 +338,12 @@ interface PreviewPaneProps {
 
 /** Right column: where the cards go, then what they are. */
 function PreviewPane({ cards, onChange, reverse, onReverse, destination }: PreviewPaneProps) {
-  const { cleaning, cleanup } = useCleanup(cards, onChange);
+  const { cleaning, cleanup, crisisDialog } = useCleanup(cards, onChange);
   const flagged = flaggedCountOf(cards);
 
   return (
     <section className={s.preview} aria-label="Cards to import">
+      {crisisDialog}
       <Destination {...destination} />
       <div className={s.previewHead}>
         <p className={s.count}>
