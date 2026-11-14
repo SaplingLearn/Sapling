@@ -545,14 +545,3 @@ class AnswerResult(BaseModel):
     #: moves mastery.
     counted: bool
     mastery: MasteryChange | None = None
-
-
-class GenerationStep(BaseModel):
-    """`data` of a `status` SSE event: how far the generation is. The label is
-    the event's `message`. The stream speaks `services.agent_events`'s
-    envelope: `status` (this), `progress` with step `outline`
-    (`{content: GuideContent}`) or `section` (`{section: Section}`), `done`
-    (`{guide: GuideDetail}`) and `error` (`{retryable: bool}`)."""
-
-    step: int
-    total: int

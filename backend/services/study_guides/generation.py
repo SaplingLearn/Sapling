@@ -459,6 +459,13 @@ async def stream_generation(generation: Generation) -> AsyncIterator[SaplingEven
     outline and then with each section, and `done` with the finished guide.
     A failure is an `error` event, never an exception.
 
+    Each event's `data`, in `services.agent_events`'s envelope: `status`
+    `{step, total}` (its label is the `message`); `progress` `{content}`
+    (step `outline`) or `{section}` (step `section`); `done` `{guide}`, the
+    reader's detail, or null when the saved guide could not be read back;
+    `error` `{retryable}`, plus `code` (`busy`, `overtaken`) when another run
+    has the guide.
+
     The guide's claim is taken here, not in `aprepare_generation`, so a
     stream nobody iterates holds nothing. A finished run gives it back with
     its last save, before `done`; any other way the stream ends, is closed or
