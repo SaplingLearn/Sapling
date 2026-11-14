@@ -225,7 +225,8 @@ REGISTRY: dict[str, FlagDef] = {f.key: f for f in (
     # Resolved GLOBALLY (user_id=None) at the start of every pass, so turning
     # it off stops the next pass without a restart. Off = deleted accounts
     # stay hidden soft deletes (credentials are still removed at the delete
-    # itself). Server-only. Kill switch: SAPLING_FLAG_ACCOUNT_PURGE=off.
+    # itself, and the daily pass still removes any a failed delete left).
+    # Server-only. Kill switch: SAPLING_FLAG_ACCOUNT_PURGE=off.
     FlagDef("account_purge", ("off", "on"),
             "Daily job: permanently erase the personal data of accounts their "
             "student deleted more than 30 days ago. Irreversible. Global: "

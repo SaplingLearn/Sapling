@@ -109,6 +109,69 @@ def test_a_stop_request_ends_the_pass_before_the_next_claim(monkeypatch, claims,
     assert sw.purge_once(stop) == 0 and claims["calls"] == []
 
 
+# ── leftover credentials (any soft-deleted account, no grace) ───────────────
+
+
+@pytest.fixture
+def leftovers(monkeypatch):
+    """The credential seams: who still holds credentials, and what was removed."""
+    from services import account_credentials as ac
+
+    state = {"owners": [], "removed": [], "revoked": [], "fail": set()}
+
+    def remove(uid):
+        if uid in state["fail"]:
+            raise RuntimeError("db down")
+        state["removed"].append(uid)
+        return [f"tok-{uid}"]
+
+    monkeypatch.setattr(ac, "deleted_accounts_with_credentials", lambda: list(state["owners"]))
+    monkeypatch.setattr(ac, "remove_credentials", remove)
+    monkeypatch.setattr(ac, "revoke_google_tokens", lambda t: state["revoked"].append(t))
+    return state
+
+
+def test_the_pass_removes_any_deleted_accounts_leftover_credentials(leftovers):
+    leftovers["owners"] = ["user_a", "user_b"]
+
+    assert sw.sweep_leftover_credentials() == 2
+    assert leftovers["removed"] == ["user_a", "user_b"]
+    assert leftovers["revoked"] == [["tok-user_a"], ["tok-user_b"]]
+
+
+def test_a_failed_leftover_removal_is_logged_with_the_user_and_the_pass_goes_on(leftovers, caplog):
+    leftovers["owners"] = ["user_bad", "user_ok"]
+    leftovers["fail"] = {"user_bad"}
+
+    with caplog.at_level("ERROR", logger=sw.__name__):
+        assert sw.sweep_leftover_credentials() == 1
+
+    assert leftovers["removed"] == ["user_ok"]
+    assert any("user_bad" in r.getMessage() for r in caplog.records if r.levelname == "ERROR")
+
+
+def test_a_failed_leftover_scan_never_raises(monkeypatch):
+    from services import account_credentials as ac
+
+    def down():
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(ac, "deleted_accounts_with_credentials", down)
+    assert sw.sweep_leftover_credentials() == 0
+
+
+def test_every_pass_sweeps_credentials_even_with_the_purge_flag_off(monkeypatch, claims, purged, leftovers):
+    # The flag gates the 30-day hard delete. The credentials were due at the
+    # delete itself (owner decision), so finishing that is not gated by it.
+    monkeypatch.setenv("SAPLING_FLAG_ACCOUNT_PURGE", "off")
+    leftovers["owners"] = ["user_a"]
+
+    sw.run_pass()
+
+    assert leftovers["removed"] == ["user_a"]
+    assert claims["calls"] == [] and purged == []
+
+
 def test_never_started_under_pytest():
     assert sw.sweeper_enabled() is False
     asyncio.run(_start_and_stop())

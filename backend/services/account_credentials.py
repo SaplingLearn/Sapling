@@ -5,11 +5,15 @@ A student's own account delete removes them AT ONCE
 (:func:`google_tokens`), hides the account, then deletes the rows
 (:func:`delete_credentials`) and revokes the grant with the tokens it read.
 Nothing is deleted before the hide, so a failed hide is a 500 whose retry
-still finds the tokens to revoke. The 30-day purge
-(services/account_purge.py) runs the removal again
-(:func:`remove_credentials`), so a credential the delete could not remove,
-or one written after it (none should be: the guard refuses a deleted
-account's session), is still gone in the end.
+still finds the tokens to revoke. A row delete that fails AFTER the hide is
+retried, with backoff, by the after-response task that revokes the grant
+(:func:`finish_removal`); and the daily purge pass
+(services/account_purge_sweeper.py::sweep_leftover_credentials) removes the
+credentials any soft-deleted account still holds
+(:func:`deleted_accounts_with_credentials`), with no grace period, so a
+credential the delete could not remove is gone within a day. The 30-day
+purge (services/account_purge.py) runs the removal once more
+(:func:`remove_credentials`).
 
 * ``oauth_tokens`` — the Google sign-in / Calendar grant. Its tokens are
   read (and decrypted) before the row goes so the grant can be REVOKED at
@@ -30,16 +34,27 @@ from __future__ import annotations
 
 import logging
 import sys
+import time
 
 import httpx
 
 from db.connection import table
+from db.scope import runs_as_service
 from services.encryption import decrypt
 
 logger = logging.getLogger(__name__)
 
 GOOGLE_REVOKE_URL = "https://oauth2.googleapis.com/revoke"
 _REVOKE_TIMEOUT_S = 10.0
+
+#: The tables that hold a student's third-party credentials (one row each).
+CREDENTIAL_TABLES = ("oauth_tokens", "gradescope_credentials")
+#: The wait before each after-response retry of a failed credential delete.
+DELETE_RETRY_DELAYS_S = (2.0, 8.0)
+#: Most credential rows per table one purge pass looks at.
+LEFTOVER_SCAN_LIMIT = 500
+
+_sleep = time.sleep  # seam: tests do not wait out the backoff
 
 
 def _plain(value) -> str | None:
@@ -71,6 +86,61 @@ def delete_credentials(user_id: str) -> None:
     gone nothing can revoke the grant."""
     table("oauth_tokens").delete(filters={"user_id": f"eq.{user_id}"})
     table("gradescope_credentials").delete(filters={"user_id": f"eq.{user_id}"})
+
+
+@runs_as_service
+def _retry_delete(user_id: str) -> bool:
+    """Retry :func:`delete_credentials` with backoff. True once it lands;
+    False (logged with the user id) when every retry failed. Never raises.
+
+    Service role: it runs after the account delete's response, where the
+    request's (now deleted) student scope would still apply."""
+    error = "none"
+    for delay in DELETE_RETRY_DELAYS_S:
+        _sleep(delay)
+        try:
+            delete_credentials(user_id)
+            return True
+        except Exception as exc:
+            error = type(exc).__name__
+    logger.error(
+        "[account] credentials of deleted account %s are still stored after %d retries (%s);"
+        " the daily purge pass removes them", user_id, len(DELETE_RETRY_DELAYS_S), error,
+    )
+    return False
+
+
+def finish_removal(user_id: str, tokens: list[str], *, retry_delete: bool) -> None:
+    """The account delete's after-response half. Never raises.
+
+    `retry_delete`: the delete could not remove the credential rows, so retry
+    that first (:func:`_retry_delete`). Then revoke the grant with `tokens`
+    (read before the account was hidden), whether or not the rows went."""
+    if retry_delete:
+        _retry_delete(user_id)
+    revoke_google_tokens(tokens)
+
+
+def deleted_accounts_with_credentials(limit: int = LEFTOVER_SCAN_LIMIT) -> list[str]:
+    """Soft-deleted accounts that still hold a credential row: a delete that
+    could not remove it (or a row written after it). Any age, not only past
+    the purge's grace. Raises on a database failure."""
+    owners: list[str] = []
+    for name in CREDENTIAL_TABLES:
+        rows = table(name).select(
+            "user_id,users!inner(deleted_at)",
+            filters={"users.deleted_at": "not.is.null"},
+            limit=limit,
+        ) or []
+        # Re-check the embed: a non-`!inner` regression would return every
+        # live account's row with a null `deleted_at`, and those must never
+        # be removed.
+        owners += [
+            r["user_id"] for r in rows
+            if isinstance(r, dict) and r.get("user_id")
+            and isinstance(r.get("users"), dict) and r["users"].get("deleted_at")
+        ]
+    return list(dict.fromkeys(owners))
 
 
 def remove_credentials(user_id: str) -> list[str]:

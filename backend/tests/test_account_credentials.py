@@ -55,12 +55,17 @@ class AfterResponse:
     def __init__(self):
         self.calls: list[tuple] = []
 
-    def __call__(self, fn, *args):
-        self.calls.append((fn, args))
+    def __call__(self, fn, *args, **kwargs):
+        self.calls.append((fn, args, kwargs))
+
+    def finishes(self):
+        """The `finish_removal` calls scheduled: (user_id, tokens, retry_delete)."""
+        return [(*args, kwargs["retry_delete"]) for fn, args, kwargs in self.calls
+                if fn is ac.finish_removal]
 
     def revoked(self):
         """The token lists scheduled for revoke at Google."""
-        return [args[0] for fn, args in self.calls if fn is ac.revoke_google_tokens]
+        return [tokens for _uid, tokens, _retry in self.finishes()]
 
 
 def _delete_account(tables, confirmation="DELETE"):
@@ -91,8 +96,9 @@ def test_self_delete_hides_the_account_then_removes_credentials():
     assert "deleted_at" in tables.log[0][2]
     for op, name, filters in tables.log[1:]:
         assert filters == {"user_id": f"eq.{USER}"}, name
-    # The grant is revoked after the response: refresh token first.
-    assert later.revoked() == [["1//refresh", "ya29.access"]]
+    # The grant is revoked after the response: refresh token first. The
+    # credentials are already gone, so nothing is retried.
+    assert later.finishes() == [(USER, ["1//refresh", "ya29.access"], False)]
 
 
 def test_a_failed_soft_delete_keeps_the_tokens_so_the_retry_revokes_the_grant():
@@ -176,10 +182,11 @@ def test_the_route_answers_an_unconfirmed_delete_400():
     assert tables.log == []
 
 
-def test_a_credential_delete_failure_after_the_hide_still_revokes_the_grant():
+def test_a_credential_delete_failure_after_the_hide_is_retried_after_the_response():
     """Once the account is hidden the student cannot retry (the guard refuses
-    the session), so a failed row delete does not fail the delete: the grant
-    is revoked with the tokens read before the hide."""
+    the session), so a failed row delete does not fail the delete: the task
+    that revokes the grant (with the tokens read before the hide) retries the
+    delete first."""
     tables = Tables(_tokens())
     tables("gradescope_credentials").delete.side_effect = RuntimeError("db down")
 
@@ -187,7 +194,102 @@ def test_a_credential_delete_failure_after_the_hide_still_revokes_the_grant():
 
     assert result == {"deleted": True}
     assert ("update", "users") in [(op, name) for op, name, _ in tables.log]
-    assert later.revoked() == [["1//refresh", "ya29.access"]]
+    assert later.finishes() == [(USER, ["1//refresh", "ya29.access"], True)]
+
+
+# ── finish_removal: the after-response half ─────────────────────────────────
+
+
+@pytest.fixture
+def no_sleep(monkeypatch):
+    slept = []
+    monkeypatch.setattr(ac, "_sleep", slept.append)
+    return slept
+
+
+def test_finish_removal_retries_the_delete_with_backoff_then_revokes(monkeypatch, no_sleep):
+    order = []
+    attempts = iter([RuntimeError("db down"), None])
+
+    def delete(uid):
+        order.append(("delete", uid))
+        exc = next(attempts)
+        if exc:
+            raise exc
+
+    monkeypatch.setattr(ac, "delete_credentials", delete)
+    monkeypatch.setattr(ac, "revoke_google_tokens", lambda t: order.append(("revoke", t)))
+
+    ac.finish_removal(USER, ["tok"], retry_delete=True)
+
+    assert order == [("delete", USER), ("delete", USER), ("revoke", ["tok"])]
+    assert no_sleep == list(ac.DELETE_RETRY_DELAYS_S[:2])
+    assert no_sleep[0] < no_sleep[1]  # backoff
+
+
+def test_finish_removal_logs_the_user_when_every_retry_fails(monkeypatch, no_sleep, caplog):
+    calls = []
+
+    def delete(uid):
+        calls.append(uid)
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(ac, "delete_credentials", delete)
+    revoke = MagicMock()
+    monkeypatch.setattr(ac, "revoke_google_tokens", revoke)
+
+    with caplog.at_level("ERROR", logger=ac.__name__):
+        ac.finish_removal(USER, ["tok"], retry_delete=True)  # never raises
+
+    assert len(calls) == len(ac.DELETE_RETRY_DELAYS_S) >= 2
+    revoke.assert_called_once_with(["tok"])  # the grant is revoked anyway
+    (record,) = [r for r in caplog.records if r.levelname == "ERROR"]
+    assert USER in record.getMessage()
+
+
+def test_finish_removal_without_a_pending_delete_only_revokes(monkeypatch, no_sleep):
+    delete = MagicMock()
+    monkeypatch.setattr(ac, "delete_credentials", delete)
+    revoke = MagicMock()
+    monkeypatch.setattr(ac, "revoke_google_tokens", revoke)
+
+    ac.finish_removal(USER, ["tok"], retry_delete=False)
+
+    delete.assert_not_called()
+    revoke.assert_called_once_with(["tok"])
+    assert no_sleep == []
+
+
+# ── deleted_accounts_with_credentials ───────────────────────────────────────
+
+
+def test_leftover_credentials_are_found_through_the_deleted_account(monkeypatch):
+    reads = {}
+
+    def tbl(name):
+        m = MagicMock()
+
+        def select(columns, filters=None, limit=None, **k):
+            reads[name] = (columns, filters, limit)
+            rows = {
+                "oauth_tokens": [{"user_id": "u1", "users": {"deleted_at": "2026-11-01T00:00:00Z"}},
+                                 # a non-!inner regression would return live rows too
+                                 {"user_id": "live", "users": {"deleted_at": None}}],
+                "gradescope_credentials": [{"user_id": "u1", "users": {"deleted_at": "x"}},
+                                           {"user_id": "u2", "users": {"deleted_at": "x"}}],
+            }
+            return rows[name]
+        m.select.side_effect = select
+        return m
+
+    monkeypatch.setattr(ac, "table", tbl)
+
+    assert ac.deleted_accounts_with_credentials() == ["u1", "u2"]
+    for name in ("oauth_tokens", "gradescope_credentials"):
+        columns, filters, limit = reads[name]
+        assert "users!inner(deleted_at)" in columns
+        assert filters == {"users.deleted_at": "not.is.null"}
+        assert limit == ac.LEFTOVER_SCAN_LIMIT
 
 
 # ── remove_credentials ──────────────────────────────────────────────────────

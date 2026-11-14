@@ -69,6 +69,8 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
     # ── Services ──
     ("services/academics.py", "resolve_offering", "service_scope"): "on-demand course_offerings insert (catalog)",
     ("services/academics.py", "school_peer_user_ids", "runs_as_service"): "reads other students' enrollments",
+    ("services/account_credentials.py", "_retry_delete", "runs_as_service"):
+        "after the account delete's response: oauth_tokens/gradescope_credentials of a now-deleted account",
     ("services/achievement_service.py", "check_achievements", "runs_as_service"): "awards are server decisions",
     ("services/achievement_service.py", "get_user_stat", "runs_as_service"): "achievement counters",
     ("services/achievement_service.py", "grant_linked_cosmetics", "runs_as_service"): "cosmetic awards",

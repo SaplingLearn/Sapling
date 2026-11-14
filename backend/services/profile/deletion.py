@@ -11,7 +11,7 @@ from typing import Callable
 
 from db.connection import table
 from db.scope import service_scope
-from services.account_credentials import delete_credentials, google_tokens, revoke_google_tokens
+from services.account_credentials import delete_credentials, finish_removal, google_tokens
 from services.analytics_consent import clear_analytics_consent_cache
 from services.auth_guard import clear_account_state_cache
 from services.posthog_client import delete_person as delete_posthog_person
@@ -54,15 +54,18 @@ def delete_account(
             {"deleted_at": datetime.now(timezone.utc).isoformat()},
             filters={"id": f"eq.{user_id}"},
         )
+    retry_delete = False
     try:
         with service_scope():
             delete_credentials(user_id)
     except Exception as exc:
-        # The account is hidden, so the guard refuses a retry. Do not fail
-        # the delete that happened: the grant is still revoked below with the
-        # tokens read above, and the purge removes the leftover rows.
-        logger.warning("[account] credential delete failed after the soft delete: %s",
-                       type(exc).__name__)
+        # The account is hidden, so the guard refuses the student's retry. Do
+        # not fail the delete that happened: the after-response task below
+        # retries the row delete before it revokes the grant (with the tokens
+        # read above), and the daily purge pass removes whatever is still left.
+        retry_delete = True
+        logger.warning("[account] credential delete for %s failed after the soft delete (%s);"
+                       " retried after the response", user_id, type(exc).__name__)
     # ADR 0028: from here on the PostHog worker's consent check reads
     # deleted_at, so nothing — not even items already queued — names this user
     # (which would re-create the person the delete below removes). Drop the
@@ -77,7 +80,7 @@ def delete_account(
     # after the consent TTL. Only reached once the soft delete landed.
     after_response(delete_posthog_person, user_id)
     # Revoke the Google grant itself (best effort, never raises): our copy of
-    # the tokens is gone (or goes with the purge), this ends Sapling's access
-    # at Google.
-    after_response(revoke_google_tokens, tokens)
+    # the tokens is gone (or is retried first), this ends Sapling's access at
+    # Google.
+    after_response(finish_removal, user_id, tokens, retry_delete=retry_delete)
     return {"deleted": True}

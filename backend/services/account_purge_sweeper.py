@@ -1,6 +1,11 @@
 """The daily account purge (owner decision 2026-11-14), as a lifespan task.
 
-Once a day each API process runs one pass: when the `account_purge` flag is
+Once a day each API process runs one pass (`run_pass`). It first removes the
+credentials any soft-deleted account still holds (`sweep_leftover_credentials`:
+the self-delete removes them at once, so a row is left only when that delete
+and its after-response retries failed); that runs whatever the flag says,
+since the credentials were due at the delete itself. Then, when the
+`account_purge` flag is
 on (resolved globally, at the start of every pass, so turning it off stops
 the next pass without a restart) it claims accounts deleted more than
 `account_purge.GRACE_DAYS` ago through `claim_accounts_for_purge` — an atomic
@@ -29,7 +34,7 @@ import sys
 import threading
 
 from db.connection import rpc
-from services import account_purge, events_service
+from services import account_credentials, account_purge, events_service
 from services.feature_flags import flag_on
 
 logger = logging.getLogger(__name__)
@@ -105,13 +110,43 @@ def purge_once(stop: threading.Event | None = None) -> int:
     return purged
 
 
+def sweep_leftover_credentials() -> int:
+    """Remove (and revoke at Google) the credentials of every soft-deleted
+    account that still holds some, at any age. Returns how many accounts were
+    cleaned. A failure is logged with the account id and retried on the next
+    pass. Never raises."""
+    try:
+        owners = account_credentials.deleted_accounts_with_credentials()
+    except Exception:
+        logger.warning("[account-purge] could not look for leftover credentials", exc_info=True)
+        return 0
+    cleaned = 0
+    for user_id in owners:
+        try:
+            account_credentials.revoke_google_tokens(account_credentials.remove_credentials(user_id))
+            cleaned += 1
+        except Exception as exc:
+            logger.error("[account-purge] could not remove the leftover credentials of deleted"
+                         " account %s (%s); retried on the next pass", user_id, type(exc).__name__)
+    if cleaned:
+        logger.info("[account-purge] removed the leftover credentials of %d deleted account(s)", cleaned)
+    return cleaned
+
+
+def run_pass(stop: threading.Event | None = None) -> int:
+    """One daily pass: the leftover credentials, then the purge (flag-gated).
+    Returns how many accounts were purged. Never raises."""
+    sweep_leftover_credentials()
+    return purge_once(stop)
+
+
 async def _loop(stop: threading.Event) -> None:
     delay = FIRST_PASS_DELAY_SECONDS
     while True:
         await asyncio.sleep(delay)
         delay = PASS_INTERVAL_SECONDS
         try:
-            await asyncio.to_thread(purge_once, stop)
+            await asyncio.to_thread(run_pass, stop)
         except Exception:
             logger.exception("[account-purge] pass raised; the loop continues")
 
