@@ -309,10 +309,12 @@ def test_a_finished_guide_is_ready_with_no_queued_section_and_the_claim_free(wor
     assert row["previous_content"] is None and row["answers"] is None
     assert [s.status for s in world.content().sections] == ["written"] * 3
     # The claim was held for the whole run, refreshed along the way, and
-    # given up with the last save: the guide is free when `done` arrives.
+    # given up with the last save, which lands before the last status goes
+    # out: the guide is ready and free by the `check` step.
     held = [r["generating_at"] for r in rows]
-    assert all(held[:-1]) and len(set(held)) > 3
-    assert (events[-1].type, held[-1], rows[-1]["status"]) == ("done", None, "ready")
+    assert all(held[:-2]) and len(set(held)) > 3
+    assert _shape(events)[-2:] == [("status", "check"), ("done", "done")]
+    assert [(r["generating_at"], r["status"]) for r in rows[-2:]] == [(None, "ready")] * 2
     assert events[-1].data == {
         "guide": {"id": GUIDE, "status": "ready", "generated_at": row["generated_at"]},
     }
@@ -1594,6 +1596,63 @@ def test_the_claim_is_released_when_the_request_is_cancelled_mid_section(world, 
     assert held is not None and row["generating_at"] is None
     assert row["status"] == "generating"
     assert [s.status for s in world.content().sections] == ["queued", "queued"]
+
+
+def test_a_reader_that_leaves_at_the_last_step_still_leaves_the_guide_ready(world, monkeypatch):
+    """The stream is closed at the `check` step, the last before `done`:
+    every section is written, so the guide must not be left `generating`
+    for the next open to spend a generation on."""
+    world.guide()
+    Script(monkeypatch, outline=_outline(_planned("One")))
+
+    async def scenario():
+        stream = generation.stream_generation(
+            await generation.aprepare_generation(ME, GUIDE, "resume"))
+        async for event in stream:
+            if (event.type, event.step) == ("status", "check"):
+                break
+        await stream.aclose()
+
+    run(scenario())
+
+    row = world.stored()
+    assert (row["status"], row["generating_at"]) == ("ready", None)
+
+
+def test_a_claim_that_landed_as_the_request_was_cancelled_is_still_given_back(world, monkeypatch):
+    """With the native async DB client a cancelled request can still land.
+    A token the run wrote but never learned would keep the guide held until
+    the claim goes stale, so the writes that move the token run to the end."""
+    world.guide()
+    Script(monkeypatch, outline=_outline(_planned("One")))
+    landed: list[str] = []
+    update = world.db.aupdate
+
+    async def lands_then_answers_late(patch, *args, **kwargs):
+        rows = await update(patch, *args, **kwargs)
+        if not landed and patch == {"generating_at": rows[0]["generating_at"] if rows else None}:
+            landed.append(rows[0]["generating_at"])
+            await anyio.sleep(0.05)  # the response is still on its way
+        return rows
+
+    monkeypatch.setattr(world.db, "aupdate", lands_then_answers_late)
+
+    async def scenario():
+        prepared = await generation.aprepare_generation(ME, GUIDE, "resume")
+        with anyio.CancelScope() as request:
+            async with anyio.create_task_group() as tasks:
+                async def consume():
+                    async for _ in generation.stream_generation(prepared):
+                        pass
+                tasks.start_soon(consume)
+                while not landed:
+                    await anyio.sleep(0)
+                request.cancel()
+
+    anyio.run(scenario)
+
+    assert landed and landed[0] is not None
+    assert world.stored()["generating_at"] is None
 
 
 def test_an_overtaken_run_stops_without_writing_or_releasing(world, monkeypatch):

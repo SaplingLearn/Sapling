@@ -21,6 +21,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+import anyio
+
 from db.connection import table
 from models.study_guide import (
     GUIDE_FORMAT,
@@ -309,12 +311,11 @@ async def asave_content(
         patch["previous_content"] = _encrypt_content(guide.content)
     if answers is not None:
         patch["answers"] = _encrypt_answers(answers) if answers else None
-    filters = _own(guide.user_id, guide.id)
-    if claim is not None:
-        patch["generating_at"] = None if release else _now().isoformat()
-        filters = _held(guide.user_id, guide.id, claim)
-    rows = await table(TABLE).aupdate(patch, filters=filters)
-    if claim is not None and not rows:
+    if claim is None:
+        return _written(await table(TABLE).aupdate(patch, filters=_own(guide.user_id, guide.id)))
+    patch["generating_at"] = None if release else _now().isoformat()
+    rows = await _aupdate_claim(patch, _held(guide.user_id, guide.id, claim))
+    if not rows:
         raise ClaimLost(guide.id)
     return _written(rows)
 
@@ -356,6 +357,17 @@ def _token(rows: list | None) -> str | None:
     return rows[0]["generating_at"] if rows else None
 
 
+async def _aupdate_claim(patch: dict[str, Any], filters: dict[str, str]) -> list | None:
+    """An update that moves the claim token, run to the end even when the
+    request is cancelled meanwhile. A cancelled request can still land (the
+    native async DB client has sent it), and a run that never learns the
+    token it wrote cannot give the claim back: the guide would stay held
+    until the claim goes stale. Shielded, the run gets the token and the
+    cancellation arrives at its next await."""
+    with anyio.CancelScope(shield=True):
+        return await table(TABLE).aupdate(patch, filters=filters)
+
+
 def claim_is_held(guide: GuideRow) -> bool:
     """Whether a run held the guide when it was loaded: it has a claim that is
     not stale. Good for refusing a request early; only ``aclaim_generation``
@@ -376,9 +388,9 @@ async def aclaim_generation(user_id: str, guide_id: str) -> str | None:
     now = _now()
     stale_before = (now - CLAIM_STALE_AFTER).isoformat()
     for free in ("is.null", f"lt.{stale_before}"):
-        rows = await table(TABLE).aupdate(
+        rows = await _aupdate_claim(
             {"generating_at": now.isoformat()},
-            filters={**_own(user_id, guide_id), "generating_at": free},
+            {**_own(user_id, guide_id), "generating_at": free},
         )
         if rows:
             return _token(rows)
@@ -389,9 +401,7 @@ async def atouch_generation(user_id: str, guide_id: str, claim: str) -> str:
     """Refresh a held claim (the run's heartbeat) and return the new token.
     ``ClaimLost`` when ``claim`` is no longer on the row: the claim is not
     taken back from whoever holds it now."""
-    rows = await table(TABLE).aupdate(
-        {"generating_at": _now().isoformat()}, filters=_held(user_id, guide_id, claim),
-    )
+    rows = await _aupdate_claim({"generating_at": _now().isoformat()}, _held(user_id, guide_id, claim))
     token = _token(rows)
     if token is None:
         raise ClaimLost(guide_id)

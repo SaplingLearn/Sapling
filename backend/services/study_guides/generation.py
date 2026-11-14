@@ -428,8 +428,11 @@ async def _aevents(run: _Run) -> AsyncIterator[SaplingEvent]:
         )
     _refuse_nothing_to_read(run, todo)
 
-    yield _status("check", "Checking citations and blocks", total, total)
+    # Saved before the last status goes out: a reader that leaves now (the
+    # stream is closed at this `yield`) still finds the guide ready, rather
+    # than `generating` with every section written.
     await _afinish(run)
+    yield _status("check", "Checking citations and blocks", total, total)
     _log_generated(run)
     yield await _adone(run)
 
