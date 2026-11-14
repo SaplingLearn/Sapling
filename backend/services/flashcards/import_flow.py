@@ -9,6 +9,7 @@ over them.
 from __future__ import annotations
 
 import base64
+import logging
 
 from db.connection import table
 from services import events_service
@@ -39,6 +40,8 @@ from services.flashcards.importing import (
     scrape_quizlet_url,
 )
 from services.llm_budget import reraise_budget_refusal
+
+logger = logging.getLogger(__name__)
 
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024
 
@@ -80,7 +83,7 @@ def import_commit(
     try:
         check_achievements(user_id, "flashcards_created", {"count": len(rows)})
     except Exception:
-        pass
+        logger.warning("flashcards_created achievement check failed", exc_info=True)
 
     return {"inserted": len(rows), "skipped_duplicates": skipped_count}
 

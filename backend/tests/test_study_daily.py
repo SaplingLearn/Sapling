@@ -13,14 +13,14 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from routes.study import router
+import routes.study as route
 from services.study import get_daily
 from tests.split_patches import patch_in
 
 # Mounted alone (as main.py mounts it, at /api/study) so the test doesn't
 # depend on every other router's import chain.
 _app = FastAPI()
-_app.include_router(router, prefix="/api/study")
+_app.include_router(route.router, prefix="/api/study")
 client = TestClient(_app)
 
 NOW = datetime(2026, 11, 8, 18, 0, tzinfo=timezone.utc)
@@ -401,8 +401,6 @@ def test_daily_route_refuses_an_offset_that_is_not_a_number():
 def test_the_route_module_holds_no_logic():
     """The route is the HTTP surface only (#118): it has no database handle
     of its own, so a patch on ``routes.study.table`` would intercept nothing."""
-    import routes.study as route
-
     assert not hasattr(route, "table")
     assert route.get_daily is not get_daily  # the wrapper, not the service
 
