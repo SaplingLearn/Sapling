@@ -294,6 +294,39 @@ describe("another run holds the guide", () => {
     expect(mocks.generateGuide).toHaveBeenCalledTimes(2);
   });
 
+  // Two requests raced for the claim and this one lost: its stream was
+  // already open, so it hears it as an `error` event, not a 409.
+  it.each([
+    ["busy", new GuideGenerationError("Another tab is writing this guide.", true, "busy")],
+    ["overtaken", new GuideGenerationError("Another request took over writing this guide.", true, "overtaken")],
+    ["busy, from a server that sends no code", new GuideGenerationError("Another tab is writing this guide.", true)],
+    ["overtaken, from a server that sends no code", new GuideGenerationError("Another request took over writing this guide.", true)],
+  ])("follows the other run when this one's stream lost the guide to it (%s)", async (_, lost) => {
+    vi.useFakeTimers();
+    mocks.generateGuide.mockRejectedValueOnce(lost).mockReturnValueOnce(deferred<GuideDetail>().promise);
+    mocks.getGuide.mockResolvedValueOnce(newGuide(finishedGuide())).mockResolvedValue(partial());
+    renderReader();
+    await flush();
+
+    expect(screen.getByTestId("guide-generating")).toHaveTextContent("This guide is being written in another tab");
+    expect(screen.queryByTestId("guide-generation-error")).not.toBeInTheDocument();
+    await flush(RETRY_MS);
+    expect(mocks.generateGuide).toHaveBeenCalledTimes(2);
+    expect(mocks.generateGuide).toHaveBeenLastCalledWith("u1", GUIDE_ID, "resume", expect.any(Object));
+  });
+
+  it("shows the error banner for a stream error with another code, even in the same words", async () => {
+    vi.useFakeTimers();
+    mocks.generateGuide.mockRejectedValueOnce(new GuideGenerationError("Another tab is writing this guide.", true, "other"));
+    mocks.getGuide.mockResolvedValueOnce(newGuide(finishedGuide())).mockResolvedValue(partial());
+    renderReader();
+    await flush();
+
+    expect(screen.getByTestId("guide-generation-error")).toHaveTextContent("Another tab is writing this guide.");
+    await flush(RETRY_MS * 2);
+    expect(mocks.generateGuide).toHaveBeenCalledTimes(1);
+  });
+
   it("stops when the reader is left while it waits", async () => {
     vi.useFakeTimers();
     mocks.generateGuide.mockRejectedValue(conflict());

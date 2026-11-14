@@ -99,6 +99,14 @@ describe("generateGuide", () => {
     expect((await failure(generateGuide("u1", "g1", "resume"))).retryable).toBe(true);
   });
 
+  it("carries the error's code when the server sends one", async () => {
+    streams(event("error", "error", "Another tab is writing this guide.", { retryable: true, code: "busy" }));
+    expect((await failure(generateGuide("u1", "g1", "resume"))).code).toBe("busy");
+
+    streams(event("error", "error", "The guide could not be written.", { retryable: true }));
+    expect((await failure(generateGuide("u1", "g1", "resume"))).code).toBeNull();
+  });
+
   it("treats an error that does not say as one worth retrying, and words one with no message", async () => {
     streams(event("error", "error", "", null));
     const err = await failure(generateGuide("u1", "g1", "resume"));

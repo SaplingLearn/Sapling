@@ -40,13 +40,32 @@ export interface Run {
   onHeld: (fresh: GuideDetail) => void;
 }
 
+/** The codes of a stream's `error` event that mean another request holds the guide. */
+const HELD_CODES = ["busy", "overtaken"];
+/** The messages of those events, from a server that sends no code. */
+const HELD_MESSAGES = ["Another tab is writing this guide.", "Another request took over writing this guide."];
+
+/**
+ * Another request holds the guide. Most often the server says so with a 409
+ * before the stream starts. When two requests race for the claim, the one
+ * that loses has already been answered 200, so it hears it as the stream's
+ * `error` event instead: "busy" when the other took the claim first,
+ * "overtaken" when the other took it over from this one.
+ */
+function heldElsewhere(err: unknown): boolean {
+  if (statusOf(err) === 409) return true;
+  if (!(err instanceof GuideGenerationError)) return false;
+  return err.code ? HELD_CODES.includes(err.code) : HELD_MESSAGES.includes(err.message);
+}
+
 /**
  * Write the guide and resolve with it once it is done.
  *
- * A 409 means another run holds the guide. Re-read it, so what that run has
- * written shows, then wait and ask again. Asking again, not only re-reading,
- * is what picks the guide up when the tab that was writing it closes: its
- * claim lapses and this request takes it.
+ * A 409, or a stream that lost the guide to another request
+ * (`heldElsewhere`), means another run holds the guide. Re-read it, so what
+ * that run has written shows, then wait and ask again. Asking again, not only
+ * re-reading, is what picks the guide up when the tab that was writing it
+ * closes: its claim lapses and this request takes it.
  *
  * A resume has nothing left to do once that run has finished, so the guide it
  * re-reads is its result. An Update or a Regenerate still has its own work to
@@ -58,7 +77,7 @@ export async function writeGuide({ userId, guideId, mode, handlers, onHeld }: Ru
     try {
       return await generateGuide(userId, guideId, mode, handlers);
     } catch (err) {
-      if (statusOf(err) !== 409) throw err;
+      if (!heldElsewhere(err)) throw err;
     }
     const fresh = await getGuide(userId, guideId);
     if (mode === "resume" && fresh.status !== "generating") return fresh;

@@ -99,6 +99,8 @@ export class GuideGenerationError extends Error {
   constructor(
     message: string,
     readonly retryable: boolean,
+    /** The server's name for what went wrong ("busy", "overtaken"), when it sends one. */
+    readonly code: string | null = null,
   ) {
     super(message);
     this.name = "GuideGenerationError";
@@ -120,6 +122,7 @@ function dispatch(event: StreamEvent, handlers: GenerationHandlers): GuideDetail
     throw new GuideGenerationError(
       event.message || "The guide could not be written.",
       data.retryable !== false,
+      typeof data.code === "string" ? data.code : null,
     );
   } else if (event.type === "done") {
     return data.guide as GuideDetail;
