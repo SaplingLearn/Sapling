@@ -135,6 +135,9 @@ const FLAG_KILL_SWITCHES = [
   // reads it; shared so the switch reads the same on every service.
   "spend_alerts",
   "account_purge",
+  // docs/safety/crisis-support.md: the crisis-support screen on student AI
+  // routes. No job reads it; shared so the switch reads the same everywhere.
+  "crisis_support",
 ].map((key) => `SAPLING_FLAG_${key.toUpperCase()}`);
 
 /** Per-slot model overrides (agents/_providers.py: `SAPLING_MODEL_<TASK>`,
