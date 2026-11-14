@@ -1,0 +1,55 @@
+# gitleaks configuration (.github/workflows/secret-scan.yml).
+#
+# The default ruleset, plus a narrow allowlist of values that are public or
+# fake by construction. Every entry matches a specific VALUE (never a whole
+# file), so a real key pasted next to one of them is still caught. Before
+# adding an entry, confirm the value is not a real credential; if it is,
+# rotate it first, then remove it from the tree. Allowlisting does not make
+# a leaked secret safe.
+#
+# Run it locally over the full history:
+#   gitleaks git . --config .gitleaks.toml --redact
+
+title = "Sapling gitleaks config"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = """Supabase CLI's public demo JWTs (iss "supabase-demo"): the anon and \
+service_role keys every `supabase start` ships, signed with the CLI's public default \
+secret. Used only against the local stack (backend/.env.local.example, \
+frontend/.env.local.example, the E2E build scripts)."""
+regexes = [
+  # base64url of `{"iss":"supabase-demo",` at the start of the payload segment.
+  '''^eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIi[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+$''',
+]
+
+[[allowlists]]
+description = "The local-only demo ENCRYPTION_KEY in backend/.env.local.example (encrypts fake local seed data only)."
+condition = "AND"
+paths = ['''^backend/\.env\.local\.example$''']
+regexes = ['''^(0123456789abcdef){4}$''']
+
+[[allowlists]]
+description = "Placeholder API keys the CI / E2E / eval lanes set so config validation passes; never valid credentials."
+regexes = [
+  '''^e2e-dummy-key-no-billing$''',
+  '''^dummy-not-used-in-(tests|replay)$''',
+]
+
+[[allowlists]]
+description = "Test fixtures and identifiers that only look like keys."
+regexes = [
+  # Fake private payloads in the trace/logfire scrubber tests.
+  '''^SHORT_PRIVATE_\d+$''',
+  # The landing page's localStorage key name (frontend/src/lib/landing/engine/plant.ts).
+  '''^sapling-planted-v\d+$''',
+]
+
+[[allowlists]]
+description = "Misconception `wrong_key` lookup keys in recorded eval cassettes (a plaintext label, not a credential)."
+condition = "AND"
+paths = ['''^backend/tests/evals/cassettes/''']
+regexTarget = "line"
+regexes = ['''"wrong_key":''']
