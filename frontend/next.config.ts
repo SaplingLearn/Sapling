@@ -117,6 +117,23 @@ const nextConfig: NextConfig = {
     ];
   },
   async headers() {
+    // Security response headers (#testathon-hardening).
+    //
+    // Scope note: these are deliberately the directives that CANNOT blank the
+    // app. A full `script-src`/`default-src` CSP is NOT set here: the app
+    // serves an inline boot script (licensedFonts GUMMI_BOOT_SCRIPT), inline
+    // styles throughout, Google Fonts, the R2 font host, the API origin and
+    // PostHog — locking those down without auditing every origin trades a
+    // clickjacking risk for a white-screen risk, which is strictly worse.
+    // `frame-ancestors`/`object-src`/`base-uri` constrain framing and
+    // injection only; they never block a legitimate resource load.
+    const csp = [
+      "frame-ancestors 'none'", // clickjacking: supersedes XFO where supported
+      "object-src 'none'",      // no <object>/<embed> plugin content
+      "base-uri 'self'",        // a <base> injection cannot repoint relative URLs
+      "form-action 'self'",     // an injected <form> cannot post credentials offsite
+    ].join("; ");
+
     return [
       {
         source: "/(.*)",
@@ -124,6 +141,19 @@ const nextConfig: NextConfig = {
           {
             key: "Cross-Origin-Opener-Policy",
             value: "same-origin-allow-popups",
+          },
+          // Clickjacking. The app had NO framing protection: any origin could
+          // iframe saplinglearn.com and overlay it for UI-redress.
+          { key: "Content-Security-Policy", value: csp },
+          { key: "X-Frame-Options", value: "DENY" },
+          // MIME sniffing: stops a text/plain upload being executed as script.
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          // Don't leak path+query (which carry ids) to third-party origins.
+          { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+          // No feature of these is used; deny them so an injected frame can't.
+          {
+            key: "Permissions-Policy",
+            value: "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
           },
         ],
       },
