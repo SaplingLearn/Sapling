@@ -452,6 +452,8 @@ QUOTED_IN_NOTES: list[str] = [
     '"I want to kill myself," said the patient.',
     'Hamlet says "I want to die" to Horatio.',
     'HAMLET: "I want to die"',
+    'Doctor: How are you?\nJane: "I want to die."',
+    'ROMEO: Speak again.\nJULIET: "I want to die"',
     'Lady Macbeth: "I want to die"',
     '**Ophelia:** "I want to die"',
     'The author notes "I want to die" as the turning point.',
@@ -476,12 +478,23 @@ UNATTRIBUTED_QUOTES_IN_NOTES: list[str] = [
     'They were asleep: "I want to die"',
     'Talked to her today: "I want to die"',
     "Week 4 notes\n“I want to die”\nhomework due Friday",
+    # a capitalized word before a colon is a label unless it is a known
+    # literary speaker or the note reads as a script (two different names)
+    'Ugh: "I want to die"',
+    'Tonight: "I want to kill myself"',
+    'Update: "I want to die"',
+    'Honestly Tired: "I want to die"',
+    'Sarah: "I want to die"',
+    'Sam: hi\nSam: "I want to die"',
+    'Mood: bad\nToday: "I want to die"',
+    'Ugh: bad day\nTonight: "I want to die"',
 ]
 
 
 @pytest.mark.parametrize("text", UNATTRIBUTED_QUOTES_IN_NOTES)
 def test_an_unattributed_quotation_in_a_note_still_matches(text):
     assert detect(text, source="document") is not None
+
 
 #: Crisis language in a note that is still the student's own: outside any
 #: quotation, or quoted inside a sentence that speaks in the first person.

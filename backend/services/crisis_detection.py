@@ -48,8 +48,10 @@ How matching works (every list below is a regex over `normalize(text)`):
    first-person word. A speaker is a reporting verb with a subject ('a
    patient says "..."', '"...," said the patient', `_REPORTING`), a
    third-person speaker word just before it ('the speaker's refrain, "..."',
-   `_SPEAKER`), or a capitalized name before a colon ('Macbeth: "..."',
-   never a label such as 'Note:', 'Today:', 'Dear diary:', `_LABELS`). A
+   `_SPEAKER`), or a `Name:` before it that is a known dramatic or literary
+   speaker ('Macbeth: "..."', 'Lady Macbeth:', `_KNOWN_SPEAKER`) or one of
+   two or more different speakers in a script ('Doctor: ...' then 'Jane:
+   "..."'). A lone unknown 'Sarah:' and a label ('Note:', 'Ugh:') are not. A
    quotation with no speaker is the student's own and counts ('Note: "I want
    to die"', a note that is only '"I want to die"'). The sentence is the one
    the quotation sits in: a break inside the quotation does not end it, a
@@ -364,13 +366,19 @@ GUARDS: tuple[str, ...] = (
     r"self ?(?:harm|injury) (?:rates?|statistics|stats|data|research|studies|study|literature|prevalence)",
 )
 
+#: Literary figures and authors a lesson on suicide names. A TOPIC_GUARD
+#: each, and (with `_DRAMATIC_SPEAKERS`) a speaker a `Name:` line can name.
+#: Names take an optional "s": normalize turns "Hamlet's" into "hamlets".
+_LITERARY_NAMES: tuple[str, ...] = (
+    r"werthers?", r"hamlets?", r"ophelias?", r"romeos?", r"juliets?", r"cleopatras?", r"socrates",
+    r"plaths?", r"woolfs?", r"hemingways?", r"camus", r"sisyphus", r"kareninas?", r"bovarys?",
+)
+
 #: TOPIC_GUARDS: naming one of these anywhere in a text vetoes its MENTION
 #: matches (never an EXPLICIT phrase): the text is about coursework.
 TOPIC_GUARDS: tuple[str, ...] = (
-    # Names take an optional "s": normalize turns "Hamlet's" into "hamlets".
     r"durkheims?", r"euthanasia", r"seppuku", r"hara ?kiri", r"kamikazes?", r"apoptosis",
-    r"werthers?", r"hamlets?", r"ophelias?", r"romeos?", r"juliets?", r"cleopatras?", r"socrates",
-    r"plaths?", r"woolfs?", r"hemingways?", r"camus", r"sisyphus", r"kareninas?", r"bovarys?",
+    *_LITERARY_NAMES,
     rf"(?:theory|theories|sociology|epidemiology|types?|forms?|rates?|statistics|causes|history"
     rf"|ethics|morality|philosophy|portrayal|depictions?|representations?|themes?|motifs?|prevalence"
     rf"|risk factors?) (?:of|on|about|for) (?:{_SUICIDE}|self ?harm)",
@@ -470,9 +478,23 @@ _ATTRIBUTION_BEFORE, _ATTRIBUTION_AFTER = 5, 3
 _NAME_COLON = re.compile(
     r"(?:^|[^\w'’.-])((?:[^\W\d_][\w'’.-]*[ \t]+){0,2}[^\W\d_][\w'’.-]*)[*_]*[ \t]*:[*_]*[ \t]*$"
 )
-#: Capitalized words before a colon that are labels, not speakers: a
-#: student's own 'Note:', 'Today:', 'Dear diary:', 'Me:'. Any word ending in
-#: "ly" ('Honestly:', 'Lately:') is one too.
+#: A speaker line of a script: a line that opens with a capitalized name and
+#: a colon ('Doctor: How are you?', 'JULIET: ...'), on the RAW text.
+_SPEAKER_LINE = re.compile(
+    r"^[ \t>*_-]*((?:[^\W\d_][\w'’.-]*[ \t]+){0,2}[^\W\d_][\w'’.-]*)[*_]*[ \t]*:",
+    re.MULTILINE,
+)
+#: Dramatic speakers a `Name:` line names on its own, beside `_LITERARY_NAMES`.
+_DRAMATIC_SPEAKERS = (
+    r"macbeths?", r"banquo", r"othello", r"iago", r"desdemona", r"lear", r"cordelia",
+    r"horatio", r"gertrude", r"claudius", r"polonius", r"laertes", r"antigone", r"oedipus",
+    r"medea", r"faust", r"prospero", r"brutus", r"cassius", r"caesar",
+)
+_KNOWN_SPEAKER = re.compile(rf"(?:{'|'.join((*_LITERARY_NAMES, *_DRAMATIC_SPEAKERS))})")
+#: Capitalized words before a colon that are labels, not names: a student's
+#: own 'Note:', 'Today:', 'Me:'. Any word ending in "ly" ('Honestly:') is one
+#: too. Only a script's speaker lines read this: a label never makes a note
+#: a script.
 _LABELS = frozenset((
     "note notes nb ps today tonight tonite yesterday tomorrow morning evening night afternoon"
     " journal diary dear me myself self i im ive my mine mood feeling feelings feel thought"
@@ -481,28 +503,46 @@ _LABELS = frozenset((
     " current goal goals question answer q a front back title topic quote idea edit also and so"
     " then now again same fyi tldr draft list important caption example definition term mantra"
     " confession secret prompt response honest real talk inner voice brain heart head header"
-    " heading subject warning tw cw content trigger"
+    " heading subject warning tw cw content trigger ugh"
 ).split())
 
 
-def _named_speaker(prefix: str) -> bool:
-    """`prefix` (raw text up to a quotation's opening mark) ends in a
-    capitalized name and a colon: 'Macbeth: ', never 'Note: '."""
-    m = _NAME_COLON.search(prefix)
-    if m is None:
-        return False
+def _name_key(name: str, *, whole: bool) -> str | None:
+    """`name` (the words before a colon) as a casefolded key, or None if it
+    is not a capitalized name: its trailing capitalized words (all of them
+    when `whole`), none of them a label."""
     words: list[str] = []
-    for word in reversed(m.group(1).split()):  # the capitalized words before the colon
+    for word in reversed(name.split()):
         if not word[0].isupper():
+            if whole:
+                return None
             break
-        words.append(word)
-    if not words:
+        words.append(_APOSTROPHES.sub("", word).strip(".-").casefold())
+    if not words or any(w in _LABELS or w.endswith("ly") for w in words):
+        return None
+    return " ".join(reversed(words))
+
+
+def _script_speakers(text: str) -> frozenset[str]:
+    """The names that open a line of `text` with a colon, labels left out."""
+    keys = (_name_key(m.group(1), whole=True) for m in _SPEAKER_LINE.finditer(text))
+    return frozenset(k for k in keys if k is not None)
+
+
+def _named_speaker(prefix: str, script: frozenset[str]) -> bool:
+    """`prefix` (raw text up to a quotation's opening mark) ends in `Name:`,
+    and that name is a speaker: a known dramatic or literary one ('Macbeth:',
+    'Lady Macbeth:', 'HAMLET:'), or one of two or more different speakers in
+    a script (`script`: 'Doctor: ...' then 'Jane: "..."'). A lone unknown
+    'Sarah:', or a label ('Ugh:', 'Note:'), is not: that quotation counts. A
+    speaker noun ('Patient:') is read by `_attributed`."""
+    m = _NAME_COLON.search(prefix)
+    key = None if m is None else _name_key(m.group(1), whole=False)
+    if key is None:
         return False
-    for word in words:
-        word = _APOSTROPHES.sub("", word).strip(".-").casefold()
-        if word in _LABELS or word.endswith("ly"):
-            return False
-    return True
+    if any(_KNOWN_SPEAKER.fullmatch(word) for word in key.split()):
+        return True
+    return len(script) >= 2 and key in script
 
 
 def _attributed(before: str, after: str) -> bool:
@@ -563,10 +603,13 @@ def _mark_quotations(text: str) -> tuple[str, list[bool]]:
     # Quotation marks only: a Markdown `>` line is as often the student's own
     # callout as a quotation, so it is screened like the rest.
     parts, named, last = [], [], 0
+    script: frozenset[str] | None = None  # read only once a quotation is found
     for m in _QUOTED.finditer(text):  # in order, never overlapping
         start, end = next(m.span(g) for g in range(1, 5) if m.group(g) is not None)
         parts += [text[last:start], _QUOTE_OPEN, text[start:end], _QUOTE_CLOSE]
-        named.append(_named_speaker(text[max(start - 121, 0):start - 1]))  # before the mark
+        if script is None:
+            script = _script_speakers(text)
+        named.append(_named_speaker(text[max(start - 121, 0):start - 1], script))  # before the mark
         last = end
     return "".join(parts) + text[last:], named
 
