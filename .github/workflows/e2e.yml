@@ -119,6 +119,11 @@ jobs:
           # last 429. e2e-up.sh sets the same value; kept here so what the
           # lane actually runs under is visible beside the rest of the seam.
           QUIZ_GENERATE_RATE_LIMIT: "1000"
+          # The study-guide limits (services/study_guides/limits.py) are
+          # counted the same way; e2e-up.sh sets the same values.
+          STUDY_GUIDE_GENERATE_RATE_LIMIT: "1000"
+          STUDY_GUIDE_BLOCK_RATE_LIMIT: "1000"
+          STUDY_GUIDE_CREATE_RATE_LIMIT: "1000"
         run: make e2e-up
 
       - name: Run Playwright suite

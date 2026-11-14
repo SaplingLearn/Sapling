@@ -1,7 +1,7 @@
 """Tests for HTTP conditional-GET caching (#99): the http_cache helper and the
-three instrumented endpoints (study-guide cached, notes list, profile settings)."""
+two instrumented endpoints (notes list, profile settings)."""
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -49,55 +49,6 @@ class TestHelper:
         assert http_cache.conditional(_req(if_none_match=f'W/{etag}'), etag) is not None
         assert http_cache.conditional(_req(if_none_match=f'"a", {etag}, "b"'), etag) is not None
         assert http_cache.conditional(_req(if_none_match="*"), etag) is not None
-
-
-# ── GET /api/study-guide/{user_id}/cached ────────────────────────────────────
-
-class TestStudyGuideCachedETag:
-    def _guides(self, generated_at="2026-04-01T00:00:00Z"):
-        return [{
-            "id": "g1", "offering_id": "off1", "exam_id": "e1",
-            "generated_at": generated_at,
-            "content": {"exam": "Midterm", "overview": "x"},
-        }]
-
-    def _table(self, guides):
-        def factory(name):
-            m = MagicMock()
-            if name == "study_guides":
-                m.select.return_value = guides
-            elif name == "courses":
-                m.select.return_value = [{"id": "c1", "course_name": "Calc"}]
-            else:
-                m.select.return_value = []
-            return m
-        return factory
-
-    def test_returns_etag_and_private_cache_control(self):
-        with patch("routes.study_guide.table", side_effect=self._table(self._guides())), \
-             patch("routes.study_guide.offering_course_id", return_value="c1"):
-            r = client.get("/api/study-guide/u1/cached")
-        assert r.status_code == 200
-        assert r.headers.get("etag")
-        assert r.headers["cache-control"].startswith("private")
-
-    def test_matching_if_none_match_returns_304(self):
-        with patch("routes.study_guide.table", side_effect=self._table(self._guides())), \
-             patch("routes.study_guide.offering_course_id", return_value="c1"):
-            etag = client.get("/api/study-guide/u1/cached").headers["etag"]
-            r = client.get("/api/study-guide/u1/cached", headers={"If-None-Match": etag})
-        assert r.status_code == 304
-        assert r.headers["etag"] == etag
-
-    def test_changed_data_yields_new_etag(self):
-        with patch("routes.study_guide.table", side_effect=self._table(self._guides("2026-04-01T00:00:00Z"))), \
-             patch("routes.study_guide.offering_course_id", return_value="c1"):
-            etag_old = client.get("/api/study-guide/u1/cached").headers["etag"]
-        with patch("routes.study_guide.table", side_effect=self._table(self._guides("2026-05-09T00:00:00Z"))), \
-             patch("routes.study_guide.offering_course_id", return_value="c1"):
-            r = client.get("/api/study-guide/u1/cached", headers={"If-None-Match": etag_old})
-        assert r.status_code == 200  # stale tag → full response
-        assert r.headers["etag"] != etag_old
 
 
 # ── GET /api/notes/user/{user_id} ────────────────────────────────────────────

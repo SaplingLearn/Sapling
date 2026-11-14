@@ -1,7 +1,6 @@
 """Cross-replica leases in Postgres, behind the ``stateless_locks`` flag (#117).
 
-Some guards in this app are per-process: the study-guide single-flight
-(``routes/study_guide.py``), the admin account-operation slot
+Some guards in this app are per-process: the admin account-operation slot
 (``services/account_ops_lock.py``) and the consumed-OAuth-nonce set
 (``routes/auth.py``). With two API replicas each process only sees its own
 half. This module is the one primitive that closes the gap: a lease row in

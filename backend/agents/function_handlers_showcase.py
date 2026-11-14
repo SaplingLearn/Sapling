@@ -253,6 +253,29 @@ register_function_handler(
 )
 
 
+# ── Flashcards (/flashcards) ────────────────────────────────────────────────
+#
+# One agent serves every flashcard model call (generate, the import flow's
+# generate / cleanup / cloze / photo): see the E2E module's section.
+
+SHOWCASE_FLASHCARDS = [
+    {
+        "front": "What must every recursive function have?",
+        "back": "A base case: an input simple enough to answer without another call.",
+    },
+    {
+        "front": "What does the recursive step do?",
+        "back": "It calls the function on a smaller piece of the same problem.",
+    },
+    {
+        "front": "What happens when the base case is never reached?",
+        "back": "The calls keep stacking up until the call stack overflows.",
+    },
+]
+
+register_function_handler("flashcard", _structured_output({"cards": SHOWCASE_FLASHCARDS}))
+
+
 # ── Notetaker (/notetaker) ──────────────────────────────────────────────────
 
 SHOWCASE_NOTE_SUMMARY = (

@@ -358,7 +358,18 @@ def backfill_flashcards(apply: bool) -> dict:
 
 
 def backfill_study_guides(apply: bool) -> dict:
-    return _encrypt_json_column("study_guides", "content", pk="id", apply=apply)
+    # previous_content and answers are written encrypted from the start
+    # (services/study_guides/store.py); they are here so a plaintext value
+    # written by hand or by a restore is still caught.
+    columns = ("content", "previous_content", "answers")
+    counts = {
+        column: _encrypt_json_column("study_guides", column, pk="id", apply=apply)
+        for column in columns
+    }
+    return {
+        "scanned": counts["content"]["scanned"],
+        **{column: counts[column][column] for column in columns},
+    }
 
 
 def backfill_room_summaries(apply: bool) -> dict:

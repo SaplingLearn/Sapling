@@ -5,10 +5,14 @@ import { useToast } from "../../ToastProvider";
 import { useUser } from "@/context/UserContext";
 import { importCloze } from "@/lib/api";
 import { detectDelimiters, splitByDelimiters, type ParsedCard } from "@/lib/flashcardParsers";
+import { pastePlaceholder } from "../importModalModel";
+import s from "../FlashcardImportModal.module.css";
 
 interface Props {
   cards: ParsedCard[];
   onCards: (next: ParsedCard[]) => void;
+  /** The textarea, so the modal can put focus there when it opens. */
+  textareaRef?: React.Ref<HTMLTextAreaElement>;
 }
 
 const TERM_OPTIONS = [
@@ -25,7 +29,48 @@ const CARD_OPTIONS = [
   { value: "custom", label: "Custom…" },
 ];
 
-export function PasteTab({ cards, onCards }: Props) {
+const CLOZE_PLACEHOLDER =
+  "Paste a paragraph. Claude will pick key terms to remove and generate fill-in-the-blank cards.";
+
+interface SeparatorProps {
+  /** The words before the select: the pairs read as one sentence. */
+  label: string;
+  /** The select's accessible name. */
+  name: string;
+  value: string;
+  onChange: (next: string) => void;
+  options: { value: string; label: string }[];
+}
+
+function SeparatorPair({ label, name, value, onChange, options }: SeparatorProps) {
+  return (
+    <span className={s.pair}>
+      <span className={s.pairLabel} aria-hidden="true">{label}</span>
+      <CustomSelect
+        className={`${s.select} ${s.pairSelect}`}
+        size="sm"
+        ariaLabel={name}
+        value={value}
+        onChange={onChange}
+        options={options}
+      />
+    </span>
+  );
+}
+
+function CustomSeparator({ name, value, onChange }: { name: string; value: string; onChange: (next: string) => void }) {
+  return (
+    <input
+      className={s.input}
+      value={value}
+      onChange={e => onChange(e.target.value)}
+      placeholder="Custom separator"
+      aria-label={`Custom separator ${name.toLowerCase()}`}
+    />
+  );
+}
+
+export function PasteTab({ cards, onCards, textareaRef }: Props) {
   const toast = useToast();
   const { userId } = useUser();
   const [text, setText] = React.useState("");
@@ -48,26 +93,41 @@ export function PasteTab({ cards, onCards }: Props) {
   const term = termSel === "custom" ? termCustom : termSel;
   const card = cardSel === "custom" ? cardCustom : cardSel;
 
-  // Smart auto-detect on first paste
-  React.useEffect(() => {
-    if (!text || autoDetectedOnce) return;
-    if (text.length < 20) return;
-    const detected = detectDelimiters(text);
-    setTermSel(detected.term);
-    setCardSel(detected.card);
-    setAutoDetectedOnce(true);
-  }, [text, autoDetectedOnce]);
+  /** The text as last typed, for the re-parse that a separator change asks for. */
+  const textRef = React.useRef("");
+  const emit = React.useCallback((nextText: string, t: string, c: string) => {
+    onCards(!nextText || !t || !c ? [] : splitByDelimiters(nextText, t, c));
+  }, [onCards]);
 
-  // Live re-parse. Emits only after the user has typed here, so a bare
-  // (re)mount never clears the shared deck, while deleting all text —
-  // dirtyRef already set — still does.
+  // Typing re-parses from the handler itself, in the same update as the text.
+  // (It used to be an effect on `text`, which put a second, commit-phase
+  // update behind every keystroke; a burst of input, such as a script typing
+  // a deck out, piled those up until React stopped it with "Maximum update
+  // depth exceeded" and a keystroke was lost.) The first 20 characters also
+  // settle the separators, once.
+  const typed = (next: string) => {
+    dirtyRef.current = true;
+    textRef.current = next;
+    setText(next);
+    let t = term;
+    let c = card;
+    if (!autoDetectedOnce && next.length >= 20) {
+      const detected = detectDelimiters(next);
+      setTermSel(detected.term);
+      setCardSel(detected.card);
+      setAutoDetectedOnce(true);
+      t = detected.term;
+      c = detected.card;
+    }
+    if (!clozeMode) emit(next, t, c);
+  };
+
+  // A separator or the mode changed: re-parse what is there. Only after the
+  // user has typed here, so a bare (re)mount never clears the shared deck.
   React.useEffect(() => {
-    if (clozeMode) return;
-    if (!dirtyRef.current) return;
-    if (!text || !term || !card) { onCards([]); return; }
-    const parsed = splitByDelimiters(text, term, card);
-    onCards(parsed);
-  }, [text, term, card, clozeMode, onCards]);
+    if (clozeMode || !dirtyRef.current) return;
+    emit(textRef.current, term, card);
+  }, [term, card, clozeMode, emit]);
 
   const runCloze = async () => {
     if (!userId || !text.trim()) return;
@@ -83,67 +143,60 @@ export function PasteTab({ cards, onCards }: Props) {
     }
   };
 
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      <div style={{ display: "flex", gap: 8, fontSize: 12 }}>
-        <button
-          className="btn btn--sm"
-          onClick={() => setClozeMode(false)}
-          style={{ opacity: clozeMode ? 0.5 : 1, fontWeight: clozeMode ? 400 : 600 }}
-        >Term / Definition</button>
-        <button
-          className="btn btn--sm"
-          onClick={() => setClozeMode(true)}
-          style={{ opacity: clozeMode ? 1 : 0.5, fontWeight: clozeMode ? 600 : 400 }}
-        >Cloze deletion (AI)</button>
-      </div>
+  const customTerm = !clozeMode && termSel === "custom";
+  const customCard = !clozeMode && cardSel === "custom";
 
+  return (
+    <div className={s.tab}>
       <textarea
+        ref={textareaRef}
+        className={s.textarea}
         value={text}
-        onChange={e => { dirtyRef.current = true; setText(e.target.value); }}
+        onChange={e => typed(e.target.value)}
         placeholder={clozeMode
-          ? "Paste a paragraph. Claude will pick key terms to remove and generate fill-in-the-blank cards."
-          : "Paste your cards here. Use Tab between term and definition, Enter between cards."}
-        style={{
-          minHeight: 180, padding: 12, borderRadius: "var(--r-md)",
-          background: "var(--bg-panel)", border: "1px solid var(--border)",
-          color: "var(--text)", fontFamily: "inherit", fontSize: 13, resize: "vertical",
-        }}
+          ? CLOZE_PLACEHOLDER
+          : pastePlaceholder({ choice: termSel, custom: termCustom }, { choice: cardSel, custom: cardCustom })}
       />
 
-      {!clozeMode && (
-        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-          <div style={{ minWidth: 180 }}>
-            <div className="label-micro">Between term and definition</div>
-            <CustomSelect value={termSel} onChange={setTermSel} options={TERM_OPTIONS} />
-            {termSel === "custom" && (
-              <input
-                value={termCustom}
-                onChange={e => setTermCustom(e.target.value)}
-                placeholder="Custom separator"
-                style={{ marginTop: 4, padding: 6, fontSize: 12, width: "100%" }}
-              />
-            )}
-          </div>
-          <div style={{ minWidth: 180 }}>
-            <div className="label-micro">Between cards</div>
-            <CustomSelect value={cardSel} onChange={setCardSel} options={CARD_OPTIONS} />
-            {cardSel === "custom" && (
-              <input
-                value={cardCustom}
-                onChange={e => setCardCustom(e.target.value)}
-                placeholder="Custom separator"
-                style={{ marginTop: 4, padding: 6, fontSize: 12, width: "100%" }}
-              />
-            )}
-          </div>
+      <div className={s.options}>
+        <div className={`${s.seg} ${s.segInline}`} role="group" aria-label="Card format">
+          <button type="button" className={s.segOpt} aria-pressed={!clozeMode} onClick={() => setClozeMode(false)}>
+            Term / Definition
+          </button>
+          <button type="button" className={s.segOpt} aria-pressed={clozeMode} onClick={() => setClozeMode(true)}>
+            Cloze deletion (AI)
+          </button>
         </div>
-      )}
 
-      {clozeMode && (
-        <button className="btn btn--sm btn--primary" onClick={runCloze} disabled={clozing || !text.trim()}>
-          {clozing ? "Generating cloze cards…" : "Generate cloze cards"}
-        </button>
+        {clozeMode ? (
+          <button type="button" className={`btn btn--primary ${s.go}`} onClick={runCloze} disabled={clozing || !text.trim()}>
+            {clozing ? "Generating cloze cards…" : "Generate cloze cards"}
+          </button>
+        ) : (
+          <div className={s.pairs}>
+            <SeparatorPair
+              label="Split terms by"
+              name="Between term and definition"
+              value={termSel}
+              onChange={setTermSel}
+              options={TERM_OPTIONS}
+            />
+            <SeparatorPair
+              label="and cards by"
+              name="Between cards"
+              value={cardSel}
+              onChange={setCardSel}
+              options={CARD_OPTIONS}
+            />
+          </div>
+        )}
+      </div>
+
+      {(customTerm || customCard) && (
+        <div className={s.customs}>
+          {customTerm && <CustomSeparator name="Between term and definition" value={termCustom} onChange={setTermCustom} />}
+          {customCard && <CustomSeparator name="Between cards" value={cardCustom} onChange={setCardCustom} />}
+        </div>
       )}
     </div>
   );

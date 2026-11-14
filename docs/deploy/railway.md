@@ -222,7 +222,7 @@ replica running, watch it for a day, then the next.
 | # | Flag | Migration it needs | What it moves out of process memory |
 | --- | --- | --- | --- |
 | 1 | `stateless_rate_limit` | `20261108220438_stateless_rate_limit_and_flag_version.sql` | the per-key rate-limit windows (`services/request_limits.py`) into `rate_limit_hits` + `claim_rate_limit()`, so two replicas share one budget instead of each granting the full one |
-| 2 | `stateless_locks` | `20261109022852_app_leases.sql` | the study-guide single-flight, the admin account-operation slot and the consumed OAuth nonces become `app_leases` rows (`services/pg_lease.py`), so they exclude across replicas |
+| 2 | `stateless_locks` | `20261109022852_app_leases.sql` | the admin account-operation slot and the consumed OAuth nonces become `app_leases` rows (`services/pg_lease.py`), so they exclude across replicas |
 | 3 | `stateless_tutor_sessions` | `20261109024225_tutor_pending_sessions.sql` | pending tutor sessions (between start-session and the first turn) and their end/delete tombstones into `tutor_pending_sessions`, so a session started on one replica can be continued, ended or deleted on the other |
 | 4 | `async_db_client` (optional) | none | not replica state: the async handlers' PostgREST calls on a native async client instead of a threadpool hop. Independent of the replica count; turn it on when the load test says so |
 
@@ -251,7 +251,7 @@ request (swept 2026-11-09):
 | State | Where | On two replicas |
 | --- | --- | --- |
 | rate-limit windows | `services/request_limits.py` `_rate_state` | **made safe**: `stateless_rate_limit` (flag 1) |
-| study-guide single-flight | `routes/study_guide.py` key locks | **made safe**: `stateless_locks` (flag 2), a lease per guide key |
+| study-guide generation claim | `study_guides.generating_at` (`services/study_guides/store.py`) | **safe by construction**: the claim is a conditional UPDATE on the guide's own row, so it already holds across replicas; no flag |
 | admin account-operation slot | `services/account_ops_lock.py` `_running` | **made safe**: `stateless_locks` (flag 2) |
 | consumed OAuth nonces | `services/auth/oauth_state.py` `_CONSUMED_OAUTH_NONCES` | **made safe**: `stateless_locks` (flag 2), a never-released lease on the nonce's hash |
 | pending tutor sessions + tombstones | `services/tutor_sessions.py` `PENDING_SESSIONS`, `_DISCARDED`, `_MATERIALIZATION_LOCKS` | **made safe**: `stateless_tutor_sessions` (flag 3); first-turn materialisation is one SQL transaction |

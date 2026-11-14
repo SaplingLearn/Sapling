@@ -291,6 +291,13 @@ echo "▶ Starting backend (uvicorn on :$BACKEND_PORT, log: .e2e/backend.log)…
 # wants to exercise the real guard.
 export QUIZ_GENERATE_RATE_LIMIT="${QUIZ_GENERATE_RATE_LIMIT:-1000}"
 echo "  ℹ QUIZ_GENERATE_RATE_LIMIT=$QUIZ_GENERATE_RATE_LIMIT for this stack (production default is 8; #537)"
+# The study-guide limits (services/study_guides/limits.py: 20 generations, 40
+# block rewrites and 60 new guides an hour) are counted the same way, and a
+# held stack re-runs its journeys inside one hour. Same reasoning, same value.
+export STUDY_GUIDE_GENERATE_RATE_LIMIT="${STUDY_GUIDE_GENERATE_RATE_LIMIT:-1000}"
+export STUDY_GUIDE_BLOCK_RATE_LIMIT="${STUDY_GUIDE_BLOCK_RATE_LIMIT:-1000}"
+export STUDY_GUIDE_CREATE_RATE_LIMIT="${STUDY_GUIDE_CREATE_RATE_LIMIT:-1000}"
+echo "  ℹ STUDY_GUIDE_{GENERATE,BLOCK,CREATE}_RATE_LIMIT=$STUDY_GUIDE_GENERATE_RATE_LIMIT/$STUDY_GUIDE_BLOCK_RATE_LIMIT/$STUDY_GUIDE_CREATE_RATE_LIMIT for this stack (production defaults are 20/40/60)"
 # ADR 0029 §9: the backend caches the flag snapshot (30 s) and each user's
 # roles (60 s) per process, and the per-test TRUNCATE + re-seed writes the DB
 # directly, which clears neither — one journey's rules would leak into the

@@ -30,6 +30,9 @@ import {
   type EnrolledCourse,
 } from "@/lib/api";
 import type { Document as Doc, ConceptNote } from "@/lib/types";
+import { LibraryGuides } from "../studyGuide/home/LibraryGuides";
+import { libraryGuides } from "../studyGuide/home/guidesModel";
+import { useLibraryGuides } from "../studyGuide/home/useLibraryGuides";
 
 const catColor: Record<Doc["category"], string> = {
   lecture_notes: "var(--c-sage)",
@@ -50,6 +53,8 @@ export function Library() {
   const { userId, userReady } = useUser();
   const [documents, setDocuments] = React.useState<Doc[]>([]);
   const [courses, setCourses] = React.useState<EnrolledCourse[]>([]);
+  // Every guide the student has; the ones saved to the Library show here.
+  const saved = useLibraryGuides(userId);
   const [cat, setCat] = React.useState<Cat>("all");
   const [courseFilter, setCourseFilter] = React.useState<string>("all");
   const [uploadOpen, setUploadOpen] = React.useState(false);
@@ -102,10 +107,7 @@ export function Library() {
     // the latest one owns the list (#769).
     const run = loadReq.begin();
     try {
-      const [docs, crs] = await Promise.all([
-        getDocuments(userId),
-        getCourses(userId),
-      ]);
+      const [docs, crs] = await Promise.all([getDocuments(userId), getCourses(userId)]);
       if (!run.isCurrent()) return;
       setDocuments(docs.documents || []);
       setCourses(crs.courses || []);
@@ -138,6 +140,13 @@ export function Library() {
       return true;
     });
   }, [documents, cat, courseFilter, query]);
+
+  // Saved study guides are not documents: they follow the course filter and
+  // the search, and show under "all" and "study guide" only.
+  const shownGuides = React.useMemo(
+    () => libraryGuides(saved.guides, { category: cat, courseFilter, query }),
+    [saved.guides, cat, courseFilter, query],
+  );
 
   // #449 (upstream, out of scope here): GET /api/graph/{userId}/courses
   // returns one row per ENROLLMENT, so a course with two offerings (e.g.
@@ -260,7 +269,9 @@ export function Library() {
                 <button data-testid="library-load-retry" className="btn btn--ghost btn--sm" onClick={retryLoad}>Retry</button>
               </div>
             )}
-            {filtered.length === 0 && !(loadError && documents.length === 0) && (
+            <LibraryGuides guides={shownGuides} courses={courses} failed={saved.failed} onRetry={saved.reload} />
+            {/* Not quiet until the guides are known: they may be on their way, or unreadable. */}
+            {filtered.length + shownGuides.length === 0 && !(loadError && documents.length === 0) && saved.known && (
               <div style={{ textAlign: "center", padding: "60px 20px", color: "var(--text-muted)", maxWidth: 440, margin: "0 auto" }}>
                 <div className="h-serif" style={{ fontSize: 22, color: "var(--text)" }}>Your library is quiet</div>
                 <div className="body-serif" style={{ fontSize: 14, marginTop: 8, lineHeight: 1.6 }}>

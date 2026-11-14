@@ -1,8 +1,7 @@
 """Tests for the #147 one-shot LLM → Pydantic AI agent migration.
 
 Covers the study-group summary paths on /api/social/rooms/{id}/overview
-(cache miss / cache hit / agent failure) and the StudyGuide typed output's
-serialization back to the legacy JSON contract.
+(cache miss / cache hit / agent failure).
 """
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -77,25 +76,6 @@ class TestRoomOverviewSummary:
         assert r.json()["ai_summary"] == (
             "This study group has complementary strengths across multiple subjects."
         )
-
-
-class TestStudyGuideOutputShape:
-    def test_model_dumps_to_legacy_contract(self):
-        from agents.study_guide import StudyGuide, Topic
-
-        guide = StudyGuide(
-            exam="Midterm",
-            due_date="2026-05-01",
-            overview="Covers chapters 1-5.",
-            topics=[Topic(name="Limits", importance="Foundational.", concepts=["a", "b", "c"])],
-        )
-        d = guide.model_dump()
-        assert set(d.keys()) == {"exam", "due_date", "overview", "topics"}
-        assert d["topics"][0] == {
-            "name": "Limits",
-            "importance": "Foundational.",
-            "concepts": ["a", "b", "c"],
-        }
 
 
 def test_a_budget_refusal_says_so_instead_of_the_generic_summary():

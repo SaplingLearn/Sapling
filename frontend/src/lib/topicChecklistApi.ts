@@ -21,7 +21,11 @@ export interface ChecklistTopic {
   last_studied_at: string | null;
   review_reasons: string[];
   priority: "high" | "normal";
+  /** The linked assessments coming up (today to 30 days out): for display and urgency. */
   assessments: ChecklistAssessment[];
+  /** Every exam and quiz the outline links this topic to, whatever its date,
+   *  as assignment ids. Absent on a payload from before the field existed. */
+  assessment_ids?: string[];
   sources: { id: string; label: string }[];
   node_id: string | null;
 }

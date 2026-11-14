@@ -144,8 +144,17 @@ def test_cases_cover_every_group(routes):
     assert swap.query["user_id"] == m.USER_A
     # A shared key on a route that also probes an owned id is neutralised.
     guide = next(c for c in groups["resource"]
-                 if c.key == ("GET", "/api/study-guide/{user_id}/guide"))
-    assert guide.query["course_id"] == m.COURSE_SHARED and guide.query["exam_id"] == "a-exam_id"
+                 if c.key == ("POST", "/api/study-guide/{user_id}/guides"))
+    assert guide.json == {
+        "course_id": m.COURSE_SHARED, "scope_kind": "exam", "scope_id": "a-scope_id",
+        "material_ids": ["a-material_ids"],
+    }
+    # A block route is probed with a real block of A's guide.
+    answer = next(c for c in groups["resource"] if c.path.endswith("/blocks/{block_id}/answer"))
+    assert answer.url == (
+        f"/api/study-guide/{m.USER_B}/guides/a-guide_id/blocks/{m.GUIDE_CHECK_BLOCK}/answer"
+    )
+    assert answer.json == {"option_id": "a"} and answer.expect == (404,)
     # Destructive requests run last within their group.
     swap_paths = [c.path for c in groups["swap"]]
     assert swap_paths[-1].endswith(("/account", "/leave", "/disconnect/{user_id}"))

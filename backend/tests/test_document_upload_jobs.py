@@ -460,8 +460,7 @@ def _process(row, *, extract=None, persist=None, existing=None, agents=None, job
     persist = persist or MagicMock(return_value=("doc-1", {"id": "doc-1"}))
     patches = list(agents if agents is not None else _agent_patches())
     post = {name: MagicMock() for name in (
-        "_invalidate_study_guide_cache", "_refresh_course_context",
-        "_check_upload_achievements")}
+        "_refresh_course_context", "_check_upload_achievements")}
     sched = MagicMock()
     with patch.object(dj, "table", uploads), \
          patch_documents("extract_text_from_file", extract), \
@@ -470,7 +469,6 @@ def _process(row, *, extract=None, persist=None, existing=None, agents=None, job
                (lambda *a: None)), \
          patch_documents("_save_orchestrator_syllabus"), \
          patch_documents("_graph_backstop"), \
-         patch_documents("_invalidate_study_guide_cache", post["_invalidate_study_guide_cache"]), \
          patch_documents("_refresh_course_context", post["_refresh_course_context"]), \
          patch_documents("_check_upload_achievements", post["_check_upload_achievements"]), \
          patch("services.document_indexing.schedule_document_index", sched):
@@ -516,7 +514,6 @@ def test_process_job_runs_the_pipeline_and_records_every_stage():
         assert filters["progress->>owner"] == f"eq.{owner}"
         assert filters["stage"].startswith("eq.") and filters["stage"] != "eq.done"
     # The streaming route's post-roll, uploader threaded through.
-    out.post["_invalidate_study_guide_cache"].assert_called_once_with("u1", "off-1")
     out.post["_refresh_course_context"].assert_called_once_with("off-1", "u1")
     out.post["_check_upload_achievements"].assert_called_once_with("u1")
     out.sched.assert_called_once_with("doc-1", "u1")
@@ -657,7 +654,6 @@ def test_flag_off_sync_is_unchanged_and_never_touches_the_queue():
          patch_documents("process_document", AsyncMock(return_value=result)), \
          patch_documents("_persist_document", return_value=("doc-1", {"id": "doc-1"})), \
          patch_documents("refresh_course_context"), \
-         patch_documents("_invalidate_study_guide_cache"), \
          patch_documents("_check_upload_achievements"), \
          patch_documents("schedule_document_index") as sched:
         r = _client().post(
@@ -802,7 +798,6 @@ def test_flag_on_sync_runs_inline_when_the_queue_cannot_take_it():
                AsyncMock(return_value=_make_orchestrator_result())), \
          patch_documents("_persist_document", return_value=("doc-1", {"id": "doc-1"})), \
          patch_documents("refresh_course_context"), \
-         patch_documents("_invalidate_study_guide_cache"), \
          patch_documents("_check_upload_achievements"), \
          patch_documents("schedule_document_index"):
         r = _sync_post(_client())
@@ -1170,7 +1165,6 @@ def test_flag_on_sync_records_the_inline_success():
                AsyncMock(return_value=_make_orchestrator_result())), \
          patch_documents("_persist_document", return_value=("doc-1", {"id": "doc-1"})), \
          patch_documents("refresh_course_context"), \
-         patch_documents("_invalidate_study_guide_cache"), \
          patch_documents("_check_upload_achievements"), \
          patch_documents("schedule_document_index"):
         r = _sync_post(_client())
@@ -1376,7 +1370,6 @@ def test_the_pipeline_stores_its_outcome_before_the_insert():
          patch_documents("_save_orchestrator_syllabus"), \
          patch_documents("_graph_backstop"), \
          patch("services.document_indexing.schedule_document_index"), \
-         patch_documents("_invalidate_study_guide_cache"), \
          patch_documents("_refresh_course_context"), \
          patch_documents("_check_upload_achievements"):
         for p in patches:

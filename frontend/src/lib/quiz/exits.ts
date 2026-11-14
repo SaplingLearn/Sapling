@@ -9,7 +9,7 @@
  */
 
 import { isSafeReturnPath } from "./source";
-import type { QuizSession, SourceKind } from "./types";
+import type { QuizSession, QuizSource, SourceKind } from "./types";
 
 /** The tree honours `?node=<id>` by selecting that node in the detail panel (C1). */
 function treeHref(conceptId: string | undefined): string {
@@ -45,4 +45,38 @@ export function sourceLabel(kind: SourceKind): string {
  *  drop you on the tree you didn't come from. */
 export function cancelTarget(session: QuizSession): string {
   return isSafeReturnPath(session.source.returnTo) ? session.source.returnTo : "/dashboard";
+}
+
+/** What the page a back link returns to is called, by its path. */
+const BACK_LABELS: Record<string, string> = {
+  "/study": "Study",
+  "/dashboard": "Dashboard",
+  "/tree": "Tree",
+  "/notetaker": "Notes",
+};
+
+/** Where a back link lands when the page it would return to is hidden from
+ *  this student: where NavFeatureGate sends a hidden feature's routes. */
+const VISIBLE_FALLBACK = "/dashboard";
+
+/**
+ * The back button in the quiz page's header: where it goes and what it says.
+ *
+ * It returns to wherever the quiz was opened from. With no origin (the URL
+ * typed in, a bare `/quiz`) it goes to the Study hub, which is where the quiz
+ * lives in the nav and the one page every quiz can be started from.
+ *
+ * `isHidden` says whether a path's feature is switched off for this student
+ * (a `hide_*` flag, lib/useNavHidden.ts). Quiz has a flag of its own, so it
+ * can be open while Study (or the page it was opened from) is hidden: the
+ * link then goes to the Dashboard instead of a page that would only bounce
+ * there.
+ */
+export function backLink(
+  source: QuizSource,
+  isHidden: (path: string) => boolean = () => false,
+): { href: string; label: string } {
+  const wanted = isSafeReturnPath(source.returnTo) ? source.returnTo : "/study";
+  const href = isHidden(wanted) ? VISIBLE_FALLBACK : wanted;
+  return { href, label: BACK_LABELS[href.split(/[?#]/)[0]] ?? "Back" };
 }

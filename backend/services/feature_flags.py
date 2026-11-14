@@ -189,8 +189,8 @@ REGISTRY: dict[str, FlagDef] = {f.key: f for f in (
     FlagDef("stateless_rate_limit", ("off", "on"),
             "Keep rate-limit counters in Postgres so every replica shares one "
             "budget. Global: per-user rules and rollouts do not apply.", False),
-    # #117 wave 3: the per-process locks (study-guide single-flight, admin
-    # account operations, consumed OAuth nonces) also take a Postgres lease
+    # #117 wave 3: the per-process locks (admin account operations,
+    # consumed OAuth nonces) also take a Postgres lease
     # (`claim_lease()`, services/pg_lease.py), so they hold across replicas.
     # Resolved GLOBALLY. Off = today's in-process locks only; on keeps them as
     # the first layer, and a failing DB falls back to them. Server-only.
@@ -754,13 +754,24 @@ def require_flag(key: str):
 #: on the API (``NAV_FEATURES_NOT_ENFORCED`` says why).
 NAV_FEATURE_API: dict[str, dict[str, tuple[tuple[str, str], ...]]] = {
     "hide_quiz": {
-        # Tree shows the student's recent attempts.
+        # Tree and the Study hub show the student's recent attempts.
         "/api/quiz": (("GET", r"/attempts"),),
     },
-    "hide_study": {"/api/flashcards": (), "/api/study-guide": ()},
+    # /api/study is the Study hub's own (daily goal + minutes).
+    "hide_study": {"/api/flashcards": (), "/api/study-guide": (), "/api/study": ()},
     "hide_calendar": {
-        # The dashboard's upcoming-deadlines card.
-        "/api/calendar": (("GET", r"/upcoming/[^/]+"),),
+        "/api/calendar": (
+            # The dashboard's upcoming-deadlines card.
+            ("GET", r"/upcoming/[^/]+"),
+            # The Study hub's exam tabs and deadlines, and the Flashcards
+            # page's exam tags.
+            ("GET", r"/all/[^/]+"),
+            # The Study hub's "+ Add Exam or Deadline".
+            ("POST", r"/save"),
+            # The Study hub's Exams and Deadlines editor (edit, remove).
+            ("PATCH", r"/assignments/[^/]+"),
+            ("DELETE", r"/assignments/[^/]+"),
+        ),
     },
     "hide_social": {
         # Friends are on every profile page (ProfileView), not just Social.

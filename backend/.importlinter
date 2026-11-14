@@ -49,6 +49,24 @@ ignore_imports =
     db.seed_local_owner -> services.encryption
     db.seed_local_owner -> services.profiles
     db.seed_local_rich -> services.encryption
+    # The rich seed builds its sample study guide from the guide contract's
+    # own models, so the seeded content always validates against it.
+    db.seed_local_rich -> models.study_guide
+    # The local study seed also stores a course outline under the hash the app
+    # would compute for it (so the Study page does not regenerate it), which
+    # only the outline service can produce.
+    db.seed_local_study -> services.encryption
+    db.seed_local_study -> services.topic_checklist_service
+    # Its dataset (db/local_study_data) writes study guides as the guide
+    # contract's own models, and builds each one the way a generation run
+    # leaves it: the server's section shares, and the server's citation and
+    # block check, which decides a chart's `illustrative` flag and stamps a
+    # quiz mistake's evidence line. A second copy of those rules would drift.
+    db.local_study_data.blocks -> models.study_guide
+    db.local_study_data.guides -> models.study_guide
+    db.local_study_data.guides -> services.study_guides.plan
+    db.local_study_data.guides -> services.study_guides.signals
+    db.local_study_data.guides -> services.study_guides.verify
     db.seed_showcase -> services.encryption
     db.seed_staging -> services.encryption
     db.e2e_staging_http -> services.encryption
@@ -78,6 +96,8 @@ source_modules =
     services.profile
     services.quiz
     services.social
+    services.study
+    services.study_guides
     services.tutor
 forbidden_modules =
     services.admin.*
@@ -89,5 +109,7 @@ forbidden_modules =
     services.profile.*
     services.quiz.*
     services.social.*
+    services.study.*
+    services.study_guides.*
     services.tutor.*
 allow_indirect_imports = True
