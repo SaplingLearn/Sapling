@@ -24,7 +24,9 @@ Deleted (directly, or through the FK cascades noted):
 Kept: users row, user_profiles, user_settings (its `featured_achievement_ids`
 is emptied, since every achievement it named is gone), user_roles,
 oauth_tokens, legal_acceptances (the Terms / Privacy versions the person
-accepted: account state, not study data), gradescope_credentials,
+accepted: account state, not study data; a consent record belongs to the
+account in the environment where it was given, so it is kept here and the
+account bundle never copies it to another environment), gradescope_credentials,
 user_cosmetics, social (rooms, friendships, …), feedback, issue_reports,
 events, llm_usage, admin_audit_log, and class-wide aggregates
 (offering_concept_stats). `KEPT_PER_USER` names every kept table that has a
@@ -120,8 +122,9 @@ KEPT_PER_USER: dict[str, str] = {
     "user_roles": "access control, managed by admins",
     "oauth_tokens": "sign-in credentials",
     "legal_acceptances": (
-        "the Terms / Privacy versions the account accepted at onboarding: "
-        "account state, not study data"
+        "the Terms / Privacy versions the account accepted at onboarding: a "
+        "consent record belongs to the account in the environment where it was "
+        "given, so it is kept, and never bundled into another environment's account"
     ),
     "gradescope_credentials": "credentials, managed by the student",
     "user_cosmetics": "purchased/unlocked cosmetics belong to the account",
