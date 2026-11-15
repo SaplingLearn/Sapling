@@ -37,11 +37,12 @@ class StripQueryStringFilter(logging.Filter):
 
     def filter(self, record: logging.LogRecord) -> bool:
         args = record.args
-        if isinstance(args, tuple) and len(args) > _PATH_ARG and isinstance(args[_PATH_ARG], str):
+        if isinstance(args, tuple) and len(args) > _PATH_ARG:
             path = args[_PATH_ARG]
-            stripped = strip_query(path)
-            if stripped != path:
-                record.args = args[:_PATH_ARG] + (stripped,) + args[_PATH_ARG + 1:]
+            if isinstance(path, str):
+                stripped = strip_query(path)
+                if stripped != path:
+                    record.args = args[:_PATH_ARG] + (stripped,) + args[_PATH_ARG + 1:]
         return True
 
 

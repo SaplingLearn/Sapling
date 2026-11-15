@@ -121,7 +121,7 @@ def _plain_value(table_name: str, column: str, value: Any) -> Any:
         return _parse_json(table_name, column, value)
     try:
         text = encryption.decrypt(value)
-    except Exception:
+    except Exception:  # noqa: BLE001 — an undecryptable value is reported, not raised
         listed = column in account_bundle.ENCRYPTED.get(table_name, {})
         if listed:
             logger.warning("self export: %s.%s does not decrypt", table_name, column)
@@ -185,7 +185,7 @@ def _courses(offering_ids: set[str], course_ids: set[str]) -> dict:
         return out
 
     offerings = select_in("course_offerings", offering_ids, "id,course_id,term_id,section")
-    course_ids = set(course_ids) | {o.get("course_id") for o in offerings if o.get("course_id")}
+    course_ids = set(course_ids) | {o["course_id"] for o in offerings if o.get("course_id")}
     courses = select_in("courses", course_ids, "id,course_code,course_name")
     return {
         "offerings": {
