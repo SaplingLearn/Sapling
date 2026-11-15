@@ -437,11 +437,35 @@ def public_route_limit(request, per_address: AbuseLimit, shared: AbuseLimit) -> 
 _UPLOAD_CHUNK = 1024 * 1024
 
 
-def _upload_too_large(max_bytes: int, status_code: int, detail: str | None) -> HTTPException:
-    return HTTPException(
-        status_code=status_code,
-        detail=detail or f"File too large. Maximum size is {max_bytes // (1024 * 1024)} MB.",
-    )
+class _CappedRead:
+    """The cap both upload readers enforce, in one place: each reader only
+    fetches the next chunk (awaited or not) and hands it to `take`."""
+
+    def __init__(self, max_bytes: int, status_code: int, detail: str | None) -> None:
+        self._max_bytes = max_bytes
+        self._status_code = status_code
+        self._detail = detail
+        self._parts: list[bytes] = []
+        self._total = 0
+
+    def take(self, chunk: bytes) -> bool:
+        """Keep `chunk`; False once the upload is exhausted (an empty chunk).
+        Raises the refusal as soon as the total passes the cap, so never more
+        than one chunk past it is read."""
+        if not chunk:
+            return False
+        self._total += len(chunk)
+        if self._total > self._max_bytes:
+            raise HTTPException(
+                status_code=self._status_code,
+                detail=self._detail
+                or f"File too large. Maximum size is {self._max_bytes // (1024 * 1024)} MB.",
+            )
+        self._parts.append(chunk)
+        return True
+
+    def data(self) -> bytes:
+        return b"".join(self._parts)
 
 
 async def read_within_limit(
@@ -461,17 +485,10 @@ async def read_within_limit(
     large. Maximum size is N MB.") past the cap; a route that has always
     answered differently passes its own.
     """
-    parts: list[bytes] = []
-    total = 0
-    while True:
-        chunk = await upload.read(_UPLOAD_CHUNK)
-        if not chunk:
-            break
-        total += len(chunk)
-        if total > max_bytes:
-            raise _upload_too_large(max_bytes, status_code, detail)
-        parts.append(chunk)
-    return b"".join(parts)
+    capped = _CappedRead(max_bytes, status_code, detail)
+    while capped.take(await upload.read(_UPLOAD_CHUNK)):
+        pass
+    return capped.data()
 
 
 def read_within_limit_sync(
@@ -484,14 +501,7 @@ def read_within_limit_sync(
     """:func:`read_within_limit` for a plain ``def`` handler (#117: FastAPI
     runs it in the threadpool, so it reads the spooled file directly rather
     than awaiting). Same chunks, cap and refusal."""
-    parts: list[bytes] = []
-    total = 0
-    while True:
-        chunk = upload.file.read(_UPLOAD_CHUNK)
-        if not chunk:
-            break
-        total += len(chunk)
-        if total > max_bytes:
-            raise _upload_too_large(max_bytes, status_code, detail)
-        parts.append(chunk)
-    return b"".join(parts)
+    capped = _CappedRead(max_bytes, status_code, detail)
+    while capped.take(upload.file.read(_UPLOAD_CHUNK)):
+        pass
+    return capped.data()
