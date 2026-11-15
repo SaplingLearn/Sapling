@@ -204,15 +204,48 @@ class TestCalendarCallback:
         assert r.headers["location"].endswith("/calendar?connected=true")
         assert "evil" not in r.headers["location"]
 
-    def test_a_failure_lands_on_calendar_whatever_next_says(self, monkeypatch):
+    @pytest.mark.parametrize("next_path", ["/gradebook", "/dashboard"])
+    def test_a_failure_lands_on_next_with_its_code(self, monkeypatch, next_path):
+        """Onboarding hands a Gradescope student on to /gradebook through the
+        connect; a failed connect must keep that hand-off (and with
+        hide_calendar on, /calendar itself redirects away)."""
         _mock_flow(monkeypatch)
         self._upserts(monkeypatch)
         client = TestClient(_app)
-        state = self._initiate(client, "&next=/dashboard")
+        state = self._initiate(client, f"&next={next_path}")
         r = client.get(
             f"/api/calendar/callback?error=access_denied&state={state}", follow_redirects=False,
         )
-        assert "/calendar?calendar_error=access_denied" in r.headers["location"]
+        assert r.headers["location"].endswith(f"{next_path}?calendar_error=access_denied")
+
+    def test_a_failure_without_next_lands_on_calendar(self, monkeypatch):
+        _mock_flow(monkeypatch)
+        self._upserts(monkeypatch)
+        client = TestClient(_app)
+        state = self._initiate(client)
+        r = client.get(f"/api/calendar/callback?state={state}", follow_redirects=False)
+        assert r.headers["location"].endswith("/calendar?calendar_error=missing_code")
+
+    def test_a_failure_with_a_signed_but_unlisted_next_lands_on_calendar(self, monkeypatch):
+        """The failure path re-checks `next` exactly as the success path does."""
+        _mock_flow(monkeypatch)
+        self._upserts(monkeypatch)
+        client = TestClient(_app)
+        client.cookies.set(cal.CALENDAR_OAUTH_STATE_COOKIE, auth_module._encode_oauth_cookie(
+            {"n": "n1", "cv": "v", "uid": "user_a", "next": "https://evil.example"}))
+        state = auth_module._encode_state({"action": "calendar", "n": "n1"})
+        r = client.get(
+            f"/api/calendar/callback?error=access_denied&state={state}", follow_redirects=False,
+        )
+        assert r.headers["location"].endswith("/calendar?calendar_error=access_denied")
+        assert "evil" not in r.headers["location"]
+
+    def test_a_failure_with_no_cookie_lands_on_calendar(self, monkeypatch):
+        _mock_flow(monkeypatch)
+        client = TestClient(_app)
+        state = auth_module._encode_state({"action": "calendar", "n": "whatever"})
+        r = client.get(f"/api/calendar/callback?code=xyz&state={state}", follow_redirects=False)
+        assert r.headers["location"].endswith("/calendar?calendar_error=invalid_state")
 
     def test_a_replayed_state_is_refused_and_writes_nothing(self, monkeypatch):
         """Each state nonce is honoured once, as at sign-in (#756): within the
@@ -258,7 +291,7 @@ class TestCalendarCallback:
         client = TestClient(_app)
         state = self._initiate(client, "&next=/dashboard")
         r = client.get(f"/api/calendar/callback?code=xyz&state={state}", follow_redirects=False)
-        assert "/calendar?calendar_error=scope_denied" in r.headers["location"]
+        assert r.headers["location"].endswith("/dashboard?calendar_error=scope_denied")
         assert upserts == []
 
     def test_a_grant_with_no_scope_list_is_what_was_asked(self, monkeypatch):
@@ -295,7 +328,7 @@ class TestCalendarCallback:
         client = TestClient(_app)
         state = self._initiate(client, "&next=/dashboard")
         r = client.get(f"/api/calendar/callback?code=xyz&state={state}", follow_redirects=False)
-        assert r.headers["location"].endswith("/calendar?calendar_error=no_refresh_token")
+        assert r.headers["location"].endswith("/dashboard?calendar_error=no_refresh_token")
         fake_table.return_value.upsert.assert_not_called()
 
     def test_nonce_mismatch_rejected_no_token_write(self, monkeypatch):

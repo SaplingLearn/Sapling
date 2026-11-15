@@ -70,8 +70,8 @@ router = APIRouter()
 CALENDAR_OAUTH_STATE_COOKIE = "sapling_calendar_oauth_state"
 _CALENDAR_OAUTH_COOKIE_MAX_AGE = 600
 
-#: Where a successful connect may send the student (`next` on /auth-url): an
-#: internal path, exactly one of these. Anything else is ignored.
+#: Where a connect, successful or not, may send the student (`next` on
+#: /auth-url): an internal path, exactly one of these. Anything else is ignored.
 CALENDAR_NEXT_PATHS = frozenset({"/dashboard", "/gradebook", "/calendar"})
 _CALENDAR_DEFAULT_NEXT = "/calendar"
 
@@ -107,7 +107,7 @@ def calendar_auth_url(
     binds the resulting tokens to *this* user and never to an attacker-supplied
     parameter (the holistic auth-scoping concern on #61, sibling of #123).
 
-    ``next`` (optional) is where a successful connect lands: one of
+    ``next`` (optional) is where the connect lands, whether it works or not: one of
     ``CALENDAR_NEXT_PATHS``, anything else ignored. It is sealed in the same
     signed cookie and re-checked at the callback, so the redirect target is
     only ever one this route allowed.
@@ -160,12 +160,18 @@ def calendar_callback(
     """Handle Google's redirect: validate CSRF state, exchange the code, and
     store the tokens scoped to the user sealed in the signed state cookie.
 
-    Success lands on the cookie's ``next`` (default /calendar) with
-    ``connected=true``; every failure on /calendar with ``calendar_error``."""
+    Success AND failure land on the cookie's ``next`` (re-checked against
+    ``CALENDAR_NEXT_PATHS``; default /calendar), with ``connected=true`` or
+    ``calendar_error=<code>``: a failed connect keeps onboarding's hand-off
+    (``next=/gradebook`` for Gradescope), and /calendar may be hidden
+    (``hide_calendar``)."""
     cookie_payload = _decode_oauth_cookie(request.cookies.get(CALENDAR_OAUTH_STATE_COOKIE))
+    landing = (
+        _clean_calendar_next(cookie_payload.get("next")) if cookie_payload else None
+    ) or _CALENDAR_DEFAULT_NEXT
 
-    def _finish(query: str, path: str = _CALENDAR_DEFAULT_NEXT) -> RedirectResponse:
-        resp = RedirectResponse(f"{FRONTEND_URL}{path}?{query}")
+    def _finish(query: str) -> RedirectResponse:
+        resp = RedirectResponse(f"{FRONTEND_URL}{landing}?{query}")
         resp.set_cookie(
             key=CALENDAR_OAUTH_STATE_COOKIE,
             value="",
@@ -237,7 +243,4 @@ def calendar_callback(
     elif not _has_stored_refresh_token(user_id):
         return _finish("calendar_error=no_refresh_token")
     table("oauth_tokens").upsert(row, on_conflict="user_id")
-    return _finish(
-        "connected=true",
-        _clean_calendar_next(cookie_payload.get("next")) or _CALENDAR_DEFAULT_NEXT,
-    )
+    return _finish("connected=true")
