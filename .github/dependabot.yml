@@ -1,6 +1,9 @@
-# Dependabot version updates: weekly, minor + patch grouped into one PR per
-# ecosystem, majors one PR each. Security updates (Dependabot alerts) are
-# separate and must be switched on in the repository settings.
+# Dependabot version updates: monthly, at most two PRs per ecosystem — one
+# grouping every minor + patch bump, one grouping every major bump. Every
+# Dependabot PR (and every rebase it pushes) runs CI on billed Actions
+# minutes, so the cadence and the grouping are deliberately coarse.
+# Security updates (Dependabot alerts) are separate and must be switched on
+# in the repository settings.
 #
 # BACKEND (pip) — READ BEFORE MERGING A PIP PR. backend/requirements.lock is
 # compiled by uv from backend/requirements.txt (the command is in its header).
@@ -30,64 +33,66 @@ updates:
   - package-ecosystem: pip
     directory: /backend
     schedule:
-      interval: weekly
-      day: monday
+      interval: monthly
       time: "06:00"
       timezone: Etc/UTC
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 2
     labels: [dependencies, backend]
     commit-message:
       prefix: "chore(deps)"
     groups:
       backend-minor-patch:
         update-types: [minor, patch]
+      backend-major:
+        update-types: [major]
 
   - package-ecosystem: npm
     directory: /frontend
     schedule:
-      interval: weekly
-      day: monday
+      interval: monthly
       time: "06:00"
       timezone: Etc/UTC
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 2
     labels: [dependencies, frontend]
     commit-message:
       prefix: "chore(deps)"
     groups:
       frontend-minor-patch:
         update-types: [minor, patch]
+      frontend-major:
+        update-types: [major]
 
   # Workflows pin every action to a commit SHA with a `# vX.Y.Z` comment;
   # Dependabot moves both together.
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: weekly
-      day: monday
+      interval: monthly
       time: "06:00"
       timezone: Etc/UTC
-    open-pull-requests-limit: 3
+    open-pull-requests-limit: 2
     labels: [dependencies, ci]
     commit-message:
       prefix: "ci(deps)"
     groups:
       actions-minor-patch:
         update-types: [minor, patch]
+      actions-major:
+        update-types: [major]
 
   - package-ecosystem: docker
     directories: [/backend, /frontend]
     schedule:
-      interval: weekly
-      day: monday
+      interval: monthly
       time: "06:00"
       timezone: Etc/UTC
-    open-pull-requests-limit: 2
+    open-pull-requests-limit: 1
     labels: [dependencies, infrastructure]
     commit-message:
       prefix: "build(deps)"
     groups:
-      docker-minor-patch:
-        update-types: [minor, patch]
+      docker-all:
+        update-types: [major, minor, patch]
     ignore:
       # The backend image's Python is tied to requirements.lock's
       # --python-version and ci.yml (test_image_python_matches_the_lock_and_ci):

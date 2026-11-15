@@ -280,7 +280,7 @@ python tests/evals/run_all.py
 | `Vulnerability scan` | PRs, pushes to `main`, weekly | `pip-audit` over `backend/requirements.lock`; `npm audit --omit=dev --audit-level=high` in `frontend/` |
 | `Secret scan` | PRs and pushes to `main` | gitleaks over the full git history (allowlist in `.gitleaks.toml`) |
 
-Every action is pinned to a commit SHA (`# vX.Y.Z` comment alongside) and every workflow's token defaults to `contents: read`. Dependabot (`.github/dependabot.yml`) proposes weekly pip, npm, Actions and Docker updates; a pip PR must be re-locked with uv before merge (the command is in that file).
+Every action is pinned to a commit SHA (`# vX.Y.Z` comment alongside) and every workflow's token defaults to `contents: read`. Dependabot (`.github/dependabot.yml`) proposes monthly pip, npm, Actions and Docker updates (minor+patch grouped, majors grouped); a pip PR must be re-locked with uv before merge (the command is in that file).
 
 Deploys: the frontend is built and deployed by Cloudflare Workers Builds on push. Production releases go through `make promote` (preflight, backup, migrate, merge `main` into `production`, verify). See [`backend/promotion/README.md`](backend/promotion/README.md).
 
