@@ -7,14 +7,21 @@ bound rejected the value only AFTER the allocation that would kill the
 process.
 """
 
+import importlib
+import inspect
 import io
+import pkgutil
 
 from fastapi import FastAPI
+from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
 from services.body_limit import (
+    ACCOUNT_IMPORT_PATH,
+    DEFAULT_ACCOUNT_IMPORT_MAX_BYTES,
     DEFAULT_JSON_MAX_BYTES,
     DEFAULT_MULTIPART_MAX_BYTES,
+    UPLOAD_PATHS,
     BodySizeLimitMiddleware,
 )
 
@@ -23,6 +30,7 @@ def _app(**limits) -> TestClient:
     """A minimal app behind the middleware, so these tests pin the
     middleware's own behaviour rather than any particular route's."""
     app = FastAPI()
+    limits.setdefault("upload_paths", frozenset({"/upload"}))
     app.add_middleware(BodySizeLimitMiddleware, **limits)
 
     @app.post("/echo")
@@ -31,6 +39,14 @@ def _app(**limits) -> TestClient:
 
     @app.post("/upload")
     async def upload():
+        return {"ok": True}
+
+    @app.post(ACCOUNT_IMPORT_PATH)
+    async def account_import():
+        return {"ok": True}
+
+    @app.post(ACCOUNT_IMPORT_PATH + "/x")
+    async def account_import_lookalike():
         return {"ok": True}
 
     @app.get("/ping")
@@ -87,6 +103,106 @@ class TestMultipartBodies:
         r = client.post("/upload",
                         files={"file": ("n.pdf", io.BytesIO(b"x" * 16384), "application/pdf")})
         assert r.status_code == 413
+
+    def test_a_multipart_label_does_not_raise_the_cap_off_an_upload_route(self):
+        """Content-Type is the client's to choose: labelling a JSON body
+        multipart must not buy a 120 MB allocation on a JSON route."""
+        client = _app(json_max_bytes=1024, multipart_max_bytes=1024 * 1024)
+        r = client.post("/echo",
+                        files={"file": ("n.pdf", io.BytesIO(b"x" * 8192), "application/pdf")})
+        assert r.status_code == 413
+
+    def test_a_forged_multipart_header_on_a_json_route_is_refused(self):
+        client = _app(json_max_bytes=1024, multipart_max_bytes=1024 * 1024)
+        r = client.post("/echo", content=b"a" * 8192,
+                        headers={"content-type": "multipart/form-data; boundary=x"})
+        assert r.status_code == 413
+
+    def test_an_upload_route_sent_a_non_multipart_body_gets_the_json_ceiling(self):
+        client = _app(json_max_bytes=1024, multipart_max_bytes=1024 * 1024)
+        r = client.post("/upload", content=b"a" * 8192,
+                        headers={"content-type": "application/json"})
+        assert r.status_code == 413
+
+    def test_the_upload_paths_match_exactly(self):
+        client = _app(json_max_bytes=1024, multipart_max_bytes=1024 * 1024,
+                      upload_paths=frozenset({"/upload"}))
+        r = client.post("/upload/x",
+                        files={"file": ("n.pdf", io.BytesIO(b"x" * 8192), "application/pdf")})
+        assert r.status_code == 413
+
+
+def _multipart_routes(app) -> set[str]:
+    """Every path whose request body FastAPI declares as multipart — i.e. the
+    routes with an `UploadFile`/`File(...)`/`Form(...)` parameter. Read off the
+    OpenAPI document (public API, unlike `app.routes`, whose shape changed
+    across FastAPI versions)."""
+    paths = set()
+    for path, ops in app.openapi()["paths"].items():
+        for op in ops.values():
+            content = ((op.get("requestBody") or {}).get("content")) or {}
+            if "multipart/form-data" in content:
+                paths.add(path)
+    return paths
+
+
+class TestUploadAllowlist:
+    def test_the_allowlist_is_exactly_the_apps_upload_routes(self):
+        """A new upload route missing from UPLOAD_PATHS would have its files
+        refused at 12 MB; a stale entry would hand 120 MB to a JSON route."""
+        from main import app
+
+        assert _multipart_routes(app) == set(UPLOAD_PATHS)
+
+    def test_no_upload_route_is_hidden_from_the_schema(self):
+        """The test above reads OpenAPI, so an upload route with
+        include_in_schema=False would slip past it. None exists today; this
+        fails if one appears, so the allowlist test can be widened with it."""
+        import routes
+
+        hidden = []
+        for info in pkgutil.iter_modules(routes.__path__):
+            router = getattr(importlib.import_module(f"routes.{info.name}"), "router", None)
+            for route in getattr(router, "routes", []):
+                if not isinstance(route, APIRoute) or route.include_in_schema:
+                    continue
+                params = inspect.signature(route.endpoint).parameters.values()
+                if any("UploadFile" in str(p.annotation) for p in params):
+                    hidden.append(f"routes/{info.name}.py {route.path}")
+        assert hidden == []
+
+
+class TestAccountImport:
+    """The server-to-server account copy carries a whole account's bundle as
+    ONE JSON body, so the ordinary JSON ceiling would 413 a big account."""
+
+    def test_the_import_route_gets_its_own_larger_ceiling(self):
+        client = _app(json_max_bytes=1024, account_import_max_bytes=64 * 1024)
+        r = client.post(ACCOUNT_IMPORT_PATH, content=b"a" * 8192,
+                        headers={"content-type": "application/json"})
+        assert r.status_code == 200
+
+    def test_the_import_route_over_its_own_ceiling_is_still_refused(self):
+        client = _app(json_max_bytes=1024, account_import_max_bytes=4096)
+        r = client.post(ACCOUNT_IMPORT_PATH, content=b"a" * 8192,
+                        headers={"content-type": "application/json"})
+        assert r.status_code == 413
+
+    def test_the_import_ceiling_is_an_exact_path_match_not_a_prefix(self):
+        client = _app(json_max_bytes=1024, account_import_max_bytes=64 * 1024)
+        r = client.post(ACCOUNT_IMPORT_PATH + "/x", content=b"a" * 8192,
+                        headers={"content-type": "application/json"})
+        assert r.status_code == 413
+
+    def test_the_constant_names_the_mounted_import_route(self):
+        """If the route moves, the ceiling must move with it."""
+        from main import app
+
+        assert app.url_path_for("import_") == ACCOUNT_IMPORT_PATH
+
+    def test_the_import_ceiling_is_far_above_the_json_ceiling(self):
+        assert DEFAULT_ACCOUNT_IMPORT_MAX_BYTES >= 200 * 1024 * 1024
+        assert DEFAULT_ACCOUNT_IMPORT_MAX_BYTES > DEFAULT_JSON_MAX_BYTES
 
 
 class TestPassThrough:

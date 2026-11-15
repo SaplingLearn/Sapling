@@ -16,7 +16,7 @@ from services.course_context_service import refresh_course_context
 from pydantic import BaseModel, Field
 
 from config import MAX_AVATAR_SIZE
-from db.connection import table
+from db.connection import like_literal, table
 from db.scope import service_route
 from services.encryption import encrypt_if_present
 from models import (
@@ -102,6 +102,27 @@ def _optional_viewer(request: Request) -> Optional[str]:
 _USERNAME_RE = re.compile(r"^[a-z0-9_]{3,24}$")
 
 
+def _username_holders(name: str) -> set[str]:
+    """The user_ids whose stored username is `name`, ignoring letter case.
+
+    Writes are lowercased now, but a handle stored before that keeps its case
+    ("Alice"), and a case-sensitive `eq.alice` would not see it — so both the
+    availability check and the write's uniqueness check read case-insensitively.
+    `ilike` with the value LIKE-escaped (`_` is a wildcard), then re-checked in
+    Python for exact equality, as `services/auth/waitlist.py` does: an escaped
+    value with no `%` already matches only itself, and the re-check keeps that
+    true even past PostgREST's `*` rewrite, which no escape reaches. More than
+    one row can hold the name when legacy rows differ only by case.
+    """
+    rows = table("user_profiles").select(
+        "user_id,username", filters={"username": f"ilike.{like_literal(name)}"},
+    )
+    return {
+        r["user_id"] for r in rows or []
+        if (r.get("username") or "").lower() == name
+    }
+
+
 # #115: answers about OTHER users' usernames -> service role. The viewer must
 # be signed in (get_session_user_id below), and is charged USERNAME_CHECK.
 @router.get("/username/check", dependencies=[Depends(service_route)])
@@ -135,12 +156,11 @@ def check_username(
     name = (username or "").strip().lower()
     if not _USERNAME_RE.match(name):
         return {"available": False, "reason": "invalid"}
-    # username now lives on user_profiles (keyed by user_id).
-    existing = table("user_profiles").select("user_id", filters={"username": f"eq.{name}"})
-    if not existing:
+    holders = _username_holders(name)
+    if not holders:
         return {"available": True}
     # The SESSION decides "self" — not the caller-supplied user_id (see above).
-    if existing[0]["user_id"] == viewer_id:
+    if holders == {viewer_id}:
         return {"available": True, "reason": "self"}
     return {"available": False, "reason": "taken"}
 
@@ -187,12 +207,10 @@ def update_profile(user_id: str, body: UpdateProfileBody, request: Request):
         # Normalised to lowercase to match the availability check, which
         # lowercases before comparing. Storing the raw value let "Alice" be
         # saved while the check reported "alice" as free — two users could
-        # hold the same handle in different cases, and this uniqueness lookup
-        # (a case-sensitive eq.) would not see the collision.
-        existing = table("user_profiles").select(
-            "user_id", filters={"username": f"eq.{candidate}"}
-        )
-        if existing and existing[0]["user_id"] != user_id:
+        # hold the same handle in different cases. The lookup is
+        # case-insensitive for the same reason: a handle stored before this
+        # normalisation keeps its case.
+        if _username_holders(candidate) - {user_id}:
             raise HTTPException(status_code=409, detail="Username already taken")
         updates_profile["username"] = candidate
 

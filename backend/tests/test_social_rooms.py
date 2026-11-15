@@ -33,7 +33,9 @@ def _tables(data=None):
     def factory(name):
         if name not in cache:
             m = MagicMock()
-            m.select.return_value = (data or {}).get(name, [])
+            rows = (data or {}).get(name, [])
+            m.select.return_value = rows
+            m.select_with_count.return_value = (rows, len(rows))
             m.insert.return_value = []
             m.upsert.return_value = []
             m.update.return_value = []
@@ -128,6 +130,37 @@ class TestPublicRooms:
         assert r.status_code == 404
 
 
+#: PostgREST's `max_rows` on this deployment (db/connection.py::MAX_ROWS).
+_MAX_ROWS = 1000
+
+
+class _CappedMembers:
+    """`room_members` as PostgREST serves it: an `in.(…)` filter, and never
+    more than `max_rows` rows in one response, whatever was asked for. That
+    cap answers 2xx (206) with the rows cut short, so a read that does not
+    page is silently truncated — the fault this fake exists to expose."""
+
+    def __init__(self, rows):
+        self.rows = rows
+        self.calls = []
+
+    def _matching(self, filters):
+        ids = set(filters["room_id"].removeprefix("in.(").removesuffix(")").split(","))
+        return [r for r in self.rows if r["room_id"] in ids]
+
+    def select(self, columns="*", *, filters=None, limit=None, **_):
+        self.calls.append(filters)
+        rows = self._matching(filters)
+        return rows[: min(limit or _MAX_ROWS, _MAX_ROWS)]
+
+    def select_with_count(self, columns="*", *, filters=None, order=None,
+                          limit=None, offset=0, **_):
+        self.calls.append(filters)
+        rows = sorted(self._matching(filters), key=lambda r: (r["room_id"], r["user_id"]))
+        page = rows[offset: offset + min(limit or _MAX_ROWS, _MAX_ROWS)]
+        return page, len(rows)
+
+
 class TestMemberCountsAreBatched:
     """Both listings used to run one `room_members` query PER ROOM, in series.
     The public listing is the worse of the two — it reads every public room in
@@ -145,11 +178,11 @@ class TestMemberCountsAreBatched:
 
         rooms_tbl = MagicMock()
         rooms_tbl.select.return_value = self._rooms(n)
-        members_tbl = MagicMock()
         # Two members in r0, one in r1, none elsewhere.
-        members_tbl.select.return_value = [
-            {"room_id": "r0"}, {"room_id": "r0"}, {"room_id": "r1"},
-        ]
+        members_tbl = _CappedMembers([
+            {"room_id": "r0", "user_id": "a"}, {"room_id": "r0", "user_id": "b"},
+            {"room_id": "r1", "user_id": "a"},
+        ])
         with patch.object(mod, "table",
                           side_effect=lambda name: rooms_tbl if name == "rooms" else members_tbl):
             out = mod.list_public_rooms("u1")
@@ -157,7 +190,7 @@ class TestMemberCountsAreBatched:
 
     def test_one_query_for_the_whole_listing(self):
         out, members_tbl = self._run_public(30)
-        assert members_tbl.select.call_count == 1, "should batch, not query per room"
+        assert len(members_tbl.calls) == 1, "should batch, not query per room"
         by_id = {r["id"]: r["member_count"] for r in out["rooms"]}
         assert by_id["r0"] == 2
         assert by_id["r1"] == 1
@@ -165,15 +198,30 @@ class TestMemberCountsAreBatched:
 
     def test_chunks_rather_than_one_huge_in_filter(self):
         _, members_tbl = self._run_public(120)
-        assert members_tbl.select.call_count == 3  # 120 / _IN_CHUNK(50)
-        for call in members_tbl.select.call_args_list:
-            ids = call.kwargs["filters"]["room_id"]
+        assert len(members_tbl.calls) == 3  # 120 / _IN_CHUNK(50)
+        for filters in members_tbl.calls:
+            ids = filters["room_id"]
             assert ids.startswith("in.(")
             assert len(ids.split(",")) <= 50
 
     def test_no_rooms_means_no_member_query(self):
         _, members_tbl = self._run_public(0)
-        assert members_tbl.select.call_count == 0
+        assert members_tbl.calls == []
+
+    def test_counts_are_not_cut_short_at_postgrest_max_rows(self):
+        """50 rooms share one `in.(…)` read; 50 rooms of 30 members is 1,500
+        rows, past PostgREST's 1,000-row cap. Every member must be counted."""
+        from unittest.mock import patch
+
+        from services.social import rooms as mod
+
+        members = _CappedMembers([
+            {"room_id": f"r{i}", "user_id": f"u{j}"} for i in range(50) for j in range(30)
+        ])
+        with patch.object(mod, "table", return_value=members):
+            counts = mod._member_counts([f"r{i}" for i in range(50)])
+        assert sum(counts.values()) == 1500
+        assert set(counts.values()) == {30}
 
     def test_invite_code_is_still_never_in_the_public_payload(self):
         """The batching rewrote this projection; it must stay explicit."""

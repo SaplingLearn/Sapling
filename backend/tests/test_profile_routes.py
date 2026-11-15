@@ -359,7 +359,7 @@ class TestUpdateProfile:
                 m.select.return_value = [user_row]
             elif name == "user_profiles":
                 # uniqueness check returns a DIFFERENT user holding the username
-                m.select.return_value = [{"user_id": "other_user"}]
+                m.select.return_value = [{"user_id": "other_user", "username": "taken"}]
             elif name == "user_settings":
                 m.select.return_value = [{"user_id": USER_ID}]
             else:
@@ -370,6 +370,61 @@ class TestUpdateProfile:
             r = client.patch(f"/api/profile/{USER_ID}", json={"username": "taken"})
 
         assert r.status_code == 409
+
+    def test_a_mixed_case_legacy_handle_is_a_collision(self):
+        """Handles stored before writes were lowercased keep their case
+        ("Alice"); the uniqueness check must see them as holding "alice"."""
+        user_row = {"id": USER_ID, "email": None, "streak_count": 0, "created_at": "2025-01-01"}
+        lookups = []
+
+        def table_side_effect(name):
+            m = MagicMock()
+            if name == "users":
+                m.select.return_value = [user_row]
+            elif name == "user_profiles":
+                def _select(columns="*", filters=None, **_):
+                    if filters and "username" in filters:
+                        lookups.append(filters["username"])
+                        return [{"user_id": "other_user", "username": "Alice"}]
+                    return [{"user_id": USER_ID, "name": "Test"}]
+                m.select.side_effect = _select
+            else:
+                m.select.return_value = []
+            m.update.return_value = [{}]
+            return m
+
+        with _mock_self(), patch_profile_table(side_effect=table_side_effect):
+            r = client.patch(f"/api/profile/{USER_ID}", json={"username": "alice"})
+        assert r.status_code == 409
+        assert lookups == ["ilike.alice"]
+
+    def test_the_uniqueness_lookup_escapes_like_wildcards(self):
+        """`_` is a LIKE wildcard: unescaped, "a_b" would match "axb"."""
+        lookups = []
+
+        def table_side_effect(name):
+            m = MagicMock()
+            if name == "users":
+                m.select.return_value = [{"id": USER_ID, "email": None, "streak_count": 0,
+                                          "created_at": "2025-01-01"}]
+            elif name == "user_profiles":
+                def _select(columns="*", filters=None, **_):
+                    if filters and "username" in filters:
+                        lookups.append(filters["username"])
+                        # What an unescaped pattern would also have matched.
+                        return [{"user_id": "other_user", "username": "axb"}]
+                    return [{"user_id": USER_ID, "name": "Test"}]
+                m.select.side_effect = _select
+            else:
+                m.select.return_value = []
+            m.update.return_value = [{}]
+            return m
+
+        with _mock_self(), patch_profile_table(side_effect=table_side_effect):
+            r = client.patch(f"/api/profile/{USER_ID}", json={"username": "a_b"})
+        assert lookups == ["ilike.a\\_b"]
+        # A row that is not the same handle (ignoring case) is not a collision.
+        assert r.status_code == 200
 
     def test_creates_user_profiles_row_when_missing(self):
         # A user with no user_profiles row yet should get one created before the
@@ -808,7 +863,7 @@ class TestCheckUsername:
     def test_taken_when_different_user_holds_it(self):
         # username lives on user_profiles now (keyed by user_id).
         with _mock_session_user(), patch_profile_table() as t:
-            t.return_value.select.return_value = [{"user_id": "other_user"}]
+            t.return_value.select.return_value = [{"user_id": "other_user", "username": "taken"}]
             r = client.get("/api/profile/username/check?username=taken")
         assert r.status_code == 200
         body = r.json()
@@ -817,7 +872,7 @@ class TestCheckUsername:
 
     def test_available_when_held_by_self(self):
         with _mock_session_user(), patch_profile_table() as t:
-            t.return_value.select.return_value = [{"user_id": USER_ID}]
+            t.return_value.select.return_value = [{"user_id": USER_ID, "username": "mine"}]
             r = client.get("/api/profile/username/check?username=mine")
         assert r.status_code == 200
         body = r.json()
@@ -836,7 +891,7 @@ class TestCheckUsername:
         """The identity oracle: passing the OWNER's id as `user_id` must not
         turn "taken" into "self" — that confirmed who owned a username."""
         with _mock_session_user(), patch_profile_table() as t:
-            t.return_value.select.return_value = [{"user_id": "other_user"}]
+            t.return_value.select.return_value = [{"user_id": "other_user", "username": "taken"}]
             r = client.get(
                 "/api/profile/username/check?username=taken&user_id=other_user"
             )
@@ -844,6 +899,34 @@ class TestCheckUsername:
         body = r.json()
         assert body["available"] is False
         assert body["reason"] == "taken"
+
+    def test_taken_when_a_mixed_case_legacy_handle_holds_it(self):
+        with _mock_session_user(), patch_profile_table() as t:
+            t.return_value.select.return_value = [{"user_id": "other_user", "username": "Alice"}]
+            r = client.get("/api/profile/username/check?username=alice")
+        assert r.json() == {"available": False, "reason": "taken"}
+        filters = t.return_value.select.call_args.kwargs["filters"]
+        assert filters == {"username": "ilike.alice"}
+
+    def test_the_lookup_is_equality_not_a_pattern(self):
+        """The value is LIKE-escaped, and a row that is not the same handle
+        ignoring case (what an unescaped `_` would match) does not count."""
+        with _mock_session_user(), patch_profile_table() as t:
+            t.return_value.select.return_value = [{"user_id": "other_user", "username": "axb"}]
+            r = client.get("/api/profile/username/check?username=a_b")
+        assert r.json() == {"available": True}
+        assert t.return_value.select.call_args.kwargs["filters"] == {"username": "ilike.a\\_b"}
+
+    def test_taken_when_a_case_twin_belongs_to_someone_else(self):
+        """Two legacy rows can differ only by case; the viewer holding one of
+        them does not make the name theirs."""
+        with _mock_session_user(), patch_profile_table() as t:
+            t.return_value.select.return_value = [
+                {"user_id": USER_ID, "username": "alice"},
+                {"user_id": "other_user", "username": "Alice"},
+            ]
+            r = client.get("/api/profile/username/check?username=alice")
+        assert r.json() == {"available": False, "reason": "taken"}
 
     def test_invalid_format_short(self):
         with _mock_session_user():

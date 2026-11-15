@@ -74,7 +74,10 @@ GOOGLE_SCOPES = [
 # already granted calendar access keeps it: sign-in asks Google to include the
 # scopes granted earlier (include_granted_scopes), and refreshes the stored
 # calendar tokens only when that grant still covers GOOGLE_SCOPES
-# (services/auth/signin.py).
+# (services/auth/signin.py). Sapling holds no token for an identity-only
+# sign-in, so deleting an account that never connected the calendar does not
+# revoke its Google grant: the student can remove Sapling in their Google
+# account (Security > Third-party connections).
 AUTH_SCOPES = [
     "openid",
     "https://www.googleapis.com/auth/userinfo.email",

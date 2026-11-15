@@ -86,11 +86,12 @@ def _clear_lru_caches():
     feature_flags.clear_user_roles_cache()
     auth_guard.clear_account_state_cache()
     llm_budget.clear_llm_budget_cache()
-    # #756: the OAuth callback honours each state nonce once per process, and
-    # the callback harnesses reuse fixed nonces. Only if already imported.
-    auth_routes = sys.modules.get("routes.auth")
-    if auth_routes is not None:
-        auth_routes.clear_consumed_oauth_nonces()
+    # #756: the OAuth callbacks (sign-in and calendar connect) honour each
+    # state nonce once per process, and the callback harnesses reuse fixed
+    # nonces. The store lives in services.auth.oauth_state; only if imported.
+    oauth_state = sys.modules.get("services.auth.oauth_state")
+    if oauth_state is not None:
+        oauth_state.clear_consumed_oauth_nonces()
     # The crisis card's once-a-day event keys (note chat). Only if imported.
     crisis_support = sys.modules.get("services.crisis_support")
     if crisis_support is not None:
@@ -106,9 +107,9 @@ def _clear_lru_caches():
     feature_flags.clear_user_roles_cache()
     auth_guard.clear_account_state_cache()
     llm_budget.clear_llm_budget_cache()
-    auth_routes = sys.modules.get("routes.auth")
-    if auth_routes is not None:
-        auth_routes.clear_consumed_oauth_nonces()
+    oauth_state = sys.modules.get("services.auth.oauth_state")
+    if oauth_state is not None:
+        oauth_state.clear_consumed_oauth_nonces()
     # The crisis card's once-a-day event keys (note chat). Only if imported.
     crisis_support = sys.modules.get("services.crisis_support")
     if crisis_support is not None:
