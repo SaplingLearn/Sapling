@@ -310,10 +310,10 @@ RESOURCE_EXPECT: dict[tuple[str, str], tuple[tuple[int, ...], str]] = {
     ("POST", "/api/feedback"):
         ((200,), "the foreign session link is set to NULL; the row is B's"),
     ("POST", "/api/graph/{user_id}/nodes"):
-        ((404,), "not enrolled in the course: academics.require_course_enrollment. "
-                 "Was 200 (B's own node under A's course, with no edge to A's node) "
-                 "until this route adopted #115's course gate like every other "
-                 "course-keyed write"),
+        ((200,), "B's node is created in B's own course; the anchor lookup is filtered "
+                 "to B, so no edge to A's node. (The probed param is anchor_node_id; "
+                 "the course gate is test_graph_node_refuses_a_course_the_caller_is_"
+                 "not_enrolled_in's probe.)"),
     ("DELETE", "/api/notes/{note_id}"):
         ((200,), "no-op {'deleted': true}: the delete is filtered by user_id = B"),
     ("GET", "/api/notes/{note_id}/concepts"):

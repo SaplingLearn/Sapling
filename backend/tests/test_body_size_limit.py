@@ -108,3 +108,22 @@ class TestProductionCeilings:
 
         # base64 inflates by 4/3, plus the surrounding JSON object.
         assert DEFAULT_JSON_MAX_BYTES > MAX_UPLOAD_BYTES * 4 / 3
+
+    def test_json_ceiling_clears_every_bounded_base64_field(self):
+        """#890 bounded each base64 JSON field at parse time; the backstop
+        must sit above the largest of those bounds, or it would answer 413
+        where the route has its own, better-worded 422."""
+        from models import AchievementIconBody, CosmeticAssetBody
+        from routes.flashcards import ImportParseBody
+        from routes.profile import _AvatarUploadBody
+
+        fields = (
+            (_AvatarUploadBody, "file_b64"),
+            (ImportParseBody, "payload"),
+            (AchievementIconBody, "file_base64"),
+            (CosmeticAssetBody, "file_base64"),
+        )
+        for model, name in fields:
+            bound = next(m.max_length for m in model.model_fields[name].metadata
+                         if getattr(m, "max_length", None))
+            assert DEFAULT_JSON_MAX_BYTES > bound + 64 * 1024, f"{model.__name__}.{name}"

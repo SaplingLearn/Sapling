@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 import config
 from main import app
+from models import SHORT_TEXT_MAX
 from tests.split_patches import patch_social
 
 client = TestClient(app)
@@ -251,7 +252,7 @@ class TestTextFieldBounds:
 
     def test_rejects_an_unbounded_claimed_name(self):
         r = client.post(f"/api/social/rooms/{ROOM_ID}/messages",
-                        json={"user_id": "u1", "user_name": "x" * 101, "text": "hi"})
+                        json={"user_id": "u1", "user_name": "x" * (SHORT_TEXT_MAX + 1), "text": "hi"})
         assert r.status_code == 422
 
     def test_rejects_an_unbounded_emoji(self):
@@ -263,7 +264,7 @@ class TestTextFieldBounds:
     def test_rejects_an_unbounded_room_name(self):
         """A public room's name renders to people who never joined it."""
         r = client.post("/api/social/rooms/create",
-                        json={"user_id": "u1", "room_name": "n" * 101, "is_public": True})
+                        json={"user_id": "u1", "room_name": "n" * (SHORT_TEXT_MAX + 1), "is_public": True})
         assert r.status_code == 422
 
 
