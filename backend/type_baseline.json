@@ -27,7 +27,6 @@
   "routes/admin_flags.py::reportArgumentType": 1,
   "routes/admin_jobs.py::reportArgumentType": 1,
   "routes/auth.py::reportArgumentType": 3,
-  "routes/calendar.py::reportArgumentType": 1,
   "routes/documents.py::reportArgumentType": 3,
   "routes/gradebook.py::reportArgumentType": 2,
   "routes/gradescope.py::reportReturnType": 2,

@@ -208,9 +208,13 @@ def calendar_callback(
     flow.redirect_uri = GOOGLE_REDIRECT_URI
     try:
         flow.fetch_token(code=code, code_verifier=cookie_payload.get("cv"))
-    except Exception:
+    except Exception:  # noqa: BLE001 — any token-exchange failure (oauthlib raises many types) is reported as oauth_exchange_failed
         return _finish("calendar_error=oauth_exchange_failed")
     creds = flow.credentials
+    if not creds.token:
+        # A successful exchange always carries an access token; treat one
+        # without as a failed exchange rather than encrypting None.
+        return _finish("calendar_error=oauth_exchange_failed")
 
     # Connected means calendar access: a grant missing a calendar scope is
     # not stored, so a stored token is always one that reaches the calendar.
