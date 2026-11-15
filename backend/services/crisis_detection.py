@@ -15,9 +15,10 @@ limits and how the owner extends the lists below.
 How matching works (every list below is a regex over `normalize(text)`):
 
 1. `normalize` folds case and accents, drops apostrophes ("can't" -> "cant",
-   "I'm" -> "im"), turns sentence punctuation into a `|` boundary and every
-   other non-letter into a space ("self-harm" -> "self harm"), and squeezes a
-   letter repeated 3+ times to one ("killl" -> "kil", "dieee" -> "die").
+   "I'm" -> "im"), turns sentence punctuation (an ellipsis included) into a
+   `|` boundary and every other non-letter into a space ("self-harm" ->
+   "self harm"), and squeezes a letter repeated 3+ times to one ("killl" ->
+   "kil", "dieee" -> "die").
    Patterns are written against THAT form: no apostrophes, no punctuation.
 2. EXPLICIT phrases match anywhere: first-person statements of intent,
    ideation, self-harm or acute danger ("kill myself", "end my life", "want to
@@ -32,11 +33,18 @@ How matching works (every list below is a regex over `normalize(text)`):
    (NEGATION_GUARDS):
    - reaches only within its own clause: a comma, dash, bracket, joining
      word ("but", "and", "so") or new first-person subject ends it, so "I'm
-     not okay, I'll kill myself" still matches. The one thing it crosses is
-     a short aside set off on both sides right after the negation ("I'm not,
+     not okay, I'll kill myself" still matches. It crosses two things: a
+     short aside set off on both sides right after the negation ("I'm not,
      like, suicidal", "I am not, and never will be, suicidal"), never one
      with a new "I" in it or a second clause after it, and never a bare
-     comma ("not, want to kill myself" is two clauses);
+     comma ("not, want to kill myself" is two clauses); and a FILLER's
+     comma ("like", "really", "honestly", "even", "you know" ...) right
+     after the negation or that aside, straight into "suicidal" ("I'm not
+     like, suicidal", "I'm not even, like, suicidal"). A filler completes
+     nothing, so its comma is not a clause break; a content word does, so
+     "I'm not okay, honestly, suicidal again" is two clauses. Past a
+     filler's comma only "suicidal" is still negated, since an act there can
+     start a clause of its own ("Not really, kill myself");
    - crosses a hedge about how much: "I'm not so / too / that / as suicidal
      (as last year)", "I don't want to die more than anything / so badly"
      are negations;
@@ -44,9 +52,12 @@ How matching works (every list below is a regex over `normalize(text)`):
      as) <phrase>" and "never wanted to <phrase> more (than) / so badly / as
      much as" (`_NEVER_SAYS_MORE`; "never" only, so "not as suicidal as" is
      still a negation), a fear of the act or of stopping it right after the
-     negation ("no longer afraid to kill myself", "won't stop hurting
-     myself"), "this" ("I'm not usually this suicidal"), and a negated
-     negation ("can't not think about killing myself");
+     negation, as an adjective or a verb ("no longer afraid to kill
+     myself", "wouldn't hesitate to kill myself", "don't fear killing
+     myself", "won't stop hurting myself"), "this" ("I'm not usually this
+     suicidal"), and a negated negation ("can't not think about killing
+     myself"). "not / never / won't hesitate to" is an `_INTENT` frame too,
+     so "I don't hesitate to hurt myself" matches;
    - is never opened by "I won't lie", "not gonna lie", "not kidding", which
      introduce a statement; and only a hedge about one's own STATE negates
      ("I don't think I'm suicidal", "I'm not thinking I'm suicidal", "I don't
@@ -59,6 +70,9 @@ How matching works (every list below is a regex over `normalize(text)`):
      and ends its clause ("I don't want to kill myself but I might", "(but I
      think I will)", "but I'm going to", "but I think about it a lot"). "I'm
      not suicidal but I'm stressed", "but I might drop out" keep the negation.
+     The take-back reads across a comma, a dash and an ellipsis, which trail
+     off inside the sentence ("I'm not suicidal... but I might be"), never
+     across a full stop ("I'm not suicidal. But I might be" keeps it).
    TOPIC_GUARDS veto MENTIONS (never explicit phrases) anywhere in the text
    when it names an academic topic ("Durkheim", "euthanasia", "theory of
    suicide").
@@ -139,7 +153,10 @@ _INTENT = (
     r"|gonna|gona|imma|ima|finna"
     r"|i (?:will|might|could|should|would|may)|ill|id"
     r"|wish i could|thinking (?:about|of)|thought (?:about|of)"
-    rf"|urge {_TO}|urges {_TO}|tempted {_TO}|feel like|feeling like)"
+    rf"|urge {_TO}|urges {_TO}|tempted {_TO}|feel like|feeling like"
+    # "I won't hesitate to": the negation removes what stands in the way.
+    rf"|(?:not|never|dont|do not|didnt|did not|wont|will not|wouldnt|would not|no longer)"
+    rf" (?:hesitate|hesitated|hesitating) {_TO})"
 )
 _SUICIDE = r"(?:suicide|suicid|sucide|suicde|suiside|suiscide|suicied)"
 _SUICIDAL = r"(?:suicidal|suisidal|sucidal|suicidel|suicidial)"
@@ -304,29 +321,38 @@ _NEGATED = (
 )
 #: Words after which a negation no longer negates the phrase: a feeling about
 #: the act or about stopping it ("no longer AFRAID to kill myself", "I won't
-#: STOP hurting myself"), and "this", which points at the state now ("I'm not
-#: usually THIS suicidal"). They say what stands in the way, never the
-#: opposite. Not "so/too/that/as/more": "I'm not SO suicidal anymore", "not
+#: STOP hurting myself"), as an adjective or as the verb it comes from ("I
+#: wouldn't HESITATE to kill myself", "I don't FEAR killing myself", "I've
+#: never STOPPED being suicidal"), and "this", which points at the state now
+#: ("I'm not usually THIS suicidal"). They say what stands in the way, never
+#: the opposite. Not "so/too/that/as/more": "I'm not SO suicidal anymore", "not
 #: AS suicidal as last year" are negations (only `_NEVER_SAYS_MORE` reads a
 #: comparative as the phrase being there).
 _NOT_NEGATING = (
     r"this|afraid|scared|frightened|terrified|ashamed|sorry"
     r"|embarrassed|nervous|hesitant|worried|guilty|able|stop|stopping"
+    r"|hesitate|hesitated|hesitating|hesitation|fear|feared|fearing|worry|worrying|stopped"
 )
-#: A word that may sit between a negation and the phrase it negates: never a
-#: clause-joining word or a new first-person subject, which start the NEXT
-#: clause ("I'm not okay but suicidal", "I won't lie I'm suicidal"), and
-#: never a `_NOT_NEGATING` word.
-_GAP_WORD = (
+#: A word of the negation's own clause: never a clause-joining word or a new
+#: first-person subject, which start the NEXT clause ("I'm not okay but
+#: suicidal", "I won't lie I'm suicidal").
+_CLAUSE_WORD = (
     r"(?!(?:but|and|so|yet|though|although|because|cause|cuz|bc|plus|or|then"
-    rf"|i|im|ill|id|ive|{_NOT_NEGATING})(?![a-z0-9]))[a-z]+"
+    r"|i|im|ill|id|ive)(?![a-z0-9]))[a-z]+"
 )
+#: A word that may sit between a negation and the phrase it negates: a
+#: `_CLAUSE_WORD` that is not a `_NOT_NEGATING` word. (Inside an `_ASIDE` a
+#: `_NOT_NEGATING` word governs nothing: "I'm not, don't worry, suicidal".)
+_GAP_WORD = rf"(?!(?:{_NOT_NEGATING})(?![a-z0-9])){_CLAUSE_WORD}"
 #: A negation that is itself negated ("I can't NOT think about killing
 #: myself") says the phrase is there.
 _NOT_DOUBLED = r"(?<!cant )(?<!cannot )(?<!couldnt )(?<!dont )(?<!didnt )(?<!wont )(?<!never )"
+#: The clause form's ellipsis token (`_Forms.clause`): a sentence end to every
+#: negation pattern except `_TAKEN_BACK`, which reads across it.
+_TRAIL = "…"
 #: A comparison right after the phrase.
 _COMPARISON = (
-    r"(?:more than|more(?= ?(?:\||,|$))|as much as|so much|this much|so badly|this badly)"
+    rf"(?:more than|more(?= ?(?:\||,|{_TRAIL}|$))|as much as|so much|this much|so badly|this badly)"
     r"(?![a-z0-9])"
 )
 #: The two constructions in which "never" says MORE, not less, read right
@@ -351,16 +377,22 @@ _INTRODUCES = (
 )
 
 #: An aside the negation may cross, set off on BOTH sides by a comma, bracket
-#: or dash right after the negation word: one to four gap words ("I'm not,
+#: or dash right after the negation word: one to four clause words ("I'm not,
 #: like, suicidal", "I am not (really) suicidal"), or a coordinated "and never
 #: (have been | will be)" ("I am not, and never will be, suicidal"). Never a
 #: new first-person subject, a clause joiner or an introducing idiom (those
-#: are not gap words), so "I'm not, I swear, okay, I'll kill myself" is not
+#: are not clause words), so "I'm not, I swear, okay, I'll kill myself" is not
 #: negated; and only one aside, closed before the phrase.
 _ASIDE = (
-    rf" ,(?:(?! {_INTRODUCES})(?: {_GAP_WORD}){{1,4}}"
+    rf" ,(?:(?! {_INTRODUCES})(?: {_CLAUSE_WORD}){{1,4}}"
     r"| and (?:never|not)(?: (?:ever|have|has|had|will|would|be|been|was|were|am|is|are)){0,3}) ,"
 )
+
+#: A filler: a word that completes nothing, so a comma after it is its own
+#: and not a clause break ("I'm not LIKE, suicidal" says no more than "I'm not
+#: like suicidal"). A content word does complete the clause, which is why
+#: "I'm not OKAY, honestly, suicidal again" is two clauses and matches.
+_FILLER = r"(?:like|really|honestly|even|actually|literally|seriously|truly|totally|um|uh|you know)"
 
 #: A negation the SAME sentence takes back, read right after the negated
 #: phrase (the join word within 100 characters of it, which also keeps a long
@@ -380,7 +412,7 @@ _TAKE_BACK_MODAL = (
     r"(?:i (?:(?:probably|still|just|really|actually|eventually|definitely) )?(?:might|will|could|may)"
     r"|im (?:going to|gonna|gona)|i am (?:going to|gonna)|i (?:want to|wanna))"
     r"(?: (?:probably|still|eventually|actually|really|do it|anyway|anyways|someday|soon|tonight"
-    r"|one day|at some point|again|too|be|end up doing it))*(?= (?:\||,)|$)"
+    rf"|one day|at some point|again|too|be|end up doing it))*(?= (?:\||,|{_TRAIL})|$)"
     r"|ill (?:(?:probably|still|eventually|actually) )*(?:do it|end up doing it)(?![a-z0-9])"
 )
 _TAKE_BACK_THOUGHT = (
@@ -412,6 +444,12 @@ NEGATION_GUARDS: tuple[str, ...] = (
     # kill myself tonight"), and never "not saying"/"don't mean" ("I'm not
     # saying I'll kill myself" is a warning sign). A contraction reads like
     # its spelled-out form.
+    # A filler and its comma right after the negation (or after an `_ASIDE`),
+    # then the state word itself: "I'm not like, suicidal", "I'm not even,
+    # like, suicidal", "I'm not, like, really, suicidal". Only "suicidal",
+    # straight after the comma: an act or any other word there can start a
+    # clause of its own ("Not really, kill myself", "not really, want to").
+    rf"{_NOT_DOUBLED}{_NEGATION}(?:{_ASIDE})?(?:(?: {_FILLER}){{1,2}} ,){{1,2}} {_SUICIDAL}{_TAKEN_BACK}",
     rf"{_NOT_DOUBLED}{_NEGATION}(?: really)? (?:think|thinking|believe|guess|feel|feeling)"
     rf"(?: like| that)? (?:im|i am|i was|ive been|i have been) {_SUICIDAL}{_TAKEN_BACK}",
     rf"{_NOT_DOUBLED}(?:dont|do not|didnt|did not|never|wont|will not|dont really){_NEVER_SAYS_MORE}"
@@ -490,20 +528,25 @@ TOPIC_GUARDS: tuple[str, ...] = (
 _APOSTROPHES = re.compile("['’‘ʼ`´]")
 _INVISIBLE = re.compile("[­​-‏⁠﻿]")
 _SENTENCE_BREAK = re.compile(r"[.!?;:\n\r]+")
+#: Two or more dots on their own (NFKD has already spelled "…" out as "...").
+#: Every pattern reads it as a sentence break; the clause form keeps it as
+#: `_TRAIL` so `_TAKEN_BACK` can tell a trailing-off from a full stop.
+_ELLIPSIS = re.compile(r"(?<![.!?;:\n\r])\.{2,}(?![.!?;:\n\r])")
 #: Clause punctuation inside a sentence: a comma, a dash between words, a
 #: bracket. Only the negation guards see it (as a `,` token); every other
 #: pattern reads it as a space, exactly as before.
 _CLAUSE_BREAK = re.compile(r"(?:[,()\[\]{}–—]|(?<!\S)-+(?!\S))+")
 _CLAUSE = ","
-_NON_WORD = re.compile(r"[^a-z0-9|,]+")
+_NON_WORD = re.compile(rf"[^a-z0-9|,{_TRAIL}]+")
 _REPEATED_LETTER = re.compile(r"([a-z])\1{2,}")
 
 
 @dataclass(frozen=True)
 class _Forms:
     """`text` is `normalize`'s form. `clause` is the same with a `,` token at
-    each clause break; `commas` are those tokens' offsets in `clause`, which
-    map a `clause` offset back onto `text`."""
+    each clause break and a `_TRAIL` token (in place of `|`) at each ellipsis;
+    `commas` are the `,` tokens' offsets in `clause`, which map a `clause`
+    offset back onto `text`."""
 
     text: str
     clause: str
@@ -519,6 +562,7 @@ def _forms(text: str) -> _Forms:
     folded = "".join(ch for ch in folded if not unicodedata.combining(ch))
     folded = _INVISIBLE.sub("", folded)
     folded = _APOSTROPHES.sub("", folded)
+    folded = _ELLIPSIS.sub(f" {_TRAIL} ", folded)
     folded = _SENTENCE_BREAK.sub(" | ", folded)
     folded = _CLAUSE_BREAK.sub(f" {_CLAUSE} ", folded)
     folded = _NON_WORD.sub(" ", folded)
@@ -531,7 +575,7 @@ def _forms(text: str) -> _Forms:
         if token == _CLAUSE:
             commas.append(offset)
         offset += len(token) + 1
-    norm = " ".join(t for t in tokens if t != _CLAUSE) if commas else clause
+    norm = " ".join("|" if t == _TRAIL else t for t in tokens if t != _CLAUSE)
     return _Forms(text=norm, clause=clause, commas=tuple(commas))
 
 

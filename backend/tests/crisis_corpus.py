@@ -302,6 +302,12 @@ _TAKEN_BACK = (
 _NEVER_BEEN = "'never (been|felt) (more|this|so|as) <phrase>' says more, not less"
 _NEVER_WANTED = "'never wanted to <phrase> more than / so badly / as much as' is a comparison"
 _FEAR = "a fear of the act after the negation (no longer afraid to) does not negate it"
+_FEELING_VERB = (
+    "the verb form of a feeling about the act (won't hesitate to, don't fear, never stopped) "
+    "does not negate it either; base read it as a gap word")
+_TAKEN_BACK_TRAIL = (
+    "taken back across an ellipsis or a dash, which trail off inside the sentence (a full stop "
+    "still ends it); base read no take-back")
 _THIS = "'this' after a negation points at the state now and no longer vetoes"
 _FIRST_PERSON_COMPARATIVE = "still a match, now explicit: a first-person lead takes a comparative"
 _SOMEONE_ELSE = "the 'why does X want to die' guard no longer reads the speaker's own 'I' as X"
@@ -326,6 +332,10 @@ INTENDED_CHANGES_FROM_BASE: dict[str, str] = {
     "not, want to kill myself": "a bare comma right after the negation ends its clause",
     # Only a short aside right after the negation is crossed (d9cc216b).
     "I'm not okay, honestly, suicidal again": _ASIDE,
+    "I'm not like, okay, suicidal": (
+        "a filler's comma is crossed only straight into the state word; 'okay' completes the clause"),
+    "Not really, kill myself lol": (
+        "'not really' can be a whole answer: past its comma only 'suicidal' is still negated"),
     "I'm not, like, okay, suicidal every night": _ASIDE,
     "I'm not, like, kidding suicidal again": _ASIDE,
     # "I won't lie", "not kidding" introduce what follows (c906e70f).
@@ -369,6 +379,12 @@ INTENDED_CHANGES_FROM_BASE: dict[str, str] = {
     "I won't kill myself but I'll probably do it": _TAKEN_BACK,
     "I don't think I'm suicidal but I might be": _TAKEN_BACK,
     "I'm not suicidal except I think about it every night": _TAKEN_BACK,
+    "I'm not suicidal... but I might be": _TAKEN_BACK_TRAIL,
+    "I'm not suicidal… but I might be": _TAKEN_BACK_TRAIL,
+    "I don't want to die... but I might": _TAKEN_BACK_TRAIL,
+    "I don't want to die.. but I might... idk": _TAKEN_BACK_TRAIL,
+    "I'm not suicidal - but I might be": _TAKEN_BACK_TRAIL,
+    "I don't want to die — but I might": _TAKEN_BACK_TRAIL,
     # "never" that says MORE: never (been|felt) (more|this|so|as) <phrase>.
     "I have never been more suicidal": _NEVER_BEEN,
     "never been this suicidal before": _NEVER_BEEN,
@@ -382,6 +398,7 @@ INTENDED_CHANGES_FROM_BASE: dict[str, str] = {
     # ...and never wanted to <phrase> more (than) / so badly / as much as.
     "I've never wanted to kill myself more than today": _NEVER_WANTED,
     "I've never wanted to kill myself more.": _NEVER_WANTED,
+    "I've never wanted to kill myself more...": _NEVER_WANTED,
     "I've never wanted to die more than now": _NEVER_WANTED,
     "I have never wanted to die more": _NEVER_WANTED,
     "I've never wanted to die so badly": _NEVER_WANTED,
@@ -391,6 +408,16 @@ INTENDED_CHANGES_FROM_BASE: dict[str, str] = {
     "I'm no longer afraid to kill myself": _FEAR,
     "I'm not scared to kill myself anymore": _FEAR,
     "I'm no longer scared to end my life": _FEAR,
+    "I wouldn't hesitate to kill myself": _FEELING_VERB,
+    "I won't hesitate to end my life": _FEELING_VERB,
+    "I'm not hesitating to kill myself": _FEELING_VERB,
+    "I don't fear killing myself": _FEELING_VERB,
+    "I'm not worrying about killing myself": _FEELING_VERB,
+    "I've never stopped being suicidal": _FEELING_VERB,
+    "I don't hesitate to hurt myself": (
+        "'not hesitate to' is now an intent frame: no other phrase reads a bare 'to hurt myself'"),
+    "I never hesitated to hurt myself": (
+        "'not hesitate to' is now an intent frame: no other phrase reads a bare 'to hurt myself'"),
     "I can't not think about killing myself": "a negated negation (can't not) says the phrase is there",
     # "this" after a negation points at the state now.
     "I'm not usually this suicidal": _THIS,

@@ -199,6 +199,7 @@ NEGATIVES: list[str] = [
     "I would never kill myself",
     "I'm not going to kill myself",
     "I don't think I'm suicidal",
+    "I'm not honestly, suicidal",
     # unrelated
     "the killer whale",
     "killjoy",
@@ -267,6 +268,10 @@ CLAUSE_CROSSING: list[str] = [
     "I won't lie I'm suicidal",
     "I'm not okay; I'll kill myself",
     "I'm not sure: I'm suicidal",
+    # "not really" can be a whole answer: the comma after it ends the clause
+    # when anything but the state word follows
+    "Not really, want to kill myself",
+    "Not really, kill myself lol",
 ]
 
 #: Negations the guard must keep vetoing, the clause-scoped form included.
@@ -290,6 +295,14 @@ GENUINE_NEGATIONS: list[str] = [
     "I am not, and never will be, suicidal",
     "I'm not, you know, suicidal",
     "I would never — not ever — kill myself",
+    "I'm not, don't worry, suicidal",
+    # a filler right after the negation carries its own comma: "I'm not
+    # like" completes nothing, so the comma is not a clause break
+    "I'm not like, suicidal",
+    "I'm not like, suicidal or anything",
+    "I'm not really, suicidal",
+    "I'm not even, like, suicidal",
+    "I'm not, like, really, suicidal",
     # a "more" that starts the next thought is not a comparison
     "I'm not suicidal more like burnt out",
     "I would never kill myself more or less",
@@ -306,6 +319,8 @@ ASIDE_IS_NOT_A_NEGATION: list[str] = [
     "No, not really, honestly, I'm suicidal",
     "I'm not, but I am, suicidal",
     "I'm not okay (I'm suicidal)",
+    "I'm not like, okay, suicidal",
+    "I'm not really, I want to kill myself",
 ]
 
 
@@ -329,6 +344,16 @@ NEGATION_THAT_DOES_NOT_NEGATE: list[str] = [
     "I don't think I've ever been this suicidal",
     "I would never want to hurt myself as much as I do now",
     "I've never wanted to kill myself more.",
+    "I've never wanted to kill myself more...",
+    # the verb forms of the feelings: no hesitation, no fear, no stopping
+    "I wouldn't hesitate to kill myself",
+    "I don't hesitate to hurt myself",
+    "I won't hesitate to end my life",
+    "I'm not hesitating to kill myself",
+    "I never hesitated to hurt myself",
+    "I don't fear killing myself",
+    "I'm not worrying about killing myself",
+    "I've never stopped being suicidal",
 ]
 
 
@@ -391,6 +416,13 @@ REVERSED_NEGATIONS: list[str] = [
     "I won't kill myself but I'll probably do it",
     "I don't think I'm suicidal but I might be",
     "I'm not suicidal except I think about it every night",
+    # an ellipsis or a dash trails off inside the sentence; a full stop ends it
+    "I'm not suicidal... but I might be",
+    "I don't want to die... but I might",
+    "I'm not suicidal… but I might be",
+    "I don't want to die.. but I might... idk",
+    "I'm not suicidal - but I might be",
+    "I don't want to die — but I might",
 ]
 
 #: ...and a "but" that goes on to something else leaves the negation alone:
@@ -407,6 +439,10 @@ UNREVERSED_NEGATIONS: list[str] = [
     "I'm not suicidal but I might be depressed",
     "I'm not suicidal but I will be okay",
     "I'm not suicidal but ill",
+    "I'm not suicidal. But I'm tired.",
+    "I'm not suicidal... but I'm stressed",
+    "I don't want to die... but I might fail",
+    "I'm not suicidal... honestly",
 ]
 
 

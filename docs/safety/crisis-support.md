@@ -253,13 +253,20 @@ sentence breaks, stretched letters squeezed):
   die", "I'm not suicidal", "I would never kill myself"). The rules:
   - A negation reaches only within its own clause, at most two words: a
     comma, dash, bracket, "but"/"and"/"so" or a new "I" ends it, so "I'm not
-    okay, I'll kill myself" and "I won't lie, I'm suicidal" match. The one
-    thing it crosses is a short aside set off on both sides right after the
-    negation word: "I'm not, like, suicidal", "I am not (really) suicidal",
-    "I am not, and never will be, suicidal" are negations; "I'm not, I
-    swear, okay, I'll kill myself" (a new "I"), "I'm not okay, honestly,
-    suicidal" (not right after "not") and "not, want to kill myself" (a bare
-    comma) are not.
+    okay, I'll kill myself" and "I won't lie, I'm suicidal" match. It
+    crosses a short aside set off on both sides right after the negation
+    word: "I'm not, like, suicidal", "I am not (really) suicidal", "I am not,
+    and never will be, suicidal" are negations; "I'm not, I swear, okay,
+    I'll kill myself" (a new "I") and "not, want to kill myself" (a bare
+    comma) are not. It also crosses a filler's comma ("like", "really",
+    "honestly", "even", "you know", ...) right after the negation, straight
+    into "suicidal": "I'm not like, suicidal", "I'm not really, suicidal",
+    "I'm not even, like, suicidal" are negations. A filler completes nothing,
+    so its comma is not a clause break; a content word completes the clause,
+    so "I'm not okay, honestly, suicidal again" and "I'm not like, okay,
+    suicidal" are two clauses and match. Past a filler's comma only
+    "suicidal" is negated, since an act there can be a clause of its own:
+    "Not really, kill myself" matches.
   - A hedge or a recovery about how much is still a negation: "I'm not so
     suicidal anymore", "I'm not too / that / as suicidal as last year",
     "I'm not more suicidal than usual", "I don't want to die more than
@@ -268,11 +275,15 @@ sentence breaks, stretched letters squeezed):
     felt) (more | this | so | as) <phrase>" ("I have never been more
     suicidal"); "never wanted to <phrase> more (than) / so badly / as much
     as" ("I've never wanted to kill myself more than today"); a fear of the
-    act or of stopping it right after the negation ("I'm no longer afraid to
-    kill myself", "I won't stop hurting myself"); a negated negation ("I
-    can't not think about killing myself"); and "this", which points at the
-    state now ("I'm not usually this suicidal"). The comparative readings
-    belong to "never" alone: "not as suicidal as" is a negation.
+    act or of stopping it right after the negation, adjective or verb ("I'm
+    no longer afraid to kill myself", "I wouldn't hesitate to kill myself",
+    "I don't fear killing myself", "I won't stop hurting myself", "I've never
+    stopped being suicidal"; "not / never / won't hesitate to" is also an
+    intent frame, so "I don't hesitate to hurt myself" matches); a negated
+    negation ("I can't not think about killing myself"); and "this", which
+    points at the state now ("I'm not usually this suicidal"). The
+    comparative readings belong to "never" alone: "not as suicidal as" is a
+    negation.
   - An idiom that introduces a statement ("I won't lie", "not gonna lie",
     "not gonna sugarcoat it", "I'm not kidding") negates nothing: "not gonna
     lie suicidal thoughts every day" matches.
@@ -291,7 +302,10 @@ sentence breaks, stretched letters squeezed):
     modal has to end its clause (or carry only "do it", "anyway", "probably",
     "be", ...), so "I'm not suicidal but I'm stressed", "I don't want to die,
     but I am tired of exams", "but I could use some help" and "but I might
-    drop out" keep the negation.
+    drop out" keep the negation. The take-back reads across a comma, a dash
+    or an ellipsis, which trail off inside the sentence ("I'm not
+    suicidal... but I might be", "I don't want to die - but I might"), never
+    across a full stop.
 
 A comparative counts as the speaker's own state only with a first-person
 lead: "I'm more suicidal than ever" is an explicit phrase, but "teens end up
@@ -348,8 +362,12 @@ points at it).
   to stop", "I won't be a problem much longer", "I've been giving my things
   away" and "I can't do this anymore" do not match. Leetspeak ("k1ll") and
   spaced-out letters do not match either. English only.
+- **A filler's comma is crossed only into "suicidal".** "I'm not like,
+  going to kill myself" is read as two clauses and matches; the filler list
+  is closed, so an unlisted filler's comma ends the clause too.
 - **A take-back is read only inside the negation's sentence and only in the
-  listed forms.** "I'm not suicidal. But I might be" (a new sentence), "I'm
+  listed forms.** An ellipsis or a dash does not end the sentence for this;
+  a full stop does. "I'm not suicidal. But I might be" (a new sentence), "I'm
   not suicidal but I think about death a lot" (no "it" pointing back) and a
   reversal more than about 100 characters after the phrase keep the
   negation, so they do not match.
