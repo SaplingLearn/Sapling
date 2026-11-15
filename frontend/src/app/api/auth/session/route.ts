@@ -12,9 +12,50 @@ const SESSION_SECRET = process.env.SESSION_SECRET;
 // is always scoped to the deployed environment — a staging build can't mint a
 // `.saplinglearn.com` cookie that leaks into prod. Falls back to the explicit
 // COOKIE_DOMAIN env when DEPLOY_ENV is unset (docker/local).
-const COOKIE_DOMAIN = sanitizeCookieDomain(
-  resolveFrontendEnv(process.env as Record<string, string | undefined>).cookieDomain,
-);
+const RESOLVED_ENV = resolveFrontendEnv(process.env as Record<string, string | undefined>);
+const COOKIE_DOMAIN = sanitizeCookieDomain(RESOLVED_ENV.cookieDomain);
+// The backend origin as seen from this server (the middleware's choice too):
+// sign-out revokes the session there before the cookie is cleared.
+const BACKEND_ORIGIN = RESOLVED_ENV.apiUrl.replace(/\/+$/, '');
+const REVOKE_TIMEOUT_MS = 5000;
+
+/**
+ * The session cookie is `Secure` in a production build AND on any request
+ * that arrived over https (a staging or preview worker, a local https proxy),
+ * so it never rides a plain-http request from a page served over TLS.
+ */
+function isSecureRequest(request: NextRequest): boolean {
+  if (process.env.NODE_ENV === 'production') return true;
+  if (request.nextUrl.protocol === 'https:') return true;
+  const forwarded = request.headers.get('x-forwarded-proto') ?? '';
+  return forwarded.split(',')[0].trim().toLowerCase() === 'https';
+}
+
+/**
+ * Revoke every session of the cookie's account on the backend
+ * (POST /api/auth/logout stamps `users.sessions_valid_after`), so a copy of
+ * the token stops working now instead of at its `exp`. Best effort: the
+ * cookie is cleared whatever happens here — a user who asked to sign out is
+ * signed out of this browser either way. True when the backend confirmed.
+ */
+async function revokeOnBackend(token: string): Promise<boolean> {
+  if (!BACKEND_ORIGIN) return false;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REVOKE_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${BACKEND_ORIGIN}/api/auth/logout`, {
+      method: 'POST',
+      headers: { Cookie: `${SESSION_COOKIE_NAME}=${token}` },
+      signal: controller.signal,
+      cache: 'no-store',
+    });
+    return res.ok;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 /**
  * A PR preview (`*-frontend-staging.saplinglearn.workers.dev`) runs with
@@ -150,7 +191,7 @@ export async function POST(request: NextRequest) {
     response.cookies.set(SESSION_COOKIE_NAME, token, {
       httpOnly: true,
       sameSite: 'lax',
-      secure: process.env.NODE_ENV === 'production',
+      secure: isSecureRequest(request),
       path: '/',
       maxAge: SESSION_MAX_AGE,
       ...domainAttr(request),
@@ -166,11 +207,20 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json({ error: 'Cross-origin request rejected' }, { status: 403 });
   }
 
-  const response = NextResponse.json({ ok: true });
+  // Revoke server-side first, while the cookie still authenticates the call.
+  // Revocation covers every session of the account (sign out everywhere);
+  // `?scope=local` only drops this browser's cookie — for the sign-in
+  // callback discarding a half-made session, which must not sign the student
+  // out of their other devices.
+  const token = request.cookies.get(SESSION_COOKIE_NAME)?.value;
+  const localOnly = request.nextUrl.searchParams.get('scope') === 'local';
+  const revoked = token && !localOnly ? await revokeOnBackend(token) : false;
+
+  const response = NextResponse.json({ ok: true, revoked });
   response.cookies.set(SESSION_COOKIE_NAME, '', {
     httpOnly: true,
     sameSite: 'lax',
-    secure: process.env.NODE_ENV === 'production',
+    secure: isSecureRequest(request),
     path: '/',
     maxAge: 0,
     ...domainAttr(request),

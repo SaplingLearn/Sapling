@@ -1,6 +1,7 @@
 """Account reads and stamps behind the auth routes (#118, moved from
 ``routes/auth.py``): the ``/me`` overview and the welcome / sign-in stamps."""
 import logging
+from datetime import datetime, timezone
 
 from db.connection import table
 from services.auth.errors import AccountDeleted, AccountNotFound
@@ -122,3 +123,18 @@ def account_overview(user_id: str) -> dict:
         "equipped_cosmetics": equipped_cosmetics,
         "is_admin": is_admin,
     }
+
+
+def revoke_sessions(user_id: str) -> None:
+    """Revoke every session issued to `user_id` up to now (sign-out).
+
+    Sets `users.sessions_valid_after` to the current time; the auth guard
+    refuses any session whose `iat` is earlier (services/auth_guard.py). The
+    caller clears the guard's account cache so this process honours it at
+    once; other processes do within the cache's TTL. Raises if the write
+    fails: a sign-out that could not revoke must not report success."""
+    table("users").update(
+        {"sessions_valid_after": datetime.now(timezone.utc).isoformat()},
+        filters={"id": f"eq.{user_id}"},
+        prefer_return_minimal=True,
+    )

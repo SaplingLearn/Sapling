@@ -39,14 +39,18 @@ SECRET = "test-login-shared-session-secret-at-least-32-bytes"
 FROZEN_NOW = 1_700_000_000
 
 
-def _reference_token(user_id: str, exp: int, secret: str, typ: str = "session") -> str:
+def _reference_token(user_id: str, exp: int, secret: str, typ: str = "session",
+                     iat: int = FROZEN_NOW) -> str:
     """Independent re-implementation of the token format `_decode_session` verifies.
 
     Deliberately written out longhand (not via session_tokens) so that a change
     to the canonical helper that broke the wire format would fail this test.
-    `typ` is the #756 token-type claim.
+    `typ` is the #756 token-type claim; `iat` the issued-at that server-side
+    revocation and the admin step-up compare against, and `iat_precision`
+    says that iat is to the millisecond (auth_guard.issued_before).
     """
-    payload = json.dumps({"user_id": user_id, "exp": exp, "typ": typ}).encode()
+    payload = json.dumps({"user_id": user_id, "exp": exp, "typ": typ, "iat": iat,
+                          "iat_precision": "ms"}).encode()
     payload_b64 = base64.urlsafe_b64encode(payload).decode().rstrip("=")
     sig = hmac.new(secret.encode(), payload_b64.encode(), hashlib.sha256).digest()
     return f"{payload_b64}.{base64.urlsafe_b64encode(sig).decode().rstrip('=')}"

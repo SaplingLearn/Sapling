@@ -16,6 +16,8 @@ from models import ChatBody, StartSessionBody
 from services import events_service
 from services.agent_events import SSE_CACHE_CONTROL, sapling_event_to_sse
 from services.auth_guard import guard_off_loop, require_self
+from services import abuse_limits
+from services.request_limits import aenforce_abuse_limit
 from services.chat_stream import stream_agent_turn
 from services.graph_service import get_graph
 from services.request_context import current_request_id
@@ -51,6 +53,7 @@ async def chat_stream(body: ChatBody, request: Request):
     persisted is replayed (here and on /chat) instead of run again.
     """
     await guard_off_loop(require_self, body.user_id, request)
+    await aenforce_abuse_limit(abuse_limits.TUTOR_TURN, body.user_id)
     await _open_turn_session(body.session_id, body.user_id)
 
     request_id = (
@@ -190,6 +193,7 @@ async def start_session_stream(body: StartSessionBody, request: Request):
     a fresh session.
     """
     await guard_off_loop(require_self, body.user_id, request)
+    await aenforce_abuse_limit(abuse_limits.TUTOR_SESSION_START, body.user_id)
     request_id = (
         getattr(request.state, "request_id", None)
         or current_request_id()

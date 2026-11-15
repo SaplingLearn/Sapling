@@ -58,7 +58,6 @@ max-complexity = 25
 "routes/documents.py" = ["E402"]
 "routes/flashcards.py" = ["F401"]
 "routes/notes.py" = ["F401"]
-"routes/profile.py" = ["F401"]
 "routes/social.py" = ["F841"]
 "services/flashcards/importing.py" = ["F401"]
 "services/notes_service.py" = ["E741"]

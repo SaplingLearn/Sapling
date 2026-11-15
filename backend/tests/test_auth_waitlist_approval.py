@@ -73,7 +73,7 @@ def callback(monkeypatch):
         userinfo.raise_for_status.return_value = None
         userinfo.json.return_value = {
             "id": "112233", "email": email,
-            "name": "Ada Lovelace", "picture": "https://example.com/a.png",
+            "name": "Ada Lovelace", "picture": "https://example.com/a.png", "verified_email": True,
         }
         monkeypatch.setattr(httpx, "get", lambda *a, **k: userinfo)
 

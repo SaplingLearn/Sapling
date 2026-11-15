@@ -13,6 +13,8 @@ import { SharedContextToggle, useSharedContext } from "../chat/SharedContextTogg
 import { ModelToggle, useModelPref, type ModelPref } from "../chat/ModelToggle";
 import { Toggle } from "@/components/ui";
 import { DisclaimerModal } from "../DisclaimerModal";
+import { useCrisisSupport } from "../safety/CrisisSupportCard";
+import { crisisSupportIn, crisisSupportInError, takeNoteCardShown, type WithCrisisSupport } from "@/lib/crisisSupport";
 import { AIDisclaimerChip } from "../chat/AIDisclaimerChip";
 import { KnowledgeGraph } from "../graph/KnowledgeGraph";
 import { useToast } from "../ToastProvider";
@@ -46,7 +48,7 @@ import {
   type GraphDelta,
 } from "@/lib/api";
 import { dropOptimisticConcept, reconcileNodes, retargetEdges } from "@/lib/graphOptimistic";
-import { humanizeError, isNotFound, statusOf } from "@/lib/errorMessage";
+import { humanizeError, isNotFound, readableError, statusOf } from "@/lib/errorMessage";
 import type { GraphNode as ApiNode, GraphEdge as ApiEdge } from "@/lib/types";
 import { apiToGraphNode, type GraphNode, type GraphEdge } from "@/lib/data";
 import { focusCardDescription, focusCardTitle, sessionSubtitle } from "./learn/view";
@@ -449,6 +451,7 @@ function LearnInner() {
     return (
       <FullHeightScreen className="fade-in">
         <DisclaimerModal />
+        {session.crisisDialog}
         <TopBar
           title="Start a session"
           subtitle="Pick a topic. Sapling will adapt to your chosen mode."
@@ -495,6 +498,7 @@ function LearnInner() {
   return (
     <FullHeightScreen>
       <DisclaimerModal />
+      {session.crisisDialog}
 
       {isMobile && (
         <div style={{ display: "flex", borderBottom: "1px solid var(--border)" }}>
@@ -562,7 +566,8 @@ function LearnInner() {
   );
 }
 
-// The entry screen's route-seeded choices: ?topic=, ?mode=, ?course=.
+// The entry screen's route-seeded choices: ?topic=, ?mode=, ?course=, and
+// ?note= (Send to tutor's note, whose title is the seeded topic).
 function useLearnPrefs(searchParams: SearchParams) {
   const initialTopic = searchParams.get("topic") ?? "";
   const initialMode = normalizeMode(searchParams.get("mode"));
@@ -572,7 +577,14 @@ function useLearnPrefs(searchParams: SearchParams) {
   const [topic, setTopic] = useState<string>(initialTopic);
   const [topicDraft, setTopicDraft] = useState<string>(initialTopic);
   const [selectedCourseId, setSelectedCourseId] = useState<string | "">(initialCourseId);
-  return { mode, setMode, topic, setTopic, topicDraft, setTopicDraft, selectedCourseId, setSelectedCourseId };
+  // docs/safety/crisis-support.md: a start on the note's title UNCHANGED names
+  // the note, so the backend screens it as stored material (the card beside
+  // the session); any other topic is what the student typed.
+  const [fromNote] = useState<{ id: string; topic: string } | null>(() => {
+    const id = searchParams.get("note");
+    return id && initialTopic.trim() ? { id, topic: initialTopic.trim() } : null;
+  });
+  return { mode, setMode, topic, setTopic, topicDraft, setTopicDraft, selectedCourseId, setSelectedCourseId, fromNote };
 }
 
 type LearnPrefs = ReturnType<typeof useLearnPrefs>;
@@ -716,7 +728,7 @@ function useLearnData({ searchParams, userId, userReady, semesterHydrated, activ
       setRecentSessions(prev => prev.filter(p => p.id !== s.id));
       toast.success("Session deleted.");
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Delete failed.");
+      toast.error(readableError(err, "Delete failed."));
     }
   };
 
@@ -737,7 +749,7 @@ function useLearnData({ searchParams, userId, userReady, semesterHydrated, activ
         setRecentSessions(filtered);
         confirmedTopicsRef.current = new Map(filtered.map(x => [x.id, x.topic] as const));
       }
-      toast.error(err instanceof Error ? err.message : "Rename failed.");
+      toast.error(readableError(err, "Rename failed."));
     }
   }, [userId, toast]);
 
@@ -850,6 +862,26 @@ type RailCollapse = ReturnType<typeof useRailCollapse>;
 
 // The tutor session on screen and every async path that changes it or talks
 // to it: start, resume, send, retry, hint/confused/skip, mode switch, end.
+// docs/safety/crisis-support.md: what a session start does with the card its
+// answer may carry. The card INSTEAD of a greeting (no session was opened)
+// always shows and stops the start (`blockedByCard`); the card BESIDE one
+// (`crisis_support_alongside`) shows over the session, and a refusal's card
+// beside the error (`showErrorCard`). Except right after Send to tutor showed
+// this note's card and the student closed it (`takeNoteCardShown`, spent by
+// this start): the same card beside the session does not pop up again.
+function startCards(intercept: (response: unknown) => boolean, fromNoteId: string | undefined) {
+  const cardJustShown = fromNoteId !== undefined && takeNoteCardShown(fromNoteId);
+  return {
+    blockedByCard(res: WithCrisisSupport): boolean {
+      if (res.crisis_support_alongside && cardJustShown) return false;
+      return intercept(res) && !res.crisis_support_alongside;
+    },
+    showErrorCard(err: unknown): void {
+      if (!cardJustShown) intercept({ crisis_support: crisisSupportInError(err) });
+    },
+  };
+}
+
 function useTutorSession({ router, searchParams, userId, userReady, toast, prefs, sharedCtx, modelPref, applyGraphDelta, setFocusedNodeId }: {
   router: Router;
   searchParams: SearchParams;
@@ -862,7 +894,11 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
   applyGraphDelta: (delta: GraphDelta) => void;
   setFocusedNodeId: (id: string | null) => void;
 }) {
-  const { mode, setMode, topic, setTopic, topicDraft, setTopicDraft, selectedCourseId, setSelectedCourseId } = prefs;
+  const { mode, setMode, topic, setTopic, topicDraft, setTopicDraft, selectedCourseId, setSelectedCourseId, fromNote } = prefs;
+  // docs/safety/crisis-support.md: a session start the crisis screen answered
+  // (no session was opened) shows the card as a dialog over the picker; on a
+  // note's title the card shows over the session that did start.
+  const crisis = useCrisisSupport();
 
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMsg[]>([]);
@@ -999,6 +1035,8 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
     const controller = new AbortController();
     streamAbort.current = controller;
     let sawToken = false;
+    const fromNoteId = fromNote && topicName === fromNote.topic ? fromNote.id : undefined;
+    const { blockedByCard, showErrorCard } = startCards(crisis.intercept, fromNoteId);
     try {
       let newSessionId: string;
       let replyText: string;
@@ -1019,7 +1057,8 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
             if (label && isCurrent()) setStreamingStatus(label);
           },
           signal: controller.signal,
-        });
+        }, fromNoteId);
+        if (blockedByCard(res)) { if (isCurrent()) setMessages([]); return; }
         if (!res.session_id) throw new Error("Session stream completed without a session_id.");
         newSessionId = res.session_id;
         replyText = res.reply || "Let's begin.";
@@ -1040,7 +1079,8 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
         // ChatPanel drops the Stop affordance for this leg (mirrors `send`).
         if (!isCurrent()) return;
         setStreamingText(null);
-        const res = await startSession(userId, topicName, mode, selectedCourseId || undefined, sharedCtx, modelPref);
+        const res = await startSession(userId, topicName, mode, selectedCourseId || undefined, sharedCtx, modelPref, fromNoteId);
+        if (blockedByCard(res)) { if (isCurrent()) setMessages([]); return; }
         newSessionId = res.session_id;
         replyText = res.initial_message || "Let's begin.";
       }
@@ -1051,7 +1091,8 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
       setMessages([{ id: msgId(), role: "assistant", content: replyText }]);
     } catch (err) {
       if (!isCurrent()) return;
-      toast.error(err instanceof Error ? err.message : "Couldn't start session.");
+      showErrorCard(err); // a refusal can carry the card
+      toast.error(readableError(err, "Couldn't start session."));
       setMessages([]);
     } finally {
       if (isCurrent()) {
@@ -1099,7 +1140,7 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
       );
     } catch (err) {
       if (!isCurrent()) return;
-      toast.error(err instanceof Error ? err.message : "Resume failed.");
+      toast.error(readableError(err, "Resume failed."));
     } finally {
       if (isCurrent()) setResuming(false);
     }
@@ -1230,7 +1271,7 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
           // Rung 2: interrupted after producing text — surface it, never
           // silently re-run (the user already saw partial text). The error
           // detail goes to a toast; the transcript keeps the partial.
-          toast.error(err instanceof Error ? err.message : "The tutor was interrupted.");
+          toast.error(readableError(err, "The tutor was interrupted."));
           appendInterrupted();
           return;
         }
@@ -1242,7 +1283,7 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
           // stays as an interrupted bubble, error detail in a toast, and
           // Retry is a deliberate user decision rather than a silent
           // re-run.
-          toast.error(err instanceof Error ? err.message : "The tutor was interrupted.");
+          toast.error(readableError(err, "The tutor was interrupted."));
           appendInterrupted();
           return;
         }
@@ -1270,14 +1311,16 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
       // it loses nothing: the JSON route persisted the pair server-side, so
       // re-opening the original session shows the turn (PR #461 review).
       if (sessionIdRef.current === turnSessionId) {
-        setMessages(m => [...m, { id: msgId(), role: "assistant", content: res.reply || "" }]);
+        // docs/safety/crisis-support.md: a crisis turn renders as the card
+        const crisisSupport = crisisSupportIn(res) ?? undefined;
+        setMessages(m => [...m, { id: msgId(), role: "assistant", content: res.reply || "", crisisSupport }]);
       }
     } catch (err) {
       if (isSessionEndedError(err)) { endedTurn(); return; }
       // The Rung-3 JSON fallback itself failed — the ladder is exhausted.
       // ADR 0020 treats this like any mid-stream failure: interrupted bubble
       // + Retry, error detail in a toast rather than a fake assistant reply.
-      toast.error(err instanceof Error ? err.message : "The tutor is unavailable.");
+      toast.error(readableError(err, "The tutor is unavailable."));
       appendInterrupted();
     } finally {
       // A superseded turn leaves `sending` alone: `enterSession` already
@@ -1400,7 +1443,7 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
       // …but its summary only belongs on screen while they're still in it.
       if (sessionEpochRef.current === epoch) setSummary(res.summary ?? null);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "End session failed.");
+      toast.error(readableError(err, "End session failed."));
     }
   }, [sessionId, userId, topic, toast]);
 
@@ -1437,6 +1480,7 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
     sessionId, messages, sending, starting, resuming, streamingText, streamingStatus, actionPending,
     sessionEnded, summary, beginSession, handleStart, handleResume, send, handleRetry, handleAction,
     handleModeSwitch, endConfirm, closeSummary, handleBackToLearn, startNextFromSummary, stopStream,
+    crisisDialog: crisis.dialog,
   };
 }
 

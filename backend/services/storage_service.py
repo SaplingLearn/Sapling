@@ -11,6 +11,8 @@ from fastapi import HTTPException
 from config import SUPABASE_URL, SUPABASE_SERVICE_KEY, STORAGE_BUCKET, MAX_AVATAR_SIZE
 import httpx
 
+from services.upload_validation import sniff_image
+
 logger = logging.getLogger(__name__)
 
 ALLOWED_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
@@ -116,11 +118,25 @@ def _is_duplicate_bucket(resp: httpx.Response) -> bool:
     return str(body.get("statusCode")) == "409" or body.get("error") == "Duplicate"
 
 
-def _validate_upload(file_bytes: bytes, content_type: str):
+_UNSUPPORTED_IMAGE = "Unsupported image type. Allowed: jpeg, png, webp, gif"
+
+
+def _validate_upload(file_bytes: bytes, content_type: str) -> str:
+    """415 / 413 on an upload the avatar and cosmetic buckets refuse; else the
+    image type the bytes' signature names.
+
+    The client's ``content_type`` must be an allowed image AND the bytes must
+    be one: a declared type is free text, so an HTML or SVG file labelled
+    image/png (served back from a public bucket under that label) is refused.
+    The returned type, not the declared one, is what gets stored."""
     if content_type not in ALLOWED_CONTENT_TYPES:
-        raise HTTPException(status_code=415, detail="Unsupported image type. Allowed: jpeg, png, webp, gif")
+        raise HTTPException(status_code=415, detail=_UNSUPPORTED_IMAGE)
     if len(file_bytes) > MAX_AVATAR_SIZE:
         raise HTTPException(status_code=413, detail="File too large. Maximum size is 5 MB")
+    sniffed = sniff_image(file_bytes)
+    if sniffed not in ALLOWED_CONTENT_TYPES:
+        raise HTTPException(status_code=415, detail=_UNSUPPORTED_IMAGE)
+    return sniffed
 
 
 # #231: issue-report screenshots. Private bucket, service-role write, and the
@@ -170,7 +186,7 @@ async def upload_issue_screenshot(user_id: str, file_bytes: bytes, content_type:
 
 
 def upload_avatar(user_id: str, file_bytes: bytes, content_type: str) -> str:
-    _validate_upload(file_bytes, content_type)
+    content_type = _validate_upload(file_bytes, content_type)
     ext = _EXT_MAP.get(content_type, "png")
     path = f"avatars/{user_id}/avatar.{ext}"
     url = f"{_storage_base}/{STORAGE_BUCKET}/{path}"
@@ -203,7 +219,7 @@ def upload_avatar(user_id: str, file_bytes: bytes, content_type: str) -> str:
 
 
 def upload_cosmetic_asset(cosmetic_id: str, file_bytes: bytes, content_type: str) -> str:
-    _validate_upload(file_bytes, content_type)
+    content_type = _validate_upload(file_bytes, content_type)
     ext = _EXT_MAP.get(content_type, "png")
     path = f"cosmetics/{cosmetic_id}.{ext}"
     url = f"{_storage_base}/{STORAGE_BUCKET}/{path}"
@@ -234,6 +250,29 @@ def upload_cosmetic_asset(cosmetic_id: str, file_bytes: bytes, content_type: str
 def delete_asset(path: str) -> None:
     url = f"{_storage_base}/{STORAGE_BUCKET}/{path}"
     httpx.delete(url, headers=_headers)
+
+
+def avatar_paths(user_id: str) -> list[str]:
+    """Every path `upload_avatar` can have written for `user_id` (one per
+    accepted image type; re-uploading in another type leaves the old one)."""
+    return [f"avatars/{user_id}/avatar.{ext}" for ext in dict.fromkeys(_EXT_MAP.values())]
+
+
+def delete_objects(bucket: str, paths: list[str]) -> None:
+    """Delete `paths` from `bucket` in one call (Storage's bulk delete).
+
+    A path that does not exist is not an error (the call is idempotent).
+    Raises RuntimeError on any non-2xx answer, so a caller that must not
+    forget an object (the account purge) can retry later. The message names
+    the status only: never the URL or the headers (the service-role key)."""
+    if not paths:
+        return
+    resp = httpx.request(
+        "DELETE", f"{_storage_base}/{bucket}",
+        json={"prefixes": list(paths)}, headers=_headers, timeout=30.0,
+    )
+    if resp.status_code not in (200, 204):
+        raise RuntimeError(f"storage delete in {bucket} failed (status {resp.status_code})")
 
 
 # ── Achievement icons ────────────────────────────────────────────────────────

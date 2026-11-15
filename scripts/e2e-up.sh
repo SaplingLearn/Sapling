@@ -298,6 +298,12 @@ export STUDY_GUIDE_GENERATE_RATE_LIMIT="${STUDY_GUIDE_GENERATE_RATE_LIMIT:-1000}
 export STUDY_GUIDE_BLOCK_RATE_LIMIT="${STUDY_GUIDE_BLOCK_RATE_LIMIT:-1000}"
 export STUDY_GUIDE_CREATE_RATE_LIMIT="${STUDY_GUIDE_CREATE_RATE_LIMIT:-1000}"
 echo "  ℹ STUDY_GUIDE_{GENERATE,BLOCK,CREATE}_RATE_LIMIT=$STUDY_GUIDE_GENERATE_RATE_LIMIT/$STUDY_GUIDE_BLOCK_RATE_LIMIT/$STUDY_GUIDE_CREATE_RATE_LIMIT for this stack (production defaults are 20/40/60)"
+# The abuse limits (backend/services/abuse_limits.py: tutor turns, note AI,
+# uploads, room messages, feedback, the public forms) are counted the same way,
+# and every journey runs as one seeded student from one address. One knob
+# scales them all; production sets none.
+export ABUSE_RATE_LIMIT_MULTIPLIER="${ABUSE_RATE_LIMIT_MULTIPLIER:-100}"
+echo "  ℹ ABUSE_RATE_LIMIT_MULTIPLIER=$ABUSE_RATE_LIMIT_MULTIPLIER for this stack (production: 1)"
 # ADR 0029 §9: the backend caches the flag snapshot (30 s) and each user's
 # roles (60 s) per process, and the per-test TRUNCATE + re-seed writes the DB
 # directly, which clears neither — one journey's rules would leak into the

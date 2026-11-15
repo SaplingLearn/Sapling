@@ -651,7 +651,7 @@ def test_guard_and_flag_store_reads_stay_service_under_enforce(wire, real_guard,
 def test_require_admin_role_read_stays_service_under_enforce(wire, real_guard, keys, monkeypatch):
     monkeypatch.setenv(FLAG_ENV, "enforce")
     monkeypatch.setattr(auth_guard, "require_admin", auth_guard._real_require_admin)
-    monkeypatch.setattr(auth_guard, "account_state", lambda uid: auth_guard.ACCOUNT_ACTIVE)
+    monkeypatch.setattr(auth_guard, "account_record", lambda uid: auth_guard.AccountRecord(auth_guard.ACCOUNT_ACTIVE))
     wire.rows = lambda verb, url, headers: (
         [{"role_id": 1, "roles": {"slug": "admin"}}] if url.endswith("/user_roles") else [])
 

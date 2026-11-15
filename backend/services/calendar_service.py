@@ -14,9 +14,40 @@ from agents.usage import record_agent_usage
 from services.extraction_service import extract_text_from_file
 from services.assignment_dedupe import assignment_dedupe_key
 from services.encryption import encrypt_if_present
+from services.prompt_safety import wrap_document_input
+from services import upload_validation as uv
 from db.connection import table
 
 logger = logging.getLogger(__name__)
+
+#: Syllabus extraction (routes/calendar.py /extract): the same document types as
+#: a document upload plus a photographed or pasted syllabus, checked by name AND
+#: signature (services/upload_validation.py). 20 MB matches the OCR routes.
+EXTRACT_MAX_BYTES = 20 * 1024 * 1024
+EXTRACT_ALLOWED_TYPES = (uv.PDF, uv.DOCX, uv.PPTX, uv.PNG, uv.JPEG, uv.WEBP, uv.TEXT)
+EXTRACT_UNSUPPORTED_DETAIL = (
+    "Unsupported file. Upload a PDF, DOCX, PPTX, TXT, or a PNG, JPEG or WEBP image."
+)
+#: What a failed extraction answers with: never the exception text.
+EXTRACT_FAILED_MESSAGE = "We couldn't read assignments from this file. Try a different file."
+
+
+async def read_syllabus_upload(upload) -> tuple[bytes, str]:
+    """(bytes, sniffed type) of a syllabus upload: 400 on a type it is not by
+    name AND signature, 413 past EXTRACT_MAX_BYTES (enforced while reading)."""
+    return await uv.read_checked_upload(
+        upload, allowed=EXTRACT_ALLOWED_TYPES, max_bytes=EXTRACT_MAX_BYTES,
+        unsupported_detail=EXTRACT_UNSUPPORTED_DETAIL,
+    )
+
+
+def extraction_failed(request_id: str) -> dict:
+    """/extract's answer to an unexpected failure: the exception (current, in
+    an ``except`` block) is logged under the request id; the client gets the
+    generic message in the route's usual shape, never the exception text,
+    which can name paths, hosts and driver internals."""
+    logger.exception("syllabus extraction failed [request_id=%s]", request_id)
+    return {"error": EXTRACT_FAILED_MESSAGE, "assignments": [], "warnings": [EXTRACT_FAILED_MESSAGE]}
 
 
 #: Why a row of a save was not written. A skip's ``reason`` is always one of
@@ -162,7 +193,8 @@ async def _extract_via_agent(
     )
     result = record_agent_usage(
         await syllabus_extraction_agent.run(
-            extracted_text, deps=deps, usage_limits=WORKER_LIMITS
+            wrap_document_input(extracted_text), deps=deps,
+            usage_limits=WORKER_LIMITS,
         ),
         feature="document", task="syllabus", user_id=user_id,
     )

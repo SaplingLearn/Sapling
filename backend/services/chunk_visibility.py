@@ -60,6 +60,7 @@ from collections.abc import Iterable
 from db.connection import page_all, pg_quote_value, table
 from db.scope import runs_as_service
 from services.events_service import log_event
+from services.share_screen import ShareScreen
 
 logger = logging.getLogger(__name__)
 
@@ -156,26 +157,41 @@ def decide_visibility(
     *,
     shareability: str | None,
     confidence: float | None,
+    screen: ShareScreen | None,
 ) -> str:
     """Whether a new upload may join the shared course pool.
 
-    Two independent gates, and BOTH must pass (#630 on top of #629):
+    Three independent gates, and ALL must pass (#630 on top of #629):
 
     1. Is this document the course's to share? Only `course_material` is —
        `completed_work` is the student's own answers, and serving those to a
        classmate is an academic-integrity failure, not merely a privacy one.
        `personal_notes` is private by default.
-    2. Does its uploader consent? That is `shares_class_context`.
+    2. Does the text pass the deterministic share screen
+       (`services/share_screen.py`)? Gate 1 is the classifier's answer, and
+       the classifier reads the document — so a document can argue for its
+       own sharing. The screen is code, not a model: text that addresses an
+       AI, steers the classifier or carries graded-work markers is never
+       shared, whatever the classifier said. ``screen`` is required and
+       ``None`` (never screened) is an unknown answer, so PRIVATE.
+    3. Does its uploader consent? That is `shares_class_context`.
 
     Every unknown answer resolves to PRIVATE: a missing `shareability` (what
     the output schema falls back to when the model omits the field), a missing
-    or low `confidence`, or a value from outside `SHAREABILITY_VALUES` — an
-    enum widened upstream must not arrive here as shareable by default.
+    or low `confidence`, a value from outside `SHAREABILITY_VALUES` — an
+    enum widened upstream must not arrive here as shareable by default — or
+    a missing screen.
 
     The asymmetry is the point. A wrongly-private chunk costs its owner some
     corpus reach and is repaired by a re-index; a wrongly-shared one has
     already been served to the class and cannot be recalled.
     """
+    if screen is None:
+        logger.warning(
+            "[RAG] upload by %s reached decide_visibility unscreened — "
+            "indexing PRIVATE", user_id,
+        )
+        return PRIVATE
     if shareability is None:
         logger.warning(
             "[RAG] classifier returned no shareability for an upload by %s — "
@@ -194,6 +210,13 @@ def decide_visibility(
         logger.info(
             "[RAG] course_material at confidence %s is below the %s share "
             "floor — indexing PRIVATE (#630)", confidence, MIN_SHARE_CONFIDENCE,
+        )
+        return PRIVATE
+    if screen.blocked:
+        # The rule name only: the text is the uploader's and is never logged.
+        logger.info(
+            "[RAG] classifier said course_material but the share screen held "
+            "an upload by %s (%s) — indexing PRIVATE", user_id, screen.reason,
         )
         return PRIVATE
     return visibility_for(user_id)

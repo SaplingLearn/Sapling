@@ -234,6 +234,7 @@ def test_copy_is_admin_only(client, configured, monkeypatch):
     def deny(request):
         raise HTTPException(status_code=403, detail="Admin access required")
     monkeypatch.setattr(admin_sync, "require_admin", deny)
+    monkeypatch.setattr(admin_sync, "require_admin_recent", deny)  # the copy itself
     monkeypatch.setattr(account_sync_client, "push", lambda uid: pytest.fail("pushed"))
 
     # 403 even for a malformed body: admin is checked before the body is read.

@@ -7,11 +7,36 @@ Two tools are exposed:
 Both append their payload to ctx.deps.graph_updates so the route can
 persist graph_update_json on the assistant message, enabling end_session
 to derive concepts_covered correctly for agent-path chats.
+
+What injected text can and cannot do through these tools
+--------------------------------------------------------
+The tutor's prompt carries text other people wrote: retrieved chunks from
+classmates' uploads (class-shared RAG rows), document summaries, note bodies.
+Every one of those arrives inside the untrusted envelope, and the system
+prompt says a passage is never a reason to call a tool. That is a request to
+a model, so the limits that matter are enforced here, in code:
+
+- Whose graph: `user_id` and `course_id` come from `ctx.deps`, never from a
+  tool argument (pinned by tests/test_prompt_injection.py), so no passage can
+  point a write at another student.
+- New concepts: `apply_graph_update_tool` always writes `initial_mastery`
+  0.0. Adding a concept never raises anyone's mastery.
+- Per call: `ConceptMasteryUpdate.mastery_delta` is bounded to
+  [MASTERY_DELTA_MIN, MASTERY_DELTA_MAX] = [-0.1, +0.3]. Out of band fails
+  validation (the #153 retry loop hands the error back to the model).
+- Per turn: the same band caps the NET delta per concept across every
+  `update_mastery_tool` call in one run (and repeats of a concept inside one
+  call). Without it a model talked into "set mastery to 1.0" could reach 1.0
+  in four +0.3 calls, all individually valid. The excess is dropped, not
+  raised: the turn still completes.
+- Storage: `apply_graph_update` clamps the stored score to [0, 1] in SQL
+  (`apply_mastery_delta`, 20261106055333_state_machines_audit.sql).
 """
 
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -19,6 +44,8 @@ from pydantic_ai import RunContext
 
 from agents.deps import SaplingDeps
 from services.graph_service import _normalize_concept, apply_graph_update
+
+logger = logging.getLogger(__name__)
 
 # Wire vocabulary (what the model may emit) -> the value that lands in
 # `node_mastery_events.event_type`.
@@ -31,6 +58,11 @@ from services.graph_service import _normalize_concept, apply_graph_update
 # indistinguishable in the column from a graded quiz submission, which is a
 # different event with a different provenance. Prefixing makes every stored
 # value say who wrote it, so the two vocabularies can never be read as one.
+#: The per-call AND per-turn mastery band (see the module docstring). Matches
+#: the eval band in tests/evals/chat_tutor.py (MASTERY_DELTA_MIN/MAX).
+MASTERY_DELTA_MIN = -0.1
+MASTERY_DELTA_MAX = 0.3
+
 TUTOR_EVENT_TYPES: dict[str, str] = {
     "interaction": "tutor_interaction",
     "correction": "tutor_correction",
@@ -57,8 +89,8 @@ class ConceptMasteryUpdate(BaseModel):
     # violation back to the model for correction). Matches the eval band
     # in tests/evals/chat_tutor.py (MASTERY_DELTA_MIN/MAX).
     mastery_delta: float = Field(
-        ge=-0.1,
-        le=0.3,
+        ge=MASTERY_DELTA_MIN,
+        le=MASTERY_DELTA_MAX,
         description=(
             "Fractional mastery change, −0.1 to +0.3. "
             "Use +0.1 to +0.3 when the student answers correctly; "
@@ -127,6 +159,28 @@ async def apply_concepts_to_graph(
     return len(new_nodes)
 
 
+def _within_turn_band(value: float) -> float:
+    return max(MASTERY_DELTA_MIN, min(MASTERY_DELTA_MAX, value))
+
+
+def _turn_mastery_spent(deps: SaplingDeps) -> dict[str, float]:
+    """Net mastery delta already applied this run, per normalized concept.
+
+    Read off `deps.graph_updates`, which holds exactly the updated_nodes this
+    tool persisted (a concept that did not exist is never appended), so the
+    budget counts what was written, not what was asked for.
+    """
+    spent: dict[str, float] = {}
+    for payload in deps.graph_updates:
+        for node in payload.get("updated_nodes", ()) if isinstance(payload, dict) else ():
+            name = node.get("concept_name")
+            delta = node.get("mastery_delta")
+            if isinstance(name, str) and isinstance(delta, (int, float)):
+                key = _normalize_concept(name)
+                spent[key] = spent.get(key, 0.0) + float(delta)
+    return spent
+
+
 async def apply_graph_update_tool(
     ctx: RunContext[SaplingDeps],
     update: GraphUpdateInput,
@@ -164,12 +218,25 @@ async def update_mastery_tool(
     exist in the graph — call apply_graph_update_tool first if needed.
     """
     updated_nodes: list[dict] = []
+    spent = _turn_mastery_spent(ctx.deps)
     for u in update.updates:
         if not (u.concept_name and u.concept_name.strip()):
             continue
+        key = _normalize_concept(u.concept_name)
+        used = spent.get(key, 0.0)
+        # Per-turn cap: the net delta for one concept across this whole run
+        # stays inside the per-call band, however many calls ask for more.
+        allowed = _within_turn_band(used + u.mastery_delta) - used
+        if abs(allowed) < 1e-9:
+            logger.info(
+                "[tutor] mastery update for one concept dropped: the turn's "
+                "net delta is already at the cap (%+.2f)", used,
+            )
+            continue
+        spent[key] = used + allowed
         node = {
             "concept_name": u.concept_name.strip(),
-            "mastery_delta": u.mastery_delta,
+            "mastery_delta": round(allowed, 6),
             "reason": u.reason,
         }
         # Omitted rather than written as None when the model didn't classify
@@ -180,6 +247,11 @@ async def update_mastery_tool(
             node["event_type"] = TUTOR_EVENT_TYPES[u.event_type]
         updated_nodes.append(node)
     if not updated_nodes:
+        if update.updates:
+            return (
+                "Mastery update skipped: these concepts already moved as far "
+                "as one turn allows."
+            )
         return "Mastery update skipped: no concepts provided."
 
     changes = await asyncio.to_thread(
