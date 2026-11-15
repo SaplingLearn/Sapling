@@ -107,8 +107,11 @@ surface" below.)
    lives only in our own `events` table. It is not mirrored to PostHog
    (`posthog_client._NOT_MIRRORED`): it is mental-health information about a
    named student, not product analytics. Category `system` also keeps it out
-   of admin analytics' usage rollups. For staff follow-up, count and list it
-   in SQL:
+   of admin analytics' usage rollups. The note chat re-reads its note every
+   turn, so it shows the card beside every reply but records the event at
+   most once a day per student, note and note version (`updated_at`), per
+   process (`screen_content_async(..., once_a_day=...)`, a hash of the ids
+   only). For staff follow-up, count and list it in SQL:
    `select user_id, created_at, payload->>'surface', payload->>'category' from events
    where event_type = 'safety.crisis_support_shown' order by created_at desc;`
 

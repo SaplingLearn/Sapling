@@ -51,9 +51,12 @@ _NOT_MIRRORED` says why): it stays in our own `events` table.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import inspect
 import json
 import logging
+import threading
+import time
 import uuid
 from dataclasses import dataclass
 from typing import Any, Awaitable, Literal, get_args
@@ -133,6 +136,13 @@ async def screen_async(
     request: Request, user_id: str | None, surface: Surface, *texts: str | None,
 ) -> CrisisSupport | None:
     """`screen` for an `async def` route: no blocking read on the event loop."""
+    return await _screen_async(request, user_id, surface, texts, once_a_day=None)
+
+
+async def _screen_async(
+    request: Request, user_id: str | None, surface: Surface, texts: tuple[str | None, ...],
+    *, once_a_day: tuple[Any, ...] | None,
+) -> CrisisSupport | None:
     _check_surface(surface)
     if sum(len(t or "") for t in texts) > _INLINE_DETECT_CHARS:
         match = await asyncio.to_thread(detect_any, texts)
@@ -141,7 +151,7 @@ async def screen_async(
     if match is None:
         return None
     await auth_guard.guard_off_loop(auth_guard.require_self, user_id, request)
-    return await asyncio.to_thread(_resolve, user_id, surface, match)
+    return await asyncio.to_thread(_resolve, user_id, surface, match, once_a_day=once_a_day)
 
 
 @dataclass(frozen=True)
@@ -162,6 +172,7 @@ class ContentScreen:
 
 async def screen_content_async(
     request: Request, user_id: str | None, surface: Surface, *texts: str | None,
+    once_a_day: tuple[Any, ...] | None = None,
 ) -> ContentScreen:
     """`screen_async` for the student's STORED material (a note's title and
     body), which NEVER blocks: the caller runs its action as usual through
@@ -169,11 +180,19 @@ async def screen_content_async(
     goes back. The match is screened, authenticated, flagged and logged
     exactly as for a typed message.
 
+    `once_a_day` names the material (the note's id and version) for a caller
+    that re-screens the same material on every turn (the note chat): the card
+    still goes beside every answer, but the event is recorded at most once a
+    day for that student, surface and material, per process
+    (`_first_today`). The key is a hash of ids, never of content.
+
     A typed message blocks (the card instead of the result): it is what the
     student is saying now. A note is material they stored, often quoting
     someone else (a patient, a play), and no pattern can tell those apart, so
     the student gets the result they asked for and the card beside it."""
-    return ContentScreen(request, await screen_async(request, user_id, surface, *texts))
+    return ContentScreen(
+        request, await _screen_async(request, user_id, surface, texts, once_a_day=once_a_day),
+    )
 
 
 def _check_surface(surface: str) -> None:
@@ -181,19 +200,55 @@ def _check_surface(surface: str) -> None:
         raise ValueError(f"unknown crisis-support surface {surface!r}")
 
 
-def _resolve(user_id: str | None, surface: str, match: CrisisMatch) -> CrisisSupport | None:
+def _resolve(
+    user_id: str | None, surface: str, match: CrisisMatch,
+    *, once_a_day: tuple[Any, ...] | None = None,
+) -> CrisisSupport | None:
     if not flag_on(FLAG, user_id):
         return None
     payload = client_payload(counseling_for(user_id))
-    # No `content=`: not even a fingerprint of what the student wrote.
-    events_service.log_event(
-        EVENT,
-        category=events_service.SYSTEM_CATEGORY,
-        user_id=user_id,
-        payload={"surface": surface, "category": match.category, "tier": match.tier},
-    )
+    if once_a_day is None or _first_today((user_id, surface, *once_a_day)):
+        # No `content=`: not even a fingerprint of what the student wrote.
+        events_service.log_event(
+            EVENT,
+            category=events_service.SYSTEM_CATEGORY,
+            user_id=user_id,
+            payload={"surface": surface, "category": match.category, "tier": match.tier},
+        )
     return CrisisSupport(surface=surface, category=match.category, payload=payload,
                          reply=render_reply(payload))
+
+
+#: `once_a_day` keys already recorded in this process: sha256 of the ids →
+#: when (time.monotonic) the key may be recorded again. Bounded: past the cap
+#: the expired keys go, then the oldest.
+_ONCE_A_DAY_S = 24 * 3600
+_ONCE_A_DAY_MAX = 10_000
+_recorded_today: dict[str, float] = {}
+_recorded_lock = threading.Lock()
+
+
+def _first_today(parts: tuple[Any, ...]) -> bool:
+    """True (and remembered for a day) the first time `parts` is seen."""
+    key = hashlib.sha256(json.dumps([str(p) for p in parts]).encode()).hexdigest()
+    now = time.monotonic()
+    with _recorded_lock:
+        until = _recorded_today.get(key)
+        if until is not None and until > now:
+            return False
+        if len(_recorded_today) >= _ONCE_A_DAY_MAX:
+            for stale in [k for k, t in _recorded_today.items() if t <= now]:
+                del _recorded_today[stale]
+            while len(_recorded_today) >= _ONCE_A_DAY_MAX:
+                del _recorded_today[min(_recorded_today, key=_recorded_today.__getitem__)]
+        _recorded_today[key] = now + _ONCE_A_DAY_S
+        return True
+
+
+def clear_once_a_day() -> None:
+    """Forget every `once_a_day` key (tests)."""
+    with _recorded_lock:
+        _recorded_today.clear()
 
 
 # ── Campus counseling (per school) ─────────────────────────────────────────

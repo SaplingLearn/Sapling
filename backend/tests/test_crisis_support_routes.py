@@ -704,6 +704,55 @@ def test_a_typed_crisis_message_still_blocks_on_a_crisis_note(flag, sink, note_a
     assert len(_crisis_rows(sink)) == 1  # the typed message's screen; the note is never read
 
 
+def test_a_note_chat_shows_the_card_every_turn_and_records_it_once_a_day(flag, sink, note_actions, monkeypatch):
+    """The chat re-reads the note every turn: the card goes beside every
+    answer, but the event is written once per student, note and note
+    version a day (per process), not once per turn."""
+    flag("on")
+    note = _note(None, "") | {"body": f"Hash tables. {CRISIS}.", "updated_at": "2026-11-14T10:00:00Z"}
+    clock = [1_000.0]
+    monkeypatch.setattr(crisis_support.time, "monotonic", lambda: clock[0])
+
+    def chat(n=note, user="u1"):
+        with patch("routes.notes.get_note", AsyncMock(return_value=n)):
+            r = client.post(f"/api/notes/{n['id']}/chat", json={"user_id": user, "message": CALM})
+        assert r.status_code == 200, r.text
+        assert r.json()["crisis_support_alongside"] is True  # the card, every turn
+        return len(_crisis_rows(sink))
+
+    assert chat() == 1
+    assert chat() == 1  # same note, same version, same day: no second event
+    assert chat(note | {"updated_at": "2026-11-14T11:00:00Z"}) == 2  # the note was edited
+    assert chat(note | {"id": "n2"}) == 3  # another note
+    assert chat(user="u2") == 4  # another student
+    clock[0] += 24 * 3600 + 1
+    assert chat() == 5  # a day later
+    assert note_actions["chat"].await_count == 6  # every turn was answered
+
+
+def test_other_note_actions_record_every_match(flag, sink, note_actions):
+    """Only the chat (re-screened every turn) is deduplicated: each summary
+    is one action the student asked for."""
+    flag("on")
+    for _ in range(2):
+        assert client.post("/api/notes/n1/summarize", json=_note_action({})).status_code == 200
+    assert len(_crisis_rows(sink)) == 2
+
+
+def test_the_once_a_day_key_holds_no_content(monkeypatch, sink):
+    monkeypatch.setattr(crisis_support, "flag_on", lambda key, uid: True)
+
+    async def run():
+        return await crisis_support.screen_content_async(
+            _request(), "u1", "note_chat", CRISIS, once_a_day=("n1", "2026-11-14T10:00:00Z"))
+
+    import asyncio
+
+    asyncio.run(run())
+    keys = " ".join(crisis_support._recorded_today).lower()
+    assert keys and not any(word in keys for word in CRISIS_WORDS + ("n1", "u1"))
+
+
 # ── Send to tutor's topic: the note's title, not something typed ───────────
 #
 # Send to tutor opens /learn with the note's title as the topic. The student

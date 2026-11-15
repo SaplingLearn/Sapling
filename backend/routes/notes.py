@@ -481,7 +481,12 @@ async def note_chat(note_id: str, body: NoteChatBody, request: Request):
     if not note:
         raise HTTPException(status_code=404, detail="Note not found.")
     # ...the note the chat agent reads never blocks: a match shows the card alongside
-    screen = await crisis_support.screen_content_async(request, body.user_id, "note_chat", *_note_texts(note))
+    # Re-read every turn: the card goes beside each answer, the event once a
+    # day per note version.
+    screen = await crisis_support.screen_content_async(
+        request, body.user_id, "note_chat", *_note_texts(note),
+        once_a_day=(note_id, note.get("updated_at")),
+    )
 
     async def action() -> dict:
         await aenforce_abuse_limit(abuse_limits.NOTE_AI_ACTION, body.user_id)
