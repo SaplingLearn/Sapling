@@ -17,7 +17,7 @@ import string
 import uuid
 from datetime import datetime, timezone
 
-from db.connection import table
+from db.connection import page_all, table
 from models import CreateRoomBody, JoinRoomBody, LeaveRoomBody, PublicJoinBody
 from services.profiles import live_user_ids
 from services.social.errors import Forbidden, InvalidRequest, NotFound
@@ -58,21 +58,28 @@ _IN_CHUNK = 50
 
 
 def _member_counts(room_ids: list[str]) -> dict[str, int]:
-    """`{room_id: member_count}` for every id, in one query per chunk.
+    """`{room_id: member_count}` for every id, in one paged read per chunk.
 
     Both room listings used to do `for room in rooms: select(room_members
     where room_id = eq.<id>)` — one PostgREST round-trip per room, in series.
     The public listing is the worse of the two: it reads EVERY public room in
     the app with no limit, so the number of queries grew with the product.
+
+    Paged (`page_all`), not one select per chunk: 50 rooms' members can pass
+    PostgREST's `max_rows` (1,000), which answers 2xx with the rows cut short,
+    so an unpaged read would undercount every room past the cap in silence.
+    The order is the table's primary key, a total order, as paging requires.
     """
     counts: dict[str, int] = {rid: 0 for rid in room_ids}
     if not room_ids:
         return counts
     for i in range(0, len(room_ids), _IN_CHUNK):
         chunk = room_ids[i : i + _IN_CHUNK]
-        rows = table("room_members").select(
-            "room_id", filters={"room_id": f"in.({','.join(chunk)})"},
-        ) or []
+        rows = page_all(
+            table("room_members"), "room_id,user_id",
+            filters={"room_id": f"in.({','.join(chunk)})"},
+            order="room_id.asc,user_id.asc",
+        )
         for row in rows:
             rid = row.get("room_id")
             if rid in counts:
