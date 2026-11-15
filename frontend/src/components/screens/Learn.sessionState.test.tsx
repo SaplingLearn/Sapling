@@ -741,4 +741,30 @@ describe("crisis support", () => {
     expect(await screen.findByRole("dialog")).toHaveTextContent(crisisFixture.title);
     expect(screen.getByTestId("tutor-start")).toBeInTheDocument(); // no session
   });
+
+  it("a 429 carrying the card on the STREAMED start shows it, through the real SSE client", async () => {
+    // The stream's error is the same ApiError fetchJSON throws, parsed body
+    // included, so crisisSupportInError finds the card on it (a 429 is never
+    // retried on the JSON route).
+    nav.search = "topic=Week%203&course=c1&note=n1";
+    const real = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
+    api.startSessionStream.mockImplementationOnce(real.startSessionStream as never);
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (url) =>
+      String(url).includes("/api/learn/start-session/stream")
+        ? new Response(JSON.stringify({ detail: "Slow down.", request_id: "r1", crisis_support: crisisFixture }), {
+            status: 429, headers: { "Content-Type": "application/json", "Retry-After": "12" },
+          })
+        : new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } }),
+    );
+    try {
+      renderLearn();
+      await screen.findByTestId("tutor-session-resume-sess-a");
+      fireEvent.click(screen.getByTestId("tutor-start"));
+      expect(await screen.findByRole("dialog")).toHaveTextContent(crisisFixture.title);
+      expect(api.startSession).not.toHaveBeenCalled(); // no JSON rung for a 429
+      expect(screen.getByTestId("tutor-start")).toBeInTheDocument(); // no session
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
 });
