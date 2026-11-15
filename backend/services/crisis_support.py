@@ -415,6 +415,12 @@ async def _stream_with_card(events: Any, payload: dict[str, Any]):
             await close()
 
 
+#: The most error-body bytes `ErrorCardMiddleware` holds back to add the card
+#: to. An error answer is a short JSON object; one past this goes back as it
+#: is, without the card, rather than buffered whole.
+_ERROR_CARD_MAX_BODY = 64 * 1024
+
+
 class ErrorCardMiddleware:
     """Pure ASGI, wrapped around the app's WHOLE middleware stack
     (`install_error_card`), so every error answer passes through it: the ones
@@ -424,7 +430,13 @@ class ErrorCardMiddleware:
     and the answer is a JSON object with an error status, the card is added
     to that body (Content-Length adjusted); status and every other header
     are left as they are. Anything else streams through untouched, and an
-    exception still propagates past it to the server."""
+    exception still propagates past it to the server.
+
+    What it holds back (the error answer's start and its body so far) is
+    always forwarded: unchanged, without the card, when the body outgrows
+    `_ERROR_CARD_MAX_BODY`, when the inner app raises before the body is
+    whole (then the exception propagates, as without a card), or when it
+    returns without finishing it. The server sees exactly the no-card answer."""
 
     def __init__(self, app: Any) -> None:
         self.app = app
@@ -435,27 +447,54 @@ class ErrorCardMiddleware:
             return
         # The dict request.state writes into, shared with every layer below.
         state = scope.setdefault("state", {})
-        start: dict[str, Any] | None = None
-        chunks: list[bytes] = []
+        # The messages held back, the start first; None while nothing is held.
+        held: list[dict[str, Any]] | None = None
+        held_bytes = 0
+
+        async def release() -> None:
+            nonlocal held
+            messages, held = held or [], None
+            for message in messages:
+                await send(message)
 
         async def send_with_card(message: dict[str, Any]) -> None:
-            nonlocal start
-            if message["type"] == "http.response.start":
-                if message["status"] >= 400 and ERROR_CARD_STATE in state and _is_json(message):
-                    start = message  # held until the body is whole
+            nonlocal held, held_bytes
+            if held is None:
+                if (message["type"] == "http.response.start" and message["status"] >= 400
+                        and ERROR_CARD_STATE in state and _is_json(message)):
+                    held = [message]  # held until the body is whole
                     return
-            elif message["type"] == "http.response.body" and start is not None:
-                chunks.append(message.get("body", b""))
-                if message.get("more_body", False):
-                    return
-                body = _body_with_card(b"".join(chunks), state[ERROR_CARD_STATE])
-                headers = [(k, v) for k, v in start.get("headers", []) if k.lower() != b"content-length"]
-                await send({**start, "headers": [*headers, (b"content-length", str(len(body)).encode())]})
-                await send({"type": "http.response.body", "body": body})
+                await send(message)
                 return
-            await send(message)
+            held.append(message)
+            if message["type"] != "http.response.body":
+                await release()
+                return
+            held_bytes += len(message.get("body", b""))
+            if held_bytes > _ERROR_CARD_MAX_BODY:
+                logger.warning("crisis support: an error answer too long to hold goes back without the card")
+                await release()
+                return
+            if message.get("more_body", False):
+                return
+            start, *bodies = held
+            held = None
+            body = _body_with_card(b"".join(m.get("body", b"") for m in bodies), state[ERROR_CARD_STATE])
+            headers = [(k, v) for k, v in start.get("headers", []) if k.lower() != b"content-length"]
+            await send({**start, "headers": [*headers, (b"content-length", str(len(body)).encode())]})
+            await send({"type": "http.response.body", "body": body})
 
-        await self.app(scope, receive, send_with_card)
+        try:
+            await self.app(scope, receive, send_with_card)
+        except Exception:
+            if held is not None:
+                try:
+                    await release()
+                except Exception:  # noqa: BLE001 — the app's own exception is the one that propagates
+                    logger.warning("crisis support: a held error answer could not be forwarded", exc_info=True)
+            raise
+        if held is not None:
+            await release()
 
 
 def install_error_card(app: Any) -> None:

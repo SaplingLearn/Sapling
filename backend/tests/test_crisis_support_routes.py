@@ -700,6 +700,99 @@ def test_the_error_card_layer_wraps_the_whole_stack_and_keeps_the_trace():
     assert "OpenTelemetryMiddleware" in layers
 
 
+# The error-card layer on its own, over a stand-in inner app: what it holds
+# back (an error JSON answer's start, until its body is whole) is always
+# forwarded, card or not.
+
+_CARD = {"title": "card"}
+_JSON_500 = {"type": "http.response.start", "status": 500,
+             "headers": [(b"content-type", b"application/json"), (b"content-length", b"20")]}
+
+
+def _run_layer(*messages: dict, raises: Exception | None = None, card: bool = True):
+    """Run ErrorCardMiddleware over an inner app that sends `messages` (then
+    raises `raises`); answers (what reached the server, what was raised)."""
+    import asyncio
+
+    async def inner(scope, receive, send):
+        if card:
+            scope["state"][crisis_support.ERROR_CARD_STATE] = _CARD
+        for message in messages:
+            await send(message)
+        if raises is not None:
+            raise raises
+
+    sent: list[dict] = []
+
+    async def send(message):
+        sent.append(message)
+
+    async def run():
+        await crisis_support.ErrorCardMiddleware(inner)({"type": "http"}, None, send)
+
+    try:
+        asyncio.run(run())
+    except Exception as exc:  # noqa: BLE001 — returned for the test to inspect
+        return sent, exc
+    return sent, None
+
+
+def _body(more: bool, data: bytes) -> dict:
+    return {"type": "http.response.body", "body": data, "more_body": more}
+
+
+def test_the_error_card_layer_adds_the_card_once_the_body_is_whole():
+    sent, raised = _run_layer(_JSON_500, _body(True, b'{"detail":'), _body(False, b'"boom"}'))
+    assert raised is None
+    start, body = sent
+    assert start["status"] == 500
+    assert json.loads(body["body"]) == {"detail": "boom", "crisis_support": _CARD}
+    assert dict(start["headers"])[b"content-length"] == str(len(body["body"])).encode()
+
+
+def test_an_exception_mid_body_forwards_what_was_held_unchanged_and_re_raises():
+    """The inner app raises between the held start and the body's last chunk:
+    the start and the chunks sent so far go to the server as they were (no
+    card), then the exception propagates, exactly as without a card."""
+    boom = RuntimeError("stream broke")
+    sent, raised = _run_layer(_JSON_500, _body(True, b'{"detail":'), raises=boom)
+    assert raised is boom
+    assert sent == [_JSON_500, _body(True, b'{"detail":')]
+
+
+def test_an_exception_before_any_body_still_forwards_the_held_start():
+    boom = RuntimeError("no body")
+    sent, raised = _run_layer(_JSON_500, raises=boom)
+    assert raised is boom
+    assert sent == [_JSON_500]
+
+
+def test_an_app_that_returns_without_finishing_the_body_gets_what_it_sent():
+    sent, raised = _run_layer(_JSON_500, _body(True, b'{"detail":'))
+    assert raised is None
+    assert sent == [_JSON_500, _body(True, b'{"detail":')]
+
+
+def test_an_error_body_past_the_buffer_cap_passes_through_untouched():
+    cap = crisis_support._ERROR_CARD_MAX_BODY
+    first, second, last = _body(True, b"x" * cap), _body(True, b"y"), _body(False, b"z")
+    sent, raised = _run_layer(_JSON_500, first, second, last)
+    assert raised is None
+    assert sent == [_JSON_500, first, second, last]  # no card, nothing rewritten
+
+
+def test_an_error_body_at_the_cap_still_gets_the_card():
+    cap = crisis_support._ERROR_CARD_MAX_BODY
+    detail = "x" * (cap - len('{"detail":""}'))
+    sent, _ = _run_layer(_JSON_500, _body(False, json.dumps({"detail": detail}, separators=(",", ":")).encode()))
+    assert json.loads(sent[-1]["body"])["crisis_support"] == _CARD
+
+
+def test_without_a_card_the_error_answer_streams_through():
+    sent, _ = _run_layer(_JSON_500, _body(True, b"{}"), card=False)
+    assert sent == [_JSON_500, _body(True, b"{}")]
+
+
 def test_a_typed_crisis_message_still_blocks_on_a_crisis_note(flag, sink, note_actions):
     """The note chat's typed message blocks as on every other surface: the
     card INSTEAD of a reply, whatever the note says."""
