@@ -65,7 +65,7 @@ surface" below.)
    topic as typed, with one exception. Send to tutor opens
    `/learn?topic=<the note's title>&note=<its id>`, and a start on that
    title unchanged sends `from_note_id`. Only when the topic matched does the
-   route check that claim (`services/tutor/note_topic.py::topic_is_note_title`):
+   route check that claim (`services/tutor/note_topic.py::note_title_version` (through `crisis_support.screen_tutor_start_async`)):
    the note must be the student's own, and the topic must be exactly what
    Send to tutor derives from its title (`notes_service.tutor_topic`). If
    both hold, the session starts through `alongside`, with the card beside it
@@ -100,7 +100,7 @@ surface" below.)
      tutor"). With `crisis_support_alongside` the notetaker shows the result
      too (the new summary, the linked concepts, the chat reply under the
      card) and opens the tutor for Send to tutor once the card is closed.
-     The tutor's start screen shows the card over the session it started.
+     The tutor's start screen shows the card over the session it started, except for the start Send to tutor just handed over after the student closed that note's card (a one-shot, per-tab mark, `lib/crisisSupport.ts::markNoteCardShown`/`takeNoteCardShown`, valid ten minutes): that start does not pop the same card up again. A card instead of a session always shows.
 5. **Record.** One `safety.crisis_support_shown` event (category `system`)
    with `surface`, `category` (`acute_danger` / `suicidal_ideation` /
    `self_harm`) and `tier` (`explicit` / `mention`), and the user id. It
@@ -191,7 +191,7 @@ goes on).
 | **All user-facing copy (owner review)** | `backend/services/crisis_support_copy.py` |
 | Campus counseling, per school | `CAMPUS_COUNSELING` in that same copy file |
 | Screen, flag, event, response builders | `backend/services/crisis_support.py` |
-| The screens | the first statement of each handler in `routes/learn.py`, `routes/notes.py`, `routes/flashcards.py` (the notes actions: right after the note read, `screen_content_async` + `alongside`; a tutor start on a note's title: `tutor.topic_is_note_title` + `alongside`; a flashcard generation on a graph concept: `concept_topic.topic_is_graph_concept` + `alongside`) |
+| The screens | the first statement of each handler in `routes/learn.py`, `routes/notes.py`, `routes/flashcards.py` (the notes actions: right after the note read, `screen_content_async` + `alongside`; a tutor start on a note's title: `crisis_support.screen_tutor_start_async` (`tutor.note_title_version`) + `alongside`; a flashcard generation on a graph concept: `concept_topic.topic_is_graph_concept` + `alongside`) |
 | Flag registration | `backend/services/feature_flags.py::REGISTRY["crisis_support"]` |
 | Event taxonomy / PostHog exclusion | `services/events_service.py::EVENT_TAXONOMY`, `services/posthog_client.py::_NOT_MIRRORED` |
 | The card | `frontend/src/components/safety/CrisisSupportCard.tsx`, `frontend/src/lib/crisisSupport.ts` |
