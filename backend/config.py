@@ -38,9 +38,9 @@ APP_ENV = os.getenv("APP_ENV", "production").strip().lower()
 IS_LOCAL = APP_ENV in {"local", "development", "dev", "test"}
 
 # ── Session lifetime, revocation and admin step-up ──────────────────────────
-# A `sapling_session` token carries `iat` (issued at, unix seconds). The guard
-# (services/auth_guard.py) refuses a session older than SESSION_MAX_AGE_SECONDS
-# whatever its `exp` says, and the frontend BFF mints cookies with the same
+# A `sapling_session` token carries `iat` (issued at, unix seconds to the
+# millisecond). The guard (services/auth_guard.py) refuses a session older than
+# SESSION_MAX_AGE_SECONDS whatever its `exp` says, and the frontend BFF mints cookies with the same
 # lifetime (frontend/src/lib/sessionToken.ts SESSION_MAX_AGE; keep them equal).
 SESSION_MAX_AGE_SECONDS = 7 * 24 * 3600
 # Admin routes need a session issued within this window (step-up: an older one

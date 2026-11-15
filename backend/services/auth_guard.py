@@ -8,6 +8,7 @@ import base64
 import hashlib
 import hmac as _hmac
 import logging
+import math
 import threading
 import time as _time
 from datetime import datetime, timezone
@@ -21,7 +22,12 @@ from config import SESSION_SECRET
 from db.connection import table
 from db.scope import service_scope
 from services import events_service
-from services.session_tokens import SESSION_COOKIE_NAME, TOKEN_TYPE_SESSION
+from services.session_tokens import (
+    IAT_PRECISION_CLAIM,
+    IAT_PRECISION_MS,
+    SESSION_COOKIE_NAME,
+    TOKEN_TYPE_SESSION,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -74,15 +80,53 @@ LEGACY_SESSION_LIFETIME_SECONDS = 30 * 24 * 3600
 _IAT_CLOCK_SKEW_SECONDS = 300
 
 
-def session_issued_at(payload: dict) -> int:
-    """When the verified session `payload` was issued (unix seconds)."""
+def session_issued_at(payload: dict) -> float:
+    """When the verified session `payload` was issued (unix seconds; fractional
+    for a token minted to the millisecond)."""
     iat = payload.get("iat")
     if isinstance(iat, (int, float)) and not isinstance(iat, bool):
-        return int(iat)
+        return iat
     exp = payload.get("exp")
     if isinstance(exp, (int, float)) and not isinstance(exp, bool):
         return int(exp) - LEGACY_SESSION_LIFETIME_SECONDS
     return 0
+
+
+def issued_before(payload: dict, cut_off: float) -> bool:
+    """Whether the session `payload` was issued before `cut_off` (unix seconds,
+    sub-second: `users.sessions_valid_after`), i.e. is revoked by it.
+
+    A token that says its `iat` is to the millisecond (`iat_precision: "ms"`:
+    every token minted now, by the backend and the BFF, truncated so it is
+    never later than the mint) compares at the millisecond, whether or not
+    that iat falls on a whole second: the cut-off (stored to the microsecond)
+    is truncated to its millisecond the way the minter truncates the iat, so
+    a session minted in the sign-out's own millisecond (signed straight back
+    in) survives and one from any earlier millisecond is revoked. Both sides
+    become integer milliseconds (`_unix_ms`), so no float error moves one.
+    Anything else (a legacy whole-second `iat`, or the legacy `exp`-derived
+    estimate) could have been minted anywhere in its second, so one from the
+    cut-off's own second counts as issued before it: no benefit of the doubt.
+    """
+    iat = session_issued_at(payload)
+    minted_iat = payload.get("iat")
+    if (
+        payload.get(IAT_PRECISION_CLAIM) == IAT_PRECISION_MS
+        and isinstance(minted_iat, (int, float))
+        and not isinstance(minted_iat, bool)
+    ):
+        return round(iat * 1000) < _unix_ms(cut_off)
+    return math.floor(iat) <= math.floor(cut_off)
+
+
+def _unix_ms(seconds: float) -> int:
+    """Unix seconds stored to the microsecond (a timestamptz, as a float)
+    truncated to the millisecond in integer arithmetic. The float is first
+    rounded to its whole microsecond (it holds one to well under half a
+    microsecond for any date in range), then divided as an integer, so a
+    product that lands a hair under a millisecond can never floor into the
+    one before it."""
+    return round(seconds * 1_000_000) // 1000
 
 
 def _decode_session(request: Request) -> dict:
@@ -173,8 +217,8 @@ class AccountRecord(NamedTuple):
     """What the guard knows about a session's account."""
 
     state: str
-    #: Unix seconds. A session issued (`iat`) before it is revoked; None when
-    #: the account never signed out.
+    #: Unix seconds (sub-second, as stored). A session issued (`iat`) before
+    #: it is revoked (`issued_before`); None when the account never signed out.
     sessions_valid_after: float | None = None
 
 
@@ -277,9 +321,8 @@ def get_session_user_id(request: Request, *, allow_unapproved: bool = False) -> 
     record = account_record(user_id)
     if record.state in (ACCOUNT_MISSING, ACCOUNT_DELETED):
         raise HTTPException(status_code=401, detail="Not authenticated")
-    if (
-        record.sessions_valid_after is not None
-        and session_issued_at(payload) < record.sessions_valid_after
+    if record.sessions_valid_after is not None and issued_before(
+        payload, record.sessions_valid_after
     ):
         raise HTTPException(status_code=401, detail="Session revoked")
     if record.state == ACCOUNT_UNAPPROVED and not allow_unapproved:

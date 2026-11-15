@@ -135,6 +135,9 @@ const FLAG_KILL_SWITCHES = [
   // reads it; shared so the switch reads the same on every service.
   "spend_alerts",
   "account_purge",
+  // services/account_purge_sweeper.py: the daily leftover-credential sweep.
+  // No job reads it; shared so the switch reads the same on every service.
+  "credential_sweep",
   // docs/safety/crisis-support.md: the crisis-support screen on student AI
   // routes. No job reads it; shared so the switch reads the same everywhere.
   "crisis_support",

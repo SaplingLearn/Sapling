@@ -1,7 +1,7 @@
 """Hard-delete a self-deleted account's personal data after 30 days.
 
 Owner decision 2026-11-14. A student's own "delete account"
-(routes/profile.py::delete_account) hides the account (`users.deleted_at`)
+(services/profile/deletion.py::delete_account) hides the account (`users.deleted_at`)
 and removes its Google tokens and Gradescope login at once
 (services/account_credentials.py). `GRACE_DAYS` after `deleted_at`,
 services/account_purge_sweeper.py claims the account and runs
@@ -11,15 +11,17 @@ services/account_purge_sweeper.py claims the account and runs
    documents with their chunks withdrawn the #629/#630 way — a shared chunk a
    classmate still holds survives for them);
 2. removes the credentials again (and revokes the Google grant, best effort);
-3. leaves every study room (ownership passes to the earliest member; a room
-   left empty is deleted, `services/social/rooms.py::leave_room`);
-4. TOMBSTONES the student's room messages instead of deleting them: text,
+3. TOMBSTONES the student's room messages instead of deleting them: text,
    image and author name are cleared (`is_deleted`, `user_name` =
    `TOMBSTONE_NAME`), exactly what "delete message" already does, so
    classmates' transcripts keep their order and their replies keep a
    "deleted message" to point at rather than losing rows mid-thread; the
    attached chat images are deleted from storage, and the rooms' cached AI
-   summaries (which may quote the student) are dropped;
+   summaries (which may quote the student) are dropped. This comes BEFORE
+   step 4: a room the student was the last member of is deleted there, and
+   its messages (with the image URLs naming the files) cascade with it;
+4. leaves every study room (ownership passes to the earliest member; a room
+   left empty is deleted, `services/social/rooms.py::leave_room`);
 5. deletes reactions, the room activity feed, friendships and friend
    requests, feedback and issue reports (+ their screenshots), cosmetics,
    roles, settings, the profile (+ the avatar files), the waitlist/newsletter
@@ -46,11 +48,13 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta, timezone
+from urllib.parse import unquote
 
 from db.connection import page_all, table
 from models import LeaveRoomBody
 from services import account_credentials, account_wipe, events_service, storage_service
 from services.account_wipe import _delete_keys, _in_list
+from services.analytics_consent import clear_analytics_consent_cache
 from services.social import rooms
 from services.social.errors import Forbidden, NotFound
 from services.social_cache_service import invalidate as invalidate_summary
@@ -154,15 +158,32 @@ def _delete_where(name: str, column: str, user_id: str) -> int:
     return len(table(name).delete(filters={column: f"eq.{user_id}"}) or [])
 
 
+def _object_path(path: str) -> str | None:
+    """`path` if it names an object inside the bucket, else None: no empty,
+    `.` or `..` segment (so no leading or doubled slash) and no NUL."""
+    if not path or "\x00" in path:
+        return None
+    return None if any(seg in ("", ".", "..") for seg in path.split("/")) else path
+
+
 def _storage_path(ref: str | None, bucket: str) -> str | None:
     """The object path `ref` names in `bucket`: a Storage URL (public or not)
-    of that bucket, or a bare object path. None for anything else."""
+    of that bucket, or a bare object path. None for anything else.
+
+    A URL's path is percent-decoded: supabase-js `getPublicUrl` runs it
+    through `encodeURI`, so `a b.png` is stored as `a%20b.png` and only the
+    decoded name is the object Storage holds. Validation runs AFTER decoding,
+    so an encoded `..` or `/` cannot reach outside the folder it names."""
     if not isinstance(ref, str) or not ref.strip():
         return None
     for marker in (f"/storage/v1/object/public/{bucket}/", f"/storage/v1/object/{bucket}/"):
         if marker in ref:
-            return ref.split(marker, 1)[1].split("?", 1)[0] or None
-    return None if "://" in ref else ref.strip().lstrip("/")
+            raw = ref.split(marker, 1)[1].split("?", 1)[0]
+            try:
+                return _object_path(unquote(raw, errors="strict"))
+            except UnicodeDecodeError:
+                return None
+    return None if "://" in ref else _object_path(ref.strip().lstrip("/"))
 
 
 def _leave_rooms(user_id: str) -> int:
@@ -208,11 +229,13 @@ def _delete_files(user_id: str) -> None:
     storage_service.delete_objects(storage_service.STORAGE_BUCKET, storage_service.avatar_paths(user_id))
     # screenshot_urls is client-supplied too: only paths under the student's
     # own upload prefix (`<user id>/<uuid>.<ext>`, routes/feedback.py) go.
+    # `_storage_path` already refuses a `.`/`..`/empty segment, so the prefix
+    # check cannot be climbed out of.
     shots = [
         p for r in page_all(table("issue_reports"), "id,screenshot_urls",
                             filters={"user_id": f"eq.{user_id}"}, order="id")
         for p in (_storage_path(u, ISSUE_BUCKET) for u in (r.get("screenshot_urls") or []))
-        if p and p.startswith(f"{user_id}/") and ".." not in p
+        if p and p.startswith(f"{user_id}/")
     ]
     storage_service.delete_objects(ISSUE_BUCKET, shots)
 
@@ -270,12 +293,17 @@ def purge_account(user_id: str, *, now: datetime | None = None) -> dict[str, int
     try:
         counts = account_wipe.wipe_account_data(user_id)
         account_credentials.revoke_google_tokens(account_credentials.remove_credentials(user_id))
-        counts["room_members"] = _leave_rooms(user_id)
+        # Messages BEFORE leaving: leaving deletes a room the student was the
+        # last member of, its messages cascade, and their image_url (the only
+        # record of which chat-images files are the student's) goes with them.
         counts["room_messages"] = _tombstone_messages(user_id)
+        counts["room_members"] = _leave_rooms(user_id)
         _delete_files(user_id)
         counts["course_chunk_contributors"] += _drop_leftover_contributions(user_id)
         for name, column in PURGE_DELETES:
             counts[name] = counts.get(name, 0) + _delete_where(name, column, user_id)
+        # user_settings (the analytics opt-out) is gone: drop the cached answer.
+        clear_analytics_consent_cache(user_id)
         _stub_user(user_id, now)
     except Exception as exc:
         raise AccountPurgeIncomplete(f"purge of {user_id} stopped: {type(exc).__name__}") from exc

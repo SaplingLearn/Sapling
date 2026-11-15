@@ -6,6 +6,8 @@ these; each of its handlers' bodies lives here under the handler's own name.
 - ``context``: what grounds a generation (session summary, course documents,
   weak concepts).
 - ``generation``: ``generate`` (topic → agent → stored cards).
+- ``concept_topic``: whether a generation's topic is one of the student's
+  graph concepts (a crisis match then shows the card beside the cards).
 - ``import_flow``: ``import_commit`` / ``import_parse`` / ``import_generate``
   / ``import_cleanup`` / ``import_cloze``.
 - ``importing``: the parsers, the Quizlet scraper, the flashcard-agent calls
@@ -14,7 +16,7 @@ these; each of its handlers' bodies lives here under the handler's own name.
 - ``sets`` / ``suggest``: saved sets, and "describe a set".
 - ``errors``: domain errors ``routes/flashcards.py`` maps to HTTP statuses.
 """
-from services.flashcards import cards, generation, import_flow
+from services.flashcards import cards, concept_topic, generation, import_flow
 from services.flashcards.cards import library_doc_source_text, list_flashcards
 from services.flashcards.errors import (
     FlashcardError,
@@ -71,6 +73,7 @@ __all__ = [
     "UpstreamError",
     "cards",
     "check_rate_limit",
+    "concept_topic",
     "create_flashcard_set",
     "dedup_against_existing",
     "delete_flashcard_set",

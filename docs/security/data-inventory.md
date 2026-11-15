@@ -160,6 +160,7 @@ personalisation. It is not a privacy inventory.
 | `newsletter_emails` | `email`, `first_name`, `approved_at`, `joined_user_id`, `joined_at` | Waitlist and allowlist | Partial: `first_name`. **`email` is plaintext by design** (ADR 0026: uniqueness and lookups). `joined_user_id` links the plaintext address to the account. | Admin (`/api/admin/allowlist`) | **Indefinite.** A revoke clears the approval and keeps the row. | RS | M: `0008`, `0019`, `20261022062444`, `20261023212748`; C: `services/admin/allowlist.py:225-256` |
 | `email_sends` | `recipient_hash` (HMAC-SHA256 of the normalised address, with a derived key), `kind`, `status`, `provider_message_id`, `error` | Send ledger and dedupe | Hashed, not stored as an address | Admin (`/api/admin/email`) | Indefinite (needed for the "never twice" rule) | RS | M: `20261022063145`; C: `services/email_service.py:118-127` |
 | `email_suppressions` | `recipient_hash`, `reason` | Unsubscribes and bounces | Hashed | Admin; public unsubscribe (HMAC token) | Indefinite by design | none | M: `20261022063145` |
+| `email_alert_suppressions` | `recipient_hash`, `reason` | Unsubscribes from the operational (admin) alerts only | Hashed | Admin; public unsubscribe (HMAC token scoped to `ops_alert`) | Indefinite by design | none | M: `20261114230351` |
 | `email_broadcasts` | `subject`, `body` (admin-written, may contain `{{first_name}}`), `created_by` | Broadcasts | No | Admin | Indefinite | RS | M: `20261022063145` |
 
 ## 13. Admin and operations

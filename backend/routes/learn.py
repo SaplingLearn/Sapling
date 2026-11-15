@@ -90,9 +90,15 @@ router = APIRouter()
 @router.post("/start-session")
 @same_doc(tutor_service.start_session)
 async def start_session(body: StartSessionBody, request: Request):
-    # docs/safety/crisis-support.md: first, before every limit and budget; no session is opened
-    if crisis := await crisis_support.screen_async(request, body.user_id, "tutor_start", body.topic):
-        return crisis_support.start_json(crisis)
+    # docs/safety/crisis-support.md: first, before every limit and budget; no session is opened...
+    screened = await crisis_support.screen_tutor_start_async(
+        request, body.user_id, body.topic, note_version=lambda: tutor_service.note_title_version(body),
+    )
+    if isinstance(screened, crisis_support.ContentScreen):
+        # ...unless the topic is the student's own note title (Send to tutor): the card beside the session
+        return await crisis_support.alongside(screened, tutor_service.start_session(body, request))
+    if screened is not None:
+        return crisis_support.start_json(screened)
     return await tutor_service.start_session(body, request)
 
 
@@ -117,9 +123,15 @@ async def chat_stream(body: ChatBody, request: Request):
 @router.post("/start-session/stream")
 @same_doc(tutor_service.start_session_stream)
 async def start_session_stream(body: StartSessionBody, request: Request):
-    # docs/safety/crisis-support.md: first, before every limit and budget; no session is opened
-    if crisis := await crisis_support.screen_async(request, body.user_id, "tutor_start", body.topic):
-        return crisis_support.sse_response(crisis, request, session_id=None)
+    # docs/safety/crisis-support.md: first, before every limit and budget; no session is opened...
+    screened = await crisis_support.screen_tutor_start_async(
+        request, body.user_id, body.topic, note_version=lambda: tutor_service.note_title_version(body),
+    )
+    if isinstance(screened, crisis_support.ContentScreen):
+        # ...unless the topic is the student's own note title (Send to tutor): the card in `done`
+        return await crisis_support.alongside(screened, tutor_service.start_session_stream(body, request))
+    if screened is not None:
+        return crisis_support.sse_response(screened, request, session_id=None)
     return await tutor_service.start_session_stream(body, request)
 
 

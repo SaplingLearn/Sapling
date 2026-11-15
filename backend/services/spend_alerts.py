@@ -246,17 +246,26 @@ def run_once(now: datetime | None = None) -> dict[str, list[str]]:
         return {a.type: [] for a in alerts}
 
     dashboard = f"{(config.FRONTEND_URL or '').rstrip('/')}{DASHBOARD_PATH}"
+    scope = email_service.suppression_scope(EMAIL_KIND)
+    # One read of who must not get an ops alert, for every send below
+    # (send_email would otherwise read two tables per recipient per alert).
+    try:
+        suppressions = email_service.suppressions_for(scope)
+    except Exception:  # noqa: BLE001 — each send then reads its own
+        logger.warning("spend alerts: could not read the suppressions; each send checks its own",
+                       exc_info=True)
+        suppressions = None
     results: dict[str, list[str]] = {}
     for alert in alerts:
         statuses = []
         for address in recipients:
             subject, html, text = email_templates.ops_alert(
                 alert.title, alert.points, dashboard_url=dashboard,
-                unsubscribe_url=email_service.unsubscribe_url(address),
+                unsubscribe_url=email_service.unsubscribe_url(address, scope=scope),
             )
             statuses.append(email_service.send_email(
                 kind=EMAIL_KIND, to=address, subject=subject, html=html, text=text,
-                dedupe_key=_dedupe_key(alert, now, address),
+                dedupe_key=_dedupe_key(alert, now, address), suppressions=suppressions,
             ))
         results[alert.type] = statuses
     return results

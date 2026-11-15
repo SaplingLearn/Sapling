@@ -66,11 +66,15 @@ set_docker_host_for_podman() {
 # Ensure the Supabase Storage buckets the app expects exist locally (#2).
 #
 # Without this, only `avatars` gets created (by migration 0011), so
-# issue-screenshot uploads fail on a fresh local stack. Every storage write goes
-# through the backend service role (which bypasses Storage RLS): admin cosmetic
-# images included, since Admin.tsx stopped uploading to a `cosmetic-assets`
-# bucket from the browser with the anon key. So no anon storage policy is
-# needed, and the one earlier versions of this script created is dropped.
+# issue-screenshot uploads fail on a fresh local stack. Avatars, issue
+# screenshots and admin cosmetic images are written through the backend service
+# role (which bypasses Storage RLS); Admin.tsx no longer uploads to a
+# `cosmetic-assets` bucket from the browser with the anon key. One anon-key
+# upload remains: Social chat images (Social.tsx) go from the browser to a
+# `chat-images` bucket, which neither this script nor any migration creates
+# (docs/security/storage-hardening-plan.md), so that upload fails here as it
+# does on the hosted projects. No anon storage policy is created for it, and
+# the one earlier versions of this script created is dropped.
 ensure_storage_buckets() {
   local sql
   sql="$(cat <<'SQL'
@@ -83,9 +87,10 @@ VALUES
   ('issues-media-files', 'issues-media-files', false, NULL,    NULL)
 ON CONFLICT (id) DO NOTHING;
 
--- No anon storage writes remain (all go through the backend service role), so
--- the blunt permissive policy older versions created is removed from any
--- existing local stack.
+-- No bucket created here takes anon writes (they go through the backend
+-- service role; see the note above on Social's `chat-images`), so the blunt
+-- permissive policy older versions created is removed from any existing
+-- local stack.
 DROP POLICY IF EXISTS "local dev storage open" ON storage.objects;
 SQL
 )"

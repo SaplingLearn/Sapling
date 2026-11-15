@@ -65,11 +65,12 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
         "cross-user projection (anonymous too); creates the target's missing rows; visibility in code",
     ("routes/profile.py", "get_roles", "service_route"):
         "roles of any live user; needs a session (anonymous is a 401)",
-    ("routes/profile.py", "delete_account", "service_scope"): "users.deleted_at: account state",
     ("services/quiz/limits.py", "_daily_spend_exceeded", "runs_as_service"): "llm_usage is service-only (bucket E)",
     # ── Services ──
     ("services/academics.py", "resolve_offering", "service_scope"): "on-demand course_offerings insert (catalog)",
     ("services/academics.py", "school_peer_user_ids", "runs_as_service"): "reads other students' enrollments",
+    ("services/account_credentials.py", "_retry_delete", "runs_as_service"):
+        "after the account delete's response: oauth_tokens/gradescope_credentials of a now-deleted account",
     ("services/achievement_service.py", "check_achievements", "runs_as_service"): "awards are server decisions",
     ("services/achievement_service.py", "get_user_stat", "runs_as_service"): "achievement counters",
     ("services/achievement_service.py", "grant_linked_cosmetics", "runs_as_service"): "cosmetic awards",
@@ -108,11 +109,12 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
         "#116 document_uploads: record an inline run's outcome",
     ("services/documents_read.py", "saved_document", "runs_as_service"):
         "#116 reads back the uploader's own row the worker saved (select * incl. index columns)",
-    ("services/email_service.py", "is_suppressed", "runs_as_service"): "email_suppressions",
+    ("services/email_service.py", "is_suppressed", "runs_as_service"): "email_suppressions/email_alert_suppressions",
     ("services/email_service.py", "notification_opt_out_hashes", "runs_as_service"): "every user's opt-out",
-    ("services/email_service.py", "send_email", "runs_as_service"): "email_sends/email_suppressions",
-    ("services/email_service.py", "suppress", "runs_as_service"): "email_suppressions",
-    ("services/email_service.py", "unsuppress", "runs_as_service"): "email_suppressions",
+    ("services/email_service.py", "send_email", "runs_as_service"): "email_sends + the suppression tables",
+    ("services/email_service.py", "suppress", "runs_as_service"): "email_suppressions/email_alert_suppressions",
+    ("services/email_service.py", "suppressions_for", "runs_as_service"): "a batch's read of the suppression tables",
+    ("services/email_service.py", "unsuppress", "runs_as_service"): "email_suppressions/email_alert_suppressions",
     ("services/events_service.py", "_flush_batch", "runs_as_service"): "events/llm_usage are service-only",
     ("services/events_service.py", "_flush_rows_individually", "runs_as_service"): "events/llm_usage",
     ("services/events_service.py", "_insert_late", "runs_as_service"): "events/llm_usage",
@@ -138,6 +140,7 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
         "#116 gradescope_syncs: the status route's read (filtered to the caller)",
     ("services/llm_budget.py", "read_status", "runs_as_service"):
         "#119 llm_budgets / llm_usage are service-only (bucket E)",
+    ("services/profile/deletion.py", "delete_account", "service_scope"): "users.deleted_at: account state",
     ("services/profiles.py", "get_display_name", "runs_as_service"): "other users' names",
     ("services/profiles.py", "get_display_names", "runs_as_service"): "other users' names",
     ("services/profiles.py", "live_user_ids", "runs_as_service"):

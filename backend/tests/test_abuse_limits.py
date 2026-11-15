@@ -35,10 +35,10 @@ def _exhaust(limit: request_limits.AbuseLimit, subject: str) -> None:
         ) is None
 
 
-# Routes whose crisis screen (docs/safety/crisis-support.md) must read the
-# note before any limit applies: a student in crisis never gets a 429. That one
-# read of the student's own note is the only table access allowed past a spent
-# budget there; nothing is written and no model runs.
+# Routes whose crisis screen (docs/safety/crisis-support.md) reads the note
+# before any limit applies, so that a 429 carries the card when the note
+# matched. That one read of the student's own note is the only table access
+# allowed past a spent budget there; nothing is written and no model runs.
 _CRISIS_SCREENS_NOTE = ("/summarize", "/extract-concepts", "/chat", "/send-to-tutor")
 
 
@@ -86,8 +86,8 @@ JSON_ROUTES = [
     (abuse_limits.NOTE_AI_ACTION, "u1", "post", "/api/notes/n1/extract-concepts", {"user_id": "u1"}),
     (abuse_limits.NOTE_AI_ACTION, "u1", "post", "/api/notes/n1/chat",
      {"user_id": "u1", "message": "explain"}),
-    (abuse_limits.NOTE_AI_ACTION, "u1", "post", "/api/notes/n1/send-to-tutor", {"user_id": "u1"}),
-    (abuse_limits.NOTE_AI_ACTION, "u1", "post", "/api/notes/n1/generate-quiz", {"user_id": "u1"}),
+    (abuse_limits.NOTE_LOOKUP, "u1", "post", "/api/notes/n1/send-to-tutor", {"user_id": "u1"}),
+    (abuse_limits.NOTE_LOOKUP, "u1", "post", "/api/notes/n1/generate-quiz", {"user_id": "u1"}),
     (abuse_limits.SOCIAL_MESSAGE_SEND, "u1", "post", "/api/social/rooms/r1/messages",
      {"user_id": "u1", "text": "hello"}),
     (abuse_limits.SOCIAL_MESSAGE_EDIT, "u1", "patch", "/api/social/rooms/r1/messages/m1",
@@ -117,6 +117,38 @@ def test_json_route_answers_429_once_its_budget_is_spent(limit, subject, method,
         r = getattr(client, method)(path, json=body)
     _assert_rate_limited(r, limit)
     _assert_no_handler_db(db, path)
+
+
+_NO_MODEL_NOTE_ACTIONS = [
+    ("/api/notes/n1/generate-quiz", {"concept_node_id": "g1", "concept_name": "Recursion"}),
+    ("/api/notes/n1/send-to-tutor", {"topic": "Recursion notes", "course_id": None, "preface": ""}),
+]
+
+
+@pytest.mark.parametrize("path,answer", _NO_MODEL_NOTE_ACTIONS, ids=[p for p, _ in _NO_MODEL_NOTE_ACTIONS])
+def test_a_note_action_that_runs_no_model_spends_no_note_ai_unit(path, answer):
+    """generate-quiz picks a linked concept (the quiz itself is generated, and
+    limited, by /api/quiz/generate); send-to-tutor hands the note to a tutor
+    session (limited by /api/learn/start-session). Neither runs a model, so a
+    spent note-AI budget does not refuse them and they spend none of it: they
+    have their own cheap budget (NOTE_LOOKUP) instead."""
+    from unittest.mock import AsyncMock
+
+    linked = [{"id": "g1", "concept_name": "Recursion", "mastery_score": 0.2}]
+    note = {"id": "n1", "user_id": "u1", "title": "Recursion notes", "offering_id": None}
+    with patch("routes.notes.get_note", AsyncMock(return_value=note)), \
+         patch("routes.notes.list_linked_concepts", AsyncMock(return_value=linked)):
+        assert client.post(path, json={"user_id": "u1"}).status_code == 200
+        _exhaust(abuse_limits.NOTE_AI_ACTION, "u1")  # every unit was still there to spend
+        r = client.post(path, json={"user_id": "u1"})
+    assert r.status_code == 200, r.text
+    assert r.json() == answer
+
+
+def test_no_model_note_actions_share_a_budget_of_their_own():
+    lookup, ai = abuse_limits.NOTE_LOOKUP, abuse_limits.NOTE_AI_ACTION
+    assert lookup.name != ai.name
+    assert lookup.limit > ai.limit  # cheaper: no model behind it
 
 
 def _pdf_upload():

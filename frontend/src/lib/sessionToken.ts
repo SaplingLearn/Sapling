@@ -65,14 +65,24 @@ async function importKey(): Promise<CryptoKey> {
 }
 
 export async function signSession(userId: string): Promise<string> {
-  const now = Math.floor(Date.now() / 1000);
+  // Unix seconds TRUNCATED to the millisecond (a JWT NumericDate may be
+  // fractional): never rounded up, which could date a session after a
+  // sign-out it preceded. Date.now() is already whole milliseconds; the floor
+  // keeps that true whatever it returns.
+  const now = Math.floor(Date.now()) / 1000;
   // `iat` is what server-side revocation (sign-out) and the admin step-up
-  // window compare against (backend services/auth_guard.py).
+  // window compare against (backend services/auth_guard.py). Its milliseconds
+  // keep a session minted earlier in a sign-out's own second older than the
+  // sign-out (auth_guard.issued_before); `exp` stays whole seconds.
+  // `iat_precision: 'ms'` says so: JSON.stringify writes an iat on a whole
+  // second as an integer, which without it would read as a legacy
+  // whole-second iat (twin of backend session_tokens.IAT_PRECISION_CLAIM).
   const payload = JSON.stringify({
     user_id: userId,
-    exp: now + SESSION_MAX_AGE,
+    exp: Math.floor(now) + SESSION_MAX_AGE,
     typ: 'session',
     iat: now,
+    iat_precision: 'ms',
   });
   const payloadB64 = toBase64Url(new TextEncoder().encode(payload));
   const key = await importKey();

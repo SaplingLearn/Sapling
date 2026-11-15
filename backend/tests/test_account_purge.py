@@ -7,6 +7,7 @@ the room cascades added. The REAL admin wipe, chunk withdrawal and
 revoke are recorders.
 """
 from datetime import datetime, timedelta, timezone
+from urllib.parse import quote
 
 import pytest
 
@@ -170,6 +171,19 @@ def test_purges_the_account_and_leaves_another_users_data(db, storage, revoked, 
     assert counts["user_profiles"] == 1 and counts["newsletter_emails"] == 1
 
 
+def test_the_purge_drops_the_cached_analytics_consent(db, storage, revoked, events, monkeypatch):
+    """The purge deletes user_settings (the opt-out the consent check reads),
+    so like every mutator of it, it drops the cached answer (CLAUDE.md)."""
+    _seed_account(db, U, deleted_at=LONG_AGO)
+    cleared: list[str] = []
+    monkeypatch.setattr(ap, "clear_analytics_consent_cache", cleared.append)
+
+    ap.purge_account(U, now=NOW)
+
+    assert cleared == [U]
+    assert not db.of("user_settings", user_id=U)
+
+
 def test_the_users_row_becomes_an_anonymised_stub(db, storage, revoked, events):
     _seed_account(db, U, deleted_at=LONG_AGO)
 
@@ -207,6 +221,23 @@ def test_room_messages_are_tombstoned_and_rooms_stay_coherent(db, storage, revok
     assert (ap.CHAT_IMAGES_BUCKET, [f"r1/{U}-1-pic.png"]) in storage
 
 
+def test_photos_in_a_room_the_student_was_last_in_are_deleted(db, storage, revoked, events):
+    """Leaving deletes a room whose last member the student was, and its
+    messages cascade with it: the image paths must be collected first, or the
+    photos stay in the public bucket with nothing left naming them."""
+    _seed_account(db, U, deleted_at=LONG_AGO)
+    db.add("rooms", id="solo", owner_id=U, created_by=U, updated_at=None)
+    db.add("room_members", room_id="solo", user_id=U, joined_at="2026-01-01")
+    db.add("room_messages", id="ms", room_id="solo", user_id=U, user_name="Ada",
+           text="enc", image_url=_chat_url(f"solo/{U}-7-pic.png"), is_deleted=False)
+
+    ap.purge_account(U, now=NOW)
+
+    assert db.of("rooms", id="solo") == []  # the room went with the student
+    sent = [p for bucket, paths in storage if bucket == ap.CHAT_IMAGES_BUCKET for p in paths]
+    assert f"solo/{U}-7-pic.png" in sent
+
+
 def test_files_and_the_google_grant_go(db, storage, revoked, events):
     _seed_account(db, U, deleted_at=LONG_AGO)
 
@@ -234,6 +265,60 @@ def test_client_supplied_references_to_someone_elses_files_are_left_alone(
     assert (ap.ISSUE_BUCKET, [f"{U}/mine.png"]) in storage
     assert (ap.CHAT_IMAGES_BUCKET, []) in storage
     assert db.of("room_messages", id="m9")[0]["image_url"] is None  # the reference goes
+
+
+def test_a_screenshot_whose_name_merely_contains_dots_is_deleted(db, storage, revoked, events):
+    """Only a `..` SEGMENT escapes the student's folder (`_object_path`
+    refuses it); `a..b.png` is an ordinary file name and must go."""
+    _seed_account(db, U, deleted_at=LONG_AGO)
+    db.of("issue_reports", user_id=U)[0]["screenshot_urls"] = [
+        f"{U}/a..b.png", f"{U}/../{OTHER}/x.png", f"{U}/..", f"{U}/sub/../x.png"]
+
+    ap.purge_account(U, now=NOW)
+
+    assert (ap.ISSUE_BUCKET, [f"{U}/a..b.png"]) in storage
+
+
+def _encode_uri(path):
+    """What supabase-js getPublicUrl does to the object path (encodeURI)."""
+    return quote(path, safe=";,/?:@&=+$-_.!~*'()#")
+
+
+@pytest.mark.parametrize("name", [
+    "Screenshot 2026-11-14 at 3.04.12 PM.png",
+    "naïve café 写真.png",
+    "100% done+final.png",
+])
+def test_a_public_url_names_the_decoded_object(name):
+    path = f"r1/{U}-1-{name}"
+    url = _chat_url(_encode_uri(path))
+    assert url != _chat_url(path)  # the stored URL really is encoded
+
+    assert ap._storage_path(url, ap.CHAT_IMAGES_BUCKET) == path
+
+
+@pytest.mark.parametrize("ref", [
+    _chat_url(f"r1/%2E%2E/{OTHER}-1-pic.png"),
+    _chat_url(f"r1/..%2F{OTHER}-1-pic.png"),
+    _chat_url(f"%2Fr1/{U}-1-pic.png"),
+    _chat_url(f"r1//{U}-1-pic.png"),
+    _chat_url(f"r1/{U}-1-pic%00.png"),
+    _chat_url(f"r1/{U}-1-%FF.png"),  # not UTF-8
+])
+def test_a_url_that_decodes_out_of_its_folder_names_nothing(ref):
+    assert ap._storage_path(ref, ap.CHAT_IMAGES_BUCKET) is None
+
+
+def test_an_encoded_chat_image_is_deleted_by_its_real_name(db, storage, revoked, events):
+    _seed_account(db, U, deleted_at=LONG_AGO)
+    path = f"r9/{U}-3-Screenshot 2026-11-14 at 3.04.12 PM.png"
+    db.add("rooms", id="r9", owner_id=OTHER, created_by=OTHER, updated_at=None)
+    db.add("room_messages", id="m9", room_id="r9", user_id=U, user_name="Ada",
+           text="enc", image_url=_chat_url(_encode_uri(path)), is_deleted=False)
+
+    ap.purge_account(U, now=NOW)
+
+    assert (ap.CHAT_IMAGES_BUCKET, [path]) in storage
 
 
 def test_storage_bulk_delete_sends_the_paths_and_raises_on_failure(monkeypatch):

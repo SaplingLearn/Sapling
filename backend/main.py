@@ -64,7 +64,7 @@ from services.logfire_scrubber import (
     scrub_value,
     strip_query_request_hook,
 )
-from services import otel_fastapi_compat
+from services import crisis_support, otel_fastapi_compat
 from services.request_context import (
     RequestIDMiddleware,
     current_request_id,
@@ -301,6 +301,14 @@ logfire.instrument_fastapi(
     # safe keys, so they are rewritten to the path here.
     server_request_hook=strip_query_request_hook,
 )
+
+# The crisis card beside a note action's error answer (services/
+# crisis_support.py::alongside leaves it on request.state and re-raises):
+# added on the way out by a layer outside the WHOLE stack, so the generic
+# 500 that ServerErrorMiddleware produces carries it like every handled
+# error does. After instrument_fastapi, which expects ServerErrorMiddleware
+# on top of the stack it wraps.
+crisis_support.install_error_card(app)
 
 if recost_api_key and RecostMiddleware is not None:
     app.add_middleware(

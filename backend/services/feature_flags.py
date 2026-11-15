@@ -225,11 +225,24 @@ REGISTRY: dict[str, FlagDef] = {f.key: f for f in (
     # Resolved GLOBALLY (user_id=None) at the start of every pass, so turning
     # it off stops the next pass without a restart. Off = deleted accounts
     # stay hidden soft deletes (credentials are still removed at the delete
-    # itself). Server-only. Kill switch: SAPLING_FLAG_ACCOUNT_PURGE=off.
+    # itself, and the daily pass still removes any a failed delete left).
+    # Server-only. Kill switch: SAPLING_FLAG_ACCOUNT_PURGE=off.
     FlagDef("account_purge", ("off", "on"),
             "Daily job: permanently erase the personal data of accounts their "
             "student deleted more than 30 days ago. Irreversible. Global: "
             "per-user rules and rollouts do not apply.", False),
+    # The daily pass's leftover-credential sweep
+    # (services/account_purge_sweeper.py::sweep_leftover_credentials): deletes
+    # the OAuth / Gradescope credential rows a soft-deleted account still
+    # holds and revokes its Google tokens. Independent of account_purge (the
+    # credentials were due at the delete itself). Resolved GLOBALLY at the
+    # start of every sweep. Seeded "on" by
+    # 20261115005314_credential_sweep_flag.sql; switching it off (or
+    # SAPLING_FLAG_CREDENTIAL_SWEEP=off) is the kill switch. Server-only.
+    FlagDef("credential_sweep", ("off", "on"),
+            "Daily job: remove (and revoke at Google) the credentials a deleted "
+            "account still holds after its delete could not remove them. "
+            "Global: per-user rules and rollouts do not apply.", False),
     # docs/safety/crisis-support.md: the crisis-support path. On: a student
     # message that states suicidal ideation, self-harm or acute danger gets
     # the fixed resources card INSTEAD of a model turn, on every surface

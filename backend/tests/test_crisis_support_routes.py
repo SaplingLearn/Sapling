@@ -8,6 +8,11 @@ event. With the flag OFF (or on an ordinary message) the route carries on to
 its own next step exactly as before — each case names that step and the test
 replaces it with a sentinel 418, so "behaves as before" is observed, not
 assumed.
+
+The one exception is a note's stored CONTENT (its title and body, read by
+the notes agent actions): a match there never blocks. The action runs as
+usual and the card rides ALONGSIDE whatever answer goes back: the result, a
+429 or an error.
 """
 
 from __future__ import annotations
@@ -51,10 +56,18 @@ class Case:
     async_next: bool = False
     neutral: dict[str, Any] = field(default_factory=dict)
     note_field: str | None = None  # notes routes: the note field the text goes in
+    #: flashcard generate: the topic is one of the student's own graph concepts
+    graph_concept: bool = False
+
+    @property
+    def blocks(self) -> bool:
+        """A typed message blocks; stored material (a note's content, a graph
+        concept's name) shows the card alongside."""
+        return self.note_field is None and not self.graph_concept
 
     @property
     def id(self) -> str:
-        return f"{self.path}:{self.note_field or self.body.__name__}"
+        return f"{self.path}:{self.note_field or ('graph_concept' if self.graph_concept else self.body.__name__)}"
 
 
 def _chat(text):
@@ -83,6 +96,10 @@ def _paste(text):
 
 def _cloze(text):
     return {"user_id": "u1", "paragraph": text}
+
+
+def _topic(text):
+    return {"user_id": "u1", "topic": text, "count": 5}
 
 
 TURN = {"graph_update": {}, "mastery_changes": []}
@@ -116,8 +133,18 @@ CASES: list[Case] = [
          "services.flashcards.import_flow.import_generate", neutral={"cards": []}),
     Case("flashcard_import_cloze", "/api/flashcards/import/cloze", _cloze,
          "services.flashcards.import_flow.import_cloze", neutral={"cards": []}),
+    # a topic that is not one of the student's graph concepts is typed: it blocks
+    Case("flashcard_generate", "/api/flashcards/generate", _topic,
+         "services.flashcards.generation.generate", neutral={"flashcards": []}),
+    # ...one that is (the page's one-concept-per-call Start) is course material
+    Case("flashcard_generate", "/api/flashcards/generate", _topic,
+         "services.flashcards.generation.generate", graph_concept=True),
 ]
 IDS = [c.id for c in CASES]
+BLOCKING = [c for c in CASES if c.blocks]
+BLOCKING_IDS = [c.id for c in BLOCKING]
+CONTENT = [c for c in CASES if not c.blocks]
+CONTENT_IDS = [c.id for c in CONTENT]
 
 
 # ── Fixtures ────────────────────────────────────────────────────────────────
@@ -166,9 +193,11 @@ def _post(case: Case, text: str):
     by a sentinel 418. Returns (response, the sentinel mock)."""
     sentinel = HTTPException(status_code=SENTINEL, detail="reached the route's own next step")
     mock = (AsyncMock if case.async_next else MagicMock)(side_effect=sentinel)
+    concepts = ["Hash tables", text] if case.graph_concept else ["Hash tables"]
     with (
         patch(case.next_step, mock),
         patch("routes.notes.get_note", AsyncMock(return_value=_note(case, text))),
+        patch("services.flashcards.concept_topic._graph_concept_names", return_value=concepts),
     ):
         return client.post(case.path, json=case.body(text)), mock
 
@@ -200,7 +229,7 @@ def _card_of(case: Case, r) -> dict:
 # ── Every surface ───────────────────────────────────────────────────────────
 
 
-@pytest.mark.parametrize("case", CASES, ids=IDS)
+@pytest.mark.parametrize("case", BLOCKING, ids=BLOCKING_IDS)
 def test_flag_on_a_crisis_message_gets_the_card_and_nothing_else(
     case, flag, model_calls, sink, caplog
 ):
@@ -247,12 +276,40 @@ def test_flag_on_a_crisis_message_gets_the_card_and_nothing_else(
     assert not any(word in logged for word in CRISIS_WORDS), "the text must never be logged"
 
 
+@pytest.mark.parametrize("case", CONTENT, ids=CONTENT_IDS)
+def test_flag_on_crisis_note_content_runs_the_action_with_the_card_alongside(
+    case, flag, model_calls, sink, caplog
+):
+    """The note's content never blocks: the action goes on to its own next
+    step (here the sentinel, an error) and the answer that goes back, error
+    or not, carries the card. One content-free event, as for any match."""
+    flag("on")
+    caplog.set_level(logging.DEBUG)
+
+    r, next_step = _post(case, CRISIS)
+
+    next_step.assert_called_once()  # the action ran
+    assert r.status_code == SENTINEL, r.text  # ...and its own answer went back
+    body = r.json()
+    assert body["detail"].startswith("reached the route's own next step")
+    assert body["crisis_support"] == crisis_support.client_payload(crisis_copy.DEFAULT_CAMPUS_COUNSELING)
+    rows = _crisis_rows(sink)
+    assert [row["payload"] for row in rows] == [
+        {"surface": case.surface, "category": "suicidal_ideation", "tier": "explicit"}
+    ]
+    assert rows[0]["content_fp"] is None
+    assert not any(word in json.dumps(rows).lower() for word in CRISIS_WORDS)
+    logged = " ".join(rec.getMessage().lower() for rec in caplog.records)
+    assert not any(word in logged for word in CRISIS_WORDS), "the text must never be logged"
+
+
 @pytest.mark.parametrize("case", CASES, ids=IDS)
 def test_flag_off_the_route_behaves_as_before(case, flag, model_calls, sink):
     flag("off")
     r, next_step = _post(case, CRISIS)
     assert r.status_code == SENTINEL, r.text
     next_step.assert_called_once()
+    assert "crisis_support" not in r.json()
     assert _crisis_rows(sink) == []
 
 
@@ -262,6 +319,7 @@ def test_flag_on_an_ordinary_message_is_untouched(case, flag, model_calls, sink)
     r, next_step = _post(case, CALM)
     assert r.status_code == SENTINEL, r.text
     next_step.assert_called_once()
+    assert "crisis_support" not in r.json()
     assert _crisis_rows(sink) == []
 
 
@@ -279,6 +337,49 @@ def test_a_library_document_import_is_not_screened(flag, model_calls, sink):
                         json={"user_id": "u1", "source": "library_doc", "text": CRISIS, "document_id": "d1"})
     assert r.status_code == SENTINEL
     assert _crisis_rows(sink) == []
+
+
+def test_an_imported_deck_is_cleaned_up_whatever_it_says(flag, model_calls, sink):
+    """`/import/cleanup` rewrites an IMPORTED deck (Anki, xlsx, a URL, OCR):
+    someone else's study material, not the student's writing. A nursing card
+    quoting a patient is cleaned up like any other, never answered with the
+    card (which would leave the deck impossible to clean up)."""
+    flag("on")
+    sentinel = HTTPException(status_code=SENTINEL, detail="next step")
+    cards = [{"front": "Patient states I want to die. First nursing action?",
+              "back": "Assess for a plan and ensure safety."},
+             {"front": CRISIS, "back": "An answer."}]
+    with patch("services.flashcards.import_flow.import_cleanup", MagicMock(side_effect=sentinel)):
+        r = client.post("/api/flashcards/import/cleanup", json={"user_id": "u1", "cards": cards})
+    assert r.status_code == SENTINEL, r.text
+    assert _crisis_rows(sink) == []
+
+
+def test_an_unauthenticated_cleanup_is_refused_before_any_card_is_read(flag, monkeypatch):
+    """Auth comes first: a stranger's 10,000-card deck costs no screening."""
+    from routes import flashcards as flashcard_routes
+    from services import crisis_detection
+
+    flag("on")
+    detect = MagicMock(side_effect=AssertionError("screened before auth"))
+    monkeypatch.setattr(crisis_detection, "detect", detect)
+    refuse = MagicMock(side_effect=HTTPException(status_code=401, detail="no session"))
+    monkeypatch.setattr(flashcard_routes, "require_self", refuse)
+    cards = [{"front": CRISIS, "back": "An answer."}] * 50
+    r = client.post("/api/flashcards/import/cleanup", json={"user_id": "u1", "cards": cards})
+    assert r.status_code == 401
+    refuse.assert_called_once()
+    detect.assert_not_called()
+
+
+def test_a_typed_note_chat_message_is_screened_whole_quotes_and_all(flag, model_calls, sink):
+    """A quotation is just text: what the student types into the note chat
+    is screened in full."""
+    flag("on")
+    case = next(c for c in CASES if c.surface == "note_chat" and not c.note_field)
+    r, next_step = _post(case, 'PSYCH 101: a patient says "I want to kill myself"; assess for a plan.')
+    assert "crisis_support" in _card_of(case, r)
+    next_step.assert_not_called()
 
 
 def test_the_screen_authenticates_before_the_flag_and_the_event(flag, model_calls, sink, monkeypatch):
@@ -319,6 +420,867 @@ def test_the_streamed_card_is_the_tutor_streams_own_terminal_shape(flag, model_c
     (name, event), = _sse_events(r.text)
     assert (name, event["type"], event["step"]) == ("done", "done", "reply")
     assert set(event["data"]) == {"reply", "crisis_support", "graph_update", "mastery_changes"}
+
+
+# ── A note's content: the card alongside the action's own answer ───────────
+#
+# The four notes agent actions down their real path (the model run and the
+# writes stood in), with a crisis line in the note's body: each returns its
+# normal result plus the card, logs the one event, and a refusal (a spent
+# note budget, the daily LLM budget) or a failure still carries the card.
+
+
+class _Ran:
+    """A stand-in agent result (output only; usage is recorded best-effort)."""
+
+    def __init__(self, output):
+        self.output = output
+
+
+#: (path, typed body, the result keys the action answers with)
+NOTE_ACTIONS = [
+    ("/api/notes/n1/summarize", _note_action, {"summary": "Short summary."}),
+    ("/api/notes/n1/extract-concepts", _note_action, {"concepts": ["Hash tables"], "linked": 1}),
+    ("/api/notes/n1/chat", lambda: _note_message(CALM), {"reply": "An answer.", "degraded": False}),
+    ("/api/notes/n1/send-to-tutor", _note_action, {"topic": "Week 3", "course_id": "c1"}),
+]
+NOTE_ACTION_IDS = [p.rsplit("/", 1)[1] for p, _, _ in NOTE_ACTIONS]
+
+
+@pytest.fixture
+def note_actions():
+    """Every note action's model run and writes stood in; the note's body is
+    `CRISIS`. Yields the dict of mocks."""
+    mocks = {
+        "summary": AsyncMock(return_value=_Ran(type("S", (), {"summary": "Short summary."})())),
+        "concepts": AsyncMock(return_value=_Ran(type("C", (), {"concepts": ["Hash tables"]})())),
+        "chat": AsyncMock(return_value=_Ran("An answer.")),
+        "save_summary": AsyncMock(return_value={}),
+    }
+    note = _note(None, "") | {"body": f"Hash tables. {CRISIS}."}
+    with (
+        patch("routes.notes.get_note", AsyncMock(return_value=note)),
+        patch("routes.notes.offering_course_id", return_value="c1"),
+        patch("routes.notes.note_summary_agent.run", mocks["summary"]),
+        patch("routes.notes.note_concepts_agent.run", mocks["concepts"]),
+        patch("routes.notes.note_chat_agent.run", mocks["chat"]),
+        patch("routes.notes.save_summary", mocks["save_summary"]),
+        patch("routes.notes.apply_concepts_to_graph", AsyncMock(return_value=None)),
+        patch("routes.notes._lookup_concept_nodes_by_name",
+              AsyncMock(return_value=[{"id": "g1", "concept_name": "Hash tables"}])),
+        patch("routes.notes.link_prechecked_concepts", AsyncMock(return_value=1)),
+    ):
+        yield mocks
+
+
+def _note_action_body(make) -> dict:
+    return make() if make.__code__.co_argcount == 0 else make(None)
+
+
+@pytest.mark.parametrize("path, make, result", NOTE_ACTIONS, ids=NOTE_ACTION_IDS)
+def test_crisis_note_content_gets_the_normal_result_and_the_card(path, make, result, flag, sink, note_actions):
+    flag("on")
+    r = client.post(path, json=_note_action_body(make))
+    assert r.status_code == 200, r.text
+    body = r.json()
+    for key, value in result.items():
+        assert body[key] == value, key
+    assert body["crisis_support"] == crisis_support.client_payload(crisis_copy.DEFAULT_CAMPUS_COUNSELING)
+    assert body["crisis_support_alongside"] is True
+    surface = next(c.surface for c in CONTENT if c.path == path)
+    assert [row["payload"]["surface"] for row in _crisis_rows(sink)] == [surface]
+    if path.endswith("/summarize"):
+        note_actions["save_summary"].assert_awaited_once()  # the summary was saved as usual
+
+
+@pytest.mark.parametrize("path, make, result", NOTE_ACTIONS, ids=NOTE_ACTION_IDS)
+def test_ordinary_note_content_gets_the_result_alone(path, make, result, flag, sink, note_actions):
+    flag("on")
+    with patch("routes.notes.get_note", AsyncMock(return_value=_note(None, ""))):
+        r = client.post(path, json=_note_action_body(make))
+    assert r.status_code == 200, r.text
+    assert "crisis_support" not in r.json() and "crisis_support_alongside" not in r.json()
+    assert _crisis_rows(sink) == []
+
+
+@pytest.mark.parametrize("path, make, result", NOTE_ACTIONS, ids=NOTE_ACTION_IDS)
+def test_a_rate_limited_note_action_still_carries_the_card(path, make, result, flag, sink, note_actions):
+    """The action's own limit applies (a 429 is its answer), and the 429
+    carries the card, with its Retry-After and plain detail intact."""
+    flag("on")
+    with patch("services.request_limits.acheck_rate_limit", AsyncMock(return_value=30)):
+        r = client.post(path, json=_note_action_body(make))
+    assert r.status_code == 429, r.text
+    assert r.headers["Retry-After"] == "30"
+    body = r.json()
+    assert "Try again in" in body["detail"]
+    assert body["crisis_support"] == crisis_support.client_payload(crisis_copy.DEFAULT_CAMPUS_COUNSELING)
+    assert len(_crisis_rows(sink)) == 1
+    for mock in note_actions.values():
+        mock.assert_not_called()  # refused before any model ran
+
+
+def test_a_budget_capped_note_action_still_carries_the_card(flag, sink, note_actions):
+    """The daily LLM budget (its own handler, with `error.reset_at`) too."""
+    flag("on")
+    from datetime import datetime, timedelta, timezone
+
+    reset_at = datetime.now(timezone.utc) + timedelta(hours=3)
+    note_actions["summary"].side_effect = llm_budget.LLMBudgetExceeded(limit=10, used=10, reset_at=reset_at)
+    r = client.post("/api/notes/n1/summarize", json=_note_action({}))
+    assert r.status_code == 429, r.text
+    assert r.json()["detail"] == llm_budget.user_message(reset_at)
+    assert "Retry-After" in r.headers
+    assert "crisis_support" in r.json()
+
+
+def test_a_failed_note_action_still_carries_the_card(flag, sink, note_actions):
+    """An unexpected failure is the generic 500, card included."""
+    flag("on")
+    note_actions["save_summary"].side_effect = RuntimeError("PostgREST down")
+    r = TestClient(app, raise_server_exceptions=False).post(
+        "/api/notes/n1/summarize", json=_note_action({}))
+    assert r.status_code == 500, r.text
+    assert r.json()["detail"] == "Internal server error."
+    assert "crisis_support" in r.json()
+
+
+def test_the_error_with_the_card_is_the_error_without_it_plus_the_card(flag, sink, note_actions):
+    """`alongside` renders the error through the app's own handler, so status,
+    headers (Retry-After) and body are exactly what the same refusal gets
+    without a match, plus `crisis_support`."""
+    flag("on")
+    with patch("services.request_limits.acheck_rate_limit", AsyncMock(return_value=30)):
+        with_card = client.post("/api/notes/n1/summarize", json=_note_action({}))
+        with patch("routes.notes.get_note", AsyncMock(return_value=_note(None, ""))):
+            without = client.post("/api/notes/n1/summarize", json=_note_action({}))
+    assert with_card.status_code == without.status_code == 429
+    drop = {"x-request-id", "content-length"}
+    assert ({k: v for k, v in with_card.headers.items() if k not in drop}
+            == {k: v for k, v in without.headers.items() if k not in drop})
+    body = with_card.json()
+    assert body.pop("crisis_support") == crisis_support.client_payload(crisis_copy.DEFAULT_CAMPUS_COUNSELING)
+    body.pop("request_id", None)
+    plain = without.json()
+    plain.pop("request_id", None)
+    assert body == plain
+
+
+def test_an_error_the_action_converts_itself_still_carries_the_card(flag, sink, note_actions):
+    """The note chat turns a model misbehaving into its own 500 detail; that
+    converted answer is what goes back, card included."""
+    from pydantic_ai.exceptions import UnexpectedModelBehavior
+
+    flag("on")
+    note_actions["chat"].side_effect = UnexpectedModelBehavior("garbled")
+    r = client.post("/api/notes/n1/chat", json=_note_message(CALM))
+    assert r.status_code == 500, r.text
+    assert r.json()["detail"] == "Something went wrong answering that."
+    assert "crisis_support" in r.json()
+
+
+def test_a_handler_that_answers_with_a_new_error_still_carries_the_card(flag, sink, note_actions):
+    """main.py answers a user-scope refusal with a fresh 404: the card is
+    added to that answer, not threaded through the new exception."""
+    import httpx
+
+    from db.scope import ScopedAccessDenied
+
+    flag("on")
+    refused = httpx.Request("POST", "http://postgrest/notes")
+    note_actions["save_summary"].side_effect = ScopedAccessDenied(
+        "refused", request=refused, response=httpx.Response(403, request=refused))
+    r = client.post("/api/notes/n1/summarize", json=_note_action({}))
+    assert r.status_code == 404, r.text
+    assert r.json()["detail"] == "Not found"
+    assert "crisis_support" in r.json()
+
+
+class _AlreadyDone(Exception):
+    """An exception type main.py has no handler of its own for (yet)."""
+
+
+def test_a_handler_that_knows_nothing_of_the_card_still_answers_with_it(flag, sink, note_actions, monkeypatch):
+    """A handler added later needs no crisis-support code: `alongside` runs
+    the app's handler for the error and adds the card to its answer."""
+    from fastapi.responses import JSONResponse
+
+    async def already_done(request, exc):
+        return JSONResponse(status_code=409, content={"detail": "Already summarized."},
+                            headers={"Retry-After": "7"})
+
+    monkeypatch.setitem(app.exception_handlers, _AlreadyDone, already_done)
+    monkeypatch.setattr(app, "middleware_stack", None)  # rebuilt with the new handler
+    flag("on")
+    note_actions["save_summary"].side_effect = _AlreadyDone()
+    r = TestClient(app, raise_server_exceptions=False).post("/api/notes/n1/summarize", json=_note_action({}))
+    assert r.status_code == 409, r.text
+    assert r.headers["Retry-After"] == "7"
+    assert r.json() == {
+        "detail": "Already summarized.",
+        "crisis_support": crisis_support.client_payload(crisis_copy.DEFAULT_CAMPUS_COUNSELING),
+    }
+
+
+def _validation_error():
+    from fastapi.exceptions import RequestValidationError
+
+    return RequestValidationError([{"type": "value_error", "loc": ("body", "x"), "msg": "bad", "input": 1}])
+
+
+def _scope_unavailable():
+    from db.scope import ScopeUnavailable
+
+    return ScopeUnavailable("no user-scoped credential")
+
+
+@pytest.mark.parametrize("raised, status", [
+    (lambda: HTTPException(status_code=413, detail="That note is too long."), 413),
+    (lambda: HTTPException(status_code=422, detail="Nothing to summarize."), 422),
+    (_validation_error, 422),
+    (_scope_unavailable, 503),
+    (lambda: RuntimeError("PostgREST down"), 500),
+], ids=["413", "422", "validation-422", "domain-503", "generic-500"])
+def test_every_error_answer_is_the_same_answer_plus_the_card(raised, status, flag, sink, note_actions):
+    """Whichever layer answers the error (an ExceptionMiddleware handler, or
+    ServerErrorMiddleware for the generic 500), the card is added on the way
+    out and nothing else about the answer changes."""
+    flag("on")
+    loose = TestClient(app, raise_server_exceptions=False)
+    note_actions["save_summary"].side_effect = lambda *a, **k: (_ for _ in ()).throw(raised())
+    with_card = loose.post("/api/notes/n1/summarize", json=_note_action({}))
+    with patch("routes.notes.get_note", AsyncMock(return_value=_note(None, ""))):
+        note_actions["summary"].return_value = _Ran(type("S", (), {"summary": "Short summary."})())
+        without = loose.post("/api/notes/n1/summarize", json=_note_action({}))
+    assert with_card.status_code == without.status_code == status, with_card.text
+    drop = {"x-request-id", "content-length"}
+    assert ({k: v for k, v in with_card.headers.items() if k not in drop}
+            == {k: v for k, v in without.headers.items() if k not in drop})
+    assert int(with_card.headers["content-length"]) == len(with_card.content)
+    body, plain = with_card.json(), without.json()
+    assert body.pop("crisis_support") == crisis_support.client_payload(crisis_copy.DEFAULT_CAMPUS_COUNSELING)
+    for answer in (body, plain):
+        answer.pop("request_id", None)
+        if isinstance(answer.get("error"), dict):
+            answer["error"].pop("request_id", None)
+    assert body == plain
+
+
+def test_an_unexpected_exception_still_reaches_the_server_and_its_log(flag, sink, note_actions, caplog, monkeypatch):
+    """`alongside` re-raises: the generic handler logs the traceback once,
+    PostHog gets the one exception, and the exception propagates past the
+    app to the server (its error log, the trace's exception record), exactly
+    as without a match."""
+    flag("on")
+    captured = []
+    monkeypatch.setattr(posthog_client, "capture_exception", lambda exc, **kw: captured.append(exc))
+    caplog.set_level(logging.ERROR, logger="main")
+    boom = RuntimeError("PostgREST down")
+    note_actions["save_summary"].side_effect = boom
+    with pytest.raises(RuntimeError) as raised:
+        TestClient(app).post("/api/notes/n1/summarize", json=_note_action({}))
+    assert raised.value is boom
+    logged = [r for r in caplog.records if r.name == "main" and r.getMessage() == "Unhandled exception"]
+    assert len(logged) == 1 and logged[0].exc_info[1] is boom
+    assert captured == [boom]
+
+
+def test_the_error_card_layer_wraps_the_whole_stack_and_keeps_the_trace():
+    """Outside every ServerErrorMiddleware (so the generic 500 passes it), and
+    installed after the OpenTelemetry instrumentation, which is still there."""
+    from starlette.middleware.errors import ServerErrorMiddleware
+
+    stack = app.build_middleware_stack()
+    assert isinstance(stack, crisis_support.ErrorCardMiddleware)
+    layers, node = [], stack.app
+    while node is not None and len(layers) < 30:
+        layers.append(type(node).__name__)
+        node = getattr(node, "app", None)
+    assert isinstance(stack.app, ServerErrorMiddleware)
+    assert "OpenTelemetryMiddleware" in layers
+
+
+# The error-card layer on its own, over a stand-in inner app: what it holds
+# back (an error JSON answer's start, until its body is whole) is always
+# forwarded, card or not.
+
+_CARD = {"title": "card"}
+_JSON_500 = {"type": "http.response.start", "status": 500,
+             "headers": [(b"content-type", b"application/json"), (b"content-length", b"20")]}
+
+
+def _run_layer(*messages: dict, raises: Exception | None = None, card: bool = True):
+    """Run ErrorCardMiddleware over an inner app that sends `messages` (then
+    raises `raises`); answers (what reached the server, what was raised)."""
+    import asyncio
+
+    async def inner(scope, receive, send):
+        if card:
+            scope["state"][crisis_support.ERROR_CARD_STATE] = _CARD
+        for message in messages:
+            await send(message)
+        if raises is not None:
+            raise raises
+
+    sent: list[dict] = []
+
+    async def send(message):
+        sent.append(message)
+
+    async def run():
+        await crisis_support.ErrorCardMiddleware(inner)({"type": "http"}, None, send)
+
+    try:
+        asyncio.run(run())
+    except Exception as exc:  # noqa: BLE001 — returned for the test to inspect
+        return sent, exc
+    return sent, None
+
+
+def _body(more: bool, data: bytes) -> dict:
+    return {"type": "http.response.body", "body": data, "more_body": more}
+
+
+def test_the_error_card_layer_adds_the_card_once_the_body_is_whole():
+    sent, raised = _run_layer(_JSON_500, _body(True, b'{"detail":'), _body(False, b'"boom"}'))
+    assert raised is None
+    start, body = sent
+    assert start["status"] == 500
+    assert json.loads(body["body"]) == {"detail": "boom", "crisis_support": _CARD}
+    assert dict(start["headers"])[b"content-length"] == str(len(body["body"])).encode()
+
+
+def test_an_exception_mid_body_forwards_what_was_held_unchanged_and_re_raises():
+    """The inner app raises between the held start and the body's last chunk:
+    the start and the chunks sent so far go to the server as they were (no
+    card), then the exception propagates, exactly as without a card."""
+    boom = RuntimeError("stream broke")
+    sent, raised = _run_layer(_JSON_500, _body(True, b'{"detail":'), raises=boom)
+    assert raised is boom
+    assert sent == [_JSON_500, _body(True, b'{"detail":')]
+
+
+def test_an_exception_before_any_body_still_forwards_the_held_start():
+    boom = RuntimeError("no body")
+    sent, raised = _run_layer(_JSON_500, raises=boom)
+    assert raised is boom
+    assert sent == [_JSON_500]
+
+
+def test_an_app_that_returns_without_finishing_the_body_gets_what_it_sent():
+    sent, raised = _run_layer(_JSON_500, _body(True, b'{"detail":'))
+    assert raised is None
+    assert sent == [_JSON_500, _body(True, b'{"detail":')]
+
+
+def test_an_error_body_past_the_buffer_cap_passes_through_untouched():
+    cap = crisis_support._ERROR_CARD_MAX_BODY
+    first, second, last = _body(True, b"x" * cap), _body(True, b"y"), _body(False, b"z")
+    sent, raised = _run_layer(_JSON_500, first, second, last)
+    assert raised is None
+    assert sent == [_JSON_500, first, second, last]  # no card, nothing rewritten
+
+
+def test_an_error_body_at_the_cap_still_gets_the_card():
+    cap = crisis_support._ERROR_CARD_MAX_BODY
+    detail = "x" * (cap - len('{"detail":""}'))
+    sent, _ = _run_layer(_JSON_500, _body(False, json.dumps({"detail": detail}, separators=(",", ":")).encode()))
+    assert json.loads(sent[-1]["body"])["crisis_support"] == _CARD
+
+
+def test_without_a_card_the_error_answer_streams_through():
+    sent, _ = _run_layer(_JSON_500, _body(True, b"{}"), card=False)
+    assert sent == [_JSON_500, _body(True, b"{}")]
+
+
+def test_a_typed_crisis_message_still_blocks_on_a_crisis_note(flag, sink, note_actions):
+    """The note chat's typed message blocks as on every other surface: the
+    card INSTEAD of a reply, whatever the note says."""
+    flag("on")
+    r = client.post("/api/notes/n1/chat", json=_note_message(CRISIS))
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["reply"] == crisis_support.render_reply(body["crisis_support"])
+    assert "crisis_support_alongside" not in body
+    note_actions["chat"].assert_not_called()
+    assert len(_crisis_rows(sink)) == 1  # the typed message's screen; the note is never read
+
+
+def test_a_note_chat_shows_the_card_every_turn_and_records_it_once_a_day(flag, sink, note_actions, monkeypatch):
+    """The chat re-reads the note every turn: the card goes beside every
+    answer, but the event is written once per student, note and note
+    version a day (per process), not once per turn."""
+    flag("on")
+    note = _note(None, "") | {"body": f"Hash tables. {CRISIS}.", "updated_at": "2026-11-14T10:00:00Z"}
+    clock = [1_000.0]
+    monkeypatch.setattr(crisis_support.time, "monotonic", lambda: clock[0])
+
+    def chat(n=note, user="u1"):
+        with patch("routes.notes.get_note", AsyncMock(return_value=n)):
+            r = client.post(f"/api/notes/{n['id']}/chat", json={"user_id": user, "message": CALM})
+        assert r.status_code == 200, r.text
+        assert r.json()["crisis_support_alongside"] is True  # the card, every turn
+        return len(_crisis_rows(sink))
+
+    assert chat() == 1
+    assert chat() == 1  # same note, same version, same day: no second event
+    assert chat(note | {"updated_at": "2026-11-14T11:00:00Z"}) == 2  # the note was edited
+    assert chat(note | {"id": "n2"}) == 3  # another note
+    assert chat(user="u2") == 4  # another student
+    clock[0] += 24 * 3600 + 1
+    assert chat() == 5  # a day later
+    assert note_actions["chat"].await_count == 6  # every turn was answered
+
+
+def test_other_note_actions_record_every_match(flag, sink, note_actions):
+    """Only the chat (re-screened every turn) is deduplicated: each summary
+    is one action the student asked for."""
+    flag("on")
+    for _ in range(2):
+        assert client.post("/api/notes/n1/summarize", json=_note_action({})).status_code == 200
+    assert len(_crisis_rows(sink)) == 2
+
+
+def test_the_once_a_day_key_holds_no_content(monkeypatch, sink):
+    monkeypatch.setattr(crisis_support, "flag_on", lambda key, uid: True)
+
+    async def run():
+        return await crisis_support.screen_content_async(
+            _request(), "u1", "note_chat", CRISIS, once_a_day=("n1", "2026-11-14T10:00:00Z"))
+
+    import asyncio
+
+    asyncio.run(run())
+    keys = " ".join(crisis_support._recorded_today).lower()
+    assert keys and not any(word in keys for word in CRISIS_WORDS + ("n1", "u1"))
+
+
+def test_once_a_day_forgets_expired_keys_oldest_first(monkeypatch):
+    clock = [0.0]
+    monkeypatch.setattr(crisis_support.time, "monotonic", lambda: clock[0])
+    assert crisis_support._first_today(("a",)) is True
+    clock[0] = 10.0
+    assert crisis_support._first_today(("b",)) is True
+    clock[0] = crisis_support._ONCE_A_DAY_S + 5  # a's day is over, b's is not
+    assert crisis_support._first_today(("c",)) is True
+    assert len(crisis_support._recorded_today) == 2  # a went, from the front
+    assert crisis_support._first_today(("b",)) is False
+    assert crisis_support._first_today(("a",)) is True  # recorded again, now the newest
+    assert list(crisis_support._recorded_today.values()) == sorted(crisis_support._recorded_today.values())
+
+
+def test_once_a_day_at_the_cap_drops_the_oldest_key(monkeypatch):
+    monkeypatch.setattr(crisis_support, "_ONCE_A_DAY_MAX", 3)
+    clock = [0.0]
+    monkeypatch.setattr(crisis_support.time, "monotonic", lambda: clock[0])
+    for i, name in enumerate("abc"):
+        clock[0] = float(i)
+        assert crisis_support._first_today((name,)) is True
+    clock[0] = 3.0
+    assert crisis_support._first_today(("d",)) is True  # over the cap: a goes
+    assert len(crisis_support._recorded_today) == 3
+    assert crisis_support._first_today(("b",)) is False
+    assert crisis_support._first_today(("c",)) is False
+    assert crisis_support._first_today(("d",)) is False
+    assert crisis_support._first_today(("a",)) is True  # forgotten, so recorded again (b goes)
+    assert crisis_support._first_today(("b",)) is True
+
+
+def test_once_a_day_at_the_cap_does_not_scan_every_key(monkeypatch):
+    """Eviction is amortized O(1): an insert at the cap touches the front of
+    the map only, never every key (or a min() over them)."""
+    monkeypatch.setattr(crisis_support, "_ONCE_A_DAY_MAX", 1_000)
+    clock = [0.0]
+    monkeypatch.setattr(crisis_support.time, "monotonic", lambda: clock[0])
+    for i in range(1_000):
+        crisis_support._first_today(("k", i))
+    visited = [0]  # keys walked over, across every iteration of the map
+    real = crisis_support._recorded_today
+
+    def _counted(it):
+        for item in it:
+            visited[0] += 1
+            yield item
+
+    class _Counting(type(real)):
+        def items(self):
+            return _counted(super().items())
+
+        def keys(self):
+            return _counted(super().keys())
+
+        def values(self):
+            return _counted(super().values())
+
+        def __iter__(self):
+            return _counted(super().__iter__())
+
+    counted = _Counting(real)
+    monkeypatch.setattr(crisis_support, "_recorded_today", counted)
+    for i in range(1_000, 1_100):
+        assert crisis_support._first_today(("k", i)) is True
+    assert len(counted) == 1_000
+    assert visited[0] <= 2 * 100  # a peek at the front per insert, not a walk over 1,000 keys
+
+
+# ── Flashcard generate: a graph concept's name, not something typed ────────
+#
+# The Flashcards page generates one concept per call with the concept's name
+# as the topic. A name the student's graph holds is course material (a nursing
+# course's "Feeling suicidal"): its cards are made, the card beside them. A
+# name that is not one of their concepts is screened as typed and blocks.
+
+CONCEPT_CARDS = {"flashcards": [{"id": "f1", "front": "Q", "back": "A"}]}
+
+
+@pytest.fixture
+def concept_generate():
+    """The generation itself stood in; the student's graph concepts are
+    `names` (in the request's course). Yields the mocks."""
+    mocks = {
+        "generate": MagicMock(return_value=dict(CONCEPT_CARDS)),
+        "names": MagicMock(return_value=["Hash tables", "Feeling suicidal"]),
+    }
+    with (
+        patch("services.flashcards.generation.generate", mocks["generate"]),
+        patch("services.flashcards.concept_topic._graph_concept_names", mocks["names"]),
+    ):
+        yield mocks
+
+
+def _generate_body(topic: str) -> dict:
+    return {"user_id": "u1", "topic": topic, "count": 5, "course_id": "c1"}
+
+
+def test_a_graph_concept_topic_makes_its_cards_with_the_card_beside_them(flag, sink, concept_generate):
+    flag("on")
+    r = client.post("/api/flashcards/generate", json=_generate_body("feeling  Suicidal"))
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["flashcards"] == CONCEPT_CARDS["flashcards"]  # the cards were made
+    assert body["crisis_support"] == crisis_support.client_payload(crisis_copy.DEFAULT_CAMPUS_COUNSELING)
+    assert body["crisis_support_alongside"] is True
+    concept_generate["generate"].assert_called_once()
+    concept_generate["names"].assert_called_once_with("u1", "c1", "feeling suicidal")  # the student's own, in this course
+    assert [row["payload"]["surface"] for row in _crisis_rows(sink)] == ["flashcard_generate"]
+
+
+def test_a_typed_topic_that_is_not_a_graph_concept_still_blocks(flag, sink, concept_generate):
+    flag("on")
+    r = client.post("/api/flashcards/generate", json=_generate_body(CRISIS))
+    assert r.status_code == 200, r.text
+    assert r.json()["flashcards"] == [] and "crisis_support_alongside" not in r.json()
+    concept_generate["generate"].assert_not_called()
+
+
+def test_a_failed_concept_read_blocks_as_typed(flag, sink, concept_generate):
+    flag("on")
+    concept_generate["names"].side_effect = RuntimeError("PostgREST down")
+    r = client.post("/api/flashcards/generate", json=_generate_body("Feeling suicidal"))
+    assert r.status_code == 200, r.text
+    assert r.json()["flashcards"] == [] and "crisis_support" in r.json()
+    concept_generate["generate"].assert_not_called()
+
+
+def test_a_refused_graph_concept_generation_still_carries_the_card(flag, sink, concept_generate):
+    from datetime import datetime, timezone
+
+    flag("on")
+    concept_generate["generate"].side_effect = llm_budget.LLMBudgetExceeded(
+        limit=1, used=1, reset_at=datetime.now(timezone.utc))
+    r = client.post("/api/flashcards/generate", json=_generate_body("Feeling suicidal"))
+    assert r.status_code == 429, r.text
+    assert "crisis_support" in r.json()
+
+
+def test_a_calm_topic_never_reads_the_graph(flag, sink, concept_generate):
+    flag("on")
+    r = client.post("/api/flashcards/generate", json=_generate_body("Hash tables"))
+    assert r.status_code == 200, r.text
+    assert r.json() == CONCEPT_CARDS
+    concept_generate["names"].assert_not_called()
+
+
+def test_the_graph_concept_read_is_the_students_own(monkeypatch):
+    from services.flashcards import concept_topic
+
+    calls = []
+
+    class _Nodes:
+        def select(self, cols, filters, limit=None):
+            calls.append((cols, filters, limit))
+            return [{"concept_name": "Feeling Suicidal"}, {"concept_name": "Feeling very suicidal"}]
+
+    monkeypatch.setattr(concept_topic, "table", lambda name: _Nodes())
+    assert concept_topic.topic_is_graph_concept("u1", "feeling  suicidal", "c1") is True
+    assert concept_topic.topic_is_graph_concept("u1", "suicidal", None) is False
+    assert concept_topic.topic_is_graph_concept("u1", "   ", None) is False
+    # Filtered server-side to the candidate name (case-insensitive, any run
+    # of spacing between its words), bounded, and confirmed in Python.
+    assert calls == [
+        ("concept_name", {"user_id": "eq.u1", "course_id": "eq.c1",
+                          "or": '(concept_name.ilike."feeling%suicidal")'}, concept_topic._CANDIDATE_LIMIT),
+        ("concept_name", {"user_id": "eq.u1", "or": '(concept_name.ilike."suicidal")'},
+         concept_topic._CANDIDATE_LIMIT),
+    ]
+
+
+def test_the_graph_concept_pattern_matches_a_like_metacharacter_verbatim(monkeypatch):
+    from services.flashcards import concept_topic
+
+    seen = []
+
+    class _Nodes:
+        def select(self, cols, filters, limit=None):
+            seen.append(filters["or"])
+            return [{"concept_name": "100% over it"}]
+
+    monkeypatch.setattr(concept_topic, "table", lambda name: _Nodes())
+    assert concept_topic.topic_is_graph_concept("u1", "100% over_it", None) is False
+    assert seen == ['(concept_name.ilike."100\\\\%%over\\\\_it")']
+
+
+def test_a_graph_concept_past_postgrests_row_cap_is_still_found(monkeypatch):
+    """A student with more nodes than PostgREST's max-rows (1000): an
+    unfiltered read would drop the matching node; the name filter finds it."""
+    import re
+
+    from services.flashcards import concept_topic
+
+    nodes = [f"Concept {i}" for i in range(1500)] + ["Feeling suicidal"]
+
+    def _ilike(pattern: str, value: str) -> bool:
+        rx = "".join(".*" if c == "%" else re.escape(c) for c in pattern)
+        return re.fullmatch(rx, value, flags=re.IGNORECASE) is not None
+
+    class _CappedNodes:
+        def select(self, cols, filters, limit=None):
+            rows = nodes
+            tree = filters.get("or")
+            if tree:
+                m = re.fullmatch(r'\(concept_name\.ilike\."(.*)"\)', tree)
+                rows = [n for n in rows if _ilike(m.group(1), n)]
+            cap = min(1000, limit or 1000)
+            return [{"concept_name": n} for n in rows[:cap]]
+
+    monkeypatch.setattr(concept_topic, "table", lambda name: _CappedNodes())
+    assert concept_topic.topic_is_graph_concept("u1", "FEELING suicidal", None) is True
+
+
+# ── Send to tutor's topic: the note's title, not something typed ───────────
+#
+# Send to tutor opens /learn with the note's title as the topic. The student
+# already got the card beside that action; a start whose topic IS that title
+# (`from_note_id`, re-checked against the student's own note) is stored
+# material too, so the session starts with the card beside it. A topic the
+# student typed, or one that does not match their note, still blocks.
+
+#: A note titled with the crisis line; Send to tutor's topic is its first line.
+CRISIS_NOTE = {"id": "n1", "user_id": "u1", "offering_id": "o1", "title": f"{CRISIS}\nweek 3", "body": ""}
+GREETING = {"session_id": "s9", "initial_message": "Let's begin.", "graph_state": {"nodes": []}}
+DONE_DATA = {"session_id": "s9", "reply": "Let's begin.", "graph_update": {}, "mastery_changes": []}
+
+
+def _note_start(**overrides) -> dict:
+    return {"user_id": "u1", "topic": CRISIS, "course_id": "c1", "from_note_id": "n1", **overrides}
+
+
+async def _greeting_stream(body, request):
+    from sse_starlette.sse import EventSourceResponse
+
+    from services.agent_events import SaplingEvent, sapling_event_to_sse
+
+    async def events():
+        yield sapling_event_to_sse(SaplingEvent(type="token", step="reply", message="Let's", data={"delta": "Let's"}))
+        yield sapling_event_to_sse(SaplingEvent(type="done", step="reply", message="Complete.", data=DONE_DATA))
+
+    return EventSourceResponse(events())
+
+
+@pytest.fixture
+def note_start():
+    """The two start routes' own work stood in (a greeting); the student's
+    note is CRISIS_NOTE. Yields the mocks."""
+    mocks = {
+        "start": AsyncMock(return_value=dict(GREETING)),
+        "stream": AsyncMock(side_effect=_greeting_stream),
+        "get_note": AsyncMock(return_value=dict(CRISIS_NOTE)),
+    }
+    with (
+        patch("services.tutor.start_session", mocks["start"]),
+        patch("services.tutor.start_session_stream", mocks["stream"]),
+        patch("services.tutor.note_topic.get_note", mocks["get_note"]),
+    ):
+        yield mocks
+
+
+def test_a_note_titled_topic_starts_the_session_with_the_card_beside_it(flag, sink, note_start):
+    flag("on")
+    r = client.post("/api/learn/start-session", json=_note_start())
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert {k: body[k] for k in GREETING} == GREETING  # the session started
+    assert body["crisis_support"] == crisis_support.client_payload(crisis_copy.DEFAULT_CAMPUS_COUNSELING)
+    assert body["crisis_support_alongside"] is True
+    note_start["start"].assert_awaited_once()
+    note_start["get_note"].assert_awaited_once_with(note_id="n1", user_id="u1")
+    assert [row["payload"]["surface"] for row in _crisis_rows(sink)] == ["tutor_start"]
+
+
+def test_a_note_titled_topic_streams_the_greeting_with_the_card_in_done(flag, sink, note_start):
+    flag("on")
+    r = client.post("/api/learn/start-session/stream", json=_note_start())
+    assert r.status_code == 200, r.text
+    events = _sse_events(r.text)
+    assert [name for name, _ in events] == ["token", "done"]  # the greeting streamed as usual
+    done = events[-1][1]["data"]
+    assert {k: done[k] for k in DONE_DATA} == DONE_DATA
+    assert done["crisis_support"] == crisis_support.client_payload(crisis_copy.DEFAULT_CAMPUS_COUNSELING)
+    assert done["crisis_support_alongside"] is True
+    assert "crisis_support" not in events[0][1]["data"]
+
+
+def test_a_refused_note_titled_start_still_carries_the_card(flag, sink, note_start):
+    flag("on")
+    note_start["start"].side_effect = HTTPException(status_code=429, detail="Slow down.",
+                                                    headers={"Retry-After": "12"})
+    r = client.post("/api/learn/start-session", json=_note_start())
+    assert r.status_code == 429, r.text
+    assert r.headers["Retry-After"] == "12"
+    assert "crisis_support" in r.json()
+
+
+@pytest.mark.parametrize("why, body, note", [
+    ("no note named", {"from_note_id": None}, CRISIS_NOTE),
+    ("not the student's note (or gone)", {}, None),
+    ("the student edited the topic", {"topic": f"{CRISIS} please"}, CRISIS_NOTE),
+    ("a different note's title", {}, {**CRISIS_NOTE, "title": "Week 3"}),
+], ids=lambda v: v if isinstance(v, str) else "")
+@pytest.mark.parametrize("path", ["/api/learn/start-session", "/api/learn/start-session/stream"])
+def test_a_topic_that_is_not_the_notes_title_blocks_as_typed(why, body, note, path, flag, sink, note_start):
+    flag("on")
+    note_start["get_note"].return_value = note
+    r = client.post(path, json=_note_start(**body))
+    assert r.status_code == 200, r.text
+    card = _sse_events(r.text)[-1][1]["data"] if path.endswith("/stream") else r.json()
+    assert card["session_id"] is None and "crisis_support" in card  # the card INSTEAD of a session
+    assert "crisis_support_alongside" not in card
+    note_start["start"].assert_not_called()
+    note_start["stream"].assert_not_called()
+
+
+def test_a_failed_note_read_blocks_as_typed_rather_than_failing(flag, sink, note_start):
+    flag("on")
+    note_start["get_note"].side_effect = RuntimeError("PostgREST down")
+    r = client.post("/api/learn/start-session", json=_note_start())
+    assert r.status_code == 200, r.text
+    assert r.json()["session_id"] is None and "crisis_support" in r.json()
+    note_start["start"].assert_not_called()
+
+
+def test_a_stranger_naming_a_note_is_refused_before_it_is_read(flag, sink, note_start, monkeypatch):
+    from services import auth_guard
+
+    flag("on")
+
+    def require_self(user_id, request, **_kwargs):
+        if user_id != "u1":
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+    monkeypatch.setattr(auth_guard, "require_self", require_self)
+    r = client.post("/api/learn/start-session", json=_note_start(user_id="u2"))
+    assert r.status_code == 403
+    note_start["get_note"].assert_not_called()
+    assert _crisis_rows(sink) == []
+
+
+def test_a_calm_note_titled_topic_starts_as_usual(flag, sink, note_start):
+    flag("on")
+    note_start["get_note"].return_value = {**CRISIS_NOTE, "title": "Week 3"}
+    r = client.post("/api/learn/start-session", json=_note_start(topic="Week 3"))
+    assert r.status_code == 200, r.text
+    assert r.json() == GREETING
+    assert _crisis_rows(sink) == []
+    note_start["get_note"].assert_not_called()  # the note is read only when the topic matched
+
+
+def _send_to_tutor(note: dict):
+    with (
+        patch("routes.notes.get_note", AsyncMock(return_value=note)),
+        patch("routes.notes.offering_course_id", return_value="c1"),
+    ):
+        r = client.post(f"/api/notes/{note['id']}/send-to-tutor", json={"user_id": "u1"})
+    assert r.status_code == 200, r.text
+    assert r.json()["crisis_support_alongside"] is True
+    return r
+
+
+def _surfaces(sink) -> list[str]:
+    return [row["payload"]["surface"] for row in _crisis_rows(sink)]
+
+
+@pytest.mark.parametrize("path", ["/api/learn/start-session", "/api/learn/start-session/stream"])
+def test_the_start_send_to_tutor_hands_over_records_no_second_card(path, flag, sink, note_start):
+    """Send to tutor showed (and recorded) the card for this note version; the
+    /learn start it hands over shows the card beside the session again but
+    records nothing new that day."""
+    flag("on")
+    note = {**CRISIS_NOTE, "updated_at": "2026-11-14T10:00:00Z"}
+    note_start["get_note"].return_value = dict(note)
+    _send_to_tutor(note)
+    r = client.post(path, json=_note_start())
+    assert r.status_code == 200, r.text
+    assert "crisis_support" in r.text  # the card still rides beside the session
+    assert _surfaces(sink) == ["note_send_to_tutor"]
+
+
+def test_a_note_titled_start_records_once_a_day_per_note_version(flag, sink, note_start, monkeypatch):
+    flag("on")
+    clock = [1_000.0]
+    monkeypatch.setattr(crisis_support.time, "monotonic", lambda: clock[0])
+    note = {**CRISIS_NOTE, "updated_at": "2026-11-14T10:00:00Z"}
+
+    def start(n=note):
+        note_start["get_note"].return_value = dict(n)
+        r = client.post("/api/learn/start-session", json=_note_start(from_note_id=n["id"]))
+        assert r.status_code == 200, r.text
+        assert r.json()["crisis_support_alongside"] is True  # the card, every start
+        return len(_crisis_rows(sink))
+
+    assert start() == 1
+    assert start() == 1  # the same note version, the same day
+    assert start(note | {"updated_at": "2026-11-14T11:00:00Z"}) == 2  # the note was edited
+    clock[0] += 24 * 3600 + 1
+    assert start() == 3  # a day later
+    assert _surfaces(sink) == ["tutor_start"] * 3
+
+
+def test_send_to_tutor_itself_still_records_every_match(flag, sink, note_start):
+    flag("on")
+    note = {**CRISIS_NOTE, "updated_at": "2026-11-14T10:00:00Z"}
+    _send_to_tutor(note)
+    _send_to_tutor(note)
+    assert _surfaces(sink) == ["note_send_to_tutor"] * 2
+
+
+def test_a_typed_crisis_topic_still_blocks_and_records_every_start(flag, sink, note_start):
+    """Typed topics are unaffected: no dedupe, the card instead of a session."""
+    flag("on")
+    note = {**CRISIS_NOTE, "updated_at": "2026-11-14T10:00:00Z"}
+    _send_to_tutor(note)
+    for _ in range(2):
+        r = client.post("/api/learn/start-session", json=_note_start(from_note_id=None))
+        assert r.status_code == 200, r.text
+        assert r.json()["session_id"] is None
+    assert _surfaces(sink) == ["note_send_to_tutor", "tutor_start", "tutor_start"]
+    note_start["start"].assert_not_called()
+
+
+def test_the_handoff_key_holds_no_content_or_id(flag, sink, note_start):
+    flag("on")
+    _send_to_tutor({**CRISIS_NOTE, "updated_at": "2026-11-14T10:00:00Z"})
+    keys = " ".join(crisis_support._recorded_today).lower()
+    assert keys and not any(word in keys for word in CRISIS_WORDS + ("n1", "u1"))
 
 
 # ── Screening precedes every rate limit, budget and quota ───────────────────
@@ -362,8 +1324,10 @@ def real_limiters(monkeypatch):
 
 
 #: The covered routes with a rate limiter of their own on main (the tutor and
-#: notes routes are budgeted at the model chokepoint only).
-RATE_LIMITED = [c for c in CASES if c.path.startswith("/api/flashcards/")]
+#: notes routes and flashcard generation are budgeted at the model chokepoint
+#: only).
+RATE_LIMITED = [c for c in CASES
+                if c.path.startswith("/api/flashcards/") and c.path != "/api/flashcards/generate"]
 
 
 def _post_real(case: Case, text: str):
@@ -391,7 +1355,7 @@ def test_a_rate_limited_student_gets_the_card_and_ordinary_text_still_gets_the_4
     assert model_calls == []
 
 
-@pytest.mark.parametrize("case", CASES, ids=IDS)
+@pytest.mark.parametrize("case", BLOCKING, ids=BLOCKING_IDS)
 def test_a_budget_capped_student_gets_the_card(case, flag, model_calls, sink, real_limiters):
     """The per-user LLM budget is read at the model chokepoint, which a crisis
     turn never reaches: an exhausted budget cannot answer it with a 429."""
@@ -402,7 +1366,7 @@ def test_a_budget_capped_student_gets_the_card(case, flag, model_calls, sink, re
     assert real_limiters["consulted"] == []
 
 
-@pytest.mark.parametrize("case", CASES, ids=IDS)
+@pytest.mark.parametrize("case", BLOCKING, ids=BLOCKING_IDS)
 def test_a_crisis_turn_consumes_no_rate_limit_or_budget_unit(
     case, flag, model_calls, sink, real_limiters, monkeypatch
 ):
@@ -463,6 +1427,118 @@ def test_the_screen_precedes_every_limiter_on_the_route(path, route):
     assert early == [], (path, early)
 
 
+# ── The inventory: no student text reaches a model unscreened ──────────────
+#
+# Every write route in a module that fronts a model, whose body carries free
+# text (a string that is not an id), is either SCREENED (its handler calls
+# crisis_support.screen and it has a Case above) or listed in NOT_SCREENED
+# with why no model reads that text as the student's message. A new route
+# with a text field fails here until it is one or the other. (Routes that
+# read STORED text, like the notes agent actions, have no text field: they
+# are pinned by CASES and test_every_covered_route_is_found, and their screen
+# is the NON-blocking one, `screen_content_async`: the card alongside the
+# action's answer, pinned by the CONTENT cases.)
+
+#: The route modules whose handlers run a model on the student's request.
+MODEL_ROUTE_MODULES = ("learn", "notes", "flashcards", "quiz", "graph", "study_guide")
+
+NOT_SCREENED: dict[str, str] = {
+    "learn PATCH /sessions/{session_id}": "renames a session; no model",
+    "notes POST ": "creates a note; no model (its agent actions screen the stored note)",
+    "notes PATCH /{note_id}": "edits a note; no model (its agent actions screen the stored note)",
+    "flashcards POST /sets": "saves a set's name and concepts; no model",
+    "flashcards POST /import/commit": "writes the reviewed cards; no model",
+    "flashcards POST /import/parse": "uploaded course material (a file or URL), not screened (docs)",
+    "flashcards POST /import/cleanup": (
+        "imported third-party study material, not the student's own writing; the student's own "
+        "words reach a screen on the tutor, notes and flashcard-generate surfaces"
+    ),
+    "quiz POST /generate": "a difficulty choice, not text",
+    "quiz POST /attempts/{attempt_id}/answer": "graded deterministically; owner decision (docs)",
+    "quiz POST /submit": "the chosen options' labels, not text",
+    "graph POST /{user_id}/courses": "a course colour",
+    "graph PATCH /{user_id}/courses/{course_id}/color": "a course colour",
+    "graph POST /{user_id}/nodes": "adds a concept to the map; no model",
+    "graph PATCH /{user_id}/nodes/{node_id}/color": "a concept colour",
+    "graph POST /{user_id}/concept-description": "a concept name off the student's map (docs)",
+    "study_guide POST /{user_id}/plan": "ids and choices (course, term, scope, materials)",
+    "study_guide POST /{user_id}/guides": "ids and choices (course, term, scope, materials)",
+}
+
+
+def _free_text_fields(model, prefix: str = "") -> list[str]:
+    """The str fields of a body model (nested models and lists of them too),
+    ids (`models.Id`) left out."""
+    import typing
+
+    from pydantic import BaseModel
+
+    from models import ID_MAX
+
+    def models_in(annotation):
+        return [a for a in (annotation, *typing.get_args(annotation))
+                if inspect.isclass(a) and issubclass(a, BaseModel)]
+
+    found: list[str] = []
+    for name, f in model.model_fields.items():
+        args = (f.annotation, *typing.get_args(f.annotation))
+        if str in args:
+            if [m.max_length for m in f.metadata if hasattr(m, "max_length")] != [ID_MAX]:
+                found.append(prefix + name)
+            continue
+        for arg in args:
+            for nested in models_in(arg):
+                found += _free_text_fields(nested, f"{prefix}{name}.")
+    return found
+
+
+def _text_routes():
+    """(key, route, free-text fields) for every write route of the model route
+    modules whose body carries free text, read off each module's own router."""
+    import importlib
+    import typing
+
+    from pydantic import BaseModel
+
+    for module in MODEL_ROUTE_MODULES:
+        router = importlib.import_module(f"routes.{module}").router
+        for route in router.routes:
+            for method in sorted(getattr(route, "methods", set()) & {"POST", "PUT", "PATCH"}):
+                hints = typing.get_type_hints(route.endpoint)
+                fields = [f for hint in hints.values()
+                          if inspect.isclass(hint) and issubclass(hint, BaseModel)
+                          for f in _free_text_fields(hint)]
+                if fields:
+                    yield f"{module} {method} {route.path}", route, list(dict.fromkeys(fields))
+
+
+def test_no_student_text_reaches_a_model_unscreened():
+    covered = {c.path.replace("/n1/", "/{note_id}/") for c in CASES}
+    unscreened, untested, seen = [], [], set()
+    for key, route, fields in _text_routes():
+        seen.add(key)
+        screened = "crisis_support.screen" in inspect.getsource(route.endpoint)
+        module, _, path = key.split(" ", 2)
+        prefix = "/api/" + module.replace("_", "-")
+        if screened and prefix + path not in covered:
+            untested.append(key)
+        if not screened and key not in NOT_SCREENED:
+            unscreened.append((key, fields))
+    assert unscreened == [], (
+        "these routes take student text and do not call crisis_support.screen: screen them "
+        "(docs/safety/crisis-support.md, 'Adding a surface') or say in NOT_SCREENED why no "
+        f"model reads it: {unscreened}"
+    )
+    assert untested == [], f"screened but no Case in CASES: {untested}"
+    stale = sorted(k for k in NOT_SCREENED if k not in seen)
+    assert stale == [], f"NOT_SCREENED names routes that no longer take text: {stale}"
+    screened_now = sorted(
+        k for k, route, _ in _text_routes()
+        if k in NOT_SCREENED and "crisis_support.screen" in inspect.getsource(route.endpoint)
+    )
+    assert screened_now == [], f"screened now, drop from NOT_SCREENED: {screened_now}"
+
+
 # ── The screen itself ───────────────────────────────────────────────────────
 
 
@@ -517,9 +1593,9 @@ def test_async_screen_scans_long_text_off_the_event_loop(monkeypatch, sink):
     threads: list[str] = []
     real = crisis_support.detect_any
 
-    def spy(texts):
+    def spy(texts, **kwargs):
         threads.append(threading.current_thread().name)
-        return real(texts)
+        return real(texts, **kwargs)
 
     monkeypatch.setattr(crisis_support, "detect_any", spy)
     long_note = "Lecture notes. " * 1000 + CRISIS
@@ -533,6 +1609,50 @@ def test_async_screen_scans_long_text_off_the_event_loop(monkeypatch, sink):
     loop_thread = asyncio.run(main())
     assert threads[0] != loop_thread  # the long note: in a worker thread
     assert threads[1] == loop_thread  # a chat message: inline, it is microseconds
+
+
+async def _a_result() -> dict:
+    return {"summary": "Short summary."}
+
+
+def test_a_stored_material_screen_can_only_ride_alongside(monkeypatch, sink):
+    """`screen_content_async` answers with a `ContentScreen`, never a
+    `CrisisSupport`: every blocking builder refuses it (a note can never be
+    answered with the card INSTEAD of its result), and `alongside` refuses
+    anything else (a typed message's card cannot be slipped beside a result)."""
+    import asyncio
+
+    monkeypatch.setattr(crisis_support, "flag_on", lambda key, uid: True)
+
+    async def screens():
+        return [await crisis_support.screen_content_async(_request(), "u1", "note_summarize", text)
+                for text in (CRISIS, CALM)]
+
+    for screen in asyncio.run(screens()):
+        assert isinstance(screen, crisis_support.ContentScreen)
+        for build in (crisis_support.json_body, crisis_support.turn_json, crisis_support.start_json):
+            with pytest.raises(TypeError):
+                build(screen)
+        with pytest.raises(TypeError):
+            crisis_support.sse_response(screen, _request())
+
+    typed = crisis_support.screen(_request(), "u1", "note_chat", CRISIS)
+    for not_a_content_screen in (typed, None):
+        with pytest.raises(TypeError):
+            asyncio.run(crisis_support.alongside(not_a_content_screen, _a_result()))
+
+
+def test_a_calm_stored_material_screen_returns_the_result_alone(monkeypatch, sink):
+    import asyncio
+
+    monkeypatch.setattr(crisis_support, "flag_on", lambda key, uid: True)
+
+    async def main():
+        screen = await crisis_support.screen_content_async(_request(), "u1", "note_summarize", CALM)
+        return await crisis_support.alongside(screen, _a_result())
+
+    assert asyncio.run(main()) == {"summary": "Short summary."}
+    assert _crisis_rows(sink) == []
 
 
 # ── Campus counseling: one config spot, per school ─────────────────────────
@@ -720,7 +1840,7 @@ def test_function_mode_the_scripted_model_is_never_called_on_a_crisis_message(mo
             patch("services.tutor.course._get_course_id_for_topic", AsyncMock(return_value="")),
             patch("routes.notes.get_note", AsyncMock(return_value=_note(None, CRISIS) | {"body": CRISIS})),
         ):
-            for case in CASES:
+            for case in BLOCKING:
                 r = client.post(case.path, json=case.body(CRISIS))
                 assert r.status_code == 200 and "crisis_support" in r.text, case.path
             assert calls == [], "the scripted model must never run on a crisis message"

@@ -7,7 +7,7 @@ from typing import Optional
 
 from db.connection import SUPABASE_URL, SUPABASE_KEY, table
 from services import abuse_limits
-from services.request_limits import enforce_abuse_limit, public_route_limit
+from services.request_limits import enforce_abuse_limit, public_route_limit, read_within_limit_sync
 from services.upload_validation import DOCX, PDF, sniff_type
 
 BUCKET = "application_resumes"
@@ -32,17 +32,17 @@ router = APIRouter()
 def _validate_resume(file: UploadFile) -> bytes:
     """Enforce content-type + size bounds and return the file bytes.
 
-    Reads at most MAX_RESUME_SIZE + 1 bytes so an oversize upload can't be
-    pulled fully into memory before we reject it.
+    Reads through the shared capped reader, which stops one chunk past
+    MAX_RESUME_SIZE, so an oversize upload is never pulled into memory whole.
     """
     if (file.content_type or "") not in ALLOWED_RESUME_TYPES:
         raise HTTPException(
             status_code=415,
             detail="Unsupported resume type. Allowed: PDF, DOC, DOCX.",
         )
-    content = file.file.read(MAX_RESUME_SIZE + 1)
-    if len(content) > MAX_RESUME_SIZE:
-        raise HTTPException(status_code=413, detail="Resume too large. Maximum size is 5 MB.")
+    content = read_within_limit_sync(
+        file, MAX_RESUME_SIZE, status_code=413, detail="Resume too large. Maximum size is 5 MB.",
+    )
     if not content:
         raise HTTPException(status_code=400, detail="Resume file is empty.")
     # The declared type is free text: the bytes must be a PDF, a DOCX or an
@@ -74,8 +74,8 @@ def _upload_resume(file: UploadFile, content: bytes) -> str:
 
 
 # #117: a plain `def` -- FastAPI runs it in the threadpool once, so the
-# spooled-file read (`file.file.read`), the Storage PUT and the insert never
-# block the event loop. The form is parsed before the handler runs.
+# spooled-file read (`read_within_limit_sync`), the Storage PUT and the
+# insert never block the event loop. The form is parsed before the handler runs.
 @router.post("/apply")
 def apply(
     request: Request,

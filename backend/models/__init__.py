@@ -49,6 +49,10 @@ class StartSessionBody(BaseModel):
     use_shared_context: bool = True
     course_id: Optional[Id] = None  # Direct course_id lookup instead of resolving from topic
     model_pref: Optional[Literal["fast", "smart"]] = None  # "fast" (default, gemini-2.5-flash) or "smart" (gemini-2.5-pro)
+    # Send to tutor's note, when the topic is still that note's title: a crisis
+    # match then shows the card beside the session (docs/safety/crisis-support.md).
+    # Checked against the student's own note; never trusted on its own.
+    from_note_id: Optional[Id] = None
 
 
 class ChatBody(BaseModel):
@@ -649,9 +653,10 @@ class AchievementIconBody(BaseModel):
 
 class CosmeticAssetBody(BaseModel):
     """An admin cosmetic image, uploaded through the backend (never the
-    browser's anon key) before the cosmetic row that points at it exists."""
-    file_base64: str
-    content_type: str
+    browser's anon key) before the cosmetic row that points at it exists.
+    Capped like AchievementIconBody: the storage helper allows 5 MB."""
+    file_base64: str = Field(max_length=8_000_000)
+    content_type: str = Field(max_length=100)
 
 
 class UpdateXpRuleBody(BaseModel):

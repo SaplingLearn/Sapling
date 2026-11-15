@@ -20,90 +20,13 @@ import { statusOf } from '@/lib/errorMessage';
 import type { WithCrisisSupport } from '@/lib/crisisSupport';
 import { createStreamPacer } from '@/lib/streamPacer';
 import { REAUTH_REQUIRED, isReauthRequired, notifyReauthRequired } from '@/lib/reauth';
+import { ApiError, apiErrorOf, errorFieldsFrom, parseErrorBody } from '@/lib/apiError';
 
 export const API_URL = '';
 
-/**
- * A failed API response. Carries the HTTP status alongside the body text so
- * callers can branch on the status instead of pattern-matching the message —
- * `lib/errorMessage.ts` reads `status` off the thrown value.
- *
- * `message` stays the raw body for backward compatibility: callers that
- * stringify the error, or read `.message`, behave exactly as they did before.
- *
- * Since #537 it also carries what the coded envelope told us. Quiz routes
- * answer with `{error: {code, message, request_id}, detail, request_id}`
- * (backend/services/quiz_errors.py::quiz_error_body) plus a `Retry-After`
- * header on 429; `code`/`requestId`/`retryAfterSec`/`body` surface that so
- * `lib/quiz/errors.ts` can tell a rate limit from a daily cap from a generation
- * timeout. All four are optional — routes outside the quiz router still answer
- * with the legacy `{detail, request_id}` shape and leave them undefined.
- */
-export interface ApiErrorFields {
-  /** `error.code` off the coded envelope, when the route sent one. */
-  code?: string;
-  /** `error.request_id` / top-level `request_id` — the support handle. */
-  requestId?: string;
-  /** Whole-seconds `Retry-After`, when the response carried the header. */
-  retryAfterSec?: number;
-  /** The parsed JSON body, when the body was JSON. */
-  body?: unknown;
-}
-
-export class ApiError extends Error {
-  readonly status: number;
-  readonly code?: string;
-  readonly requestId?: string;
-  readonly retryAfterSec?: number;
-  readonly body?: unknown;
-
-  constructor(message: string, status: number, fields: ApiErrorFields = {}) {
-    super(message);
-    this.name = 'ApiError';
-    this.status = status;
-    this.code = fields.code;
-    this.requestId = fields.requestId;
-    this.retryAfterSec = fields.retryAfterSec;
-    this.body = fields.body;
-  }
-}
-
-function parseErrorBody(text: string): unknown {
-  const trimmed = text.trim();
-  if (!trimmed.startsWith('{')) return undefined;
-  try {
-    return JSON.parse(trimmed);
-  } catch {
-    return undefined;
-  }
-}
-
-/** `Retry-After` is either whole seconds or an HTTP date. Only the numeric form
- *  is honoured — a date needs clock-skew handling nobody here wants, and the one
- *  route that sets the header (quiz.py:1238) always sends seconds. */
-function parseRetryAfter(header: string | null): number | undefined {
-  if (!header) return undefined;
-  const trimmed = header.trim();
-  if (!trimmed) return undefined;
-  const seconds = Number(trimmed);
-  return Number.isFinite(seconds) && seconds >= 0 ? Math.round(seconds) : undefined;
-}
-
-/** Pulls the coded-envelope fields out of a parsed error body, tolerating both
- *  the quiz shape and the legacy `{detail, request_id}` one. */
-function errorFieldsFrom(body: unknown): { code?: string; requestId?: string } {
-  if (body === null || typeof body !== 'object') return {};
-  const record = body as Record<string, unknown>;
-  const nested = record.error;
-  const error = nested !== null && typeof nested === 'object'
-    ? (nested as Record<string, unknown>)
-    : null;
-  const code = error && typeof error.code === 'string' ? error.code : undefined;
-  const requestId = [error?.request_id, record.request_id].find(
-    (v): v is string => typeof v === 'string' && v.length > 0,
-  );
-  return { code, requestId };
-}
+// The error every failed response is thrown as lives in lib/apiError.ts, shared
+// with the SSE client; re-exported here, where callers have always imported it.
+export { ApiError, type ApiErrorFields } from '@/lib/apiError';
 
 // ── Global 401 (#756) ─────────────────────────────────────────────────────────
 // A 401 from any session-authenticated call means the server no longer honours
@@ -165,11 +88,7 @@ export async function fetchJSON<T>(path: string, options?: RequestInit): Promise
       throw new ApiError(err, res.status, { ...errorFieldsFrom(body), code: REAUTH_REQUIRED, body });
     }
     if (res.status === 401 && isSessionAuthenticated(path)) notifySessionExpired();
-    throw new ApiError(err || `HTTP ${res.status}`, res.status, {
-      ...errorFieldsFrom(body),
-      retryAfterSec: parseRetryAfter(res.headers.get('Retry-After')),
-      body,
-    });
+    throw apiErrorOf(res, err);
   }
   return res.json();
 }
@@ -335,8 +254,11 @@ export const startSession = (
   courseId?: string,
   useSharedContext = true,
   modelPref?: ModelPref,
+  /** Send to tutor's note, when `topic` is still its title (see startSessionStream). */
+  fromNoteId?: string,
 ) =>
-  // A crisis-support answer carries `crisis_support` and no session (session_id null).
+  // A crisis-support answer carries `crisis_support` and no session (session_id null),
+  // or, on a note's title, the session with `crisis_support_alongside`.
   fetchJSON<{ session_id: string; initial_message: string; graph_state: any } & WithCrisisSupport>('/api/learn/start-session', {
     method: 'POST',
     body: JSON.stringify({
@@ -346,6 +268,7 @@ export const startSession = (
       use_shared_context: useSharedContext,
       course_id: courseId,
       ...(modelPref ? { model_pref: modelPref } : {}),
+      ...(fromNoteId ? { from_note_id: fromNoteId } : {}),
     }),
   });
 
@@ -561,6 +484,13 @@ export const startSessionStream = (
   courseId?: string,
   modelPref?: ModelPref,
   handlers: StreamChatHandlers = {},
+  /**
+   * Send to tutor's note (docs/safety/crisis-support.md), when `topic` is
+   * still that note's title: the backend checks it against the student's own
+   * note and, on a crisis match, starts the session with the card beside it
+   * (`crisis_support_alongside`) instead of answering with the card alone.
+   */
+  fromNoteId?: string,
 ): Promise<ChatResult> => {
   return consumeChatStream(
     '/api/learn/start-session/stream',
@@ -571,6 +501,7 @@ export const startSessionStream = (
       use_shared_context: useSharedContext,
       course_id: courseId,
       ...(modelPref ? { model_pref: modelPref } : {}),
+      ...(fromNoteId ? { from_note_id: fromNoteId } : {}),
     },
     handlers,
   );
@@ -1004,7 +935,8 @@ export const generateFlashcards = (
   semester?: string,
   courseId?: string,
 ) =>
-  fetchJSON<GenerateFlashcardsResponse>('/api/flashcards/generate', {
+  // docs/safety/crisis-support.md: a crisis answer carries `crisis_support` and no cards.
+  fetchJSON<GenerateFlashcardsResponse & WithCrisisSupport>('/api/flashcards/generate', {
     method: 'POST',
     body: JSON.stringify({ user_id: userId, topic, count, semester, course_id: courseId }),
   });
