@@ -1,0 +1,4 @@
+# The pip-audit the vulnerability-scan workflow runs (.github/workflows/vuln-scan.yml),
+# compiled to the hash-pinned pip-audit.lock next to this file. To bump it, edit the
+# pin below and re-run the command in pip-audit.lock's header from the repo root.
+pip-audit==2.10.1

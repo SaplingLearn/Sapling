@@ -34,6 +34,31 @@ export function isPrivateProfile(stats: UserProfile["stats"] | undefined): boole
   return stats === undefined || Object.keys(stats || {}).length === 0;
 }
 
+/** A bare host, as rows written before the backend validated websites hold. */
+const BARE_HOST = /^[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}(?:[/?#]|$)/i;
+
+/**
+ * The href a profile's `website` may be linked as: an absolute http(s) URL,
+ * or null for anything else (a `javascript:`/`data:` URL, a relative path,
+ * garbage). The backend accepts only http(s) since UpdateProfileBody validates
+ * the field, but rows written before that are drawn here too, so the link is
+ * decided again where it is rendered. A bare host (`example.com`) is read as
+ * https, as the backend now normalises it.
+ */
+export function safeWebsiteHref(website: string | null | undefined): string | null {
+  const raw = (website ?? "").trim();
+  if (!raw) return null;
+  const candidate = !raw.includes("://") && BARE_HOST.test(raw) ? `https://${raw}` : raw;
+  try {
+    const u = new URL(candidate);
+    if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+    if (!u.hostname) return null;
+    return u.href;
+  } catch {
+    return null;
+  }
+}
+
 /** `https://www.example.com/me` → `example.com/me`; an unparsable URL as-is. */
 export function prettyUrl(url: string) {
   try {

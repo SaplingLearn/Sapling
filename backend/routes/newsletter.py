@@ -3,21 +3,10 @@ import logging
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from pydantic import BaseModel, EmailStr, field_validator
 from db.connection import table
-from services import email_service
-from services.client_ip import client_ip
-from services.request_limits import check_rate_limit
+from services import abuse_limits, email_service
+from services.request_limits import enforce_abuse_limit, public_route_limit
 
 logger = logging.getLogger("newsletter")
-
-# Public and unauthenticated: one call upserts a `newsletter_emails` row and
-# queues a "you're on the list" email. The send is deduped per ADDRESS
-# (email_sends), so the same address cannot be mailed twice — but nothing
-# bounded how many DISTINCT addresses one caller could submit, so a script
-# could stuff the list and make our domain send to addresses that never asked
-# for it, which is how a sending reputation gets burned. Key on the caller
-# (see services/client_ip.py's caveat); this is abuse dampening, not identity.
-_SUBSCRIBE_RATE_LIMIT = 5    # subscriptions...
-_SUBSCRIBE_RATE_WINDOW = 3600  # ...per hour, per caller
 
 router = APIRouter()
 
@@ -36,17 +25,11 @@ class SubscribeRequest(BaseModel):
 
 @router.post("/subscribe")
 def subscribe(body: SubscribeRequest, background_tasks: BackgroundTasks, request: Request):
-    retry = check_rate_limit(
-        f"newsletter-subscribe:{client_ip(request)}",
-        limit=_SUBSCRIBE_RATE_LIMIT,
-        window_sec=_SUBSCRIBE_RATE_WINDOW,
-    )
-    if retry is not None:
-        raise HTTPException(
-            status_code=429,
-            detail="Too many subscription attempts. Please try again later.",
-            headers={"Retry-After": str(retry)},
-        )
+    # Public: per client address when it is a public one, else a shared ceiling
+    # (request_limits.public_route_limit).
+    enforce_abuse_limit(*public_route_limit(
+        request, abuse_limits.NEWSLETTER_SUBSCRIBE, abuse_limits.NEWSLETTER_SUBSCRIBE_SHARED,
+    ))
     try:
         table("newsletter_emails").upsert(
             {"email": body.email},

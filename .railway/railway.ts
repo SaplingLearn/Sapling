@@ -131,6 +131,16 @@ const FLAG_KILL_SWITCHES = [
   "stateless_rate_limit",
   "stateless_locks",
   "stateless_tutor_sessions",
+  // services/spend_alerts.py: the API's hourly admin alert emails. No job
+  // reads it; shared so the switch reads the same on every service.
+  "spend_alerts",
+  "account_purge",
+  // services/account_purge_sweeper.py: the daily leftover-credential sweep.
+  // No job reads it; shared so the switch reads the same on every service.
+  "credential_sweep",
+  // docs/safety/crisis-support.md: the crisis-support screen on student AI
+  // routes. No job reads it; shared so the switch reads the same everywhere.
+  "crisis_support",
 ].map((key) => `SAPLING_FLAG_${key.toUpperCase()}`);
 
 /** Per-slot model overrides (agents/_providers.py: `SAPLING_MODEL_<TASK>`,

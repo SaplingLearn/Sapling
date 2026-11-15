@@ -52,7 +52,31 @@ class TestCareersUploadBounds:
         # Pre-fix accepted it (200, unbounded read + upload); fix returns 413
         # and never reaches the storage upload.
         assert r.status_code == 413
+        assert r.json()["detail"] == "Resume too large. Maximum size is 5 MB."
         hx.put.assert_not_called()
+
+    def test_resume_is_read_through_the_shared_capped_reader(self, monkeypatch):
+        import routes.careers as careers
+
+        seen = []
+        real = careers.read_within_limit_sync
+
+        def spy(upload, max_bytes, **kwargs):
+            seen.append((max_bytes, kwargs))
+            return real(upload, max_bytes, **kwargs)
+
+        monkeypatch.setattr(careers, "read_within_limit_sync", spy)
+        with patch("routes.careers.httpx"), patch("routes.careers.table") as t:
+            t.return_value.insert.return_value = [{"id": "app1"}]
+            r = client.post(
+                "/api/careers/apply",
+                data=VALID_FORM,
+                files={"resume": ("resume.pdf", b"%PDF-1.4 small", "application/pdf")},
+            )
+        assert r.status_code == 200
+        assert seen == [(careers.MAX_RESUME_SIZE, {
+            "status_code": 413, "detail": "Resume too large. Maximum size is 5 MB.",
+        })]
 
     def test_wrong_content_type_rejected_415(self):
         with patch("routes.careers.httpx") as hx, patch("routes.careers.table") as t:

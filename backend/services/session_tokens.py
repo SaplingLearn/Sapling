@@ -5,7 +5,9 @@ Wire format — this is exactly what `services/auth_guard._decode_session` verif
 and what the frontend session BFF (`frontend/src/lib/sessionToken.ts`) issues to
 the browser:
 
-    payload     = {"user_id": <str>, "exp": <unix seconds>, "typ": "session"|"handoff"}
+    payload     = {"user_id": <str>, "exp": <unix seconds>, "typ": "session"|"handoff",
+                   "iat": <unix seconds, truncated to the millisecond>,
+                   "iat_precision": "ms"}
     payload_b64 = base64url(json.dumps(payload)).rstrip("=")
     sig_b64     = base64url(HMAC_SHA256(SESSION_SECRET, payload_b64)).rstrip("=")
     token       = f"{payload_b64}.{sig_b64}"
@@ -45,16 +47,31 @@ TOKEN_TYPE_SESSION = "session"
 TOKEN_TYPE_HANDOFF = "handoff"
 TOKEN_TYPES = frozenset({TOKEN_TYPE_SESSION, TOKEN_TYPE_HANDOFF})
 
+# Every token minted now says its `iat` is to the millisecond. Without it the
+# guard cannot tell a millisecond iat that falls on X.000 (JSON may write it
+# as the integer X) from a legacy whole-second one, which it must date
+# anywhere in that second (auth_guard.issued_before). Verifiers ignore claims
+# they do not read, so adding it changes nothing else.
+IAT_PRECISION_CLAIM = "iat_precision"
+IAT_PRECISION_MS = "ms"
+
 # The cookie `auth_guard._decode_session` reads and the frontend BFF sets.
 SESSION_COOKIE_NAME = "sapling_session"
 
 DEFAULT_TTL_SECONDS = 3600
 
+# The longest a session may live, whatever ttl a caller asks for: the guard
+# refuses a session whose `iat` is older than this (config.py).
+MAX_SESSION_TTL_SECONDS = config.SESSION_MAX_AGE_SECONDS
 
-def _now() -> int:
-    """Current unix time. Seam so tests can freeze the clock and compare tokens
-    byte-for-byte against a reference implementation."""
-    return int(time.time())
+
+def _now() -> float:
+    """Current unix time TRUNCATED to the millisecond (a JWT NumericDate may be
+    fractional). Never rounded: rounding up could date a session after a
+    sign-out it preceded. Integer nanoseconds, so the truncation is exact.
+    Seam so tests can freeze the clock and compare tokens byte-for-byte
+    against a reference implementation."""
+    return time.time_ns() // 1_000_000 / 1000
 
 
 def mint_session(
@@ -82,7 +99,17 @@ def mint_session(
         )
     if typ not in TOKEN_TYPES:
         raise ValueError(f"unknown token typ {typ!r}; expected one of {sorted(TOKEN_TYPES)}")
-    payload = json.dumps({"user_id": user_id, "exp": _now() + int(ttl), "typ": typ}).encode()
+    # `iat` (issued at) is what server-side revocation (users.sessions_valid_after)
+    # and the admin step-up window compare against. It carries milliseconds so
+    # a session minted earlier in a sign-out's own second is still older than
+    # it (auth_guard.issued_before); `exp` stays whole seconds. The lifetime is
+    # capped at the session maximum.
+    now = _now()
+    ttl = min(int(ttl), MAX_SESSION_TTL_SECONDS)
+    payload = json.dumps({
+        "user_id": user_id, "exp": int(now) + ttl, "typ": typ, "iat": now,
+        IAT_PRECISION_CLAIM: IAT_PRECISION_MS,
+    }).encode()
     payload_b64 = base64.urlsafe_b64encode(payload).decode().rstrip("=")
     sig = hmac.new(key.encode(), payload_b64.encode(), hashlib.sha256).digest()
     sig_b64 = base64.urlsafe_b64encode(sig).decode().rstrip("=")

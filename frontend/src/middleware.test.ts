@@ -168,4 +168,31 @@ describe('middleware — only a definitive /me answer ends the session (#756)', 
     expect(errorCode(res)).toBe('session_expired');
     expect(fetchSpy).not.toHaveBeenCalled();
   });
+
+  it('a session older than 7 days is not a session, whatever its exp', async () => {
+    const { verifySession } = await load();
+    const enc = (s: string) => btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+    const key = await crypto.subtle.importKey(
+      'raw', new TextEncoder().encode(SECRET), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'],
+    );
+    const sign = async (payload: Record<string, unknown>) => {
+      const payloadB64 = enc(JSON.stringify(payload));
+      const sig = new Uint8Array(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(payloadB64)));
+      return `${payloadB64}.${enc(String.fromCharCode(...sig))}`;
+    };
+    const now = Math.floor(Date.now() / 1000);
+    const day = 86400;
+    // iat 8 days ago, exp still in the future.
+    expect(await verifySession(await sign({ user_id: 'u', iat: now - 8 * day, exp: now + day, typ: 'session' })))
+      .toBeNull();
+    // A pre-iat 30-day cookie minted 8 days ago (dated exp - 30 days).
+    expect(await verifySession(await sign({ user_id: 'u', exp: now + 22 * day }))).toBeNull();
+    // ...but one minted yesterday still verifies.
+    expect(await verifySession(await sign({ user_id: 'u', exp: now + 29 * day }))).toEqual({ userId: 'u' });
+    // An iat in the future is refused.
+    expect(await verifySession(await sign({ user_id: 'u', iat: now + 3600, exp: now + day }))).toBeNull();
+    // A millisecond iat (what both minters issue) verifies.
+    expect(await verifySession(await sign({ user_id: 'u', iat: now - 0.655, exp: now + day, typ: 'session' })))
+      .toEqual({ userId: 'u' });
+  });
 });

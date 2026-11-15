@@ -619,7 +619,7 @@ class TestDeletePerson:
 
         with patch("routes.profile.require_self"), \
              patch_profile_table(side_effect=table_side_effect), \
-             patch("routes.profile.delete_posthog_person",
+             patch("services.profile.deletion.delete_posthog_person",
                    side_effect=lambda uid: order.append(f"posthog:{uid}")):
             r = TestClient(app).request(
                 "DELETE", f"/api/profile/{USER_ID}/account", json={"confirmation": "DELETE"},
@@ -632,7 +632,7 @@ class TestDeletePerson:
 
         with patch("routes.profile.require_self"), \
              patch_profile_table(), \
-             patch("routes.profile.delete_posthog_person") as delete:
+             patch("services.profile.deletion.delete_posthog_person") as delete:
             r = TestClient(app).request(
                 "DELETE", f"/api/profile/{USER_ID}/account", json={"confirmation": "nope"},
             )
@@ -956,7 +956,7 @@ class TestDeletedUsers:
         consent_db.answers[USER_ID] = Consent.DENIED  # the row after the soft delete
         with patch("routes.profile.require_self"), \
              patch_profile_table(), \
-             patch("routes.profile.delete_posthog_person"):
+             patch("services.profile.deletion.delete_posthog_person"):
             r = TestClient(app).request(
                 "DELETE", f"/api/profile/{USER_ID}/account", json={"confirmation": "DELETE"},
             )

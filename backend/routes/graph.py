@@ -1,4 +1,5 @@
 import hashlib
+import logging
 import uuid
 
 import httpx
@@ -22,6 +23,14 @@ from agents._run import run_agent_sync
 from agents.deps import SaplingDeps
 from agents.concept_describe import PROMPT_VERSION, concept_describe_agent, build_message
 from agents.usage import record_agent_usage
+from models import Id, ShortText
+
+logger = logging.getLogger(__name__)
+
+#: The 502 a failed concept description answers with. Never the exception
+#: text (model/transport errors can name hosts, keys or prompts); that is
+#: logged under the request id instead.
+DESCRIBE_FAILED_DETAIL = "Couldn't describe this concept right now. Try again in a moment."
 
 router = APIRouter()
 
@@ -48,25 +57,27 @@ async def get_user_recommendations(
 # ── Course endpoints ──────────────────────────────────────────────────────────
 
 class AddCourseBody(BaseModel):
-    course_id: str
-    color: Optional[str] = None
-    nickname: Optional[str] = None
+    course_id: Id
+    color: Optional[str] = Field(default=None, max_length=64)
+    nickname: Optional[ShortText] = None
     # Semester label to enroll into (the active tab in the Courses & Semesters
     # hub). Omitted → the backend falls back to the current term.
-    term: Optional[str] = None
+    term: Optional[ShortText] = None
 
 
 class UpdateCourseColorBody(BaseModel):
-    color: str
+    color: str = Field(max_length=64)
 
 
 class UpdateNodeColorBody(BaseModel):
-    color: Optional[str] = None
+    color: Optional[str] = Field(default=None, max_length=64)
 
 
 class ConceptDescriptionBody(BaseModel):
-    concept: str
-    course_label: Optional[str] = None
+    # The route truncates to _MAX_CONCEPT_LEN / _MAX_COURSE_LABEL_LEN; these
+    # bounds only cap what is parsed at all.
+    concept: str = Field(max_length=2000)
+    course_label: Optional[str] = Field(default=None, max_length=2000)
 
 
 @router.get("/{user_id}/courses")
@@ -116,14 +127,9 @@ class AddNodeBody(BaseModel):
     ``anchor_node_id`` optionally links the new node to an existing one (the
     client defaults it to the focused concept/root).
     """
-    # BOUNDED. `graph_nodes` carries a UNIQUE (user_id, course_id,
-    # concept_name), and a btree index entry cannot exceed ~2704 bytes — so
-    # an over-long name made the upsert fail inside Postgres and the request
-    # answered 500. Verified: 300,000 characters reproduced it every time.
-    # 200 is far more than any real concept name and well under the limit.
-    concept_name: str = Field(..., max_length=200)
-    course_id: str = Field(..., max_length=128)
-    anchor_node_id: Optional[str] = Field(default=None, max_length=128)
+    concept_name: ShortText
+    course_id: Id
+    anchor_node_id: Optional[Id] = None
 
 
 @router.post("/{user_id}/nodes")
@@ -240,9 +246,9 @@ def describe_concept(user_id: str, body: ConceptDescriptionBody, request: Reques
         # HTTPException, so it is not caught here); one wrapped inside a caught
         # error is re-raised so it is never mislabelled as an agent failure.
         llm_budget.reraise_budget_refusal(e)
-        raise HTTPException(
-            status_code=502, detail=f"concept-description agent failed: {e}"
-        ) from e
+        logger.warning("concept-description agent failed [request_id=%s]: %s",
+                       current_request_id(), e, exc_info=True)
+        raise HTTPException(status_code=502, detail=DESCRIBE_FAILED_DETAIL) from e
     description = result.output.description
     if cache_key and description.strip():
         cache.set_str(cache_key, description, ttl_seconds=_DESCRIPTION_CACHE_TTL)

@@ -59,6 +59,10 @@ function detailOf(body: Body): string | undefined {
 
   const detail = body.detail;
   if (typeof detail === "string") return detail.trim() || undefined;
+  // A coded detail (`{code, message}`, e.g. the admin step-up's
+  // `reauth_required` or #756's `not_approved`) carries its own sentence.
+  const detailMessage = asRecord(detail)?.message;
+  if (typeof detailMessage === "string" && detailMessage.trim()) return detailMessage.trim();
   // FastAPI request-validation failures nest the message under detail[].msg.
   if (Array.isArray(detail)) {
     for (const entry of detail) {
@@ -169,5 +173,20 @@ function looksHuman(text: string): boolean {
 export function humanizeError(err: unknown, fallback: string): string {
   const { detail, status } = extractErrorDetail(err);
   if (detail && looksHuman(detail)) return detail;
+  return statusCopy(status) ?? fallback;
+}
+
+/**
+ * `humanizeError` for call sites that used to show `err.message` as is: a
+ * plain sentence an `Error` was thrown with (a stream error, a client-side
+ * check) still reads through, but a raw response body never does — a 429's
+ * `{"detail": "... Try again in 30 seconds."}` shows its detail, and a body
+ * with nothing readable falls back to the status copy or `fallback`.
+ */
+export function readableError(err: unknown, fallback: string): string {
+  const { detail, status } = extractErrorDetail(err);
+  if (detail && looksHuman(detail)) return detail;
+  const raw = rawMessage(err).trim();
+  if (parseJson(raw) === null && !HTTP_STATUS_RE.test(raw) && looksHuman(raw)) return raw;
   return statusCopy(status) ?? fallback;
 }

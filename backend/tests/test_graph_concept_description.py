@@ -23,7 +23,7 @@ from pydantic_ai.exceptions import UnexpectedModelBehavior
 
 from agents._providers import UnregisteredHandlerError
 from main import app
-from routes.graph import _MAX_CONCEPT_LEN, _MAX_COURSE_LABEL_LEN
+from routes.graph import DESCRIBE_FAILED_DETAIL, _MAX_CONCEPT_LEN, _MAX_COURSE_LABEL_LEN
 
 # #117: a sync PostgREST call reached on the event loop raises here.
 pytestmark = pytest.mark.usefixtures("no_sync_db_on_loop")
@@ -77,7 +77,9 @@ def test_agent_failure_translates_to_502():
          patch("routes.graph.run_agent_sync", side_effect=UnexpectedModelBehavior("model exploded")):
         resp = client.post(URL, json={"concept": "Recursion"})
     assert resp.status_code == 502
-    assert "concept-description agent failed" in resp.json()["detail"]
+    assert resp.json()["detail"] == DESCRIBE_FAILED_DETAIL
+    # The exception text stays in the log, never the response.
+    assert "model exploded" not in resp.text
 
 
 def test_unregistered_handler_error_translates_to_502():
@@ -96,7 +98,7 @@ def test_unregistered_handler_error_translates_to_502():
          ):
         resp = client.post(URL, json={"concept": "Recursion"})
     assert resp.status_code == 502
-    assert "concept-description agent failed" in resp.json()["detail"]
+    assert resp.json()["detail"] == DESCRIBE_FAILED_DETAIL
 
 
 def test_empty_concept_rejected_with_400():

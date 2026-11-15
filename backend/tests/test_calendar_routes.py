@@ -431,7 +431,7 @@ class TestImportExtractWireFormat:
     def _post_extract(self):
         return client.post(
             "/api/calendar/extract",
-            files={"file": ("syllabus.pdf", b"raw-bytes", "application/pdf")},
+            files={"file": ("syllabus.pdf", b"%PDF-1.4 raw-bytes", "application/pdf")},
             data={"user_id": "user_andres"},
         )
 

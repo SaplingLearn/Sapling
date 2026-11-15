@@ -4,6 +4,7 @@ import { CustomSelect } from "../../CustomSelect";
 import { useToast } from "../../ToastProvider";
 import { useUser } from "@/context/UserContext";
 import { importGenerate } from "@/lib/api";
+import { useCrisisSupport } from "@/components/safety/CrisisSupportCard";
 import type { ParsedCard } from "@/lib/flashcardParsers";
 import s from "../FlashcardImportModal.module.css";
 import { humanizeError } from "@/lib/errorMessage";
@@ -38,6 +39,8 @@ const DIFFICULTY_OPTIONS = [
 export function AiTab({ documents, documentsLoading = false, onCards }: Props) {
   const toast = useToast();
   const { userId } = useUser();
+  // docs/safety/crisis-support.md: pasted text the crisis screen answered
+  const crisis = useCrisisSupport();
   const [mode, setMode] = React.useState<"paste" | "library_doc">("paste");
   const [text, setText] = React.useState("");
   const [docId, setDocId] = React.useState("");
@@ -54,6 +57,7 @@ export function AiTab({ documents, documentsLoading = false, onCards }: Props) {
       const res = mode === "paste"
         ? await importGenerate(userId, { source: "paste", text, count: numericCount, difficulty })
         : await importGenerate(userId, { source: "library_doc", documentId: docId, count: numericCount, difficulty });
+      if (crisis.intercept(res)) return; // no cards were generated
       onCards(res.cards.map((c, i) => ({ front: c.front, back: c.back, row: i + 1 })));
       toast.success(`Generated ${res.cards.length} cards.`);
     } catch (err) {
@@ -67,6 +71,7 @@ export function AiTab({ documents, documentsLoading = false, onCards }: Props) {
 
   return (
     <div className={s.tab}>
+      {crisis.dialog}
       {mode === "paste" ? (
         <textarea
           className={s.textarea}

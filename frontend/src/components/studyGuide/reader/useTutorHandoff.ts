@@ -14,15 +14,22 @@ import {
   type TurnProgress,
 } from "@/components/quiz/question/askTurn";
 import { useToast } from "@/components/ToastProvider";
+import { useCrisisSupport } from "@/components/safety/CrisisSupportCard";
 import { newTurnId } from "@/lib/api";
 
 export type AskTutor = (topic: string, message: string) => Promise<void>;
 
-export function useTutorHandoff(userId: string, courseId: string): { ask: AskTutor; busy: boolean } {
+export function useTutorHandoff(
+  userId: string,
+  courseId: string,
+): { ask: AskTutor; busy: boolean; crisisDialog: React.ReactNode } {
   const router = useRouter();
   const toast = useToast();
   const [busy, setBusy] = React.useState(false);
   const controller = React.useRef<AbortController | null>(null);
+  // docs/safety/crisis-support.md: the crisis screen answered the question.
+  // The card shows here, and the tutor is not opened (the turn was not kept).
+  const crisis = useCrisisSupport();
 
   React.useEffect(() => () => controller.current?.abort(), []);
 
@@ -34,6 +41,7 @@ export function useTutorHandoff(userId: string, courseId: string): { ask: AskTut
     try {
       const sid = await openTutorSession(userId, topic, courseId, signal);
       if (sid === ABORTED) return;
+      if (typeof sid === "object" && sid !== null) { crisis.intercept({ crisis_support: sid.crisis }); return; }
       if (!sid) throw new Error("The tutor did not start a session.");
       const reply = await chatWithFallback(
         { sid, userId, message, turnId: newTurnId(), signal, progress },
@@ -41,6 +49,7 @@ export function useTutorHandoff(userId: string, courseId: string): { ask: AskTut
         () => {},
       );
       if (reply === ABORTED) return;
+      if (typeof reply === "object") { crisis.intercept({ crisis_support: reply.crisis }); return; }
       router.push(`/learn?resume=${encodeURIComponent(sid)}`);
     } catch {
       if (!signal.aborted) toast.error("The tutor could not be opened. Try again.");
@@ -49,5 +58,5 @@ export function useTutorHandoff(userId: string, courseId: string): { ask: AskTut
     }
   };
 
-  return { ask, busy };
+  return { ask, busy, crisisDialog: crisis.dialog };
 }

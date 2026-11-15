@@ -3,12 +3,13 @@ import re
 import uuid
 
 import httpx
-from fastapi import APIRouter, Request, UploadFile, File, Form, HTTPException
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Request
 from typing import Optional
 
 from db.connection import SUPABASE_URL, SUPABASE_KEY, table
-from services.client_ip import client_ip
-from services.request_limits import check_rate_limit
+from services import abuse_limits
+from services.request_limits import enforce_abuse_limit, public_route_limit, read_within_limit_sync
+from services.upload_validation import DOCX, PDF, sniff_type
 
 logger = logging.getLogger("careers")
 
@@ -24,16 +25,9 @@ ALLOWED_RESUME_TYPES = {
     "application/msword",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 }
+#: Legacy Word (.doc) files are OLE2 compound documents.
+_OLE2_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
-
-# /apply is public by design, so it is an UNAUTHENTICATED write sink: every
-# call inserts a `job_applications` row and can PUT a 5 MB object into the
-# resumes bucket. Size and type were already bounded (#199) but call RATE was
-# not, so one script could fill the table and the bucket unattended. There is
-# no user id to key on here (see services/client_ip.py's caveat about what an
-# IP is and is not good for) — this is abuse dampening, not authorization.
-_APPLY_RATE_LIMIT = 5     # applications...
-_APPLY_RATE_WINDOW = 3600  # ...per hour, per caller
 
 # Storage object keys are built from the uploaded filename's extension. Bound
 # it: the raw value is attacker-controlled and ends up in a URL path.
@@ -43,36 +37,29 @@ _EXT_RE = re.compile(r"^[A-Za-z0-9]+$")
 router = APIRouter()
 
 
-def _enforce_apply_limit(request: Request) -> None:
-    retry = check_rate_limit(
-        f"careers-apply:{client_ip(request)}",
-        limit=_APPLY_RATE_LIMIT,
-        window_sec=_APPLY_RATE_WINDOW,
-    )
-    if retry is not None:
-        raise HTTPException(
-            status_code=429,
-            detail="Too many applications submitted. Please try again later.",
-            headers={"Retry-After": str(retry)},
-        )
-
-
 def _validate_resume(file: UploadFile) -> bytes:
     """Enforce content-type + size bounds and return the file bytes.
 
-    Reads at most MAX_RESUME_SIZE + 1 bytes so an oversize upload can't be
-    pulled fully into memory before we reject it.
+    Reads through the shared capped reader, which stops one chunk past
+    MAX_RESUME_SIZE, so an oversize upload is never pulled into memory whole.
     """
     if (file.content_type or "") not in ALLOWED_RESUME_TYPES:
         raise HTTPException(
             status_code=415,
             detail="Unsupported resume type. Allowed: PDF, DOC, DOCX.",
         )
-    content = file.file.read(MAX_RESUME_SIZE + 1)
-    if len(content) > MAX_RESUME_SIZE:
-        raise HTTPException(status_code=413, detail="Resume too large. Maximum size is 5 MB.")
+    content = read_within_limit_sync(
+        file, MAX_RESUME_SIZE, status_code=413, detail="Resume too large. Maximum size is 5 MB.",
+    )
     if not content:
         raise HTTPException(status_code=400, detail="Resume file is empty.")
+    # The declared type is free text: the bytes must be a PDF, a DOCX or an
+    # OLE2 (legacy .doc) file too.
+    if sniff_type(content) not in (PDF, DOCX) and not content.startswith(_OLE2_MAGIC):
+        raise HTTPException(
+            status_code=415,
+            detail="Unsupported resume type. Allowed: PDF, DOC, DOCX.",
+        )
     return content
 
 
@@ -124,8 +111,8 @@ def _upload_resume(file: UploadFile, content: bytes) -> str:
 
 
 # #117: a plain `def` -- FastAPI runs it in the threadpool once, so the
-# spooled-file read (`file.file.read`), the Storage PUT and the insert never
-# block the event loop. The form is parsed before the handler runs.
+# spooled-file read (`read_within_limit_sync`), the Storage PUT and the
+# insert never block the event loop. The form is parsed before the handler runs.
 @router.post("/apply")
 def apply(
     request: Request,
@@ -137,7 +124,11 @@ def apply(
     portfolio_link: str = Form(""),
     resume: Optional[UploadFile] = File(None),
 ):
-    _enforce_apply_limit(request)
+    # Public: per client address when it is a public one, else a shared ceiling
+    # (request_limits.public_route_limit).
+    enforce_abuse_limit(*public_route_limit(
+        request, abuse_limits.CAREERS_APPLY, abuse_limits.CAREERS_APPLY_SHARED,
+    ))
     position = position.strip()
     full_name = full_name.strip()
     email = email.strip()
@@ -150,6 +141,10 @@ def apply(
         raise HTTPException(status_code=422, detail="A valid email is required.")
     if not linkedin_url or len(linkedin_url) > 500:
         raise HTTPException(status_code=422, detail="A LinkedIn URL is required.")
+    if len(phone or "") > 50:
+        raise HTTPException(status_code=422, detail="That phone number is too long.")
+    if len(portfolio_link or "") > 500:
+        raise HTTPException(status_code=422, detail="That portfolio link is too long.")
 
     resume_path = None
     if resume is not None and resume.filename:

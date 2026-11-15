@@ -10,6 +10,7 @@
  * `ApiError` `fetchJSON` builds, for the caller to surface.
  */
 import { fetchJSON } from "@/lib/api";
+import type { WithCrisisSupport } from "@/lib/crisisSupport";
 
 /** The server's limits on a saved set (backend/services/flashcards/sets.py:
  *  NAME_MAX, CONCEPTS_MAX). The page holds a set to them before it is sent. */
@@ -98,7 +99,8 @@ export interface FlashcardSetSuggestion {
  * under 3 or over 300 characters; 429 past 10 asks a minute.
  */
 export const suggestFlashcardSet = (userId: string, description: string, courseId: string) =>
-  fetchJSON<FlashcardSetSuggestion>(`${BASE}/suggest`, {
+  // docs/safety/crisis-support.md: a crisis answer is an empty suggestion + `crisis_support`.
+  fetchJSON<FlashcardSetSuggestion & WithCrisisSupport>(`${BASE}/suggest`, {
     method: "POST",
     body: JSON.stringify({ user_id: userId, description, course_id: courseId }),
   });

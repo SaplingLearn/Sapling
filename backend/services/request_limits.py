@@ -27,6 +27,7 @@ is safe from either: a DB refund is handed to a background thread.
 """
 import logging
 import math
+import os
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -331,16 +332,197 @@ def refund_rate_limit(key: str, slot) -> None:
         pass
 
 
-async def read_within_limit(upload: UploadFile, max_bytes: int) -> bytes:
-    """Read at most ``max_bytes`` (+1 to detect overflow) from an UploadFile so
-    an oversize upload can't be pulled fully into memory before we reject it.
+# ── Abuse guards: one call per route, a friendly 429 ─────────────────────────
 
-    Raises 413 if the upload exceeds ``max_bytes``.
+
+class AbuseLimit(NamedTuple):
+    """One per-subject sliding-window budget on an abusable route.
+
+    `name` prefixes the limiter key (``"<name>:<subject>"``), so two routes
+    sharing a name share a budget. `detail` is the student-readable 429
+    message; the wait is appended to it and rides in ``Retry-After`` too.
+    The budgets themselves are declared in ``services/abuse_limits.py``.
     """
-    data = await upload.read(max_bytes + 1)
-    if len(data) > max_bytes:
-        raise HTTPException(
-            status_code=413,
-            detail=f"File too large. Maximum size is {max_bytes // (1024 * 1024)} MB.",
-        )
-    return data
+
+    name: str
+    limit: int
+    window_sec: int
+    detail: str
+
+
+#: Environment knob that multiplies every :class:`AbuseLimit` budget. A local
+#: E2E lane runs every journey as one seeded student from one address against
+#: one backend, so the production numbers would 429 the specs that run last
+#: (the reason ``QUIZ_GENERATE_RATE_LIMIT`` is raised there too). A positive
+#: whole number; anything else is ignored with a warning, so a stray value can
+#: never switch a limit off. Production sets none.
+ABUSE_LIMIT_MULTIPLIER_ENV = "ABUSE_RATE_LIMIT_MULTIPLIER"
+
+
+def _abuse_multiplier() -> int:
+    raw = (os.getenv(ABUSE_LIMIT_MULTIPLIER_ENV) or "").strip()
+    if raw.isdecimal() and int(raw) > 0:
+        return int(raw)
+    if raw:
+        logger.warning("%s=%r is not a positive whole number; using 1",
+                       ABUSE_LIMIT_MULTIPLIER_ENV, raw)
+    return 1
+
+
+def abuse_limit(name: str, *, limit: int, window_sec: int, detail: str) -> AbuseLimit:
+    """Declare an :class:`AbuseLimit`, read once at import (like the
+    study-guide limits): `limit` scaled by ``ABUSE_RATE_LIMIT_MULTIPLIER``."""
+    return AbuseLimit(name, limit * _abuse_multiplier(), window_sec, detail)
+
+
+def _wait_phrase(seconds: int) -> str:
+    if seconds < 90:
+        return "1 second" if seconds == 1 else f"{seconds} seconds"
+    return f"{math.ceil(seconds / 60)} minutes"
+
+
+def rate_limited_error(limit: AbuseLimit, retry_after: int) -> HTTPException:
+    """The 429 every :class:`AbuseLimit` answers with: the friendly detail
+    (the frontend's ``humanizeError`` shows a short plain sentence as is) plus
+    the wait, and a real ``Retry-After`` (main.py forwards ``exc.headers``,
+    #544) — the same shape as the OCR and Gradescope limits."""
+    retry_after = max(1, int(retry_after))
+    return HTTPException(
+        status_code=429,
+        detail=f"{limit.detail} Try again in {_wait_phrase(retry_after)}.",
+        headers={"Retry-After": str(retry_after)},
+    )
+
+
+def enforce_abuse_limit(limit: AbuseLimit, subject: str) -> None:
+    """Charge one call to `subject`'s budget under `limit`; 429 past it.
+
+    Sync (a PostgREST call under ``stateless_rate_limit``): for plain ``def``
+    handlers only; an ``async def`` uses :func:`aenforce_abuse_limit`. Call it
+    AFTER the caller is authenticated, so an anonymous request can never
+    spend a student's budget."""
+    retry = check_rate_limit(f"{limit.name}:{subject}", limit=limit.limit,
+                             window_sec=limit.window_sec)
+    if retry is not None:
+        raise rate_limited_error(limit, retry)
+
+
+async def aenforce_abuse_limit(limit: AbuseLimit, subject: str) -> None:
+    """:func:`enforce_abuse_limit` for an ``async def``: never blocks the loop."""
+    retry = await acheck_rate_limit(f"{limit.name}:{subject}", limit=limit.limit,
+                                    window_sec=limit.window_sec)
+    if retry is not None:
+        raise rate_limited_error(limit, retry)
+
+
+def client_ip(request) -> str:
+    """The address a public (unauthenticated) route rate-limits by.
+
+    ``request.client.host`` only. The app trusts no forwarding header itself
+    (it reads neither ``CF-Connecting-IP`` nor ``X-Forwarded-For``), and
+    neither does this: a client-set header would let a caller pick a fresh
+    budget per request. Behind Railway's proxy the real address reaches
+    ``request.client`` only when uvicorn is told to trust that proxy
+    (``FORWARDED_ALLOW_IPS``); until then every public caller shares the
+    proxy's address, and these budgets act as one ceiling per route.
+    """
+    client = getattr(request, "client", None)
+    return getattr(client, "host", None) or "unknown"
+
+
+def is_public_address(host: str) -> bool:
+    """Whether ``host`` is a globally routable IP: a real caller's address,
+    not a proxy's private, loopback, link-local or carrier-grade NAT one."""
+    import ipaddress
+
+    try:
+        return ipaddress.ip_address(host).is_global
+    except ValueError:
+        return False
+
+
+def public_route_limit(request, per_address: AbuseLimit, shared: AbuseLimit) -> tuple[AbuseLimit, str]:
+    """The budget and key for a public route. A public client address gets
+    its own strict ``per_address`` budget; anything else (a proxy's private
+    address, ``"unknown"``) is one caller among all of them, so it falls under
+    the looser ``shared`` ceiling instead of locking everyone out at once.
+    Setting ``FORWARDED_ALLOW_IPS`` for the platform proxy (docs/deploy/
+    railway.md) turns every caller into the first case."""
+    host = client_ip(request)
+    if is_public_address(host):
+        return per_address, host
+    return shared, "shared"
+
+
+#: How much of an upload `read_within_limit` reads at a time.
+_UPLOAD_CHUNK = 1024 * 1024
+
+
+class _CappedRead:
+    """The cap both upload readers enforce, in one place: each reader only
+    fetches the next chunk (awaited or not) and hands it to `take`."""
+
+    def __init__(self, max_bytes: int, status_code: int, detail: str | None) -> None:
+        self._max_bytes = max_bytes
+        self._status_code = status_code
+        self._detail = detail
+        self._parts: list[bytes] = []
+        self._total = 0
+
+    def take(self, chunk: bytes) -> bool:
+        """Keep `chunk`; False once the upload is exhausted (an empty chunk).
+        Raises the refusal as soon as the total passes the cap, so never more
+        than one chunk past it is read."""
+        if not chunk:
+            return False
+        self._total += len(chunk)
+        if self._total > self._max_bytes:
+            raise HTTPException(
+                status_code=self._status_code,
+                detail=self._detail
+                or f"File too large. Maximum size is {self._max_bytes // (1024 * 1024)} MB.",
+            )
+        self._parts.append(chunk)
+        return True
+
+    def data(self) -> bytes:
+        return b"".join(self._parts)
+
+
+async def read_within_limit(
+    upload: UploadFile,
+    max_bytes: int,
+    *,
+    status_code: int = 413,
+    detail: str | None = None,
+) -> bytes:
+    """Read an UploadFile in 1 MB chunks, refusing it as soon as it passes
+    ``max_bytes`` — never more than one chunk past the cap is read, so an
+    oversize upload is never pulled into memory whole. The one capped upload
+    reader: every upload route reads through it, or through
+    :func:`read_within_limit_sync`, its twin for a sync (threadpool) handler.
+
+    Raises ``status_code`` (413 by default) with ``detail`` (default "File too
+    large. Maximum size is N MB.") past the cap; a route that has always
+    answered differently passes its own.
+    """
+    capped = _CappedRead(max_bytes, status_code, detail)
+    while capped.take(await upload.read(_UPLOAD_CHUNK)):
+        pass
+    return capped.data()
+
+
+def read_within_limit_sync(
+    upload: UploadFile,
+    max_bytes: int,
+    *,
+    status_code: int = 413,
+    detail: str | None = None,
+) -> bytes:
+    """:func:`read_within_limit` for a plain ``def`` handler (#117: FastAPI
+    runs it in the threadpool, so it reads the spooled file directly rather
+    than awaiting). Same chunks, cap and refusal."""
+    capped = _CappedRead(max_bytes, status_code, detail)
+    while capped.take(upload.file.read(_UPLOAD_CHUNK)):
+        pass
+    return capped.data()

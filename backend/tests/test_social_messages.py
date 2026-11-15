@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
 
+import config
 from main import app
 from tests.split_patches import patch_social
 
@@ -274,9 +275,17 @@ class TestImageDimensionBounds:
     """
 
     def _post(self, **extra):
-        body = {"user_id": "u1", "user_name": "Alice", "image_url": "https://x/i.png"}
+        # A room-image upload URL on the app's own bucket, so only the
+        # dimensions are under test (image_url is validated too, see
+        # test_web_hardening_inputs.py).
+        supa = "https://abcd1234.supabase.co"
+        body = {
+            "user_id": "u1", "user_name": "Alice",
+            "image_url": f"{supa}/storage/v1/object/public/chat-images/{ROOM_ID}/u1-1-i.png",
+        }
         body.update(extra)
-        return client.post(f"/api/social/rooms/{ROOM_ID}/messages", json=body)
+        with patch.object(config, "SUPABASE_URL", supa):
+            return client.post(f"/api/social/rooms/{ROOM_ID}/messages", json=body)
 
     def test_rejects_absurd_height(self):
         # Inside Postgres INTEGER range, so nothing downstream would object:

@@ -4,6 +4,7 @@ import { CustomSelect } from "../../CustomSelect";
 import { useToast } from "../../ToastProvider";
 import { useUser } from "@/context/UserContext";
 import { importCloze } from "@/lib/api";
+import { useCrisisSupport } from "@/components/safety/CrisisSupportCard";
 import { detectDelimiters, splitByDelimiters, type ParsedCard } from "@/lib/flashcardParsers";
 import { pastePlaceholder } from "../importModalModel";
 import s from "../FlashcardImportModal.module.css";
@@ -130,11 +131,14 @@ export function PasteTab({ cards, onCards, textareaRef }: Props) {
     emit(textRef.current, term, card);
   }, [term, card, clozeMode, emit]);
 
+  // docs/safety/crisis-support.md: a paragraph the crisis screen answered
+  const crisis = useCrisisSupport();
   const runCloze = async () => {
     if (!userId || !text.trim()) return;
     setClozing(true);
     try {
       const res = await importCloze(userId, text);
+      if (crisis.intercept(res)) return; // no cards were generated
       onCards(res.cards.map((c, i) => ({ front: c.front, back: c.back, row: i + 1 })));
       toast.success(`Generated ${res.cards.length} cloze cards.`);
     } catch (err) {
@@ -149,6 +153,7 @@ export function PasteTab({ cards, onCards, textareaRef }: Props) {
 
   return (
     <div className={s.tab}>
+      {crisis.dialog}
       <textarea
         ref={textareaRef}
         className={s.textarea}

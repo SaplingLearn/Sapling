@@ -148,6 +148,7 @@ def test_event_taxonomy_is_pinned():
         "account.copy_pull",
         "account.export",
         "account.import",
+        "account.purge",
         # #640/#642 (ADR 0027): one row per typed-decision call. Emit
         # coverage lives in test_decisions.py / test_tutor_router.py.
         "decision.made",
@@ -156,6 +157,10 @@ def test_event_taxonomy_is_pinned():
         "db.unscoped_query",
         "db.rls_shadow_divergence",
         "db.rls_denied",
+        # docs/safety/crisis-support.md: the crisis screen fired. Emit
+        # coverage (and the no-content / no-PostHog pins) lives in
+        # test_crisis_support_routes.py.
+        "safety.crisis_support_shown",
     })
 
 
@@ -247,6 +252,14 @@ def test_unmatched_404_emits_no_event(sink, path):
     assert _events(sink) == []
 
 
+def test_auth_token_query_param_is_not_a_credential(sink):
+    """`?auth_token=` stopped being a session channel (tokens in URLs reach
+    access logs), so it no longer marks a request as one of our clients."""
+    r = client.get("/api/renamed-router/thing", params={"auth_token": "anything.sig"})
+    assert r.status_code == 404
+    assert _events(sink) == []
+
+
 def test_unmatched_404_on_other_methods_emits_no_event(sink):
     for method in ("POST", "PUT", "DELETE", "HEAD"):
         assert client.request(method, "/wp-login.php").status_code == 404
@@ -264,7 +277,6 @@ def test_unmatched_404_on_other_methods_emits_no_event(sink):
     [
         pytest.param({"headers": {"Cookie": "sapling_session=anything.sig"}}, id="session-cookie"),
         pytest.param({"headers": {"Authorization": "Bearer not-checked"}}, id="bearer-header"),
-        pytest.param({"params": {"auth_token": "anything.sig"}}, id="auth-token-param"),
     ],
 )
 def test_unmatched_404_with_credentials_still_emits(sink, kwargs):

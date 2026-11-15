@@ -123,6 +123,10 @@ def get_room_messages(room_id: str, viewer_id: str, before: str | None = None, l
     return {"messages": enriched, "has_more": has_more}
 
 
+#: Shown for a sender with no profile name yet.
+SENDER_NAME_FALLBACK = "Student"
+
+
 def send_room_message(room_id: str, body: SendMessageBody):
     membership = table("room_members").select(
         "user_id", filters={"room_id": f"eq.{room_id}", "user_id": f"eq.{body.user_id}"}
@@ -140,19 +144,9 @@ def send_room_message(room_id: str, body: SendMessageBody):
         if reply_to_id is None:
             raise NotFound("Message not found")
 
-    # IDENTITY: resolved from the sender's own profile, never from the body.
-    #
-    # `body.user_name` was stored verbatim and is what the transcript renders
-    # as the message's author — both the name label and the avatar. A room
-    # member could therefore post under ANY name they liked and every other
-    # member saw it as genuine ("Professor Smith (Staff)" was the proof).
-    # Membership was checked, so the sender was real; who the message LOOKED
-    # like was not checked at all.
-    #
-    # The field stays on the request model so existing clients keep working,
-    # but it is ignored. Falling back to the id (rather than "") keeps a
-    # nameless profile attributable instead of anonymous.
-    sender_name = get_display_name(body.user_id) or body.user_id
+    # The name shown beside the message is the sender's own profile name,
+    # never the client's `user_name` (which let a member post as anyone).
+    sender_name = get_display_name(body.user_id) or SENDER_NAME_FALLBACK
 
     row = table("room_messages").insert({
         "room_id": room_id,

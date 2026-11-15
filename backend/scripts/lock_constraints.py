@@ -1,23 +1,27 @@
 """Make the backend image install the dependency set CI tests (#694).
 
-CI and the E2E lane install `requirements.lock` with `--require-hashes`. The
-Docker image cannot: the lock deliberately leaves out the OCR stack
-(torch / docling / transformers), and `--require-hashes` is all-or-nothing, so
-it cannot cover a hashed lock plus an unhashed OCR install. Before #694 the
-image therefore installed the unlocked `requirements.txt`, every transitive
-dependency floated, and `genai-prices` 0.1.x reached the deployed image while
-CI still pinned 0.0.66. pydantic-ai then swallowed a TypeError and every
-`llm_usage` row recorded 0 tokens for two months (#689).
+CI and the E2E lane install `requirements.lock` with `--require-hashes`, and so
+do both Docker stages. The worker image cannot stop there: the lock
+deliberately leaves out the OCR stack (torch / docling / transformers), and
+`--require-hashes` is all-or-nothing within one pip run, so the OCR stack goes
+in a second, unhashed run. Before #694 the image installed the unlocked
+`requirements.txt`, every transitive dependency floated, and `genai-prices`
+0.1.x reached the deployed image while CI still pinned 0.0.66. pydantic-ai then
+swallowed a TypeError and every `llm_usage` row recorded 0 tokens for two
+months (#689).
 
-The Dockerfile uses this script like this:
+The Dockerfile's heavy stage uses this script like this:
 
     pip install --no-deps --index-url https://download.pytorch.org/whl/cpu \
         --report /tmp/cpu-index-report.json "torch>=2.5,<3" torchvision
+    pip install --require-hashes -r requirements.lock
     python scripts/lock_constraints.py constraints requirements.lock > /tmp/lock-constraints.txt
     python scripts/lock_constraints.py pin >> /tmp/lock-constraints.txt
-    pip install -c /tmp/lock-constraints.txt -r requirements.txt
+    pip install -c /tmp/lock-constraints.txt -r requirements-worker.txt
     python scripts/lock_constraints.py verify requirements.lock
     python scripts/lock_constraints.py cpu-torch
+
+The api stage runs only the hashed lock install, `verify` and `pip check`.
 
 `constraints` turns the lock into a hash-free pip constraints file. pip
 switches to hash-checking mode as soon as any constraint carries a `--hash`,
@@ -62,8 +66,8 @@ requirement is satisfied by `2.14.0+cpu` (so `pip check` is clean), and it
 still raises `operator torchvision::nms does not exist`. docling's layout model
 then could not load, and scanned PDFs silently fell back to tesseract.
 
-`constraints` and `pin` use only the standard library, because they run before
-requirements.txt is installed. `verify` runs after it and needs `packaging`,
+`constraints` and `pin` use only the standard library, so they never depend on
+what is installed. `verify` runs after the lock install and needs `packaging`,
 which requirements.txt lists for that reason.
 """
 

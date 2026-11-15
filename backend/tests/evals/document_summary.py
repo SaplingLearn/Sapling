@@ -32,6 +32,7 @@ from pydantic_evals.evaluators import Evaluator, EvaluatorContext
 
 from agents.summary import Summary, summary_agent
 from _replay import run_with_cassette  # noqa: E402  (sibling, sys.path-injected)
+from services.prompt_safety import wrap_document_input  # noqa: E402  (as the upload pipeline sends it)
 
 
 @dataclass
@@ -272,7 +273,7 @@ async def _run(case_input: str) -> Summary:
         dataset="document_summary",
         case_name=case_name,
         agent=summary_agent,
-        case_input=case_input,
+        case_input=wrap_document_input(case_input),
         output_model=Summary,
     )
 
