@@ -276,6 +276,8 @@ GENUINE_NEGATIONS: list[str] = [
     "I would never kill myself",
     "I would never, ever kill myself",
     "I don't want to die",
+    "I do not want to die",
+    "She did not want to die",
     "I'm not going to kill myself",
     "I don't think I'm suicidal",
     "I'm stressed, but I'm not suicidal",
@@ -352,12 +354,59 @@ NOT_A_SELF_NEGATION: list[str] = [
     "I don't think I'd kill myself",
 ]
 
-#: The hedges that stay negations, contraction or not.
+#: The hedges that stay negations, contraction or not, in their common forms:
+#: "thinking", "feel like", "feel that", "think that".
 SELF_NEGATING_HEDGES: list[str] = [
     "I don't think I'm suicidal",
     "I don't think I am suicidal",
     "I don't really think I'm suicidal",
     "I don't believe I've been suicidal",
+    "I'm not thinking I'm suicidal",
+    "I am not thinking I'm suicidal",
+    "I don't feel like I'm suicidal",
+    "I don't feel that I'm suicidal",
+    "I don't really feel like I'm suicidal",
+    "I don't think that I'm suicidal",
+    "I'm not feeling like I'm suicidal",
+]
+
+
+#: A negation the same sentence takes back: after "but", "though",
+#: "although", "except" or "yet", a first-person modal or intent that points
+#: back at the phrase ("but I might", "but I think I will", "but I'm going
+#: to", "but I think about it"). The negation does not veto.
+REVERSED_NEGATIONS: list[str] = [
+    "I don't want to kill myself but I might",
+    "I don't want to kill myself (but I think I will)",
+    "I don't want to die but I think I'm going to",
+    "I'm not suicidal but I think about it a lot",
+    "I would never kill myself, but I might.",
+    "I don't want to hurt myself but I probably will",
+    "I'm not suicidal yet but I could be",
+    "I don't want to die though I might do it anyway",
+    "I'm not going to kill myself, but I keep thinking about it",
+    "I don't want to die but I'm going to",
+    "I do not want to die but I am going to",
+    "I don't want to hurt myself but I want to",
+    "I won't kill myself but I'll probably do it",
+    "I don't think I'm suicidal but I might be",
+    "I'm not suicidal except I think about it every night",
+]
+
+#: ...and a "but" that goes on to something else leaves the negation alone:
+#: the modal has to stand for the phrase, not start a new one.
+UNREVERSED_NEGATIONS: list[str] = [
+    "I'm not suicidal but I'm stressed",
+    "I don't want to die, but I am tired of exams",
+    "I'm not suicidal but I could use some help",
+    "I don't want to die but I will fail this class",
+    "I would never kill myself but I might drop out",
+    "I don't want to kill myself, but I will pass",
+    "I'm not suicidal but I think about my grades a lot",
+    "I'm not suicidal, but I might fail",
+    "I'm not suicidal but I might be depressed",
+    "I'm not suicidal but I will be okay",
+    "I'm not suicidal but ill",
 ]
 
 
@@ -406,6 +455,16 @@ def test_saying_or_meaning_is_not_a_self_negation(text):
 
 @pytest.mark.parametrize("text", SELF_NEGATING_HEDGES)
 def test_a_hedge_about_ones_own_state_still_vetoes(text):
+    assert detect(text) is None
+
+
+@pytest.mark.parametrize("text", REVERSED_NEGATIONS)
+def test_a_negation_the_sentence_takes_back_never_vetoes(text):
+    assert detect(text) is not None, f"{text!r}: the sentence reverses its negation"
+
+
+@pytest.mark.parametrize("text", UNREVERSED_NEGATIONS)
+def test_a_but_that_goes_on_to_something_else_keeps_the_negation(text):
     assert detect(text) is None
 
 
@@ -538,6 +597,8 @@ def expected_corpus() -> dict[str, bool]:
         (True, NEGATION_THAT_DOES_NOT_NEGATE),
         (True, NOT_A_SELF_NEGATION),
         (False, SELF_NEGATING_HEDGES),
+        (True, REVERSED_NEGATIONS),
+        (False, UNREVERSED_NEGATIONS),
         (True, INTRODUCING_IDIOMS),
         (False, IDIOM_THEN_NEGATION),
         (True, QUOTATIONS),

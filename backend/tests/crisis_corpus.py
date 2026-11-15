@@ -271,6 +271,10 @@ KNOWN_MISSES: list[str] = [
     "I wouldn't mind dying",
     "I've never been this close to ending it all",
     "I'm not afraid to hurt myself anymore",
+    # a take-back in the NEXT sentence: the negation's sentence ends first
+    "I'm not suicidal. But I might be",
+    # ...or one with no "it" pointing back at the phrase
+    "I'm not suicidal but I think about death a lot",
     # a comparative with no "I": the price of not reading "teens end up
     # feeling MORE suicidal" as a student's own words
     "been more suicidal lately",
@@ -293,6 +297,8 @@ _ASIDE = "the negation crosses only a short aside right after it; this is not on
 _INTRODUCES = "an introducing idiom (won't lie, not kidding) negates nothing"
 _SAYING = "'not saying' / 'don't mean' / 'don't think I'll' is a warning sign, not a negation"
 _HEDGE = "a hedge about one's own state negates however it is spelled; base caught only 'think I'm'"
+_TAKEN_BACK = (
+    "the sentence takes its negation back ('but I might', 'but I think about it'); base let it veto")
 _NEVER_BEEN = "'never (been|felt) (more|this|so|as) <phrase>' says more, not less"
 _NEVER_WANTED = "'never wanted to <phrase> more than / so badly / as much as' is a comparison"
 _FEAR = "a fear of the act after the negation (no longer afraid to) does not negate it"
@@ -340,6 +346,29 @@ INTENDED_CHANGES_FROM_BASE: dict[str, str] = {
     "I don't think I am suicidal": _HEDGE,
     "I don't really think I'm suicidal": _HEDGE,
     "I don't believe I've been suicidal": _HEDGE,
+    "I don't feel like I'm suicidal": _HEDGE,
+    "I don't feel that I'm suicidal": _HEDGE,
+    "I don't really feel like I'm suicidal": _HEDGE,
+    "I don't think that I'm suicidal": _HEDGE,
+    "I'm not feeling like I'm suicidal": _HEDGE,
+    # A negation the same sentence takes back: "but / though / yet" + a
+    # first-person modal or intent that stands for the phrase.
+    "I don't want to kill myself but I might": _TAKEN_BACK,
+    "I don't want to kill myself (but I think I will)": _TAKEN_BACK,
+    "I don't want to die but I think I'm going to": _TAKEN_BACK,
+    "I'm not suicidal but I think about it a lot": _TAKEN_BACK,
+    "I would never kill myself, but I might.": _TAKEN_BACK,
+    "I don't want to hurt myself but I probably will": _TAKEN_BACK,
+    "I'm not suicidal yet but I could be": _TAKEN_BACK,
+    "I don't want to die though I might do it anyway": _TAKEN_BACK,
+    "I'm not going to kill myself, but I keep thinking about it": _TAKEN_BACK,
+    "I don't want to die but I'm going to": _TAKEN_BACK,
+    "I do not want to die but I am going to": (
+        "taken back, and 'do not' is now a negation (not 'someone else's wish'), so it can be"),
+    "I don't want to hurt myself but I want to": _TAKEN_BACK,
+    "I won't kill myself but I'll probably do it": _TAKEN_BACK,
+    "I don't think I'm suicidal but I might be": _TAKEN_BACK,
+    "I'm not suicidal except I think about it every night": _TAKEN_BACK,
     # "never" that says MORE: never (been|felt) (more|this|so|as) <phrase>.
     "I have never been more suicidal": _NEVER_BEEN,
     "never been this suicidal before": _NEVER_BEEN,

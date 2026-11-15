@@ -48,9 +48,17 @@ How matching works (every list below is a regex over `normalize(text)`):
      myself"), "this" ("I'm not usually this suicidal"), and a negated
      negation ("can't not think about killing myself");
    - is never opened by "I won't lie", "not gonna lie", "not kidding", which
-     introduce a statement; and only a hedge about one's own STATE ("I don't
-     think I'm suicidal") negates: "I'm not saying I'll kill myself" is a
-     warning sign.
+     introduce a statement; and only a hedge about one's own STATE negates
+     ("I don't think I'm suicidal", "I'm not thinking I'm suicidal", "I don't
+     (really) feel like / feel that / think that I'm suicidal"): "I'm not
+     saying I'm suicidal", "I don't think I'll kill myself tonight" are
+     warning signs;
+   - does not veto when its own sentence takes it back (`_TAKEN_BACK`):
+     "but / though / although / except / yet", within ~100 characters of the
+     phrase, then a first-person modal or intent that stands for the phrase
+     and ends its clause ("I don't want to kill myself but I might", "(but I
+     think I will)", "but I'm going to", "but I think about it a lot"). "I'm
+     not suicidal but I'm stressed", "but I might drop out" keep the negation.
    TOPIC_GUARDS veto MENTIONS (never explicit phrases) anywhere in the text
    when it names an academic topic ("Durkheim", "euthanasia", "theory of
    suicide").
@@ -354,9 +362,41 @@ _ASIDE = (
     r"| and (?:never|not)(?: (?:ever|have|has|had|will|would|be|been|was|were|am|is|are)){0,3}) ,"
 )
 
+#: A negation the SAME sentence takes back, read right after the negated
+#: phrase (the join word within 100 characters of it, which also keeps a long
+#: unpunctuated note linear): "but / though / although / except / yet" introducing a
+#: first-person modal or intent that stands for the phrase — "I don't want to
+#: kill myself but I might", "(but I think I will)", "but I think I'm going
+#: to", "but I think about it a lot". The modal must END its clause (or carry
+#: only "do it", "anyway", "probably", "be" ...): "but I might drop out",
+#: "but I could use some help", "but I will pass" start a new thought and the
+#: negation stands. "I'll" counts only as "I'll (probably) do it", since "but
+#: ill" is also "but sick".
+_TAKE_BACK_LEAD = (
+    r"(?:(?:honestly|maybe|deep down|sometimes|lately|tbh|ngl|i (?:think|guess|feel like|bet|know"
+    r"|worry|fear)(?: that)?) (?:, )?)*"
+)
+_TAKE_BACK_MODAL = (
+    r"(?:i (?:(?:probably|still|just|really|actually|eventually|definitely) )?(?:might|will|could|may)"
+    r"|im (?:going to|gonna|gona)|i am (?:going to|gonna)|i (?:want to|wanna))"
+    r"(?: (?:probably|still|eventually|actually|really|do it|anyway|anyways|someday|soon|tonight"
+    r"|one day|at some point|again|too|be|end up doing it))*(?= (?:\||,)|$)"
+    r"|ill (?:(?:probably|still|eventually|actually) )*(?:do it|end up doing it)(?![a-z0-9])"
+)
+_TAKE_BACK_THOUGHT = (
+    r"(?:i (?:(?:still|also|sometimes|often|always|constantly|really|do|kinda) )*(?:think|thought)"
+    r"|i (?:(?:still|also) )?(?:keep|cant stop) thinking|(?:ive|i have) (?:(?:still|also) )?been thinking"
+    r"|im (?:(?:still|always|also) )?thinking) about it(?![a-z0-9])"
+)
+_TAKEN_BACK = (
+    rf"(?![^|]{{0,100}}? (?:but|though|although|except|yet) (?:, )?{_TAKE_BACK_LEAD}"
+    rf"(?:{_TAKE_BACK_MODAL}|{_TAKE_BACK_THOUGHT}))"
+)
+
 #: NEGATION_GUARDS veto like GUARDS, but are matched over the CLAUSE form of
 #: the text (`_Forms.clause`), where a comma, dash or bracket is a `,` token
 #: no gap word can cross: "I'm not okay, I'll kill myself" is not negated.
+#: None of them vetoes a negation the sentence then takes back (`_TAKEN_BACK`).
 NEGATION_GUARDS: tuple[str, ...] = (
     # "I'm not suicidal", "I would never(, ever) kill myself" say the opposite
     # (up to two words between the negation and the phrase, same clause; an
@@ -365,15 +405,17 @@ NEGATION_GUARDS: tuple[str, ...] = (
     # "so" joins clauses, so it is no gap word, except as "not so (much)"
     # right after the negation ("I'm not so suicidal anymore").
     rf"{_NOT_DOUBLED}{_NEGATION}{_NEVER_SAYS_MORE}(?! {_INTRODUCES})(?:{_ASIDE})?(?: ,? ever)?"
-    rf"(?! {_INTRODUCES})(?: so(?: much)?)?(?: {_GAP_WORD}){{0,2}} {_NEGATED}",
-    # A hedge about one's own STATE: "I don't think I'm suicidal". Never about
-    # an act or a plan ("I don't think I'll kill myself tonight"), and never
-    # "not saying"/"don't mean" ("I'm not saying I'll kill myself" is a
-    # warning sign). A contraction reads like its spelled-out form.
-    rf"{_NOT_DOUBLED}{_NEGATION}(?: really)? (?:think|believe|guess|feel)"
-    rf" (?:im|i am|i was|ive been|i have been) {_SUICIDAL}",
+    rf"(?! {_INTRODUCES})(?: so(?: much)?)?(?: {_GAP_WORD}){{0,2}} {_NEGATED}{_TAKEN_BACK}",
+    # A hedge about one's own STATE: "I don't think I'm suicidal", "I'm not
+    # thinking I'm suicidal", "I don't (really) feel like / feel that / think
+    # that I'm suicidal". Never about an act or a plan ("I don't think I'll
+    # kill myself tonight"), and never "not saying"/"don't mean" ("I'm not
+    # saying I'll kill myself" is a warning sign). A contraction reads like
+    # its spelled-out form.
+    rf"{_NOT_DOUBLED}{_NEGATION}(?: really)? (?:think|thinking|believe|guess|feel|feeling)"
+    rf"(?: like| that)? (?:im|i am|i was|ive been|i have been) {_SUICIDAL}{_TAKEN_BACK}",
     rf"{_NOT_DOUBLED}(?:dont|do not|didnt|did not|never|wont|will not|dont really){_NEVER_SAYS_MORE}"
-    rf" (?:want(?:ed)?|wanna|wish(?:ed)?) (?:to |2 )?(?:die|be dead)",
+    rf" (?:want(?:ed)?|wanna|wish(?:ed)?) (?:to |2 )?(?:die|be dead){_TAKEN_BACK}",
 )
 
 GUARDS: tuple[str, ...] = (
@@ -401,7 +443,11 @@ GUARDS: tuple[str, ...] = (
     r"beating me (?:at|in|on|to)",
     # Someone else's wish, asked about: "Why does Hamlet want to die?". The
     # someone is never the speaker: "I can't DO this anymore I want to die".
-    r"(?:does|did|do|doesnt|didnt|would|wouldnt|why would|why does|why did|why do|why dont)"
+    # Nor is it "do not" / "did not": that is the negation NEGATION_GUARDS
+    # reads ("I do not want to die" stays vetoed there), which a sentence
+    # can take back ("... but I'm going to").
+    r"(?:does|did(?! not)|do(?! not)|doesnt|didnt|would|wouldnt|why would|why does|why did|why do"
+    r"|why dont)"
     r"(?: (?!(?:i|im|id|ive|you|u|we)(?![a-z0-9]))[a-z]+){1,3} (?:want|wanna|wanted|wish|wished)"
     r" (?:to |2 )?die",
     # Housing and itineraries, not life.

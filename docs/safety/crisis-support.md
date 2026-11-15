@@ -274,10 +274,22 @@ sentence breaks, stretched letters squeezed):
   - An idiom that introduces a statement ("I won't lie", "not gonna lie",
     "not gonna sugarcoat it", "I'm not kidding") negates nothing: "not gonna
     lie suicidal thoughts every day" matches.
-  - A hedge about one's own STATE ("I don't think I'm suicidal", "I don't
-    believe I've been suicidal") is a negation; one about an act or a plan
-    ("I don't think I'll kill myself tonight") and "I'm not saying I'll kill
-    myself" are not.
+  - A hedge about one's own STATE is a negation in its common forms: "I
+    don't think I'm suicidal", "I'm not thinking I'm suicidal", "I don't
+    (really) feel like / feel that I'm suicidal", "I don't think that I'm
+    suicidal", "I don't believe I've been suicidal". One about an act or a
+    plan ("I don't think I'll kill myself tonight", "I don't mean I'll kill
+    myself") and "I'm not saying I'm suicidal" are not.
+  - A negation the same sentence takes back does not veto: after "but",
+    "though", "although", "except" or "yet" (within about 100 characters of
+    the phrase), a first-person modal or intent that stands for the phrase —
+    "I don't want to kill myself but I might", "(but I think I will)", "I
+    don't want to die but I think I'm going to", "I'm not suicidal but I
+    think about it a lot", "I won't kill myself but I'll probably do it". The
+    modal has to end its clause (or carry only "do it", "anyway", "probably",
+    "be", ...), so "I'm not suicidal but I'm stressed", "I don't want to die,
+    but I am tired of exams", "but I could use some help" and "but I might
+    drop out" keep the negation.
 
 A comparative counts as the speaker's own state only with a first-person
 lead: "I'm more suicidal than ever" is an explicit phrase, but "teens end up
@@ -334,6 +346,11 @@ points at it).
   to stop", "I won't be a problem much longer", "I've been giving my things
   away" and "I can't do this anymore" do not match. Leetspeak ("k1ll") and
   spaced-out letters do not match either. English only.
+- **A take-back is read only inside the negation's sentence and only in the
+  listed forms.** "I'm not suicidal. But I might be" (a new sentence), "I'm
+  not suicidal but I think about death a lot" (no "it" pointing back) and a
+  reversal more than about 100 characters after the phrase keep the
+  negation, so they do not match.
 - **False positives remain, and cost the most on typed text.** A literature
   or psychology question TYPED to the tutor that uses an explicit
   first-person phrase ("the speaker says 'I want to die'") gets the card
