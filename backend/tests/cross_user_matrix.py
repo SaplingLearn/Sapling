@@ -310,7 +310,10 @@ RESOURCE_EXPECT: dict[tuple[str, str], tuple[tuple[int, ...], str]] = {
     ("POST", "/api/feedback"):
         ((200,), "the foreign session link is set to NULL; the row is B's"),
     ("POST", "/api/graph/{user_id}/nodes"):
-        ((200,), "B's node is created; the anchor lookup is filtered to B, so no edge to A's node"),
+        ((200,), "B's node is created in B's own course; the anchor lookup is filtered "
+                 "to B, so no edge to A's node. (The probed param is anchor_node_id; "
+                 "the course gate is test_graph_node_refuses_a_course_the_caller_is_"
+                 "not_enrolled_in's probe.)"),
     ("DELETE", "/api/notes/{note_id}"):
         ((200,), "no-op {'deleted': true}: the delete is filtered by user_id = B"),
     ("GET", "/api/notes/{note_id}/concepts"):
@@ -345,7 +348,9 @@ RESOURCE_EXPECT: dict[tuple[str, str], tuple[tuple[int, ...], str]] = {
 SWAP_EXPECT: dict[tuple[str, str], tuple[tuple[int, ...], str]] = {
     ("POST", "/api/feedback"): ((200,), "body.user_id is ignored; the row is attributed to the session"),
     ("POST", "/api/issue-reports"): ((200,), "body.user_id is ignored; the row is attributed to the session"),
-    ("GET", "/api/profile/username/check"): ((200,), "unauthenticated availability check by design"),
+    ("GET", "/api/profile/username/check"): ((200,), "availability for the SESSION; the user_id "
+                                                     "param is accepted but ignored (it used to "
+                                                     "confirm the user_id -> username mapping)"),
 }
 
 #: Routes with a self param that are intentionally cross-user; covered by the
@@ -418,8 +423,11 @@ BODY_OVERRIDES: dict[tuple[str, str], dict[str, Any]] = {
     ("DELETE", "/api/profile/{user_id}/account"): {"confirmation": "DELETE"},
     ("POST", "/api/profile/{user_id}/avatar"): {"file_b64": "aGVsbG8="},
     ("POST", "/api/onboarding/profile"): {
-        "first_name": "Matrix", "last_name": "Probe", "year": "Senior",
+        "first_name": "Matrix", "last_name": "Probe", "year": "senior",
         "learning_style": "visual", "majors": ["Biology"], "course_ids": [COURSE_SHARED],
+        # Any string passes request validation; B is refused at require_self
+        # before the versions are compared (services/legal.py).
+        "accepted_terms_version": "2026-10-22", "accepted_privacy_version": "2026-11-03",
     },
     ("POST", "/api/calendar/save"): {"assignments": []},
     # Admin bodies: valid enough that B reaches require_admin, never more.
@@ -901,7 +909,7 @@ def allowlist_cases(a_user: str = USER_A, b_user: str = USER_B) -> list[Case]:
              expect=(200,), note="roles for a signed-in viewer (anonymous: 401, #115)"),
         Case("allowlist", "GET", "/api/profile/username/check", "/api/profile/username/check",
              query={"username": "rich-active", "user_id": b_user}, expect=(200,),
-             note="username availability"),
+             note="username availability for the signed-in viewer (anonymous: 401)"),
         Case("allowlist", "GET", "/api/social/public-rooms", "/api/social/public-rooms",
              query={"user_id": b_user}, expect=(200,),
              note="public room list: A's public room, never the private one or any invite code",

@@ -37,6 +37,7 @@ import {
 } from "@/lib/api";
 import { now } from "@/lib/testMode";
 import { humanizeError } from "@/lib/errorMessage";
+import { CALENDAR_ERROR_PARAM, calendarConnectError } from "@/lib/calendarConnect";
 
 type View = "month" | "week" | "day" | "table";
 
@@ -157,6 +158,18 @@ export function Calendar() {
     }
   }, [search, router, toast, load]);
 
+  // The consent flow came back without access (started here or from
+  // onboarding's Connect step): say why, then clear the code.
+  React.useEffect(() => {
+    const code = search.get(CALENDAR_ERROR_PARAM);
+    if (!code) return;
+    toast.error(calendarConnectError(code));
+    const next = new URLSearchParams(search.toString());
+    next.delete(CALENDAR_ERROR_PARAM);
+    const qs = next.toString();
+    router.replace(qs ? `/calendar?${qs}` : "/calendar");
+  }, [search, router, toast]);
+
   const today = React.useMemo(() => {
     const d = new Date(now()); d.setHours(0, 0, 0, 0); return d;
   }, []);
@@ -184,7 +197,7 @@ export function Calendar() {
       const res = await syncCalendar(userId);
       toast.success(`Synced ${res.synced_count} event${res.synced_count === 1 ? "" : "s"} to Google.`);
     } catch (err) {
-      toast.error(`Sync failed: ${String(err)}`);
+      toast.error(humanizeError(err, "Couldn't sync your calendar. Try again."));
     }
   };
 
@@ -194,7 +207,7 @@ export function Calendar() {
       const res = await importGoogleEvents(userId, 60);
       setGoogleEvents(res.events || []);
     } catch (err) {
-      toast.error(`Import failed: ${String(err)}`);
+      toast.error(humanizeError(err, "Couldn't import those events."));
     } finally {
       setImportingGoogle(false);
     }
@@ -206,7 +219,7 @@ export function Calendar() {
       setGoogleConnected(false);
       toast.success("Google Calendar disconnected.");
     } catch (err) {
-      toast.error(`Disconnect failed: ${String(err)}`);
+      toast.error(humanizeError(err, "Couldn't disconnect that calendar."));
     }
   };
   const disconnectConfirm = useConfirm(doDisconnect);
@@ -738,7 +751,7 @@ function AssignmentTable({
       toast.success("Assignment deleted.");
       await onReload();
     } catch (err) {
-      toast.error(`Delete failed: ${String(err)}`);
+      toast.error(humanizeError(err, "Couldn't delete that. Try again."));
     } finally {
       setDeletingId(null);
     }
@@ -757,7 +770,7 @@ function AssignmentTable({
       );
       await onReload();
     } catch (err) {
-      toast.error(`Export failed: ${String(err)}`);
+      toast.error(humanizeError(err, "Couldn't export that. Try again."));
     } finally {
       setExporting(false);
     }
@@ -784,7 +797,7 @@ function AssignmentTable({
       await onReload();
       cancel();
     } catch (err) {
-      toast.error(`Save failed: ${String(err)}`);
+      toast.error(humanizeError(err, "Couldn't save that. Try again."));
     } finally {
       setSaving(false);
     }

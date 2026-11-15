@@ -293,6 +293,62 @@ class TestUpdateProfile:
         assert "bio" in captured[0]["payload"]
         assert captured[0]["payload"]["bio"] != "Updated bio"
 
+    def test_rejects_an_unbounded_bio(self):
+        """bio/location/website were unbounded and are rendered cross-user."""
+        with _mock_self():
+            r = client.patch(f"/api/profile/{USER_ID}", json={"bio": "x" * 2001})
+        assert r.status_code == 422
+
+    def test_rejects_a_username_that_breaks_the_format_rule(self):
+        """The format rule used to live ONLY in the availability check, so the
+        write path stored anything. A 500-char username was accepted, and
+        10,000 chars answered 500 (the uniqueness lookup built a PostgREST
+        query string too long to send)."""
+        def table_side_effect(name):
+            m = MagicMock()
+            if name == "users":
+                m.select.return_value = [{"id": USER_ID, "email": None, "streak_count": 0,
+                                          "created_at": "2025-01-01"}]
+            elif name == "user_profiles":
+                m.select.return_value = [{"user_id": USER_ID, "name": "Test"}]
+            else:
+                m.select.return_value = []
+            m.update.return_value = [{}]
+            return m
+
+        for bad in ["x" * 500, "ab", "Has Spaces", "bad!chars", "x" * 10_000]:
+            with _mock_self(), patch_profile_table(side_effect=table_side_effect):
+                r = client.patch(f"/api/profile/{USER_ID}", json={"username": bad})
+            assert r.status_code == 422, f"{bad[:20]!r} was accepted ({r.status_code})"
+
+    def test_username_is_stored_lowercased(self):
+        """The availability check lowercases before comparing, so storing the
+        raw value let "Alice" be saved while "alice" still read as free."""
+        captured = []
+
+        def table_side_effect(name):
+            m = MagicMock()
+            if name == "users":
+                m.select.return_value = [{"id": USER_ID, "email": None, "streak_count": 0,
+                                          "created_at": "2025-01-01"}]
+            elif name == "user_profiles":
+                m.select.return_value = [{"user_id": USER_ID, "name": "Test"}]
+
+                def _capture(payload, filters):
+                    captured.append(payload)
+                    return [{}]
+
+                m.update.side_effect = _capture
+            else:
+                m.select.return_value = []
+            m.update.return_value = [{}]
+            return m
+
+        with _mock_self(), patch_profile_table(side_effect=table_side_effect):
+            r = client.patch(f"/api/profile/{USER_ID}", json={"username": "MixedCase"})
+        assert r.status_code == 200
+        assert captured and captured[0]["username"] == "mixedcase"
+
     def test_username_conflict_returns_409(self):
         user_row = {"id": USER_ID, "email": None, "streak_count": 0, "created_at": "2025-01-01"}
         profile_row = {"user_id": USER_ID, "name": "Test"}
@@ -737,8 +793,13 @@ class TestViewerResolution:
 # ── GET /api/profile/username/check ────────────────────────────────────────
 
 class TestCheckUsername:
+    """The endpoint requires a session (testathon hardening): it used to be an
+    anonymous oracle over the username space, and its `user_id` query param
+    confirmed the user_id -> username mapping to anyone who asked. "self" is
+    now decided by the SESSION, and the param is ignored."""
+
     def test_available_when_no_existing_row(self):
-        with patch_profile_table() as t:
+        with _mock_session_user(), patch_profile_table() as t:
             t.return_value.select.return_value = []
             r = client.get("/api/profile/username/check?username=freshname")
         assert r.status_code == 200
@@ -746,7 +807,7 @@ class TestCheckUsername:
 
     def test_taken_when_different_user_holds_it(self):
         # username lives on user_profiles now (keyed by user_id).
-        with patch_profile_table() as t:
+        with _mock_session_user(), patch_profile_table() as t:
             t.return_value.select.return_value = [{"user_id": "other_user"}]
             r = client.get("/api/profile/username/check?username=taken")
         assert r.status_code == 200
@@ -755,21 +816,44 @@ class TestCheckUsername:
         assert body["reason"] == "taken"
 
     def test_available_when_held_by_self(self):
-        with patch_profile_table() as t:
+        with _mock_session_user(), patch_profile_table() as t:
             t.return_value.select.return_value = [{"user_id": USER_ID}]
-            r = client.get(f"/api/profile/username/check?username=mine&user_id={USER_ID}")
+            r = client.get("/api/profile/username/check?username=mine")
         assert r.status_code == 200
         body = r.json()
         assert body["available"] is True
         assert body["reason"] == "self"
 
+    def test_anonymous_caller_is_refused(self):
+        """No session -> 401, so the oracle is not open to the internet."""
+        with patch("routes.profile.get_session_user_id",
+                   side_effect=HTTPException(status_code=401, detail="Not authenticated")),              patch_profile_table() as t:
+            t.return_value.select.return_value = []
+            r = client.get("/api/profile/username/check?username=freshname")
+        assert r.status_code == 401
+
+    def test_user_id_param_cannot_claim_someone_elses_name(self):
+        """The identity oracle: passing the OWNER's id as `user_id` must not
+        turn "taken" into "self" — that confirmed who owned a username."""
+        with _mock_session_user(), patch_profile_table() as t:
+            t.return_value.select.return_value = [{"user_id": "other_user"}]
+            r = client.get(
+                "/api/profile/username/check?username=taken&user_id=other_user"
+            )
+        assert r.status_code == 200
+        body = r.json()
+        assert body["available"] is False
+        assert body["reason"] == "taken"
+
     def test_invalid_format_short(self):
-        r = client.get("/api/profile/username/check?username=ab")
+        with _mock_session_user():
+            r = client.get("/api/profile/username/check?username=ab")
         assert r.status_code == 200
         assert r.json() == {"available": False, "reason": "invalid"}
 
     def test_invalid_format_special_chars(self):
-        r = client.get("/api/profile/username/check?username=bad-name!")
+        with _mock_session_user():
+            r = client.get("/api/profile/username/check?username=bad-name!")
         assert r.status_code == 200
         assert r.json() == {"available": False, "reason": "invalid"}
 

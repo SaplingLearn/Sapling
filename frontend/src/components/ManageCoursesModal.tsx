@@ -16,6 +16,7 @@ import {
 } from "@/lib/api";
 import { useActiveSemester, distinctTerms, courseInTerm } from "@/lib/useActiveSemester";
 import { useLatestRequest } from "@/lib/useLatestRequest";
+import { humanizeError } from "@/lib/errorMessage";
 
 const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 
@@ -109,7 +110,7 @@ export function ManageCoursesModal({ open, userId, courses, onClose, onChanged }
       }
       await onChanged();
     } catch (err) {
-      toast.error(`Failed to add course: ${String(err)}`);
+      toast.error(humanizeError(err, "Couldn't add that course. Try again."));
     } finally {
       setAddingId(null);
     }
@@ -307,7 +308,7 @@ function EnrolledRow({
       setDirty(false);
       await onChanged();
     } catch (err) {
-      toast.error(`Failed: ${String(err)}`);
+      toast.error(humanizeError(err, "Couldn't save that change. Try again."));
     }
   };
 
@@ -317,7 +318,7 @@ function EnrolledRow({
       toast.success(`Removed ${course.course_code || course.course_name}`);
       await onChanged();
     } catch (err) {
-      toast.error(`Failed: ${String(err)}`);
+      toast.error(humanizeError(err, "Couldn't save that change. Try again."));
     }
   };
 

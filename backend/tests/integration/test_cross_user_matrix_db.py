@@ -454,6 +454,30 @@ def test_note_move_refuses_a_course_the_caller_is_not_enrolled_in(mode, matrix_w
 
 
 @pytest.mark.parametrize("mode", m.MODES)
+def test_graph_node_refuses_a_course_the_caller_is_not_enrolled_in(mode, matrix_world, db_conn, b_client):
+    """#115: POST /api/graph/{user_id}/nodes is a course-keyed write, so it
+    passes the same enrollment gate as notes and documents. The matrix's own
+    case for this route probes anchor_node_id (in B's own course, a 200); this
+    probe isolates the gate: B's own user id, A's A-only course -> 404, and no
+    graph node is written for B in that course."""
+    course = matrix_world["course_id"]
+    concept = "matrix-probe-not-enrolled"
+    probe = m.Case(
+        "probe", "POST", "/api/graph/{user_id}/nodes", f"/api/graph/{m.USER_B}/nodes",
+        json={"concept_name": concept, "course_id": course},
+        has_json=True, expect=(404,), probed=("course_id",),
+        note="B wrote a graph node into A's course",
+    )
+    _report(_run(b_client, db_conn, [probe], mode), f"graph-node probe [{mode}]")
+    row = db_conn.execute(
+        "SELECT count(*) AS n FROM graph_nodes WHERE user_id = %(u)s AND course_id = %(c)s "
+        "AND concept_name = %(n)s",
+        {"u": m.USER_B, "c": course, "n": concept},
+    ).fetchone()
+    assert row["n"] == 0, "a graph node was written for B in a course B is not enrolled in"
+
+
+@pytest.mark.parametrize("mode", m.MODES)
 def test_roles_need_a_session_and_deleted_profiles_are_gone(mode, db_conn, seeded_user, b_client):
     """#115, outside the B-as-caller groups: who is an admin is not an
     anonymous read (the /roles route, the public profile's roles, and its

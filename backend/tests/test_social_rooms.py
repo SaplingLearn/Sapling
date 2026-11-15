@@ -126,3 +126,85 @@ class TestPublicRooms:
         with patch_social("table", side_effect=factory):
             r = client.post("/api/social/public-rooms/r-nope/join", json={"user_id": "u2"})
         assert r.status_code == 404
+
+
+class TestMemberCountsAreBatched:
+    """Both listings used to run one `room_members` query PER ROOM, in series.
+    The public listing is the worse of the two — it reads every public room in
+    the app with no limit, so the query count grew with the product."""
+
+    def _rooms(self, n):
+        return [{"id": f"r{i}", "name": f"Room {i}", "topic": None, "course": None,
+                 "owner_id": "u1", "created_by": "u1", "created_at": "x",
+                 "updated_at": "x", "is_public": True} for i in range(n)]
+
+    def _run_public(self, n):
+        from unittest.mock import MagicMock, patch
+
+        from services.social import rooms as mod
+
+        rooms_tbl = MagicMock()
+        rooms_tbl.select.return_value = self._rooms(n)
+        members_tbl = MagicMock()
+        # Two members in r0, one in r1, none elsewhere.
+        members_tbl.select.return_value = [
+            {"room_id": "r0"}, {"room_id": "r0"}, {"room_id": "r1"},
+        ]
+        with patch.object(mod, "table",
+                          side_effect=lambda name: rooms_tbl if name == "rooms" else members_tbl):
+            out = mod.list_public_rooms("u1")
+        return out, members_tbl
+
+    def test_one_query_for_the_whole_listing(self):
+        out, members_tbl = self._run_public(30)
+        assert members_tbl.select.call_count == 1, "should batch, not query per room"
+        by_id = {r["id"]: r["member_count"] for r in out["rooms"]}
+        assert by_id["r0"] == 2
+        assert by_id["r1"] == 1
+        assert by_id["r2"] == 0
+
+    def test_chunks_rather_than_one_huge_in_filter(self):
+        _, members_tbl = self._run_public(120)
+        assert members_tbl.select.call_count == 3  # 120 / _IN_CHUNK(50)
+        for call in members_tbl.select.call_args_list:
+            ids = call.kwargs["filters"]["room_id"]
+            assert ids.startswith("in.(")
+            assert len(ids.split(",")) <= 50
+
+    def test_no_rooms_means_no_member_query(self):
+        _, members_tbl = self._run_public(0)
+        assert members_tbl.select.call_count == 0
+
+    def test_invite_code_is_still_never_in_the_public_payload(self):
+        """The batching rewrote this projection; it must stay explicit."""
+        out, _ = self._run_public(3)
+        for room in out["rooms"]:
+            assert "invite_code" not in room
+
+
+class TestPublicRoomDiscoveryIsBoundedAndOrdered:
+    """The discovery read had no limit and no ORDER BY: it pulled every public
+    room in the app for every student who opened Social, and returned them in
+    whatever order Postgres felt like — so the list reshuffled between loads."""
+
+    def _call(self):
+        from unittest.mock import MagicMock, patch
+
+        from services.social import rooms as mod
+
+        rooms_tbl = MagicMock()
+        rooms_tbl.select.return_value = []
+        members_tbl = MagicMock()
+        members_tbl.select.return_value = []
+        with patch.object(mod, "table",
+                          side_effect=lambda name: rooms_tbl if name == "rooms" else members_tbl):
+            mod.list_public_rooms("u1")
+        return rooms_tbl.select.call_args
+
+    def test_read_is_bounded(self):
+        from services.social.rooms import PUBLIC_ROOMS_MAX
+
+        assert self._call().kwargs["limit"] == PUBLIC_ROOMS_MAX
+
+    def test_read_is_newest_first(self):
+        assert self._call().kwargs["order"] == "created_at.desc"

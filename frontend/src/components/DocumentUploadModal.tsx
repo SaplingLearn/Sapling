@@ -17,6 +17,7 @@ import {
   type UploadEvent,
   type UploadResultData,
 } from "@/lib/api";
+import { humanizeError } from "@/lib/errorMessage";
 
 const MAX_FILES = 5;
 const MAX_SIZE = 100 * 1024 * 1024;
@@ -299,7 +300,7 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
         await updateDocumentCategory(item.docId, userId, next);
         toast.success("Category updated");
       } catch (err) {
-        toast.error(`Failed: ${String(err)}`);
+        toast.error(humanizeError(err, "Couldn't upload that file. Try again."));
       }
     }
   };
@@ -318,7 +319,7 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
         ? prev
         : [...prev, { course_id: courseId, course_code: course.course_code, course_name: course.course_name }]);
     } catch (err) {
-      toast.error(`Failed: ${String(err)}`);
+      toast.error(humanizeError(err, "Couldn't upload that file. Try again."));
     } finally {
       setAddingCourse(false);
     }
