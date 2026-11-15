@@ -800,7 +800,7 @@ def test_a_graph_concept_topic_makes_its_cards_with_the_card_beside_them(flag, s
     assert body["crisis_support"] == crisis_support.client_payload(crisis_copy.DEFAULT_CAMPUS_COUNSELING)
     assert body["crisis_support_alongside"] is True
     concept_generate["generate"].assert_called_once()
-    concept_generate["names"].assert_called_once_with("u1", "c1")  # the student's own, in this course
+    concept_generate["names"].assert_called_once_with("u1", "c1", "feeling suicidal")  # the student's own, in this course
     assert [row["payload"]["surface"] for row in _crisis_rows(sink)] == ["flashcard_generate"]
 
 
@@ -846,18 +846,64 @@ def test_the_graph_concept_read_is_the_students_own(monkeypatch):
     calls = []
 
     class _Nodes:
-        def select(self, cols, filters):
-            calls.append((cols, filters))
-            return [{"concept_name": "Feeling Suicidal"}]
+        def select(self, cols, filters, limit=None):
+            calls.append((cols, filters, limit))
+            return [{"concept_name": "Feeling Suicidal"}, {"concept_name": "Feeling very suicidal"}]
 
     monkeypatch.setattr(concept_topic, "table", lambda name: _Nodes())
-    assert concept_topic.topic_is_graph_concept("u1", "feeling suicidal", "c1") is True
+    assert concept_topic.topic_is_graph_concept("u1", "feeling  suicidal", "c1") is True
     assert concept_topic.topic_is_graph_concept("u1", "suicidal", None) is False
     assert concept_topic.topic_is_graph_concept("u1", "   ", None) is False
+    # Filtered server-side to the candidate name (case-insensitive, any run
+    # of spacing between its words), bounded, and confirmed in Python.
     assert calls == [
-        ("concept_name", {"user_id": "eq.u1", "course_id": "eq.c1"}),
-        ("concept_name", {"user_id": "eq.u1"}),
+        ("concept_name", {"user_id": "eq.u1", "course_id": "eq.c1",
+                          "or": '(concept_name.ilike."feeling%suicidal")'}, concept_topic._CANDIDATE_LIMIT),
+        ("concept_name", {"user_id": "eq.u1", "or": '(concept_name.ilike."suicidal")'},
+         concept_topic._CANDIDATE_LIMIT),
     ]
+
+
+def test_the_graph_concept_pattern_matches_a_like_metacharacter_verbatim(monkeypatch):
+    from services.flashcards import concept_topic
+
+    seen = []
+
+    class _Nodes:
+        def select(self, cols, filters, limit=None):
+            seen.append(filters["or"])
+            return [{"concept_name": "100% over it"}]
+
+    monkeypatch.setattr(concept_topic, "table", lambda name: _Nodes())
+    assert concept_topic.topic_is_graph_concept("u1", "100% over_it", None) is False
+    assert seen == ['(concept_name.ilike."100\\\\%%over\\\\_it")']
+
+
+def test_a_graph_concept_past_postgrests_row_cap_is_still_found(monkeypatch):
+    """A student with more nodes than PostgREST's max-rows (1000): an
+    unfiltered read would drop the matching node; the name filter finds it."""
+    import re
+
+    from services.flashcards import concept_topic
+
+    nodes = [f"Concept {i}" for i in range(1500)] + ["Feeling suicidal"]
+
+    def _ilike(pattern: str, value: str) -> bool:
+        rx = "".join(".*" if c == "%" else re.escape(c) for c in pattern)
+        return re.fullmatch(rx, value, flags=re.IGNORECASE) is not None
+
+    class _CappedNodes:
+        def select(self, cols, filters, limit=None):
+            rows = nodes
+            tree = filters.get("or")
+            if tree:
+                m = re.fullmatch(r'\(concept_name\.ilike\."(.*)"\)', tree)
+                rows = [n for n in rows if _ilike(m.group(1), n)]
+            cap = min(1000, limit or 1000)
+            return [{"concept_name": n} for n in rows[:cap]]
+
+    monkeypatch.setattr(concept_topic, "table", lambda name: _CappedNodes())
+    assert concept_topic.topic_is_graph_concept("u1", "FEELING suicidal", None) is True
 
 
 # ── Send to tutor's topic: the note's title, not something typed ───────────

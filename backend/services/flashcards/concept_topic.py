@@ -17,17 +17,36 @@ from __future__ import annotations
 
 import logging
 
-from db.connection import table
+from db.connection import like_literal, pg_quote_value, table
 from services.flashcards.context import _normalized
 
 logger = logging.getLogger(__name__)
 
+#: How many candidate rows one lookup reads. The name filter leaves only
+#: spellings of one name (case twins, stray spacing between its words), so
+#: this is generous; it exists so the read can never reach PostgREST's
+#: max-rows cap and drop the matching node the way an unfiltered read of a
+#: large graph could.
+_CANDIDATE_LIMIT = 50
 
-def _graph_concept_names(user_id: str, course_id: str | None) -> list[str]:
+
+def _name_pattern(key: str) -> str:
+    """An ``ilike`` pattern for a normalized name: each word verbatim (LIKE's
+    metacharacters escaped), any run of characters between words, so a stored
+    "Feeling  Suicidal" is a candidate for "feeling suicidal". A superset of
+    the real match (PostgREST also turns ``*`` into a wildcard), which the
+    caller narrows in Python."""
+    return "%".join(like_literal(word) for word in key.split(" "))
+
+
+def _graph_concept_names(user_id: str, course_id: str | None, key: str) -> list[str]:
+    """The student's concept names that may equal the normalized `key`,
+    filtered server-side and bounded."""
     filters = {"user_id": f"eq.{user_id}"}
     if course_id:
         filters["course_id"] = f"eq.{course_id}"
-    rows = table("graph_nodes").select("concept_name", filters=filters) or []
+    filters["or"] = f"(concept_name.ilike.{pg_quote_value(_name_pattern(key))})"
+    rows = table("graph_nodes").select("concept_name", filters=filters, limit=_CANDIDATE_LIMIT) or []
     return [r.get("concept_name") or "" for r in rows if isinstance(r, dict)]
 
 
@@ -41,7 +60,7 @@ def topic_is_graph_concept(user_id: str, topic: str, course_id: str | None) -> b
     if not key:
         return False
     try:
-        names = _graph_concept_names(user_id, course_id)
+        names = _graph_concept_names(user_id, course_id, key)
     except Exception:  # noqa: BLE001 — a failed read means "not shown to be a concept"
         logger.warning("crisis support: a flashcard topic's concepts could not be read; it is screened as typed")
         return False
