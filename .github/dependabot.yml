@@ -1,0 +1,99 @@
+# Dependabot version updates: weekly, minor + patch grouped into one PR per
+# ecosystem, majors one PR each. Security updates (Dependabot alerts) are
+# separate and must be switched on in the repository settings.
+#
+# BACKEND (pip) — READ BEFORE MERGING A PIP PR. backend/requirements.lock is
+# compiled by uv from backend/requirements.txt (the command is in its header).
+# Dependabot does not run uv: it edits requirements.txt and the lock as two
+# plain requirement files, bumping each pin and its hashes in place without
+# re-resolving. CI cannot pass a stale pair silently:
+#   - tests/test_docker_lock_install.py::test_lock_pins_satisfy_requirements_txt
+#     fails when a requirements.txt pin and the lock disagree;
+#   - `pip install --require-hashes -r requirements.lock` (CI, E2E, Docker)
+#     fails when a bumped package needs a dependency the lock lacks (no hash)
+#     or a version another pin excludes (resolver conflict).
+# Either way, and before merging ANY pip PR, re-lock on the PR branch so the
+# lock is uv's resolution again, then push:
+#   cd backend
+#   uv pip compile requirements.txt -o requirements.lock --generate-hashes \
+#     --universal --python-version 3.13 -P <package> [-P <package> ...]
+# (-P only for the packages the PR bumps; everything else keeps its pin.)
+#
+# FRONTEND (npm): frontend/.npmrc pins npm 10.9.x because Cloudflare's
+# builder runs `npm ci` on it. ci.yml runs `npm ci` on npm 10.9.2 too, so a
+# Dependabot package-lock.json that npm 10.9 rejects fails CI; regenerate it
+# on the PR branch with npm 10.9.2 (`npm install -g npm@10.9.2`), never newer.
+
+version: 2
+
+updates:
+  - package-ecosystem: pip
+    directory: /backend
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    labels: [dependencies, backend]
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      backend-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    labels: [dependencies, frontend]
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      frontend-minor-patch:
+        update-types: [minor, patch]
+
+  # Workflows pin every action to a commit SHA with a `# vX.Y.Z` comment;
+  # Dependabot moves both together.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 3
+    labels: [dependencies, ci]
+    commit-message:
+      prefix: "ci(deps)"
+    groups:
+      actions-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: docker
+    directories: [/backend, /frontend]
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 2
+    labels: [dependencies, infrastructure]
+    commit-message:
+      prefix: "build(deps)"
+    groups:
+      docker-minor-patch:
+        update-types: [minor, patch]
+    ignore:
+      # The backend image's Python is tied to requirements.lock's
+      # --python-version and ci.yml (test_image_python_matches_the_lock_and_ci):
+      # moving it is a re-lock, done by hand, never a tag bump.
+      - dependency-name: python
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      # Node majors follow Cloudflare Workers Builds' runtime (frontend/.npmrc).
+      - dependency-name: node
+        update-types: ["version-update:semver-major"]

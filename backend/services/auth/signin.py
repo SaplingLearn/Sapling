@@ -28,6 +28,16 @@ def _email_domain_allowed(email: str) -> bool:
     return domain in ALLOWED_EMAIL_DOMAINS
 
 
+def _email_verified(user_info: dict) -> bool:
+    """Whether Google vouches that the account owns its email address.
+
+    The domain allowlist, the waitlist and the account lookup all key on the
+    email, so an unverified one (a Google account created with an address its
+    owner never proved) must not sign in. Only an explicit JSON `true` counts:
+    a missing or non-boolean `verified_email` is refused."""
+    return user_info.get("verified_email") is True
+
+
 def fetch_google_userinfo(access_token: str) -> dict | None:
     """Google's userinfo for the signed-in account, or None on any failure."""
     # Fetch user info from Google. Uses httpx (the codebase's sanctioned HTTP
@@ -47,6 +57,22 @@ def fetch_google_userinfo(access_token: str) -> dict | None:
     if not isinstance(user_info, dict):
         return None
     return user_info
+
+
+def _reopen_purged_stub(user_id: str) -> dict:
+    """Extra columns for a new account whose deterministic id is held by the
+    anonymised stub a 30-day purge left (services/account_purge.py): the
+    returning person starts a fresh account on it. Empty otherwise — a soft
+    deleted account that is NOT yet purged still has its google_id and was
+    refused above, and is never reopened here."""
+    rows = table("users").select(
+        "purged_at", filters={"id": f"eq.{user_id}", "purged_at": "not.is.null"},
+    )
+    if not (isinstance(rows, list) and rows and isinstance(rows[0], dict) and rows[0].get("purged_at")):
+        return {}
+    logger.info("new sign-up reopens a purged account stub")
+    return {"deleted_at": None, "purged_at": None, "purge_claimed_at": None,
+            "onboarding_completed": False}
 
 
 @dataclass(frozen=True)
@@ -175,6 +201,11 @@ def record_google_sign_in(
     # #756: a deleted account stays deleted. Refused before anything is written
     # (sign-in time, profile, OAuth tokens, waitlist) — there is no silent
     # un-delete, and the guard would 401 a session minted for it anyway.
+    # Owner decision 2026-11-14: such an account is pending deletion — its
+    # personal data is purged 30 days after the delete (services/
+    # account_purge.py), and the sign-in page says so. There is no restore
+    # by signing in. After the purge the row is a stub with no google_id, so
+    # this lookup no longer finds it and the person is a new sign-up below.
     if existing and existing[0].get("deleted_at"):
         logger.info("sign-in refused for deleted account %s", existing[0]["id"])
         return SignInResult("account_deleted")
@@ -226,6 +257,7 @@ def record_google_sign_in(
             "auth_provider": "google",
             "is_approved": is_approved,
             "last_sign_in_at": _dt.now(_tz.utc).isoformat(),
+            **_reopen_purged_stub(user_id),
         }, on_conflict="id")
         # Same hazard: user_profiles.user_id is the PK (0024), and a stub that
         # reached onboarding already has a row here (onboarding.py upserts it),

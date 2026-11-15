@@ -209,6 +209,54 @@ REGISTRY: dict[str, FlagDef] = {f.key: f for f in (
             "Keep not-yet-started tutor sessions in Postgres so every replica "
             "can continue, end or delete them. Global: per-user rules and "
             "rollouts do not apply.", False),
+    # Hourly ops alert emails to admins (services/spend_alerts.py): today's AI
+    # spend over budget, per-student spend outliers, and spikes in
+    # auth.permission_denied / error.5xx. Resolved GLOBALLY (user_id=None).
+    # Seeded "on" by 20261114192656_spend_alerts_flag.sql; switching it off
+    # (or SAPLING_FLAG_SPEND_ALERTS=off) is the kill switch. Server-only.
+    FlagDef("spend_alerts", ("off", "on"),
+            "Email admins (at most once a day per alert) when today's AI spend "
+            "or one student's spend passes its threshold, or permission-denied "
+            "/ 5xx events spike. Global: per-user rules and rollouts do not "
+            "apply.", False),
+    # Owner decision 2026-11-14: the daily job that hard-deletes the personal
+    # data of an account its student deleted more than 30 days ago
+    # (services/account_purge_sweeper.py -> services/account_purge.py).
+    # Resolved GLOBALLY (user_id=None) at the start of every pass, so turning
+    # it off stops the next pass without a restart. Off = deleted accounts
+    # stay hidden soft deletes (credentials are still removed at the delete
+    # itself, and the daily pass still removes any a failed delete left).
+    # Server-only. Kill switch: SAPLING_FLAG_ACCOUNT_PURGE=off.
+    FlagDef("account_purge", ("off", "on"),
+            "Daily job: permanently erase the personal data of accounts their "
+            "student deleted more than 30 days ago. Irreversible. Global: "
+            "per-user rules and rollouts do not apply.", False),
+    # The daily pass's leftover-credential sweep
+    # (services/account_purge_sweeper.py::sweep_leftover_credentials): deletes
+    # the OAuth / Gradescope credential rows a soft-deleted account still
+    # holds and revokes its Google tokens. Independent of account_purge (the
+    # credentials were due at the delete itself). Resolved GLOBALLY at the
+    # start of every sweep. Seeded "on" by
+    # 20261115005314_credential_sweep_flag.sql; switching it off (or
+    # SAPLING_FLAG_CREDENTIAL_SWEEP=off) is the kill switch. Server-only.
+    FlagDef("credential_sweep", ("off", "on"),
+            "Daily job: remove (and revoke at Google) the credentials a deleted "
+            "account still holds after its delete could not remove them. "
+            "Global: per-user rules and rollouts do not apply.", False),
+    # docs/safety/crisis-support.md: the crisis-support path. On: a student
+    # message that states suicidal ideation, self-harm or acute danger gets
+    # the fixed resources card INSTEAD of a model turn, on every surface
+    # services/crisis_support.py lists. Server-only: the client renders the
+    # card whenever a response carries one. SHIPS OFF until the owner has
+    # reviewed the copy (services/crisis_support_copy.py).
+    FlagDef("crisis_support", ("off", "on"),
+            "Crisis-support path: a student message stating suicidal ideation, "
+            "self-harm or acute danger gets a fixed card with crisis resources "
+            "(988, Crisis Text Line, campus counseling, 911) instead of a model "
+            "turn, on every tutor, notes and flashcard AI surface. Keep OFF "
+            "until the owner has reviewed the copy in "
+            "services/crisis_support_copy.py (checklist: "
+            "docs/safety/crisis-support.md).", False),
 )}
 
 STEPS = ("env_override", "fail_closed", "user", "role", "rollout", "default")

@@ -4,6 +4,7 @@ import { Suspense, useEffect } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { useUser } from '@/context/UserContext';
 import { API_URL } from '@/lib/api';
+import { takePostSignInPath } from '@/lib/reauth';
 import { postSignInRoute } from '@/lib/localSeed';
 import { stashPendingToken } from '@/lib/pendingToken';
 import { signInErrorMessage } from '@/components/marketing/signInErrors';
@@ -126,7 +127,7 @@ function CallbackInner() {
       const me = await fetchMe();
       if (!me) {
         try {
-          await fetch('/api/auth/session', { method: 'DELETE', credentials: 'include' });
+          await fetch('/api/auth/session?scope=local', { method: 'DELETE', credentials: 'include' });
         } catch {}
         fail('signin_failed');
         return;
@@ -151,7 +152,10 @@ function CallbackInner() {
       // #715: a new account on a local backend waits for its sample data;
       // anywhere else this is /onboarding, as before. (Popup mode returned
       // above: the opener's SignInModal makes the same call.)
-      router.replace(await postSignInRoute(onboardingCompleted));
+      // An admin re-signing in for the step-up window goes back to the admin
+      // page they left (lib/api.ts startReauth).
+      const resume = onboardingCompleted ? takePostSignInPath() : null;
+      router.replace(resume ?? (await postSignInRoute(onboardingCompleted)));
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

@@ -62,6 +62,7 @@ BUCKETS: dict[str, frozenset[str]] = {
         "app_leases",  # #117 wave 3 (stateless_locks)
         "tutor_pending_sessions",  # #117 stateless_tutor_sessions
         "legal_acceptances",  # onboarding: Terms / Privacy versions accepted
+        "email_alert_suppressions",  # #890 ops-alert unsubscribes
     }),
 }
 

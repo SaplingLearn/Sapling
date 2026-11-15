@@ -110,6 +110,7 @@ renders the element.
 | Study hub | none shared (see its inventory note) | `frontend/src/components/study/*.tsx` (the `/study` hub since #870: `ReadinessBand.tsx`, `RoadmapTile.tsx`, `DailyGoalCard.tsx`, `FocusCard.tsx`, `RecentActivity.tsx`, `StudyModal.tsx`), rendered by `screens/Study.tsx` through `study/StudyHub.tsx` |
 | Flashcards | `flashcards` (+ the shared `back-link`) | `frontend/src/components/screens/Flashcards.tsx` (the `/flashcards` page frame and header), `frontend/src/components/flashcards/home/*.tsx` (the home: hero figures, deck grid, mix bar; and the set builder: concept map, tray) and `frontend/src/components/flashcards/review/Review.tsx` (the flip-card review). The header's way back is `frontend/src/components/BackLink.tsx`, shared with the Quiz and Study Guide headers — added with #870 |
 | Achievements | `achievements` (see note below) | `frontend/src/components/screens/Achievements.tsx` (tab bar, showcase) + `frontend/src/components/screens/achievements/HeroCard.tsx` (level/XP hero) + `LeaderboardTab.tsx` + `ActivityTab.tsx` — the `/achievements` screen added across Tasks 13–14, testids added with the Task 17 E2E journey |
+| Crisis support | `crisis-support` | `frontend/src/components/safety/CrisisSupportCard.tsx` (the card shown instead of an AI result when the crisis screen fired, inline in a conversation or in its dialog — docs/safety/crisis-support.md) |
 
 Two surfaces do **not** carry their testids in the screen file named by the
 route:
@@ -952,6 +953,24 @@ button/input/textarea), just the two list cards and their rows.
 | `adminfb-feedback-row` | one feedback entry (repeated, no suffix — read-only list, no per-row action to select) |
 | `adminfb-issues-card` | issue-report list card root |
 | `adminfb-issue-row` | one issue report (repeated, no suffix) |
+
+### `crisis-support`
+
+The crisis-support card (docs/safety/crisis-support.md). Owner:
+`frontend/src/components/safety/CrisisSupportCard.tsx`. Inline it renders in
+a conversation (`tutor-messages`, the quiz's Ask panel, the notes chat); its
+dialog form is `role="dialog"`, labelled by the card's title, over a surface
+with no conversation (the tutor's start, a note action, a flashcard
+generator, the study guide's "ask the tutor"). All its text comes from the
+backend payload, so a journey asserts the payload's strings, never literals
+written in the spec.
+
+| testid | element |
+| --- | --- |
+| `crisis-support-card` | the card's root (`<section>`, labelled by its title) |
+| `crisis-support-resource-{id}` | one resource; `id` is the payload's (`lifeline_988`, `crisis_text_line`, `campus_counseling`, `emergency`, `international`) |
+| `crisis-support-action` | one tappable way to reach a resource (`tel:`, `sms:` or `https:` link; repeated) |
+| `crisis-support-dismiss` | "Back to studying": closes the dialog |
 
 ## Enforcement
 

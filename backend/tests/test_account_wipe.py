@@ -121,7 +121,8 @@ class FakeDB:
                 gone = hits(filters)
                 db.rows[name] = [r for r in db.rows.get(name, []) if r not in gone]
                 db._cascade(name, gone)
-                return []
+                # PostgREST's Prefer: return=representation (db/connection.py).
+                return [dict(r) for r in gone]
 
         return _T()
 
@@ -441,3 +442,68 @@ def test_every_seeded_table_is_wiped_and_copied():
     for name in set(INSERT_ORDER) - _SEEDER_NOT_ACCOUNT_DATA:
         assert name in wiped, f"seeder writes {name} but the wipe never removes it"
         assert name in copied, f"seeder writes {name} but the copy never moves it"
+
+
+# ── Schema guard: every per-user table is wiped or kept for a reason ────────
+
+_STATEMENT = re.compile(
+    r"CREATE TABLE(?: IF NOT EXISTS)?\s+(?:public\.)?\"?(?P<create>\w+)\"?\s*\((?P<body>.*?)\n\s*\);"
+    r"|DROP TABLE(?: IF EXISTS)?\s+(?P<drop>[\w.,\s\"]+?)(?:\s+CASCADE|\s+RESTRICT)?\s*;"
+    r"|ALTER TABLE(?: IF EXISTS)?(?: ONLY)?\s+(?:public\.)?\"?(?P<altered>\w+)\"?\s+(?P<alter>[^;]*);",
+    re.S | re.I,
+)
+
+
+def schema_user_id_columns() -> dict[str, bool]:
+    """table -> whether it has a `user_id` column, replaying the migrations in
+    order: CREATE TABLE (a later one supersedes), DROP TABLE, RENAME TO (how
+    user_courses became enrollments), ADD/DROP/RENAME COLUMN user_id.
+    Shared with tests/test_account_purge.py."""
+    tables: dict[str, bool] = {}
+    for path in sorted(_MIGRATIONS.glob("*.sql")):
+        sql = re.sub(r"--[^\n]*", "", path.read_text())
+        for m in _STATEMENT.finditer(sql):
+            if m.group("create"):
+                tables[m.group("create").lower()] = bool(
+                    re.search(r"(?:^|,)\s*user_id\s", m.group("body"), re.M)
+                )
+            elif m.group("drop") is not None:
+                for name in m.group("drop").split(","):
+                    tables.pop(name.strip().strip('"').removeprefix("public.").lower(), None)
+            else:
+                name, alter = m.group("altered").lower(), m.group("alter")
+                if name not in tables:
+                    continue
+                renamed = re.match(r"\s*RENAME TO\s+\"?(\w+)\"?\s*$", alter, re.I)
+                if renamed:
+                    tables[renamed.group(1).lower()] = tables.pop(name)
+                elif re.search(r"ADD COLUMN(?: IF NOT EXISTS)?\s+user_id\b"
+                               r"|RENAME COLUMN\s+\w+\s+TO\s+user_id\b", alter, re.I):
+                    tables[name] = True
+                elif re.search(r"DROP COLUMN(?: IF EXISTS)?\s+user_id\b"
+                               r"|RENAME COLUMN\s+user_id\s+TO\b", alter, re.I):
+                    tables[name] = False
+    return tables
+
+
+def test_the_schema_scan_sees_renames_and_drops():
+    tables = schema_user_id_columns()
+    assert tables["enrollments"] is True and "user_courses" not in tables  # 0020 rename
+    assert "course_categories" not in tables  # dropped in 0021
+    assert tables["feedback"] is True  # dropped and recreated in 0026
+    assert tables["users"] is False
+
+
+def test_every_table_with_a_user_id_is_wiped_or_kept_for_a_stated_reason():
+    user_tables = {t for t, has in schema_user_id_columns().items() if has}
+    assert len(user_tables) > 25, "the migration scan found too few user_id tables"
+    unaccounted = sorted(user_tables - aw.wiped_tables() - set(aw.KEPT_PER_USER))
+    assert not unaccounted, (
+        f"tables with a user_id that the account wipe neither deletes nor keeps for "
+        f"a stated reason: {unaccounted}. Wipe them (services/account_wipe.py) or add "
+        "them to KEPT_PER_USER with the reason."
+    )
+    assert not set(aw.KEPT_PER_USER) & aw.wiped_tables()
+    stale = sorted(set(aw.KEPT_PER_USER) - user_tables)
+    assert not stale, f"KEPT_PER_USER names tables with no user_id column: {stale}"
+    assert all(reason.strip() for reason in aw.KEPT_PER_USER.values())

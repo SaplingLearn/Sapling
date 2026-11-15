@@ -47,6 +47,7 @@ export const USER_SCOPED_LOCAL_PREFIXES = [
 export const USER_SCOPED_SESSION_KEYS = [
   'sapling_last_session_context', // Learn.tsx → SessionFeedbackGlobal.tsx
   'sapling_pending_token', // lib/pendingToken.ts
+  'sapling_crisis_card_shown_note', // lib/crisisSupport.ts (Send to tutor → Learn)
 ] as const;
 
 /** sessionStorage key prefixes (one key per course). */

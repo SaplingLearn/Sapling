@@ -86,6 +86,7 @@ def _deny(request):
 ])
 def test_every_endpoint_is_admin_only(state, monkeypatch, method, path, body):
     monkeypatch.setattr(admin_accounts, "require_admin", _deny)
+    monkeypatch.setattr(admin_accounts, "require_admin_recent", _deny)  # seed / wipe
     kw = {"json": body} if body is not None else {}
     assert getattr(state.client, method)(path, **kw).status_code == 403
     assert state.seeds == [] and state.wipes == [] and state.audits == []

@@ -17,6 +17,8 @@ from agents.usage import record_agent_usage
 from models import ActionBody, ChatBody, StartSessionBody
 from services import events_service
 from services.auth_guard import guard_off_loop, require_self
+from services import abuse_limits
+from services.request_limits import aenforce_abuse_limit
 from services.chat_stream import merge_graph_updates
 from services.graph_service import get_graph
 from services.request_context import current_request_id
@@ -224,6 +226,7 @@ async def _start_session_agent(
 
 async def start_session(body: StartSessionBody, request: Request):
     await guard_off_loop(require_self, body.user_id, request)
+    await aenforce_abuse_limit(abuse_limits.TUTOR_SESSION_START, body.user_id)
     result = await _agent_turn_or_http_error(
         _start_session_agent(body), what="start-session agent"
     )
@@ -437,6 +440,7 @@ async def _chat_turn_json(
 
 async def chat(body: ChatBody, request: Request):
     await guard_off_loop(require_self, body.user_id, request)
+    await aenforce_abuse_limit(abuse_limits.TUTOR_TURN, body.user_id)
     await _open_turn_session(body.session_id, body.user_id)
     # #761: the client's fallback for a stream whose `done` it never saw. If
     # that turn already persisted, answer with it instead of running it again.
@@ -530,6 +534,7 @@ async def _action_turn(body: ActionBody, request: Request) -> dict:
 
 async def action(body: ActionBody, request: Request):
     await guard_off_loop(require_self, body.user_id, request)
+    await aenforce_abuse_limit(abuse_limits.TUTOR_TURN, body.user_id)
     await _open_turn_session(body.session_id, body.user_id)
     return await _agent_turn_or_http_error(
         _action_turn(body, request), what="action agent"

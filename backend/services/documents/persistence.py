@@ -18,6 +18,7 @@ from services.calendar_service import save_assignments_to_db
 from services.documents_read import decrypt_document_row
 from services.encryption import encrypt_if_present, encrypt_json
 from services.graph_service import apply_graph_update
+from services.share_screen import screen_for_sharing
 from services.xp_service import award_xp_safe
 
 logger = logging.getLogger(__name__)
@@ -93,6 +94,7 @@ _MISSING_COLUMN_MARKERS = ("PGRST204", "does not exist", "Could not find the")
 _DROPPABLE_COLUMNS = (
     "request_id", "shareability",
     "index_status", "index_attempts", "shareability_confidence",
+    "share_block_reason",
 )
 
 
@@ -195,6 +197,17 @@ def _persist_document(
         # as private — without it, recovering a correctly shared document
         # would silently privatise it.
         "shareability_confidence": _stored_confidence(result.classification),
+        # The deterministic share screen's verdict on the uploaded text
+        # (services/share_screen.py): NULL when nothing fired, else the rule
+        # that holds this document out of the class pool whatever the
+        # classifier answered. Stored so a re-index reproduces it; the indexer
+        # also re-screens, so dropping it below (column not migrated yet)
+        # still never shares a held document. No text here means nothing to
+        # screen yet: NULL, and the indexer screens whatever it indexes.
+        "share_block_reason": (
+            screen_for_sharing(extracted_text).reason
+            if extracted_text is not None else None
+        ),
         "extracted_text": encrypt_if_present(extracted_text),
         "index_status": "pending",
         "index_attempts": 0,

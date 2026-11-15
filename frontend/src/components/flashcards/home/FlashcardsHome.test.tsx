@@ -62,6 +62,7 @@ vi.mock("@/lib/flashcardSetsApi", async importOriginal => ({
   suggestFlashcardSet: vi.fn(),
 }));
 
+import crisisFixture from "@/test-utils/crisisSupport.json";
 import type { getGraph } from "@/lib/api";
 import type { FlashcardSetSuggestion } from "@/lib/flashcardSetsApi";
 import type { TopicChecklist } from "@/lib/topicChecklistApi";
@@ -483,6 +484,75 @@ describe("Flashcards home: decks", () => {
     await waitFor(() => expect(homeStatus()).toMatch(/No cards could be made for this selection/));
     expect(screen.queryByText(/Card 1 of/)).toBeNull();
     expect(screen.getByRole("button", { name: "Review Just sorting" })).toBeEnabled();
+  });
+
+  it("a generation the crisis screen answered shows the card, makes nothing more and starts nothing", async () => {
+    // docs/safety/crisis-support.md
+    mocks.generate.mockResolvedValue({ flashcards: [], reply: "the card as text", crisis_support: crisisFixture } as never);
+    mocks.sets.mockResolvedValue({ sets: [savedSet({ id: "s6", name: "Sorting and trees", concepts: ["Sorting", "Trees"], exam_id: null })] });
+    const user = await home();
+
+    await user.click(screen.getByRole("button", { name: "Review Sorting and trees" }));
+
+    expect(await screen.findByRole("dialog")).toHaveTextContent(crisisFixture.title);
+    expect(mocks.generate).toHaveBeenCalledTimes(1); // the run stopped at the card
+    expect(screen.queryByText(/Card 1 of/)).toBeNull();
+    expect(screen.queryByText(/No cards could be made/)).toBeNull();
+    await user.click(screen.getByTestId("crisis-support-dismiss"));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(screen.getByRole("button", { name: "Review Sorting and trees" })).toBeEnabled();
+  });
+
+  it("a concept whose name matched comes back with its cards and the card beside them: shown once, and the run goes on", async () => {
+    // docs/safety/crisis-support.md: a graph concept's name is course
+    // material, so the backend makes its cards and answers with the card
+    // alongside (crisis_support_alongside) instead of blocking the Start.
+    const sorting = [card("g1", "Sorting", { course_id: null })];
+    const trees = [card("g2", "Trees", { course_id: null })];
+    const beside = (made: unknown[]) =>
+      ({ flashcards: made, crisis_support: crisisFixture, crisis_support_alongside: true }) as never;
+    mocks.generate.mockResolvedValueOnce(beside(sorting)).mockResolvedValueOnce(beside(trees));
+    mocks.sets.mockResolvedValue({ sets: [savedSet({ id: "s6", name: "Sorting and trees", concepts: ["Sorting", "Trees"], exam_id: null })] });
+    const user = await home();
+    mocks.cards.mockResolvedValue({ flashcards: [...CARDS_NO_DUE, ...sorting, ...trees] });
+
+    await user.click(screen.getByRole("button", { name: "Review Sorting and trees" }));
+
+    expect(await screen.findByRole("dialog")).toHaveTextContent(crisisFixture.title);
+    await waitFor(() => expect(mocks.generate).toHaveBeenCalledTimes(2)); // the run went on past the card
+    expect(await screen.findByText("Card 1 of 2")).toBeTruthy(); // and the review started
+    expect(screen.getAllByTestId("crisis-support-card")).toHaveLength(1);
+    await user.click(screen.getByTestId("crisis-support-dismiss"));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull()); // shown once, not once per concept
+  });
+
+  it("a crisis answer for a later concept still brings in the cards already made for the earlier ones", async () => {
+    // docs/safety/crisis-support.md: Sorting's cards were generated and saved
+    // before the screen answered for Trees. They must reach the page (not be
+    // made again on the next Start).
+    const made = [card("g1", "Sorting", { course_id: null })];
+    mocks.generate
+      .mockResolvedValueOnce(generated(made))
+      .mockResolvedValueOnce({ flashcards: [], reply: "the card as text", crisis_support: crisisFixture } as never)
+      .mockResolvedValue(generated([]));
+    mocks.sets.mockResolvedValue({ sets: [savedSet({ id: "s6", name: "Sorting and trees", concepts: ["Sorting", "Trees"], exam_id: null })] });
+    const user = await home();
+    const readsBefore = mocks.cards.mock.calls.length;
+    mocks.cards.mockResolvedValue({ flashcards: [...CARDS_NO_DUE, ...made] });
+
+    await user.click(screen.getByRole("button", { name: "Review Sorting and trees" }));
+
+    expect(await screen.findByRole("dialog")).toHaveTextContent(crisisFixture.title);
+    expect(mocks.generate).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(mocks.cards).toHaveBeenCalledTimes(readsBefore + 1)); // the re-read
+    expect(screen.queryByText(/Card 1 of/)).toBeNull();
+    await user.click(screen.getByTestId("crisis-support-dismiss"));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+
+    // The next Start asks only for the concept that still has none.
+    await user.click(screen.getByRole("button", { name: "Review Sorting and trees" }));
+    await waitFor(() => expect(mocks.generate).toHaveBeenCalledTimes(3));
+    expect(mocks.generate.mock.calls[2][1]).toBe("Trees");
   });
 
   it("the deck's body, or Edit in its menu, opens the builder with the set loaded", async () => {

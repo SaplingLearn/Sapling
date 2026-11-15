@@ -226,6 +226,21 @@ def _encode_oauth_cookie(payload: dict) -> str:
     return payload_b64
 
 
+def clear_oauth_cookie(response, *, secure: bool):
+    """Expire the signed OAuth state cookie on `response` (every way a Google
+    callback ends: signed in, refused or failed). Returns `response`."""
+    response.set_cookie(
+        key=OAUTH_STATE_COOKIE,
+        value="",
+        max_age=0,
+        httponly=True,
+        secure=secure,
+        samesite="lax",
+        path="/",
+    )
+    return response
+
+
 def _decode_oauth_cookie(cookie_value: str | None) -> dict | None:
     if not cookie_value:
         return None

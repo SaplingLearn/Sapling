@@ -83,6 +83,7 @@ export function Flashcards({
         onImported={page.reloadCards}
       />
       <PageBody page={page} />
+      {page.crisisDialog}
     </div>
   );
 }

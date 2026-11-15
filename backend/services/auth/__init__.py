@@ -8,7 +8,7 @@ package's approve / revoke / unapprove writes read.
 ``services/auth_guard.py`` (the request guard) are CLAUDE.md chokepoints and
 stay where they are.
 """
-from services.auth.accounts import account_overview
+from services.auth.accounts import account_overview, revoke_sessions
 from services.auth.errors import AccountDeleted, AccountNotFound
 from services.auth.signin import (
     SignInResult,
@@ -27,6 +27,7 @@ __all__ = [
     "fetch_google_userinfo",
     "join_waitlist",
     "record_google_sign_in",
+    "revoke_sessions",
     "waitlist_entries",
     "welcome_and_achievements_after_sign_in",
 ]

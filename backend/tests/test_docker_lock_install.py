@@ -3,10 +3,11 @@
 CI installs requirements.lock with --require-hashes. The Dockerfile used to
 install the bare requirements.txt, so `genai-prices` 0.1.x floated into the
 deployed image while CI pinned 0.0.66, and every `llm_usage` row recorded 0
-tokens for two months (#689). The image now installs requirements.txt under
-constraints derived from the lock (scripts/lock_constraints.py). These tests
-keep that wiring from silently regressing. They read files only: no network,
-no docker.
+tokens for two months (#689). The image now installs requirements.lock with
+--require-hashes, as CI does, and the worker image's OCR stack on top of it
+under constraints derived from the lock (scripts/lock_constraints.py). These
+tests keep that wiring from silently regressing. They read files only: no
+network, no docker.
 """
 
 import json
@@ -214,9 +215,28 @@ def _is_cpu_torch_step(args: list[str]) -> bool:
     return "torch" in (_cpu_index_packages(args) or [])
 
 
+def _is_hashed_lock_install(args: list[str]) -> bool:
+    """`pip install --require-hashes -r requirements.lock` and nothing else.
+
+    No other requirement file, no named package and no other source: the lock
+    alone, every artifact checked against the sha256 it lists.
+    """
+    opts, packages = _parse_install(args)
+    return (
+        "--require-hashes" in opts
+        and opts.get("--requirement") == ["requirements.lock"]
+        and not packages
+        and not {"--index-url", "--extra-index-url", "--find-links", "--constraint"} & opts.keys()
+    )
+
+
 def _unconstrained_installs(text: str) -> list[list[str]]:
-    """Every pip install that runs outside the lock constraints, torch aside."""
-    return [a for a in _installs(text) if not _is_constrained(a) and not _is_cpu_torch_step(a)]
+    """Every pip install outside the lock (hashed or as constraints), torch aside."""
+    return [
+        a
+        for a in _installs(text)
+        if not _is_constrained(a) and not _is_cpu_torch_step(a) and not _is_hashed_lock_install(a)
+    ]
 
 
 def _positions(commands: list[list[str]], predicate) -> list[int]:
@@ -265,11 +285,34 @@ def _torch_stage() -> str:
 # --- Dockerfile wiring -------------------------------------------------------
 
 
-def test_every_install_but_the_cpu_torch_step_is_under_the_lock_constraints():
+def test_every_install_but_the_cpu_torch_step_is_under_the_lock():
     assert _unconstrained_installs(_DOCKERFILE) == []
-    reqs = [a for a in _installs(_DOCKERFILE) if "requirements.txt" in a]
-    assert reqs, "the Dockerfile no longer installs requirements.txt"
-    assert all(_is_constrained(a) for a in reqs)
+
+
+def test_every_installing_stage_installs_the_lock_with_hashes_first():
+    """The API's whole set comes from requirements.lock with --require-hashes,
+    as in CI, before anything else that resolves dependencies (the CPU torch
+    step is --no-deps and resolves nothing). requirements.txt is never
+    installed directly: it is the lock's input, not an install plan."""
+    assert all("requirements.txt" not in a for a in _installs(_DOCKERFILE))
+    installing = [t for t in _STAGES.values() if _installs(t)]
+    assert len(installing) >= 2, "the api and heavy stages both install"
+    for text in installing:
+        installs = [a for a in _installs(text) if not _is_cpu_torch_step(a)]
+        assert installs and _is_hashed_lock_install(installs[0]), installs
+
+
+def test_hashed_lock_install_reader():
+    assert _is_hashed_lock_install(["--no-cache-dir", "--require-hashes", "-r", "requirements.lock"])
+    assert not _is_hashed_lock_install(["-r", "requirements.lock"])
+    assert not _is_hashed_lock_install(["--require-hashes", "-r", "requirements.txt"])
+    assert not _is_hashed_lock_install(
+        ["--require-hashes", "-r", "requirements.lock", "-r", "requirements-worker.txt"]
+    )
+    assert not _is_hashed_lock_install(["--require-hashes", "-r", "requirements.lock", "foo"])
+    assert not _is_hashed_lock_install(
+        ["--require-hashes", "-r", "requirements.lock", "--extra-index-url", "https://x"]
+    )
 
 
 def test_torch_is_installed_once_from_the_cpu_index():
@@ -418,12 +461,11 @@ def test_an_unknown_image_target_fails_the_build_with_a_clear_message():
 
 def test_the_api_image_has_no_torch_ocr_or_chromium():
     """docs/architecture-hardening-plan.md phase 2: "API image has no
-    torch/Chromium". The api stage installs requirements.txt under the lock
-    and nothing else."""
+    torch/Chromium". The api stage installs the hashed lock and nothing else."""
     api = _STAGES["api"]
     assert re.match(r"FROM python:", api), "the api stage must not build on heavy"
     installs = _installs(api)
-    assert installs and all(_is_constrained(a) for a in installs)
+    assert installs and all(_is_hashed_lock_install(a) for a in installs)
     assert not any(_is_cpu_torch_step(a) for a in installs)
     assert all("requirements-worker.txt" not in a for a in installs)
     assert "playwright install" not in api
@@ -434,8 +476,7 @@ def test_the_api_image_has_no_torch_ocr_or_chromium():
 def test_the_heavy_image_installs_the_worker_extras_under_the_lock():
     heavy = _STAGES["heavy"]
     worker_installs = [a for a in _installs(heavy) if "requirements-worker.txt" in a]
-    assert worker_installs and all(_is_constrained(a) and "requirements.txt" in a
-                                   for a in worker_installs)
+    assert worker_installs and all(_is_constrained(a) for a in worker_installs)
     assert "playwright install --with-deps chromium" in re.sub(r"\\\n\s*", "", heavy)
 
 

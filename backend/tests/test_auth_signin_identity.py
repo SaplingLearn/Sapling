@@ -101,6 +101,7 @@ def signin(monkeypatch):
         userinfo.raise_for_status.return_value = None
         userinfo.json.return_value = {
             "id": GOOGLE_ID, "email": "ada@bu.edu", "name": name, "picture": picture,
+            "verified_email": True,  # #890: an unverified email is refused
         }
         monkeypatch.setattr(httpx, "get", lambda *a, **k: userinfo)
 

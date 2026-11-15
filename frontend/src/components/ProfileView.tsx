@@ -13,7 +13,7 @@ import {
 import { humanizeError } from "@/lib/errorMessage";
 import type { UserAchievement, UserProfile } from "@/lib/types";
 import {
-  hasStatsStrip, heroBackground, isPrivateProfile, prettyUrl, sortRolesByPriority, studiesOf,
+  hasStatsStrip, heroBackground, isPrivateProfile, prettyUrl, safeWebsiteHref, sortRolesByPriority, studiesOf,
   type StudyGroup,
 } from "./profileViewHelpers";
 
@@ -279,19 +279,21 @@ function ProfileHero({ profile }: { profile: UserProfile }) {
 }
 
 function ProfileMetaRow({ profile }: { profile: UserProfile }) {
+  // Only an http(s) URL becomes a link; any other value is not shown.
+  const websiteHref = safeWebsiteHref(profile.website);
   return (
     <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginTop: 12, fontSize: 12, color: "var(--text-muted)" }}>
       {profile.school && <Meta icon="tree" text={profile.school} />}
       {profile.year && <Meta icon="star" text={profile.year} />}
       {profile.location && <Meta icon="home" text={profile.location} />}
-      {profile.website && (
+      {websiteHref && (
         <a
-          href={profile.website}
+          href={websiteHref}
           target="_blank"
-          rel="noreferrer"
+          rel="noopener noreferrer nofollow"
           style={{ color: "var(--accent)", textDecoration: "underline", display: "inline-flex", alignItems: "center", gap: 4 }}
         >
-          <Icon name="send" size={11} /> {prettyUrl(profile.website)}
+          <Icon name="send" size={11} /> {prettyUrl(websiteHref)}
         </a>
       )}
     </div>

@@ -469,3 +469,14 @@ def test_error_content_adds_the_error_object_only_for_coded_non_quiz_errors():
         "detail": "ended", "request_id": "rid",
         "error": {"code": "SESSION_ENDED", "message": "ended", "request_id": "rid"},
     }
+
+
+def test_tutor_mode_literal_names_exactly_the_displayable_modes():
+    """mode_switch relies on the body's TutorMode Literal to refuse an unknown
+    mode, so the Literal and the display-name map must name the same modes."""
+    from typing import get_args
+
+    from models import TutorMode
+    from services.tutor.sessions import MODE_DISPLAY_NAMES
+
+    assert set(get_args(TutorMode)) == set(MODE_DISPLAY_NAMES)

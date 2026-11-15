@@ -16,6 +16,9 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from db.connection import table
 from models import (
     CreateRoleBody,
+    UpdateRoleBody,
+    UpdateAchievementBody,
+    UpdateCosmeticBody,
     AssignRoleBody,
     RevokeRoleBody,
     CreateAchievementBody,
@@ -28,6 +31,7 @@ from models import (
     AllowlistEmailBody,
     AllowlistBulkBody,
     AchievementIconBody,
+    CosmeticAssetBody,
     UpdateXpRuleBody,
 )
 from services.admin import (
@@ -48,7 +52,7 @@ from services.admin import (
 )
 from routes._errors import domain_status
 from services.admin_audit import log_admin_action
-from services.auth_guard import require_admin, get_session_user_id
+from services.auth_guard import require_admin, require_admin_recent, get_session_user_id
 from routes.admin_flags import record_flag_change
 from services.feature_flags import clear_feature_flags_cache, clear_user_roles_cache
 from services.users_search import paginate_users
@@ -86,6 +90,12 @@ def _admin_errors():
         raise HTTPException(status_code=domain_status(e, _ERROR_STATUS), detail=e.detail)
 
 
+def _set_fields(body) -> dict:
+    """The fields a PATCH body set (an explicit null included), as the dict the
+    admin services filter by their own allow-list. No body = no fields."""
+    return body.model_dump(exclude_unset=True) if body is not None else {}
+
+
 # ── Roles ────────────────────────────────────────────────────────────────────
 
 @router.get("/roles")
@@ -102,23 +112,23 @@ def create_role(body: CreateRoleBody, request: Request):
 
 
 @router.patch("/roles/{role_id}")
-def update_role(role_id: str, request: Request, body: dict = {}):
+def update_role(role_id: str, request: Request, body: Optional[UpdateRoleBody] = None):
     require_admin(request)
     actor = get_session_user_id(request)
     with _admin_errors():
-        return roles.update_role(role_id, body, actor)
+        return roles.update_role(role_id, _set_fields(body), actor)
 
 
 @router.post("/roles/assign")
 def assign_role(body: AssignRoleBody, request: Request):
-    require_admin(request)
+    require_admin_recent(request)
     actor = get_session_user_id(request)
     return roles.assign_role(body, actor)
 
 
 @router.delete("/roles/revoke")
 def revoke_role(body: RevokeRoleBody, request: Request):
-    require_admin(request)
+    require_admin_recent(request)
     actor = get_session_user_id(request)
     with _admin_errors():
         return roles.revoke_role(body, actor)
@@ -180,11 +190,13 @@ def create_achievement(body: CreateAchievementBody, request: Request):
 
 
 @router.patch("/achievements/{achievement_id}")
-def update_achievement(achievement_id: str, request: Request, body: dict = {}):
+def update_achievement(
+    achievement_id: str, request: Request, body: Optional[UpdateAchievementBody] = None,
+):
     require_admin(request)
     actor = get_session_user_id(request)
     with _admin_errors():
-        return achievements.update_achievement(achievement_id, body, actor)
+        return achievements.update_achievement(achievement_id, _set_fields(body), actor)
 
 
 @router.post("/achievements/{achievement_id}/icon")
@@ -282,6 +294,14 @@ def list_cosmetics(request: Request):
     return cosmetics.list_cosmetics()
 
 
+@router.post("/cosmetics/assets")
+def create_cosmetic_asset(body: CosmeticAssetBody, request: Request):
+    require_admin(request)
+    actor = get_session_user_id(request)
+    with _admin_errors():
+        return cosmetics.upload_asset(body, actor)
+
+
 @router.post("/cosmetics")
 def create_cosmetic(body: CreateCosmeticBody, request: Request):
     require_admin(request)
@@ -290,11 +310,11 @@ def create_cosmetic(body: CreateCosmeticBody, request: Request):
 
 
 @router.patch("/cosmetics/{cosmetic_id}")
-def update_cosmetic(cosmetic_id: str, request: Request, body: dict = {}):
+def update_cosmetic(cosmetic_id: str, request: Request, body: Optional[UpdateCosmeticBody] = None):
     require_admin(request)
     actor = get_session_user_id(request)
     with _admin_errors():
-        return cosmetics.update_cosmetic(cosmetic_id, body, actor)
+        return cosmetics.update_cosmetic(cosmetic_id, _set_fields(body), actor)
 
 
 @router.delete("/cosmetics/{cosmetic_id}")

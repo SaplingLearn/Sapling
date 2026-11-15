@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { errorCodeOf, extractErrorDetail, humanizeError, isNotFound, statusOf } from './errorMessage';
+import { errorCodeOf, extractErrorDetail, humanizeError, isNotFound, readableError, statusOf } from './errorMessage';
 import { ApiError } from './api';
 
 const FALLBACK = "Couldn't load that.";
@@ -285,5 +285,29 @@ describe('coded HTTPException details (`detail: {code, message}`)', () => {
     expect(errorCodeOf(new ApiError('{"detail":"Not found."}', 404))).toBeUndefined();
     expect(errorCodeOf(new DOMException('aborted', 'AbortError'))).toBeUndefined();
     expect(errorCodeOf(null)).toBeUndefined();
+  });
+});
+
+describe('readableError', () => {
+  it("shows a rate limit's detail, never its raw body", () => {
+    const limited = Object.assign(
+      new Error('{"detail":"You\'re sending tutor messages too fast. Try again in 30 seconds.","request_id":"r1"}'),
+      { status: 429 },
+    );
+    expect(readableError(limited, FALLBACK)).toBe(
+      "You're sending tutor messages too fast. Try again in 30 seconds.",
+    );
+  });
+
+  it('keeps a plain sentence an Error was thrown with', () => {
+    expect(readableError(new Error('The tutor was interrupted.'), FALLBACK)).toBe('The tutor was interrupted.');
+  });
+
+  it('falls back to status copy for a body with nothing readable', () => {
+    expect(readableError(new ApiError('{"detail":[{"loc":["body"]}]}', 429), FALLBACK))
+      .toBe('Too many requests right now. Wait a moment and try again.');
+    expect(readableError(new Error('HTTP 500'), FALLBACK))
+      .toBe('Something went wrong on our end. Try again in a moment.');
+    expect(readableError(new Error('{"oops":1}'), FALLBACK)).toBe(FALLBACK);
   });
 });

@@ -39,6 +39,7 @@ from services.auth import (
     fetch_google_userinfo,
     join_waitlist,
     record_google_sign_in,
+    revoke_sessions,
     welcome_and_achievements_after_sign_in,
 )
 from services.auth_guard import clear_account_state_cache, get_session_user_id, guard_off_loop
@@ -54,11 +55,12 @@ from services.auth.oauth_state import (  # noqa: F401
     _clamp_redirect_ttl, _clean_popup_id, _clean_return_to, _consume_oauth_nonce,
     _decode_oauth_cookie, _decode_state, _encode_oauth_cookie, _encode_state,
     _generate_pkce_pair, _google_client_config, _parse_redirect_ttl, clear_consumed_oauth_nonces,
+    clear_oauth_cookie,
 )
 from services.auth.pending import (  # noqa: F401
     _PENDING_TOKEN_TTL_SECONDS, _mint_pending_token, _pending_token_claims, _pending_token_email,
 )
-from services.auth.signin import _email_domain_allowed  # noqa: F401
+from services.auth.signin import _email_domain_allowed, _email_verified  # noqa: F401
 from services.auth.waitlist import (  # noqa: F401
     _mark_waitlist_joined, _pending_standing, _waitlist_entries, _waitlist_entry,
 )
@@ -92,6 +94,27 @@ def get_me(request: Request):
         raise HTTPException(status_code=404, detail="User not found")
     except AccountDeleted:
         raise HTTPException(status_code=401, detail="Not authenticated")
+
+
+@router.post("/logout")
+def logout(request: Request):
+    """Sign out everywhere: revoke every session this account was issued up
+    to now (`users.sessions_valid_after`), so a copied cookie stops working at
+    once instead of living until its `exp`.
+
+    Authenticated by the session it revokes (an unapproved account may sign
+    out too). The frontend session BFF (DELETE /api/auth/session) calls this
+    with the browser's cookie before clearing it. 401 when the session is
+    already invalid: there is nothing left to revoke.
+    """
+    user_id = get_session_user_id(request, allow_unapproved=True)
+    try:
+        revoke_sessions(user_id)
+    except Exception:
+        logger.exception("logout: could not revoke sessions for %r", user_id)
+        raise HTTPException(status_code=503, detail="Could not sign you out. Please try again.")
+    clear_account_state_cache(user_id)
+    return JSONResponse({"ok": True}, headers={"Cache-Control": "no-store"})
 
 
 @router.get("/google")
@@ -184,16 +207,7 @@ def google_callback(
             resp = RedirectResponse(f"{frontend_url}/auth/callback?{params}")
         else:
             resp = RedirectResponse(f"{frontend_url}{fallback_path}?error={error_code}")
-        resp.set_cookie(
-            key=OAUTH_STATE_COOKIE,
-            value="",
-            max_age=0,
-            httponly=True,
-            secure=SECURE_COOKIES,
-            samesite="lax",
-            path="/",
-        )
-        return resp
+        return clear_oauth_cookie(resp, secure=SECURE_COOKIES)
 
     def _not_approved(signin_email: str, signin_first_name: str) -> RedirectResponse:
         pending_token = _mint_pending_token(signin_email, signin_first_name)
@@ -203,16 +217,7 @@ def google_callback(
             )
         query = f"?{urlencode({'t': pending_token})}" if pending_token else ""
         resp = RedirectResponse(f"{frontend_url}/pending{query}")
-        resp.set_cookie(
-            key=OAUTH_STATE_COOKIE,
-            value="",
-            max_age=0,
-            httponly=True,
-            secure=SECURE_COOKIES,
-            samesite="lax",
-            path="/",
-        )
-        return resp
+        return clear_oauth_cookie(resp, secure=SECURE_COOKIES)
 
     # Whether this request is Google's answer to THE pending sign-in: the
     # state's nonce matches the one sealed in the signed cookie.
@@ -259,6 +264,10 @@ def google_callback(
     user_info = fetch_google_userinfo(creds.token)
     if user_info is None:
         return _fail_redirect("userinfo_fetch_failed")
+
+    # Every decision below keys on the email: refuse one Google has not verified.
+    if not _email_verified(user_info):
+        return _fail_redirect("email_not_verified")
 
     email = user_info.get("email", "")
     google_id = user_info.get("id", "")
@@ -333,16 +342,7 @@ def google_callback(
         **({"popup_id": popup_id} if popup_id else {}),
     })
     resp = RedirectResponse(f"{frontend_url}/auth/callback?{params}")
-    resp.set_cookie(
-        key=OAUTH_STATE_COOKIE,
-        value="",
-        max_age=0,
-        httponly=True,
-        secure=SECURE_COOKIES,
-        samesite="lax",
-        path="/",
-    )
-    return resp
+    return clear_oauth_cookie(resp, secure=SECURE_COOKIES)
 
 
 # ── POST /api/auth/test-login ─────────────────────────────────────────────────
