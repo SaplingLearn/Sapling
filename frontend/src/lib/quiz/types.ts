@@ -50,7 +50,19 @@ export function isWrittenType(type: string | null | undefined): boolean {
   return typeof type === "string" && WRITTEN_TYPES.has(type);
 }
 
+export interface QuizQuestionContext {
+  stem: string;
+  part: number;
+  parts: number;
+  graph: {
+    x_label: string;
+    y_label: string;
+    points: [number, number][];
+  } | null;
+}
+
 export interface WireQuestion {
+  context?: QuizQuestionContext;
   numeric_unit?: string;
   material_context?: "course_material" | "catalog" | "general";
   type?: QuestionType;
@@ -149,6 +161,11 @@ export type SubmitGamification =
   | (SubmitAward & GamificationMe)
   | (SubmitAward & { [K in keyof GamificationMe]?: undefined });
 
+export interface RetryResult {
+  correct: boolean;
+  points: number;
+}
+
 export interface SubmitResult {
   score: number;
   total: number;
@@ -160,6 +177,7 @@ export interface SubmitResult {
     correct: boolean;
     correct_answer: string;
     explanation: string;
+    can_retry?: boolean;
   }[];
   /** Optional while `useGamificationDelta` still reads `/me` around the
    *  submit (R-9); the client migration to this field is a later pass. The

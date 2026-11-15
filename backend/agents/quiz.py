@@ -6,8 +6,8 @@ misconceptions on demand instead of pre-stuffing them into the prompt.
 
 Per ADR 0003 convention 4: keep the output schema compact. Gemini's
 structured-output API rejects rich nested schemas with too many states
-for serving — Quiz is a flat top-level model with a list of
-QuizQuestion items, no further nesting.
+for serving. Quiz keeps questions and shared contexts in separate lists
+with no nested objects inside either item type.
 """
 
 from __future__ import annotations
@@ -111,12 +111,25 @@ class QuizQuestion(BaseModel):
         return _clip(accepted, MAX_ACCEPTED_ANSWERS, "accepted_answers")
 
 
+class QuizContext(BaseModel):
+    """Shared scenario and optional plotted data for consecutive questions."""
+
+    question_numbers: list[int]
+    stem: str
+    graph_question_number: int | None = None
+    x_label: str = ""
+    y_label: str = ""
+    x_values: list[float] = Field(default_factory=list)
+    y_values: list[float] = Field(default_factory=list)
+
+
 class Quiz(BaseModel):
     """The agent's structured output."""
 
     # 1..MAX_QUESTIONS, enforced here rather than as minItems/maxItems in the
     # schema (see MAX_QUESTIONS above).
     questions: list[QuizQuestion]
+    contexts: list[QuizContext] = Field(default_factory=list)
 
     @field_validator("questions", mode="before")
     @classmethod
@@ -256,6 +269,20 @@ _SYSTEM_PROMPT += (
     "Numeric grading compares values exactly after parsing. Use a rounded key if "
     "the stem asks for rounding. Do not ask for symbolic expressions or approximate "
     "irrational values unless an explicit rounded answer is requested. "
+    "When a scenario naturally supports several skills, use a context with two or "
+    "three consecutive question_numbers (1-based positions in questions) and a shared "
+    "stem. Each question is a separately scored part. Write an explicit, distinct question in each part, "
+    "and supply any earlier result a later part needs so students can continue independently. "
+    "The requested question count includes every part. Contexts cannot overlap. "
+    "Only use a single-question context when it has a graph. "
+    "Use a graph only if the student needs it to solve a specific question. Set "
+    "graph_question_number to that question's position, even within a multipart problem. "
+    "Write the shared stem so it makes sense on parts that do not show the graph. "
+    "Label both axes with units where relevant. Supply 2 to 24 pairs of x_values and y_values, "
+    "with strictly increasing x_values and finite values of magnitude at most one million. "
+    "The plot connects adjacent points. For a curved function, sample enough points "
+    "to show its shape accurately. Prefer varied, topic-appropriate data and functions. "
+    "Leave both value lists empty for a context without a graph. "
     "Use LaTeX for mathematical expressions in question, options and feedback. "
     "Wrap inline math in \\( ... \\) and standalone equations in \\[ ... \\]. "
     "Keep prose as plain text. Copy a correct multiple-choice option verbatim into "

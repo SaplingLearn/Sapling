@@ -101,6 +101,7 @@ export function QuizResults({
   // panel treats as "not signed in") rather than a throw.
   const { userId } = useUser();
   const [asking, setAsking] = React.useState<MissedItem | null>(null);
+  const [retryPoints, setRetryPoints] = React.useState<Record<string, number>>({});
   // The row that opened the panel, so closing it lands back on that button
   // rather than on the document (AskPanel's `returnFocusTo`).
   const askTrigger = React.useRef<HTMLElement | null>(null);
@@ -121,6 +122,7 @@ export function QuizResults({
 
   const missed = buildMissedItems(session);
   const isPerfect = missed.length === 0;
+  const recoveredPoints = missed.reduce((sum, item) => sum + (retryPoints[item.questionId] ?? 0), 0);
   const correct = buildMissedItems(session, true);
 
   const queue = queueOf(session.scope);
@@ -188,6 +190,10 @@ export function QuizResults({
         )}
       </div>
 
+      {recoveredPoints > 0 && (
+        <p role="status">{result.score + recoveredPoints} of {result.total} practice points with retries</p>
+      )}
+
       {isPerfect ? (
         <p className="quiz-results__perfect" data-testid="quiz-results-perfect">
           Every answer was right. {concept.name} keeps growing on your tree.
@@ -195,6 +201,8 @@ export function QuizResults({
       ) : (
         <MissedList
           items={missed}
+          attemptId={session.attemptId}
+          onRetryScored={(questionId, points) => setRetryPoints(previous => ({ ...previous, [questionId]: points }))}
           onAsk={(item, trigger) => {
             askTrigger.current = trigger;
             setAsking(item);

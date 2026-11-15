@@ -39,11 +39,6 @@ export function numericValue(raw: string): number | null {
   return percent ? result / 100 : result;
 }
 
-/** A read-back value without float noise (`0.1 + 0.2` shows as 0.3). */
-export function formatNumber(value: number): string {
-  return String(Number(value.toPrecision(10)));
-}
-
 /** Letter runs the algebra grammar refuses rather than read as products. */
 const FUNCTION_NAME = /sin|cos|tan|sec|csc|cot|log|ln|exp|sqrt|abs/i;
 
@@ -90,26 +85,4 @@ export function isWrittenAnswerFormatValid(type: QuestionType | undefined, value
     return quantity !== null && numericValue(quantity[1]) !== null;
   }
   return type !== "symbolic" || validSymbolicFormat(value);
-}
-
-export type ExpressionPart = { text: string; sup: boolean };
-
-/**
- * An algebra answer split for display: exponents raised, `*` as a centred
- * dot, `-` as a true minus. `2x^2 - 3*y^(n+1)` → 2x² − 3·yⁿ⁺¹, as parts the
- * input's preview renders with `<sup>`.
- */
-export function expressionParts(raw: string): ExpressionPart[] {
-  const pretty = (s: string) => s.replace(/\*/g, "·").replace(/-/g, "−");
-  const parts: ExpressionPart[] = [];
-  const exponent = /\^(\(([^()]*)\)|[+-]?\d+(?:\.\d+)?|[A-Za-z])/g;
-  let last = 0;
-  for (const m of raw.matchAll(exponent)) {
-    const at = m.index ?? 0;
-    if (at > last) parts.push({ text: pretty(raw.slice(last, at)), sup: false });
-    parts.push({ text: pretty(m[2] ?? m[1]), sup: true });
-    last = at + m[0].length;
-  }
-  if (last < raw.length) parts.push({ text: pretty(raw.slice(last)), sup: false });
-  return parts;
 }

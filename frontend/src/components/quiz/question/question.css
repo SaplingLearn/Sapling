@@ -15,8 +15,7 @@
   --quiz-q-rail-top: 8px;      /* the rail's optical alignment with the header */
   --quiz-q-stem-fs: 24px;      /* the --fs-* ramp has no 24px step */
   --quiz-q-stem-mw: 560px;     /* the reading measure of the stem */
-  --quiz-q-stem-my: 48px;      /* the air above and below it */
-  --quiz-q-stem-mh: 72px;      /* reserved, so a one-line stem doesn't jump */
+  --quiz-q-stem-my: var(--pad-md);      /* the air above and below it */
   --quiz-q-feedback-mh: 20px;  /* reserved for the verdict line */
   --quiz-q-feedback-mt: 18px;
   --quiz-q-aside-mt: 10px;
@@ -30,10 +29,6 @@
   --quiz-q-skeleton-inset: 14px;
   --quiz-q-written-fs: 18px;   /* the answer line reads at near-stem size */
   --quiz-q-numeric-w: 22ch;    /* a number needs a field, not the column */
-  --quiz-q-key-h: 34px;
-  --quiz-q-key-min-w: 44px;    /* touch-sized, on the decimal-pad screens */
-  --quiz-q-key-gap: 6px;
-
   display: flex;
   align-items: stretch;
   /* The footer sits at the bottom of the viewport, not under the stem: the
@@ -108,7 +103,6 @@
   color: var(--text);
   margin: var(--quiz-q-stem-my) 0;
   max-width: var(--quiz-q-stem-mw);
-  min-height: var(--quiz-q-stem-mh);
   text-wrap: pretty;
 }
 
@@ -164,7 +158,7 @@
    the bottom of the screen rather than under the last option. */
 .quiz-question__grow {
   flex: 1;
-  min-height: var(--pad-xl);
+  min-height: var(--pad-sm);
 }
 
 .quiz-question__footer {
@@ -398,7 +392,7 @@
   line-height: 1.5;
 }
 
-/* The input, its symbol keys and its read-back (`WrittenAnswer`). */
+/* Written answer input. */
 .quiz-written {
   display: grid;
   gap: var(--pad-sm);
@@ -417,10 +411,6 @@
   font: inherit;
   font-size: var(--quiz-q-written-fs);
   line-height: 1.4;
-}
-
-.quiz-question__written-input::placeholder {
-  color: var(--text-muted);
 }
 
 .quiz-question__written-input:focus-visible {
@@ -443,17 +433,14 @@
   font-family: var(--font-mono);
 }
 
-.quiz-written__readback {
-  margin: 0;
-  font-size: var(--fs-sm);
-  color: var(--text-muted);
-}
+@media (max-width: 600px) {
+  .quiz-question {
+    --quiz-rail: 24px;
+    --quiz-q-stem-fs: 20px;
+    --quiz-q-stem-my: var(--pad-sm);
+  }
 
-.quiz-written__value {
-  color: var(--text);
-  font-size: var(--fs-md);
-}
-
-.quiz-written__expr {
-  font-family: var(--font-mono);
+  .quiz-question__spacer {
+    display: none;
+  }
 }

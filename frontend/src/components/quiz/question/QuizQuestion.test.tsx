@@ -220,7 +220,6 @@ describe("QuizQuestion — the question", () => {
   it.each([
     ["numeric", /Enter only the number, without units/],
     ["symbolic", /single-letter variables/],
-    ["short_answer", /Write a brief answer/],
   ] as const)("shows the %s answer format rules on screen, not only to screen readers", (type, rule) => {
     renderScreen(makeSession({ items: [item(0, { question: { ...question(1), type, options: [] } })] }));
     const hint = screen.getByTestId("quiz-format-hint");
@@ -230,6 +229,28 @@ describe("QuizQuestion — the question", () => {
     expect(hint).not.toHaveClass("quiz-question__hint");
     expect(screen.getByRole("textbox", { name: /^Your answer/ })).toHaveAccessibleDescription(rule);
     expect(screen.queryByText(/Keyboard: press A to F/)).not.toBeInTheDocument();
+  });
+
+  it("shows the part question above its graph without a data disclosure or short-answer hint", () => {
+    renderScreen(makeSession({ items: [item(0, {
+      question: {
+        ...question(1),
+        question: "What is the stopping condition?",
+        type: "short_answer",
+        options: [],
+        context: {
+          stem: "Use the recursion example.",
+          part: 1,
+          parts: 2,
+          graph: { x_label: "Step", y_label: "Value", points: [[0, 0], [1, 0.5]] },
+        },
+      },
+    })] }));
+    const stem = screen.getByRole("heading", { name: "What is the stopping condition?" });
+    const graph = screen.getByRole("img", { name: "Value by Step" });
+    expect(stem.compareDocumentPosition(graph) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.queryByText("Graph data")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("quiz-format-hint")).not.toBeInTheDocument();
   });
 
   it("ends the expected-answer feedback with exactly one full stop", () => {

@@ -24,6 +24,7 @@
 
 import { isWrittenAnswerFormatValid } from "@/lib/quiz/answerFormats";
 import { QuizMath } from "../QuizMath";
+import { QuizProblemContext } from "../QuizProblemContext";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnswerOption, Button, ProgressDots, type AnswerState } from "@/components/ui";
 import { ConceptNode } from "@/components/graph/ConceptNode";
@@ -156,6 +157,8 @@ export function QuizQuestion({
   // A blank accent would reach `shadeFor` as an unparseable colour and pass
   // straight through; the CSS variable degrades to the app accent instead.
   const accent = concept.color || "var(--quiz-accent, var(--accent))";
+  const stem = <h2 className="quiz-question__stem h-serif" id="quiz-question-stem"><QuizMath text={item?.question.question ?? ""} /></h2>;
+  const showFormatHint = item?.question.type === "numeric" || item?.question.type === "symbolic";
   const railTotal = total || session.config.count;
 
   // ── Effects ──────────────────────────────────────────────────────────
@@ -391,7 +394,9 @@ export function QuizQuestion({
       <div className="quiz-question__col">
         {header}
 
-        <h2 className="quiz-question__stem h-serif" id="quiz-question-stem"><QuizMath text={item?.question.question ?? ""} /></h2>
+        {item?.question.context
+          ? <QuizProblemContext context={item.question.context}>{stem}</QuizProblemContext>
+          : stem}
         {!written && (
           <p className="quiz-question__hint" id="quiz-keyboard-hint">
             Keyboard: press A to F, or 1 to 6, to choose an answer. Enter submits your answer and
@@ -405,15 +410,15 @@ export function QuizQuestion({
             {/* Visible, unlike the keyboard hint: these are the rules the
                 grader applies, so a sighted student needs them as much as a
                 screen-reader user does. */}
-            <p className="quiz-question__format-hint" id="quiz-format-hint" data-testid="quiz-format-hint">
-              {item?.question.type === "symbolic"
-                ? "Enter an expression using single-letter variables, + − * / ^ and parentheses. For example, 2(x + 1) and 2x + 2 are equivalent wherever both are defined. Use whole-number powers from −8 to 8. Functions and equations are not supported."
-                : item?.question.type === "numeric"
-                  ? item.question.numeric_unit
-                    ? `Enter a number followed by a space and its unit, for example 2.5 ${item.question.numeric_unit}. Follow the rounding requested in the question.`
-                    : "Enter only the number, without units. Equivalent fractions, decimals, percentages, and scientific notation are accepted. Follow the rounding requested in the question."
-                  : "Write a brief answer. Capitalization and extra spacing do not affect your score."}
-            </p>
+            {showFormatHint && (
+              <p className="quiz-question__format-hint" id="quiz-format-hint" data-testid="quiz-format-hint">
+                {item?.question.type === "symbolic"
+                  ? "Use single-letter variables and whole-number powers from −8 to 8. Example: 2(x + 1)."
+                  : item?.question.numeric_unit
+                      ? `Enter a number followed by a space and its unit, for example 2.5 ${item.question.numeric_unit}. Follow the rounding requested in the question.`
+                      : "Enter only the number, without units. Fractions, decimals, percentages, and scientific notation are accepted."}
+              </p>
+            )}
             <WrittenAnswer
               type={(item?.question.type ?? "short_answer") as WrittenType}
               numericUnit={item?.question.numeric_unit}
@@ -423,7 +428,7 @@ export function QuizQuestion({
               onSubmit={() => {
                 if (primary.enabled) primary.activate();
               }}
-              describedBy="quiz-format-hint"
+              describedBy={showFormatHint ? "quiz-format-hint" : undefined}
               labelledBy="quiz-written-label quiz-question-stem"
             />
           </div>

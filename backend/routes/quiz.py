@@ -14,7 +14,7 @@ from pydantic_ai.exceptions import UsageLimitExceeded, UnexpectedModelBehavior
 import config
 from agents import ORCHESTRATOR_LIMITS, TOPUP_LIMITS
 from agents._providers import UnregisteredHandlerError
-from agents.quiz import quiz_agent, Quiz, QuizQuestion, PROMPT_VERSION
+from agents.quiz import quiz_agent, Quiz, QuizContext, QuizQuestion, PROMPT_VERSION
 from agents.deps import SaplingDeps
 from agents._run import run_agent_sync
 from agents.quiz_context import quiz_context_agent
@@ -446,8 +446,57 @@ def _sweep_abandoned(user_id: str, *, active_attempt_ids: set[str] | None = None
 # stored row from an older shape can hold the answer under any key at all
 # (the rich seed has {"q":..., "a":...}). Anything not listed here never
 # reaches a client that hasn't answered yet.
-_KEYLESS_QUESTION_KEYS = ("id", "question", "concept_tested", "difficulty", "type", "material_context", "numeric_unit")
+_KEYLESS_QUESTION_KEYS = ("id", "question", "concept_tested", "difficulty", "type", "material_context", "numeric_unit", "context")
 _KEYLESS_OPTION_KEYS = ("label", "text")
+
+
+def _question_context_graph(context: QuizContext) -> dict | None:
+    x, y = context.x_values, context.y_values
+    x_label, y_label = context.x_label.strip(), context.y_label.strip()
+    if (
+        not 2 <= len(x) == len(y) <= 24
+        or not all(abs(value) <= 1_000_000 for value in (*x, *y))
+        or not all(left < right for left, right in zip(x, x[1:]))
+        or not (0 < len(x_label) <= 60 and 0 < len(y_label) <= 60)
+    ):
+        return None
+    return {"x_label": x_label, "y_label": y_label, "points": list(zip(x, y))}
+
+
+def _attach_question_contexts(quiz: Quiz, mapped_by_position: dict[int, dict]) -> set[int]:
+    assigned = set()
+    rejected = set()
+    for context in quiz.contexts:
+        numbers = context.question_numbers
+        if not numbers:
+            continue
+        stem = context.stem.strip()
+        graph = _question_context_graph(context)
+        graph_question = context.graph_question_number
+        if graph_question is None and len(numbers) == 1:
+            graph_question = numbers[0]
+        if (
+            not 1 <= len(numbers) <= 3
+            or numbers != list(range(numbers[0], numbers[0] + len(numbers)))
+            or numbers[0] < 1
+            or numbers[-1] > len(quiz.questions)
+            or not 0 < len(stem) <= 2000
+            or assigned.intersection(numbers)
+            or (graph is None and (len(numbers) == 1 or context.x_values or context.y_values))
+            or (graph is not None and graph_question not in numbers)
+        ):
+            rejected.update(numbers)
+            continue
+        assigned.update(numbers)
+        for index, number in enumerate(numbers, start=1):
+            if number in mapped_by_position:
+                mapped_by_position[number]["context"] = {
+                    "stem": stem,
+                    "part": index,
+                    "parts": len(numbers),
+                    "graph": graph if number == graph_question else None,
+                }
+    return rejected
 
 
 def _choice_feedback(question: dict, selected_index: int | None) -> str:
@@ -661,6 +710,9 @@ def _agent_question_to_wire(q: QuizQuestion, qid: int) -> dict | None:
     Returning None lets the caller filter questions out cleanly.
     """
     stem = q.question.rstrip()
+    if not stem:
+        logger.warning("quiz: dropping question id=%d with an empty stem", qid)
+        return None
     if stem != q.question:
         # Gemini can end a function-call string at an inner double quote
         # ('...referred to as the "energy currency"' served as '...as the ',
@@ -1590,7 +1642,8 @@ async def _quiz_via_agent(
 
     def _absorb(quiz: Quiz, model: str) -> None:
         nonlocal dropped
-        for q in quiz.questions:
+        mapped_by_position = {}
+        for position, q in enumerate(quiz.questions, start=1):
             if question_format != "mixed" and q.type != question_format:
                 dropped += 1
                 continue
@@ -1609,7 +1662,7 @@ async def _quiz_via_agent(
                 )
                 dropped += 1
                 continue
-            mapped = _agent_question_to_wire(q, len(wire_questions) + 1)
+            mapped = _agent_question_to_wire(q, len(wire_questions) + len(mapped_by_position) + 1)
             if mapped is None:
                 dropped += 1
                 continue
@@ -1619,6 +1672,14 @@ async def _quiz_via_agent(
             )
             seen_stems.add(stem)
             seen_hashes.add(qhash)
+            mapped_by_position[position] = mapped
+        rejected = _attach_question_contexts(quiz, mapped_by_position)
+        for position, mapped in mapped_by_position.items():
+            if position in rejected:
+                dropped += 1
+                seen_stems.discard(normalize_text(mapped["question"]))
+                seen_hashes.discard(mapped["question_hash"])
+                continue
             wire_questions.append(mapped)
 
     _absorb(*await _run(user_message, ORCHESTRATOR_LIMITS))
@@ -1676,7 +1737,7 @@ async def _quiz_via_agent(
         )
     # Never serve more than asked for (a generous top-up run can overshoot).
     return GeneratedQuiz(
-        questions=wire_questions[:num_questions],
+        questions=_renumber(wire_questions[:num_questions]),
         exam_days_away=exam_days_away,
     )
 
@@ -2536,6 +2597,54 @@ def answer_question(attempt_id: str, body: AnswerQuestionBody, request: Request)
     }
 
 
+@router.post("/attempts/{attempt_id}/retry")
+def retry_question(attempt_id: str, body: AnswerQuestionBody, request: Request):
+    attempt = _load_owned_attempt(attempt_id, request)
+    _refuse_if_abandoned(attempt)
+    if not attempt.get("completed_at") or attempt.get("score") is None:
+        raise QuizAPIError(status_code=409, code=QuizErrorCode.QUIZ_QUESTION_INVALID,
+                           message="Finish the quiz before retrying a question.")
+
+    questions = decrypt_json_column(attempt["questions_json"]) or []
+    if body.question_index >= len(questions):
+        raise QuizAPIError(status_code=400, code=QuizErrorCode.QUIZ_QUESTION_INVALID,
+                           message="That question isn't part of this quiz.")
+    question = questions[body.question_index]
+    written = question.get("type") in WRITTEN_TYPES
+    options = question.get("options", [])
+    if (
+        body.question_id != question.get("id")
+        or (written and body.answer_text is None)
+        or (not written and (body.selected_index is None or body.selected_index >= len(options)))
+    ):
+        raise QuizAPIError(status_code=400, code=QuizErrorCode.QUIZ_QUESTION_INVALID,
+                           message="Use the answer format shown for this question.")
+
+    filters = {"attempt_id": f"eq.{attempt_id}", "question_index": f"eq.{body.question_index}",
+               "is_correct": "eq.false"}
+    responses = table("quiz_responses")
+    rows = responses.select("retry_correct", filters=filters)
+    if not rows:
+        raise QuizAPIError(status_code=409, code=QuizErrorCode.QUIZ_QUESTION_INVALID,
+                           message="Only recorded missed answers can be retried.")
+    correct = rows[0]["retry_correct"]
+    if correct is None:
+        retry_correct = (
+            grade_written(question, body.answer_text)
+            if written else bool(options[body.selected_index].get("correct"))
+        )
+        updated = responses.update({"retry_correct": retry_correct},
+                                   filters={**filters, "retry_correct": "is.null"})
+        if updated:
+            correct = retry_correct
+        else:
+            rows = responses.select("retry_correct", filters=filters)
+            if not rows or rows[0]["retry_correct"] is None:
+                raise _attempt_not_found()
+            correct = rows[0]["retry_correct"]
+    return {"correct": correct, "points": 0.5 if correct else 0}
+
+
 @router.post("/attempts/{attempt_id}/abandon")
 def abandon_attempt(attempt_id: str, request: Request):
     """#537 G4: close an unfinished attempt ON PURPOSE.
@@ -2733,7 +2842,8 @@ def _grade_submission(
             score += int(is_correct)
             results.append({"question_id": qid, "selected": selected_text,
                             "correct": is_correct, "correct_answer": expected_written_answer(q),
-                            "explanation": written_feedback(q, selected_text)})
+                            "explanation": written_feedback(q, selected_text),
+                            **({"can_retry": True} if recorded and not is_correct else {})})
             continue
         if recorded is not None:
             sel_idx = recorded.get("selected_index")
@@ -2763,6 +2873,7 @@ def _grade_submission(
             "selected": selected,
             "correct": is_correct,
             "correct_answer": correct_label,
+            **({"can_retry": True} if recorded and not is_correct else {}),
             "explanation": _choice_feedback(
                 q, next((i for i, option in enumerate(q["options"]) if option["label"] == selected), None)
             ),

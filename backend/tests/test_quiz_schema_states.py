@@ -232,3 +232,29 @@ def test_malformed_surplus_past_the_caps_is_discarded_not_fatal():
 def test_malformed_item_inside_the_caps_is_still_a_validation_error():
     with pytest.raises(ValidationError):
         Quiz.model_validate({"questions": [_mcq(0), {"question": "missing fields"}]})
+
+
+def test_multipart_context_and_graph_survive_keyless_projection():
+    from routes.quiz import _agent_question_to_wire, _attach_question_contexts, _strip_answer_key
+
+    quiz = Quiz.model_validate({
+        "questions": [_mcq(), _mcq(question="What is the second result?")],
+        "contexts": [{
+            "question_numbers": [1, 2],
+            "stem": "Consider an object in motion.",
+            "graph_question_number": 2,
+            "x_label": "Time (s)", "y_label": "Position (m)",
+            "x_values": [0, 1], "y_values": [1, 3],
+        }],
+    })
+    wire = {i: _agent_question_to_wire(question, i) for i, question in enumerate(quiz.questions, 1)}
+    assert not _attach_question_contexts(quiz, wire)
+    first, second = _strip_answer_key(list(wire.values()))
+    assert first["context"]["part"] == 1
+    assert first["context"]["graph"] is None
+    assert second["context"]["part"] == second["context"]["parts"] == 2
+    assert second["context"]["graph"]["points"] == [(0, 1), (1, 3)]
+    assert all("correct" not in option for option in second["options"])
+
+    quiz.contexts[0].x_values = [1, 1]
+    assert _attach_question_contexts(quiz, wire) == {1, 2}

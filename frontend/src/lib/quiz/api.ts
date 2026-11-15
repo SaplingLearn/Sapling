@@ -20,6 +20,7 @@ import type {
   AttemptsPage,
   GenerateResult,
   QuizConfig,
+  RetryResult,
   SubmitResult,
 } from "./types";
 
@@ -103,6 +104,16 @@ export const answerQuestion = (
       ...(p.answerText !== undefined ? { answer_text: p.answerText } : { selected_index: p.selectedIndex }),
       question_id: p.questionId,
     }),
+  });
+
+export const retryQuestion = (
+  attemptId: string,
+  questionId: number,
+  answer: { answer_text: string } | { selected_index: number },
+): Promise<RetryResult> =>
+  fetchJSON<RetryResult>(`/api/quiz/attempts/${encodeURIComponent(attemptId)}/retry`, {
+    method: "POST",
+    body: JSON.stringify({ question_id: questionId, question_index: questionId - 1, ...answer }),
   });
 
 /**

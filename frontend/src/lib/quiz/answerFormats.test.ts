@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { expressionParts, formatNumber, isWrittenAnswerFormatValid, numericValue } from "./answerFormats";
+import { isWrittenAnswerFormatValid, numericValue } from "./answerFormats";
 
 describe("numericValue — mirrors quiz_grading.numeric_value", () => {
   it.each([
@@ -23,11 +23,6 @@ describe("numericValue — mirrors quiz_grading.numeric_value", () => {
   it.each(["", "abc", "1,5", "1/0", "2x", "3×10^8", "1..2", "10 units"])("refuses %j", raw => {
     expect(numericValue(raw)).toBeNull();
   });
-
-  it("formats without float noise", () => {
-    expect(formatNumber(0.1 + 0.2)).toBe("0.3");
-    expect(formatNumber(1 / 3)).toBe("0.3333333333");
-  });
 });
 
 describe("isWrittenAnswerFormatValid", () => {
@@ -45,29 +40,5 @@ describe("isWrittenAnswerFormatValid", () => {
     expect(isWrittenAnswerFormatValid("numeric", "250 cm", "m")).toBe(true);
     expect(isWrittenAnswerFormatValid("numeric", "250", "m")).toBe(false);
     expect(isWrittenAnswerFormatValid("numeric", "cm", "m")).toBe(false);
-  });
-});
-
-describe("expressionParts", () => {
-  it("raises exponents and prettifies operators", () => {
-    expect(expressionParts("2x^2 - 3*y^(n+1)")).toEqual([
-      { text: "2x", sup: false },
-      { text: "2", sup: true },
-      { text: " − 3·y", sup: false },
-      { text: "n+1", sup: true },
-    ]);
-  });
-
-  it("raises a negative or single-letter exponent", () => {
-    expect(expressionParts("x^-1 + a^n")).toEqual([
-      { text: "x", sup: false },
-      { text: "−1", sup: true },
-      { text: " + a", sup: false },
-      { text: "n", sup: true },
-    ]);
-  });
-
-  it("leaves a dangling caret as typed", () => {
-    expect(expressionParts("x^")).toEqual([{ text: "x^", sup: false }]);
   });
 });

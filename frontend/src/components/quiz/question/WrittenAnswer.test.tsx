@@ -24,17 +24,16 @@ describe("WrittenAnswer", () => {
     expect(screen.queryByTestId("quiz-written-readback")).toBeNull();
   });
 
-  it("reads valid numbers back without symbol keys", () => {
-    render(<Harness type="numeric" initial="3/4" />);
-    expect(screen.queryByRole("group", { name: "Insert a symbol" })).toBeNull();
-    expect(screen.getByTestId("quiz-written-readback")).toHaveTextContent("Reads as 0.75");
-  });
-
-  it("previews algebra with real superscripts", () => {
-    render(<Harness type="symbolic" initial="x^2 - 1" />);
-    const readBack = screen.getByTestId("quiz-written-readback");
-    expect(readBack).toHaveTextContent("Reads as x2 − 1");
-    expect(readBack.querySelector("sup")).toHaveTextContent("2");
+  it.each([
+    ["numeric", "3/4"],
+    ["symbolic", "x^2 - 1"],
+  ] as const)("accepts valid %s without preview or placeholder text", (type, initial) => {
+    const onSubmit = vi.fn();
+    render(<Harness type={type} initial={initial} onSubmit={onSubmit} />);
+    expect(screen.queryByTestId("quiz-written-readback")).toBeNull();
+    expect(input()).not.toHaveAttribute("placeholder");
+    fireEvent.keyDown(input(), { key: "Enter" });
+    expect(onSubmit).toHaveBeenCalledOnce();
   });
 
   it.each([

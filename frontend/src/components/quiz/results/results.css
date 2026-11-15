@@ -177,3 +177,9 @@
   margin: var(--quiz-results-line-gap) 0 0;
   text-wrap: pretty;
 }
+
+.quiz-retry__choice {
+  display: flex;
+  gap: 0.5rem;
+  align-items: baseline;
+}

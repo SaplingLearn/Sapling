@@ -1,13 +1,16 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, cleanup, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, cleanup, fireEvent, waitFor, within } from "@testing-library/react";
 import React from "react";
 import { markRadius } from "@/components/graph/ConceptNode";
 import { __resetReducedMotionStoreForTests } from "@/lib/usePrefersReducedMotion";
 import type { QuizActions } from "@/lib/quiz/useQuizSession";
 import type { QuizItem, QuizSession, SubmitResult } from "@/lib/quiz/types";
+import { retryQuestion } from "@/lib/quiz/api";
 import { QuizResults } from "./QuizResults";
 import { buildMissedItems } from "./MissedList";
+
+vi.mock("@/lib/quiz/api", () => ({ retryQuestion: vi.fn() }));
 
 // B2 owns `question/AskPanel`; this screen only has to open it with the right
 // seed. The mock renders the seed so the assertion is on the props, not on
@@ -244,6 +247,29 @@ describe("QuizResults", () => {
       correctLabel: "B",
       correctText: "It recurses forever and overflows the stack",
     });
+  });
+
+  it("offers one retry for a missed part and keeps its explanation available", async () => {
+    vi.mocked(retryQuestion).mockResolvedValueOnce({ correct: true, points: 0.5 });
+    renderResults({
+      attemptId: "attempt-1",
+      result: {
+        ...RESULT,
+        results: RESULT.results.map(row => row.correct ? row : { ...row, can_retry: true }),
+      },
+    });
+
+    const row = within(screen.getByTestId("quiz-missed-102"));
+    expect(row.queryByText(/the answer is/)).toBeNull();
+    fireEvent.click(row.getByText("Retry for up to ½ practice point"));
+    fireEvent.click(row.getByRole("radio", { name: "It recurses forever and overflows the stack" }));
+    fireEvent.click(row.getByRole("button", { name: "Submit retry" }));
+    expect(await row.findByRole("status")).toHaveTextContent("You earned ½ practice point");
+    expect(retryQuestion).toHaveBeenCalledWith("attempt-1", 102, { selected_index: 1 });
+    expect(screen.getByText("2.5 of 3 practice points with retries")).toBeVisible();
+    expect(row.queryByRole("button", { name: "Submit retry" })).toBeNull();
+    fireEvent.click(row.getByRole("button", { name: "Show explanation" }));
+    expect(row.getByText(RESULT.results[1].explanation)).toBeVisible();
   });
 
   it("toggles the explanation disclosure and reveals the text", () => {

@@ -1,0 +1,44 @@
+.quiz-problem-context {
+  margin-block: var(--pad-sm);
+}
+
+.quiz-problem-context p {
+  margin-block: calc(var(--pad-sm) / 2);
+}
+
+.quiz-problem-graph {
+  margin: 0;
+  max-width: 32rem;
+}
+
+.quiz-problem-graph svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: min(24svh, 13rem);
+}
+
+.quiz-problem-graph text {
+  fill: currentColor;
+  font-size: 11px;
+}
+
+.quiz-problem-graph__grid {
+  stroke: currentColor;
+  opacity: 0.17;
+}
+
+.quiz-problem-graph__axes {
+  stroke: currentColor;
+  fill: none;
+}
+
+.quiz-problem-graph__line {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+}
+
+.quiz-problem-graph circle {
+  fill: currentColor;
+}
