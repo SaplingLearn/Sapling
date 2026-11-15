@@ -214,6 +214,28 @@ class TestCalendarCallback:
         )
         assert "/calendar?calendar_error=access_denied" in r.headers["location"]
 
+    def test_a_replayed_state_is_refused_and_writes_nothing(self, monkeypatch):
+        """Each state nonce is honoured once, as at sign-in (#756): within the
+        cookie's 10 minutes a second callback with the same state and another
+        code must not overwrite the student's calendar tokens."""
+        flow, _ = _mock_flow(monkeypatch)
+        upserts = self._upserts(monkeypatch)
+        client = TestClient(_app)
+        state = self._initiate(client)
+        cookie = client.cookies.get(cal.CALENDAR_OAUTH_STATE_COOKIE)
+
+        first = client.get(f"/api/calendar/callback?code=one&state={state}", follow_redirects=False)
+        assert first.headers["location"].endswith("/calendar?connected=true")
+        assert len(upserts) == 1
+
+        # The callback clears the cookie; a replay brings the captured one back.
+        client.cookies.set(cal.CALENDAR_OAUTH_STATE_COOKIE, cookie)
+        replay = client.get(f"/api/calendar/callback?code=two&state={state}", follow_redirects=False)
+        assert replay.headers["location"].endswith("/calendar?calendar_error=invalid_state")
+        assert len(upserts) == 1
+        codes = [c.kwargs.get("code") for c in flow.fetch_token.call_args_list]
+        assert codes == ["one"], "a replay must be refused before the code exchange"
+
     def test_the_exchange_flow_carries_no_scopes(self, monkeypatch):
         """include_granted_scopes returns the identity scopes too; with the
         calendar scopes on the session oauthlib raised "Scope has changed" and

@@ -30,6 +30,7 @@ from services.encryption import encrypt
 # These are pure helpers with no request state, so importing them keeps the
 # calendar connect flow DRY without duplicating the security-critical bits.
 from services.auth.oauth_state import (
+    _consume_oauth_nonce,
     _google_client_config,
     _encode_state,
     _decode_state,
@@ -197,6 +198,11 @@ def calendar_callback(
         or not user_id
         or not _hmac.compare_digest(str(state_nonce), str(cookie_nonce))
     ):
+        return _finish("calendar_error=invalid_state")
+    # #756, as at sign-in: one callback per state. Consumed before the code
+    # exchange, so a replay within the cookie's 10 minutes (another code, the
+    # same state) can never overwrite the student's stored tokens.
+    if not _consume_oauth_nonce(str(cookie_nonce)):
         return _finish("calendar_error=invalid_state")
 
     # No scopes on the exchange Flow. include_granted_scopes makes Google
