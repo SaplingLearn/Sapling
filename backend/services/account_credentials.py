@@ -32,9 +32,9 @@ non-Supabase calls). Nothing about a token is ever logged.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import sys
-import time
 
 import httpx
 
@@ -54,7 +54,7 @@ DELETE_RETRY_DELAYS_S = (2.0, 8.0)
 #: Most credential rows per table one purge pass looks at.
 LEFTOVER_SCAN_LIMIT = 500
 
-_sleep = time.sleep  # seam: tests do not wait out the backoff
+_sleep = asyncio.sleep  # seam: tests do not wait out the backoff
 
 
 def _plain(value) -> str | None:
@@ -89,17 +89,20 @@ def delete_credentials(user_id: str) -> None:
 
 
 @runs_as_service
-def _retry_delete(user_id: str) -> bool:
+async def _retry_delete(user_id: str) -> bool:
     """Retry :func:`delete_credentials` with backoff. True once it lands;
     False (logged with the user id) when every retry failed. Never raises.
 
-    Service role: it runs after the account delete's response, where the
-    request's (now deleted) student scope would still apply."""
+    The backoff is an ``asyncio.sleep`` and each (sync) delete runs on a
+    worker thread, so the retries hold neither the event loop nor a
+    threadpool worker while they wait. Service role (carried into the
+    thread with the context): it runs after the account delete's response,
+    where the request's (now deleted) student scope would still apply."""
     error = "none"
     for delay in DELETE_RETRY_DELAYS_S:
-        _sleep(delay)
+        await _sleep(delay)
         try:
-            delete_credentials(user_id)
+            await asyncio.to_thread(delete_credentials, user_id)
             return True
         except Exception as exc:
             error = type(exc).__name__
@@ -110,15 +113,21 @@ def _retry_delete(user_id: str) -> bool:
     return False
 
 
-def finish_removal(user_id: str, tokens: list[str], *, retry_delete: bool) -> None:
-    """The account delete's after-response half. Never raises.
+async def finish_removal(user_id: str, tokens: list[str], *, retry_delete: bool) -> None:
+    """The account delete's after-response half: an ``async def``, so
+    Starlette awaits it on the loop instead of parking a threadpool worker
+    for the whole backoff. Never raises.
 
     `retry_delete`: the delete could not remove the credential rows, so retry
     that first (:func:`_retry_delete`). Then revoke the grant with `tokens`
-    (read before the account was hidden), whether or not the rows went."""
+    (read before the account was hidden), whether or not the rows went; the
+    revoke is a blocking HTTP call, so it runs on a worker thread."""
     if retry_delete:
-        _retry_delete(user_id)
-    revoke_google_tokens(tokens)
+        await _retry_delete(user_id)
+    try:
+        await asyncio.to_thread(revoke_google_tokens, tokens)
+    except Exception as exc:  # noqa: BLE001 — revoke never raises; this keeps the promise if it ever does
+        logger.warning("[account] Google token revoke for %s failed: %s", user_id, type(exc).__name__)
 
 
 def deleted_accounts_with_credentials(limit: int = LEFTOVER_SCAN_LIMIT) -> list[str]:

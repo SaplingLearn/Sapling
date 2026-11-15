@@ -8,6 +8,9 @@ the tokens it read; `services/account_credentials.py` does the reading,
 removing and revoking. The ordering is tested at the service level; the
 route's own tests only check the HTTP mapping.
 """
+import asyncio
+import inspect
+import threading
 from unittest.mock import MagicMock, patch
 
 import httpx
@@ -203,8 +206,24 @@ def test_a_credential_delete_failure_after_the_hide_is_retried_after_the_respons
 @pytest.fixture
 def no_sleep(monkeypatch):
     slept = []
-    monkeypatch.setattr(ac, "_sleep", slept.append)
+
+    async def sleep(delay):
+        slept.append(delay)
+
+    monkeypatch.setattr(ac, "_sleep", sleep)
     return slept
+
+
+def _finish(*args, **kwargs):
+    return asyncio.run(ac.finish_removal(*args, **kwargs))
+
+
+def test_finish_removal_is_an_async_background_task():
+    """Starlette awaits an `async def` background task on the loop; its
+    backoff is an `asyncio.sleep`, so a failed delete holds no threadpool
+    worker for the ~10 s of retries."""
+    assert inspect.iscoroutinefunction(ac.finish_removal)
+    assert ac._sleep is asyncio.sleep
 
 
 def test_finish_removal_retries_the_delete_with_backoff_then_revokes(monkeypatch, no_sleep):
@@ -220,11 +239,54 @@ def test_finish_removal_retries_the_delete_with_backoff_then_revokes(monkeypatch
     monkeypatch.setattr(ac, "delete_credentials", delete)
     monkeypatch.setattr(ac, "revoke_google_tokens", lambda t: order.append(("revoke", t)))
 
-    ac.finish_removal(USER, ["tok"], retry_delete=True)
+    _finish(USER, ["tok"], retry_delete=True)
 
     assert order == [("delete", USER), ("delete", USER), ("revoke", ["tok"])]
     assert no_sleep == list(ac.DELETE_RETRY_DELAYS_S[:2])
     assert no_sleep[0] < no_sleep[1]  # backoff
+
+
+def test_finish_removal_keeps_the_loop_free_and_its_db_calls_off_it(monkeypatch):
+    """The backoff yields to the loop (another task runs during it), and the
+    sync delete and the revoke run on a worker thread, as the service role."""
+    from db.scope import in_service_scope
+
+    monkeypatch.setattr(ac, "DELETE_RETRY_DELAYS_S", (0.05, 0.05))
+    seen = []
+    attempts = iter([RuntimeError("db down"), None])
+
+    def delete(uid):
+        seen.append(("delete", threading.get_ident(), in_service_scope()))
+        exc = next(attempts)
+        if exc:
+            raise exc
+
+    def revoke(tokens):
+        seen.append(("revoke", threading.get_ident(), None))
+
+    monkeypatch.setattr(ac, "delete_credentials", delete)
+    monkeypatch.setattr(ac, "revoke_google_tokens", revoke)
+
+    async def run():
+        loop_thread = threading.get_ident()
+        ticks = 0
+
+        async def ticker():
+            nonlocal ticks
+            while True:
+                ticks += 1
+                await asyncio.sleep(0.005)
+
+        tick = asyncio.create_task(ticker())
+        await ac.finish_removal(USER, ["tok"], retry_delete=True)
+        tick.cancel()
+        return loop_thread, ticks
+
+    loop_thread, ticks = asyncio.run(run())
+    assert ticks >= 5  # the loop ran other work during the ~0.1 s of backoff
+    assert [what for what, _, _ in seen] == ["delete", "delete", "revoke"]
+    assert all(thread != loop_thread for _, thread, _ in seen)
+    assert [scope for what, _, scope in seen if what == "delete"] == [True, True]
 
 
 def test_finish_removal_logs_the_user_when_every_retry_fails(monkeypatch, no_sleep, caplog):
@@ -239,7 +301,7 @@ def test_finish_removal_logs_the_user_when_every_retry_fails(monkeypatch, no_sle
     monkeypatch.setattr(ac, "revoke_google_tokens", revoke)
 
     with caplog.at_level("ERROR", logger=ac.__name__):
-        ac.finish_removal(USER, ["tok"], retry_delete=True)  # never raises
+        _finish(USER, ["tok"], retry_delete=True)  # never raises
 
     assert len(calls) == len(ac.DELETE_RETRY_DELAYS_S) >= 2
     revoke.assert_called_once_with(["tok"])  # the grant is revoked anyway
@@ -253,11 +315,16 @@ def test_finish_removal_without_a_pending_delete_only_revokes(monkeypatch, no_sl
     revoke = MagicMock()
     monkeypatch.setattr(ac, "revoke_google_tokens", revoke)
 
-    ac.finish_removal(USER, ["tok"], retry_delete=False)
+    _finish(USER, ["tok"], retry_delete=False)
 
     delete.assert_not_called()
     revoke.assert_called_once_with(["tok"])
     assert no_sleep == []
+
+
+def test_finish_removal_never_raises_when_the_revoke_does(monkeypatch, no_sleep):
+    monkeypatch.setattr(ac, "revoke_google_tokens", MagicMock(side_effect=RuntimeError("boom")))
+    _finish(USER, ["tok"], retry_delete=False)
 
 
 # ── deleted_accounts_with_credentials ───────────────────────────────────────
