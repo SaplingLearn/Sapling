@@ -411,7 +411,7 @@ async def summarize(note_id: str, body: AgentActionBody, request: Request):
     if not note:
         raise HTTPException(status_code=404, detail="Note not found.")
     # docs/safety/crisis-support.md: the note never blocks; a match shows the card alongside
-    card = await crisis_support.screen_content_async(request, body.user_id, "note_summarize", *_note_texts(note))
+    screen = await crisis_support.screen_content_async(request, body.user_id, "note_summarize", *_note_texts(note))
 
     async def action() -> dict:
         await aenforce_abuse_limit(abuse_limits.NOTE_AI_ACTION, body.user_id)
@@ -427,7 +427,7 @@ async def summarize(note_id: str, body: AgentActionBody, request: Request):
         await save_summary(note_id=note_id, user_id=body.user_id, summary=summary_text)
         return {"summary": summary_text}
 
-    return await crisis_support.alongside(card, action())
+    return await crisis_support.alongside(screen, action())
 
 
 @router.post("/{note_id}/extract-concepts")
@@ -439,7 +439,7 @@ async def extract_concepts(
     if not note:
         raise HTTPException(status_code=404, detail="Note not found.")
     # docs/safety/crisis-support.md: the note never blocks; a match shows the card alongside
-    card = await crisis_support.screen_content_async(
+    screen = await crisis_support.screen_content_async(
         request, body.user_id, "note_extract_concepts", *_note_texts(note)
     )
 
@@ -462,7 +462,7 @@ async def extract_concepts(
         linked = await link_prechecked_concepts(note_id=note_id, node_ids=[n["id"] for n in nodes])
         return {"concepts": names, "linked": linked}
 
-    return await crisis_support.alongside(card, action())
+    return await crisis_support.alongside(screen, action())
 
 
 class NoteChatBody(BaseModel):
@@ -480,7 +480,7 @@ async def note_chat(note_id: str, body: NoteChatBody, request: Request):
     if not note:
         raise HTTPException(status_code=404, detail="Note not found.")
     # ...the note the chat agent reads never blocks: a match shows the card alongside
-    card = await crisis_support.screen_content_async(request, body.user_id, "note_chat", *_note_texts(note))
+    screen = await crisis_support.screen_content_async(request, body.user_id, "note_chat", *_note_texts(note))
 
     async def action() -> dict:
         await aenforce_abuse_limit(abuse_limits.NOTE_AI_ACTION, body.user_id)
@@ -506,7 +506,7 @@ async def note_chat(note_id: str, body: NoteChatBody, request: Request):
             raise HTTPException(status_code=500, detail="Something went wrong answering that.") from e
         return {"reply": result.output, "degraded": False}
 
-    return await crisis_support.alongside(card, action())
+    return await crisis_support.alongside(screen, action())
 
 
 @router.post("/{note_id}/send-to-tutor")
@@ -518,7 +518,7 @@ async def send_to_tutor(
     if not note:
         raise HTTPException(status_code=404, detail="Note not found.")
     # docs/safety/crisis-support.md: the note never blocks; a match shows the card alongside
-    card = await crisis_support.screen_content_async(request, body.user_id, "note_send_to_tutor", *_note_texts(note))
+    screen = await crisis_support.screen_content_async(request, body.user_id, "note_send_to_tutor", *_note_texts(note))
 
     async def action() -> dict:
         # No model runs here (the tutor session is limited where it starts),
@@ -538,7 +538,7 @@ async def send_to_tutor(
             "preface": "\n\n".join(preface_parts),
         }
 
-    return await crisis_support.alongside(card, action())
+    return await crisis_support.alongside(screen, action())
 
 
 @router.post("/{note_id}/generate-quiz")

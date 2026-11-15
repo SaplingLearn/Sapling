@@ -877,6 +877,50 @@ def test_async_screen_scans_long_text_off_the_event_loop(monkeypatch, sink):
     assert threads[1] == loop_thread  # a chat message: inline, it is microseconds
 
 
+async def _a_result() -> dict:
+    return {"summary": "Short summary."}
+
+
+def test_a_stored_material_screen_can_only_ride_alongside(monkeypatch, sink):
+    """`screen_content_async` answers with a `ContentScreen`, never a
+    `CrisisSupport`: every blocking builder refuses it (a note can never be
+    answered with the card INSTEAD of its result), and `alongside` refuses
+    anything else (a typed message's card cannot be slipped beside a result)."""
+    import asyncio
+
+    monkeypatch.setattr(crisis_support, "flag_on", lambda key, uid: True)
+
+    async def screens():
+        return [await crisis_support.screen_content_async(_request(), "u1", "note_summarize", text)
+                for text in (CRISIS, CALM)]
+
+    for screen in asyncio.run(screens()):
+        assert isinstance(screen, crisis_support.ContentScreen)
+        for build in (crisis_support.json_body, crisis_support.turn_json, crisis_support.start_json):
+            with pytest.raises(TypeError):
+                build(screen)
+        with pytest.raises(TypeError):
+            crisis_support.sse_response(screen, _request())
+
+    typed = crisis_support.screen(_request(), "u1", "note_chat", CRISIS)
+    for not_a_content_screen in (typed, None):
+        with pytest.raises(TypeError):
+            asyncio.run(crisis_support.alongside(not_a_content_screen, _a_result()))
+
+
+def test_a_calm_stored_material_screen_returns_the_result_alone(monkeypatch, sink):
+    import asyncio
+
+    monkeypatch.setattr(crisis_support, "flag_on", lambda key, uid: True)
+
+    async def main():
+        screen = await crisis_support.screen_content_async(_request(), "u1", "note_summarize", CALM)
+        return await crisis_support.alongside(screen, _a_result())
+
+    assert asyncio.run(main()) == {"summary": "Short summary."}
+    assert _crisis_rows(sink) == []
+
+
 # ── Campus counseling: one config spot, per school ─────────────────────────
 
 

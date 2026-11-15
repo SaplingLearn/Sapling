@@ -48,6 +48,7 @@ _NOT_MIRRORED` says why): it stays in our own `events` table.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import uuid
 from dataclasses import dataclass
@@ -139,20 +140,33 @@ async def screen_async(
     return await asyncio.to_thread(_resolve, user_id, surface, match)
 
 
+@dataclass(frozen=True)
+class ContentScreen:
+    """What `screen_content_async` answers: whether the student's STORED
+    material matched (`support`, else None) and the request to answer on.
+    Deliberately not a `CrisisSupport`, and never None: the blocking builders
+    (`json_body`, `turn_json`, `start_json`, `sse_response`) refuse it, and
+    `alongside`, the one thing that takes it, refuses anything else, so stored
+    material can never be answered with the card INSTEAD of its result."""
+
+    request: Request
+    support: CrisisSupport | None
+
+
 async def screen_content_async(
     request: Request, user_id: str | None, surface: Surface, *texts: str | None,
-) -> CrisisSupport | None:
+) -> ContentScreen:
     """`screen_async` for the student's STORED material (a note's title and
-    body), which NEVER blocks: the caller does not stop on a match, it runs
-    its action as usual through `alongside`, which attaches the card to
-    whatever answer goes back. The match is screened, authenticated, flagged
-    and logged exactly as for a typed message.
+    body), which NEVER blocks: the caller runs its action as usual through
+    `alongside(screen, action())`, which attaches the card to whatever answer
+    goes back. The match is screened, authenticated, flagged and logged
+    exactly as for a typed message.
 
     A typed message blocks (the card instead of the result): it is what the
     student is saying now. A note is material they stored, often quoting
     someone else (a patient, a play), and no pattern can tell those apart, so
     the student gets the result they asked for and the card beside it."""
-    return await screen_async(request, user_id, surface, *texts)
+    return ContentScreen(request, await screen_async(request, user_id, surface, *texts))
 
 
 def _check_surface(surface: str) -> None:
@@ -248,8 +262,17 @@ def json_body(support: CrisisSupport, **neutral: Any) -> dict[str, Any]:
     """The body a JSON route returns instead of its result: `reply` (the copy
     as text), `crisis_support` (the card) and the route's own neutral keys, so
     a client that ignores `crisis_support` still reads a well-formed, empty
-    result."""
+    result. Only for a blocking screen: a `ContentScreen` is refused."""
+    _blocking(support)
     return {**neutral, "reply": support.reply, "crisis_support": support.payload}
+
+
+def _blocking(support: Any) -> None:
+    if not isinstance(support, CrisisSupport):
+        raise TypeError(
+            f"a blocking crisis answer needs a CrisisSupport, not {type(support).__name__} "
+            "(stored material rides alongside its result: crisis_support.alongside)"
+        )
 
 
 def turn_json(support: CrisisSupport, **neutral: Any) -> dict[str, Any]:
@@ -260,6 +283,7 @@ def turn_json(support: CrisisSupport, **neutral: Any) -> dict[str, Any]:
 def start_json(support: CrisisSupport) -> dict[str, Any]:
     """A session start: no session is opened (`session_id` null) and the copy
     stands in for the opener."""
+    _blocking(support)
     return json_body(support, session_id=None, initial_message=support.reply, graph_state=None)
 
 
@@ -273,11 +297,19 @@ _ERROR_CARD = "_crisis_support_payload"
 _E = TypeVar("_E", bound=BaseException)
 
 
-async def alongside(support: CrisisSupport | None, action: Awaitable[dict[str, Any]]) -> dict[str, Any]:
+async def alongside(screen: ContentScreen, action: Awaitable[dict[str, Any]]) -> dict[str, Any]:
     """Await `action` (the route's own work, limits included) and attach the
-    card to whatever answer goes back: its result (`crisis_support` plus
-    `ALONGSIDE`), or the error it raises (a 429, a 413, a 500), whose body
-    main.py's handlers give the card too. With no card, just the action."""
+    card `screen` found to whatever answer goes back: its result
+    (`crisis_support` plus `ALONGSIDE`), or the error it raises (a 429, a 413,
+    a 500), whose body main.py's handlers give the card too. With no card,
+    just the action. `screen` must come from `screen_content_async`."""
+    if not isinstance(screen, ContentScreen):
+        if inspect.iscoroutine(action):
+            action.close()
+        raise TypeError(
+            f"alongside takes screen_content_async's ContentScreen, not {type(screen).__name__}"
+        )
+    support = screen.support
     if support is None:
         return await action
     try:
