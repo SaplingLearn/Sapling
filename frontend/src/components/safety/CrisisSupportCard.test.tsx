@@ -99,4 +99,31 @@ describe("useCrisisSupport", () => {
     expect(hit).toBe(true);
     expect(result.current.support?.title).toBe(support.title);
   });
+
+  it("runs every pending afterClose when the card closes, even when a second card arrived first", () => {
+    // Send to tutor waits for the card to close before it navigates; a second
+    // card arriving before then must not drop that.
+    const { result } = renderHook(() => useCrisisSupport());
+    const sendToTutor = vi.fn();
+    const second = vi.fn();
+    act(() => { result.current.intercept({ crisis_support: fixture }, sendToTutor); });
+    act(() => { result.current.intercept({ crisis_support: fixture }); });
+    act(() => { result.current.intercept({ crisis_support: fixture }, second); });
+    expect(sendToTutor).not.toHaveBeenCalled();
+
+    const { getByTestId } = render(<>{result.current.dialog}</>);
+    act(() => { getByTestId("crisis-support-dismiss").click(); });
+
+    expect(sendToTutor).toHaveBeenCalledTimes(1);
+    expect(second).toHaveBeenCalledTimes(1);
+    expect(sendToTutor.mock.invocationCallOrder[0]).toBeLessThan(second.mock.invocationCallOrder[0]);
+    expect(result.current.support).toBeNull();
+
+    // ...and each runs once: the next close has nothing pending.
+    act(() => { result.current.intercept({ crisis_support: fixture }); });
+    const again = render(<>{result.current.dialog}</>);
+    act(() => { again.getAllByTestId("crisis-support-dismiss").at(-1)!.click(); });
+    expect(sendToTutor).toHaveBeenCalledTimes(1);
+    expect(second).toHaveBeenCalledTimes(1);
+  });
 });

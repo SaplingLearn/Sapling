@@ -138,24 +138,26 @@ export function CrisisSupportDialog({
  * (and returns true) when the response carries one, so the caller stops its
  * normal handling; render `dialog` once in the surface. `afterClose` runs
  * once the student closes the card (a result shown alongside it that leaves
- * the page, like opening the tutor, waits for that).
+ * the page, like opening the tutor, waits for that). A card that arrives
+ * while one is showing replaces it, but every `afterClose` still pending
+ * runs, in order, when the student closes it.
  */
 export function useCrisisSupport() {
   const [support, setSupport] = useState<CrisisSupport | null>(null);
-  const afterCloseRef = useRef<(() => void) | null>(null);
+  const afterCloseRef = useRef<Array<() => void>>([]);
   const intercept = useCallback((response: unknown, afterClose?: () => void): boolean => {
     const found = crisisSupportIn(response);
     if (found) {
-      afterCloseRef.current = afterClose ?? null;
+      if (afterClose) afterCloseRef.current.push(afterClose);
       setSupport(found);
     }
     return found !== null;
   }, []);
   const close = useCallback(() => {
     setSupport(null);
-    const then = afterCloseRef.current;
-    afterCloseRef.current = null;
-    then?.();
+    const pending = afterCloseRef.current;
+    afterCloseRef.current = [];
+    for (const then of pending) then();
   }, []);
   const dialog = <CrisisSupportDialog support={support} onClose={close} />;
   return { intercept, dialog, support };
