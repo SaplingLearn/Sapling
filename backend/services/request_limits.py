@@ -250,28 +250,7 @@ def check_rate_limit(key: str, *, limit: int, window_sec: int) -> int | None:
     return claim_rate_limit(key, limit=limit, window_sec=window_sec).retry_after
 
 
-async def acheck_rate_limit(
-    key: str, *, limit: int, window_sec: int, memory_only: bool = False
-) -> int | None:
-    """:func:`check_rate_limit` for an ``async def``.
-
-    ``memory_only`` keeps the window in THIS PROCESS and never consults the
-    ``stateless_rate_limit`` flag. Two reasons a caller wants that:
-
-    * Latency. The flag read is cached, but a cold cache costs a thread hop
-      and a read. On a hot path that already runs a model call per request
-      (the tutor turn), the limiter should not be the thing that adds I/O.
-    * Blast radius. Resolving a flag here pulls the feature-flag store into
-      the caller's request, which is a surprising dependency for something
-      whose whole job is to count calls.
-
-    The trade is that each replica gets its own window, so the effective
-    limit is `limit x replicas`. That is fine for ABUSE DAMPENING (stop a
-    script) and wrong for a quota (bill a student), so only pass it where
-    being approximate is acceptable.
-    """
-    if memory_only:
-        return _claim_memory(key, limit, window_sec).retry_after
+async def acheck_rate_limit(key: str, *, limit: int, window_sec: int) -> int | None:
     return (await aclaim_rate_limit(key, limit=limit, window_sec=window_sec)).retry_after
 
 
