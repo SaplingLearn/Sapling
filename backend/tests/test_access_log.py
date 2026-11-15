@@ -81,7 +81,7 @@ def test_real_uvicorn_request_logs_no_query(access_output):
                                 access_log=True, http="h11", lifespan="off")
         server = uvicorn.Server(config)
         task = asyncio.create_task(server.serve())
-        while not server.started:
+        while not server.started:  # noqa: ASYNC110 — uvicorn exposes a flag, not an event
             await asyncio.sleep(0.01)
         port = server.servers[0].sockets[0].getsockname()[1]
         async with httpx.AsyncClient() as client:

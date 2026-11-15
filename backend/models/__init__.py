@@ -508,7 +508,7 @@ def normalise_website(value: str) -> str:
         parts = urlsplit(v)
         host = parts.hostname
     except ValueError:
-        raise ValueError("website must be an http(s) URL")
+        raise ValueError("website must be an http(s) URL") from None
     if parts.scheme.lower() not in {"http", "https"} or not host or "@" in parts.netloc:
         raise ValueError("website must be an http(s) URL")
     if len(v) > PROFILE_WEBSITE_MAX:

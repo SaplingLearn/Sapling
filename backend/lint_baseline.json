@@ -32,7 +32,7 @@
   "routes/documents.py::B904": 3,
   "routes/documents.py::BLE001": 1,
   "routes/extract.py::B904": 6,
-  "routes/extract.py::BLE001": 3,
+  "routes/extract.py::BLE001": 1,
   "routes/feedback.py::BLE001": 1,
   "routes/gradebook.py::B904": 2,
   "routes/gradescope.py::B904": 10,
