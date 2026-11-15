@@ -31,7 +31,7 @@ import { quizHrefForNote } from "@/lib/quiz/noteHref";
 import { useNoteAutosave, type AutosaveStatus } from "@/lib/notes/useNoteAutosave";
 import { CHAT_MESSAGE_MAX, NOTE_BODY_MAX, NOTE_TITLE_MAX } from "@/lib/inputLimits";
 import { CrisisSupportCard, useCrisisSupport } from "@/components/safety/CrisisSupportCard";
-import { crisisSupportIn, crisisSupportInError, type CrisisSupport } from "@/lib/crisisSupport";
+import { crisisSupportIn, crisisSupportInError, markNoteCardShown, type CrisisSupport } from "@/lib/crisisSupport";
 import {
   layoutRowStyle,
   notesListRailStyle,
@@ -442,9 +442,11 @@ function NotetakerScreen() {
           `/learn?topic=${encodeURIComponent(res.topic ?? "")}&course=${encodeURIComponent(res.course_id ?? "")}`
             + `&note=${encodeURIComponent(noteId)}`,
         );
-        // Beside a result, the tutor opens once the card is closed; a card
-        // that stands in for the result opens nothing.
-        if (crisis.intercept(res, res.crisis_support_alongside ? open : undefined)) return;
+        // Beside a result, the tutor opens once the card is closed, told the
+        // card was shown so its start does not pop the same one up again; a
+        // card that stands in for the result opens nothing.
+        const openAfterCard = () => { markNoteCardShown(noteId); open(); };
+        if (crisis.intercept(res, res.crisis_support_alongside ? openAfterCard : undefined)) return;
         open();
       } catch (e) {
         console.error("Send to tutor failed", e);

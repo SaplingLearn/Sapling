@@ -14,6 +14,7 @@ title (`notes_service.tutor_topic`); anything else is screened as typed.
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from models import StartSessionBody
 from services.notes_service import get_note, tutor_topic
@@ -21,18 +22,23 @@ from services.notes_service import get_note, tutor_topic
 logger = logging.getLogger(__name__)
 
 
-async def topic_is_note_title(body: StartSessionBody) -> bool:
-    """True when `body.topic` is the tutor topic of the student's own note
-    `body.from_note_id`. Read only after the crisis screen matched the topic
-    (which authenticated the caller as `body.user_id`), so an ordinary start
-    never pays for the read. Every doubt is False (no id, another student's or
-    a deleted note, an edited topic, a failed read): the topic then blocks as
-    typed, never the other way round."""
+async def note_title_version(body: StartSessionBody) -> tuple[str, Any] | None:
+    """The version (id, updated_at) of the student's own note
+    `body.from_note_id` when `body.topic` is that note's tutor topic, else
+    None. The version keys the start's once-a-day event, shared with Send to
+    tutor's (`crisis_support.screen_tutor_start_async`). Read only after the
+    crisis screen matched the topic (which authenticated the caller as
+    `body.user_id`), so an ordinary start never pays for the read. Every
+    doubt is None (no id, another student's or a deleted note, an edited
+    topic, a failed read): the topic then blocks as typed, never the other
+    way round."""
     if not body.from_note_id:
-        return False
+        return None
     try:
         note = await get_note(note_id=body.from_note_id, user_id=body.user_id)
     except Exception:  # noqa: BLE001 — a failed read means "not shown to be the note's"
         logger.warning("crisis support: a tutor start's note could not be read; its topic is screened as typed")
-        return False
-    return bool(note) and body.topic.strip() == tutor_topic(note)
+        return None
+    if not note or body.topic.strip() != tutor_topic(note):
+        return None
+    return (body.from_note_id, note.get("updated_at"))

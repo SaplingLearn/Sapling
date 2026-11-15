@@ -14,7 +14,7 @@ import { ModelToggle, useModelPref, type ModelPref } from "../chat/ModelToggle";
 import { Toggle } from "@/components/ui";
 import { DisclaimerModal } from "../DisclaimerModal";
 import { useCrisisSupport } from "../safety/CrisisSupportCard";
-import { crisisSupportIn, crisisSupportInError, type WithCrisisSupport } from "@/lib/crisisSupport";
+import { crisisSupportIn, crisisSupportInError, takeNoteCardShown, type WithCrisisSupport } from "@/lib/crisisSupport";
 import { AIDisclaimerChip } from "../chat/AIDisclaimerChip";
 import { KnowledgeGraph } from "../graph/KnowledgeGraph";
 import { useToast } from "../ToastProvider";
@@ -862,6 +862,26 @@ type RailCollapse = ReturnType<typeof useRailCollapse>;
 
 // The tutor session on screen and every async path that changes it or talks
 // to it: start, resume, send, retry, hint/confused/skip, mode switch, end.
+// docs/safety/crisis-support.md: what a session start does with the card its
+// answer may carry. The card INSTEAD of a greeting (no session was opened)
+// always shows and stops the start (`blockedByCard`); the card BESIDE one
+// (`crisis_support_alongside`) shows over the session, and a refusal's card
+// beside the error (`showErrorCard`). Except right after Send to tutor showed
+// this note's card and the student closed it (`takeNoteCardShown`, spent by
+// this start): the same card beside the session does not pop up again.
+function startCards(intercept: (response: unknown) => boolean, fromNoteId: string | undefined) {
+  const cardJustShown = fromNoteId !== undefined && takeNoteCardShown(fromNoteId);
+  return {
+    blockedByCard(res: WithCrisisSupport): boolean {
+      if (res.crisis_support_alongside && cardJustShown) return false;
+      return intercept(res) && !res.crisis_support_alongside;
+    },
+    showErrorCard(err: unknown): void {
+      if (!cardJustShown) intercept({ crisis_support: crisisSupportInError(err) });
+    },
+  };
+}
+
 function useTutorSession({ router, searchParams, userId, userReady, toast, prefs, sharedCtx, modelPref, applyGraphDelta, setFocusedNodeId }: {
   router: Router;
   searchParams: SearchParams;
@@ -1016,9 +1036,7 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
     streamAbort.current = controller;
     let sawToken = false;
     const fromNoteId = fromNote && topicName === fromNote.topic ? fromNote.id : undefined;
-    // The card instead of a greeting (no session was opened) stops here; the
-    // card beside one (`crisis_support_alongside`) shows over the session.
-    const blockedByCard = (res: WithCrisisSupport) => crisis.intercept(res) && !res.crisis_support_alongside;
+    const { blockedByCard, showErrorCard } = startCards(crisis.intercept, fromNoteId);
     try {
       let newSessionId: string;
       let replyText: string;
@@ -1073,7 +1091,7 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
       setMessages([{ id: msgId(), role: "assistant", content: replyText }]);
     } catch (err) {
       if (!isCurrent()) return;
-      crisis.intercept({ crisis_support: crisisSupportInError(err) }); // a refusal can carry the card
+      showErrorCard(err); // a refusal can carry the card
       toast.error(readableError(err, "Couldn't start session."));
       setMessages([]);
     } finally {

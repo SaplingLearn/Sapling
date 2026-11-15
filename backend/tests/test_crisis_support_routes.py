@@ -1204,6 +1204,85 @@ def test_a_calm_note_titled_topic_starts_as_usual(flag, sink, note_start):
     note_start["get_note"].assert_not_called()  # the note is read only when the topic matched
 
 
+def _send_to_tutor(note: dict):
+    with (
+        patch("routes.notes.get_note", AsyncMock(return_value=note)),
+        patch("routes.notes.offering_course_id", return_value="c1"),
+    ):
+        r = client.post(f"/api/notes/{note['id']}/send-to-tutor", json={"user_id": "u1"})
+    assert r.status_code == 200, r.text
+    assert r.json()["crisis_support_alongside"] is True
+    return r
+
+
+def _surfaces(sink) -> list[str]:
+    return [row["payload"]["surface"] for row in _crisis_rows(sink)]
+
+
+@pytest.mark.parametrize("path", ["/api/learn/start-session", "/api/learn/start-session/stream"])
+def test_the_start_send_to_tutor_hands_over_records_no_second_card(path, flag, sink, note_start):
+    """Send to tutor showed (and recorded) the card for this note version; the
+    /learn start it hands over shows the card beside the session again but
+    records nothing new that day."""
+    flag("on")
+    note = {**CRISIS_NOTE, "updated_at": "2026-11-14T10:00:00Z"}
+    note_start["get_note"].return_value = dict(note)
+    _send_to_tutor(note)
+    r = client.post(path, json=_note_start())
+    assert r.status_code == 200, r.text
+    assert "crisis_support" in r.text  # the card still rides beside the session
+    assert _surfaces(sink) == ["note_send_to_tutor"]
+
+
+def test_a_note_titled_start_records_once_a_day_per_note_version(flag, sink, note_start, monkeypatch):
+    flag("on")
+    clock = [1_000.0]
+    monkeypatch.setattr(crisis_support.time, "monotonic", lambda: clock[0])
+    note = {**CRISIS_NOTE, "updated_at": "2026-11-14T10:00:00Z"}
+
+    def start(n=note):
+        note_start["get_note"].return_value = dict(n)
+        r = client.post("/api/learn/start-session", json=_note_start(from_note_id=n["id"]))
+        assert r.status_code == 200, r.text
+        assert r.json()["crisis_support_alongside"] is True  # the card, every start
+        return len(_crisis_rows(sink))
+
+    assert start() == 1
+    assert start() == 1  # the same note version, the same day
+    assert start(note | {"updated_at": "2026-11-14T11:00:00Z"}) == 2  # the note was edited
+    clock[0] += 24 * 3600 + 1
+    assert start() == 3  # a day later
+    assert _surfaces(sink) == ["tutor_start"] * 3
+
+
+def test_send_to_tutor_itself_still_records_every_match(flag, sink, note_start):
+    flag("on")
+    note = {**CRISIS_NOTE, "updated_at": "2026-11-14T10:00:00Z"}
+    _send_to_tutor(note)
+    _send_to_tutor(note)
+    assert _surfaces(sink) == ["note_send_to_tutor"] * 2
+
+
+def test_a_typed_crisis_topic_still_blocks_and_records_every_start(flag, sink, note_start):
+    """Typed topics are unaffected: no dedupe, the card instead of a session."""
+    flag("on")
+    note = {**CRISIS_NOTE, "updated_at": "2026-11-14T10:00:00Z"}
+    _send_to_tutor(note)
+    for _ in range(2):
+        r = client.post("/api/learn/start-session", json=_note_start(from_note_id=None))
+        assert r.status_code == 200, r.text
+        assert r.json()["session_id"] is None
+    assert _surfaces(sink) == ["note_send_to_tutor", "tutor_start", "tutor_start"]
+    note_start["start"].assert_not_called()
+
+
+def test_the_handoff_key_holds_no_content_or_id(flag, sink, note_start):
+    flag("on")
+    _send_to_tutor({**CRISIS_NOTE, "updated_at": "2026-11-14T10:00:00Z"})
+    keys = " ".join(crisis_support._recorded_today).lower()
+    assert keys and not any(word in keys for word in CRISIS_WORDS + ("n1", "u1"))
+
+
 # ── Screening precedes every rate limit, budget and quota ───────────────────
 #
 # A student in crisis must never be answered with a 429 instead of the card.

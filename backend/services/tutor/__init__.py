@@ -15,7 +15,7 @@ and every helper and constant moved under its old name (re-exported by
 - ``turns``: ``start_session``, ``chat``, ``action`` and the guardrail mapping.
 - ``streams``: ``chat_stream`` and ``start_session_stream``.
 - ``note_topic``: whether a start's topic is Send to tutor's note title
-  (``topic_is_note_title``, the crisis screen's stored-material case).
+  (``note_title_version``, the crisis screen's stored-material case).
 - ``sessions``: ``end_session``, ``list_sessions``, ``rename_session``,
   ``delete_session``, ``resume_session``, ``mode_switch``.
 - ``errors``: the package's one ``fastapi`` import (``HTTPException``).
@@ -49,7 +49,7 @@ _PUBLIC = {
     "save_message_sync": "messages",
     "start_session": "turns",
     "start_session_stream": "streams",
-    "topic_is_note_title": "note_topic",
+    "note_title_version": "note_topic",
 }
 
 __all__ = sorted(_PUBLIC)

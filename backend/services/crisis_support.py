@@ -63,7 +63,7 @@ import time
 import uuid
 from collections import OrderedDict
 from dataclasses import dataclass
-from typing import Any, Awaitable, Literal, get_args
+from typing import Any, Awaitable, Callable, Literal, get_args
 
 from fastapi import Request
 from sse_starlette.sse import EventSourceResponse
@@ -140,14 +140,13 @@ async def screen_async(
     request: Request, user_id: str | None, surface: Surface, *texts: str | None,
 ) -> CrisisSupport | None:
     """`screen` for an `async def` route: no blocking read on the event loop."""
-    return await _screen_async(request, user_id, surface, texts, once_a_day=None)
+    return await _screen_async(request, user_id, surface, texts)
 
 
-async def _screen_async(
-    request: Request, user_id: str | None, surface: Surface, texts: tuple[str | None, ...],
-    *, once_a_day: tuple[Any, ...] | None,
-) -> CrisisSupport | None:
-    _check_surface(surface)
+async def _match_async(
+    request: Request, user_id: str | None, texts: tuple[str | None, ...],
+) -> CrisisMatch | None:
+    """Detection, then (on a match only) the caller's authentication."""
     if sum(len(t or "") for t in texts) > _INLINE_DETECT_CHARS:
         match = await asyncio.to_thread(detect_any, texts)
     else:
@@ -155,7 +154,20 @@ async def _screen_async(
     if match is None:
         return None
     await auth_guard.guard_off_loop(auth_guard.require_self, user_id, request)
-    return await asyncio.to_thread(_resolve, user_id, surface, match, once_a_day=once_a_day)
+    return match
+
+
+async def _screen_async(
+    request: Request, user_id: str | None, surface: Surface, texts: tuple[str | None, ...],
+    *, once_a_day: tuple[Any, ...] | None = None, hands_off_note: tuple[Any, ...] | None = None,
+) -> CrisisSupport | None:
+    _check_surface(surface)
+    match = await _match_async(request, user_id, texts)
+    if match is None:
+        return None
+    return await asyncio.to_thread(
+        _resolve, user_id, surface, match, once_a_day=once_a_day, hands_off_note=hands_off_note,
+    )
 
 
 @dataclass(frozen=True)
@@ -168,7 +180,7 @@ class ContentScreen:
     material can never be answered with the card INSTEAD of its result. Built
     by hand only where a route has shown that a typed-looking field holds
     stored material: a tutor start whose topic is the student's own note
-    title (routes/learn.py, `tutor.topic_is_note_title`), and a flashcard
+    title (`screen_tutor_start_async`, `tutor.note_title_version`), and a flashcard
     generation whose topic is one of the student's own graph concepts
     (routes/flashcards.py, `concept_topic.topic_is_graph_concept`)."""
 
@@ -179,6 +191,7 @@ class ContentScreen:
 async def screen_content_async(
     request: Request, user_id: str | None, surface: Surface, *texts: str | None,
     once_a_day: tuple[Any, ...] | None = None,
+    hands_off_note: tuple[Any, ...] | None = None,
 ) -> ContentScreen:
     """`screen_async` for the student's STORED material (a note's title and
     body), which NEVER blocks: the caller runs its action as usual through
@@ -192,13 +205,50 @@ async def screen_content_async(
     day for that student, surface and material, per process
     (`_first_today`). The key is a hash of ids, never of content.
 
+    `hands_off_note` names the note version (id, updated_at) an action hands
+    to the tutor (Send to tutor): its event is recorded as usual, and the
+    version is remembered for the day, so the /learn start it hands over
+    (`screen_tutor_start_async`) shows the card without recording it again.
+
     A typed message blocks (the card instead of the result): it is what the
     student is saying now. A note is material they stored, often quoting
     someone else (a patient, a play), and no pattern can tell those apart, so
     the student gets the result they asked for and the card beside it."""
     return ContentScreen(
-        request, await _screen_async(request, user_id, surface, texts, once_a_day=once_a_day),
+        request,
+        await _screen_async(request, user_id, surface, texts,
+                            once_a_day=once_a_day, hands_off_note=hands_off_note),
     )
+
+
+async def screen_tutor_start_async(
+    request: Request, user_id: str | None, topic: str | None,
+    *, note_version: Callable[[], Awaitable[tuple[Any, ...] | None]],
+) -> CrisisSupport | ContentScreen | None:
+    """The `tutor_start` screen of a session start's topic: None to carry on
+    as before, a `CrisisSupport` to answer with the card INSTEAD of a session
+    (`start_json`, `sse_response`), or a `ContentScreen` to start the session
+    with the card beside it (`alongside`).
+
+    The last only when `note_version()` (awaited on a match only, after the
+    caller is authenticated and the flag is on) answers the version (id,
+    updated_at) of the student's own note whose title the topic is: Send to
+    tutor handed it over, so it is stored material. Its event is recorded
+    once a day per student and note version, sharing the key Send to tutor
+    remembered (`hands_off_note`), so the start right after it records no
+    second card. A typed topic (`note_version()` answers None) records
+    every match and blocks, as before."""
+    _check_surface("tutor_start")
+    match = await _match_async(request, user_id, (topic,))
+    if match is None:
+        return None
+    support = await asyncio.to_thread(_support, user_id, "tutor_start", match)
+    if support is None:
+        return None
+    version = await note_version()
+    once = None if version is None else _handoff_key(user_id, version)
+    await asyncio.to_thread(_record, user_id, "tutor_start", match, once_a_day_key=once)
+    return support if version is None else ContentScreen(request, support)
 
 
 def _check_surface(surface: str) -> None:
@@ -208,12 +258,35 @@ def _check_surface(surface: str) -> None:
 
 def _resolve(
     user_id: str | None, surface: str, match: CrisisMatch,
-    *, once_a_day: tuple[Any, ...] | None = None,
+    *, once_a_day: tuple[Any, ...] | None = None, hands_off_note: tuple[Any, ...] | None = None,
 ) -> CrisisSupport | None:
+    support = _support(user_id, surface, match)
+    if support is not None:
+        _record(
+            user_id, surface, match,
+            once_a_day_key=None if once_a_day is None else (user_id, surface, *once_a_day),
+            remember_key=None if hands_off_note is None else _handoff_key(user_id, hands_off_note),
+        )
+    return support
+
+
+def _support(user_id: str | None, surface: str, match: CrisisMatch) -> CrisisSupport | None:
+    """The card for a match, or None with the flag off. Records nothing."""
     if not flag_on(FLAG, user_id):
         return None
     payload = client_payload(counseling_for(user_id))
-    if once_a_day is None or _first_today((user_id, surface, *once_a_day)):
+    return CrisisSupport(surface=surface, category=match.category, payload=payload,
+                         reply=render_reply(payload))
+
+
+def _record(
+    user_id: str | None, surface: str, match: CrisisMatch,
+    *, once_a_day_key: tuple[Any, ...] | None = None, remember_key: tuple[Any, ...] | None = None,
+) -> None:
+    """The one event for a shown card: always, or (with `once_a_day_key`)
+    the first time that key is seen today. `remember_key` is marked seen
+    without gating this event (Send to tutor, for the start it hands over)."""
+    if once_a_day_key is None or _first_today(once_a_day_key):
         # No `content=`: not even a fingerprint of what the student wrote.
         events_service.log_event(
             EVENT,
@@ -221,8 +294,17 @@ def _resolve(
             user_id=user_id,
             payload={"surface": surface, "category": match.category, "tier": match.tier},
         )
-    return CrisisSupport(surface=surface, category=match.category, payload=payload,
-                         reply=render_reply(payload))
+    if remember_key is not None:
+        _first_today(remember_key)
+
+
+#: The once-a-day scope Send to tutor and the tutor start it hands over share:
+#: one recorded card per student and note version a day.
+_NOTE_HANDOFF = "note_handoff"
+
+
+def _handoff_key(user_id: str | None, note_version: tuple[Any, ...]) -> tuple[Any, ...]:
+    return (user_id, _NOTE_HANDOFF, *note_version)
 
 
 #: `once_a_day` keys already recorded in this process: sha256 of the ids →

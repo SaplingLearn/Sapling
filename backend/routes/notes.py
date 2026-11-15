@@ -523,8 +523,12 @@ async def send_to_tutor(
     note = await get_note(note_id=note_id, user_id=body.user_id)
     if not note:
         raise HTTPException(status_code=404, detail="Note not found.")
-    # docs/safety/crisis-support.md: the note never blocks; a match shows the card alongside
-    screen = await crisis_support.screen_content_async(request, body.user_id, "note_send_to_tutor", *_note_texts(note))
+    # docs/safety/crisis-support.md: the note never blocks; a match shows the card alongside,
+    # recorded here; the /learn start it hands over records no second card for this version.
+    screen = await crisis_support.screen_content_async(
+        request, body.user_id, "note_send_to_tutor", *_note_texts(note),
+        hands_off_note=(note_id, note.get("updated_at")),
+    )
 
     async def action() -> dict:
         # No model runs here (the tutor session is limited where it starts),

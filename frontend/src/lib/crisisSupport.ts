@@ -97,3 +97,37 @@ export function crisisSupportInError(error: unknown): CrisisSupport | null {
   if (!error || typeof error !== "object") return null;
   return crisisSupportIn((error as { body?: unknown }).body);
 }
+
+/**
+ * Send to tutor showed the card beside its result and then opens /learn on the
+ * note's title; the start there answers with the same card beside the session
+ * (docs/safety/crisis-support.md). `markNoteCardShown` records that the card
+ * for `noteId` was just shown and closed; `takeNoteCardShown`, at that start,
+ * says whether it was, so the card does not pop up a second time. One-shot (a
+ * take spends the mark), per tab, and only for `CARD_SHOWN_TTL_MS`: every
+ * doubt (no storage, another note, a stale or unreadable mark) shows the card.
+ */
+const CARD_SHOWN_KEY = "sapling_crisis_card_shown_note";
+export const CARD_SHOWN_TTL_MS = 10 * 60 * 1000;
+
+export function markNoteCardShown(noteId: string, now: number = Date.now()): void {
+  try {
+    sessionStorage.setItem(CARD_SHOWN_KEY, JSON.stringify({ noteId, at: now }));
+  } catch {
+    // No storage: the start shows the card again, which is the safe side.
+  }
+}
+
+export function takeNoteCardShown(noteId: string, now: number = Date.now()): boolean {
+  try {
+    const raw = sessionStorage.getItem(CARD_SHOWN_KEY);
+    if (raw === null) return false;
+    sessionStorage.removeItem(CARD_SHOWN_KEY);
+    const mark = JSON.parse(raw) as { noteId?: unknown; at?: unknown } | null;
+    if (!mark || mark.noteId !== noteId || typeof mark.at !== "number") return false;
+    const age = now - mark.at;
+    return age >= 0 && age <= CARD_SHOWN_TTL_MS;
+  } catch {
+    return false;
+  }
+}

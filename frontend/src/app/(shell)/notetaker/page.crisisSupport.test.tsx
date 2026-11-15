@@ -14,7 +14,7 @@ import { render, screen, cleanup, fireEvent, waitFor } from "@testing-library/re
 import { ApiError, type EnrolledCourse } from "@/lib/api";
 import type { Note as ApiNote } from "@/lib/types";
 import crisisFixture from "@/test-utils/crisisSupport.json";
-import type { CrisisSupport } from "@/lib/crisisSupport";
+import { takeNoteCardShown, type CrisisSupport } from "@/lib/crisisSupport";
 
 const { push, toastError } = vi.hoisted(() => ({ push: vi.fn(), toastError: vi.fn() }));
 
@@ -76,6 +76,7 @@ const CRISIS = { reply: "the card as text", crisis_support: crisisFixture as Cri
 const ALONGSIDE = { crisis_support: crisisFixture as CrisisSupport, crisis_support_alongside: true };
 
 beforeEach(() => {
+  sessionStorage.clear();
   Element.prototype.scrollTo = (() => {}) as typeof Element.prototype.scrollTo;
   vi.mocked(getCourses).mockResolvedValue({ courses: [COURSE] });
   vi.mocked(listNotes).mockResolvedValue({ notes: [NOTE] });
@@ -153,6 +154,9 @@ describe("notetaker — crisis support", () => {
     fireEvent.click(screen.getByTestId("crisis-support-dismiss"));
     // The note rides along, so starting on its title is not screened as typed.
     await waitFor(() => expect(push).toHaveBeenCalledWith("/learn?topic=Week%203&course=c1&note=n1"));
+    // ...and the tutor's start knows this note's card was just shown, so the
+    // same card beside its session does not pop up again.
+    expect(takeNoteCardShown("n1")).toBe(true);
   });
 
   it("Send to tutor of an ordinary note opens the tutor on its title, naming the note", async () => {
@@ -160,6 +164,7 @@ describe("notetaker — crisis support", () => {
     await renderPage();
     fireEvent.click(screen.getByRole("button", { name: "Send to tutor" }));
     await waitFor(() => expect(push).toHaveBeenCalledWith("/learn?topic=Week%203&course=c1&note=n1"));
+    expect(takeNoteCardShown("n1")).toBe(false); // no card was shown
   });
 
   it("the notes chat on a note that matched shows the card AND the reply", async () => {

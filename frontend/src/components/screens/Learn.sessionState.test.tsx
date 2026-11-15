@@ -81,6 +81,7 @@ import { Learn } from "./Learn";
 import { ToastProvider } from "../ToastProvider";
 import { ChatStreamError } from "@/lib/api";
 import crisisFixture from "@/test-utils/crisisSupport.json";
+import { markNoteCardShown, takeNoteCardShown } from "@/lib/crisisSupport";
 
 class StubResizeObserver {
   constructor(private cb: (entries: { contentRect: { width: number } }[]) => void) {}
@@ -702,6 +703,64 @@ describe("crisis support", () => {
     expect(call[7]).toBe("n1");
     expect(await screen.findByRole("dialog")).toHaveTextContent(crisisFixture.title);
     await waitFor(() => expect(log()).toHaveTextContent("Welcome.")); // the session started
+  });
+
+  it("a start Send to tutor handed over just after showing the card does not show it again", async () => {
+    nav.search = "topic=Week%203&course=c1&note=n1";
+    markNoteCardShown("n1");
+    api.startSessionStream.mockResolvedValueOnce(NOTE_START);
+    renderLearn();
+    await screen.findByTestId("tutor-session-resume-sess-a");
+    fireEvent.click(screen.getByTestId("tutor-start"));
+    await waitFor(() => expect(log()).toHaveTextContent("Welcome.")); // the session started
+    expect(api.startSessionStream.mock.calls[0][7]).toBe("n1");
+    expect(screen.queryByRole("dialog")).toBeNull(); // the card the student just closed, not again
+  });
+
+  it("the handed-over mark is spent by the first start: a later start on the note shows the card", async () => {
+    nav.search = "topic=Week%203&course=c1&note=n1";
+    markNoteCardShown("n1");
+    api.startSessionStream.mockResolvedValueOnce(NOTE_START);
+    renderLearn();
+    await screen.findByTestId("tutor-session-resume-sess-a");
+    fireEvent.click(screen.getByTestId("tutor-start"));
+    await waitFor(() => expect(log()).toHaveTextContent("Welcome."));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(takeNoteCardShown("n1")).toBe(false);
+  });
+
+  it("another note's mark does not hide this start's card", async () => {
+    nav.search = "topic=Week%203&course=c1&note=n1";
+    markNoteCardShown("n2");
+    api.startSessionStream.mockResolvedValueOnce(NOTE_START);
+    renderLearn();
+    await screen.findByTestId("tutor-session-resume-sess-a");
+    fireEvent.click(screen.getByTestId("tutor-start"));
+    expect(await screen.findByRole("dialog")).toHaveTextContent(crisisFixture.title);
+  });
+
+  it("a card INSTEAD of a session still shows, mark or not", async () => {
+    nav.search = "topic=Week%203&course=c1&note=n1";
+    markNoteCardShown("n1");
+    api.startSessionStream.mockResolvedValueOnce({ session_id: null, reply: "…", crisis_support: crisisFixture });
+    renderLearn();
+    await screen.findByTestId("tutor-session-resume-sess-a");
+    fireEvent.click(screen.getByTestId("tutor-start"));
+    expect(await screen.findByRole("dialog")).toHaveTextContent(crisisFixture.title);
+    expect(screen.getByTestId("tutor-start")).toBeInTheDocument(); // no session
+  });
+
+  it("a refused handed-over start toasts its error without popping the just-closed card again", async () => {
+    nav.search = "topic=Week%203&course=c1&note=n1";
+    markNoteCardShown("n1");
+    const refused = Object.assign(new Error("Slow down."), { status: 429, body: { detail: "Slow down.", crisis_support: crisisFixture } });
+    api.startSessionStream.mockRejectedValueOnce(refused); // a 429 is never retried on the JSON route
+    renderLearn();
+    await screen.findByTestId("tutor-session-resume-sess-a");
+    fireEvent.click(screen.getByTestId("tutor-start"));
+    await waitFor(() => expect(api.startSessionStream).toHaveBeenCalled());
+    await waitFor(() => expect(screen.getByTestId("tutor-start")).not.toBeDisabled());
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it("the JSON fallback of that start names the note too", async () => {
