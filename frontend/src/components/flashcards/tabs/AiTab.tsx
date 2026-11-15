@@ -7,6 +7,7 @@ import { importGenerate } from "@/lib/api";
 import { useCrisisSupport } from "@/components/safety/CrisisSupportCard";
 import type { ParsedCard } from "@/lib/flashcardParsers";
 import s from "../FlashcardImportModal.module.css";
+import { humanizeError } from "@/lib/errorMessage";
 
 interface LibraryDoc { id: string; file_name: string; category?: string }
 
@@ -60,7 +61,7 @@ export function AiTab({ documents, documentsLoading = false, onCards }: Props) {
       onCards(res.cards.map((c, i) => ({ front: c.front, back: c.back, row: i + 1 })));
       toast.success(`Generated ${res.cards.length} cards.`);
     } catch (err) {
-      toast.error(`Generate failed: ${String(err)}`);
+      toast.error(humanizeError(err, "Couldn't generate cards. Try again."));
     } finally {
       setBusy(false);
     }

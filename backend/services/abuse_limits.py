@@ -98,6 +98,16 @@ ISSUE_SCREENSHOT_UPLOAD = abuse_limit(
     detail="You've uploaded a lot of screenshots this hour.",
 )
 
+# ── Username availability (routes/profile.py; session-authenticated) ────────
+
+#: /api/profile/username/check, per signed-in viewer. The Settings field
+#: debounces, so a real student makes a handful; this stops scripted
+#: enumeration of the username space.
+USERNAME_CHECK = abuse_limit(
+    "username-check", limit=30, window_sec=_MINUTE,
+    detail="You're checking usernames too quickly.",
+)
+
 # ── Public, unauthenticated routes: keyed by client address ─────────────────
 
 CAREERS_APPLY = abuse_limit(

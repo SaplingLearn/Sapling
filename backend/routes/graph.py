@@ -9,6 +9,7 @@ from typing import Optional
 from pydantic_ai.exceptions import AgentRunError
 
 from services import cache, llm_budget
+from services.academics import require_course_enrollment
 from services.auth_guard import guard_off_loop, require_self
 from services.graph_service import (
     aget_graph, aget_recommendations, aget_courses,
@@ -138,6 +139,17 @@ def create_node(user_id: str, body: AddNodeBody, request: Request):
         raise HTTPException(status_code=422, detail="concept_name must be non-empty")
     if not body.course_id.strip():
         raise HTTPException(status_code=422, detail="course_id is required")
+    # #115's rule, which this route was missing: a course-keyed write needs
+    # the student to be IN the course. Every other one already gates here
+    # (documents, notes, learn/start-session, scan-concepts) — a graph node is
+    # the same shape of write and was the one that slipped through.
+    #
+    # It also fixes a 500. `graph_nodes.course_id` is a FOREIGN KEY to
+    # courses(id), and the route only checked that the string was non-empty,
+    # so a course id naming nothing reached the upsert, violated the
+    # constraint, and surfaced as an unhandled 500 instead of "no such
+    # course". Verified against the running app before this was added.
+    require_course_enrollment(user_id, body.course_id)
     return add_node(
         user_id, body.concept_name, body.course_id, anchor_node_id=body.anchor_node_id,
     )

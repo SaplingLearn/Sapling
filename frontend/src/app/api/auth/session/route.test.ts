@@ -100,6 +100,38 @@ describe('session route — only a handoff token is exchanged (#756)', () => {
   });
 });
 
+describe('session route — malformed request bodies (testathon hardening)', () => {
+  async function postRaw(body: string | undefined) {
+    const { POST } = await loadRoute({ SESSION_SECRET: SECRET });
+    return POST(new NextRequest(URL, {
+      method: 'POST',
+      headers: { origin: 'https://app.saplinglearn.com', 'content-type': 'application/json' },
+      ...(body === undefined ? {} : { body }),
+    }));
+  }
+
+  it('answers 400, not 500, for a body that is not JSON', async () => {
+    // `request.json()` throws here; the throw used to escape the handler.
+    const res = await postRaw('not json at all');
+    expect(res.status).toBe(400);
+  });
+
+  it('answers 400, not 500, for an absent body', async () => {
+    const res = await postRaw(undefined);
+    expect(res.status).toBe(400);
+  });
+
+  it('answers 400 for JSON that is not an object', async () => {
+    const res = await postRaw('"just a string"');
+    expect(res.status).toBe(400);
+  });
+
+  it('answers 400 when authToken is the wrong type', async () => {
+    const res = await postRaw(JSON.stringify({ authToken: { nested: true } }));
+    expect(res.status).toBe(400);
+  });
+});
+
 describe('session route — COOKIE_DOMAIN validation (#190)', () => {
   it('does not scope the cleared cookie to an overly-broad COOKIE_DOMAIN', async () => {
     // Pre-fix: COOKIE_DOMAIN='.com' was applied verbatim → cookie.domain='.com'.

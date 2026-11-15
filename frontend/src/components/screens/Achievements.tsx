@@ -13,6 +13,7 @@ import { BadgeGrid, CAT_META, CAT_ORDER, type CategoryFilter } from "./achieveme
 import { BadgeModal } from "./achievements/BadgeModal";
 import { LeaderboardTab } from "./achievements/LeaderboardTab";
 import { ActivityTab } from "./achievements/ActivityTab";
+import { humanizeError } from "@/lib/errorMessage";
 
 // Rarity colors come only from the canonical --rarity-* tokens (globals.css);
 // rarity text itself stays neutral (colored text fails 4.5:1 on several tiers).
@@ -124,16 +125,41 @@ export function Achievements() {
     setFeaturedIds(ids);
   }, []);
 
+  /** The ids already announced, from localStorage. Never throws.
+   *
+   * This was a bare `JSON.parse(... || "[]")` with no guard, in a callback
+   * that runs on every Achievements load. Two ways it took the screen down:
+   * malformed JSON threw from `JSON.parse`, and well-formed JSON that is not
+   * an array (`{}`, `5`) threw from `new Set(...)` because it is not
+   * iterable. Either way the throw escaped into render and the screen went
+   * to the error boundary — and it STAYED there on reload, because the value
+   * that caused it is persisted. A value we cannot read is treated as "none
+   * seen yet", which at worst re-announces an achievement once. */
+  const readSeenIds = React.useCallback((): Set<string> => {
+    try {
+      const parsed: unknown = JSON.parse(window.localStorage.getItem(SEEN_KEY) || "[]");
+      if (!Array.isArray(parsed)) return new Set();
+      return new Set(parsed.filter((id): id is string => typeof id === "string"));
+    } catch {
+      return new Set();
+    }
+  }, []);
+
   const detectUnlocks = React.useCallback((next: UserAchievement[]) => {
     if (typeof window === "undefined") return;
-    const seen = new Set<string>(JSON.parse(window.localStorage.getItem(SEEN_KEY) || "[]"));
+    const seen = readSeenIds();
     const fresh = next.filter(u => !seen.has(u.achievement.id));
     for (const u of fresh) {
       if (seen.size > 0) toast.success(`Achievement unlocked: ${u.achievement.name}`);
       seen.add(u.achievement.id);
     }
-    window.localStorage.setItem(SEEN_KEY, JSON.stringify([...seen]));
-  }, [toast]);
+    try {
+      window.localStorage.setItem(SEEN_KEY, JSON.stringify([...seen]));
+    } catch {
+      // Storage full or blocked (Safari private mode): the toast already
+      // fired, and failing to remember that is not worth a crash.
+    }
+  }, [toast, readSeenIds]);
 
   const load = React.useCallback(async () => {
     if (!userId) return;
@@ -201,7 +227,7 @@ export function Achievements() {
       // own save decides the final state.
       if (seq === editSeq.current) {
         showFeatured(savedRef.current);
-        toast.error(`Couldn't save showcase: ${String(err)}`);
+        toast.error(humanizeError(err, "Couldn't save your showcase. Try again."));
       }
     } finally {
       savesInFlight.current -= 1;

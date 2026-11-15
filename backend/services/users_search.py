@@ -31,13 +31,56 @@ _APPROVED = {"is_approved": "eq.true"}
 _MIN_CIPHERTEXT_BYTES = 12 + 16
 
 
+#: ids per `in.(…)` filter — keeps the query string bounded, the same ceiling
+#: account_bundle / account_summary / admin.allowlist use.
+_IN_CHUNK = 50
+
+_ROLE_COLS = (
+    "roles(id,name,slug,color,icon,description,"
+    "is_staff_assigned,is_earnable,display_priority)"
+)
+
+
+def _chunks(items: list[str], size: int = _IN_CHUNK):
+    for i in range(0, len(items), size):
+        yield items[i : i + size]
+
+
 def _attach_roles(users: list[dict]) -> None:
+    """Attach each user's roles, in one query per CHUNK rather than per user.
+
+    This read was `for user in users: table("user_roles").select(... eq.id)` —
+    one PostgREST round-trip per row. `page_size` goes up to 200, so a single
+    admin page load could issue 200 sequential queries and wait for all of
+    them in series. Batching by `in.(…)` makes it at most four, and the
+    chunking keeps the query string inside the same bound every other
+    batched read here respects.
+
+    `_attach_names` already resolves the whole page's names in one call; this
+    is the same shape, applied to the join it sits next to.
+    """
     for user in users:
+        user["roles"] = []
+    ids = [u["id"] for u in users if u.get("id")]
+    if not ids:
+        return
+
+    by_user: dict[str, list[dict]] = {}
+    for chunk in _chunks(ids):
         rows = table("user_roles").select(
-            "roles(id,name,slug,color,icon,description,is_staff_assigned,is_earnable,display_priority)",
-            filters={"user_id": f"eq.{user['id']}"},
+            f"user_id,{_ROLE_COLS}",
+            filters={"user_id": f"in.({','.join(chunk)})"},
         )
-        user["roles"] = [r["roles"] for r in (rows or []) if r.get("roles")]
+        for row in rows or []:
+            role = row.get("roles")
+            user_id = row.get("user_id")
+            # `roles` is None when the join target was deleted but the
+            # user_roles row remained — an orphan to drop, as before.
+            if role and user_id:
+                by_user.setdefault(user_id, []).append(role)
+
+    for user in users:
+        user["roles"] = by_user.get(user["id"], [])
 
 
 def _still_encrypted(value: Optional[str]) -> bool:

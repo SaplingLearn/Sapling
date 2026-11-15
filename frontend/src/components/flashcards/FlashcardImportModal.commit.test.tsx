@@ -226,7 +226,9 @@ describe("FlashcardImportModal commit (characterization)", () => {
     expect(commitButton()).toBeDisabled();
 
     await act(async () => { reject(new Error("boom")); });
-    expect(toast.error).toHaveBeenCalledWith("Import failed: Error: boom");
+    // A bare Error carries no server `detail` and no status, so the student
+    // gets the fallback sentence rather than "Error: boom" (#errorMessage).
+    expect(toast.error).toHaveBeenCalledWith("Couldn't import those cards. Try again.");
     expect(onClose).not.toHaveBeenCalled();
     expect(onImported).not.toHaveBeenCalled();
     expect(commitButton()).toHaveTextContent("Import 1 card");
@@ -418,7 +420,7 @@ describe("FlashcardImportModal layout", () => {
     render(modal());
     fireEvent.change(pasteTextarea(), { target: { value: "alpha\tbeta" } });
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: /Clean up with AI/ })); });
-    expect(toast.error).toHaveBeenCalledWith("Cleanup failed: Error: boom");
+    expect(toast.error).toHaveBeenCalledWith("Couldn't tidy up that import.");
     expect(screen.getByLabelText("Term, row 1")).toHaveValue("alpha");
   });
 

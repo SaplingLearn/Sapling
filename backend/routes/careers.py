@@ -1,3 +1,4 @@
+import logging
 import re
 import uuid
 
@@ -9,6 +10,8 @@ from db.connection import SUPABASE_URL, SUPABASE_KEY, table
 from services import abuse_limits
 from services.request_limits import enforce_abuse_limit, public_route_limit, read_within_limit_sync
 from services.upload_validation import DOCX, PDF, sniff_type
+
+logger = logging.getLogger("careers")
 
 BUCKET = "application_resumes"
 
@@ -25,6 +28,11 @@ ALLOWED_RESUME_TYPES = {
 #: Legacy Word (.doc) files are OLE2 compound documents.
 _OLE2_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+# Storage object keys are built from the uploaded filename's extension. Bound
+# it: the raw value is attacker-controlled and ends up in a URL path.
+MAX_EXT_LEN = 10
+_EXT_RE = re.compile(r"^[A-Za-z0-9]+$")
 
 router = APIRouter()
 
@@ -55,21 +63,50 @@ def _validate_resume(file: UploadFile) -> bytes:
     return content
 
 
+def _safe_ext(filename: str | None) -> str:
+    """The upload's extension, reduced to something safe to put in a URL path.
+
+    The raw value is attacker-controlled and was previously interpolated into
+    the Storage object key verbatim, so a crafted filename chose the key's
+    shape (slashes, dot segments, unbounded length). Accept a short
+    alphanumeric extension or fall back to `pdf`.
+    """
+    if not filename or "." not in filename:
+        return "pdf"
+    ext = filename.rsplit(".", 1)[-1].strip().lower()
+    if not ext or len(ext) > MAX_EXT_LEN or not _EXT_RE.match(ext):
+        return "pdf"
+    return ext
+
+
 def _upload_resume(file: UploadFile, content: bytes) -> str:
     """Upload a validated resume to Supabase Storage and return the path."""
-    ext = file.filename.rsplit(".", 1)[-1] if file.filename and "." in file.filename else "pdf"
-    path = f"{uuid.uuid4()}.{ext}"
+    path = f"{uuid.uuid4()}.{_safe_ext(file.filename)}"
     url = f"{SUPABASE_URL}/storage/v1/object/{BUCKET}/{path}"
-    r = httpx.put(
-        url,
-        content=content,
-        headers={
-            "apikey": SUPABASE_KEY,
-            "Authorization": f"Bearer {SUPABASE_KEY}",
-            "Content-Type": file.content_type or "application/pdf",
-        },
-    )
-    r.raise_for_status()
+    try:
+        r = httpx.put(
+            url,
+            content=content,
+            headers={
+                "apikey": SUPABASE_KEY,
+                "Authorization": f"Bearer {SUPABASE_KEY}",
+                "Content-Type": file.content_type or "application/pdf",
+            },
+            # Without a timeout this blocks a threadpool worker indefinitely
+            # when Storage hangs; enough concurrent applications would then
+            # starve the pool and stall unrelated requests.
+            timeout=30.0,
+        )
+        r.raise_for_status()
+    except httpx.HTTPError:
+        # `raise_for_status()` / a transport error used to escape the handler
+        # as an unhandled exception, answering 500 and logging a stack trace.
+        # It is an upstream failure, not a bug in the request: say so.
+        logger.exception("careers: resume upload to Storage failed")
+        raise HTTPException(
+            status_code=502,
+            detail="Could not store the uploaded resume. Please try again later.",
+        )
     return path
 
 
@@ -114,13 +151,23 @@ def apply(
         content = _validate_resume(resume)
         resume_path = _upload_resume(resume, content)
 
-    row = table("job_applications").insert({
-        "position": position,
-        "full_name": full_name,
-        "email": email,
-        "phone": (phone or "").strip() or None,
-        "linkedin_url": linkedin_url,
-        "portfolio_link": (portfolio_link or "").strip() or None,
-        "resume": resume_path,
-    })
+    try:
+        row = table("job_applications").insert({
+            "position": position,
+            "full_name": full_name,
+            "email": email,
+            "phone": (phone or "").strip() or None,
+            "linkedin_url": linkedin_url,
+            "portfolio_link": (portfolio_link or "").strip() or None,
+            "resume": resume_path,
+        })
+    except Exception:
+        # Never echo raw PostgREST/driver text to an anonymous caller: it
+        # names the host, table and driver (same reasoning as #199 in
+        # routes/newsletter.py).
+        logger.exception("careers: application insert failed")
+        raise HTTPException(
+            status_code=500,
+            detail="Could not submit your application. Please try again later.",
+        )
     return {"ok": True, "id": row[0]["id"] if row else None}

@@ -85,6 +85,48 @@ export function shouldBounceToSignin(pathname: string): boolean {
   return isAppShellRoute(pathname);
 }
 
+/**
+ * The identity persisted in `sapling_user`, or null when there isn't a usable
+ * one — absent, unparseable, or parsed to something that doesn't name an
+ * account. A value that is present but unusable is REMOVED: leaving it is what
+ * made a corrupt copy permanent, since every later boot read the same bad
+ * bytes and took the same broken path.
+ */
+function readStoredIdentity(): { id: string; name: string; avatar: string } | null {
+  let raw: string | null = null;
+  try {
+    raw = localStorage.getItem('sapling_user');
+  } catch {
+    return null; // storage disabled (private mode, blocked cookies)
+  }
+  if (!raw) return null;
+
+  let parsed: unknown = null;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    parsed = null;
+  }
+  // `typeof null === 'object'`, and an array would destructure to undefined
+  // ids — both have to fail this check, not just non-objects.
+  const ok =
+    typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) &&
+    typeof (parsed as { id?: unknown }).id === 'string' &&
+    (parsed as { id: string }).id !== '';
+  if (!ok) {
+    try {
+      localStorage.removeItem('sapling_user');
+    } catch {}
+    return null;
+  }
+  const value = parsed as { id: string; name?: unknown; avatar?: unknown };
+  return {
+    id: value.id,
+    name: typeof value.name === 'string' ? value.name : '',
+    avatar: typeof value.avatar === 'string' ? value.avatar : '',
+  };
+}
+
 /** The account id persisted in `sapling_user`, or '' (none / unreadable). */
 function persistedIdentity(): string {
   try {
@@ -180,16 +222,36 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     // Onboarding needs an account now (sign in first): drop any answers the
     // old signed-out "guest" onboarding left on this browser.
     purgeGuestOnboardingDraft();
-    const saved = localStorage.getItem('sapling_user');
-    if (saved) {
-      try {
-        const { id, name, avatar } = JSON.parse(saved);
-        activeIdentity.current = id;
-        setUserId(id);
-        setUserName(name);
-        if (avatar) setAvatarUrl(avatar);
-        setIsAuthenticated(true);
-      } catch {}
+    // A STORED COPY ONLY COUNTS IF IT ACTUALLY NAMES SOMEONE.
+    //
+    // This was `try { const {id,...} = JSON.parse(saved) } catch {}` followed
+    // unconditionally by `setUserReady(true); return;` — so a `sapling_user`
+    // value that could not be read still took the fast path and RETURNED,
+    // skipping the cookie fallback below. Two ways that bites, both of them
+    // sticky, because the bad value stays in localStorage and every reload
+    // repeats the same thing until the student clears site data by hand:
+    //
+    //   * Malformed JSON (or `null`) throws, the catch swallows it, and a
+    //     student holding a perfectly valid `sapling_session` cookie is left
+    //     with userReady=true and no userId — so every screen gated on
+    //     `userReady && userId` renders its signed-out/empty state. Signed in,
+    //     shown as signed out, permanently.
+    //   * JSON that parses to a non-object (`5`, `"x"`, `[]`) does NOT throw
+    //     when destructured: `id` comes out `undefined`, and the old code
+    //     still called `setIsAuthenticated(true)`. The app then believed it
+    //     was authenticated as nobody.
+    //
+    // The recovery path for "no stored identity" already exists and is
+    // exactly right here: fall through to the cookie-identified getMe(). So
+    // validate the shape, drop a copy that fails (it is what makes this
+    // sticky), and only take the fast path on a usable id.
+    const stored = readStoredIdentity();
+    if (stored) {
+      activeIdentity.current = stored.id;
+      setUserId(stored.id);
+      setUserName(stored.name);
+      if (stored.avatar) setAvatarUrl(stored.avatar);
+      setIsAuthenticated(true);
       setUserReady(true);
       return;
     }

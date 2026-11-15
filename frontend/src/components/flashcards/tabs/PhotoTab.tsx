@@ -6,6 +6,7 @@ import { useUser } from "@/context/UserContext";
 import { importParse } from "@/lib/api";
 import type { ParsedCard } from "@/lib/flashcardParsers";
 import s from "../FlashcardImportModal.module.css";
+import { humanizeError } from "@/lib/errorMessage";
 
 interface Props { onCards: (cards: ParsedCard[]) => void }
 
@@ -38,7 +39,7 @@ export function PhotoTab({ onCards }: Props) {
       onCards(res.cards.map((c, i) => ({ front: c.front, back: c.back, row: i + 1 })));
       toast.success(`Extracted ${res.cards.length} cards from image.`);
     } catch (err) {
-      toast.error(`OCR failed: ${String(err)}`);
+      toast.error(humanizeError(err, "Couldn't read text from that photo."));
     } finally {
       setBusy(false);
     }

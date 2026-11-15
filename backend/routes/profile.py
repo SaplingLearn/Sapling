@@ -16,7 +16,7 @@ from services.course_context_service import refresh_course_context
 from pydantic import BaseModel, Field
 
 from config import MAX_AVATAR_SIZE
-from db.connection import table
+from db.connection import like_literal, table
 from db.scope import service_route
 from services.encryption import encrypt_if_present
 from models import (
@@ -27,9 +27,11 @@ from models import (
     SetFeaturedAchievementsBody,
     DeleteAccountBody,
 )
+from services import abuse_limits
 from services.analytics_consent import clear_analytics_consent_cache
 from services.auth_guard import require_self, get_session_user_id
 from services.http_cache import cached_json, conditional, make_etag
+from services.request_limits import enforce_abuse_limit
 from services.storage_service import upload_avatar
 from services.profile import (
     DeletionNotConfirmed,
@@ -100,17 +102,65 @@ def _optional_viewer(request: Request) -> Optional[str]:
 _USERNAME_RE = re.compile(r"^[a-z0-9_]{3,24}$")
 
 
-# #115: unauthenticated, and answers about OTHER users' usernames -> service role.
+def _username_holders(name: str) -> set[str]:
+    """The user_ids whose stored username is `name`, ignoring letter case.
+
+    Writes are lowercased now, but a handle stored before that keeps its case
+    ("Alice"), and a case-sensitive `eq.alice` would not see it — so both the
+    availability check and the write's uniqueness check read case-insensitively.
+    `ilike` with the value LIKE-escaped (`_` is a wildcard), then re-checked in
+    Python for exact equality, as `services/auth/waitlist.py` does: an escaped
+    value with no `%` already matches only itself, and the re-check keeps that
+    true even past PostgREST's `*` rewrite, which no escape reaches. More than
+    one row can hold the name when legacy rows differ only by case.
+    """
+    rows = table("user_profiles").select(
+        "user_id,username", filters={"username": f"ilike.{like_literal(name)}"},
+    )
+    return {
+        r["user_id"] for r in rows or []
+        if (r.get("username") or "").lower() == name
+    }
+
+
+# #115: answers about OTHER users' usernames -> service role. The viewer must
+# be signed in (get_session_user_id below), and is charged USERNAME_CHECK.
 @router.get("/username/check", dependencies=[Depends(service_route)])
-def check_username(username: str = Query(...), user_id: Optional[str] = Query(None)):
+def check_username(
+    request: Request,
+    username: str = Query(...),
+    user_id: Optional[str] = Query(None),
+):
+    """Is `username` free for the SIGNED-IN viewer?
+
+    Two things changed here (testathon hardening), both about what this
+    endpoint told an ANONYMOUS caller:
+
+    1. It required no session at all, and ran as the service role, so anyone
+       on the internet could ask "does this username exist?" as often as they
+       liked — an unauthenticated oracle over the whole username space, and a
+       free way to harvest the handles of a closed @bu.edu beta.
+
+    2. Worse, the `user_id` QUERY PARAM was trusted: passing
+       `?username=X&user_id=Y` answered `reason: "self"` exactly when user Y
+       owned username X. That is an unauthenticated CONFIRMATION of the
+       user_id -> username mapping, for any id an attacker could observe.
+
+    The viewer is now the session, never the query. `user_id` is still
+    accepted so existing clients (and the cross-user matrix) keep their
+    request shape, but it is IGNORED: "self" is decided by who is calling.
+    """
+    viewer_id = get_session_user_id(request)
+    enforce_abuse_limit(abuse_limits.USERNAME_CHECK, viewer_id)
+
     name = (username or "").strip().lower()
     if not _USERNAME_RE.match(name):
         return {"available": False, "reason": "invalid"}
-    # username now lives on user_profiles (keyed by user_id).
-    existing = table("user_profiles").select("user_id", filters={"username": f"eq.{name}"})
-    if not existing:
+    holders = _username_holders(name)
+    if not holders:
         return {"available": True}
-    if user_id and existing[0]["user_id"] == user_id:
+    # The SESSION decides "self" — not the caller-supplied user_id (see above).
+    if holders == {viewer_id}:
         return {"available": True, "reason": "self"}
     return {"available": False, "reason": "taken"}
 
@@ -141,13 +191,28 @@ def update_profile(user_id: str, body: UpdateProfileBody, request: Request):
     updates_profile = {}
 
     if body.username is not None:
-        # Check uniqueness against user_profiles.
-        existing = table("user_profiles").select(
-            "user_id", filters={"username": f"eq.{body.username}"}
-        )
-        if existing and existing[0]["user_id"] != user_id:
+        # FORMAT, on the write path. `_USERNAME_RE` used to be applied only by
+        # the availability check above, so this endpoint — the one that
+        # actually stores the handle — accepted anything: a 500-character
+        # username was saved happily, and 10,000 characters answered 500 when
+        # the uniqueness lookup below built a PostgREST query string too long
+        # to send. Validating where the value is PERSISTED is what makes the
+        # rule true; the check endpoint is only a convenience for the UI.
+        candidate = body.username.strip().lower()
+        if not _USERNAME_RE.match(candidate):
+            raise HTTPException(
+                status_code=422,
+                detail="Username must be 3-24 characters, using lowercase letters, numbers or underscores.",
+            )
+        # Normalised to lowercase to match the availability check, which
+        # lowercases before comparing. Storing the raw value let "Alice" be
+        # saved while the check reported "alice" as free — two users could
+        # hold the same handle in different cases. The lookup is
+        # case-insensitive for the same reason: a handle stored before this
+        # normalisation keeps its case.
+        if _username_holders(candidate) - {user_id}:
             raise HTTPException(status_code=409, detail="Username already taken")
-        updates_profile["username"] = body.username
+        updates_profile["username"] = candidate
 
     if body.bio is not None:
         updates_profile["bio"] = encrypt_if_present(body.bio)

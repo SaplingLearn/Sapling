@@ -5,6 +5,7 @@ import { useUser } from "@/context/UserContext";
 import { ApiError, importParse } from "@/lib/api";
 import type { ParsedCard } from "@/lib/flashcardParsers";
 import s from "../FlashcardImportModal.module.css";
+import { humanizeError } from "@/lib/errorMessage";
 
 interface Props { onCards: (cards: ParsedCard[]) => void }
 
@@ -41,7 +42,7 @@ export function UrlTab({ onCards }: Props) {
       if (p) {
         setProblem(p);
       } else {
-        toast.error(`Fetch failed: ${String(err)}`);
+        toast.error(humanizeError(err, "Couldn't fetch that link."));
       }
     } finally {
       setBusy(false);
