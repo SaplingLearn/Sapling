@@ -537,7 +537,8 @@ body { font-size: 14px; line-height: 1.5; }
    has already unmounted it and this rule is moot. Keep the width in sync with
    MOBILE_BREAKPOINT in lib/useIsMobile.ts. */
 @media (max-width: 767px) {
-  [data-app-sidenav] {
+  [data-app-sidenav],
+  [data-app-sidenav-slot] {
     display: none;
   }
 }

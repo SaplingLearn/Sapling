@@ -2083,7 +2083,7 @@ export function LoopLearn() {
     } else if (readOnly) {
       return (
         <div style={{ flex: 1, overflowY: "auto", padding: "20px 32px" }}>
-          <div style={{ maxWidth: 720, margin: "0 auto", display: "flex", flexDirection: "column", gap: 14 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
               <span className="chip">Read-only</span>
               <span style={{ fontSize: 14, color: "var(--text-dim)" }}>
@@ -2404,7 +2404,7 @@ function ProbePanel({
   );
   return (
     <div style={{ flex: 1, overflowY: "auto", padding: "20px 32px 32px" }}>
-      <div style={{ maxWidth: 640, margin: "0 auto", display: "flex", flexDirection: "column", gap: 14 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
         <div>
           <h2 className="h-serif" style={{ margin: 0, fontSize: 22 }}>Quick check-in</h2>
           <p style={{ margin: "4px 0 0", fontSize: 14, color: "var(--text-dim)" }}>
@@ -2561,7 +2561,7 @@ function PlanPanel({
     <div style={{ flex: 1, overflowY: "auto", padding: "20px 32px 32px" }}>
       <div
         className="card"
-        style={{ maxWidth: 640, margin: "0 auto", padding: "var(--pad-xl)", display: "flex", flexDirection: "column", gap: 14 }}
+        style={{ padding: "var(--pad-xl)", display: "flex", flexDirection: "column", gap: 14 }}
       >
         <div>
           <h2 ref={headingRef} tabIndex={-1} className="h-serif" style={{ margin: 0, fontSize: 22 }}>
@@ -2847,7 +2847,7 @@ function ClosePanel({
     <div style={{ flex: 1, overflowY: "auto", padding: "20px 32px 32px" }}>
       <div
         className="card"
-        style={{ maxWidth: 640, margin: "0 auto", padding: "var(--pad-xl)", display: "flex", flexDirection: "column", gap: 16 }}
+        style={{ padding: "var(--pad-xl)", display: "flex", flexDirection: "column", gap: 16 }}
       >
         <h2 ref={setFocusTarget} tabIndex={-1} className="h-serif" style={{ margin: 0, fontSize: 22 }}>Session wrap-up</h2>
         <p data-testid="loop-close-summary" style={{ margin: 0, fontSize: 15, lineHeight: 1.55, whiteSpace: "pre-wrap" }}>

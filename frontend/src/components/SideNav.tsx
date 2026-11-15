@@ -113,17 +113,52 @@ function useCollapsed(): [boolean, (v: boolean) => void] {
   return [collapsed, update];
 }
 
+/* On the Tutor the rail gives its width to the chat: it shows as the narrow
+   icon rail whatever the stored preference, and opens over the page (no
+   layout shift) while the pointer is on it or focus is inside it. Arriving
+   at the Tutor closes it at once, even with the pointer still on the rail. */
+/** On the Tutor the rail floats over its fixed 64px slot (so a hover-open
+ *  never pushes the chat); elsewhere it sits in the flow as before. */
+function railPlacement(onTutor: boolean, peek: boolean): React.CSSProperties {
+  if (!onTutor) return { position: "relative", zIndex: 1, boxShadow: "none" };
+  return {
+    position: "absolute", top: 0, left: 0, bottom: 0, zIndex: 40,
+    boxShadow: peek ? "var(--shadow-lg)" : "none",
+  };
+}
+function useTutorPeek(onTutor: boolean) {
+  const [peek, setPeek] = React.useState(false);
+  React.useEffect(() => { if (!onTutor) setPeek(false); }, [onTutor]);
+  const handlers = onTutor
+    ? {
+        onMouseEnter: () => setPeek(true),
+        onMouseLeave: () => setPeek(false),
+        onFocus: () => setPeek(true),
+        onBlur: (e: React.FocusEvent<HTMLElement>) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setPeek(false);
+        },
+        onKeyDown: (e: React.KeyboardEvent<HTMLElement>) => {
+          if (e.key === "Escape") { setPeek(false); (document.activeElement as HTMLElement | null)?.blur(); }
+        },
+      }
+    : {};
+  return { peek: onTutor && peek, handlers, close: () => setPeek(false) };
+}
+
 export function SideNav() {
   const pathname = usePathname() || "/";
   const { userName, avatarUrl, isAdmin, isAuthenticated } = useUser();
-  const [collapsed, setCollapsed] = useCollapsed();
+  const [storedCollapsed, setCollapsed] = useCollapsed();
+  const onTutor = isActive(pathname, "/learn");
+  const { peek, handlers: peekHandlers } = useTutorPeek(onTutor);
+  const collapsed = onTutor ? !peek : storedCollapsed;
   const sections = useVisibleNavSections();
   const { due: retentionDue } = useRetentionDue();
   const settingsActive = isActive(pathname, "/settings");
 
   const width = collapsed ? SIDE_NAV_COLLAPSED : SIDE_NAV_EXPANDED;
 
-  return (
+  const rail = (
     <aside
       role="navigation"
       aria-label="Primary"
@@ -135,8 +170,7 @@ export function SideNav() {
         height: "100%",
         background: "var(--sidenav-bg)",
         borderRadius: "0 var(--r-lg) var(--r-lg) 0",
-        position: "relative",
-        zIndex: 1,
+        ...railPlacement(onTutor, peek),
         padding: `16px ${collapsed ? RAIL_PAD_X.narrow : RAIL_PAD_X.wide}px`,
         display: "flex",
         flexDirection: "column",
@@ -144,7 +178,7 @@ export function SideNav() {
         // The rail itself never scrolls: only the destinations region below
         // does, so the account footer stays pinned at the bottom.
         overflow: "hidden",
-        transition: "width var(--dur) var(--ease), min-width var(--dur) var(--ease), padding var(--dur) var(--ease)",
+        transition: "width var(--dur) var(--ease), min-width var(--dur) var(--ease), padding var(--dur) var(--ease), box-shadow var(--dur) var(--ease)",
       }}
     >
       {/* Wide: the wordmark. Narrow: the Sapling symbol, centred. The two
@@ -292,7 +326,7 @@ export function SideNav() {
           bare icon in the narrow one — the usual sidebar toggle.
           Same insets, padding and row height as NavLink so it lines up with
           the destinations above it. */}
-      <button
+      {!onTutor && <button
         type="button"
         aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
         title={collapsed ? "Expand sidebar" : undefined}
@@ -321,7 +355,7 @@ export function SideNav() {
       >
         <PanelToggleIcon collapsed={collapsed} />
         <span aria-hidden style={{ flex: 1, ...fade(collapsed) }}>Collapse</span>
-      </button>
+      </button>}
 
       {isAdmin && (
         <NavLink
@@ -402,6 +436,18 @@ export function SideNav() {
       )}
       </div>
     </aside>
+  );
+
+  if (!onTutor) return rail;
+  // A fixed 64px slot keeps the page where it is while the rail opens over it.
+  return (
+    <div
+      data-app-sidenav-slot=""
+      {...peekHandlers}
+      style={{ width: SIDE_NAV_COLLAPSED, minWidth: SIDE_NAV_COLLAPSED, height: "100%", position: "relative", zIndex: 40, flexShrink: 0 }}
+    >
+      {rail}
+    </div>
   );
 }
 
