@@ -55,6 +55,8 @@ WORKER_PATH_MODULES = (
 
 #: Read in those modules but not on a worker's path, or not the API's to share.
 EXCLUDED = {
+    "ADMIN_REAUTH_WINDOW_SECONDS": "admin step-up on admin routes (HTTP only)",
+    "ADMIN_DESTRUCTIVE_REAUTH_WINDOW_SECONDS": "admin step-up on admin routes (HTTP only)",
     "ACCOUNT_SYNC_INBOUND_TOKEN": "admin account-copy routes only",
     "ACCOUNT_SYNC_PEER_TOKEN": "admin account-copy routes only",
     "ACCOUNT_SYNC_PEER_URL": "admin account-copy routes only",
@@ -65,6 +67,12 @@ EXCLUDED = {
     "EMAIL_FROM": "email routes only; no job sends email",
     "EMAIL_REPLY_TO": "email routes only; no job sends email",
     "RESEND_API_KEY": "email routes only; no job sends email",
+    "SPEND_ALERT_DAILY_USD": "the API's spend-alert lifespan task only",
+    "SPEND_ALERT_USER_DAILY_USD": "the API's spend-alert lifespan task only",
+    "SPEND_ALERT_DENIED_PER_HOUR": "the API's spend-alert lifespan task only",
+    "SPEND_ALERT_5XX_PER_HOUR": "the API's spend-alert lifespan task only",
+    "SPEND_ALERT_SPIKE_FACTOR": "the API's spend-alert lifespan task only",
+    "SPEND_ALERT_RECIPIENTS": "the API's spend-alert lifespan task only",
     "FRONTEND_URL": "OAuth redirects and cookies (HTTP only)",
     "SECURE_COOKIES": "session cookies (HTTP only)",
     "GOOGLE_AUTH_REDIRECT_URI": "OAuth (HTTP only)",

@@ -18,7 +18,7 @@ Buckets that actually exist (3):
 
 `storage.objects` policies (2, both scoped to `issues-media-files`): `"Allow public read"` (anon SELECT) and `"Allow uploads"` (anon INSERT). The app no longer uses either — both dropped by migration 0029.
 
-Note: `chat-images` and `cosmetic-assets` referenced in code **do not exist** — those upload paths are dead (separate cleanup; not a live exposure).
+Note: `chat-images` and `cosmetic-assets` referenced in code **do not exist** — those upload paths are dead (separate cleanup; not a live exposure). Update 2026-11-14: the admin screen's anon-key `cosmetic-assets` upload is gone; cosmetic images now go through `POST /api/admin/cosmetics/assets` (admin-only, service key, `avatars` bucket under `cosmetics/`).
 
 ## Target state
 All storage writes go through the **backend (service_role)**; private buckets are read via **backend-generated signed URLs**; only `avatars` stays public-read. After this, there are **no anon/public storage policies** — the anon storage surface is gone.

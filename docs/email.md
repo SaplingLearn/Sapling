@@ -1,6 +1,6 @@
 # Email (Resend)
 
-Sapling sends four kinds of email, all through `backend/services/email_service.py`
+Sapling sends five kinds of email, all through `backend/services/email_service.py`
 (the only module that talks to Resend):
 
 | kind | category | when | dedupe (never twice) |
@@ -9,6 +9,7 @@ Sapling sends four kinds of email, all through `backend/services/email_service.p
 | `waitlist_approved` | transactional | an admin approves a waitlist email (Admin → Allowlist, single or bulk) | per address, so a revoke and re-approve doesn't re-send |
 | `welcome` | transactional | an account's first approved sign-in while `users.welcomed_at` is NULL | per account |
 | `broadcast` | notification | Admin → Email, sent to a chosen audience | per broadcast × address |
+| `ops_alert` | operational | an hourly spend/error check fires (`services/spend_alerts.py`), to admins only | per alert × UTC day × address |
 
 The category lives in one place, `email_service.EMAIL_CATEGORIES` (a kind
 missing from it counts as notification). **Notification** mail is not sent to
@@ -18,6 +19,11 @@ audiences leave those accounts out of their counts. The setting is matched by
 address hash, so it also covers that person's waitlist address, and a toggle
 reaches a running send within a minute. **Transactional** mail (waitlist,
 "you're in", welcome) ignores that setting. Only the suppression list stops it.
+**Operational** mail (staff alerts) ignores the setting and an ordinary
+unsubscribe: it reaches an admin even after they unsubscribed from a
+broadcast or any other Sapling email. It has an unsubscribe of its own that
+stops only the admin alerts (see Unsubscribe below). A bounce or complaint
+recorded against the address still stops it, like every other kind.
 
 **Kill switch:** with `RESEND_API_KEY` unset, nothing is sent. Each send is
 recorded as `skipped`, and the admin portal shows a "not configured" banner.
@@ -58,7 +64,7 @@ Resend's docs don't say whether a failed response is stored against a key,
 which is why a definitive failure moves to a new key.
 
 **Privacy:** the email tables (`email_sends`, `email_suppressions`,
-`email_broadcasts`) never store an address, only `recipient_hash`, an HMAC
+`email_alert_suppressions`, `email_broadcasts`) never store an address, only `recipient_hash`, an HMAC
 keyed off `SESSION_SECRET`. **Rotating `SESSION_SECRET` orphans every
 suppression and invalidates every unsubscribe link**, so don't rotate it
 casually.
@@ -67,14 +73,36 @@ casually.
 headers (`List-Unsubscribe` / `List-Unsubscribe-Post`). The link is
 `{FRONTEND_URL}/api/email/unsubscribe?t=…`, which the frontend proxies to the
 backend. GET shows a confirm page and POST suppresses, because mail scanners
-prefetch GETs. A suppressed address gets no email of any kind; a send to it
-returns and records `suppressed`, including over an earlier `skipped`/`failed`
-row for the same key.
+prefetch GETs. A suppression has a **scope**
+(`email_service.suppression_scope`), and each scope has its own table
+(`email_service.SUPPRESSION_TABLES`):
+
+| scope | table | set by | stops |
+| --- | --- | --- | --- |
+| `all` | `email_suppressions` | the link in any email but an ops alert (reason `unsubscribe`); a bounce or complaint (reason `bounce`/`complaint`; nothing writes these yet, see Known gaps) | every kind except `ops_alert`; with reason `bounce` or `complaint`, `ops_alert` too (`email_service.DELIVERABILITY_REASONS`) |
+| `ops_alert` | `email_alert_suppressions` | the link in an ops alert (`…&scope=ops_alert`) | `ops_alert` only |
+
+An address can be in both. One row per address and table: a later bounce or
+complaint replaces an earlier unsubscribe's reason (`email_service.suppress`
+upserts it with DO UPDATE, so the ops-alert check sees it), and a later
+unsubscribe never downgrades a bounce or complaint (DO NOTHING on conflict).
+The two tables have the same columns and key
+(`recipient_hash`). The ops-alert scope got a table of its own rather than a
+column on `email_suppressions` so that table never changes shape: a deploy
+migrates before the new backend starts, and the old backend serving meanwhile
+writes `email_suppressions` exactly as it always has. The token's signature binds its scope, so a
+broadcast link cannot be edited into an ops-alert one or the other way round.
+A send to a suppressed address (for that kind's scope) returns and records
+`suppressed`, including over an earlier `skipped`/`failed` row for the same
+key, and a broadcast's audience leaves out only `all`-scope suppressions.
 
 **Undoing a suppression:** `POST /api/admin/email/suppressions/remove` with
-`{"email": "…"}` (admin only) takes the address off the list and returns
-`{"removed": true|false}`. The audit log records the hash, never the address.
-There is no admin UI for it yet.
+`{"email": "…"}` (admin only) takes the address off **both** suppression
+tables, so an accidental ops-alert unsubscribe (or a mail client's one-click
+`List-Unsubscribe` POST on an alert) is undone the same way as a broadcast one.
+It returns `{"removed": true|false, "scopes": [...]}`, `scopes` naming the
+scopes (`all`, `ops_alert`) it was lifted from. The audit log records the hash
+and those scopes, never the address. There is no admin UI for it yet.
 
 ## Broadcasts
 

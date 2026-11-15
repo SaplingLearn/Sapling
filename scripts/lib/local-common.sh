@@ -63,40 +63,35 @@ set_docker_host_for_podman() {
   export DOCKER_HOST="$sock"
 }
 
-# Ensure the Supabase Storage buckets the app expects exist locally, plus a
-# blunt LOCAL-ONLY RLS policy so anon-key frontend uploads work (#2).
+# Ensure the Supabase Storage buckets the app expects exist locally (#2).
 #
-# Without this, only `avatars` gets created (by migration 0011), so cosmetic-asset
-# uploads (Admin.tsx, direct anon-key upload) and issue-screenshot uploads fail on
-# a fresh local stack. issues-media-files is uploaded via the backend service role
-# (which bypasses Storage RLS), so it only needs the bucket to exist; cosmetic-assets
-# is uploaded straight from the browser with the anon key, so storage.objects RLS
-# applies and it also needs a permissive policy.
+# Without this, only `avatars` gets created (by migration 0011), so
+# issue-screenshot uploads fail on a fresh local stack. Avatars, issue
+# screenshots and admin cosmetic images are written through the backend service
+# role (which bypasses Storage RLS); Admin.tsx no longer uploads to a
+# `cosmetic-assets` bucket from the browser with the anon key. One anon-key
+# upload remains: Social chat images (Social.tsx) go from the browser to a
+# `chat-images` bucket, which neither this script nor any migration creates
+# (docs/security/storage-hardening-plan.md), so that upload fails here as it
+# does on the hosted projects. No anon storage policy is created for it, and
+# the one earlier versions of this script created is dropped.
 ensure_storage_buckets() {
   local sql
   sql="$(cat <<'SQL'
 -- Buckets the app expects. `avatars` mirrors migration 0011's column list;
--- the other two are otherwise never created locally. NULL size/mime keeps
+-- the other is otherwise never created locally. NULL size/mime keeps
 -- local uploads frictionless. ON CONFLICT never clobbers a tuned bucket.
 INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 VALUES
   ('avatars',            'avatars',            true,  5242880, ARRAY['image/jpeg', 'image/png', 'image/webp', 'image/gif']),
-  ('cosmetic-assets',    'cosmetic-assets',    true,  NULL,    NULL),
   ('issues-media-files', 'issues-media-files', false, NULL,    NULL)
 ON CONFLICT (id) DO NOTHING;
 
--- cosmetic-assets is uploaded DIRECTLY from the frontend with the anon key
--- (frontend Admin.tsx), so storage.objects RLS applies. This blunt permissive
--- policy is LOCAL-ONLY — these scripts never run against staging/prod.
--- issues-media-files goes via the backend service role (bypasses RLS) but is
--- harmless to include. DROP-then-CREATE makes re-running idempotent.
+-- No bucket created here takes anon writes (they go through the backend
+-- service role; see the note above on Social's `chat-images`), so the blunt
+-- permissive policy older versions created is removed from any existing
+-- local stack.
 DROP POLICY IF EXISTS "local dev storage open" ON storage.objects;
-CREATE POLICY "local dev storage open"
-  ON storage.objects
-  FOR ALL
-  TO anon, authenticated
-  USING (bucket_id IN ('cosmetic-assets', 'issues-media-files'))
-  WITH CHECK (bucket_id IN ('cosmetic-assets', 'issues-media-files'));
 SQL
 )"
   if "$CONTAINER_CMD" exec "$DB_CONTAINER" psql -U postgres -d postgres \

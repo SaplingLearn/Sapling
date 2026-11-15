@@ -16,6 +16,7 @@ from pydantic_ai import Agent
 from agents._bounded import clip_list, clip_prose
 from agents._providers import model_for
 from agents.deps import SaplingDeps
+from services.prompt_safety import DOCUMENT_INPUT_GUARD_PROMPT
 
 
 class Summary(BaseModel):
@@ -48,7 +49,8 @@ _SYSTEM_PROMPT = (
     "takeaways, each one sentence, ordered by importance.\n\n"
     "Stay grounded in the document. Do not embellish with general "
     "knowledge the text does not state. If the document is sparse "
-    "or near-empty, say so in the headline rather than padding."
+    "or near-empty, say so in the headline rather than padding.\n\n"
+    + DOCUMENT_INPUT_GUARD_PROMPT
 )
 _PROMPT_HASH = hashlib.sha256(_SYSTEM_PROMPT.encode("utf-8")).hexdigest()[:12]
 

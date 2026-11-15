@@ -8,6 +8,11 @@ on:
     branches: [main]
   pull_request:
 
+# Least privilege: the GITHUB_TOKEN is read-only unless a job
+# grants itself more.
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -21,8 +26,8 @@ jobs:
       run:
         working-directory: ./backend
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.13"
           cache: pip
@@ -84,8 +89,8 @@ jobs:
       run:
         working-directory: ./frontend
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           # node 22, not 20: a transitive dep (@cloudflare/kv-asset-handler) requires
           # node >=22, and .npmrc engine-strict=true enforces it during `npm ci`.
@@ -114,8 +119,9 @@ jobs:
   # (TODO/FIXME markers in source) — which Canopy reads off its `status` webhook.
   #
   # A job of its own, on purpose, so nothing above changes:
-  #   - `statuses: write` is granted HERE only. A workflow-level `permissions:`
-  #     block, or one on `backend`, would re-scope a gating job's token.
+  #   - `statuses: write` is granted HERE only, on top of the workflow-level
+  #     `contents: read` every other job runs with; the gating jobs never
+  #     hold a token that can write.
   #   - The gating pytest command stays byte-for-byte what it was: coverage is
   #     measured by a second, parallel run that cannot slow or fail the gate.
   #     The cost is one extra backend suite run per push to main.
@@ -137,7 +143,7 @@ jobs:
       contents: read
       statuses: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           # Test code and pip packages run in this job; do not leave the
           # statuses-capable token in .git/config for them to read.
@@ -184,7 +190,7 @@ jobs:
           gh api "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
             -f state=success -f context=canopy/todo -f description="$N"
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.13"
           cache: pip

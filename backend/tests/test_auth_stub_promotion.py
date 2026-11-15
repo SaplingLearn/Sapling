@@ -104,7 +104,7 @@ def drive_callback(monkeypatch):
         "id": GOOGLE_ID,
         "email": EMAIL,
         "name": "Ada Lovelace",
-        "picture": "https://example.com/a.png",
+        "picture": "https://example.com/a.png", "verified_email": True,
     }
     # auth.py does `import httpx` inside the function, so patch the module attr.
     monkeypatch.setattr(httpx, "get", lambda *a, **k: userinfo)

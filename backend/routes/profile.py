@@ -8,7 +8,8 @@ import re
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, UploadFile, File, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Query
+from fastapi.responses import StreamingResponse
 
 from services.chunk_visibility import resync_user_chunk_visibility
 from services.course_context_service import refresh_course_context
@@ -16,7 +17,7 @@ from pydantic import BaseModel, Field
 
 from config import MAX_AVATAR_SIZE
 from db.connection import table
-from db.scope import service_route, service_scope
+from db.scope import service_route
 from services.encryption import encrypt_if_present
 from models import (
     UpdateProfileBody,
@@ -27,11 +28,11 @@ from models import (
     DeleteAccountBody,
 )
 from services.analytics_consent import clear_analytics_consent_cache
-from services.auth_guard import clear_account_state_cache, require_self, get_session_user_id
+from services.auth_guard import require_self, get_session_user_id
 from services.http_cache import cached_json, conditional, make_etag
-from services.posthog_client import delete_person as delete_posthog_person
 from services.storage_service import upload_avatar
 from services.profile import (
+    DeletionNotConfirmed,
     UserNotFound,
     achievements_view,
     cosmetics_catalog,
@@ -40,7 +41,9 @@ from services.profile import (
     public_profile,
     replace_featured_achievements,
 )
+from services.profile import delete_account as _delete_account
 from services.profile import users as _users
+from services.profile.full_export import stream_export
 from services.profile.achievements import _get_featured_achievements  # noqa: F401  (re-export, #118)
 from services.profile.cosmetics import _get_equipped_cosmetics
 from services.profile.users import (  # noqa: F401  (re-export, #118)
@@ -455,38 +458,32 @@ def delete_account(
 ):
     # #756: a removed (unapproved) student may still erase their account.
     require_self(user_id, request, allow_unapproved=True)
-
-    if body.confirmation != "DELETE":
-        raise HTTPException(status_code=400, detail="Confirmation must be 'DELETE'")
-
-    # #115: the soft delete is account state (`users` is SELECT-only for the
-    # student's token) -> service role.
-    with service_scope():
-        table("users").update(
-            {"deleted_at": datetime.now(timezone.utc).isoformat()},
-            filters={"id": f"eq.{user_id}"},
+    try:
+        return _delete_account(
+            user_id, body.confirmation, after_response=background_tasks.add_task,
         )
-    # ADR 0028: from here on the PostHog worker's consent check reads
-    # deleted_at, so nothing — not even items already queued — names this user
-    # (which would re-create the person the delete below removes). Drop the
-    # cached "allowed" answer now.
-    clear_analytics_consent_cache(user_id)
-    # #756: the auth guard refuses a deleted account; drop its cached "active"
-    # answer so this process stops honouring the session now, not at the TTL.
-    clear_account_state_cache(user_id)
-    # Best-effort PostHog person + event delete, AFTER the response so it adds
-    # no latency and cannot fail the deletion (it never raises; unconfigured
-    # -> WARN + skip). It drains our queue and the SDK's first, and repeats
-    # after the consent TTL. Only reached once the soft delete landed.
-    background_tasks.add_task(delete_posthog_person, user_id)
-    return {"deleted": True}
+    except DeletionNotConfirmed as exc:
+        raise HTTPException(status_code=400, detail="Confirmation must be 'DELETE'") from exc
 
 
 # ── Data Export ──────────────────────────────────────────────────────────────
 
 @router.post("/{user_id}/export")
 def export_data(user_id: str, request: Request):
+    """The student's full data export, decrypted, streamed as one JSON
+    document (services/profile/full_export.py has what is in it and why)."""
     # #756: a removed (unapproved) student may still export their data.
     require_self(user_id, request, allow_unapproved=True)
 
-    return _export_account_data(user_id)
+    # The legacy keys first, BEFORE the response starts: a missing or deleted
+    # account is a 404, not a broken stream.
+    head = _export_account_data(user_id)
+    return StreamingResponse(
+        stream_export(user_id, head),
+        media_type="application/json",
+        headers={
+            "Content-Disposition": 'attachment; filename="sapling-export.json"',
+            # Decrypted personal data: never stored by a browser or proxy.
+            "Cache-Control": "no-store",
+        },
+    )

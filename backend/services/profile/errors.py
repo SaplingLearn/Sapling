@@ -6,3 +6,11 @@ class UserNotFound(LookupError):
 
     ``routes/profile.py`` answers it as ``404 {"detail": "User not found"}``.
     """
+
+
+class DeletionNotConfirmed(ValueError):
+    """An account delete whose confirmation is not ``"DELETE"``.
+
+    ``routes/profile.py`` answers it as
+    ``400 {"detail": "Confirmation must be 'DELETE'"}``.
+    """

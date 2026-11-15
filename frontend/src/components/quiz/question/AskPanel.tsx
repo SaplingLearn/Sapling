@@ -43,6 +43,8 @@ import {
   openTutorSession,
   type TurnProgress,
 } from "./askTurn";
+import { CrisisSupportCard } from "@/components/safety/CrisisSupportCard";
+import type { CrisisSupport } from "@/lib/crisisSupport";
 
 // The same renderer the tutor uses, loaded the same way `ChatPanel` loads it:
 // `MarkdownChat` statically imports mermaid, katex and highlight.js, and a
@@ -84,6 +86,8 @@ interface AskTurn {
   id: number;
   role: "user" | "assistant";
   text: string;
+  /** docs/safety/crisis-support.md: the crisis card instead of a tutor reply. */
+  crisisSupport?: CrisisSupport;
   /** ADR 0020: the stream was cut off after producing this much. The partial
    *  stays in the thread, marked; Retry drops it and starts the answer over. */
   interrupted?: boolean;
@@ -186,6 +190,13 @@ export function AskPanel({
         if (!sid) {
           const opened = await openTutorSession(userId, conceptName, courseId, controller.signal);
           if (opened === ABORTED) return;
+          if (typeof opened === "object" && opened !== null) {
+            // The card instead of a session: none was opened.
+            if (runRef.current === token && mountedRef.current) {
+              setTurns(t => [...t, { id: nextId(), role: "assistant", text: "", crisisSupport: opened.crisis }]);
+            }
+            return;
+          }
           if (!opened) throw new Error("The tutor didn't open a session.");
           if (runRef.current !== token) return;
           sid = opened;
@@ -217,7 +228,12 @@ export function AskPanel({
         if (reply === ABORTED) return;
 
         if (runRef.current !== token || !mountedRef.current) return;
-        setTurns(t => [...t, { id: nextId(), role: "assistant", text: reply }]);
+        setTurns(t => [
+          ...t,
+          typeof reply === "string"
+            ? { id: nextId(), role: "assistant", text: reply }
+            : { id: nextId(), role: "assistant", text: "", crisisSupport: reply.crisis },
+        ]);
       } catch (err) {
         if (controller.signal.aborted || runRef.current !== token || !mountedRef.current) return;
         // ADR 0020, and the whole reason `partial` exists: half an answer the
@@ -369,7 +385,9 @@ export function AskPanel({
 
         <div className="quiz-ask__thread" aria-live="polite">
           {turns.map(turn =>
-            turn.role === "user" ? (
+            turn.crisisSupport ? (
+              <CrisisSupportCard key={turn.id} support={turn.crisisSupport} />
+            ) : turn.role === "user" ? (
               <p key={turn.id} className="quiz-ask__turn--user">
                 {turn.text}
               </p>

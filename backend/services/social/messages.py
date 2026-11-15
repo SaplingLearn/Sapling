@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from db.connection import table
 from models import EditMessageBody, SendMessageBody, ToggleReactionBody
 from services.encryption import decrypt_if_present, encrypt_if_present
+from services.profiles import get_display_name
 from services.social.errors import Conflict, Forbidden, InvalidRequest, NotFound
 from services.social.rooms import _require_member
 
@@ -122,6 +123,10 @@ def get_room_messages(room_id: str, viewer_id: str, before: str | None = None, l
     return {"messages": enriched, "has_more": has_more}
 
 
+#: Shown for a sender with no profile name yet.
+SENDER_NAME_FALLBACK = "Student"
+
+
 def send_room_message(room_id: str, body: SendMessageBody):
     membership = table("room_members").select(
         "user_id", filters={"room_id": f"eq.{room_id}", "user_id": f"eq.{body.user_id}"}
@@ -139,10 +144,14 @@ def send_room_message(room_id: str, body: SendMessageBody):
         if reply_to_id is None:
             raise NotFound("Message not found")
 
+    # The name shown beside the message is the sender's own profile name,
+    # never the client's `user_name` (which let a member post as anyone).
+    sender_name = get_display_name(body.user_id) or SENDER_NAME_FALLBACK
+
     row = table("room_messages").insert({
         "room_id": room_id,
         "user_id": body.user_id,
-        "user_name": body.user_name,
+        "user_name": sender_name,
         "text": encrypt_if_present(body.text or None),
         "image_url": body.image_url or None,
         "image_width": body.image_width or None,

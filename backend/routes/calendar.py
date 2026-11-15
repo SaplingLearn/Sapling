@@ -24,12 +24,16 @@ from config import (
 )
 from db.connection import table
 from db.scope import service_route
-from models import SaveAssignmentsBody, StudyBlockBody, ExportBody, SyncBody
+from models import SaveAssignmentsBody, StudyBlockBody, ExportBody, SyncBody, UpdateCalendarAssignmentBody
 from services import academics
 from services.auth_guard import require_self, get_session_user_id, guard_off_loop
-from services.calendar_service import extract_assignments_from_file, save_new_assignments
+from services.calendar_service import (
+    extract_assignments_from_file, extraction_failed, read_syllabus_upload, save_new_assignments,
+)
 from services.encryption import encrypt, encrypt_if_present, decrypt, decrypt_if_present
 from services.request_context import current_request_id
+from services import abuse_limits
+from services.request_limits import aenforce_abuse_limit
 # Reuse the sign-in flow's OAuth primitives (PKCE + HMAC-signed state cookie) as
 # the single source of truth for CSRF handling — see services/auth/oauth_state.py.
 # These are pure helpers with no request state, so importing them keeps the
@@ -303,23 +307,18 @@ async def extract(request: FastAPIRequest, file: UploadFile = File(...), user_id
         await guard_off_loop(require_self, user_id, request)
     else:
         user_id = await guard_off_loop(get_session_user_id, request)
-    file_bytes = await file.read()
-    filename = file.filename or "upload"
-    content_type = file.content_type or "application/octet-stream"
-    request_id = (
-        getattr(request.state, "request_id", None)
-        or current_request_id()
-        or ""
-    )
+    await aenforce_abuse_limit(abuse_limits.SYLLABUS_EXTRACT, user_id)
+    file_bytes, content_type = await read_syllabus_upload(file)  # 400 type / 413 size
+    request_id = getattr(request.state, "request_id", None) or current_request_id() or ""
     try:
-        result = await extract_assignments_from_file(
-            file_bytes, filename, content_type,
-            user_id=user_id or "",
-            request_id=request_id,
+        return await extract_assignments_from_file(
+            file_bytes, file.filename or "upload", content_type,
+            user_id=user_id or "", request_id=request_id,
         )
-        return result
-    except Exception as e:
-        return {"error": str(e), "assignments": [], "warnings": [str(e)]}
+    except HTTPException:
+        raise  # e.g. the LLM budget's 429 (#119)
+    except Exception:
+        return extraction_failed(request_id)  # logged; never the exception text
 
 
 # ── Assignment CRUD ───────────────────────────────────────────────────────────
@@ -356,8 +355,8 @@ def get_all_assignments(user_id: str, request: FastAPIRequest):
 
 
 @router.patch("/assignments/{assignment_id}")
-def update_assignment(assignment_id: str, body: dict, request: FastAPIRequest):
-    user_id = body.get("user_id")
+def update_assignment(assignment_id: str, body: UpdateCalendarAssignmentBody, request: FastAPIRequest):
+    user_id = body.user_id
     if not user_id:
         raise HTTPException(status_code=400, detail="user_id is required")
     require_self(user_id, request)
@@ -374,7 +373,7 @@ def update_assignment(assignment_id: str, body: dict, request: FastAPIRequest):
         raise HTTPException(status_code=404, detail="Assignment not found")
 
     ALLOWED = {"title", "due_date", "assignment_type"}  # course_id no longer settable here
-    patch = {k: v for k, v in body.items() if k in ALLOWED}
+    patch = {k: v for k, v in body.model_dump(exclude_unset=True).items() if k in ALLOWED}
     # A cleared date input arrives as "": that means "no date" (the column is
     # nullable since 0012), and "" is not a valid DATE literal for PostgREST.
     if patch.get("due_date") == "":

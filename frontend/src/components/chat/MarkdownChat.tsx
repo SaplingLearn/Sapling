@@ -12,6 +12,11 @@ import "katex/dist/katex.min.css";
 import "katex/contrib/mhchem";
 import "highlight.js/styles/github.css";
 
+import {
+  browserImageSrcContext,
+  imageLinkHref,
+  isAllowedMarkdownImageSrc,
+} from "@/lib/markdownImages";
 import { MermaidBlock } from "./MermaidBlock";
 import { FunctionPlot } from "./FunctionPlot";
 
@@ -96,7 +101,9 @@ function remarkSaplingDirectives() {
 
       if (n.type === "leafDirective" && n.name === "geogebra") {
         const id = n.attributes?.id || n.attributes?.materialid || n.attributes?.material;
-        if (!id) return;
+        // A GeoGebra material id is alphanumeric; anything else would put
+        // model-chosen text into the frame URL.
+        if (!id || !/^[A-Za-z0-9]{1,32}$/.test(id)) return;
         const data = n.data || (n.data = {});
         data.hName = "iframe";
         data.hProperties = {
@@ -195,21 +202,44 @@ const COMPONENTS: Components = {
       {children}
     </a>
   ),
-  img: ({ src, alt }) => (
-    <img
-      src={typeof src === "string" ? src : undefined}
-      alt={alt || ""}
-      loading="lazy"
-      style={{
-        maxWidth: "100%",
-        height: "auto",
-        borderRadius: "var(--r-sm)",
-        border: "1px solid var(--border)",
-        margin: "6px 0",
-        display: "block",
-      }}
-    />
-  ),
+  // Only images the app serves are fetched (lib/markdownImages.ts): an
+  // external image in model-written markdown is an exfiltration channel.
+  // Anything else is offered as a link, followed only on a click.
+  img: ({ src, alt }) => {
+    const url = typeof src === "string" ? src : "";
+    if (isAllowedMarkdownImageSrc(url, browserImageSrcContext())) {
+      return (
+        <img
+          src={url}
+          alt={alt || ""}
+          loading="lazy"
+          style={{
+            maxWidth: "100%",
+            height: "auto",
+            borderRadius: "var(--r-sm)",
+            border: "1px solid var(--border)",
+            margin: "6px 0",
+            display: "block",
+          }}
+        />
+      );
+    }
+    const label = alt ? `[image: ${alt}]` : "[image]";
+    const href = imageLinkHref(url);
+    if (!href) return <span data-testid="markdown-image-blocked">{label}</span>;
+    return (
+      <a
+        data-testid="markdown-image-blocked"
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer nofollow"
+        referrerPolicy="no-referrer"
+        style={{ color: "var(--accent)", textDecoration: "underline" }}
+      >
+        {label}
+      </a>
+    );
+  },
   code: ({ children, className }) => {
     const inline = !className;
     if (inline) {

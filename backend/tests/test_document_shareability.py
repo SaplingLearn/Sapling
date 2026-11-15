@@ -191,9 +191,11 @@ class TestRouteWiring:
             _run_indexer(shareability="completed_work", confidence=0.42)
 
         assert decide.call_args.args == ("user-1",)
-        assert decide.call_args.kwargs == {
-            "shareability": "completed_work", "confidence": 0.42,
-        }
+        kwargs = dict(decide.call_args.kwargs)
+        screen = kwargs.pop("screen")
+        assert kwargs == {"shareability": "completed_work", "confidence": 0.42}
+        # The share screen always reaches the decision (services/share_screen.py).
+        assert screen is not None
 
     def test_completed_work_is_indexed_private_end_to_end(self):
         """No mock on the decision: the stored row alone must produce a private

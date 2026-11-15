@@ -36,6 +36,7 @@ from services.auth import (
     fetch_google_userinfo,
     join_waitlist,
     record_google_sign_in,
+    revoke_sessions,
     welcome_and_achievements_after_sign_in,
 )
 from services.auth_guard import clear_account_state_cache, get_session_user_id, guard_off_loop
@@ -55,7 +56,7 @@ from services.auth.oauth_state import (  # noqa: F401
 from services.auth.pending import (  # noqa: F401
     _PENDING_TOKEN_TTL_SECONDS, _mint_pending_token, _pending_token_claims, _pending_token_email,
 )
-from services.auth.signin import _email_domain_allowed  # noqa: F401
+from services.auth.signin import _email_domain_allowed, _email_verified  # noqa: F401
 from services.auth.waitlist import (  # noqa: F401
     _mark_waitlist_joined, _pending_standing, _waitlist_entries, _waitlist_entry,
 )
@@ -89,6 +90,27 @@ def get_me(request: Request):
         raise HTTPException(status_code=404, detail="User not found")
     except AccountDeleted:
         raise HTTPException(status_code=401, detail="Not authenticated")
+
+
+@router.post("/logout")
+def logout(request: Request):
+    """Sign out everywhere: revoke every session this account was issued up
+    to now (`users.sessions_valid_after`), so a copied cookie stops working at
+    once instead of living until its `exp`.
+
+    Authenticated by the session it revokes (an unapproved account may sign
+    out too). The frontend session BFF (DELETE /api/auth/session) calls this
+    with the browser's cookie before clearing it. 401 when the session is
+    already invalid: there is nothing left to revoke.
+    """
+    user_id = get_session_user_id(request, allow_unapproved=True)
+    try:
+        revoke_sessions(user_id)
+    except Exception:
+        logger.exception("logout: could not revoke sessions for %r", user_id)
+        raise HTTPException(status_code=503, detail="Could not sign you out. Please try again.")
+    clear_account_state_cache(user_id)
+    return JSONResponse({"ok": True}, headers={"Cache-Control": "no-store"})
 
 
 @router.get("/google")
@@ -217,6 +239,10 @@ def google_callback(
     user_info = fetch_google_userinfo(creds.token)
     if user_info is None:
         return _fail_redirect("userinfo_fetch_failed")
+
+    # Every decision below keys on the email: refuse one Google has not verified.
+    if not _email_verified(user_info):
+        return _fail_redirect("email_not_verified")
 
     email = user_info.get("email", "")
     google_id = user_info.get("id", "")

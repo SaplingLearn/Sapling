@@ -15,6 +15,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Query, Request
 
 import services.tutor as tutor_service
+from services import crisis_support
 from models import StartSessionBody, ChatBody, EndSessionBody, ActionBody, ModeSwitchBody, RenameSessionBody
 from routes._docs import same_doc
 
@@ -89,24 +90,48 @@ router = APIRouter()
 @router.post("/start-session")
 @same_doc(tutor_service.start_session)
 async def start_session(body: StartSessionBody, request: Request):
+    # docs/safety/crisis-support.md: first, before every limit and budget; no session is opened...
+    screened = await crisis_support.screen_tutor_start_async(
+        request, body.user_id, body.topic, note_version=lambda: tutor_service.note_title_version(body),
+    )
+    if isinstance(screened, crisis_support.ContentScreen):
+        # ...unless the topic is the student's own note title (Send to tutor): the card beside the session
+        return await crisis_support.alongside(screened, tutor_service.start_session(body, request))
+    if screened is not None:
+        return crisis_support.start_json(screened)
     return await tutor_service.start_session(body, request)
 
 
 @router.post("/chat")
 @same_doc(tutor_service.chat)
 async def chat(body: ChatBody, request: Request):
+    # docs/safety/crisis-support.md: first, before every limit and budget; nothing of the turn is written
+    if crisis := await crisis_support.screen_async(request, body.user_id, "tutor_chat", body.message):
+        return crisis_support.turn_json(crisis)
     return await tutor_service.chat(body, request)
 
 
 @router.post("/chat/stream")
 @same_doc(tutor_service.chat_stream)
 async def chat_stream(body: ChatBody, request: Request):
+    # docs/safety/crisis-support.md: first, before every limit and budget; nothing of the turn is written
+    if crisis := await crisis_support.screen_async(request, body.user_id, "tutor_chat", body.message):
+        return crisis_support.sse_response(crisis, request)
     return await tutor_service.chat_stream(body, request)
 
 
 @router.post("/start-session/stream")
 @same_doc(tutor_service.start_session_stream)
 async def start_session_stream(body: StartSessionBody, request: Request):
+    # docs/safety/crisis-support.md: first, before every limit and budget; no session is opened...
+    screened = await crisis_support.screen_tutor_start_async(
+        request, body.user_id, body.topic, note_version=lambda: tutor_service.note_title_version(body),
+    )
+    if isinstance(screened, crisis_support.ContentScreen):
+        # ...unless the topic is the student's own note title (Send to tutor): the card in `done`
+        return await crisis_support.alongside(screened, tutor_service.start_session_stream(body, request))
+    if screened is not None:
+        return crisis_support.sse_response(screened, request, session_id=None)
     return await tutor_service.start_session_stream(body, request)
 
 

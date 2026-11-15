@@ -102,6 +102,8 @@ const eslintConfig = [
       "src/components/DocumentUploadModal.tsx",
       "src/components/TopicChecklistPanel.tsx",
       "src/components/chat/ChatPanel.tsx",
+      // The crisis-support card (docs/safety/crisis-support.md). New file, no backlog.
+      "src/components/safety/CrisisSupportCard.tsx",
       // Quiz redesign (#537). The three screens carry every answer/submit/exit
       // control the Playwright journeys drive; the three `ui/` primitives are
       // listed because those controls render INSIDE them, so a testid-less
