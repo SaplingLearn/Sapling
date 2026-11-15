@@ -83,15 +83,18 @@ def test_screenshot_is_stored_at_the_path_the_report_keeps(authed_client, db_con
         _storage("DELETE", path)
 
 
-def test_missing_bucket_is_a_502_not_a_500(authed_client, monkeypatch):
+def test_missing_bucket_is_a_502_not_a_500(authed_client, monkeypatch, caplog):
     """What production looked like before the bucket existed: Storage's own
-    answer is mapped to a 502, on the real client and the real error body."""
+    answer is mapped to a 502, on the real client and the real error body.
+    That body goes to the server log; the client gets generic text."""
     from services import storage_service
 
     monkeypatch.setattr(storage_service, "ISSUE_BUCKET", "issues-media-files-not-created")
-    up = authed_client.post(
-        "/api/issue-reports/screenshot",
-        files={"file": ("shot.png", PNG, "image/png")},
-    )
+    with caplog.at_level("WARNING", logger="services.storage_service"):
+        up = authed_client.post(
+            "/api/issue-reports/screenshot",
+            files={"file": ("shot.png", PNG, "image/png")},
+        )
     assert up.status_code == 502, up.text
-    assert "Bucket not found" in up.json()["detail"]
+    assert up.json()["detail"] == storage_service.SCREENSHOT_UPLOAD_FAILED_DETAIL
+    assert "Bucket not found" in caplog.text
