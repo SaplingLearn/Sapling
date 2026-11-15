@@ -15,7 +15,10 @@ is often material the student is quoting (a patient, a play, a poem), and
 no phrase list can tell a quoted patient from a student quoting themselves,
 so the student gets what they asked for and the resources with it. What the
 student TYPES (a chat message, the note chat's message, a topic, a
-description) still blocks, on every surface.
+description) still blocks, on every surface. The one topic that does not is
+Send to tutor's: the tutor opens on the note's title, and a session started
+on that title unchanged is the note's content too, so it starts with the
+card beside it.
 
 (First built on the learning loop and removed with it by the revert
 e5a08d47; this is the same path re-landed on the surfaces main has. The loop
@@ -41,13 +44,31 @@ surface" below.)
 
    The notes routes screen the note they read with
    `crisis_support.screen_content_async`, right after that read and still
-   before any limit, and then run their action through
-   `crisis_support.alongside(card, action())`. The action is limited and
-   budgeted as usual (it runs a model), so it can be refused with a 429; the
-   card then rides on that 429, and on any other error the action raises
-   (a 413, a 500), in the error body's `crisis_support` key (main.py's
-   exception handlers add it through `crisis_support.error_body`). The
-   student never gets a refusal without the card.
+   before any limit. It answers with a `ContentScreen`, never a card: the
+   blocking builders (`json_body`, `turn_json`, `start_json`,
+   `sse_response`) refuse it, and the only thing that takes it is
+   `crisis_support.alongside(screen, action())`. The action is limited and
+   budgeted as usual (it runs a model), so it can be refused with a 429.
+   `alongside` answers any error the action raises (a 429, a 413, a 500)
+   itself: it runs the app's own exception handler for it (found the way
+   Starlette finds it) and adds the card to that handler's body, in the
+   `crisis_support` key, so the status, detail, `Retry-After` and envelope
+   are exactly what the same error gets without a match. No exception
+   handler needs to know about the card. An action that turns one error into
+   another does so inside the action, not around `alongside`. The student
+   never gets a refusal without the card.
+
+   A tutor start (`/api/learn/start-session` and its stream) screens its
+   topic as typed, with one exception. Send to tutor opens
+   `/learn?topic=<the note's title>&note=<its id>`, and a start on that
+   title unchanged sends `from_note_id`. Only when the topic matched does the
+   route check that claim (`services/tutor/note_topic.py::topic_is_note_title`):
+   the note must be the student's own, and the topic must be exactly what
+   Send to tutor derives from its title (`notes_service.tutor_topic`). If
+   both hold, the session starts through `alongside`, with the card beside it
+   (in the stream's `done` data). If anything is doubtful (no id, another
+   student's or a deleted note, an edited topic, a failed read), the topic
+   blocks as typed.
 2. **Authenticate, on a match only.** The screen runs before the handler's
    own auth, so on a match it checks the caller itself (`require_self` on the
    body's `user_id`): a stranger gets the route's 401/403 before anything is
@@ -64,10 +85,11 @@ surface" below.)
    - Streams: one `done` event whose `data` is that same body. That is the
      tutor streams' normal terminal event, so the existing stream consumer
      resolves it like any turn.
-   - A note's content: the action's normal result plus `crisis_support` and
-     `crisis_support_alongside: true` (no `reply` of the card's: the note
-     chat's `reply` is the agent's), or its error body plus
-     `crisis_support`.
+   - A note's content (and a tutor start on Send to tutor's note title): the
+     action's normal result plus `crisis_support` and
+     `crisis_support_alongside: true` (no card `reply`: the note chat's
+     `reply` is the agent's), for the streamed start in its `done` event's
+     data; or its error body plus `crisis_support`.
    - The frontend renders `crisis_support` as a calm card
      (`frontend/src/components/safety/CrisisSupportCard.tsx`): inline in a
      conversation; as a dialog where there is none (the tutor's start screen,
@@ -75,6 +97,7 @@ surface" below.)
      tutor"). With `crisis_support_alongside` the notetaker shows the result
      too (the new summary, the linked concepts, the chat reply under the
      card) and opens the tutor for Send to tutor once the card is closed.
+     The tutor's start screen shows the card over the session it started.
 5. **Record.** One `safety.crisis_support_shown` event (category `system`)
    with `surface`, `category` (`acute_danger` / `suicidal_ideation` /
    `self_harm`) and `tier` (`explicit` / `mention`), and the user id. It
@@ -160,7 +183,7 @@ and the review start that generates cards (dialogs).
 | **All user-facing copy (owner review)** | `backend/services/crisis_support_copy.py` |
 | Campus counseling, per school | `CAMPUS_COUNSELING` in that same copy file |
 | Screen, flag, event, response builders | `backend/services/crisis_support.py` |
-| The screens | the first statement of each handler in `routes/learn.py`, `routes/notes.py`, `routes/flashcards.py` (the notes actions: right after the note read, `screen_content_async` + `alongside`) |
+| The screens | the first statement of each handler in `routes/learn.py`, `routes/notes.py`, `routes/flashcards.py` (the notes actions: right after the note read, `screen_content_async` + `alongside`; a tutor start on a note's title: `tutor.topic_is_note_title` + `alongside`) |
 | Flag registration | `backend/services/feature_flags.py::REGISTRY["crisis_support"]` |
 | Event taxonomy / PostHog exclusion | `services/events_service.py::EVENT_TAXONOMY`, `services/posthog_client.py::_NOT_MIRRORED` |
 | The card | `frontend/src/components/safety/CrisisSupportCard.tsx`, `frontend/src/lib/crisisSupport.ts` |
@@ -175,7 +198,9 @@ and the review start that generates cards (dialogs).
   until it does) and renders the card on its frontend surface. A route that
   reads text the student STORED rather than typed (like the notes actions)
   uses `screen_content_async` and runs its work through `alongside`
-  instead, so the card shows beside the result; its `Case` sets
+  instead, so the card shows beside the result (and errors are answered
+  there, by the app's own handler, card included: convert an error inside
+  the action, never around `alongside`); its `Case` sets
   `note_field`, which makes it a non-blocking (`CONTENT`) case.
   `test_no_student_text_reaches_a_model_unscreened` reads every write route
   of the modules that run a model (`MODEL_ROUTE_MODULES`): a route whose body
