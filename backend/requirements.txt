@@ -18,7 +18,7 @@ recost==0.1.3
 
 # Database migrations (#197): direct Postgres driver for db/migrate.py ONLY.
 # App runtime uses PostgREST via db/connection.py; this is admin tooling.
-psycopg[binary]>=3.2,<4
+psycopg[binary]>=3.3.8,<4
 
 # OCR pipeline (Docling, GOT-OCR, torch): requirements-worker.txt (#116). This
 # file is the API image's set, and exactly what requirements.lock pins; the OCR
