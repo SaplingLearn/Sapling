@@ -112,4 +112,4 @@ packaging>=24
 # extra: LLM analytics are $ai_generation events from the usage chokepoint,
 # not an OTel span export.
 # Upper bound: a PostHog major can change the capture/context API surface.
-posthog>=7.0,<8
+posthog>=7.87.1,<8
