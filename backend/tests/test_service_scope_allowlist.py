@@ -113,6 +113,7 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
     ("services/email_service.py", "notification_opt_out_hashes", "runs_as_service"): "every user's opt-out",
     ("services/email_service.py", "send_email", "runs_as_service"): "email_sends + the suppression tables",
     ("services/email_service.py", "suppress", "runs_as_service"): "email_suppressions/email_alert_suppressions",
+    ("services/email_service.py", "suppressions_for", "runs_as_service"): "a batch's read of the suppression tables",
     ("services/email_service.py", "unsuppress", "runs_as_service"): "email_suppressions/email_alert_suppressions",
     ("services/events_service.py", "_flush_batch", "runs_as_service"): "events/llm_usage are service-only",
     ("services/events_service.py", "_flush_rows_individually", "runs_as_service"): "events/llm_usage",
