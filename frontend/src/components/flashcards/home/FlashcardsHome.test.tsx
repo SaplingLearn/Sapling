@@ -503,6 +503,29 @@ describe("Flashcards home: decks", () => {
     expect(screen.getByRole("button", { name: "Review Sorting and trees" })).toBeEnabled();
   });
 
+  it("a concept whose name matched comes back with its cards and the card beside them: shown once, and the run goes on", async () => {
+    // docs/safety/crisis-support.md: a graph concept's name is course
+    // material, so the backend makes its cards and answers with the card
+    // alongside (crisis_support_alongside) instead of blocking the Start.
+    const sorting = [card("g1", "Sorting", { course_id: null })];
+    const trees = [card("g2", "Trees", { course_id: null })];
+    const beside = (made: unknown[]) =>
+      ({ flashcards: made, crisis_support: crisisFixture, crisis_support_alongside: true }) as never;
+    mocks.generate.mockResolvedValueOnce(beside(sorting)).mockResolvedValueOnce(beside(trees));
+    mocks.sets.mockResolvedValue({ sets: [savedSet({ id: "s6", name: "Sorting and trees", concepts: ["Sorting", "Trees"], exam_id: null })] });
+    const user = await home();
+    mocks.cards.mockResolvedValue({ flashcards: [...CARDS_NO_DUE, ...sorting, ...trees] });
+
+    await user.click(screen.getByRole("button", { name: "Review Sorting and trees" }));
+
+    expect(await screen.findByRole("dialog")).toHaveTextContent(crisisFixture.title);
+    await waitFor(() => expect(mocks.generate).toHaveBeenCalledTimes(2)); // the run went on past the card
+    expect(await screen.findByText("Card 1 of 2")).toBeTruthy(); // and the review started
+    expect(screen.getAllByTestId("crisis-support-card")).toHaveLength(1);
+    await user.click(screen.getByTestId("crisis-support-dismiss"));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull()); // shown once, not once per concept
+  });
+
   it("a crisis answer for a later concept still brings in the cards already made for the earlier ones", async () => {
     // docs/safety/crisis-support.md: Sorting's cards were generated and saved
     // before the screen answered for Trees. They must reach the page (not be

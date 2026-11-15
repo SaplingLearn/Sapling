@@ -56,15 +56,18 @@ class Case:
     async_next: bool = False
     neutral: dict[str, Any] = field(default_factory=dict)
     note_field: str | None = None  # notes routes: the note field the text goes in
+    #: flashcard generate: the topic is one of the student's own graph concepts
+    graph_concept: bool = False
 
     @property
     def blocks(self) -> bool:
-        """A typed message blocks; a note's stored content shows the card alongside."""
-        return self.note_field is None
+        """A typed message blocks; stored material (a note's content, a graph
+        concept's name) shows the card alongside."""
+        return self.note_field is None and not self.graph_concept
 
     @property
     def id(self) -> str:
-        return f"{self.path}:{self.note_field or self.body.__name__}"
+        return f"{self.path}:{self.note_field or ('graph_concept' if self.graph_concept else self.body.__name__)}"
 
 
 def _chat(text):
@@ -130,8 +133,12 @@ CASES: list[Case] = [
          "services.flashcards.import_flow.import_generate", neutral={"cards": []}),
     Case("flashcard_import_cloze", "/api/flashcards/import/cloze", _cloze,
          "services.flashcards.import_flow.import_cloze", neutral={"cards": []}),
+    # a topic that is not one of the student's graph concepts is typed: it blocks
     Case("flashcard_generate", "/api/flashcards/generate", _topic,
          "services.flashcards.generation.generate", neutral={"flashcards": []}),
+    # ...one that is (the page's one-concept-per-call Start) is course material
+    Case("flashcard_generate", "/api/flashcards/generate", _topic,
+         "services.flashcards.generation.generate", graph_concept=True),
 ]
 IDS = [c.id for c in CASES]
 BLOCKING = [c for c in CASES if c.blocks]
@@ -186,9 +193,11 @@ def _post(case: Case, text: str):
     by a sentinel 418. Returns (response, the sentinel mock)."""
     sentinel = HTTPException(status_code=SENTINEL, detail="reached the route's own next step")
     mock = (AsyncMock if case.async_next else MagicMock)(side_effect=sentinel)
+    concepts = ["Hash tables", text] if case.graph_concept else ["Hash tables"]
     with (
         patch(case.next_step, mock),
         patch("routes.notes.get_note", AsyncMock(return_value=_note(case, text))),
+        patch("services.flashcards.concept_topic._graph_concept_names", return_value=concepts),
     ):
         return client.post(case.path, json=case.body(text)), mock
 
@@ -751,6 +760,104 @@ def test_the_once_a_day_key_holds_no_content(monkeypatch, sink):
     asyncio.run(run())
     keys = " ".join(crisis_support._recorded_today).lower()
     assert keys and not any(word in keys for word in CRISIS_WORDS + ("n1", "u1"))
+
+
+# ── Flashcard generate: a graph concept's name, not something typed ────────
+#
+# The Flashcards page generates one concept per call with the concept's name
+# as the topic. A name the student's graph holds is course material (a nursing
+# course's "Feeling suicidal"): its cards are made, the card beside them. A
+# name that is not one of their concepts is screened as typed and blocks.
+
+CONCEPT_CARDS = {"flashcards": [{"id": "f1", "front": "Q", "back": "A"}]}
+
+
+@pytest.fixture
+def concept_generate():
+    """The generation itself stood in; the student's graph concepts are
+    `names` (in the request's course). Yields the mocks."""
+    mocks = {
+        "generate": MagicMock(return_value=dict(CONCEPT_CARDS)),
+        "names": MagicMock(return_value=["Hash tables", "Feeling suicidal"]),
+    }
+    with (
+        patch("services.flashcards.generation.generate", mocks["generate"]),
+        patch("services.flashcards.concept_topic._graph_concept_names", mocks["names"]),
+    ):
+        yield mocks
+
+
+def _generate_body(topic: str) -> dict:
+    return {"user_id": "u1", "topic": topic, "count": 5, "course_id": "c1"}
+
+
+def test_a_graph_concept_topic_makes_its_cards_with_the_card_beside_them(flag, sink, concept_generate):
+    flag("on")
+    r = client.post("/api/flashcards/generate", json=_generate_body("feeling  Suicidal"))
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["flashcards"] == CONCEPT_CARDS["flashcards"]  # the cards were made
+    assert body["crisis_support"] == crisis_support.client_payload(crisis_copy.DEFAULT_CAMPUS_COUNSELING)
+    assert body["crisis_support_alongside"] is True
+    concept_generate["generate"].assert_called_once()
+    concept_generate["names"].assert_called_once_with("u1", "c1")  # the student's own, in this course
+    assert [row["payload"]["surface"] for row in _crisis_rows(sink)] == ["flashcard_generate"]
+
+
+def test_a_typed_topic_that_is_not_a_graph_concept_still_blocks(flag, sink, concept_generate):
+    flag("on")
+    r = client.post("/api/flashcards/generate", json=_generate_body(CRISIS))
+    assert r.status_code == 200, r.text
+    assert r.json()["flashcards"] == [] and "crisis_support_alongside" not in r.json()
+    concept_generate["generate"].assert_not_called()
+
+
+def test_a_failed_concept_read_blocks_as_typed(flag, sink, concept_generate):
+    flag("on")
+    concept_generate["names"].side_effect = RuntimeError("PostgREST down")
+    r = client.post("/api/flashcards/generate", json=_generate_body("Feeling suicidal"))
+    assert r.status_code == 200, r.text
+    assert r.json()["flashcards"] == [] and "crisis_support" in r.json()
+    concept_generate["generate"].assert_not_called()
+
+
+def test_a_refused_graph_concept_generation_still_carries_the_card(flag, sink, concept_generate):
+    from datetime import datetime, timezone
+
+    flag("on")
+    concept_generate["generate"].side_effect = llm_budget.LLMBudgetExceeded(
+        limit=1, used=1, reset_at=datetime.now(timezone.utc))
+    r = client.post("/api/flashcards/generate", json=_generate_body("Feeling suicidal"))
+    assert r.status_code == 429, r.text
+    assert "crisis_support" in r.json()
+
+
+def test_a_calm_topic_never_reads_the_graph(flag, sink, concept_generate):
+    flag("on")
+    r = client.post("/api/flashcards/generate", json=_generate_body("Hash tables"))
+    assert r.status_code == 200, r.text
+    assert r.json() == CONCEPT_CARDS
+    concept_generate["names"].assert_not_called()
+
+
+def test_the_graph_concept_read_is_the_students_own(monkeypatch):
+    from services.flashcards import concept_topic
+
+    calls = []
+
+    class _Nodes:
+        def select(self, cols, filters):
+            calls.append((cols, filters))
+            return [{"concept_name": "Feeling Suicidal"}]
+
+    monkeypatch.setattr(concept_topic, "table", lambda name: _Nodes())
+    assert concept_topic.topic_is_graph_concept("u1", "feeling suicidal", "c1") is True
+    assert concept_topic.topic_is_graph_concept("u1", "suicidal", None) is False
+    assert concept_topic.topic_is_graph_concept("u1", "   ", None) is False
+    assert calls == [
+        ("concept_name", {"user_id": "eq.u1", "course_id": "eq.c1"}),
+        ("concept_name", {"user_id": "eq.u1"}),
+    ]
 
 
 # ── Send to tutor's topic: the note's title, not something typed ───────────

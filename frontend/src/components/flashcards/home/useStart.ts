@@ -11,6 +11,12 @@
  *
  * One run at a time, and the latest wins: a course switch (`cancel`) or an
  * unmount drops whatever the run still has in flight.
+ *
+ * docs/safety/crisis-support.md: a concept whose NAME matched the crisis
+ * screen (course material on the student's map) comes back with its cards and
+ * the card beside them (`crisis_support_alongside`): the card shows once per
+ * run and the run carries on. A topic the screen blocked (the card INSTEAD of
+ * cards) ends the run.
  */
 import React from "react";
 import { generateFlashcards } from "@/lib/api";
@@ -87,8 +93,9 @@ export function useStart(input: StartInput) {
   // state through this.
   const live = React.useRef(input);
   React.useEffect(() => { live.current = input; });
-  // docs/safety/crisis-support.md: a generation the crisis screen answered
-  // shows the card and ends the run (nothing more is made, nothing starts).
+  // docs/safety/crisis-support.md: a generation the crisis screen blocked
+  // shows the card and ends the run (nothing more is made, nothing starts);
+  // one that carries the card beside its cards shows it once and goes on.
   const crisis = useCrisisSupport();
   const { intercept } = crisis;
 
@@ -103,11 +110,17 @@ export function useStart(input: StartInput) {
     /** Asked for and answered with no cards: the generator writes from the
      *  course's material, and makes nothing for a concept it does not cover. */
     const none: string[] = [];
+    /** The card beside a concept's cards has been shown in this run. */
+    let shownBeside = false;
     for (let i = 0; i < names.length && run.isCurrent(); i++) {
       setProgress({ name: names[i], at: i + 1, of: names.length });
       try {
         const r = await generateFlashcards(userId, names[i], perConcept, semester || undefined, courseId || undefined);
-        if (run.isCurrent() && intercept(r)) return { made, crisis: true };
+        if (r.crisis_support_alongside) {
+          if (run.isCurrent() && !shownBeside) shownBeside = intercept(r);
+        } else if (run.isCurrent() && intercept(r)) {
+          return { made, crisis: true };
+        }
         const cards = r.flashcards || [];
         if (!cards.length) none.push(names[i]);
         made.push(...cards);

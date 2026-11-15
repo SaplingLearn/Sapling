@@ -25,7 +25,10 @@ phrase list can tell from their own words, so they get the result they
 asked for and the resources with it. The note chat's typed message still
 blocks. So does a tutor start's topic, unless it is the title of the
 student's own note that Send to tutor handed over (`from_note_id`, checked
-against the note): then the session starts with the card beside it.
+against the note): then the session starts with the card beside it. And a
+flashcard generation's topic, unless it is one of the student's own graph
+concepts (course material): then the cards are made with the card beside
+them.
 
 A crisis turn (a blocking screen) makes no model call, consumes no
 rate-limit, budget or quota unit (the per-user LLM budget is checked at the
@@ -164,7 +167,9 @@ class ContentScreen:
     material can never be answered with the card INSTEAD of its result. Built
     by hand only where a route has shown that a typed-looking field holds
     stored material: a tutor start whose topic is the student's own note
-    title (routes/learn.py, `tutor.topic_is_note_title`)."""
+    title (routes/learn.py, `tutor.topic_is_note_title`), and a flashcard
+    generation whose topic is one of the student's own graph concepts
+    (routes/flashcards.py, `concept_topic.topic_is_graph_concept`)."""
 
     request: Request
     support: CrisisSupport | None

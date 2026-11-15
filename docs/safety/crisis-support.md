@@ -139,7 +139,7 @@ PostHog, not to Logfire.
 | `flashcard_set_suggest` | `POST /api/flashcards/sets/suggest` | `description` | instead of sorting a described set |
 | `flashcard_import_paste` | `POST /api/flashcards/import/generate` (`source: "paste"`) | `text` | instead of generating cards from pasted text |
 | `flashcard_import_cloze` | `POST /api/flashcards/import/cloze` | `paragraph` | instead of generating cloze cards |
-| `flashcard_generate` | `POST /api/flashcards/generate` | `topic` | instead of generating cards for a topic |
+| `flashcard_generate` | `POST /api/flashcards/generate` | `topic` | instead of generating cards for a typed topic; beside the cards when the topic is one of the student's own graph concepts (`concept_topic.topic_is_graph_concept`, checked only on a match) |
 
 Frontend surfaces that render the card: the tutor (`Learn.tsx`: chat turns
 inline, a session start as a dialog over the picker), the quiz's "Ask about
@@ -149,7 +149,9 @@ inline, the reply under the card when the note matched; Summarize, Extract
 concepts and Send to tutor as a dialog over their result, or over the error
 toast when the answer was a 429 carrying the card), and the
 flashcards hero ("What do you want to study?"), AI-generate tab, cloze tab
-and the review start that generates cards (dialogs).
+and the review start that generates cards (dialogs; a concept's cards that
+come back with the card beside them show it once per Start and the review
+goes on).
 
 **Checked and not covered** (no student-written text reaches a model there):
 
@@ -189,7 +191,7 @@ and the review start that generates cards (dialogs).
 | **All user-facing copy (owner review)** | `backend/services/crisis_support_copy.py` |
 | Campus counseling, per school | `CAMPUS_COUNSELING` in that same copy file |
 | Screen, flag, event, response builders | `backend/services/crisis_support.py` |
-| The screens | the first statement of each handler in `routes/learn.py`, `routes/notes.py`, `routes/flashcards.py` (the notes actions: right after the note read, `screen_content_async` + `alongside`; a tutor start on a note's title: `tutor.topic_is_note_title` + `alongside`) |
+| The screens | the first statement of each handler in `routes/learn.py`, `routes/notes.py`, `routes/flashcards.py` (the notes actions: right after the note read, `screen_content_async` + `alongside`; a tutor start on a note's title: `tutor.topic_is_note_title` + `alongside`; a flashcard generation on a graph concept: `concept_topic.topic_is_graph_concept` + `alongside`) |
 | Flag registration | `backend/services/feature_flags.py::REGISTRY["crisis_support"]` |
 | Event taxonomy / PostHog exclusion | `services/events_service.py::EVENT_TAXONOMY`, `services/posthog_client.py::_NOT_MIRRORED` |
 | The card | `frontend/src/components/safety/CrisisSupportCard.tsx`, `frontend/src/lib/crisisSupport.ts` |

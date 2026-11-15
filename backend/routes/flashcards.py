@@ -36,6 +36,7 @@ from services.flashcards import (
     Unprocessable,
     UpstreamError,
     cards,
+    concept_topic,
     create_flashcard_set,
     delete_flashcard_set,
     generation,
@@ -209,20 +210,38 @@ def _card_inputs(items: list[CardInput]) -> list[dict]:
 # ── Cards ──────────────────────────────────────────────────────────────────────
 
 @router.post("/generate")
-def generate(body: GenerateFlashcardsBody, request: Request):
+async def generate(body: GenerateFlashcardsBody, request: Request):
     """
     Generate AI flashcards grounded in the student's actual course material.
     Pulls library documents + weak concepts from the knowledge graph automatically.
     """
-    # docs/safety/crisis-support.md: first, before the budget; no cards are made
-    if crisis := crisis_support.screen(request, body.user_id, "flashcard_generate", body.topic):
+    # docs/safety/crisis-support.md: first, before the budget; no cards are made...
+    if crisis := await crisis_support.screen_async(request, body.user_id, "flashcard_generate", body.topic):
+        # ...unless the topic is one of the student's own graph concepts (course
+        # material, not typed): the cards are made with the card beside them
+        if await run_in_threadpool(
+            concept_topic.topic_is_graph_concept, body.user_id, body.topic, body.course_id,
+        ):
+            return await crisis_support.alongside(
+                crisis_support.ContentScreen(request, crisis), _generate(body, request),
+            )
         return crisis_support.json_body(crisis, flashcards=[])
-    require_self(body.user_id, request)
-    with _flashcard_errors():
-        return generation.generate(
-            body.user_id, topic=body.topic, count=body.count, session_id=body.session_id,
-            semester=body.semester, course_id=body.course_id,
-        )
+    return await _generate(body, request)
+
+
+async def _generate(body: GenerateFlashcardsBody, request: Request) -> dict:
+    """`generate`'s own work: the guard, then the generation (both blocking,
+    so off the event loop)."""
+    await run_in_threadpool(require_self, body.user_id, request)
+
+    def run() -> dict:
+        with _flashcard_errors():
+            return generation.generate(
+                body.user_id, topic=body.topic, count=body.count, session_id=body.session_id,
+                semester=body.semester, course_id=body.course_id,
+            )
+
+    return await run_in_threadpool(run)
 
 
 @router.get("/user/{user_id}")
