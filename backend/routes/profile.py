@@ -27,10 +27,11 @@ from models import (
     SetFeaturedAchievementsBody,
     DeleteAccountBody,
 )
+from services import abuse_limits
 from services.analytics_consent import clear_analytics_consent_cache
 from services.auth_guard import require_self, get_session_user_id
 from services.http_cache import cached_json, conditional, make_etag
-from services.request_limits import check_rate_limit
+from services.request_limits import enforce_abuse_limit
 from services.storage_service import upload_avatar
 from services.profile import (
     DeletionNotConfirmed,
@@ -101,14 +102,8 @@ def _optional_viewer(request: Request) -> Optional[str]:
 _USERNAME_RE = re.compile(r"^[a-z0-9_]{3,24}$")
 
 
-# #115: unauthenticated, and answers about OTHER users' usernames -> service role.
-#: Username checks per minute, per signed-in viewer. The Settings field
-#: debounces, so a real user makes a handful; this only stops scripted
-#: enumeration of the username space.
-_USERNAME_CHECK_LIMIT = 30
-_USERNAME_CHECK_WINDOW = 60
-
-
+# #115: answers about OTHER users' usernames -> service role. The viewer must
+# be signed in (get_session_user_id below), and is charged USERNAME_CHECK.
 @router.get("/username/check", dependencies=[Depends(service_route)])
 def check_username(
     request: Request,
@@ -135,17 +130,7 @@ def check_username(
     request shape, but it is IGNORED: "self" is decided by who is calling.
     """
     viewer_id = get_session_user_id(request)
-    retry = check_rate_limit(
-        f"username-check:{viewer_id}",
-        limit=_USERNAME_CHECK_LIMIT,
-        window_sec=_USERNAME_CHECK_WINDOW,
-    )
-    if retry is not None:
-        raise HTTPException(
-            status_code=429,
-            detail="Too many username checks. Please slow down.",
-            headers={"Retry-After": str(retry)},
-        )
+    enforce_abuse_limit(abuse_limits.USERNAME_CHECK, viewer_id)
 
     name = (username or "").strip().lower()
     if not _USERNAME_RE.match(name):
