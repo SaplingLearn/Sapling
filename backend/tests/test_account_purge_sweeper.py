@@ -114,9 +114,11 @@ def test_a_stop_request_ends_the_pass_before_the_next_claim(monkeypatch, claims,
 
 @pytest.fixture
 def leftovers(monkeypatch):
-    """The credential seams: who still holds credentials, and what was removed."""
+    """The credential seams: who still holds credentials, and what was removed.
+    The `credential_sweep` flag is on (as seeded)."""
     from services import account_credentials as ac
 
+    monkeypatch.setenv("SAPLING_FLAG_CREDENTIAL_SWEEP", "on")
     state = {"owners": [], "removed": [], "revoked": [], "fail": set()}
 
     def remove(uid):
@@ -137,6 +139,48 @@ def test_the_pass_removes_any_deleted_accounts_leftover_credentials(leftovers):
     assert sw.sweep_leftover_credentials() == 2
     assert leftovers["removed"] == ["user_a", "user_b"]
     assert leftovers["revoked"] == [["tok-user_a"], ["tok-user_b"]]
+
+
+def test_the_credential_sweep_flag_is_registered_off_first_and_seeded_on():
+    fd = REGISTRY["credential_sweep"]
+    assert fd.variants == ("off", "on") and fd.client_visible is False
+    migrations = Path(__file__).resolve().parents[1] / "db" / "migrations"
+    seeded = [p for p in migrations.glob("*_credential_sweep_flag.sql")
+              if "('credential_sweep', 'on')" in p.read_text()]
+    assert len(seeded) == 1
+
+
+def test_the_kill_switch_stops_the_credential_sweep(monkeypatch, leftovers, leases):
+    """SAPLING_FLAG_CREDENTIAL_SWEEP=off: nothing is read, deleted or
+    revoked, and no lease is taken; the purge itself is unaffected."""
+    monkeypatch.setenv("SAPLING_FLAG_CREDENTIAL_SWEEP", "off")
+    monkeypatch.setenv("SAPLING_FLAG_STATELESS_LOCKS", "on")
+    leftovers["owners"] = ["user_a"]
+    scanned = []
+    from services import account_credentials as ac
+
+    monkeypatch.setattr(ac, "deleted_accounts_with_credentials", lambda: scanned.append(1) or ["user_a"])
+
+    assert sw.sweep_leftover_credentials() == 0
+    assert scanned == [] and leftovers["removed"] == [] and leftovers["revoked"] == []
+    assert leases.calls == []
+
+
+def test_the_credential_sweep_runs_with_its_flag_on(monkeypatch, leftovers):
+    monkeypatch.setenv("SAPLING_FLAG_CREDENTIAL_SWEEP", "on")
+    leftovers["owners"] = ["user_a"]
+    assert sw.sweep_leftover_credentials() == 1
+    assert leftovers["removed"] == ["user_a"]
+
+
+def test_an_unreadable_credential_sweep_flag_skips_the_sweep(monkeypatch, leftovers):
+    def broken(key, user_id):
+        raise RuntimeError("flag store down")
+
+    monkeypatch.setattr(sw, "flag_on", broken)
+    leftovers["owners"] = ["user_a"]
+    assert sw.sweep_leftover_credentials() == 0
+    assert leftovers["removed"] == []
 
 
 def test_a_failed_leftover_removal_is_logged_with_the_user_and_the_pass_goes_on(leftovers, caplog):

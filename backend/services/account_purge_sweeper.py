@@ -3,9 +3,11 @@
 Once a day each API process runs one pass (`run_pass`). It first removes the
 credentials any soft-deleted account still holds (`sweep_leftover_credentials`:
 the self-delete removes them at once, so a row is left only when that delete
-and its after-response retries failed); that runs whatever the flag says,
-since the credentials were due at the delete itself, and on one replica at a
-time (a `services/pg_lease.py` lease, under `stateless_locks`). Then, when the
+and its after-response retries failed); that runs whatever `account_purge`
+says, since the credentials were due at the delete itself, behind its own
+`credential_sweep` flag (seeded on; SAPLING_FLAG_CREDENTIAL_SWEEP=off is the
+kill switch), on one replica at a time (a `services/pg_lease.py` lease, under
+`stateless_locks`). Then, when the
 `account_purge` flag is
 on (resolved globally, at the start of every pass, so turning it off stops
 the next pass without a restart) it claims accounts deleted more than
@@ -41,6 +43,10 @@ from services.feature_flags import flag_on
 logger = logging.getLogger(__name__)
 
 FLAG_KEY = "account_purge"
+#: The leftover-credential sweep's own switch (seeded "on" by
+#: 20261115005314_credential_sweep_flag.sql): it deletes rows and revokes tokens
+#: at Google every pass, so it can be stopped without a deploy.
+CREDENTIAL_SWEEP_FLAG = "credential_sweep"
 CLAIM_RPC = "claim_accounts_for_purge"
 FIRST_PASS_DELAY_SECONDS = 15 * 60
 PASS_INTERVAL_SECONDS = 24 * 60 * 60
@@ -127,7 +133,16 @@ def sweep_leftover_credentials(stop: threading.Event | None = None) -> int:
     CREDENTIAL_SWEEP_LEASE_KEY lease (`stateless_locks`), and a pass that
     finds it held elsewhere skips its sweep. With that flag off, or the lease
     store unreachable, every replica sweeps, as before: the sweep is
-    idempotent, so that costs duplicate work, never harm."""
+    idempotent, so that costs duplicate work, never harm.
+
+    A no-op (nothing read, no lease taken) while the `credential_sweep` flag
+    is off, or cannot be read."""
+    try:
+        if not flag_on(CREDENTIAL_SWEEP_FLAG, None):
+            return 0
+    except Exception:
+        logger.warning("[account-purge] could not read the %s flag; sweep skipped", CREDENTIAL_SWEEP_FLAG)
+        return 0
     try:
         with pg_lease.lease(CREDENTIAL_SWEEP_LEASE_KEY, CREDENTIAL_SWEEP_LEASE_SECONDS) as held:
             if not held:
