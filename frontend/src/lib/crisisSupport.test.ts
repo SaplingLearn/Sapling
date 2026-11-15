@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * crisisSupportOf / crisisSupportIn (docs/safety/crisis-support.md): the
  * client-side guard on the crisis card's payload. The fixture is the payload
