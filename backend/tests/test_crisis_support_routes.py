@@ -536,6 +536,83 @@ def test_a_failed_note_action_still_carries_the_card(flag, sink, note_actions):
     assert "crisis_support" in r.json()
 
 
+def test_the_error_with_the_card_is_the_error_without_it_plus_the_card(flag, sink, note_actions):
+    """`alongside` renders the error through the app's own handler, so status,
+    headers (Retry-After) and body are exactly what the same refusal gets
+    without a match, plus `crisis_support`."""
+    flag("on")
+    with patch("services.request_limits.acheck_rate_limit", AsyncMock(return_value=30)):
+        with_card = client.post("/api/notes/n1/summarize", json=_note_action({}))
+        with patch("routes.notes.get_note", AsyncMock(return_value=_note(None, ""))):
+            without = client.post("/api/notes/n1/summarize", json=_note_action({}))
+    assert with_card.status_code == without.status_code == 429
+    drop = {"x-request-id", "content-length"}
+    assert ({k: v for k, v in with_card.headers.items() if k not in drop}
+            == {k: v for k, v in without.headers.items() if k not in drop})
+    body = with_card.json()
+    assert body.pop("crisis_support") == crisis_support.client_payload(crisis_copy.DEFAULT_CAMPUS_COUNSELING)
+    body.pop("request_id", None)
+    plain = without.json()
+    plain.pop("request_id", None)
+    assert body == plain
+
+
+def test_an_error_the_action_converts_itself_still_carries_the_card(flag, sink, note_actions):
+    """The note chat turns a model misbehaving into its own 500 detail; that
+    converted answer is what goes back, card included."""
+    from pydantic_ai.exceptions import UnexpectedModelBehavior
+
+    flag("on")
+    note_actions["chat"].side_effect = UnexpectedModelBehavior("garbled")
+    r = client.post("/api/notes/n1/chat", json=_note_message(CALM))
+    assert r.status_code == 500, r.text
+    assert r.json()["detail"] == "Something went wrong answering that."
+    assert "crisis_support" in r.json()
+
+
+def test_a_handler_that_answers_with_a_new_error_still_carries_the_card(flag, sink, note_actions):
+    """main.py answers a user-scope refusal with a fresh 404: the card is
+    added to that answer, not threaded through the new exception."""
+    import httpx
+
+    from db.scope import ScopedAccessDenied
+
+    flag("on")
+    refused = httpx.Request("POST", "http://postgrest/notes")
+    note_actions["save_summary"].side_effect = ScopedAccessDenied(
+        "refused", request=refused, response=httpx.Response(403, request=refused))
+    r = client.post("/api/notes/n1/summarize", json=_note_action({}))
+    assert r.status_code == 404, r.text
+    assert r.json()["detail"] == "Not found"
+    assert "crisis_support" in r.json()
+
+
+class _AlreadyDone(Exception):
+    """An exception type main.py has no handler of its own for (yet)."""
+
+
+def test_a_handler_that_knows_nothing_of_the_card_still_answers_with_it(flag, sink, note_actions, monkeypatch):
+    """A handler added later needs no crisis-support code: `alongside` runs
+    the app's handler for the error and adds the card to its answer."""
+    from fastapi.responses import JSONResponse
+
+    async def already_done(request, exc):
+        return JSONResponse(status_code=409, content={"detail": "Already summarized."},
+                            headers={"Retry-After": "7"})
+
+    monkeypatch.setitem(app.exception_handlers, _AlreadyDone, already_done)
+    monkeypatch.setattr(app, "middleware_stack", None)  # rebuilt with the new handler
+    flag("on")
+    note_actions["save_summary"].side_effect = _AlreadyDone()
+    r = TestClient(app, raise_server_exceptions=False).post("/api/notes/n1/summarize", json=_note_action({}))
+    assert r.status_code == 409, r.text
+    assert r.headers["Retry-After"] == "7"
+    assert r.json() == {
+        "detail": "Already summarized.",
+        "crisis_support": crisis_support.client_payload(crisis_copy.DEFAULT_CAMPUS_COUNSELING),
+    }
+
+
 def test_a_typed_crisis_message_still_blocks_on_a_crisis_note(flag, sink, note_actions):
     """The note chat's typed message blocks as on every other surface: the
     card INSTEAD of a reply, whatever the note says."""

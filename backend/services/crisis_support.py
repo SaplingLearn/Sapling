@@ -16,8 +16,8 @@ title and body, read by the notes agent actions. A match there never
 blocks. The notes routes screen the note right after they read it (still
 before any limit) with `screen_content_async`, then run their action
 through `alongside`, which returns the action's own answer with the card
-beside it: its result, or the error it raised (a 429, a 413, a 500), whose
-body main.py's exception handlers give the card through `error_body`. The
+beside it: its result, or the error it raised (a 429, a 413, a 500),
+answered there by the app's own handler for it with the card added. The
 action itself is limited, budgeted and written exactly as without a match.
 A note is often material the student quotes (a patient, a play), which no
 phrase list can tell from their own words, so they get the result they
@@ -49,12 +49,15 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 import logging
 import uuid
 from dataclasses import dataclass
-from typing import Any, Awaitable, Literal, TypeVar, get_args
+from typing import Any, Awaitable, Callable, Literal, get_args
 
 from fastapi import Request
+from fastapi.responses import JSONResponse, Response
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from sse_starlette.sse import EventSourceResponse
 
 from db.connection import table
@@ -290,19 +293,19 @@ def start_json(support: CrisisSupport) -> dict[str, Any]:
 #: Marks a result that carries the card BESIDE it (`alongside`), not instead
 #: of it (`json_body`): the note chat shows both the reply and the card.
 ALONGSIDE = "crisis_support_alongside"
-#: Where `alongside` leaves the card on an exception the action raised;
-#: `error_body` (main.py's exception handlers) puts it in the error answer.
-_ERROR_CARD = "_crisis_support_payload"
-
-_E = TypeVar("_E", bound=BaseException)
 
 
-async def alongside(screen: ContentScreen, action: Awaitable[dict[str, Any]]) -> dict[str, Any]:
+async def alongside(screen: ContentScreen, action: Awaitable[dict[str, Any]]) -> dict[str, Any] | Response:
     """Await `action` (the route's own work, limits included) and attach the
     card `screen` found to whatever answer goes back: its result
     (`crisis_support` plus `ALONGSIDE`), or the error it raises (a 429, a 413,
-    a 500), whose body main.py's handlers give the card too. With no card,
-    just the action. `screen` must come from `screen_content_async`."""
+    a 500). An error is answered HERE, by the app's own handler for it (the
+    one main.py registered, looked up as Starlette does), with the card added
+    to that handler's body: status, detail, headers and envelope are exactly
+    the ones the same error gets without a match, and no handler needs to
+    know about the card. So an action converts an error inside itself, never
+    around `alongside`. With no card, just the action. `screen` must come
+    from `screen_content_async`."""
     if not isinstance(screen, ContentScreen):
         if inspect.iscoroutine(action):
             action.close()
@@ -314,33 +317,45 @@ async def alongside(screen: ContentScreen, action: Awaitable[dict[str, Any]]) ->
         return await action
     try:
         result = await action
-    except Exception as exc:
-        card_from_payload(exc, support.payload)
-        raise
+    except Exception as exc:  # noqa: BLE001 — answered below by the app's own handler
+        handler = _handler_for(screen.request, exc)
+        if handler is None:  # nothing would answer it: let it propagate as it would have
+            logger.warning("crisis support: no handler for %s; its answer goes back without the card",
+                           type(exc).__name__)
+            raise
+        # Still inside `except`, so a handler that logs the traceback (the
+        # generic 500's) logs this one.
+        response = handler(screen.request, exc)
+        if inspect.isawaitable(response):
+            response = await response
+        return _with_card(response, support.payload)
     return {**result, "crisis_support": support.payload, ALONGSIDE: True}
 
 
-def card_from_payload(exc: _E, payload: dict[str, Any] | None) -> _E:
-    """`exc` carrying `payload` (the card) to the handler that answers it."""
-    if payload is not None:
-        try:
-            setattr(exc, _ERROR_CARD, payload)
-        except AttributeError:  # a slotted exception: the answer goes back without the card
-            logger.warning("crisis support: could not attach the card to %s", type(exc).__name__)
-    return exc
+def _handler_for(request: Request, exc: Exception) -> Callable[..., Any] | None:
+    """The app's handler for `exc`, chosen the way Starlette chooses it: an
+    HTTPException's status code first, then the nearest class in its MRO
+    (main.py's `Exception` handler is the generic 500)."""
+    handlers = getattr(getattr(request, "app", None), "exception_handlers", None) or {}
+    if isinstance(exc, StarletteHTTPException) and exc.status_code in handlers:
+        return handlers[exc.status_code]
+    for cls in type(exc).__mro__:
+        if cls in handlers:
+            return handlers[cls]
+    return None
 
 
-def card_from(source: BaseException, target: _E) -> _E:
-    """`target` carrying `source`'s card: for a handler that answers `source`
-    with a new exception (main.py's scope handlers)."""
-    return card_from_payload(target, getattr(source, _ERROR_CARD, None))
-
-
-def error_body(content: dict[str, Any], exc: BaseException) -> dict[str, Any]:
-    """An error answer's body (`content`) with the card the failed action
-    carried (`alongside`), if any."""
-    payload = getattr(exc, _ERROR_CARD, None)
-    return {**content, "crisis_support": payload} if payload is not None else content
+def _with_card(response: Any, payload: dict[str, Any]) -> Any:
+    """`response` (a handler's JSON error answer) with the card in its body;
+    its status and headers are left as they are."""
+    if isinstance(response, JSONResponse):
+        content = json.loads(response.body)
+        if isinstance(content, dict):
+            response.body = response.render({**content, "crisis_support": payload})
+            response.headers["content-length"] = str(len(response.body))
+            return response
+    logger.warning("crisis support: an error answer that is not a JSON object goes back without the card")
+    return response
 
 
 def _request_id(request: Request) -> str:
