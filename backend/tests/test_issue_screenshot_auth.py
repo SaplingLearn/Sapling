@@ -86,18 +86,20 @@ class TestIssueScreenshotUpload:
             assert path.count("/") == 1, (name, path)
             assert put.await_args.args[0].endswith(path)
 
-    def test_supabase_failure_returns_502_not_500(self):
+    def test_supabase_failure_returns_502_not_500(self, caplog):
         # When Supabase Storage rejects the upload (e.g. bucket missing /
-        # RLS denied), the endpoint maps it to a 502 with the truncated
-        # upstream body — never a generic 500. (#231 review fix.)
-        with _storage(404, '{"statusCode":"404","error":"Bucket not found"}') as put:
-            r = client.post("/api/issue-reports/screenshot", files=_png())
+        # RLS denied), the endpoint maps it to a 502 — never a generic 500
+        # (#231 review fix). The upstream status and body go to the server
+        # log for debugging; the client gets generic text (#890's rule), so
+        # neither Supabase's body, the key nor the upload URL can leak.
+        with caplog.at_level("WARNING", logger="services.storage_service"):
+            with _storage(404, '{"statusCode":"404","error":"Bucket not found"}') as put:
+                r = client.post("/api/issue-reports/screenshot", files=_png())
         assert r.status_code == 502
         detail = r.json()["detail"]
-        # Upstream status + body are surfaced for debuggability...
-        assert "404" in detail
-        assert "Bucket not found" in detail
-        # ...but the service-role key (in headers) and upload URL must not leak.
+        assert "Bucket not found" not in detail
         assert "Authorization" not in detail
         assert "storage/v1/object" not in detail
+        logged = caplog.text
+        assert "404" in logged and "Bucket not found" in logged
         put.assert_awaited_once()
