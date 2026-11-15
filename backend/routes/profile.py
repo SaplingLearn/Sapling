@@ -8,7 +8,7 @@ import re
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, UploadFile, File, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Query
 from fastapi.responses import StreamingResponse
 
 from services.chunk_visibility import resync_user_chunk_visibility
@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 
 from config import MAX_AVATAR_SIZE
 from db.connection import table
-from db.scope import service_route, service_scope
+from db.scope import service_route
 from services.encryption import encrypt_if_present
 from models import (
     UpdateProfileBody,
