@@ -322,7 +322,7 @@ def test_a_continuation_over_budget_degrades_instead_of_escaping():
     with pytest.MonkeyPatch.context() as mp:
         # A ceiling the continuation's own prompt cannot fit under.
         mp.setattr(
-            "routes.learn.CONTINUATION_LIMITS",
+            "services.tutor.run.CONTINUATION_LIMITS",
             UsageLimits(request_limit=1, tool_calls_limit=0, total_tokens_limit=1),
         )
         with pytest.raises(UsageLimitExceeded):

@@ -17,9 +17,9 @@ from services import chunk_visibility as cv
 U, OTHER = "user_wipe", "user_keep"
 
 WIPED = (
-    "enrollments", "documents", "notes", "flashcards", "sessions", "study_guides",
-    "quiz_attempts", "quiz_context", "graph_nodes", "xp_events", "user_achievements",
-    "document_uploads",
+    "enrollments", "documents", "notes", "flashcards", "flashcard_sets", "sessions",
+    "study_guides", "quiz_attempts", "quiz_context", "graph_nodes", "xp_events",
+    "user_achievements", "document_uploads", "tutor_pending_sessions",
 )
 KEPT = (
     "users", "user_profiles", "user_settings", "user_roles", "oauth_tokens",
@@ -120,7 +120,8 @@ class FakeDB:
                 gone = hits(filters)
                 db.rows[name] = [r for r in db.rows.get(name, []) if r not in gone]
                 db._cascade(name, gone)
-                return []
+                # PostgREST's Prefer: return=representation (db/connection.py).
+                return [dict(r) for r in gone]
 
         return _T()
 
@@ -152,6 +153,7 @@ def _seed_user(db, uid, *, n=1):
         db.add("documents", id=f"{p}-doc{i}", user_id=uid, deleted_at=None)
         db.add("notes", id=f"{p}-note{i}", user_id=uid)
         db.add("flashcards", id=f"{p}-fc{i}", user_id=uid)
+        db.add("flashcard_sets", id=f"{p}-fs{i}", user_id=uid, exam_id=f"{p}-asg{i}")
         db.add("sessions", id=f"{p}-ses{i}", user_id=uid)
         db.add("messages", id=f"{p}-msg{i}", session_id=f"{p}-ses{i}")
         db.add("study_guides", id=f"{p}-sg{i}", user_id=uid)
@@ -164,6 +166,7 @@ def _seed_user(db, uid, *, n=1):
         db.add("xp_events", id=f"{p}-xp{i}", user_id=uid)
         db.add("user_achievements", achievement_id=f"{p}-ach{i}", user_id=uid)
         db.add("document_uploads", id=f"{p}-up{i}", user_id=uid)
+        db.add("tutor_pending_sessions", session_id=f"{p}-tps{i}", user_id=uid)
         # A private chunk of this document, ledgered as its source.
         db.add("course_chunks", id=f"{p}-ck{i}", doc_id=f"{p}-doc{i}", uploader_id=uid,
                visibility="private", category="lecture_notes")
@@ -205,9 +208,11 @@ def test_wipes_the_scope_and_keeps_everything_else(db):
 
     assert counts == {
         "enrollments": 2, "documents": 2, "course_chunks": 2,
-        "course_chunk_contributors": 0, "notes": 2, "flashcards": 2, "sessions": 2,
+        "course_chunk_contributors": 0, "notes": 2, "flashcards": 2, "flashcard_sets": 2,
+        "sessions": 2,
         "study_guides": 2, "quiz_attempts": 2, "quiz_context": 2, "graph_nodes": 2,
         "xp_events": 2, "user_achievements": 2, "document_uploads": 2,
+        "tutor_pending_sessions": 2,
     }
     assert [r["id"] for r in db.rows["course_chunks"]] == [f"{OTHER}-ck0", f"{OTHER}-ck1"]
 
@@ -385,6 +390,28 @@ def test_every_bundle_table_is_wiped():
             assert spec.name in aw.WIPED_DIRECTLY or parent in aw.WIPED_DIRECTLY, spec.name
 
 
+#: Wiped but never bundled, each for a stated reason. CLAUDE.md (the admin
+#: account tools entry) names the in-flight staging tables; a new per-user
+#: table that is wiped but not copied must be added here, with its reason.
+WIPED_NOT_BUNDLED = {
+    "document_uploads": "in-flight upload staging (#116)",
+    "gradescope_syncs": "in-flight Gradescope sync staging (#116)",
+    "tutor_pending_sessions": "a tutor session not yet chatted in, or its tombstone (#117)",
+    "gradescope_course_links": "Gradescope credentials do not move, so neither do their links",
+}
+
+
+def test_wiped_but_not_bundled_tables_are_exactly_the_named_exceptions():
+    from services.account_bundle import SPECS
+
+    assert set(aw.wiped_tables()) - {s.name for s in SPECS} == set(WIPED_NOT_BUNDLED)
+    claude_md = (Path(__file__).resolve().parents[2] / "CLAUDE.md").read_text()
+    exception = claude_md[claude_md.index("Exception: in-flight staging tables"):]
+    exception = exception[:exception.index("\n")]
+    for name in ("document_uploads", "gradescope_syncs", "tutor_pending_sessions"):
+        assert f"`{name}`" in exception, f"CLAUDE.md's wipe-not-bundle exception omits {name}"
+
+
 def test_cascade_chains_end_in_a_direct_delete():
     for child, parent in aw.WIPED_BY_CASCADE.items():
         seen = {child}
@@ -414,3 +441,68 @@ def test_every_seeded_table_is_wiped_and_copied():
     for name in set(INSERT_ORDER) - _SEEDER_NOT_ACCOUNT_DATA:
         assert name in wiped, f"seeder writes {name} but the wipe never removes it"
         assert name in copied, f"seeder writes {name} but the copy never moves it"
+
+
+# ── Schema guard: every per-user table is wiped or kept for a reason ────────
+
+_STATEMENT = re.compile(
+    r"CREATE TABLE(?: IF NOT EXISTS)?\s+(?:public\.)?\"?(?P<create>\w+)\"?\s*\((?P<body>.*?)\n\s*\);"
+    r"|DROP TABLE(?: IF EXISTS)?\s+(?P<drop>[\w.,\s\"]+?)(?:\s+CASCADE|\s+RESTRICT)?\s*;"
+    r"|ALTER TABLE(?: IF EXISTS)?(?: ONLY)?\s+(?:public\.)?\"?(?P<altered>\w+)\"?\s+(?P<alter>[^;]*);",
+    re.S | re.I,
+)
+
+
+def schema_user_id_columns() -> dict[str, bool]:
+    """table -> whether it has a `user_id` column, replaying the migrations in
+    order: CREATE TABLE (a later one supersedes), DROP TABLE, RENAME TO (how
+    user_courses became enrollments), ADD/DROP/RENAME COLUMN user_id.
+    Shared with tests/test_account_purge.py."""
+    tables: dict[str, bool] = {}
+    for path in sorted(_MIGRATIONS.glob("*.sql")):
+        sql = re.sub(r"--[^\n]*", "", path.read_text())
+        for m in _STATEMENT.finditer(sql):
+            if m.group("create"):
+                tables[m.group("create").lower()] = bool(
+                    re.search(r"(?:^|,)\s*user_id\s", m.group("body"), re.M)
+                )
+            elif m.group("drop") is not None:
+                for name in m.group("drop").split(","):
+                    tables.pop(name.strip().strip('"').removeprefix("public.").lower(), None)
+            else:
+                name, alter = m.group("altered").lower(), m.group("alter")
+                if name not in tables:
+                    continue
+                renamed = re.match(r"\s*RENAME TO\s+\"?(\w+)\"?\s*$", alter, re.I)
+                if renamed:
+                    tables[renamed.group(1).lower()] = tables.pop(name)
+                elif re.search(r"ADD COLUMN(?: IF NOT EXISTS)?\s+user_id\b"
+                               r"|RENAME COLUMN\s+\w+\s+TO\s+user_id\b", alter, re.I):
+                    tables[name] = True
+                elif re.search(r"DROP COLUMN(?: IF EXISTS)?\s+user_id\b"
+                               r"|RENAME COLUMN\s+user_id\s+TO\b", alter, re.I):
+                    tables[name] = False
+    return tables
+
+
+def test_the_schema_scan_sees_renames_and_drops():
+    tables = schema_user_id_columns()
+    assert tables["enrollments"] is True and "user_courses" not in tables  # 0020 rename
+    assert "course_categories" not in tables  # dropped in 0021
+    assert tables["feedback"] is True  # dropped and recreated in 0026
+    assert tables["users"] is False
+
+
+def test_every_table_with_a_user_id_is_wiped_or_kept_for_a_stated_reason():
+    user_tables = {t for t, has in schema_user_id_columns().items() if has}
+    assert len(user_tables) > 25, "the migration scan found too few user_id tables"
+    unaccounted = sorted(user_tables - aw.wiped_tables() - set(aw.KEPT_PER_USER))
+    assert not unaccounted, (
+        f"tables with a user_id that the account wipe neither deletes nor keeps for "
+        f"a stated reason: {unaccounted}. Wipe them (services/account_wipe.py) or add "
+        "them to KEPT_PER_USER with the reason."
+    )
+    assert not set(aw.KEPT_PER_USER) & aw.wiped_tables()
+    stale = sorted(set(aw.KEPT_PER_USER) - user_tables)
+    assert not stale, f"KEPT_PER_USER names tables with no user_id column: {stale}"
+    assert all(reason.strip() for reason in aw.KEPT_PER_USER.values())

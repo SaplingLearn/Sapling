@@ -48,6 +48,16 @@ describe("AnswerOption", () => {
     expect(screen.getByRole("radio")).toHaveAttribute("aria-checked", "false");
   });
 
+  it("can be the student's pick and the correct answer at once", () => {
+    // `correct` alone only marks the right answer, picked or not.
+    setup("correct");
+    expect(screen.getByRole("radio")).toHaveAttribute("aria-checked", "false");
+    cleanup();
+    setup("correct", { checked: true });
+    expect(screen.getByRole("radio")).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("radio")).toHaveAccessibleName(/correct answer/);
+  });
+
   it("selects on click and on Enter/Space, because it is a real button", () => {
     const { onSelect } = setup("default");
     const row = screen.getByRole("radio");
@@ -99,9 +109,9 @@ describe("AnswerOption", () => {
     expect(row.querySelector(".answer-option__mark")).toHaveAttribute("aria-hidden", "true");
   });
 
-  it("draws its text at the design's 15px, which the --fs-* scale has no step for", () => {
+  it("draws its text at 16px, its own token rather than the --fs-* ramp", () => {
     const css = fs.readFileSync(path.resolve(__dirname, "../../app/globals.css"), "utf8");
-    expect(css).toMatch(/--answer-text-fs:\s*15px;/);
+    expect(css).toMatch(/--answer-text-fs:\s*16px;/);
     expect(css).toMatch(
       /\.answer-option__text \{[^}]*font-size:\s*var\(--answer-text-fs\)[^}]*\}/,
     );

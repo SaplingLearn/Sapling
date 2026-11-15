@@ -8,11 +8,12 @@ public surface (GET /public-rooms + invite-less join) never leaks the
 invite_code and 403s private rooms. Supabase mocked per
 tests/test_social_messages.py's idiom.
 """
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from fastapi.testclient import TestClient
 
 from main import app
+from tests.split_patches import patch_social
 
 client = TestClient(app)
 
@@ -45,7 +46,7 @@ def _tables(data=None):
 class TestCreateRoomPopulates:
     def test_defaults(self):
         factory, mocks = _tables()
-        with patch("routes.social.table", side_effect=factory):
+        with patch_social("table", side_effect=factory):
             r = client.post("/api/social/rooms/create",
                             json={"user_id": "u1", "room_name": "Algebra crew"})
         assert r.status_code == 200
@@ -58,7 +59,7 @@ class TestCreateRoomPopulates:
 
     def test_optional_fields(self):
         factory, mocks = _tables()
-        with patch("routes.social.table", side_effect=factory):
+        with patch_social("table", side_effect=factory):
             r = client.post("/api/social/rooms/create", json={
                 "user_id": "u1", "room_name": "Algebra crew",
                 "topic": "Midterm prep", "course": "MATH210", "is_public": True,
@@ -73,13 +74,13 @@ class TestCreateRoomPopulates:
 class TestKickAuthKeysOnOwner:
     def test_creator_who_is_not_owner_cannot_kick(self):
         factory, _ = _tables({"rooms": [_room()]})
-        with patch("routes.social.table", side_effect=factory):
+        with patch_social("table", side_effect=factory):
             r = client.delete("/api/social/rooms/r1/members/u2?requester_id=u-creator")
         assert r.status_code == 403
 
     def test_owner_kicks_and_touches_updated_at(self):
         factory, mocks = _tables({"rooms": [_room()]})
-        with patch("routes.social.table", side_effect=factory):
+        with patch_social("table", side_effect=factory):
             r = client.delete("/api/social/rooms/r1/members/u2?requester_id=u-owner")
         assert r.status_code == 200
         mocks["room_members"].delete.assert_called_once()
@@ -92,7 +93,7 @@ class TestPublicRooms:
             "rooms": [_room(id="r-pub", is_public=True)],
             "room_members": [{"room_id": "r-pub", "user_id": "u9"}],
         })
-        with patch("routes.social.table", side_effect=factory):
+        with patch_social("table", side_effect=factory):
             r = client.get("/api/social/public-rooms?user_id=u9")
         assert r.status_code == 200
         rooms = r.json()["rooms"]
@@ -104,7 +105,7 @@ class TestPublicRooms:
 
     def test_join_public_room_inserts_membership(self):
         factory, mocks = _tables({"rooms": [_room(id="r-pub", is_public=True)]})
-        with patch("routes.social.table", side_effect=factory):
+        with patch_social("table", side_effect=factory):
             r = client.post("/api/social/public-rooms/r-pub/join", json={"user_id": "u2"})
         assert r.status_code == 200
         # UPSERT, not insert: a double-click racing itself must no-op on the
@@ -116,12 +117,12 @@ class TestPublicRooms:
 
     def test_join_private_room_is_403(self):
         factory, _ = _tables({"rooms": [_room(id="r-priv", is_public=False)]})
-        with patch("routes.social.table", side_effect=factory):
+        with patch_social("table", side_effect=factory):
             r = client.post("/api/social/public-rooms/r-priv/join", json={"user_id": "u2"})
         assert r.status_code == 403
 
     def test_join_unknown_room_is_404(self):
         factory, _ = _tables()
-        with patch("routes.social.table", side_effect=factory):
+        with patch_social("table", side_effect=factory):
             r = client.post("/api/social/public-rooms/r-nope/join", json={"user_id": "u2"})
         assert r.status_code == 404

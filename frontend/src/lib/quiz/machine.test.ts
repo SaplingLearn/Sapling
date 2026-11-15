@@ -9,6 +9,8 @@ import {
   reduce,
   type QuizEvent,
   type StartRequest,
+  isUnanswered,
+  nextUnansweredIndex,
 } from "./machine";
 import type { EntryRequest } from "./source";
 import type {
@@ -965,5 +967,61 @@ describe("invariant 6 — an unrecorded replay still advances", () => {
     let s = reduce(activeSession(1, "at-end"), { type: "SELECT", index: 1 });
     s = reduce(s, { type: "ANSWER_RECORDED", result: answered(0, false, false) });
     expect(s.phase).toBe("submitting");
+  });
+});
+
+describe("moving between questions (GO_TO)", () => {
+  it("opens a question ahead to skip to, and answering it moves on to the one skipped", () => {
+    let s = activeSession(3, "at-end");
+    s = reduce(s, { type: "GO_TO", index: 2 });
+    expect(s.cursor).toBe(2);
+    expect(s.phase).toBe("active");
+    s = reduce(s, { type: "SELECT", index: 1 });
+    s = reduce(s, { type: "ANSWER_RECORDED", result: answered(2) });
+    // Not submitting: question 1 and 2 (indexes 0, 1) are still open.
+    expect(s.phase).toBe("active");
+    expect(s.cursor).toBe(0);
+  });
+
+  it("submits once every question is answered, whichever was last", () => {
+    let s = activeSession(2, "at-end");
+    s = reduce(s, { type: "GO_TO", index: 1 });
+    s = reduce(s, { type: "SELECT", index: 1 });
+    s = reduce(s, { type: "ANSWER_RECORDED", result: answered(1) });
+    s = reduce(s, { type: "SELECT", index: 1 });
+    s = reduce(s, { type: "ANSWER_RECORDED", result: answered(0) });
+    expect(s.phase).toBe("submitting");
+  });
+
+  it("goes back to an answered question as answered, locked", () => {
+    let s = activeSession(3, "as-you-go");
+    s = reduce(s, { type: "SELECT", index: 1 });
+    s = reduce(s, { type: "ANSWER_RECORDED", result: answered(0) });
+    s = reduce(s, { type: "NEXT" });
+    s = reduce(s, { type: "GO_TO", index: 0 });
+    expect(s.cursor).toBe(0);
+    expect(s.phase).toBe("answered");
+    // Selecting does nothing there: the answer is recorded.
+    expect(reduce(s, { type: "SELECT", index: 3 }).items[0].selectedIndex).toBe(1);
+    // Next carries on to the first question still to answer.
+    expect(reduce(s, { type: "NEXT" }).cursor).toBe(1);
+  });
+
+  it("drops an unsubmitted multiple-choice pick when moving off it", () => {
+    let s = activeSession(3, "at-end");
+    s = reduce(s, { type: "SELECT", index: 2 });
+    s = reduce(s, { type: "GO_TO", index: 1 });
+    expect(s.items[0].selectedIndex).toBeNull();
+    // ...so it still counts as unanswered.
+    expect(nextUnansweredIndex(s.items, 1)).toBe(2);
+    expect(isUnanswered(s.items[0])).toBe(true);
+  });
+
+  it("is refused outside a question on screen", () => {
+    const s = activeSession(3, "at-end");
+    for (const phase of ["submitting", "confirm-leave", "generating", "results"] as const) {
+      expect(reduce({ ...s, phase }, { type: "GO_TO", index: 1 }).cursor).toBe(0);
+    }
+    expect(reduce(s, { type: "GO_TO", index: 7 })).toBe(s);
   });
 });

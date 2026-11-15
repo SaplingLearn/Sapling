@@ -2,7 +2,8 @@
 #
 # Tear down the LOCAL E2E stack booted by scripts/e2e-up.sh (#384).
 #
-#   make e2e-down                     # stop uvicorn + next, then `supabase stop`
+#   make e2e-down                     # (via scripts/e2e-cycle.sh --stop) stop uvicorn + next,
+#                                     # then the slot's Supabase
 #   scripts/e2e-down.sh --apps-only   # stop only the tracked app servers, keep
 #                                     # Supabase up (e2e-up.sh uses this so
 #                                     # re-runs start from clean processes)
@@ -10,7 +11,7 @@
 # Server PIDs are tracked in .e2e/*.pid. Each server was started under setsid,
 # so the recorded PID is its process-group leader and one group signal takes
 # down the whole tree (npm → next-server, etc.). Stale or missing PID files are
-# cleaned up silently — safe to run any time. LOCAL ONLY.
+# cleaned up silently. Runs only inside a cycle (or CI) — see below. LOCAL ONLY.
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -23,7 +24,21 @@ cd "$REPO_ROOT" || exit 1
 source "$REPO_ROOT/scripts/lib/local-common.sh"
 set_docker_host_for_podman
 
+# A step of scripts/e2e-cycle.sh, which owns the stack (its slot and its
+# checkout locks) and calls this from its teardown with E2E_SLOT_LOCKED=1 —
+# so this never has to guess whose stack it is stopping. To end a stack you
+# hold: `make e2e-down` (= scripts/e2e-cycle.sh --stop). CI (slot 0) calls it
+# directly.
+source "$REPO_ROOT/scripts/lib/e2e-slot.sh"
 E2E_DIR="$REPO_ROOT/.e2e"
+if [ "${E2E_SLOT_LOCKED:-0}" != "1" ] && [ "${CI:-}" != "true" ]; then
+  echo "✗ e2e-down.sh is a step of an E2E cycle. Stop this checkout's held stack with"
+  echo "  \`make e2e-down\` (scripts/e2e-cycle.sh --stop); a foreground cycle tears down when it ends."
+  exit 1
+fi
+resolve_e2e_slot "$REPO_ROOT" || exit 1
+mapfile -t SUPABASE_ARGS < <(e2e_supabase_args)
+
 APPS_ONLY=0
 [ "${1:-}" = "--apps-only" ] && APPS_ONLY=1
 
@@ -64,7 +79,21 @@ stop_tracked "job worker (opt-in)" "$E2E_DIR/worker.pid"
 
 [ "$APPS_ONLY" = "1" ] && exit 0
 
-echo "▶ Stopping local Supabase…"
-supabase stop || { echo "✗ supabase stop failed"; exit 1; }
+# A slot's database is throwaway: dropping its volume means the next run on
+# the slot migrates and seeds from empty, so no run inherits another branch's
+# tables or another checkout's ENCRYPTION_KEY canary. Slot 0 (CI) keeps the
+# old behaviour.
+STOP_ARGS=()
+[ "$E2E_SLOT" != "0" ] && STOP_ARGS=(--no-backup)
+echo "▶ Stopping Supabase (slot $E2E_SLOT, project $SUPABASE_PROJECT_ID)…"
+rc=0
+supabase stop "${SUPABASE_ARGS[@]}" "${STOP_ARGS[@]}" || { echo "✗ supabase stop failed"; rc=1; }
 
-echo "✅ E2E stack is down. Logs from the last run are kept in .e2e/."
+# The manifest pointed the harnesses at this stack; it is gone now — even when
+# the stop failed. .e2e/booted stays when it failed: it is what lets
+# `make e2e-down` (or this checkout's next cycle) find the stack and retry.
+rm -f "$E2E_DIR/stack.json" "$E2E_DIR/env.sh"
+[ "$rc" = "0" ] && rm -f "$E2E_DIR/booted"
+
+[ "$rc" = "0" ] && echo "✅ E2E stack (slot $E2E_SLOT) is down. Logs from the last run are kept in .e2e/."
+exit "$rc"

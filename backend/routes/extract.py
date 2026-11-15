@@ -14,9 +14,12 @@ from services.extraction_backends.got_ocr_backend import got_ocr_available
 from services.extraction_backends.tesseract_backend import tesseract_available
 from services.auth_guard import get_session_user_id
 from services.request_limits import check_rate_limit, read_within_limit
+from services.request_context import current_request_id
+from services.upload_validation import PDF, sniff_image, sniff_type
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
-logger = logging.getLogger(__name__)
 
 # #182: these endpoints run multi-second Docling/tesseract OCR. They were
 # unauthenticated, unbounded, and unthrottled — an anonymous caller could drive
@@ -43,13 +46,21 @@ def _enforce_ocr_limits(request: Request) -> str:
     return user_id
 
 
+#: What a client reads when OCR is not installed or a run fails. Never the
+#: exception text (it names binaries, paths and library internals); that is
+#: logged under the request id.
+OCR_UNAVAILABLE_DETAIL = "Text scanning isn't available right now. Try again later."
+PDF_OCR_FAILED_DETAIL = "We couldn't read text from this PDF. Try a different file."
+IMAGE_OCR_FAILED_DETAIL = "We couldn't read text from this image. Try a different file."
+
+
 def _ocr_unavailable_error(detail: str) -> HTTPException:
-    """Log the OCR error and return a 503 the frontend can display."""
-    logger.error("[OCR UNAVAILABLE] %s (install tesseract-ocr to enable OCR features)", detail)
-    return HTTPException(
-        status_code=503,
-        detail=f"OCR not available on this machine: {detail}. Install tesseract-ocr to enable PDF/image scanning.",
+    """Log the OCR error server-side and return a generic 503."""
+    logger.warning(
+        "OCR unavailable [request_id=%s]: %s (install tesseract-ocr to enable OCR features)",
+        current_request_id(), detail,
     )
+    return HTTPException(status_code=503, detail=OCR_UNAVAILABLE_DETAIL)
 
 ALLOWED_IMAGE_TYPES = {"image/png", "image/jpeg", "image/jpg", "image/webp"}
 ALLOWED_PDF_TYPES = {"application/pdf"}
@@ -85,6 +96,8 @@ async def extract_pdf(
     pdf_bytes = await read_within_limit(file, MAX_OCR_BYTES)  # 413 if oversize (#182)
     if not pdf_bytes:
         raise HTTPException(status_code=400, detail="Empty file")
+    if sniff_type(pdf_bytes) != PDF:  # the bytes, not the declared type
+        raise HTTPException(status_code=400, detail="Only PDF files are supported")
 
     warnings = []
     text = ""
@@ -94,8 +107,10 @@ async def extract_pdf(
     if not force_ocr:
         try:
             text, page_count = extract_text_from_pdf_native(pdf_bytes, max_pages=max_pages)
-        except Exception as e:
-            warnings.append(f"Native extraction failed: {e}")
+        except Exception:
+            logger.warning("native PDF extraction failed [request_id=%s]",
+                           current_request_id(), exc_info=True)
+            warnings.append("Native text extraction failed; scanned the pages instead.")
 
     if force_ocr or len(text) < 50:
         try:
@@ -112,7 +127,8 @@ async def extract_pdf(
             err = str(e)
             if "tesseract" in err.lower() or "not found" in err.lower():
                 raise _ocr_unavailable_error(err)
-            raise HTTPException(status_code=500, detail=f"PDF OCR failed: {e}")
+            logger.exception("PDF OCR failed [request_id=%s]", current_request_id())
+            raise HTTPException(status_code=500, detail=PDF_OCR_FAILED_DETAIL)
 
     return {
         "source_type": "pdf",
@@ -137,6 +153,8 @@ async def extract_image(
     image_bytes = await read_within_limit(file, MAX_OCR_BYTES)  # 413 if oversize (#182)
     if not image_bytes:
         raise HTTPException(status_code=400, detail="Empty file")
+    if sniff_image(image_bytes) not in ALLOWED_IMAGE_TYPES:  # the bytes, not the declared type
+        raise HTTPException(status_code=400, detail="Only PNG/JPG/WEBP images are supported")
 
     try:
         text = extract_text_from_image_bytes(image_bytes, lang=lang)
@@ -153,4 +171,5 @@ async def extract_image(
         err = str(e)
         if "tesseract" in err.lower() or "not found" in err.lower():
             raise _ocr_unavailable_error(err)
-        raise HTTPException(status_code=500, detail=f"Image extraction failed: {e}")
+        logger.exception("image OCR failed [request_id=%s]", current_request_id())
+        raise HTTPException(status_code=500, detail=IMAGE_OCR_FAILED_DETAIL)

@@ -68,6 +68,14 @@ flashcard.generated           usage     card_count, documents_used, weak_concept
                                         (topic: /generate | paste | library_doc: /import/generate;
                                         /import/commit persists, it does not emit)
 flashcard.reviewed            usage     card_id, rating (1 forgot | 2 hard | 3 easy)
+study_guide.generated         usage     guide_id, mode (resume | update | regenerate),
+                                        scope_kind, goal, depth, use_history, sources,
+                                        sections, sections_written, sections_failed
+study_guide.block_regenerated usage     guide_id, block_type
+study_guide.check_answered    usage     guide_id, block_id, correct, counted (false = a
+                                        repeat answer, which moves no mastery)
+study_guide.saved             usage     guide_id (a guide became saved to the Library;
+                                        saving a saved guide again emits nothing)
 session.started               usage     session_id, mode, offering_id (+ content=topic -> fingerprint)
 session.ended                 usage     session_id, time_spent_minutes, concepts_covered
 rag.retrieval_failed          error     course_id, error_type
@@ -90,6 +98,15 @@ account.copy_push             audit     direction, peer_env, outcome, counts
 account.copy_pull             audit     direction, peer_env, outcome, counts
 account.export                audit     outcome (internal, peer-initiated)
 account.import                audit     outcome, counts (internal, peer-initiated)
+account.purge                 audit     outcome (purged | incomplete); purged: days_since_delete,
+                                        counts; incomplete: error (exception class). NO user
+                                        id (the 30-day purge, services/account_purge.py)
+safety.crisis_support_shown   system    surface (services/crisis_support.SURFACES), category
+                                        (acute_danger / suicidal_ideation / self_harm), tier
+                                        (explicit / mention) — a student message matched the
+                                        crisis screen and got the resources card instead of a
+                                        model turn. Never the text, not even content_fp; NOT
+                                        mirrored to PostHog (docs/safety/crisis-support.md)
 decision.made                 system    feature, backend (who answered: jev | flash_lite |
                                         function | none), requested, fallback_reason (an
                                         enum-like reason, never a message), model, latency_ms,
@@ -197,6 +214,13 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     # here so BOTH pipelines get them from the one taxonomy.
     "flashcard.generated",
     "flashcard.reviewed",
+    # The study-guide redesign: a guide written, one block rewritten, a check
+    # question answered, a guide saved to the Library. Ids, counts and enums
+    # only, never guide text.
+    "study_guide.generated",
+    "study_guide.block_regenerated",
+    "study_guide.check_answered",
+    "study_guide.saved",
     "session.started",
     "session.ended",
     "rag.retrieval_failed",
@@ -224,6 +248,7 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     "account.copy_pull",
     "account.export",
     "account.import",
+    "account.purge",
     # #640/#642 (ADR 0027): one row per typed-decision call — the answers, the
     # backend that actually served them, and (in shadow mode) the second
     # backend's answers plus per-key agreement. category="system": the server
@@ -251,6 +276,14 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     "db.unscoped_query",
     "db.rls_shadow_divergence",
     "db.rls_denied",
+    # docs/safety/crisis-support.md: a student message matched the crisis
+    # screen and got the resources card instead of a model turn
+    # (services/crisis_support.py). category="system", like decision.made:
+    # the server emits it about a turn, so it is not counted as activity.
+    # Payload surface / category / tier: enums only; never the message,
+    # never even a content fingerprint. NOT mirrored to PostHog
+    # (posthog_client._NOT_MIRRORED says why).
+    "safety.crisis_support_shown",
 })
 
 #: Category for rows the SERVER emits about a request (e.g. decision.made, one

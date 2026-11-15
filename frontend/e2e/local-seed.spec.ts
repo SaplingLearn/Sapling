@@ -4,7 +4,9 @@
  * On a developer's local backend (APP_ENV local|test + loopback Supabase —
  * which the E2E stack is), services/local_seed_watcher.py copies the rich
  * sample dataset onto every live `user_<google id>` account that has not
- * onboarded yet, and the seed completes onboarding as its last write. The
+ * onboarded yet, then writes the study dataset (db/seed_local_study.py: a
+ * term of study guides, quizzes, flashcards, documents and exams) on top, and
+ * the seed completes onboarding as its last write. The
  * post-sign-in routing (lib/localSeed.ts) asks GET /api/auth/local-seed and
  * sends a seeding account to the /setting-up hold screen instead of an empty
  * /onboarding; the hold screen polls until `ready`, then the dashboard.
@@ -33,6 +35,7 @@ import { randomUUID } from "node:crypto";
 
 import { expect, test } from "./support/fixtures";
 import { insertGoogleAccount, queryRaw } from "./support/db";
+import { decryptTexts } from "./support/decrypt";
 import { mintSessionToken } from "./support/session";
 import { FRONTEND_URL } from "./support/stack";
 
@@ -76,11 +79,16 @@ test("a new local Google account is seeded with the sample data and lands on the
     );
     expect(user?.onboarding_completed, "the seed completes onboarding last").toBe(true);
 
-    const [counts] = await queryRaw(
+    // The study seed's rows carry `study-` ids. A concept the rich copy
+    // already made is updated under the id it has, so the copy's own rows are
+    // the ones without that prefix.
+    const [copied] = await queryRaw(
       `SELECT
          (SELECT count(*)::int FROM enrollments WHERE user_id = $1) AS enrollments,
-         (SELECT count(*)::int FROM graph_nodes WHERE user_id = $1) AS graph_nodes,
-         (SELECT count(*)::int FROM documents WHERE user_id = $1) AS documents,
+         (SELECT count(*)::int FROM graph_nodes
+           WHERE user_id = $1 AND id NOT LIKE 'study-%') AS graph_nodes,
+         (SELECT count(*)::int FROM documents
+           WHERE user_id = $1 AND id NOT LIKE 'study-%') AS documents,
          (SELECT count(*)::int FROM feedback WHERE user_id = $1) AS feedback,
          (SELECT count(*)::int FROM issue_reports WHERE user_id = $1) AS issue_reports,
          (SELECT count(*)::int FROM user_roles WHERE user_id = $1) AS user_roles`,
@@ -88,7 +96,7 @@ test("a new local Google account is seeded with the sample data and lands on the
     );
     // The owner seed's copy of db/seed_local_rich.py's USER_ACTIVE dataset
     // (backend/tests/test_seed_local_rich.py pins the same numbers).
-    expect(counts).toEqual({
+    expect(copied).toEqual({
       enrollments: 5,
       graph_nodes: 13,
       documents: 3,
@@ -97,6 +105,67 @@ test("a new local Google account is seeded with the sample data and lands on the
       issue_reports: 0,
       user_roles: 0,
     });
+
+    // The study dataset, in by the time the account is ready. Its content is
+    // free to grow (backend/tests/test_local_study_data.py pins it), so these
+    // are floors: more than the rich copy alone gives (1 guide, 6 flashcards,
+    // 3 quizzes), in each of its three classes. Study guides are the last
+    // table it writes and the course outlines come after them (the rich copy
+    // leaves one of the three classes without an outline), so an outline for
+    // every class with guides means it ran to the end.
+    const [studied] = await queryRaw(
+      `SELECT
+         (SELECT count(*)::int FROM graph_nodes
+           WHERE user_id = $1 AND id LIKE 'study-%') AS graph_nodes,
+         (SELECT count(*)::int FROM documents
+           WHERE user_id = $1 AND id LIKE 'study-%') AS documents,
+         (SELECT count(*)::int FROM quiz_attempts
+           WHERE user_id = $1 AND id LIKE 'study-%') AS quiz_attempts,
+         (SELECT count(*)::int FROM flashcards
+           WHERE user_id = $1 AND id LIKE 'study-%') AS flashcards,
+         (SELECT count(*)::int FROM study_guides
+           WHERE user_id = $1 AND id LIKE 'study-%') AS study_guides,
+         (SELECT count(DISTINCT offering_id)::int FROM study_guides
+           WHERE user_id = $1 AND id LIKE 'study-%') AS classes_with_guides,
+         (SELECT count(*)::int FROM topic_checklists c
+            JOIN enrollments e ON e.id = c.enrollment_id
+           WHERE e.user_id = $1 AND e.offering_id IN (
+             SELECT offering_id FROM study_guides
+              WHERE user_id = $1 AND id LIKE 'study-%')) AS classes_with_outlines,
+         (SELECT count(*)::int FROM study_guides
+           WHERE user_id = $1 AND jsonb_typeof(content) <> 'string') AS readable_guides`,
+      [userId],
+    );
+    expect(studied.graph_nodes).toBeGreaterThan(13);
+    expect(studied.documents).toBeGreaterThan(3);
+    expect(studied.quiz_attempts).toBeGreaterThan(3);
+    expect(studied.flashcards).toBeGreaterThan(6);
+    expect(studied.study_guides).toBeGreaterThan(1);
+    expect(studied.classes_with_guides).toBeGreaterThanOrEqual(3);
+    expect(studied.classes_with_outlines).toBe(studied.classes_with_guides);
+    // Encrypted at rest: a guide's content is a JSON string of ciphertext,
+    // never the guide itself.
+    expect(studied.readable_guides).toBe(0);
+
+    // And under THIS stack's key: the backend's own helper decrypts a study
+    // row's text columns to something else. It hands an undecryptable value
+    // back unchanged, so "differs from what is stored" is the whole proof.
+    const [stored] = await queryRaw(
+      `SELECT
+         (SELECT front FROM flashcards
+           WHERE user_id = $1 AND id LIKE 'study-%' ORDER BY id LIMIT 1) AS flashcard,
+         (SELECT summary FROM documents
+           WHERE user_id = $1 AND id LIKE 'study-%' ORDER BY id LIMIT 1) AS summary,
+         (SELECT m.content FROM messages m JOIN sessions s ON s.id = m.session_id
+           WHERE s.user_id = $1 AND m.id LIKE 'study-%' ORDER BY m.id LIMIT 1) AS message`,
+      [userId],
+    );
+    const atRest = [stored.flashcard, stored.summary, stored.message] as string[];
+    const decrypted = await decryptTexts(atRest);
+    for (const [index, plain] of decrypted.entries()) {
+      expect(plain, "a study row's text decrypts with the stack's key").toBeTruthy();
+      expect(plain).not.toBe(atRest[index]);
+    }
   } finally {
     await context.close();
   }

@@ -5,7 +5,10 @@ is why unsubscribe links are built on FRONTEND_URL.
 
 The token in `?t=` is `<recipient_hash>.<hmac>` (email_service.unsubscribe_token),
 so possession of the link is the credential and nothing here ever sees an
-address.
+address. `?scope=` (default `all`) says what the link stops: `all` is every
+kind of email but the admin alerts, `ops_alert` (the link in an admin alert)
+is those alerts only. The signature binds the scope, so a link cannot be
+turned into the other one.
 
 GET never mutates: mail scanners and link previewers prefetch every URL in a
 message, so a GET that unsubscribed would unsubscribe people who never clicked.
@@ -37,10 +40,36 @@ _HEADERS = {
 }
 
 
-def _page(title: str, message: str, *, form_token: str | None = None, status_code: int = 200) -> HTMLResponse:
+#: Each scope's confirm page and done page: (title, message) twice.
+_COPY = {
+    email_service.SUPPRESSION_SCOPE_ALL: (
+        ("Unsubscribe from Sapling emails?",
+         "You'll stop receiving Sapling's newsletters, announcements and account updates at this "
+         "address. If you get Sapling admin alerts, they have their own unsubscribe link."),
+        ("You're unsubscribed",
+         "You won't receive any more Sapling newsletters, announcements or account updates at this "
+         "address. If you get Sapling admin alerts, they have their own unsubscribe link."),
+    ),
+    email_service.SUPPRESSION_SCOPE_OPS: (
+        ("Stop Sapling admin alerts?",
+         "You'll stop receiving Sapling's admin alerts (spend and error spikes) at this address. "
+         "Other Sapling email is not affected."),
+        ("You're unsubscribed from admin alerts",
+         "You won't receive any more Sapling admin alerts at this address."),
+    ),
+}
+
+
+def _page(
+    title: str, message: str, *, form_token: str | None = None,
+    scope: str = email_service.SUPPRESSION_SCOPE_ALL, status_code: int = 200,
+) -> HTMLResponse:
     form = ""
     if form_token is not None:
-        action = f"/api/email/unsubscribe?t={escape(form_token, quote=True)}"
+        query = f"t={form_token}"
+        if scope != email_service.SUPPRESSION_SCOPE_ALL:
+            query += f"&scope={scope}"
+        action = escape(f"/api/email/unsubscribe?{query}", quote=True)
         form = (
             f'<form method="post" action="{action}">'
             '<input type="hidden" name="List-Unsubscribe" value="One-Click">'
@@ -93,33 +122,28 @@ def _invalid() -> HTMLResponse:
 
 
 @router.get("/unsubscribe")
-def unsubscribe_page(t: str = Query("")):
-    if not email_service.verify_unsubscribe_token(t):
+def unsubscribe_page(t: str = Query(""), scope: str = Query(email_service.SUPPRESSION_SCOPE_ALL)):
+    if not email_service.verify_unsubscribe_token(t, scope):
         return _invalid()
-    return _page(
-        "Unsubscribe from Sapling emails?",
-        "You'll stop receiving all emails from Sapling at this address, including "
-        "account updates.",
-        form_token=t.strip(),
-    )
+    (title, message), _done = _COPY[scope]
+    return _page(title, message, form_token=t.strip(), scope=scope)
 
 
 @router.post("/unsubscribe")
-def unsubscribe(t: str = Query("")):
-    rhash = email_service.verify_unsubscribe_token(t)
+def unsubscribe(t: str = Query(""), scope: str = Query(email_service.SUPPRESSION_SCOPE_ALL)):
+    rhash = email_service.verify_unsubscribe_token(t, scope)
     if not rhash:
         return _invalid()
     try:
-        email_service.suppress(rhash, "unsubscribe")
+        email_service.suppress(rhash, "unsubscribe", scope=scope)
     except Exception:  # noqa: BLE001
         logger.exception("unsubscribe write failed")
         return _page(
             "Something went wrong",
             "We couldn't process your unsubscribe just now. Please try again in a minute.",
             form_token=t.strip(),
+            scope=scope,
             status_code=500,
         )
-    return _page(
-        "You're unsubscribed",
-        "You won't receive any more emails from Sapling at this address.",
-    )
+    _confirm, (title, message) = _COPY[scope]
+    return _page(title, message)

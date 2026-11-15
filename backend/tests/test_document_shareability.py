@@ -15,6 +15,7 @@ the category reaching the row, and the route feeding both into the decision.
 from unittest.mock import MagicMock, patch
 
 import pytest
+from tests.split_patches import patch_documents
 
 
 # ── The classifier's new field ───────────────────────────────────────────────
@@ -190,9 +191,11 @@ class TestRouteWiring:
             _run_indexer(shareability="completed_work", confidence=0.42)
 
         assert decide.call_args.args == ("user-1",)
-        assert decide.call_args.kwargs == {
-            "shareability": "completed_work", "confidence": 0.42,
-        }
+        kwargs = dict(decide.call_args.kwargs)
+        screen = kwargs.pop("screen")
+        assert kwargs == {"shareability": "completed_work", "confidence": 0.42}
+        # The share screen always reaches the decision (services/share_screen.py).
+        assert screen is not None
 
     def test_completed_work_is_indexed_private_end_to_end(self):
         """No mock on the decision: the stored row alone must produce a private
@@ -243,8 +246,8 @@ def test_the_documents_row_records_its_shareability():
     result.concepts.concepts = []
 
     with (
-        patch("routes.documents.table", side_effect=_table),
-        patch("routes.documents.award_xp_safe"),
+        patch_documents("table", side_effect=_table),
+        patch_documents("award_xp_safe"),
         patch("routes.documents.events_service.log_event"),
     ):
         _persist_document(
@@ -312,8 +315,8 @@ class TestPersistRetry:
             return m
 
         with (
-            patch("routes.documents.table", side_effect=_table),
-            patch("routes.documents.award_xp_safe"),
+            patch_documents("table", side_effect=_table),
+            patch_documents("award_xp_safe"),
             patch("routes.documents.events_service.log_event"),
         ):
             _persist_document(
@@ -513,8 +516,8 @@ class TestRetryDropsOnlyTheNamedColumn:
             return m
 
         with (
-            patch("routes.documents.table", side_effect=_table),
-            patch("routes.documents.award_xp_safe"),
+            patch_documents("table", side_effect=_table),
+            patch_documents("award_xp_safe"),
             patch("routes.documents.events_service.log_event"),
         ):
             _persist_document(

@@ -4,6 +4,7 @@ import { useToast } from "../../ToastProvider";
 import { useUser } from "@/context/UserContext";
 import { ApiError, importParse } from "@/lib/api";
 import type { ParsedCard } from "@/lib/flashcardParsers";
+import s from "../FlashcardImportModal.module.css";
 
 interface Props { onCards: (cards: ParsedCard[]) => void }
 
@@ -48,24 +49,25 @@ export function UrlTab({ onCards }: Props) {
   };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      <div style={{ fontSize: 13, color: "var(--text-dim)" }}>
+    <div className={s.tab}>
+      <p className={s.hint}>
         Paste a public Quizlet set URL.
-      </div>
-      <div style={{ display: "flex", gap: 8 }}>
+      </p>
+      <div className={s.urlRow}>
         <input
+          className={s.input}
           value={url}
           onChange={e => setUrl(e.target.value)}
           placeholder="https://quizlet.com/12345/some-set"
-          style={{ flex: 1, padding: 10, borderRadius: "var(--r-md)", background: "var(--bg-panel)", border: "1px solid var(--border)", color: "var(--text)" }}
+          aria-label="Quizlet set URL"
         />
-        <button className="btn btn--sm btn--primary" onClick={fetchUrl} disabled={busy || !url.trim()}>
+        <button type="button" className={`btn btn--primary ${s.go}`} onClick={fetchUrl} disabled={busy || !url.trim()}>
           {busy ? "Fetching…" : "Fetch cards"}
         </button>
       </div>
       {problem?.kind === "rejected" && (
-        <div role="alert" className="card" style={{ padding: 14, fontSize: 13, color: "var(--text-dim)" }}>
-          <div style={{ fontWeight: 600, color: "var(--text)", marginBottom: 6 }}>
+        <div role="alert" className={s.notice}>
+          <div className={s.noticeTitle}>
             That isn&apos;t a Quizlet set link
           </div>
           Only links to a public set on quizlet.com can be fetched, like{" "}
@@ -75,15 +77,15 @@ export function UrlTab({ onCards }: Props) {
         </div>
       )}
       {problem?.kind === "blocked" && (
-        <div role="alert" className="card" style={{ padding: 14, fontSize: 13, color: "var(--text-dim)" }}>
-          <div style={{ fontWeight: 600, color: "var(--text)", marginBottom: 6 }}>
+        <div role="alert" className={s.notice}>
+          <div className={s.noticeTitle}>
             Couldn&apos;t fetch this URL
           </div>
           Quizlet may be blocking automated requests. Try the <strong>Paste</strong> tab
           instead — open the set in your browser, click <em>Export</em> in the
           three-dot menu, then paste the export text.
           {problem.detail && (
-            <div style={{ marginTop: 6, fontSize: 12 }}>{problem.detail}</div>
+            <div className={s.noticeDetail}>{problem.detail}</div>
           )}
         </div>
       )}

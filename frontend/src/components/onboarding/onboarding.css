@@ -1,0 +1,435 @@
+/* Onboarding, ported from the Claude Design handoff ("Sapling Onboarding",
+ * Paper theme). Everything is scoped under .ob-root and uses --ob-* tokens so
+ * it never leaks into the app's own design system. */
+
+@font-face { font-family: 'Momo Trust Sans'; font-weight: 400; font-display: swap; src: url('/onboarding/fonts/MomoTrustSans-Regular.ttf') format('truetype'); }
+@font-face { font-family: 'Momo Trust Sans'; font-weight: 500; font-display: swap; src: url('/onboarding/fonts/MomoTrustSans-Medium.ttf') format('truetype'); }
+@font-face { font-family: 'Momo Trust Sans'; font-weight: 600; font-display: swap; src: url('/onboarding/fonts/MomoTrustSans-SemiBold.ttf') format('truetype'); }
+@font-face { font-family: 'Momo Trust Sans'; font-weight: 700; font-display: swap; src: url('/onboarding/fonts/MomoTrustSans-Bold.ttf') format('truetype'); }
+
+@keyframes obIn { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+@keyframes obSheet { from { opacity: 0; transform: translateY(40px); } to { opacity: 1; transform: none; } }
+@keyframes obFade { from { opacity: 0; } to { opacity: 1; } }
+
+.ob-root {
+  --ob-bg: #F6F8F4;
+  --ob-fg: #12201A;
+  --ob-fg2: #33443B;
+  --ob-mut: #61726A;
+  --ob-line: rgba(18, 32, 26, .13);
+  --ob-pan: rgba(255, 255, 255, .9);
+  --ob-pan2: rgba(255, 255, 255, .9);
+  --ob-panh: rgba(230, 242, 232, .9);
+  --ob-sheet: rgba(255, 255, 255, .96);
+  --ob-acc: #0C5638;
+  --ob-accfg: #FFFFFF;
+  --ob-sel: #E6F2E8;
+  --ob-brand: #4B6B1F;
+  --ob-il: #12201A;
+  --ob-i1: #FFFFFF;
+  --ob-i2: #D6DFD8;
+  --ob-i3: #0C5638;
+  --ob-i4: #12201A;
+  --ob-ia: #0E9E5A;
+  --ob-sk: #9A6A48;
+  --ob-sk2: #D9A87C;
+  --ob-beam: rgba(14, 158, 90, .09);
+  --ob-vig: rgba(12, 86, 56, .07);
+  --ob-glow: rgba(255, 255, 255, .62);
+  --ob-glow2: rgba(255, 255, 255, .28);
+  --ob-tsh: 0 0 2px rgba(246, 248, 244, 1), 0 0 12px rgba(246, 248, 244, .95), 0 0 28px rgba(246, 248, 244, .9);
+  --ob-scrim: rgba(246, 248, 244, .36);
+  --ob-bub: #12201A;
+  --ob-bubfg: #F6F8F4;
+  --ob-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --uiz: 1;
+
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background: var(--ob-bg);
+  color: var(--ob-fg);
+  font-family: 'Momo Trust Sans', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  color-scheme: light;
+}
+.ob-root *, .ob-root *::before, .ob-root *::after { box-sizing: border-box; }
+.ob-root input::placeholder { color: rgba(97, 114, 106, .7); }
+.ob-root :focus-visible { outline: 2px solid var(--ob-acc); outline-offset: 2px; }
+
+/* Landing → onboarding: the takeover fades in over the landing so its nodes
+ * cross-fade into the graph's colors before the intro zoom. */
+/* Landing → onboarding: the veil fades the landing out from under its hero
+ * canvas (lifted to z 150 by the hero while the stage is active), and the
+ * onboarding UI sits on top with no background or canvas of its own. */
+.ob-veil { position: fixed; inset: 0; z-index: 140; background: #F6F8F4; animation: obFade 600ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+.ob-takeover { position: fixed; inset: 0; z-index: 200; }
+.ob-root.ob-root--takeover { background: transparent; }
+
+/* ── Stage layers ─────────────────────────────────────────────── */
+.ob-beam {
+  position: absolute; inset: 0; pointer-events: none;
+  background:
+    radial-gradient(ellipse 55% 80% at 20% -10%, var(--ob-beam), transparent 62%),
+    radial-gradient(ellipse 90% 60% at 60% 125%, var(--ob-vig), transparent 62%);
+}
+.ob-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.ob-scrim {
+  position: absolute; inset: 0; pointer-events: none; transition: opacity 1800ms ease;
+  background: radial-gradient(ellipse 46% 62% at 50% 48%, var(--ob-scrim) 0%, var(--ob-scrim) 40%, transparent 100%);
+}
+.ob-logo { position: absolute; top: 26px; left: 32px; zoom: var(--uiz); z-index: 5; }
+.ob-logo img { height: 30px; width: auto; display: block; }
+
+/* Over the landing, the mark stays exactly where the landing navbar drew it —
+ * same file, same box, no UI-scale zoom — so it holds its place while the
+ * landing fades out, through the intro and the graph's zoom, and across every
+ * onboarding screen. Mirrors `.sapling-nav`'s padding and `.ld-nav-mark`'s
+ * width (Navbar.tsx, and the 640px override in globals.css). */
+.ob-root--takeover .ob-logo { top: 20px; left: max(4.2vw, 22px); zoom: 1; }
+.ob-root--takeover .ob-logo img { height: auto; width: 132px; }
+
+.ob-content {
+  position: absolute; inset: 0; z-index: 3;
+  display: flex; flex-direction: column;
+  padding: calc(78px * var(--uiz)) clamp(20px, 4vw, 64px) calc(96px * var(--uiz));
+  transition: opacity 600ms var(--ob-ease);
+}
+.ob-scroll {
+  flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden;
+  scrollbar-width: thin; scrollbar-color: var(--ob-line) transparent;
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent);
+  display: flex; flex-direction: column; width: 100%;
+  max-width: calc(680px * var(--uiz)); margin: 0 auto; padding: 4px 6px 28px;
+}
+.ob-scroll--wide { max-width: calc(1080px * var(--uiz)); }
+.ob-scroll--legal { max-width: calc(920px * var(--uiz)); overflow-y: hidden; }
+.ob-zoom { zoom: var(--uiz); flex: 1 0 auto; min-height: 0; display: flex; flex-direction: column; }
+.ob-scroll--legal .ob-zoom { flex: 1 1 0; }
+
+/* ── Screens ──────────────────────────────────────────────────── */
+.ob-screen {
+  flex: 1 0 auto; display: flex; flex-direction: column; align-items: center; gap: 12px;
+  animation: obIn 560ms var(--ob-ease) both;
+}
+.ob-screen--roomy { gap: 26px; }
+.ob-screen--legal { flex: 1 1 0; min-height: 0; }
+.ob-h1 {
+  font: 500 clamp(26px, 2.4vw, 36px)/1.15 var(--font-gummi), sans-serif; letter-spacing: -0.015em; -webkit-text-stroke-width: var(--medium-stroke);
+  margin: 0; flex-shrink: 0; width: 100%; text-align: center; text-shadow: var(--ob-tsh); text-wrap: balance;
+}
+.ob-sub {
+  margin: 0 auto; flex-shrink: 0; width: 100%; max-width: 520px; text-wrap: pretty;
+  font: 400 15px/1.5 'Momo Trust Sans', sans-serif; color: var(--ob-fg2);
+  text-align: center; text-shadow: var(--ob-tsh);
+}
+.ob-body {
+  flex: 1 0 auto; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 22px; width: 100%;
+}
+
+.ob-input {
+  width: 100%; border-radius: 14px; border: 1.5px solid var(--ob-line);
+  background: var(--ob-pan2); color: var(--ob-fg); outline: none;
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  transition: border-color 140ms, box-shadow 140ms;
+}
+.ob-input:focus { border-color: var(--ob-acc); box-shadow: 0 0 0 4px var(--ob-sel); }
+.ob-root .ob-input:focus-visible { outline: none; }
+.ob-input--name { max-width: 380px; height: 52px; padding: 0 18px; border-radius: 12px; font: 500 18px/1 'Momo Trust Sans', sans-serif; text-align: center; }
+.ob-input--search { height: 48px; padding: 0 20px; font: 500 16px/1 'Momo Trust Sans', sans-serif; }
+.ob-note { margin: 0; font: 400 14px/1.5 'Momo Trust Sans', sans-serif; color: var(--ob-mut); text-align: center; }
+.ob-character { height: 120px; width: auto; transform: translateX(15px); display: block; }
+
+/* Birthday */
+.ob-cake { width: 140px; height: auto; overflow: visible; }
+.ob-dob { width: 100%; display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
+.ob-select {
+  height: 50px; padding: 0 36px 0 16px; border-radius: 14px; border: 1.5px solid var(--ob-line);
+  background: var(--ob-pan2) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%238aa096' stroke-width='1.6' fill='none'/%3E%3C/svg%3E") no-repeat right 16px center;
+  color: var(--ob-fg); font: 500 15px 'Momo Trust Sans', sans-serif;
+  appearance: none; -webkit-appearance: none; outline: none; cursor: pointer;
+  backdrop-filter: blur(12px);
+}
+.ob-select:focus { border-color: var(--ob-acc); box-shadow: 0 0 0 4px var(--ob-sel); }
+.ob-bubble {
+  max-width: 440px; padding: 12px 16px; border-radius: 12px; background: var(--ob-bub); color: var(--ob-bubfg);
+  font: 400 14px/1.5 'Momo Trust Sans', sans-serif; text-align: center;
+}
+.ob-panel {
+  border-radius: 18px; border: 1px solid var(--ob-line); background: var(--ob-pan);
+  backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+}
+.ob-blocked { max-width: 460px; padding: 22px 24px; text-align: center; display: flex; flex-direction: column; gap: 10px; }
+.ob-blocked-title { font: 600 18px/1.3 'Momo Trust Sans', sans-serif; }
+.ob-blocked-body { font: 400 15px/1.55 'Momo Trust Sans', sans-serif; color: var(--ob-fg2); }
+.ob-textlink {
+  align-self: center; background: none; border: none; padding: 2px 0; cursor: pointer;
+  color: var(--ob-acc); font: 500 14px 'Momo Trust Sans', sans-serif;
+  text-decoration: underline; text-underline-offset: 3px;
+}
+
+/* School */
+.ob-schools { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; width: 100%; max-width: 560px; }
+.ob-school {
+  display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 14px 12px 16px;
+  border-radius: 18px; border: 1.5px solid var(--ob-line); background: var(--ob-pan2); color: var(--ob-fg);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  font: 600 14px/1.2 'Momo Trust Sans', sans-serif;
+}
+button.ob-school { cursor: pointer; transition: border-color 140ms, background 140ms, transform 140ms; }
+button.ob-school:hover { transform: translateY(-2px); }
+.ob-school[aria-pressed='true'] { border-color: var(--ob-acc); background: var(--ob-sel); }
+.ob-school--soon { border-width: 1px; opacity: .55; font-weight: 500; color: var(--ob-fg2); }
+.ob-school-logo { width: 100%; aspect-ratio: 16 / 10; border-radius: 12px; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.ob-school-logo img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
+.ob-soon { font: 500 10px/1 'Momo Trust Sans', sans-serif; letter-spacing: .14em; text-transform: uppercase; color: var(--ob-mut); }
+
+/* Courses */
+.ob-courses { flex: 1 0 auto; display: flex; flex-direction: column; align-items: center; gap: 10px; width: 100%; max-width: 560px; padding-top: 4px; }
+.ob-label {
+  width: 100%; padding: 0 4px; font: 500 10.5px/1 'Momo Trust Sans', sans-serif; letter-spacing: .16em;
+  text-transform: uppercase; color: var(--ob-mut); text-shadow: var(--ob-tsh);
+}
+.ob-label--gap { padding-top: 6px; }
+/* Each button sizes to its word plus the same padding, and the row's spare
+   width is shared out equally, so every label sits centred with even space. */
+.ob-years { display: flex; gap: 8px; width: 100%; }
+.ob-choice {
+  flex: 1 1 auto; display: inline-flex; align-items: center; justify-content: center;
+  height: 40px; min-width: 0; padding: 0 12px; white-space: nowrap;
+  border-radius: 10px; border: 1.5px solid var(--ob-line); background: var(--ob-pan2); color: var(--ob-fg2);
+  font: 500 12.5px/1 'Momo Trust Sans', sans-serif; cursor: pointer;
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); transition: all 140ms;
+}
+.ob-choice[aria-pressed='true'] { border-color: var(--ob-acc); background: var(--ob-sel); color: var(--ob-fg); }
+.ob-chips { display: flex; flex-wrap: wrap; gap: 8px; width: 100%; }
+.ob-chip {
+  display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 10px 0 14px; border-radius: 999px;
+  border: none; background: var(--ob-brand); color: #FFFFFF; font: 600 13px/1 'Momo Trust Sans', sans-serif; cursor: pointer;
+}
+.ob-chip span { font-size: 15px; opacity: .7; }
+/* The search field and its results are one box: a shared border, the field
+   as its header row, the list scrolling beneath a hairline. */
+.ob-search {
+  width: 100%; border-radius: 16px; border: 1.5px solid var(--ob-line); overflow: hidden;
+  background: var(--ob-pan); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+  transition: border-color 140ms, box-shadow 140ms;
+}
+.ob-search:focus-within { border-color: var(--ob-acc); box-shadow: 0 0 0 4px var(--ob-sel); }
+.ob-search .ob-input--search {
+  border: none; border-bottom: 1px solid var(--ob-line); border-radius: 0;
+  background: var(--ob-pan2); box-shadow: none;
+}
+.ob-search .ob-input--search:focus { box-shadow: none; }
+.ob-results {
+  width: 100%; max-height: 218px; overflow-y: auto; overscroll-behavior: contain;
+  scrollbar-width: thin; scrollbar-color: var(--ob-acc) transparent;
+}
+.ob-result {
+  display: flex; align-items: center; gap: 14px; width: 100%; padding: 11px 18px; border: none;
+  border-bottom: 1px solid var(--ob-line); background: transparent; color: var(--ob-fg); text-align: left; cursor: pointer;
+}
+.ob-result:last-child { border-bottom: none; }
+.ob-result:hover { background: var(--ob-panh); }
+.ob-result[aria-pressed='true'] { background: var(--ob-sel); }
+.ob-result-code { font: 600 12.5px/1 'Momo Trust Sans', sans-serif; min-width: 92px; color: var(--ob-brand); }
+.ob-result-name { flex: 1; font: 500 15px/1.3 'Momo Trust Sans', sans-serif; }
+.ob-result-action { font: 600 13px/1 'Momo Trust Sans', sans-serif; color: var(--ob-acc); }
+.ob-empty { padding: 18px; font: 400 14px/1.5 'Momo Trust Sans', sans-serif; color: var(--ob-mut); text-align: center; }
+
+/* Tour */
+.ob-tour-art { width: 100%; max-width: 520px; height: auto; overflow: visible; }
+/* `grid-auto-rows: 1fr` is ours, not the handoff's: with auto rows, the row
+ * holding the two-line captions grew taller than the row below it at window
+ * sizes where the art's clamp doesn't already set the height (visible at
+ * 1152px and 1280px). Equal rows keep all eight panels the same size. */
+.ob-features {
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); grid-auto-rows: 1fr;
+  gap: clamp(8px, 1.2vw, 14px); width: 100%; max-width: 1080px;
+}
+.ob-feature {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center;
+  gap: clamp(4px, 0.8vh, 10px); padding: clamp(6px, 1.2vh, 16px) clamp(8px, 1.2vw, 16px);
+  border-radius: clamp(14px, 1.6vw, 22px); border: 1px solid var(--ob-line); background: var(--ob-pan);
+  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+  font: 500 clamp(12px, 1.7vh, 15px)/1.3 'Momo Trust Sans', sans-serif; text-wrap: balance;
+}
+.ob-feature-art { height: clamp(24px, 7vh, 80px); width: auto; flex: none; }
+
+/* Legal */
+.ob-legal { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; align-items: center; gap: 12px; width: 100%; padding-top: 4px; }
+.ob-doc { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; width: 100%; max-width: 880px; overflow: hidden; }
+.ob-doc-progress { height: 3px; background: var(--ob-line); }
+.ob-doc-progress div { height: 3px; background: var(--ob-acc); transition: width 120ms linear; }
+.ob-doc-body { flex: 1 1 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 24px 32px 8px; }
+.ob-doc-meta {
+  font: 500 10.5px/1 'Momo Trust Sans', sans-serif; letter-spacing: .16em; text-transform: uppercase; color: var(--ob-mut);
+}
+.ob-doc-meta--top { margin-bottom: 12px; }
+.ob-doc-meta--end { padding: 18px 0 22px; border-top: 1px solid var(--ob-line); text-align: center; }
+.ob-clause { padding: 14px 0; border-top: 1px solid var(--ob-line); }
+.ob-clause h2 { margin: 0; font: 600 14.5px/1.3 'Momo Trust Sans', sans-serif; }
+.ob-clause p, .ob-clause ul { margin: 6px 0 0; font: 400 13.5px/1.6 'Momo Trust Sans', sans-serif; color: var(--ob-fg2); }
+.ob-clause ul { padding-left: 18px; list-style: disc; }
+.ob-agree {
+  display: flex; align-items: center; gap: 12px; padding: 10px 18px; border-radius: 12px; flex-shrink: 0;
+  border: 1.5px solid var(--ob-line); background: var(--ob-pan); color: var(--ob-fg);
+  font: 500 15px/1.3 'Momo Trust Sans', sans-serif; cursor: pointer;
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); transition: all 160ms;
+}
+.ob-agree:disabled { color: var(--ob-mut); cursor: not-allowed; }
+.ob-agree[aria-checked='true'] { border-color: var(--ob-acc); }
+.ob-box {
+  width: 22px; height: 22px; flex: none; border-radius: 6px; border: 1.5px solid var(--ob-line);
+  display: flex; align-items: center; justify-content: center; color: var(--ob-accfg); font: 700 14px/1 'Momo Trust Sans', sans-serif;
+}
+.ob-agree:not(:disabled) .ob-box { border-color: var(--ob-acc); }
+.ob-agree[aria-checked='true'] .ob-box { background: var(--ob-acc); }
+
+/* Connect */
+.ob-connect-wrap { flex: 1 1 auto; min-height: 0; display: flex; align-items: center; justify-content: center; width: 100%; padding-top: clamp(4px, 1.5vh, 16px); }
+.ob-connect { width: 100%; max-width: 760px; display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 10px; }
+.ob-conn { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 14px; }
+.ob-conn-icon {
+  width: 36px; height: 36px; flex: none; border-radius: 10px; border: 1px solid var(--ob-line); background: #FFFFFF;
+  padding: 6px; display: flex; align-items: center; justify-content: center;
+}
+.ob-conn-icon img { width: 100%; height: 100%; object-fit: contain; display: block; border-radius: 4px; }
+.ob-conn-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.ob-conn-name { font: 600 15px/1.2 'Momo Trust Sans', sans-serif; }
+.ob-conn-desc { font: 400 12.5px/1.3 'Momo Trust Sans', sans-serif; color: var(--ob-fg2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ob-pill {
+  height: 34px; padding: 0 14px; border-radius: 999px; border: 1.5px solid var(--ob-line); background: transparent;
+  color: var(--ob-fg); font: 600 13px/1 'Momo Trust Sans', sans-serif; cursor: pointer; white-space: nowrap; transition: all 140ms;
+}
+.ob-pill--primary { border-color: var(--ob-brand); background: var(--ob-brand); color: #FFFFFF; }
+.ob-pill--on { border-color: var(--ob-acc); background: var(--ob-sel); color: var(--ob-fg); cursor: default; }
+
+/* ── Actions ──────────────────────────────────────────────────── */
+.ob-actions { display: flex; flex-direction: column; align-items: center; gap: 10px; padding-top: 18px; zoom: var(--uiz); }
+.ob-primary {
+  height: 46px; width: 100%; max-width: 300px; padding: 0 28px; border-radius: 10px;
+  border: 1.5px solid var(--ob-brand); background: var(--ob-brand); color: #FFFFFF;
+  font: 700 15px/1 'Momo Trust Sans', sans-serif; cursor: pointer; box-shadow: 0 2px 6px rgba(35, 52, 12, .28);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  transition: background 220ms, color 220ms, box-shadow 220ms, transform 140ms;
+}
+.ob-primary:active:not(:disabled) { transform: scale(.985); }
+.ob-primary:disabled { border-color: var(--ob-line); background: var(--ob-pan2); color: var(--ob-mut); box-shadow: none; cursor: default; }
+.ob-secondaries { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 20px; min-height: 22px; }
+.ob-secondary {
+  background: none; border: none; padding: 2px 0; color: var(--ob-fg2); font: 500 14px/1.4 'Momo Trust Sans', sans-serif;
+  cursor: pointer; text-decoration: underline; text-decoration-color: var(--ob-line); text-underline-offset: 4px;
+}
+.ob-secondary:hover { color: var(--ob-fg); }
+
+/* Progress fits itself to the viewport: it owns the strip left of the key
+ * hints (which take ~250px at UI scale 1), six segments share that strip up to
+ * 110px each, and the label scales with the screen. No zoom here, so widths
+ * are real viewport pixels and the strip can never run under the hints. */
+.ob-progress {
+  position: absolute; z-index: 4; transition: opacity 600ms;
+  left: calc(32px * var(--uiz)); right: calc(280px * var(--uiz)); bottom: calc(30px * var(--uiz));
+  display: flex; gap: calc(10px * var(--uiz));
+}
+.ob-chapter {
+  flex: 0 1 calc(110px * var(--uiz)); min-width: 0;
+  display: flex; flex-direction: column; gap: calc(10px * var(--uiz));
+}
+.ob-chapter-label {
+  font: 600 calc(15px * var(--uiz))/1.25 'Momo Trust Sans', sans-serif;
+  text-shadow: var(--ob-tsh); white-space: nowrap; overflow: visible;
+  min-height: 1.25em; /* an empty (upcoming) label keeps its row, so every bar lines up */
+}
+/* The active segment is at least as wide as its label, and the finished and
+ * upcoming ones shrink to share the rest, so a long label ("Connect your
+ * accounts") never runs over a neighbour's tick or out of the strip. */
+.ob-chapter[aria-current='step'] { flex: 0 0 auto; min-width: calc(110px * var(--uiz)); }
+.ob-chapter-bar { height: calc(4px * var(--uiz)); background: var(--ob-line); overflow: hidden; }
+.ob-chapter-bar div { height: 100%; background: var(--ob-acc); transition: width 500ms var(--ob-ease); }
+
+.ob-keys {
+  position: absolute; right: 32px; bottom: 26px; z-index: 4; zoom: var(--uiz);
+  display: flex; align-items: center; gap: 26px; transition: opacity 600ms;
+}
+.ob-key {
+  display: flex; align-items: center; gap: 12px; background: none; border: none; padding: 0; cursor: pointer;
+  color: var(--ob-fg2); font: 500 14px/1 'Momo Trust Sans', sans-serif; text-shadow: var(--ob-tsh);
+}
+.ob-key kbd {
+  padding: 6px 10px; border-radius: 8px; border: 1px solid var(--ob-line); background: var(--ob-pan2);
+  font: 500 12px/1 'Momo Trust Sans', sans-serif;
+}
+
+/* ── Overlays ─────────────────────────────────────────────────── */
+.ob-sheet-backdrop {
+  position: absolute; inset: 0; z-index: 20; background: rgba(3, 10, 6, .45);
+  display: flex; align-items: flex-end; justify-content: center; animation: obFade 240ms both;
+}
+.ob-sheet {
+  width: 100%; max-width: 560px; margin: 0 16px; padding: 26px 26px 24px; border-radius: 24px 24px 0 0;
+  border: 1px solid var(--ob-line); border-bottom: none; background: var(--ob-sheet);
+  backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+  display: flex; flex-direction: column; gap: 14px; animation: obSheet 420ms var(--ob-ease) both;
+}
+.ob-sheet-grip { width: 40px; height: 4px; border-radius: 99px; background: var(--ob-line); align-self: center; }
+.ob-sheet-title { margin: 0; font: 500 26px/1.2 var(--font-gummi), sans-serif; -webkit-text-stroke-width: var(--medium-stroke); }
+.ob-sheet-rows { display: flex; flex-direction: column; gap: 10px; font: 400 14.5px/1.5 'Momo Trust Sans', sans-serif; color: var(--ob-fg2); }
+.ob-sheet-row { display: flex; gap: 10px; }
+.ob-sheet-row b { font: 500 10.5px/1.9 'Momo Trust Sans', sans-serif; letter-spacing: .12em; color: var(--ob-acc); min-width: 62px; }
+.ob-sheet-actions { display: flex; gap: 10px; margin-top: 4px; }
+.ob-sheet-go {
+  flex: 1; height: 50px; border-radius: 999px; border: none; background: var(--ob-acc); color: var(--ob-accfg);
+  font: 600 15px/1 'Momo Trust Sans', sans-serif; cursor: pointer;
+}
+.ob-sheet-cancel {
+  height: 50px; padding: 0 22px; border-radius: 999px; border: 1.5px solid var(--ob-line); background: transparent;
+  color: var(--ob-fg); font: 600 15px/1 'Momo Trust Sans', sans-serif; cursor: pointer;
+}
+
+.ob-moment {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none;
+  transition: opacity 650ms var(--ob-ease);
+}
+.ob-moment--intro { z-index: 75; }
+.ob-moment--outro { z-index: 76; transition-duration: 700ms; }
+.ob-moment-glow {
+  position: absolute; width: 680px; height: 260px;
+  background: radial-gradient(ellipse at center, var(--ob-glow) 0%, var(--ob-glow2) 45%, transparent 72%);
+}
+.ob-moment--outro .ob-moment-glow { width: 780px; height: 280px; }
+.ob-intro-text {
+  position: relative; margin: 0; text-align: center; color: var(--ob-fg); text-shadow: var(--ob-tsh);
+  font: 600 clamp(26px, 4vw, 50px)/1.2 var(--font-gummi), sans-serif; letter-spacing: -0.02em;
+}
+.ob-welcome { position: relative; margin: 0; display: flex; flex-direction: column; align-items: center; gap: clamp(6px, 1.4vw, 18px); }
+.ob-welcome span { white-space: nowrap; font: 600 clamp(22px, 3.2vw, 44px)/1 var(--font-gummi), sans-serif; letter-spacing: -0.01em; text-shadow: var(--ob-tsh); }
+.ob-welcome img { height: clamp(80px, 12vw, 170px); width: auto; max-width: 90vw; display: block; }
+.ob-whiteout { position: absolute; inset: 0; z-index: 92; background: #FFFFFF; transition: opacity 900ms cubic-bezier(0.4, 0, 0.2, 1); }
+
+/* The landing's navbar steps the mark down at 640px; the takeover follows it
+ * so the hand-off stays seamless on a phone too. */
+@media (max-width: 640px) {
+  .ob-root--takeover .ob-logo { top: 14px; left: 18px; }
+  .ob-root--takeover .ob-logo img { width: 108px; }
+}
+
+/* ── Small screens ────────────────────────────────────────────── */
+@media (max-width: 720px) {
+  .ob-features { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ob-schools { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ob-years { flex-wrap: wrap; }
+  .ob-choice { flex-basis: calc(33.333% - 6px); }
+  .ob-keys { display: none; }
+  /* Key hints are hidden here, so the strip spans the screen. */
+  .ob-progress { left: 16px; right: 16px; bottom: 20px; gap: 6px; }
+  .ob-chapter { flex: 1 1 0; gap: 8px; }
+  .ob-chapter[aria-current='step'] { flex: 0 0 auto; min-width: 0; }
+  .ob-chapter-label { font-size: 14px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ob-root *, .ob-root *::before, .ob-root *::after { animation-duration: 1ms !important; transition-duration: 1ms !important; }
+}

@@ -1,0 +1,514 @@
+"""
+Auth hardening: server-side session revocation, admin step-up, the cookie as
+the only session channel, verified Google emails and the API docs gate.
+
+- Tokens carry `iat`; sign-out (POST /api/auth/logout) stamps
+  `users.sessions_valid_after`, and the guard refuses a session issued before
+  it (through its bounded account cache).
+- Admin routes need a session issued within ADMIN_REAUTH_WINDOW_SECONDS, the
+  destructive ones within ADMIN_DESTRUCTIVE_REAUTH_WINDOW_SECONDS; otherwise
+  401 `reauth_required`. A non-admin still gets 403.
+- An unverified Google email cannot sign in.
+
+The suite-wide `_bypass_session_auth` stub replaces the guard everywhere, so
+these tests reach the real one through the `_real_*` handles conftest keeps.
+"""
+import ast
+import json
+import pathlib
+import time
+from datetime import datetime, timezone
+from urllib.parse import parse_qs
+
+import httpx
+import pytest
+from fastapi import FastAPI, HTTPException
+from fastapi.testclient import TestClient
+
+import config
+import routes.auth as auth_module
+from services import auth_guard, session_tokens
+from tests.split_patches import set_auth_table
+# Fixtures (`real_guard`, `callback`: imported fixtures register under their
+# declared names) and helpers shared with the #756 suite.
+from tests.test_auth_session_access_756 import (  # noqa: F401
+    SECRET,
+    _request,
+    _row,
+    _callback,
+    _real_guard,
+)
+
+
+def _token_at(iat: float, user_id: str = "user_alice", ttl: int = config.SESSION_MAX_AGE_SECONDS) -> str:
+    """A session token issued at `iat` (unix seconds)."""
+    original = session_tokens._now
+    session_tokens._now = lambda: iat
+    try:
+        return session_tokens.mint_session(user_id, ttl=ttl, secret=SECRET)
+    finally:
+        session_tokens._now = original
+
+
+def _signed(claims: dict, *, compact: bool = False) -> str:
+    """A token over exactly `claims`, signed with SECRET. `compact` serialises
+    the way the BFF's JSON.stringify does (no spaces; a whole-number iat
+    written as an integer)."""
+    import base64
+    import hashlib
+    import hmac
+
+    body = json.dumps(claims, separators=(",", ":") if compact else None)
+    payload_b64 = base64.urlsafe_b64encode(body.encode()).decode().rstrip("=")
+    sig = hmac.new(SECRET.encode(), payload_b64.encode(), hashlib.sha256).digest()
+    return f"{payload_b64}.{base64.urlsafe_b64encode(sig).decode().rstrip('=')}"
+
+
+def _legacy_token_at(iat: int, user_id: str = "user_alice") -> str:
+    """A whole-second token from before the millisecond iat (no
+    `iat_precision` claim)."""
+    return _signed({"user_id": user_id, "exp": int(iat) + 3600, "typ": "session", "iat": int(iat)})
+
+
+def _iso(ts: float) -> str:
+    return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
+
+
+def _raw_payload(token: str) -> str:
+    import base64
+
+    b64 = token.split(".")[0]
+    return base64.urlsafe_b64decode(b64 + "=" * (-len(b64) % 4)).decode()
+
+
+def _payload(token: str) -> dict:
+    return json.loads(_raw_payload(token))
+
+
+# ── iat ──────────────────────────────────────────────────────────────────────
+
+
+def test_minted_tokens_carry_iat_and_cap_the_lifetime():
+    now = int(time.time())
+    payload = _payload(session_tokens.mint_session("u", ttl=90 * 86400, secret=SECRET))
+    assert abs(payload["iat"] - now) <= 2
+    assert payload["exp"] - int(payload["iat"]) == config.SESSION_MAX_AGE_SECONDS
+
+
+def test_iat_is_minted_to_the_millisecond(monkeypatch):
+    # A JWT NumericDate may be fractional. Whole seconds would make a session
+    # minted earlier in a sign-out's own second indistinguishable from one
+    # minted after it; `exp` stays whole seconds. The token says so
+    # (`iat_precision`), so a millisecond iat that happens to be X.000 is not
+    # mistaken for a legacy whole-second one.
+    monkeypatch.setattr(session_tokens.time, "time_ns", lambda: 1_700_000_012_200_000_000)
+    payload = _payload(session_tokens.mint_session("u", ttl=3600, secret=SECRET))
+    assert payload["iat"] == 1_700_000_012.2
+    assert payload["iat_precision"] == "ms"
+    assert payload["exp"] == 1_700_000_012 + 3600
+
+
+def test_iat_is_truncated_to_the_millisecond_never_rounded_up(monkeypatch):
+    # Rounding 12.2996 up to 12.300 would date the session after a sign-out at
+    # 12.2999 that it preceded.
+    monkeypatch.setattr(session_tokens.time, "time_ns", lambda: 1_700_000_012_299_600_000)
+    assert _payload(session_tokens.mint_session("u", secret=SECRET))["iat"] == 1_700_000_012.299
+
+
+def test_session_max_age_is_seven_days():
+    assert config.SESSION_MAX_AGE_SECONDS == 7 * 24 * 3600
+    frontend = pathlib.Path(__file__).resolve().parents[2] / "frontend/src/lib/sessionToken.ts"
+    assert "export const SESSION_MAX_AGE = 604800;" in frontend.read_text()
+
+
+# ── revocation ───────────────────────────────────────────────────────────────
+
+
+class TestRevocation:
+    def test_session_issued_before_the_cut_off_is_revoked(self, real_guard):
+        now = int(time.time())
+        real_guard.select.return_value = _row(sessions_valid_after=_iso(now - 60))
+        old = _token_at(now - 120)
+        with pytest.raises(HTTPException) as exc:
+            auth_guard._real_get_session_user_id(_request(old))
+        assert exc.value.status_code == 401
+        assert exc.value.detail == "Session revoked"
+
+    def test_session_issued_after_the_cut_off_is_honoured(self, real_guard):
+        now = int(time.time())
+        real_guard.select.return_value = _row(sessions_valid_after=_iso(now - 60))
+        assert auth_guard._real_get_session_user_id(_request(_token_at(now - 30))) == "user_alice"
+
+    def test_session_minted_earlier_in_the_sign_out_second_is_revoked(self, real_guard):
+        # Minted at 12.2, signed out at 12.9: whole seconds would compare 12 < 12.
+        now = int(time.time())
+        real_guard.select.return_value = _row(sessions_valid_after=_iso(now + 0.9))
+        with pytest.raises(HTTPException) as exc:
+            auth_guard._real_get_session_user_id(_request(_token_at(now + 0.2)))
+        assert exc.value.detail == "Session revoked"
+
+    def test_session_minted_later_in_the_sign_out_second_is_honoured(self, real_guard):
+        # Sign out, then straight back in within the same second.
+        now = int(time.time())
+        real_guard.select.return_value = _row(sessions_valid_after=_iso(now + 0.2))
+        assert auth_guard._real_get_session_user_id(_request(_token_at(now + 0.9))) == "user_alice"
+
+    def test_session_minted_a_second_before_the_sign_out_is_revoked(self, real_guard):
+        now = int(time.time())
+        real_guard.select.return_value = _row(sessions_valid_after=_iso(now + 0.7))
+        with pytest.raises(HTTPException) as exc:
+            auth_guard._real_get_session_user_id(_request(_token_at(now - 0.3)))
+        assert exc.value.detail == "Session revoked"
+
+    def test_whole_second_iat_in_the_sign_out_second_is_revoked(self, real_guard):
+        # A legacy whole-second `iat` could be anywhere in its second, so one
+        # from the sign-out's own second gets no benefit of the doubt.
+        now = int(time.time())
+        real_guard.select.return_value = _row(sessions_valid_after=_iso(now + 0.1))
+        with pytest.raises(HTTPException) as exc:
+            auth_guard._real_get_session_user_id(_request(_legacy_token_at(now)))
+        assert exc.value.detail == "Session revoked"
+        # ...even when the sign-out fell on the second's very start.
+        real_guard.select.return_value = _row(sessions_valid_after=_iso(now))
+        auth_guard._account_state_cache.clear()
+        with pytest.raises(HTTPException):
+            auth_guard._real_get_session_user_id(_request(_legacy_token_at(now)))
+
+    def test_whole_second_iat_after_the_sign_out_second_is_honoured(self, real_guard):
+        now = int(time.time())
+        real_guard.select.return_value = _row(sessions_valid_after=_iso(now - 0.3))
+        assert auth_guard._real_get_session_user_id(_request(_legacy_token_at(now))) == "user_alice"
+
+    def test_session_minted_0_5_ms_before_the_sign_out_is_revoked(self, real_guard, monkeypatch):
+        # Minted at 12.2996, signed out at 12.3001: a rounded iat (12.300)
+        # would land in the sign-out's own millisecond and survive; the
+        # truncated one (12.299) is a millisecond older than the cut-off.
+        second = int(time.time())
+        monkeypatch.setattr(session_tokens.time, "time_ns", lambda: second * 10**9 + 299_600_000)
+        token = session_tokens.mint_session("user_alice", ttl=3600, secret=SECRET)
+        real_guard.select.return_value = _row(sessions_valid_after=_iso(second + 0.3001))
+        with pytest.raises(HTTPException) as exc:
+            auth_guard._real_get_session_user_id(_request(token))
+        assert exc.value.detail == "Session revoked"
+
+    def test_session_minted_in_the_sign_out_millisecond_after_it_is_honoured(self, real_guard, monkeypatch):
+        # Signed out at 12.123456 (stored to the microsecond), signed straight
+        # back in at 12.1239: the iat is truncated to 12.123, the sign-out's
+        # own millisecond. Compared to the microsecond (12.123 < 12.123456)
+        # the new session would count as revoked; compared at the iat's own
+        # granularity, the millisecond, it is not before the cut-off.
+        second = int(time.time())
+        monkeypatch.setattr(session_tokens.time, "time_ns", lambda: second * 10**9 + 123_900_000)
+        token = session_tokens.mint_session("user_alice", ttl=3600, secret=SECRET)
+        real_guard.select.return_value = _row(sessions_valid_after=_iso(second + 0.123456))
+        assert auth_guard._real_get_session_user_id(_request(token)) == "user_alice"
+
+    def test_session_minted_a_millisecond_before_the_sign_out_millisecond_is_revoked(self, real_guard, monkeypatch):
+        second = int(time.time())
+        monkeypatch.setattr(session_tokens.time, "time_ns", lambda: second * 10**9 + 122_999_999)
+        token = session_tokens.mint_session("user_alice", ttl=3600, secret=SECRET)
+        real_guard.select.return_value = _row(sessions_valid_after=_iso(second + 0.123456))
+        with pytest.raises(HTTPException) as exc:
+            auth_guard._real_get_session_user_id(_request(token))
+        assert exc.value.detail == "Session revoked"
+
+
+    def test_a_backend_session_minted_at_a_whole_second_is_not_read_as_legacy(self, real_guard, monkeypatch):
+        # Minted at exactly X.000, signed out at X.000: issued at, not before,
+        # the cut-off. The whole-second rule would revoke it.
+        second = int(time.time())
+        monkeypatch.setattr(session_tokens.time, "time_ns", lambda: second * 10**9)
+        token = session_tokens.mint_session("user_alice", ttl=3600, secret=SECRET)
+        assert _payload(token)["iat"] == second
+        real_guard.select.return_value = _row(sessions_valid_after=_iso(second))
+        assert auth_guard._real_get_session_user_id(_request(token)) == "user_alice"
+
+    def test_a_bff_session_minted_at_a_whole_second_is_not_read_as_legacy(self, real_guard):
+        # The BFF's JSON.stringify writes a whole-number iat as an integer
+        # (`"iat":1700000012`); its `iat_precision` says it is milliseconds.
+        second = int(time.time())
+        token = _signed({"user_id": "user_alice", "exp": second + 604800, "typ": "session",
+                         "iat": second, "iat_precision": "ms"}, compact=True)
+        assert f'"iat":{second},' in _raw_payload(token)
+        real_guard.select.return_value = _row(sessions_valid_after=_iso(second))
+        assert auth_guard._real_get_session_user_id(_request(token)) == "user_alice"
+        # And one minted a millisecond earlier is revoked.
+        auth_guard._account_state_cache.clear()
+        real_guard.select.return_value = _row(sessions_valid_after=_iso(second + 0.001))
+        with pytest.raises(HTTPException) as exc:
+            auth_guard._real_get_session_user_id(_request(token))
+        assert exc.value.detail == "Session revoked"
+
+    def test_never_signed_out_revokes_nothing(self, real_guard):
+        real_guard.select.return_value = _row(sessions_valid_after=None)
+        assert auth_guard._real_get_session_user_id(_request(_token_at(int(time.time()) - 3600))) == "user_alice"
+
+    def test_the_guard_reads_the_cut_off_column(self, real_guard):
+        real_guard.select.return_value = _row()
+        auth_guard._real_get_session_user_id(_request(_token_at(int(time.time()))))
+        columns = real_guard.select.call_args.args[0]
+        assert "sessions_valid_after" in columns.split(",")
+
+    def test_a_malformed_cut_off_is_503_and_not_cached(self, real_guard):
+        real_guard.select.return_value = _row(sessions_valid_after="not-a-time")
+        with pytest.raises(HTTPException) as exc:
+            auth_guard._real_get_session_user_id(_request(_token_at(int(time.time()))))
+        assert exc.value.status_code == 503
+        assert "user_alice" not in auth_guard._account_state_cache
+
+    def test_revocation_also_applies_to_an_unapproved_account(self, real_guard):
+        now = int(time.time())
+        real_guard.select.return_value = _row(is_approved=False, sessions_valid_after=_iso(now))
+        with pytest.raises(HTTPException) as exc:
+            auth_guard._real_get_session_user_id(_request(_token_at(now - 60)), allow_unapproved=True)
+        assert exc.value.detail == "Session revoked"
+
+
+@pytest.mark.parametrize("iat, cut_off, revoked", [
+    (1000.123, 1000.123456, False),  # the sign-out's own millisecond
+    (1000.122, 1000.123456, True),   # the millisecond before it
+    (1000.123, 1000.123, False),     # exactly at the cut-off
+    (1000.122, 1000.123, True),
+    (1000.999, 1001.0, True),        # across a second boundary
+    (1001.0, 1001.000999, False),
+    # Present-day values, a microsecond either side of a millisecond edge.
+    (1_700_000_000.29, 1_700_000_000.290999, False),
+    (1_700_000_000.289, 1_700_000_000.29, True),
+])
+def test_a_millisecond_iat_compares_to_the_cut_off_at_the_millisecond(iat, cut_off, revoked):
+    payload = {"iat": iat, "iat_precision": "ms"}
+    assert auth_guard.issued_before(payload, cut_off) is revoked
+
+
+@pytest.fixture
+def logout_client(real_guard, monkeypatch):
+    """The auth router over the real guard; `users` writes are recorded."""
+    monkeypatch.setattr(auth_module, "get_session_user_id", auth_guard._real_get_session_user_id)
+    set_auth_table(monkeypatch, lambda name: real_guard)
+    app = FastAPI()
+    app.include_router(auth_module.router, prefix="/api/auth")
+    return TestClient(app), real_guard
+
+
+class TestLogout:
+    def test_logout_stamps_the_cut_off_and_kills_the_old_session(self, logout_client):
+        client, users = logout_client
+        users.select.return_value = _row()
+        token = _token_at(int(time.time()) - 5)
+        client.cookies.set("sapling_session", token)
+        # Warm the guard's cache: logout must clear it, not wait out the TTL.
+        auth_guard._real_get_session_user_id(_request(token))
+
+        resp = client.post("/api/auth/logout")
+        assert resp.status_code == 200, resp.text
+        assert resp.headers["Cache-Control"] == "no-store"
+        data, = users.update.call_args.args[:1]
+        assert set(data) == {"sessions_valid_after"}
+        assert users.update.call_args.kwargs["filters"] == {"id": "eq.user_alice"}
+        stamp = datetime.fromisoformat(data["sessions_valid_after"]).timestamp()
+        assert abs(stamp - time.time()) < 5
+        assert "user_alice" not in auth_guard._account_state_cache
+
+        # The database now says so; the same cookie is refused.
+        users.select.return_value = _row(sessions_valid_after=data["sessions_valid_after"])
+        assert client.get("/api/auth/me").status_code == 401
+        with pytest.raises(HTTPException) as exc:
+            auth_guard._real_get_session_user_id(_request(token))
+        assert exc.value.detail == "Session revoked"
+
+    def test_logout_without_a_session_is_401_and_writes_nothing(self, logout_client):
+        client, users = logout_client
+        assert client.post("/api/auth/logout").status_code == 401
+        assert not users.update.called
+
+    def test_logout_ignores_a_token_in_the_query_string(self, logout_client):
+        client, users = logout_client
+        users.select.return_value = _row()
+        token = _token_at(int(time.time()))
+        assert client.post(f"/api/auth/logout?auth_token={token}").status_code == 401
+        assert not users.update.called
+
+    def test_a_failed_write_is_not_reported_as_signed_out(self, logout_client):
+        client, users = logout_client
+        users.select.return_value = _row()
+        users.update.side_effect = httpx.ConnectError("db down")
+        client.cookies.set("sapling_session", _token_at(int(time.time())))
+        assert client.post("/api/auth/logout").status_code == 503
+
+
+# ── admin step-up ────────────────────────────────────────────────────────────
+
+
+@pytest.fixture
+def admin_guard(real_guard, monkeypatch):
+    """The real admin guard over an approved account with the admin role."""
+    real_guard.select.return_value = _row()
+    roles = auth_guard.table("user_roles")
+    roles.select.return_value = [{"role_id": 1, "roles": {"slug": "admin"}}]
+    monkeypatch.setattr(auth_guard, "get_session_user_id", auth_guard._real_get_session_user_id)
+    monkeypatch.setattr(auth_guard, "require_admin", auth_guard._real_require_admin)
+    return roles
+
+
+def _reauth(exc: pytest.ExceptionInfo) -> bool:
+    return (
+        exc.value.status_code == 401
+        and isinstance(exc.value.detail, dict)
+        and exc.value.detail.get("code") == auth_guard.REAUTH_REQUIRED
+    )
+
+
+class TestAdminStepUp:
+    def test_recent_admin_session_is_accepted(self, admin_guard):
+        auth_guard._real_require_admin(_request(_token_at(int(time.time()) - 3600)))
+
+    def test_admin_session_older_than_the_window_must_reauthenticate(self, admin_guard):
+        old = int(time.time()) - config.ADMIN_REAUTH_WINDOW_SECONDS - 60
+        with pytest.raises(HTTPException) as exc:
+            auth_guard._real_require_admin(_request(_token_at(old)))
+        assert _reauth(exc)
+        assert exc.value.detail["max_session_age_seconds"] == config.ADMIN_REAUTH_WINDOW_SECONDS
+
+    def test_window_defaults(self):
+        assert config.ADMIN_REAUTH_WINDOW_SECONDS == 12 * 3600
+        assert config.ADMIN_DESTRUCTIVE_REAUTH_WINDOW_SECONDS == 30 * 60
+
+    def test_destructive_actions_need_a_fresher_session(self, admin_guard):
+        now = int(time.time())
+        auth_guard._real_require_admin_recent(_request(_token_at(now - 10 * 60)))
+        stale = now - config.ADMIN_DESTRUCTIVE_REAUTH_WINDOW_SECONDS - 60
+        auth_guard._real_require_admin(_request(_token_at(stale)))  # fine for reads
+        with pytest.raises(HTTPException) as exc:
+            auth_guard._real_require_admin_recent(_request(_token_at(stale)))
+        assert _reauth(exc)
+
+    def test_a_non_admin_gets_403_not_a_reauth_prompt(self, admin_guard):
+        admin_guard.select.return_value = []
+        old = int(time.time()) - 2 * 86400
+        for guard in (auth_guard._real_require_admin, auth_guard._real_require_admin_recent):
+            with pytest.raises(HTTPException) as exc:
+                guard(_request(_token_at(old)))
+            assert exc.value.status_code == 403
+
+    def test_legacy_cookie_is_dated_by_its_30_day_exp(self, admin_guard):
+        """A pre-iat BFF cookie minted 13 h ago (exp = mint + 30 d)."""
+        import base64
+        import hashlib
+        import hmac
+
+        minted = int(time.time()) - 13 * 3600
+        payload_b64 = base64.urlsafe_b64encode(json.dumps(
+            {"user_id": "user_alice", "exp": minted + 30 * 86400}).encode()).decode().rstrip("=")
+        sig = hmac.new(SECRET.encode(), payload_b64.encode(), hashlib.sha256).digest()
+        token = f"{payload_b64}.{base64.urlsafe_b64encode(sig).decode().rstrip('=')}"
+        with pytest.raises(HTTPException) as exc:
+            auth_guard._real_require_admin(_request(token))
+        assert _reauth(exc)
+
+
+# Each destructive admin action, by (route module, handler).
+DESTRUCTIVE = [
+    ("routes/admin_accounts.py", "seed_account"),
+    ("routes/admin_accounts.py", "wipe_account"),
+    ("routes/admin_account_sync.py", "copy_account"),
+    ("routes/admin.py", "assign_role"),
+    ("routes/admin.py", "revoke_role"),
+    ("routes/admin_email.py", "create_broadcast"),
+    ("routes/admin_email.py", "resume_broadcast"),
+    ("routes/admin_flags.py", "update_flag"),
+    ("routes/admin_flags.py", "upsert_target"),
+    ("routes/admin_flags.py", "delete_target"),
+]
+
+
+@pytest.mark.parametrize(("path", "handler"), DESTRUCTIVE)
+def test_destructive_admin_actions_use_the_strict_window(path, handler):
+    backend = pathlib.Path(__file__).resolve().parent.parent
+    tree = ast.parse((backend / path).read_text())
+    fn = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == handler)
+    first_guard = next(
+        n.func.id for n in ast.walk(fn)
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+        and n.func.id in {"require_admin", "require_admin_recent"}
+    )
+    assert first_guard == "require_admin_recent", f"{path}::{handler}"
+
+
+def test_reauth_is_answered_by_the_destructive_route(admin_guard, monkeypatch):
+    """Through a real route: a 20-hour-old admin session cannot wipe."""
+    import routes.admin_accounts as admin_accounts
+
+    monkeypatch.setattr(admin_accounts, "require_admin_recent", auth_guard._real_require_admin_recent)
+    app = FastAPI()
+    app.include_router(admin_accounts.router, prefix="/api/admin/accounts")
+    client = TestClient(app)
+    client.cookies.set("sapling_session", _token_at(int(time.time()) - 20 * 3600))
+    resp = client.post("/api/admin/accounts/user_target/wipe", json={"confirm": "WIPE"})
+    assert resp.status_code == 401
+    assert resp.json()["detail"]["code"] == "reauth_required"
+
+
+# ── verified Google email ────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("verified", [False, None, "true", 1])
+def test_unverified_google_email_cannot_sign_in(callback, monkeypatch, verified):
+    drive, factory, _ = callback
+    factory("users").select.return_value = [
+        {"id": "user_112233", "is_approved": True, "deleted_at": None}
+    ]
+    info = {"id": "112233", "email": "student@bu.edu", "name": "Ada Lovelace"}
+    if verified is not None:
+        info["verified_email"] = verified
+
+    class _Resp:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return info
+
+    monkeypatch.setattr(httpx, "get", lambda *a, **k: _Resp())
+    loc = drive()
+    query = parse_qs(loc.query)
+    assert query["error"] == ["email_not_verified"]
+    assert "auth_token" not in query
+    for name in ("users", "user_profiles", "oauth_tokens"):
+        t = factory(name)
+        assert not t.update.called and not t.upsert.called and not t.insert.called, name
+
+
+def test_verified_google_email_signs_in(callback):
+    drive, factory, _ = callback
+    factory("users").select.return_value = [
+        {"id": "user_112233", "is_approved": True, "deleted_at": None}
+    ]
+    assert parse_qs(drive().query).get("auth_token")
+
+
+# ── API docs ─────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(("app_env", "served"), [
+    ("local", True), ("test", True), ("production", False), ("staging", False), ("dev", False),
+])
+def test_api_docs_are_served_only_locally(app_env, served):
+    import main
+
+    app = FastAPI(**main.api_docs_urls(app_env))
+
+    @app.get("/api/thing")
+    def _thing():
+        return {}
+
+    client = TestClient(app)
+    for path in ("/docs", "/redoc", "/openapi.json"):
+        status = client.get(path).status_code
+        assert (status == 200) is served, (app_env, path, status)
+
+
+def test_the_app_is_built_with_the_docs_gate():
+    import main
+
+    assert main.app.openapi_url == main.api_docs_urls(config.APP_ENV)["openapi_url"]
+    assert main.app.docs_url == main.api_docs_urls(config.APP_ENV)["docs_url"]

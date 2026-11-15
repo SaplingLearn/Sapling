@@ -1,4 +1,4 @@
-"""Unit tests for services.flashcard_import_service."""
+"""Unit tests for services.flashcards.importing."""
 import io
 import os
 import sqlite3
@@ -10,7 +10,7 @@ import httpx
 import pytest
 from pydantic_ai.exceptions import ContentFilterError, ModelHTTPError, UnexpectedModelBehavior
 
-from services import flashcard_import_service as svc
+from services.flashcards import importing as svc
 
 
 # ── dedup_against_existing ───────────────────────────────────────────────────
@@ -20,7 +20,7 @@ class TestDedup:
         return [{"front": f} for f in fronts]
 
     def test_skips_exact_match(self):
-        with patch("services.flashcard_import_service.table") as t:
+        with patch("services.flashcards.importing.table") as t:
             t.return_value.select.return_value = self._existing_rows(["What is mitosis?"])
             new = [{"front": "What is mitosis?", "back": "Cell division."}]
             keep, skipped = svc.dedup_against_existing("u1", "c1", new)
@@ -28,7 +28,7 @@ class TestDedup:
         assert skipped == new
 
     def test_skips_near_match_within_levenshtein_3(self):
-        with patch("services.flashcard_import_service.table") as t:
+        with patch("services.flashcards.importing.table") as t:
             t.return_value.select.return_value = self._existing_rows(["What is mitosis?"])
             new = [{"front": "what is mitosis", "back": "Cell division."}]
             keep, skipped = svc.dedup_against_existing("u1", "c1", new)
@@ -36,7 +36,7 @@ class TestDedup:
         assert len(skipped) == 1
 
     def test_keeps_distinct_card(self):
-        with patch("services.flashcard_import_service.table") as t:
+        with patch("services.flashcards.importing.table") as t:
             t.return_value.select.return_value = self._existing_rows(["What is mitosis?"])
             new = [{"front": "What is photosynthesis?", "back": "Plants making food."}]
             keep, skipped = svc.dedup_against_existing("u1", "c1", new)
@@ -45,14 +45,14 @@ class TestDedup:
 
     def test_filters_by_offering_id(self):
         # Migration 0025 renamed the flashcards link column course_id -> offering_id.
-        with patch("services.flashcard_import_service.table") as t:
+        with patch("services.flashcards.importing.table") as t:
             t.return_value.select.return_value = []
             svc.dedup_against_existing("u1", "off1", [])
             _, kwargs = t.return_value.select.call_args
             assert kwargs["filters"] == {"user_id": "eq.u1", "offering_id": "eq.off1"}
 
     def test_filters_by_topic_when_offering_id_is_none(self):
-        with patch("services.flashcard_import_service.table") as t:
+        with patch("services.flashcards.importing.table") as t:
             t.return_value.select.return_value = []
             svc.dedup_against_existing("u1", None, [], topic="Bio")
             call_kwargs = t.return_value.select.call_args
@@ -63,7 +63,7 @@ class TestDedup:
     def test_dedup_matches_against_encrypted_existing_cards(self):
         # #518: dedupe must be decrypt-aware — existing rows are ciphertext.
         from services.encryption import encrypt
-        with patch("services.flashcard_import_service.table") as t:
+        with patch("services.flashcards.importing.table") as t:
             t.return_value.select.return_value = [
                 {"front": encrypt("What is a variable?")}
             ]
@@ -75,7 +75,7 @@ class TestDedup:
     def test_dedup_still_matches_legacy_plaintext_rows(self):
         # Pre-backfill rows are still plaintext — decrypt_if_present falls
         # back to the raw value, so dedupe keeps working unchanged.
-        with patch("services.flashcard_import_service.table") as t:
+        with patch("services.flashcards.importing.table") as t:
             t.return_value.select.return_value = [{"front": "What is a variable?"}]
             new = [{"front": "What is a variable?", "back": "A named storage location."}]
             keep, skipped = svc.dedup_against_existing("u1", "c1", new)
@@ -263,7 +263,7 @@ def _addrinfo(ip):
 def public_dns():
     """Hermetic DNS: every lookup answers one public address."""
     with patch(
-        "services.flashcard_import_service.socket.getaddrinfo",
+        "services.flashcards.importing.socket.getaddrinfo",
         return_value=_PUBLIC_ADDRINFO,
     ) as gai:
         yield gai
@@ -293,7 +293,7 @@ def _mock_client(handler):
 
 def _patch_client(handler):
     factory = _mock_client(handler)
-    return factory, patch("services.flashcard_import_service._quizlet_client", side_effect=factory)
+    return factory, patch("services.flashcards.importing._quizlet_client", side_effect=factory)
 
 
 def _ok(request):
@@ -632,8 +632,8 @@ class TestExtractFromImage:
             {"front": "Mitosis", "back": "cell division"},
             {"front": "Meiosis", "back": "halving"},
         ])
-        with patch("services.flashcard_import_service.extraction_service") as ext, \
-             patch("services.flashcard_import_service.flashcard_agent.run", new=run):
+        with patch("services.flashcards.importing.extraction_service") as ext, \
+             patch("services.flashcards.importing.flashcard_agent.run", new=run):
             ext.extract_text_from_file.return_value = "# Notes\nMitosis: cell division\nMeiosis: halving"
             cards = svc.extract_cards_from_image(b"\x89PNG_fake_bytes", filename="notes.png")
 
@@ -645,8 +645,8 @@ class TestExtractFromImage:
 
     def test_returns_empty_on_empty_extraction(self):
         run = _agent_returning([])
-        with patch("services.flashcard_import_service.extraction_service") as ext, \
-             patch("services.flashcard_import_service.flashcard_agent.run", new=run):
+        with patch("services.flashcards.importing.extraction_service") as ext, \
+             patch("services.flashcards.importing.flashcard_agent.run", new=run):
             ext.extract_text_from_file.return_value = ""
             cards = svc.extract_cards_from_image(b"", filename="x.png")
         assert cards == []
@@ -661,7 +661,7 @@ class TestGenerateCards:
             {"front": "Q1", "back": "A1"},
             {"front": "Q2", "back": "A2"},
         ])
-        with patch("services.flashcard_import_service.flashcard_agent.run", new=run):
+        with patch("services.flashcards.importing.flashcard_agent.run", new=run):
             cards = svc.gemini_generate_cards("source notes", count=2, difficulty="recall")
         assert cards == [{"front": "Q1", "back": "A1"}, {"front": "Q2", "back": "A2"}]
         sent = run.call_args.args[0]  # the rendered prompt handed to the agent
@@ -672,14 +672,14 @@ class TestGenerateCards:
     def test_bad_model_output_degrades_to_empty(self):
         # A model whose output can't satisfy the schema is "bad output" → [].
         run = AsyncMock(side_effect=UnexpectedModelBehavior("unparseable"))
-        with patch("services.flashcard_import_service.flashcard_agent.run", new=run):
+        with patch("services.flashcards.importing.flashcard_agent.run", new=run):
             assert svc.gemini_generate_cards("x", count=5, difficulty="recall") == []
 
     def test_transport_failure_propagates(self):
         # Transport/runtime errors must NOT masquerade as "no cards" — they
         # propagate so the route surfaces a retryable 502.
         run = AsyncMock(side_effect=RuntimeError("boom"))
-        with patch("services.flashcard_import_service.flashcard_agent.run", new=run):
+        with patch("services.flashcards.importing.flashcard_agent.run", new=run):
             with pytest.raises(RuntimeError):
                 svc.gemini_generate_cards("x", count=5, difficulty="recall")
 
@@ -690,13 +690,13 @@ class TestGenerateCards:
         # own carve-out it would degrade to [] and the route would answer a
         # misleading 200 with zero cards; it must propagate → route 502 (#340).
         run = AsyncMock(side_effect=ContentFilterError("blocked: RECITATION"))
-        with patch("services.flashcard_import_service.flashcard_agent.run", new=run):
+        with patch("services.flashcards.importing.flashcard_agent.run", new=run):
             with pytest.raises(ContentFilterError):
                 svc.gemini_generate_cards("x", count=5, difficulty="recall")
 
     def test_non_transient_http_error_propagates(self):
         run = AsyncMock(side_effect=ModelHTTPError(status_code=400, model_name="gemini-2.5-flash"))
-        with patch("services.flashcard_import_service.flashcard_agent.run", new=run):
+        with patch("services.flashcards.importing.flashcard_agent.run", new=run):
             with pytest.raises(ModelHTTPError):
                 svc.gemini_generate_cards("x", count=5, difficulty="recall")
 
@@ -708,8 +708,8 @@ class TestGenerateCards:
             ModelHTTPError(status_code=429, model_name="gemini-2.5-flash"),
             ok,
         ])
-        with patch("services.flashcard_import_service.flashcard_agent.run", new=run), \
-             patch("services.flashcard_import_service.time.sleep") as sleep:
+        with patch("services.flashcards.importing.flashcard_agent.run", new=run), \
+             patch("services.flashcards.importing.time.sleep") as sleep:
             cards = svc.gemini_generate_cards("x", count=1, difficulty="recall")
         assert cards == [{"front": "Q1", "back": "A1"}]
         assert run.call_count == 2
@@ -717,8 +717,8 @@ class TestGenerateCards:
 
     def test_transient_http_error_reraises_after_retries_exhausted(self):
         run = AsyncMock(side_effect=ModelHTTPError(status_code=503, model_name="gemini-2.5-flash"))
-        with patch("services.flashcard_import_service.flashcard_agent.run", new=run), \
-             patch("services.flashcard_import_service.time.sleep"):
+        with patch("services.flashcards.importing.flashcard_agent.run", new=run), \
+             patch("services.flashcards.importing.time.sleep"):
             with pytest.raises(ModelHTTPError):
                 svc.gemini_generate_cards("x", count=1, difficulty="recall")
         assert run.call_count == 2  # initial + 1 retry
@@ -729,7 +729,7 @@ class TestGenerateCards:
             {"front": "", "back": "no front"},
             {"front": "no back", "back": ""},
         ])
-        with patch("services.flashcard_import_service.flashcard_agent.run", new=run):
+        with patch("services.flashcards.importing.flashcard_agent.run", new=run):
             cards = svc.gemini_generate_cards("x", count=3, difficulty="recall")
         assert cards == [{"front": "keep", "back": "yes"}]
 
@@ -740,7 +740,7 @@ class TestCleanupCards:
     def test_replaces_cards_in_input_order(self):
         cards = [{"front": "miotsis", "back": "cell div."}]
         run = _agent_returning([{"front": "Mitosis", "back": "Cell division"}])
-        with patch("services.flashcard_import_service.flashcard_agent.run", new=run):
+        with patch("services.flashcards.importing.flashcard_agent.run", new=run):
             out = svc.gemini_cleanup_cards(cards)
         assert out == [{"front": "Mitosis", "back": "Cell division"}]
 
@@ -749,7 +749,7 @@ class TestCleanupCards:
         # usable it keeps the user's original cards rather than erroring.
         cards = [{"front": "X", "back": "Y"}]
         run = AsyncMock(side_effect=UnexpectedModelBehavior("unparseable"))
-        with patch("services.flashcard_import_service.flashcard_agent.run", new=run):
+        with patch("services.flashcards.importing.flashcard_agent.run", new=run):
             out = svc.gemini_cleanup_cards(cards)
         assert out == cards
 
@@ -757,7 +757,7 @@ class TestCleanupCards:
         # A real outage still propagates (→ route 502), not a silent no-op.
         cards = [{"front": "X", "back": "Y"}]
         run = AsyncMock(side_effect=RuntimeError("boom"))
-        with patch("services.flashcard_import_service.flashcard_agent.run", new=run):
+        with patch("services.flashcards.importing.flashcard_agent.run", new=run):
             with pytest.raises(RuntimeError):
                 svc.gemini_cleanup_cards(cards)
 
@@ -767,7 +767,7 @@ class TestCleanupCards:
         # user's original cards (#340).
         cards = [{"front": "X", "back": "Y"}]
         run = AsyncMock(side_effect=ContentFilterError("blocked: SAFETY"))
-        with patch("services.flashcard_import_service.flashcard_agent.run", new=run):
+        with patch("services.flashcards.importing.flashcard_agent.run", new=run):
             with pytest.raises(ContentFilterError):
                 svc.gemini_cleanup_cards(cards)
 
@@ -779,7 +779,7 @@ class TestCloze:
         run = _agent_returning([
             {"front": "{{...}} is the powerhouse of the cell.", "back": "Mitochondria"},
         ])
-        with patch("services.flashcard_import_service.flashcard_agent.run", new=run):
+        with patch("services.flashcards.importing.flashcard_agent.run", new=run):
             cards = svc.gemini_cloze("Mitochondria is the powerhouse of the cell.")
         assert cards == [{"front": "{{...}} is the powerhouse of the cell.", "back": "Mitochondria"}]
 
@@ -791,7 +791,7 @@ class TestGenerateFlashcards:
         run = _agent_returning([
             {"front": "What is a base case?", "back": "The stopping condition of a recursion."},
         ])
-        with patch("services.flashcard_import_service.flashcard_agent.run", new=run):
+        with patch("services.flashcards.importing.flashcard_agent.run", new=run):
             cards = svc.generate_flashcards(
                 "Recursion", count=1, weak_concepts=["base case"],
             )
@@ -820,7 +820,7 @@ class TestGenerateFlashcards:
                 ],
             }
         ]
-        with patch("services.flashcard_import_service.flashcard_agent.run", new=run):
+        with patch("services.flashcards.importing.flashcard_agent.run", new=run):
             cards = svc.generate_flashcards(
                 "Data Structures",
                 count=3,

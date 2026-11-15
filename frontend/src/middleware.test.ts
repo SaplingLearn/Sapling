@@ -33,6 +33,30 @@ describe('middleware — /profile gating (#189)', () => {
   });
 });
 
+describe('middleware — the Study tools are gated wherever they are served', () => {
+  // /flashcards became a (shell) page without joining SHELL_PREFIXES or the
+  // matcher, so it was served to signed-out and unapproved visitors.
+  it.each(['/flashcards', '/flashcards/deck-1', '/study/guide'])(
+    'redirects an unauthenticated %s request',
+    async (path) => {
+      const res = await middleware(req(path));
+      expect(res.status).toBe(307);
+      expect(res.headers.get('location')).toBeTruthy();
+    },
+  );
+
+  it('lists /flashcards in config.matcher so middleware actually runs there', () => {
+    // `/x/:path*` also matches the bare `/x`, as for every other entry.
+    expect(config.matcher).toContain('/flashcards/:path*');
+    expect(config.matcher).toContain('/study/:path*');
+  });
+
+  it('does not gate a look-alike path', async () => {
+    const res = await middleware(req('/flashcards-import'));
+    expect(res.headers.get('location')).toBeNull();
+  });
+});
+
 describe('middleware — sign-in return origin (PR previews)', () => {
   afterEach(() => {
     vi.unstubAllEnvs();
@@ -73,13 +97,13 @@ describe('middleware — only a definitive /me answer ends the session (#756)', 
     return { mw, ...tokens };
   }
 
-  async function run(me: Response | Error) {
+  async function run(me: Response | Error, path = '/dashboard') {
     const { mw, signSession } = await load();
     vi.stubGlobal('fetch', vi.fn(async () => {
       if (me instanceof Error) throw me;
       return me;
     }));
-    return mw(new NextRequest(`${LOCAL}/dashboard`, {
+    return mw(new NextRequest(`${LOCAL}${path}`, {
       headers: { cookie: `sapling_session=${await signSession('user_1')}` },
     }));
   }
@@ -113,6 +137,15 @@ describe('middleware — only a definitive /me answer ends the session (#756)', 
     expect(new URL(res.headers.get('location') ?? '').pathname).toBe('/pending');
   });
 
+  it.each(['/flashcards', '/study/guide'])('an unapproved account on %s goes to /pending too', async (path) => {
+    const res = await run(json(200, { is_approved: false }), path);
+    expect(new URL(res.headers.get('location') ?? '').pathname).toBe('/pending');
+  });
+
+  it('an expired session on /flashcards is ended like any shell route', async () => {
+    expect(errorCode(await run(json(401), '/flashcards'))).toBe('session_expired');
+  });
+
   it('an approved account passes', async () => {
     expect((await run(json(200, { is_approved: true }))).headers.get('location')).toBeNull();
   });
@@ -134,5 +167,32 @@ describe('middleware — only a definitive /me answer ends the session (#756)', 
     }));
     expect(errorCode(res)).toBe('session_expired');
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('a session older than 7 days is not a session, whatever its exp', async () => {
+    const { verifySession } = await load();
+    const enc = (s: string) => btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+    const key = await crypto.subtle.importKey(
+      'raw', new TextEncoder().encode(SECRET), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'],
+    );
+    const sign = async (payload: Record<string, unknown>) => {
+      const payloadB64 = enc(JSON.stringify(payload));
+      const sig = new Uint8Array(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(payloadB64)));
+      return `${payloadB64}.${enc(String.fromCharCode(...sig))}`;
+    };
+    const now = Math.floor(Date.now() / 1000);
+    const day = 86400;
+    // iat 8 days ago, exp still in the future.
+    expect(await verifySession(await sign({ user_id: 'u', iat: now - 8 * day, exp: now + day, typ: 'session' })))
+      .toBeNull();
+    // A pre-iat 30-day cookie minted 8 days ago (dated exp - 30 days).
+    expect(await verifySession(await sign({ user_id: 'u', exp: now + 22 * day }))).toBeNull();
+    // ...but one minted yesterday still verifies.
+    expect(await verifySession(await sign({ user_id: 'u', exp: now + 29 * day }))).toEqual({ userId: 'u' });
+    // An iat in the future is refused.
+    expect(await verifySession(await sign({ user_id: 'u', iat: now + 3600, exp: now + day }))).toBeNull();
+    // A millisecond iat (what both minters issue) verifies.
+    expect(await verifySession(await sign({ user_id: 'u', iat: now - 0.655, exp: now + day, typ: 'session' })))
+      .toEqual({ userId: 'u' });
   });
 });

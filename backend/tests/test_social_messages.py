@@ -6,7 +6,9 @@ from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
 
+import config
 from main import app
+from tests.split_patches import patch_social
 
 client = TestClient(app)
 
@@ -39,7 +41,7 @@ class TestGetRoomMessages:
                 m.select.return_value = []
             return m
 
-        with patch("routes.social.table", side_effect=table_side_effect):
+        with patch_social("table", side_effect=table_side_effect):
             r = client.get(f"/api/social/rooms/{ROOM_ID}/messages")
 
         assert r.status_code == 200
@@ -65,7 +67,7 @@ class TestGetRoomMessages:
                 m.select.return_value = []
             return m
 
-        with patch("routes.social.table", side_effect=table_side_effect):
+        with patch_social("table", side_effect=table_side_effect):
             r = client.get(f"/api/social/rooms/{ROOM_ID}/messages?limit=5")
 
         body = r.json()
@@ -88,7 +90,7 @@ class TestGetRoomMessages:
                 m.select.return_value = []
             return m
 
-        with patch("routes.social.table", side_effect=table_side_effect):
+        with patch_social("table", side_effect=table_side_effect):
             r = client.get(f"/api/social/rooms/{ROOM_ID}/messages?limit=5")
 
         body = r.json()
@@ -116,7 +118,7 @@ class TestGetRoomMessages:
                 m.select.return_value = []
             return m
 
-        with patch("routes.social.table", side_effect=table_side_effect):
+        with patch_social("table", side_effect=table_side_effect):
             r = client.get(f"/api/social/rooms/{ROOM_ID}/messages?before=2026-04-02T00:00:00Z&limit=20")
 
         assert r.status_code == 200
@@ -127,7 +129,7 @@ class TestGetRoomMessages:
     def test_invalid_before_rejected(self):
         # Guards against PostgREST operator injection (e.g. ?before=null or
         # ?before=gt.2026-01-01). Anything not parseable as ISO 8601 is 400.
-        with patch("routes.social.table"):
+        with patch_social("table"):
             for bad in ["null", "gt.2026-01-01", "not-a-date", "is.null", ""]:
                 if not bad:  # empty string skips the `if before:` branch; still valid
                     continue
@@ -142,7 +144,7 @@ class TestGetRoomMessages:
             else:
                 m.select.return_value = []
             return m
-        with patch("routes.social.table", side_effect=table_side_effect):
+        with patch_social("table", side_effect=table_side_effect):
             r = client.get(f"/api/social/rooms/{ROOM_ID}/messages")
         assert r.status_code == 200
         assert r.json() == {"messages": [], "has_more": False}
@@ -164,7 +166,7 @@ class TestGetRoomMessages:
                 m.select.return_value = []
             return m
 
-        with patch("routes.social.table", side_effect=table_side_effect):
+        with patch_social("table", side_effect=table_side_effect):
             r = client.get(f"/api/social/rooms/{ROOM_ID}/messages?limit=9999")
 
         assert r.status_code == 200
@@ -187,7 +189,7 @@ class TestGetRoomMessages:
                 m.select.return_value = []
             return m
 
-        with patch("routes.social.table", side_effect=table_side_effect):
+        with patch_social("table", side_effect=table_side_effect):
             r = client.get(f"/api/social/rooms/{ROOM_ID}/messages?limit=0")
 
         assert r.status_code == 200
@@ -202,9 +204,17 @@ class TestImageDimensionBounds:
     """
 
     def _post(self, **extra):
-        body = {"user_id": "u1", "user_name": "Alice", "image_url": "https://x/i.png"}
+        # A room-image upload URL on the app's own bucket, so only the
+        # dimensions are under test (image_url is validated too, see
+        # test_web_hardening_inputs.py).
+        supa = "https://abcd1234.supabase.co"
+        body = {
+            "user_id": "u1", "user_name": "Alice",
+            "image_url": f"{supa}/storage/v1/object/public/chat-images/{ROOM_ID}/u1-1-i.png",
+        }
         body.update(extra)
-        return client.post(f"/api/social/rooms/{ROOM_ID}/messages", json=body)
+        with patch.object(config, "SUPABASE_URL", supa):
+            return client.post(f"/api/social/rooms/{ROOM_ID}/messages", json=body)
 
     def test_rejects_absurd_height(self):
         # Inside Postgres INTEGER range, so nothing downstream would object:

@@ -6,8 +6,13 @@ stream_agent_turn dispatches on.
 """
 import asyncio
 
+import pytest
+
 from agents.deps import SaplingDeps
 from services.chat_stream import merge_graph_updates, stream_agent_turn
+
+#: #117 wave 3: a sync PostgREST call on the event loop raises here.
+pytestmark = pytest.mark.usefixtures("no_sync_db_on_loop")
 
 
 # ── Fakes mirroring pydantic_ai event shapes ──────────────────────────────
@@ -1140,6 +1145,57 @@ def test_on_complete_runs_in_a_worker_thread_not_on_the_event_loop():
         events = await collect(agent, make_deps(), on_complete=persist)
         assert events[-1].type == "done"
         assert seen["thread"] is not loop_thread
+
+    asyncio.run(run())
+
+
+def test_coroutine_on_complete_is_awaited_on_the_loop_and_merges_extra():
+    """#117 wave 3: the tutor's persist hook is a coroutine over the async DB
+    seam; it is awaited (no worker thread) and its extra rides `done`."""
+    import threading
+
+    async def run():
+        loop_thread = threading.current_thread()
+        seen = {}
+
+        async def persist(reply, graph_update, mastery_changes):
+            seen["thread"] = threading.current_thread()
+            seen["reply"] = reply
+            return {"session_id": "s1"}
+
+        agent = FakeAgent([PartStartEvent("hi"), AgentRunResultEvent("hi")])
+        events = await collect(agent, make_deps(), on_complete=persist)
+        assert events[-1].type == "done"
+        assert events[-1].data["session_id"] == "s1"
+        assert seen == {"thread": loop_thread, "reply": "hi"}
+
+    asyncio.run(run())
+
+
+def test_coroutine_on_complete_survives_a_disconnect_mid_persist():
+    """Cancel-after-persist (#761) holds for a coroutine hook too: a client
+    that disconnects while the rows are being written cancels the stream, not
+    the write — the persist runs to completion under `asyncio.shield`."""
+    async def run():
+        started, release = asyncio.Event(), asyncio.Event()
+        written = []
+
+        async def persist(reply, graph_update, mastery_changes):
+            started.set()
+            await release.wait()
+            written.append(reply)
+            return {}
+
+        agent = FakeAgent([PartStartEvent("hi"), AgentRunResultEvent("hi")])
+        consumer = asyncio.ensure_future(collect(agent, make_deps(), on_complete=persist))
+        await started.wait()
+        consumer.cancel()  # the client disconnects mid-persist
+        with pytest.raises(asyncio.CancelledError):
+            await consumer
+        release.set()
+        for _ in range(5):
+            await asyncio.sleep(0)
+        assert written == ["hi"]
 
     asyncio.run(run())
 

@@ -1,5 +1,17 @@
+import fs from "node:fs";
 import nextCoreWebVitals from "eslint-config-next/core-web-vitals";
 import nextTypescript from "eslint-config-next/typescript";
+
+// Files that still hold a function over the complexity limit, read from the
+// ratchet's baseline (complexity-baseline.json, keys `<file>::<function>`).
+const complexityBaselinedFiles = [
+  ...new Set(
+    Object.keys(
+      JSON.parse(fs.readFileSync(new URL("./complexity-baseline.json", import.meta.url), "utf8"))
+        .complexity,
+    ).map((key) => key.split("::", 1)[0]),
+  ),
+].sort();
 
 // Next 16 removed `next lint`, so linting runs through the ESLint CLI (eslint 9
 // flat config). eslint-config-next 16 ships native flat-config arrays, spread
@@ -34,8 +46,39 @@ const eslintConfig = [
       // — if that starts forcing eslint-disable comments on legitimate cases,
       // downgrade THIS single rule back to "warn" (don't relax the others).
       "react-hooks/exhaustive-deps": "error",
+      // Architecture-hardening Phase 4 (Trov #118): no function above
+      // cyclomatic complexity 25. Today's offenders are held per function by
+      // the ratchet (scripts/complexity_ratchet.mjs, two blocks down), not by
+      // eslint-suppressions.json.
+      complexity: ["error", 25],
     },
   },
+  // The landing-page animation engine is exempt from the complexity limit by
+  // decision of its owner (Trov #118 phase 4): it is frame-loop and physics
+  // code for the marketing hero, where one long tick function is clearer than
+  // a split. The ratchet skips the same glob (EXEMPT_GLOB).
+  {
+    name: "complexity/landing-engine-exempt",
+    files: ["src/lib/landing/engine/**"],
+    rules: { complexity: "off" },
+  },
+  // Generated from complexity-baseline.json at load: `complexity` is off for
+  // every file that still holds a baselined function, because ESLint can only
+  // switch a rule off per file. The ratchet (`npm run complexity`, enforced by
+  // scripts/complexity_ratchet.test.ts in `npm test`) holds each of those
+  // functions to its own ceiling instead, and any NEW function over 25 in
+  // them. This block shrinks to nothing as entries are deleted: once a file's
+  // last entry goes (`npm run complexity:shrink`), plain `eslint .` enforces
+  // the limit on it again. Do not edit this list; edit the baseline.
+  ...(complexityBaselinedFiles.length
+    ? [
+        {
+          name: "complexity/ratchet-baselined",
+          files: complexityBaselinedFiles,
+          rules: { complexity: "off" },
+        },
+      ]
+    : []),
   // ── data-testid convention on the core E2E surfaces (#382) ───────────────
   //
   // The browser suite (#385) drives six surfaces: sign-in, the approval gate,
@@ -59,12 +102,15 @@ const eslintConfig = [
       "src/components/DocumentUploadModal.tsx",
       "src/components/TopicChecklistPanel.tsx",
       "src/components/chat/ChatPanel.tsx",
+      // The crisis-support card (docs/safety/crisis-support.md). New file, no backlog.
+      "src/components/safety/CrisisSupportCard.tsx",
       // Quiz redesign (#537). The three screens carry every answer/submit/exit
       // control the Playwright journeys drive; the three `ui/` primitives are
       // listed because those controls render INSIDE them, so a testid-less
       // <button> there would silently un-anchor the whole surface.
       "src/components/quiz/QuizScreen.tsx",
       "src/components/quiz/home/QuizHome.tsx",
+      "src/components/quiz/home/TopicsColumn.tsx",
       "src/components/quiz/home/AdjustDialog.tsx",
       "src/components/quiz/home/TopicList.tsx",
       "src/components/quiz/home/QuizSettings.tsx",
@@ -117,9 +163,31 @@ const eslintConfig = [
       // New files, no baselined backlog.
       "src/components/screens/admin/AllowlistTab.tsx",
       "src/components/screens/admin/EmailBroadcasts.tsx",
+      // Study hub + Flashcards (#870): the two files whose one <button> a
+      // journey clicks by testid (a roadmap tile's "..." menu, the tool
+      // headers' way back). No baselined backlog. The surfaces' other files
+      // are not enrolled: see docs/frontend-testids.md "Enforcement".
+      "src/components/study/RoadmapTile.tsx",
+      "src/components/BackLink.tsx",
       // Admin "Account tools" dialog (seed / wipe / copy an account). New file,
       // no baselined backlog.
       "src/components/screens/admin/AccountToolsDialog.tsx",
+      // Study guides (the reader, the home, the New study guide dialog): every
+      // file under components/studyGuide/ that renders an intrinsic control.
+      // New files, no baselined backlog.
+      "src/components/studyGuide/home/GuidesToolbar.tsx",
+      "src/components/studyGuide/home/MaterialTiles.tsx",
+      "src/components/studyGuide/home/NewGuideModal.tsx",
+      "src/components/studyGuide/home/SortMenu.tsx",
+      "src/components/studyGuide/reader/FeedbackRow.tsx",
+      "src/components/studyGuide/reader/GuideMenu.tsx",
+      "src/components/studyGuide/reader/SectionView.tsx",
+      "src/components/studyGuide/reader/blocks/BlockFrame.tsx",
+      "src/components/studyGuide/reader/blocks/ConceptMapBlockView.tsx",
+      "src/components/studyGuide/reader/blocks/WorkedExampleBlockView.tsx",
+      "src/components/studyGuide/reader/rail/AskBox.tsx",
+      "src/components/studyGuide/reader/rail/Outline.tsx",
+      "src/components/studyGuide/reader/rail/StaleBanner.tsx",
       // Settings (#675 Data tab): NOT a no-backlog file — its pre-existing
       // controls are baselined in eslint-suppressions.json, so the rule
       // covers new elements only. Shrink that baseline as testids are added.

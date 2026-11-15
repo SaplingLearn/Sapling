@@ -12,6 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from services import events_service, posthog_client
+from tests.split_patches import patch_documents
 
 
 # ── Lifespan ────────────────────────────────────────────────────────────────
@@ -38,7 +39,7 @@ def _patch_lifecycle(stack: ExitStack, calls: list[str], *, fail_at: str | None 
     stack.enter_context(patch("services.typesafe_client.aclose_clients", async_("jev.close")))
     stack.enter_context(patch("services.tutor_router.drain_inflight", async_("router.drain")))
     stack.enter_context(patch("main.init_dbos", sync("dbos.init")))
-    stack.enter_context(patch("routes.documents.drain_post_roll", async_("postroll.drain")))
+    stack.enter_context(patch_documents("drain_post_roll", async_("postroll.drain")))
     stack.enter_context(patch("main.shutdown_dbos", sync("dbos.shutdown")))
     stack.enter_context(patch("main.start_sweeper", sync("sweeper.start")))
     stack.enter_context(patch("main.stop_sweeper", async_("sweeper.stop")))

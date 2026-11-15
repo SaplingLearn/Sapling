@@ -14,10 +14,12 @@ const POPUP_TIMEOUT_MS = 3 * 60 * 1000;
 const ERROR_COPY: Record<string, string> = {
   not_approved: "Your account is pending approval. We'll email you once an admin lets you in.",
   invalid_domain: "Sign-in is limited to approved school accounts (@bu.edu).",
+  email_not_verified:
+    "Google hasn't verified this account's email address. Verify it with Google, then sign in again.",
   google_not_configured: "Google sign-in is not configured on the server. Please contact support.",
   signin_failed: "Sign-in failed. Please try again.",
   account_deleted:
-    "This account was deleted. If you think that's a mistake, please contact support.",
+    "This account was deleted. It is pending permanent erasure: its data is erased 30 days after the deletion. If you think that's a mistake, please contact support before then.",
   session_expired: "Your session has expired. Please sign in again.",
   env_misconfig: "This environment is misconfigured and can't sign you in. Please contact support.",
   revoked: "Your access has been revoked.",
@@ -29,9 +31,12 @@ interface SignInModalProps {
   open: boolean;
   onClose: () => void;
   errorCode?: string | null;
+  /** Called after a successful popup sign-in instead of routing away, for a
+   * caller that carries on in place (onboarding saving a guest's answers). */
+  onSignedIn?: () => void;
 }
 
-export default function SignInModal({ open, onClose, errorCode }: SignInModalProps) {
+export default function SignInModal({ open, onClose, errorCode, onSignedIn }: SignInModalProps) {
   const router = useRouter();
   const { setActiveUser } = useUser();
   const [closing, setClosing] = useState(false);
@@ -185,7 +190,8 @@ export default function SignInModal({ open, onClose, errorCode }: SignInModalPro
         });
         // #715: a new account on a local backend waits for its sample data
         // on the hold screen; anywhere else this is /onboarding, as before.
-        void postSignInRoute(!!data.onboardingCompleted).then(route => router.replace(route));
+        if (onSignedIn) onSignedIn();
+        else void postSignInRoute(!!data.onboardingCompleted).then(route => router.replace(route));
         onClose();
       } else if (data.error === "not_approved" && data.pendingToken) {
         // An unapproved account: /pending shows where it stands (on the

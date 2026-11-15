@@ -38,7 +38,15 @@ export interface AnswerOptionProps {
   letter: string;
   text: string;
   state: AnswerState;
+  /** Whether this is the row the student picked. Defaults to what `state`
+   *  says; pass it where a pick can also be `correct`, which on its own
+   *  only marks the right answer. */
+  checked?: boolean;
   disabled?: boolean;
+  /** A visible word beside the mark once the answer is marked ("Correct",
+   *  "Incorrect") — on the row the student chose, so the result sits on the
+   *  answer itself. Decorative: the accessible name already carries it. */
+  status?: string;
   onSelect?: () => void;
   /** Roving tab stop, owned by the enclosing radiogroup. */
   tabIndex?: number;
@@ -49,12 +57,13 @@ export function AnswerOption({
   letter,
   text,
   state,
+  checked = state === "selected" || state === "chosen-wrong",
   disabled = false,
+  status,
   onSelect,
   tabIndex,
   testid,
 }: AnswerOptionProps) {
-  const checked = state === "selected" || state === "chosen-wrong";
   const mark = MARK[state];
 
   return (
@@ -76,6 +85,11 @@ export function AnswerOption({
         {letter}
       </span>
       <span className="answer-option__text">{text}</span>
+      {status && (
+        <span className="answer-option__status" aria-hidden="true">
+          {status}
+        </span>
+      )}
       <span className="answer-option__mark" aria-hidden="true">
         {mark}
       </span>

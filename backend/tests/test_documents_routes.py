@@ -18,13 +18,20 @@ from fastapi.testclient import TestClient
 from pydantic_ai.exceptions import UsageLimitExceeded, UnexpectedModelBehavior
 
 from main import app
+from tests.db_fakes import fake_table
+from tests.split_patches import patch_documents
+from tests.upload_fixtures import docx_bytes, pptx_bytes
 
 client = TestClient(app)
+
+# #117: the converted handlers run on the async seam; a sync PostgREST call
+# creeping back onto the event loop raises instead of only logging.
+pytestmark = pytest.mark.usefixtures("no_sync_db_on_loop")
 
 
 def _mock_validate_user():
     """Patch _validate_user to always succeed."""
-    return patch("routes.documents._validate_user", return_value=None)
+    return patch_documents("_validate_user", return_value=None)
 
 
 def _doc_text(label: str = "document") -> str:
@@ -52,7 +59,7 @@ class TestListDocuments:
             {"id": "d1", "user_id": "u1", "file_name": "notes.pdf", "category": "lecture_notes"},
             {"id": "d2", "user_id": "u1", "file_name": "syllabus.pdf", "category": "syllabus"},
         ]
-        with _mock_validate_user(), patch("routes.documents.table") as t:
+        with _mock_validate_user(), patch_documents("table", return_value=fake_table()) as t:
             t.return_value.select.return_value = docs
             r = client.get("/api/documents/user/u1")
 
@@ -60,7 +67,7 @@ class TestListDocuments:
         assert r.json()["documents"] == docs
 
     def test_returns_empty_list_when_no_documents(self):
-        with _mock_validate_user(), patch("routes.documents.table") as t:
+        with _mock_validate_user(), patch_documents("table", return_value=fake_table()) as t:
             t.return_value.select.return_value = []
             r = client.get("/api/documents/user/u1")
 
@@ -68,7 +75,7 @@ class TestListDocuments:
         assert r.json()["documents"] == []
 
     def test_queries_correct_user(self):
-        with _mock_validate_user(), patch("routes.documents.table") as t:
+        with _mock_validate_user(), patch_documents("table", return_value=fake_table()) as t:
             t.return_value.select.return_value = []
             client.get("/api/documents/user/user_andres")
             t.assert_called_with("documents")
@@ -88,8 +95,8 @@ class TestListDocuments:
         ]
         with (
             _mock_validate_user(),
-            patch("routes.documents.table") as t,
-            patch("routes.documents.offering_course_id") as mock_ocid,
+            patch_documents("table", return_value=fake_table()) as t,
+            patch_documents("offering_course_id") as mock_ocid,
         ):
             t.return_value.select.return_value = docs
             mock_ocid.side_effect = {"off-1": "course-A", "off-2": "course-B"}.get
@@ -111,8 +118,8 @@ class TestListDocuments:
         ]
         with (
             _mock_validate_user(),
-            patch("routes.documents.table") as t,
-            patch("routes.documents.offering_course_id", return_value="course-A") as mock_ocid,
+            patch_documents("table", return_value=fake_table()) as t,
+            patch_documents("offering_course_id", return_value="course-A") as mock_ocid,
         ):
             t.return_value.select.return_value = docs
             r = client.get("/api/documents/user/u1")
@@ -131,7 +138,7 @@ class TestListDocuments:
         docs = [
             {"id": "d1", "user_id": "u1", "offering_id": None, "file_name": "a.pdf", "category": "other"},
         ]
-        with _mock_validate_user(), patch("routes.documents.table") as t:
+        with _mock_validate_user(), patch_documents("table", return_value=fake_table()) as t:
             t.return_value.select.return_value = docs
             r = client.get("/api/documents/user/u1")
 
@@ -149,8 +156,8 @@ class TestListDocuments:
         ]
         with (
             _mock_validate_user(),
-            patch("routes.documents.table") as t,
-            patch("routes.documents.offering_course_id", return_value=None),
+            patch_documents("table", return_value=fake_table()) as t,
+            patch_documents("offering_course_id", return_value=None),
         ):
             t.return_value.select.return_value = docs
             r = client.get("/api/documents/user/u1")
@@ -180,8 +187,8 @@ class TestListDocuments:
 
         with (
             _mock_validate_user(),
-            patch("routes.documents.table") as t,
-            patch("routes.documents.decrypt_json", side_effect=fake_decrypt_json),
+            patch_documents("table", return_value=fake_table()) as t,
+            patch_documents("decrypt_json", side_effect=fake_decrypt_json),
         ):
             t.return_value.select.return_value = docs
             r = client.get("/api/documents/user/u1")
@@ -195,7 +202,7 @@ class TestListDocuments:
 
 class TestDeleteDocument:
     def test_returns_deleted_true(self):
-        with patch("routes.documents.table") as t:
+        with patch_documents("table", return_value=fake_table()) as t:
             t.return_value.delete.return_value = None
             r = client.delete("/api/documents/doc/d1")
 
@@ -205,7 +212,7 @@ class TestDeleteDocument:
     def test_soft_deletes_with_correct_id(self):
         """Delete is a soft delete (0025): it stamps deleted_at via an
         update scoped to the document id, not a hard row removal."""
-        with patch("routes.documents.table") as t:
+        with patch_documents("table", return_value=fake_table()) as t:
             t.return_value.delete.return_value = None
             client.delete("/api/documents/doc/my-doc-uuid")
             t.assert_called_with("documents")
@@ -218,7 +225,7 @@ class TestDeleteDocument:
             assert payload.get("deleted_at") is not None
 
     def test_delete_with_user_validation(self):
-        with _mock_validate_user(), patch("routes.documents.table") as t:
+        with _mock_validate_user(), patch_documents("table", return_value=fake_table()) as t:
             t.return_value.select.return_value = [{"id": "d1"}]
             t.return_value.delete.return_value = None
             r = client.delete("/api/documents/doc/d1?user_id=u1")
@@ -227,7 +234,7 @@ class TestDeleteDocument:
         assert r.json() == {"deleted": True}
 
     def test_delete_returns_404_when_doc_not_owned(self):
-        with _mock_validate_user(), patch("routes.documents.table") as t, \
+        with _mock_validate_user(), patch_documents("table", return_value=fake_table()) as t, \
                 patch("services.chunk_visibility.withdraw_document_chunks") as w:
             t.return_value.select.return_value = []
             r = client.delete("/api/documents/doc/d1?user_id=u1")
@@ -240,7 +247,7 @@ class TestDeleteDocument:
         included — in retrieval. The withdrawal names the deleted document and
         its owner, and runs AFTER the stamp so a concurrent index sees it."""
         order = []
-        with _mock_validate_user(), patch("routes.documents.table") as t, \
+        with _mock_validate_user(), patch_documents("table", return_value=fake_table()) as t, \
                 patch("services.chunk_visibility.withdraw_document_chunks",
                       side_effect=lambda *a: order.append(("withdraw", a))):
             t.return_value.select.return_value = [{"id": "d1"}]
@@ -255,7 +262,7 @@ class TestDeleteDocument:
 
 class TestUpdateDocument:
     def test_updates_category(self):
-        with patch("routes.documents.table") as t:
+        with patch_documents("table", return_value=fake_table()) as t:
             t.return_value.update.return_value = [{"id": "d1", "category": "slides"}]
             r = client.patch("/api/documents/doc/d1", json={"category": "slides"})
 
@@ -271,7 +278,7 @@ class TestUpdateDocument:
         assert r.status_code == 400
 
     def test_update_with_user_validation(self):
-        with _mock_validate_user(), patch("routes.documents.table") as t:
+        with _mock_validate_user(), patch_documents("table", return_value=fake_table()) as t:
             t.return_value.select.return_value = [{"id": "d1"}]
             t.return_value.update.return_value = [{"id": "d1", "category": "reading"}]
             r = client.patch("/api/documents/doc/d1", json={"category": "reading", "user_id": "u1"})
@@ -324,8 +331,8 @@ class TestUploadValidation:
         # value, so together they pin the production message.
         with (
             _mock_validate_user(),
-            patch("routes.documents.MAX_FILE_SIZE", 1024 * 1024),
-            patch("routes.documents.extract_text_from_file", return_value=""),
+            patch_documents("MAX_FILE_SIZE", 1024 * 1024),
+            patch_documents("extract_text_from_file", return_value=""),
         ):
             r = _make_upload(content=b"x" * (1024 * 1024 + 1))
         assert r.status_code == 400
@@ -344,9 +351,9 @@ class TestUploadValidation:
         row = {"id": "d1", "file_name": "notes.pdf"}
         with (
             _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value=_doc_text("pdf text")),
-            patch("routes.documents.process_document", return_value=result),
-            patch("routes.documents.table") as t,
+            patch_documents("extract_text_from_file", return_value=_doc_text("pdf text")),
+            patch_documents("process_document", return_value=result),
+            patch_documents("table", return_value=fake_table()) as t,
         ):
             t.return_value.select.return_value = []
             t.return_value.insert.return_value = [row]
@@ -360,14 +367,14 @@ class TestUploadValidation:
         row = {"id": "d2", "file_name": "chapter.docx"}
         with (
             _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value=_doc_text("docx text")),
-            patch("routes.documents.process_document", return_value=result),
-            patch("routes.documents.table") as t,
+            patch_documents("extract_text_from_file", return_value=_doc_text("docx text")),
+            patch_documents("process_document", return_value=result),
+            patch_documents("table", return_value=fake_table()) as t,
         ):
             t.return_value.select.return_value = []
             t.return_value.insert.return_value = [row]
             ct = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            r = _make_upload(filename="chapter.docx", content_type=ct)
+            r = _make_upload(filename="chapter.docx", content_type=ct, content=docx_bytes())
 
         assert r.status_code == 200
 
@@ -376,14 +383,14 @@ class TestUploadValidation:
         row = {"id": "d3", "file_name": "lecture.pptx"}
         with (
             _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value=_doc_text("pptx text")),
-            patch("routes.documents.process_document", return_value=result),
-            patch("routes.documents.table") as t,
+            patch_documents("extract_text_from_file", return_value=_doc_text("pptx text")),
+            patch_documents("process_document", return_value=result),
+            patch_documents("table", return_value=fake_table()) as t,
         ):
             t.return_value.select.return_value = []
             t.return_value.insert.return_value = [row]
             ct = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-            r = _make_upload(filename="lecture.pptx", content_type=ct)
+            r = _make_upload(filename="lecture.pptx", content_type=ct, content=pptx_bytes())
 
         assert r.status_code == 200
 
@@ -392,8 +399,8 @@ class TestUploadValidation:
         detail, not a 500 with stack trace leaked through the body."""
         with (
             _mock_validate_user(),
-            patch(
-                "routes.documents.extract_text_from_file",
+            patch_documents(
+                "extract_text_from_file",
                 side_effect=RuntimeError("scanned PDF too noisy"),
             ),
         ):
@@ -477,12 +484,12 @@ class TestUploadDocumentOrchestrator:
         result = _make_orchestrator_result(category="syllabus", is_syllabus=True)
         with (
             _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
-            patch("routes.documents.process_document", return_value=result),
-            patch("routes.documents.save_assignments_to_db"),
-            patch("routes.documents.apply_graph_update"),
-            patch("routes.documents.table") as t,
-            patch("routes.documents.schedule_document_index") as idx,
+            patch_documents("extract_text_from_file", return_value=_doc_text("text")),
+            patch_documents("process_document", return_value=result),
+            patch_documents("save_assignments_to_db"),
+            patch_documents("apply_graph_update"),
+            patch_documents("table", return_value=fake_table()) as t,
+            patch_documents("schedule_document_index") as idx,
         ):
             t.return_value.select.return_value = []
             t.return_value.insert.return_value = [
@@ -503,9 +510,9 @@ class TestUploadDocumentOrchestrator:
         row = {"id": "doc-1", "file_name": "notes.pdf", "category": "lecture_notes"}
         with (
             _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
-            patch("routes.documents.process_document", return_value=result),
-            patch("routes.documents.table") as t,
+            patch_documents("extract_text_from_file", return_value=_doc_text("text")),
+            patch_documents("process_document", return_value=result),
+            patch_documents("table", return_value=fake_table()) as t,
         ):
             t.return_value.insert.return_value = [row]
             r = _make_upload(filename="notes.pdf")
@@ -522,9 +529,9 @@ class TestUploadDocumentOrchestrator:
         )
         with (
             _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
-            patch("routes.documents.process_document", return_value=result),
-            patch("routes.documents.table") as t,
+            patch_documents("extract_text_from_file", return_value=_doc_text("text")),
+            patch_documents("process_document", return_value=result),
+            patch_documents("table", return_value=fake_table()) as t,
         ):
             t.return_value.insert.return_value = []
             r = _make_upload()
@@ -539,10 +546,10 @@ class TestUploadDocumentOrchestrator:
         result = _make_orchestrator_result()
         with (
             _mock_validate_user(),
-            patch("routes.documents.require_course_enrollment", return_value="off-99") as ro,
-            patch("routes.documents.extract_text_from_file", return_value=_doc_text("t")),
-            patch("routes.documents.process_document", return_value=result),
-            patch("routes.documents.table") as t,
+            patch_documents("require_course_enrollment", return_value="off-99") as ro,
+            patch_documents("extract_text_from_file", return_value=_doc_text("t")),
+            patch_documents("process_document", return_value=result),
+            patch_documents("table", return_value=fake_table()) as t,
         ):
             t.return_value.select.return_value = []
             t.return_value.insert.return_value = []
@@ -567,11 +574,11 @@ class TestUploadDocumentOrchestrator:
         )
         with (
             _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
-            patch("routes.documents.process_document", return_value=result),
-            patch("routes.documents.save_assignments_to_db"),
-            patch("routes.documents.apply_graph_update"),
-            patch("routes.documents.table") as t,
+            patch_documents("extract_text_from_file", return_value=_doc_text("text")),
+            patch_documents("process_document", return_value=result),
+            patch_documents("save_assignments_to_db"),
+            patch_documents("apply_graph_update"),
+            patch_documents("table", return_value=fake_table()) as t,
         ):
             t.return_value.insert.return_value = [{"id": "s1"}]
             r = _make_upload(filename="syllabus.pdf")
@@ -598,11 +605,11 @@ class TestUploadDocumentOrchestrator:
         )
         with (
             _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
-            patch("routes.documents.process_document", return_value=result),
-            patch("routes.documents.save_assignments_to_db"),
-            patch("routes.documents.apply_graph_update"),
-            patch("routes.documents.table") as t,
+            patch_documents("extract_text_from_file", return_value=_doc_text("text")),
+            patch_documents("process_document", return_value=result),
+            patch_documents("save_assignments_to_db"),
+            patch_documents("apply_graph_update"),
+            patch_documents("table", return_value=fake_table()) as t,
         ):
             t.return_value.insert.return_value = [{"id": "s_pts"}]
             r = _make_upload(filename="syllabus.pdf")
@@ -623,11 +630,11 @@ class TestUploadDocumentOrchestrator:
         )
         with (
             _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
-            patch("routes.documents.process_document", return_value=result),
-            patch("routes.documents.save_assignments_to_db") as mock_save,
-            patch("routes.documents.apply_graph_update"),
-            patch("routes.documents.table") as t,
+            patch_documents("extract_text_from_file", return_value=_doc_text("text")),
+            patch_documents("process_document", return_value=result),
+            patch_documents("save_assignments_to_db") as mock_save,
+            patch_documents("apply_graph_update"),
+            patch_documents("table", return_value=fake_table()) as t,
         ):
             t.return_value.insert.return_value = [{"id": "s2"}]
             r = _make_upload(filename="syllabus.pdf", course_id="c-7")
@@ -651,10 +658,10 @@ class TestUploadDocumentOrchestrator:
         )
         with (
             _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
-            patch("routes.documents.process_document", return_value=result),
-            patch("routes.documents.apply_graph_update") as mock_apply,
-            patch("routes.documents.table") as t,
+            patch_documents("extract_text_from_file", return_value=_doc_text("text")),
+            patch_documents("process_document", return_value=result),
+            patch_documents("apply_graph_update") as mock_apply,
+            patch_documents("table", return_value=fake_table()) as t,
         ):
             t.return_value.insert.return_value = [{"id": "a1"}]
             r = _make_upload(filename="pset.pdf", course_id="c-9")
@@ -675,10 +682,10 @@ class TestUploadDocumentOrchestrator:
         )
         with (
             _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
-            patch("routes.documents.process_document", return_value=result),
-            patch("routes.documents.apply_graph_update") as mock_apply,
-            patch("routes.documents.table") as t,
+            patch_documents("extract_text_from_file", return_value=_doc_text("text")),
+            patch_documents("process_document", return_value=result),
+            patch_documents("apply_graph_update") as mock_apply,
+            patch_documents("table", return_value=fake_table()) as t,
         ):
             t.return_value.insert.return_value = [{"id": "a2"}]
             r = _make_upload(filename="pset.pdf")
@@ -692,10 +699,10 @@ class TestUploadDocumentOrchestrator:
         )
         with (
             _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
-            patch("routes.documents.process_document", return_value=result),
-            patch("routes.documents.apply_graph_update") as mock_apply,
-            patch("routes.documents.table") as t,
+            patch_documents("extract_text_from_file", return_value=_doc_text("text")),
+            patch_documents("process_document", return_value=result),
+            patch_documents("apply_graph_update") as mock_apply,
+            patch_documents("table", return_value=fake_table()) as t,
         ):
             t.return_value.insert.return_value = [{"id": "l1"}]
             r = _make_upload()
@@ -718,9 +725,9 @@ class TestUploadSyncAgentFailure:
     def test_guardrail_failure_maps_to_502(self, exc):
         with (
             _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
-            patch("routes.documents.process_document", side_effect=exc),
-            patch("routes.documents.table") as t,
+            patch_documents("extract_text_from_file", return_value=_doc_text("text")),
+            patch_documents("process_document", side_effect=exc),
+            patch_documents("table", return_value=fake_table()) as t,
         ):
             t.return_value.select.return_value = []  # no idempotent replay hit
             r = _make_upload()
@@ -731,9 +738,9 @@ class TestUploadSyncAgentFailure:
     def test_unexpected_failure_maps_to_502(self):
         with (
             _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
-            patch("routes.documents.process_document", side_effect=RuntimeError("boom")),
-            patch("routes.documents.table") as t,
+            patch_documents("extract_text_from_file", return_value=_doc_text("text")),
+            patch_documents("process_document", side_effect=RuntimeError("boom")),
+            patch_documents("table", return_value=fake_table()) as t,
         ):
             t.return_value.select.return_value = []
             r = _make_upload()
@@ -806,11 +813,11 @@ class TestUploadDocumentStreaming:
         syl_run = AsyncMock(return_value=SimpleNamespace(output=syllabus))
 
         return (
-            patch("routes.documents.classifier_agent.run", cls_run),
-            patch("routes.documents.summary_agent.run", sum_run),
-            patch("routes.documents.concept_extraction_agent.run", cpt_run),
-            patch("routes.documents.syllabus_extraction_agent.run", syl_run),
-            patch("routes.documents.apply_concepts_to_graph", AsyncMock(return_value=0)),
+            patch("agents.classifier.classifier_agent.run", cls_run),
+            patch("agents.summary.summary_agent.run", sum_run),
+            patch("agents.concept_extraction.concept_extraction_agent.run", cpt_run),
+            patch("agents.syllabus_extraction.syllabus_extraction_agent.run", syl_run),
+            patch("agents.document.apply_concepts_to_graph", AsyncMock(return_value=0)),
         )
 
     def test_emits_full_event_sequence_on_happy_path(self):
@@ -820,10 +827,10 @@ class TestUploadDocumentStreaming:
         cls_p, sum_p, cpt_p, syl_p, doc_p = self._mock_agent_runs()
         with (
             _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
+            patch_documents("extract_text_from_file", return_value=_doc_text("text")),
             cls_p, sum_p, cpt_p, syl_p, doc_p,
-            patch("routes.documents.table") as t,
-            patch("routes.documents._spawn_post_roll"),  # avoid stray asyncio.create_task in tests
+            patch_documents("table", return_value=fake_table()) as t,
+            patch_documents("_spawn_post_roll"),  # avoid stray asyncio.create_task in tests
         ):
             t.return_value.insert.return_value = [{"id": "stream-1"}]
             with client.stream(
@@ -860,10 +867,10 @@ class TestUploadDocumentStreaming:
         cls_p, sum_p, cpt_p, syl_p, doc_p = self._mock_agent_runs()
         with (
             _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
+            patch_documents("extract_text_from_file", return_value=_doc_text("text")),
             cls_p, sum_p, cpt_p, syl_p, doc_p,
-            patch("routes.documents.table") as t,
-            patch("routes.documents._spawn_post_roll") as spawn,
+            patch_documents("table", return_value=fake_table()) as t,
+            patch_documents("_spawn_post_roll") as spawn,
         ):
             t.return_value.insert.return_value = [{"id": "stream-1"}]
             with client.stream(
@@ -882,12 +889,12 @@ class TestUploadDocumentStreaming:
         cls_p, sum_p, cpt_p, syl_p, doc_p = self._mock_agent_runs(is_syllabus=True)
         with (
             _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
+            patch_documents("extract_text_from_file", return_value=_doc_text("text")),
             cls_p, sum_p, cpt_p, syl_p, doc_p,
-            patch("routes.documents.save_assignments_to_db"),
-            patch("routes.documents.apply_graph_update"),
-            patch("routes.documents.table") as t,
-            patch("routes.documents._spawn_post_roll"),
+            patch_documents("save_assignments_to_db"),
+            patch_documents("apply_graph_update"),
+            patch_documents("table", return_value=fake_table()) as t,
+            patch_documents("_spawn_post_roll"),
         ):
             t.return_value.insert.return_value = [{"id": "stream-syl"}]
             with client.stream(
@@ -925,13 +932,13 @@ class TestUploadDocumentStreaming:
         cls_p, sum_p, cpt_p, syl_p, doc_p = self._mock_agent_runs()
         with (
             _mock_validate_user(),
-            patch("routes.documents.OCR_ASYNC_ENABLED", True),
-            patch(
-                "routes.documents.extract_text_from_file",
+            patch_documents("OCR_ASYNC_ENABLED", True),
+            patch_documents(
+                "extract_text_from_file",
                 side_effect=RuntimeError("scanned PDF too noisy"),
             ),
             cls_p, sum_p, cpt_p, syl_p, doc_p,
-            patch("routes.documents.table") as t,
+            patch_documents("table", return_value=fake_table()) as t,
         ):
             t.return_value.select.return_value = []  # no idempotency cache hit
             with client.stream(
@@ -971,10 +978,10 @@ class TestUploadDocumentStreaming:
         cls_p, sum_p, cpt_p, syl_p, doc_p = self._mock_agent_runs()
         with (
             _mock_validate_user(),
-            patch("routes.documents.OCR_ASYNC_ENABLED", True),
-            patch("routes.documents.extract_text_from_file", return_value=""),
+            patch_documents("OCR_ASYNC_ENABLED", True),
+            patch_documents("extract_text_from_file", return_value=""),
             cls_p, sum_p, cpt_p, syl_p, doc_p,
-            patch("routes.documents.table") as t,
+            patch_documents("table", return_value=fake_table()) as t,
         ):
             t.return_value.select.return_value = []  # no idempotency cache hit
             with client.stream(
@@ -1005,8 +1012,8 @@ class TestUploadDocumentStreaming:
         test_async_ocr_failure_emits_terminal_error_no_legacy_fallthrough.)"""
         with (
             _mock_validate_user(),
-            patch(
-                "routes.documents.extract_text_from_file",
+            patch_documents(
+                "extract_text_from_file",
                 side_effect=RuntimeError("docling crashed"),
             ),
         ):
@@ -1026,8 +1033,8 @@ class TestUploadDocumentStreaming:
         value is pinned by test_default_cap_is_100_mb.)"""
         with (
             _mock_validate_user(),
-            patch("routes.documents.MAX_FILE_SIZE", 1024 * 1024),
-            patch("routes.documents.extract_text_from_file", return_value=""),
+            patch_documents("MAX_FILE_SIZE", 1024 * 1024),
+            patch_documents("extract_text_from_file", return_value=""),
         ):
             r = client.post(
                 "/api/documents/upload",
@@ -1055,14 +1062,14 @@ class TestUploadDocumentStreaming:
         cls_p, sum_p, cpt_p, syl_p, doc_p = self._mock_agent_runs()
         with (
             _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
+            patch_documents("extract_text_from_file", return_value=_doc_text("text")),
             cls_p, sum_p, cpt_p, syl_p, doc_p,
-            patch(
-                "routes.documents._persist_document",
+            patch_documents(
+                "_persist_document",
                 side_effect=RuntimeError("documents insert blew up"),
             ),
-            patch("routes.documents.table") as t,
-            patch("routes.documents._spawn_post_roll") as spawn,
+            patch_documents("table", return_value=fake_table()) as t,
+            patch_documents("_spawn_post_roll") as spawn,
         ):
             t.return_value.select.return_value = []  # no idempotency cache hit
             with client.stream(
@@ -1108,9 +1115,9 @@ class TestUploadStreamingAgentFailure:
     def test_agent_failure_emits_terminal_error_done_pair(self, exc):
         with (
             _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
-            patch("routes.documents.classifier_agent.run", AsyncMock(side_effect=exc)),
-            patch("routes.documents.table") as t,
+            patch_documents("extract_text_from_file", return_value=_doc_text("text")),
+            patch("agents.classifier.classifier_agent.run", AsyncMock(side_effect=exc)),
+            patch_documents("table", return_value=fake_table()) as t,
         ):
             t.return_value.select.return_value = []  # no idempotency cache hit
             with client.stream(
@@ -1143,7 +1150,7 @@ class TestUploadStreamingAgentFailure:
 
 class TestRequestIDPropagation:
     def test_x_request_id_header_on_response(self):
-        with _mock_validate_user(), patch("routes.documents.table") as t:
+        with _mock_validate_user(), patch_documents("table", return_value=fake_table()) as t:
             t.return_value.select.return_value = []
             r = client.get("/api/documents/user/u1")
         assert r.status_code == 200
@@ -1151,7 +1158,7 @@ class TestRequestIDPropagation:
         assert "x-request-id" in {k.lower() for k in r.headers.keys()}
 
     def test_caller_supplied_x_request_id_passes_through(self):
-        with _mock_validate_user(), patch("routes.documents.table") as t:
+        with _mock_validate_user(), patch_documents("table", return_value=fake_table()) as t:
             t.return_value.select.return_value = []
             r = client.get(
                 "/api/documents/user/u1",
@@ -1160,7 +1167,7 @@ class TestRequestIDPropagation:
         assert r.headers.get("X-Request-ID") == "custom-trace-1234"
 
     def test_invalid_caller_supplied_id_replaced(self):
-        with _mock_validate_user(), patch("routes.documents.table") as t:
+        with _mock_validate_user(), patch_documents("table", return_value=fake_table()) as t:
             t.return_value.select.return_value = []
             r = client.get(
                 "/api/documents/user/u1",
@@ -1171,7 +1178,7 @@ class TestRequestIDPropagation:
         assert len(r.headers.get("X-Request-ID", "")) >= 8
 
     def test_http_error_carries_request_id_in_body(self):
-        with _mock_validate_user(), patch("routes.documents.table") as t:
+        with _mock_validate_user(), patch_documents("table", return_value=fake_table()) as t:
             t.return_value.select.return_value = []  # 404 path
             r = client.delete("/api/documents/doc/missing?user_id=u1")
         assert r.status_code == 404
@@ -1206,9 +1213,9 @@ class TestUploadIdempotency:
         }
         with (
             _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
-            patch("routes.documents.process_document") as proc,
-            patch("routes.documents.table") as t,
+            patch_documents("extract_text_from_file", return_value=_doc_text("text")),
+            patch_documents("process_document") as proc,
+            patch_documents("table", return_value=fake_table()) as t,
         ):
             t.return_value.select.return_value = [existing]
             r = client.post(
@@ -1244,10 +1251,10 @@ class TestUploadIdempotency:
         cls_run = AsyncMock()
         with (
             _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
-            patch("routes.documents.classifier_agent.run", cls_run),
-            patch("routes.documents.table") as t,
-            patch("routes.documents._spawn_post_roll"),
+            patch_documents("extract_text_from_file", return_value=_doc_text("text")),
+            patch("agents.classifier.classifier_agent.run", cls_run),
+            patch_documents("table", return_value=fake_table()) as t,
+            patch_documents("_spawn_post_roll"),
         ):
             t.return_value.select.return_value = [existing]
             with client.stream(
@@ -1298,7 +1305,7 @@ class TestEmptyExtractionGuard:
     def test_rejects_pdf_with_no_extractable_text(self):
         with (
             _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value=""),
+            patch_documents("extract_text_from_file", return_value=""),
         ):
             r = _make_upload()
 
@@ -1315,17 +1322,17 @@ class TestEmptyExtractionGuard:
         at = "x" * MIN_EXTRACTED_CHARS
         with (
             _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value=below),
+            patch_documents("extract_text_from_file", return_value=below),
         ):
             assert _make_upload().status_code == 422
         with (
             _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value="  " + at + "\n"),
-            patch(
-                "routes.documents.process_document",
+            patch_documents("extract_text_from_file", return_value="  " + at + "\n"),
+            patch_documents(
+                "process_document",
                 return_value=_make_orchestrator_result(category="other"),
             ),
-            patch("routes.documents.table") as t,
+            patch_documents("table", return_value=fake_table()) as t,
         ):
             t.return_value.select.return_value = []
             t.return_value.insert.return_value = [{"id": "d50", "file_name": "notes.pdf"}]
@@ -1335,7 +1342,7 @@ class TestEmptyExtractionGuard:
     def test_rejects_whitespace_only_extraction(self):
         with (
             _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value="  \n\n\t   \n "),
+            patch_documents("extract_text_from_file", return_value="  \n\n\t   \n "),
         ):
             r = _make_upload()
 
@@ -1348,7 +1355,7 @@ class TestEmptyExtractionGuard:
         testing for emptiness alone would be too weak."""
         with (
             _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value="Page 1 of 13"),
+            patch_documents("extract_text_from_file", return_value="Page 1 of 13"),
         ):
             r = _make_upload()
 
@@ -1360,9 +1367,9 @@ class TestEmptyExtractionGuard:
         is never reached and nothing is written."""
         with (
             _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value=""),
-            patch("routes.documents.process_document") as agent,
-            patch("routes.documents.table") as t,
+            patch_documents("extract_text_from_file", return_value=""),
+            patch_documents("process_document") as agent,
+            patch_documents("table", return_value=fake_table()) as t,
         ):
             r = _make_upload()
 
@@ -1378,13 +1385,13 @@ class TestEmptyExtractionGuard:
         )
         with (
             _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value=real_text),
-            patch(
-                "routes.documents.process_document",
+            patch_documents("extract_text_from_file", return_value=real_text),
+            patch_documents(
+                "process_document",
                 return_value=_make_orchestrator_result(category="assignment"),
             ),
-            patch("routes.documents.apply_graph_update"),
-            patch("routes.documents.table") as t,
+            patch_documents("apply_graph_update"),
+            patch_documents("table", return_value=fake_table()) as t,
         ):
             t.return_value.select.return_value = []
             t.return_value.insert.return_value = [{"id": "d9", "file_name": "notes.pdf"}]

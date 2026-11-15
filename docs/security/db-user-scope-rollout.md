@@ -363,27 +363,31 @@ until graduation (§9).
 5. **Policies/grants** (2a–2c) are inert while the flag is off, so leave them in
    place. Their reverse SQL is in the release doc §3.
 
-## 8. Later: step 2e, Realtime (`realtime_rls`)
+## 8. Step 2e, Realtime: done
 
-Live room chat moves off the anon key to a bridge token (`iss: sapling-realtime`,
-`docs/security/realtime-jwt-bridge-design.md`), behind its own flag
-`realtime_rls` (built separately). Until then `/api/social` is service-marked
-and `room_messages` is exempt, so shadow never reports on social.
+Live room chat runs on a bridge token (`iss: sapling-realtime`,
+`docs/security/realtime-jwt-bridge-design.md`), not the anon key. It shipped
+behind its own flag, `realtime_rls`, which went to default `on` on staging
+and prod with live chat confirmed working through the bridge. `/api/social`
+stays service-marked, so shadow still never reports on social.
 
-Once `realtime_rls` is fully on (default `on`, 100%) on an environment and live
-chat is confirmed working through the bridge, there is one manual hardening
-step for that environment:
+The hardening step this section used to leave to Andres is now a reviewed
+migration, `20261109073255_room_messages_rls_enable.sql`: RLS on for
+`room_messages`, anon's privileges revoked (`REVOKE ALL`, so the
+TRUNCATE/REFERENCES/TRIGGER the June lockdown left go too; step 2a had
+already taken them), authenticated exactly SELECT, gated by the member
+policy. It is a no-op on prod (RLS on since June, anon already revoked) and
+changes staging when it migrates. The same change removed the client's anon
+subscription path and stopped reading the `realtime_rls` flag; the flag
+stays registered (stored default `on`) for one release so frontend bundles
+older than the change keep live chat, and a follow-up deletes it with its
+stored rows. Nothing is left to do by hand. Rollback: revert that change, then (staging only, never prod) `GRANT
+SELECT ON public.room_messages TO anon; ALTER TABLE public.room_messages
+DISABLE ROW LEVEL SECURITY;`.
 
-- **[Andres]** `ALTER TABLE room_messages ENABLE ROW LEVEL SECURITY;` (prod
-  already has it on with zero policies; check staging) and revoke `anon`'s
-  `SELECT` on `room_messages` (and the stray TRUNCATE/REFERENCES/TRIGGER the
-  June lockdown left, which step 2a revokes). Then confirm a student still gets
-  live messages and an anon-key client gets none. Do this through a reviewed
-  migration if the 2e workstream provides one. Never use the dashboard SQL
-  editor for DDL.
-
-Do this only after `realtime_rls` is fully on. Before that, it cuts live chat
-for everyone still on the anon-key path.
+To check an environment after it migrates: a student in a room still gets
+live messages, and an anon-key client gets none (PostgREST
+`/rest/v1/room_messages` with the anon key answers 401).
 
 ## 9. Graduation
 

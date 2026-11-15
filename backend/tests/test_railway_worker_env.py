@@ -38,6 +38,8 @@ WORKER_PATH_MODULES = (
     "services/extraction_backends/*.py",
     "services/cache.py",
     "services/document_jobs.py",
+    "services/staged_jobs.py",
+    "services/document_pipeline.py",
     "services/document_indexing.py",
     "services/course_context_service.py",
     "services/rag_service.py",
@@ -53,6 +55,8 @@ WORKER_PATH_MODULES = (
 
 #: Read in those modules but not on a worker's path, or not the API's to share.
 EXCLUDED = {
+    "ADMIN_REAUTH_WINDOW_SECONDS": "admin step-up on admin routes (HTTP only)",
+    "ADMIN_DESTRUCTIVE_REAUTH_WINDOW_SECONDS": "admin step-up on admin routes (HTTP only)",
     "ACCOUNT_SYNC_INBOUND_TOKEN": "admin account-copy routes only",
     "ACCOUNT_SYNC_PEER_TOKEN": "admin account-copy routes only",
     "ACCOUNT_SYNC_PEER_URL": "admin account-copy routes only",
@@ -63,6 +67,12 @@ EXCLUDED = {
     "EMAIL_FROM": "email routes only; no job sends email",
     "EMAIL_REPLY_TO": "email routes only; no job sends email",
     "RESEND_API_KEY": "email routes only; no job sends email",
+    "SPEND_ALERT_DAILY_USD": "the API's spend-alert lifespan task only",
+    "SPEND_ALERT_USER_DAILY_USD": "the API's spend-alert lifespan task only",
+    "SPEND_ALERT_DENIED_PER_HOUR": "the API's spend-alert lifespan task only",
+    "SPEND_ALERT_5XX_PER_HOUR": "the API's spend-alert lifespan task only",
+    "SPEND_ALERT_SPIKE_FACTOR": "the API's spend-alert lifespan task only",
+    "SPEND_ALERT_RECIPIENTS": "the API's spend-alert lifespan task only",
     "FRONTEND_URL": "OAuth redirects and cookies (HTTP only)",
     "SECURE_COOKIES": "session cookies (HTTP only)",
     "GOOGLE_AUTH_REDIRECT_URI": "OAuth (HTTP only)",
@@ -161,3 +171,13 @@ def test_the_worker_agent_slots_are_shared_and_real():
 
 def test_exclusions_are_not_also_shared():
     assert not (set(EXCLUDED) & _shared())
+
+
+def test_the_api_ships_at_one_replica():
+    """#117 review: the first `MANAGE_API = true` apply must not bring up a
+    second replica before the cut-over flags are on. API_REPLICAS goes to 2
+    only as the last step of docs/deploy/railway.md "Two API replicas"; that
+    change updates this pin in the same commit, on purpose."""
+    src = RAILWAY_TS.read_text()
+    assert re.search(r"^const API_REPLICAS = 1;$", src, re.MULTILINE)
+    assert "replicas: API_REPLICAS" in src

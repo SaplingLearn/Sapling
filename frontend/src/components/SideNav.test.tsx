@@ -267,6 +267,17 @@ describe("SideNav — active vs inactive", () => {
     expect(tree.getAttribute("style") || "").not.toMatch(/--bg-soft/);
   });
 
+  it.each(["/flashcards", "/flashcards/deck-1", "/study/guide"])(
+    "marks Study active on %s, a Study page",
+    (path) => {
+      mockedUsePathname.mockReturnValue(path);
+      renderRail();
+      const study = screen.getByText("Study").closest("a")!;
+      expect(study.getAttribute("style") || "").toMatch(/font-weight:\s*600/);
+      expect(study.getAttribute("style") || "").toMatch(/--bg-soft/);
+    },
+  );
+
   it("treats / and /dashboard/... as the Dashboard route", () => {
     mockedUsePathname.mockReturnValue("/");
     renderRail();

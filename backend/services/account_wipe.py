@@ -12,18 +12,23 @@ Deleted (directly, or through the FK cascades noted):
   then any private `course_chunks` still carrying `uploader_id = user`
 * notes → note_concepts
 * flashcards
+* flashcard_sets (saved selections; they own no cards)
 * sessions → messages (feedback.session_id is SET NULL; feedback is kept)
 * study_guides
 * quiz_attempts → quiz_responses
 * quiz_context
 * graph_nodes → graph_edges, node_mastery_events, note_concepts
 * xp_events, user_achievements
+* document_uploads, tutor_pending_sessions (in-flight work, never bundled)
 
 Kept: users row, user_profiles, user_settings (its `featured_achievement_ids`
 is emptied, since every achievement it named is gone), user_roles,
 oauth_tokens, gradescope_credentials, user_cosmetics, social (rooms,
 friendships, …), feedback, issue_reports, events, llm_usage, admin_audit_log,
-and class-wide aggregates (offering_concept_stats).
+and class-wide aggregates (offering_concept_stats). `KEPT_PER_USER` names every
+kept table that has a `user_id` column, with its reason; the 30-day purge of a
+self-deleted account (services/account_purge.py) runs this wipe first and then
+removes most of them.
 
 Not atomic — PostgREST has no transactions. Each step selects the ids it is
 about to delete and deletes exactly those, in bounded batches, so the counts
@@ -59,6 +64,9 @@ _BATCH = 100
 _USER_TABLES: tuple[tuple[str, str], ...] = (
     ("notes", "id"),
     ("flashcards", "id"),
+    # Saved flashcard selections (a name, a course, concept names). Account
+    # data like the cards themselves: wiped here AND copied by the bundle.
+    ("flashcard_sets", "id"),
     ("sessions", "id"),
     ("study_guides", "id"),
     ("quiz_attempts", "id"),
@@ -70,6 +78,10 @@ _USER_TABLES: tuple[tuple[str, str], ...] = (
     # copied: a staged upload is in-flight work, not account data — a finished
     # one is already a `documents` row, which the bundle copies.
     ("document_uploads", "id"),
+    # #117 tutor sessions not yet started, and end/delete tombstones (flag
+    # stateless_tutor_sessions). Transient like document_uploads: wiped, never
+    # copied — a session someone chats in is a `sessions` row.
+    ("tutor_pending_sessions", "session_id"),
 )
 
 #: Every table the wipe deletes from directly.
@@ -92,6 +104,36 @@ WIPED_BY_CASCADE: dict[str, str] = {
     "note_concepts": "notes",
     "messages": "sessions",
     "quiz_responses": "quiz_attempts",
+}
+
+
+#: Every table with a `user_id` column that the wipe deliberately keeps, with
+#: the reason. tests/test_account_wipe.py fails on a `user_id` table (replayed
+#: from the migrations) that is neither wiped nor named here. The 30-day
+#: account purge (services/account_purge.py) starts from this wipe and then
+#: removes or anonymises most of these; its own `KEPT_AFTER_PURGE` names what
+#: even the purge keeps.
+KEPT_PER_USER: dict[str, str] = {
+    "user_profiles": "the account's identity, not study data",
+    "user_settings": "the account's preferences and consent choices",
+    "user_roles": "access control, managed by admins",
+    "oauth_tokens": "sign-in credentials",
+    "gradescope_credentials": "credentials, managed by the student",
+    "user_cosmetics": "purchased/unlocked cosmetics belong to the account",
+    "friendships": "social graph, shared with another student",
+    "room_members": "social: study-room membership",
+    "room_messages": "social: messages other members read",
+    "room_reactions": "social: reactions on shared messages",
+    "room_activity": "social: study-room activity feed",
+    "room_bans": "moderation record, kept by design",
+    "feedback": "product feedback the student sent us",
+    "issue_reports": "bug reports the student sent us",
+    "events": "telemetry",
+    "llm_usage": "telemetry and the billing record of model spend",
+    "course_chunk_contributors": (
+        "removed per document by chunk_visibility.withdraw_document_chunks; a "
+        "row stays only while a chunk is still produced by another live document"
+    ),
 }
 
 

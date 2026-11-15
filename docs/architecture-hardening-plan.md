@@ -29,14 +29,16 @@ Keep: the single LLM chokepoint (`agents/_providers.py`) with function mode and 
 
 ## Phases
 
-| Phase | Weeks | Ticket | Done when |
-| --- | --- | --- | --- |
-| 0. Hygiene: CVEs, Railway config in repo, backups | 1 | #114 | No critical/high prod advisories; a restore has been tested |
-| 1. Authorization in the database (`docs/security/rls-step2-plan.md`) | 2 to 4 | #115 | Every table has policies; cross-user matrix runs in CI |
-| 2. Job queue and worker service | 3 to 6 | #116 | API image has no torch/Chromium; a 50-page PDF upload doesn't move chat latency |
-| 3. Async, stateless API on 2 replicas | 5 to 8 | #117 | 2 replicas serve prod; nightly load test meets targets |
-| 4. Domain modules | 7 to 10 | #118 | No route file over 600 lines; no function over complexity 25 |
-| 5. LLM resilience and cost | 9 to 12 | #119 | A forced provider outage in staging falls back with no user-facing errors |
+| Phase | Weeks | Ticket | Done when | Status (2026-11-09, `main`) |
+| --- | --- | --- | --- | --- |
+| 0. Hygiene: CVEs, Railway config in repo, backups | 1 | #114 | No critical/high prod advisories; a restore has been tested | Code shipped: CVE upgrades (#808), `pg_dump` before every promote (#810), `.railway/railway.ts` (#836, unapplied). Open: paid plan / PITR decision. |
+| 1. Authorization in the database (`docs/security/rls-step2-plan.md`) | 2 to 4 | #115 | Every table has policies; cross-user matrix runs in CI | Code shipped (waves 1–2): RLS policies, the matrix in CI, `db_user_scope` and `realtime_rls` (flags off). Open: the step 2d signing key, then the flag rollouts. |
+| 2. Job queue and worker service | 3 to 6 | #116 | API image has no torch/Chromium; a 50-page PDF upload doesn't move chat latency | Code shipped (waves 1–3): `jobs` queue, `python -m worker`, uploads, indexing, Gradescope and course context on it behind `jobs_queue`; `api`/`worker` image targets. Open: the Railway worker service, the flag rollout, the API image cut-over. |
+| 3. Async, stateless API on 2 replicas | 5 to 8 | #117 | 2 replicas serve prod; nightly load test meets targets | Code shipped (#839, #850): async DB seam, sync-DB-on-loop allowlist empty, `stateless_*` flags, nightly load test. Open (human): the flags on, `API_REPLICAS = 2`, the `LOADTEST_TARGET_URL` variable. |
+| 4. Domain modules | 7 to 10 | #118 | No route file over 600 lines; no function over complexity 25 | **Met** (#840, #851): the code-size baseline is empty; import-linter contracts in CI. Open: drop the re-export shims, lower `max-complexity` in steps. |
+| 5. LLM resilience and cost | 9 to 12 | #119 | A forced provider outage in staging falls back with no user-facing errors | Code shipped (#814, #838): retries, timeouts, breaker, `llm_fallback`, `llm_budget`, cost signal, `llm_outage_drill`. Open: the staging drill itself. |
+
+None of it is on production yet: prod still runs `6ed0f13c`, and one promote ships waves 1–4 (`docs/releases/2026-11-architecture-hardening-wave3.md`).
 
 Phase 4's target layout, split order and the ratchet that holds both numbers until then: `docs/design/domain-modules.md`.
 

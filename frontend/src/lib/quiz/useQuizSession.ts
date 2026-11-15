@@ -45,6 +45,8 @@ export interface QuizActions {
   write?(text: string): void;
   submitAnswer(): void;
   next(): void;
+  /** Move to question `index` (back, or ahead to skip). Ignored mid-request. */
+  goTo?(index: number): void;
   finish(): void;
   requestLeave(): void;
   cancelLeave(): void;
@@ -536,6 +538,13 @@ export function useQuizSession(userId: string, entry: EntryRequest): QuizSession
       next: () => {
         const next = apply({ type: "NEXT" });
         if (next.phase === "submitting") void runSubmit(next);
+      },
+
+      goTo: index => {
+        // Never while an answer is on its way: its response is placed by the
+        // question it was FOR, and the cursor must still be there to take it.
+        if (answeringRef.current) return;
+        apply({ type: "GO_TO", index });
       },
 
       finish: () => {

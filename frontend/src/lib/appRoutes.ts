@@ -13,6 +13,7 @@
  */
 export const SHELL_PREFIXES = [
   "/dashboard", "/learn", "/quiz", "/study", "/tree",
+  "/flashcards", // a Study tool with a top-level path of its own
   "/library", "/calendar", "/social",
   "/settings", "/achievements", "/admin",
   "/gradebook", "/course-planner", "/notetaker", "/profile",

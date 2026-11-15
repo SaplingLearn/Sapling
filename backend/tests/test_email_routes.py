@@ -13,9 +13,11 @@ from fastapi.testclient import TestClient
 
 import config
 from main import app
+from tests.split_patches import ADMIN_MODULES, patch_admin, setattr_in
 from routes import admin_email
 from services import email_service
 from services.encryption import encrypt
+from tests.split_patches import set_auth_table
 
 client = TestClient(app)
 
@@ -69,6 +71,7 @@ def unsub_tables(monkeypatch):
     factory, made = _factory()
     monkeypatch.setattr(email_service, "table", factory)
     factory("email_suppressions")
+    factory("email_alert_suppressions")
     return made
 
 
@@ -91,6 +94,47 @@ def test_unsubscribe_post_suppresses_the_hash(unsub_tables):
     call = unsub_tables["email_suppressions"].upsert.call_args
     assert call.args[0] == {"recipient_hash": _h("a@bu.edu"), "reason": "unsubscribe"}
     assert call.kwargs == {"on_conflict": "recipient_hash", "ignore_duplicates": True}
+    unsub_tables["email_alert_suppressions"].upsert.assert_not_called()
+
+
+def test_the_all_scope_pages_do_not_promise_every_email_stops(unsub_tables):
+    """An `all` unsubscribe leaves admin alerts running (they have their own
+    link), so neither page may say every email from Sapling stops."""
+    token = email_service.unsubscribe_token("a@bu.edu")
+    for r in (client.get(f"/api/email/unsubscribe?t={token}"),
+              client.post(f"/api/email/unsubscribe?t={token}")):
+        assert r.status_code == 200
+        text = r.text.lower()
+        assert "all emails" not in text and "any more emails" not in text
+        assert "admin alerts" in text and "their own unsubscribe link" in text
+
+
+def test_the_ops_alert_link_stops_ops_alerts_only(unsub_tables):
+    token = email_service.unsubscribe_token("a@bu.edu", scope="ops_alert")
+    page = client.get(f"/api/email/unsubscribe?t={token}&scope=ops_alert")
+    assert page.status_code == 200 and "admin alerts" in page.text
+    assert f'action="/api/email/unsubscribe?t={token}&amp;scope=ops_alert"' in page.text
+    unsub_tables["email_alert_suppressions"].upsert.assert_not_called()
+
+    r = client.post(f"/api/email/unsubscribe?t={token}&scope=ops_alert")
+    assert r.status_code == 200 and "admin alerts" in r.text
+    call = unsub_tables["email_alert_suppressions"].upsert.call_args
+    assert call.args[0] == {"recipient_hash": _h("a@bu.edu"), "reason": "unsubscribe"}
+    unsub_tables["email_suppressions"].upsert.assert_not_called()
+
+
+@pytest.mark.parametrize("method", ["get", "post"])
+def test_a_link_cannot_be_rescoped(unsub_tables, method):
+    """The signature binds the scope: a broadcast link does not stop ops
+    alerts, an ops link does not stop everything, and no other scope exists."""
+    everything = email_service.unsubscribe_token("a@bu.edu")
+    ops = email_service.unsubscribe_token("a@bu.edu", scope="ops_alert")
+    for query in (f"t={everything}&scope=ops_alert", f"t={ops}", f"t={ops}&scope=all",
+                  f"t={everything}&scope=everything"):
+        r = getattr(client, method)(f"/api/email/unsubscribe?{query}")
+        assert r.status_code == 400, query
+    unsub_tables["email_suppressions"].upsert.assert_not_called()
+    unsub_tables["email_alert_suppressions"].upsert.assert_not_called()
 
 
 def test_rfc8058_one_click_post(unsub_tables):
@@ -159,9 +203,9 @@ def test_single_approve_enqueues_youre_in(monkeypatch, sent):
     stored = {"id": "w1", "email": "A@B.co", "approved_at": None}
     made_rows = factory("newsletter_emails")
     made_rows.select.return_value = [stored]
-    monkeypatch.setattr("routes.admin.table", factory)
-    monkeypatch.setattr("routes.auth.table", factory)
-    with patch("routes.admin.log_admin_action"):
+    setattr_in(monkeypatch, ADMIN_MODULES, "table", factory)
+    set_auth_table(monkeypatch, factory)
+    with patch_admin("log_admin_action"):
         r = client.post("/api/admin/allowlist/approve", json={"email": "A@B.co"})
     assert r.status_code == 200
     assert r.json() == {"email": stored}
@@ -177,9 +221,9 @@ def test_single_approve_greets_a_named_entry_and_hides_the_ciphertext(monkeypatc
     factory("newsletter_emails").select.return_value = [
         {"id": "w1", "email": "a@bu.edu", "approved_at": None, "first_name": encrypt("Ada")},
     ]
-    monkeypatch.setattr("routes.admin.table", factory)
-    monkeypatch.setattr("routes.auth.table", factory)
-    with patch("routes.admin.log_admin_action"):
+    setattr_in(monkeypatch, ADMIN_MODULES, "table", factory)
+    set_auth_table(monkeypatch, factory)
+    with patch_admin("log_admin_action"):
         r = client.post("/api/admin/allowlist/approve", json={"email": "a@bu.edu"})
     assert r.status_code == 200
     # no first_name, encrypted or not
@@ -196,8 +240,8 @@ def test_bulk_approve_greets_named_entries(monkeypatch, sent):
         {"id": "w1", "email": "ada@bu.edu", "approved_at": None, "first_name": encrypt("Ada")},
         {"id": "w2", "email": "anon@bu.edu", "approved_at": None, "first_name": None},
     ])
-    monkeypatch.setattr("routes.admin.table", factory)
-    with patch("routes.admin.log_admin_action"):
+    setattr_in(monkeypatch, ADMIN_MODULES, "table", factory)
+    with patch_admin("log_admin_action"):
         r = client.post("/api/admin/allowlist/approve-bulk", json={"emails": ["ada@bu.edu", "anon@bu.edu"]})
     assert r.status_code == 200, r.text
     by_to = {c.kwargs["to"]: c.kwargs["html"] for c in sent.call_args_list}
@@ -216,7 +260,7 @@ def test_bulk_approve_greets_named_entries(monkeypatch, sent):
     {},
 ])
 def test_bulk_approve_validation(payload, sent):
-    with patch("routes.admin.table") as t:
+    with patch_admin("table") as t:
         r = client.post("/api/admin/allowlist/approve-bulk", json=payload)
     assert r.status_code == 422
     t.assert_not_called()
@@ -234,8 +278,8 @@ def test_bulk_approve_only_stamps_null_and_inserts_missing(monkeypatch, sent):
         {"id": "w1", "email": "Pending@BU.edu", "created_at": "2026-02-01T00:00:00Z",
          "approved_at": "2026-10-22T00:00:00Z", "joined_at": None, "joined_user_id": None},
     ]
-    monkeypatch.setattr("routes.admin.table", factory)
-    with patch("routes.admin.log_admin_action") as audit:
+    setattr_in(monkeypatch, ADMIN_MODULES, "table", factory)
+    with patch_admin("log_admin_action") as audit:
         r = client.post("/api/admin/allowlist/approve-bulk", json={
             "emails": [" pending@bu.edu", "ALREADY@bu.edu", "new@bu.edu", "new@bu.edu"],
         })
@@ -285,7 +329,7 @@ def test_allowlist_joins_invite_status(monkeypatch):
     factory("email_sends").select.return_value = [
         {"dedupe_key": f"waitlist_approved:{_h('sent@bu.edu')}", "status": "sent"},
     ]
-    monkeypatch.setattr("routes.admin.table", factory)
+    setattr_in(monkeypatch, ADMIN_MODULES, "table", factory)
     r = client.get("/api/admin/allowlist")
     assert r.status_code == 200
     by_id = {e["id"]: e["invite_status"] for e in r.json()["emails"]}
@@ -298,7 +342,7 @@ def test_allowlist_status_lookup_is_chunked(monkeypatch):
     factory, made = _factory()
     rows = [{"id": f"w{i}", "email": f"u{i}@bu.edu"} for i in range(120)]
     factory("newsletter_emails").select_with_count.return_value = _paged(rows)
-    monkeypatch.setattr("routes.admin.table", factory)
+    setattr_in(monkeypatch, ADMIN_MODULES, "table", factory)
     r = client.get("/api/admin/allowlist")
     assert r.status_code == 200
     assert made["email_sends"].select.call_count == 3  # 50 + 50 + 20
@@ -310,7 +354,7 @@ def test_allowlist_survives_a_status_read_error(monkeypatch):
         [{"id": "w1", "email": "a@bu.edu"}]
     )
     factory("email_sends").select.side_effect = RuntimeError("no such table")
-    monkeypatch.setattr("routes.admin.table", factory)
+    setattr_in(monkeypatch, ADMIN_MODULES, "table", factory)
     r = client.get("/api/admin/allowlist")
     assert r.status_code == 200
     assert r.json()["emails"][0]["invite_status"] is None
@@ -364,6 +408,10 @@ def test_audiences_dedupe_and_exclude_suppressed(audience_tables):
     ]}
     users_call = audience_tables["users"].select_with_count.call_args
     assert users_call.kwargs["filters"] == {"is_approved": "eq.true", "deleted_at": "is.null"}
+    # Only a suppression of every (non-ops) kind keeps an address out of a
+    # broadcast; an ops-only unsubscribe (its own table) is never read here.
+    audience_tables["email_suppressions"].select_with_count.assert_called()
+    assert "email_alert_suppressions" not in audience_tables
 
 
 def test_test_send_goes_to_the_admin_only(monkeypatch, sent):
@@ -675,28 +723,44 @@ def test_resume_unknown_broadcast_is_404(monkeypatch, bid):
 # ── Un-suppress ─────────────────────────────────────────────────────────────
 
 
-def test_unsuppress_removes_the_hash_and_audits_without_the_address(monkeypatch):
+def _unsuppress_tables(monkeypatch, *, held):
+    """The address is on the suppression tables of the scopes in `held`."""
     factory, made = _factory()
-    factory("email_suppressions").delete.return_value = [{"recipient_hash": _h("a@bu.edu")}]
+    for scope, name in email_service.SUPPRESSION_TABLES.items():
+        factory(name).delete.return_value = [{"recipient_hash": _h("a@bu.edu")}] if scope in held else []
     monkeypatch.setattr(email_service, "table", factory)
+    return made
+
+
+def test_unsuppress_removes_the_hash_and_audits_without_the_address(monkeypatch):
+    made = _unsuppress_tables(monkeypatch, held={"all"})
     with patch("routes.admin_email.log_admin_action") as audit:
         r = client.post("/api/admin/email/suppressions/remove", json={"email": "  A@BU.edu "})
-    assert r.status_code == 200 and r.json() == {"removed": True}
-    assert made["email_suppressions"].delete.call_args.kwargs["filters"] == {
-        "recipient_hash": f"eq.{_h('a@bu.edu')}",
-    }
+    assert r.status_code == 200 and r.json() == {"removed": True, "scopes": ["all"]}
+    for name in ("email_suppressions", "email_alert_suppressions"):
+        assert made[name].delete.call_args.kwargs["filters"] == {"recipient_hash": f"eq.{_h('a@bu.edu')}"}
     kw = audit.call_args.kwargs
     assert kw["action"] == "email.unsuppress" and kw["target_id"] == _h("a@bu.edu")
+    assert kw["payload"] == {"removed": True, "scopes": ["all"]}
     assert "bu.edu" not in repr(kw).lower()
 
 
-def test_unsuppress_not_on_the_list(monkeypatch):
-    factory, _ = _factory()
-    factory("email_suppressions").delete.return_value = []
-    monkeypatch.setattr(email_service, "table", factory)
+@pytest.mark.parametrize("held", [{"ops_alert"}, {"all", "ops_alert"}])
+def test_unsuppress_lifts_an_ops_alert_unsubscribe_too(monkeypatch, held):
+    """An accidental ops-alert unsubscribe (or a mail client's one-click
+    List-Unsubscribe POST) is undone from the admin page, not by hand SQL."""
+    made = _unsuppress_tables(monkeypatch, held=held)
     with patch("routes.admin_email.log_admin_action"):
         r = client.post("/api/admin/email/suppressions/remove", json={"email": "a@bu.edu"})
-    assert r.json() == {"removed": False}
+    assert r.json() == {"removed": True, "scopes": sorted(held)}
+    made["email_alert_suppressions"].delete.assert_called_once()
+
+
+def test_unsuppress_not_on_the_list(monkeypatch):
+    _unsuppress_tables(monkeypatch, held=set())
+    with patch("routes.admin_email.log_admin_action"):
+        r = client.post("/api/admin/email/suppressions/remove", json={"email": "a@bu.edu"})
+    assert r.json() == {"removed": False, "scopes": []}
 
 
 def test_unsuppress_rejects_a_non_address(monkeypatch):
@@ -704,7 +768,7 @@ def test_unsuppress_rejects_a_non_address(monkeypatch):
     monkeypatch.setattr(email_service, "table", factory)
     r = client.post("/api/admin/email/suppressions/remove", json={"email": "nobody"})
     assert r.status_code == 422
-    assert "email_suppressions" not in made
+    assert not set(made) & set(email_service.SUPPRESSION_TABLES.values())
 
 
 def test_audiences_exclude_accounts_with_email_notifications_off(audience_tables, monkeypatch):

@@ -39,6 +39,8 @@ from tests.test_llm_budget import (  # noqa: F401  (fixtures: _fresh is autouse)
     _ResilientFn,
     session_user,
 )
+from tests.split_patches import patch_documents
+from tests.split_patches import patch_quiz
 
 
 def _exc():
@@ -359,8 +361,8 @@ def test_an_ocr_budget_refusal_is_the_sync_upload_429():
 
     with (
         _mock_validate_user(),
-        patch("routes.documents.extract_text_from_file", side_effect=_exc()),
-        patch("routes.documents.table") as t,
+        patch_documents("extract_text_from_file", side_effect=_exc()),
+        patch_documents("table") as t,
     ):
         t.return_value.select.return_value = []
         r = _make_upload()
@@ -376,10 +378,10 @@ def test_an_ocr_budget_refusal_is_the_streamed_upload_terminal_event():
 
     with (
         _mock_validate_user(),
-        patch("routes.documents.OCR_ASYNC_ENABLED", True),
-        patch("routes.documents.extract_text_from_file", side_effect=_exc()),
-        patch("routes.documents.process_document") as pipeline,
-        patch("routes.documents.table") as t,
+        patch_documents("OCR_ASYNC_ENABLED", True),
+        patch_documents("extract_text_from_file", side_effect=_exc()),
+        patch_documents("process_document") as pipeline,
+        patch_documents("table") as t,
     ):
         t.return_value.select.return_value = []
         with TestClient(app).stream(
@@ -494,10 +496,10 @@ def test_quiz_submit_context_update_never_sees_a_refusal(budget):
         return SimpleNamespace(output=SimpleNamespace(model_dump=lambda: {}))
 
     with (
-        patch("routes.quiz.table", side_effect=_submit_factory()),
-        patch("routes.quiz.quiz_context_agent.run", new=ctx_run),
-        patch("routes.quiz.save_quiz_context") as save,
-        patch("routes.quiz.record_agent_usage", side_effect=lambda r, **k: r),
+        patch_quiz("table", side_effect=_submit_factory()),
+        patch("services.quiz.submission.quiz_context_agent.run", new=ctx_run),
+        patch_quiz("save_quiz_context") as save,
+        patch_quiz("record_agent_usage", side_effect=lambda r, **k: r),
         # what auth_guard's stamp on request.state.user_id gives the gate (the
         # hermetic app bypasses the real guard)
         patch("services.request_context.current_session_user", return_value=USER),

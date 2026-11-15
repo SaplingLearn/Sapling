@@ -61,7 +61,7 @@ export function Faq({
           column. If it stops being sticky, drop the entry there too.
         */}
         <FadeIn data-drag-anchor="faq" className="ld-faq-intro" style={{ position: 'sticky', top: 110 }}>
-          <h2 style={{ margin: 0, fontFamily: "var(--font-gummi), 'Gummi', Georgia, serif", fontSize: 'clamp(2.2rem, 4vw, 3.4rem)', fontWeight: 600, lineHeight: 1.06, letterSpacing: '-0.02em', color: '#191F13' }}>
+          <h2 style={{ margin: 0, fontFamily: "var(--font-gummi), Georgia, serif", fontSize: 'clamp(2.2rem, 4vw, 3.4rem)', fontWeight: 600, lineHeight: 1.06, letterSpacing: '-0.02em', color: '#191F13' }}>
             Honest answers about <em style={{ color: '#445D22' }}>AI.</em>
           </h2>
           <p style={{ margin: '20px 0 0', color: '#3B4233', fontSize: 15, lineHeight: 1.75, maxWidth: '38ch' }}>
@@ -87,7 +87,7 @@ export function Faq({
                   aria-expanded={open}
                   style={{ width: '100%', background: 'none', border: 'none', cursor: 'pointer', padding: '22px 4px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 20, textAlign: 'left' }}
                 >
-                  <span style={{ fontFamily: "var(--font-gummi), 'Gummi', Georgia, serif", fontSize: 19, fontWeight: 600, letterSpacing: '-0.01em', color: open ? '#445D22' : '#191F13', transition: 'color 300ms' }}>
+                  <span style={{ fontFamily: "var(--font-gummi), Georgia, serif", fontSize: 19, fontWeight: 600, letterSpacing: '-0.01em', color: open ? '#445D22' : '#191F13', transition: 'color 300ms' }}>
                     {q.q}
                   </span>
                   <span

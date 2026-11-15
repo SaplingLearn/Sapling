@@ -227,4 +227,4 @@ Preserve these in the rebuild.
 
 ## 10. Question surfaced by this deep-dive
 
-**Q11.** `signOut()` does **not** clear `sessionStorage.sapling_onboarding_pending`. If user A signs out mid-onboarding and user B signs in on the same browser, B could inherit the flag and be forced into the landing-page onboarding instead of going straight to `/dashboard`. Reproduction: sign in as A, trigger `sapling_onboarding_pending=true` via `OnboardingFlow`, sign out before finishing, sign in as B — B lands on `/` with A's partially-entered state. Intentional or a bug? (Noted in `QUESTIONS.md`.)
+**Q11.** `signOut()` does **not** clear `sessionStorage.sapling_onboarding_pending`. If user A signs out mid-onboarding and user B signs in on the same browser, B could inherit the flag and be forced into the landing-page onboarding instead of going straight to `/dashboard`. Reproduction: sign in as A, trigger `sapling_onboarding_pending=true` via `OnboardingFlow`, sign out before finishing, sign in as B — B lands on `/` with A's partially-entered state. Intentional or a bug? (Noted in `questions.md`.)

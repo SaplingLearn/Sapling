@@ -5,6 +5,7 @@ import { useToast } from "../../ToastProvider";
 import { useUser } from "@/context/UserContext";
 import { importParse } from "@/lib/api";
 import { parseCSV, parseTSV, parseJSON, type ParsedCard } from "@/lib/flashcardParsers";
+import s from "../FlashcardImportModal.module.css";
 
 interface Props { onCards: (cards: ParsedCard[]) => void }
 
@@ -64,26 +65,28 @@ export function UploadTab({ onCards }: Props) {
   };
 
   return (
-    <div
-      onDragOver={e => { e.preventDefault(); }}
-      onDrop={e => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) handleFile(f); }}
-      style={{
-        border: "2px dashed var(--border)", borderRadius: "var(--r-md)",
-        padding: 32, textAlign: "center", color: "var(--text-muted)",
-        cursor: "pointer",
-      }}
-      onClick={() => inputRef.current?.click()}
-    >
-      <Icon name="upload" size={20} />
-      <div style={{ marginTop: 8, fontSize: 13 }}>
-        {busy ? "Parsing…" : "Drop or click to upload .csv, .tsv, .txt, .json, .xlsx, .apkg"}
-      </div>
-      <div style={{ fontSize: 11, marginTop: 4 }}>Max 5MB</div>
+    <div className={s.tab}>
+      <button
+        type="button"
+        className={s.drop}
+        onClick={() => inputRef.current?.click()}
+        onDragOver={e => { e.preventDefault(); }}
+        onDrop={e => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) handleFile(f); }}
+      >
+        <Icon name="upload" size={20} />
+        <span className={s.dropText}>
+          {busy ? "Parsing…" : "Drop or click to upload .csv, .tsv, .txt, .json, .xlsx, .apkg"}
+        </span>
+        <span className={s.dropMeta}>Max 5MB</span>
+      </button>
+      {/* Opened by the button above, which is what the keyboard reaches. */}
       <input
         ref={inputRef}
         type="file"
         accept=".csv,.tsv,.txt,.json,.xlsx,.apkg"
-        style={{ display: "none" }}
+        hidden
+        tabIndex={-1}
+        aria-label="File to import"
         onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f); e.target.value = ""; }}
       />
     </div>

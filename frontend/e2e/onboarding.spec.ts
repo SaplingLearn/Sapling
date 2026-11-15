@@ -7,8 +7,9 @@
  * no nav and no `<main>` padding to inherit. Nothing else in the suite would
  * notice if it broke.
  *
- * This is deliberately a smoke-plus-persistence journey, not a full
- * five-step walkthrough: the steps' own field validation is unit-tested, and
+ * Since #800 the funnel is the Claude Design flow: an intro, then nine
+ * screens over six chapters, with Enter / Esc key hints (Next / Back) always
+ * on screen. This is deliberately a smoke journey, not a full walkthrough: the steps' own field validation is unit-tested, and
  * a long scripted click-path over a funnel that is still being redesigned
  * (#289 changes its frame; the flow itself is untouched) would break on every
  * copy tweak. What it pins is the part that must not regress — the screen
@@ -36,35 +37,30 @@ test("the onboarding funnel renders for an un-onboarded user (#289)", async ({ b
     const gate = page.getByTestId("onboarding-gate");
     await expect(gate).toBeVisible();
 
-    // Step 0 is the welcome step: forward affordance present, Back absent.
-    await expect(page.getByTestId("onboarding-continue")).toBeVisible();
-    await expect(page.getByTestId("onboarding-back")).toHaveCount(0);
-
-    // The card must actually occupy the screen. #289 converted every
-    // hardcoded px in this file to --pad-*/--fs-* tokens; a mistyped var()
-    // resolves to nothing and silently collapses the box, which no unit test
-    // would catch and which this assertion would.
+    // The root must actually occupy the screen: it renders bare (no shell),
+    // so a broken layout collapses it, which no unit test would catch.
     const box = await gate.boundingBox();
     expect(box, "the onboarding root should have a layout box").not.toBeNull();
     expect(box!.height, "onboarding must fill the viewport, not collapse").toBeGreaterThan(400);
 
-    const card = await page.evaluate(() => {
-      const el = document.querySelector('[data-testid="onboarding-gate"] .card');
-      if (!el) return null;
-      const r = el.getBoundingClientRect();
-      const cs = getComputedStyle(el);
-      return { w: Math.round(r.width), h: Math.round(r.height), padTop: cs.paddingTop };
-    });
-    expect(card, "the onboarding card should render").not.toBeNull();
-    expect(card!.w, "card should have real width").toBeGreaterThan(200);
-    expect(card!.h, "card should have real height").toBeGreaterThan(150);
-    // A var() that failed to resolve computes to 0px, not a real length.
-    expect(card!.padTop, "card padding must resolve from --pad-*").not.toBe("0px");
+    // After the intro, the first screen asks for a name, and Next is gated
+    // on one.
+    const name = page.getByTestId("onboarding-name");
+    await expect(name).toBeVisible({ timeout: 15_000 });
+    const next = page.getByTestId("onboarding-continue");
+    await name.fill("   ");
+    await expect(next).toBeDisabled();
+    await name.fill("Rich");
+    await expect(next).toBeEnabled();
 
-    // Advancing off the welcome step reveals Back — the cheapest proof the
-    // step machine still drives the frame after the re-home.
-    await page.getByTestId("onboarding-continue").click();
-    await expect(page.getByTestId("onboarding-back")).toBeVisible();
+    // Advancing reaches the birthday screen: the cheapest proof the step
+    // machine drives the frame.
+    await next.click();
+    await expect(page.getByTestId("onboarding-dob-month")).toBeVisible();
+
+    // Back (Esc) returns to the name screen with the answer kept.
+    await page.getByTestId("onboarding-back").click();
+    await expect(page.getByTestId("onboarding-name")).toHaveValue("Rich");
   } finally {
     await context.close();
   }

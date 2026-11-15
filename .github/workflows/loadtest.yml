@@ -3,11 +3,12 @@ name: loadtest (manual)
 # #117 (docs/design/async-db-client.md §1, "Measurement"): a locust run of the
 # fixed mix in loadtest/locustfile.py against a target YOU name.
 #
-# Manual only. Never scheduled, never on push/PR, and there is no default
-# target: an empty target_url fails the job before anything is sent. Point it
-# at a stack you own (a preview or a throwaway environment in function mode);
-# pointing it at staging or production needs the owner's say-so, because the
-# chat task writes tutor messages and, in real model mode, spends money.
+# Manual only (the opt-in nightly run is loadtest-nightly.yml). Never on
+# push/PR, and there is no default target: an empty target_url fails the job
+# before anything is sent. Point it at a stack you own (a preview or a
+# throwaway environment in function mode); pointing it at staging or
+# production needs the owner's say-so, because the chat task writes tutor
+# messages and, in real model mode, spends money.
 on:
   workflow_dispatch:
     inputs:
@@ -66,8 +67,8 @@ jobs:
             http://*|https://*) ;;
             *) echo "::error::target_url must start with http:// or https://"; exit 1 ;;
           esac
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
       - name: Install locust
@@ -90,7 +91,7 @@ jobs:
             --csv loadtest/out/run --html loadtest/out/report.html --only-summary
       - name: Upload results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: loadtest-results
           path: loadtest/out/

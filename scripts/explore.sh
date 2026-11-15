@@ -14,9 +14,9 @@
 #   scripts/explore.sh up       boot only — leaves the stack running so you
 #                                can drive `claude` yourself against
 #                                .explore/mcp.json (the interactive flow)
-#   scripts/explore.sh down     oracle final pass + findings + teardown +
-#                                lock release (for the interactive flow above,
-#                                or to clean up after a crashed full run)
+#   scripts/explore.sh down     oracle final pass + findings + teardown (for
+#                                the interactive flow above, or to clean up
+#                                after a crashed full run)
 #
 # Env knobs:
 #   EXPLORE_MAX_TURNS   turn budget passed to `claude -p --max-turns` (default 40)
@@ -24,10 +24,10 @@
 #   EXPLORE_HEADED      1 = headed browser, 0 = headless (default 0)
 #   EXPLORE_USER        seeded rich-* user to mint a session for (default rich-user-active)
 #
-# Outputs land in .explore/ (wiped and recreated by `up`, but only AFTER the
-# lock is acquired — see do_up/start_lock_holder — so a lock-busy `up` never
-# touches another session's live artifacts; previous-run artifacts are
-# otherwise the operator's to triage before re-running):
+# Outputs land in .explore/ (wiped and recreated by `up`, but only AFTER this
+# checkout's stack is ours — a busy checkout fails before .explore/ is touched;
+# previous-run artifacts are otherwise the operator's to triage before
+# re-running):
 #   storageState.json        Playwright storage state (cookie + sapling_user localStorage)
 #   mcp.json                 --mcp-config fed to `claude -p` (the playwright MCP server)
 #   session.log               readable transcript, reformatted by jq from `claude -p
@@ -38,29 +38,27 @@
 #   findings.md               running human-readable findings log
 #   oracle-final.{txt,json}   final #400 oracle pass, appended at teardown
 #   traces/                   playwright MCP session artifacts (see write_mcp_config)
-#   lock.ok                   internal lock-holder bookkeeping (start_lock_holder /
-#                             stop_lock_holder) — deliberately excluded from the wipe.
-#                             Content is the holder process's PID, written ONLY by
-#                             that process itself after it actually acquires the
-#                             flock (never by the parent, and never speculatively) —
-#                             see start_lock_holder for why.
+#   cycle.pid                 the held E2E cycle THIS explore started (see do_up) —
+#                             deliberately excluded from the wipe; `down` stops
+#                             only that cycle, never one another command started.
 #
-# Lock: /tmp/claude-$(id -u)/sapling-e2e-stack.lock — the machine-singleton
-# E2E stack lock, held by a DETACHED setsid process (start_lock_holder below),
-# never by this script's own shell. A prior session proved that wrapping
-# `make e2e-up` in `flock -c ...` leaves the lock held by the detached
-# uvicorn/next children instead (fd inheritance), so a flock-wrapped teardown
-# then deadlocks. Because this script never opens the lock fd itself and
-# always invokes scripts/e2e-up.sh / scripts/e2e-down.sh unwrapped, that
-# failure mode can't happen here, and `up`/`down` can safely be two separate
-# invocations (the interactive flow above).
+# Stack: an E2E SLOT held by a background cycle (scripts/e2e-cycle.sh
+# --background) — the same owner as `make e2e-up`. The cycle takes the slot's
+# lock and this checkout's, boots the stack on the slot's ports (never the dev
+# app's :3000/:5000), and tears it down when `down` stops it, so `up` and
+# `down` can be two separate invocations (the interactive flow above). This
+# script never holds a lock itself.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
 EXPLORE_DIR="$REPO_ROOT/.explore"
-LOCK_FILE="/tmp/claude-$(id -u)/sapling-e2e-stack.lock"
+# Explore runs in an E2E SLOT like every other lane (scripts/lib/e2e-slot.sh).
+# E2E_SLOT picks one; otherwise the cycle takes the first free slot.
+CYCLE="$REPO_ROOT/scripts/e2e-cycle.sh"
+# The ownership test (e2e_held_cycle_pid) and manifest reader (e2e_manifest_slot).
+source "$REPO_ROOT/scripts/lib/e2e-slot.sh"
 
 # @playwright/mcp version pin (determinism beats freshness). Checked via
 # `npm view @playwright/mcp version` on 2026-07-28 — see task-5-report.md.
@@ -83,75 +81,18 @@ Usage: scripts/explore.sh [up|down]
   (no arg)   full pipeline: up -> run the explorer -> down
   up         boot the stack, mint a session, write .explore/mcp.json, and
              leave it running (drive `claude` yourself, then run `down`)
-  down       oracle final pass + findings + teardown + lock release
+  down       oracle final pass + findings + stop the stack explore started
 
 Env: EXPLORE_MAX_TURNS EXPLORE_MODEL EXPLORE_HEADED EXPLORE_USER
 See docs/e2e-exploration.md for the full runbook.
 USAGE
 }
 
-# ── Lock (both modes) ─────────────────────────────────────────────────────────
-# The flock must survive this process so `up` and `down` can be separate
-# invocations: a detached setsid holder opens fd 9 on $LOCK_FILE and sleeps
-# forever; stop_lock_holder kills it. Neither this script nor scripts/e2e-up.sh
-# (invoked below, not by the holder) ever has the lock fd open, so the stack's
-# own detached servers can't inherit it either.
-#
-# do_up calls this BEFORE touching .explore/ at all (see do_up): a busy lock
-# means another session owns the stack, and .explore/'s current contents
-# (including that session's own lock.ok) are that session's live state —
-# nothing here may wipe, delete, or overwrite them.
-#
-# Bookkeeping ownership is the subtle part (fixed after a real bug was found
-# in review): a FAILED acquisition attempt must never touch lock.ok, because
-# lock.ok may belong to another, currently-live session. The old design had
-# the PARENT unconditionally `rm -f` lock.ok and write lock.pid before even
-# knowing whether the flock would succeed — session B's failed attempt could
-# delete session A's lock.ok and overwrite session A's lock.pid with B's own
-# (about-to-die) PID, leaving A's later `down` unable to find A's holder at
-# all (a permanent leaked process + leaked machine-singleton lock). Fixed by
-# making the HOLDER subprocess itself the only writer of lock.ok, and only
-# ever AFTER its own `flock -n 9` has actually succeeded — the parent here
-# just polls for that write to appear, and does nothing to disk at all on
-# the failure path. The write is atomic (temp file + mv) and self-identifying
-# (content = the holder's own $$, which — because `setsid CMD &` execs CMD
-# directly without an intervening fork — equals $! as seen by the parent) so
-# the poll can't be fooled by a stale lock.ok left behind by a crashed prior
-# session: it only accepts a lock.ok whose content is THIS attempt's pid.
-start_lock_holder() {
-  mkdir -p "$(dirname "$LOCK_FILE")" "$EXPLORE_DIR"
-  setsid bash -c "
-    exec 9>\"$LOCK_FILE\"
-    flock -n 9 || exit 42
-    tmp=\"$EXPLORE_DIR/lock.ok.\$\$.tmp\"
-    echo \"\$\$\" > \"\$tmp\"
-    mv -f \"\$tmp\" \"$EXPLORE_DIR/lock.ok\"
-    exec sleep infinity
-  " &
-  local holder_pid=$!
-  local acquired=1
-  for _ in $(seq 1 20); do
-    if [ "$(cat "$EXPLORE_DIR/lock.ok" 2>/dev/null)" = "$holder_pid" ]; then
-      acquired=0
-      break
-    fi
-    kill -0 "$holder_pid" 2>/dev/null || break
-    sleep 0.1
-  done
-  [ "$acquired" -eq 0 ] && return 0
-  # Acquisition failed (busy, or the holder died before confirming) — reap
-  # our OWN doomed holder only. lock.ok is never touched here: it may belong
-  # to another session's live, already-successful holder.
-  kill "$holder_pid" 2>/dev/null || true
-  die "e2e stack lock busy ($LOCK_FILE) — another session is using the stack"
-}
-
-stop_lock_holder() {
-  local pid
-  pid="$(cat "$EXPLORE_DIR/lock.ok" 2>/dev/null)" || true
-  [ -n "${pid:-}" ] && kill "$pid" 2>/dev/null || true
-  rm -f "$EXPLORE_DIR/lock.ok"
-}
+# ── Stack ownership ─────────────────────────────────────────────────────────
+# The held cycle's pid, if this checkout has one running — the shared
+# ownership test (scripts/lib/e2e-slot.sh), same as e2e-cycle.sh's.
+EXPLORE_CYCLE_PID=""
+held_cycle_pid() { e2e_held_cycle_pid "$REPO_ROOT"; }
 
 # ── Storage-state mint ────────────────────────────────────────────────────────
 # POST through the frontend origin (also proves the /api/:path* proxy), then
@@ -175,10 +116,10 @@ stop_lock_holder() {
 # would actually set is still wrong on its own — fix it regardless.
 mint_storage_state() {
   local body display_name
-  body="$(curl -fsS -X POST "http://localhost:3000/api/auth/test-login" \
+  body="$(curl -fsS -X POST "$E2E_FRONTEND_URL/api/auth/test-login" \
     -H 'Content-Type: application/json' \
     -d "{\"user_id\": \"$EXPLORE_USER\"}")" \
-    || die "POST /api/auth/test-login failed — is the frontend (:3000) up and running with APP_ENV=local|test?"
+    || die "POST /api/auth/test-login failed — is the frontend ($E2E_FRONTEND_URL) up and running with APP_ENV=local|test?"
   # Display name for the seeded rich-* users (backend/db/seed_local_rich.py's
   # _USERS/_PROFILES) — EXPLORE_USER is the id, but sapling_user localStorage
   # wants the human name. Falls back to the raw id for anything else.
@@ -190,9 +131,9 @@ mint_storage_state() {
     rich-user-admin)   display_name="Ada Admin" ;;
     *)                 display_name="$EXPLORE_USER" ;;
   esac
-  python3 - "$body" "$EXPLORE_USER" "$display_name" > "$EXPLORE_DIR/storageState.json" <<'PY'
+  python3 - "$body" "$EXPLORE_USER" "$display_name" "$E2E_FRONTEND_URL" > "$EXPLORE_DIR/storageState.json" <<'PY'
 import json, sys, time
-body = json.loads(sys.argv[1]); user = sys.argv[2]; name = sys.argv[3]
+body = json.loads(sys.argv[1]); user = sys.argv[2]; name = sys.argv[3]; origin = sys.argv[4]
 state = {
     "cookies": [{
         "name": "sapling_session", "value": body["token"],
@@ -201,7 +142,7 @@ state = {
         "httpOnly": True, "secure": False, "sameSite": "Lax",
     }],
     "origins": [{
-        "origin": "http://localhost:3000",
+        "origin": origin,
         "localStorage": [{
             "name": "sapling_user",
             "value": json.dumps({"id": user, "name": name, "avatar": ""}),
@@ -321,7 +262,7 @@ EOF
 # with (and corrupt) the JSON stream jq is parsing.
 run_explorer() {
   cd "$REPO_ROOT"
-  claude -p "$(cat "$REPO_ROOT/scripts/explore/explorer-prompt.md")" \
+  claude -p "$(sed "s#{{FRONTEND_URL}}#$E2E_FRONTEND_URL#g" "$REPO_ROOT/scripts/explore/explorer-prompt.md")" \
     --mcp-config "$EXPLORE_DIR/mcp.json" \
     --strict-mcp-config \
     --model "$EXPLORE_MODEL" \
@@ -367,34 +308,15 @@ do_up() {
   [ -f "$REPO_ROOT/scripts/explore/explorer-prompt.md" ] \
     || die "scripts/explore/explorer-prompt.md not found (lands in a later #399 task) — nothing to run yet"
 
-  # Acquire the lock FIRST, before touching .explore/ at all and before
-  # arming any trap that can call do_down (which runs scripts/e2e-down.sh —
-  # destructive). A busy lock means another session owns the stack; failing
-  # here must exit with the "stack busy" message having wiped nothing, torn
-  # nothing down, and leaked no process (start_lock_holder cleans up its own
-  # failed attempt — see above). Only once the lock is truly ours do we arm
-  # the boot-failure safety net and wipe .explore/ for this run.
-  start_lock_holder
+  # This checkout's stack must be free: a held cycle here is someone else's
+  # (`make e2e-up`, another explore) and `down` would end it. Failing here has
+  # touched nothing — .explore/ is wiped only once the stack is ours.
+  if pid="$(held_cycle_pid)"; then
+    die "this checkout already holds an E2E stack (cycle pid $pid) — stop it first (make e2e-down), or explore from another worktree"
+  fi
 
-  # Lock is ours: NOW it's safe to arm do_down as a cleanup-on-failure trap
-  # (idempotent-safe even with nothing up) so a boot failure partway through
-  # still releases the lock and tears down whatever partially came up.
-  # Disarmed just before a successful return so a bare `up` leaves the stack
-  # running for the interactive flow.
-  trap do_down EXIT
-
-  echo "▶ Preparing .explore/ (previous run's artifacts, if any, are wiped — triage them first if you need them)…"
-  # Preserve lock.ok — start_lock_holder just wrote it (containing our
-  # holder's pid), and a later, separate `scripts/explore.sh down` invocation
-  # (the interactive flow) needs it on disk to know which holder to stop.
-  find "$EXPLORE_DIR" -mindepth 1 -maxdepth 1 ! -name lock.ok -exec rm -rf {} +
-  mkdir -p "$EXPLORE_DIR/traces"
-  # Pre-create findings.md with a header so the explorer (allowedTools grants
-  # Edit(.explore/**), not Write — see run_explorer) always has an existing
-  # file to append to.
-  printf '# Exploration findings — %s\n' "$(date -Iseconds)" > "$EXPLORE_DIR/findings.md"
-
-  echo "▶ Booting the E2E stack (scripts/e2e-up.sh)…"
+  # The held cycle inherits this environment, so the explore lane's knobs are
+  # exported BEFORE it starts.
   export SAPLING_MODEL_MODE=function
   export SAPLING_FUNCTION_HANDLERS=agents.function_handlers_e2e
   # ADR 0028: never send exploration traffic to PostHog: no project token,
@@ -406,8 +328,7 @@ do_up() {
   # path can still bill a real key even in function mode, and an ambient real
   # key routinely stays exported in dev shells. This only exports into this
   # process tree (the stack we're about to boot) — it never mutates the
-  # operator's actual shell — so there is nothing of the operator's to
-  # preserve by deferring to `${GEMINI_API_KEY:-...}` here.
+  # operator's actual shell.
   export GEMINI_API_KEY=e2e-dummy-key-no-billing
   # Same for the agents' provider (ADR 0030): function mode never dials Claude;
   # the dummy makes sure a slip in this local-only harness can't bill either.
@@ -416,7 +337,33 @@ do_up() {
   # operator's shell would silently defeat it — this harness requires the
   # rich dataset (mint_storage_state below dies late otherwise).
   export SEED_RICH=1
-  "$REPO_ROOT/scripts/e2e-up.sh" || die "scripts/e2e-up.sh failed — see .e2e/*.log"
+
+  echo "▶ Booting the E2E stack (scripts/e2e-cycle.sh --background)…"
+  # --new: a hold this checkout already runs (someone else's, started since
+  # the check above) is a failure here, never adopted as ours.
+  "$CYCLE" --new --background || die "the E2E stack did not come up — see .e2e/cycle.log"
+  if ! EXPLORE_CYCLE_PID="$(held_cycle_pid)"; then
+    "$CYCLE" --stop >/dev/null 2>&1 || true   # never leave a stack nobody tracks
+    die "the E2E cycle exited right after coming up — see .e2e/cycle.log"
+  fi
+
+  # The stack is ours: NOW arm do_down as the boot-failure safety net (it
+  # stops EXPLORE_CYCLE_PID even if .explore/ can't be written), so a failure
+  # below still stops the cycle. Disarmed just before a successful return so a
+  # bare `up` leaves the stack running for the interactive flow.
+  trap do_down EXIT
+  # shellcheck disable=SC1091
+  source "$REPO_ROOT/.e2e/env.sh"
+
+  echo "▶ Preparing .explore/ (previous run's artifacts, if any, are wiped — triage them first if you need them)…"
+  mkdir -p "$EXPLORE_DIR"
+  find "$EXPLORE_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+  echo "$EXPLORE_CYCLE_PID" > "$EXPLORE_DIR/cycle.pid"
+  mkdir -p "$EXPLORE_DIR/traces"
+  # Pre-create findings.md with a header so the explorer (allowedTools grants
+  # Edit(.explore/**), not Write — see run_explorer) always has an existing
+  # file to append to.
+  printf '# Exploration findings — %s\n' "$(date -Iseconds)" > "$EXPLORE_DIR/findings.md"
 
   echo "▶ Minting a session for $EXPLORE_USER…"
   mint_storage_state
@@ -428,7 +375,9 @@ do_up() {
 
   cat <<DONE
 
-✅ Explore stack is up.
+✅ Explore stack is up (E2E slot $(e2e_manifest_slot "$REPO_ROOT"), $E2E_FRONTEND_URL).
+   in your own browser: http://127.0.0.1:${E2E_FRONTEND_URL##*:} (a localhost
+   cookie would sign you out of the dev app on localhost:3000)
    storage state:  $EXPLORE_DIR/storageState.json
    mcp config:     $EXPLORE_DIR/mcp.json
 
@@ -440,20 +389,42 @@ DONE
 }
 
 # ── down ───────────────────────────────────────────────────────────────────
-# Oracle final pass -> append to findings -> tear down -> release the lock.
-# Idempotent-safe: runs cleanly even with no stack up.
+# Oracle final pass -> append to findings -> stop the cycle explore started
+# (the cycle tears the stack down). Idempotent-safe: runs cleanly with no
+# stack up, and never stops a held cycle another command started.
 #
 # This runs as both a plain function AND an EXIT trap (see do_up/run_full)
 # under `set -euo pipefail`, so every fallible statement below is `|| true`
-# guarded — a failed write (disk full, read-only fs, whatever) must never
-# abort this function before scripts/e2e-down.sh and stop_lock_holder run,
-# or it leaks the running stack AND the machine-singleton lock. The oracle
-# calls, the findings.md bootstrap, and the findings append block are each
-# independently guarded rather than reordering teardown first: the oracle
-# final pass needs the stack (backend on :5000) still up to hit anything, so
-# teardown must stay last — it just must be UNCONDITIONALLY reached.
+# guarded — a failed write must never abort this function before the cycle is
+# stopped, or it leaks the running stack AND the slot. The oracle pass needs
+# the stack still up, so stopping stays last — it just must be
+# UNCONDITIONALLY reached.
 do_down() {
   mkdir -p "$EXPLORE_DIR" || true
+  local mine held
+  mine="${EXPLORE_CYCLE_PID:-}"
+  [ -n "$mine" ] || mine="$(cat "$EXPLORE_DIR/cycle.pid" 2>/dev/null)" || true
+  held="$(held_cycle_pid)" || true
+  if [ -n "${held:-}" ] && [ "$held" != "${mine:-}" ]; then
+    echo "✗ this checkout's held E2E stack (cycle pid $held) was not started by explore — leaving it (make e2e-down stops it)." >&2
+    rm -f "$EXPLORE_DIR/cycle.pid" || true
+    return 0
+  fi
+  if [ -z "${held:-}" ]; then
+    if [ -n "${mine:-}" ]; then
+      # Explore's hold died without its teardown (SIGKILL, OOM): --stop
+      # recovers the stack it left (.e2e/booted names the slot).
+      echo "▶ explore's E2E cycle (pid $mine) is gone — cleaning up after it…"
+      "$CYCLE" --stop || true
+    else
+      echo "✓ no explore stack is running — nothing to stop."
+    fi
+    rm -f "$EXPLORE_DIR/cycle.pid" || true
+    return 0
+  fi
+  # The oracles and findings target the stack's slot via its manifest.
+  # shellcheck disable=SC1091
+  [ -f "$REPO_ROOT/.e2e/env.sh" ] && source "$REPO_ROOT/.e2e/env.sh" || true
   (
     cd "$REPO_ROOT/backend"
     venv/bin/python -m e2e_oracles --json --user "$EXPLORE_USER" > "$EXPLORE_DIR/oracle-final.json" || true
@@ -465,8 +436,8 @@ do_down() {
     cat "$EXPLORE_DIR/oracle-final.txt" 2>/dev/null || true
     printf '```\n'
   } >> "$EXPLORE_DIR/findings.md" || true
-  "$REPO_ROOT/scripts/e2e-down.sh" || true
-  stop_lock_holder
+  "$CYCLE" --stop || true
+  rm -f "$EXPLORE_DIR/cycle.pid" || true
 }
 
 # ── Full pipeline ────────────────────────────────────────────────────────────

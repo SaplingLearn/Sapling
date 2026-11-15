@@ -323,6 +323,22 @@ class TestSaveOnboardingProfile:
 
         assert res.status_code == 422
 
+    def test_majors_and_learning_style_optional(self):
+        """The redesigned flow sends neither; the profile still saves."""
+        payload = {**VALID_PAYLOAD}
+        del payload["majors"]
+        del payload["learning_style"]
+        tables = {}
+        factory = _make_factory(tables, course_rows=[{"id": "some-id"}], enrollment_rows=[])
+
+        with patch("routes.onboarding.table", side_effect=factory),              patch("services.academics.table", side_effect=factory):
+            res = client.post("/api/onboarding/profile", json=payload)
+
+        assert res.status_code == 200
+        profile_data = tables["user_profiles"].upsert.call_args[0][0]
+        assert profile_data["majors"] == []
+        assert profile_data["learning_style"] is None
+
     def test_minors_optional_defaults_empty(self):
         payload = {**VALID_PAYLOAD}
         del payload["minors"]

@@ -24,6 +24,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from main import app
+from tests.split_patches import patch_profile_table
 
 client = TestClient(app)
 
@@ -146,7 +147,7 @@ class TestGetPublicProfile:
                 m.select.return_value = []
             return m
 
-        with patch("routes.profile.table", side_effect=table_side_effect):
+        with patch_profile_table(side_effect=table_side_effect):
             r = client.get(f"/api/profile/{USER_ID}")
 
         assert r.status_code == 200
@@ -161,7 +162,7 @@ class TestGetPublicProfile:
             m.select.return_value = []
             return m
 
-        with patch("routes.profile.table", side_effect=table_side_effect):
+        with patch_profile_table(side_effect=table_side_effect):
             r = client.get("/api/profile/nonexistent")
 
         assert r.status_code == 404
@@ -171,7 +172,7 @@ class TestGetPublicProfile:
         # the minimal stub — name/year/majors/minors/school are personal data
         # and must be hidden alongside bio/location/website/stats.
         with _viewer("someone_else"), \
-             patch("routes.profile.table", side_effect=_visibility_tables("private")):
+             patch_profile_table(side_effect=_visibility_tables("private")):
             r = client.get(f"/api/profile/{USER_ID}")
 
         assert r.status_code == 200
@@ -183,7 +184,7 @@ class TestGetPublicProfile:
 class TestProfileVisibilityMatrix:
     def test_private_profile_hidden_from_anonymous(self):
         with _viewer(None), \
-             patch("routes.profile.table", side_effect=_visibility_tables("private")):
+             patch_profile_table(side_effect=_visibility_tables("private")):
             r = client.get(f"/api/profile/{USER_ID}")
         # Anonymous viewing stays allowed (public profiles are anonymous-
         # visible); it must narrow the payload, never 401.
@@ -192,15 +193,15 @@ class TestProfileVisibilityMatrix:
 
     def test_private_profile_owner_sees_everything(self):
         with _viewer(USER_ID), \
-             patch("routes.profile.table", side_effect=_visibility_tables("private")):
+             patch_profile_table(side_effect=_visibility_tables("private")):
             r = client.get(f"/api/profile/{USER_ID}")
         assert r.status_code == 200
         _assert_full_profile(r.json())
 
     def test_school_profile_same_school_sees_extended(self):
         with _viewer(VIEWER_ID), \
-             patch("routes.profile.table", side_effect=_visibility_tables("school")), \
-             patch("routes.profile.school_peer_user_ids",
+             patch_profile_table(side_effect=_visibility_tables("school")), \
+             patch("services.profile.public.school_peer_user_ids",
                    return_value={USER_ID, VIEWER_ID}) as peers:
             r = client.get(f"/api/profile/{USER_ID}")
         assert r.status_code == 200
@@ -209,24 +210,24 @@ class TestProfileVisibilityMatrix:
 
     def test_school_profile_different_school_gets_stub(self):
         with _viewer(VIEWER_ID), \
-             patch("routes.profile.table", side_effect=_visibility_tables("school")), \
-             patch("routes.profile.school_peer_user_ids", return_value={USER_ID}):
+             patch_profile_table(side_effect=_visibility_tables("school")), \
+             patch("services.profile.public.school_peer_user_ids", return_value={USER_ID}):
             r = client.get(f"/api/profile/{USER_ID}")
         assert r.status_code == 200
         _assert_private_stub(r.json())
 
     def test_school_profile_anonymous_gets_stub(self):
         with _viewer(None), \
-             patch("routes.profile.table", side_effect=_visibility_tables("school")), \
-             patch("routes.profile.school_peer_user_ids", return_value=set()):
+             patch_profile_table(side_effect=_visibility_tables("school")), \
+             patch("services.profile.public.school_peer_user_ids", return_value=set()):
             r = client.get(f"/api/profile/{USER_ID}")
         assert r.status_code == 200
         _assert_private_stub(r.json())
 
     def test_school_profile_owner_sees_everything_without_peer_lookup(self):
         with _viewer(USER_ID), \
-             patch("routes.profile.table", side_effect=_visibility_tables("school")), \
-             patch("routes.profile.school_peer_user_ids", return_value=set()) as peers:
+             patch_profile_table(side_effect=_visibility_tables("school")), \
+             patch("services.profile.public.school_peer_user_ids", return_value=set()) as peers:
             r = client.get(f"/api/profile/{USER_ID}")
         assert r.status_code == 200
         _assert_full_profile(r.json())
@@ -235,7 +236,7 @@ class TestProfileVisibilityMatrix:
     def test_public_profile_anonymous_sees_extended(self):
         # Guard: the viewer resolution must not narrow PUBLIC profiles.
         with _viewer(None), \
-             patch("routes.profile.table", side_effect=_visibility_tables("public")):
+             patch_profile_table(side_effect=_visibility_tables("public")):
             r = client.get(f"/api/profile/{USER_ID}")
         assert r.status_code == 200
         _assert_full_profile(r.json())
@@ -249,7 +250,7 @@ class TestStatsStreakIsEffective:
         next activity; the profile stats must not show it."""
         t = MagicMock()
         t.select.return_value = [{"streak_count": 8, "last_active_date": "2020-01-01"}]
-        with patch("routes.profile.table", return_value=t):
+        with patch_profile_table(return_value=t):
             from routes.profile import _get_user_stats
             assert _get_user_stats(USER_ID)["streak_count"] == 0
 
@@ -280,7 +281,7 @@ class TestUpdateProfile:
             m.update.return_value = [{}]
             return m
 
-        with _mock_self(), patch("routes.profile.table", side_effect=table_side_effect):
+        with _mock_self(), patch_profile_table(side_effect=table_side_effect):
             r = client.patch(f"/api/profile/{USER_ID}", json={"bio": "Updated bio"})
 
         assert r.status_code == 200
@@ -309,7 +310,7 @@ class TestUpdateProfile:
                 m.select.return_value = []
             return m
 
-        with _mock_self(), patch("routes.profile.table", side_effect=table_side_effect):
+        with _mock_self(), patch_profile_table(side_effect=table_side_effect):
             r = client.patch(f"/api/profile/{USER_ID}", json={"username": "taken"})
 
         assert r.status_code == 409
@@ -348,7 +349,7 @@ class TestUpdateProfile:
                 m.select.return_value = []
             return m
 
-        with _mock_self(), patch("routes.profile.table", side_effect=table_side_effect):
+        with _mock_self(), patch_profile_table(side_effect=table_side_effect):
             r = client.patch(f"/api/profile/{USER_ID}", json={"website": "https://x.io"})
 
         from routes.profile import _PROFILE_COLS
@@ -380,7 +381,7 @@ class TestGetSettings:
                 m.select.return_value = []
             return m
 
-        with _mock_self(), patch("routes.profile.table", side_effect=table_side_effect):
+        with _mock_self(), patch_profile_table(side_effect=table_side_effect):
             r = client.get(f"/api/profile/{USER_ID}/settings?user_id={USER_ID}")
 
         assert r.status_code == 200
@@ -410,7 +411,7 @@ class TestUpdateSettingsVisibility:
 
     def test_school_tier_is_accepted(self):
         table_side_effect, captured = self._tables()
-        with _mock_self(), patch("routes.profile.table", side_effect=table_side_effect):
+        with _mock_self(), patch_profile_table(side_effect=table_side_effect):
             r = client.patch(
                 f"/api/profile/{USER_ID}/settings", json={"profile_visibility": "school"}
             )
@@ -419,7 +420,7 @@ class TestUpdateSettingsVisibility:
 
     def test_invalid_visibility_is_rejected_400(self):
         table_side_effect, captured = self._tables()
-        with _mock_self(), patch("routes.profile.table", side_effect=table_side_effect):
+        with _mock_self(), patch_profile_table(side_effect=table_side_effect):
             r = client.patch(
                 f"/api/profile/{USER_ID}/settings", json={"profile_visibility": "friends"}
             )
@@ -445,7 +446,7 @@ class TestEquipCosmetic:
                 m.select.return_value = []
             return m
 
-        with _mock_self(), patch("routes.profile.table", side_effect=table_side_effect):
+        with _mock_self(), patch_profile_table(side_effect=table_side_effect):
             r = client.post(f"/api/profile/{USER_ID}/equip", json={"slot": "avatar_frame", "cosmetic_id": "cos_1"})
 
         assert r.status_code == 200
@@ -464,7 +465,7 @@ class TestEquipCosmetic:
                 m.select.return_value = []
             return m
 
-        with _mock_self(), patch("routes.profile.table", side_effect=table_side_effect):
+        with _mock_self(), patch_profile_table(side_effect=table_side_effect):
             r = client.post(f"/api/profile/{USER_ID}/equip", json={"slot": "avatar_frame", "cosmetic_id": "cos_1"})
 
         assert r.status_code == 403
@@ -480,7 +481,7 @@ class TestEquipCosmetic:
                 m.select.return_value = []
             return m
 
-        with _mock_self(), patch("routes.profile.table", side_effect=table_side_effect):
+        with _mock_self(), patch_profile_table(side_effect=table_side_effect):
             r = client.post(f"/api/profile/{USER_ID}/equip", json={"slot": "invalid_slot", "cosmetic_id": "cos_1"})
 
         assert r.status_code == 400
@@ -498,14 +499,14 @@ class TestDeleteAccount:
             m.update.return_value = [{}]
             return m
 
-        with _mock_self(), patch("routes.profile.table", side_effect=table_side_effect):
+        with _mock_self(), patch_profile_table(side_effect=table_side_effect):
             r = client.request("DELETE", f"/api/profile/{USER_ID}/account", json={"confirmation": "DELETE"})
 
         assert r.status_code == 200
         assert r.json()["deleted"] is True
 
     def test_rejects_wrong_confirmation(self):
-        with _mock_self(), patch("routes.profile.table") as t:
+        with _mock_self(), patch_profile_table() as t:
             t.return_value.select.return_value = [{"id": USER_ID}]
             r = client.request("DELETE", f"/api/profile/{USER_ID}/account", json={"confirmation": "wrong"})
 
@@ -532,7 +533,7 @@ class TestGetAchievements:
                 m.select.return_value = []
             return m
 
-        with patch("routes.profile.table", side_effect=table_side_effect):
+        with patch_profile_table(side_effect=table_side_effect):
             r = client.get(f"/api/profile/{USER_ID}/achievements")
 
         assert r.status_code == 200
@@ -576,7 +577,7 @@ def _roles_tables(*, deleted=False, calls=None):
 
 class TestGetRoles:
     def test_returns_user_roles(self):
-        with patch("routes.profile.table", side_effect=_roles_tables()):
+        with patch_profile_table(side_effect=_roles_tables()):
             r = client.get(f"/api/profile/{USER_ID}/roles")
 
         assert r.status_code == 200
@@ -586,7 +587,7 @@ class TestGetRoles:
     def test_anonymous_caller_is_401(self):
         """#115: roles say who is an admin; no session, no answer."""
         with _viewer(None), \
-             patch("routes.profile.table", side_effect=_roles_tables()):
+             patch_profile_table(side_effect=_roles_tables()):
             r = client.get(f"/api/profile/{USER_ID}/roles")
         assert r.status_code == 401
 
@@ -594,7 +595,7 @@ class TestGetRoles:
         """The public profile already shows a signed-in viewer the target's
         role badges; /roles answers the same audience."""
         with _viewer(VIEWER_ID), \
-             patch("routes.profile.table", side_effect=_roles_tables()):
+             patch_profile_table(side_effect=_roles_tables()):
             r = client.get(f"/api/profile/{USER_ID}/roles")
         assert r.status_code == 200
         assert r.json()["roles"][0]["role"]["slug"] == "admin"
@@ -602,7 +603,7 @@ class TestGetRoles:
     def test_soft_deleted_user_is_404(self):
         calls: list[dict] = []
         with _viewer(VIEWER_ID), \
-             patch("routes.profile.table", side_effect=_roles_tables(deleted=True, calls=calls)):
+             patch_profile_table(side_effect=_roles_tables(deleted=True, calls=calls)):
             r = client.get(f"/api/profile/{USER_ID}/roles")
         assert r.status_code == 404
         assert calls and calls[0].get("deleted_at") == "is.null"
@@ -621,7 +622,7 @@ class TestPublicProfileDeletedAndAnonymous:
             return inner(name)
 
         with _viewer(VIEWER_ID), \
-             patch("routes.profile.table", side_effect=table_side_effect):
+             patch_profile_table(side_effect=table_side_effect):
             r = client.get(f"/api/profile/{USER_ID}")
         assert r.status_code == 404
         assert calls[0].get("deleted_at") == "is.null"
@@ -629,7 +630,7 @@ class TestPublicProfileDeletedAndAnonymous:
 
     def test_live_user_profile_still_200(self):
         with _viewer(VIEWER_ID), \
-             patch("routes.profile.table", side_effect=_roles_tables()):
+             patch_profile_table(side_effect=_roles_tables()):
             r = client.get(f"/api/profile/{USER_ID}")
         assert r.status_code == 200
         # A signed-in viewer sees the role badges the UI renders.
@@ -639,7 +640,7 @@ class TestPublicProfileDeletedAndAnonymous:
         """#115: the anonymous projection must not answer "who is an admin"
         either, or the /roles 401 is bypassed through this route."""
         with _viewer(None), \
-             patch("routes.profile.table", side_effect=_roles_tables()):
+             patch_profile_table(side_effect=_roles_tables()):
             r = client.get(f"/api/profile/{USER_ID}")
         assert r.status_code == 200
         assert r.json()["roles"] == []
@@ -692,7 +693,7 @@ class TestAnonymousViewerSeesNoRoleDecoration:
     def test_anonymous_loses_featured_role_and_role_cosmetics_only(self):
         touched: list[str] = []
         with _viewer(None), \
-             patch("routes.profile.table", side_effect=_decorated_tables(touched)):
+             patch_profile_table(side_effect=_decorated_tables(touched)):
             r = client.get(f"/api/profile/{USER_ID}")
         assert r.status_code == 200
         eq = r.json()["equipped_cosmetics"]
@@ -705,7 +706,7 @@ class TestAnonymousViewerSeesNoRoleDecoration:
 
     def test_signed_in_viewer_keeps_them(self):
         with _viewer(VIEWER_ID), \
-             patch("routes.profile.table", side_effect=_decorated_tables()):
+             patch_profile_table(side_effect=_decorated_tables()):
             r = client.get(f"/api/profile/{USER_ID}")
         assert r.status_code == 200
         eq = r.json()["equipped_cosmetics"]
@@ -720,14 +721,14 @@ class TestViewerResolution:
         anonymous view."""
         with patch("routes.profile.get_session_user_id",
                    side_effect=HTTPException(status_code=503, detail="x")), \
-             patch("routes.profile.table", side_effect=_roles_tables()):
+             patch_profile_table(side_effect=_roles_tables()):
             r = client.get(f"/api/profile/{USER_ID}")
         assert r.status_code == 503
 
     def test_unapproved_viewer_gets_the_anonymous_view(self):
         with patch("routes.profile.get_session_user_id",
                    side_effect=HTTPException(status_code=403, detail={"code": "not_approved"})), \
-             patch("routes.profile.table", side_effect=_roles_tables()):
+             patch_profile_table(side_effect=_roles_tables()):
             r = client.get(f"/api/profile/{USER_ID}")
         assert r.status_code == 200
         assert r.json()["roles"] == []
@@ -737,7 +738,7 @@ class TestViewerResolution:
 
 class TestCheckUsername:
     def test_available_when_no_existing_row(self):
-        with patch("routes.profile.table") as t:
+        with patch_profile_table() as t:
             t.return_value.select.return_value = []
             r = client.get("/api/profile/username/check?username=freshname")
         assert r.status_code == 200
@@ -745,7 +746,7 @@ class TestCheckUsername:
 
     def test_taken_when_different_user_holds_it(self):
         # username lives on user_profiles now (keyed by user_id).
-        with patch("routes.profile.table") as t:
+        with patch_profile_table() as t:
             t.return_value.select.return_value = [{"user_id": "other_user"}]
             r = client.get("/api/profile/username/check?username=taken")
         assert r.status_code == 200
@@ -754,7 +755,7 @@ class TestCheckUsername:
         assert body["reason"] == "taken"
 
     def test_available_when_held_by_self(self):
-        with patch("routes.profile.table") as t:
+        with patch_profile_table() as t:
             t.return_value.select.return_value = [{"user_id": USER_ID}]
             r = client.get(f"/api/profile/username/check?username=mine&user_id={USER_ID}")
         assert r.status_code == 200
@@ -796,7 +797,7 @@ class TestGetCosmeticsCatalog:
                 m.select.return_value = []
             return m
 
-        with _mock_self(), patch("routes.profile.table", side_effect=table_side_effect):
+        with _mock_self(), patch_profile_table(side_effect=table_side_effect):
             r = client.get(f"/api/profile/{USER_ID}/cosmetics/catalog?user_id={USER_ID}")
 
         assert r.status_code == 200
@@ -834,8 +835,8 @@ class TestAchievementProgress:
                 m.select.return_value = []
             return m
 
-        with patch("routes.profile.table", side_effect=table_side_effect), \
-             patch("routes.profile.get_user_stat", return_value=3):
+        with patch_profile_table(side_effect=table_side_effect), \
+             patch("services.profile.achievements.get_user_stat", return_value=3):
             r = client.get(f"/api/profile/{USER_ID}/achievements")
 
         assert r.status_code == 200
@@ -863,8 +864,8 @@ class TestAchievementProgress:
                 m.select.return_value = []
             return m
 
-        with patch("routes.profile.table", side_effect=table_side_effect), \
-             patch("routes.profile.get_user_stat", return_value=42):
+        with patch_profile_table(side_effect=table_side_effect), \
+             patch("services.profile.achievements.get_user_stat", return_value=42):
             r = client.get(f"/api/profile/{USER_ID}/achievements")
 
         assert r.status_code == 200
@@ -890,8 +891,8 @@ class TestAchievementProgress:
                 m.select.return_value = []
             return m
 
-        with patch("routes.profile.table", side_effect=table_side_effect), \
-             patch("routes.profile.get_user_stat", return_value=1):
+        with patch_profile_table(side_effect=table_side_effect), \
+             patch("services.profile.achievements.get_user_stat", return_value=1):
             r = client.get(f"/api/profile/{USER_ID}/achievements")
 
         assert r.status_code == 200
@@ -937,7 +938,7 @@ class TestUploadAvatar:
     def test_accepts_base64_body_and_uploads(self):
         captured = []
         with _mock_self(), \
-             patch("routes.profile.table", side_effect=self._table_factory(captured_update=captured)), \
+             patch_profile_table(side_effect=self._table_factory(captured_update=captured)), \
              patch("routes.profile.upload_avatar", return_value="https://cdn/avatar.png") as up:
             r = client.post(
                 f"/api/profile/{USER_ID}/avatar",
@@ -959,7 +960,7 @@ class TestUploadAvatar:
         """Frontend's readFileAsBase64 strips the prefix, but a future
         client that forgets must also work — accept either shape."""
         with _mock_self(), \
-             patch("routes.profile.table", side_effect=self._table_factory()), \
+             patch_profile_table(side_effect=self._table_factory()), \
              patch("routes.profile.upload_avatar", return_value="https://cdn/avatar.png") as up:
             r = client.post(
                 f"/api/profile/{USER_ID}/avatar",
@@ -974,7 +975,7 @@ class TestUploadAvatar:
 
     def test_invalid_base64_returns_400(self):
         with _mock_self(), \
-             patch("routes.profile.table", side_effect=self._table_factory()), \
+             patch_profile_table(side_effect=self._table_factory()), \
              patch("routes.profile.upload_avatar") as up:
             r = client.post(
                 f"/api/profile/{USER_ID}/avatar",
@@ -987,7 +988,7 @@ class TestUploadAvatar:
 
     def test_missing_file_b64_returns_422(self):
         """Pydantic body validation rejects missing required field."""
-        with _mock_self(), patch("routes.profile.table", side_effect=self._table_factory()):
+        with _mock_self(), patch_profile_table(side_effect=self._table_factory()):
             r = client.post(
                 f"/api/profile/{USER_ID}/avatar",
                 json={"content_type": "image/png"},
@@ -1007,7 +1008,7 @@ class TestUploadAvatar:
         oversize_b64 = base64.b64encode(oversize_bytes).decode("ascii")
 
         with _mock_self(), \
-             patch("routes.profile.table", side_effect=self._table_factory()), \
+             patch_profile_table(side_effect=self._table_factory()), \
              patch("routes.profile.upload_avatar") as up:
             r = client.post(
                 f"/api/profile/{USER_ID}/avatar",
@@ -1091,7 +1092,7 @@ class TestGetUserOr404SelectColumns:
                 m.select.return_value = []
             return m
 
-        with patch("routes.profile.table", side_effect=table_side_effect):
+        with patch_profile_table(side_effect=table_side_effect):
             from routes.profile import _get_user_or_404
             _get_user_or_404(USER_ID)
 
@@ -1135,7 +1136,7 @@ class TestUpdateSettingsShareClassContext:
 
     def test_share_class_context_is_patchable(self):
         table_side_effect, captured = self._tables()
-        with _mock_self(), patch("routes.profile.table", side_effect=table_side_effect):
+        with _mock_self(), patch_profile_table(side_effect=table_side_effect):
             r = client.patch(
                 f"/api/profile/{USER_ID}/settings", json={"share_class_context": False}
             )
@@ -1171,7 +1172,7 @@ class TestShareClassContextToggleRefresh:
     def test_toggling_share_class_context_refreshes_every_enrolled_offering(self):
         with (
             _mock_self(),
-            patch("routes.profile.table", side_effect=self._tables()),
+            patch_profile_table(side_effect=self._tables()),
             patch("routes.profile.refresh_course_context") as refresh,
         ):
             r = client.patch(
@@ -1191,7 +1192,7 @@ class TestShareClassContextToggleRefresh:
         applied while the data it was meant to withdraw stayed published."""
         with (
             _mock_self(),
-            patch("routes.profile.table", side_effect=self._tables()),
+            patch_profile_table(side_effect=self._tables()),
             patch("routes.profile.refresh_course_context"),
             patch("routes.profile.resync_user_chunk_visibility") as resync,
         ):
@@ -1204,7 +1205,7 @@ class TestShareClassContextToggleRefresh:
     def test_other_settings_do_not_resync_chunk_visibility(self):
         with (
             _mock_self(),
-            patch("routes.profile.table", side_effect=self._tables()),
+            patch_profile_table(side_effect=self._tables()),
             patch("routes.profile.refresh_course_context"),
             patch("routes.profile.resync_user_chunk_visibility") as resync,
         ):
@@ -1215,7 +1216,7 @@ class TestShareClassContextToggleRefresh:
     def test_other_settings_do_not_trigger_refresh(self):
         with (
             _mock_self(),
-            patch("routes.profile.table", side_effect=self._tables()),
+            patch_profile_table(side_effect=self._tables()),
             patch("routes.profile.refresh_course_context") as refresh,
         ):
             r = client.patch(f"/api/profile/{USER_ID}/settings", json={"theme": "dark"})
@@ -1249,7 +1250,7 @@ class TestAchievementPayloadShape:
                 m.select.return_value = []
             return m
 
-        with patch("routes.profile.table", side_effect=table_side_effect):
+        with patch_profile_table(side_effect=table_side_effect):
             return client.get(f"/api/profile/{USER_ID}/achievements")
 
     def _full(self, **over):
@@ -1277,7 +1278,7 @@ class TestAchievementPayloadShape:
                 m.select.return_value = []
             return m
 
-        with patch("routes.profile.table", side_effect=table_side_effect):
+        with patch_profile_table(side_effect=table_side_effect):
             client.get(f"/api/profile/{USER_ID}/achievements")
 
         cols = set(captured["cols"].split(","))
@@ -1325,7 +1326,7 @@ class TestAchievementsAuthGuard:
     no-op, so this re-patches it to prove the call happens."""
 
     def test_it_checks_the_user_id(self):
-        with patch("routes.profile.table") as t, \
+        with patch_profile_table() as t, \
              patch("routes.profile.require_self") as guard:
             t.return_value.select.return_value = []
             r = client.get(f"/api/profile/{USER_ID}/achievements")
@@ -1334,7 +1335,7 @@ class TestAchievementsAuthGuard:
 
     def test_a_rejection_propagates(self):
         from fastapi import HTTPException
-        with patch("routes.profile.table"), \
+        with patch_profile_table(), \
              patch("routes.profile.require_self",
                    side_effect=HTTPException(status_code=403, detail="nope")):
             r = client.get("/api/profile/someone-else/achievements")
@@ -1364,7 +1365,7 @@ class TestFeaturedAchievementsStatusFilter:
                 m.select.return_value = []
             return m
 
-        with patch("routes.profile.table", side_effect=table_side_effect):
+        with patch_profile_table(side_effect=table_side_effect):
             from routes.profile import _get_featured_achievements
             _get_featured_achievements(USER_ID)
 
@@ -1388,10 +1389,10 @@ class TestFeaturedAchievementsStatusFilter:
                 m.select.return_value = [{"id": USER_ID}]
             return m
 
-        with patch("routes.profile.table", side_effect=table_side_effect), \
-             patch("routes.profile._get_user_roles", return_value=[]), \
-             patch("routes.profile._get_or_create_settings", return_value={}), \
-             patch("routes.profile._get_user_or_404", return_value={"id": USER_ID}):
+        with patch_profile_table(side_effect=table_side_effect), \
+             patch("services.profile.account._get_user_roles", return_value=[]), \
+             patch("services.profile.account._get_or_create_settings", return_value={}), \
+             patch("services.profile.account._get_user_or_404", return_value={"id": USER_ID}):
             r = client.post(f"/api/profile/{USER_ID}/export")
 
         assert r.status_code == 200
@@ -1477,7 +1478,7 @@ def test_concurrent_first_loads_both_get_settings_674():
     from routes import profile
 
     fake = _SettingsTable(racing=True)
-    with patch("routes.profile.table", side_effect=lambda name: fake):
+    with patch_profile_table(side_effect=lambda name: fake):
         with ThreadPoolExecutor(max_workers=2) as pool:
             results = list(pool.map(lambda _: profile._get_or_create_settings(USER_ID), range(2)))
 
@@ -1496,7 +1497,7 @@ def test_concurrent_first_profile_loads_both_succeed_674():
     from routes import profile
 
     fake = _SettingsTable(racing=True)
-    with patch("routes.profile.table", side_effect=lambda name: fake):
+    with patch_profile_table(side_effect=lambda name: fake):
         with ThreadPoolExecutor(max_workers=2) as pool:
             results = list(pool.map(lambda _: profile._get_or_create_profile(USER_ID), range(2)))
 
@@ -1510,7 +1511,7 @@ def test_existing_settings_row_is_not_rewritten_674():
     fake = _SettingsTable()
     fake.rows[USER_ID] = {"user_id": USER_ID, "profile_visibility": "private"}
     fake.upsert = MagicMock(side_effect=AssertionError("must not write when the row exists"))
-    with patch("routes.profile.table", side_effect=lambda name: fake):
+    with patch_profile_table(side_effect=lambda name: fake):
         assert profile._get_or_create_settings(USER_ID)["profile_visibility"] == "private"
 
 
@@ -1518,7 +1519,7 @@ def test_uncontended_create_uses_the_upsert_row_without_a_second_select_674():
     from routes import profile
 
     fake = _SettingsTable()
-    with patch("routes.profile.table", side_effect=lambda name: fake):
+    with patch_profile_table(side_effect=lambda name: fake):
         assert profile._get_or_create_settings(USER_ID) == {"user_id": USER_ID}
 
     assert fake.selects == 1
@@ -1536,7 +1537,7 @@ def test_missing_users_row_fk_violation_is_404_not_500(helper):
 
     fake = _SettingsTable()
     fake.upsert = MagicMock(side_effect=_pg_error(409, {"code": "23503", "message": "fk"}))
-    with patch("routes.profile.table", side_effect=lambda name: fake):
+    with patch_profile_table(side_effect=lambda name: fake):
         with pytest.raises(HTTPException) as exc:
             getattr(profile, helper)(USER_ID)
 
@@ -1552,7 +1553,7 @@ def test_lost_race_with_an_empty_reread_is_404_not_a_made_up_row(helper):
 
     fake = _SettingsTable()
     fake.upsert = MagicMock(return_value=[])
-    with patch("routes.profile.table", side_effect=lambda name: fake):
+    with patch_profile_table(side_effect=lambda name: fake):
         with pytest.raises(HTTPException) as exc:
             getattr(profile, helper)(USER_ID)
 
@@ -1563,7 +1564,7 @@ def test_lost_race_with_an_empty_reread_is_404_not_a_made_up_row(helper):
 def test_settings_get_for_a_lost_race_with_vanished_row_answers_404():
     fake = _SettingsTable()
     fake.upsert = MagicMock(return_value=[])
-    with _mock_self(), patch("routes.profile.table", side_effect=lambda name: fake):
+    with _mock_self(), patch_profile_table(side_effect=lambda name: fake):
         r = client.get(f"/api/profile/{USER_ID}/settings")
 
     assert r.status_code == 404
@@ -1573,7 +1574,7 @@ def test_settings_get_for_a_lost_race_with_vanished_row_answers_404():
 def test_settings_get_for_a_hard_deleted_users_row_answers_404():
     fake = _SettingsTable()
     fake.upsert = MagicMock(side_effect=_pg_error(409, {"code": "23503"}))
-    with _mock_self(), patch("routes.profile.table", side_effect=lambda name: fake):
+    with _mock_self(), patch_profile_table(side_effect=lambda name: fake):
         r = client.get(f"/api/profile/{USER_ID}/settings")
 
     assert r.status_code == 404
@@ -1596,7 +1597,7 @@ def test_other_create_errors_still_propagate(err):
 
     fake = _SettingsTable()
     fake.upsert = MagicMock(side_effect=err())
-    with patch("routes.profile.table", side_effect=lambda name: fake):
+    with patch_profile_table(side_effect=lambda name: fake):
         with pytest.raises(httpx.HTTPStatusError):
             profile._get_or_create_settings(USER_ID)
 

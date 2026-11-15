@@ -86,6 +86,11 @@ def matrix_world(_reset_between_tests, db_conn, seeded_user):
         "user_name": "Rich Active", "text": encrypt_if_present(m.PRIVATE_ROOM_MESSAGE_TEXT),
     })
     table("friend_requests").insert({"from_user_id": m.USER_A, "to_user_id": user_c})
+    # A saved flashcard set of A's (the seed has none): what `set_id` probes.
+    table("flashcard_sets").insert({
+        "id": m.FLASHCARD_SET_ID, "user_id": m.USER_A, "course_id": m.COURSE_SHARED,
+        "name": m.FLASHCARD_SET_NAME, "concepts": ["Recursion"], "options": {},
+    })
 
     codes = {cid: code for cid, code, *_ in seed._COURSES}
     table("course_chunks").insert({
@@ -128,6 +133,7 @@ _A_ROWS: dict[str, str] = {
     "quiz_attempts": _OWN.format(table="quiz_attempts", col="user_id"),
     "quiz_context": _OWN.format(table="quiz_context", col="user_id"),
     "flashcards": _OWN.format(table="flashcards", col="user_id"),
+    "flashcard_sets": _OWN.format(table="flashcard_sets", col="user_id"),
     "study_guides": _OWN.format(table="study_guides", col="user_id"),
     "graph_nodes": _OWN.format(table="graph_nodes", col="user_id"),
     "graph_edges": _OWN.format(table="graph_edges", col="user_id"),

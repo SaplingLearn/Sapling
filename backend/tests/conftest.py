@@ -91,6 +91,10 @@ def _clear_lru_caches():
     auth_routes = sys.modules.get("routes.auth")
     if auth_routes is not None:
         auth_routes.clear_consumed_oauth_nonces()
+    # The crisis card's once-a-day event keys (note chat). Only if imported.
+    crisis_support = sys.modules.get("services.crisis_support")
+    if crisis_support is not None:
+        crisis_support.clear_once_a_day()
     yield
     _unfreeze_model_mode_for_tests()
     clear_override_model_cache()
@@ -105,6 +109,10 @@ def _clear_lru_caches():
     auth_routes = sys.modules.get("routes.auth")
     if auth_routes is not None:
         auth_routes.clear_consumed_oauth_nonces()
+    # The crisis card's once-a-day event keys (note chat). Only if imported.
+    crisis_support = sys.modules.get("services.crisis_support")
+    if crisis_support is not None:
+        crisis_support.clear_once_a_day()
 
 
 @pytest.fixture(autouse=True)
@@ -134,6 +142,9 @@ def _db_user_scope_off(request, monkeypatch):
     if request.node.get_closest_marker("e2e_staging") or request.node.get_closest_marker("integration"):
         return
     monkeypatch.setenv("SAPLING_FLAG_DB_USER_SCOPE", "off")
+    # #117: likewise for `stateless_tutor_sessions`, read on every tutor
+    # session lookup; tests/test_tutor_sessions_store.py turns it on per test.
+    monkeypatch.setenv("SAPLING_FLAG_STATELESS_TUTOR_SESSIONS", "off")
 
 
 @pytest.fixture(autouse=True)
@@ -142,13 +153,17 @@ def _tutor_session_reads_follow_learn_table(monkeypatch):
     services/tutor_sessions.py so flashcards/feedback could share it. Dozens
     of learn tests drive the whole route through ONE `patch("routes.learn.
     table", side_effect=factory)`; this keeps the ownership read on that same
-    factory by resolving `routes.learn.table` at call time. A test of a
+    factory by resolving the tutor's `table` at call time. A test of a
     non-learn route that needs a different answer patches
-    `services.tutor_sessions.table` itself, which overrides this."""
-    import routes.learn as learn_routes
-    from services import tutor_sessions
+    `services.tutor_sessions.table` itself, which overrides this.
 
-    monkeypatch.setattr(tutor_sessions, "table", lambda name: learn_routes.table(name))
+    #118: the learn code moved into services/tutor/, so those tests now use
+    `patch_tutor("table", ...)` (tests/split_patches.py), which puts ONE mock
+    on every tutor module; following any one of them follows that mock."""
+    from services import tutor_sessions
+    from services.tutor import pending as tutor_pending
+
+    monkeypatch.setattr(tutor_sessions, "table", lambda name: tutor_pending.table(name))
     # #761: discard tombstones are process-global, and test session ids are
     # reused ("s1"), so one test's delete would 404 the next test's turn.
     tutor_sessions._DISCARDED.clear()
@@ -536,7 +551,9 @@ def live_accounts(monkeypatch):
     (test_auth_session_access_756.py)."""
     from services import auth_guard
 
-    monkeypatch.setattr(auth_guard, "_read_account_state", lambda _uid: auth_guard.ACCOUNT_ACTIVE)
+    monkeypatch.setattr(
+        auth_guard, "_read_account_state", lambda _uid: auth_guard.AccountRecord(auth_guard.ACCOUNT_ACTIVE)
+    )
 
 
 #: The offering `_bypass_course_enrollment` hands a gated write when the
@@ -608,7 +625,11 @@ def _bypass_session_auth(request, monkeypatch):
     def _require_self_stub(user_id, request, **_kwargs):
         return None
 
-    def _require_admin_stub(request):
+    def _require_admin_stub(request, **_kwargs):
+        # **_kwargs: the real guard takes `max_session_age=` (admin step-up).
+        return None
+
+    def _require_admin_recent_stub(request):
         return None
 
     def _require_role_stub(role_slug):
@@ -620,16 +641,20 @@ def _bypass_session_auth(request, monkeypatch):
     auth_guard._real_require_self = auth_guard.require_self
     auth_guard._real_get_session_user_id = auth_guard.get_session_user_id
     auth_guard._real_require_admin = auth_guard.require_admin
+    auth_guard._real_require_admin_recent = auth_guard.require_admin_recent
     auth_guard._real_require_role = auth_guard.require_role
 
     monkeypatch.setattr(auth_guard, "_decode_session", _decode_session_stub)
     monkeypatch.setattr(auth_guard, "require_self", _require_self_stub)
     monkeypatch.setattr(auth_guard, "get_session_user_id", _get_session_user_id_stub)
     monkeypatch.setattr(auth_guard, "require_admin", _require_admin_stub)
+    monkeypatch.setattr(auth_guard, "require_admin_recent", _require_admin_recent_stub)
     monkeypatch.setattr(auth_guard, "require_role", _require_role_stub)
 
     for mod_name in list(sys.modules):
-        if not mod_name.startswith("routes."):
+        # services.quiz.* / services.tutor.*: the quiz and learn splits (#118)
+        # moved guarded handler bodies there.
+        if not mod_name.startswith(("routes.", "services.quiz.", "services.tutor.")):
             continue
         mod = sys.modules[mod_name]
         if hasattr(mod, "require_self"):
@@ -638,5 +663,7 @@ def _bypass_session_auth(request, monkeypatch):
             monkeypatch.setattr(mod, "get_session_user_id", _get_session_user_id_stub)
         if hasattr(mod, "require_admin"):
             monkeypatch.setattr(mod, "require_admin", _require_admin_stub)
+        if hasattr(mod, "require_admin_recent"):
+            monkeypatch.setattr(mod, "require_admin_recent", _require_admin_recent_stub)
         if hasattr(mod, "require_role"):
             monkeypatch.setattr(mod, "require_role", _require_role_stub)

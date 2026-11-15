@@ -21,6 +21,12 @@ import {
   gradescopeErrorCode,
   needsGradescopeSignIn,
 } from "./gradescopeState";
+import {
+  canDismissGradescopeDialog,
+  connectedCopy,
+  gradescopeDialogTitle,
+  type Stage,
+} from "./gradescopeDialog";
 
 interface Props {
   open: boolean;
@@ -37,20 +43,6 @@ interface Props {
   /** Fired after a successful sync. Not called in settings/connect-only mode. */
   onSynced?: () => void;
 }
-
-type Stage =
-  | "loading"
-  | "verification-error"
-  | "choose-mode"
-  | "credentials"
-  | "cookies"
-  | "bu-sso-form"
-  | "bu-sso-waiting"
-  | "connected" // settings-mode: creds saved, no course to sync
-  | "link"
-  | "ready"
-  | "syncing"
-  | "done";
 
 /**
  * Copy for a failed BU SSO attempt. Classified on the status and the RAW
@@ -93,16 +85,37 @@ export function GradescopeSyncModal(props: Props) {
   ])} {...props} />;
 }
 
-// The wrapper only mounts this while open, so `open` itself is never read here.
-function GradescopeSyncDialog({
+/** Keyboard focus trap: Tab / Shift+Tab wrap around the dialog's enabled
+ *  controls, and a dialog with none keeps focus on itself. */
+function trapDialogTab(event: React.KeyboardEvent<HTMLDivElement>) {
+  const controls = Array.from(event.currentTarget.querySelectorAll<HTMLElement>(
+    'button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), a[href]',
+  ));
+  const first = controls[0];
+  const last = controls.at(-1);
+  if (!first) {
+    event.preventDefault();
+    event.currentTarget.focus();
+  } else if (event.shiftKey && (document.activeElement === first || document.activeElement === event.currentTarget)) {
+    event.preventDefault();
+    last?.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
+/**
+ * The dialog's state machine: every piece of state, the stage loaders and the
+ * submit/link/sync/reset handlers, in the order the dialog has always run them.
+ */
+function useGradescopeSyncFlow({
   userId,
   saplingCourseId,
-  saplingCourseLabel,
   semester,
   reconnect = false,
-  onClose,
   onSynced,
-}: Omit<Props, "open">) {
+}: Omit<Props, "open" | "onClose" | "saplingCourseLabel">) {
   const [mounted, setMounted] = React.useState(false);
   const [stage, setStage] = React.useState<Stage>("loading");
   const [error, setError] = React.useState<string | null>(null);
@@ -253,7 +266,11 @@ function GradescopeSyncDialog({
     else refreshState();
   }, [reconnect, refreshState]);
 
-  if (!mounted) return null;
+  /** Move to another stage with the previous stage's error cleared. */
+  function goTo(next: Stage) {
+    setError(null);
+    setStage(next);
+  }
 
   async function onSubmitCredentials(e: React.FormEvent) {
     e.preventDefault();
@@ -435,6 +452,36 @@ function GradescopeSyncDialog({
     }
   }
 
+  return {
+    mounted, stage, error, lastSyncedAt,
+    email, setEmail, password, setPassword,
+    gradescopeSession, setGradescopeSession, signedToken, setSignedToken,
+    buUsername, setBuUsername, buPassword, setBuPassword,
+    courses, linkedGsCourseId, result, syncPending, saving,
+    dialogRef, fieldId,
+    goTo, refreshState, chooseCourse,
+    onSubmitCredentials, onSubmitBuSso, onSubmitCookies,
+    onPickCourse, onSyncNow, onResetCredentials,
+  };
+}
+
+type SyncFlow = ReturnType<typeof useGradescopeSyncFlow>;
+
+// The wrapper only mounts this while open, so `open` itself is never read here.
+function GradescopeSyncDialog({
+  saplingCourseLabel,
+  onClose,
+  ...flowProps
+}: Omit<Props, "open">) {
+  const flow = useGradescopeSyncFlow(flowProps);
+  const { stage, error, result, syncPending, saving, dialogRef } = flow;
+
+  if (!flow.mounted) return null;
+
+  function dismiss() {
+    if (canDismissGradescopeDialog(stage, saving, syncPending)) onClose();
+  }
+
   return createPortal(
     <div
       ref={dialogRef}
@@ -452,30 +499,14 @@ function GradescopeSyncDialog({
         zIndex: 100,
         padding: 16,
       }}
-      onClick={() => {
-        if (!saving && (stage !== "syncing" || syncPending) && stage !== "bu-sso-waiting") onClose();
-      }}
+      onClick={dismiss}
       onKeyDown={(event) => {
         if (event.key === "Escape") {
           event.stopPropagation();
-          if (!saving && (stage !== "syncing" || syncPending) && stage !== "bu-sso-waiting") onClose();
+          dismiss();
         }
         if (event.key !== "Tab") return;
-        const controls = Array.from(event.currentTarget.querySelectorAll<HTMLElement>(
-          'button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), a[href]',
-        ));
-        const first = controls[0];
-        const last = controls.at(-1);
-        if (!first) {
-          event.preventDefault();
-          event.currentTarget.focus();
-        } else if (event.shiftKey && (document.activeElement === first || document.activeElement === event.currentTarget)) {
-          event.preventDefault();
-          last?.focus();
-        } else if (!event.shiftKey && document.activeElement === last) {
-          event.preventDefault();
-          first.focus();
-        }
+        trapDialogTab(event);
       }}
     >
       <div
@@ -515,25 +546,7 @@ function GradescopeSyncDialog({
               margin: 0,
             }}
           >
-            {stage === "choose-mode"
-              ? "Connect Gradescope"
-              : stage === "verification-error"
-                ? "Couldn't verify Gradescope"
-              : stage === "credentials"
-                ? "Sign in with Gradescope password"
-                : stage === "cookies"
-                  ? "Paste your Gradescope session"
-                  : stage === "bu-sso-form"
-                    ? "Sign in with BU SSO"
-                    : stage === "bu-sso-waiting"
-                      ? "Waiting for Duo approval"
-                      : stage === "connected"
-                        ? "Gradescope is connected"
-                        : stage === "link"
-                          ? "Pick the matching Gradescope course"
-                          : stage === "done"
-                            ? result?.failed ? "Sync needs attention" : "Sync complete"
-                            : "Pull grades from Gradescope"}
+            {gradescopeDialogTitle(stage, result)}
           </h2>
         </header>
 
@@ -554,449 +567,564 @@ function GradescopeSyncDialog({
           </div>
         )}
 
-        <div style={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
-          {stage === "loading" && (
-            <p style={{ color: "var(--text-dim)", fontSize: 14 }}>Loading…</p>
-          )}
-
-          {stage === "verification-error" && (
-            <div>
-              <p style={{ color: "var(--text-dim)" }}>
-                Your saved credentials have not been changed. Retry the connection check,
-                or reconnect if you want to use a different Gradescope session.
-              </p>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
-                <button type="button" className="btn btn--primary" onClick={() => void refreshState()}>
-                  Retry connection
-                </button>
-                <button type="button" className="btn" onClick={() => { setError(null); setStage("choose-mode"); }}>
-                  Reconnect
-                </button>
-                <button type="button" className="btn" onClick={onClose}>Cancel</button>
-              </div>
-            </div>
-          )}
-
-          {stage === "choose-mode" && (
-            <ChooseModeStep
-              onPickPassword={() => {
-                setError(null);
-                setStage("credentials");
-              }}
-              onPickCookies={() => {
-                setError(null);
-                setStage("cookies");
-              }}
-              onPickBuSso={() => {
-                setError(null);
-                setStage("bu-sso-form");
-              }}
-              onCancel={onClose}
-            />
-          )}
-
-          {stage === "bu-sso-form" && (
-            <BuSsoFormStep
-              username={buUsername}
-              password={buPassword}
-              setUsername={setBuUsername}
-              setPassword={setBuPassword}
-              onSubmit={onSubmitBuSso}
-              onBack={() => {
-                setError(null);
-                setStage("choose-mode");
-              }}
-            />
-          )}
-
-          {stage === "bu-sso-waiting" && <BuSsoWaitingStep />}
-
-          {stage === "cookies" && (
-            <CookiePasteStep
-              gradescopeSession={gradescopeSession}
-              signedToken={signedToken}
-              setGradescopeSession={setGradescopeSession}
-              setSignedToken={setSignedToken}
-              saving={saving}
-              onSubmit={onSubmitCookies}
-              onBack={() => {
-                setError(null);
-                setStage("choose-mode");
-              }}
-            />
-          )}
-
-          {stage === "credentials" && (
-            <form onSubmit={onSubmitCredentials}>
-              <p
-                style={{
-                  fontFamily: "var(--font-serif), var(--font-aleo), 'Aleo', Georgia, serif",
-                  fontSize: 14,
-                  lineHeight: 1.6,
-                  color: "var(--text-dim)",
-                  margin: "0 0 18px",
-                }}
-              >
-                Sapling will log into Gradescope on your behalf to pull your
-                grades. Your password is encrypted at rest with AES-GCM and is
-                never shown again after this form.
-              </p>
-              <label
-                htmlFor={`${fieldId}-email`}
-                className="mono"
-                style={{
-                  display: "block",
-                  fontSize: 11,
-                  letterSpacing: "0.12em",
-                  textTransform: "uppercase",
-                  color: "var(--text-muted)",
-                  marginBottom: 6,
-                }}
-              >
-                Email
-              </label>
-              <input
-                id={`${fieldId}-email`}
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-                autoComplete="username"
-                style={{
-                  width: "100%",
-                  padding: "10px 12px",
-                  borderRadius: "var(--r-sm)",
-                  border: "1px solid var(--border)",
-                  background: "var(--bg-input)",
-                  color: "var(--text)",
-                  fontSize: 14,
-                  marginBottom: 14,
-                }}
-              />
-              <label
-                htmlFor={`${fieldId}-password`}
-                className="mono"
-                style={{
-                  display: "block",
-                  fontSize: 11,
-                  letterSpacing: "0.12em",
-                  textTransform: "uppercase",
-                  color: "var(--text-muted)",
-                  marginBottom: 6,
-                }}
-              >
-                Password
-              </label>
-              <input
-                id={`${fieldId}-password`}
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                autoComplete="current-password"
-                style={{
-                  width: "100%",
-                  padding: "10px 12px",
-                  borderRadius: "var(--r-sm)",
-                  border: "1px solid var(--border)",
-                  background: "var(--bg-input)",
-                  color: "var(--text)",
-                  fontSize: 14,
-                  marginBottom: 20,
-                }}
-              />
-              <div
-                style={{
-                  display: "flex",
-                  gap: 10,
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                }}
-              >
-                <button
-                  type="button"
-                  className="btn btn--ghost"
-                  disabled={saving}
-                  onClick={() => {
-                    setError(null);
-                    setStage("choose-mode");
-                  }}
-                  style={{ padding: "6px 10px", fontSize: 12 }}
-                >
-                  ← Back
-                </button>
-                <div style={{ display: "flex", gap: 10 }}>
-                  <button type="button" className="btn" onClick={onClose} disabled={saving}>
-                    Cancel
-                  </button>
-                  <button type="submit" className="btn btn--primary" disabled={saving}>
-                    {saving ? "Connecting…" : "Connect"}
-                  </button>
-                </div>
-              </div>
-            </form>
-          )}
-
-          {stage === "link" && (
-            <div>
-              <p
-                style={{
-                  fontFamily: "var(--font-serif), var(--font-aleo), 'Aleo', Georgia, serif",
-                  fontSize: 14,
-                  lineHeight: 1.6,
-                  color: "var(--text-dim)",
-                  margin: "0 0 16px",
-                }}
-              >
-                Which Gradescope course should map to{" "}
-                <span style={{ color: "var(--text)", fontWeight: 500 }}>
-                  {saplingCourseLabel}
-                </span>
-                ?
-              </p>
-              {courses.length === 0 ? (
-                <p style={{ color: "var(--text-dim)", fontSize: 14 }}>
-                  We didn&apos;t find any student courses on this Gradescope account.
-                </p>
-              ) : (
-                <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-                  {courses.map((c) => (
-                    <li key={c.id} style={{ marginBottom: 6 }}>
-                      <button
-                        type="button"
-                        disabled={saving}
-                        onClick={() => onPickCourse(c.id)}
-                        style={{
-                          width: "100%",
-                          textAlign: "left",
-                          padding: "12px 14px",
-                          border: "1px solid var(--border)",
-                          borderRadius: "var(--r-sm)",
-                          background: "var(--bg-panel)",
-                          cursor: "pointer",
-                          color: "var(--text)",
-                          fontSize: 14,
-                          display: "flex",
-                          justifyContent: "space-between",
-                          alignItems: "baseline",
-                          gap: 12,
-                          transition: "border-color var(--dur-fast) var(--ease)",
-                        }}
-                        onMouseEnter={(e) =>
-                          (e.currentTarget.style.borderColor = "var(--border-strong)")
-                        }
-                        onMouseLeave={(e) =>
-                          (e.currentTarget.style.borderColor = "var(--border)")
-                        }
-                      >
-                        <span>
-                          <span style={{ fontWeight: 500 }}>{c.name}</span>
-                          {c.full_name && c.full_name !== c.name && (
-                            <span style={{ color: "var(--text-dim)", marginLeft: 8 }}>
-                              {c.full_name}
-                            </span>
-                          )}
-                        </span>
-                        <span
-                          className="mono"
-                          style={{ fontSize: 11, color: "var(--text-muted)" }}
-                        >
-                          {[c.semester, c.year].filter(Boolean).join(" ")}
-                        </span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 20, gap: 10 }}>
-                <button type="button" className="btn" onClick={onClose} disabled={saving}>
-                  Cancel
-                </button>
-                <button type="button" className="btn btn--ghost" onClick={onResetCredentials} disabled={saving}>
-                  Use different account
-                </button>
-              </div>
-            </div>
-          )}
-
-          {stage === "connected" && (
-            <div>
-              <p
-                style={{
-                  fontFamily: "var(--font-serif), var(--font-aleo), 'Aleo', Georgia, serif",
-                  fontSize: 14,
-                  lineHeight: 1.6,
-                  color: "var(--text-dim)",
-                  margin: "0 0 12px",
-                }}
-              >
-                {courses.length > 0
-                  ? `Your Gradescope account is verified with ${courses.length} student course${courses.length === 1 ? "" : "s"}. Go to a course in the gradebook to link it and sync grades.`
-                  : "Sign-in was verified, but this account has no student courses. Check that you used the same Gradescope account you use for your classes."}
-              </p>
-              {lastSyncedAt && (
-                <p
-                  className="mono"
-                  style={{
-                    fontSize: 11,
-                    color: "var(--text-muted)",
-                    letterSpacing: "-0.01em",
-                    margin: "0 0 18px",
-                  }}
-                >
-                  Last sync · {new Date(lastSyncedAt).toLocaleString()}
-                </p>
-              )}
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  gap: 12,
-                  flexWrap: "wrap",
-                }}
-              >
-                <button
-                  type="button"
-                  className="btn btn--ghost"
-                  onClick={onResetCredentials}
-                  disabled={saving}
-                >
-                  Disconnect
-                </button>
-                <button type="button" className="btn btn--primary" onClick={onClose} disabled={saving}>
-                  Done
-                </button>
-              </div>
-            </div>
-          )}
-
-          {(stage === "ready" || stage === "syncing") && (
-            <div>
-              <p
-                style={{
-                  fontFamily: "var(--font-serif), var(--font-aleo), 'Aleo', Georgia, serif",
-                  fontSize: 14,
-                  lineHeight: 1.6,
-                  color: "var(--text-dim)",
-                  margin: "0 0 16px",
-                }}
-              >
-                Sapling will pull every assignment from Gradescope course{" "}
-                <span className="mono" style={{ color: "var(--text)" }}>
-                  {linkedGsCourseId}
-                </span>{" "}
-                and update grades in {saplingCourseLabel}. New assignments
-                are matched to categories by title where possible. You can re-categorize them after.
-              </p>
-              {lastSyncedAt && (
-                <p
-                  className="mono"
-                  style={{
-                    fontSize: 11,
-                    color: "var(--text-muted)",
-                    letterSpacing: "-0.01em",
-                    margin: "0 0 18px",
-                  }}
-                >
-                  Last sync · {new Date(lastSyncedAt).toLocaleString()}
-                </p>
-              )}
-              {stage === "syncing" && syncPending && (
-                <p
-                  role="status"
-                  style={{ fontSize: 13, lineHeight: 1.5, color: "var(--text-dim)", margin: "0 0 16px" }}
-                >
-                  Still syncing — this one is taking longer than usual. We&apos;ll refresh
-                  your gradebook when it finishes.
-                </p>
-              )}
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-                <button
-                  type="button"
-                  className="btn btn--ghost"
-                  onClick={() => void chooseCourse()}
-                  disabled={stage === "syncing" || saving}
-                >
-                  Change course
-                </button>
-                <button
-                  type="button"
-                  className="btn btn--ghost"
-                  onClick={onResetCredentials}
-                  disabled={stage === "syncing" || saving}
-                >
-                  Use different account
-                </button>
-                <div style={{ display: "flex", gap: 10 }}>
-                  <button
-                    type="button"
-                    className="btn"
-                    onClick={onClose}
-                    disabled={(stage === "syncing" && !syncPending) || saving}
-                  >
-                    Close
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn--primary"
-                    onClick={onSyncNow}
-                    disabled={stage === "syncing" || saving}
-                  >
-                    {stage === "syncing" ? "Syncing…" : "Sync now"}
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {stage === "done" && result && (
-            <div>
-              <p
-                style={{
-                  fontFamily: "var(--font-serif), var(--font-aleo), 'Aleo', Georgia, serif",
-                  fontSize: 15,
-                  lineHeight: 1.6,
-                  color: "var(--text)",
-                  margin: "0 0 18px",
-                }}
-              >
-                {result.failed > 0
-                  ? "Some assignments could not be saved. Retry the sync to import the remaining grades."
-                  : "Pulled grades from Gradescope."}
-              </p>
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(4, 1fr)",
-                  gap: 12,
-                  marginBottom: 24,
-                }}
-              >
-                <SyncStat label="Added" value={result.inserted} />
-                <SyncStat label="Updated" value={result.updated} />
-                <SyncStat label="Skipped" value={result.skipped} muted />
-                <SyncStat
-                  label="Failed"
-                  value={result.failed}
-                  warn={result.failed > 0}
-                />
-              </div>
-              <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
-                {result.failed > 0 && (
-                  <button type="button" className="btn btn--primary" onClick={onSyncNow}>
-                    Retry sync
-                  </button>
-                )}
-                <button type="button" className="btn btn--primary" onClick={onClose}>
-                  Done
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
+        {renderStageBody(flow, saplingCourseLabel, onClose)}
       </div>
     </div>,
     document.body,
+  );
+}
+
+/**
+ * The scrolling stage area. A plain function (not a component) so the tree is
+ * exactly the one the dialog always rendered: one slot per stage, in the same
+ * order, so each stage mounts and unmounts its own subtree as before.
+ */
+function renderStageBody(flow: SyncFlow, saplingCourseLabel: string | undefined, onClose: () => void) {
+  const { stage, saving, result } = flow;
+  const backToChoices = () => flow.goTo("choose-mode");
+  return (
+    <div style={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
+      {stage === "loading" && (
+        <p style={{ color: "var(--text-dim)", fontSize: 14 }}>Loading…</p>
+      )}
+
+      {stage === "verification-error" && (
+        <VerificationErrorStep
+          onRetry={() => void flow.refreshState()}
+          onReconnect={backToChoices}
+          onCancel={onClose}
+        />
+      )}
+
+      {stage === "choose-mode" && (
+        <ChooseModeStep
+          onPickPassword={() => flow.goTo("credentials")}
+          onPickCookies={() => flow.goTo("cookies")}
+          onPickBuSso={() => flow.goTo("bu-sso-form")}
+          onCancel={onClose}
+        />
+      )}
+
+      {stage === "bu-sso-form" && (
+        <BuSsoFormStep
+          username={flow.buUsername}
+          password={flow.buPassword}
+          setUsername={flow.setBuUsername}
+          setPassword={flow.setBuPassword}
+          onSubmit={flow.onSubmitBuSso}
+          onBack={backToChoices}
+        />
+      )}
+
+      {stage === "bu-sso-waiting" && <BuSsoWaitingStep />}
+
+      {stage === "cookies" && (
+        <CookiePasteStep
+          gradescopeSession={flow.gradescopeSession}
+          signedToken={flow.signedToken}
+          setGradescopeSession={flow.setGradescopeSession}
+          setSignedToken={flow.setSignedToken}
+          saving={saving}
+          onSubmit={flow.onSubmitCookies}
+          onBack={backToChoices}
+        />
+      )}
+
+      {stage === "credentials" && (
+        <CredentialsStep flow={flow} onBack={backToChoices} onCancel={onClose} />
+      )}
+
+      {stage === "link" && (
+        <LinkStep
+          saplingCourseLabel={saplingCourseLabel}
+          courses={flow.courses}
+          saving={saving}
+          onPick={flow.onPickCourse}
+          onCancel={onClose}
+          onReset={flow.onResetCredentials}
+        />
+      )}
+
+      {stage === "connected" && (
+        <ConnectedStep
+          courseCount={flow.courses.length}
+          lastSyncedAt={flow.lastSyncedAt}
+          saving={saving}
+          onReset={flow.onResetCredentials}
+          onDone={onClose}
+        />
+      )}
+
+      {(stage === "ready" || stage === "syncing") && (
+        <ReadyStep
+          syncing={stage === "syncing"}
+          flow={flow}
+          saplingCourseLabel={saplingCourseLabel}
+          onClose={onClose}
+        />
+      )}
+
+      {stage === "done" && result && (
+        <DoneStep result={result} onRetry={flow.onSyncNow} onDone={onClose} />
+      )}
+    </div>
+  );
+}
+
+function VerificationErrorStep({
+  onRetry,
+  onReconnect,
+  onCancel,
+}: {
+  onRetry: () => void;
+  onReconnect: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div>
+      <p style={{ color: "var(--text-dim)" }}>
+        Your saved credentials have not been changed. Retry the connection check,
+        or reconnect if you want to use a different Gradescope session.
+      </p>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+        <button type="button" className="btn btn--primary" onClick={onRetry}>
+          Retry connection
+        </button>
+        <button type="button" className="btn" onClick={onReconnect}>
+          Reconnect
+        </button>
+        <button type="button" className="btn" onClick={onCancel}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+function CredentialsStep({
+  flow,
+  onBack,
+  onCancel,
+}: {
+  flow: SyncFlow;
+  onBack: () => void;
+  onCancel: () => void;
+}) {
+  const { fieldId, saving } = flow;
+  return (
+    <form onSubmit={flow.onSubmitCredentials}>
+      <p
+        style={{
+          fontFamily: "var(--font-serif), var(--font-aleo), 'Aleo', Georgia, serif",
+          fontSize: 14,
+          lineHeight: 1.6,
+          color: "var(--text-dim)",
+          margin: "0 0 18px",
+        }}
+      >
+        Sapling will log into Gradescope on your behalf to pull your
+        grades. Your password is encrypted at rest with AES-GCM and is
+        never shown again after this form.
+      </p>
+      <label
+        htmlFor={`${fieldId}-email`}
+        className="mono"
+        style={{
+          display: "block",
+          fontSize: 11,
+          letterSpacing: "0.12em",
+          textTransform: "uppercase",
+          color: "var(--text-muted)",
+          marginBottom: 6,
+        }}
+      >
+        Email
+      </label>
+      <input
+        id={`${fieldId}-email`}
+        type="email"
+        value={flow.email}
+        onChange={(e) => flow.setEmail(e.target.value)}
+        required
+        autoComplete="username"
+        style={{
+          width: "100%",
+          padding: "10px 12px",
+          borderRadius: "var(--r-sm)",
+          border: "1px solid var(--border)",
+          background: "var(--bg-input)",
+          color: "var(--text)",
+          fontSize: 14,
+          marginBottom: 14,
+        }}
+      />
+      <label
+        htmlFor={`${fieldId}-password`}
+        className="mono"
+        style={{
+          display: "block",
+          fontSize: 11,
+          letterSpacing: "0.12em",
+          textTransform: "uppercase",
+          color: "var(--text-muted)",
+          marginBottom: 6,
+        }}
+      >
+        Password
+      </label>
+      <input
+        id={`${fieldId}-password`}
+        type="password"
+        value={flow.password}
+        onChange={(e) => flow.setPassword(e.target.value)}
+        required
+        autoComplete="current-password"
+        style={{
+          width: "100%",
+          padding: "10px 12px",
+          borderRadius: "var(--r-sm)",
+          border: "1px solid var(--border)",
+          background: "var(--bg-input)",
+          color: "var(--text)",
+          fontSize: 14,
+          marginBottom: 20,
+        }}
+      />
+      <div
+        style={{
+          display: "flex",
+          gap: 10,
+          justifyContent: "space-between",
+          alignItems: "center",
+        }}
+      >
+        <button
+          type="button"
+          className="btn btn--ghost"
+          disabled={saving}
+          onClick={onBack}
+          style={{ padding: "6px 10px", fontSize: 12 }}
+        >
+          ← Back
+        </button>
+        <div style={{ display: "flex", gap: 10 }}>
+          <button type="button" className="btn" onClick={onCancel} disabled={saving}>
+            Cancel
+          </button>
+          <button type="submit" className="btn btn--primary" disabled={saving}>
+            {saving ? "Connecting…" : "Connect"}
+          </button>
+        </div>
+      </div>
+    </form>
+  );
+}
+
+function LinkStep({
+  saplingCourseLabel,
+  courses,
+  saving,
+  onPick,
+  onCancel,
+  onReset,
+}: {
+  saplingCourseLabel: string | undefined;
+  courses: GradescopeCourse[];
+  saving: boolean;
+  onPick: (gsCourseId: string) => void;
+  onCancel: () => void;
+  onReset: () => void;
+}) {
+  return (
+    <div>
+      <p
+        style={{
+          fontFamily: "var(--font-serif), var(--font-aleo), 'Aleo', Georgia, serif",
+          fontSize: 14,
+          lineHeight: 1.6,
+          color: "var(--text-dim)",
+          margin: "0 0 16px",
+        }}
+      >
+        Which Gradescope course should map to{" "}
+        <span style={{ color: "var(--text)", fontWeight: 500 }}>
+          {saplingCourseLabel}
+        </span>
+        ?
+      </p>
+      {courses.length === 0 ? (
+        <p style={{ color: "var(--text-dim)", fontSize: 14 }}>
+          We didn&apos;t find any student courses on this Gradescope account.
+        </p>
+      ) : (
+        <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+          {courses.map((c) => (
+            <li key={c.id} style={{ marginBottom: 6 }}>
+              <button
+                type="button"
+                disabled={saving}
+                onClick={() => onPick(c.id)}
+                style={{
+                  width: "100%",
+                  textAlign: "left",
+                  padding: "12px 14px",
+                  border: "1px solid var(--border)",
+                  borderRadius: "var(--r-sm)",
+                  background: "var(--bg-panel)",
+                  cursor: "pointer",
+                  color: "var(--text)",
+                  fontSize: 14,
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "baseline",
+                  gap: 12,
+                  transition: "border-color var(--dur-fast) var(--ease)",
+                }}
+                onMouseEnter={(e) =>
+                  (e.currentTarget.style.borderColor = "var(--border-strong)")
+                }
+                onMouseLeave={(e) =>
+                  (e.currentTarget.style.borderColor = "var(--border)")
+                }
+              >
+                <span>
+                  <span style={{ fontWeight: 500 }}>{c.name}</span>
+                  {c.full_name && c.full_name !== c.name && (
+                    <span style={{ color: "var(--text-dim)", marginLeft: 8 }}>
+                      {c.full_name}
+                    </span>
+                  )}
+                </span>
+                <span
+                  className="mono"
+                  style={{ fontSize: 11, color: "var(--text-muted)" }}
+                >
+                  {[c.semester, c.year].filter(Boolean).join(" ")}
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 20, gap: 10 }}>
+        <button type="button" className="btn" onClick={onCancel} disabled={saving}>
+          Cancel
+        </button>
+        <button type="button" className="btn btn--ghost" onClick={onReset} disabled={saving}>
+          Use different account
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ConnectedStep({
+  courseCount,
+  lastSyncedAt,
+  saving,
+  onReset,
+  onDone,
+}: {
+  courseCount: number;
+  lastSyncedAt: string | null;
+  saving: boolean;
+  onReset: () => void;
+  onDone: () => void;
+}) {
+  return (
+    <div>
+      <p
+        style={{
+          fontFamily: "var(--font-serif), var(--font-aleo), 'Aleo', Georgia, serif",
+          fontSize: 14,
+          lineHeight: 1.6,
+          color: "var(--text-dim)",
+          margin: "0 0 12px",
+        }}
+      >
+        {connectedCopy(courseCount)}
+      </p>
+      {lastSyncedAt && (
+        <p
+          className="mono"
+          style={{
+            fontSize: 11,
+            color: "var(--text-muted)",
+            letterSpacing: "-0.01em",
+            margin: "0 0 18px",
+          }}
+        >
+          Last sync · {new Date(lastSyncedAt).toLocaleString()}
+        </p>
+      )}
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          gap: 12,
+          flexWrap: "wrap",
+        }}
+      >
+        <button
+          type="button"
+          className="btn btn--ghost"
+          onClick={onReset}
+          disabled={saving}
+        >
+          Disconnect
+        </button>
+        <button type="button" className="btn btn--primary" onClick={onDone} disabled={saving}>
+          Done
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** Both "ready" and "syncing": one component at one slot, so starting a sync
+ *  updates this subtree in place instead of remounting it. */
+function ReadyStep({
+  syncing,
+  flow,
+  saplingCourseLabel,
+  onClose,
+}: {
+  syncing: boolean;
+  flow: SyncFlow;
+  saplingCourseLabel: string | undefined;
+  onClose: () => void;
+}) {
+  const { lastSyncedAt, syncPending, saving } = flow;
+  return (
+    <div>
+      <p
+        style={{
+          fontFamily: "var(--font-serif), var(--font-aleo), 'Aleo', Georgia, serif",
+          fontSize: 14,
+          lineHeight: 1.6,
+          color: "var(--text-dim)",
+          margin: "0 0 16px",
+        }}
+      >
+        Sapling will pull every assignment from Gradescope course{" "}
+        <span className="mono" style={{ color: "var(--text)" }}>
+          {flow.linkedGsCourseId}
+        </span>{" "}
+        and update grades in {saplingCourseLabel}. New assignments
+        are matched to categories by title where possible. You can re-categorize them after.
+      </p>
+      {lastSyncedAt && (
+        <p
+          className="mono"
+          style={{
+            fontSize: 11,
+            color: "var(--text-muted)",
+            letterSpacing: "-0.01em",
+            margin: "0 0 18px",
+          }}
+        >
+          Last sync · {new Date(lastSyncedAt).toLocaleString()}
+        </p>
+      )}
+      {syncing && syncPending && (
+        <p
+          role="status"
+          style={{ fontSize: 13, lineHeight: 1.5, color: "var(--text-dim)", margin: "0 0 16px" }}
+        >
+          Still syncing — this one is taking longer than usual. We&apos;ll refresh
+          your gradebook when it finishes.
+        </p>
+      )}
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+        <button
+          type="button"
+          className="btn btn--ghost"
+          onClick={() => void flow.chooseCourse()}
+          disabled={syncing || saving}
+        >
+          Change course
+        </button>
+        <button
+          type="button"
+          className="btn btn--ghost"
+          onClick={flow.onResetCredentials}
+          disabled={syncing || saving}
+        >
+          Use different account
+        </button>
+        <div style={{ display: "flex", gap: 10 }}>
+          <button
+            type="button"
+            className="btn"
+            onClick={onClose}
+            disabled={(syncing && !syncPending) || saving}
+          >
+            Close
+          </button>
+          <button
+            type="button"
+            className="btn btn--primary"
+            onClick={flow.onSyncNow}
+            disabled={syncing || saving}
+          >
+            {syncing ? "Syncing…" : "Sync now"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DoneStep({
+  result,
+  onRetry,
+  onDone,
+}: {
+  result: GradescopeSyncResult;
+  onRetry: () => void;
+  onDone: () => void;
+}) {
+  return (
+    <div>
+      <p
+        style={{
+          fontFamily: "var(--font-serif), var(--font-aleo), 'Aleo', Georgia, serif",
+          fontSize: 15,
+          lineHeight: 1.6,
+          color: "var(--text)",
+          margin: "0 0 18px",
+        }}
+      >
+        {result.failed > 0
+          ? "Some assignments could not be saved. Retry the sync to import the remaining grades."
+          : "Pulled grades from Gradescope."}
+      </p>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(4, 1fr)",
+          gap: 12,
+          marginBottom: 24,
+        }}
+      >
+        <SyncStat label="Added" value={result.inserted} />
+        <SyncStat label="Updated" value={result.updated} />
+        <SyncStat label="Skipped" value={result.skipped} muted />
+        <SyncStat
+          label="Failed"
+          value={result.failed}
+          warn={result.failed > 0}
+        />
+      </div>
+      <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+        {result.failed > 0 && (
+          <button type="button" className="btn btn--primary" onClick={onRetry}>
+            Retry sync
+          </button>
+        )}
+        <button type="button" className="btn btn--primary" onClick={onDone}>
+          Done
+        </button>
+      </div>
+    </div>
   );
 }
 

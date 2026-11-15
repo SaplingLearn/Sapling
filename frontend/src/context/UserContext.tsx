@@ -15,6 +15,7 @@ import { API_URL, getMe, onSessionExpired } from '@/lib/api';
 import { readAccountSettings } from '@/lib/accountSettings';
 import { isAppShellRoute } from '@/lib/appRoutes';
 import { clearUserScopedStorage } from '@/lib/userScopedStorage';
+import { cacheBustedAvatar, isDeadSessionStatus, profileFields } from './userProfile';
 import {
   ACCOUNT_REFRESH_MS,
   accountRefreshDue,
@@ -79,6 +80,37 @@ function persistedIdentity(): string {
     return saved && typeof saved.id === 'string' ? saved.id : '';
   } catch {
     return '';
+  }
+}
+
+/**
+ * Write a display name /me just confirmed through to `sapling_user`, so the
+ * next page load boots with it — only onto this account's own copy, and only
+ * when it changed. An unreadable or unwritable copy is left as it is.
+ */
+function persistConfirmedName(uid: string, name: string): void {
+  try {
+    const saved = JSON.parse(localStorage.getItem('sapling_user') ?? 'null');
+    if (saved && saved.id === uid && saved.name !== name) {
+      localStorage.setItem('sapling_user', JSON.stringify({ ...saved, name }));
+    }
+  } catch {}
+}
+
+/** On an auth-flow route (`/auth/*`), which owns its own identity bootstrap. */
+function onAuthFlowRoute(): boolean {
+  return typeof window !== 'undefined' && window.location.pathname.startsWith('/auth');
+}
+
+/**
+ * After a cleared session: on a shell route there is no usable UI left
+ * (every screen gates on userId) and the next server navigation would be
+ * bounced by the middleware anyway — bounce now, with the same greppable
+ * code the middleware uses.
+ */
+function bounceToSigninFromShell(): void {
+  if (typeof window !== 'undefined' && shouldBounceToSignin(window.location.pathname)) {
+    window.location.replace('/?error=session_expired');
   }
 }
 
@@ -296,22 +328,15 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
       const res = await fetch(`${API_URL}/api/auth/me?user_id=${encodeURIComponent(uid)}`, { credentials: 'include' });
       if (generation !== profileGeneration.current) return;
       if (!res.ok) {
-        // #191: a definitive 401 (no live session) or 404 (user row gone —
-        // the stale-session family) means the identity this client holds is
+        // #191: a definitive 401/404 means the identity this client holds is
         // dead: clear it so isAuthenticated stops asserting a session the
         // server won't honor. This effect already runs on every authed
         // mount, so the stale-localStorage case self-heals with no extra
         // request. Transient failures (5xx, network) fall through and keep
         // the session — a server blip must not sign the user out.
-        if (res.status === 401 || res.status === 404) {
+        if (isDeadSessionStatus(res.status)) {
           clearStaleClientAuth();
-          // On a shell route a cleared session has no usable UI left (every
-          // screen gates on userId) and the next server navigation would be
-          // bounced by the middleware anyway — bounce now, with the same
-          // greppable code the middleware uses.
-          if (typeof window !== 'undefined' && shouldBounceToSignin(window.location.pathname)) {
-            window.location.replace('/?error=session_expired');
-          }
+          bounceToSigninFromShell();
         }
         return;
       }
@@ -330,7 +355,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
         clearStaleClientAuth();
         // The auth-flow routes own their own bootstrap (see the cookie
         // fallback above): just drop the stale identity there.
-        if (typeof window !== 'undefined' && window.location.pathname.startsWith('/auth')) return;
+        if (onAuthFlowRoute()) return;
         setActiveUser(data.user_id, data.name || '', data.avatar_url || '');
         return;
       }
@@ -339,41 +364,24 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
       // confirmed name so the next page load boots with it.
       if (data.name) {
         setUserName(data.name);
-        try {
-          const saved = JSON.parse(localStorage.getItem('sapling_user') ?? 'null');
-          if (saved && saved.id === uid && saved.name !== data.name) {
-            localStorage.setItem('sapling_user', JSON.stringify({ ...saved, name: data.name }));
-          }
-        } catch {}
+        persistConfirmedName(uid, data.name);
       }
-      setUsername(data.username ?? null);
-      setRoles(data.roles ?? []);
-      setEquippedCosmetics(data.equipped_cosmetics ?? {});
-      setIsAdmin(data.is_admin ?? false);
+      const profile = profileFields(data);
+      setUsername(profile.username);
+      setRoles(profile.roles);
+      setEquippedCosmetics(profile.equippedCosmetics);
+      setIsAdmin(profile.isAdmin);
       // Avatar URL has to be refreshed here too — Settings.tsx calls
       // refreshProfile() after a successful avatar upload to pick up
       // the new image, and without this line the avatar stayed on
       // whatever value setActiveUser put in at login (often empty,
-      // showing the initial-letter fallback in <Avatar>).
-      //
-      // Cache-bust with `?v=<timestamp>` because the storage URL is
-      // deterministic — every upload writes to
-      // `avatars/{user_id}/avatar.{ext}`, so a re-upload produces an
-      // identical URL and browsers serve the cached old image. The
-      // timestamp changes on every refresh, which forces a re-fetch
-      // from Supabase Storage's CDN once per refreshProfile() call.
-      // Avatars are small (<5 MB cap, usually <100 KB after
-      // browser-side compression), so the extra fetch per refresh is
-      // not a meaningful bandwidth concern.
-      const rawAvatar = (data.avatar_url ?? '').trim();
-      if (rawAvatar) {
-        const sep = rawAvatar.includes('?') ? '&' : '?';
-        setAvatarUrl(`${rawAvatar}${sep}v=${Date.now()}`);
-      } else {
-        setAvatarUrl('');
-      }
-      const fr = data.equipped_cosmetics?.featured_role ?? null;
-      setFeaturedRole(fr);
+      // showing the initial-letter fallback in <Avatar>). The cache-bust
+      // (see cacheBustedAvatar) forces a re-fetch from Supabase Storage's
+      // CDN once per refreshProfile() call; avatars are small (<5 MB cap,
+      // usually <100 KB after browser-side compression), so the extra
+      // fetch per refresh is not a meaningful bandwidth concern.
+      setAvatarUrl(cacheBustedAvatar(data.avatar_url, Date.now()));
+      setFeaturedRole(profile.featuredRole);
     } catch {}
   }, [clearStaleClientAuth, setActiveUser]);
 

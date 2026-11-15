@@ -13,8 +13,8 @@ from __future__ import annotations
 from unittest.mock import patch
 
 from services.encryption import decrypt_json, encrypt_json
-from services.quiz_distractors import DIGEST_SCHEMA_VERSION
-from services.quiz_context_service import get_quiz_context, save_quiz_context
+from services.quiz.distractors import DIGEST_SCHEMA_VERSION
+from services.quiz.context import get_quiz_context, save_quiz_context
 
 
 class FakeTable:
@@ -39,7 +39,7 @@ class FakeTable:
 def test_save_quiz_context_upserts_ciphertext():
     fake = FakeTable()
     context = {"weak_areas": ["recursion base case"], "recommended_difficulty": "hard"}
-    with patch("services.quiz_context_service.table", return_value=fake):
+    with patch("services.quiz.context.table", return_value=fake):
         save_quiz_context("u1", "concept1", context)
 
     assert fake.upserted, "upsert was not called"
@@ -63,7 +63,7 @@ def test_save_quiz_context_upserts_ciphertext():
 def test_get_quiz_context_decrypts_ciphertext():
     context = {"weak_areas": ["loops"], "questions_seen_summary": "iteration basics"}
     fake = FakeTable(rows=[{"context_json": encrypt_json(context)}])
-    with patch("services.quiz_context_service.table", return_value=fake):
+    with patch("services.quiz.context.table", return_value=fake):
         out = get_quiz_context("u1", "concept1")
     assert out == context
 
@@ -73,7 +73,7 @@ def test_get_quiz_context_passes_legacy_plaintext_dict():
     not ciphertext. decrypt_json_column must pass those through unchanged."""
     context = {"weak_areas": ["loops"]}
     fake = FakeTable(rows=[{"context_json": context}])
-    with patch("services.quiz_context_service.table", return_value=fake):
+    with patch("services.quiz.context.table", return_value=fake):
         out = get_quiz_context("u1", "concept1")
     assert out == context
 
@@ -84,6 +84,6 @@ def test_get_quiz_context_degrades_to_none_on_corrupt_string():
     submit_quiz's post-commit read can't 500 a request whose mastery/score
     writes already landed. MUST fail if the try/except guard is reverted."""
     fake = FakeTable(rows=[{"context_json": "corrupt-not-json-not-b64"}])
-    with patch("services.quiz_context_service.table", return_value=fake):
+    with patch("services.quiz.context.table", return_value=fake):
         out = get_quiz_context("u1", "concept1")
     assert out is None

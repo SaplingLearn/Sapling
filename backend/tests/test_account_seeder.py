@@ -12,6 +12,7 @@ from datetime import date, timedelta
 
 import pytest
 
+from models.study_guide import GuideContent
 from services.account_seed import seeder
 from services.account_seed.schema import MajorPack
 from services.encryption import decrypt_if_present, decrypt_json, decrypt_numeric
@@ -399,10 +400,11 @@ def test_locked_text_columns_are_encrypted(db):
 def test_locked_json_columns_are_encrypted(db):
     _seed(db)
     guide = db.rows["study_guides"][0]
-    content = decrypt_json(guide["content"])
-    assert content["exam"] == "Midterm"
-    assert content["overview"] == "What the midterm covers."
-    assert [t["name"] for t in content["topics"]] == ["Topic one", "Topic two"]
+    assert isinstance(guide["content"], str)
+    content = GuideContent.model_validate(decrypt_json(guide["content"]))
+    assert content.title == "Midterm"
+    assert content.deck == "What the midterm covers."
+    assert [s.title for s in content.sections] == ["Topic one", "Topic two"]
     session = db.rows["sessions"][0]
     summary = decrypt_json(session["summary_json"])
     assert summary["bullets"] == ["Covered one", "Covered two"]
@@ -438,6 +440,20 @@ def test_study_guide_targets_the_midterm(db):
     for g in db.rows["study_guides"]:
         assert g["exam_id"] in midterms
         assert g["generated_at"][:10] <= TODAY.isoformat()
+        assert g["created_at"] == g["generated_at"]
+
+
+def test_study_guide_is_a_ready_format_2_guide(db):
+    """The pack's overview and topics, stored in the shape the reader reads:
+    one written section per topic, shares summing to 100."""
+    _seed(db)
+    for g in db.rows["study_guides"]:
+        assert (g["format"], g["status"], g["scope_kind"]) == (2, "ready", "exam")
+        content = GuideContent.model_validate(decrypt_json(g["content"]))
+        assert [s.status for s in content.sections] == ["written", "written"]
+        assert [s.id for s in content.sections] == ["s1", "s2"]
+        assert sum(s.weight for s in content.sections) == 100
+        assert content.sections[0].items[0].paragraphs[0].text == "Core."
 
 
 # ── graph ────────────────────────────────────────────────────────────────────

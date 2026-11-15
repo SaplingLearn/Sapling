@@ -93,12 +93,25 @@ async def get_note(note_id: str, user_id: str) -> dict | None:
     return _decrypt_row(rows[0])
 
 
+def tutor_topic(note: dict) -> str:
+    """The topic Send to tutor opens the tutor on: the first line of the
+    note's title, at most 80 characters ("Untitled note" without one). A tutor
+    start re-derives it to tell the note's title from a typed topic
+    (services/tutor/note_topic.py), so both sides read it here."""
+    title = (note.get("title") or "").strip() or "Untitled note"
+    return title.splitlines()[0][:80].strip()
+
+
 async def list_notes(
     user_id: str,
-    offering_id: str | None = None,
+    offering_id: str | list[str] | None = None,
 ) -> list[dict]:
+    """The user's live notes, newest first. ``offering_id`` narrows them to
+    one offering, or (a list) to any of several — a course's offerings."""
     filters: dict[str, str] = {"user_id": f"eq.{user_id}", "deleted_at": "is.null"}
-    if offering_id:
+    if isinstance(offering_id, list):
+        filters["offering_id"] = f"in.({','.join(offering_id)})"
+    elif offering_id:
         filters["offering_id"] = f"eq.{offering_id}"
 
     def _fetch() -> list[dict]:

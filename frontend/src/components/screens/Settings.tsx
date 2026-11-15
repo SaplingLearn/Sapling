@@ -35,6 +35,12 @@ import {
   subscribeAnalytics,
   type AnalyticsState,
 } from "@/lib/analytics";
+import {
+  usernameBorderColor,
+  usernameMessageColor,
+  usernameMessageText,
+  type UsernameState,
+} from "./settingsUsername";
 
 type Tab = "profile" | "cosmetics" | "preferences" | "notifications" | "data";
 
@@ -96,14 +102,6 @@ function Toggle({
     </button>
   );
 }
-
-// `checked` = the exact (normalised) draft this verdict is about (#769), so
-// save-on-blur can refuse a verdict that belongs to an earlier draft.
-type UsernameState = {
-  status: "idle" | "checking" | "available" | "taken" | "invalid";
-  message?: string;
-  checked?: string;
-};
 
 export function Settings() {
   const toast = useToast();
@@ -425,7 +423,7 @@ export function Settings() {
                       style={{
                         padding: "8px 12px 8px 26px",
                         background: "var(--bg-input)",
-                        border: `1px solid ${usernameState.status === "taken" || usernameState.status === "invalid" ? "var(--err)" : "var(--border)"}`,
+                        border: `1px solid ${usernameBorderColor(usernameState.status)}`,
                         borderRadius: "var(--r-sm)",
                         fontSize: 13,
                         width: "100%",
@@ -436,10 +434,9 @@ export function Settings() {
                     <div style={{
                       fontSize: 11,
                       marginTop: 4,
-                      color: usernameState.status === "available" ? "var(--accent)"
-                        : (usernameState.status === "checking" ? "var(--text-muted)" : "var(--err)"),
+                      color: usernameMessageColor(usernameState.status),
                     }}>
-                      {usernameState.status === "checking" ? "Checking…" : usernameState.message}
+                      {usernameMessageText(usernameState)}
                     </div>
                   )}
                 </div>
