@@ -61,6 +61,7 @@ import logging
 import threading
 import time
 import uuid
+from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any, Awaitable, Literal, get_args
 
@@ -225,11 +226,13 @@ def _resolve(
 
 
 #: `once_a_day` keys already recorded in this process: sha256 of the ids →
-#: when (time.monotonic) the key may be recorded again. Bounded: past the cap
-#: the expired keys go, then the oldest.
+#: when (time.monotonic) the key may be recorded again. Every key lives the
+#: same `_ONCE_A_DAY_S` and is (re)inserted at the end, so the map is in
+#: expiry order: eviction pops from the front only (expired keys, then the
+#: oldest past `_ONCE_A_DAY_MAX`), amortized O(1) under the lock.
 _ONCE_A_DAY_S = 24 * 3600
 _ONCE_A_DAY_MAX = 10_000
-_recorded_today: dict[str, float] = {}
+_recorded_today: OrderedDict[str, float] = OrderedDict()
 _recorded_lock = threading.Lock()
 
 
@@ -241,11 +244,12 @@ def _first_today(parts: tuple[Any, ...]) -> bool:
         until = _recorded_today.get(key)
         if until is not None and until > now:
             return False
-        if len(_recorded_today) >= _ONCE_A_DAY_MAX:
-            for stale in [k for k, t in _recorded_today.items() if t <= now]:
-                del _recorded_today[stale]
-            while len(_recorded_today) >= _ONCE_A_DAY_MAX:
-                del _recorded_today[min(_recorded_today, key=_recorded_today.__getitem__)]
+        _recorded_today.pop(key, None)  # an expired key goes back in at the end
+        while _recorded_today:
+            oldest, oldest_until = next(iter(_recorded_today.items()))
+            if oldest_until > now and len(_recorded_today) < _ONCE_A_DAY_MAX:
+                break
+            del _recorded_today[oldest]
         _recorded_today[key] = now + _ONCE_A_DAY_S
         return True
 

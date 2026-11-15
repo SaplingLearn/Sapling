@@ -855,6 +855,74 @@ def test_the_once_a_day_key_holds_no_content(monkeypatch, sink):
     assert keys and not any(word in keys for word in CRISIS_WORDS + ("n1", "u1"))
 
 
+def test_once_a_day_forgets_expired_keys_oldest_first(monkeypatch):
+    clock = [0.0]
+    monkeypatch.setattr(crisis_support.time, "monotonic", lambda: clock[0])
+    assert crisis_support._first_today(("a",)) is True
+    clock[0] = 10.0
+    assert crisis_support._first_today(("b",)) is True
+    clock[0] = crisis_support._ONCE_A_DAY_S + 5  # a's day is over, b's is not
+    assert crisis_support._first_today(("c",)) is True
+    assert len(crisis_support._recorded_today) == 2  # a went, from the front
+    assert crisis_support._first_today(("b",)) is False
+    assert crisis_support._first_today(("a",)) is True  # recorded again, now the newest
+    assert list(crisis_support._recorded_today.values()) == sorted(crisis_support._recorded_today.values())
+
+
+def test_once_a_day_at_the_cap_drops_the_oldest_key(monkeypatch):
+    monkeypatch.setattr(crisis_support, "_ONCE_A_DAY_MAX", 3)
+    clock = [0.0]
+    monkeypatch.setattr(crisis_support.time, "monotonic", lambda: clock[0])
+    for i, name in enumerate("abc"):
+        clock[0] = float(i)
+        assert crisis_support._first_today((name,)) is True
+    clock[0] = 3.0
+    assert crisis_support._first_today(("d",)) is True  # over the cap: a goes
+    assert len(crisis_support._recorded_today) == 3
+    assert crisis_support._first_today(("b",)) is False
+    assert crisis_support._first_today(("c",)) is False
+    assert crisis_support._first_today(("d",)) is False
+    assert crisis_support._first_today(("a",)) is True  # forgotten, so recorded again (b goes)
+    assert crisis_support._first_today(("b",)) is True
+
+
+def test_once_a_day_at_the_cap_does_not_scan_every_key(monkeypatch):
+    """Eviction is amortized O(1): an insert at the cap touches the front of
+    the map only, never every key (or a min() over them)."""
+    monkeypatch.setattr(crisis_support, "_ONCE_A_DAY_MAX", 1_000)
+    clock = [0.0]
+    monkeypatch.setattr(crisis_support.time, "monotonic", lambda: clock[0])
+    for i in range(1_000):
+        crisis_support._first_today(("k", i))
+    visited = [0]  # keys walked over, across every iteration of the map
+    real = crisis_support._recorded_today
+
+    def _counted(it):
+        for item in it:
+            visited[0] += 1
+            yield item
+
+    class _Counting(type(real)):
+        def items(self):
+            return _counted(super().items())
+
+        def keys(self):
+            return _counted(super().keys())
+
+        def values(self):
+            return _counted(super().values())
+
+        def __iter__(self):
+            return _counted(super().__iter__())
+
+    counted = _Counting(real)
+    monkeypatch.setattr(crisis_support, "_recorded_today", counted)
+    for i in range(1_000, 1_100):
+        assert crisis_support._first_today(("k", i)) is True
+    assert len(counted) == 1_000
+    assert visited[0] <= 2 * 100  # a peek at the front per insert, not a walk over 1,000 keys
+
+
 # ── Flashcard generate: a graph concept's name, not something typed ────────
 #
 # The Flashcards page generates one concept per call with the concept's name
