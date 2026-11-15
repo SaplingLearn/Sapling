@@ -1,6 +1,5 @@
 import logging
 import os
-import sys
 
 from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile
 from starlette.concurrency import run_in_threadpool
@@ -57,8 +56,10 @@ IMAGE_OCR_FAILED_DETAIL = "We couldn't read text from this image. Try a differen
 
 def _ocr_unavailable_error(detail: str) -> HTTPException:
     """Log the OCR error server-side and return a generic 503."""
-    logger.warning("OCR unavailable [request_id=%s]: %s", current_request_id(), detail)
-    print("[OCR UNAVAILABLE] Install tesseract-ocr to enable OCR features.", file=sys.stderr)
+    logger.warning(
+        "OCR unavailable [request_id=%s]: %s (install tesseract-ocr to enable OCR features)",
+        current_request_id(), detail,
+    )
     return HTTPException(status_code=503, detail=OCR_UNAVAILABLE_DETAIL)
 
 ALLOWED_IMAGE_TYPES = {"image/png", "image/jpeg", "image/jpg", "image/webp"}
