@@ -13,6 +13,7 @@ import pytest
 
 from services import crisis_detection
 from services.crisis_detection import CATEGORIES, EXPLICIT, MENTIONS, detect, detect_any, normalize
+from tests import crisis_corpus
 
 # (text, category, label) — the label is the EXPLICIT/MENTIONS entry that must fire.
 POSITIVES: list[tuple[str, str, str]] = [
@@ -508,3 +509,76 @@ def test_there_is_no_document_mode():
     alone, so no caller can screen a note any other way than in full."""
     with pytest.raises(TypeError):
         detect('A patient says "I want to die"', source="document")  # type: ignore[call-arg]
+
+
+# ── The differential corpus (tests/crisis_corpus.py) ────────────────────────
+
+#: The strings the tests above use inline, with the outcome they pin.
+_INLINE: dict[str, bool] = {
+    "Is suicide a sin? I'm asking for my ethics class": False,
+    "I keep thinking suicide would be easier": True,
+    "Durkheim essay is due. Also I want to kill myself.": True,
+    "Hamlet. Also I've been thinking about suicide": True,
+    "I took too many pills and I want to kill myself": True,
+    "what is a heap": False,
+    "I want to kill myself, said in confidence": True,
+    'A patient says "I want to die"': True,
+}
+
+
+def expected_corpus() -> dict[str, bool]:
+    """Every sentence the crisis tests know, mapped to whether it must match:
+    every list in this file plus tests/crisis_corpus.py's groups."""
+    groups: list[tuple[bool, list[str]]] = [
+        (True, [t for t, _, _ in POSITIVES]),
+        (False, NEGATIVES),
+        (True, CLAUSE_CROSSING),
+        (False, GENUINE_NEGATIONS),
+        (True, ASIDE_IS_NOT_A_NEGATION),
+        (True, NEGATION_THAT_DOES_NOT_NEGATE),
+        (True, NOT_A_SELF_NEGATION),
+        (False, SELF_NEGATING_HEDGES),
+        (True, INTRODUCING_IDIOMS),
+        (False, IDIOM_THEN_NEGATION),
+        (True, QUOTATIONS),
+        (True, [t for t, m in _INLINE.items() if m]),
+        (False, [t for t, m in _INLINE.items() if not m]),
+        (False, crisis_corpus.EVERYDAY_NEGATIVES),
+        (False, crisis_corpus.CLINICAL_NEGATIVES),
+        (True, crisis_corpus.CRISIS_POSITIVES),
+        (False, crisis_corpus.KNOWN_MISSES),
+        (True, crisis_corpus.KNOWN_FALSE_POSITIVES),
+    ]
+    expected: dict[str, bool] = {}
+    for must_match, texts in groups:
+        for text in texts:
+            if not text.strip():
+                continue
+            assert expected.setdefault(text, must_match) is must_match, f"{text!r} is pinned both ways"
+    return expected
+
+
+_CORPUS = expected_corpus()
+
+
+@pytest.mark.parametrize("text", list(_CORPUS))
+def test_corpus_sentence_has_its_expected_outcome(text):
+    match = detect(text)
+    if _CORPUS[text]:
+        assert match is not None, f"{text!r} must match"
+    else:
+        assert match is None, f"{text!r} must not match ({match})"
+
+
+def test_every_difference_from_base_is_intended():
+    """Every corpus answer that differs from #890's head (crisis_corpus.BASE_COMMIT)
+    is listed in INTENDED_CHANGES_FROM_BASE with its reason, and every listed
+    sentence does differ. `python -m tests.crisis_corpus` prints the diff."""
+    base = crisis_corpus.load_base_results()
+    missing = [t for t in _CORPUS if t not in base]
+    assert not missing, f"no base answer (run python -m tests.crisis_corpus --write-base): {missing}"
+    changed = {t for t in _CORPUS if crisis_corpus.result_key(detect(t)) != base[t]}
+    intended = set(crisis_corpus.INTENDED_CHANGES_FROM_BASE)
+    assert not changed - intended, f"differs from base but not listed: {sorted(changed - intended)}"
+    assert not intended - changed, f"listed but no longer differs: {sorted(intended - changed)}"
+    assert all(reason.strip() for reason in crisis_corpus.INTENDED_CHANGES_FROM_BASE.values())
