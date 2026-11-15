@@ -23,6 +23,18 @@ Two ceilings, because the two body shapes have genuinely different needs:
   as base64 (`services/flashcards/import_flow.py::MAX_UPLOAD_BYTES`, 5 MB
   decoded, so ~6.7 MB encoded plus the surrounding object).
 
+One route is neither: ``POST /api/internal/account-sync/import``
+(`routes/internal_account_sync.py`, fed by `services/account_sync_client.py
+::push`) carries a whole account's decrypted bundle as ONE JSON body — every
+document's extracted text, every tutor message, every quiz attempt — and no
+per-table cap bounds it, so the 12 MB JSON ceiling would 413 the copy of any
+big account. It gets its own ceiling, matched on the EXACT path (a prefix
+would hand the larger cap to anything mounted beneath it). The ceiling is
+generous because the gate for that route is not this backstop: it is the
+bearer token, which the route checks BEFORE it reads a single body byte, so
+an unauthenticated caller never reaches the allocation at all. The bound only
+caps what a holder of the peer token can make this process hold in memory.
+
 These are a backstop, not the real validation: each route keeps its own,
 tighter, better-explained limit. This exists so that a body which is absurd
 by any measure is refused before it is read, instead of after.
@@ -53,6 +65,16 @@ DEFAULT_MULTIPART_MAX_BYTES = 120 * 1024 * 1024
 
 #: Above the flashcard importer's ~6.7 MB base64 payload.
 DEFAULT_JSON_MAX_BYTES = 12 * 1024 * 1024
+
+#: The server-to-server account-copy import (routes/internal_account_sync.py).
+#: Exact path: main.py mounts that router at /api/internal/account-sync.
+ACCOUNT_IMPORT_PATH = "/api/internal/account-sync/import"
+
+#: A whole account's plaintext bundle (services/account_bundle.py). A heavy
+#: account — dozens of documents’ OCR text plus its tutor history — can run to
+#: tens of MB; 256 MB leaves an order of magnitude of headroom while still
+#: bounding what one token-holding request can make the worker allocate.
+DEFAULT_ACCOUNT_IMPORT_MAX_BYTES = 256 * 1024 * 1024
 
 #: Methods that carry no body worth bounding.
 _BODYLESS = frozenset({"GET", "HEAD", "OPTIONS", "TRACE"})
@@ -90,12 +112,16 @@ class BodySizeLimitMiddleware:
         *,
         json_max_bytes: int = DEFAULT_JSON_MAX_BYTES,
         multipart_max_bytes: int = DEFAULT_MULTIPART_MAX_BYTES,
+        account_import_max_bytes: int = DEFAULT_ACCOUNT_IMPORT_MAX_BYTES,
     ) -> None:
         self.app = app
         self.json_max_bytes = json_max_bytes
         self.multipart_max_bytes = multipart_max_bytes
+        self.account_import_max_bytes = account_import_max_bytes
 
     def _limit_for(self, scope: Scope) -> int:
+        if scope.get("path") == ACCOUNT_IMPORT_PATH:
+            return self.account_import_max_bytes
         content_type = Headers(scope=scope).get("content-type", "")
         if content_type.lower().startswith("multipart/form-data"):
             return self.multipart_max_bytes

@@ -13,6 +13,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from services.body_limit import (
+    ACCOUNT_IMPORT_PATH,
+    DEFAULT_ACCOUNT_IMPORT_MAX_BYTES,
     DEFAULT_JSON_MAX_BYTES,
     DEFAULT_MULTIPART_MAX_BYTES,
     BodySizeLimitMiddleware,
@@ -31,6 +33,14 @@ def _app(**limits) -> TestClient:
 
     @app.post("/upload")
     async def upload():
+        return {"ok": True}
+
+    @app.post(ACCOUNT_IMPORT_PATH)
+    async def account_import():
+        return {"ok": True}
+
+    @app.post(ACCOUNT_IMPORT_PATH + "/x")
+    async def account_import_lookalike():
         return {"ok": True}
 
     @app.get("/ping")
@@ -87,6 +97,39 @@ class TestMultipartBodies:
         r = client.post("/upload",
                         files={"file": ("n.pdf", io.BytesIO(b"x" * 16384), "application/pdf")})
         assert r.status_code == 413
+
+
+class TestAccountImport:
+    """The server-to-server account copy carries a whole account's bundle as
+    ONE JSON body, so the ordinary JSON ceiling would 413 a big account."""
+
+    def test_the_import_route_gets_its_own_larger_ceiling(self):
+        client = _app(json_max_bytes=1024, account_import_max_bytes=64 * 1024)
+        r = client.post(ACCOUNT_IMPORT_PATH, content=b"a" * 8192,
+                        headers={"content-type": "application/json"})
+        assert r.status_code == 200
+
+    def test_the_import_route_over_its_own_ceiling_is_still_refused(self):
+        client = _app(json_max_bytes=1024, account_import_max_bytes=4096)
+        r = client.post(ACCOUNT_IMPORT_PATH, content=b"a" * 8192,
+                        headers={"content-type": "application/json"})
+        assert r.status_code == 413
+
+    def test_the_import_ceiling_is_an_exact_path_match_not_a_prefix(self):
+        client = _app(json_max_bytes=1024, account_import_max_bytes=64 * 1024)
+        r = client.post(ACCOUNT_IMPORT_PATH + "/x", content=b"a" * 8192,
+                        headers={"content-type": "application/json"})
+        assert r.status_code == 413
+
+    def test_the_constant_names_the_mounted_import_route(self):
+        """If the route moves, the ceiling must move with it."""
+        from main import app
+
+        assert app.url_path_for("import_") == ACCOUNT_IMPORT_PATH
+
+    def test_the_import_ceiling_is_far_above_the_json_ceiling(self):
+        assert DEFAULT_ACCOUNT_IMPORT_MAX_BYTES >= 200 * 1024 * 1024
+        assert DEFAULT_ACCOUNT_IMPORT_MAX_BYTES > DEFAULT_JSON_MAX_BYTES
 
 
 class TestPassThrough:
