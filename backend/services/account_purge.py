@@ -72,7 +72,7 @@ TOMBSTONE_NAME = "Deleted user"
 #: live in config.STORAGE_BUCKET): chat images (frontend Social.tsx) and
 #: issue-report screenshots (services/storage_service.py::ISSUE_BUCKET).
 CHAT_IMAGES_BUCKET = "chat-images"
-ISSUE_BUCKET = "issues-media-files"
+ISSUE_BUCKET = storage_service.ISSUE_BUCKET
 
 #: Deleted outright after the wipe: (table, column naming the student).
 PURGE_DELETES: tuple[tuple[str, str], ...] = (

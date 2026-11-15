@@ -142,6 +142,7 @@ def _validate_upload(file_bytes: bytes, content_type: str) -> str:
 # #231: issue-report screenshots. Private bucket, service-role write, and the
 # caller stores the returned PATH (never a public URL).
 ISSUE_BUCKET = "issues-media-files"
+SCREENSHOT_UPLOAD_FAILED_DETAIL = "Couldn't upload the screenshot. Please try again."
 
 
 async def upload_issue_screenshot(user_id: str, file_bytes: bytes, content_type: str) -> str:
@@ -159,19 +160,28 @@ async def upload_issue_screenshot(user_id: str, file_bytes: bytes, content_type:
     ext = _EXT_MAP.get(content_type, "png")
     path = f"{user_id}/{uuid.uuid4()}.{ext}"
     url = f"{DB_SUPABASE_URL}/storage/v1/object/{ISSUE_BUCKET}/{path}"
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.put(
-            url,
-            content=file_bytes,
-            headers={
-                "apikey": SUPABASE_KEY,
-                "Authorization": f"Bearer {SUPABASE_KEY}",
-                "Content-Type": content_type,
-            },
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.put(
+                url,
+                content=file_bytes,
+                headers={
+                    "apikey": SUPABASE_KEY,
+                    "Authorization": f"Bearer {SUPABASE_KEY}",
+                    "Content-Type": content_type,
+                },
+            )
+    except httpx.HTTPError as exc:
+        # A timeout or connect failure is an upstream failure, not a bug in
+        # the request: the same 502 as a rejected upload, never a raw 500.
+        logger.warning(
+            "upload_issue_screenshot: Supabase storage unreachable user=%s error=%s",
+            user_id, type(exc).__name__,
         )
+        raise HTTPException(status_code=502, detail=SCREENSHOT_UPLOAD_FAILED_DETAIL) from None
     if resp.status_code not in (200, 201):
-        # Only the truncated upstream body reaches the client, never the URL or
-        # the headers (the latter carry the service-role key).
+        # The upstream status and body go to the log only; the client gets
+        # generic text (never the URL, headers or Supabase's error body).
         body_text = (resp.text or "").strip()[:500]
         logger.warning(
             "upload_issue_screenshot: Supabase storage rejected upload "
@@ -180,7 +190,7 @@ async def upload_issue_screenshot(user_id: str, file_bytes: bytes, content_type:
         )
         raise HTTPException(
             status_code=502,
-            detail=f"Screenshot upload failed (Supabase {resp.status_code}): {body_text or 'no body'}",
+            detail=SCREENSHOT_UPLOAD_FAILED_DETAIL,
         )
     return path
 
