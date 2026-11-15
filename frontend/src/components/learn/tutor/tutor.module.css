@@ -365,8 +365,6 @@
   width: 56px;
   height: 56px;
   flex-shrink: 0;
-  border-radius: 50%;
-  background: var(--accent-soft);
   color: var(--accent);
   display: grid;
   place-items: center;
