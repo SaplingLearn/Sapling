@@ -133,6 +133,13 @@ async function signIn(browser: Browser, userId: string, name: string) {
   return { context, page };
 }
 
+/** Wireframe T1: with no open session, /learn is the Tutor home; its
+ * "Start a guided session" starts the session and its check-in. */
+async function openLearn(page: Page) {
+  await page.goto("/learn");
+  await page.getByTestId("loop-start-guided").click();
+}
+
 /** A structured turn renders as separate paragraphs: assert each one. */
 async function expectTurn(page: Page, text: string) {
   const log = page.getByTestId("loop-messages");
@@ -231,7 +238,7 @@ test("loop user completes probe → plan → check (explicit submission) with a 
   });
 
   // ── Probe + plan (no open session after the fixture's re-seed → a new one) ─
-  await page.goto("/learn");
+  await openLearn(page);
   const phase = page.getByTestId("loop-phase");
   const answered = await walkProbeAndPlan(page, P);
   expect(answered).toBeGreaterThanOrEqual(Number(P.PROBE_ITEMS_PER_SKILL_MIN));
@@ -548,7 +555,7 @@ test("a reload mid-session resumes the same loop session and calls no probe rout
   test.setTimeout(LOOP_JOURNEY_TIMEOUT_MS);
   const P = await learningParams(["PROBE_SESSION_CAP"]);
   const { context, page } = await signIn(browser, USER_LOOP, "Lou Loop");
-  await page.goto("/learn");
+  await openLearn(page);
   await walkProbeAndPlan(page, P);
   await firstTeachTurn(page);
   const phase = page.getByTestId("loop-phase");
@@ -604,7 +611,7 @@ for (const width of [1440, 390]) {
       let release = () => {};
       try {
         await page.setViewportSize({ width, height: 950 });
-        await page.goto("/learn");
+        await openLearn(page);
         await expect(page.getByTestId("loop-probe-item")).toBeVisible();
         if (resumedPhase === "plan") await walkProbeAndPlan(page, P, false);
         const phase = page.getByTestId("loop-phase");
@@ -661,7 +668,11 @@ for (const width of [1440, 390]) {
 
         const closed = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/learn/loop/close");
         const started = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/learn/loop/start-session");
+        // Wireframe T1: New session opens the Tutor home (no write); its CTA
+        // wraps up the open session and starts the new one.
         await button.click();
+        expect(mutations).toEqual([]);
+        await page.getByTestId("loop-start-guided").click();
         const closeResponse = await closed;
         expect(closeResponse.status()).toBe(200);
         expect(closeResponse.request().postDataJSON()).toMatchObject({ session_id: oldSession, user_id: USER_LOOP });
@@ -823,7 +834,7 @@ async function walkToTheCheckPosingTurn(page: Page, reply: string, served: strin
   const P = await learningParams(["PROBE_SESSION_CAP", "LOOP_TEACH_TURNS_BEFORE_CHECK"]);
   // the journey's second teach turn is the one that poses the concept's check
   expect(Number(P.LOOP_TEACH_TURNS_BEFORE_CHECK)).toBe(2);
-  await page.goto("/learn");
+  await openLearn(page);
   // (1) The probe-phase opener is a template: a welcome and the check-in's
   // intro — no model turn, nothing taught, no question before the pretest.
   const greeting = page.getByTestId("loop-probe-greeting");
@@ -940,7 +951,7 @@ test("spec §13 A138 (segment_prequestion on): a new segment opens on an ungrade
   const P = await learningParams(["PROBE_SESSION_CAP"]);
   const { context, page } = await signIn(browser, USER_LOOP, "Lou Loop");
   try {
-    await page.goto("/learn");
+    await openLearn(page);
     await walkProbeAndPlan(page, P, false);
     // After the check-in, so it still asks only the seeded free-text items: a
     // fresh multiple-choice pool the segment's guess can draw from while the
@@ -1038,7 +1049,7 @@ test("spec §13 A139 (self_explanation_prompts on): the worked example asks why 
   const P = await learningParams(["PROBE_SESSION_CAP"]);
   const { context, page } = await signIn(browser, USER_LOOP, "Lou Loop");
   try {
-    await page.goto("/learn");
+    await openLearn(page);
     await walkProbeAndPlan(page, P);
     await firstTeachTurn(page);
 
@@ -1103,7 +1114,7 @@ test("budget cap: tutor chat pauses on /learn; review still serves and grades on
   const { context, page } = await signIn(browser, USER_CAPPED, "Casey Cap");
 
   // ── /learn: the tutor pauses (spec §3.5 hard level; §13 A20/A26) ─────────
-  await page.goto("/learn");
+  await openLearn(page);
   await expect(page.getByTestId("loop-phase")).toBeVisible(); // the loop tree, not the legacy one
   const banner = page.getByTestId("loop-budget-paused");
   // spec §13 A27: at the hard level PKG-07's opener is a template (tier none, no model call)
@@ -1200,7 +1211,7 @@ test("phone learner can check in, answer a check and reach wrap-up without horiz
   const P = await learningParams(["PROBE_SESSION_CAP"]);
   const { context, page } = await signIn(browser, USER_LOOP, "Lou Loop");
   await page.setViewportSize({ width: 320, height: 740 });
-  await page.goto("/learn");
+  await openLearn(page);
   const phase = page.getByTestId("loop-phase");
   await expect(page.getByRole("textbox", { name: "Check-in answer" })).toBeVisible();
   await expect(page.getByTestId("loop-tree-link")).toBeVisible();
@@ -1252,7 +1263,7 @@ test("switching sessions cancels a pending tutor stream and retains the chosen s
   test.setTimeout(LOOP_JOURNEY_TIMEOUT_MS);
   const P = await learningParams(["PROBE_SESSION_CAP"]);
   const { context, page } = await signIn(browser, USER_LOOP, "Lou Loop");
-  await page.goto("/learn");
+  await openLearn(page);
   await walkProbeAndPlan(page, P);
   const phase = page.getByTestId("loop-phase");
   const original = await phase.getAttribute("data-session-id");
@@ -1305,7 +1316,7 @@ test("a phone learner confirms a goal, sees prerequisite planning and retains it
   const P = await learningParams(["PROBE_SESSION_CAP"]);
   const { context, page } = await signIn(browser, USER_LOOP, "Lou Loop");
   await page.setViewportSize({ width: 320, height: 740 });
-  await page.goto("/learn");
+  await openLearn(page);
   const phase = page.getByTestId("loop-phase");
   await expect(page.getByTestId("loop-set-goal")).toBeEnabled();
   await page.getByTestId("loop-set-goal").click();
@@ -1374,7 +1385,7 @@ test("an earned hint arriving late cannot reopen a graded check in the same sess
     } catch { /* the context may have closed after an earlier assertion */ }
   });
   try {
-    await page.goto("/learn");
+    await openLearn(page);
     await walkProbeAndPlan(page, P);
     await firstTeachTurn(page);
     await page.getByTestId("loop-check-me").click();
@@ -1569,7 +1580,7 @@ test("independent prerequisite recovery unlocks a fresh goal plan requiring appr
   page.on("request", (request) => { if (new URL(request.url()).pathname === "/api/learn/loop/plan/approve") approvals += 1; });
   try {
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.goto("/learn");
+    await openLearn(page);
     await expect(page.getByTestId("loop-set-goal")).toBeEnabled();
     await page.getByTestId("loop-set-goal").click();
     const editor = page.getByRole("form", { name: "Learning goal" });
@@ -1736,7 +1747,7 @@ test("a new goal session respects an earlier helped prerequisite miss even when 
 
   try {
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.goto("/learn");
+    await openLearn(page);
     await setTargets(["Binary Numbers"], "Check binary foundations first");
     await completeCheckIn(true);
     await expect(page.getByTestId(`loop-plan-concept-${binary}`)).toBeVisible();
@@ -1821,6 +1832,7 @@ test("a new goal session respects an earlier helped prerequisite miss even when 
     await page.getByTestId("loop-close-button").click();
     await expect(phase).toHaveAttribute("data-phase", "close");
     await page.getByTestId("loop-new-session").click();
+    await page.getByTestId("loop-start-guided").click(); // wireframe T1: the home's CTA starts it
     await expect(phase).toHaveAttribute("data-phase", "probe");
     await expect.poll(async () => {
       const id = await phase.getAttribute("data-session-id");

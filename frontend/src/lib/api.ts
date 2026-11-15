@@ -666,6 +666,8 @@ export interface Session {
   ended_at: string | null;
   message_count: number;
   is_active: boolean;
+  /** A learning-loop session the student can still resume (no close yet). */
+  loop_open?: boolean;
 }
 
 export const getSessions = (userId: string, limit = 10) =>
@@ -1497,7 +1499,11 @@ export interface LoopSessionStatus extends LoopLearningScope {
   prequestion?: LoopPrequestion | null;
   /** Spec §13 A139: the open self-explanation prompt (absent when none). */
   self_explain?: LoopSelfExplain | null;
+  /** The approved plan, in order, with its cursor (absent before approval). */
+  approved_plan?: { concepts: LoopPanelConcept[]; cursor: number };
 }
+/** A concept as the Tutor's session panel lists it. */
+export interface LoopPanelConcept { node_id: string; concept_name: string; kind: string; reason?: LoopPlanConcept['reason'] }
 export const getLoopSessionStatus = (sessionId: string, userId: string) =>
   fetchJSON<LoopSessionStatus>(
     `/api/learn/loop/status?${new URLSearchParams({ user_id: userId, session_id: sessionId })}`,

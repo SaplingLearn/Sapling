@@ -15,12 +15,10 @@ import React, { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRedu
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
-import { TopBar } from "../TopBar";
 import { FullHeightScreen } from "../FullHeightScreen";
 import { DisclaimerModal } from "../DisclaimerModal";
 import { AIDisclaimerChip } from "../chat/AIDisclaimerChip";
 import { ChatPanel, type ChatMsg } from "../chat/ChatPanel";
-import { CustomSelect } from "../CustomSelect";
 import { KnowledgeGraph } from "../graph/KnowledgeGraph";
 import { useToast } from "../ToastProvider";
 import { useUser } from "@/context/UserContext";
@@ -34,7 +32,9 @@ import {
   budgetPauseOf,
   closeLoopSession,
   getCourses,
+  getDocuments,
   getGraph,
+  getSessions,
   getLoopPlan,
   getLoopSessionStatus,
   listLoopSessionsFor,
@@ -53,6 +53,7 @@ import {
   streamLoopPrequestionAnswer,
   submitLoopRating,
   type EnrolledCourse,
+  type Session,
   type LoopCheckAnswer,
   type LoopCheckItem,
   type LoopCloseBaseline,
@@ -63,6 +64,7 @@ import {
   type LoopDiagnosis,
   type LoopLearningScope,
   type LoopOpenSession,
+  type LoopPanelConcept,
   type LoopPendingGrade,
   type LoopPhase,
   type LoopPlanConcept,
@@ -92,6 +94,14 @@ import { ConfidenceControl } from "./ConfidenceControl";
 import { OptionList } from "./OptionList";
 import { PrequestionCard, renderGuess } from "./PrequestionCard";
 import { SelfExplainCard } from "./SelfExplainCard";
+import { retentionHref, useRetentionDue } from "@/context/RetentionDueContext";
+import { Icon } from "../Icon";
+import { TutorSidebar } from "./tutor/TutorSidebar";
+import { TutorAllSessions, TutorCourse, TutorHome, type SessionFilter } from "./tutor/TutorPages";
+import { SessionPanel, type PanelConcept } from "./tutor/SessionPanel";
+import { SidebarGlyph } from "./tutor/TutorIcons";
+import { mergeSessions, sessionTitle, type TutorSessionRow } from "./tutor/sessions";
+import tutorStyles from "./tutor/tutor.module.css";
 
 // ── Copy ─────────────────────────────────────────────────────────────────
 const NO_CHECK_ITEMS_COPY =
@@ -150,14 +160,7 @@ const KIND_LABEL: Record<string, { label: string; chip: string }> = {
   new: { label: "New", chip: "chip chip--accent" },
   sibling: { label: "Related", chip: "chip chip--info" },
 };
-const STEPS: { label: string; phases: LoopPhase[] }[] = [
-  { label: "Check-in", phases: ["probe"] },
-  { label: "Plan", phases: ["plan"] },
-  { label: "Learn", phases: ["teach", "check", "feedback"] },
-  { label: "Wrap-up", phases: ["close"] },
-];
 const TEACHING: readonly LoopPhase[] = ["teach", "check", "feedback"];
-const RAIL_WIDTH = 300;
 const RAIL_GRAPH_HEIGHT = 240;
 
 const FIELD_STYLE: React.CSSProperties = {
@@ -179,11 +182,6 @@ const toChat = (rows: { id: string; role: string; content: string }[] | undefine
   (rows ?? [])
     .filter((m) => m.role === "user" || m.role === "assistant")
     .map((m) => ({ id: m.id, role: m.role as "user" | "assistant", content: m.content }));
-const shortDate = (iso: string) => {
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-};
-
 /** An answer being written. `confidence` (spec §13 A127) is the student's stated
  *  confidence — null until chosen, and a skip sends none. */
 type Draft = { answer: string; option: string; reason: string; confidence: StudentConfidence | null };
@@ -197,6 +195,9 @@ function draftAnswer(draft: Draft, format: string): LoopCheckAnswer {
   return draft.confidence ? { ...a, confidence: draft.confidence } : a;
 }
 type HintView = { denied: string } | { reply: string } | null;
+/** The Tutor's main column: a session (T4–T15), the Tutor home (T1), a course
+ *  page (T2) or every session (T3). */
+type TutorView = "session" | "home" | "course" | "all";
 
 /** The Learn deep links (Dashboard, Tree, notetaker, quiz): read ONCE at mount,
  *  so a consumed `?resume=` never re-applies on a session or course switch. */
@@ -256,6 +257,22 @@ export function LoopLearn() {
   const [state, dispatch] = useReducer(reduceLoopEvent, undefined, initialLoopState);
   const [deepLink] = useState(() => readDeepLink(searchParams));
 
+  // The Tutor shell (wireframes T1–T3, T17): which page the main column shows,
+  // the tutor sidebar, the session panel, and the sessions they list.
+  const [view, setView] = useState<TutorView>("session");
+  const [courseView, setCourseView] = useState<string | null>(null);
+  const [sideOpen, setSideOpen] = useState(true);
+  const [panelOpen, setPanelOpen] = useState(true);
+  const [recent, setRecent] = useState<Session[] | null>(null);
+  const [recentTick, setRecentTick] = useState(0);
+  const [sideQuery, setSideQuery] = useState("");
+  const [allQuery, setAllQuery] = useState("");
+  const [allFilter, setAllFilter] = useState<SessionFilter>("all");
+  const [materials, setMaterials] = useState<{ id: string; file_name: string; category?: string | null; course_id?: string | null }[] | null>(null);
+  const { courseIds: dueCourseIds } = useRetentionDue();
+  // A session picked in another course: resumed once that course's sessions list.
+  const pendingResume = useRef<string | null>(null);
+
   // Course + sessions
   const [courses, setCourses] = useState<EnrolledCourse[] | null>(null);
   const [courseId, setCourseId] = useState<string | null>(null);
@@ -307,6 +324,8 @@ export function LoopLearn() {
   const [planLoading, setPlanLoading] = useState(false);
   const [planGoalVersion, setPlanGoalVersion] = useState<number | undefined>(undefined);
   const [planJustApproved, setPlanJustApproved] = useState(false);
+  // The approved plan as GET /status reports it: the session panel's list after a reload
+  const [approvedPlan, setApprovedPlan] = useState<{ concepts: LoopPanelConcept[]; cursor: number } | null>(null);
 
   // Teach / check / feedback
   const [messages, setMessages] = useState<ChatMsg[]>([]);
@@ -322,6 +341,8 @@ export function LoopLearn() {
   const [pendingGrade, setPendingGrade] = useState<LoopPendingGrade | null>(null);
   // PKG-14: the session a graded check asked to rate (done.ask_rating); one click hides it
   const [askRating, setAskRating] = useState<string | null>(null);
+  // Wireframe T9: the last graded check's verdict, shown over the feedback turn
+  const [verdict, setVerdict] = useState<{ verdict: string; nodeId: string | null } | null>(null);
   // Spec §13 A138: the open segment-opening guess; A139: the open "why" prompt.
   // Both are server-driven: a served turn closes them and may open new ones.
   const [prequestion, setPrequestion] = useState<LoopPrequestion | null>(null);
@@ -352,6 +373,7 @@ export function LoopLearn() {
   const gen = useRef(0);
   const bootKey = useRef<string | null>(null);
   const resumePending = useRef(true); // the deep link's ?resume= is honoured once
+  const topicStarted = useRef(false); // the deep link's ?topic= starts a session once
   const sessionRef = useRef<string | null>(null);
   const streamAbort = useRef<AbortController | null>(null);
   const turnEpoch = useRef(0); // a late recovery snapshot cannot undo a newer turn
@@ -518,6 +540,7 @@ export function LoopLearn() {
   const applyStatus = useCallback((sid: string, st: LoopSessionStatus) => {
     invalidateHint();
     applyLearningScope(st);
+    if (st.approved_plan) setApprovedPlan(st.approved_plan);
     setPendingGrade(st.pending_grade ?? null);
     if (st.loop_phase === "close") {
       void enterClosed(sid);
@@ -578,6 +601,7 @@ export function LoopLearn() {
     setMaterialsNote(false);
     setPlan(null);
     setPlanJustApproved(false);
+    setApprovedPlan(null);
     setPlanGoalVersion(undefined);
     setPlanBusy(false);
     setPlanLoading(false);
@@ -592,6 +616,7 @@ export function LoopLearn() {
     setFeedbackPending(false);
     setPendingGrade(null);
     setAskRating(null);
+    setVerdict(null);
     setPrequestion(null);
     setPrequestionBusy(false);
     setSelfExplain(null);
@@ -813,7 +838,8 @@ export function LoopLearn() {
   const loadSessions = useCallback(async () => {
     if (!courseId || !userId) return;
     const g = ++gen.current;
-    const wanted = resumePending.current ? deepLink.resume : null;
+    const wanted = resumePending.current ? (pendingResume.current ?? deepLink.resume) : null;
+    pendingResume.current = null;
     let listed: Awaited<ReturnType<typeof listLoopSessionsFor>>;
     try {
       listed = await listLoopSessionsFor(userId, courseId, wanted);
@@ -849,8 +875,14 @@ export function LoopLearn() {
       await openReadOnly(wanted); // a legacy (or closed) session: read-only
     } else if (list.length > 0) {
       await resume(list[0]);
-    } else {
+    } else if (deepLink.topic && !topicStarted.current) {
+      // a "learn this" link from the map starts on its concept, once
+      topicStarted.current = true;
       await newSession({ topic: deepLink.topic, mode: deepLink.mode });
+    } else {
+      // wireframe T1: nothing open in this course — the Tutor home, never a
+      // probe the student did not ask for
+      setView((v) => (v === "session" ? "home" : v));
     }
   }, [courseId, userId, courses, deepLink, openReadOnly, resume, newSession]);
 
@@ -901,6 +933,78 @@ export function LoopLearn() {
     setOpenSessions(null);
     if (!courses) void loadCourses();
     else void loadSessions();
+  };
+
+  // ── Tutor shell: sidebar, home, course page, all sessions ────────────────
+  // Every session the student has, across courses (the sidebar's recents, T2, T3).
+  useEffect(() => {
+    if (!userId) return;
+    let cancelled = false;
+    getSessions(userId, 50)
+      .then((r) => { if (!cancelled) setRecent(r.sessions ?? []); })
+      .catch(() => { if (!cancelled) setRecent((prev) => prev ?? []); });
+    return () => { cancelled = true; };
+  }, [userId, recentTick]);
+  // A start, a resume and a close each change what the recents show.
+  const sessionClosed = state.phase === "close";
+  useEffect(() => {
+    setRecentTick((t) => t + 1);
+  }, [sessionId, sessionClosed]);
+  // A phone shows the sidebar as a drawer: closed until asked for.
+  useEffect(() => {
+    if (isMobile) setSideOpen(false);
+  }, [isMobile]);
+  // T2 lists the course's material: read once, when a course page first opens.
+  useEffect(() => {
+    if (view !== "course" || materials !== null || !userId) return;
+    let cancelled = false;
+    getDocuments(userId)
+      .then((r) => { if (!cancelled) setMaterials(r.documents ?? []); })
+      .catch(() => { if (!cancelled) setMaterials([]); });
+    return () => { cancelled = true; };
+  }, [view, materials, userId]);
+
+  const sessionRows = useMemo(() => mergeSessions(recent, openSessions, courseId), [recent, openSessions, courseId]);
+
+  /** Show another course: its sessions load (and an open one resumes) behind the page. */
+  const switchCourse = (v: string) => {
+    if (v === courseId) return;
+    ++gen.current;
+    clearSessionView();
+    setSessionId(null);
+    sessionRef.current = null;
+    setOpenSessions(null);
+    setCourseId(v);
+  };
+  const closeDrawer = () => { if (isMobile) setSideOpen(false); };
+  const showHome = () => { setView("home"); closeDrawer(); };
+  const showCourse = (id: string) => {
+    switchCourse(id);
+    setCourseView(id);
+    setView("course");
+    closeDrawer();
+  };
+  const showAll = () => { setView("all"); closeDrawer(); };
+  /** A listed session: an open one resumes; a wrapped-up one opens read-only (T14). */
+  const openRow = (row: TutorSessionRow) => {
+    setView("session");
+    closeDrawer();
+    if (row.id === sessionId && !readOnly) return;
+    if (row.courseId && row.courseId !== courseId && courses?.some((c) => c.course_id === row.courseId)) {
+      pendingResume.current = row.id;
+      resumePending.current = true;
+      switchCourse(row.courseId);
+      return;
+    }
+    const listed = openSessions?.find((s) => s.session_id === row.id);
+    if (listed) void resume(listed);
+    else void openReadOnly(row.id);
+  };
+  /** T1's start: a new session (the open one on screen is wrapped up first). */
+  const startGuided = async (opts: { topic?: string; goal?: boolean } = {}) => {
+    setView("session");
+    await newSession({ closeCurrent: true, topic: opts.topic, mode: deepLink.mode });
+    if (opts.goal && mounted.current && sessionRef.current) { setGoalEditor(true); setGoalError(null); }
   };
 
   // ── Probe ──────────────────────────────────────────────────────────────
@@ -1086,6 +1190,7 @@ export function LoopLearn() {
     const text = res.reply ?? streamed;
     if (text) setMessages((prev) => [...prev, asMsg("assistant", text)]);
     if (submission && res.graded) {
+      setVerdict(res.verdict ? { verdict: res.verdict, nodeId: state.focusNodeId } : null);
       setPendingGrade(null);
       // graded — correct, not yet, idk, or a refusal the server graded as idk:
       // the item takes no more answers
@@ -1112,7 +1217,7 @@ export function LoopLearn() {
     } else if (!hardSeen) {
       dispatch({ type: "budget_clear" }); // a tutor turn got through
     }
-  }, [applyActivated, showPrequestion]);
+  }, [applyActivated, showPrequestion, state.focusNodeId]);
 
   /** A turn that threw while this screen still owns it: what streamed stays,
    *  marked interrupted; a submission that may have been graded is re-read;
@@ -1563,9 +1668,9 @@ export function LoopLearn() {
   const conceptNames = useMemo(() => {
     const names = new Map<string, string>();
     for (const n of graph.nodes) if (n.course_id === courseId) names.set(n.id, n.name);
-    for (const c of plan ?? []) if (c.concept_name) names.set(c.node_id, c.concept_name);
+    for (const c of panelPlanOf(plan, approvedPlan) ?? []) if (c.concept_name) names.set(c.node_id, c.concept_name);
     return names;
-  }, [graph.nodes, plan, courseId]);
+  }, [graph.nodes, plan, approvedPlan, courseId]);
   const railGraph = useMemo(() => {
     const nodes = graph.nodes.filter((n) => n.course_id === courseId);
     const ids = new Set(nodes.map((n) => n.id));
@@ -1580,7 +1685,6 @@ export function LoopLearn() {
   const learner = state.focusNodeId ? state.learnerState[state.focusNodeId] : undefined;
   const treeHref = focusNodeId ? `/tree?node=${encodeURIComponent(focusNodeId)}` : "/tree";
   const teaching = TEACHING.includes(state.phase);
-  const stepIndex = STEPS.findIndex((s) => s.phases.includes(state.phase));
   const streaming = streamingText !== null;
   // The card shows the current pose and hint, so the log does not paint those
   // rows while the item is current (live and after a reload alike) — nothing
@@ -1653,130 +1757,106 @@ export function LoopLearn() {
 
   // The screen's regions: plain render calls, not components, so React sees
   // the same element tree the inline JSX produced (nothing remounts).
+  const inSession = view === "session";
+  const sessionRow = findRow(sessionRows, sessionId);
+  const panelPlan = panelPlanOf(plan, approvedPlan);
+  /** The TopBar's line under the title: where the session is (no step pills). */
+  const phaseLine = (): string => {
+    if (readOnly) return "Wrapped up · read-only";
+    if (!sessionId) return starting ? "Starting…" : "";
+    return phaseText(state.phase, panelPlan, focusNodeId ?? cursorNode(approvedPlan), conceptNames);
+  };
+  const topTitle = (): string => {
+    if (view === "home") return "New session";
+    if (view === "all") return "All sessions";
+    if (view === "course") return course ? `${course.course_code ? `${course.course_code} · ` : ""}${course.course_name}` : "Course";
+    if (readOnly) return readOnly.topic || "Earlier session";
+    return sessionRow ? sessionTitle(sessionRow, course ?? undefined) : sessionId ? course?.course_name ?? "Session" : "Tutor";
+  };
+  const topSub = (): string => {
+    if (view === "home") return "Choose where to start.";
+    if (view === "all") return "Newest first.";
+    if (view === "course") return "Sessions, material and progress.";
+    return phaseLine();
+  };
+  const showPanel = allOf(inSession, !isMobile, panelOpen, !!sessionId, !readOnly, !sessionsError, !noCourses);
+  // A phone has no sidebar or panel on screen: the map and New session sit here.
+  const renderMobileActions = () => (
+    <>
+      <Link data-testid="loop-tree-link" href={treeHref} className="btn btn--sm btn--ghost">Map</Link>
+      <button
+        data-testid="loop-new-session"
+        type="button"
+        className="btn btn--sm"
+        onClick={showHome}
+        disabled={!courseId || sessionTransitionBusy}
+      >
+        + New
+      </button>
+    </>
+  );
+  const renderTopActions = () => (
+    <div className={tutorStyles.topActs}>
+      {view === "course" && (
+        <button type="button" className="btn btn--primary" data-testid="tutor-course-start"
+          disabled={!courseId || sessionTransitionBusy} onClick={showHome}>
+          <Icon name="sparkle" size={14} /> Start a session
+        </button>
+      )}
+      {inSession && sessionId && !readOnly && (state.phase === "probe" || state.phase === "plan") && (
+        <button ref={goalButton} type="button" className="btn btn--sm" data-testid="loop-set-goal"
+          disabled={starting || probeBusy || planBusy || goalBusy || !scopeReady || !!pendingGrade}
+          onClick={() => { setGoalEditor(true); setGoalError(null); }}>
+          {goal ? "Edit goal" : "Set goal"}
+        </button>
+      )}
+      {inSession && teaching && sessionId && (
+        <button
+          data-testid="loop-close-button"
+          className="btn btn--sm"
+          onClick={() => void doClose()}
+          disabled={closeBusy || !!pendingGrade}
+          title="Wrap up this session"
+        >
+          {closeBusy ? "Wrapping up…" : "Wrap up"}
+        </button>
+      )}
+      {isMobile && renderMobileActions()}
+      <AIDisclaimerChip />
+      {inSession && !isMobile && sessionId && !readOnly && (
+        <button type="button" className={tutorStyles.iconBtn} data-testid="tutor-panel-toggle"
+          aria-label={panelOpen ? "Hide session panel" : "Show session panel"} aria-pressed={panelOpen}
+          onClick={() => setPanelOpen((o) => !o)}>
+          <SidebarGlyph side="right" />
+        </button>
+      )}
+    </div>
+  );
   const renderHeader = () => (
-    <TopBar
-      title={course ? course.course_name : "Learn"}
-      subtitle={
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-          {course?.course_code && <span>{course.course_code} ·</span>}
-          {STEPS.map((s, i) => (
-            <span
-              key={s.label}
-              aria-current={i === stepIndex ? "step" : undefined}
-              style={{
-                color: i === stepIndex ? "var(--accent)" : i < stepIndex ? "var(--text-dim)" : "var(--text-muted)",
-                fontWeight: i === stepIndex ? 600 : 400,
-              }}
-            >
-              {i > 0 && <span aria-hidden style={{ color: "var(--text-muted)", marginRight: 6 }}>›</span>}
-              {s.label}
-            </span>
-          ))}
-        </span>
-      }
-      actions={
-        <>
-          {courses && courses.length > 1 && (
-            <CustomSelect<string>
-              testId="loop-course-select"
-              value={courseId ?? ""}
-              options={courses.map((c) => ({ value: c.course_id, label: c.course_code || c.course_name }))}
-              onChange={(v) => {
-                ++gen.current;
-                clearSessionView();
-                setSessionId(null);
-                sessionRef.current = null;
-                setOpenSessions(null);
-                setCourseId(v);
-              }}
-              ariaLabel="Course"
-              size="sm"
-            />
-          )}
-          {sessionId && !readOnly && (state.phase === "probe" || state.phase === "plan") && (
-            <button ref={goalButton} type="button" className="btn btn--sm" data-testid="loop-set-goal"
-              disabled={starting || probeBusy || planBusy || goalBusy || !scopeReady || !!pendingGrade}
-              onClick={() => { setGoalEditor(true); setGoalError(null); }}>
-              {goal ? "Edit goal" : "Set goal"}
-            </button>
-          )}
-          <Link data-testid="loop-tree-link" href={treeHref} className="btn btn--sm btn--ghost">
-            Knowledge map
-          </Link>
-          {teaching && sessionId && (
-            <button
-              data-testid="loop-close-button"
-              className="btn btn--sm"
-              onClick={() => void doClose()}
-              disabled={closeBusy || !!pendingGrade}
-              title="Wrap up this session"
-            >
-              {closeBusy ? "Closing…" : "End session"}
-            </button>
-          )}
-          <AIDisclaimerChip />
-        </>
-      }
-    />
+    <header className={tutorStyles.topbar}>
+      {(!sideOpen || isMobile) && (
+        <button type="button" className={tutorStyles.iconBtn} style={{ alignSelf: "center" }}
+          data-testid="tutor-sidebar-show" aria-label="Show tutor sidebar" onClick={() => setSideOpen(true)}>
+          <SidebarGlyph />
+        </button>
+      )}
+      <div className={tutorStyles.topTitle}>
+        {course && view !== "all" && view !== "home" ? (
+          <button type="button" className={`label-micro ${tutorStyles.crumb}`} data-testid="tutor-crumb-course"
+            onClick={() => showCourse(course.course_id)}>
+            {course.course_code ? `${course.course_code} · ` : ""}{course.nickname || course.course_name}
+          </button>
+        ) : (
+          <div className="label-micro" style={{ marginBottom: 4 }}>Tutor</div>
+        )}
+        <h1 className="h-serif">{topTitle()}</h1>
+        <div className={tutorStyles.topSub} data-testid="tutor-phase-line">{topSub()}</div>
+      </div>
+      {renderTopActions()}
+    </header>
   );
   const header = renderHeader();
 
-  const renderSessionStrip = () => (
-    <div
-      className={styles.sessionStrip}
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 8,
-        padding: "10px 32px",
-        borderBottom: "1px solid var(--border)",
-        overflowX: "auto",
-      }}
-    >
-      <span className="label-micro" style={{ flexShrink: 0 }}>Open sessions</span>
-      {/* A list only while it lists something: an empty role="list", or one
-          holding the "None yet" line, has no listitem (spec §13 A135). */}
-      <div
-        data-testid="loop-session-picker"
-        role={openSessions && openSessions.length > 0 ? "list" : undefined}
-        aria-label={openSessions && openSessions.length > 0 ? "Open sessions" : undefined}
-        style={{ display: "flex", gap: 6, flex: 1, minWidth: 0 }}
-      >
-        {(openSessions ?? []).map((s) => {
-          const current = s.session_id === sessionId;
-          return (
-            <div role="listitem" key={s.session_id} style={{ flexShrink: 0 }}>
-              <button
-                data-testid={`loop-session-${s.session_id}`}
-                aria-current={current ? "true" : undefined}
-                className={current ? "chip chip--accent" : "chip"}
-                style={{ cursor: current ? "default" : "pointer", whiteSpace: "nowrap" }}
-                onClick={() => { if (!current) void resume(s); }}
-                title={current ? "Current session" : `Resume “${s.topic}”`}
-              >
-                {s.topic || "Session"}
-                <span style={{ color: "var(--text-muted)", marginLeft: 6 }}>{shortDate(s.started_at)}</span>
-              </button>
-            </div>
-          );
-        })}
-        {openSessions !== null && openSessions.length === 0 && (
-          <span style={{ fontSize: 12, color: "var(--text-muted)" }}>None yet</span>
-        )}
-      </div>
-      <button
-        data-testid="loop-new-session"
-        className="btn btn--sm"
-        style={{ flexShrink: 0 }}
-        onClick={() => void newSession({ closeCurrent: true })}
-        disabled={!courseId || sessionTransitionBusy}
-        title="Wrap up this session and start a new one"
-      >
-        + New session
-      </button>
-    </div>
-  );
-  const sessionStrip = renderSessionStrip();
 
   // docs/safety/crisis-support.md × spec §13 A128: while a crisis-support card is
   // on screen (the start card, the dialog, or the latest reply in the
@@ -1914,7 +1994,7 @@ export function LoopLearn() {
         <button
           ref={continueRef}
           data-testid="loop-continue"
-          className="btn btn--sm btn--primary"
+          className="btn btn--primary"
           onClick={() => send(CONTINUE_MESSAGE)}
           disabled={!!paused || streaming || starting || scopeLoading}
         >
@@ -1924,7 +2004,7 @@ export function LoopLearn() {
       <button
         ref={checkMeRef}
         data-testid="loop-check-me"
-        className="btn btn--sm"
+        className={state.phase === "feedback" ? "btn" : "btn btn--primary"}
         onClick={() => void checkMe()}
         disabled={checkBusy || streaming || feedbackPending || starting || scopeLoading}
         title={feedbackPending ? FEEDBACK_PENDING_COPY : "Get a question on this concept"}
@@ -1936,7 +2016,7 @@ export function LoopLearn() {
         <button
           ref={teachStartRef}
           data-testid="loop-teach-start"
-          className="btn btn--sm btn--ghost"
+          className="btn"
           onClick={() => send(`Teach me about ${firstConcept.concept_name}.`)}
           disabled={streaming}
         >
@@ -1960,11 +2040,12 @@ export function LoopLearn() {
   );
 
   const renderChatHeader = (firstConcept: LoopPlanConcept | undefined) => (
-    <div style={{ padding: "14px 32px 0", display: "flex", flexDirection: "column", gap: 10 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 10, paddingLeft: anyOf(!!item, !!prequestion, !!selfExplain) ? 0 : TURN_INDENT }}>
       {askRating && askRating === sessionId && <RatingPrompt onRate={rate} />}
       {item ? (
         <CheckCard
           item={item}
+          conceptName={focusNodeId ? conceptNames.get(focusNodeId) : null}
           draft={attempt}
           setDraft={setAttempt}
           busy={attemptBusy || streaming}
@@ -2010,7 +2091,12 @@ export function LoopLearn() {
           onSkip={() => void sendSelfExplain(null)}
         />
       ) : (
-        renderTeachActions(firstConcept)
+        <>
+          {state.phase === "feedback" && verdict && (
+            <VerdictBanner verdict={verdict.verdict} concept={verdict.nodeId ? conceptNames.get(verdict.nodeId) ?? null : null} />
+          )}
+          {renderTeachActions(firstConcept)}
+        </>
       )}
       {/* Always in the DOM, so a close that must wait is announced (spec §13 A135). */}
       <div aria-live="polite">
@@ -2037,7 +2123,7 @@ export function LoopLearn() {
           messages={logMessages}
           composerRef={composerRef}
           onSend={send}
-          header={renderChatHeader(firstConcept)}
+          footer={renderChatHeader(firstConcept)}
           streamingText={streamingText}
           onStop={stop}
           // spec §13 A138 (review fix): the open guess card is the turn's one
@@ -2048,8 +2134,9 @@ export function LoopLearn() {
               ? PREQUESTION_COMPOSER_COPY
               : paused
                 ? "Tutor chat is paused — check answers still count."
-                : "Ask the tutor…"
+                : "Ask your AI tutor anything…"
           }
+          attachHref="/library"
           draftSeed={chatDraft.text}
           draftSeedKey={chatDraft.key}
         />
@@ -2207,7 +2294,7 @@ export function LoopLearn() {
         />
       );
     } else if (state.phase === "close") {
-      return <ClosePanel close={close} note={closeNote} names={conceptNames} courseId={courseId} />;
+      return <ClosePanel close={close} note={closeNote} names={conceptNames} courseId={courseId} onNew={showHome} />;
     }
     return renderTeach();
   };
@@ -2233,31 +2320,129 @@ export function LoopLearn() {
       {progress.remaining_target_node_ids.length > 0 && <span> Goal concepts remaining: {progress.remaining_target_node_ids.map((id) => conceptNames.get(id) ?? "A selected concept").join(", ")}.</span>}
     </div>
   );
+  /** Skill per concept in today's plan (else the concept being taught): the
+   *  loop's own estimate when it has one, else the map's mastery. */
+  const panelSkills = (): PanelConcept[] => {
+    const ids = panelPlan && panelPlan.length > 0 ? panelPlan.map((c) => c.node_id) : focusNodeId ? [focusNodeId] : [];
+    return ids.map((id) => {
+      const live = state.learnerState[id]?.p_known;
+      const planned = plan?.find((c) => c.node_id === id)?.p_known;
+      const node = railGraph.nodes.find((n) => n.id === id);
+      const mapScore = node && node.mastery_tier !== "unexplored" ? node.mastery_score : null;
+      return { nodeId: id, name: conceptNames.get(id) ?? "Concept", score: live ?? planned ?? mapScore };
+    });
+  };
+  const dueHref = dueLink(dueCourseIds);
   const renderRail = () => (
-    <aside
-      data-testid="loop-rail"
-      aria-label="Knowledge map"
-      style={{
-        width: RAIL_WIDTH,
-        flexShrink: 0,
-        borderLeft: "1px solid var(--border)",
-        background: "var(--bg-subtle)",
-        display: "flex",
-        flexDirection: "column",
-        gap: 8,
-        padding: 14,
-        overflowY: "auto",
-      }}
-    >
-      <div className="label-micro">Knowledge map</div>
-      {railGraph.nodes.length > 0 ? (
+    <SessionPanel
+      plan={panelPlan}
+      currentNodeId={teaching ? focusNodeId ?? cursorNode(approvedPlan) : null}
+      skills={panelSkills()}
+      dueCount={dueCourseIds.length}
+      dueHref={dueHref}
+      learnerChip={learnerChip}
+      hasLearner={!!learner}
+      treeHref={treeHref}
+      showTreeLink={!isMobile}
+      onHide={() => setPanelOpen(false)}
+      map={railGraph.nodes.length > 0 ? (
         <RailGraph nodes={railGraph.nodes} edges={railGraph.edges} highlightId={focusNodeId ?? undefined} />
       ) : (
         <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Concepts appear here as you learn.</div>
       )}
-    </aside>
+    />
   );
-  const showRail = !isMobile && !sessionsError && !noCourses;
+
+  const renderHome = () => {
+    const openHere = sessionRows.find((r) => r.open && r.courseId === courseId) ?? null;
+    const leaving = allOf(!!sessionId, !readOnly, isOpenPhase(state.phase));
+    return (
+      <div className={tutorStyles.scroll}>
+        <TutorHome
+          courseName={course?.course_name ?? null}
+          continueRow={openHere}
+          dueCount={dueCourseIds.length}
+          dueHref={dueHref}
+          startWith={weakestConcept(railGraph.nodes)}
+          busy={anyOf(!courseId, sessionTransitionBusy, openSessions === null)}
+          closesCurrent={leaving ? sessionTitle(sessionRow ?? { topic: "" }, course ?? undefined) : null}
+          onContinue={() => { if (openHere) openRow(openHere); }}
+          onStart={() => void startGuided()}
+          onStartWith={(topic) => void startGuided({ topic })}
+          onGoal={() => void startGuided({ goal: true })}
+        />
+      </div>
+    );
+  };
+  const renderCourse = (c: EnrolledCourse) => (
+    <div className={tutorStyles.scroll}>
+      <TutorCourse
+        course={c}
+        sessions={sessionRows.filter((r) => r.courseId === c.course_id)}
+        concepts={railGraph.nodes.filter((n) => !n.is_subject_root)}
+        materials={materials && materials.filter((m) => m.course_id === c.course_id)}
+        dueHref={dueHref}
+        onOpen={openRow}
+        onAll={showAll}
+      />
+    </div>
+  );
+  const renderAll = () => (
+    <div className={tutorStyles.scroll}>
+      <TutorAllSessions
+        sessions={sessionRows}
+        courses={courses ?? []}
+        query={allQuery}
+        setQuery={setAllQuery}
+        filter={allFilter}
+        setFilter={setAllFilter}
+        onOpen={openRow}
+      />
+    </div>
+  );
+  const renderSession = () => {
+    const live = allOf(!!sessionId, !readOnly);
+    return (
+      <>
+        {live && renderScopeSummary()}
+        {goalProgress && goal && renderGoalProgress(goalProgress)}
+        {notices}
+        {!showPanel && live && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px clamp(16px, 4vw, 56px) 0" }}>
+            {learnerChip}
+          </div>
+        )}
+        {body}
+      </>
+    );
+  };
+  /** The main column's page: T1 home, T2 course, T3 all sessions, else the session. */
+  const renderPage = (): React.ReactNode => {
+    const pageable = !sessionsError && !noCourses;
+    if (view === "home" && pageable) return renderHome();
+    if (view === "course" && course) return renderCourse(course);
+    if (view === "all") return renderAll();
+    return renderSession();
+  };
+
+  const renderSidebar = () => (
+    <TutorSidebar
+      courses={courses}
+      courseId={courseId}
+      sessions={sessionRows}
+      currentSessionId={inSession ? readOnly?.id ?? sessionId : null}
+      currentCourseView={view === "course" ? courseView : null}
+      query={sideQuery}
+      setQuery={setSideQuery}
+      newDisabled={!courseId || sessionTransitionBusy}
+      showNew={!isMobile}
+      onNew={showHome}
+      onCourse={showCourse}
+      onOpen={openRow}
+      onAll={showAll}
+      onHide={() => setSideOpen(false)}
+    />
+  );
 
   return (
     <FullHeightScreen className={styles.screen}>
@@ -2268,25 +2453,66 @@ export function LoopLearn() {
         data-testid="loop-phase"
         data-phase={state.phase}
         data-session-id={sessionId ?? ""}
-        style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}
+        data-view={view}
+        className={tutorStyles.shell}
       >
-        {header}
-        {sessionStrip}
-        {sessionId && !readOnly && renderScopeSummary()}
-        {goalProgress && goal && renderGoalProgress(goalProgress)}
-        {notices}
-        <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
-          <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 32px 0" }}>
-              {learnerChip}
+        {sideOpen && !isMobile && renderSidebar()}
+        {sideOpen && isMobile && (
+          <div className={tutorStyles.drawerScrim} onClick={() => setSideOpen(false)}>
+            <div className={tutorStyles.drawer} onClick={(e) => e.stopPropagation()}
+              onKeyDown={(e) => { if (e.key === "Escape") setSideOpen(false); }}>
+              {renderSidebar()}
             </div>
-            {body}
           </div>
-          {showRail && renderRail()}
+        )}
+        <div className={tutorStyles.main}>
+          {header}
+          <div className={tutorStyles.body}>
+            <div className={tutorStyles.center}>{renderPage()}</div>
+            {showPanel && renderRail()}
+          </div>
         </div>
       </div>
     </FullHeightScreen>
   );
+}
+
+function dueLink(courseIds: string[]): string {
+  return courseIds.length > 0 ? retentionHref(courseIds) : "/study?mode=cards";
+}
+
+/** The plan the panel lists: the one on screen, else the approved one /status reported. */
+function panelPlanOf(plan: LoopPlanConcept[] | null, approved: { concepts: LoopPanelConcept[] } | null): LoopPanelConcept[] | null {
+  return plan ?? approved?.concepts ?? null;
+}
+
+/** The concept the approved plan's cursor is on (a resumed session's current one). */
+function cursorNode(p: { concepts: LoopPanelConcept[]; cursor: number } | null): string | null {
+  return p?.concepts[p.cursor]?.node_id ?? null;
+}
+
+function findRow(rows: TutorSessionRow[], id: string | null): TutorSessionRow | null {
+  return id ? rows.find((r) => r.id === id) ?? null : null;
+}
+
+/** Where an open session is, in words: "Check-in", "Plan · 3 concepts",
+ *  "Recursion · concept 2 of 3", "Wrap-up". */
+function phaseText(phase: LoopPhase, plan: LoopPanelConcept[] | null, focus: string | null, names: Map<string, string>): string {
+  const n = plan?.length ?? 0;
+  if (phase === "probe") return "Check-in";
+  if (phase === "plan") return n ? `Plan · ${n} ${n === 1 ? "concept" : "concepts"}` : "Plan";
+  if (phase === "close") return "Wrap-up";
+  const name = focus ? names.get(focus) : undefined;
+  const at = plan && focus ? plan.findIndex((c) => c.node_id === focus) : -1;
+  if (name && at >= 0) return `${name} · concept ${at + 1} of ${n}`;
+  return name ?? "Learning";
+}
+
+/** The concept T1 offers as a first focus: the weakest one not yet mastered. */
+function weakestConcept(nodes: GraphNode[]): string | null {
+  const open = nodes.filter((n) => !n.is_subject_root && n.mastery_tier !== "mastered");
+  open.sort((a, b) => a.mastery_score - b.mastery_score);
+  return open[0]?.name ?? null;
 }
 
 /** A session the "New session" button should wrap up first: one the student is in. */
@@ -2317,6 +2543,42 @@ function CenteredCard({ testId, children }: { testId: string; children: React.Re
   return (
     <div style={{ flex: 1, overflowY: "auto", padding: 32 }}>
       <div ref={ref} tabIndex={-1} data-testid={testId} className="card" style={{ maxWidth: 520, margin: "24px auto", padding: "var(--pad-xl)" }}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/** Actions under a tutor turn line up with its bubble (avatar 32 + gap 12). */
+const TURN_INDENT = 44;
+
+const VERDICT_COPY: Record<string, { title: string; note: string }> = {
+  correct: { title: "Correct", note: "That answer counts toward this concept." },
+  not_yet: { title: "Not yet", note: "The tutor explains below. Try another one on the same idea." },
+  idk: { title: "Not yet", note: "No problem — the tutor walks through it below." },
+};
+
+/** Wireframe T9: the graded check's verdict, above the tutor's feedback. */
+function VerdictBanner({ verdict, concept }: { verdict: string; concept: string | null }) {
+  const copy = VERDICT_COPY[verdict] ?? VERDICT_COPY.not_yet;
+  const yes = verdict === "correct";
+  return (
+    <div data-testid="loop-verdict" data-verdict={verdict} className={yes ? tutorStyles.verdictYes : tutorStyles.verdictNo}>
+      {concept && <span className="label-micro">{concept} · check</span>}
+      <div style={{ font: "600 17px var(--font-display)", color: yes ? "var(--sap-600)" : "var(--warn)" }}>{copy.title}</div>
+      <div style={{ fontSize: 14 }}>{copy.note}</div>
+    </div>
+  );
+}
+
+/** One tutor turn outside the chat log (the check-in opener, the plan's intro):
+ *  the avatar and serif bubble the conversation uses. */
+function TutorTurn({ children, testId }: { children: React.ReactNode; testId?: string }) {
+  return (
+    <div className={tutorStyles.turn}>
+      <span className={tutorStyles.avatar} aria-hidden><Icon name="sparkle" size={14} /></span>
+      <div className={tutorStyles.turnBody} data-testid={testId}>
+        <span className={tutorStyles.sr}>Tutor: </span>
         {children}
       </div>
     </div>
@@ -2403,32 +2665,13 @@ function ProbePanel({
     </div>
   );
   return (
-    <div style={{ flex: 1, overflowY: "auto", padding: "20px 32px 32px" }}>
-      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-        <div>
-          <h2 className="h-serif" style={{ margin: 0, fontSize: 22 }}>Quick check-in</h2>
-          <p style={{ margin: "4px 0 0", fontSize: 14, color: "var(--text-dim)" }}>
-            A few questions so the tutor knows where to start. Answer what you can — &ldquo;I don&apos;t know&rdquo; is a
-            fine answer.
-          </p>
-        </div>
+    <div style={{ flex: 1, overflowY: "auto" }}>
+      <div className={tutorStyles.col}>
+        <h2 className={tutorStyles.sr}>Quick check-in</h2>
+        <TutorTurn testId="loop-probe-greeting">
+          {greeting ?? "Let's start with a quick check-in so I know where you are. No hints here; it just shows me what to teach."}
+        </TutorTurn>
         <DiagnosisSummary diagnosis={diagnosis} names={names} />
-        {greeting && (
-          <div
-            data-testid="loop-probe-greeting"
-            style={{
-              fontSize: 14,
-              lineHeight: 1.5,
-              padding: "10px 14px",
-              borderRadius: "var(--r-md)",
-              background: "var(--bg-soft)",
-              whiteSpace: "pre-wrap",
-            }}
-          >
-            <div className="label-micro" style={{ marginBottom: 2 }}>Tutor</div>
-            {greeting}
-          </div>
-        )}
         {!item && busy && <div style={{ fontSize: 14, color: "var(--text-muted)" }}>Loading the next question…</div>}
         {!item && reference !== null && (
           <div className="card" style={{ padding: "var(--pad-xl)", display: "flex", flexDirection: "column", gap: 12 }}>
@@ -2453,11 +2696,13 @@ function ProbePanel({
             data-testid="loop-probe-item"
             data-question-hash={item.question_hash}
             data-difficulty={item.difficulty}
-            className="card"
-            style={{ padding: "var(--pad-xl)", display: "flex", flexDirection: "column", gap: 12 }}
+            className={`card ${tutorStyles.qcard}`}
           >
-            <h3 id={headingId} className="label-micro" style={{ margin: 0, fontWeight: 400 }}>Question {count + (reference === null ? 1 : 0)}</h3>
-            <p id={promptId} style={{ margin: 0, fontSize: 16, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{item.prompt}</p>
+            <div className={tutorStyles.qhead}>
+              <h3 id={headingId} className={`label-micro ${tutorStyles.qlabel}`}>Check-in · Question {count + (reference === null ? 1 : 0)}</h3>
+              <span className="chip">No hints</span>
+            </div>
+            <p id={promptId} className={tutorStyles.q}>{item.prompt}</p>
             {reference === null ? (
               <>
                 {mc ? (
@@ -2470,11 +2715,13 @@ function ProbePanel({
                       labelledBy={promptId}
                       disabled={busy}
                     />
+                    <label className={tutorStyles.fl} htmlFor={`${ids}-reason`} style={{ marginBottom: -8 }}>In one sentence: why?</label>
                     <input
+                      id={`${ids}-reason`}
                       data-testid="loop-probe-reason"
                       aria-label="Check-in reasoning"
                       style={FIELD_STYLE}
-                      placeholder="In one sentence: why?"
+                      placeholder="Because…"
                       value={draft.reason}
                       disabled={busy}
                       onChange={(e) => {
@@ -2511,7 +2758,7 @@ function ProbePanel({
                 />
                 <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                   <button data-testid="loop-probe-submit" className="btn btn--primary" disabled={!canSubmit} onClick={onSubmit}>
-                    {busy ? "Checking…" : "Submit"}
+                    {busy ? "Checking…" : "Submit answer"}
                   </button>
                   <button data-testid="loop-probe-idk" className="btn btn--ghost" disabled={busy} onClick={onIdk}>
                     I don&apos;t know
@@ -2558,18 +2805,17 @@ function PlanPanel({
     if (!modalOpen()) headingRef.current?.focus();
   }, []);
   return (
-    <div style={{ flex: 1, overflowY: "auto", padding: "20px 32px 32px" }}>
-      <div
-        className="card"
-        style={{ padding: "var(--pad-xl)", display: "flex", flexDirection: "column", gap: 14 }}
+    <div style={{ flex: 1, overflowY: "auto" }}>
+      <div className={tutorStyles.col}>
+      <TutorTurn>Here&apos;s today&apos;s plan, built from your check-in. Due reviews come first, then what&apos;s new, then related practice.</TutorTurn>
+      <section
+        aria-labelledby="loop-plan-heading"
+        className={`card ${tutorStyles.qcard}`}
       >
-        <div>
-          <h2 ref={headingRef} tabIndex={-1} className="h-serif" style={{ margin: 0, fontSize: 22 }}>
+        <div className={tutorStyles.qhead}>
+          <h2 id="loop-plan-heading" ref={headingRef} tabIndex={-1} className={`label-micro ${tutorStyles.qlabel}`}>
             Today&apos;s plan
           </h2>
-          <p style={{ margin: "4px 0 0", fontSize: 14, color: "var(--text-dim)" }}>
-            Built from your check-in: anything due for review first, then what&apos;s next to learn.
-          </p>
         </div>
         <DiagnosisSummary diagnosis={diagnosis} names={names} />
         {plan === null && !loadFailed && <div style={{ fontSize: 14, color: "var(--text-muted)" }}>Building your plan…</div>}
@@ -2592,19 +2838,11 @@ function PlanPanel({
                 <li
                   key={c.node_id}
                   data-testid={`loop-plan-concept-${c.node_id}`}
-                  className={styles.planItem}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 10,
-                    padding: "10px 12px",
-                    borderRadius: "var(--r-md)",
-                    background: "var(--bg-soft)",
-                  }}
+                  className={`${styles.planItem} ${tutorStyles.planRow} ${i === 0 ? tutorStyles.planCur : ""}`}
                 >
-                  <span style={{ width: 22, color: "var(--text-muted)", fontVariantNumeric: "tabular-nums" }}>{i + 1}</span>
+                  <span className={tutorStyles.planBox} aria-hidden>{i + 1}</span>
                   <span style={{ flex: "1 1 100px", minWidth: 0, overflowWrap: "anywhere", fontSize: 14, fontWeight: 500 }}>{c.concept_name || "Concept"}
-                    {c.reason && <span data-testid={`loop-plan-reason-${c.node_id}`} style={{ display: "block", marginTop: 4, fontWeight: 400, fontSize: 12, color: "var(--text-dim)" }}>
+                    {c.reason && <span data-testid={`loop-plan-reason-${c.node_id}`} className={tutorStyles.ps} style={{ display: "block", marginTop: 2, fontWeight: 400 }}>
                       {c.reason === "prerequisite" ? "Prerequisite for your goal" : c.reason === "goal" ? "Your selected goal" : c.reason === "review" ? "Due for review" : "Related practice"}
                     </span>}
                   </span>
@@ -2623,18 +2861,21 @@ function PlanPanel({
             disabled={busy}
             onClick={onApprove}
           >
-            {busy ? "Saving…" : "Start learning"}
+            <Icon name="sparkle" size={14} /> {busy ? "Saving…" : "Start learning"}
           </button>
         )}
+      </section>
       </div>
     </div>
   );
 }
 
 function CheckCard({
-  item, draft, setDraft, busy, hint, hintBusy, hintRetry, onSubmit, onIdk, onHint, onReport, selfExplain,
+  item, conceptName, draft, setDraft, busy, hint, hintBusy, hintRetry, onSubmit, onIdk, onHint, onReport, selfExplain,
 }: {
   item: LoopCheckItem;
+  /** The concept the check is on (the chip in the card's head). */
+  conceptName?: string | null;
   draft: Draft;
   setDraft: React.Dispatch<React.SetStateAction<Draft>>;
   busy: boolean;
@@ -2671,17 +2912,19 @@ function CheckCard({
     <section
       ref={cardRef}
       aria-labelledby={headingId}
-      className="card"
-      style={{ padding: "14px 16px", display: "flex", flexDirection: "column", gap: 10, borderColor: "var(--accent-border)" }}
+      className={`card ${tutorStyles.qcard}`}
     >
       <div
         data-testid="loop-check-prompt"
         data-question-hash={item.question_hash}
         data-format={item.format}
-        style={{ display: "flex", flexDirection: "column", gap: 4 }}
+        style={{ display: "flex", flexDirection: "column", gap: 10 }}
       >
-        <h2 id={headingId} className="label-micro" style={{ margin: 0, fontWeight: 400 }}>Check your understanding</h2>
-        <p id={promptId} style={{ margin: 0, fontSize: 15, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{item.prompt}</p>
+        <div className={tutorStyles.qhead}>
+          <h2 id={headingId} className={`label-micro ${tutorStyles.qlabel}`}>Check your understanding</h2>
+          {conceptName && <span className="chip">{conceptName}</span>}
+        </div>
+        <p id={promptId} className={tutorStyles.q}>{item.prompt}</p>
       </div>
       {mc ? (
         <>
@@ -2693,7 +2936,9 @@ function CheckCard({
             labelledBy={promptId}
             disabled={busy}
           />
+          <label className={tutorStyles.fl} htmlFor={`${ids}-reason`} style={{ marginBottom: -8 }}>Your reasoning (optional)</label>
           <input
+            id={`${ids}-reason`}
             data-testid="loop-attempt-reason"
             aria-label="Your reasoning"
             style={FIELD_STYLE}
@@ -2707,14 +2952,17 @@ function CheckCard({
           />
         </>
       ) : (
+        <>
+        <label className={tutorStyles.fl} htmlFor={`${ids}-answer`} style={{ marginBottom: -8 }}>Your answer — this is what gets checked</label>
         <textarea
+          id={`${ids}-answer`}
           data-testid="loop-attempt-input"
           data-answer-start=""
           aria-label="Your answer"
           aria-describedby={promptId}
           style={FIELD_STYLE}
           rows={2}
-          placeholder={item.format === "teachback" ? "Explain it in your own words" : "Your answer — this is what gets checked"}
+          placeholder={item.format === "teachback" ? "Explain it in your own words" : ""}
           value={draft.answer}
           disabled={busy}
           onChange={(e) => {
@@ -2725,6 +2973,7 @@ function CheckCard({
             if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && canSubmit) onSubmit();
           }}
         />
+        </>
       )}
       <ConfidenceControl
         testIdPrefix="loop-check-confidence"
@@ -2733,23 +2982,22 @@ function CheckCard({
         disabled={busy}
       />
       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-        <button data-testid="loop-attempt-submit" className="btn btn--sm btn--primary" disabled={!canSubmit} onClick={onSubmit}>
+        <button data-testid="loop-attempt-submit" className="btn btn--primary" disabled={!canSubmit} onClick={onSubmit}>
           Submit answer
         </button>
-        <button data-testid="loop-attempt-idk" className="btn btn--sm btn--ghost" disabled={busy} onClick={onIdk}>
-          I don&apos;t know
-        </button>
-        <div style={{ flex: 1 }} />
         <button
           data-testid="loop-hint-button"
-          className="btn btn--sm"
+          className="btn"
           aria-disabled={hintUnavailable}
           style={hintUnavailable ? { cursor: "not-allowed" } : undefined}
           onClick={() => {
             if (!hintUnavailable) onHint();
           }}
         >
-          {hintBusy ? "Hint…" : hintRetry ? "Retry earned hint" : "Hint"}
+          <Icon name="sparkle" size={13} />{hintBusy ? "Hint…" : hintRetry ? "Retry earned hint" : "Hint"}
+        </button>
+        <button data-testid="loop-attempt-idk" className="btn btn--ghost" disabled={busy} onClick={onIdk}>
+          I don&apos;t know
         </button>
       </div>
       {/* Always in the DOM, so a refusal is announced when it appears. */}
@@ -2770,13 +3018,17 @@ function CheckCard({
           data-testid="loop-hint-reply"
           style={{
             fontSize: 14,
-            padding: "8px 12px",
+            padding: "10px 12px",
             borderRadius: "var(--r-md)",
-            background: "var(--info-soft)",
+            border: "1px solid var(--accent-border)",
+            background: "var(--accent-soft)",
             whiteSpace: "pre-wrap",
+            display: "flex",
+            gap: 8,
           }}
         >
-          {hint.reply}
+          <span style={{ color: "var(--accent)", marginTop: 2 }} aria-hidden><Icon name="sparkle" size={13} /></span>
+          <span>{hint.reply}</span>
         </div>
       )}
       {selfExplain}
@@ -2812,8 +3064,10 @@ function closeConceptView(c: LoopCloseConcept): {
 }
 
 function ClosePanel({
-  close, note, names, courseId,
+  close, note, names, courseId, onNew,
 }: {
+  /** Wireframe T10: back to the Tutor home to start the next session. */
+  onNew?: () => void;
   close: LoopCloseResponse | null;
   /** Set when the stored close could not be read (the session was closed elsewhere). */
   note: string | null;
@@ -2843,69 +3097,93 @@ function ClosePanel({
     );
   }
   const rec = close.close;
+  const up = rec.concepts.filter((c) => closeConceptView(c).dir === "up").length;
   return (
-    <div style={{ flex: 1, overflowY: "auto", padding: "20px 32px 32px" }}>
-      <div
-        className="card"
-        style={{ padding: "var(--pad-xl)", display: "flex", flexDirection: "column", gap: 16 }}
-      >
-        <h2 ref={setFocusTarget} tabIndex={-1} className="h-serif" style={{ margin: 0, fontSize: 22 }}>Session wrap-up</h2>
-        <p data-testid="loop-close-summary" style={{ margin: 0, fontSize: 15, lineHeight: 1.55, whiteSpace: "pre-wrap" }}>
-          {rec.summary}
-        </p>
-        {rec.concepts.length > 0 && (
-          <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 4 }}>
-            {rec.concepts.map((c) => {
-              const view = closeConceptView(c);
-              return (
-                <li
-                  key={c.node_id}
-                  data-testid={`loop-close-concept-${c.node_id}`}
-                  data-baseline={view.baseline}
-                  data-direction={view.dir}
-                  style={{ display: "flex", gap: 8, fontSize: 14 }}
-                >
-                  <span aria-hidden style={{ color: view.dir === "up" ? "var(--accent)" : "var(--text-muted)" }}>
-                    {view.arrow}
-                  </span>
-                  <span>{names.get(c.node_id) ?? "A concept"}</span>
-                  <span style={{ color: "var(--text-muted)" }}>{view.label}</span>
-                </li>
-              );
-            })}
-          </ul>
-        )}
+    <div style={{ flex: 1, overflowY: "auto" }}>
+      <div className={tutorStyles.col}>
+        <h2 ref={setFocusTarget} tabIndex={-1} className="h-serif" style={{ margin: 0, fontSize: 24 }}>Session wrap-up</h2>
+        <div className={tutorStyles.closeGrid}>
+          <section className="card" aria-labelledby="loop-close-moved">
+            <div className={tutorStyles.cardHead}>
+              <div>
+                <span className="label-micro">What moved</span>
+                <h3 id="loop-close-moved" className="h-serif">
+                  {rec.concepts.length === 0 ? "Nothing measured yet" : `${up} of ${rec.concepts.length} ${rec.concepts.length === 1 ? "concept" : "concepts"} stronger`}
+                </h3>
+              </div>
+            </div>
+            <div className={tutorStyles.cardPad}>
+              {rec.concepts.length > 0 ? (
+                <ul className={tutorStyles.moved}>
+                  {rec.concepts.map((c) => {
+                    const view = closeConceptView(c);
+                    return (
+                      <li
+                        key={c.node_id}
+                        data-testid={`loop-close-concept-${c.node_id}`}
+                        data-baseline={view.baseline}
+                        data-direction={view.dir}
+                        className={tutorStyles.movedRow}
+                      >
+                        <span>
+                          <span aria-hidden style={{ color: view.dir === "up" ? "var(--sap-600)" : view.dir === "down" ? "var(--warn)" : "var(--text-muted)", marginRight: 6 }}>{view.arrow}</span>
+                          {names.get(c.node_id) ?? "A concept"}
+                        </span>
+                        <span style={{ color: view.dir === "down" ? "var(--warn)" : "var(--text-muted)", fontSize: 13 }}>{view.label}</span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              ) : (
+                <p style={{ margin: 0, fontSize: 13, color: "var(--text-muted)" }}>Your tutor picks up from here next session.</p>
+              )}
+              <p style={{ margin: 0, fontSize: 12, color: "var(--text-muted)" }}>Change from where you started this session.</p>
+            </div>
+          </section>
+          <section className="card" aria-labelledby="loop-close-summary-h">
+            <div className={tutorStyles.cardHead}>
+              <div>
+                <span className="label-micro">Summary</span>
+                <h3 id="loop-close-summary-h" className="h-serif">What you covered</h3>
+              </div>
+            </div>
+            <div className={tutorStyles.cardPad}>
+              <p data-testid="loop-close-summary" style={{ margin: 0, font: "400 14px/1.6 var(--font-serif)", whiteSpace: "pre-wrap" }}>
+                {rec.summary}
+              </p>
+            </div>
+          </section>
+        </div>
         {/* A60: the self-evaluation is a reflection prompt only — nothing is saved. */}
-        <div
-          data-testid="loop-close-self-eval"
-          style={{ padding: "12px 14px", borderRadius: "var(--r-md)", background: "var(--bg-soft)" }}
-        >
-          <div className="label-micro" style={{ marginBottom: 4 }}>Reflect</div>
-          <div style={{ fontSize: 15, fontStyle: "italic" }}>{rec.self_eval}</div>
-          <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 6 }}>
+        <section data-testid="loop-close-self-eval" className={`card ${tutorStyles.cardPad}`} style={{ gap: 6 }}>
+          <span className="label-micro">Reflect</span>
+          <div style={{ fontSize: 15, fontStyle: "italic", fontFamily: "var(--font-serif)" }}>{rec.self_eval}</div>
+          <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
             Take a moment with it — it&apos;s just for you, nothing is saved.
           </div>
-        </div>
+        </section>
         {rec.if_then && (
-          <div
-            data-testid="loop-close-if-then"
-            style={{ padding: "12px 14px", borderRadius: "var(--r-md)", background: "var(--accent-soft)" }}
-          >
-            <div className="label-micro" style={{ marginBottom: 4 }}>Your plan for next time</div>
+          <section data-testid="loop-close-if-then" className={`card ${tutorStyles.cardPad}`} style={{ gap: 6, background: "var(--accent-soft)", borderColor: "var(--accent-border)" }}>
+            <span className="label-micro">Your plan for next time</span>
             <div style={{ fontSize: 15 }}>{rec.if_then}</div>
-          </div>
+          </section>
         )}
         <div
           data-testid="loop-close-done"
           style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", fontSize: 14, color: "var(--text-dim)" }}
         >
-          <span>Session closed.</span>
-          <Link data-testid="loop-close-study-link" href="/study?mode=cards" style={{ color: "var(--accent)" }}>
-            Review what&apos;s due
-          </Link>
-          {courseId && <Link data-testid="loop-close-retention-link" href={`/study?mode=cards&retention-course=${encodeURIComponent(courseId)}`} style={{ color: "var(--accent)" }}>
+          <span style={{ flex: 1, minWidth: 120 }}>Session closed.</span>
+          {courseId && <Link data-testid="loop-close-retention-link" href={`/study?mode=cards&retention-course=${encodeURIComponent(courseId)}`} className="btn">
             Check retention after time away
           </Link>}
+          <Link data-testid="loop-close-study-link" href="/study?mode=cards" className="btn">
+            Review what&apos;s due
+          </Link>
+          {onNew && (
+            <button type="button" data-testid="loop-close-new-session" className="btn btn--primary" onClick={onNew}>
+              Start a new session
+            </button>
+          )}
         </div>
       </div>
     </div>

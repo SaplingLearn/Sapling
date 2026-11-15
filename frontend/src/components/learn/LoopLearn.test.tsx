@@ -43,7 +43,7 @@ const api = vi.hoisted(() => ({
   getLoopPlan: vi.fn(), approveLoopPlan: vi.fn(), streamLoopChat: vi.fn(), streamLoopCheckAnswer: vi.fn(),
   postLoopAttempt: vi.fn(), requestLoopHint: vi.fn(), requestLoopHintTurn: vi.fn(), closeLoopSession: vi.fn(),
   getGraph: vi.fn(), nextLoopCheck: vi.fn(), submitLoopRating: vi.fn(), reportCheckItem: vi.fn(),
-  streamLoopPrequestionAnswer: vi.fn(), postLoopSelfExplain: vi.fn(),
+  streamLoopPrequestionAnswer: vi.fn(), postLoopSelfExplain: vi.fn(), getSessions: vi.fn(), getDocuments: vi.fn(),
 }));
 vi.mock("@/lib/api", async (orig) => ({ ...(await orig<typeof import("@/lib/api")>()), ...api }));
 // Every flag "off" (the provider's default) unless a test turns one on.
@@ -80,6 +80,17 @@ const painted = (text: string) => screen.getAllByText(text).filter((el) => !el.c
 /** The conversation log's copy of `text` — present, and painted or not. */
 const logRow = (text: string) => within(screen.getByTestId("tutor-messages")).getByText(text);
 
+/** Wireframe T1: with no open session the Tutor home shows; its CTA starts one. */
+async function startFromHome() {
+  fireEvent.click(await screen.findByTestId("loop-start-guided"));
+}
+/** Wireframe T1: New session opens the Tutor home, and its CTA starts the session
+ *  (wrapping up the open one first). */
+function clickNewSession() {
+  fireEvent.click(screen.getByTestId("loop-new-session"));
+  fireEvent.click(screen.getByTestId("loop-start-guided"));
+}
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((done) => { resolve = done; });
@@ -101,6 +112,8 @@ beforeEach(() => {
     return status({ session_id: id, loop_phase: ["check", "feedback"].includes(phase) ? "teach" : phase, phase, goal: null, diagnosis: null });
   });
   api.getGraph.mockResolvedValue({ nodes: [], edges: [], stats: {} });
+  api.getSessions.mockResolvedValue({ sessions: [] });
+  api.getDocuments.mockResolvedValue({ documents: [] });
   api.resumeSession.mockResolvedValue({ session: { id: "s2" }, messages: [{ id: "m1", role: "assistant", content: "welcome back", created_at: "" }] });
 });
 afterEach(cleanup);
@@ -187,6 +200,7 @@ describe("LoopLearn — resume (spec §11.3)", () => {
     await act(async () => { content.resolve(phase === "probe" ? probeItem : { concepts: [], order: [] }); });
     await waitFor(() => expect(button.disabled).toBe(false));
     fireEvent.click(button);
+    fireEvent.click(screen.getByTestId("loop-start-guided"));
     await waitFor(() => expect(screen.getByTestId("loop-phase").getAttribute("data-session-id")).toBe("s9"));
     await waitFor(() => expect(button.disabled).toBe(false));
     expect(api.closeLoopSession).toHaveBeenCalledExactlyOnceWith("s2", "u1");
@@ -202,6 +216,7 @@ describe("LoopLearn — resume (spec §11.3)", () => {
     api.startLoopSession.mockResolvedValue({ session_id: "s9", initial_message: "Hello there" });
     api.nextLoopProbe.mockReturnValue(firstProbe.promise);
     render(<LoopLearn />);
+    await startFromHome();
     await waitFor(() => expect(api.nextLoopProbe).toHaveBeenCalledWith("s9", "u1"));
     const button = screen.getByTestId("loop-new-session") as HTMLButtonElement;
     expect(button.disabled).toBe(true);
@@ -243,6 +258,7 @@ describe("LoopLearn — resume (spec §11.3)", () => {
     const button = screen.getByTestId("loop-new-session") as HTMLButtonElement;
     await waitFor(() => expect(button.disabled).toBe(false));
     fireEvent.click(button);
+    fireEvent.click(screen.getByTestId("loop-start-guided"));
     await waitFor(() => expect(screen.getByTestId("loop-phase").getAttribute("data-session-id")).toBe("s9"));
     expect(api.closeLoopSession).toHaveBeenCalledTimes(1); // No second close for the terminal session.
   });
@@ -337,6 +353,7 @@ describe("LoopLearn — resume (spec §11.3)", () => {
     api.startLoopSession.mockResolvedValue({ session_id: "s9", initial_message: "Hello there" });
     api.nextLoopProbe.mockResolvedValue(probeItem);
     render(<LoopLearn />);
+    await startFromHome();
     await waitFor(() => expect(api.nextLoopProbe).toHaveBeenCalledWith("s9", "u1"));
     expect(api.startLoopSession).toHaveBeenCalledTimes(1);
     expect(api.startLoopSession.mock.calls[0].slice(0, 3)).toEqual(["u1", "c1", "Intro CS"]);
@@ -351,7 +368,7 @@ describe("LoopLearn — resume (spec §11.3)", () => {
     api.nextLoopProbe.mockResolvedValue(probeItem);
     render(<LoopLearn />);
     await screen.findByText("welcome back");
-    fireEvent.click(screen.getByTestId("loop-new-session"));
+    clickNewSession();
     await waitFor(() => expect(api.startLoopSession).toHaveBeenCalledTimes(1));
     expect(api.closeLoopSession).toHaveBeenCalledWith("s2", "u1");
     expect(api.closeLoopSession.mock.invocationCallOrder[0]).toBeLessThan(api.startLoopSession.mock.invocationCallOrder[0]);
@@ -364,7 +381,7 @@ describe("LoopLearn — resume (spec §11.3)", () => {
     api.closeLoopSession.mockRejectedValue(new ApiError("x", 409, { body: { detail: "a check is being graded; close again in a moment" } }));
     render(<LoopLearn />);
     await screen.findByText("welcome back");
-    fireEvent.click(screen.getByTestId("loop-new-session"));
+    clickNewSession();
     expect(await screen.findByText(/close again in a moment/i)).toBeTruthy();
     expect(api.startLoopSession).not.toHaveBeenCalled();
     expect(screen.getByTestId("loop-phase").getAttribute("data-session-id")).toBe("s2");
@@ -494,6 +511,7 @@ describe("LoopLearn — A26", () => {
     api.startLoopSession.mockResolvedValue({ session_id: "s9", initial_message: "template", budget: { level: "hard", reset_at: "2026-09-27T00:00:00Z", scope: "daily_usd", session_capped: false } });
     api.nextLoopProbe.mockResolvedValue(probeItem);
     render(<LoopLearn />);
+    await startFromHome();
     const banner = await screen.findByTestId("loop-budget-paused");
     expect(banner.getAttribute("data-reset-at")).toBe("2026-09-27T00:00:00Z");
     expect(banner.getAttribute("data-session-capped")).toBe("false");
@@ -604,6 +622,7 @@ describe("LoopLearn — A26", () => {
     api.nextLoopProbe.mockResolvedValue({ done: true, phase: "plan", no_check_items: true });
     api.getLoopPlan.mockResolvedValue({ concepts: [], order: [], empty: true, phase: "teach" });
     render(<LoopLearn />);
+    await startFromHome();
     expect((await screen.findByTestId("loop-no-check-items")).textContent).toContain("No check items for this course yet");
     expect(screen.queryByTestId("loop-preparing-items")).toBeNull();
     // A128: another notice showing never brings the materials note with it
@@ -616,6 +635,7 @@ describe("LoopLearn — A26", () => {
     api.nextLoopProbe.mockResolvedValue({ done: true, phase: "plan", no_check_items: true, preparing: true });
     api.getLoopPlan.mockResolvedValue({ concepts: [], order: [], empty: true, phase: "teach" });
     render(<LoopLearn />);
+    await startFromHome();
     expect((await screen.findByTestId("loop-preparing-items")).textContent).toBe(
       "Preparing practice questions from your upload…",
     );
@@ -702,6 +722,7 @@ describe("LoopLearn — A26", () => {
     api.getLoopPlan.mockResolvedValue({ concepts: [], order: [], empty: true, phase: "teach" });
     api.streamLoopChat.mockResolvedValue(crisisTurn);
     render(<LoopLearn />);
+    await startFromHome();
     await screen.findByTestId("loop-preparing-items");
     fireEvent.change(await screen.findByTestId("tutor-input"), { target: { value: "i want to kill myself" } });
     fireEvent.click(screen.getByTestId("tutor-send"));
@@ -714,6 +735,7 @@ describe("LoopLearn — A26", () => {
     api.startLoopSession.mockResolvedValue({ session_id: "s9", initial_message: "Welcome.", materials_unavailable: true });
     api.nextLoopProbe.mockResolvedValue(probeItem);
     render(<LoopLearn />);
+    await startFromHome();
     expect(await screen.findByTestId("loop-materials-unavailable")).toBeTruthy();
   });
 
@@ -1135,6 +1157,7 @@ describe("LoopLearn — PKG-13 fix round", () => {
       .mockResolvedValue({ session_id: "s9", initial_message: "" });
     api.nextLoopProbe.mockResolvedValue(probeItem);
     render(<LoopLearn />);
+    await startFromHome();
     expect(await screen.findByTestId("loop-start-error")).toBeTruthy();
     expect(screen.getByTestId("loop-budget-paused")).toBeTruthy();
     expect(screen.queryByTestId("loop-probe-item")).toBeNull();
@@ -1162,11 +1185,11 @@ describe("LoopLearn — PKG-13 fix round", () => {
     expect(screen.getByTestId("loop-budget-paused")).toBeTruthy();
   });
 
-  it("m: testids on the course select, the no-course link and the close link", async () => {
+  it("m: testids on the sidebar's courses, the no-course link and the close link", async () => {
     api.getCourses.mockResolvedValue({ courses: [course, { course_id: "c2", course_name: "Data Structures", course_code: "CS 201" }] });
     api.closeLoopSession.mockResolvedValue({ close: closeRecord, model_written: false, close_phase: "teach" });
     await resumedTeach();
-    expect(screen.getByTestId("loop-course-select")).toBeTruthy();
+    expect(screen.getByTestId("tutor-course-c2")).toBeTruthy();
     fireEvent.click(screen.getByTestId("loop-close-button"));
     expect((await screen.findByTestId("loop-close-study-link")).getAttribute("href")).toBe("/study?mode=cards");
     cleanup();
@@ -1625,7 +1648,7 @@ describe("LoopLearn — session isolation and learning evidence", () => {
     api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "teach", "2026-09-21T10:00:00Z"), open("s1", "teach", "2026-09-20T10:00:00Z")]));
     render(<LoopLearn />);
     await screen.findByText("welcome back");
-    fireEvent.click(screen.getByTestId("loop-new-session"));
+    clickNewSession();
     fireEvent.click(screen.getByTestId("loop-session-s1"));
     await waitFor(() => expect(screen.getByTestId("loop-phase").getAttribute("data-session-id")).toBe("s1"));
     await act(async () => { finish({ close: closeRecord, model_written: false, close_phase: "teach" }); });
@@ -1845,9 +1868,11 @@ describe("explicit goals and honest diagnostic coverage", () => {
     await screen.findByTestId("loop-probe-item");
     await openGoalEditor();
     fireEvent.click(screen.getByRole("checkbox", { name: "Bitwise Operators" }));
-    fireEvent.click(screen.getByTestId("loop-course-select"));
-    fireEvent.click(screen.getByTestId("loop-course-select-option-c2"));
+    // wireframe T2: a sidebar course opens its page; its open session loads behind it
+    fireEvent.click(screen.getByTestId("tutor-course-c2"));
     await waitFor(() => expect(screen.getByTestId("loop-phase").getAttribute("data-session-id")).toBe("other"));
+    expect(screen.getByTestId("tutor-course-page").getAttribute("data-course-id")).toBe("c2");
+    fireEvent.click(await screen.findByTestId("loop-session-other"));
     await screen.findByTestId("loop-probe-item");
     expect(screen.queryByRole("form", { name: "Learning goal" })).toBeNull();
     await openGoalEditor();
@@ -2250,7 +2275,7 @@ describe("LoopLearn — no feedback survey mid-learning", () => {
 
     api.startLoopSession.mockResolvedValue({ session_id: "s9", initial_message: "" });
     api.nextLoopProbe.mockResolvedValue(probeItem);
-    fireEvent.click(screen.getByTestId("loop-new-session"));
+    clickNewSession();
     await screen.findByTestId("loop-probe-item");
     await effectsFlushed();
     expect(feedbackHeld()).toBe(true);
@@ -2632,7 +2657,7 @@ describe("LoopLearn — keyboard and screen reader (spec §13 A135)", () => {
     const answer = await screen.findByRole("textbox", { name: "Check-in answer" });
     await waitFor(() => expect(answer).toHaveFocus());
     expect(answer).toHaveAccessibleDescription("What is a base case?");
-    expect(screen.getByRole("region", { name: "Question 1" })).toContainElement(answer);
+    expect(screen.getByRole("region", { name: "Check-in · Question 1" })).toContainElement(answer);
     fireEvent.change(answer, { target: { value: "not sure" } });
     fireEvent.click(screen.getByTestId("loop-probe-submit"));
     const reference = await screen.findByTestId("loop-probe-reference");
@@ -2673,14 +2698,15 @@ describe("LoopLearn — keyboard and screen reader (spec §13 A135)", () => {
     await waitFor(() => expect(screen.getByRole("heading", { name: "Session wrap-up" })).toHaveFocus());
   });
 
-  it("the open-sessions strip is a list only while it lists sessions", async () => {
+  it("the sidebar's recents are lists only while they list sessions", async () => {
     api.closeLoopSession.mockResolvedValue({ close: closeRecord, model_written: false, close_phase: "teach" });
     await resumedTeach();
-    expect(screen.getByRole("list", { name: "Open sessions" })).toBe(screen.getByTestId("loop-session-picker"));
+    const picker = screen.getByTestId("loop-session-picker");
+    expect(within(picker).getByRole("list").contains(screen.getByTestId("loop-session-s2"))).toBe(true);
     fireEvent.click(screen.getByTestId("loop-close-button"));
     await screen.findByTestId("loop-close-summary");
-    expect(screen.getByTestId("loop-session-picker")).not.toHaveAttribute("role");
-    expect(screen.getByTestId("loop-session-picker").textContent).toContain("None yet");
+    expect(within(picker).queryByRole("list")).toBeNull();
+    expect(picker.textContent).toContain("None yet");
   });
 
   it("notices go into a live region that is on the page before any of them", async () => {
@@ -2703,6 +2729,7 @@ describe("LoopLearn — cards that stand in for the screen (spec §13 A135)", ()
       .mockResolvedValue({ session_id: "s9", initial_message: "" });
     api.nextLoopProbe.mockResolvedValue(probeItem);
     render(<LoopLearn />);
+    await startFromHome();
     await screen.findByTestId("loop-start-error");
     await waitFor(() => expect(screen.getByRole("heading", { name: "Couldn't start a session" })).toHaveFocus());
     fireEvent.click(screen.getByTestId("loop-start-retry"));
@@ -2714,8 +2741,9 @@ describe("LoopLearn — cards that stand in for the screen (spec §13 A135)", ()
     let fail: (error: unknown) => void = () => {};
     api.startLoopSession.mockReturnValue(new Promise((_, reject) => { fail = reject; }));
     render(<LoopLearn />);
+    await startFromHome();
     await waitFor(() => expect(api.startLoopSession).toHaveBeenCalled());
-    const elsewhere = screen.getByTestId("loop-tree-link");
+    const elsewhere = screen.getByTestId("tutor-session-search");
     elsewhere.focus();
     await act(async () => { fail(new ApiError("x", 503, { body: { detail: "temporarily unavailable" } })); });
     await screen.findByTestId("loop-start-error");
@@ -2958,5 +2986,95 @@ describe("LoopLearn — self-explanation prompts (spec §13 A139)", () => {
     await screen.findByText("On we go.");
     expect(screen.queryByTestId("loop-self-explain")).toBeNull();
     expect(api.postLoopSelfExplain).not.toHaveBeenCalled();
+  });
+});
+
+describe("LoopLearn — the Tutor shell (wireframes T1–T3, T9, T10)", () => {
+  it("T1: with nothing open the Tutor home shows and starts nothing until asked", async () => {
+    api.listLoopSessionsFor.mockResolvedValue(listed([]));
+    api.startLoopSession.mockResolvedValue({ session_id: "s9", initial_message: "Hello there" });
+    api.nextLoopProbe.mockResolvedValue(probeItem);
+    render(<LoopLearn />);
+    const home = await screen.findByTestId("tutor-home");
+    expect(home.textContent).toContain("What do you want to learn today?");
+    expect(screen.getByRole("heading", { name: "What do you want to learn today?" })).toHaveFocus();
+    expect(screen.getByTestId("loop-phase").getAttribute("data-view")).toBe("home");
+    expect(api.startLoopSession).not.toHaveBeenCalled();
+    expect(api.nextLoopProbe).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId("loop-start-guided"));
+    await screen.findByTestId("loop-probe-item");
+    expect(screen.getByTestId("loop-phase").getAttribute("data-view")).toBe("session");
+    expect(screen.getByTestId("tutor-phase-line").textContent).toBe("Check-in");
+  });
+
+  it("T1: New session leaves the open session as it is; Continue returns to it", async () => {
+    await resumedTeach();
+    fireEvent.click(screen.getByTestId("loop-new-session"));
+    expect(screen.getByTestId("tutor-home")).toBeTruthy();
+    expect(screen.getByTestId("tutor-home").textContent).toContain("Starting wraps up");
+    expect(api.closeLoopSession).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId("tutor-home-continue"));
+    expect(screen.getByTestId("loop-phase").getAttribute("data-view")).toBe("session");
+    expect(screen.getByTestId("loop-phase").getAttribute("data-session-id")).toBe("s2");
+    expect(api.closeLoopSession).not.toHaveBeenCalled();
+  });
+
+  it("the sidebar lists recents across courses; a wrapped-up one opens read-only, an open one in another course resumes there", async () => {
+    api.getCourses.mockResolvedValue({ courses: [course, { course_id: "c2", course_name: "Precalculus", course_code: "MATH 120" }] });
+    const today = new Date().toISOString();
+    api.getSessions.mockResolvedValue({ sessions: [
+      { id: "old", topic: "Big-O practice", mode: "socratic", course_id: "c1", started_at: today, ended_at: null, message_count: 3, is_active: true, loop_open: false },
+      { id: "quad", topic: "Quadratics", mode: "socratic", course_id: "c2", started_at: today, ended_at: null, message_count: 2, is_active: true, loop_open: true },
+    ] });
+    api.listLoopSessionsFor.mockImplementation((_u: string, c: string, resume: string | null) => Promise.resolve(
+      c === "c1" ? listed([open("s2", "teach", today)]) : listed([open("quad", "teach", today)], resume === "quad" ? { ...open("quad", "teach", today), course_id: "c2" } : null),
+    ));
+    api.resumeSession.mockImplementation(async (id: string) => ({ session: { id, topic: id === "old" ? "Big-O practice" : "x" }, messages: [{ id: `m-${id}`, role: "assistant", content: `chat ${id}`, created_at: "" }] }));
+    render(<LoopLearn />);
+    await screen.findByText("chat s2");
+    fireEvent.click(await screen.findByTestId("tutor-recent-old"));
+    expect(await screen.findByTestId("loop-readonly-transcript")).toBeTruthy();
+    expect(screen.getByTestId("tutor-phase-line").textContent).toBe("Wrapped up · read-only");
+    fireEvent.click(screen.getByTestId("tutor-recent-quad"));
+    await waitFor(() => expect(screen.getByTestId("loop-phase").getAttribute("data-session-id")).toBe("quad"));
+    expect(api.listLoopSessionsFor).toHaveBeenCalledWith("u1", "c2", "quad");
+    expect(api.startLoopSession).not.toHaveBeenCalled();
+    expect(api.closeLoopSession).not.toHaveBeenCalled();
+  });
+
+  it("T2 and T3: a course page lists its sessions and material; all sessions filter by status", async () => {
+    const today = new Date().toISOString();
+    api.getSessions.mockResolvedValue({ sessions: [
+      { id: "old", topic: "Big-O practice", mode: "socratic", course_id: "c1", started_at: today, ended_at: null, message_count: 3, is_active: true, loop_open: false },
+    ] });
+    api.getDocuments.mockResolvedValue({ documents: [{ id: "d1", file_name: "Week 3 slides.pptx", category: "slides", course_id: "c1" }] });
+    await resumedTeach();
+    fireEvent.click(screen.getByTestId("tutor-course-c1"));
+    const page = await screen.findByTestId("tutor-course-page");
+    await waitFor(() => expect(page.textContent).toContain("Week 3 slides.pptx"));
+    expect(page.textContent).toContain("Big-O practice");
+    expect(screen.getByTestId("tutor-course-c1").getAttribute("aria-current")).toBe("true");
+    fireEvent.click(screen.getByTestId("tutor-view-all"));
+    const all = await screen.findByTestId("tutor-all-sessions");
+    expect(all.textContent).toContain("Big-O practice");
+    fireEvent.click(within(all).getByRole("button", { name: "In progress" }));
+    expect(all.textContent).not.toContain("Big-O practice");
+    expect(all.textContent).toContain("t s2");
+  });
+
+  it("T9: a graded check shows its verdict over the feedback", async () => {
+    api.streamLoopCheckAnswer.mockImplementation(async (
+      _s: string, _u: string, _q: string, _a: object,
+      handlers: { onPhase?: (phase: string) => void },
+    ) => {
+      handlers.onPhase?.("feedback");
+      return turn({ reply: "Close — look at the base case.", phase: "feedback", graded: true, verdict: "not_yet" });
+    });
+    await withCheckItem();
+    fireEvent.change(screen.getByTestId("loop-attempt-input"), { target: { value: "it loops" } });
+    fireEvent.click(screen.getByTestId("loop-attempt-submit"));
+    const verdict = await screen.findByTestId("loop-verdict");
+    expect(verdict.getAttribute("data-verdict")).toBe("not_yet");
+    expect(verdict.textContent).toContain("Not yet");
   });
 });

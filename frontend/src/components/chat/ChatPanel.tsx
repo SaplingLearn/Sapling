@@ -2,6 +2,7 @@
 
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
+import Link from "next/link";
 import { Icon } from "../Icon";
 import { CrisisSupportCard } from "../safety/CrisisSupportCard";
 import type { CrisisSupport } from "@/lib/crisisSupport";
@@ -103,6 +104,11 @@ interface ChatPanelProps {
   onRetry?: (m: ChatMsg) => void;
   /** The composer's textarea, for a parent that moves keyboard focus to it. */
   composerRef?: React.RefObject<HTMLTextAreaElement | null>;
+  /** Wireframe T6: a "+" next to Send that opens where material is added. */
+  /** Content between the conversation and the composer: the learning loop's
+   *  check card and its next-step actions sit under the latest turn. */
+  footer?: React.ReactNode;
+  attachHref?: string;
 }
 
 export function ChatPanel({
@@ -119,6 +125,8 @@ export function ChatPanel({
   onStop,
   onRetry,
   composerRef,
+  attachHref,
+  footer,
 }: ChatPanelProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const isStreaming = streamingText !== null && streamingText !== undefined;
@@ -147,7 +155,7 @@ export function ChatPanel({
         style={{
           flex: 1,
           overflowY: "auto",
-          padding: "24px 32px",
+          padding: "24px clamp(16px, 4vw, 56px)",
           display: "flex",
           flexDirection: "column",
           gap: 16,
@@ -177,6 +185,14 @@ export function ChatPanel({
         )}
       </div>
 
+      {footer && (
+        <div
+          data-testid="chat-footer"
+          style={{ padding: "4px clamp(16px, 4vw, 56px) 14px", maxHeight: "65%", overflowY: "auto", flexShrink: 0 }}
+        >
+          {footer}
+        </div>
+      )}
       <ChatInputBar
         onSend={onSend}
         onAction={onAction}
@@ -187,6 +203,7 @@ export function ChatPanel({
         streaming={isStreaming}
         onStop={onStop}
         composerRef={composerRef}
+        attachHref={attachHref}
       />
     </div>
   );
@@ -202,6 +219,7 @@ interface ChatInputBarProps {
   streaming?: boolean;
   onStop?: () => void;
   composerRef?: React.RefObject<HTMLTextAreaElement | null>;
+  attachHref?: string;
 }
 
 const ChatInputBar = React.memo(function ChatInputBar({
@@ -214,6 +232,7 @@ const ChatInputBar = React.memo(function ChatInputBar({
   streaming,
   onStop,
   composerRef,
+  attachHref,
 }: ChatInputBarProps) {
   const [text, setText] = useState<string>(draftSeed ?? "");
   const barRef = useRef<HTMLDivElement>(null);
@@ -255,7 +274,7 @@ const ChatInputBar = React.memo(function ChatInputBar({
     <div
       ref={barRef}
       style={{
-        padding: "12px 32px 20px",
+        padding: "12px clamp(16px, 4vw, 56px) 20px",
         borderTop: "1px solid var(--border)",
         background: "var(--bg-panel)",
         display: "flex",
@@ -324,6 +343,20 @@ const ChatInputBar = React.memo(function ChatInputBar({
           >
             Stop
           </button>
+        )}
+        {attachHref && (
+          // Attach sits next to Send (wireframe T6): material is added in the
+          // Library, where an upload is classified and indexed for the tutor.
+          <Link
+            href={attachHref}
+            data-testid="tutor-attach"
+            aria-label="Attach material"
+            title="Attach material"
+            className="btn btn--sm btn--ghost"
+            style={{ width: 32, padding: 0, alignSelf: "flex-end" }}
+          >
+            <Icon name="plus" size={15} />
+          </Link>
         )}
         <button
           data-testid="tutor-send"

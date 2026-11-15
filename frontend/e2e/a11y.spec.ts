@@ -386,6 +386,10 @@ test("learning loop: check-in, plan, teaching, a check with hints, feedback, a m
   const { context, page } = await signIn(browser, USER_LOOP, "Lou Loop");
   try {
     await page.goto("/learn");
+    // Wireframe T1: the Tutor home, before anything starts
+    await expect(page.getByTestId("tutor-home")).toBeVisible();
+    await expectAccessible(page, "learn loop: tutor home");
+    await page.getByTestId("loop-start-guided").click();
     await walkCheckInAndPlan(page, Number(P.PROBE_SESSION_CAP));
     const phase = page.getByTestId("loop-phase");
 
@@ -432,6 +436,13 @@ test("learning loop: check-in, plan, teaching, a check with hints, feedback, a m
     await expect(phase).toHaveAttribute("data-phase", "close");
     await expect(page.getByTestId("loop-close-done")).toBeVisible();
     await expectAccessible(page, "learn loop: wrap-up");
+    // Wireframes T2 and T3: a course page and every session, from the tutor sidebar
+    await page.locator('[data-testid^="tutor-course-"]').first().click();
+    await expect(page.getByTestId("tutor-course-page")).toBeVisible();
+    await expectAccessible(page, "learn loop: course page");
+    await page.getByTestId("tutor-view-all").click();
+    await expect(page.getByTestId("tutor-all-sessions")).toBeVisible();
+    await expectAccessible(page, "learn loop: all sessions");
   } finally {
     await context.close();
   }
@@ -447,6 +458,7 @@ test("learning loop: a segment's ungraded guess and a self-explanation prompt (A
   const { context, page } = await signIn(browser, USER_LOOP, "Lou Loop");
   try {
     await page.goto("/learn");
+    await page.getByTestId("loop-start-guided").click();
     await walkCheckInAndPlan(page, Number(P.PROBE_SESSION_CAP), { approve: false });
     // a fresh multiple-choice pool for the segment's guess, added after the check-in
     await seedTeachPromptItems();
@@ -479,6 +491,7 @@ test("learning loop: the budget pause and the degraded-mode notes", async ({ bro
       route.fulfill({ json: { done: true, phase: "plan", no_check_items: true, preparing: true } }),
     );
     await page.goto("/learn");
+    await page.getByTestId("loop-start-guided").click();
     await expect(page.getByTestId("loop-budget-paused")).toBeVisible();
     await expect(page.getByTestId("loop-materials-unavailable")).toBeVisible();
     await expect(page.getByTestId("loop-preparing-items")).toBeVisible();

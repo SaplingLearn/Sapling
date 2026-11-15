@@ -180,6 +180,41 @@ class TestListSessions:
         assert r.json()["sessions"][0]["is_active"] is False
         assert r.json()["sessions"][0]["message_count"] == 0
 
+    def test_loop_open_marks_only_resumable_loop_sessions(self):
+        """The Tutor's recents mark a loop session "in progress" only while it
+        can be resumed: a loop close writes close_json and never ended_at, so
+        is_active alone would read a wrapped-up session as open."""
+        sessions = [
+            {"id": "open", "topic": "A", "mode": "socratic", "started_at": "2026-01-03T00:00:00",
+             "ended_at": None, "close_json": None, "loop_phase": "teach"},
+            {"id": "closed", "topic": "B", "mode": "socratic", "started_at": "2026-01-02T00:00:00",
+             "ended_at": None, "close_json": "ciphertext", "loop_phase": "close"},
+            {"id": "legacy", "topic": "C", "mode": "socratic", "started_at": "2026-01-01T00:00:00",
+             "ended_at": None, "close_json": None, "loop_phase": None},
+        ]
+        seen = {}
+
+        def factory(name):
+            mock = MagicMock()
+
+            def select(cols, filters=None, order=None, limit=None, **_k):
+                if name == "sessions":
+                    seen["cols"] = cols
+                    return sessions
+                return []
+            mock.select.side_effect = select
+            mock.select_with_count.return_value = ([], 0)
+            return mock
+
+        with patch_tutor("table", side_effect=with_async_twins(factory)):
+            r = client.get("/api/learn/sessions/user_andres")
+        assert r.status_code == 200
+        rows = {s["id"]: s for s in r.json()["sessions"]}
+        assert [rows[k]["loop_open"] for k in ("open", "closed", "legacy")] == [True, False, False]
+        assert all(rows[k]["is_active"] for k in rows)  # legacy semantics unchanged
+        assert "close_json" not in rows["closed"]  # the ciphertext is never returned
+        assert "loop_phase:loop_state->>phase" in seen["cols"]
+
     def test_message_counts_are_head_counts_with_bounded_concurrency(self):
         """One count=exact read per session with a one-row body (never every
         message id), at most _SESSION_COUNT_CONCURRENCY in flight at once."""

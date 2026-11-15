@@ -115,7 +115,7 @@
 }
 
 .scopeSummary {
-  padding: 8px 32px;
+  padding: 10px clamp(24px, 4vw, 56px) 0;
   font-size: 13px;
   overflow-wrap: anywhere;
 }

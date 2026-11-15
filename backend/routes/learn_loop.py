@@ -135,7 +135,7 @@ from learning.fsrs import budget_select, order_due
 from learning.gate import learning_loop_active, learning_loop_for_request
 from learning.goals import (
     encode_goal, public_goal, goal_version, attempted_nodes, planning_observations,
-    scope_signature, progress as goal_progress,
+    scope_signature, progress as goal_progress, approved_plan_view,
 )
 from learning.ladder import Rung
 from learning.leak import confront_text_states_answer, detect_leak, leak_spans
@@ -4315,7 +4315,7 @@ def status(request: Request, user_id: str = Query(...), session_id: str = Query(
         "active": True,
         "session_id": session_id,
         "loop_phase": _loop_phase(state),  # PKG-08: probe | plan | teach (resume point)
-        **_learning_scope_payload(state),
+        **_learning_scope_payload(state), **approved_plan_view(state, lambda ids: _plan_node_names(user_id, ids)),
         "phase": phase,
         "pending_grade": pending_grade,
         # PKG-13 reopen: the open item's pose, so a resuming client restores the

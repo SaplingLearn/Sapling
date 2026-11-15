@@ -106,3 +106,26 @@ def progress(state: dict, states: dict[str, float], scope, *, continue_available
         "unresolved_prerequisite_ids": unresolved,
         "attempted_node_ids": attempted,
     }
+
+
+def approved_plan_view(state: dict, names) -> dict:
+    """`approved_plan` for GET /status once a plan is approved: the concepts in
+    order (name and kind) and the cursor, so the Tutor's session panel lists the
+    plan after a reload. Absent before approval (the plan phase reads GET /plan),
+    so a probe or plan status costs no extra read. `names(ids)` → {id: name}."""
+    plan = state.get("plan") if isinstance(state.get("plan"), dict) else {}
+    approved = [n for n in plan.get("approved") or [] if isinstance(n, str) and n]
+    if not approved:
+        return {}
+    kinds = plan.get("proposed_kinds") if isinstance(plan.get("proposed_kinds"), dict) else {}
+    cursor = plan.get("cursor")
+    named = names(approved)
+    return {
+        "approved_plan": {
+            "concepts": [
+                {"node_id": n, "concept_name": named.get(n, ""), "kind": kinds.get(n) or "new"}
+                for n in approved
+            ],
+            "cursor": cursor if isinstance(cursor, int) and not isinstance(cursor, bool) else 0,
+        }
+    }

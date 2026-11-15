@@ -80,6 +80,9 @@ test("keyboard only: the check-in, the plan, and a check item answered wrong (ea
   try {
     await page.goto("/learn");
     const phase = page.getByTestId("loop-phase");
+    // Wireframe T1: the Tutor home's heading takes focus; its CTA starts the session from the keyboard.
+    await expect(page.getByRole("heading", { name: "What do you want to learn today?" })).toBeFocused();
+    await page.getByTestId("loop-start-guided").press("Enter");
 
     // ── Check-in: each question takes focus and is answered from its box ──
     const probeItem = page.getByTestId("loop-probe-item");

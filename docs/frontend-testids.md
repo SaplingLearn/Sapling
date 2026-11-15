@@ -765,11 +765,23 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | --- | --- |
 | `loop-status-error` | PKG-14b (spec §11.2): `Learn()`'s retry state — the status probe failed (5xx, network, timeout); "Couldn't reach the tutor. Try again." Never the legacy tree |
 | `loop-status-retry` | its button — re-runs `GET /api/learn/loop/review/active` |
-| `loop-phase` | root container; `data-phase` = probe / plan / teach / check / feedback / close (server-driven); `data-session-id` (empty until a session exists) |
-| `loop-session-picker` | the open-sessions strip (`GET /api/learn/loop/sessions`, spec §11.3); `role="list"` ("Open sessions") only while it lists a session — empty, it holds the "None yet" line and no role (spec §13 A135) |
-| `loop-session-{sessionId}` | one open session (topic, start date); `aria-current="true"` on the one shown; a click resumes it |
-| `loop-new-session` | start a new session — the only path to a new probe while a session is open; it wraps up (`/close`) the open session being left first, so sessions do not pile up open (a 409 there starts nothing) |
-| `loop-course-select` | the course switcher (`CustomSelect`'s trigger; `testId` prop), shown with more than one enrolled course; options are `loop-course-select-option-{courseId}` |
+| `loop-phase` | root container; `data-phase` = probe / plan / teach / check / feedback / close (server-driven); `data-session-id` (empty until a session exists); `data-view` = session / home / course / all (the Tutor shell's page, wireframes T1–T3) |
+| `tutor-sidebar` | the Tutor's own sidebar (`learn/tutor/TutorSidebar.tsx`): New session, the session search, the courses and the recents; a drawer on a phone (`tutor-sidebar-show` opens it, `tutor-sidebar-hide` closes it) |
+| `tutor-session-search` | the sidebar's session search (`type="search"`) |
+| `tutor-course-{courseId}` | one course in the sidebar; a click opens its page (T2); `aria-current="true"` while that page shows |
+| `loop-session-picker` | the sidebar's recents (`GET /api/learn/sessions/{user}` merged with `GET /api/learn/loop/sessions`, spec §11.3), one list per day group (Today / Yesterday / Previous 7 days / Older); no list while it lists nothing — it holds the "None yet" line (spec §13 A135) |
+| `loop-session-{sessionId}` | one OPEN session of the course on screen; `aria-current="true"` on the one shown; a click resumes it |
+| `tutor-recent-{sessionId}` | any other recent: an open session in another course (a click switches course and resumes it) or a wrapped-up one (opens read-only, T14) |
+| `tutor-view-all` | "View all sessions" — the all-sessions page (T3) |
+| `loop-new-session` | New session: opens the Tutor home (T1) and writes nothing; in the sidebar on wide screens, "+ New" in the TopBar on a phone |
+| `tutor-home` | the Tutor home (T1): "What do you want to learn today?" — where `/learn` lands when the course has no open session (a `?topic=` link still starts one) |
+| `loop-start-guided` | the home's "Start a guided session": wraps up (`/close`) the open session on screen first, so sessions do not pile up open (a 409 there starts nothing), then starts one |
+| `tutor-home-continue` / `tutor-home-due` / `tutor-home-start-with` / `tutor-home-goal` | the home's suggestions: back to the open session; Study's due review; a session titled after the weakest concept; a session that opens the goal editor |
+| `tutor-course-page` | a course page (T2); `data-course-id`: its sessions, progress and material; `tutor-course-start` (TopBar) goes to the home |
+| `tutor-all-sessions` | every session (T3), with a search and an All / In progress / Wrapped up filter |
+| `tutor-phase-line` | the TopBar's line under the title: Check-in / Plan · N concepts / "<concept> · concept i of n" / Wrap-up / "Wrapped up · read-only" |
+| `tutor-crumb-course` | the TopBar's course breadcrumb (opens the course page) |
+| `tutor-panel-toggle` / `tutor-panel-hide` | show / hide the session panel |
 | `loop-sessions-error` | `GET /sessions` (or a read-only resume) failed |
 | `loop-sessions-retry` | retry — never falls through to a new session or probe |
 | `loop-no-course` | the student has no enrolled course |
@@ -786,7 +798,10 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `loop-budget-study-link` | link to `/study?mode=cards` inside the banner |
 | `loop-no-check-items` | "No check items for this course yet" (A23) |
 | `loop-tree-link` | link to `/tree` (`?node=<id>` once a `learner_state` event names the concept) |
-| `loop-rail` | the knowledge-map rail (wide screens only; the tree link stands in on narrow ones) |
+| `loop-rail` | the session panel, "Today's session" (wide screens only): the plan (the approved one from `/status` after a reload), a skill meter per concept, due review (`tutor-panel-review`) and the knowledge map; the tree link sits in the TopBar on narrow screens |
+| `loop-verdict` | wireframe T9: the graded check's verdict over the feedback; `data-verdict` = correct / not_yet / idk |
+| `loop-close-new-session` | the wrap-up's "Start a new session" (to the Tutor home) |
+| `tutor-attach` | the composer's "+" next to Send: opens the Library to add material |
 | `loop-learner-state` | the current concept's belief; `data-node-id`, `data-p-known`, `data-band` (present, empty, before any event) |
 | `loop-probe-greeting` | the session opener above the check-in (spec §13 A121: a template — a welcome and the check-in's intro, never teaching or a question) |
 | `loop-probe-item` | the current probe card; `data-question-hash` |

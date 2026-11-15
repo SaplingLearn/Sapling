@@ -933,6 +933,30 @@ def test_status_has_no_pose_when_no_item_is_open(gate_on, seams, doc):
     seams.save.assert_not_called()
 
 
+def test_status_lists_the_approved_plan_for_the_session_panel(gate_on, seams, monkeypatch):
+    """The Tutor's session panel lists the approved plan after a reload: GET
+    /status carries it (names from one graph read, kinds as proposed, the
+    cursor) once a plan is approved, and nothing before — and writes nothing."""
+    import routes.learn_loop as loop
+
+    seen = []
+    monkeypatch.setattr(loop, "_plan_node_names", lambda uid, ids: seen.append((uid, list(ids))) or {"n1": "Recursion", "n2": "Call stack"})
+    seams.store["doc"] = {"phase": "teach", "plan": {"approved": ["n1", "n2"], "cursor": 1, "proposed_kinds": {"n1": "review"}}}
+    body = client.get("/api/learn/loop/status?user_id=u1&session_id=s1").json()
+    assert body["approved_plan"] == {
+        "concepts": [
+            {"node_id": "n1", "concept_name": "Recursion", "kind": "review"},
+            {"node_id": "n2", "concept_name": "Call stack", "kind": "new"},
+        ],
+        "cursor": 1,
+    }
+    assert seen == [("u1", ["n1", "n2"])]
+    seams.save.assert_not_called()
+    seams.store["doc"] = {"phase": "plan", "plan": {"proposed": ["n1"]}}
+    body = client.get("/api/learn/loop/status?user_id=u1&session_id=s1").json()
+    assert "approved_plan" not in body and len(seen) == 1
+
+
 def test_status_of_a_lazy_session_is_a_fresh_state(gate_on, seams):
     from routes.learn_loop import PENDING_SESSIONS
 

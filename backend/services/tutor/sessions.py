@@ -234,7 +234,9 @@ async def list_sessions(user_id: str, request: Request, limit: int = 10):
     await guard_off_loop(require_self, user_id, request)
     limit = SESSION_LIST_MAX if limit <= 0 else min(limit, SESSION_LIST_MAX)
     sessions = await table("sessions").aselect(
-        "id,user_id,topic,mode,offering_id,started_at,ended_at",
+        # close_json is read only for IS NULL (a ciphertext is never compared);
+        # the loop phase alone says the row is a learning-loop session.
+        "id,user_id,topic,mode,offering_id,started_at,ended_at,close_json,loop_phase:loop_state->>phase",
         filters={"user_id": f"eq.{user_id}", **NOT_REVIEW},  # review queue rows are not tutor sessions
         order="started_at.desc",
         limit=limit,
@@ -264,6 +266,10 @@ async def list_sessions(user_id: str, request: Request, limit: int = 10):
             "ended_at": s.get("ended_at"),
             "message_count": n_messages,
             "is_active": s.get("ended_at") is None,
+            # A learning-loop session the student can still resume: the Tutor's
+            # recents mark it "in progress" (a loop close writes close_json,
+            # never ended_at, so is_active alone reads a wrapped-up one as open).
+            "loop_open": bool(s.get("loop_phase")) and s.get("ended_at") is None and s.get("close_json") is None,
         })
     return {"sessions": result}
 
