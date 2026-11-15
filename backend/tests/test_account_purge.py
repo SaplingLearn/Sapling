@@ -11,7 +11,6 @@ from urllib.parse import quote
 
 import pytest
 
-from routes import feedback as feedback_routes
 from services import account_credentials as ac
 from services import account_purge as ap
 from services import account_wipe as aw
@@ -345,7 +344,7 @@ def test_storage_bulk_delete_sends_the_paths_and_raises_on_failure(monkeypatch):
 
 
 def test_the_issue_bucket_is_the_one_screenshots_upload_to():
-    assert ap.ISSUE_BUCKET == feedback_routes.ISSUE_BUCKET
+    assert ap.ISSUE_BUCKET == storage_service.ISSUE_BUCKET
 
 
 def test_a_classmates_shared_chunk_survives(db, storage, revoked, events):
