@@ -240,6 +240,10 @@ EXCLUDED_PARAMS: dict[str, str] = {
     "course_ids": "onboarding catalog selection, not a user-owned row",
     "block_id": "id of an item inside a study guide's content (the guide is probed)",
     "option_id": "one of a check question's answer letters (a to d), not a row",
+    "from_note_id": "a tutor start's claim that its topic is the caller's note title: read only on a "
+                    "crisis match, through get_note scoped to the caller's user_id; a foreign or "
+                    "unknown id is never an error, the topic just blocks as typed "
+                    "(services/tutor/note_topic.py, test_crisis_support_routes)",
 }
 
 #: Route-level coverage outside the per-param matrix. Admin and server routes

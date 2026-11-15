@@ -22,7 +22,9 @@ action itself is limited, budgeted and written exactly as without a match.
 A note is often material the student quotes (a patient, a play), which no
 phrase list can tell from their own words, so they get the result they
 asked for and the resources with it. The note chat's typed message still
-blocks.
+blocks. So does a tutor start's topic, unless it is the title of the
+student's own note that Send to tutor handed over (`from_note_id`, checked
+against the note): then the session starts with the card beside it.
 
 A crisis turn (a blocking screen) makes no model call, consumes no
 rate-limit, budget or quota unit (the per-user LLM budget is checked at the
@@ -150,7 +152,10 @@ class ContentScreen:
     Deliberately not a `CrisisSupport`, and never None: the blocking builders
     (`json_body`, `turn_json`, `start_json`, `sse_response`) refuse it, and
     `alongside`, the one thing that takes it, refuses anything else, so stored
-    material can never be answered with the card INSTEAD of its result."""
+    material can never be answered with the card INSTEAD of its result. Built
+    by hand only where a route has shown that a typed-looking field holds
+    stored material: a tutor start whose topic is the student's own note
+    title (routes/learn.py, `tutor.topic_is_note_title`)."""
 
     request: Request
     support: CrisisSupport | None
@@ -295,11 +300,13 @@ def start_json(support: CrisisSupport) -> dict[str, Any]:
 ALONGSIDE = "crisis_support_alongside"
 
 
-async def alongside(screen: ContentScreen, action: Awaitable[dict[str, Any]]) -> dict[str, Any] | Response:
+async def alongside(
+    screen: ContentScreen, action: Awaitable[dict[str, Any] | EventSourceResponse],
+) -> dict[str, Any] | Response:
     """Await `action` (the route's own work, limits included) and attach the
     card `screen` found to whatever answer goes back: its result
-    (`crisis_support` plus `ALONGSIDE`), or the error it raises (a 429, a 413,
-    a 500). An error is answered HERE, by the app's own handler for it (the
+    (`crisis_support` plus `ALONGSIDE`; for a stream, in its `done` event's
+    data), or the error it raises (a 429, a 413, a 500). An error is answered HERE, by the app's own handler for it (the
     one main.py registered, looked up as Starlette does), with the card added
     to that handler's body: status, detail, headers and envelope are exactly
     the ones the same error gets without a match, and no handler needs to
@@ -329,7 +336,26 @@ async def alongside(screen: ContentScreen, action: Awaitable[dict[str, Any]]) ->
         if inspect.isawaitable(response):
             response = await response
         return _with_card(response, support.payload)
+    if isinstance(result, EventSourceResponse):
+        result.body_iterator = _stream_with_card(result.body_iterator, support.payload)
+        return result
     return {**result, "crisis_support": support.payload, ALONGSIDE: True}
+
+
+async def _stream_with_card(events: Any, payload: dict[str, Any]):
+    """A tutor stream's events, its terminal `done` event's data carrying the
+    card beside the turn (what consumeChatStream resolves the turn from)."""
+    try:
+        async for item in events:
+            if isinstance(item, dict) and item.get("event") == "done":
+                event = json.loads(item["data"])
+                event["data"] = {**(event.get("data") or {}), "crisis_support": payload, ALONGSIDE: True}
+                item = {**item, "data": json.dumps(event)}
+            yield item
+    finally:
+        close = getattr(events, "aclose", None)
+        if close is not None:
+            await close()
 
 
 def _handler_for(request: Request, exc: Exception) -> Callable[..., Any] | None:

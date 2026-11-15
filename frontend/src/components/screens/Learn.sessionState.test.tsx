@@ -684,4 +684,61 @@ describe("crisis support", () => {
     fireEvent.click(screen.getByTestId("crisis-support-dismiss"));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
+
+  // Send to tutor opens /learn?topic=<the note's title>&note=<its id>: a start
+  // on that title unchanged names the note, so the backend can treat it as
+  // stored material (the card BESIDE the session) rather than a typed topic.
+  const NOTE_START = { session_id: "sess-new", reply: "Welcome.", crisis_support: crisisFixture, crisis_support_alongside: true };
+
+  it("a start on Send to tutor's note title names the note, and the card shows beside the session", async () => {
+    nav.search = "topic=Week%203&course=c1&note=n1";
+    api.startSessionStream.mockResolvedValueOnce(NOTE_START);
+    renderLearn();
+    await screen.findByTestId("tutor-session-resume-sess-a");
+    fireEvent.click(screen.getByTestId("tutor-start"));
+    await waitFor(() => expect(api.startSessionStream).toHaveBeenCalled());
+    const call = api.startSessionStream.mock.calls[0];
+    expect(call[1]).toBe("Week 3");
+    expect(call[7]).toBe("n1");
+    expect(await screen.findByRole("dialog")).toHaveTextContent(crisisFixture.title);
+    await waitFor(() => expect(log()).toHaveTextContent("Welcome.")); // the session started
+  });
+
+  it("the JSON fallback of that start names the note too", async () => {
+    nav.search = "topic=Week%203&course=c1&note=n1";
+    api.startSessionStream.mockRejectedValueOnce(new Error("stream refused")); // Rung 3
+    api.startSession.mockResolvedValueOnce({ ...NOTE_START, initial_message: "Welcome (json)." });
+    renderLearn();
+    await screen.findByTestId("tutor-session-resume-sess-a");
+    fireEvent.click(screen.getByTestId("tutor-start"));
+    await waitFor(() => expect(api.startSession).toHaveBeenCalled());
+    expect(api.startSession.mock.calls[0][6]).toBe("n1");
+    expect(await screen.findByRole("dialog")).toHaveTextContent(crisisFixture.title);
+    await waitFor(() => expect(log()).toHaveTextContent("Welcome (json)."));
+  });
+
+  it("a start on another topic does not name the note", async () => {
+    nav.search = "topic=Week%203&course=c1&note=n1";
+    renderLearn();
+    await screen.findByTestId("tutor-session-resume-sess-a");
+    fireEvent.click(screen.getByTestId("tutor-topic-picker"));
+    fireEvent.click(await screen.findByRole("button", { name: /^Trees/ }));
+    fireEvent.click(screen.getByTestId("tutor-start"));
+    await waitFor(() => expect(api.startSessionStream).toHaveBeenCalled());
+    const call = api.startSessionStream.mock.calls[0];
+    expect(call[1]).toBe("Trees");
+    expect(call[7]).toBeUndefined();
+  });
+
+  it("a refused start that carries the card shows it", async () => {
+    nav.search = "topic=Week%203&course=c1&note=n1";
+    const refused = Object.assign(new Error("Slow down."), { status: 429, body: { detail: "Slow down.", crisis_support: crisisFixture } });
+    api.startSessionStream.mockRejectedValueOnce(refused);
+    api.startSession.mockRejectedValueOnce(refused);
+    renderLearn();
+    await screen.findByTestId("tutor-session-resume-sess-a");
+    fireEvent.click(screen.getByTestId("tutor-start"));
+    expect(await screen.findByRole("dialog")).toHaveTextContent(crisisFixture.title);
+    expect(screen.getByTestId("tutor-start")).toBeInTheDocument(); // no session
+  });
 });

@@ -151,7 +151,15 @@ describe("notetaker — crisis support", () => {
     expect((await screen.findByRole("dialog")).textContent).toContain(crisisFixture.title);
     expect(push).not.toHaveBeenCalled();
     fireEvent.click(screen.getByTestId("crisis-support-dismiss"));
-    await waitFor(() => expect(push).toHaveBeenCalledWith("/learn?topic=Week%203&course=c1"));
+    // The note rides along, so starting on its title is not screened as typed.
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/learn?topic=Week%203&course=c1&note=n1"));
+  });
+
+  it("Send to tutor of an ordinary note opens the tutor on its title, naming the note", async () => {
+    vi.mocked(sendNoteToTutor).mockResolvedValueOnce({ topic: "Week 3", course_id: "c1", preface: "" });
+    await renderPage();
+    fireEvent.click(screen.getByRole("button", { name: "Send to tutor" }));
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/learn?topic=Week%203&course=c1&note=n1"));
   });
 
   it("the notes chat on a note that matched shows the card AND the reply", async () => {

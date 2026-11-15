@@ -49,6 +49,10 @@ class StartSessionBody(BaseModel):
     use_shared_context: bool = True
     course_id: Optional[Id] = None  # Direct course_id lookup instead of resolving from topic
     model_pref: Optional[Literal["fast", "smart"]] = None  # "fast" (default, gemini-2.5-flash) or "smart" (gemini-2.5-pro)
+    # Send to tutor's note, when the topic is still that note's title: a crisis
+    # match then shows the card beside the session (docs/safety/crisis-support.md).
+    # Checked against the student's own note; never trusted on its own.
+    from_note_id: Optional[Id] = None
 
 
 class ChatBody(BaseModel):

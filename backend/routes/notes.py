@@ -40,6 +40,7 @@ from services.notes_service import (
     list_linked_concepts,
     list_notes,
     save_summary,
+    tutor_topic,
     unlink_concept,
     update_note,
 )
@@ -524,7 +525,6 @@ async def send_to_tutor(
         # No model runs here (the tutor session is limited where it starts),
         # so the cheap note budget, not a note-AI unit.
         await aenforce_abuse_limit(abuse_limits.NOTE_LOOKUP, body.user_id)
-        title = (note.get("title") or "").strip() or "Untitled note"
         preface_parts: list[str] = []
         if note.get("last_summary"):
             preface_parts.append(f"Note summary: {note['last_summary']}")
@@ -532,7 +532,7 @@ async def send_to_tutor(
         if body_text:
             preface_parts.append(f"Note excerpt:\n{body_text[:1500]}")
         return {
-            "topic": title.splitlines()[0][:80],
+            "topic": tutor_topic(note),
             # The tutor session starts from the abstract course id (the graph key).
             "course_id": offering_course_id(note.get("offering_id")),
             "preface": "\n\n".join(preface_parts),

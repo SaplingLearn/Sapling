@@ -435,8 +435,12 @@ function NotetakerScreen() {
       if (!(await saveBeforeAgent(noteId))) return;
       try {
         const res = await sendNoteToTutor(noteId, userId);
+        // `note` names the note, so a start on its title unchanged is screened
+        // as the student's stored material, not as a topic they typed
+        // (docs/safety/crisis-support.md): the card shows beside the session.
         const open = () => router.push(
-          `/learn?topic=${encodeURIComponent(res.topic ?? "")}&course=${encodeURIComponent(res.course_id ?? "")}`,
+          `/learn?topic=${encodeURIComponent(res.topic ?? "")}&course=${encodeURIComponent(res.course_id ?? "")}`
+            + `&note=${encodeURIComponent(noteId)}`,
         );
         // Beside a result, the tutor opens once the card is closed; a card
         // that stands in for the result opens nothing.

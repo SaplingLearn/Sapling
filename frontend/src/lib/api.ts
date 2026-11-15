@@ -335,8 +335,11 @@ export const startSession = (
   courseId?: string,
   useSharedContext = true,
   modelPref?: ModelPref,
+  /** Send to tutor's note, when `topic` is still its title (see startSessionStream). */
+  fromNoteId?: string,
 ) =>
-  // A crisis-support answer carries `crisis_support` and no session (session_id null).
+  // A crisis-support answer carries `crisis_support` and no session (session_id null),
+  // or, on a note's title, the session with `crisis_support_alongside`.
   fetchJSON<{ session_id: string; initial_message: string; graph_state: any } & WithCrisisSupport>('/api/learn/start-session', {
     method: 'POST',
     body: JSON.stringify({
@@ -346,6 +349,7 @@ export const startSession = (
       use_shared_context: useSharedContext,
       course_id: courseId,
       ...(modelPref ? { model_pref: modelPref } : {}),
+      ...(fromNoteId ? { from_note_id: fromNoteId } : {}),
     }),
   });
 
@@ -561,6 +565,13 @@ export const startSessionStream = (
   courseId?: string,
   modelPref?: ModelPref,
   handlers: StreamChatHandlers = {},
+  /**
+   * Send to tutor's note (docs/safety/crisis-support.md), when `topic` is
+   * still that note's title: the backend checks it against the student's own
+   * note and, on a crisis match, starts the session with the card beside it
+   * (`crisis_support_alongside`) instead of answering with the card alone.
+   */
+  fromNoteId?: string,
 ): Promise<ChatResult> => {
   return consumeChatStream(
     '/api/learn/start-session/stream',
@@ -571,6 +582,7 @@ export const startSessionStream = (
       use_shared_context: useSharedContext,
       course_id: courseId,
       ...(modelPref ? { model_pref: modelPref } : {}),
+      ...(fromNoteId ? { from_note_id: fromNoteId } : {}),
     },
     handlers,
   );

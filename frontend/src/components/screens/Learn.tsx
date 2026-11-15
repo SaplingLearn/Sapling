@@ -14,7 +14,7 @@ import { ModelToggle, useModelPref, type ModelPref } from "../chat/ModelToggle";
 import { Toggle } from "@/components/ui";
 import { DisclaimerModal } from "../DisclaimerModal";
 import { useCrisisSupport } from "../safety/CrisisSupportCard";
-import { crisisSupportIn } from "@/lib/crisisSupport";
+import { crisisSupportIn, crisisSupportInError, type WithCrisisSupport } from "@/lib/crisisSupport";
 import { AIDisclaimerChip } from "../chat/AIDisclaimerChip";
 import { KnowledgeGraph } from "../graph/KnowledgeGraph";
 import { useToast } from "../ToastProvider";
@@ -566,7 +566,8 @@ function LearnInner() {
   );
 }
 
-// The entry screen's route-seeded choices: ?topic=, ?mode=, ?course=.
+// The entry screen's route-seeded choices: ?topic=, ?mode=, ?course=, and
+// ?note= (Send to tutor's note, whose title is the seeded topic).
 function useLearnPrefs(searchParams: SearchParams) {
   const initialTopic = searchParams.get("topic") ?? "";
   const initialMode = normalizeMode(searchParams.get("mode"));
@@ -576,7 +577,14 @@ function useLearnPrefs(searchParams: SearchParams) {
   const [topic, setTopic] = useState<string>(initialTopic);
   const [topicDraft, setTopicDraft] = useState<string>(initialTopic);
   const [selectedCourseId, setSelectedCourseId] = useState<string | "">(initialCourseId);
-  return { mode, setMode, topic, setTopic, topicDraft, setTopicDraft, selectedCourseId, setSelectedCourseId };
+  // docs/safety/crisis-support.md: a start on the note's title UNCHANGED names
+  // the note, so the backend screens it as stored material (the card beside
+  // the session); any other topic is what the student typed.
+  const [fromNote] = useState<{ id: string; topic: string } | null>(() => {
+    const id = searchParams.get("note");
+    return id && initialTopic.trim() ? { id, topic: initialTopic.trim() } : null;
+  });
+  return { mode, setMode, topic, setTopic, topicDraft, setTopicDraft, selectedCourseId, setSelectedCourseId, fromNote };
 }
 
 type LearnPrefs = ReturnType<typeof useLearnPrefs>;
@@ -866,9 +874,10 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
   applyGraphDelta: (delta: GraphDelta) => void;
   setFocusedNodeId: (id: string | null) => void;
 }) {
-  const { mode, setMode, topic, setTopic, topicDraft, setTopicDraft, selectedCourseId, setSelectedCourseId } = prefs;
+  const { mode, setMode, topic, setTopic, topicDraft, setTopicDraft, selectedCourseId, setSelectedCourseId, fromNote } = prefs;
   // docs/safety/crisis-support.md: a session start the crisis screen answered
-  // (no session was opened) shows the card as a dialog over the picker.
+  // (no session was opened) shows the card as a dialog over the picker; on a
+  // note's title the card shows over the session that did start.
   const crisis = useCrisisSupport();
 
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -1006,6 +1015,10 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
     const controller = new AbortController();
     streamAbort.current = controller;
     let sawToken = false;
+    const fromNoteId = fromNote && topicName === fromNote.topic ? fromNote.id : undefined;
+    // The card instead of a greeting (no session was opened) stops here; the
+    // card beside one (`crisis_support_alongside`) shows over the session.
+    const blockedByCard = (res: WithCrisisSupport) => crisis.intercept(res) && !res.crisis_support_alongside;
     try {
       let newSessionId: string;
       let replyText: string;
@@ -1026,9 +1039,8 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
             if (label && isCurrent()) setStreamingStatus(label);
           },
           signal: controller.signal,
-        });
-        // The crisis card instead of a greeting: no session was opened.
-        if (crisis.intercept(res)) { if (isCurrent()) setMessages([]); return; }
+        }, fromNoteId);
+        if (blockedByCard(res)) { if (isCurrent()) setMessages([]); return; }
         if (!res.session_id) throw new Error("Session stream completed without a session_id.");
         newSessionId = res.session_id;
         replyText = res.reply || "Let's begin.";
@@ -1049,8 +1061,8 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
         // ChatPanel drops the Stop affordance for this leg (mirrors `send`).
         if (!isCurrent()) return;
         setStreamingText(null);
-        const res = await startSession(userId, topicName, mode, selectedCourseId || undefined, sharedCtx, modelPref);
-        if (crisis.intercept(res)) { if (isCurrent()) setMessages([]); return; }
+        const res = await startSession(userId, topicName, mode, selectedCourseId || undefined, sharedCtx, modelPref, fromNoteId);
+        if (blockedByCard(res)) { if (isCurrent()) setMessages([]); return; }
         newSessionId = res.session_id;
         replyText = res.initial_message || "Let's begin.";
       }
@@ -1061,6 +1073,7 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
       setMessages([{ id: msgId(), role: "assistant", content: replyText }]);
     } catch (err) {
       if (!isCurrent()) return;
+      crisis.intercept({ crisis_support: crisisSupportInError(err) }); // a refusal can carry the card
       toast.error(readableError(err, "Couldn't start session."));
       setMessages([]);
     } finally {

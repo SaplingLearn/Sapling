@@ -626,6 +626,143 @@ def test_a_typed_crisis_message_still_blocks_on_a_crisis_note(flag, sink, note_a
     assert len(_crisis_rows(sink)) == 1  # the typed message's screen; the note is never read
 
 
+# ── Send to tutor's topic: the note's title, not something typed ───────────
+#
+# Send to tutor opens /learn with the note's title as the topic. The student
+# already got the card beside that action; a start whose topic IS that title
+# (`from_note_id`, re-checked against the student's own note) is stored
+# material too, so the session starts with the card beside it. A topic the
+# student typed, or one that does not match their note, still blocks.
+
+#: A note titled with the crisis line; Send to tutor's topic is its first line.
+CRISIS_NOTE = {"id": "n1", "user_id": "u1", "offering_id": "o1", "title": f"{CRISIS}\nweek 3", "body": ""}
+GREETING = {"session_id": "s9", "initial_message": "Let's begin.", "graph_state": {"nodes": []}}
+DONE_DATA = {"session_id": "s9", "reply": "Let's begin.", "graph_update": {}, "mastery_changes": []}
+
+
+def _note_start(**overrides) -> dict:
+    return {"user_id": "u1", "topic": CRISIS, "course_id": "c1", "from_note_id": "n1", **overrides}
+
+
+async def _greeting_stream(body, request):
+    from sse_starlette.sse import EventSourceResponse
+
+    from services.agent_events import SaplingEvent, sapling_event_to_sse
+
+    async def events():
+        yield sapling_event_to_sse(SaplingEvent(type="token", step="reply", message="Let's", data={"delta": "Let's"}))
+        yield sapling_event_to_sse(SaplingEvent(type="done", step="reply", message="Complete.", data=DONE_DATA))
+
+    return EventSourceResponse(events())
+
+
+@pytest.fixture
+def note_start():
+    """The two start routes' own work stood in (a greeting); the student's
+    note is CRISIS_NOTE. Yields the mocks."""
+    mocks = {
+        "start": AsyncMock(return_value=dict(GREETING)),
+        "stream": AsyncMock(side_effect=_greeting_stream),
+        "get_note": AsyncMock(return_value=dict(CRISIS_NOTE)),
+    }
+    with (
+        patch("services.tutor.start_session", mocks["start"]),
+        patch("services.tutor.start_session_stream", mocks["stream"]),
+        patch("services.tutor.note_topic.get_note", mocks["get_note"]),
+    ):
+        yield mocks
+
+
+def test_a_note_titled_topic_starts_the_session_with_the_card_beside_it(flag, sink, note_start):
+    flag("on")
+    r = client.post("/api/learn/start-session", json=_note_start())
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert {k: body[k] for k in GREETING} == GREETING  # the session started
+    assert body["crisis_support"] == crisis_support.client_payload(crisis_copy.DEFAULT_CAMPUS_COUNSELING)
+    assert body["crisis_support_alongside"] is True
+    note_start["start"].assert_awaited_once()
+    note_start["get_note"].assert_awaited_once_with(note_id="n1", user_id="u1")
+    assert [row["payload"]["surface"] for row in _crisis_rows(sink)] == ["tutor_start"]
+
+
+def test_a_note_titled_topic_streams_the_greeting_with_the_card_in_done(flag, sink, note_start):
+    flag("on")
+    r = client.post("/api/learn/start-session/stream", json=_note_start())
+    assert r.status_code == 200, r.text
+    events = _sse_events(r.text)
+    assert [name for name, _ in events] == ["token", "done"]  # the greeting streamed as usual
+    done = events[-1][1]["data"]
+    assert {k: done[k] for k in DONE_DATA} == DONE_DATA
+    assert done["crisis_support"] == crisis_support.client_payload(crisis_copy.DEFAULT_CAMPUS_COUNSELING)
+    assert done["crisis_support_alongside"] is True
+    assert "crisis_support" not in events[0][1]["data"]
+
+
+def test_a_refused_note_titled_start_still_carries_the_card(flag, sink, note_start):
+    flag("on")
+    note_start["start"].side_effect = HTTPException(status_code=429, detail="Slow down.",
+                                                    headers={"Retry-After": "12"})
+    r = client.post("/api/learn/start-session", json=_note_start())
+    assert r.status_code == 429, r.text
+    assert r.headers["Retry-After"] == "12"
+    assert "crisis_support" in r.json()
+
+
+@pytest.mark.parametrize("why, body, note", [
+    ("no note named", {"from_note_id": None}, CRISIS_NOTE),
+    ("not the student's note (or gone)", {}, None),
+    ("the student edited the topic", {"topic": f"{CRISIS} please"}, CRISIS_NOTE),
+    ("a different note's title", {}, {**CRISIS_NOTE, "title": "Week 3"}),
+], ids=lambda v: v if isinstance(v, str) else "")
+@pytest.mark.parametrize("path", ["/api/learn/start-session", "/api/learn/start-session/stream"])
+def test_a_topic_that_is_not_the_notes_title_blocks_as_typed(why, body, note, path, flag, sink, note_start):
+    flag("on")
+    note_start["get_note"].return_value = note
+    r = client.post(path, json=_note_start(**body))
+    assert r.status_code == 200, r.text
+    card = _sse_events(r.text)[-1][1]["data"] if path.endswith("/stream") else r.json()
+    assert card["session_id"] is None and "crisis_support" in card  # the card INSTEAD of a session
+    assert "crisis_support_alongside" not in card
+    note_start["start"].assert_not_called()
+    note_start["stream"].assert_not_called()
+
+
+def test_a_failed_note_read_blocks_as_typed_rather_than_failing(flag, sink, note_start):
+    flag("on")
+    note_start["get_note"].side_effect = RuntimeError("PostgREST down")
+    r = client.post("/api/learn/start-session", json=_note_start())
+    assert r.status_code == 200, r.text
+    assert r.json()["session_id"] is None and "crisis_support" in r.json()
+    note_start["start"].assert_not_called()
+
+
+def test_a_stranger_naming_a_note_is_refused_before_it_is_read(flag, sink, note_start, monkeypatch):
+    from services import auth_guard
+
+    flag("on")
+
+    def require_self(user_id, request, **_kwargs):
+        if user_id != "u1":
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+    monkeypatch.setattr(auth_guard, "require_self", require_self)
+    r = client.post("/api/learn/start-session", json=_note_start(user_id="u2"))
+    assert r.status_code == 403
+    note_start["get_note"].assert_not_called()
+    assert _crisis_rows(sink) == []
+
+
+def test_a_calm_note_titled_topic_starts_as_usual(flag, sink, note_start):
+    flag("on")
+    note_start["get_note"].return_value = {**CRISIS_NOTE, "title": "Week 3"}
+    r = client.post("/api/learn/start-session", json=_note_start(topic="Week 3"))
+    assert r.status_code == 200, r.text
+    assert r.json() == GREETING
+    assert _crisis_rows(sink) == []
+    note_start["get_note"].assert_not_called()  # the note is read only when the topic matched
+
+
 # ── Screening precedes every rate limit, budget and quota ───────────────────
 #
 # A student in crisis must never be answered with a 429 instead of the card.
