@@ -208,32 +208,54 @@ sentence breaks, stretched letters squeezed):
   matches; "Why did Romeo commit suicide?" and a bare concept name
   "Suicide" do not.
 - **GUARDS** veto any match they overlap: idioms ("killing myself laughing",
-  "cut myself some slack", "the hill I want to die on"), negations ("I don't
-  want to die", "I'm not suicidal"; `NEGATION_GUARDS` reach only within their
-  own clause: a comma, dash, bracket, "but"/"and" or a new "I" ends the
-  negation, so "I'm not okay, I'll kill myself" and "I won't lie, I'm
-  suicidal" still match, except for a short aside set off on both sides
-  right after the negation word: "I'm not, like, suicidal", "I am not
-  (really) suicidal", "I would never, ever, kill myself" and "I am not, and
-  never will be, suicidal" are negations, while "I'm not, I swear, okay,
-  I'll kill myself" (a new "I"), "I'm not okay, honestly, suicidal" (the
-  aside is not right after "not") and "not, want to kill myself" (a bare
-  comma, not an aside) are not; an idiom that introduces a statement ("I
-  won't lie", "not gonna lie", "not gonna sugarcoat it", "I'm not kidding")
-  negates nothing, so "not gonna lie suicidal thoughts every day" matches; a
-  negation followed by a comparative or intensifier ("I have never been more
-  suicidal", "never been this suicidal before", "I've never wanted to kill
-  myself more than today"), by a feeling about the act ("I'm no longer
-  afraid to kill myself", "not able to stop") or itself negated ("I can't not
-  think about killing myself") says the phrase is there and negates nothing;
-  a hedge about one's own state, "I don't think I'm suicidal", is a
-  negation, but "I'm not saying I'll kill myself" and "I don't think I'll
-  kill myself tonight" are not), and technical compounds ("suicide squad",
-  "suicide inhibitor", "suicide burn"). "this problem is killing me", "kill
-  the process", "dying to know", "dead code", "kill switch" and "die roll"
-  never match anything. **TOPIC_GUARDS** ("Durkheim", "euthanasia", "Hamlet",
-  "theory of suicide", "essay on suicide", ...) veto MENTIONS in a text that
-  names coursework. They never veto an explicit first-person phrase.
+  "cut myself some slack", "the hill I want to die on"), someone else's wish
+  asked about ("Why does Hamlet want to die?", never the speaker's own: "I
+  can't do this anymore, I want to die" matches), and technical compounds
+  ("suicide squad", "suicide inhibitor", "suicide burn"). "this problem is
+  killing me", "kill the process", "dying to know", "dead code", "kill
+  switch" and "die roll" never match anything. **TOPIC_GUARDS** ("Durkheim",
+  "euthanasia", "Hamlet", "theory of suicide", "essay on suicide", ...) veto
+  MENTIONS in a text that names coursework. They never veto an explicit
+  first-person phrase.
+- **NEGATION_GUARDS** veto a phrase the student negates ("I don't want to
+  die", "I'm not suicidal", "I would never kill myself"). The rules:
+  - A negation reaches only within its own clause, at most two words: a
+    comma, dash, bracket, "but"/"and"/"so" or a new "I" ends it, so "I'm not
+    okay, I'll kill myself" and "I won't lie, I'm suicidal" match. The one
+    thing it crosses is a short aside set off on both sides right after the
+    negation word: "I'm not, like, suicidal", "I am not (really) suicidal",
+    "I am not, and never will be, suicidal" are negations; "I'm not, I
+    swear, okay, I'll kill myself" (a new "I"), "I'm not okay, honestly,
+    suicidal" (not right after "not") and "not, want to kill myself" (a bare
+    comma) are not.
+  - A hedge or a recovery about how much is still a negation: "I'm not so
+    suicidal anymore", "I'm not too / that / as suicidal as last year",
+    "I'm not more suicidal than usual", "I don't want to die more than
+    anything", "I don't want to die so badly".
+  - Only these say the phrase IS there, and negate nothing: "never (been |
+    felt) (more | this | so | as) <phrase>" ("I have never been more
+    suicidal"); "never wanted to <phrase> more (than) / so badly / as much
+    as" ("I've never wanted to kill myself more than today"); a fear of the
+    act or of stopping it right after the negation ("I'm no longer afraid to
+    kill myself", "I won't stop hurting myself"); a negated negation ("I
+    can't not think about killing myself"); and "this", which points at the
+    state now ("I'm not usually this suicidal"). The comparative readings
+    belong to "never" alone: "not as suicidal as" is a negation.
+  - An idiom that introduces a statement ("I won't lie", "not gonna lie",
+    "not gonna sugarcoat it", "I'm not kidding") negates nothing: "not gonna
+    lie suicidal thoughts every day" matches.
+  - A hedge about one's own STATE ("I don't think I'm suicidal", "I don't
+    believe I've been suicidal") is a negation; one about an act or a plan
+    ("I don't think I'll kill myself tonight") and "I'm not saying I'll kill
+    myself" are not.
+
+A comparative counts as the speaker's own state only with a first-person
+lead: "I'm more suicidal than ever" is an explicit phrase, but "teens end up
+feeling more suicidal on SSRIs" and "patients getting more suicidal" are
+pharmacology, read as a mention (no first person, so no match). The price is
+a subjectless fragment: "Never been this suicidal before" still matches
+because it opens its sentence, but "been more suicidal lately" with no "I"
+does not.
 
 When several categories match, the most severe is reported: `acute_danger`,
 then `suicidal_ideation`, then `self_harm`.
@@ -253,10 +275,28 @@ replacing it.
 **To extend:** add a `Phrase` to `EXPLICIT` (choose its category, write the
 pattern against the normalized form, reuse `_MYSELF` / `_INTENT`), or a
 pattern to `GUARDS` / `NEGATION_GUARDS` / `TOPIC_GUARDS` for a new false
-positive. Then add an
-example to `backend/tests/test_crisis_detection.py`. The suite fails if a
-phrase has no positive example, or if a guard vetoes none of the pinned
-negatives.
+positive. Then add an example to `backend/tests/test_crisis_detection.py`.
+The suite fails if a phrase has no positive example, or if a guard vetoes
+none of the pinned negatives.
+
+**Changing the detector safely.** Every fix to a phrase list risks breaking
+sentences it was not written for, and review rounds of this detector did
+exactly that. `backend/tests/crisis_corpus.py` is the check: several hundred
+sentences (everyday, recovery and hedging text that must not match; clinical
+third-person text that must not match; first-person crisis statements that
+must match; the known misses and false positives, pinned), plus every string
+the unit tests use. `crisis_corpus_base.json` stores what #890's first
+reviewed detector (`BASE_COMMIT`) answered for each, and
+`INTENDED_CHANGES_FROM_BASE` lists every sentence whose answer now differs,
+with the reason. The suite fails on a sentence with the wrong outcome, on a
+difference from the base that is not listed, and on a listed one that no
+longer differs. To change the detector: add the motivating sentence to its
+group, make the change, run `python -m tests.crisis_corpus` from `backend/`
+(it prints base vs now for every differing sentence; `--all` for every
+sentence) and list each new difference you meant, with its reason. A new
+corpus sentence needs its base answer: `python -m tests.crisis_corpus
+--write-base` (runs the base checkout's detector; `CRISIS_BASE_BACKEND`
+points at it).
 
 ## Limits
 
