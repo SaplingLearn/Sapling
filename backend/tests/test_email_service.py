@@ -769,3 +769,61 @@ def test_unsuppress_all_scopes_lifts_the_hash_from_every_table(tables):
     assert email_service.unsuppress_all_scopes(rhash) == ["ops_alert"]
     for name in SCOPE_TABLES.values():
         assert tables[name].delete.call_args.kwargs["filters"] == {"recipient_hash": f"eq.{rhash}"}
+
+
+# ── A batch's suppressions, read once (spend_alerts.run_once) ───────────────
+
+
+def _rows_by_table(tables, rows: dict[str, list[dict]]):
+    """`page_all` over each suppression table answers `rows[name]`, honouring
+    a `reason=in.(...)` filter; every call is recorded on the mock."""
+    for name in SCOPE_TABLES.values():
+        def select_with_count(columns, filters=None, _rows=rows.get(name, []), **_):
+            wanted = (filters or {}).get("reason")
+            kept = [r for r in _rows if wanted is None or r["reason"] in wanted[4:-1].split(",")]
+            return kept, len(kept)
+
+        tables[name].select_with_count.side_effect = select_with_count
+
+
+def test_ops_suppressions_are_the_ops_table_and_the_alls_bounces_and_complaints(tables):
+    _rows_by_table(tables, {
+        "email_alert_suppressions": [{"recipient_hash": "a" * 64, "reason": "unsubscribe"}],
+        "email_suppressions": [
+            {"recipient_hash": "b" * 64, "reason": "bounce"},
+            {"recipient_hash": "c" * 64, "reason": "complaint"},
+            {"recipient_hash": "d" * 64, "reason": "unsubscribe"},  # a broadcast unsubscribe
+        ],
+    })
+    prefetched = email_service.suppressions_for("ops_alert")
+    assert prefetched.scope == "ops_alert"
+    assert prefetched.hashes == {"a" * 64, "b" * 64, "c" * 64}
+    assert tables["email_suppressions"].select_with_count.call_args.kwargs["filters"] == {
+        "reason": "in.(bounce,complaint)",
+    }
+
+
+def test_all_scope_suppressions_are_its_own_table_only(tables):
+    _rows_by_table(tables, {
+        "email_suppressions": [{"recipient_hash": "d" * 64, "reason": "unsubscribe"}],
+        "email_alert_suppressions": [{"recipient_hash": "a" * 64, "reason": "unsubscribe"}],
+    })
+    assert email_service.suppressions_for("all").hashes == {"d" * 64}
+    tables["email_alert_suppressions"].select_with_count.assert_not_called()
+
+
+@pytest.mark.parametrize("held, status", [(True, "suppressed"), (False, "sent")])
+def test_a_prefetched_set_answers_the_send_with_no_read_of_its_own(tables, resend, held, status):
+    rhash = email_service.recipient_hash(TO)
+    prefetched = email_service.Suppressions("ops_alert", frozenset({rhash} if held else set()))
+    assert _send(kind="ops_alert", dedupe_key="ops_alert:x", suppressions=prefetched) == status
+    tables["email_suppressions"].select.assert_not_called()
+    tables["email_alert_suppressions"].select.assert_not_called()
+
+
+def test_a_prefetched_set_for_another_scope_is_ignored(tables, resend):
+    """A set read for `all` says nothing about an ops send: it reads its own."""
+    _suppressed_for(tables, "ops_alert")
+    prefetched = email_service.Suppressions("all", frozenset())
+    assert _send(kind="ops_alert", dedupe_key="ops_alert:x", suppressions=prefetched) == "suppressed"
+    tables["email_alert_suppressions"].select.assert_called()

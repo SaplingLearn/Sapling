@@ -232,10 +232,13 @@ def test_real_send_email_without_resend_key_records_skipped(db, monkeypatch):
     assert "admin@example.edu" not in claims[0]["dedupe_key"]
 
 
-def _sending(monkeypatch, suppressed_scopes, reason="unsubscribe"):
+def _sending(monkeypatch, suppressed_scopes, reason="unsubscribe", reads=None):
     """email_service over fakes: the given suppression scopes hold every
-    address, with `reason`; returns the Resend payloads sent."""
+    address, with `reason`; returns the Resend payloads sent. The run reads
+    each suppression table once (`_hashes_in`, recorded in `reads`); a
+    per-recipient read (`is_suppressed`) is recorded as ("one", scope)."""
     sent = []
+    reads = reads if reads is not None else []
 
     class Sends:
         def upsert(self, row, **_):
@@ -244,13 +247,22 @@ def _sending(monkeypatch, suppressed_scopes, reason="unsubscribe"):
         def update(self, *_a, **_k):
             return []
 
+    def held(scope, reasons):
+        return scope in suppressed_scopes and (reasons is None or reason in reasons)
+
+    def hashes_in(scope, *, reasons=None):
+        reads.append(("all-of", scope))
+        if held(scope, reasons):
+            return {email_service.recipient_hash(a) for a in ("admin@example.edu", "ops@example.org")}
+        return set()
+
+    def is_suppressed(_h, scope="all", reasons=None):
+        reads.append(("one", scope))
+        return held(scope, reasons)
+
     monkeypatch.setattr(email_service, "table", lambda name: Sends())
-    monkeypatch.setattr(
-        email_service, "is_suppressed",
-        lambda _h, scope="all", reasons=None: (
-            scope in suppressed_scopes and (reasons is None or reason in reasons)
-        ),
-    )
+    monkeypatch.setattr(email_service, "_hashes_in", hashes_in)
+    monkeypatch.setattr(email_service, "is_suppressed", is_suppressed)
     monkeypatch.setattr(config, "RESEND_API_KEY", "re_test_key")
     monkeypatch.setattr(email_service, "MIN_REQUEST_INTERVAL_S", 0.0)
 
@@ -291,6 +303,37 @@ def test_an_admin_whose_address_bounced_gets_none(db, monkeypatch):
     _events(db, "error.5xx", 25, NOON - timedelta(minutes=20))
     assert spend_alerts.run_once(NOON) == {"error_5xx_spike": ["suppressed"]}
     assert sent == []
+
+
+def test_a_run_reads_the_suppressions_once_not_per_recipient(db, monkeypatch):
+    """Three alerts to two admins: the ops table and the `all` table's bounces
+    and complaints are read once for the run, and no send reads its own."""
+    reads = []
+    sent = _sending(monkeypatch, set(), reads=reads)
+    monkeypatch.setenv("SPEND_ALERT_RECIPIENTS", "admin@example.edu, ops@example.org")
+    monkeypatch.setenv("SPEND_ALERT_DAILY_USD", "1")
+    _usage(db, "user_a", 5.0, NOON - timedelta(hours=1))
+    _events(db, "error.5xx", 25, NOON - timedelta(minutes=20))
+
+    results = spend_alerts.run_once(NOON)
+
+    assert sorted(results) == ["daily_spend", "error_5xx_spike", "user_spend"]
+    assert all(statuses == ["sent", "sent"] for statuses in results.values())
+    assert len(sent) == 6
+    assert reads == [("all-of", "ops_alert"), ("all-of", "all")]
+
+
+def test_a_failed_prefetch_leaves_each_send_to_read_its_own(db, monkeypatch):
+    reads = []
+    sent = _sending(monkeypatch, {"ops_alert"}, reads=reads)
+
+    def down(scope, *, reasons=None):
+        raise RuntimeError("PostgREST down")
+
+    monkeypatch.setattr(email_service, "_hashes_in", down)
+    _events(db, "error.5xx", 25, NOON - timedelta(minutes=20))
+    assert spend_alerts.run_once(NOON) == {"error_5xx_spike": ["suppressed"]}
+    assert sent == [] and ("one", "ops_alert") in reads
 
 
 def test_never_runnable_under_pytest():

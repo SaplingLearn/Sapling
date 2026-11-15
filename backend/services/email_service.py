@@ -54,6 +54,7 @@ import logging
 import re
 import threading
 import time
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -233,6 +234,39 @@ def is_suppressed(
         filters["reason"] = f"in.({','.join(reasons)})"
     rows = _suppression_table(scope).select("recipient_hash", filters=filters, limit=1)
     return bool(rows)
+
+
+@dataclass(frozen=True)
+class Suppressions:
+    """Every recipient_hash a `scope` send must skip, read once for a batch
+    (`suppressions_for`) and handed to `send_email`, which then reads nothing
+    per recipient. Same rule as `_stops_send`. A send of another scope
+    ignores it and reads its own."""
+
+    scope: str
+    hashes: frozenset[str]
+
+
+def _hashes_in(scope: str, *, reasons: Optional[tuple[str, ...]] = None) -> set[str]:
+    filters = {"reason": f"in.({','.join(reasons)})"} if reasons is not None else None
+    return {
+        r["recipient_hash"]
+        for r in page_all(_suppression_table(scope), "recipient_hash,reason",
+                          filters=filters, order="recipient_hash.asc")
+        if r.get("recipient_hash")
+    }
+
+
+@runs_as_service  # #115: the suppression tables are service-only
+def suppressions_for(scope: str) -> Suppressions:
+    """The `Suppressions` of `scope`: its own table, and for an operational
+    scope also the bounces and complaints in the `all` table (as
+    `_stops_send`). One paged read per table. Raises on a DB error (the
+    caller then lets each send read its own)."""
+    hashes = _hashes_in(scope)
+    if scope == SUPPRESSION_SCOPE_OPS:
+        hashes |= _hashes_in(SUPPRESSION_SCOPE_ALL, reasons=DELIVERABILITY_REASONS)
+    return Suppressions(scope, frozenset(hashes))
 
 
 def _stops_send(rhash: str, scope: str) -> bool:
@@ -494,8 +528,13 @@ def send_email(
     text: str,
     dedupe_key: str,
     broadcast_id: Optional[str] = None,
+    suppressions: Optional[Suppressions] = None,
 ) -> str:
     """Send one email at most once per `dedupe_key`.
+
+    `suppressions`: a batch's suppression set for this kind's scope, read
+    once (`suppressions_for`); without it (or for another scope) the send
+    reads its own.
 
     Returns the final status: "sent" | "skipped" | "failed" | "suppressed",
     "opted_out" (a notification-category kind to an account that turned email
@@ -526,7 +565,10 @@ def send_email(
             return "opted_out"
 
     try:
-        suppressed = _stops_send(rhash, scope)
+        if suppressions is not None and suppressions.scope == scope:
+            suppressed = rhash in suppressions.hashes
+        else:
+            suppressed = _stops_send(rhash, scope)
         row = {
             "kind": kind,
             "dedupe_key": dedupe_key,
