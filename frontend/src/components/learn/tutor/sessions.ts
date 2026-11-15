@@ -88,6 +88,12 @@ export function courseColor(course: EnrolledCourse | undefined, index: number): 
   return course?.color || FALLBACK_COLORS[Math.abs(index) % FALLBACK_COLORS.length];
 }
 
+/** A session's name. A course-wide session is titled after its course, which
+ *  the breadcrumb and the course dot already show: it reads "Guided session". */
 export function sessionTitle(row: Pick<TutorSessionRow, "topic">, course?: EnrolledCourse): string {
-  return row.topic?.trim() || course?.course_name || "Session";
+  const topic = row.topic?.trim() ?? "";
+  if (!topic) return "Guided session";
+  const sameAsCourse = !!course && [course.course_name, course.nickname, course.course_code]
+    .some((n) => !!n && n.trim().toLowerCase() === topic.toLowerCase());
+  return sameAsCourse ? "Guided session" : topic;
 }

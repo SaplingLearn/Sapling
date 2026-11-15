@@ -50,6 +50,7 @@ function useFocusHeading<T extends HTMLElement>() {
 export function TutorHome({
   courseName,
   continueRow,
+  continueTitle,
   dueCount,
   dueHref,
   startWith,
@@ -63,6 +64,8 @@ export function TutorHome({
   courseName: string | null;
   /** The course's open session, offered as "Continue". */
   continueRow: TutorSessionRow | null;
+  /** Its name as the rest of the shell shows it (the course decides it). */
+  continueTitle?: string;
   dueCount: number;
   dueHref: string;
   /** The weakest concept the map knows, offered as a first focus. */
@@ -89,7 +92,7 @@ export function TutorHome({
       <div className={styles.suggest}>
         {continueRow && (
           <button type="button" className={styles.pill} data-testid="tutor-home-continue" onClick={onContinue} disabled={busy}>
-            Continue: {sessionTitle(continueRow)}
+            Continue: {continueTitle ?? sessionTitle(continueRow)}
           </button>
         )}
         {dueCount > 0 && (

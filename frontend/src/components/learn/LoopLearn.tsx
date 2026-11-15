@@ -13,6 +13,7 @@
 // backend/routes/learn_loop.py.
 import React, { useCallback, useEffect, useId, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
 import Link from "next/link";
+import { createPortal } from "react-dom";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { FullHeightScreen } from "../FullHeightScreen";
@@ -954,6 +955,11 @@ export function LoopLearn() {
   useEffect(() => {
     if (isMobile) setSideOpen(false);
   }, [isMobile]);
+  // The drawer, once open, takes focus (its Hide button), so the keyboard is in it.
+  useEffect(() => {
+    if (!isMobile || !sideOpen) return;
+    document.querySelector<HTMLElement>('[data-testid="tutor-sidebar-hide"]')?.focus();
+  }, [isMobile, sideOpen]);
   // T2 lists the course's material: read once, when a course page first opens.
   useEffect(() => {
     if (view !== "course" || materials !== null || !userId) return;
@@ -1145,6 +1151,8 @@ export function LoopLearn() {
       if (g === gen.current) {
         dispatch({ type: "phase", phase: r.phase });
         setPlanJustApproved(true);
+        // the panel and the phase line follow the approved order from its first concept
+        setApprovedPlan({ concepts: plan, cursor: 0 });
         setGoalProgress((current) => current?.status === "continue_available" ? null : current);
         // spec §13 A138: the first segment opens on its ungraded guess
         showPrequestion(r.prequestion);
@@ -1190,7 +1198,7 @@ export function LoopLearn() {
     const text = res.reply ?? streamed;
     if (text) setMessages((prev) => [...prev, asMsg("assistant", text)]);
     if (submission && res.graded) {
-      setVerdict(res.verdict ? { verdict: res.verdict, nodeId: state.focusNodeId } : null);
+      setVerdict(res.verdict ? { verdict: res.verdict, nodeId: res.learner_state?.[0]?.node_id ?? state.focusNodeId } : null);
       setPendingGrade(null);
       // graded — correct, not yet, idk, or a refusal the server graded as idk:
       // the item takes no more answers
@@ -1771,7 +1779,7 @@ export function LoopLearn() {
     if (view === "all") return "All sessions";
     if (view === "course") return course ? `${course.course_code ? `${course.course_code} · ` : ""}${course.course_name}` : "Course";
     if (readOnly) return readOnly.topic || "Earlier session";
-    return sessionRow ? sessionTitle(sessionRow, course ?? undefined) : sessionId ? course?.course_name ?? "Session" : "Tutor";
+    return sessionRow ? sessionTitle(sessionRow, course ?? undefined) : sessionId ? "Guided session" : "Tutor";
   };
   const topSub = (): string => {
     if (view === "home") return "Choose where to start.";
@@ -1823,10 +1831,11 @@ export function LoopLearn() {
       )}
       {isMobile && renderMobileActions()}
       <AIDisclaimerChip height={32} />
-      {inSession && !isMobile && sessionId && !readOnly && (
+      {/* Show only: while the panel is open its own head carries Hide. */}
+      {allOf(inSession, !isMobile, !!sessionId, !readOnly, !panelOpen) && (
         <button type="button" className={tutorStyles.iconBtn} data-testid="tutor-panel-toggle"
-          aria-label={panelOpen ? "Hide session panel" : "Show session panel"} aria-pressed={panelOpen}
-          onClick={() => setPanelOpen((o) => !o)}>
+          aria-label="Show session panel"
+          onClick={() => setPanelOpen(true)}>
           <SidebarGlyph side="right" />
         </button>
       )}
@@ -1841,13 +1850,13 @@ export function LoopLearn() {
         </button>
       )}
       <div className={tutorStyles.topTitle}>
-        {course && view !== "all" && view !== "home" ? (
+        {course && view === "session" ? (
           <button type="button" className={`label-micro ${tutorStyles.crumb}`} data-testid="tutor-crumb-course"
             onClick={() => showCourse(course.course_id)}>
             {course.course_code ? `${course.course_code} · ` : ""}{course.nickname || course.course_name}
           </button>
         ) : (
-          <div className={`label-micro ${tutorStyles.crumbStatic}`}>Tutor</div>
+          <div className={`label-micro ${tutorStyles.crumbStatic}`}>{view === "course" ? "Course" : "Tutor"}</div>
         )}
         <h1 className="h-serif">{topTitle()}</h1>
         <div className={tutorStyles.topSub} data-testid="tutor-phase-line">{topSub()}</div>
@@ -2045,7 +2054,7 @@ export function LoopLearn() {
       {item ? (
         <CheckCard
           item={item}
-          conceptName={focusNodeId ? conceptNames.get(focusNodeId) : null}
+          conceptName={conceptAt(conceptNames, focusNodeId, approvedPlan)}
           draft={attempt}
           setDraft={setAttempt}
           busy={attemptBusy || streaming}
@@ -2093,7 +2102,7 @@ export function LoopLearn() {
       ) : (
         <>
           {state.phase === "feedback" && verdict && (
-            <VerdictBanner verdict={verdict.verdict} concept={verdict.nodeId ? conceptNames.get(verdict.nodeId) ?? null : null} />
+            <VerdictBanner verdict={verdict.verdict} concept={conceptAt(conceptNames, verdict.nodeId, approvedPlan)} />
           )}
           {renderTeachActions(firstConcept)}
         </>
@@ -2264,8 +2273,6 @@ export function LoopLearn() {
     } else if (state.phase === "probe") {
       return (
         <ProbePanel
-          diagnosis={diagnosis}
-          names={conceptNames}
           item={probeItem}
           count={probeCount}
           draft={probeDraft}
@@ -2325,17 +2332,19 @@ export function LoopLearn() {
   const panelSkills = (): PanelConcept[] => {
     const ids = panelPlan && panelPlan.length > 0 ? panelPlan.map((c) => c.node_id) : focusNodeId ? [focusNodeId] : [];
     return ids.map((id) => {
+      // measured only: the loop's estimate once this session observed the
+      // concept, else the map's mastery. The plan's p_known for an untested
+      // concept is the prior, not a measurement — it reads "Not started".
       const live = state.learnerState[id]?.p_known;
-      const planned = plan?.find((c) => c.node_id === id)?.p_known;
       const node = railGraph.nodes.find((n) => n.id === id);
       const mapScore = node && node.mastery_tier !== "unexplored" ? node.mastery_score : null;
-      return { nodeId: id, name: conceptNames.get(id) ?? "Concept", score: live ?? planned ?? mapScore };
+      return { nodeId: id, name: conceptNames.get(id) ?? "Concept", score: live ?? mapScore };
     });
   };
   const dueHref = dueLink(dueCourseIds);
   const renderRail = () => (
     <SessionPanel
-      plan={panelPlan}
+      plan={state.phase === "plan" ? null : panelPlan}
       currentNodeId={teaching ? focusNodeId ?? cursorNode(approvedPlan) : null}
       skills={panelSkills()}
       dueCount={dueCourseIds.length}
@@ -2361,6 +2370,7 @@ export function LoopLearn() {
         <TutorHome
           courseName={course?.course_name ?? null}
           continueRow={openHere}
+          continueTitle={openHere ? sessionTitle(openHere, course ?? undefined) : undefined}
           dueCount={dueCourseIds.length}
           dueHref={dueHref}
           startWith={weakestConcept(railGraph.nodes)}
@@ -2404,10 +2414,10 @@ export function LoopLearn() {
     const live = allOf(!!sessionId, !readOnly);
     return (
       <>
-        {live && renderScopeSummary()}
+        {live && state.phase !== "close" && renderScopeSummary()}
         {goalProgress && goal && renderGoalProgress(goalProgress)}
         {notices}
-        {!showPanel && live && (
+        {allOf(!showPanel, live, !!learner) && (
           <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px clamp(16px, 4vw, 56px) 0" }}>
             {learnerChip}
           </div>
@@ -2457,13 +2467,16 @@ export function LoopLearn() {
         className={tutorStyles.shell}
       >
         {sideOpen && !isMobile && renderSidebar()}
-        {sideOpen && isMobile && (
+        {/* A phone: the sidebar is a drawer over the whole app (a portal, so the
+            app's own top bar cannot cover its head). */}
+        {sideOpen && isMobile && typeof document !== "undefined" && createPortal(
           <div className={tutorStyles.drawerScrim} onClick={() => setSideOpen(false)}>
             <div className={tutorStyles.drawer} onClick={(e) => e.stopPropagation()}
               onKeyDown={(e) => { if (e.key === "Escape") setSideOpen(false); }}>
               {renderSidebar()}
             </div>
-          </div>
+          </div>,
+          document.body,
         )}
         <div className={tutorStyles.main}>
           {header}
@@ -2486,6 +2499,12 @@ function panelPlanOf(plan: LoopPlanConcept[] | null, approved: { concepts: LoopP
   return plan ?? approved?.concepts ?? null;
 }
 
+/** The name of `id`, else of the approved plan's current concept. */
+function conceptAt(names: Map<string, string>, id: string | null, approved: { concepts: LoopPanelConcept[]; cursor: number } | null): string | null {
+  const at = id ?? cursorNode(approved);
+  return at ? names.get(at) ?? null : null;
+}
+
 /** The concept the approved plan's cursor is on (a resumed session's current one). */
 function cursorNode(p: { concepts: LoopPanelConcept[]; cursor: number } | null): string | null {
   return p?.concepts[p.cursor]?.node_id ?? null;
@@ -2505,7 +2524,8 @@ function phaseText(phase: LoopPhase, plan: LoopPanelConcept[] | null, focus: str
   const name = focus ? names.get(focus) : undefined;
   const at = plan && focus ? plan.findIndex((c) => c.node_id === focus) : -1;
   if (name && at >= 0) return `${name} · concept ${at + 1} of ${n}`;
-  return name ?? "Learning";
+  // an approved plan with no current concept: its cursor is past the end
+  return name ?? (n > 0 ? "Plan complete" : "Learning");
 }
 
 /** The concept T1 offers as a first focus: the weakest one not yet mastered. */
@@ -2554,8 +2574,8 @@ const TURN_INDENT = 44;
 
 const VERDICT_COPY: Record<string, { title: string; note: string }> = {
   correct: { title: "Correct", note: "That answer counts toward this concept." },
-  not_yet: { title: "Not yet", note: "The tutor explains below. Try another one on the same idea." },
-  idk: { title: "Not yet", note: "No problem — the tutor walks through it below." },
+  not_yet: { title: "Not yet", note: "The tutor's reply above shows what to fix. Try another one on the same idea." },
+  idk: { title: "Not yet", note: "No problem — the tutor's reply above walks through it." },
 };
 
 /** Wireframe T9: the graded check's verdict, above the tutor's feedback. */
@@ -2607,10 +2627,8 @@ function RailGraph({ nodes, edges, highlightId }: { nodes: GraphNode[]; edges: G
 }
 
 function ProbePanel({
-  item, count, draft, setDraft, reference, note, busy, loadFailed, greeting, onSubmit, onIdk, onNext, onRetry, diagnosis, names,
+  item, count, draft, setDraft, reference, note, busy, loadFailed, greeting, onSubmit, onIdk, onNext, onRetry,
 }: {
-  diagnosis: LoopDiagnosis | null;
-  names: Map<string, string>;
   item: LoopProbeItem | null;
   count: number;
   draft: Draft;
@@ -2671,7 +2689,8 @@ function ProbePanel({
         <TutorTurn testId="loop-probe-greeting">
           {greeting ?? "Let's start with a quick check-in so I know where you are. No hints here; it just shows me what to teach."}
         </TutorTurn>
-        <DiagnosisSummary diagnosis={diagnosis} names={names} />
+        {/* The coverage summary reads the check-in's results: it shows on the plan,
+            once there is something to summarise, not over the first question. */}
         {!item && busy && <div style={{ fontSize: 14, color: "var(--text-muted)" }}>Loading the next question…</div>}
         {!item && reference !== null && (
           <div className="card" style={{ padding: "var(--pad-xl)", display: "flex", flexDirection: "column", gap: 12 }}>
@@ -2807,7 +2826,7 @@ function PlanPanel({
   return (
     <div style={{ flex: 1, overflowY: "auto" }}>
       <div className={tutorStyles.col}>
-      <TutorTurn>Here&apos;s today&apos;s plan, built from your check-in. Due reviews come first, then what&apos;s new, then related practice.</TutorTurn>
+      <TutorTurn>Here&apos;s today&apos;s plan. Due reviews come first, then what&apos;s new, then related practice.</TutorTurn>
       <section
         aria-labelledby="loop-plan-heading"
         className={`card ${tutorStyles.qcard}`}

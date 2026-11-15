@@ -530,10 +530,12 @@
   flex-wrap: wrap;
 }
 
+/* The filters sit beside the 36px search: one height. */
 .segPill {
   display: inline-flex;
   align-items: center;
-  height: 32px;
+  height: 36px;
+  box-sizing: border-box;
   padding: 6px 14px;
   border-radius: 999px;
   font-size: 12px;
@@ -855,7 +857,8 @@
 .drawerScrim {
   position: fixed;
   inset: 0;
-  z-index: 60;
+  /* over the app's own top bar, so the drawer's head (Tutor, Hide) shows */
+  z-index: 1000;
   background: rgba(26, 24, 20, 0.32);
 }
 
@@ -878,9 +881,21 @@
     display: none;
   }
 
+  /* A phone: the title takes the full row, the actions wrap under it. */
   .topbar {
     flex-wrap: wrap;
+    align-items: flex-start;
     padding: 16px;
+    row-gap: 12px;
+  }
+
+  .topTitle {
+    flex: 1 1 calc(100% - 44px);
+  }
+
+  .topActs {
+    flex: 1 1 100%;
+    justify-content: flex-start;
   }
 
   .topTitle h1 {
@@ -896,4 +911,11 @@
   .col {
     padding: 16px;
   }
+}
+
+/* A heading or card that takes focus programmatically (a new question, the
+   plan, the wrap-up — spec §13 A135) is not a control: no ring around it.
+   Every control keeps the global :focus-visible ring. */
+.shell [tabindex="-1"]:focus {
+  outline: none;
 }

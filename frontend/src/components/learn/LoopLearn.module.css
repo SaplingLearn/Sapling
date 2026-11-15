@@ -115,7 +115,9 @@
 }
 
 .scopeSummary {
-  padding: 10px clamp(24px, 4vw, 56px) 0;
+  padding: 10px clamp(24px, 4vw, 56px);
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
   font-size: 13px;
   overflow-wrap: anywhere;
 }

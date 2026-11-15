@@ -3,6 +3,7 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
+import styles from "./ChatPanel.module.css";
 import { Icon } from "../Icon";
 import { CrisisSupportCard } from "../safety/CrisisSupportCard";
 import type { CrisisSupport } from "@/lib/crisisSupport";
@@ -131,11 +132,25 @@ export function ChatPanel({
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const isStreaming = streamingText !== null && streamingText !== undefined;
 
+  // Whether the student is reading the latest turn: then the log stays pinned
+  // to it when its box resizes (a footer appearing or growing shrinks the log
+  // after the messages rendered); scrolled up to read history, it is left alone.
+  const pinned = useRef(true);
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
+    pinned.current = true;
   }, [messages, streamingText]);
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => {
+      if (pinned.current) el.scrollTop = el.scrollHeight;
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
@@ -145,6 +160,10 @@ export function ChatPanel({
           keys then scroll the history. */}
       <div
         ref={scrollRef}
+        onScroll={(e) => {
+          const el = e.currentTarget;
+          pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 8;
+        }}
         role="log"
         aria-live="polite"
         aria-relevant="additions"
@@ -153,7 +172,11 @@ export function ChatPanel({
         data-testid="tutor-messages"
         tabIndex={0}
         style={{
-          flex: 1,
+          // With a footer the log only takes the height it needs, so the
+          // footer's actions sit right under the latest turn; a long
+          // conversation still scrolls and the footer stays above the composer.
+          flex: footer ? "0 1 auto" : 1,
+          minHeight: 0,
           overflowY: "auto",
           padding: "24px clamp(16px, 4vw, 56px)",
           display: "flex",
@@ -188,11 +211,12 @@ export function ChatPanel({
       {footer && (
         <div
           data-testid="chat-footer"
-          style={{ padding: "4px clamp(16px, 4vw, 56px) 14px", maxHeight: "65%", overflowY: "auto", flexShrink: 0 }}
+          style={{ padding: "0 clamp(16px, 4vw, 56px) 16px", maxHeight: "65%", overflowY: "auto", flexShrink: 0 }}
         >
           {footer}
         </div>
       )}
+      {footer && <div aria-hidden style={{ flex: 1 }} />}
       <ChatInputBar
         onSend={onSend}
         onAction={onAction}
@@ -307,15 +331,7 @@ const ChatInputBar = React.memo(function ChatInputBar({
         </div>
       )}
       <div
-        style={{
-          display: "flex",
-          gap: 10,
-          alignItems: "flex-end",
-          background: "var(--bg-subtle)",
-          border: "1px solid var(--border)",
-          borderRadius: "var(--r-lg)",
-          padding: "10px 14px",
-        }}
+        className={styles.composer}
       >
         <textarea
           ref={inputRef}
@@ -384,6 +400,54 @@ const ChatInputBar = React.memo(function ChatInputBar({
     </div>
   );
 });
+
+/** The loop tutor's turn carries a "Key idea:" paragraph the server adds
+ *  (routes/learn_loop.py) — first in a teaching turn, after "The answer: …" in
+ *  feedback. It shows as the design's key-idea block (a label over the idea, an
+ *  accent rule beside it) where it stands; the text still reads "Key idea: …"
+ *  to a screen reader and to `textContent`. */
+const KEY_IDEA = /^Key idea:\s*/;
+
+export type TurnPart = { kind: "text"; text: string } | { kind: "key"; text: string };
+
+export function splitKeyIdea(content: string): TurnPart[] {
+  const parts: TurnPart[] = [];
+  let buffer: string[] = [];
+  const flush = () => {
+    if (buffer.length) parts.push({ kind: "text", text: buffer.join("\n\n") });
+    buffer = [];
+  };
+  for (const para of content.split("\n\n")) {
+    const idea = KEY_IDEA.test(para) ? para.replace(KEY_IDEA, "").trim() : "";
+    if (idea) {
+      flush();
+      parts.push({ kind: "key", text: idea });
+    } else {
+      buffer.push(para);
+    }
+  }
+  flush();
+  return parts;
+}
+
+function AssistantBody({ content }: { content: string }) {
+  const parts = splitKeyIdea(content);
+  if (!parts.some((p) => p.kind === "key")) return <MarkdownChat>{content}</MarkdownChat>;
+  return (
+    <>
+      {parts.map((p, i) => p.kind === "key" ? (
+        <div key={i} data-testid="tutor-key-idea" style={{ borderLeft: "3px solid var(--accent)", padding: "2px 0 2px 12px", margin: i === 0 ? "0 0 8px" : "8px 0" }}>
+          <span className="label-micro" style={{ display: "block", color: "var(--accent)", marginBottom: 2 }}>
+            Key idea<span style={VISUALLY_HIDDEN}>: </span>
+          </span>
+          <MarkdownChat>{p.text}</MarkdownChat>
+        </div>
+      ) : (
+        <MarkdownChat key={i}>{p.text}</MarkdownChat>
+      ))}
+    </>
+  );
+}
 
 const Message = React.memo(function Message({
   m,
@@ -458,7 +522,7 @@ const Message = React.memo(function Message({
           // ADR 0020: an interrupted turn keeps its partial text visible,
           // just dimmed — never blanked.
           <div style={m.interrupted ? { opacity: 0.7 } : undefined}>
-            {m.content ? <MarkdownChat>{m.content}</MarkdownChat> : null}
+            {m.content ? <AssistantBody content={m.content} /> : null}
           </div>
         )}
         {m.interrupted && !isUser && (

@@ -781,7 +781,9 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `tutor-all-sessions` | every session (T3), with a search and an All / In progress / Wrapped up filter |
 | `tutor-phase-line` | the TopBar's line under the title: Check-in / Plan · N concepts / "<concept> · concept i of n" / Wrap-up / "Wrapped up · read-only" |
 | `tutor-crumb-course` | the TopBar's course breadcrumb (opens the course page) |
-| `tutor-panel-toggle` / `tutor-panel-hide` | show / hide the session panel |
+| `tutor-panel-hide` / `tutor-panel-toggle` | hide the session panel (its head) / show it again (the TopBar, only while it is hidden) |
+| `tutor-key-idea` | the tutor turn's "Key idea:" paragraph, shown as the labelled key-idea block (`ChatPanel`'s `splitKeyIdea`) |
+| `chat-footer` | `ChatPanel`'s footer: the check card or the actions, right under the latest turn |
 | `loop-sessions-error` | `GET /sessions` (or a read-only resume) failed |
 | `loop-sessions-retry` | retry — never falls through to a new session or probe |
 | `loop-no-course` | the student has no enrolled course |

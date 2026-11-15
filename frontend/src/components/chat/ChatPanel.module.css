@@ -1,0 +1,23 @@
+/* The composer box: one focus indicator, on the box (the design's composer).
+   The textarea inside draws none of its own — a second ring inside the box
+   read as a stray rectangle. The box's ring is the AA focus indicator. */
+.composer {
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  padding: 10px 14px;
+  transition: border-color var(--dur-fast, 0.14s) var(--ease, ease), box-shadow var(--dur-fast, 0.14s) var(--ease, ease);
+}
+
+.composer:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.composer textarea:focus,
+.composer textarea:focus-visible {
+  outline: none;
+}

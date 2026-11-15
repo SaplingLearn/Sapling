@@ -107,6 +107,12 @@ test("the TopBar is one height on every Tutor page, and the sidebar's controls a
   await page.getByTestId("tutor-view-all").click();
   await expect(page.getByTestId("tutor-all-sessions")).toBeVisible();
   await expectTopBarAgrees(page, home);
+  // the search and its filters are one height (the sidebar's 36)
+  for (const h of await page.getByTestId("tutor-all-sessions").locator('label, [role="group"] button').evaluateAll(
+    (els) => els.map((e) => e.getBoundingClientRect().height),
+  )) {
+    expect(Math.abs(h - 36)).toBeLessThanOrEqual(SLACK);
+  }
   await expectNoHorizontalOverflow(page);
 
   // a session: the TopBar keeps its height, and the session panel starts at its edge
@@ -132,6 +138,15 @@ test("phone: the Tutor home fits without horizontal scroll and keeps 40px contro
     expect(Math.abs(h - 40)).toBeLessThanOrEqual(SLACK);
   }
   await expectNoHorizontalOverflow(page);
+  // the TopBar's title keeps the row: one 36px line, never squeezed by the actions
+  const title = (await (await topBar(page)).locator("h1").boundingBox())!;
+  expect(title.width).toBeGreaterThan(200);
+  expect(title.height).toBeLessThanOrEqual(36 + SLACK);
+  // the sidebar opens as a drawer over everything, its head (Tutor, Hide) in view
+  await page.getByTestId("tutor-sidebar-show").click();
+  await expect(page.getByTestId("tutor-sidebar-hide")).toBeInViewport();
+  await page.getByTestId("tutor-sidebar-hide").click();
+  await expect(page.getByTestId("tutor-sidebar")).toHaveCount(0);
 });
 
 test("a session: the composer's controls are one 32px square and the actions under the turn are 36px", async ({ page }) => {
