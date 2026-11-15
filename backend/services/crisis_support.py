@@ -17,7 +17,8 @@ blocks. The notes routes screen the note right after they read it (still
 before any limit) with `screen_content_async`, then run their action
 through `alongside`, which returns the action's own answer with the card
 beside it: its result, or the error it raised (a 429, a 413, a 500),
-answered there by the app's own handler for it with the card added. The
+answered by the app's own handler with the card added on the way out
+(`ErrorCardMiddleware`). The
 action itself is limited, budgeted and written exactly as without a match.
 A note is often material the student quotes (a patient, a play), which no
 phrase list can tell from their own words, so they get the result they
@@ -55,11 +56,9 @@ import json
 import logging
 import uuid
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable, Literal, get_args
+from typing import Any, Awaitable, Literal, get_args
 
 from fastapi import Request
-from fastapi.responses import JSONResponse, Response
-from starlette.exceptions import HTTPException as StarletteHTTPException
 from sse_starlette.sse import EventSourceResponse
 
 from db.connection import table
@@ -300,19 +299,26 @@ def start_json(support: CrisisSupport) -> dict[str, Any]:
 ALONGSIDE = "crisis_support_alongside"
 
 
+#: Where `alongside` leaves the card when the action raises: the request's
+#: state (`scope["state"]`), read by `ErrorCardMiddleware` off the error answer.
+ERROR_CARD_STATE = "crisis_support_card"
+
+
 async def alongside(
     screen: ContentScreen, action: Awaitable[dict[str, Any] | EventSourceResponse],
-) -> dict[str, Any] | Response:
+) -> dict[str, Any] | EventSourceResponse:
     """Await `action` (the route's own work, limits included) and attach the
     card `screen` found to whatever answer goes back: its result
     (`crisis_support` plus `ALONGSIDE`; for a stream, in its `done` event's
-    data), or the error it raises (a 429, a 413, a 500). An error is answered HERE, by the app's own handler for it (the
-    one main.py registered, looked up as Starlette does), with the card added
-    to that handler's body: status, detail, headers and envelope are exactly
-    the ones the same error gets without a match, and no handler needs to
-    know about the card. So an action converts an error inside itself, never
-    around `alongside`. With no card, just the action. `screen` must come
-    from `screen_content_async`."""
+    data), or the error it raises (a 429, a 413, a 500). An error is NOT
+    answered here: the card is left on the request's state and the exception
+    re-raised, so it reaches the app's own handler (and, for an unexpected
+    one, ServerErrorMiddleware, the server's error log and the trace) exactly
+    as without a match; `ErrorCardMiddleware`, outside the whole stack, adds
+    the card to whatever JSON error answer goes back. Status, detail, headers
+    and envelope are the handler's, and no handler needs to know about the
+    card. With no card, just the action. `screen` must come from
+    `screen_content_async`."""
     if not isinstance(screen, ContentScreen):
         if inspect.iscoroutine(action):
             action.close()
@@ -324,18 +330,9 @@ async def alongside(
         return await action
     try:
         result = await action
-    except Exception as exc:  # noqa: BLE001 — answered below by the app's own handler
-        handler = _handler_for(screen.request, exc)
-        if handler is None:  # nothing would answer it: let it propagate as it would have
-            logger.warning("crisis support: no handler for %s; its answer goes back without the card",
-                           type(exc).__name__)
-            raise
-        # Still inside `except`, so a handler that logs the traceback (the
-        # generic 500's) logs this one.
-        response = handler(screen.request, exc)
-        if inspect.isawaitable(response):
-            response = await response
-        return _with_card(response, support.payload)
+    except Exception:
+        setattr(screen.request.state, ERROR_CARD_STATE, support.payload)
+        raise
     if isinstance(result, EventSourceResponse):
         result.body_iterator = _stream_with_card(result.body_iterator, support.payload)
         return result
@@ -358,30 +355,79 @@ async def _stream_with_card(events: Any, payload: dict[str, Any]):
             await close()
 
 
-def _handler_for(request: Request, exc: Exception) -> Callable[..., Any] | None:
-    """The app's handler for `exc`, chosen the way Starlette chooses it: an
-    HTTPException's status code first, then the nearest class in its MRO
-    (main.py's `Exception` handler is the generic 500)."""
-    handlers = getattr(getattr(request, "app", None), "exception_handlers", None) or {}
-    if isinstance(exc, StarletteHTTPException) and exc.status_code in handlers:
-        return handlers[exc.status_code]
-    for cls in type(exc).__mro__:
-        if cls in handlers:
-            return handlers[cls]
-    return None
+class ErrorCardMiddleware:
+    """Pure ASGI, wrapped around the app's WHOLE middleware stack
+    (`install_error_card`), so every error answer passes through it: the ones
+    ExceptionMiddleware's handlers produce (a 429, a 413, a 422, a domain
+    error) and the generic 500 that ServerErrorMiddleware produces outside
+    the user middleware. When `alongside` left a card on the request's state
+    and the answer is a JSON object with an error status, the card is added
+    to that body (Content-Length adjusted); status and every other header
+    are left as they are. Anything else streams through untouched, and an
+    exception still propagates past it to the server."""
+
+    def __init__(self, app: Any) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+        # The dict request.state writes into, shared with every layer below.
+        state = scope.setdefault("state", {})
+        start: dict[str, Any] | None = None
+        chunks: list[bytes] = []
+
+        async def send_with_card(message: dict[str, Any]) -> None:
+            nonlocal start
+            if message["type"] == "http.response.start":
+                if message["status"] >= 400 and ERROR_CARD_STATE in state and _is_json(message):
+                    start = message  # held until the body is whole
+                    return
+            elif message["type"] == "http.response.body" and start is not None:
+                chunks.append(message.get("body", b""))
+                if message.get("more_body", False):
+                    return
+                body = _body_with_card(b"".join(chunks), state[ERROR_CARD_STATE])
+                headers = [(k, v) for k, v in start.get("headers", []) if k.lower() != b"content-length"]
+                await send({**start, "headers": [*headers, (b"content-length", str(len(body)).encode())]})
+                await send({"type": "http.response.body", "body": body})
+                return
+            await send(message)
+
+        await self.app(scope, receive, send_with_card)
 
 
-def _with_card(response: Any, payload: dict[str, Any]) -> Any:
-    """`response` (a handler's JSON error answer) with the card in its body;
-    its status and headers are left as they are."""
-    if isinstance(response, JSONResponse):
-        content = json.loads(response.body)
-        if isinstance(content, dict):
-            response.body = response.render({**content, "crisis_support": payload})
-            response.headers["content-length"] = str(len(response.body))
-            return response
-    logger.warning("crisis support: an error answer that is not a JSON object goes back without the card")
-    return response
+def install_error_card(app: Any) -> None:
+    """Make `ErrorCardMiddleware` the outermost layer of `app` (outside every
+    ServerErrorMiddleware, the one carrying main.py's generic 500 included).
+    Starlette has no slot outside ServerErrorMiddleware, so this wraps
+    `build_middleware_stack`, as the OpenTelemetry instrumentation does;
+    call it AFTER instrumenting, which expects ServerErrorMiddleware on top."""
+    build = app.build_middleware_stack
+    app.build_middleware_stack = lambda: ErrorCardMiddleware(build())
+    app.middleware_stack = None
+
+
+def _is_json(start: dict[str, Any]) -> bool:
+    for key, value in start.get("headers", []):
+        if key.lower() == b"content-type":
+            return value.split(b";", 1)[0].strip().lower() == b"application/json"
+    return False
+
+
+def _body_with_card(body: bytes, payload: dict[str, Any]) -> bytes:
+    """A JSON error body with the card in it, rendered as JSONResponse renders;
+    a body that is not a JSON object goes back as it was."""
+    try:
+        content = json.loads(body)
+    except ValueError:
+        content = None
+    if not isinstance(content, dict):
+        logger.warning("crisis support: an error answer that is not a JSON object goes back without the card")
+        return body
+    return json.dumps({**content, "crisis_support": payload}, ensure_ascii=False,
+                      allow_nan=False, indent=None, separators=(",", ":")).encode("utf-8")
 
 
 def _request_id(request: Request) -> str:

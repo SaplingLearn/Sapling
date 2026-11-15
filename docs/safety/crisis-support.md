@@ -49,14 +49,17 @@ surface" below.)
    `sse_response`) refuse it, and the only thing that takes it is
    `crisis_support.alongside(screen, action())`. The action is limited and
    budgeted as usual (it runs a model), so it can be refused with a 429.
-   `alongside` answers any error the action raises (a 429, a 413, a 500)
-   itself: it runs the app's own exception handler for it (found the way
-   Starlette finds it) and adds the card to that handler's body, in the
-   `crisis_support` key, so the status, detail, `Retry-After` and envelope
-   are exactly what the same error gets without a match. No exception
-   handler needs to know about the card. An action that turns one error into
-   another does so inside the action, not around `alongside`. The student
-   never gets a refusal without the card.
+   When the action raises (a 429, a 413, a 500), `alongside` leaves the card
+   on the request's state (`request.state.crisis_support_card`) and
+   re-raises, so the error reaches the app's own handler, and an unexpected
+   one reaches ServerErrorMiddleware, the server's error log and the trace,
+   exactly as without a match. `crisis_support.ErrorCardMiddleware`, wrapped
+   around the whole middleware stack by `install_error_card` in `main.py`
+   (outside every ServerErrorMiddleware, so the generic 500 passes it too),
+   adds the card to that JSON error body in the `crisis_support` key. The
+   status, detail, `Retry-After` and envelope are exactly what the same
+   error gets without a match, and no exception handler needs to know about
+   the card. The student never gets a refusal without the card.
 
    A tutor start (`/api/learn/start-session` and its stream) screens its
    topic as typed, with one exception. Send to tutor opens
@@ -198,9 +201,8 @@ and the review start that generates cards (dialogs).
   until it does) and renders the card on its frontend surface. A route that
   reads text the student STORED rather than typed (like the notes actions)
   uses `screen_content_async` and runs its work through `alongside`
-  instead, so the card shows beside the result (and errors are answered
-  there, by the app's own handler, card included: convert an error inside
-  the action, never around `alongside`); its `Case` sets
+  instead, so the card shows beside the result (and beside any error it
+  raises, whichever handler answers it); its `Case` sets
   `note_field`, which makes it a non-blocking (`CONTENT`) case.
   `test_no_student_text_reaches_a_model_unscreened` reads every write route
   of the modules that run a model (`MODEL_ROUTE_MODULES`): a route whose body

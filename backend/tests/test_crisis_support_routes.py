@@ -613,6 +613,84 @@ def test_a_handler_that_knows_nothing_of_the_card_still_answers_with_it(flag, si
     }
 
 
+def _validation_error():
+    from fastapi.exceptions import RequestValidationError
+
+    return RequestValidationError([{"type": "value_error", "loc": ("body", "x"), "msg": "bad", "input": 1}])
+
+
+def _scope_unavailable():
+    from db.scope import ScopeUnavailable
+
+    return ScopeUnavailable("no user-scoped credential")
+
+
+@pytest.mark.parametrize("raised, status", [
+    (lambda: HTTPException(status_code=413, detail="That note is too long."), 413),
+    (lambda: HTTPException(status_code=422, detail="Nothing to summarize."), 422),
+    (_validation_error, 422),
+    (_scope_unavailable, 503),
+    (lambda: RuntimeError("PostgREST down"), 500),
+], ids=["413", "422", "validation-422", "domain-503", "generic-500"])
+def test_every_error_answer_is_the_same_answer_plus_the_card(raised, status, flag, sink, note_actions):
+    """Whichever layer answers the error (an ExceptionMiddleware handler, or
+    ServerErrorMiddleware for the generic 500), the card is added on the way
+    out and nothing else about the answer changes."""
+    flag("on")
+    loose = TestClient(app, raise_server_exceptions=False)
+    note_actions["save_summary"].side_effect = lambda *a, **k: (_ for _ in ()).throw(raised())
+    with_card = loose.post("/api/notes/n1/summarize", json=_note_action({}))
+    with patch("routes.notes.get_note", AsyncMock(return_value=_note(None, ""))):
+        note_actions["summary"].return_value = _Ran(type("S", (), {"summary": "Short summary."})())
+        without = loose.post("/api/notes/n1/summarize", json=_note_action({}))
+    assert with_card.status_code == without.status_code == status, with_card.text
+    drop = {"x-request-id", "content-length"}
+    assert ({k: v for k, v in with_card.headers.items() if k not in drop}
+            == {k: v for k, v in without.headers.items() if k not in drop})
+    assert int(with_card.headers["content-length"]) == len(with_card.content)
+    body, plain = with_card.json(), without.json()
+    assert body.pop("crisis_support") == crisis_support.client_payload(crisis_copy.DEFAULT_CAMPUS_COUNSELING)
+    for answer in (body, plain):
+        answer.pop("request_id", None)
+        if isinstance(answer.get("error"), dict):
+            answer["error"].pop("request_id", None)
+    assert body == plain
+
+
+def test_an_unexpected_exception_still_reaches_the_server_and_its_log(flag, sink, note_actions, caplog, monkeypatch):
+    """`alongside` re-raises: the generic handler logs the traceback once,
+    PostHog gets the one exception, and the exception propagates past the
+    app to the server (its error log, the trace's exception record), exactly
+    as without a match."""
+    flag("on")
+    captured = []
+    monkeypatch.setattr(posthog_client, "capture_exception", lambda exc, **kw: captured.append(exc))
+    caplog.set_level(logging.ERROR, logger="main")
+    boom = RuntimeError("PostgREST down")
+    note_actions["save_summary"].side_effect = boom
+    with pytest.raises(RuntimeError) as raised:
+        TestClient(app).post("/api/notes/n1/summarize", json=_note_action({}))
+    assert raised.value is boom
+    logged = [r for r in caplog.records if r.name == "main" and r.getMessage() == "Unhandled exception"]
+    assert len(logged) == 1 and logged[0].exc_info[1] is boom
+    assert captured == [boom]
+
+
+def test_the_error_card_layer_wraps_the_whole_stack_and_keeps_the_trace():
+    """Outside every ServerErrorMiddleware (so the generic 500 passes it), and
+    installed after the OpenTelemetry instrumentation, which is still there."""
+    from starlette.middleware.errors import ServerErrorMiddleware
+
+    stack = app.build_middleware_stack()
+    assert isinstance(stack, crisis_support.ErrorCardMiddleware)
+    layers, node = [], stack.app
+    while node is not None and len(layers) < 30:
+        layers.append(type(node).__name__)
+        node = getattr(node, "app", None)
+    assert isinstance(stack.app, ServerErrorMiddleware)
+    assert "OpenTelemetryMiddleware" in layers
+
+
 def test_a_typed_crisis_message_still_blocks_on_a_crisis_note(flag, sink, note_actions):
     """The note chat's typed message blocks as on every other surface: the
     card INSTEAD of a reply, whatever the note says."""
