@@ -68,8 +68,7 @@ export function TutorSidebar({
           <button
             type="button"
             data-testid="loop-new-session"
-            className="btn btn--primary"
-            style={{ width: "100%" }}
+            className={`btn btn--primary ${styles.sideNew}`}
             onClick={onNew}
             disabled={newDisabled}
           >

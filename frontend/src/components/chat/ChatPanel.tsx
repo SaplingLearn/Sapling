@@ -222,6 +222,17 @@ interface ChatInputBarProps {
   attachHref?: string;
 }
 
+/** The composer's controls share one 32px square (Attach, Send; Stop is 32 tall). */
+const COMPOSER_ICON: React.CSSProperties = {
+  width: 32,
+  height: 32,
+  padding: 0,
+  display: "inline-grid",
+  placeItems: "center",
+  alignSelf: "flex-end",
+  boxSizing: "border-box",
+};
+
 const ChatInputBar = React.memo(function ChatInputBar({
   onSend,
   onAction,
@@ -338,6 +349,7 @@ const ChatInputBar = React.memo(function ChatInputBar({
           <button
             data-testid="tutor-stop"
             className="btn btn--sm"
+            style={{ height: 32, alignSelf: "flex-end" }}
             onClick={onStop}
             aria-label="Stop response"
           >
@@ -353,7 +365,7 @@ const ChatInputBar = React.memo(function ChatInputBar({
             aria-label="Attach material"
             title="Attach material"
             className="btn btn--sm btn--ghost"
-            style={{ width: 32, padding: 0, alignSelf: "flex-end" }}
+            style={COMPOSER_ICON}
           >
             <Icon name="plus" size={15} />
           </Link>
@@ -361,6 +373,7 @@ const ChatInputBar = React.memo(function ChatInputBar({
         <button
           data-testid="tutor-send"
           className="btn btn--primary btn--sm"
+          style={{ ...COMPOSER_ICON, width: 40 }}
           onClick={submit}
           disabled={disabled || !text.trim()}
           aria-label="Send"

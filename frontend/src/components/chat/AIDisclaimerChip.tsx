@@ -3,7 +3,9 @@
 import React, { useState } from "react";
 import { DisclaimerModal } from "../DisclaimerModal";
 
-export function AIDisclaimerChip() {
+/** `height`: the chip matches the controls beside it (28 by default; the
+ *  Tutor's TopBar sets every action to 32). */
+export function AIDisclaimerChip({ height = 28 }: { height?: number } = {}) {
   const [tooltipVisible, setTooltipVisible] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
 
@@ -22,7 +24,7 @@ export function AIDisclaimerChip() {
             display: "inline-flex",
             alignItems: "center",
             gap: 4,
-            height: 28,
+            height,
             padding: "0 12px",
             background: "var(--bg-subtle)",
             border: "1px solid var(--border)",

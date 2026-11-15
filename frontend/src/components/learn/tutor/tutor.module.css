@@ -22,7 +22,10 @@
   overflow: hidden;
 }
 
+/* Sidebar sizes: every row, the search and New session are 36px tall; the
+   head's toggle is the shell's 32px icon button. */
 .sideInner {
+  --side-control: 36px;
   padding: 22px 14px 18px;
   display: flex;
   flex-direction: column;
@@ -41,6 +44,15 @@
 .sideHead h2 {
   margin: 0;
   font-size: 22px;
+  line-height: 32px;
+}
+
+.sideNew {
+  width: 100%;
+  height: var(--side-control);
+  padding-top: 0;
+  padding-bottom: 0;
+  box-sizing: border-box;
 }
 
 .iconBtn {
@@ -71,7 +83,8 @@
   align-items: center;
   gap: 8px;
   padding: 0 11px;
-  height: 34px;
+  height: var(--side-control, 36px);
+  box-sizing: border-box;
   border-radius: var(--r-sm);
   background: var(--bg-panel);
   border: 1px solid var(--border);
@@ -108,7 +121,9 @@
   display: flex;
   align-items: center;
   gap: 9px;
-  padding: 7px 8px;
+  height: var(--side-control, 36px);
+  box-sizing: border-box;
+  padding: 0 8px;
   border-radius: var(--r-sm);
   font-size: 13px;
   color: var(--text-dim);
@@ -233,13 +248,20 @@
   min-width: 0;
 }
 
+/* TopBar rhythm, the same on every page: crumb 14 · 4 · title 36 · 4 · line 20,
+   and every action 32px tall. */
 .topTitle h1 {
   margin: 0;
   font-size: 30px;
+  line-height: 36px;
   overflow-wrap: anywhere;
 }
 
 .crumb {
+  display: block;
+  font-size: 10px;
+  line-height: 14px;
+  height: 14px;
   margin-bottom: 4px;
   background: none;
   border: 0;
@@ -255,8 +277,17 @@
 
 .topSub {
   font-size: 13px;
+  line-height: 20px;
+  min-height: 20px;
   color: var(--text-dim);
-  margin-top: 3px;
+  margin-top: 4px;
+}
+
+.crumbStatic {
+  font-size: 10px;
+  line-height: 14px;
+  height: 14px;
+  margin-bottom: 4px;
 }
 
 .topActs {
@@ -265,6 +296,11 @@
   gap: 8px;
   flex-wrap: wrap;
   justify-content: flex-end;
+}
+
+.topActs > :is(button, a, span) {
+  height: 32px;
+  box-sizing: border-box;
 }
 
 .body {
@@ -288,20 +324,47 @@
 }
 
 /* ── T1 Tutor home ─────────────────────────────────────────────────────── */
+/* One 8px rhythm: mark 56 · 24 · heading 48 · 16 · intro 48 (2 × 24) · 24 ·
+   suggestions 40 · 16 · CTA 40. Every control on the page is 40px tall. */
 .home {
+  --home-control: 40px;
   min-height: 100%;
   display: flex;
   flex-direction: column;
   justify-content: center;
   align-items: center;
-  gap: 18px;
   text-align: center;
   padding: 40px 32px;
+}
+
+.home > * {
+  margin: 0;
+}
+
+.home > .heroMark {
+  margin-bottom: 24px;
+}
+
+.home > h2 {
+  margin-bottom: 16px;
+}
+
+.home > .quote {
+  margin-bottom: 24px;
+}
+
+.home > .suggest {
+  margin-bottom: 16px;
+}
+
+.home > .ctaNote {
+  margin-top: 12px;
 }
 
 .heroMark {
   width: 56px;
   height: 56px;
+  flex-shrink: 0;
   border-radius: 50%;
   background: var(--accent-soft);
   color: var(--accent);
@@ -314,14 +377,13 @@
 }
 
 .home h2 {
-  font: 600 42px/1.15 var(--font-display);
+  font: 600 42px/48px var(--font-display);
   letter-spacing: -0.02em;
-  margin: 0;
   text-wrap: balance;
 }
 
 .quote {
-  font: italic 400 15px/1.55 var(--font-serif);
+  font: italic 400 15px/24px var(--font-serif);
   color: var(--text-dim);
   max-width: 560px;
   margin: 0;
@@ -339,8 +401,12 @@
 .pill {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
-  padding: 8px 14px;
+  height: var(--home-control, 40px);
+  padding: 0 16px;
+  box-sizing: border-box;
+  line-height: 1;
   border-radius: 999px;
   font-size: 13px;
   font-weight: 500;
@@ -362,8 +428,15 @@
 }
 
 .cta {
-  height: 40px;
+  height: var(--home-control, 40px);
   padding: 0 16px;
+  box-sizing: border-box;
+}
+
+.ctaNote {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-muted);
 }
 
 /* ── T2 / T3 pages ─────────────────────────────────────────────────────── */
@@ -674,6 +747,22 @@
   overflow-wrap: anywhere;
 }
 
+/* The actions under the latest turn (Continue, Check me, Start with …): 36px,
+   the sidebar's control height. */
+.chatActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.chatActions > :is(button, a) {
+  height: 36px;
+  padding-top: 0;
+  padding-bottom: 0;
+  box-sizing: border-box;
+}
+
 .qcard {
   padding: 20px 22px;
   display: flex;
@@ -798,12 +887,9 @@
     font-size: 24px;
   }
 
-  .home h2:focus {
-  outline: none;
-}
-
-.home h2 {
+  .home h2 {
     font-size: 30px;
+    line-height: 36px;
   }
 
   .page,

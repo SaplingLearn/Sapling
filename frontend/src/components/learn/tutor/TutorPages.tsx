@@ -116,7 +116,7 @@ export function TutorHome({
         <Icon name="sparkle" size={14} /> {busy ? "Starting…" : "Start a guided session"}
       </button>
       {closesCurrent && (
-        <p className="small-note" style={{ fontSize: 12, color: "var(--text-muted)", margin: 0 }}>
+        <p className={styles.ctaNote}>
           Starting wraps up “{closesCurrent}” first.
         </p>
       )}

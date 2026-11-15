@@ -1822,7 +1822,7 @@ export function LoopLearn() {
         </button>
       )}
       {isMobile && renderMobileActions()}
-      <AIDisclaimerChip />
+      <AIDisclaimerChip height={32} />
       {inSession && !isMobile && sessionId && !readOnly && (
         <button type="button" className={tutorStyles.iconBtn} data-testid="tutor-panel-toggle"
           aria-label={panelOpen ? "Hide session panel" : "Show session panel"} aria-pressed={panelOpen}
@@ -1847,7 +1847,7 @@ export function LoopLearn() {
             {course.course_code ? `${course.course_code} · ` : ""}{course.nickname || course.course_name}
           </button>
         ) : (
-          <div className="label-micro" style={{ marginBottom: 4 }}>Tutor</div>
+          <div className={`label-micro ${tutorStyles.crumbStatic}`}>Tutor</div>
         )}
         <h1 className="h-serif">{topTitle()}</h1>
         <div className={tutorStyles.topSub} data-testid="tutor-phase-line">{topSub()}</div>
@@ -1989,7 +1989,7 @@ export function LoopLearn() {
   /** Between checks: Continue (after feedback), Check me, the plan's first
    *  concept, and the check's status line. */
   const renderTeachActions = (firstConcept: LoopPlanConcept | undefined) => (
-    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+    <div className={tutorStyles.chatActions}>
       {state.phase === "feedback" && (
         <button
           ref={continueRef}
