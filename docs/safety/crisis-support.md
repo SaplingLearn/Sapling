@@ -364,13 +364,21 @@ points at it).
   suicide in a first-person sentence with no topic word, shows the
   resources beside its summary (its concepts, its chat reply, its trip to
   the tutor) every time an AI action reads it, and logs a
-  `safety.crisis_support_shown` event each time. Nothing is withheld.
+  `safety.crisis_support_shown` event each time (the note chat, which
+  re-reads the note every turn, at most once a day per note version).
+  Nothing is withheld.
 - **Send to tutor carries the note's title.** The tutor opens with the
-  note's first title line filled in as its topic, and starting that session
-  is a typed-text screen (`tutor_start`): for a note whose TITLE matched,
-  the card shows beside Send to tutor and then again, instead of a session,
-  when the student presses Start. A note whose body matched starts the
-  tutor normally.
+  note's first title line as its topic. A start on that title unchanged,
+  verified server-side as the student's own note's title, starts the
+  session with the card beside it; if the student edits the topic first, it
+  is typed text and blocks like any other.
+- **A flashcard concept's name is course material.** The Flashcards page
+  generates one concept per call with the concept's name as the topic. A
+  name that matches one of the student's own graph concepts
+  (`concept_topic.topic_is_graph_concept`, read only on a match) makes its
+  cards with the card beside them, shown once per Start. A concept the
+  student added by name that is not on their map is screened as typed and
+  blocks.
 - **A model-based screen** would catch indirect language. It would also need
   its own labelled eval set, measured false-negative and false-positive
   rates, eval spend, and a latency budget on every turn. It would also send
