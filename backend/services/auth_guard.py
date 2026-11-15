@@ -98,11 +98,15 @@ def issued_before(payload: dict, cut_off: float) -> bool:
 
     A token that says its `iat` is to the millisecond (`iat_precision: "ms"`:
     every token minted now, by the backend and the BFF, truncated so it is
-    never later than the mint) compares exactly, whether or not that iat
-    falls on a whole second. Anything else (a legacy whole-second `iat`, or
-    the legacy `exp`-derived estimate) could have been minted anywhere in its
-    second, so one from the cut-off's own second counts as issued before it:
-    no benefit of the doubt.
+    never later than the mint) compares at the millisecond, whether or not
+    that iat falls on a whole second: the cut-off (stored to the microsecond)
+    is truncated to its millisecond the way the minter truncates the iat, so
+    a session minted in the sign-out's own millisecond (signed straight back
+    in) survives and one from any earlier millisecond is revoked. Both sides
+    become integer milliseconds (`_unix_ms`), so no float error moves one.
+    Anything else (a legacy whole-second `iat`, or the legacy `exp`-derived
+    estimate) could have been minted anywhere in its second, so one from the
+    cut-off's own second counts as issued before it: no benefit of the doubt.
     """
     iat = session_issued_at(payload)
     minted_iat = payload.get("iat")
@@ -111,8 +115,18 @@ def issued_before(payload: dict, cut_off: float) -> bool:
         and isinstance(minted_iat, (int, float))
         and not isinstance(minted_iat, bool)
     ):
-        return iat < cut_off
+        return round(iat * 1000) < _unix_ms(cut_off)
     return math.floor(iat) <= math.floor(cut_off)
+
+
+def _unix_ms(seconds: float) -> int:
+    """Unix seconds stored to the microsecond (a timestamptz, as a float)
+    truncated to the millisecond in integer arithmetic. The float is first
+    rounded to its whole microsecond (it holds one to well under half a
+    microsecond for any date in range), then divided as an integer, so a
+    product that lands a hair under a millisecond can never floor into the
+    one before it."""
+    return round(seconds * 1_000_000) // 1000
 
 
 def _decode_session(request: Request) -> dict:

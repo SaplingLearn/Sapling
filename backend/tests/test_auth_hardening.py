@@ -179,16 +179,39 @@ class TestRevocation:
         real_guard.select.return_value = _row(sessions_valid_after=_iso(now - 0.3))
         assert auth_guard._real_get_session_user_id(_request(_legacy_token_at(now))) == "user_alice"
 
-    def test_session_minted_0_4_ms_before_the_sign_out_is_revoked(self, real_guard, monkeypatch):
-        # Minted at 12.2996, signed out at 12.2999: a rounded iat (12.300)
-        # would survive; the truncated one (12.299) is older than the cut-off.
+    def test_session_minted_0_5_ms_before_the_sign_out_is_revoked(self, real_guard, monkeypatch):
+        # Minted at 12.2996, signed out at 12.3001: a rounded iat (12.300)
+        # would land in the sign-out's own millisecond and survive; the
+        # truncated one (12.299) is a millisecond older than the cut-off.
         second = int(time.time())
         monkeypatch.setattr(session_tokens.time, "time_ns", lambda: second * 10**9 + 299_600_000)
         token = session_tokens.mint_session("user_alice", ttl=3600, secret=SECRET)
-        real_guard.select.return_value = _row(sessions_valid_after=_iso(second + 0.2999))
+        real_guard.select.return_value = _row(sessions_valid_after=_iso(second + 0.3001))
         with pytest.raises(HTTPException) as exc:
             auth_guard._real_get_session_user_id(_request(token))
         assert exc.value.detail == "Session revoked"
+
+    def test_session_minted_in_the_sign_out_millisecond_after_it_is_honoured(self, real_guard, monkeypatch):
+        # Signed out at 12.123456 (stored to the microsecond), signed straight
+        # back in at 12.1239: the iat is truncated to 12.123, the sign-out's
+        # own millisecond. Compared to the microsecond (12.123 < 12.123456)
+        # the new session would count as revoked; compared at the iat's own
+        # granularity, the millisecond, it is not before the cut-off.
+        second = int(time.time())
+        monkeypatch.setattr(session_tokens.time, "time_ns", lambda: second * 10**9 + 123_900_000)
+        token = session_tokens.mint_session("user_alice", ttl=3600, secret=SECRET)
+        real_guard.select.return_value = _row(sessions_valid_after=_iso(second + 0.123456))
+        assert auth_guard._real_get_session_user_id(_request(token)) == "user_alice"
+
+    def test_session_minted_a_millisecond_before_the_sign_out_millisecond_is_revoked(self, real_guard, monkeypatch):
+        second = int(time.time())
+        monkeypatch.setattr(session_tokens.time, "time_ns", lambda: second * 10**9 + 122_999_999)
+        token = session_tokens.mint_session("user_alice", ttl=3600, secret=SECRET)
+        real_guard.select.return_value = _row(sessions_valid_after=_iso(second + 0.123456))
+        with pytest.raises(HTTPException) as exc:
+            auth_guard._real_get_session_user_id(_request(token))
+        assert exc.value.detail == "Session revoked"
+
 
     def test_a_backend_session_minted_at_a_whole_second_is_not_read_as_legacy(self, real_guard, monkeypatch):
         # Minted at exactly X.000, signed out at X.000: issued at, not before,
@@ -239,6 +262,22 @@ class TestRevocation:
         with pytest.raises(HTTPException) as exc:
             auth_guard._real_get_session_user_id(_request(_token_at(now - 60)), allow_unapproved=True)
         assert exc.value.detail == "Session revoked"
+
+
+@pytest.mark.parametrize("iat, cut_off, revoked", [
+    (1000.123, 1000.123456, False),  # the sign-out's own millisecond
+    (1000.122, 1000.123456, True),   # the millisecond before it
+    (1000.123, 1000.123, False),     # exactly at the cut-off
+    (1000.122, 1000.123, True),
+    (1000.999, 1001.0, True),        # across a second boundary
+    (1001.0, 1001.000999, False),
+    # Present-day values, a microsecond either side of a millisecond edge.
+    (1_700_000_000.29, 1_700_000_000.290999, False),
+    (1_700_000_000.289, 1_700_000_000.29, True),
+])
+def test_a_millisecond_iat_compares_to_the_cut_off_at_the_millisecond(iat, cut_off, revoked):
+    payload = {"iat": iat, "iat_precision": "ms"}
+    assert auth_guard.issued_before(payload, cut_off) is revoked
 
 
 @pytest.fixture
