@@ -43,7 +43,9 @@ Never copied: OAuth tokens, roles, social (rooms/friendships), telemetry
 move), cosmetics (`equipped_*`/`featured_*` ids), `avatar_url` (storage buckets
 differ), `course_chunks`, in-flight staging (`document_uploads`, `gradescope_syncs`,
 `tutor_pending_sessions`: wiped, never bundled), `legal_acceptances` (kept by the
-wipe), and every privacy/consent/notification choice in
+wipe and never bundled: a consent record belongs to the account in the
+environment where it was given, never to another environment's account), and
+every privacy/consent/notification choice in
 `user_settings` (see `_SETTINGS_COPIED`): consent is the person's, given on
 each environment, and is never carried from one to the other — the Terms and
 Privacy Policy accepted on one environment included. The imported
