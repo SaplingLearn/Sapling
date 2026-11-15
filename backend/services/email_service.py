@@ -131,6 +131,8 @@ SUPPRESSION_SCOPE_OPS = "ops_alert"
 #: domain whatever the kind, so these stop an operational send as well.
 #: (The reason CHECK in 20261022063145_email.sql.)
 DELIVERABILITY_REASONS = ("bounce", "complaint")
+#: The owner's own choice: the weakest reason, which never replaces another.
+SUPPRESSION_REASON_UNSUBSCRIBE = "unsubscribe"
 
 #: Where each scope's suppressions live. One table per scope, same columns,
 #: keyed on recipient_hash alone: `email_suppressions` is left exactly as it
@@ -246,13 +248,20 @@ def _stops_send(rhash: str, scope: str) -> bool:
 
 @runs_as_service  # #115: the suppression tables are service-only
 def suppress(rhash: str, reason: str = "unsubscribe", scope: str = SUPPRESSION_SCOPE_ALL) -> None:
-    """Add a hash to `scope`'s suppression table. Idempotent: an existing row
-    keeps its original reason and timestamp. Raises on a DB error (the
+    """Add a hash to `scope`'s suppression table. Idempotent, and a stronger
+    reason wins: a bounce or complaint (`DELIVERABILITY_REASONS`) replaces
+    whatever reason the row had (an earlier unsubscribe would otherwise hide
+    it from the ops-alert check, which filters on those reasons), while an
+    unsubscribe only makes sure a row exists and never downgrades one. Both
+    are the same upsert on `recipient_hash` a backend from before scopes
+    makes; the row keeps its original timestamp. Raises on a DB error (the
     unsubscribe page must not claim success it did not get)."""
+    if reason not in (SUPPRESSION_REASON_UNSUBSCRIBE, *DELIVERABILITY_REASONS):
+        raise ValueError(f"unknown suppression reason {reason!r}")
     _suppression_table(scope).upsert(
         {"recipient_hash": rhash, "reason": reason},
         on_conflict="recipient_hash",
-        ignore_duplicates=True,
+        ignore_duplicates=reason not in DELIVERABILITY_REASONS,
     )
 
 

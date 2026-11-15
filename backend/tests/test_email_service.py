@@ -516,6 +516,34 @@ def test_an_all_scope_suppression_writes_exactly_what_it_always_did(tables):
     tables["email_alert_suppressions"].upsert.assert_not_called()
 
 
+@pytest.mark.parametrize("reason", email_service.DELIVERABILITY_REASONS)
+@pytest.mark.parametrize("scope", sorted(email_service.SUPPRESSION_TABLES))
+def test_a_bounce_or_complaint_replaces_an_existing_unsubscribe(tables, reason, scope):
+    """A stronger reason overwrites the row's reason (DO UPDATE on the same
+    recipient_hash conflict), so an address that unsubscribed and later
+    bounced reads as a bounce, which the ops-alert check (`_stops_send`)
+    filters on."""
+    rhash = email_service.recipient_hash(TO)
+    email_service.suppress(rhash, reason, scope=scope)
+    call = tables[email_service.SUPPRESSION_TABLES[scope]].upsert.call_args
+    assert call.args[0] == {"recipient_hash": rhash, "reason": reason}
+    assert call.kwargs == {"on_conflict": "recipient_hash", "ignore_duplicates": False}
+
+
+def test_an_unsubscribe_never_downgrades_a_bounce_or_complaint(tables):
+    """An unsubscribe only makes sure a row exists (DO NOTHING on conflict): a
+    bounce or complaint already there keeps its reason."""
+    rhash = email_service.recipient_hash(TO)
+    email_service.suppress(rhash, "unsubscribe")
+    assert tables["email_suppressions"].upsert.call_args.kwargs["ignore_duplicates"] is True
+
+
+def test_an_unknown_reason_is_refused(tables):
+    with pytest.raises(ValueError):
+        email_service.suppress("a" * 64, "spam")
+    tables["email_suppressions"].upsert.assert_not_called()
+
+
 def test_an_unknown_scope_is_refused(tables):
     with pytest.raises(ValueError):
         email_service.suppress("a" * 64, scope="everything")

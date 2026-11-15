@@ -82,7 +82,11 @@ prefetch GETs. A suppression has a **scope**
 | `all` | `email_suppressions` | the link in any email but an ops alert (reason `unsubscribe`); a bounce or complaint (reason `bounce`/`complaint`; nothing writes these yet, see Known gaps) | every kind except `ops_alert`; with reason `bounce` or `complaint`, `ops_alert` too (`email_service.DELIVERABILITY_REASONS`) |
 | `ops_alert` | `email_alert_suppressions` | the link in an ops alert (`…&scope=ops_alert`) | `ops_alert` only |
 
-An address can be in both. The two tables have the same columns and key
+An address can be in both. One row per address and table: a later bounce or
+complaint replaces an earlier unsubscribe's reason (`email_service.suppress`
+upserts it with DO UPDATE, so the ops-alert check sees it), and a later
+unsubscribe never downgrades a bounce or complaint (DO NOTHING on conflict).
+The two tables have the same columns and key
 (`recipient_hash`). The ops-alert scope got a table of its own rather than a
 column on `email_suppressions` so that table never changes shape: a deploy
 migrates before the new backend starts, and the old backend serving meanwhile
