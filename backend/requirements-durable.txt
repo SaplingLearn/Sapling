@@ -8,4 +8,4 @@
 # `dbos` NOT installed — see backend/tests/test_durable_shim.py.
 #
 # Install with: pip install -r requirements-durable.txt
-dbos>=2.28,<3
+dbos>=3.5.0,<4
