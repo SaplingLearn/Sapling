@@ -45,7 +45,7 @@ jobs:
     # Acceptance bar (#389): total wall clock under 15 minutes — enforced.
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # This lane reaches `supabase start` through `make e2e-up` ->
       # scripts/e2e-up.sh, so it has the SAME exposure integration.yml does:
       # Supabase's ports sit inside Linux's ephemeral source-port range, and an

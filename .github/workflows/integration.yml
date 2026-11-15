@@ -25,7 +25,7 @@ jobs:
       run:
         working-directory: backend
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # Supabase's ports sit INSIDE Linux's default ephemeral source-port range,
       # so an outbound connection this job makes can be handed 54322 as its
       # source port and Docker's later bind of 0.0.0.0:54322 then fails with
