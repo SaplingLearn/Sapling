@@ -15,6 +15,7 @@ import { API_URL, getMe, onSessionExpired } from '@/lib/api';
 import { readAccountSettings } from '@/lib/accountSettings';
 import { isAppShellRoute } from '@/lib/appRoutes';
 import { clearUserScopedStorage } from '@/lib/userScopedStorage';
+import { purgeGuestOnboardingDraft } from '@/lib/onboardingDraft';
 import { cacheBustedAvatar, isDeadSessionStatus, profileFields } from './userProfile';
 import {
   ACCOUNT_REFRESH_MS,
@@ -42,6 +43,15 @@ interface UserContextValue {
   setActiveUser: (id: string, name: string, avatar?: string, opts?: { persist?: boolean }) => void;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
+  /**
+   * GET /api/auth/me's `onboarding_completed` for this account; null until it
+   * has answered (and after an account change). The shell sends a student
+   * whose answer is `false` to /onboarding (components/OnboardingGate.tsx).
+   */
+  onboardingCompleted: boolean | null;
+  /** The onboarding save just finished (or found it already finished): the
+   * shell may let this account in without waiting for the next /me. */
+  markOnboarded: () => void;
   // Direct setter exposed so callers can do an optimistic UI update
   // (e.g. show a local blob URL for an avatar the user just picked
   // before the upload finishes). The next refreshProfile() will
@@ -63,6 +73,8 @@ export const UserContext = createContext<UserContextValue>({
   setActiveUser: () => {},
   signOut: () => Promise.resolve(),
   refreshProfile: () => Promise.resolve(),
+  onboardingCompleted: null,
+  markOnboarded: () => {},
   setAvatarUrl: () => {},
 });
 
@@ -126,6 +138,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
   const [equippedCosmetics, setEquippedCosmetics] = useState<EquippedCosmetics>({});
   const [featuredRole, setFeaturedRole] = useState<Role | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [onboardingCompleted, setOnboardingCompleted] = useState<boolean | null>(null);
   // Account changes and newer profile loads invalidate older responses,
   // including a 401 or a body that finishes after sign-out.
   const profileGeneration = React.useRef(0);
@@ -144,7 +157,11 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     }
     // A repeated confirmation of the same account must not cancel its
     // profile load: userId would be unchanged, so the effect would not retry.
-    if (id !== activeIdentity.current) profileGeneration.current += 1;
+    if (id !== activeIdentity.current) {
+      profileGeneration.current += 1;
+      // Another account's onboarding answer says nothing about this one.
+      setOnboardingCompleted(null);
+    }
     activeIdentity.current = id;
     setUserId(id);
     setUserName(name);
@@ -160,6 +177,9 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
+    // Onboarding needs an account now (sign in first): drop any answers the
+    // old signed-out "guest" onboarding left on this browser.
+    purgeGuestOnboardingDraft();
     const saved = localStorage.getItem('sapling_user');
     if (saved) {
       try {
@@ -210,6 +230,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
         // localStorage, so the next bootstrap takes the fast synchronous
         // path above instead of hitting the network again.
         setActiveUser(me.user_id, me.name || '', me.avatar_url || '');
+        if (typeof me.onboarding_completed === 'boolean') setOnboardingCompleted(me.onboarding_completed);
       } catch {
         // No identity source is left, for any reason: a 401 (no/expired
         // session), a 404 (the cookie names a user row that no longer
@@ -249,6 +270,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     setEquippedCosmetics({});
     setFeaturedRole(null);
     setIsAdmin(false);
+    setOnboardingCompleted(null);
     // #756: every user-scoped key, not just the identity — a shared browser
     // must not hand the next student this one's semester, drafts or quiz.
     clearUserScopedStorage();
@@ -366,6 +388,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
         setUserName(data.name);
         persistConfirmedName(uid, data.name);
       }
+      if (typeof data.onboarding_completed === 'boolean') setOnboardingCompleted(data.onboarding_completed);
       const profile = profileFields(data);
       setUsername(profile.username);
       setRoles(profile.roles);
@@ -413,6 +436,8 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
 
   const refreshProfile = useCallback(async () => { await fetchProfileData(userId); }, [userId, fetchProfileData]);
 
+  const markOnboarded = useCallback(() => setOnboardingCompleted(true), []);
+
   const signOut = useCallback(async () => {
     try {
       await fetch('/api/auth/session', { method: 'DELETE' });
@@ -429,9 +454,11 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
       userId, userName, avatarUrl, userReady, isAuthenticated,
       username, roles, equippedCosmetics, featuredRole, isAdmin,
       setActiveUser, signOut, refreshProfile, setAvatarUrl,
+      onboardingCompleted, markOnboarded,
     }),
     [userId, userName, avatarUrl, userReady, isAuthenticated,
-     username, roles, equippedCosmetics, featuredRole, isAdmin, setActiveUser, refreshProfile, signOut]
+     username, roles, equippedCosmetics, featuredRole, isAdmin, setActiveUser, refreshProfile, signOut,
+     onboardingCompleted, markOnboarded]
   );
 
   return <UserContext.Provider value={value}>{children}</UserContext.Provider>;

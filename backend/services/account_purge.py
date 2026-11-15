@@ -24,9 +24,9 @@ services/account_purge_sweeper.py claims the account and runs
    left empty is deleted, `services/social/rooms.py::leave_room`);
 5. deletes reactions, the room activity feed, friendships and friend
    requests, feedback and issue reports (+ their screenshots), cosmetics,
-   roles, settings, the profile (+ the avatar files), the waitlist/newsletter
-   row the account was joined from, and any chunk-contributor row a failed
-   withdrawal left behind;
+   roles, settings, the legal acceptances, the profile (+ the avatar files),
+   the waitlist/newsletter row the account was joined from, and any
+   chunk-contributor row a failed withdrawal left behind;
 6. turns the `users` row into an anonymised STUB (no email, no google_id,
    unapproved, `purged_at` set). The row stays because shared rows point at
    it: `rooms.created_by` (NOT NULL), the tombstoned messages, a former
@@ -88,6 +88,11 @@ PURGE_DELETES: tuple[tuple[str, str], ...] = (
     ("user_roles", "user_id"),
     ("user_settings", "user_id"),
     ("user_profiles", "user_id"),
+    # The Terms / Privacy versions accepted at onboarding. The admin wipe keeps
+    # them (account state); the purge does not, because the Privacy Policy does
+    # not say consent records outlive the account, and a reopened stub
+    # (services/auth/signin.py) must start without the old account's answers.
+    ("legal_acceptances", "user_id"),
     ("newsletter_emails", "joined_user_id"),
 )
 

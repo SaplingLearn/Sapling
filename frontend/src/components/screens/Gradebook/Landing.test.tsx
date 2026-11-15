@@ -19,16 +19,15 @@ vi.mock("@/context/UserContext", () => ({
   useUser: () => mockUser,
 }));
 
-// TranscriptModal (rendered by the landing, #139) toasts its load failures;
-// the landing itself never toasts. No test here asserts on toasts — the modal
-// has its own suite — so a bare stub keeps useToast from throwing. Stable
-// object, like the real memoized provider: the modal's fetch effect keys on
-// toast identity.
+// TranscriptModal (rendered by the landing, #139) toasts its load failures,
+// and the landing toasts a failed Google Calendar connect handed on to it
+// (?calendar_error=). Stable object, like the real memoized provider: the
+// modal's fetch effect keys on toast identity.
 const toastApi = vi.hoisted(() => ({
   show: () => {},
   dismiss: () => {},
   success: () => {},
-  error: () => {},
+  error: vi.fn(),
   info: () => {},
   warn: () => {},
 }));
@@ -443,5 +442,22 @@ describe("GradebookLanding term GPA + term-aware card links (#139)", () => {
     const open = await screen.findByTestId("gradebook-transcript-open");
     fireEvent.click(open);
     expect(await screen.findByRole("dialog")).toBeInTheDocument();
+  });
+});
+
+describe("GradebookLanding — a calendar connect that failed on onboarding's way here", () => {
+  it("explains ?calendar_error and clears it", async () => {
+    mockedGetCourses.mockResolvedValue({ courses: [] });
+    window.history.replaceState({}, "", "/gradebook?calendar_error=scope_denied");
+
+    render(<GradebookLanding />);
+
+    await waitFor(() =>
+      expect(toastApi.error).toHaveBeenCalledWith(
+        expect.stringContaining("needs permission to see and add your events"),
+      ),
+    );
+    expect(toastApi.error).toHaveBeenCalledTimes(1);
+    expect(window.location.search).toBe("");
   });
 });

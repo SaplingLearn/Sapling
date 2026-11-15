@@ -1,6 +1,6 @@
 import re
 from typing import Annotated, Optional, Union, List, Literal
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, StringConstraints, field_validator, model_validator
 
 from services.quiz.config import QUIZ_MIN_QUESTIONS, QUIZ_MAX_QUESTIONS
 
@@ -448,17 +448,43 @@ class ScanConceptsBody(BaseModel):
 
 # ── Onboarding ────────────────────────────────────────────────────────────────
 
+#: The year choices onboarding offers (frontend Onboarding.tsx `YEARS`).
+OnboardingYear = Literal["freshman", "sophomore", "junior", "senior", "graduate", "other"]
+
+#: Most courses one onboarding submit may enroll in.
+ONBOARDING_MAX_COURSES = 20
+
+
 class OnboardingBody(BaseModel):
     user_id: Id
-    first_name: ShortText
-    last_name: ShortText
-    year: str = Field(max_length=64)
+    first_name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=80)]
+    last_name: Annotated[str, StringConstraints(strip_whitespace=True, max_length=80)]
+    year: OnboardingYear
     # The redesigned onboarding (school -> year + courses) no longer asks for
     # majors or a learning style; both stay accepted for older clients.
     majors: list[ShortText] = Field(default_factory=list, max_length=20)
     minors: list[ShortText] = Field(default_factory=list, max_length=20)
-    course_ids: list[Id] = Field(min_length=1, max_length=50)  # abstract catalog course ids; enroll resolves each to a current-term offering
+    # Abstract catalog course ids; enrollment resolves each to an offering of
+    # the onboarding term. Empty is allowed: "my courses aren't listed — I'll
+    # add them later".
+    course_ids: list[Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=128)]] = Field(
+        default_factory=list, max_length=ONBOARDING_MAX_COURSES,
+    )
     learning_style: Optional[str] = Field(default=None, max_length=64)
+    # Under-18 students start private: the server applies their privacy
+    # settings before onboarding completes (routes/onboarding.py).
+    under_18: bool = False
+    # The Terms / Privacy Policy versions the student accepted; anything but
+    # the current ones (services/legal.py) is a 422 `legal_outdated`.
+    accepted_terms_version: ShortText
+    accepted_privacy_version: ShortText
+
+    @field_validator("course_ids")
+    @classmethod
+    def _unique_course_ids(cls, v: list[str]) -> list[str]:
+        if len(set(v)) != len(v):
+            raise ValueError("course_ids must not repeat a course")
+        return v
 
 
 # ── Profile & Settings ───────────────────────────────────────────────────────

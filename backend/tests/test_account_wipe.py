@@ -23,6 +23,7 @@ WIPED = (
 )
 KEPT = (
     "users", "user_profiles", "user_settings", "user_roles", "oauth_tokens",
+    "legal_acceptances",
     "gradescope_credentials", "user_cosmetics", "friendships", "rooms",
     "room_members", "feedback", "issue_reports", "events", "llm_usage",
     "admin_audit_log", "offering_concept_stats",
@@ -410,6 +411,32 @@ def test_wiped_but_not_bundled_tables_are_exactly_the_named_exceptions():
     exception = exception[:exception.index("\n")]
     for name in ("document_uploads", "gradescope_syncs", "tutor_pending_sessions"):
         assert f"`{name}`" in exception, f"CLAUDE.md's wipe-not-bundle exception omits {name}"
+
+
+def test_consent_records_are_kept_and_never_bundled_for_a_documented_reason():
+    """`legal_acceptances` breaks CLAUDE.md's "a new per-user table belongs in
+    BOTH the wipe and the bundle": a consent record belongs to the account in
+    the environment where it was given, so the wipe keeps it and a copy never
+    carries it to another environment's account. The exception is stated in
+    CLAUDE.md, the wipe's KEPT_PER_USER reason and the bundle's docstring."""
+    from services import account_bundle
+
+    assert "legal_acceptances" not in aw.wiped_tables()
+    assert "legal_acceptances" not in {s.name for s in account_bundle.SPECS}
+    assert "environment" in aw.KEPT_PER_USER["legal_acceptances"]
+    doc = account_bundle.__doc__
+    assert "environment" in doc[doc.index("`legal_acceptances`"):][:200]
+
+    claude_md = (Path(__file__).resolve().parents[2] / "CLAUDE.md").read_text()
+    entry = next(
+        line for line in claude_md.splitlines()
+        if line.startswith("- backend/routes/admin_accounts.py")
+    )
+    exception = entry[entry.index("Exception: in-flight staging tables"):]
+    assert "`legal_acceptances`" in exception, (
+        "CLAUDE.md's admin account tools entry must name legal_acceptances's exception"
+    )
+    assert "environment" in exception[exception.index("`legal_acceptances`"):]
 
 
 def test_cascade_chains_end_in_a_direct_delete():
