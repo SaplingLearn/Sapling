@@ -252,7 +252,7 @@ def login_with_cookies(
     return conn
 
 
-def login(email: str, password: str) -> GSConnection:
+def login(email: str, password: str, *, remember_me: bool = False) -> GSConnection:
     """Authenticate with Gradescope. Returns a logged-in GSConnection.
 
     Reimplemented here instead of calling gradescopeapi's built-in login
@@ -264,6 +264,11 @@ def login(email: str, password: str) -> GSConnection:
          link as if the login were suspicious.
       2. It leaves the default python-requests User-Agent on the session,
          which the same anomaly heuristics flag on its own.
+
+    ``remember_me`` ticks Gradescope's "Remember me", as a browser would:
+    the login then sets the long-lived ``signed_token`` cookie beside
+    ``_gradescope_session``. ``login_for_session_cookies`` uses it, because
+    those cookies are what Sapling stores instead of the password.
 
     Both issues are fixed here. The resulting authenticated `Session` is
     handed back to a real `GSConnection` so the rest of the library
@@ -299,7 +304,7 @@ def login(email: str, password: str) -> GSConnection:
         "utf8": "✓",
         "session[email]": email,
         "session[password]": password,
-        "session[remember_me]": "0",
+        "session[remember_me]": "1" if remember_me else "0",
         "commit": "Log In",
         "session[remember_me_sso]": "0",
         "authenticity_token": auth_token,
@@ -361,6 +366,39 @@ def login(email: str, password: str) -> GSConnection:
     conn.logged_in = True
     conn.account = Account(session, base_url)
     return conn
+
+
+_GRADESCOPE_COOKIE_DOMAINS = frozenset({"gradescope.com", "www.gradescope.com"})
+
+
+def session_cookies(conn: GSConnection) -> dict[str, str]:
+    """The Gradescope session cookies of a logged-in connection, in the shape
+    ``login_via_bu_sso`` returns and ``login_with_cookies`` accepts:
+    ``{"_gradescope_session": ..., "signed_token": ...}`` (``signed_token``
+    may be ""). Raises GradescopeAuthError when there is no session cookie."""
+    found: dict[str, str] = {}
+    for cookie in conn.session.cookies:
+        if (cookie.domain or "").lstrip(".") not in _GRADESCOPE_COOKIE_DOMAINS:
+            continue
+        if cookie.name in ("_gradescope_session", "signed_token") and cookie.value:
+            found[cookie.name] = cookie.value
+    if not found.get("_gradescope_session"):
+        raise GradescopeAuthError("Gradescope did not return a session cookie after login.")
+    return {
+        "_gradescope_session": found["_gradescope_session"],
+        "signed_token": found.get("signed_token", ""),
+    }
+
+
+def login_for_session_cookies(email: str, password: str) -> dict[str, str]:
+    """Log in once with an email and password and return the session cookies
+    (``session_cookies``) to store in place of the password. The password is
+    used for this one login only; the session is closed before returning."""
+    conn = login(email, password, remember_me=True)
+    try:
+        return session_cookies(conn)
+    finally:
+        conn.session.close()
 
 
 def list_student_courses(conn: GSConnection) -> list[dict[str, Any]]:

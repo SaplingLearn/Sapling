@@ -1763,6 +1763,11 @@ export const uploadSyllabus = (input: {
 
 export type GradescopeAuthMode = 'password' | 'cookies';
 
+/** How the stored Gradescope session was obtained. A password is used for one
+ *  sign-in and never kept, so a `password` user re-enters it when the session
+ *  expires (components/Gradebook/gradescopeState.ts words that). */
+export type GradescopeConnectedVia = 'password' | 'bu_sso' | 'cookies';
+
 /** #770: `disconnected` = no saved credentials (course links may survive);
  *  `needs_reauth` = saved, but Gradescope rejected them on the last login. */
 export type GradescopeConnectionState = 'disconnected' | 'needs_reauth' | 'connected';
@@ -1773,6 +1778,8 @@ export type GradescopeSyncError = 'auth_failed' | 'fetch_failed' | 'write_failed
 export interface GradescopeStatus {
   has_credentials: boolean;
   auth_mode: GradescopeAuthMode | null;
+  /** Optional: a backend before 2026-11-16 does not send it. */
+  connected_via?: GradescopeConnectedVia | null;
   last_synced_at: string | null;
   credentials_updated_at?: string | null;
   // Optional so a backend without the #770 migration still type-checks; read

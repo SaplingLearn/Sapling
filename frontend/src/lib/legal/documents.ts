@@ -195,7 +195,7 @@ export const PRIVACY: LegalDocument = {
       link: CONTACT,
       bodySuffix: " before the 30 days below are up. When you delete your account:",
       list: [
-        "Straight away, your account is hidden, you are signed out, and it can no longer be signed in to. We also delete your Google sign-in tokens (and revoke Sapling's access at Google), delete any Gradescope login you saved, and ask PostHog to delete the product analytics it holds about you.",
+        "Straight away, your account is hidden, you are signed out, and it can no longer be signed in to. We also delete your Google sign-in tokens (and revoke Sapling's access at Google), delete the Gradescope connection you saved (we keep a Gradescope session, never your Gradescope or university password), and ask PostHog to delete the product analytics it holds about you.",
         "30 days after the deletion, we permanently erase your personal data: your name and email address, profile and avatar, settings, uploaded documents and notes, knowledge graph, quizzes, flashcards, study guides, tutoring sessions, gradebook and calendar data, feedback and bug reports, friendships, and the record of which Terms and Privacy Policy versions you accepted. You leave every study room, and the messages you sent there are replaced by a “deleted message” placeholder with their text, images and your name removed. This erasure cannot be undone.",
         "After the 30 days we keep only the following, with no name or email address attached, linked to an anonymous account ID:",
       ],

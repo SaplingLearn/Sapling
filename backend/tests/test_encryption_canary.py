@@ -260,6 +260,7 @@ WRITE_SCRIPTS = [
     "scripts/backfill_document_shareability.py",
     "scripts/dedupe_course_chunks.py",
     "scripts/move_unapproved_users_to_waitlist.py",
+    "scripts/retire_gradescope_passwords.py",
 ]
 
 

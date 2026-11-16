@@ -780,7 +780,7 @@ class TestBuSsoCredentials:
         assert payload["auth_mode"] == "cookies"
         assert payload["password_encrypted"] is None and payload["email_encrypted"] is None
         assert "private-password" not in str(payload)
-        assert json.loads(decrypt(payload["cookies_encrypted"])) == cookies
+        assert json.loads(decrypt(payload["cookies_encrypted"])) == {**cookies, "via": "bu_sso"}
 
     def test_unusable_sso_cookie_is_never_saved(self):
         saved = MagicMock()

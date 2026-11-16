@@ -22,6 +22,7 @@ from services.gradescope.credentials import (
     _load_creds,
     _now_iso,
     _write_connection_state,
+    reauth_message,
 )
 from services.gradescope.errors import GradescopeCredsError
 
@@ -63,7 +64,8 @@ def _run_linked_sync(
 
     conn = None
     try:
-        conn = _establish_connection(creds)
+        # user_id: a legacy password row is converted to its session here.
+        conn = _establish_connection(creds, user_id=user_id)
         gs_assignments = gradescope_service.list_assignments(conn, gs_course_id)
     except gradescope_service.GradescopeAuthError as e:
         # Stored credentials rejected: mark them stale (as _reauth_required does).
@@ -71,7 +73,7 @@ def _run_linked_sync(
             user_id, {"needs_reauth": True, "last_sync_error": "auth_failed", "last_attempt_at": _now_iso()},
             only_version=creds.updated_at,
         )
-        return Outcome.failed(gradescope_jobs.ERR_AUTH, str(e))
+        return Outcome.failed(gradescope_jobs.ERR_AUTH, reauth_message(creds, e))
     except gradescope_service.GradescopeFetchError as e:
         # An outage says nothing about the credentials: needs_reauth untouched.
         _write_connection_state(user_id, {"last_sync_error": "fetch_failed", "last_attempt_at": _now_iso()})
