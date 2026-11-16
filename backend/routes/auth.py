@@ -62,7 +62,7 @@ from services.auth.oauth_state import (  # noqa: F401
 from services.auth.pending import (  # noqa: F401
     _PENDING_TOKEN_TTL_SECONDS, _mint_pending_token, _pending_token_claims, _pending_token_email,
 )
-from services.auth.signin import _email_domain_allowed, _email_verified  # noqa: F401
+from services.auth.signin import _email_verified  # noqa: F401
 from services.auth.waitlist import (  # noqa: F401
     _mark_waitlist_joined, _pending_standing, _waitlist_entries, _waitlist_entry,
 )
@@ -284,10 +284,6 @@ def google_callback(
     name_parts = name.split(None, 1)
     first_name = name_parts[0] if name_parts else ""
     last_name = name_parts[1] if len(name_parts) > 1 else ""
-
-    # Restrict sign-in to the configured email-domain allowlist (default @bu.edu)
-    if not _email_domain_allowed(email):
-        return _fail_redirect("invalid_domain")
 
     signin = record_google_sign_in(
         email=email, google_id=google_id, name=name, first_name=first_name,

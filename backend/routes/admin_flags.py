@@ -55,6 +55,9 @@ def _view(fd: feature_flags.FlagDef, snap: feature_flags.Snapshot) -> dict:
         "variants": list(fd.variants),
         "client_visible": fd.client_visible,
         "default_variant": row.get("default_variant") or fd.variants[0],
+        # SAPLING_FLAG_<KEY>: wins over everything stored, so the UI must
+        # not present the stored default as the live answer when it is set.
+        "env_override": feature_flags.env_override(fd.key),
         "rollout_percent": row.get("rollout_percent") or 0,
         "rollout_variant": row.get("rollout_variant"),
         "updated_at": row.get("updated_at"),

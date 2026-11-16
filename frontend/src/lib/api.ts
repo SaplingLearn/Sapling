@@ -1265,6 +1265,9 @@ export type AdminFlagTarget = { target_type: 'user' | 'role'; target_id: string;
 export type AdminFlag = {
   key: string; description: string; variants: string[]; client_visible: boolean;
   default_variant: string; rollout_percent: number; rollout_variant: string | null;
+  /** The variant SAPLING_FLAG_<KEY> forces on the server, or null. It wins
+   *  over every stored setting. */
+  env_override?: string | null;
   updated_at: string | null; updated_by: string | null; updated_by_name: string | null;
   targets: AdminFlagTarget[];
 };

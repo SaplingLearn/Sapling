@@ -86,6 +86,19 @@ describe("Admin → Users", () => {
     expect(screen.getAllByRole("button", { name: "Remove access" })).toHaveLength(2);
   });
 
+  it("marks accounts that are in through open access, not approved", async () => {
+    const GUS = {
+      id: "u-gus", name: "Gus Open", email: "gus@gmail.com", is_approved: false,
+      open_access_at: "2026-11-16T12:00:00Z",
+      last_sign_in_at: null, created_at: "2026-11-16T12:00:00Z", roles: [],
+    };
+    api.adminFetchUsers.mockResolvedValue({ users: [ADA, GUS], total: 2, page: 1, page_size: 50 });
+    render(<Admin />);
+    expect(await screen.findByText("Gus Open")).toBeTruthy();
+    // Exactly one chip: Gus's. Ada is approved.
+    expect(screen.getAllByTestId("admin-user-open-access")).toHaveLength(1);
+  });
+
   it("asks before removing access, and Cancel does nothing", async () => {
     render(<Admin />);
     await openRemove("u-ada");

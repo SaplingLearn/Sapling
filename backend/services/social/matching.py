@@ -15,7 +15,7 @@ from services import academics
 from services.graph_service import get_graph
 from services.matching_service import find_study_matches
 from services.profiles import get_display_name, get_display_names
-from services.social.directory import _LISTABLE_USER_FILTERS, _visible_profile_ids
+from services.social.directory import _listable_user_filters, _visible_profile_ids
 from services.social.errors import UpstreamError
 from services.social.rooms import _live_members, _require_member
 from models import MatchBody
@@ -72,7 +72,7 @@ def school_match(body: MatchBody):
     candidate_ids = _visible_profile_ids(set(peer_ids) - excluded_ids)
     school_users = table("users").select(
         "id",
-        filters={"id": f"in.({','.join(candidate_ids)})", **_LISTABLE_USER_FILTERS},
+        filters={"id": f"in.({','.join(candidate_ids)})", **_listable_user_filters()},
     ) if candidate_ids else []
 
     # Names live on user_profiles (0024); resolve in bulk and decrypt.

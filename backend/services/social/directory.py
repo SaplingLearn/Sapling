@@ -14,6 +14,7 @@ from collections import defaultdict
 
 from db.connection import table
 from services import academics
+from services.open_access import access_filter, gate_open
 from services.profiles import get_display_names
 
 
@@ -38,17 +39,20 @@ def _visible_profile_ids(user_ids) -> list[str]:
     return [uid for uid in ids if uid not in hidden]
 
 
-#: Who counts as a real, listable student (#764). A stub is the bare
-#: {id, streak_count} row graph_service.ensure_user_exists inserts, and it has
-#: no email. (google_id is NOT the test: every seeded local/E2E/showcase user
-#: carries an email but no google_id, so keying on it would empty the
-#: directory on every seeded stack.) Pending and soft-deleted accounts are
-#: neither matchable nor browsable.
-_LISTABLE_USER_FILTERS = {
-    "email": "not.is.null",
-    "is_approved": "eq.true",
-    "deleted_at": "is.null",
-}
+def _listable_user_filters() -> dict[str, str]:
+    """Who counts as a real, listable student (#764). A stub is the bare
+    {id, streak_count} row graph_service.ensure_user_exists inserts, and it
+    has no email. (google_id is NOT the test: every seeded local/E2E/showcase
+    user carries an email but no google_id, so keying on it would empty the
+    directory on every seeded stack.) Accounts without access (waitlisted,
+    removed, or in through an open gate that is now closed —
+    services/open_access.py) and soft-deleted ones are neither matchable nor
+    browsable."""
+    return {
+        "email": "not.is.null",
+        "deleted_at": "is.null",
+        **access_filter(open_now=gate_open()),
+    }
 
 
 def get_students(user_id: str):
@@ -88,7 +92,7 @@ def get_students(user_id: str):
     from services.streak_service import effective_streak
     users = table("users").select(
         "id,streak_count,last_active_date",
-        filters={"id": f"in.({','.join(visible_ids)})", **_LISTABLE_USER_FILTERS},
+        filters={"id": f"in.({','.join(visible_ids)})", **_listable_user_filters()},
     ) or []
     # Display names live on user_profiles (0024); resolve in bulk and decrypt.
     name_map = get_display_names([u["id"] for u in users])

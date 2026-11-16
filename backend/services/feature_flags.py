@@ -243,6 +243,22 @@ REGISTRY: dict[str, FlagDef] = {f.key: f for f in (
             "Daily job: remove (and revoke at Google) the credentials a deleted "
             "account still holds after its delete could not remove them. "
             "Global: per-user rules and rollouts do not apply.", False),
+    # docs/design/open-access-gate.md: the waitlist requirement. On = it is
+    # lifted: anyone who signs in (any email domain) gets in, stamped
+    # `users.open_access_at` and linked on the waitlist UNAPPROVED, so closing
+    # the gate again puts them back on the waitlist; nobody's approval is
+    # touched either way (access is computed, services/open_access.py).
+    # Accounts an admin removed stay out. "off" (the fail-closed answer) is the
+    # gated side. Resolved GLOBALLY (user_id=None): a new person has no id at
+    # sign-in, so per-user rules and rollouts do not apply. Client-visible:
+    # the landing page offers "Sign up" instead of "Join the waitlist" while
+    # it is on. Kill switch: SAPLING_FLAG_OPEN_ACCESS=off.
+    FlagDef("open_access", ("off", "on"),
+            "Open access: lift the waitlist requirement, so anyone who signs in "
+            "gets in. They are added to the waitlist unapproved and go back to "
+            "waiting when this is turned off; approvals are untouched and "
+            "removed accounts stay out. Global: per-user rules and rollouts do "
+            "not apply.", True),
     # docs/safety/crisis-support.md: the crisis-support path. On: a student
     # message that states suicidal ideation, self-harm or acute danger gets
     # the fixed resources card INSTEAD of a model turn, on every surface
@@ -695,6 +711,15 @@ def explain(key: str, user_id: str | None, *, fresh: bool = False,
         logger.error("feature flag %r failed to resolve (%s: %s); fails closed",
                      key, type(exc).__name__, exc)
         return Resolution(off, "fail_closed", f"resolution error: {type(exc).__name__}")
+
+
+def env_override(key: str) -> str | None:
+    """The variant `SAPLING_FLAG_<KEY>` forces right now, or None. It wins
+    over every stored setting (:func:`explain`), so an admin surface that
+    shows the stored default must show this beside it."""
+    fd = REGISTRY.get(key)
+    env = (os.getenv(f"SAPLING_FLAG_{key.upper()}") or "").strip().lower()
+    return env if fd is not None and env in fd.variants else None
 
 
 def cached_explain(key: str, user_id: str | None) -> Resolution | None:

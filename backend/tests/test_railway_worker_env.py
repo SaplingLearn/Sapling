@@ -60,7 +60,6 @@ EXCLUDED = {
     "ACCOUNT_SYNC_INBOUND_TOKEN": "admin account-copy routes only",
     "ACCOUNT_SYNC_PEER_TOKEN": "admin account-copy routes only",
     "ACCOUNT_SYNC_PEER_URL": "admin account-copy routes only",
-    "ALLOWED_EMAIL_DOMAINS": "sign-in only",
     "CANOPY_METRICS_TOKEN": "the internal metrics route only",
     "DB_USER_SCOPE_SHADOW_SAMPLE_RATE": "per-request RLS shadow; a worker runs as service role",
     "EMAIL_ASSET_BASE_URL": "email routes only; no job sends email",

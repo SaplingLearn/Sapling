@@ -148,6 +148,10 @@ const FLAG_KILL_SWITCHES = [
   // docs/safety/crisis-support.md: the crisis-support screen on student AI
   // routes. No job reads it; shared so the switch reads the same everywhere.
   "crisis_support",
+  // docs/design/open-access-gate.md: the waitlist requirement at sign-in and
+  // in the auth guard. No job reads it; shared so the switch reads the same
+  // everywhere.
+  "open_access",
 ].map((key) => `SAPLING_FLAG_${key.toUpperCase()}`);
 
 /** Per-slot model overrides (agents/_providers.py: `SAPLING_MODEL_<TASK>`,

@@ -21,7 +21,7 @@ import config
 from config import SESSION_SECRET
 from db.connection import table
 from db.scope import service_scope
-from services import events_service
+from services import events_service, open_access
 from services.session_tokens import (
     HOST_COOKIE_CLAIM,
     HOST_COOKIE_CLAIM_VALUE,
@@ -224,14 +224,17 @@ def _decode_session(request: Request) -> dict:
 # ── Account state (#756) ─────────────────────────────────────────────────────
 # A valid signature only says the token was issued; the account may since have
 # been deleted (soft delete: `users.deleted_at`), had its access removed
-# (`users.is_approved = false`, Admin → Users), or signed out, which revokes
+# (`users.is_approved = false`, Admin → Users), lost the access the open gate
+# gave it (`open_access` turned off, services/open_access.py), or signed out, which revokes
 # every session issued before it (`users.sessions_valid_after`). The guard
 # therefore reads the `users` row too — through a short-TTL per-process cache,
 # so an authenticated request does not pay a DB round-trip each time.
 #
 # Invalidation story (CLAUDE.md's cache rule): bounded staleness. An entry lives
 # at most ACCOUNT_STATE_TTL_SECONDS, so a deletion, approval change or sign-out
-# made by ANY process is honoured everywhere within that window. Mutators in
+# made by ANY process is honoured everywhere within that window. The open gate
+# is resolved into the cached state too, so turning `open_access` off is
+# honoured within this TTL plus the flag store's own convergence (~5 s). Mutators in
 # this process call `clear_account_state_cache(user_id)` to make it immediate
 # (profile.delete_account and POST /api/auth/logout do). Failures to read are
 # never cached.
@@ -283,7 +286,8 @@ def _read_account_state(user_id: str) -> AccountRecord:
     # it; a scoped miss here would 500 every request under enforce.
     with service_scope():
         rows = table("users").select(
-            "id,deleted_at,is_approved,sessions_valid_after", filters={"id": f"eq.{user_id}"}
+            "id,deleted_at,is_approved,open_access_at,sessions_valid_after",
+            filters={"id": f"eq.{user_id}"},
         )
     if not rows:
         return AccountRecord(ACCOUNT_MISSING)
@@ -291,7 +295,12 @@ def _read_account_state(user_id: str) -> AccountRecord:
     valid_after = _parse_timestamp(row.get("sessions_valid_after"))
     if row.get("deleted_at"):
         return AccountRecord(ACCOUNT_DELETED, valid_after)
-    if not row.get("is_approved"):
+    # The flag is read only for an account the open gate could let in, so an
+    # approved account's request never depends on the flag store. It fails
+    # closed: an unreadable store reads as a closed gate.
+    if not row.get("is_approved") and not (
+        row.get("open_access_at") and open_access.gate_open()
+    ):
         return AccountRecord(ACCOUNT_UNAPPROVED, valid_after)
     return AccountRecord(ACCOUNT_ACTIVE, valid_after)
 

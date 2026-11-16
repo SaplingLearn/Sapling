@@ -186,16 +186,21 @@ shutdown in 3.6.
 | `POSTHOG_PROJECT_TOKEN` unset | No PostHog client is built at boot. Account-deletion erasure in PostHog runs off `POSTHOG_PERSONAL_API_KEY` independently. | **[doc: backend/.env.example; CLAUDE.md]** |
 | `CANOPY_METRICS_TOKEN` unset | `GET /api/internal/metrics` answers 404. | **[code: backend/config.py::canopy_metrics_token]** |
 | `ACCOUNT_SYNC_INBOUND_TOKEN` unset | `/api/internal/account-sync/*` answers 404 (stops cross-env account copy into this env). Production's `/import` answers 403 even with the token set: nothing is ever pushed into prod. | **[code: backend/config.py; backend/routes/internal_account_sync.py; backend/.env.example]** |
-| `ALLOWED_EMAIL_DOMAINS` | Sign-in email-domain allowlist, default `bu.edu`. **An empty value allows any domain**: never blank it to "turn it off". To refuse all new sign-ins, set a domain nobody has (e.g. `invalid.invalid`). | **[code: backend/config.py, backend/services/auth/signin.py]** |
+| `SAPLING_FLAG_OPEN_ACCESS=off` | Forces the waitlist on: no one new gets in without an admin's approval, and everyone who came in through open access loses access within about 35 s. Wins over the flag's stored setting (Admin → Allowlist), so it works while the flag store is down; an unreadable store reads as off anyway. There is no email-domain restriction (`ALLOWED_EMAIL_DOMAINS` was removed). To refuse even approved new sign-ins, revoke them on the Allowlist. | **[code: backend/services/open_access.py, backend/services/feature_flags.py; docs/design/open-access-gate.md]** |
 
 ### 3.4 Approval gate
 
-New accounts start with `users.is_approved = false` and are sent to
-`/pending` instead of receiving a session **[code: backend/routes/auth.py]**.
+A sign-in whose email is not approved on the waitlist gets no account and is
+sent to `/pending` instead of receiving a session **[code:
+backend/services/auth/signin.py]**. While the `open_access` flag is on,
+anyone who signs in gets an account that is NOT approved but marked
+`users.open_access_at`, and has access only while the flag stays on;
+switching it off (or `SAPLING_FLAG_OPEN_ACCESS=off`) removes that access with
+no data change **[code: backend/services/open_access.py]**.
 An admin removes an existing user's access with
 `PATCH /api/admin/users/{user_id}/unapprove` (account and data kept)
 **[code: backend/routes/admin.py::unapprove_user]**. The auth guard reads
-`users.deleted_at` / `users.is_approved` on every authenticated request
+`users.deleted_at` / `users.is_approved` / `users.open_access_at` on every authenticated request
 through a 30 s per-process cache, so an unapproved or soft-deleted account is
 refused within about 30 s on every replica
 **[code: backend/services/auth_guard.py `ACCOUNT_STATE_TTL_SECONDS`,
@@ -380,10 +385,12 @@ whether `ENCRYPTION_KEY` leaked.
 
 Facts that shape the analysis (to verify when the incident happens):
 
-- Sign-in is limited to `@bu.edu` Google accounts by default
-  **[code: backend/config.py `ALLOWED_EMAIL_DOMAINS`]**, so users are
-  presumably Boston University students. Students' home states vary; state
-  breach laws generally follow the *resident's* state, not the school's.
+- Any Google account can sign in; who gets in is the admin's approval (or
+  `open_access`). Most users are presumably Boston University students, but
+  NOT all: Admin → Allowlist labels non-BU addresses ("Non-BU") **[code:
+  backend/services/open_access.py `SCHOOL_EMAIL_DOMAINS`]**. Users' home
+  states vary; state breach laws generally follow the *resident's* state,
+  not the school's.
 - Whether Sapling has a contract or DPA with BU (or any school) decides
   whether FERPA's school-official route and any contractual notice clause
   apply. Check before the first call with counsel.
