@@ -158,13 +158,8 @@ async def _lifespan(_app: FastAPI):
     validate_config()
     # APP_ENV=local may boot without ANTHROPIC_API_KEY; say so once, up front,
     # rather than leaving a developer to find it in a request's 502 traceback.
-    from agents._providers import anthropic_key_missing
-    if anthropic_key_missing():
-        logging.getLogger("main").warning(
-            "ANTHROPIC_API_KEY is not set: the backend is up, but every "
-            "Claude-backed feature (document processing, the tutor, quizzes, "
-            "note actions) will fail until it is set in backend/.env."
-        )
+    from agents._providers import warn_if_anthropic_key_missing
+    warn_if_anthropic_key_missing()
     # Refuse to boot with an ENCRYPTION_KEY that isn't this database's: the
     # read helpers fail soft, so a mismatch otherwise surfaces as garbage reads
     # and writes the real environment can never decrypt.

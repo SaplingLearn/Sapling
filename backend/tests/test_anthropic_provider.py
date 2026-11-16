@@ -256,17 +256,17 @@ def test_a_blank_key_fails_before_the_request_leaves(monkeypatch, captured_creat
     """APP_ENV=local boots without a key. A Claude call then names the missing
     env var instead of sending the dummy key off for a 401 (`captured_create`
     raising `_Sent` here would mean the request reached the SDK)."""
-    from pydantic_ai.exceptions import ModelAPIError
+    from pydantic_ai.exceptions import ModelHTTPError
 
     monkeypatch.setattr(_providers, "ANTHROPIC_API_KEY", "")
     agent = Agent(provider_model("claude-haiku-5-5", task="classifier"), output_type=str)
-    with pytest.raises(ModelAPIError, match="ANTHROPIC_API_KEY is not set"):
+    with pytest.raises(ModelHTTPError, match="ANTHROPIC_API_KEY is not set"):
         asyncio.run(agent.run("hi"))
 
 
 def test_a_blank_key_fails_a_streamed_run_too(monkeypatch, captured_create):
     """The SSE tutor streams, which goes through `request_stream`."""
-    from pydantic_ai.exceptions import ModelAPIError
+    from pydantic_ai.exceptions import ModelHTTPError
 
     monkeypatch.setattr(_providers, "ANTHROPIC_API_KEY", "")
     agent = Agent(provider_model("claude-sonnet-5-5", task="chat_tutor"), output_type=str)
@@ -275,7 +275,7 @@ def test_a_blank_key_fails_a_streamed_run_too(monkeypatch, captured_create):
         async with agent.run_stream("hi") as result:
             await result.get_output()
 
-    with pytest.raises(ModelAPIError, match="ANTHROPIC_API_KEY is not set"):
+    with pytest.raises(ModelHTTPError, match="ANTHROPIC_API_KEY is not set"):
         asyncio.run(_go())
 
 

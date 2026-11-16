@@ -28,8 +28,15 @@ os.environ.setdefault("APP_ENV", "test")
 # Mirrors CI's dummy. The local .env example leaves ANTHROPIC_API_KEY blank,
 # and a blank key fails Claude requests before they reach the transport, so
 # without this a local run would never exercise the hermetic egress guard.
+# Only when backend/.env has no key either: config's load_dotenv() never
+# overrides a set variable, so a dummy here would hide a real .env key from
+# the opt-in live_llm lanes.
 if not os.environ.get("ANTHROPIC_API_KEY"):
-    os.environ["ANTHROPIC_API_KEY"] = "dummy-not-used-in-tests"
+    from dotenv import dotenv_values
+
+    _dotenv_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
+    if not (dotenv_values(_dotenv_path).get("ANTHROPIC_API_KEY") or "").strip():
+        os.environ["ANTHROPIC_API_KEY"] = "dummy-not-used-in-tests"
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 

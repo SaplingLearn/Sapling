@@ -30,8 +30,19 @@ Install Docker Desktop with its WSL 2 backend. If WSL is missing, run
 Windows when requested. Start Docker Desktop and wait for its engine to be ready.
 Node.js 20+ lets you run the Supabase CLI through `npx` without a global install.
 
-From PowerShell at the repository root, after creating the backend venv and
-copying both local env examples as described below:
+First, from PowerShell at the repository root (after creating the backend venv
+as described below), copy both local env examples. They keep both apps on the
+local database with matching `SESSION_SECRET` values:
+
+```powershell
+Copy-Item backend/.env.local.example backend/.env
+Copy-Item frontend/.env.local.example frontend/.env.local
+```
+
+Copy only during first-time setup; preserve existing Google OAuth credentials
+when updating an existing env file. Fill in those credentials and `GEMINI_API_KEY`.
+
+Then start the stack, migrate and seed:
 
 ```powershell
 npx --yes supabase start
@@ -47,15 +58,6 @@ Pop-Location
 
 The backend needs the database stack running, even when `ANTHROPIC_API_KEY` is
 blank. A backend health response alone does not confirm database connectivity.
-Keep both env files on the local database, with matching `SESSION_SECRET` values:
-
-```powershell
-Copy-Item backend/.env.local.example backend/.env
-Copy-Item frontend/.env.local.example frontend/.env.local
-```
-
-Copy only during first-time setup; preserve existing Google OAuth credentials
-when updating an existing env file. Fill in those credentials and `GEMINI_API_KEY`.
 If database requests return `401`, run `npx --yes supabase status -o env` and
 copy that local stack's `SERVICE_ROLE_KEY` into backend `SUPABASE_SERVICE_KEY`,
 and `ANON_KEY` into frontend `NEXT_PUBLIC_SUPABASE_ANON_KEY`. Both Supabase URLs

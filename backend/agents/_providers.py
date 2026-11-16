@@ -37,7 +37,7 @@ from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Callable, Literal
 
 import httpx
-from pydantic_ai.exceptions import ModelAPIError
+from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
 from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
 from pydantic_ai.profiles.anthropic import AnthropicModelProfile
@@ -371,12 +371,14 @@ def _require_anthropic_key(model_name: str) -> None:
     APP_ENV=local boots without ANTHROPIC_API_KEY (`config.validate_config`),
     and the dummy key above would otherwise send every request to Anthropic
     only to come back as a 401 whose cause sits in the response body of a long
-    traceback. `ModelAPIError` is the family a real 401 raises
-    (`ModelHTTPError` subclasses it), so every route's existing handling is
-    unchanged; only the message now names the fix. Reads the module global at
-    call time so tests can patch it."""
+    traceback. It raises the same `ModelHTTPError(401)` a rejected key would,
+    so `_resilience` classifies it as permanent (never retried, never a
+    fallback trigger) and every route's existing handling is unchanged; only
+    the message now names the fix. Reads the module global at call time so
+    tests can patch it."""
     if not ANTHROPIC_API_KEY:
-        raise ModelAPIError(
+        raise ModelHTTPError(
+            401,
             model_name,
             "ANTHROPIC_API_KEY is not set, so Claude cannot be called. Set it "
             "in backend/.env and restart the backend (APP_ENV=local boots "
@@ -395,6 +397,20 @@ def anthropic_key_missing() -> bool:
     return any(
         provider_for_model(model_name_for(task)) == "anthropic" for task in _DEFAULTS
     )
+
+
+def warn_if_anthropic_key_missing() -> None:
+    """Log once at boot when Claude-backed work will fail for want of a key.
+
+    Called by both entry points that run `config.validate_config()` (the API
+    lifespan and `python -m worker`), since APP_ENV=local lets either boot
+    without ANTHROPIC_API_KEY."""
+    if anthropic_key_missing():
+        _logger.warning(
+            "ANTHROPIC_API_KEY is not set: the process is up, but every "
+            "Claude-backed feature (document processing, the tutor, quizzes, "
+            "note actions) will fail until it is set in backend/.env."
+        )
 
 
 # ── #354 root-cause fix: loop-scoped provider, resolved at READ time ───────

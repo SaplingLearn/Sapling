@@ -54,7 +54,9 @@ ADMIN_DESTRUCTIVE_REAUTH_WINDOW_SECONDS = int(
 )
 
 # Sign-in email-domain allowlist. Comma-separated; empty value = allow any domain.
-# Local dev defaults to any domain; other environments default to @bu.edu.
+# APP_ENV=local defaults to any domain; every other APP_ENV (incl. test/dev)
+# defaults to @bu.edu — the same `local`-only gate as the sign-in auto-approve
+# in services/auth/signin.py.
 # Explicit values override either default. Staging can widen this (e.g.
 # "bu.edu,saplinglearn.com") or set it empty to allow any Google account — safe
 # on staging because Cloudflare Access already gates who reaches the app at all.
