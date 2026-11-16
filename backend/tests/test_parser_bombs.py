@@ -202,6 +202,12 @@ def test_docling_refuses_an_oversize_pdf_before_converting(fake_docling_stream, 
     get.assert_not_called()
 
 
+def test_the_docling_size_bound_never_refuses_a_route_capped_upload():
+    from routes.documents import MAX_FILE_SIZE
+
+    assert docling_backend.MAX_FILE_BYTES > MAX_FILE_SIZE
+
+
 def test_the_converter_is_built_with_a_document_timeout(monkeypatch):
     seen = {}
 

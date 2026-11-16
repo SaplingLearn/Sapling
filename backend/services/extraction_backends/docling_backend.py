@@ -26,8 +26,10 @@ class DoclingUnavailableError(RuntimeError):
 #: Wall clock for one document (Docling's own `document_timeout`: pages past
 #: it are skipped and the result is a partial success, not a hang).
 DOCUMENT_TIMEOUT_S = 120.0
-#: Largest input Docling accepts (the upload routes cap below this already).
-MAX_FILE_BYTES = 50 * 1024 * 1024
+#: Largest input Docling accepts: a backstop just above the largest upload
+#: (routes/documents.py::MAX_FILE_SIZE, 100 MB), so no route-capped file is
+#: ever pushed off Docling by it.
+MAX_FILE_BYTES = 110 * 1024 * 1024
 #: Pages a document may have at all; past this Docling refuses it outright
 #: (and the caller falls back to Tesseract over its first `max_pages`).
 MAX_NUM_PAGES = 1000
