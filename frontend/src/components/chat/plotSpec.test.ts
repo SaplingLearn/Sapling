@@ -73,8 +73,19 @@ describe("safeExpression rejects anything that is not plain maths", () => {
     "х", // Cyrillic ha
     "x; globalThis.__plotHit = 1",
     "x = 1",
-    "y = x^2",
     "x == 1",
+    // A leading `y =` / `f(x) =` / `r =` is the one `=` allowed, once.
+    "y = x = 2",
+    "y == x",
+    "y = = x",
+    "y = y = x",
+    "f(x) = y = x",
+    "x^2 = y",
+    "g(x) = x",
+    "f(t) = t",
+    "z = x",
+    "y := x",
+    'y = x + ["(globalThis.__plotHit=1, 0)"]',
     "x ? 1 : 2",
     "x < 1",
     "x % 2",
@@ -113,6 +124,13 @@ describe("safeExpression keeps plain maths", () => {
     ["ln(x)", "log ( x )"],
     ["max(x, 0.5) / .25", "max ( x , 0.5 ) / .25"],
     ["-cos(theta) + t*r - y", "- cos ( theta ) + t * r - y"],
+    // One leading definition is dropped.
+    ["y = x^2", "x ^ 2"],
+    ["y=x^2", "x ^ 2"],
+    ["  y   =   sin(x)", "sin ( x )"],
+    ["f(x) = sin(x)", "sin ( x )"],
+    ["f ( x )=2*pi*x", "2 * PI * x"],
+    ["r = 1 + cos(theta)", "1 + cos ( theta )"],
   ])("%j → %j", (expr, rebuilt) => {
     expect(safeExpression(expr).fn).toBe(rebuilt);
   });
@@ -130,6 +148,11 @@ describe("safeExpression keeps plain maths", () => {
     expect(at("sqrt(abs(x))")).toBeCloseTo(Math.SQRT2, 12);
     expect(at("2*pi*x")).toBeCloseTo(4 * Math.PI, 12);
     expect(at("ln(e^x)")).toBeCloseTo(2, 12);
+  });
+
+  it("plots a fence written as a definition", () => {
+    const res = parsePlotSpec("plot: y = x^2; color=red\nfn: f(x) = sqrt(abs(x))");
+    expect(res.ok && res.spec.data.map((d) => d.fn)).toEqual(["x ^ 2", "sqrt ( abs ( x ) )"]);
   });
 
   it("samples point by point when the interval sampler lacks a function", () => {

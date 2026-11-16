@@ -152,9 +152,14 @@ export interface SafeExpression {
   needsBuiltIn: boolean;
 }
 
+// Models write `y = x^2` or `f(x) = sin(x)`. Exactly one such leading
+// `y =` / `f(x) =` / `r =` is dropped; the `(?!=)` keeps `y == x` whole, and
+// any `=` left after it fails the tokenizer like every other character.
+const LEADING_DEFINITION = /^\s*(?:y|r|f\s*\(\s*x\s*\))\s*=(?!=)/;
+
 /** Validates one expression and rebuilds it from its tokens. */
 export function safeExpression(src: string): SafeExpression {
-  const tokens = tokenize(src.trim());
+  const tokens = tokenize(src.replace(LEADING_DEFINITION, "").trim());
   checkStructure(tokens);
   return {
     fn: tokens.map((t) => t.text).join(" "),
