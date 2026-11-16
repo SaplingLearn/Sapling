@@ -189,7 +189,7 @@ A reviewer that wrote none of the code reviews each wave against the handoff.
 - **Export PDF** is the browser's print dialog over a print stylesheet. No PDF library is added on either side.
 - **Planned outline** in the modal is computed from the chosen materials' concepts and the student's mastery, with no model call. The outline the model then writes may merge or rename sections.
 - **Takeaways** arrive with the outline, not after the last section as in the mockup's animation.
-- **Check questions** withhold the answer until the student picks one. Only the first answer moves mastery; later picks are graded but not counted.
+- **Check questions** withhold the answer until the student picks one. Only the first answer moves mastery; the server answers a later pick with `counted: false` and stores nothing, and the reader keeps showing the first answer, as a reload does.
 - **Tutor.** "Ask about this guide" starts a tutor session on the guide's title and sends the question with the section outline as the first message, then opens the tutor on that session. A true attachment field on the tutor API was not added.
 - **Back link.** The reader's back link goes to the Study Guides home and is labelled "Study Guides". The handoff's mockup says "Study", but the hub is one more step back and the home is where the student's guides are.
 - **PR #735** (draft, 907 commits behind) edits the old route and adds a separate saved-plans table. It conflicts with this rebuild and was not built on.

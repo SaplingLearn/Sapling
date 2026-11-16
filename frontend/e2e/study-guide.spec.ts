@@ -530,10 +530,17 @@ test("a guide is made in the dialog, written, read, answered, saved and found ag
   expect(Number(counted[0].delta)).toBeCloseTo(-MASTERY_PER_WRONG, 6);
   expect(await masteryOf(NODE_ID)).toBeCloseTo(masteryBefore - MASTERY_PER_WRONG, 6);
 
-  // Then the right one: graded and explained, and nothing more is counted.
+  // Then the right one: the server answers `counted: false`, and the reader
+  // keeps the first answer shown, as a reload would (b4cacb93). Nothing more
+  // is counted.
+  const laterAnswer = page.waitForResponse(
+    response => response.request().method() === "POST" && response.url().endsWith(`/${check}/answer`),
+  );
   await pickCheckOption(page, check, CHECK.right);
-  await expect(result).toHaveText(`Correct. ${CHECK.explainCorrect}`);
-  await expect(rightOption).toHaveClass(/answer-option--correct/);
+  expect((await (await laterAnswer).json()).counted).toBe(false);
+  await expect(result).toHaveText(`Not quite. ${CHECK.explainIncorrect}`);
+  await expect(wrongOption).toHaveClass(/answer-option--chosen-wrong/);
+  await expect(rightOption).toHaveClass(/answer-option--default/);
 
   expect(await guideCheckEvents()).toEqual(counted);
   expect(await masteryOf(NODE_ID)).toBeCloseTo(masteryBefore - MASTERY_PER_WRONG, 6);
