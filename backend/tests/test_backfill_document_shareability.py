@@ -34,7 +34,7 @@ def _run(mod, monkeypatch, *, text, classified, offering_id="off-1"):
 
     monkeypatch.setattr(mod, "page_all", lambda *a, **k: iter([dict(doc)]))
     monkeypatch.setattr(mod, "table", lambda name: handle)
-    monkeypatch.setattr(mod, "decrypt_if_present", lambda v: text)
+    monkeypatch.setattr(mod, "decrypt_if_present", lambda v, **k: text)
     monkeypatch.setattr(mod, "_classify", lambda t: classified)
     monkeypatch.setattr(mod, "_course_code", lambda off: None)
     monkeypatch.setattr(sys, "argv", ["backfill_document_shareability.py", "--apply"])

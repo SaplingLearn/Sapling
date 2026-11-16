@@ -47,7 +47,7 @@ from agents.deps import SaplingDeps
 from config import is_mastered, is_weak
 from db.connection import table
 from services.academics import course_offering_ids
-from services.encryption import decrypt_if_present, decrypt_json
+from services.encryption import bind, decrypt_if_present, decrypt_json
 
 # Shared tokenizer (#149): factored to services/token_overlap.py so the
 # graph-context seed block selects concepts with the same token semantics
@@ -235,11 +235,13 @@ async def search_course_materials(
     # encrypted at rest — never hand ciphertext to the LLM.
     decrypted: list[dict[str, Any]] = []
     for r in rows:
-        summary = decrypt_if_present(r.get("summary"))
+        summary = decrypt_if_present(r.get("summary"), bind=bind("documents", "summary", r))
         notes_raw = r.get("concept_notes")
         if isinstance(notes_raw, str) and notes_raw:
             try:
-                notes = _coerce_concept_notes(decrypt_json(notes_raw))
+                notes = _coerce_concept_notes(
+                    decrypt_json(notes_raw, bind=bind("documents", "concept_notes", r))
+                )
             except Exception:
                 logger.warning(
                     "search_course_materials: concept_notes decrypt failed doc=%s",
@@ -427,7 +429,9 @@ async def read_session_history(
         role = _ROLE_MAP.get(raw_role)
         if role is None:
             continue
-        content = decrypt_if_present(r.get("content"))
+        content = decrypt_if_present(
+            r.get("content"), bind=bind("messages", "content", session_id),
+        )
         if not content:
             continue
         out.append(

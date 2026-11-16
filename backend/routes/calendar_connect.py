@@ -24,7 +24,7 @@ from config import (
 from db.connection import table
 from db.scope import service_route
 from services.auth_guard import require_self
-from services.encryption import encrypt
+from services.encryption import bind, encrypt
 # Reuse the sign-in flow's OAuth primitives (PKCE + HMAC-signed state cookie) as
 # the single source of truth for CSRF handling — see services/auth/oauth_state.py.
 # These are pure helpers with no request state, so importing them keeps the
@@ -231,7 +231,7 @@ def calendar_callback(
 
     row = {
         "user_id": user_id,
-        "access_token": encrypt(creds.token),
+        "access_token": encrypt(creds.token, bind=bind("oauth_tokens", "access_token", user_id)),
         # expires_at is TIMESTAMPTZ (0024): None, not "", when absent.
         "expires_at": creds.expiry.isoformat() if creds.expiry else None,
     }
@@ -239,7 +239,8 @@ def calendar_callback(
     # With none stored either, the access token stops working within the hour
     # while /status would say "connected": store nothing and report a failure.
     if creds.refresh_token:
-        row["refresh_token"] = encrypt(creds.refresh_token)
+        row["refresh_token"] = encrypt(
+            creds.refresh_token, bind=bind("oauth_tokens", "refresh_token", user_id))
     elif not _has_stored_refresh_token(user_id):
         return _finish("calendar_error=no_refresh_token")
     table("oauth_tokens").upsert(row, on_conflict="user_id")

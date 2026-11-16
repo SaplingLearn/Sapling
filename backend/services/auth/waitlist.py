@@ -3,7 +3,7 @@ see it (#118, moved from ``routes/auth.py``)."""
 import logging
 
 from db.connection import like_literal, pg_quote_value, table
-from services.encryption import encrypt
+from services.encryption import bind, encrypt
 
 logger = logging.getLogger(__name__)
 
@@ -81,11 +81,16 @@ def join_waitlist(email: str, first_name: str, entry: dict | None) -> None:
     if entry is None:
         # The first name (from Google) lets the "you're in" email greet them.
         table("newsletter_emails").upsert(
-            {"email": email, "first_name": encrypt(first_name) if first_name else None},
+            # Bound to the email as stored: the upsert keys on it exactly.
+            {"email": email, "first_name": encrypt(
+                first_name, bind=bind("newsletter_emails", "first_name", email),
+            ) if first_name else None},
             on_conflict="email",
         )
     elif first_name:
         table("newsletter_emails").update(
-            {"first_name": encrypt(first_name)},
+            {"first_name": encrypt(
+                first_name, bind=bind("newsletter_emails", "first_name", entry),
+            )},
             filters={"id": f"eq.{entry['id']}", "first_name": "is.null"},
         )

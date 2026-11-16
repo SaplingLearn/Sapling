@@ -56,7 +56,7 @@ from services.chunk_visibility import (  # noqa: E402
     withdraw_document_chunks,
 )
 from services.chunker import chunk_document, chunk_prose  # noqa: E402
-from services.encryption import decrypt  # noqa: E402
+from services.encryption import bind, decrypt  # noqa: E402
 from services.rag_service import chunk_id  # noqa: E402
 
 #: Ids per `in.(…)` filter — see chunk_visibility._ID_BATCH.
@@ -110,7 +110,7 @@ def _located(doc: dict, cache: dict) -> list[str]:
     if not stored or not code:
         return []
     try:
-        text = decrypt(stored)
+        text = decrypt(stored, bind=bind("documents", "extracted_text", doc))
     except Exception:
         print(f"  {doc['id'][:8]} extracted_text does not decrypt under this key — skipped")
         return []

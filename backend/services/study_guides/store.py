@@ -35,7 +35,7 @@ from models.study_guide import (
     ScopeKind,
     parse_items,
 )
-from services.encryption import decrypt_json_column, encrypt_json
+from services.encryption import bind, decrypt_json_column, encrypt_json
 from services.study_guides.errors import GuideBusy, GuideInvalid, GuideNotFound
 from services.study_guides.legacy import UNTITLED, content_from_topics
 
@@ -128,14 +128,20 @@ def _own(user_id: str, guide_id: str) -> dict[str, str]:
 _STORED_ONLY = ("last_section_number", "materials_read_at")
 
 
-def _encrypt_content(content: GuideContent) -> str:
+def _encrypt_content(content: GuideContent, guide_id: str, column: str = "content") -> str:
+    """Seal ``content`` for ``column`` (``content`` or ``previous_content``)
+    of guide ``guide_id``: each column is sealed for itself (M13), so the
+    previous content is re-sealed, never copied as ciphertext."""
     stored = content.model_dump(mode="json")
     stored.update((name, getattr(content, name)) for name in _STORED_ONLY)
-    return encrypt_json(stored)
+    return encrypt_json(stored, bind=bind(TABLE, column, guide_id))
 
 
-def _encrypt_answers(answers: dict[str, CheckAnswer]) -> str:
-    return encrypt_json({block_id: answer.model_dump() for block_id, answer in answers.items()})
+def _encrypt_answers(answers: dict[str, CheckAnswer], guide_id: str) -> str:
+    return encrypt_json(
+        {block_id: answer.model_dump() for block_id, answer in answers.items()},
+        bind=bind(TABLE, "answers", guide_id),
+    )
 
 
 def _sound_section(section: Any) -> Any:
@@ -160,7 +166,7 @@ def _content(raw: dict) -> tuple[GuideContent, bool]:
     A row that does not decrypt or validate is still listed, as an empty
     placeholder marked unreadable, rather than failing the whole list."""
     try:
-        stored = decrypt_json_column(raw.get("content")) or {}
+        stored = decrypt_json_column(raw.get("content"), bind=bind(TABLE, "content", raw)) or {}
         if raw.get("format") == GUIDE_FORMAT:
             return _stored_content(stored), False
         return content_from_topics(stored), False
@@ -175,7 +181,7 @@ def _content(raw: dict) -> tuple[GuideContent, bool]:
 def _answers(raw: dict) -> tuple[dict[str, CheckAnswer], bool]:
     """``(the row's check answers, whether they are unreadable)``."""
     try:
-        stored = decrypt_json_column(raw.get("answers")) or {}
+        stored = decrypt_json_column(raw.get("answers"), bind=bind(TABLE, "answers", raw)) or {}
         return {block_id: CheckAnswer.model_validate(a) for block_id, a in stored.items()}, False
     except Exception as exc:
         logger.warning(
@@ -276,7 +282,7 @@ async def ainsert_guide(
         "use_history": use_history,
         "status": "generating",
         "format": GUIDE_FORMAT,
-        "content": _encrypt_content(content),
+        "content": _encrypt_content(content, guide_id),
         "material_ids": list(material_ids),
         # Sent as NULL on purpose: the column's default is now().
         "generated_at": None,
@@ -324,13 +330,13 @@ async def asave_content(
         raise TypeError(f"asave_content cannot write {', '.join(unknown)}")
     patch: dict[str, Any] = {
         **columns,
-        "content": _encrypt_content(content),
+        "content": _encrypt_content(content, guide.id),
         "format": GUIDE_FORMAT,
     }
     if keep_previous:
-        patch["previous_content"] = _encrypt_content(guide.content)
+        patch["previous_content"] = _encrypt_content(guide.content, guide.id, "previous_content")
     if answers is not None:
-        patch["answers"] = _encrypt_answers(answers) if answers else None
+        patch["answers"] = _encrypt_answers(answers, guide.id) if answers else None
     if claim is None:
         return _written(await table(TABLE).aupdate(patch, filters=_own(guide.user_id, guide.id)))
     patch["generating_at"] = None if release else _now().isoformat()
@@ -460,7 +466,7 @@ async def arecord_answer(guide: GuideRow, block_id: str, answer: CheckAnswer) ->
         if block_id in guide.answers:
             return False
         rows = await table(TABLE).aupdate(
-            {"answers": _encrypt_answers({**guide.answers, block_id: answer})},
+            {"answers": _encrypt_answers({**guide.answers, block_id: answer}, guide.id)},
             filters={**_own(guide.user_id, guide.id), "updated_at": f"eq.{guide.updated_at}"},
         )
         if rows:

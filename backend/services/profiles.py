@@ -12,7 +12,7 @@ missing row and return "" (single) / omit the id (bulk).
 
 from db.connection import table
 from db.scope import runs_as_service
-from services.encryption import decrypt_if_present
+from services.encryption import bind, decrypt_if_present
 
 
 @runs_as_service  # #115: names of OTHER users (room members, friends, quiz/tutor attributions)
@@ -21,7 +21,7 @@ def get_display_name(user_id: str) -> str:
     rows = table("user_profiles").select("name", filters={"user_id": f"eq.{user_id}"})
     if not rows:
         return ""
-    return decrypt_if_present(rows[0].get("name")) or ""
+    return decrypt_if_present(rows[0].get("name"), bind=bind("user_profiles", "name", user_id)) or ""
 
 
 @runs_as_service  # #115: names of OTHER users
@@ -39,7 +39,9 @@ def get_display_names(user_ids: list[str]) -> dict[str, str]:
     )
     out: dict[str, str] = {}
     for r in rows or []:
-        name = decrypt_if_present(r.get("name"))
+        if not r.get("user_id"):
+            continue
+        name = decrypt_if_present(r.get("name"), bind=bind("user_profiles", "name", r))
         if name:
             out[r["user_id"]] = name
     return out

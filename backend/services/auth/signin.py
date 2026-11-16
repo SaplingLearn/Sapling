@@ -10,7 +10,7 @@ from services import email_service
 from services.auth.accounts import _mark_welcomed, _welcome_due
 from services.auth.oauth_state import covers_calendar, granted_scopes
 from services.auth.waitlist import _mark_waitlist_joined, _waitlist_entry
-from services.encryption import decrypt_if_present, encrypt, encrypt_if_present
+from services.encryption import bind, decrypt_if_present, encrypt, encrypt_if_present
 
 logger = logging.getLogger(__name__)
 
@@ -94,9 +94,12 @@ _NAME_COLS = ("name", "first_name", "last_name")
 _UPLOADED_AVATAR_MARK = f"/storage/v1/object/public/{STORAGE_BUCKET}/"
 
 
-def _has_name(row: dict) -> bool:
+def _has_name(row: dict, user_id: str) -> bool:
     # Decrypted, because an empty name is still a ciphertext (of "").
-    return any((decrypt_if_present(row.get(c)) or "").strip() for c in _NAME_COLS)
+    return any(
+        (decrypt_if_present(row.get(c), bind=bind("user_profiles", c, user_id)) or "").strip()
+        for c in _NAME_COLS
+    )
 
 
 def _refresh_profile(
@@ -113,9 +116,8 @@ def _refresh_profile(
     the student uploaded themselves, and never to a blank.
     """
     google_name = {
-        "name": encrypt_if_present(name),
-        "first_name": encrypt_if_present(first_name),
-        "last_name": encrypt_if_present(last_name),
+        c: encrypt_if_present(v, bind=bind("user_profiles", c, user_id))
+        for c, v in (("name", name), ("first_name", first_name), ("last_name", last_name))
     }
     cols = "name,first_name,last_name,avatar_url"
     by_user = {"user_id": f"eq.{user_id}"}
@@ -139,7 +141,7 @@ def _refresh_profile(
     if avatar_url and _UPLOADED_AVATAR_MARK not in (current.get("avatar_url") or ""):
         patch["avatar_url"] = avatar_url
     filters = dict(by_user)
-    if not _has_name(current):
+    if not _has_name(current, user_id):
         patch.update(google_name)
         # Compare-and-set on the stored name: one written since the read
         # above is the student's, and this update then matches no row.
@@ -164,13 +166,14 @@ def _store_calendar_tokens(user_id: str, creds) -> None:
     later grants, so creating one here would connect them again unasked.
     A grant without a refresh token keeps the stored one."""
     row = {
-        "access_token": encrypt(creds.token),
+        "access_token": encrypt(creds.token, bind=bind("oauth_tokens", "access_token", user_id)),
         # expires_at is TIMESTAMPTZ after migration 0024 — None (not "") when
         # there is no expiry, since "" is not a valid timestamptz.
         "expires_at": creds.expiry.isoformat() if creds.expiry else None,
     }
     if creds.refresh_token:
-        row["refresh_token"] = encrypt(creds.refresh_token)
+        row["refresh_token"] = encrypt(
+            creds.refresh_token, bind=bind("oauth_tokens", "refresh_token", user_id))
     table("oauth_tokens").update(row, filters={"user_id": f"eq.{user_id}"})
 
 
@@ -224,7 +227,7 @@ def record_google_sign_in(
         from datetime import datetime as _dt, timezone as _tz
         table("users").update(
             {
-                "email": encrypt_if_present(email),
+                "email": encrypt_if_present(email, bind=bind("users", "email", user_id)),
                 "last_sign_in_at": _dt.now(_tz.utc).isoformat(),
             },
             filters={"id": f"eq.{user_id}"},
@@ -252,7 +255,7 @@ def record_google_sign_in(
         # stub's NULL auth columns in, promoting it to a real user.
         table("users").upsert({
             "id": user_id,
-            "email": encrypt_if_present(email),
+            "email": encrypt_if_present(email, bind=bind("users", "email", user_id)),
             "google_id": google_id,
             "auth_provider": "google",
             "is_approved": is_approved,

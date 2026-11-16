@@ -15,7 +15,7 @@ import pytest
 from models.study_guide import GuideContent
 from services.account_seed import seeder
 from services.account_seed.schema import MajorPack
-from services.encryption import decrypt_if_present, decrypt_json, decrypt_numeric
+from services.encryption import V2_PREFIX, bind, decrypt_if_present, decrypt_json, decrypt_numeric
 
 USER = "user_seed_target"
 TERM_START = date(2026, 8, 24)
@@ -351,13 +351,15 @@ def test_only_past_due_assignments_are_graded(db):
     for title, expect in [("HW 1", 91), ("HW 2", 84), ("HW 3", 45)]:
         for a in by_title[title]:
             assert date.fromisoformat(a["due_date"]) < TODAY
-            assert decrypt_numeric(a["points_earned"]) == expect
+            assert decrypt_numeric(a["points_earned"],
+                                   bind=bind("assignments", "points_earned", a)) == expect
     for title in ("HW 4", "Midterm", "Final"):
         for a in by_title[title]:
             assert a["points_earned"] is None
     hw4 = by_title["HW 4"][0]
     assert date.fromisoformat(hw4["due_date"]) == TERM_START + timedelta(days=55)
-    assert decrypt_numeric(hw4["points_possible"]) == 100
+    assert decrypt_numeric(hw4["points_possible"],
+                           bind=bind("assignments", "points_possible", hw4)) == 100
 
 
 def test_assignments_reference_their_enrollment_and_category(db):
@@ -372,27 +374,29 @@ def test_assignments_reference_their_enrollment_and_category(db):
 # ── encryption ───────────────────────────────────────────────────────────────
 
 
-def _assert_encrypted(stored, plain):
-    assert stored != plain
-    assert decrypt_if_present(stored) == plain
+def _assert_encrypted(stored, plain, table, column, row):
+    """Sealed in the v2 envelope, bound to its own cell (finding M13)."""
+    assert stored != plain and stored.startswith(V2_PREFIX)
+    assert decrypt_if_present(stored, bind=bind(table, column, row)) == plain
 
 
 def test_locked_text_columns_are_encrypted(db):
     _seed(db)
     note = db.rows["notes"][0]
-    _assert_encrypted(note["title"], "Week 1 notes")
-    _assert_encrypted(note["body"], "Plaintext note body. " * 6)
+    _assert_encrypted(note["title"], "Week 1 notes", "notes", "title", note)
+    _assert_encrypted(note["body"], "Plaintext note body. " * 6, "notes", "body", note)
     doc = db.rows["documents"][0]
-    _assert_encrypted(doc["summary"], PACK.courses[0].documents[0].summary)
-    _assert_encrypted(doc["extracted_text"], _EXTRACTED)
-    assert decrypt_json(doc["concept_notes"]) == [
+    _assert_encrypted(doc["summary"], PACK.courses[0].documents[0].summary,
+                      "documents", "summary", doc)
+    _assert_encrypted(doc["extracted_text"], _EXTRACTED, "documents", "extracted_text", doc)
+    assert decrypt_json(doc["concept_notes"], bind=bind("documents", "concept_notes", doc)) == [
         {"name": "Idea A1", "description": "First idea."}
     ]
     card = db.rows["flashcards"][0]
-    _assert_encrypted(card["front"], "Front 0")
-    _assert_encrypted(card["back"], "Back 0")
+    _assert_encrypted(card["front"], "Front 0", "flashcards", "front", card)
+    _assert_encrypted(card["back"], "Back 0", "flashcards", "back", card)
     msg = db.rows["messages"][0]
-    _assert_encrypted(msg["content"], "Tutor message from the student.")
+    _assert_encrypted(msg["content"], "Tutor message from the student.", "messages", "content", msg)
     asg = db.rows["assignments"][0]
     assert asg["points_possible"] not in ("100", 100)
 
@@ -401,17 +405,19 @@ def test_locked_json_columns_are_encrypted(db):
     _seed(db)
     guide = db.rows["study_guides"][0]
     assert isinstance(guide["content"], str)
-    content = GuideContent.model_validate(decrypt_json(guide["content"]))
+    content = GuideContent.model_validate(
+        decrypt_json(guide["content"], bind=bind("study_guides", "content", guide)))
     assert content.title == "Midterm"
     assert content.deck == "What the midterm covers."
     assert [s.title for s in content.sections] == ["Topic one", "Topic two"]
     session = db.rows["sessions"][0]
-    summary = decrypt_json(session["summary_json"])
+    summary = decrypt_json(session["summary_json"], bind=bind("sessions", "summary_json", session))
     assert summary["bullets"] == ["Covered one", "Covered two"]
     assert "time_spent_minutes" in summary
     attempt = db.rows["quiz_attempts"][0]
     assert isinstance(attempt["questions_json"], str)
-    assert isinstance(decrypt_json(attempt["questions_json"]), list)
+    assert isinstance(decrypt_json(attempt["questions_json"],
+                                   bind=bind("quiz_attempts", "questions_json", attempt)), list)
 
 
 # ── documents ────────────────────────────────────────────────────────────────
@@ -449,7 +455,8 @@ def test_study_guide_is_a_ready_format_2_guide(db):
     _seed(db)
     for g in db.rows["study_guides"]:
         assert (g["format"], g["status"], g["scope_kind"]) == (2, "ready", "exam")
-        content = GuideContent.model_validate(decrypt_json(g["content"]))
+        content = GuideContent.model_validate(
+            decrypt_json(g["content"], bind=bind("study_guides", "content", g)))
         assert [s.status for s in content.sections] == ["written", "written"]
         assert [s.id for s in content.sections] == ["s1", "s2"]
         assert sum(s.weight for s in content.sections) == 100
@@ -486,7 +493,8 @@ def test_quiz_attempts_store_the_real_wire_shape(db):
 
     _seed(db)
     first = db.rows["quiz_attempts"][0]
-    questions = decrypt_json(first["questions_json"])
+    questions = decrypt_json(first["questions_json"],
+                             bind=bind("quiz_attempts", "questions_json", first))
     assert all(_is_wire_question(q) for q in questions)
     assert _strip_answer_key(questions)  # the review projection accepts it
     for q in questions:
@@ -495,7 +503,7 @@ def test_quiz_attempts_store_the_real_wire_shape(db):
         assert q["question_hash"]
     assert first["score"] == 3 and first["total"] == 4
     assert first["completed_at"][:10] == (TODAY - timedelta(days=5)).isoformat()
-    answers = decrypt_json(first["answers_json"])
+    answers = decrypt_json(first["answers_json"], bind=bind("quiz_attempts", "answers_json", first))
     graded = [
         a["selected_label"] == next(o["label"] for o in q["options"] if o["correct"])
         for a, q in zip(answers, questions)

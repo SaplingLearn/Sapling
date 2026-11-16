@@ -34,6 +34,15 @@ Per-table only (useful for staged rollouts):
 
 Run from the `backend/` directory with the venv active so config + the
 encryption module + the supabase client all resolve correctly.
+
+Superseded for new work by ``db/backfill_encryption_aad.py`` (finding M13),
+which seals legacy plaintext AND re-seals v1 ciphertext in the AAD-bound v2
+envelope. This script predates the row bindings: it seals plaintext as v1
+(unbound — some of its columns, e.g. ``users.name``, no longer exist and are
+not in ``encryption.ENCRYPTED_COLUMNS``), and the AAD backfill upgrades those
+values afterwards. A v2 (``enc2:``) value is already encrypted by its prefix
+alone and is never touched: opening it unbound would fail, which this script
+would otherwise read as "plaintext" and encrypt a second time.
 """
 from __future__ import annotations
 
@@ -48,6 +57,7 @@ from services.encryption import (
     encrypt,
     encrypt_if_present,
     encrypt_json,
+    is_v2,
 )
 
 
@@ -56,9 +66,12 @@ from services.encryption import (
 def _is_already_encrypted(value: Any) -> bool:
     """True if `value` is a valid base64 AES-GCM ciphertext under the
     current ENCRYPTION_KEY. False for None, non-strings, plaintext,
-    or ciphertext under a different key."""
+    or ciphertext under a different key. A v2 value is ciphertext by its
+    prefix (it opens only with its row's binding)."""
     if value is None or not isinstance(value, str):
         return False
+    if is_v2(value):
+        return True
     try:
         decrypt(value)
         return True
@@ -71,6 +84,8 @@ def _is_already_encrypted_json(value: Any) -> bool:
     these are TEXT, so a legacy JSONB row is now a JSON string."""
     if value is None or not isinstance(value, str):
         return False
+    if is_v2(value):
+        return True
     try:
         decrypt_json(value)
         return True

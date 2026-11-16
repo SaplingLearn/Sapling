@@ -37,7 +37,7 @@ sys.path.insert(0, str(BASE))
 
 from db.connection import REST_URL, table  # noqa: E402
 from services.auth.waitlist import _waitlist_entry  # noqa: E402
-from services.encryption import decrypt_if_present  # noqa: E402
+from services.encryption import bind, decrypt_if_present  # noqa: E402
 
 #: Rows a never-approved account can hold. Deleted before the account itself;
 #: anything else referencing it makes the delete fail, and the account is kept.
@@ -61,7 +61,7 @@ def main(argv: list[str] | None = None) -> dict:
     summary = {"listed": 0, "already_listed": 0, "deleted": 0, "kept": 0, "no_email": 0, "failed": 0}
     for row in _unapproved():
         uid = row["id"]
-        email = (decrypt_if_present(row.get("email")) or "").strip()
+        email = (decrypt_if_present(row.get("email"), bind=bind("users", "email", uid)) or "").strip()
         if "@" not in email:
             summary["no_email"] += 1
             print(f"  {uid}: no readable email, left alone")

@@ -76,7 +76,7 @@ from services.chunk_visibility import (  # noqa: E402
     COURSE_MATERIAL, PERSONAL_NOTES,
 )
 from services.chunker import chunk_document, chunk_prose  # noqa: E402
-from services.encryption import decrypt_if_present  # noqa: E402
+from services.encryption import bind, decrypt_if_present  # noqa: E402
 from services.rag_service import chunk_id  # noqa: E402
 
 #: Enough text to judge. Below this the classifier invents a document (the same
@@ -185,7 +185,8 @@ def main() -> None:
     for doc in docs:
         doc_id = doc["id"]
         user_id = doc.get("user_id") or ""
-        text = decrypt_if_present(doc.get("extracted_text")) or ""
+        text = decrypt_if_present(
+            doc.get("extracted_text"), bind=bind("documents", "extracted_text", doc)) or ""
         if len(text.strip()) < MIN_CHARS:
             answer, confidence = PERSONAL_NOTES, None
             why = "no readable extracted_text"

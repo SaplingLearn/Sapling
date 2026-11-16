@@ -13,7 +13,7 @@ class TestPaginateUsers:
              patch("services.users_search.get_display_names",
                    return_value={"u1": "Decrypted Name"}), \
              patch("services.users_search.decrypt_if_present",
-                   side_effect=lambda v: f"d:{v}" if v else v):
+                   side_effect=lambda v, **_: f"d:{v}" if v else v):
             users_tbl = MagicMock()
             users_tbl.select_with_count.return_value = (users_rows, 137)
             roles_tbl = MagicMock()
@@ -48,7 +48,7 @@ class TestPaginateUsers:
         with patch("services.users_search.table") as t, \
              patch("services.users_search.get_display_names", return_value=name_map), \
              patch("services.users_search.decrypt_if_present",
-                   side_effect=lambda v: email_map.get(v, v)):
+                   side_effect=lambda v, **_: email_map.get(v, v)):
             users_tbl = MagicMock()
             users_tbl.select.return_value = rows
             roles_tbl = MagicMock()
@@ -93,7 +93,7 @@ class TestPaginateUsers:
 
         with patch("services.users_search.table") as t, \
              patch("services.users_search.get_display_names", return_value={"u1": "Admin User"}), \
-             patch("services.users_search.decrypt_if_present", side_effect=lambda v: v):
+             patch("services.users_search.decrypt_if_present", side_effect=lambda v, **_: v):
             users_tbl = MagicMock()
             users_tbl.select_with_count.return_value = (rows, 1)
             user_roles_tbl = MagicMock()
@@ -122,7 +122,7 @@ class TestRolesAreReadInOneQueryPerPage:
         rows = [{"id": f"u{i}", "email": "E", "is_approved": True,
                  "created_at": "x", "last_sign_in_at": None} for i in range(n_users)]
         with patch("services.users_search.table") as t,              patch("services.users_search.get_display_names",
-                   return_value={r["id"]: "N" for r in rows}),              patch("services.users_search.decrypt_if_present", side_effect=lambda v: v):
+                   return_value={r["id"]: "N" for r in rows}),              patch("services.users_search.decrypt_if_present", side_effect=lambda v, **_: v):
             users_tbl = MagicMock()
             users_tbl.select_with_count.return_value = (rows, n_users)
             user_roles_tbl = MagicMock()

@@ -6,7 +6,7 @@ from uuid import NAMESPACE_URL, uuid5
 
 from db import seed_helpers as h
 from db.connection import page_all, table
-from services.encryption import decrypt
+from services.encryption import ENCRYPTED_COLUMNS, bind, decrypt, encrypt
 from services.profiles import get_display_name
 
 _ACTIVE = "rich-user-active"
@@ -17,6 +17,21 @@ _SHARED = {"schools", "courses", "course_offerings", "offering_concept_stats"}
 #: as ciphertext-oracle baseline rows; on a real account they would read as
 #: submissions the developer never made.
 _SKIPPED = {"user_roles", "feedback", "issue_reports"}
+
+
+def _reseal(table_name: str, source: dict, row: dict) -> None:
+    """Move each 🔒 value from the fixture's cell to the owner's.
+
+    A value is bound to its row (finding M13): copied as is under a remapped
+    id, session or user it would no longer open. It is opened with the SOURCE
+    row's binding and sealed again with the TARGET row's (JSON and numeric
+    columns seal their text form, so the string round-trips unchanged)."""
+    for spec in ENCRYPTED_COLUMNS:
+        value = row.get(spec.column) if spec.table == table_name else None
+        if not isinstance(value, str):
+            continue
+        plain = decrypt(value, bind=bind(table_name, spec.column, source))
+        row[spec.column] = encrypt(plain, bind=bind(table_name, spec.column, row))
 
 
 def resolve_owner(*, email: str | None = None, user_id: str | None = None) -> dict:
@@ -33,7 +48,8 @@ def resolve_owner(*, email: str | None = None, user_id: str | None = None) -> di
             if not row.get("email"):
                 continue
             try:
-                stored_email = decrypt(row["email"]).strip().casefold()
+                stored_email = decrypt(
+                    row["email"], bind=bind("users", "email", row)).strip().casefold()
             except Exception:
                 # One stray row under another key must not block every other account.
                 undecryptable += 1
@@ -113,6 +129,7 @@ class OwnerSeedWriter:
             h.record(table_name, created=False)
             return
 
+        _reseal(table_name, source, row)
         table(table_name).insert(row)
         if source_id:
             self.ids[source_id] = row["id"]

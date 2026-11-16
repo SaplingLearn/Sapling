@@ -198,9 +198,9 @@ class TestUpdateCourseContext(unittest.TestCase):
         nodes_tbl = MagicMock()
         nodes_tbl.select.return_value = node_rows
         quiz_rows = [
-            {"concept_node_id": "n1",
+            {"user_id": "u1", "concept_node_id": "n1",
              "context_json": {"common_mistakes": ["Off-by-one error", "off-by-one error"], "weak_areas": []}},
-            {"concept_node_id": "n2",
+            {"user_id": "u2", "concept_node_id": "n2",
              "context_json": {"common_mistakes": ["OFF-BY-ONE ERROR"], "weak_areas": ["boundary conditions"]}},
         ]
 
@@ -244,7 +244,7 @@ class TestUpdateCourseContext(unittest.TestCase):
         nodes_tbl = MagicMock()
         nodes_tbl.select.return_value = node_rows
         quiz_rows = [
-            {"concept_node_id": "n1",
+            {"user_id": "u1", "concept_node_id": "n1",
              "context_json": {
                  "common_mistakes": ["Off-by-one error"],
                  "weak_areas": ["boundary conditions"],

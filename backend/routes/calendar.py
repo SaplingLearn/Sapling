@@ -20,7 +20,7 @@ from services.auth_guard import require_self, get_session_user_id, guard_off_loo
 from services.calendar_service import (
     extract_assignments_from_file, extraction_failed, read_syllabus_upload, save_new_assignments,
 )
-from services.encryption import encrypt, decrypt, decrypt_if_present
+from services.encryption import bind, decrypt, decrypt_if_present, encrypt
 from services.request_context import current_request_id
 from services import abuse_limits
 from services.request_limits import aenforce_abuse_limit
@@ -44,10 +44,12 @@ router.include_router(consent_router)
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _get_refreshed_credentials(token_row: dict) -> "Credentials":
+    user_id = token_row["user_id"]
     creds = Credentials(
-        token=decrypt(token_row["access_token"]),
+        token=decrypt(token_row["access_token"], bind=bind("oauth_tokens", "access_token", user_id)),
         # NULL when Google never sent one; then there is nothing to refresh with.
-        refresh_token=decrypt_if_present(token_row.get("refresh_token")),
+        refresh_token=decrypt_if_present(
+            token_row.get("refresh_token"), bind=bind("oauth_tokens", "refresh_token", user_id)),
         client_id=GOOGLE_CLIENT_ID,
         client_secret=GOOGLE_CLIENT_SECRET,
         token_uri="https://oauth2.googleapis.com/token",
@@ -70,13 +72,14 @@ def _get_refreshed_credentials(token_row: dict) -> "Credentials":
         creds.refresh(Request())
         table("oauth_tokens").update(
             {
-                "access_token": encrypt(creds.token),
+                "access_token": encrypt(
+                    creds.token, bind=bind("oauth_tokens", "access_token", user_id)),
                 # expires_at is TIMESTAMPTZ (migration 0024); "" is not a valid
                 # timestamptz, so pass None when a refresh yields no expiry
                 # (mirrors the auth.py callback which fixed the same hazard).
                 "expires_at": creds.expiry.isoformat() if creds.expiry else None,
             },
-            filters={"user_id": f"eq.{token_row['user_id']}"},
+            filters={"user_id": f"eq.{user_id}"},
         )
 
     return creds
@@ -144,7 +147,7 @@ def _read_assignments(user_id, *, due_gte=None, limit=None):
             "title": r["title"],
             "due_date": r["due_date"],
             "assignment_type": r.get("assignment_type"),
-            "notes": decrypt_if_present(r.get("notes")),
+            "notes": decrypt_if_present(r.get("notes"), bind=bind("assignments", "notes", r)),
             "google_event_id": r.get("google_event_id"),
             "course_id": meta.get("course_id"),
             "course_code": meta.get("course_code") or "",
@@ -379,7 +382,8 @@ def sync_to_google(body: SyncBody, request: FastAPIRequest):
         course_label = f"[{cc}] " if cc else (f"{cn}: " if cn else "")
         event = {
             "summary": f"{course_label}{a['title']}" if course_label else a["title"],
-            "description": decrypt_if_present(a.get("notes")) or "",
+            "description": decrypt_if_present(
+                a.get("notes"), bind=bind("assignments", "notes", a)) or "",
             "start": {"date": a["due_date"]},
             "end": {"date": a["due_date"]},
         }
@@ -438,7 +442,8 @@ def export_to_google(body: ExportBody, request: FastAPIRequest):
 
         event = {
             "summary": f"{course_label}{a['title']}" if course_label else a["title"],
-            "description": decrypt_if_present(a.get("notes")) or "",
+            "description": decrypt_if_present(
+                a.get("notes"), bind=bind("assignments", "notes", a)) or "",
             "start": {"date": a["due_date"]},
             "end": {"date": a["due_date"]},
         }

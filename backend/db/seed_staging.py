@@ -33,7 +33,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config import get_mastery_tier  # noqa: E402  (tier ↔ score stay consistent)
 from db import seed_helpers as h  # noqa: E402
-from services.encryption import encrypt_if_present  # noqa: E402
+from services.encryption import bind, encrypt_if_present  # noqa: E402
 
 # ─── Deterministic ids (everything namespaced `seed-…`) ──────────────────────
 
@@ -133,7 +133,8 @@ def seed_user() -> None:
         "users",
         {
             "id": USER_ID,
-            "email": encrypt_if_present("demo.student@staging.saplinglearn.com"),
+            "email": encrypt_if_present("demo.student@staging.saplinglearn.com",
+                                        bind=bind("users", "email", USER_ID)),
             "onboarding_completed": True,
             "streak_count": 4,
             "is_approved": True,
@@ -146,9 +147,9 @@ def seed_user() -> None:
         "user_profiles",
         {
             "user_id": USER_ID,
-            "name": encrypt_if_present("Demo Student"),
-            "first_name": encrypt_if_present("Demo"),
-            "last_name": encrypt_if_present("Student"),
+            "name": encrypt_if_present("Demo Student", bind=bind("user_profiles", "name", USER_ID)),
+            "first_name": encrypt_if_present("Demo", bind=bind("user_profiles", "first_name", USER_ID)),
+            "last_name": encrypt_if_present("Student", bind=bind("user_profiles", "last_name", USER_ID)),
             "username": "demo-student",
             "year": "Sophomore",
             "majors": ["Computer Science"],
@@ -316,8 +317,10 @@ def seed_gradebook() -> None:
                 "assignment_type": atype,
                 "source": source,
                 # 🔒 points (numeric semantics; decrypt_numeric at read).
-                "points_possible": encrypt_if_present(possible),
-                "points_earned": encrypt_if_present(earned),
+                "points_possible": encrypt_if_present(
+                    possible, bind=bind("assignments", "points_possible", asg_id)),
+                "points_earned": encrypt_if_present(
+                    earned, bind=bind("assignments", "points_earned", asg_id)),
             },
         )
 
@@ -336,10 +339,12 @@ def seed_study() -> None:
             "category": "syllabus",
             # 🔒 summary / concept_notes.
             "summary": encrypt_if_present(
-                "CS101 syllabus: weekly homework, one midterm, final project."
+                "CS101 syllabus: weekly homework, one midterm, final project.",
+                bind=bind("documents", "summary", "seed-doc-cs-fall-syllabus"),
             ),
             "concept_notes": encrypt_if_present(
-                "Covers variables, functions, recursion."
+                "Covers variables, functions, recursion.",
+                bind=bind("documents", "concept_notes", "seed-doc-cs-fall-syllabus"),
             ),
         },
     )
@@ -350,9 +355,11 @@ def seed_study() -> None:
             "user_id": USER_ID,
             "offering_id": OFF_CS_FALL,
             # 🔒 title / body.
-            "title": encrypt_if_present("Week 1 — Variables"),
+            "title": encrypt_if_present(
+                "Week 1 — Variables", bind=bind("notes", "title", "seed-note-cs-fall-week1")),
             "body": encrypt_if_present(
-                "A variable binds a name to a value. Types: int, str, bool, float."
+                "A variable binds a name to a value. Types: int, str, bool, float.",
+                bind=bind("notes", "body", "seed-note-cs-fall-week1"),
             ),
             "tags": ["week1", "basics"],
         },

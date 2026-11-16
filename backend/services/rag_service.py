@@ -20,7 +20,7 @@ from agents._providers import model_mode
 from db.connection import rpc, table
 from db.scope import runs_as_service
 from services.chunk_visibility import PRIVATE, SHARED, record_contributors
-from services.encryption import decrypt_if_present, encrypt_if_present
+from services.encryption import bind, decrypt_if_present, encrypt_if_present
 from services.events_service import log_event
 
 logger = logging.getLogger(__name__)
@@ -265,7 +265,8 @@ def retrieve_chunks_detailed(
         # Ranking never touched this column (the RPC orders on `embedding`), so
         # encryption costs retrieval nothing but ~k AES-GCM decrypts.
         for row in kept:
-            row["chunk_text"] = decrypt_if_present(row.get("chunk_text"))
+            row["chunk_text"] = decrypt_if_present(
+                row.get("chunk_text"), bind=bind("course_chunks", "chunk_text", row))
         return Retrieval(chunks=kept)
     except _EmbeddingDisabled as e:
         # The #439 seam guard, not a failure: below-seam embedding is disabled
@@ -521,8 +522,14 @@ def index_document_chunks_detailed(
     # silently. Ids were computed on the plaintext, which is the other half of
     # the ADR: AES-GCM draws a fresh nonce per call, so identical text encrypts
     # differently every time and ciphertext can never be a dedup key.
+    #
+    # Bound (AAD, finding M13) to that same content-addressed id: it is known
+    # before encryption, and the shared upsert (`on_conflict=id`) keeps it, so
+    # a second uploader deduping onto the row re-seals the same text under the
+    # same binding and every reader opens it with the id it selected.
     for rec in embedded:
-        rec["chunk_text"] = encrypt_if_present(rec["chunk_text"])
+        rec["chunk_text"] = encrypt_if_present(
+            rec["chunk_text"], bind=bind("course_chunks", "chunk_text", rec["id"]))
 
     table("course_chunks").upsert(embedded, on_conflict="id")
     if visibility == SHARED:

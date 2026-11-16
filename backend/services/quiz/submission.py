@@ -27,7 +27,7 @@ from services import llm_budget
 from services.quiz.config import mastery_after
 from services.quiz.errors import QuizAPIError, QuizErrorCode
 from services.profiles import get_display_name
-from services.encryption import encrypt_json, decrypt_json_column
+from services.encryption import bind, encrypt_json, decrypt_json_column
 from services.quiz.grading import WRITTEN_TYPES, grade_written
 from services.graph_service import apply_graph_update
 from services.quiz.context import get_quiz_context, save_quiz_context
@@ -136,7 +136,8 @@ def _grade_submission(
     # to close). Questions never answered through C1 fall back to the
     # submitted payload, so the current all-at-the-end client keeps working.
     recorded_rows = table("quiz_responses").select(
-        "question_index,selected_index,answer_text",
+        # attempt_id + question_index are answer_text's binding (M13).
+        "attempt_id,question_index,selected_index,answer_text",
         filters={"attempt_id": f"eq.{body.quiz_id}"},
     ) or []
     recorded_by_index = {r["question_index"]: r for r in recorded_rows}
@@ -229,7 +230,8 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
     user_id = attempt["user_id"]
 
     # #521: ciphertext str for new rows, plaintext JSONB for pre-backfill rows.
-    questions = decrypt_json_column(attempt["questions_json"])
+    questions = decrypt_json_column(
+        attempt["questions_json"], bind=bind("quiz_attempts", "questions_json", body.quiz_id))
 
     # #129: completed_at is written on the first successful submit. A re-POST
     # of the same quiz_id must not re-run apply_graph_update (double mastery
@@ -330,7 +332,8 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
                 # The reconciled set (recorded responses winning over payload),
                 # not the raw request — the attempt's stored answers must agree
                 # with the score computed from them.
-                "answers_json": encrypt_json(graded_answers),
+                "answers_json": encrypt_json(
+                    graded_answers, bind=bind("quiz_attempts", "answers_json", body.quiz_id)),
                 # completed_at was already stamped by the atomic claim above.
             },
             filters={"id": f"eq.{body.quiz_id}"},

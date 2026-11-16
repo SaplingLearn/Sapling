@@ -37,9 +37,16 @@ def enc_json(aes: AESGCM, value) -> str:
     return enc(aes, json.dumps(value, separators=(",", ":")))
 
 
-def dec(aes: AESGCM, value: str) -> str:
+def dec(aes: AESGCM, value: str, table: str | None = None, column: str | None = None,
+        row: dict | None = None) -> str:
+    """Open a v1 value, or a v2 value with the binding of (table, column, row)."""
+    aad = None
+    if value.startswith(encryption.V2_PREFIX):
+        assert table and column and row is not None, "a v2 value needs its cell"
+        aad = encryption.bind(table, column, row).aad()
+        value = value.split(":", 2)[2]
     raw = base64.b64decode(value)
-    return aes.decrypt(raw[:12], raw[12:], None).decode()
+    return aes.decrypt(raw[:12], raw[12:], aad).decode()
 
 
 # ── A tiny PostgREST stand-in ───────────────────────────────────────────────
@@ -456,7 +463,7 @@ def test_soft_decrypt_would_have_shipped_the_ciphertext():
     ct = enc(KEY_C, "secret")
     assert encryption.decrypt_if_present(ct) == ct
     with pytest.raises(BundleError):
-        account_bundle._decrypt_text(ct, "t.c")
+        account_bundle._decrypt_text(ct, "t.c", encryption.bind("notes", "body", "n-1"))
 
 
 def test_legacy_plaintext_in_an_encrypted_column_travels_as_is(use):
@@ -475,6 +482,63 @@ def test_unlisted_encrypted_column_fails_the_export(use):
 
     with pytest.raises(BundleError, match=r"sessions\.close_json.*not in account_bundle\.ENCRYPTED"):
         account_bundle.export_account(UID)
+
+
+def _seal_v2(aes: AESGCM, value: str, table: str, column: str, row) -> str:
+    nonce = os.urandom(12)
+    aad = encryption.bind(table, column, row).aad()
+    body = base64.b64encode(nonce + aes.encrypt(nonce, value.encode(), aad)).decode()
+    return f"{encryption.V2_PREFIX}{encryption.ACTIVE_KID}:{body}"
+
+
+def test_export_opens_a_v2_value_in_its_own_cell(use):
+    db = source_db()
+    db.data["notes"][0]["body"] = _seal_v2(KEY_A, "bound body", "notes", "body", "note-1")
+    use(db, KEY_A, "staging")
+
+    assert account_bundle.export_account(UID)["tables"]["notes"][0]["body"] == "bound body"
+
+
+def test_a_v2_value_moved_from_another_row_fails_the_export(use):
+    """Finding M13: a ciphertext copied into this row from another one."""
+    db = source_db()
+    db.data["notes"][0]["body"] = _seal_v2(KEY_A, "someone else's", "notes", "body", "note-9")
+    use(db, KEY_A, "staging")
+
+    with pytest.raises(BundleError, match=r"notes\.body.*does not decrypt"):
+        account_bundle.export_account(UID)
+
+
+def test_unlisted_v2_column_fails_the_export_without_opening_it(use):
+    db = source_db()
+    db.data["sessions"][0]["close_json"] = f"{encryption.V2_PREFIX}0:AAAA"
+    use(db, KEY_A, "staging")
+
+    with pytest.raises(BundleError, match=r"sessions\.close_json.*not in account_bundle\.ENCRYPTED"):
+        account_bundle.export_account(UID)
+
+
+def test_legacy_plaintext_is_refused_once_legacy_reads_are_off(use, monkeypatch):
+    db = source_db()
+    db.data["notes"][0]["title"] = "injected plaintext"
+    use(db, KEY_A, "staging")
+    monkeypatch.setenv("ENCRYPTION_STRICT_TABLES", "notes")
+
+    with pytest.raises(BundleError, match=r"notes\.title.*legacy plaintext refused"):
+        account_bundle.export_account(UID)
+
+
+def test_encrypted_map_is_the_registry_for_every_bundled_table():
+    """account_bundle.ENCRYPTED is derived from encryption.ENCRYPTED_COLUMNS:
+    a bundled table's 🔒 columns are exactly the registry's."""
+    bundled = {s.name for s in account_bundle.SPECS} | {"user_profiles"}
+    registry_tables = {s.table for s in encryption.ENCRYPTED_COLUMNS}
+    assert set(account_bundle.ENCRYPTED) == bundled & registry_tables
+    for name, cols in account_bundle.ENCRYPTED.items():
+        assert cols == {
+            s.column: (account_bundle.JSON if s.kind == encryption.JSON else account_bundle.TEXT)
+            for s in encryption.ENCRYPTED_COLUMNS if s.table == name
+        }
 
 
 def test_export_unknown_or_deleted_account(use):
@@ -499,11 +563,16 @@ def test_round_trip_reencrypts_under_the_target_key_and_remaps_catalog(use, wipe
     assert wipes == [UID]
     d = dst.data
     doc = d["documents"][0]
-    # Re-encrypted under B: readable with B, not with A.
-    assert dec(KEY_B, doc["summary"]) == "Weekly homework."
-    assert json.loads(dec(KEY_B, doc["concept_notes"]))[0]["name"] == "Recursion"
+    # Re-encrypted under B, in the v2 envelope bound to the target cell:
+    # readable with B in its own cell, not with A, not in another column.
+    assert doc["summary"].startswith(encryption.V2_PREFIX)
+    assert dec(KEY_B, doc["summary"], "documents", "summary", doc) == "Weekly homework."
+    assert json.loads(dec(KEY_B, doc["concept_notes"], "documents", "concept_notes", doc)
+                      )[0]["name"] == "Recursion"
     with pytest.raises(Exception):
-        dec(KEY_A, doc["summary"])
+        dec(KEY_A, doc["summary"], "documents", "summary", doc)
+    with pytest.raises(Exception):
+        dec(KEY_B, doc["summary"], "documents", "extracted_text", doc)
     # Documents re-index on the target; shareability travels.
     assert doc["index_status"] == "pending"
     assert doc["index_attempts"] == 0 and doc["index_chunk_count"] is None
@@ -538,14 +607,19 @@ def test_round_trip_reencrypts_under_the_target_key_and_remaps_catalog(use, wipe
     assert d["graph_edges"][0]["source_node_id"] == "node-1"
     # Encrypted values everywhere read back under B.
     a = d["assignments"][0]
-    assert dec(KEY_B, a["points_earned"]) == "88" and dec(KEY_B, a["notes"]) == "remember the base case"
-    assert [dec(KEY_B, m["content"]) for m in d["messages"]] == ["Hi", "Hello"]
-    assert json.loads(dec(KEY_B, d["quiz_responses"][0]["answer_text"])) == {"text": "a base case"}
+    assert dec(KEY_B, a["points_earned"], "assignments", "points_earned", a) == "88"
+    assert dec(KEY_B, a["notes"], "assignments", "notes", a) == "remember the base case"
+    assert [dec(KEY_B, m["content"], "messages", "content", m)
+            for m in d["messages"]] == ["Hi", "Hello"]
+    resp = d["quiz_responses"][0]
+    assert json.loads(dec(KEY_B, resp["answer_text"], "quiz_responses", "answer_text", resp)
+                      ) == {"text": "a base case"}
     guide = d["study_guides"][0]
-    assert json.loads(dec(KEY_B, guide["content"])) == {"exam": "Midterm"}
-    assert json.loads(dec(KEY_B, guide["previous_content"])) == {
-        "exam": "Midterm, before the update"}
-    assert json.loads(dec(KEY_B, guide["answers"])) == {
+    assert json.loads(dec(KEY_B, guide["content"], "study_guides", "content", guide)
+                      ) == {"exam": "Midterm"}
+    assert json.loads(dec(KEY_B, guide["previous_content"], "study_guides", "previous_content",
+                          guide)) == {"exam": "Midterm, before the update"}
+    assert json.loads(dec(KEY_B, guide["answers"], "study_guides", "answers", guide)) == {
         "s1-i2": {"option_id": "b", "correct": True}}
     # The guide's plaintext state travels; its materials and exam keep their
     # ids (row ids are preserved), and the source's generation claim does not.
@@ -555,7 +629,9 @@ def test_round_trip_reencrypts_under_the_target_key_and_remaps_catalog(use, wipe
     assert (guide["read_sections"], guide["saved_at"]) == (["s1"], "2026-11-04T00:00:00Z")
     assert guide["generating_at"] is None
     assert d["quiz_attempts"][0]["answers_json"] is None
-    assert json.loads(dec(KEY_B, d["topic_checklists"][0]["content"]))["topics"][0]["name"] == "Recursion"
+    chk = d["topic_checklists"][0]
+    assert json.loads(dec(KEY_B, chk["content"], "topic_checklists", "content", chk)
+                      )["topics"][0]["name"] == "Recursion"
     # Achievements by slug; one the target lacks is skipped and counted.
     assert d["user_achievements"] == [{
         "user_id": UID, "achievement_id": DST_ACH_FIRST,
@@ -564,7 +640,7 @@ def test_round_trip_reencrypts_under_the_target_key_and_remaps_catalog(use, wipe
     assert counts["user_achievements"] == 1 and counts["user_achievements_skipped"] == 1
     # Profile: re-encrypted, username kept (someone else holds it here), avatar untouched.
     prof = next(p for p in d["user_profiles"] if p["user_id"] == UID)
-    assert dec(KEY_B, prof["name"]) == "Ada Student"
+    assert dec(KEY_B, prof["name"], "user_profiles", "name", prof) == "Ada Student"
     assert prof["username"] == "ada-target"
     assert prof["avatar_url"] == "https://dst/avatar.png"
     assert prof["majors"] == ["Computer Science"]

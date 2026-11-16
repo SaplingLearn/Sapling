@@ -669,7 +669,7 @@ class TestChatViaAgent:
             patch_tutor("table", side_effect=with_async_twins(factory)),
             patch_tutor(
                 "decrypt_if_present",
-                side_effect=lambda v: (v or "").replace("ENC:", "") if v else v,
+                side_effect=lambda v, **_kw: (v or "").replace("ENC:", "") if v else v,
             ) as decrypt_mock,
         ):
             history = asyncio.run(_load_message_history("s1"))
@@ -720,7 +720,7 @@ class TestChatViaAgent:
             patch_tutor("agent_for_mode", return_value=agent),
             patch_tutor(
                 "encrypt_if_present",
-                side_effect=lambda v: f"ENC:{v}" if v else v,
+                side_effect=lambda v, **_kw: f"ENC:{v}" if v else v,
             ) as encrypt_mock,
         ):
             r = self._post(message="USER_PROMPT")
@@ -776,7 +776,7 @@ class TestChatViaAgent:
         with (
             patch_tutor("table", side_effect=with_async_twins(factory)),
             patch_tutor("agent_for_mode", return_value=agent),
-            patch_tutor("encrypt_if_present", side_effect=lambda v: v),
+            patch_tutor("encrypt_if_present", side_effect=lambda v, **_kw: v),
         ):
             r = self._post(message="Explain Big-O")
 

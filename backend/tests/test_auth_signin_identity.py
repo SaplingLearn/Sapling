@@ -27,7 +27,7 @@ from fastapi.testclient import TestClient
 import config
 import routes.auth as auth_module
 import services.achievement_service as ach_module
-from services.encryption import decrypt, encrypt
+from services.encryption import bind, decrypt, encrypt
 from tests.split_patches import set_auth_session_secret, set_auth_table
 
 _app = FastAPI()
@@ -180,8 +180,8 @@ class TestCalendarTokensAtSignIn:
         t.update.assert_called_once()
         row = t.update.call_args.args[0]
         assert t.update.call_args.kwargs["filters"] == {"user_id": f"eq.{USER_ID}"}
-        assert decrypt(row["access_token"]) == "access-tok"
-        assert decrypt(row["refresh_token"]) == "refresh-tok"
+        assert decrypt(row["access_token"], bind=bind("oauth_tokens", "access_token", USER_ID)) == "access-tok"
+        assert decrypt(row["refresh_token"], bind=bind("oauth_tokens", "refresh_token", USER_ID)) == "refresh-tok"
         assert row["expires_at"] is None
         t.delete.assert_not_called()
 
@@ -199,7 +199,7 @@ class TestCalendarTokensAtSignIn:
         _, tables, _ = signin(granted=IDENTITY + CALENDAR, refresh=None)
         row = tables["oauth_tokens"].update.call_args.args[0]
         assert "refresh_token" not in row
-        assert decrypt(row["access_token"]) == "access-tok"
+        assert decrypt(row["access_token"], bind=bind("oauth_tokens", "access_token", USER_ID)) == "access-tok"
 
 
 class TestTheProfileAtSignIn:
@@ -247,9 +247,9 @@ class TestTheProfileAtSignIn:
         _, updates = _profile_writes(tables)
         [update] = updates
         patch = update.args[0]
-        assert decrypt(patch["name"]) == "Ada Lovelace"
-        assert decrypt(patch["first_name"]) == "Ada"
-        assert decrypt(patch["last_name"]) == "Lovelace"
+        assert decrypt(patch["name"], bind=bind("user_profiles", "name", USER_ID)) == "Ada Lovelace"
+        assert decrypt(patch["first_name"], bind=bind("user_profiles", "first_name", USER_ID)) == "Ada"
+        assert decrypt(patch["last_name"], bind=bind("user_profiles", "last_name", USER_ID)) == "Lovelace"
         assert patch["avatar_url"] == "https://lh3.googleusercontent.com/a/new.png"
         assert update.kwargs["filters"] == {"user_id": f"eq.{USER_ID}", "name": f"eq.{stored}"}
 
@@ -267,7 +267,7 @@ class TestTheProfileAtSignIn:
         [upsert] = upserts
         row = upsert.args[0]
         assert row["user_id"] == USER_ID
-        assert decrypt(row["name"]) == "Ada Lovelace"
+        assert decrypt(row["name"], bind=bind("user_profiles", "name", USER_ID)) == "Ada Lovelace"
         assert row["avatar_url"] == "https://lh3.googleusercontent.com/a/new.png"
         assert upsert.kwargs == {"on_conflict": "user_id", "ignore_duplicates": True}
 
