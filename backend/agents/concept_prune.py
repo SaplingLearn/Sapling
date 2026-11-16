@@ -25,6 +25,7 @@ from pydantic_ai import Agent
 from agents._bounded import clip_list, clip_prose
 from agents._providers import model_for
 from agents.deps import SaplingDeps
+from services.prompt_safety import INJECTION_GUARD_PROMPT
 
 
 class JunkConcept(BaseModel):
@@ -70,7 +71,10 @@ _SYSTEM_PROMPT = (
     "When unsure, keep it: a broad or introductory "
     "subject concept (e.g. 'Scarcity' in economics, 'Thesis Statement' in "
     "writing) is a real concept. Skills and topics a course teaches are "
-    "concepts even when they sound general. Use names exactly as given."
+    "concepts even when they sound general. Use names exactly as given.\n\n"
+    # sec2 M10 audit: the entries are student graph text, enveloped; an entry
+    # that tells you what to remove is itself just an entry to judge.
+    + INJECTION_GUARD_PROMPT
 )
 _PROMPT_HASH = hashlib.sha256(_SYSTEM_PROMPT.encode("utf-8")).hexdigest()[:12]
 

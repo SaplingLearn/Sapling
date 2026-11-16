@@ -26,6 +26,7 @@ from db.connection import table
 from models import GenerateQuizBody
 from services import events_service
 from services.log_privacy import safe_exception_text
+from services.prompt_safety import neutralize_delimiters
 from services.auth_guard import require_self, guard_off_loop
 from services.llm_budget import LLMBudgetExceeded
 from services.quiz.config import (
@@ -260,6 +261,14 @@ async def _quiz_via_agent(
     on this single run. Anything else (None, unknown string) falls
     through to model_for("quiz") at agent-construction time.
     """
+    if use_shared_context:
+        # M8: class-derived data follows the STORED consent
+        # (`user_settings.share_class_context`), not only the request body's
+        # `use_shared_context`, which defaults to True on the wire: a student
+        # who opted out in settings never gets classmates' aggregates because
+        # a client sent the default. A read failure counts as opted out.
+        from services.chunk_visibility import shares_class_context
+        use_shared_context = await asyncio.to_thread(shares_class_context, user_id)
     deps = SaplingDeps(
         user_id=user_id,
         course_id=course_id,
@@ -437,7 +446,9 @@ async def _quiz_via_agent(
 
     routing_msg = (
         f"{difficulty_clause} "
-        f"The target concept is '{concept_name}' "
+        # The concept name is the student's graph text: a short scalar, so
+        # delimiter neutralization (#150), as every other concept name gets.
+        f"The target concept is '{neutralize_delimiters(concept_name)}' "
         f"(concept_node_id={concept_node_id}). Follow the workflow in your "
         f"system prompt; pass concept_node_id='{concept_node_id}' to "
         f"read_recent_quiz_attempts."
@@ -470,7 +481,7 @@ async def _quiz_via_agent(
 
     if material.block:
         user_message = (
-            "COURSE MATERIAL for '" + concept_name + "':\n\n" + material.block
+            "COURSE MATERIAL for '" + neutralize_delimiters(concept_name) + "':\n\n" + material.block
             + "\n\n[GENERATE QUIZ]\n" + routing_msg
         )
     else:

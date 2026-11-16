@@ -93,6 +93,29 @@ POSITIVES: list[tuple[str, str, str]] = [
     ("sucide has been on my mind", "suicidal_ideation", "suicide (mention)"),  # misspelling
     ("i self harm", "self_harm", "self-harm (mention)"),
     ("my self-injury is getting worse", "self_harm", "self-harm (mention)"),
+    # sec2 M11: the misses the audit found, more English phrasings, and the
+    # core phrases in Spanish, French, Portuguese and Chinese.
+    ("k1ll mys3lf", "suicidal_ideation", "kill myself"),  # leetspeak, folded
+    ("I want to kіll myself", "suicidal_ideation", "kill myself"),  # Cyrillic i
+    ("I have been cutting again", "self_harm", "cutting again"),
+    ("relapsed and started cutting again", "self_harm", "cutting again"),
+    ("going to end it tonight", "suicidal_ideation", "end it with a timeline"),
+    ("I just want it all to end", "suicidal_ideation", "want it all to end"),
+    ("I want to fall asleep and never wake up", "suicidal_ideation", "sleep and never wake up"),
+    ("I've been stockpiling my meds", "acute_danger", "stockpiling pills"),
+    ("I tied a noose", "acute_danger", "noose"),
+    ("quiero morirme", "suicidal_ideation", "es: quiero morir"),
+    ("ya no quiero vivir", "suicidal_ideation", "es: quiero morir"),
+    ("me estoy cortando otra vez", "self_harm", "es: me corto"),
+    ("je veux mourir", "suicidal_ideation", "fr: je veux mourir"),
+    ("j'ai envie de me suicider", "suicidal_ideation", "fr: je veux mourir"),
+    ("je me scarifie encore", "self_harm", "fr: je me scarifie"),
+    ("quero morrer", "suicidal_ideation", "pt: quero morrer"),
+    ("não quero mais viver", "suicidal_ideation", "pt: quero morrer"),
+    ("estou me cortando", "self_harm", "pt: me cortando"),
+    ("我想死", "suicidal_ideation", "zh: 想死"),
+    ("我不想活了", "suicidal_ideation", "zh: 想死"),
+    ("我又割腕了", "self_harm", "zh: 伤害自己"),
 ]
 
 #: Academic and idiomatic text that must never fire (the owner's list first).
@@ -205,6 +228,43 @@ NEGATIVES: list[str] = [
     "killjoy",
     "",
     "   ",
+    # sec2 M11: everyday text near the new phrases (the owner's named ones
+    # first), and one per new guard (other languages' negations and idioms)
+    "this exam is killing me",
+    "cut the wire",
+    "kill -9 the process",
+    "I'm dying to know the answer",
+    "I've been cutting vegetables all day",
+    "I keep cutting corners",
+    "Cut 3 pieces of 5cm wire",
+    "I'm going to end it with him tonight",
+    "Let's end it today with a quiz",
+    "Students fall asleep and never wake up on time",
+    "CS 330 lab 5: kill the zombie processes",
+    "call 988 or text 2 friends",
+    "me muero de risa",
+    "me corto el pelo",
+    "quiero cortarme el pelo",
+    "je vais mourir de rire",
+    "je me coupe les cheveux",
+    "morrendo de fome",
+    "vou me cortar o cabelo",
+    "我想死你了",  # "I miss you to death"
+    "我不想死",  # "I don't want to die"
+    "没有水植物活不下去",  # plants can't live without water
+    "不要伤害自己",  # "don't hurt yourself"
+    "累死了",  # "dead tired"
+    "No quiero morir, solo estoy cansada",
+    "no voy a matarme",
+    "no me voy a matar",
+    "quiero morirme de vergüenza",
+    "me voy a matar estudiando",
+    "je veux mourir de honte",
+    "je vais me tuer à la tâche",
+    "não quero morrer",
+    "não vou me matar",
+    "quero morrer de vergonha",
+    "vou me matar de estudar",
 ]
 
 
@@ -227,7 +287,7 @@ def test_every_category_is_covered():
 def test_every_listed_phrase_has_an_example():
     """A phrase added to EXPLICIT or MENTIONS without a pinned example here
     fails, so the lists can grow only with a test."""
-    listed = {p.label for p in (*EXPLICIT, *MENTIONS)}
+    listed = {p.label for p in (*EXPLICIT, *MENTIONS, *crisis_detection.CJK_EXPLICIT)}
     assert listed == {label for _, _, label in POSITIVES}
 
 

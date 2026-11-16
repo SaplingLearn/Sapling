@@ -110,8 +110,12 @@ _PROBES: dict[Expect, tuple[str, dict, bool]] = {
     # report a discrepancy on every generation for every student — the alarm
     # fatigue this helper exists to avoid. The expectation is "this class has
     # misconceptions to offer", so that is what the probe must ask.
+    # M8: and only rows built under the distinct-student floor, which are the
+    # only rows the reader serves (a pre-floor row is not "data to offer").
     Expect.COURSE_HAS_AGGREGATES: (
-        "offering_concept_stats", {"common_misconceptions": "neq.{}"}, False,
+        "offering_concept_stats",
+        {"common_misconceptions": "neq.{}", "min_mistake_contributors": "gte.3"},
+        False,
     ),
     Expect.HAS_DOCUMENTS: ("documents", {"deleted_at": "is.null"}, True),
 }

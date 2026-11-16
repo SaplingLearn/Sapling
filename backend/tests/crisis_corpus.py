@@ -311,6 +311,13 @@ _TAKEN_BACK_TRAIL = (
 _THIS = "'this' after a negation points at the state now and no longer vetoes"
 _FIRST_PERSON_COMPARATIVE = "still a match, now explicit: a first-person lead takes a comparative"
 _SOMEONE_ELSE = "the 'why does X want to die' guard no longer reads the speaker's own 'I' as X"
+_LEET = "sec2 M11: leetspeak next to letters is folded on a second read (base read 'k1ll' as is)"
+_LOOKALIKE = "sec2 M11: Cyrillic/Greek look-alike letters fold to Latin before matching"
+_CUTTING = "sec2 M11: 'cutting again' / 'started cutting' without 'myself' (base needed 'myself')"
+_END_IT = "sec2 M11: 'end it' with a timeline (tonight, now, for good); base needed 'end it all'"
+_NEW_ENGLISH = "sec2 M11: a wish for everything to end / never to wake up (base had no such phrase)"
+_MEANS = "sec2 M11: means (stockpiled pills, a noose) are acute danger"
+_OTHER_LANGUAGE = "sec2 M11: core phrases in Spanish, French, Portuguese and Chinese (base: English only)"
 
 INTENDED_CHANGES_FROM_BASE: dict[str, str] = {
     # A negation reaches only within its own clause (fc061fc9): base let it
@@ -430,6 +437,28 @@ INTENDED_CHANGES_FROM_BASE: dict[str, str] = {
     # The "someone else's wish" guard read the speaker's own "I" as the someone.
     "I can't do this anymore, I want to die": _SOMEONE_ELSE,
     "I really do think I want to die": _SOMEONE_ELSE,
+    # sec2 M11: misses the audit found, and the phrases added for them.
+    "k1ll mys3lf": _LEET,
+    "I want to kіll myself": _LOOKALIKE,
+    "I have been cutting again": _CUTTING,
+    "relapsed and started cutting again": _CUTTING,
+    "going to end it tonight": _END_IT,
+    "I just want it all to end": _NEW_ENGLISH,
+    "I want to fall asleep and never wake up": _NEW_ENGLISH,
+    "I've been stockpiling my meds": _MEANS,
+    "I tied a noose": _MEANS,
+    "quiero morirme": _OTHER_LANGUAGE,
+    "ya no quiero vivir": _OTHER_LANGUAGE,
+    "me estoy cortando otra vez": _OTHER_LANGUAGE,
+    "je veux mourir": _OTHER_LANGUAGE,
+    "j'ai envie de me suicider": _OTHER_LANGUAGE,
+    "je me scarifie encore": _OTHER_LANGUAGE,
+    "quero morrer": _OTHER_LANGUAGE,
+    "não quero mais viver": _OTHER_LANGUAGE,
+    "estou me cortando": _OTHER_LANGUAGE,
+    "我想死": _OTHER_LANGUAGE,
+    "我不想活了": _OTHER_LANGUAGE,
+    "我又割腕了": _OTHER_LANGUAGE,
 }
 
 

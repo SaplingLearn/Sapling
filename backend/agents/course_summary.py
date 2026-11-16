@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 
 from agents._providers import model_for
+from services.prompt_safety import INJECTION_GUARD_PROMPT
 
 
 class CourseSummary(BaseModel):
@@ -30,7 +31,9 @@ _SYSTEM_PROMPT = (
     "struggling and may need intervention; notes areas where students excel; "
     "and gives actionable recommendations for the instructor. Write in a "
     "professional but approachable tone — specific and data-driven. Do not "
-    "invent concepts or numbers beyond what you are given."
+    "invent concepts or numbers beyond what you are given.\n\n"
+    # M10 audit: concept names come from students' graphs.
+    + INJECTION_GUARD_PROMPT
 )
 _PROMPT_HASH = hashlib.sha256(_SYSTEM_PROMPT.encode("utf-8")).hexdigest()[:12]
 

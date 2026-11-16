@@ -194,14 +194,21 @@ class TestUpdateCourseContext(unittest.TestCase):
              "mastery_tier": "learning", "user_id": "u1"},
             {"id": "n2", "concept_name": "Loops", "mastery_score": 0.3,
              "mastery_tier": "learning", "user_id": "u2"},
+            {"id": "n3", "concept_name": "Loops", "mastery_score": 0.3,
+             "mastery_tier": "learning", "user_id": "u3"},
         ]
         nodes_tbl = MagicMock()
         nodes_tbl.select.return_value = node_rows
+        # M8: three distinct students share the off-by-one mistake (so it is
+        # kept, once); "boundary conditions" comes from u2 and u3 only.
         quiz_rows = [
             {"user_id": "u1", "concept_node_id": "n1",
              "context_json": {"common_mistakes": ["Off-by-one error", "off-by-one error"], "weak_areas": []}},
             {"user_id": "u2", "concept_node_id": "n2",
              "context_json": {"common_mistakes": ["OFF-BY-ONE ERROR"], "weak_areas": ["boundary conditions"]}},
+            {"user_id": "u3", "concept_node_id": "n3",
+             "context_json": {"common_mistakes": ["off-by-one error."],
+                              "weak_areas": ["Boundary conditions"]}},
         ]
 
         stats_tbl = MagicMock()
@@ -216,11 +223,13 @@ class TestUpdateCourseContext(unittest.TestCase):
             from services.course_context_service import update_course_context
             update_course_context("off-1")
 
-        # All three "off-by-one" variants are the same after .lower() — only one kept
+        # All "off-by-one" variants are the same after folding — only one kept
         stats_tbl.upsert.assert_called_once()
         upsert_payload = stats_tbl.upsert.call_args[0][0]
         self.assertEqual(len(upsert_payload["common_misconceptions"]), 1)
-        self.assertEqual(len(upsert_payload["prerequisite_gaps"]), 1)
+        # M8: two students are below the three-student floor.
+        self.assertEqual(upsert_payload["prerequisite_gaps"], [])
+        self.assertEqual(upsert_payload["min_mistake_contributors"], 3)
 
     @patch("services.academics.table")
     @patch("services.course_context_service.table")
@@ -238,18 +247,20 @@ class TestUpdateCourseContext(unittest.TestCase):
         self.assertNotIn("effective_explanations", QuizContext.model_fields)
 
         node_rows = [
-            {"id": "n1", "concept_name": "Loops", "mastery_score": 0.3,
-             "mastery_tier": "learning", "user_id": "u1"},
+            {"id": f"n{i}", "concept_name": "Loops", "mastery_score": 0.3,
+             "mastery_tier": "learning", "user_id": f"u{i}"}
+            for i in (1, 2, 3)  # M8: three students, so the arrays clear the floor
         ]
         nodes_tbl = MagicMock()
         nodes_tbl.select.return_value = node_rows
         quiz_rows = [
-            {"user_id": "u1", "concept_node_id": "n1",
+            {"user_id": f"u{i}", "concept_node_id": f"n{i}",
              "context_json": {
                  "common_mistakes": ["Off-by-one error"],
                  "weak_areas": ["boundary conditions"],
                  "effective_explanations": ["A worked example with a number line"],
-             }},
+             }}
+            for i in (1, 2, 3)
         ]
 
         stats_tbl = MagicMock()

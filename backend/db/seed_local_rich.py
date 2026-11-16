@@ -990,6 +990,9 @@ def seed_offering_concept_stats(writer=h) -> None:
                 "pct_struggling": 0.5,
                 "pct_unexplored": 0.25,
                 "common_misconceptions": misconceptions,
+                # M8: stamped as aggregated under the distinct-student floor,
+                # which is the only kind of row the quiz's reader serves.
+                "min_mistake_contributors": 3,
                 # No `effective_explanations` key — #572, see
                 # services/course_context_service.py::_parse_quiz_context_to_arrays.
                 "prerequisite_gaps": [],

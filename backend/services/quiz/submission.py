@@ -27,6 +27,7 @@ from services import llm_budget
 from services.quiz.config import mastery_after
 from services.quiz.errors import QuizAPIError, QuizErrorCode
 from services.profiles import get_display_name
+from services.prompt_safety import neutralize_delimiters, wrap_untrusted
 from services.encryption import bind, encrypt_json, decrypt_json_column
 from services.quiz.grading import WRITTEN_TYPES, grade_written
 from services.graph_service import apply_graph_update
@@ -454,14 +455,27 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
     student_name = get_display_name(user_id) or "Student"
 
     existing_ctx = get_quiz_context(user_id, concept_node_id)
+    # M8: the student's own answers (written answers are free text, and the
+    # chosen distractors' wording rides along) and the previous notes the
+    # model wrote from earlier answers are UNTRUSTED: each block goes in the
+    # envelope, and the short scalars get delimiter neutralization. These
+    # notes feed `common_mistakes`, which (aggregated across at least three
+    # students) reaches classmates' quiz agents.
     ctx_prompt = (
         _load_prompt("quiz_context_update.txt")
-        .replace("{concept_name}", concept_name)
-        .replace("{student_name}", student_name)
-        .replace("{existing_quiz_context_json}", json.dumps(existing_ctx) if existing_ctx else "{}")
+        .replace("{concept_name}", neutralize_delimiters(concept_name))
+        .replace("{student_name}", neutralize_delimiters(student_name))
+        .replace(
+            "{existing_quiz_context_json}",
+            wrap_untrusted(json.dumps(existing_ctx), source="previous learning notes")
+            if existing_ctx else "{}",
+        )
         .replace("{score}", str(score))
         .replace("{total}", str(total))
-        .replace("{quiz_results_json}", json.dumps(results, indent=2))
+        .replace(
+            "{quiz_results_json}",
+            wrap_untrusted(json.dumps(results, indent=2), source="the student's quiz answers"),
+        )
         # H2/#554: the wrong answers in WORDS. `results` carries labels only
         # ("picked B, answer was C"), which is not something a model can turn
         # into a misconception — it can only guess one. The option text lives
@@ -469,7 +483,10 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
         # answers_json existed.
         .replace(
             "{distractor_profile_json}",
-            json.dumps(build_distractor_profile(questions, results), indent=2),
+            wrap_untrusted(
+                json.dumps(build_distractor_profile(questions, results), indent=2),
+                source="the student's wrong answers",
+            ),
         )
     )
 

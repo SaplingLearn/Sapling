@@ -367,6 +367,9 @@ class Misconception(BaseModel):
     related_concept: str | None = None
 
 
+#: Envelope label on each aggregated mistake handed to a classmate's agent.
+CLASS_MISTAKES_SOURCE = "class quiz mistakes aggregated from several students"
+
 #: Row budget per offering. Applied per-offering rather than shared, so one
 #: class cannot starve another when a student holds two offerings of a course.
 _ROWS_PER_OFFERING = 20
@@ -418,6 +421,8 @@ async def read_misconceptions_for_course(
     if not ids:
         return []
 
+    from services.course_context_service import MIN_MISTAKE_CONTRIBUTORS
+
     def _fetch() -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
         # One read PER offering rather than one `in.(...)` read over all of
@@ -449,6 +454,11 @@ async def read_misconceptions_for_course(
                             # question the F5 probe asks, so a legitimately
                             # quiet class cannot look like a broken one.
                             "common_misconceptions": "neq.{}",
+                            # M8: only arrays built under the distinct-student
+                            # floor (at least MIN_MISTAKE_CONTRIBUTORS students
+                            # named the mistake); a row aggregated before the
+                            # floor existed is NULL here and never served.
+                            "min_mistake_contributors": f"gte.{MIN_MISTAKE_CONTRIBUTORS}",
                         },
                         order="updated_at.desc",
                         limit=_ROWS_PER_OFFERING,
@@ -491,13 +501,13 @@ async def read_misconceptions_for_course_tool(
 ) -> list[Misconception]:
     """Pydantic AI tool wrapper. Reads from ctx.deps.
 
-    #150: misconception strings are distilled from OTHER students'
-    sessions — peer-derived text. Delimiters are neutralized at this LLM
-    boundary so an injected string can't forge untrusted-envelope markers;
-    the consuming agents' UNTRUSTED CONTENT POLICY covers the rest
-    (typed short strings — no per-entry envelope).
+    #150 / M8: misconception strings are distilled from OTHER students'
+    written quiz answers — peer-derived text. Each one reaches the model
+    inside the untrusted envelope (so it reads as data about the class, never
+    as an instruction, and cannot forge an END marker); the related concept
+    name, a short scalar, gets delimiter neutralization.
     """
-    from services.prompt_safety import neutralize_delimiters
+    from services.prompt_safety import neutralize_delimiters, wrap_untrusted
 
     # Class-intel consent, enforced at the tool (#553 review finding 4).
     #
@@ -571,7 +581,7 @@ async def read_misconceptions_for_course_tool(
     prompt_dimensions.record(misconceptions=len(out))
     return [
         Misconception(
-            text=neutralize_delimiters(m.text),
+            text=wrap_untrusted(m.text, source=CLASS_MISTAKES_SOURCE),
             related_concept=(
                 neutralize_delimiters(m.related_concept)
                 if m.related_concept
