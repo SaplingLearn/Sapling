@@ -130,6 +130,7 @@ class Quiz(BaseModel):
     # schema (see MAX_QUESTIONS above).
     questions: list[QuizQuestion]
     contexts: list[QuizContext] = Field(default_factory=list)
+    retry_hints: list[str] = Field(default_factory=list)
 
     @field_validator("questions", mode="before")
     @classmethod
@@ -222,10 +223,20 @@ _SYSTEM_PROMPT = (
     "Honor the requested num_questions. Don't invent concepts the "
     "student doesn't have."
     "\n\nCOURSE MATERIAL grounding:\n"
-    "- If the user message contains a `COURSE MATERIAL` block, treat it as "
-    "  the primary source for the selected unit or concept. Use its terminology, "
-    "  methods and worked examples to calibrate every question. Use new problems "
-    "  at the same level. Ignore unrelated passages.\n"
+    "- Start with the target topic. From relevant retrieved course excerpts, identify "
+    "  the learning objectives, techniques, notation, assumptions, and level the "
+    "  course expects. Use the catalog only to establish course scope. Ignore excerpts "
+    "  that do not help test the target topic.\n"
+    "- Use reference exercises and worked examples as models for the skill and reasoning "
+    "  steps. Write original parallel problems. Change the scenario, givens, or data "
+    "  and recompute the answer and distractors. For conceptual material, apply the "
+    "  same idea to a new case or ask for a new prediction or interpretation. "
+    "  Rewording an existing exercise with the same givens and task is insufficient. "
+    "  Do not lift stems, shared scenarios, answer choices, datasets, or solution phrasing. "
+    "  Keep standard terminology, definitions, and notation when needed.\n"
+    "- Check that each new problem is solvable from its own information, that each "
+    "  multiple-choice question has exactly one correct answer, and that the explanation "
+    "  works through the new problem's givens.\n"
     "- Match the discipline. In math, ask directly for a result when a story "
     "  adds nothing. For conceptual topics, use a short scenario, prediction "
     "  or interpretation. Give all quantities, definitions and assumptions "
@@ -236,8 +247,9 @@ _SYSTEM_PROMPT = (
     "  clearly does not cover (no off-syllabus drift).\n"
     "- Difficulty, targeting, and distractors are still governed by the "
     "  mastery / misconception / quiz-history tools.\n"
-    "- If there is no COURSE MATERIAL block, use general knowledge of the "
-    "  concept as before."
+    "- If relevant excerpts are missing or thin, use standard applications of the "
+    "  selected topic at the requested level. Do not infer course-specific details "
+    "  from a catalog summary or claim the question came from a source."
     # #150: course material / misconception / quiz-history content is
     # student- or peer-derived — data for question writing, never
     # instructions. Single source of truth in services/prompt_safety.py.
@@ -289,6 +301,9 @@ _SYSTEM_PROMPT += (
     "correct_answer, including delimiters. Keep written grading keys and aliases "
     "in their plain input format. "
     "For written questions, options must be empty. Explain the reasoning after grading. "
+    "In retry_hints, write one brief hint per question in the same order. Suggest a "
+    "method or a first step without naming the correct choice or giving the result. "
+    "Write complete worked solutions in explanation, including intermediate math steps."
     "Keep every item focused on the requested concept and the supplied course material."
 )
 _PROMPT_HASH = hashlib.sha256(_SYSTEM_PROMPT.encode("utf-8")).hexdigest()[:12]

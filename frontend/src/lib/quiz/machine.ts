@@ -278,11 +278,10 @@ function withItem(session: QuizSession, index: number, patch: Partial<QuizItem>)
   };
 }
 
-/** Where an answered item goes next: hold on the verdict, step forward, or
- *  finish. `at-end` never stops on `answered` — that's the whole of R-2's
- *  client-side half. */
+/** Pause for a retry or immediate feedback, otherwise advance. */
 function advanceAfterAnswer(session: QuizSession, index: number): QuizSession {
-  if (session.config.feedback === "as-you-go") {
+  const verdict = session.items[index]?.verdict;
+  if (!verdict?.skipped && (verdict?.retryHint || session.config.feedback === "as-you-go")) {
     return { ...session, phase: "answered", cursor: index };
   }
   return isLastItem(session, index)
@@ -394,8 +393,12 @@ export function reduce(session: QuizSession, event: QuizEvent): QuizSession {
       // `recorded: false` is an idempotent replay or a lost race — the answer
       // still stands, so it advances exactly like a fresh record (invariant 6).
       const scored = withItem(session, index, {
+        ...(event.result.selected_index !== undefined ? { selectedIndex: event.result.selected_index } : {}),
+        ...(event.result.skipped ? { selectedIndex: null, answerText: "" } : {}),
         ...(event.result.answer_text !== undefined ? { answerText: event.result.answer_text } : {}),
         verdict: {
+          ...(event.result.skipped ? { skipped: true } : {}),
+          ...(event.result.retry_hint ? { retryHint: event.result.retry_hint } : {}),
           isCorrect: event.result.is_correct,
           correctIndex: event.result.correct_index,
           correctAnswer: event.result.correct_answer,
@@ -592,15 +595,23 @@ function resumeFrom(
   const items: QuizItem[] = (detail.questions ?? []).map((question, index) => {
     const previous = storedById.get(question.id);
     const selected = selectedByIndex.get(index);
+    const response = responsesByIndex.get(index);
+    const metadata = response?.retry_correct != null
+      ? { isCorrect: false, correctIndex: -1, explanation: "" }
+      : response?.skipped
+      ? { skipped: true, isCorrect: false, correctIndex: -1, explanation: "" }
+      : response?.retry_hint
+        ? { retryHint: response.retry_hint, isCorrect: false, correctIndex: -1, explanation: "" }
+        : null;
     return {
       index,
       question,
-      selectedIndex: selected ?? previous?.selectedIndex ?? null,
-      answerText: responsesByIndex.get(index)?.answer_text ?? previous?.answerText,
-      verdict: selected === undefined ? null : previous?.verdict ?? (
+      selectedIndex: response ? response.selected_index : previous?.selectedIndex ?? null,
+      answerText: response?.skipped ? "" : response?.answer_text ?? previous?.answerText,
+      verdict: metadata ?? (selected === undefined ? null : previous?.verdict ?? (
         isWrittenType(question.type) && responsesByIndex.has(index)
           ? { isCorrect: responsesByIndex.get(index)!.is_correct, correctIndex: -1, explanation: "" }
-          : null),
+          : null)),
       flagged: previous?.flagged ?? false,
     };
   });
@@ -609,9 +620,11 @@ function resumeFrom(
   // Every question already answered but the attempt never submitted (the last
   // `/answer` landed and then the tab went away). Park on the final verdict so
   // "See results" is one press away, rather than deadlocking on an empty cursor.
-  const cursor = unanswered >= 0 ? unanswered : Math.max(items.length - 1, 0);
+  const pendingRetry = matching?.phase === "answered" && items[matching.cursor]?.verdict?.retryHint
+    ? matching.cursor : -1;
+  const cursor = pendingRetry >= 0 ? pendingRetry : unanswered >= 0 ? unanswered : Math.max(items.length - 1, 0);
   const phase: Phase =
-    unanswered >= 0 ? "active" : items[cursor]?.verdict != null ? "answered" : "active";
+    pendingRetry >= 0 || (unanswered < 0 && items[cursor]?.verdict != null) ? "answered" : "active";
 
   return {
     ...session,

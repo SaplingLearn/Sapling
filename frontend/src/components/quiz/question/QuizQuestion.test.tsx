@@ -231,6 +231,56 @@ describe("QuizQuestion — the question", () => {
     expect(screen.queryByText(/Keyboard: press A to F/)).not.toBeInTheDocument();
   });
 
+  it("uses formatted choice rows and arrow navigation on retry", () => {
+    const { container } = renderScreen(makeSession({
+      phase: "answered",
+      attemptId: "attempt-1",
+      items: [item(0, {
+        selectedIndex: 0,
+        verdict: { isCorrect: false, correctIndex: -1, explanation: "", retryHint: "Check the first step." },
+      })],
+    }));
+    const rows = screen.getAllByRole("radio");
+    expect(rows[0]).toHaveClass("answer-option");
+    expect(container.querySelector('input[type="radio"]')).toBeNull();
+    fireEvent.keyDown(rows[0], { key: "ArrowDown" });
+    expect(rows[0]).toHaveAttribute("aria-checked", "true");
+    fireEvent.keyDown(rows[0], { key: "ArrowDown" });
+    expect(rows[1]).toHaveAttribute("aria-checked", "true");
+    expect(rows[1]).toHaveFocus();
+  });
+
+  it("shows the previous written answer and a blank retry field", () => {
+    renderScreen(makeSession({
+      phase: "answered",
+      attemptId: "attempt-1",
+      items: [item(0, {
+        question: { ...question(1), type: "numeric", options: [] },
+        answerText: "0.25",
+        verdict: { isCorrect: false, correctIndex: -1, explanation: "", retryHint: "Check the units." },
+      })],
+    }));
+    const input = screen.getByRole("textbox", { name: "Enter a number" });
+    const previous = screen.getByText("Previous answer").parentElement!;
+    expect(screen.getByText("Try again")).toBeVisible();
+    expect(input).toHaveValue("");
+    expect(previous).toHaveTextContent("0.25");
+    expect(input.compareDocumentPosition(previous) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByText("Check the units.")).toBeVisible();
+  });
+
+  it("can skip a written question with an empty answer", () => {
+    const actions = { ...makeActions(), skipAnswer: vi.fn() };
+    renderScreen(makeSession({ items: [item(0, {
+      question: { ...question(1), type: "numeric", options: [] },
+      answerText: "",
+    })] }), actions);
+    expect(screen.getByTestId("quiz-submit-answer")).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Skip question" }));
+    expect(actions.skipAnswer).toHaveBeenCalledOnce();
+    expect(actions.submitAnswer).not.toHaveBeenCalled();
+  });
+
   it("shows the part question above its graph without a data disclosure or short-answer hint", () => {
     renderScreen(makeSession({ items: [item(0, {
       question: {

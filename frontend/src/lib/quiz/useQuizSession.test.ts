@@ -132,7 +132,7 @@ it("submits a written answer through the server grader and completes the attempt
   await act(async () => { result.current.actions.submitAnswer(); });
   await waitFor(() => expect(result.current.session.phase).toBe("results"));
   expect(quizApi.answerQuestion).toHaveBeenCalledWith("attempt-1", {
-    questionIndex: 0, questionId: 1, selectedIndex: null, answerText: "1/2",
+    questionIndex: 0, questionId: 1, selectedIndex: null, answerText: "1/2", allowRetry: true,
   });
   expect(result.current.session.items[0].answerText).toBe("1/2");
 });
@@ -192,6 +192,7 @@ describe("start → answer → answer → submit", () => {
       questionIndex: 0,
       selectedIndex: 1,
       questionId: 1,
+      allowRetry: true,
     });
 
     act(() => result.current.actions.select(2));

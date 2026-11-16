@@ -70,20 +70,30 @@ test("a missed part can earn practice credit once after submission", async ({ pa
   await openQuizHome(page, `/quiz?concept=${NODE_ID}`);
   await page.getByTestId("quiz-start").click();
   const written = page.getByTestId("quiz-written-answer");
-  for (const [part, answer] of ["termination condition", "0.25", "2(x + 1)"].entries()) {
-    await expect(page.getByText(`Part ${part + 1} of 3`)).toBeVisible({ timeout: SUBMIT_TIMEOUT });
-    await written.fill(answer);
-    await page.getByTestId("quiz-submit-answer").click();
-  }
+  await expect(page.getByText("Part 1 of 3")).toBeVisible({ timeout: SUBMIT_TIMEOUT });
+  await page.getByRole("button", { name: "Skip question" }).click();
+  await expect(page.getByText("Part 2 of 3")).toBeVisible();
+  await written.fill("0.25");
+  await page.getByTestId("quiz-submit-answer").click();
+
+  const retry = page.getByRole("region", { name: "Retry for partial credit" });
+  await expect(retry.getByText("Try again", { exact: true })).toBeVisible();
+  await expect(retry.getByText(/Previous answer/)).toContainText("0.25");
+  await expect(page.getByText("The point at step 1 has a value of 0.5.")).toHaveCount(0);
+  await retry.getByRole("textbox").fill("50%");
+  await retry.getByRole("button", { name: "Submit retry" }).click();
+  await expect(retry.getByText(/earned ½ practice point/)).toBeVisible();
+  await page.getByTestId("quiz-next").click();
+
+  await expect(page.getByText("Part 3 of 3")).toBeVisible();
+  await written.fill("2(x + 1)");
+  await page.getByTestId("quiz-submit-answer").click();
   await expectResults(page);
-  const missed = page.getByTestId("quiz-missed-2");
-  await expect(missed).toContainText("0 of 1 point");
-  await missed.getByText("Retry for up to ½ practice point").click();
-  await missed.getByRole("textbox").fill("50%");
-  await missed.getByRole("button", { name: "Submit retry" }).click();
-  await expect(missed.getByRole("status")).toContainText("earned ½ practice point");
-  await missed.getByRole("button", { name: "Show explanation" }).click();
-  await expect(missed).toContainText("The point at step 1 has a value of 0.5.");
-  await expect(page.getByTestId("quiz-results-score")).toContainText("2 of 3 correct");
-  await expect(page.getByText("2.5 of 3 practice points with retries")).toBeVisible();
+
+  await expect(page.getByTestId("quiz-missed-1")).toContainText("Skipped");
+  await expect(page.getByTestId("quiz-missed-2")).toContainText("0.5 of 1 point");
+  await expect(page.getByTestId("quiz-missed-2")).toContainText("The point at step 1 has a value of 0.5.");
+  await expect(page.getByTestId("quiz-correct-3")).toContainText("Distribute 2 to each term");
+  await expect(page.getByTestId("quiz-results-score")).toContainText("1 of 3 correct");
+  await expect(page.getByText("1.5 of 3 practice points with retries")).toBeVisible();
 });

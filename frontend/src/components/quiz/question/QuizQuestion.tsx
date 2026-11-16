@@ -24,6 +24,7 @@
 
 import { isWrittenAnswerFormatValid } from "@/lib/quiz/answerFormats";
 import { QuizMath } from "../QuizMath";
+import { RetryAnswer } from "./RetryAnswer";
 import { QuizProblemContext } from "../QuizProblemContext";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnswerOption, Button, ProgressDots, type AnswerState } from "@/components/ui";
@@ -123,6 +124,7 @@ export function QuizQuestion({
    * new item derives it closed, because the panel is seeded from one verdict
    * and carrying it across would be answering the wrong question.
    */
+  const [retryPending, setRetryPending] = useState(false);
   const [askForCursor, setAskForCursor] = useState<number | null>(null);
 
   const { phase, cursor, items } = session;
@@ -138,8 +140,10 @@ export function QuizQuestion({
   const isLast = cursor >= total - 1;
   // R-2: every answer is recorded server-side either way; the feedback mode
   // only decides whether the verdict is ever shown.
-  const showVerdict = item?.verdict != null && (session.config.feedback === "as-you-go"
-    || (phase === "answered" && isLast && items.every(i => i.verdict !== null)));
+  const retryHint = item?.verdict?.retryHint;
+  const showVerdict = item?.verdict != null && !retryHint && !item.verdict.skipped
+    && (session.config.feedback === "as-you-go"
+      || (phase === "answered" && isLast && items.every(i => i.verdict !== null)));
 
   /**
    * A quiz call is in flight. Straight off the hook (`useQuizSession`'s
@@ -149,7 +153,7 @@ export function QuizQuestion({
    * `attemptId`, a duplicate press), so a screen-local latch would stay stuck
    * on exactly those.
    */
-  const busy = pending;
+  const busy = pending || retryPending;
   // Derived, so a new question is the only thing that closes the sheet.
   const askOpen = askForCursor === cursor;
   const selectable = phase === "active" && !busy;
@@ -221,12 +225,12 @@ export function QuizQuestion({
         activate: () => {},
       };
     }
-    if (showVerdict) {
+    if (phase === "answered") {
       return {
-        label: isLast ? "See results" : "Next",
+        label: isLast ? "See results" : retryHint ? "Continue" : "Next",
         testid: "quiz-next",
-        enabled: phase === "answered",
-        activate: () => actions.next(),
+        enabled: !busy,
+        activate: () => { if (!busy) actions.next(); },
       };
     }
     return {
@@ -235,7 +239,7 @@ export function QuizQuestion({
       enabled: phase === "active" && !busy && hasAnswer,
       activate: submit,
     };
-  }, [actions, busy, isLast, phase, hasAnswer, showVerdict, submit]);
+  }, [actions, busy, isLast, phase, hasAnswer, retryHint, showVerdict, submit]);
 
   // ── Keyboard (§5 B2) ─────────────────────────────────────────────────
 
@@ -247,7 +251,7 @@ export function QuizQuestion({
     if (isTypingTarget(e.target)) return;
 
     if (e.key === "Escape") {
-      if (phase !== "active" && phase !== "answered") return;
+      if (retryPending || (phase !== "active" && phase !== "answered")) return;
       e.preventDefault();
       actions.requestLeave();
       return;
@@ -404,7 +408,17 @@ export function QuizQuestion({
           </p>
         )}
 
-        {written ? (
+        {retryHint && item && session.attemptId && (phase === "answered" || phase === "confirm-leave") ? (
+          <RetryAnswer
+            key={item.question.id}
+            attemptId={session.attemptId}
+            question={item.question}
+            hint={retryHint}
+            previousAnswer={item.answerText}
+            previousChoice={item.selectedIndex}
+            onPending={setRetryPending}
+          />
+        ) : written ? (
           <div className="quiz-question__written">
             <label htmlFor="quiz-written-answer" className="label-micro" id="quiz-written-label">Your answer</label>
             {/* Visible, unlike the keyboard hint: these are the rules the
@@ -484,6 +498,11 @@ export function QuizQuestion({
         </div>
 
         <div className="quiz-question__aside">
+          {phase === "active" && actions.skipAnswer && (
+            <Button variant="link" disabled={busy} onClick={actions.skipAnswer} data-testid="quiz-skip-answer">
+              Skip question
+            </Button>
+          )}
           <Button
             variant="link"
             className="quiz-question__flag"
@@ -493,7 +512,7 @@ export function QuizQuestion({
           >
             This question is confusing
           </Button>
-          {phase === "answered" && (
+          {phase === "answered" && showVerdict && (
             <Button
               ref={askRef}
               size="sm"
@@ -516,7 +535,7 @@ export function QuizQuestion({
               Cancel
             </Button>
           ) : (
-            <Button data-testid="quiz-leave" onClick={() => actions.requestLeave()}>
+            <Button data-testid="quiz-leave" disabled={retryPending} onClick={() => actions.requestLeave()}>
               Leave
             </Button>
           )}

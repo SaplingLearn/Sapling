@@ -444,3 +444,35 @@
     display: none;
   }
 }
+
+.quiz-retry__status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--pad-sm);
+  margin: 0 0 var(--pad-sm);
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+}
+
+.quiz-retry__status strong {
+  color: var(--err);
+  font-size: var(--fs-md);
+}
+
+.quiz-retry__previous,
+.quiz-retry__hint {
+  margin: var(--pad-sm) 0;
+  font-size: var(--fs-sm);
+  overflow-wrap: anywhere;
+}
+
+.quiz-retry__previous {
+  color: var(--text-muted);
+}
+
+.quiz-retry__previous > span:first-child,
+.quiz-retry__hint strong {
+  font-weight: 600;
+  margin-inline-end: var(--pad-sm);
+}

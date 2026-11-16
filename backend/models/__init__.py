@@ -140,11 +140,13 @@ class AnswerQuestionBody(BaseModel):
     question_id: Optional[int] = None
     time_ms: Optional[int] = Field(default=None, ge=0)
     confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    skipped: bool = False
+    allow_retry: bool = False
 
     @model_validator(mode="after")
     def one_answer(self):
-        if (self.selected_index is None) == (self.answer_text is None):
-            raise ValueError("Supply either an answer choice or a written answer.")
+        if sum((self.selected_index is not None, self.answer_text is not None, self.skipped)) != 1:
+            raise ValueError("Supply an answer choice, a written answer, or skip.")
         if self.answer_text is not None and not self.answer_text.strip():
             raise ValueError("The answer must not be blank.")
         return self

@@ -44,6 +44,7 @@ export interface QuizActions {
   select(index: number): void;
   write?(text: string): void;
   submitAnswer(): void;
+  skipAnswer?(): void;
   next(): void;
   finish(): void;
   requestLeave(): void;
@@ -455,25 +456,28 @@ export function useQuizSession(userId: string, entry: EntryRequest): QuizSession
     [apply, begin, end, gamification, isLive],
   );
 
-  const submitAnswer = useCallback(async () => {
+  const skippedRequest = useRef(false);
+  const submitAnswer = useCallback(async (skipped = false) => {
     // SUBMIT_ANSWER is the machine's own guard against a submit with nothing
     // selected; dispatching it keeps the transition table honest even though it
     // is state-neutral, and `canSubmitAnswer` is the same predicate the footer
     // button disables on.
     const current = apply({ type: "SUBMIT_ANSWER" });
-    if (!canSubmitAnswer(current) || !current.attemptId) return;
     const item = current.items[current.cursor];
+    if (!current.attemptId || !item || current.phase !== "active" || (!skipped && !canSubmitAnswer(current))) return;
     const attemptId = current.attemptId;
     const inFlight = `${attemptId}:${item.index}`;
     if (answeringRef.current === inFlight) return;
     answeringRef.current = inFlight;
+    skippedRequest.current = skipped;
     const request = begin("answer");
     try {
       const result = await withNetworkRetry(() =>
         answerQuestion(attemptId, {
           questionIndex: item.index,
           selectedIndex: item.selectedIndex,
-          ...(isWrittenType(item.question.type) ? { answerText: item.answerText ?? "" } : {}),
+          ...(skipped ? { skipped: true } : isWrittenType(item.question.type) ? { answerText: item.answerText ?? "" } : {}),
+          allowRetry: true,
           questionId: item.question.id,
         }),
       );
@@ -531,6 +535,10 @@ export function useQuizSession(userId: string, entry: EntryRequest): QuizSession
 
       submitAnswer: () => {
         void submitAnswer();
+      },
+
+      skipAnswer: () => {
+        void submitAnswer(true);
       },
 
       next: () => {
@@ -642,7 +650,7 @@ export function useQuizSession(userId: string, entry: EntryRequest): QuizSession
             config: next.config,
           });
           if (generating.phase === "generating") void runGenerate(generating);
-        } else if (back === "active") void submitAnswer();
+        } else if (back === "active") void submitAnswer(skippedRequest.current);
       },
     };
   }, [abandonRequests, apply, config, router, runGenerate, runResume, runSubmit, submitAnswer]);

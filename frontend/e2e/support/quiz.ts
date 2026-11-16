@@ -153,9 +153,8 @@ export async function chooseAndSubmit(page: Page, label: string): Promise<void> 
  * BEFORE choosing, which is what makes the walk race-free without a sleep: the
  * previous `/answer` round trip is still in flight until the next stem renders.
  *
- * In `at-end` there is no per-question reveal and no "See results" press —
- * recording the LAST answer transitions straight to `submitting`
- * (machine.ts::advanceAfterAnswer). The caller waits on the results screen.
+ * Deliberately missed fixture questions pause for a retry. This helper moves
+ * past that offer so the results reflect the first answers.
  */
 export async function answerAtEnd(
   page: Page,
@@ -164,6 +163,7 @@ export async function answerAtEnd(
   for (const { n, label } of steps) {
     await expectOnQuestion(page, n);
     await chooseAndSubmit(page, label);
+    if (label !== CORRECT_LABELS[n - 1]) await page.getByTestId("quiz-next").click();
   }
 }
 

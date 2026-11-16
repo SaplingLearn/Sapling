@@ -101,6 +101,9 @@ export interface GenerateResult {
 
 export interface AnswerResult {
   answer_text?: string;
+  skipped?: boolean;
+  retry_hint?: string;
+  selected_index?: number | null;
   correct_answer?: string | null;
   question_index: number;
   question_id: number;
@@ -177,7 +180,8 @@ export interface SubmitResult {
     correct: boolean;
     correct_answer: string;
     explanation: string;
-    can_retry?: boolean;
+    skipped?: boolean;
+    retry_points?: number;
   }[];
   /** Optional while `useGamificationDelta` still reads `/me` around the
    *  submit (R-9); the client migration to this field is a later pass. The
@@ -228,6 +232,9 @@ export interface AttemptDetail {
     selected_index: number | null;
     answer_text?: string | null;
     is_correct: boolean;
+    skipped?: boolean;
+    retry_hint?: string;
+    retry_correct?: boolean | null;
     answered_at: string;
   }[];
   score: number | null;
@@ -276,7 +283,7 @@ export interface QuizItem {
   index: number;
   question: WireQuestion;
   selectedIndex: number | null;
-  verdict: { isCorrect: boolean; correctIndex: number; explanation: string; correctAnswer?: string | null } | null;
+  verdict: { skipped?: boolean; retryHint?: string; isCorrect: boolean; correctIndex: number; explanation: string; correctAnswer?: string | null } | null;
   flagged: boolean;
 }
 

@@ -95,13 +95,14 @@ export const generateQuiz = (p: {
  */
 export const answerQuestion = (
   attemptId: string,
-  p: { questionIndex: number; selectedIndex: number | null; questionId: number; answerText?: string },
+  p: { questionIndex: number; selectedIndex: number | null; questionId: number; answerText?: string; skipped?: boolean; allowRetry?: boolean },
 ): Promise<AnswerResult> =>
   fetchJSON<AnswerResult>(`/api/quiz/attempts/${encodeURIComponent(attemptId)}/answer`, {
     method: "POST",
     body: JSON.stringify({
       question_index: p.questionIndex,
-      ...(p.answerText !== undefined ? { answer_text: p.answerText } : { selected_index: p.selectedIndex }),
+      ...(p.skipped ? { skipped: true } : p.answerText !== undefined ? { answer_text: p.answerText } : { selected_index: p.selectedIndex }),
+      ...(p.allowRetry ? { allow_retry: true } : {}),
       question_id: p.questionId,
     }),
   });

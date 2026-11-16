@@ -427,7 +427,7 @@ test("ask-without-abandoning: the tutor opens over the question, streams, closes
   await expect(adjust).toBeVisible();
   await page.getByTestId("quiz-seg-feedback-as-you-go").click();
   await expect(adjust).toContainText(
-    "After each answer you'll see whether it was right and which answer was correct, before moving on.",
+    "After each answer you'll see whether it was right. Missed answers get a retry and a worked solution at the end.",
   );
   await page.getByTestId("quiz-adjust-start").click();
   await expect(page.getByTestId("quiz-answer-options")).toBeVisible({
@@ -435,12 +435,11 @@ test("ask-without-abandoning: the tutor opens over the question, streams, closes
   });
   await expectOnQuestion(page, 1);
 
-  // Get it wrong on purpose.
-  const chosen = wrongLabelFor(1);
   const correct = CORRECT_LABELS[0];
+  const chosen = correct;
   await chooseAndSubmit(page, chosen);
   const verdict = page.getByTestId("quiz-review-verdict");
-  await expect(verdict).toContainText(`Not quite — the answer is ${correct}.`, {
+  await expect(verdict).toContainText("Correct.", {
     timeout: SUBMIT_TIMEOUT,
   });
   await expect(verdict).toContainText(explanationOf(1, correct));
@@ -468,7 +467,7 @@ test("ask-without-abandoning: the tutor opens over the question, streams, closes
   // THE POINT: the question is exactly as it was left — same item, same
   // choice, same verdict. The old screen navigated away and lost all of it.
   await expectOnQuestion(page, 1);
-  await expect(verdict).toContainText(`Not quite — the answer is ${correct}.`);
+  await expect(verdict).toContainText("Correct.");
   await expect(page.getByTestId(`quiz-answer-option-${chosen}`)).toHaveAttribute(
     "aria-checked",
     "true",
@@ -480,14 +479,14 @@ test("ask-without-abandoning: the tutor opens over the question, streams, closes
   await answerAsYouGo(page, 3, CORRECT_LABELS[2], "Correct.");
   await expectResults(page);
   await expect(page.getByTestId("quiz-results-score")).toHaveText(
-    `${QUIZ_LENGTH - 1} of ${QUIZ_LENGTH} correct`,
+    `${QUIZ_LENGTH} of ${QUIZ_LENGTH} correct`,
     { timeout: SUBMIT_TIMEOUT },
   );
 
   const attempts = await appAttempts();
   expect(attempts).toHaveLength(1);
   expect(attempts[0].completed_at).not.toBeNull();
-  expect(Number(attempts[0].score)).toBe(QUIZ_LENGTH - 1);
+  expect(Number(attempts[0].score)).toBe(QUIZ_LENGTH);
 
   // The dashboard exit (R-10): a quiz reached from the dashboard says so, and
   // goes back there rather than to the tree — or, as before #537, to /learn.
@@ -539,18 +538,12 @@ test("missed review: the results screen explains the wrong answer and asks for a
   await expect(list).toContainText("One to look at");
   const item = page.getByTestId(`quiz-missed-${questionId}`);
   await expect(item).toContainText(stemOf(1));
-  await expect(item).toContainText(`You chose ${chosen} · the answer is ${correct}`);
+  await expect(item).toContainText(`You chose ${chosen} (${optionTextOf(1, chosen)}) · the answer is ${correct}`);
 
-  // The explanation is a disclosure — present in the DOM (so `aria-controls`
-  // never dangles) but hidden until asked for.
   const explain = page.getByTestId(`quiz-missed-explain-${questionId}`);
   const explanation = item.locator(`#quiz-missed-explanation-${questionId}`);
-  await expect(explain).toHaveText("Show explanation");
-  await expect(explain).toHaveAttribute("aria-expanded", "false");
-  await expect(explanation).toBeHidden();
-  await explain.click();
-  await expect(explain).toHaveText("Hide explanation");
   await expect(explain).toHaveAttribute("aria-expanded", "true");
+  await expect(explanation).toBeVisible();
   await expect(explanation).toHaveText(explanationOf(1, correct));
   await explain.click();
   await expect(explanation).toBeHidden();

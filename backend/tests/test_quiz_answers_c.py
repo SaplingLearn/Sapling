@@ -121,21 +121,12 @@ def _answer(body_extra=None, attempt_id="quiz1"):
     })
 
 
-def test_retry_awards_half_credit_once_without_regrading_the_attempt():
-    attempts = MagicMock()
-    attempts.select.return_value = [{
-        "id": "quiz1",
-        "user_id": "user_andres",
-        "questions_json": QUESTIONS,
-        "completed_at": "2026-11-14T01:00:00+00:00",
-        "score": 0,
-    }]
-    responses = MagicMock()
-    responses.select.side_effect = [[{"retry_correct": None}], [{"retry_correct": True}]]
-    responses.update.return_value = [{"retry_correct": True}]
-    tables = {"quiz_attempts": attempts, "quiz_responses": responses}
-
-    with patch("routes.quiz.table", side_effect=tables.__getitem__):
+def test_retry_grades_in_progress_and_uses_the_first_persisted_result():
+    factory, _ = _tables()
+    with (
+        patch("routes.quiz.table", side_effect=factory),
+        patch("routes.quiz.rpc", return_value=[{"retry_correct": True}]) as record,
+    ):
         url = "/api/quiz/attempts/quiz1/retry"
         payload = {"question_id": 1, "question_index": 0, "selected_index": 1}
         first = client.post(url, json=payload)
@@ -143,14 +134,29 @@ def test_retry_awards_half_credit_once_without_regrading_the_attempt():
 
     assert first.status_code == repeated.status_code == 200
     assert first.json() == repeated.json() == {"correct": True, "points": 0.5}
-    responses.update.assert_called_once_with(
-        {"retry_correct": True},
-        filters={
-            "attempt_id": "eq.quiz1", "question_index": "eq.0",
-            "is_correct": "eq.false", "retry_correct": "is.null",
-        },
-    )
-    attempts.update.assert_not_called()
+    assert [call.args[1]["p_correct"] for call in record.call_args_list] == [True, False]
+
+
+def test_skip_persists_without_revealing_the_solution():
+    factory, responses = _tables()
+    with patch("routes.quiz.table", side_effect=factory):
+        result = _answer({"selected_index": None, "skipped": True})
+    assert result.status_code == 200
+    assert result.json()["skipped"] is True
+    assert result.json()["correct_index"] == -1
+    assert result.json()["explanation"] == ""
+    assert responses.rows[0]["skipped"] is True
+    assert not responses.rows[0]["is_correct"]
+
+
+def test_missed_answer_offers_a_hint_without_revealing_the_solution():
+    factory, _ = _tables()
+    with patch("routes.quiz.table", side_effect=factory):
+        result = _answer({"selected_index": 0, "allow_retry": True})
+    assert result.status_code == 200
+    assert result.json()["retry_hint"]
+    assert result.json()["correct_index"] == -1
+    assert result.json()["explanation"] == ""
 
 
 # ── C1: per-question answer endpoint ────────────────────────────────────────

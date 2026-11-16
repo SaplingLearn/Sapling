@@ -16,7 +16,6 @@
  * students won't open would cost more than the shift does.
  */
 
-import { RetryAnswer } from "./RetryAnswer";
 import { QuizProblemContext } from "../QuizProblemContext";
 import { QuizMath } from "../QuizMath";
 import React from "react";
@@ -38,7 +37,8 @@ export interface MissedItem {
   explanation: string;
   written?: boolean;
   question?: WireQuestion;
-  canRetry?: boolean;
+  skipped?: boolean;
+  retryPoints?: number;
   correct?: boolean;
 }
 
@@ -77,7 +77,8 @@ export function buildMissedItems(session: QuizSession, correct = false): MissedI
         explanation: r.explanation,
         written,
         question,
-        canRetry: r.can_retry,
+        skipped: r.skipped,
+        retryPoints: r.retry_points,
         correct: r.correct,
       };
     });
@@ -95,11 +96,9 @@ export interface MissedListProps {
   onAsk: (item: MissedItem, trigger: HTMLElement) => void;
   testid?: string;
   heading?: string;
-  attemptId?: string | null;
-  onRetryScored?: (questionId: string, points: number) => void;
 }
 
-export function MissedList({ items, onAsk, testid = "quiz-missed-list", heading, attemptId, onRetryScored }: MissedListProps) {
+export function MissedList({ items, onAsk, testid = "quiz-missed-list", heading }: MissedListProps) {
   const [expanded, setExpanded] = React.useState<Record<string, boolean>>({});
 
   if (items.length === 0) return null;
@@ -116,8 +115,7 @@ export function MissedList({ items, onAsk, testid = "quiz-missed-list", heading,
         {heading ?? missedLabel(items.length)}
       </div>
       {items.map(item => {
-        const open = expanded[item.questionId] === true;
-        const retry = item.canRetry && attemptId && item.question ? { attemptId, question: item.question } : null;
+        const open = expanded[item.questionId] ?? true;
         const panelId = `${rowIdPrefix}-explanation-${item.questionId}`;
         const chosen = item.chosenText ? `${item.chosenLabel} (${item.chosenText})` : item.chosenLabel;
         const expected = item.correctText ? `${item.correctLabel} (${item.correctText})` : item.correctLabel;
@@ -131,19 +129,20 @@ export function MissedList({ items, onAsk, testid = "quiz-missed-list", heading,
             {item.question?.context
               ? <QuizProblemContext context={item.question.context}>{stem}</QuizProblemContext>
               : stem}
-            {item.question?.context && <p>{item.correct ? "1 of 1 point" : "0 of 1 point"}</p>}
+            {(item.question?.context || item.retryPoints !== undefined) && (
+              <p>{item.correct ? 1 : item.retryPoints ?? 0} of 1 point</p>
+            )}
             <p className="quiz-missed__line">
-              <QuizMath text={retry && !open
-                ? `Your answer: ${item.chosenText || item.chosenLabel || "No answer"}`
+              <QuizMath text={item.skipped
+                ? `Skipped · Expected: ${item.correctText || item.correctLabel}`
                 : item.written
                 ? `Your answer: ${item.chosenText || "No answer"} · Expected: ${item.correctText}`
                 : item.chosenLabel
                   ? `You chose ${chosen} · the answer is ${expected}`
                   : `No answer · the answer is ${expected}`} />
             </p>
-            {retry && <RetryAnswer {...retry} onScored={points => onRetryScored?.(item.questionId, points)} />}
             <div className="quiz-missed__actions">
-              {(item.explanation || retry) && (
+              {item.explanation && (
                 <Button
                   variant="link"
                   aria-expanded={open}
@@ -155,7 +154,7 @@ export function MissedList({ items, onAsk, testid = "quiz-missed-list", heading,
                   onClick={() =>
                     setExpanded(prev => ({
                       ...prev,
-                      [item.questionId]: prev[item.questionId] !== true,
+                      [item.questionId]: !(prev[item.questionId] ?? true),
                     }))
                   }
                 >
@@ -174,7 +173,7 @@ export function MissedList({ items, onAsk, testid = "quiz-missed-list", heading,
                 an IDREF to a missing element is invalid ARIA and some screen
                 readers announce the control as broken. `hidden` occupies no
                 space, so the expand behaves exactly as before. */}
-            {(item.explanation || retry) && (
+            {item.explanation && (
               <p id={panelId} hidden={!open} className="body-serif quiz-missed__explanation">
                 <QuizMath text={item.explanation} />
               </p>

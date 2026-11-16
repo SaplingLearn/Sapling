@@ -1117,7 +1117,6 @@ export const RECIPES_STUDY: RecipeBook = {
   "quiz/results-missed-explain-open": {
     run: async (page) => {
       await toResults(page);
-      await page.getByTestId("quiz-missed-explain-2").click();
       await expect(page.getByTestId("quiz-missed-explain-2")).toHaveAttribute("aria-expanded", "true");
     },
   },

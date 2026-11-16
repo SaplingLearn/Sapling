@@ -19,7 +19,7 @@ from agents.deps import SaplingDeps
 from agents._run import run_agent_sync
 from agents.quiz_context import quiz_context_agent
 from agents.usage import record_agent_usage, served_model_name
-from db.connection import pg_quote_value, table
+from db.connection import pg_quote_value, rpc, table
 from models import AnswerQuestionBody, GenerateQuizBody, SubmitQuizBody
 from routes.learn import _get_catalog_chunk
 from services import events_service
@@ -826,7 +826,7 @@ def _agent_question_to_wire(q: QuizQuestion, qid: int) -> dict | None:
 # student's own question) but because nothing client-side consumes it yet.
 # Per-question feedback (#26) is the change that should surface it, and it
 # should do so by adding it to the keyless allowlist, deliberately.
-_INTERNAL_QUESTION_KEYS = ("provenance", "question_hash")
+_INTERNAL_QUESTION_KEYS = ("provenance", "question_hash", "retry_hint")
 
 
 def _client_questions(wire_questions: list[dict], include_answer_key: bool) -> list[dict]:
@@ -1118,9 +1118,8 @@ def _course_material(
     # `_detailed` because [] alone cannot say whether retrieval ran: it is
     # both "nothing matched" and "the index was unreachable". E8 reports on
     # that difference, so it has to be carried rather than inferred.
-    retrieval = retrieve_chunks_detailed(
-        concept_name, course_id=bu_code, k=_RAG_K, user_id=user_id
-    )
+    query = f"{concept_name}: course explanations, worked examples, and practice problems"
+    retrieval = retrieve_chunks_detailed(query, course_id=bu_code, k=_RAG_K, user_id=user_id)
     chunks = retrieval.chunks
     # Drop any retrieved chunk that merely repeats the catalog block already
     # injected above — catalog chunks share the course_chunks store and can
@@ -1146,6 +1145,18 @@ def _course_material(
         course_chunks=None if chunks else _course_chunk_coverage(bu_code, user_id),
         bu_code=bu_code,
         retrieval_failed=retrieval.failed,
+    )
+
+
+def _copies_reference(text: str, reference: str, *, min_words: int = 6) -> bool:
+    """Catch a copied stem or a long copied passage, ignoring punctuation and case."""
+    if not reference:
+        return False
+    words = re.findall(r"\w+", text.casefold())
+    span = min(len(words), 12)
+    return span >= min_words and any(
+        " " + " ".join(words[start:start + span]) + " " in reference
+        for start in range(len(words) - span + 1)
     )
 
 
@@ -1623,6 +1634,8 @@ async def _quiz_via_agent(
     seen_stems: set[str] = set()
     seen_hashes: set[str] = set()
     dropped = 0
+    copied_reference = False
+    reference = " " + " ".join(re.findall(r"\w+", material.block.casefold())) + " " if material.block else ""
 
     # E5 provenance shared by every question this generation produces. The
     # chunk ids are attempt-level, not per-item: they are the sources that
@@ -1641,7 +1654,7 @@ async def _quiz_via_agent(
     }
 
     def _absorb(quiz: Quiz, model: str) -> None:
-        nonlocal dropped
+        nonlocal dropped, copied_reference
         mapped_by_position = {}
         for position, q in enumerate(quiz.questions, start=1):
             if question_format != "mixed" and q.type != question_format:
@@ -1666,6 +1679,10 @@ async def _quiz_via_agent(
             if mapped is None:
                 dropped += 1
                 continue
+            if position <= len(quiz.retry_hints):
+                hint = quiz.retry_hints[position - 1].strip()
+                if hint and len(hint) <= 500:
+                    mapped["retry_hint"] = hint
             mapped["provenance"] = {**provenance_base, "model": model}
             mapped["material_context"] = (
                 "course_material" if material.rag_grounded else "catalog" if material.has_catalog else "general"
@@ -1675,7 +1692,17 @@ async def _quiz_via_agent(
             mapped_by_position[position] = mapped
         rejected = _attach_question_contexts(quiz, mapped_by_position)
         for position, mapped in mapped_by_position.items():
-            if position in rejected:
+            context_stem = (mapped.get("context") or {}).get("stem", "")
+            copied = any(_copies_reference(stem, reference) for stem in (mapped["question"], context_stem))
+            if not copied:
+                copied = any(
+                    _copies_reference(text, reference, min_words=12)
+                    for text in (mapped["explanation"], *(option["text"] for option in mapped["options"]))
+                )
+            if copied:
+                copied_reference = True
+                logger.info("quiz: dropping question that copies retrieved reference text")
+            if position in rejected or copied:
                 dropped += 1
                 seen_stems.discard(normalize_text(mapped["question"]))
                 seen_hashes.discard(mapped["question_hash"])
@@ -1684,13 +1711,12 @@ async def _quiz_via_agent(
 
     _absorb(*await _run(user_message, ORCHESTRATOR_LIMITS))
 
-    # #543 E2: one bounded top-up when DRIFT cost us a big share of the
-    # quiz. Gated on questions actually dropped (never on a clean short
-    # response), and it runs for total drift too — that's the case a
-    # retry most obviously helps, and the old `wire_questions and` guard
-    # made it the only case that never retried. Bounded because a retry
-    # loop against a drifting model burns tokens without converging.
-    if dropped and dropped >= num_questions * QUIZ_TOPUP_DROP_RATIO:
+    # Retry format drift only when it materially reduced the quiz. A copied
+    # reference item warrants a replacement even when the rest are sound.
+    # Clean under-delivery still does not trigger an extra model call.
+    if len(wire_questions) < num_questions and (
+        copied_reference or dropped >= num_questions * QUIZ_TOPUP_DROP_RATIO
+    ):
         for _ in range(QUIZ_TOPUP_MAX_RETRIES):
             missing = max(1, num_questions - len(wire_questions))
             logger.info(
@@ -1704,8 +1730,8 @@ async def _quiz_via_agent(
             already = "\n".join(f"- {q['question']}" for q in wire_questions)
             topup_msg = (
                 f"{user_message}\n\n[TOP-UP] Some questions were rejected for "
-                f"format errors. Generate {missing} MORE questions on the same "
-                f"concept. Remember: {_topup_format_rule(question_format)}"
+                f"format or originality checks. Generate {missing} MORE questions on the same "
+                f"concept. Use fresh scenarios, givens, and wording. {_topup_format_rule(question_format)}"
             )
             if already:
                 topup_msg += (
@@ -2411,7 +2437,7 @@ def get_attempt(attempt_id: str, request: Request):
     attempt = _load_owned_attempt(attempt_id, request)
 
     responses = table("quiz_responses").select(
-        "question_index,selected_index,answer_text,is_correct,time_ms,confidence,answered_at",
+        "question_index,selected_index,answer_text,is_correct,time_ms,confidence,answered_at,skipped,retry_enabled,retry_correct",
         filters={"attempt_id": f"eq.{attempt_id}"},
         order="question_index.asc",
     ) or []
@@ -2448,6 +2474,12 @@ def get_attempt(attempt_id: str, request: Request):
     # abandoned one would otherwise let a client keep answering (the write
     # paths refuse it, but there's no reason to ship the payload at all).
     resumable = status == "in_progress"
+    if resumable:
+        for response in responses:
+            index = response["question_index"]
+            if (0 <= index < len(questions) and response.get("is_correct") is False
+                    and response.get("retry_enabled") and not response.get("skipped") and response.get("retry_correct") is None):
+                response["retry_hint"] = _retry_hint(questions[index])
     return {
         "quiz_id": attempt["id"],
         "status": status,
@@ -2463,6 +2495,14 @@ def get_attempt(attempt_id: str, request: Request):
         "created_at": attempt.get("created_at"),
         "completed_at": attempt.get("completed_at"),
     }
+
+
+def _retry_hint(question: dict) -> str:
+    if question.get("retry_hint"):
+        return question["retry_hint"]
+    if question.get("type") in {"numeric", "symbolic"}:
+        return "Write down the givens, then check the operation that connects them to what the question asks."
+    return "Identify the concept the question is testing and check how it applies to the information given."
 
 
 @router.post("/attempts/{attempt_id}/answer")
@@ -2487,10 +2527,10 @@ def answer_question(attempt_id: str, body: AnswerQuestionBody, request: Request)
     question = questions[body.question_index]
     options = question.get("options", [])
     written = question.get("type") in WRITTEN_TYPES
-    if (written and body.answer_text is None) or (not written and body.selected_index is None):
+    if not body.skipped and written != (body.answer_text is not None):
         raise QuizAPIError(status_code=400, code=QuizErrorCode.QUIZ_QUESTION_INVALID,
                            message="Use the answer format shown for this question.")
-    if not written and body.selected_index >= len(options):
+    if body.selected_index is not None and body.selected_index >= len(options):
         raise QuizAPIError(
             status_code=400,
             code=QuizErrorCode.QUIZ_QUESTION_INVALID,
@@ -2535,11 +2575,15 @@ def answer_question(attempt_id: str, body: AnswerQuestionBody, request: Request)
             "attempt_id": attempt_id,
             "question_index": body.question_index,
             "selected_index": body.selected_index,
-            "is_correct": _is_correct(body.selected_index, body.answer_text),
+            "is_correct": not body.skipped and _is_correct(body.selected_index, body.answer_text),
             "time_ms": body.time_ms,
             "confidence": body.confidence,
         }
-        if written:
+        if body.allow_retry and not body.skipped:
+            row["retry_enabled"] = True
+        if body.skipped:
+            row["skipped"] = True
+        elif written:
             row["answer_text"] = encrypt_json({"text": body.answer_text})
         # ACCEPTED RISK (#597, #537 G4): this is the one quiz write path still
         # guarded by a PRE-READ alone. Submit and abandon both arbitrate with a
@@ -2579,16 +2623,23 @@ def answer_question(attempt_id: str, body: AnswerQuestionBody, request: Request)
         else None
     )
     answer_text = _written_response_text(response_row) if written else ""
+    skipped = response_row.get("skipped", False)
+    is_correct = not skipped and _is_correct(response_row["selected_index"], answer_text)
+    retry_enabled = response_row.get("retry_enabled", False)
+    hide_solution = skipped or (retry_enabled and not is_correct)
+    offer_retry = retry_enabled and not is_correct and not skipped and response_row.get("retry_correct") is None
     return {
         # Echo both addressing schemes so a client that mixed them up sees
         # it immediately rather than discovering it at submit time.
         "question_index": body.question_index,
         "question_id": question.get("id"),
-        "is_correct": _is_correct(response_row["selected_index"], answer_text),
-        "correct_answer": expected_written_answer(question) if written else None,
+        "is_correct": is_correct,
+        **({"skipped": True} if skipped else {}),
+        **({"retry_hint": _retry_hint(question), "selected_index": response_row["selected_index"]} if offer_retry else {}),
+        "correct_answer": expected_written_answer(question) if written and not hide_solution else None,
         **({"answer_text": answer_text} if written else {}),
-        "correct_index": correct_index,
-        "explanation": (
+        "correct_index": -1 if hide_solution else correct_index,
+        "explanation": "" if hide_solution else (
             written_feedback(question, answer_text)
             if written else _choice_feedback(question, response_row["selected_index"])
         ),
@@ -2601,9 +2652,7 @@ def answer_question(attempt_id: str, body: AnswerQuestionBody, request: Request)
 def retry_question(attempt_id: str, body: AnswerQuestionBody, request: Request):
     attempt = _load_owned_attempt(attempt_id, request)
     _refuse_if_abandoned(attempt)
-    if not attempt.get("completed_at") or attempt.get("score") is None:
-        raise QuizAPIError(status_code=409, code=QuizErrorCode.QUIZ_QUESTION_INVALID,
-                           message="Finish the quiz before retrying a question.")
+    _refuse_if_completed(attempt)
 
     questions = decrypt_json_column(attempt["questions_json"]) or []
     if body.question_index >= len(questions):
@@ -2613,35 +2662,27 @@ def retry_question(attempt_id: str, body: AnswerQuestionBody, request: Request):
     written = question.get("type") in WRITTEN_TYPES
     options = question.get("options", [])
     if (
-        body.question_id != question.get("id")
+        body.skipped or body.question_id != question.get("id")
         or (written and body.answer_text is None)
         or (not written and (body.selected_index is None or body.selected_index >= len(options)))
     ):
         raise QuizAPIError(status_code=400, code=QuizErrorCode.QUIZ_QUESTION_INVALID,
                            message="Use the answer format shown for this question.")
 
-    filters = {"attempt_id": f"eq.{attempt_id}", "question_index": f"eq.{body.question_index}",
-               "is_correct": "eq.false"}
-    responses = table("quiz_responses")
-    rows = responses.select("retry_correct", filters=filters)
+    retry_correct = (
+        grade_written(question, body.answer_text)
+        if written else bool(options[body.selected_index].get("correct"))
+    )
+    rows = rpc("record_quiz_retry", {
+        "p_attempt_id": attempt_id,
+        "p_user_id": attempt["user_id"],
+        "p_question_index": body.question_index,
+        "p_correct": retry_correct,
+    })
     if not rows:
         raise QuizAPIError(status_code=409, code=QuizErrorCode.QUIZ_QUESTION_INVALID,
-                           message="Only recorded missed answers can be retried.")
+                           message="Only missed answers in an active quiz can be retried.")
     correct = rows[0]["retry_correct"]
-    if correct is None:
-        retry_correct = (
-            grade_written(question, body.answer_text)
-            if written else bool(options[body.selected_index].get("correct"))
-        )
-        updated = responses.update({"retry_correct": retry_correct},
-                                   filters={**filters, "retry_correct": "is.null"})
-        if updated:
-            correct = retry_correct
-        else:
-            rows = responses.select("retry_correct", filters=filters)
-            if not rows or rows[0]["retry_correct"] is None:
-                raise _attempt_not_found()
-            correct = rows[0]["retry_correct"]
     return {"correct": correct, "points": 0.5 if correct else 0}
 
 
@@ -2815,7 +2856,7 @@ def _grade_submission(
     # to close). Questions never answered through C1 fall back to the
     # submitted payload, so the current all-at-the-end client keeps working.
     recorded_rows = table("quiz_responses").select(
-        "question_index,selected_index,answer_text",
+        "question_index,selected_index,answer_text,skipped,retry_correct",
         filters={"attempt_id": f"eq.{body.quiz_id}"},
     ) or []
     recorded_by_index = {r["question_index"]: r for r in recorded_rows}
@@ -2832,6 +2873,11 @@ def _grade_submission(
     for q_index, q in enumerate(questions):
         qid = str(q["id"])
         recorded = recorded_by_index.get(q_index)
+        response_metadata = {}
+        if recorded and recorded.get("skipped"):
+            response_metadata["skipped"] = True
+        if recorded and recorded.get("retry_correct") is not None:
+            response_metadata["retry_points"] = 0.5 if recorded["retry_correct"] else 0
         if q.get("type") in WRITTEN_TYPES:
             # Written responses must have been accepted through /answer. Never
             # let a submission payload override the first recorded response.
@@ -2843,7 +2889,7 @@ def _grade_submission(
             results.append({"question_id": qid, "selected": selected_text,
                             "correct": is_correct, "correct_answer": expected_written_answer(q),
                             "explanation": written_feedback(q, selected_text),
-                            **({"can_retry": True} if recorded and not is_correct else {})})
+                            **response_metadata})
             continue
         if recorded is not None:
             sel_idx = recorded.get("selected_index")
@@ -2873,7 +2919,7 @@ def _grade_submission(
             "selected": selected,
             "correct": is_correct,
             "correct_answer": correct_label,
-            **({"can_retry": True} if recorded and not is_correct else {}),
+            **response_metadata,
             "explanation": _choice_feedback(
                 q, next((i for i, option in enumerate(q["options"]) if option["label"] == selected), None)
             ),

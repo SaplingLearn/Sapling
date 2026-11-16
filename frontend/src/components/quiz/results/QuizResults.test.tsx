@@ -6,11 +6,8 @@ import { markRadius } from "@/components/graph/ConceptNode";
 import { __resetReducedMotionStoreForTests } from "@/lib/usePrefersReducedMotion";
 import type { QuizActions } from "@/lib/quiz/useQuizSession";
 import type { QuizItem, QuizSession, SubmitResult } from "@/lib/quiz/types";
-import { retryQuestion } from "@/lib/quiz/api";
 import { QuizResults } from "./QuizResults";
 import { buildMissedItems } from "./MissedList";
-
-vi.mock("@/lib/quiz/api", () => ({ retryQuestion: vi.fn() }));
 
 // B2 owns `question/AskPanel`; this screen only has to open it with the right
 // seed. The mock renders the seed so the assertion is on the props, not on
@@ -249,47 +246,28 @@ describe("QuizResults", () => {
     });
   });
 
-  it("offers one retry for a missed part and keeps its explanation available", async () => {
-    vi.mocked(retryQuestion).mockResolvedValueOnce({ correct: true, points: 0.5 });
+  it("shows retry credit and all worked explanations at the end", () => {
     renderResults({
-      attemptId: "attempt-1",
       result: {
         ...RESULT,
-        results: RESULT.results.map(row => row.correct ? row : { ...row, can_retry: true }),
+        results: RESULT.results.map(row => row.correct ? row : { ...row, retry_points: 0.5 }),
       },
     });
-
-    const row = within(screen.getByTestId("quiz-missed-102"));
-    expect(row.queryByText(/the answer is/)).toBeNull();
-    fireEvent.click(row.getByText("Retry for up to ½ practice point"));
-    fireEvent.click(row.getByRole("radio", { name: "It recurses forever and overflows the stack" }));
-    fireEvent.click(row.getByRole("button", { name: "Submit retry" }));
-    expect(await row.findByRole("status")).toHaveTextContent("You earned ½ practice point");
-    expect(retryQuestion).toHaveBeenCalledWith("attempt-1", 102, { selected_index: 1 });
     expect(screen.getByText("2.5 of 3 practice points with retries")).toBeVisible();
-    expect(row.queryByRole("button", { name: "Submit retry" })).toBeNull();
-    fireEvent.click(row.getByRole("button", { name: "Show explanation" }));
-    expect(row.getByText(RESULT.results[1].explanation)).toBeVisible();
+    expect(screen.getByText(RESULT.results[1].explanation)).toBeVisible();
+    expect(within(screen.getByTestId("quiz-correct-list")).getByText("Yes.")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Submit retry" })).toBeNull();
   });
 
-  it("toggles the explanation disclosure and reveals the text", () => {
+  it("lets students collapse an initially visible explanation", () => {
     renderResults();
     const toggle = screen.getByTestId("quiz-missed-explain-102");
-    // The panel is always in the DOM (so `aria-controls` resolves) and hidden
-    // until asked for, so visibility — not presence — is the assertion.
     const panel = document.getElementById(toggle.getAttribute("aria-controls")!)!;
-    expect(panel).toHaveTextContent("Without a base case the recursion never stops.");
-
-    expect(toggle).toHaveAttribute("aria-expanded", "false");
-    expect(panel).not.toBeVisible();
-
-    fireEvent.click(toggle);
-    expect(toggle).toHaveAttribute("aria-expanded", "true");
     expect(panel).toBeVisible();
-
     fireEvent.click(toggle);
-    expect(toggle).toHaveAttribute("aria-expanded", "false");
     expect(panel).not.toBeVisible();
+    fireEvent.click(toggle);
+    expect(panel).toBeVisible();
   });
 
   it("names the missed region from its eyebrow", () => {
@@ -515,7 +493,7 @@ describe("QuizResults", () => {
     await waitFor(() => expect(growthMark(container).grow).toBe(1));
 
     fireEvent.click(screen.getByTestId("quiz-missed-explain-102"));
-    expect(screen.getByTestId("quiz-missed-explain-102")).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByTestId("quiz-missed-explain-102")).toHaveAttribute("aria-expanded", "false");
 
     const after = growthMark(container);
     expect(after.grow).toBe(1);
