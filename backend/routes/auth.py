@@ -462,9 +462,7 @@ async def mint_test_session(request: Request):
     if not user_id:
         raise HTTPException(status_code=422, detail="user_id must not be blank")
 
-    # Sign with the raw secret (auth_guard, the BFF and the handoff exchange
-    # all verify with it); the strip only decides whether one is configured.
-    secret = getattr(config, "SESSION_SECRET", "") or ""
+    secret = getattr(config, "SESSION_SECRET", "") or ""  # raw: verifiers use it unstripped
     if not secret.strip():
         # config.validate_config() relaxes the SESSION_SECRET requirement for
         # IS_LOCAL, so local dev can legitimately have none. Fail loudly instead
