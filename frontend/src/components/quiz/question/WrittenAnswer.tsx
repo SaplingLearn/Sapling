@@ -90,6 +90,7 @@ const PLACEHOLDER: Record<WrittenType, string> = {
 
 export interface WrittenAnswerProps {
   type: WrittenType;
+  numericUnit?: string;
   value: string;
   disabled: boolean;
   /** Set once the verdict is shown: the field itself says how it was marked. */
@@ -251,6 +252,7 @@ function KeyRows({ type, disabled, onInsert }: { type: WrittenType; disabled: bo
 
 export function WrittenAnswer({
   type,
+  numericUnit,
   value,
   disabled,
   verdict = null,
@@ -305,7 +307,7 @@ export function WrittenAnswer({
     commit(shown.slice(0, start) + key.insert + shown.slice(end), start + (key.caret ?? key.insert.length));
   };
 
-  const reading = readingFor(type, value, shown);
+  const reading = numericUnit ? null : readingFor(type, value, shown);
   // The reading describes the field only while it is the field's to give.
   const showsReading = Boolean(reading) && !verdict;
 
@@ -321,8 +323,8 @@ export function WrittenAnswer({
           aria-labelledby={labelledBy}
           aria-describedby={showsReading ? `${describedBy} quiz-written-readback` : describedBy}
           aria-invalid={reading?.ok === false ? true : undefined}
-          inputMode={type === "numeric" ? "decimal" : "text"}
-          placeholder={PLACEHOLDER[type]}
+          inputMode={type === "numeric" && !numericUnit ? "decimal" : "text"}
+          placeholder={numericUnit ? `e.g. 2.5 ${numericUnit}` : PLACEHOLDER[type]}
           maxLength={2000}
           value={shown}
           disabled={disabled}

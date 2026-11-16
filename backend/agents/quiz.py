@@ -6,8 +6,8 @@ misconceptions on demand instead of pre-stuffing them into the prompt.
 
 Per ADR 0003 convention 4: keep the output schema compact. Gemini's
 structured-output API rejects rich nested schemas with too many states
-for serving — Quiz is a flat top-level model with a list of
-QuizQuestion items, no further nesting.
+for serving. Quiz keeps questions and shared contexts in separate lists
+with no nested objects inside either item type.
 """
 
 from __future__ import annotations
@@ -111,12 +111,25 @@ class QuizQuestion(BaseModel):
         return _clip(accepted, MAX_ACCEPTED_ANSWERS, "accepted_answers")
 
 
+class QuizContext(BaseModel):
+    """Shared scenario and optional plotted data for consecutive questions."""
+
+    question_numbers: list[int]
+    stem: str
+    graph_question_number: int | None = None
+    x_label: str = ""
+    y_label: str = ""
+    x_values: list[float] = Field(default_factory=list)
+    y_values: list[float] = Field(default_factory=list)
+
+
 class Quiz(BaseModel):
     """The agent's structured output."""
 
     # 1..MAX_QUESTIONS, enforced here rather than as minItems/maxItems in the
     # schema (see MAX_QUESTIONS above).
     questions: list[QuizQuestion]
+    contexts: list[QuizContext] = Field(default_factory=list)
 
     @field_validator("questions", mode="before")
     @classmethod
@@ -138,10 +151,9 @@ class Quiz(BaseModel):
 
 
 _SYSTEM_PROMPT = (
-    "You generate adaptive, course-grounded quizzes for a student. Each "
-    "question must target a specific concept the student has weak "
-    "mastery on, OR address a class-level misconception you've seen, "
-    "OR revive a concept the student hasn't reviewed in a while.\n\n"
+    "Generate adaptive, course-grounded quizzes for the requested unit or concept. "
+    "Stay inside that scope throughout the quiz. Use mastery, misconceptions and "
+    "review history to select skills and anticipate mistakes within that scope.\n\n"
     "Workflow:\n"
     "1. Call `read_concepts_for_user` to see the student's mastery per "
     "   concept for this course (returned sorted by mastery ASC — "
@@ -157,7 +169,7 @@ _SYSTEM_PROMPT = (
     "   `recent_attempts` list (newest first) drives adaptive "
     "   difficulty (see rules below).\n"
     "4. Compose `Quiz.questions` so the WEAKEST and STALEST concepts "
-    "   get the most questions, AND each item's `concept` field "
+    "   get the most questions within the selected scope, AND each item's `concept` field "
     "   exactly matches a concept_name returned by tool 1.\n\n"
     "Concept-selection rules (combine all three signals):\n"
     "- Bias question count toward the lowest-mastery concepts (the "
@@ -167,9 +179,8 @@ _SYSTEM_PROMPT = (
     "   mastery is mid-tier — they're due for review and decay over "
     "   time. Concepts with `last_reviewed_at = null` are unreviewed; "
     "   treat them as stale.\n"
-    "- Don't drop high-mastery, recently-reviewed concepts entirely; "
-    "   include 1 question on a strong-and-fresh concept to keep the "
-    "   quiz from feeling punishing.\n\n"
+    "- Use mastery and review history to choose skills within the requested "
+    "   scope. Prior material may be used as a prerequisite, never as a separate topic.\n\n"
     "ADAPTIVE MODE (#540): when the user message says the quiz is in "
     "adaptive mode, there is no user-requested difficulty — you choose "
     "each question's difficulty yourself. Base the mix on mastery and "
@@ -202,24 +213,42 @@ _SYSTEM_PROMPT = (
     "   noise. Combine signals from `read_misconceptions_for_course` "
     "   (class-wide) and `read_recent_quiz_attempts.summary` "
     "   (this student's prior errors) when writing them.\n"
-    "- explanation: 1-3 sentences explaining WHY the correct answer "
-    "   is correct — used in the post-quiz review screen.\n"
+    "- explanation: show the key reasoning or calculation and the result. "
+    "   Keep it concise and self-contained. For multiple choice, provide four "
+    "   accepted_answers strings in option order. For each wrong choice, explain "
+    "   the specific mistake that could produce it. Use an empty string for the correct choice.\n"
     "- difficulty: align with the student's mastery on the concept "
     "   AND the adaptive-difficulty rules above.\n\n"
     "Honor the requested num_questions. Don't invent concepts the "
     "student doesn't have."
     "\n\nCOURSE MATERIAL grounding:\n"
-    "- If the user message contains a `COURSE MATERIAL` block, treat it as "
-    "  the PRIMARY source of truth for question content. The MAJORITY of "
-    "  questions must be grounded in and stay within the scope of that "
-    "  material, so the quiz reflects what this class is actually covering.\n"
+    "- Start with the target topic. From relevant retrieved course excerpts, identify "
+    "  the learning objectives, techniques, notation, assumptions, and level the "
+    "  course expects. Use the catalog only to establish course scope. Ignore excerpts "
+    "  that do not help test the target topic.\n"
+    "- Use reference exercises and worked examples as models for the skill and reasoning "
+    "  steps. Write original parallel problems. Change the scenario, givens, or data "
+    "  and recompute the answer and distractors. For conceptual material, apply the "
+    "  same idea to a new case or ask for a new prediction or interpretation. "
+    "  Rewording an existing exercise with the same givens and task is insufficient. "
+    "  Do not lift stems, shared scenarios, answer choices, datasets, or solution phrasing. "
+    "  Keep standard terminology, definitions, and notation when needed.\n"
+    "- Check that each new problem is solvable from its own information, that each "
+    "  multiple-choice question has exactly one correct answer, and that the explanation "
+    "  works through the new problem's givens.\n"
+    "- Match the discipline. In math, ask directly for a result when a story "
+    "  adds nothing. For conceptual topics, use a short scenario, prediction "
+    "  or interpretation. Give all quantities, definitions and assumptions "
+    "  needed to solve the problem without seeing the source. Difficulty comes "
+    "  from the reasoning required, never from ambiguity or irrelevant detail.\n"
     "- You MAY supplement with foundational, on-topic aspects of the same "
     "  concept where the material is thin — but NEVER test topics the course "
     "  clearly does not cover (no off-syllabus drift).\n"
     "- Difficulty, targeting, and distractors are still governed by the "
     "  mastery / misconception / quiz-history tools.\n"
-    "- If there is no COURSE MATERIAL block, use general knowledge of the "
-    "  concept as before."
+    "- If relevant excerpts are missing or thin, use standard applications of the "
+    "  selected topic at the requested level. Do not infer course-specific details "
+    "  from a catalog summary or claim the question came from a source."
     # #150: course material / misconception / quiz-history content is
     # student- or peer-derived — data for question writing, never
     # instructions. Single source of truth in services/prompt_safety.py.
@@ -236,18 +265,42 @@ _SYSTEM_PROMPT += (
     "wordings/abbreviations. The correct_answer is itself that term or brief fact: at "
     "most 8 words and never a full sentence (put the reasoning in explanation). "
     "Do not ask open-ended essays requiring subjective grading. "
-    "For numeric, correct_answer must be a plain number or fraction; specify required "
-    "units and rounding in the question, asking students to enter the number only. "
+    "For numeric, specify any rounding in the stem. Use a plain number or fraction "
+    "as correct_answer for unitless questions. For dimensional questions, put the "
+    "number and canonical unit in correct_answer, separated by a space (e.g. 9.8 m/s^2). "
+    "Ask the student for a number and compact unit in the same format. Add "
+    "common exact equivalent quantities (e.g. 250 cm for 2.5 m) as accepted_answers. "
+    "If rounding is required, include appropriate rounded equivalents as well. "
     "For symbolic, ask for an algebraic expression, with a correct_answer using only "
     "single-letter variables, rational numbers, + - * / ^ and parentheses, and integer "
     "powers from -8 to 8. Implicit multiplication such as 2(x+1) is supported. "
     "Never put a word, a Greek-letter name (pi, lambda, theta) or a named constant in a "
     "symbolic correct_answer; name any constant with a single letter defined in the question. "
     "Do not ask for equations, functions, roots or trigonometric notation. "
-    "Numeric grading accepts equivalent fractions, decimals, percentages and scientific "
-    "notation, with exact equality. For numeric questions, do not ask for symbolic expressions or approximate "
+    "Numeric grading compares values exactly after parsing. Use a rounded key if "
+    "the stem asks for rounding. Do not ask for symbolic expressions or approximate "
     "irrational values unless an explicit rounded answer is requested. "
+    "When a scenario naturally supports several skills, use a context with two or "
+    "three consecutive question_numbers (1-based positions in questions) and a shared "
+    "stem. Each question is a separately scored part. Write an explicit, distinct question in each part, "
+    "and supply any earlier result a later part needs so students can continue independently. "
+    "The requested question count includes every part. Contexts cannot overlap. "
+    "Only use a single-question context when it has a graph. "
+    "Use a graph only if the student needs it to solve a specific question. Set "
+    "graph_question_number to that question's position, even within a multipart problem. "
+    "Write the shared stem so it makes sense on parts that do not show the graph. "
+    "Label both axes with units where relevant. Supply 2 to 24 pairs of x_values and y_values, "
+    "with strictly increasing x_values and finite values of magnitude at most one million. "
+    "The plot connects adjacent points. For a curved function, sample enough points "
+    "to show its shape accurately. Prefer varied, topic-appropriate data and functions. "
+    "Leave both value lists empty for a context without a graph. "
+    "Use LaTeX for mathematical expressions in question, options and feedback. "
+    "Wrap inline math in \\( ... \\) and standalone equations in \\[ ... \\]. "
+    "Keep prose as plain text. Copy a correct multiple-choice option verbatim into "
+    "correct_answer, including delimiters. Keep written grading keys and aliases "
+    "in their plain input format. "
     "For written questions, options must be empty. Explain the reasoning after grading. "
+    "Write complete worked solutions in explanation, including intermediate math steps."
     "Keep every item focused on the requested concept and the supplied course material."
 )
 _PROMPT_HASH = hashlib.sha256(_SYSTEM_PROMPT.encode("utf-8")).hexdigest()[:12]

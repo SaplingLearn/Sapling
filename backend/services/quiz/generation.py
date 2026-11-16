@@ -10,6 +10,7 @@ underscores included) are unchanged, and routes/quiz.py re-exports them.
 """
 import asyncio
 import logging
+import re
 import uuid
 from typing import NamedTuple
 
@@ -60,7 +61,7 @@ from services.quiz.grounding import (
 )
 from services.quiz.limits import _daily_spend_exceeded, _refund_generate_slot
 from services.quiz.practice import _renumber, _reserved_misses
-from services.quiz.wire import _agent_question_to_wire, _client_questions, _resolved_difficulty
+from services.quiz.wire import _attach_question_contexts, _agent_question_to_wire, _client_questions, _resolved_difficulty
 
 # Log records keep the name they had in routes/quiz.py before the #118 split:
 # the move must not change what an operator (or a caplog test) filters on.
@@ -224,6 +225,29 @@ def _topup_format_rule(question_format: str) -> str:
     if question_format in WRITTEN_TYPES:
         return f"{question_format} only; {_WRITTEN_TOPUP_RULE}"
     return f"{_MCQ_TOPUP_RULE} And {_WRITTEN_TOPUP_RULE}"
+
+
+def _copies_reference(text: str, reference: str, *, min_words: int = 6) -> bool:
+    """Catch a copied stem or a long copied passage, ignoring punctuation and case."""
+    if not reference:
+        return False
+    words = re.findall(r"\w+", text.casefold())
+    span = min(len(words), 12)
+    return span >= min_words and any(
+        " " + " ".join(words[start:start + span]) + " " in reference
+        for start in range(len(words) - span + 1)
+    )
+
+
+def _copies_reference_question(question: dict, reference: str) -> bool:
+    context_stem = (question.get("context") or {}).get("stem", "")
+    return (
+        any(_copies_reference(stem, reference) for stem in (question["question"], context_stem))
+        or any(
+            _copies_reference(text, reference, min_words=12)
+            for text in (question["explanation"], *(option["text"] for option in question["options"]))
+        )
+    )
 
 
 async def _quiz_via_agent(
@@ -538,6 +562,8 @@ async def _quiz_via_agent(
     seen_stems: set[str] = set()
     seen_hashes: set[str] = set()
     dropped = 0
+    copied_reference = False
+    reference = " " + " ".join(re.findall(r"\w+", material.block.casefold())) + " " if material.block else ""
 
     # E5 provenance shared by every question this generation produces. The
     # chunk ids are attempt-level, not per-item: they are the sources that
@@ -556,8 +582,9 @@ async def _quiz_via_agent(
     }
 
     def _absorb(quiz: Quiz, model: str) -> None:
-        nonlocal dropped
-        for q in quiz.questions:
+        nonlocal dropped, copied_reference
+        mapped_by_position = {}
+        for position, q in enumerate(quiz.questions, start=1):
             if question_format != "mixed" and q.type != question_format:
                 dropped += 1
                 continue
@@ -576,7 +603,7 @@ async def _quiz_via_agent(
                 )
                 dropped += 1
                 continue
-            mapped = _agent_question_to_wire(q, len(wire_questions) + 1)
+            mapped = _agent_question_to_wire(q, len(wire_questions) + len(mapped_by_position) + 1)
             if mapped is None:
                 dropped += 1
                 continue
@@ -586,17 +613,26 @@ async def _quiz_via_agent(
             )
             seen_stems.add(stem)
             seen_hashes.add(qhash)
+            mapped_by_position[position] = mapped
+        rejected = _attach_question_contexts(quiz, mapped_by_position)
+        for position, mapped in mapped_by_position.items():
+            copied = _copies_reference_question(mapped, reference)
+            copied_reference |= copied
+            if position in rejected or copied:
+                dropped += 1
+                seen_stems.discard(normalize_text(mapped["question"]))
+                seen_hashes.discard(mapped["question_hash"])
+                continue
             wire_questions.append(mapped)
 
     _absorb(*await _run(user_message, ORCHESTRATOR_LIMITS))
 
-    # #543 E2: one bounded top-up when DRIFT cost us a big share of the
-    # quiz. Gated on questions actually dropped (never on a clean short
-    # response), and it runs for total drift too — that's the case a
-    # retry most obviously helps, and the old `wire_questions and` guard
-    # made it the only case that never retried. Bounded because a retry
-    # loop against a drifting model burns tokens without converging.
-    if dropped and dropped >= num_questions * QUIZ_TOPUP_DROP_RATIO:
+    # Retry format drift only when it materially reduced the quiz. A copied
+    # reference item warrants a replacement even when the rest are sound.
+    # Clean under-delivery still does not trigger an extra model call.
+    if len(wire_questions) < num_questions and (
+        copied_reference or dropped >= num_questions * QUIZ_TOPUP_DROP_RATIO
+    ):
         for _ in range(QUIZ_TOPUP_MAX_RETRIES):
             missing = max(1, num_questions - len(wire_questions))
             logger.info(
@@ -610,8 +646,8 @@ async def _quiz_via_agent(
             already = "\n".join(f"- {q['question']}" for q in wire_questions)
             topup_msg = (
                 f"{user_message}\n\n[TOP-UP] Some questions were rejected for "
-                f"format errors. Generate {missing} MORE questions on the same "
-                f"concept. Remember: {_topup_format_rule(question_format)}"
+                f"format or originality checks. Generate {missing} MORE questions on the same "
+                f"concept. Use fresh scenarios, givens, and wording. {_topup_format_rule(question_format)}"
             )
             if already:
                 topup_msg += (
@@ -643,7 +679,7 @@ async def _quiz_via_agent(
         )
     # Never serve more than asked for (a generous top-up run can overshoot).
     return GeneratedQuiz(
-        questions=wire_questions[:num_questions],
+        questions=_renumber(wire_questions[:num_questions]),
         exam_days_away=exam_days_away,
     )
 

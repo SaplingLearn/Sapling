@@ -247,24 +247,16 @@ describe("QuizResults", () => {
     });
   });
 
-  it("toggles the explanation disclosure and reveals the text", () => {
+  it("opens all explanations and lets students collapse them", () => {
     renderResults();
     const toggle = screen.getByTestId("quiz-missed-explain-102");
-    // The panel is always in the DOM (so `aria-controls` resolves) and hidden
-    // until asked for, so visibility — not presence — is the assertion.
     const panel = document.getElementById(toggle.getAttribute("aria-controls")!)!;
-    expect(panel).toHaveTextContent("Without a base case the recursion never stops.");
-
-    expect(toggle).toHaveAttribute("aria-expanded", "false");
-    expect(panel).not.toBeVisible();
-
-    fireEvent.click(toggle);
-    expect(toggle).toHaveAttribute("aria-expanded", "true");
     expect(panel).toBeVisible();
-
+    expect(screen.getByTestId("quiz-correct-101")).toBeVisible();
     fireEvent.click(toggle);
-    expect(toggle).toHaveAttribute("aria-expanded", "false");
     expect(panel).not.toBeVisible();
+    fireEvent.click(toggle);
+    expect(panel).toBeVisible();
   });
 
   it("names the missed region from its eyebrow", () => {
@@ -295,7 +287,7 @@ describe("QuizResults", () => {
   it("replaces the review section with the perfect-run line", () => {
     renderResults(PERFECT);
     expect(screen.getByTestId("quiz-results-perfect")).toHaveTextContent(
-      "Nothing to review — every answer was right. Recursion keeps growing on your tree.",
+      "Every answer was right. Recursion keeps growing on your tree.",
     );
     expect(screen.queryByTestId("quiz-missed-list")).toBeNull();
     expect(screen.getByTestId("quiz-again")).toBeInTheDocument();
@@ -518,7 +510,7 @@ describe("QuizResults", () => {
     await waitFor(() => expect(growthMark(container).grow).toBe(1));
 
     fireEvent.click(screen.getByTestId("quiz-missed-explain-102"));
-    expect(screen.getByTestId("quiz-missed-explain-102")).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByTestId("quiz-missed-explain-102")).toHaveAttribute("aria-expanded", "false");
 
     const after = growthMark(container);
     expect(after.grow).toBe(1);

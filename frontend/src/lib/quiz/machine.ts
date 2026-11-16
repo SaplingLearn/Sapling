@@ -56,6 +56,7 @@ export type QuizEvent =
   | { type: "SELECT"; index: number }
   | { type: "WRITE"; text: string }
   | { type: "SUBMIT_ANSWER" }
+  | { type: "SKIP_ANSWER" }
   | { type: "ANSWER_RECORDED"; result: AnswerResult }
   | { type: "ANSWER_FAILED"; error: QuizError }
   | { type: "NEXT" }
@@ -183,20 +184,22 @@ export function queueOf(scope: QuizScope): string[] {
  *  carry its selection without a verdict, so a selection alone counts as
  *  recorded there — which is why GO_TO drops an unsubmitted draft selection
  *  when the student moves off it. */
-export function isUnanswered(item: QuizItem): boolean {
-  return !item.verdict && (isWrittenType(item.question.type) || item.selectedIndex === null);
+export function isUnanswered(item: QuizItem, includeDrafts = false): boolean {
+  return !item.skipped && !item.verdict && (isWrittenType(item.question.type)
+    ? !includeDrafts || !item.answerText?.trim()
+    : item.selectedIndex === null);
 }
 
 export function firstUnansweredIndex(items: QuizItem[]): number {
-  return items.findIndex(isUnanswered);
+  return items.findIndex(item => isUnanswered(item));
 }
 
 /** The next question still to answer after `from`, wrapping round to any the
  *  student skipped; -1 once every question is answered. */
-export function nextUnansweredIndex(items: QuizItem[], from: number): number {
+export function nextUnansweredIndex(items: QuizItem[], from: number, includeDrafts = false): number {
   for (let step = 1; step <= items.length; step++) {
     const index = (from + step) % items.length;
-    if (isUnanswered(items[index])) return index;
+    if (isUnanswered(items[index], includeDrafts)) return index;
   }
   return -1;
 }
@@ -391,20 +394,27 @@ function onWrite(session: QuizSession, event: EventOf<"WRITE">): QuizSession {
   if (session.phase !== "active") return session;
   const item = session.items[session.cursor];
   if (!item || item.verdict || !isWrittenType(item.question.type)) return session;
-  return withItem(session, session.cursor, { answerText: event.text.slice(0, 2000) });
+  return withItem(session, session.cursor, { answerText: event.text.slice(0, 2000), ...(item.skipped ? { skipped: false } : {}) });
 }
 
 function onSelect(session: QuizSession, event: EventOf<"SELECT">): QuizSession {
   if (session.phase !== "active") return session;
   if (!session.items[session.cursor]) return session;
-  return withItem(session, session.cursor, { selectedIndex: event.index });
+  return withItem(session, session.cursor, { selectedIndex: event.index, ...(session.items[session.cursor].skipped ? { skipped: false } : {}) });
 }
 
 function onSubmitAnswer(session: QuizSession): QuizSession {
-  // State-neutral by design: the network call is the hook's job and the
-  // "pending" look is local to the footer button. `canSubmitAnswer` is the
-  // predicate that actually gates it, in the hook and on the button alike.
-  return session;
+  if (session.config.feedback !== "at-end" || !canSubmitAnswer(session)) return session;
+  const next = nextUnansweredIndex(session.items, session.cursor, true);
+  return next < 0 ? onFinish(session) : { ...session, cursor: next };
+}
+
+function onSkipAnswer(session: QuizSession): QuizSession {
+  if (session.phase !== "active" || !session.items[session.cursor]) return session;
+  const skipped = withItem(session, session.cursor, { skipped: true, selectedIndex: null, answerText: "" });
+  const next = nextUnansweredIndex(skipped.items, skipped.cursor, skipped.config.feedback === "at-end");
+  if (next >= 0) return { ...skipped, cursor: next };
+  return skipped.config.feedback === "as-you-go" ? { ...skipped, phase: "answered" } : skipped;
 }
 
 function onAnswerRecorded(session: QuizSession, event: EventOf<"ANSWER_RECORDED">): QuizSession {
@@ -454,6 +464,9 @@ function onGoTo(session: QuizSession, event: EventOf<"GO_TO">): QuizSession {
   if (!inPhase(session, "active", "answered")) return session;
   const target = session.items[event.index];
   if (!target || event.index === session.cursor) return session;
+  if (session.config.feedback === "at-end") {
+    return { ...session, cursor: event.index, phase: target.verdict ? "answered" : "active" };
+  }
   // An unsubmitted multiple-choice pick is dropped on the way out: a
   // selection with no verdict reads as RECORDED (see isUnanswered), and a
   // draft must never be mistaken for an answer the server has. A written
@@ -468,7 +481,7 @@ function onGoTo(session: QuizSession, event: EventOf<"GO_TO">): QuizSession {
 function onFinish(session: QuizSession): QuizSession {
   if (!inPhase(session, "active", "answered")) return session;
   if (session.items.length === 0) return session;
-  if (session.items.some(i => i.selectedIndex === null && !i.verdict)) return session;
+  if (session.items.some(i => isUnanswered(i, session.config.feedback === "at-end"))) return session;
   return { ...session, phase: "submitting" };
 }
 
@@ -618,6 +631,7 @@ const HANDLERS = {
   WRITE: onWrite,
   SELECT: onSelect,
   SUBMIT_ANSWER: onSubmitAnswer,
+  SKIP_ANSWER: onSkipAnswer,
   ANSWER_RECORDED: onAnswerRecorded,
   ANSWER_FAILED: onAnswerFailed,
   NEXT: onNext,
@@ -672,6 +686,7 @@ function resumedItem(
     selectedIndex: selected ?? previous?.selectedIndex ?? null,
     answerText: response?.answer_text ?? previous?.answerText,
     verdict: selected === undefined ? null : previous?.verdict ?? wireVerdict(question, response),
+    ...(previous?.skipped && !response ? { skipped: true } : {}),
     flagged: previous?.flagged ?? false,
   };
 }
@@ -683,14 +698,15 @@ function resumedItems(detail: AttemptDetail, matching: QuizSession | null): Quiz
     resumedItem(question, index, storedById.get(question.id), responsesByIndex.get(index)));
 }
 
-function resumedPosition(items: QuizItem[]): { cursor: number; phase: Phase } {
-  const unanswered = firstUnansweredIndex(items);
+function resumedPosition(items: QuizItem[], includeDrafts: boolean): { cursor: number; phase: Phase } {
+  const unanswered = items.findIndex(item => isUnanswered(item, includeDrafts));
   if (unanswered >= 0) return { cursor: unanswered, phase: "active" };
   // Every question already answered but the attempt never submitted (the last
   // `/answer` landed and then the tab went away). Park on the final verdict so
   // "See results" is one press away, rather than deadlocking on an empty cursor.
   const cursor = Math.max(items.length - 1, 0);
-  return { cursor, phase: items[cursor]?.verdict != null ? "answered" : "active" };
+  const settled = items[cursor]?.verdict != null || (!includeDrafts && items[cursor]?.skipped);
+  return { cursor, phase: settled ? "answered" : "active" };
 }
 
 function resumedConfig(
@@ -750,13 +766,14 @@ function resumeFrom(
 ): QuizSession {
   const matching = stored && stored.attemptId === detail.quiz_id ? stored : null;
   const items = resumedItems(detail, matching);
+  const config = resumedConfig(session, detail, matching);
   return {
     ...session,
     ...resumedFraming(session, detail, matching),
-    config: resumedConfig(session, detail, matching),
+    config,
     attemptId: detail.quiz_id,
     items,
-    ...resumedPosition(items),
+    ...resumedPosition(items, config.feedback === "at-end"),
     error: null,
     result: null,
     xp: null,

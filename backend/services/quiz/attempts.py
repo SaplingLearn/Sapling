@@ -19,7 +19,7 @@ from services.auth_guard import require_self, guard_off_loop
 from services.quiz.config import QUIZ_ATTEMPT_ABANDON_TTL_HOURS
 from services.quiz.errors import QuizAPIError, QuizErrorCode
 from services.encryption import encrypt_json, decrypt_json_column
-from services.quiz.grading import WRITTEN_TYPES, grade_written
+from services.quiz.grading import WRITTEN_TYPES, expected_written_answer, grade_written, written_feedback
 from services.timestamps import parse_ts
 from services.quiz.wire import _strip_answer_key, _written_response_text
 
@@ -367,17 +367,18 @@ async def answer_question(attempt_id: str, body: AnswerQuestionBody, request: Re
         if next_index < len(questions)
         else None
     )
+    answer_text = _written_response_text(response_row) if written else ""
     return {
         # Echo both addressing schemes so a client that mixed them up sees
         # it immediately rather than discovering it at submit time.
         "question_index": body.question_index,
         "question_id": question.get("id"),
         "is_correct": _is_correct(response_row["selected_index"],
-                                  _written_response_text(response_row)),
-        "correct_answer": question.get("correct_answer") if written else None,
-        **({"answer_text": _written_response_text(response_row)} if written else {}),
+                                  answer_text),
+        "correct_answer": expected_written_answer(question) if written else None,
+        **({"answer_text": answer_text} if written else {}),
         "correct_index": correct_index,
-        "explanation": question.get("explanation", ""),
+        "explanation": written_feedback(question, answer_text) if written else question.get("explanation", ""),
         "next_question": next_question,
         "recorded": recorded,
     }

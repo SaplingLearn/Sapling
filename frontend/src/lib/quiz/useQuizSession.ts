@@ -34,7 +34,7 @@ import { clearSession, persistSession, loadSession } from "./session";
 import type { EntryRequest } from "./source";
 import { useGamificationDelta } from "./useGamificationDelta";
 import { useQuizConfig } from "./useQuizConfig";
-import type { QuizConfig, QuizSession, SubmitResult } from "./types";
+import type { QuizConfig, QuizSession, QuizSubmissionAnswer, SubmitResult } from "./types";
 import { isWrittenType } from "./types";
 
 export interface QuizActions {
@@ -44,6 +44,7 @@ export interface QuizActions {
   select(index: number): void;
   write?(text: string): void;
   submitAnswer(): void;
+  skipAnswer?(): void;
   next(): void;
   /** Move to question `index` (back, or ahead to skip). Ignored mid-request. */
   goTo?(index: number): void;
@@ -391,16 +392,19 @@ export function useQuizSession(userId: string, entry: EntryRequest): QuizSession
       submittingRef.current = attemptId;
       const request = begin("submit", SUBMIT_TIMEOUT_MS);
       try {
-        // Belt and braces: the server reconciles against `quiz_responses` and a
-        // recorded row always wins, so this payload only covers questions whose
-        // `/answer` call was lost.
-        const answers = from.items
-          .filter(i => i.selectedIndex !== null)
-          .map(i => ({
-            question_id: i.question.id,
-            selected_label: i.question.options[i.selectedIndex as number]?.label ?? "",
-          }));
-        const result = await submitQuiz(attemptId, answers, request.controller.signal);
+        // At-end quizzes send drafts together. An older recorded response
+        // remains authoritative if one exists for the same question.
+        const answers = from.items.flatMap<QuizSubmissionAnswer>(item => {
+          const question_id = item.question.id;
+          if (item.skipped) return [{ question_id, skipped: true }];
+          if (isWrittenType(item.question.type)) {
+            const answer_text = item.answerText?.trim();
+            return from.config.feedback === "at-end" && answer_text ? [{ question_id, answer_text }] : [];
+          }
+          const selected_label = item.selectedIndex === null ? undefined : item.question.options[item.selectedIndex]?.label;
+          return selected_label ? [{ question_id, selected_label }] : [];
+        });
+        const result = await submitQuiz(attemptId, answers, request.controller.signal, from.config.feedback === "at-end");
         const xp = await gamification.deltaAfterSubmit();
         // Cancelled while scoring: the student is back in the quiz and asked
         // not to be moved. If the server did score it, "See results" will say
@@ -463,6 +467,10 @@ export function useQuizSession(userId: string, entry: EntryRequest): QuizSession
     // is state-neutral, and `canSubmitAnswer` is the same predicate the footer
     // button disables on.
     const current = apply({ type: "SUBMIT_ANSWER" });
+    if (current.config.feedback === "at-end" && current.phase !== "answered") {
+      if (current.phase === "submitting") await runSubmit(current);
+      return;
+    }
     if (!canSubmitAnswer(current) || !current.attemptId) return;
     const item = current.items[current.cursor];
     const attemptId = current.attemptId;
@@ -538,6 +546,10 @@ export function useQuizSession(userId: string, entry: EntryRequest): QuizSession
       next: () => {
         const next = apply({ type: "NEXT" });
         if (next.phase === "submitting") void runSubmit(next);
+      },
+
+      skipAnswer: () => {
+        if (!answeringRef.current) apply({ type: "SKIP_ANSWER" });
       },
 
       goTo: index => {

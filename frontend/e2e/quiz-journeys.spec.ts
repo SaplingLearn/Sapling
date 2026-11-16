@@ -541,16 +541,10 @@ test("missed review: the results screen explains the wrong answer and asks for a
   await expect(item).toContainText(stemOf(1));
   await expect(item).toContainText(`You chose ${chosen} · the answer is ${correct}`);
 
-  // The explanation is a disclosure — present in the DOM (so `aria-controls`
-  // never dangles) but hidden until asked for.
   const explain = page.getByTestId(`quiz-missed-explain-${questionId}`);
   const explanation = item.locator(`#quiz-missed-explanation-${questionId}`);
-  await expect(explain).toHaveText("Show explanation");
-  await expect(explain).toHaveAttribute("aria-expanded", "false");
-  await expect(explanation).toBeHidden();
-  await explain.click();
-  await expect(explain).toHaveText("Hide explanation");
   await expect(explain).toHaveAttribute("aria-expanded", "true");
+  await expect(explanation).toBeVisible();
   await expect(explanation).toHaveText(explanationOf(1, correct));
   await explain.click();
   await expect(explanation).toBeHidden();

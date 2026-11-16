@@ -20,6 +20,7 @@ import type {
   AttemptsPage,
   GenerateResult,
   QuizConfig,
+  QuizSubmissionAnswer,
   SubmitResult,
 } from "./types";
 
@@ -117,13 +118,14 @@ export const answerQuestion = (
  */
 export const submitQuiz = (
   attemptId: string,
-  answers: { question_id: number; selected_label: string }[],
+  answers: QuizSubmissionAnswer[],
   signal?: AbortSignal,
+  deferred = false,
 ): Promise<SubmitResult> =>
   fetchJSON<SubmitResult>("/api/quiz/submit", {
     method: "POST",
     ...(signal ? { signal } : {}),
-    body: JSON.stringify({ quiz_id: attemptId, answers }),
+    body: JSON.stringify({ quiz_id: attemptId, answers, ...(deferred ? { deferred: true } : {}) }),
   });
 
 /**

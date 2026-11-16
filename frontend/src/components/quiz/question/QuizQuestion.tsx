@@ -24,6 +24,8 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BookOpen, ChevronLeft, ChevronRight, Hash, Library, ListChecks, PenLine, Sigma, Sparkles } from "lucide-react";
+import { QuizMath } from "../QuizMath";
+import { QuizProblemContext } from "../QuizProblemContext";
 import { AnswerOption, Badge, Button, ProgressDots } from "@/components/ui";
 import { ConceptNode } from "@/components/graph/ConceptNode";
 import { useToast } from "@/components/ToastProvider";
@@ -194,7 +196,9 @@ function usePrimary({
   phase,
   hasAnswer,
   showVerdict,
+  atEnd,
 }: {
+  atEnd: boolean;
   actions: QuizActions;
   busy: boolean;
   items: QuizItem[];
@@ -209,13 +213,22 @@ function usePrimary({
 
   return useMemo(() => {
     const button = primaryButton({ phase, showVerdict, allAnswered: everyAnswered(items), busy, hasAnswer });
+    if (atEnd && phase === "active") {
+      const ready = everyAnswered(items, true);
+      return {
+        ...button,
+        label: ready ? "Submit quiz" : "Next",
+        enabled: !busy && (ready || hasAnswer),
+        activate: ready ? () => actions.finish() : submit,
+      };
+    }
     const presses: Record<PrimaryAction, () => void> = {
       none: () => {},
       next: () => actions.next(),
       submit,
     };
     return { ...button, activate: presses[button.action] };
-  }, [actions, busy, items, phase, hasAnswer, showVerdict, submit]);
+  }, [actions, busy, items, phase, hasAnswer, showVerdict, submit, atEnd]);
 }
 
 // ── Keyboard (§5 B2) ───────────────────────────────────────────────────
@@ -353,7 +366,7 @@ function QuestionPager({
         current={total === 0 ? -1 : cursor}
         answered={total === 0 ? 0 : items.filter(i => i.verdict !== null).length}
         // Out of order once questions can be skipped: answered isn't a prefix.
-        done={items.map(i => !isUnanswered(i))}
+        done={items.map(i => !isUnanswered(i, session.config.feedback === "at-end"))}
         // As-you-go shows each verdict, so the pager keeps the tally too.
         // At-end holds every verdict back, and the pager must not leak them.
         outcomes={session.config.feedback === "as-you-go"
@@ -451,12 +464,12 @@ function QuestionPrompt({ item, format }: { item: QuizItem | undefined; format: 
   const stem = item?.question.question ?? "";
   const kind = item?.question.material_context;
   const context = kind ? MATERIAL_CONTEXT[kind] : null;
-  return (
+  const prompt = (
     <div className="quiz-question__prompt">
       <h2 className="quiz-question__stem h-serif" id="quiz-question-stem">
         {/* An algebra stem carries its maths as typed (`(x + 1)^2`); raise
             the exponents so the question reads the way it would be printed. */}
-        {format === "symbolic" ? renderParts(superscriptParts(stem)) : stem}
+        {format === "symbolic" && !stem.includes("\\(") && !stem.includes("\\[") ? renderParts(superscriptParts(stem)) : <QuizMath text={stem} />}
       </h2>
       {context && (
         <p className="quiz-question__context" data-testid="quiz-material-context">
@@ -466,6 +479,9 @@ function QuestionPrompt({ item, format }: { item: QuizItem | undefined; format: 
       )}
     </div>
   );
+  return item?.question.context
+    ? <QuizProblemContext context={item.question.context}>{prompt}</QuizProblemContext>
+    : prompt;
 }
 
 /** What every answer format is handed. `shown` is the verdict once it may be
@@ -544,6 +560,7 @@ function WrittenField({ view, shown, selectable, actions, primary }: AnswerField
       <label htmlFor="quiz-written-answer" className="quiz-question__sr" id="quiz-written-label">Your answer</label>
       <WrittenAnswer
         type={(type ?? "short_answer") as WrittenType}
+        numericUnit={view.item?.question.numeric_unit}
         value={view.item?.answerText ?? ""}
         disabled={!selectable}
         verdict={outcomeOf(shown) ?? null}
@@ -558,7 +575,7 @@ function WrittenField({ view, shown, selectable, actions, primary }: AnswerField
           grader applies, so a sighted student needs them as much as a
           screen-reader user does. */}
       <p className="quiz-question__format-hint" id="quiz-format-hint" data-testid="quiz-format-hint">
-        {formatHint(type)}
+        {formatHint(type, view.item?.question.numeric_unit)}
       </p>
     </div>
   );
@@ -716,7 +733,7 @@ export function QuizQuestion({
 
   const { rootRef, feedbackRef } = useQuestionFocus(phase, cursor, view.written, showVerdict);
   useShortQuizToast(session, total, toast);
-  const primary = usePrimary({ actions, busy, items, phase, hasAnswer: view.hasAnswer, showVerdict });
+  const primary = usePrimary({ actions, busy, items, phase, hasAnswer: view.hasAnswer, showVerdict, atEnd: session.config.feedback === "at-end" });
 
   const header = (
     <QuestionHeader concept={concept} format={view.format} showFormat={phase !== "generating" && Boolean(view.item)} difficulty={difficulty} />
@@ -766,6 +783,11 @@ export function QuizQuestion({
             format={view.format}
             correctLabel={correctOption(view.verdict, view.options)?.label}
           />
+          {selectable && actions.skipAnswer && (
+            <Button variant="link" onClick={actions.skipAnswer} data-testid="quiz-skip-answer">
+              Skip question
+            </Button>
+          )}
           <QuestionAside
             flagged={view.item?.flagged ?? false}
             onFlag={() => flagItem(view.item, actions, toast)}

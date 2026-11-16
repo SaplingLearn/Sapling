@@ -194,12 +194,21 @@ class AnswerQuestionBody(BaseModel):
 
 class AnswerItem(BaseModel):
     question_id: Union[int, Id]
-    selected_label: ShortText
+    selected_label: Optional[ShortText] = None
+    answer_text: Optional[str] = Field(default=None, min_length=1, max_length=2000)
+    skipped: bool = False
+
+    @model_validator(mode="after")
+    def one_answer(self):
+        if sum((self.selected_label is not None, self.answer_text is not None, self.skipped)) != 1:
+            raise ValueError("Supply an answer choice, a written answer, or skip.")
+        return self
 
 
 class SubmitQuizBody(BaseModel):
     quiz_id: Id
     answers: list[AnswerItem] = Field(max_length=QUIZ_MAX_QUESTIONS * 4)
+    deferred: bool = False
 
 
 # ── Calendar ──────────────────────────────────────────────────────────────────

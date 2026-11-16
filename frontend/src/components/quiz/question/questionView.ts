@@ -116,8 +116,8 @@ export function primaryButton({
 }
 
 /** Nothing is left to answer, in any order. */
-export function everyAnswered(items: QuizItem[]): boolean {
-  return items.every(i => !isUnanswered(i));
+export function everyAnswered(items: QuizItem[], includeDrafts = false): boolean {
+  return items.every(i => !isUnanswered(i, includeDrafts));
 }
 
 /** How the outcome is written on the answer and the feedback line. */
@@ -154,11 +154,12 @@ export function nextOptionIndex(selectedIndex: number | null, step: 1 | -1, coun
 }
 
 /** The grading rules shown under a written answer, per format. */
-export function formatHint(type: QuestionType | undefined): string {
+export function formatHint(type: QuestionType | undefined, numericUnit?: string): string {
   if (type === "symbolic") {
     return "Enter an expression using single-letter variables, + − * / ^ and parentheses, with whole-number powers from −8 to 8. For example, 2(x + 1) and 2x + 2 are equivalent wherever both are defined. Functions and equations are not supported.";
   }
   if (type === "numeric") {
+    if (numericUnit) return `Enter a number followed by its unit, such as 2.5 ${numericUnit}.`;
     return "Enter only the number, without units. Equivalent fractions, decimals, percentages, and scientific notation are accepted. Follow the rounding requested in the question.";
   }
   return "Write a brief answer. Capitalization and extra spacing do not affect your score.";

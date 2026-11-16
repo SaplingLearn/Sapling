@@ -68,7 +68,7 @@ class MissedQuestions(NamedTuple):
     graded: bool
 
 
-def missed_question_hashes(attempt_id: str, questions: list[dict]) -> MissedQuestions:
+def missed_question_hashes(attempt_id: str, questions: list[dict], graded_answers=None) -> MissedQuestions:
     """Which questions `attempt_id` got WRONG, in asked order.
 
     Reads `quiz_responses` — the per-answer rows POST /attempts/{id}/answer
@@ -89,6 +89,17 @@ def missed_question_hashes(attempt_id: str, questions: list[dict]) -> MissedQues
     """
     if not attempt_id or not questions:
         return MissedQuestions(hashes=[], graded=False)
+    if (
+        isinstance(graded_answers, list) and len(graded_answers) == len(questions)
+        and all(isinstance(answer, dict) and isinstance(answer.get("is_correct"), bool)
+                for answer in graded_answers)
+    ):
+        hashes = [
+            wire_question_hash(question)
+            for question, answer in zip(questions, graded_answers, strict=True)
+            if not answer["is_correct"]
+        ]
+        return MissedQuestions(hashes=list(dict.fromkeys(value for value in hashes if value)), graded=True)
     try:
         rows = table("quiz_responses").select(
             "question_index,is_correct",

@@ -42,6 +42,14 @@ def test_course_material_passes_the_student_as_the_retrieval_reader():
     assert mock_retrieve.call_args.kwargs["user_id"] == "user_1"
 
 
+def test_course_material_retrieval_targets_the_topic_and_teaching_examples():
+    _, retrieve, _ = _material()
+    query = retrieve.call_args.args[0]
+    assert query.startswith("dynamic programming:")
+    assert "worked examples" in query
+    assert retrieve.call_args.kwargs["course_id"] == "CAS CS 330"
+
+
 def test_coverage_count_is_scoped_to_what_this_student_could_retrieve():
     """`course_chunks=0` is E8's "this course has nothing indexed" signal. An
     unscoped count would report a course as covered on the strength of rows

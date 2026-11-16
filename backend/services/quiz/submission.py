@@ -28,7 +28,7 @@ from services.quiz.config import mastery_after
 from services.quiz.errors import QuizAPIError, QuizErrorCode
 from services.profiles import get_display_name
 from services.encryption import encrypt_json, decrypt_json_column
-from services.quiz.grading import WRITTEN_TYPES, grade_written
+from services.quiz.grading import WRITTEN_TYPES, expected_written_answer, grade_written, written_feedback
 from services.graph_service import apply_graph_update
 from services.quiz.context import get_quiz_context, save_quiz_context
 from services.quiz.distractors import build_distractor_profile
@@ -42,7 +42,7 @@ from services.quiz.attempts import (
     _refuse_if_abandoned,
     _refuse_if_completed,
 )
-from services.quiz.wire import _written_response_text
+from services.quiz.wire import _choice_feedback, _written_response_text
 
 # Log records keep the name they had in routes/quiz.py before the #118 split:
 # the move must not change what an operator (or a caplog test) filters on.
@@ -141,7 +141,7 @@ def _grade_submission(
     ) or []
     recorded_by_index = {r["question_index"]: r for r in recorded_rows}
 
-    answer_map = {str(a.question_id): a.selected_label for a in body.answers}
+    answer_map = {str(answer.question_id): answer for answer in body.answers}
     results = []
     # The reconciled answer set — what was ACTUALLY graded, which is what
     # answers_json must persist. Storing the raw payload instead left a
@@ -153,17 +153,21 @@ def _grade_submission(
     for q_index, q in enumerate(questions):
         qid = str(q["id"])
         recorded = recorded_by_index.get(q_index)
+        submitted = answer_map.get(qid)
+        skipped = recorded is None and submitted is not None and submitted.skipped
         if q.get("type") in WRITTEN_TYPES:
-            # Written responses must have been accepted through /answer. Never
-            # let a submission payload override the first recorded response.
-            selected_text = _written_response_text(recorded) if recorded else ""
+            selected_text = (
+                _written_response_text(recorded) if recorded
+                else (submitted.answer_text or "").strip() if submitted else ""
+            )
             is_correct = grade_written(q, selected_text)
             if selected_text:
                 graded_answers.append({"question_id": q["id"], "answer_text": selected_text})
             score += int(is_correct)
             results.append({"question_id": qid, "selected": selected_text,
-                            "correct": is_correct, "correct_answer": q.get("correct_answer", ""),
-                            "explanation": q.get("explanation", "")})
+                            "correct": is_correct, "correct_answer": expected_written_answer(q),
+                            "explanation": written_feedback(q, selected_text),
+                            **({"skipped": True} if skipped else {})})
             continue
         if recorded is not None:
             sel_idx = recorded.get("selected_index")
@@ -174,7 +178,7 @@ def _grade_submission(
                 else ""
             )
         else:
-            selected = answer_map.get(qid, "")
+            selected = submitted.selected_label or "" if submitted else ""
         if selected:
             graded_answers.append({
                 "question_id": q["id"],
@@ -193,7 +197,10 @@ def _grade_submission(
             "selected": selected,
             "correct": is_correct,
             "correct_answer": correct_label,
-            "explanation": q.get("explanation", ""),
+            "explanation": _choice_feedback(
+                q, next((i for i, option in enumerate(q["options"]) if option["label"] == selected), None)
+            ),
+            **({"skipped": True} if skipped else {}),
         })
 
     return results, graded_answers, score
@@ -321,6 +328,13 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
     try:
         results, graded_answers, score = _grade_submission(body, questions)
         total = len(questions)
+        if body.deferred:
+            submitted_by_id = {str(answer["question_id"]): answer for answer in graded_answers}
+            graded_answers = [
+                {**submitted_by_id.get(result["question_id"], {"question_id": result["question_id"]}),
+                 "is_correct": result["correct"], **({"skipped": True} if result.get("skipped") else {})}
+                for result in results
+            ]
         # The score lands FIRST and alone (#760): everything after it is
         # best-effort, so nothing after it can strand the attempt scoreless.
         table("quiz_attempts").update(

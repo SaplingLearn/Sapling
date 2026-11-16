@@ -50,7 +50,16 @@ export function isWrittenType(type: string | null | undefined): boolean {
   return typeof type === "string" && WRITTEN_TYPES.has(type);
 }
 
+export interface QuizQuestionContext {
+  stem: string;
+  part: number;
+  parts: number;
+  graph: { x_label: string; y_label: string; points: [number, number][] } | null;
+}
+
 export interface WireQuestion {
+  numeric_unit?: string;
+  context?: QuizQuestionContext;
   material_context?: "course_material" | "catalog" | "general";
   type?: QuestionType;
   id: number;
@@ -148,6 +157,10 @@ export type SubmitGamification =
   | (SubmitAward & GamificationMe)
   | (SubmitAward & { [K in keyof GamificationMe]?: undefined });
 
+export type QuizSubmissionAnswer = { question_id: number } & (
+  { selected_label: string } | { answer_text: string } | { skipped: true }
+);
+
 export interface SubmitResult {
   score: number;
   total: number;
@@ -158,6 +171,7 @@ export interface SubmitResult {
     selected: string;
     correct: boolean;
     correct_answer: string;
+    skipped?: boolean;
     explanation: string;
   }[];
   /** Optional while `useGamificationDelta` still reads `/me` around the
@@ -253,6 +267,7 @@ export type QuizScope =
   | { kind: "missed"; conceptId: string; missedCount: number };
 
 export interface QuizItem {
+  skipped?: boolean;
   answerText?: string;
   index: number;
   question: WireQuestion;

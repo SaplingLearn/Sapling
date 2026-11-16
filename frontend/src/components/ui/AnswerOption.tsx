@@ -37,6 +37,7 @@ const MARK: Partial<Record<AnswerState, string>> = {
 export interface AnswerOptionProps {
   letter: string;
   text: string;
+  formattedText?: React.ReactNode;
   state: AnswerState;
   /** Whether this is the row the student picked. Defaults to what `state`
    *  says; pass it where a pick can also be `correct`, which on its own
@@ -56,6 +57,7 @@ export interface AnswerOptionProps {
 export function AnswerOption({
   letter,
   text,
+  formattedText,
   state,
   checked = state === "selected" || state === "chosen-wrong",
   disabled = false,
@@ -84,7 +86,7 @@ export function AnswerOption({
       <span className="answer-option__letter label-micro" aria-hidden="true">
         {letter}
       </span>
-      <span className="answer-option__text">{text}</span>
+      <span className="answer-option__text">{formattedText ?? text}</span>
       {status && (
         <span className="answer-option__status" aria-hidden="true">
           {status}

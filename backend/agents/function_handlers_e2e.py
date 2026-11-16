@@ -158,18 +158,37 @@ def _quiz_handler(messages, info) -> ModelResponse:
     if requested:
         formats = ["short_answer", "numeric", "symbolic"] if requested[1] == "mixed" else [requested[1]] * 3
         answers = {"short_answer": "base case", "numeric": "0.5", "symbolic": "2x+2"}
+        stems = {
+            "short_answer": "What is the condition that stops a recursive function from calling itself?",
+            "numeric": "What value does the graph show at step 1?" if requested[1] == "mixed" else "What is 1 divided by 2?",
+            "symbolic": "Expand 2(x + 1).",
+        }
+        explanations = {
+            "short_answer": "A base case returns a result without making another recursive call.",
+            "numeric": "The point at step 1 has a value of 0.5." if requested[1] == "mixed" else "Dividing 1 by 2 gives 0.5.",
+            "symbolic": "Distribute 2 to each term inside the parentheses to get 2x + 2.",
+        }
         questions = [{
-            "question": f"E2E written question {n}: enter the {kind} fixture answer.",
+            "question": stems[kind] if requested[1] == "mixed" else f"Question {n}. {stems[kind]}",
             "type": kind, "difficulty": "medium", "options": [],
             "correct_answer": answers[kind],
             "accepted_answers": ["termination condition"] if kind == "short_answer" else [],
-            "explanation": "Scripted written-answer fixture.", "concept": "Recursion",
+            "explanation": explanations[kind], "concept": "Recursion",
         } for n, kind in enumerate(formats, 1)]
+    contexts = []
+    if requested and requested[1] == "mixed":
+        contexts = [{
+            "question_numbers": [1, 2, 3],
+            "stem": "Consider a quantity that halves at each step.",
+            "graph_question_number": 2,
+            "x_label": "Step", "y_label": "Value",
+            "x_values": [0, 1, 2, 3, 4], "y_values": [1, 0.5, 0.25, 0.125, 0.0625],
+        }]
     return ModelResponse(
         parts=[
             ToolCallPart(
                 tool_name=info.output_tools[0].name,
-                args={"questions": questions},
+                args={"questions": questions, "contexts": contexts},
             )
         ]
     )

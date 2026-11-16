@@ -579,10 +579,10 @@ describe("field-level transitions", () => {
     expect(moved.phase).toBe("active");
   });
 
-  it("GO_TO lands on answered for an item with a pick but no verdict", () => {
+  it("GO_TO keeps an at-end draft editable", () => {
     const s = active();
     const picked = { ...s, items: s.items.map((i, n) => (n === 2 ? { ...i, selectedIndex: 0 } : i)) };
-    expect(reduce(picked, { type: "GO_TO", index: 2 }).phase).toBe("answered");
+    expect(reduce(picked, { type: "GO_TO", index: 2 }).phase).toBe("active");
   });
 
   it("FINISH is refused with no items, and accepted once every item has a pick", () => {

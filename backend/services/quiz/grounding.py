@@ -265,9 +265,8 @@ def _course_material(
     # `_detailed` because [] alone cannot say whether retrieval ran: it is
     # both "nothing matched" and "the index was unreachable". E8 reports on
     # that difference, so it has to be carried rather than inferred.
-    retrieval = retrieve_chunks_detailed(
-        concept_name, course_id=bu_code, k=_RAG_K, user_id=user_id
-    )
+    query = f"{concept_name}: course explanations, worked examples, and practice problems"
+    retrieval = retrieve_chunks_detailed(query, course_id=bu_code, k=_RAG_K, user_id=user_id)
     chunks = retrieval.chunks
     # Drop any retrieved chunk that merely repeats the catalog block already
     # injected above — catalog chunks share the course_chunks store and can

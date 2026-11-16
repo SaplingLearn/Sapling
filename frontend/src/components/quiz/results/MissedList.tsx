@@ -16,9 +16,11 @@
  * students won't open would cost more than the shift does.
  */
 
+import { QuizMath } from "../QuizMath";
+import { QuizProblemContext } from "../QuizProblemContext";
 import React from "react";
 import { Button } from "@/components/ui";
-import type { QuizSession } from "@/lib/quiz/types";
+import type { QuizSession, WireQuestion } from "@/lib/quiz/types";
 import { isWrittenType } from "@/lib/quiz/types";
 
 export interface MissedItem {
@@ -36,6 +38,8 @@ export interface MissedItem {
   /** A typed answer: `chosenText` / `correctText` ARE the answers (there are
    *  no option letters), so the line reads "You wrote 4 · the answer is 2". */
   written: boolean;
+  skipped?: boolean;
+  context?: WireQuestion["context"];
 }
 
 /**
@@ -49,12 +53,12 @@ export interface MissedItem {
  * which is why the option texts are looked up here rather than read off the
  * result.
  */
-export function buildMissedItems(session: QuizSession): MissedItem[] {
+export function buildMissedItems(session: QuizSession, correct = false): MissedItem[] {
   const result = session.result;
   if (!result) return [];
 
   return result.results
-    .filter(r => !r.correct)
+    .filter(r => r.correct === correct)
     .map(r => {
       const question = session.items.find(
         item => String(item.question.id) === String(r.question_id),
@@ -72,6 +76,8 @@ export function buildMissedItems(session: QuizSession): MissedItem[] {
         correctText: textFor(r.correct_answer),
         explanation: r.explanation,
         written,
+        skipped: r.skipped,
+        context: question?.context,
       };
     });
 }
@@ -87,9 +93,10 @@ export interface MissedListProps {
    *  screen can hold it as the panel's `returnFocusTo`. */
   onAsk: (item: MissedItem, trigger: HTMLElement) => void;
   testid?: string;
+  heading?: string;
 }
 
-export function MissedList({ items, onAsk, testid = "quiz-missed-list" }: MissedListProps) {
+export function MissedList({ items, onAsk, testid = "quiz-missed-list", heading }: MissedListProps) {
   const [expanded, setExpanded] = React.useState<Record<string, boolean>>({});
 
   if (items.length === 0) return null;
@@ -102,26 +109,28 @@ export function MissedList({ items, onAsk, testid = "quiz-missed-list" }: Missed
   return (
     <section className="quiz-missed" data-testid={testid} aria-labelledby={headingId}>
       <div className="label-micro" id={headingId}>
-        {missedLabel(items.length)}
+        {heading ?? missedLabel(items.length)}
       </div>
       {items.map(item => {
-        const open = expanded[item.questionId] === true;
-        const panelId = `quiz-missed-explanation-${item.questionId}`;
+        const open = expanded[item.questionId] ?? true;
+        const prefix = testid.replace(/-list$/, "");
+        const panelId = `${prefix}-explanation-${item.questionId}`;
+        const stem = item.stem && <p className="h-serif quiz-missed__stem"><QuizMath text={item.stem} /></p>;
+        const expected = item.written ? item.correctText : item.correctLabel;
+        const chosen = item.written ? item.chosenText : item.chosenLabel;
+
         return (
           <div
             key={item.questionId}
             className="quiz-missed__item"
-            data-testid={`quiz-missed-${item.questionId}`}
+            data-testid={`${prefix}-${item.questionId}`}
           >
-            {item.stem && <p className="h-serif quiz-missed__stem">{item.stem}</p>}
+            {item.context ? <QuizProblemContext context={item.context}>{stem}</QuizProblemContext> : stem}
             <p className="quiz-missed__line">
-              {item.written
-                ? item.chosenText
-                  ? `You wrote ${item.chosenText} · the answer is ${item.correctText}`
-                  : `No answer · the answer is ${item.correctText}`
-                : item.chosenLabel
-                  ? `You chose ${item.chosenLabel} · the answer is ${item.correctLabel}`
-                  : `No answer · the answer is ${item.correctLabel}`}
+              {item.skipped ? "Skipped" : chosen ? <>{item.written ? "You wrote " : "You chose "}<QuizMath text={chosen} /></> : "No answer"}
+              {" · the answer is "}
+              <QuizMath text={expected} />
+              {!item.written && item.correctText && <>. <QuizMath text={item.correctText} /></>}
             </p>
             <div className="quiz-missed__actions">
               {item.explanation && (
@@ -129,14 +138,14 @@ export function MissedList({ items, onAsk, testid = "quiz-missed-list" }: Missed
                   variant="link"
                   aria-expanded={open}
                   aria-controls={panelId}
-                  data-testid={`quiz-missed-explain-${item.questionId}`}
+                  data-testid={`${prefix}-explain-${item.questionId}`}
                   // Flipped off `prev`, not off `open`: `open` is captured from
                   // the render that attached this handler, so two clicks
                   // batched into one render would collapse into one toggle.
                   onClick={() =>
                     setExpanded(prev => ({
                       ...prev,
-                      [item.questionId]: prev[item.questionId] !== true,
+                      [item.questionId]: !(prev[item.questionId] ?? true),
                     }))
                   }
                 >
@@ -145,7 +154,7 @@ export function MissedList({ items, onAsk, testid = "quiz-missed-list" }: Missed
               )}
               <Button
                 size="sm"
-                data-testid={`quiz-missed-ask-${item.questionId}`}
+                data-testid={`${prefix}-ask-${item.questionId}`}
                 onClick={event => onAsk(item, event.currentTarget)}
               >
                 Ask about this
@@ -157,7 +166,7 @@ export function MissedList({ items, onAsk, testid = "quiz-missed-list" }: Missed
                 space, so the expand behaves exactly as before. */}
             {item.explanation && (
               <p id={panelId} hidden={!open} className="body-serif quiz-missed__explanation">
-                {item.explanation}
+                <QuizMath text={item.explanation} />
               </p>
             )}
           </div>

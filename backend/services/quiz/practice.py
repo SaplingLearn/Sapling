@@ -101,7 +101,7 @@ async def _reserved_misses(body: GenerateQuizBody) -> ReservedMisses | None:
         # they are the only evidence that a pre-#537 attempt with no recorded
         # responses missed anything at all (see _missed_something).
         # concept_node_id rides along for the same-concept check below.
-        "id,user_id,concept_node_id,completed_at,questions_json,score,total",
+        "id,user_id,concept_node_id,completed_at,questions_json,answers_json,score,total",
         filters={"id": f"eq.{body.source_attempt_id}"},
     )
     if not rows:
@@ -182,8 +182,13 @@ async def _reserved_misses(body: GenerateQuizBody) -> ReservedMisses | None:
         # them is a discrepancy whoever sent the list wants to know about.
         missed_something = True
     else:
+        try:
+            graded_answers = decrypt_json_column(attempt.get("answers_json"))
+        except Exception:
+            logger.warning("quiz reserve: could not read graded answers for attempt %s", body.source_attempt_id)
+            graded_answers = None
         found = await run_in_threadpool(
-            missed_question_hashes, body.source_attempt_id, stored)
+            missed_question_hashes, body.source_attempt_id, stored, graded_answers)
         hashes = found.hashes
         missed_something = _missed_something(attempt, found)
     # Only questions in the CURRENT wire shape can be re-served: the client

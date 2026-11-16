@@ -10,10 +10,10 @@ underscores included) are unchanged, and routes/quiz.py re-exports them.
 import logging
 import re
 
-from agents.quiz import QuizQuestion
+from agents.quiz import Quiz, QuizContext, QuizQuestion
 from services.quiz.config import CONCRETE_DIFFICULTIES
 from services.encryption import decrypt_json_column
-from services.quiz.grading import WRITTEN_TYPES, numeric_value
+from services.quiz.grading import WRITTEN_TYPES, expected_written_answer, numeric_quantity, numeric_value
 from services.quiz.algebra import equivalent_algebra
 from services.fingerprint import fingerprint
 from services.quiz.identity import question_hash
@@ -54,8 +54,66 @@ _DIFFICULTY_RANK = {d: i for i, d in enumerate(CONCRETE_DIFFICULTIES)}
 # stored row from an older shape can hold the answer under any key at all
 # (the rich seed has {"q":..., "a":...}). Anything not listed here never
 # reaches a client that hasn't answered yet.
-_KEYLESS_QUESTION_KEYS = ("id", "question", "concept_tested", "difficulty", "type", "material_context")
+_KEYLESS_QUESTION_KEYS = ("id", "question", "concept_tested", "difficulty", "type", "material_context", "numeric_unit", "context")
 _KEYLESS_OPTION_KEYS = ("label", "text")
+
+
+def _question_context_graph(context: QuizContext) -> dict | None:
+    x, y = context.x_values, context.y_values
+    x_label, y_label = context.x_label.strip(), context.y_label.strip()
+    if (
+        not 2 <= len(x) == len(y) <= 24
+        or not all(abs(value) <= 1_000_000 for value in (*x, *y))
+        or not all(left < right for left, right in zip(x, x[1:]))
+        or not (0 < len(x_label) <= 60 and 0 < len(y_label) <= 60)
+    ):
+        return None
+    return {"x_label": x_label, "y_label": y_label, "points": list(zip(x, y))}
+
+
+def _attach_question_contexts(quiz: Quiz, mapped_by_position: dict[int, dict]) -> set[int]:
+    assigned = set()
+    rejected = set()
+    for context in quiz.contexts:
+        numbers = context.question_numbers
+        if not numbers:
+            continue
+        stem = context.stem.strip()
+        graph = _question_context_graph(context)
+        graph_question = context.graph_question_number
+        if graph_question is None and len(numbers) == 1:
+            graph_question = numbers[0]
+        if (
+            not 1 <= len(numbers) <= 3
+            or numbers != list(range(numbers[0], numbers[0] + len(numbers)))
+            or numbers[0] < 1
+            or numbers[-1] > len(quiz.questions)
+            or not 0 < len(stem) <= 2000
+            or assigned.intersection(numbers)
+            or (graph is None and (len(numbers) == 1 or context.x_values or context.y_values))
+            or (graph is not None and graph_question not in numbers)
+        ):
+            rejected.update(numbers)
+            continue
+        assigned.update(numbers)
+        for index, number in enumerate(numbers, start=1):
+            if number in mapped_by_position:
+                mapped_by_position[number]["context"] = {
+                    "stem": stem,
+                    "part": index,
+                    "parts": len(numbers),
+                    "graph": graph if number == graph_question else None,
+                }
+    return rejected
+
+
+def _choice_feedback(question: dict, selected_index: int | None) -> str:
+    options = question.get("options", [])
+    explanation = question.get("explanation", "")
+    if selected_index is None or not 0 <= selected_index < len(options):
+        return explanation
+    feedback = options[selected_index].get("feedback", "")
+    return f"{feedback} {explanation}".strip()
 
 
 def _written_response_text(row: dict) -> str:
@@ -218,6 +276,7 @@ def _validate_wire_question(wire: dict) -> bool:
             isinstance(answer, str) and bool(answer.strip())
             and len(answer) <= _MAX_ANSWER_CHARS and not wire.get("options")
             and (wire["type"] != "numeric" or numeric_value(answer) is not None)
+            and (not wire.get("numeric_unit") or numeric_quantity(expected_written_answer(wire)) is not None)
             and (wire["type"] != "symbolic" or equivalent_algebra(answer, answer))
         )
     options = wire.get("options") or []
@@ -259,6 +318,9 @@ def _agent_question_to_wire(q: QuizQuestion, qid: int) -> dict | None:
     Returning None lets the caller filter questions out cleanly.
     """
     stem = q.question.rstrip()
+    if not stem:
+        logger.warning("quiz: dropping question id=%d with an empty stem", qid)
+        return None
     if stem != q.question:
         # Gemini can end a function-call string at an inner double quote
         # ('...referred to as the "energy currency"' served as '...as the ',
@@ -287,9 +349,15 @@ def _agent_question_to_wire(q: QuizQuestion, qid: int) -> dict | None:
         # A blank or unbounded alias is dropped on its own; it says nothing
         # about whether the rest of the item is sound.
         accepted = [a for a in q.accepted_answers if a.strip() and len(a) <= _MAX_ANSWER_CHARS]
+        answer = q.correct_answer
+        unit = ""
+        if q.type == "numeric" and numeric_quantity(answer) is not None:
+            answer, unit = answer.rsplit(maxsplit=1)
+            accepted = [a for a in accepted if numeric_quantity(a) is not None]
         wire = {
+            **({"numeric_unit": unit} if unit else {}),
             "id": qid, "type": q.type, "question": q.question, "options": [],
-            "correct_answer": q.correct_answer, "accepted_answers": accepted,
+            "correct_answer": answer, "accepted_answers": accepted,
             "explanation": q.explanation, "concept_tested": q.concept,
             "difficulty": q.difficulty,
             "question_hash": question_hash(q.question, [q.type]),
@@ -313,6 +381,10 @@ def _agent_question_to_wire(q: QuizQuestion, qid: int) -> dict | None:
             "text": text,
             "correct": is_correct,
         })
+        if not is_correct and len(q.accepted_answers) == len(q.options):
+            feedback = q.accepted_answers[i].strip()
+            if feedback:
+                options[-1]["feedback"] = feedback
     if not matched:
         # Generation drift: agent's correct_answer doesn't match any
         # option verbatim. Surface in logs (Logfire span carries the

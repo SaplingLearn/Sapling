@@ -60,6 +60,7 @@ def _generate(
     recent=None,
     body_extra=None,
     model_name="gemini-2.5-flash-lite",
+    topup_questions=None,
 ):
     """Drive POST /generate, returning (response, stored_row, agent_prompt)."""
     captured: dict = {}
@@ -68,6 +69,11 @@ def _generate(
         response=SimpleNamespace(model_name=model_name),
     )
     agent_run = AsyncMock(return_value=result)
+    if topup_questions is not None:
+        agent_run.side_effect = [
+            result,
+            SimpleNamespace(output=Quiz(questions=topup_questions), response=result.response),
+        ]
     with (
         patch_quiz("table", side_effect=with_async_twins(_factory(captured))),
         patch("services.quiz.generation.quiz_agent.run", new=agent_run),
@@ -112,6 +118,23 @@ def test_written_generation_preserves_course_material_context_and_hides_the_key(
     assert _stored(row)[0]["provenance"]["chunk_ids"] == ["chunk-1"]
     assert f"question_format: {kind}." in prompt
     assert "Uploaded lecture notes on recursion." in prompt
+
+
+def test_copied_reference_question_is_replaced_with_original_practice():
+    reference = "Trace the recursive calls used to sum the values in a list."
+    original = "A function counts nodes in a tree recursively. What should it return for an empty tree?"
+    response, row, prompt = _generate(
+        [_question(reference.upper().rstrip(".") + "?")],
+        material=CourseMaterial(block=f"Recursion worksheet\n{reference}", chunk_ids=("chunk-1",)),
+        body_extra={"num_questions": 1},
+        topup_questions=[_question(original)],
+    )
+
+    assert response.status_code == 200
+    assert [q["question"] for q in response.json()["questions"]] == [original]
+    assert [q["question"] for q in _stored(row)] == [original]
+    assert reference in prompt
+    assert "originality checks" in prompt
 
 
 # ── CourseMaterial's groundedness invariant ─────────────────────────────────

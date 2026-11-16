@@ -483,6 +483,28 @@ class TestSubmitReconciliation:
             patch_quiz("save_quiz_context"),
         )
 
+    def test_deferred_submit_grades_written_draft_and_returns_skipped_solution(self, monkeypatch):
+        from contextlib import ExitStack
+
+        written = {"id": 2, "question": "What is half?", "type": "numeric", "options": [],
+                   "correct_answer": "0.5", "explanation": "One divided by two.", "difficulty": "easy"}
+        monkeypatch.setitem(globals(), "QUESTIONS", [QUESTIONS[0], written])
+        responses = _ResponsesTable()
+        with ExitStack() as stack:
+            for mock in self._submit_mocks(responses):
+                stack.enter_context(mock)
+            response = client.post("/api/quiz/submit", json={
+                "quiz_id": "quiz1", "deferred": True,
+                "answers": [{"question_id": 1, "skipped": True}, {"question_id": 2, "answer_text": "1/2"}],
+            })
+
+        assert response.status_code == 200
+        assert response.json()["score"] == 1
+        skipped, answered = response.json()["results"]
+        assert skipped["skipped"] is True and skipped["correct_answer"] == "B"
+        assert skipped["explanation"] and answered["correct"] is True
+        assert responses.rows == []
+
     def test_persisted_answers_match_what_was_graded(self):
         """answers_json is the attempt's record of what the student answered
         — it must be the RECONCILED set, not the raw payload. A recorded-only

@@ -879,7 +879,7 @@ describe("invariant 4 — SELECT is ignored once the verdict is showing", () => 
     expect(after.items[0].selectedIndex).toBe(1);
   });
 
-  it("SUBMIT_ANSWER is gated by canSubmitAnswer, and never moves the session", () => {
+  it("SUBMIT_ANSWER advances an at-end draft only when it has an answer", () => {
     const s = activeSession(3);
     expect(canSubmitAnswer(s)).toBe(false);
 
@@ -889,7 +889,7 @@ describe("invariant 4 — SELECT is ignored once the verdict is showing", () => 
     // SUBMIT_ANSWER is state-neutral BY DESIGN (the request is the hook's job),
     // so it must not move the session in either direction.
     expect(reduce(s, { type: "SUBMIT_ANSWER" })).toBe(s);
-    expect(reduce(selected, { type: "SUBMIT_ANSWER" })).toBe(selected);
+    expect(reduce(selected, { type: "SUBMIT_ANSWER" }).cursor).toBe(1);
   });
 
   it("canSubmitAnswer is false when the cursor points at no item at all", () => {
@@ -1007,14 +1007,13 @@ describe("moving between questions (GO_TO)", () => {
     expect(reduce(s, { type: "NEXT" }).cursor).toBe(1);
   });
 
-  it("drops an unsubmitted multiple-choice pick when moving off it", () => {
+  it("keeps the multiple-choice draft when moving off it", () => {
     let s = activeSession(3, "at-end");
     s = reduce(s, { type: "SELECT", index: 2 });
     s = reduce(s, { type: "GO_TO", index: 1 });
-    expect(s.items[0].selectedIndex).toBeNull();
-    // ...so it still counts as unanswered.
+    expect(s.items[0].selectedIndex).toBe(2);
     expect(nextUnansweredIndex(s.items, 1)).toBe(2);
-    expect(isUnanswered(s.items[0])).toBe(true);
+    expect(isUnanswered(s.items[0], true)).toBe(false);
   });
 
   it("is refused outside a question on screen", () => {
