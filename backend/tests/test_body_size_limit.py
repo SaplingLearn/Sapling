@@ -243,3 +243,54 @@ class TestProductionCeilings:
             bound = next(m.max_length for m in model.model_fields[name].metadata
                          if getattr(m, "max_length", None))
             assert DEFAULT_JSON_MAX_BYTES > bound + 64 * 1024, f"{model.__name__}.{name}"
+
+
+class TestAnonymousMultipart:
+    """sec2: the multipart body is spooled before any route's auth check, so
+    the large ceiling is only for a request with a session that verifies."""
+
+    SECRET = "sec2-body-limit-session-secret-at-least-32-bytes"
+
+    def _signed_in(self, monkeypatch, valid: bool):
+        import services.body_limit as body_limit
+
+        monkeypatch.setattr(body_limit, "_has_valid_session", lambda scope: valid)
+
+    def test_anonymous_multipart_gets_the_small_ceiling(self, monkeypatch):
+        self._signed_in(monkeypatch, False)
+        client = _app(json_max_bytes=1024, multipart_max_bytes=1024 * 1024,
+                      anonymous_multipart_max_bytes=4096)
+        r = client.post("/upload",
+                        files={"file": ("n.pdf", io.BytesIO(b"x" * 16384), "application/pdf")})
+        assert r.status_code == 413
+
+    def test_a_signed_in_upload_gets_the_large_ceiling(self, monkeypatch):
+        self._signed_in(monkeypatch, True)
+        client = _app(json_max_bytes=1024, multipart_max_bytes=1024 * 1024,
+                      anonymous_multipart_max_bytes=4096)
+        r = client.post("/upload",
+                        files={"file": ("n.pdf", io.BytesIO(b"x" * 16384), "application/pdf")})
+        assert r.status_code == 200
+
+    def test_only_a_cookie_that_verifies_counts(self, monkeypatch):
+        from services import auth_guard, session_tokens
+        from services.body_limit import _has_valid_session
+
+        monkeypatch.setattr(auth_guard, "_decode_session", auth_guard._real_decode_session)
+        monkeypatch.setattr(auth_guard, "SESSION_SECRET", self.SECRET)
+
+        def scope(cookie: str | None):
+            headers = [(b"cookie", cookie.encode())] if cookie else []
+            return {"type": "http", "method": "POST", "path": "/upload", "headers": headers}
+
+        good = session_tokens.mint_session("user_x", secret=self.SECRET)
+        assert _has_valid_session(scope(f"sapling_session={good}"))
+        assert not _has_valid_session(scope(None))
+        assert not _has_valid_session(scope("sapling_session=forged.token"))
+        assert not _has_valid_session(scope(f"sapling_session={good[:-2]}xx"))
+
+    def test_the_anonymous_ceiling_clears_the_public_careers_form(self):
+        from routes.careers import MAX_RESUME_SIZE
+        from services.body_limit import DEFAULT_ANONYMOUS_MULTIPART_MAX_BYTES
+
+        assert DEFAULT_ANONYMOUS_MULTIPART_MAX_BYTES > MAX_RESUME_SIZE + 1024 * 1024

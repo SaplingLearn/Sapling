@@ -1,6 +1,10 @@
+import inspect
 import io
+import logging
 import re
 from typing import Tuple
+
+logger = logging.getLogger(__name__)
 
 MATH_WITHOUT_LATEX = re.compile(r"[∫∑∏√∂∇≈≠≤≥±×÷]")
 MATH_SCRIPT_PATTERN = re.compile(r"(?<![A-Za-z])[A-Za-z]\^[A-Za-z0-9]|_\{[^}]+\}")
@@ -16,7 +20,39 @@ class DoclingUnavailableError(RuntimeError):
     """Raised when Docling cannot be imported or converter construction fails."""
 
 
+# Bounds on one conversion (sec2 M5). Docling converts the WHOLE input unless
+# told otherwise; `max_pages` used to trim only the output, after every page
+# had been laid out, OCR'd and table-parsed.
+#: Wall clock for one document (Docling's own `document_timeout`: pages past
+#: it are skipped and the result is a partial success, not a hang).
+DOCUMENT_TIMEOUT_S = 120.0
+#: Largest input Docling accepts (the upload routes cap below this already).
+MAX_FILE_BYTES = 50 * 1024 * 1024
+#: Pages a document may have at all; past this Docling refuses it outright
+#: (and the caller falls back to Tesseract over its first `max_pages`).
+MAX_NUM_PAGES = 1000
+
+
 _CACHED_CONVERTER = None
+
+
+def _build_converter(DocumentConverter):
+    """A converter whose PDF pipeline stops at DOCUMENT_TIMEOUT_S. A Docling
+    without the option still gets a converter (the page and size bounds in
+    :func:`_convert_kwargs` apply either way), with a warning."""
+    try:
+        from docling.datamodel.base_models import InputFormat
+        from docling.datamodel.pipeline_options import PdfPipelineOptions
+        from docling.document_converter import PdfFormatOption
+
+        options = PdfPipelineOptions()
+        options.document_timeout = DOCUMENT_TIMEOUT_S
+        return DocumentConverter(
+            format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=options)}
+        )
+    except (ImportError, AttributeError, TypeError, ValueError) as e:
+        logger.warning("Docling document_timeout unavailable (%s); converting without it", e)
+        return DocumentConverter()
 
 
 def _get_converter():
@@ -27,8 +63,25 @@ def _get_converter():
         from docling.document_converter import DocumentConverter
     except ImportError as e:
         raise DoclingUnavailableError(f"Docling not installed: {e}") from e
-    _CACHED_CONVERTER = DocumentConverter()
+    _CACHED_CONVERTER = _build_converter(DocumentConverter)
     return _CACHED_CONVERTER
+
+
+def _convert_kwargs(converter, max_pages: int) -> dict:
+    """The input bounds this Docling's ``convert`` accepts: only the first
+    ``max_pages`` pages (``page_range``), no document over MAX_NUM_PAGES
+    pages or MAX_FILE_BYTES bytes. Read off the signature so an older
+    Docling still gets every bound it knows."""
+    try:
+        params = inspect.signature(converter.convert).parameters
+    except (TypeError, ValueError):
+        return {}
+    wanted = {
+        "page_range": (1, max(1, int(max_pages))),
+        "max_num_pages": MAX_NUM_PAGES,
+        "max_file_size": MAX_FILE_BYTES,
+    }
+    return {k: v for k, v in wanted.items() if k in params}
 
 
 def reset_converter_cache():
@@ -57,9 +110,11 @@ def extract_pdf_with_docling(pdf_bytes: bytes, max_pages: int = 50) -> Tuple[str
     except ImportError as e:
         raise DoclingUnavailableError(f"Docling not installed: {e}") from e
 
+    if len(pdf_bytes) > MAX_FILE_BYTES:
+        raise ValueError(f"PDF is larger than {MAX_FILE_BYTES // (1024 * 1024)} MB")
     converter = _get_converter()
     stream = DocumentStream(name="input.pdf", stream=io.BytesIO(pdf_bytes))
-    result = converter.convert(stream)
+    result = converter.convert(stream, **_convert_kwargs(converter, max_pages))
     doc = result.document
 
     page_count = 0

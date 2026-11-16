@@ -1,4 +1,3 @@
-import io
 import os
 
 
@@ -45,9 +44,10 @@ def extract_page_with_got_ocr(image_bytes: bytes, ocr_type: str = "format") -> s
     model, tokenizer = _load_model()
 
     import tempfile
-    from PIL import Image
 
-    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    from services.image_safety import open_image
+
+    img = open_image(image_bytes).convert("RGB")
     with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
         img.save(tmp.name, format="PNG")
         tmp_path = tmp.name
