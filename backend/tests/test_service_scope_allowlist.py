@@ -39,8 +39,6 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
         "#119 llm_budgets / llm_usage are service-only",
     ("main.py", "/api/admin/flags admin_flags_router", "admin_service_route"): "feature_flags is service-only",
     ("main.py", "gemini_test", "admin_service_route"): "admin LLM probe (records usage)",
-    ("main.py", "/api/auth auth.router", "service_route"):
-        "OAuth callback / test-login / pending: run before a session exists; users is account state",
     ("main.py", "/api/careers careers.router", "service_route"): "public; job_applications is service-only",
     ("main.py", "/api/email email_router", "service_route"): "public unsubscribe; email_suppressions is service-only",
     ("main.py", "/api/internal internal_metrics_router", "service_route"):
@@ -52,6 +50,17 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
         "until step 2e: room_messages has no policies; invite join/owner transfer/teardown/"
         "friendships are cross-user (plan §6.3: social last)",
     # ── Endpoints ──
+    ("routes/auth.py", "google_login", "service_route"): "OAuth redirect: no session yet",
+    ("routes/auth.py", "google_callback", "service_route"):
+        "OAuth callback: no session yet; upserts users/oauth_tokens/newsletter_emails (account state)",
+    ("routes/auth.py", "pending_status", "service_route"):
+        "unapproved sign-in (pending token, no session): reads the waitlist (newsletter_emails)",
+    ("routes/auth.py", "pending_join", "service_route"):
+        "unapproved sign-in (pending token, no session): writes the waitlist (newsletter_emails)",
+    ("routes/auth.py", "mint_test_session", "service_route"):
+        "local/test-only session minter: runs before a session exists",
+    ("routes/auth.py", "logout", "service_route"):
+        "writes users.sessions_valid_after; users is SELECT-only for students",
     ("routes/academics.py", "get_semesters", "service_route"): "public catalog read, no session",
     ("routes/calendar_connect.py", "calendar_callback", "service_route"):
         "Google redirect: no session, user from the signed state cookie",
