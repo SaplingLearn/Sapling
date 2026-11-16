@@ -112,9 +112,11 @@ _PROBES: dict[Expect, tuple[str, dict, bool]] = {
     # misconceptions to offer", so that is what the probe must ask.
     # M8: and only rows built under the distinct-student floor, which are the
     # only rows the reader serves (a pre-floor row is not "data to offer").
+    # That floor filter is added per call (_floor_filters), from the same
+    # constant the reader uses, so the two can never disagree.
     Expect.COURSE_HAS_AGGREGATES: (
         "offering_concept_stats",
-        {"common_misconceptions": "neq.{}", "min_mistake_contributors": "gte.3"},
+        {"common_misconceptions": "neq.{}"},
         False,
     ),
     Expect.HAS_DOCUMENTS: ("documents", {"deleted_at": "is.null"}, True),
@@ -126,6 +128,16 @@ _PROBES: dict[Expect, tuple[str, dict, bool]] = {
 _PROBE_SELECT: dict[Expect, str] = {
     Expect.HAS_DOCUMENTS: "id,course_offerings!inner(course_id)",
 }
+
+
+def _floor_filters(expect: Expect) -> dict:
+    """Filters that must match the reader's own constants exactly."""
+    if expect is Expect.COURSE_HAS_AGGREGATES:
+        # Local import, as agents/tools/graph_read.py does: the module pulls
+        # in the agents, and the reader filters on this same constant.
+        from services.course_context_service import MIN_MISTAKE_CONTRIBUTORS
+        return {"min_mistake_contributors": f"gte.{MIN_MISTAKE_CONTRIBUTORS}"}
+    return {}
 
 
 def _user_plausibly_has_data(
@@ -154,7 +166,7 @@ def _user_plausibly_has_data(
             "tool_signals: %s requires a scope; skipping probe", expect.value,
         )
         return None
-    filters = {**extra, **(scope or {})}
+    filters = {**extra, **_floor_filters(expect), **(scope or {})}
     if owner_scoped:
         filters["user_id"] = f"eq.{user_id}"
     try:

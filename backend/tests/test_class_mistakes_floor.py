@@ -106,11 +106,15 @@ def test_the_reader_serves_only_rows_built_under_the_floor():
     assert [m.text for m in out] == ["Off-by-one"]
 
 
-def test_the_f5_probe_asks_the_readers_question():
-    from services.tool_signals import Expect, _PROBES
+def test_the_f5_probe_asks_the_readers_question(monkeypatch):
+    from services import course_context_service
+    from services.tool_signals import Expect, _floor_filters
 
-    _table_name, filters, _scoped = _PROBES[Expect.COURSE_HAS_AGGREGATES]
-    assert filters["min_mistake_contributors"] == f"gte.{MIN_MISTAKE_CONTRIBUTORS}"
+    floor = _floor_filters(Expect.COURSE_HAS_AGGREGATES)
+    assert floor["min_mistake_contributors"] == f"gte.{MIN_MISTAKE_CONTRIBUTORS}"
+    # It follows the reader's constant rather than a copy of its value.
+    monkeypatch.setattr(course_context_service, "MIN_MISTAKE_CONTRIBUTORS", 5)
+    assert _floor_filters(Expect.COURSE_HAS_AGGREGATES)["min_mistake_contributors"] == "gte.5"
 
 
 # ── consent ───────────────────────────────────────────────────────────────────
