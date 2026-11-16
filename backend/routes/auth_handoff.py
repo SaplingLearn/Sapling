@@ -32,7 +32,10 @@ class HandoffExchangeBody(BaseModel):
 
 @router.post("/handoff/exchange", include_in_schema=False)
 def handoff_exchange(body: HandoffExchangeBody):
-    secret = (getattr(config, "SESSION_SECRET", "") or "").strip()
+    # The raw secret, exactly as google_callback signs with it (and as
+    # auth_guard and the frontend BFF verify with it): stripping here would
+    # refuse every handoff when the env value carries trailing whitespace.
+    secret = getattr(config, "SESSION_SECRET", "") or ""
     try:
         user_id = exchange_handoff(body.token, body.nonce, secret=secret)
     except HandoffRefused as exc:

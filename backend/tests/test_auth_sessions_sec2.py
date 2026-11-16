@@ -344,6 +344,16 @@ class TestHandoffExchange:
         assert exchange_client.post("/api/auth/handoff/exchange",
                                     json={"token": token, "nonce": NONCE}).status_code == 401
 
+    def test_secret_with_trailing_whitespace_still_exchanges(self, exchange_client, store, monkeypatch):
+        # The callback signs with the raw env value (pasted secrets often keep
+        # a trailing newline); the exchange must verify with the same bytes.
+        padded = SECRET + "\n"
+        monkeypatch.setattr(config, "SESSION_SECRET", padded)
+        token = handoff.mint_handoff("user_alice", ttl=300, secret=padded,
+                                     binding=handoff.binding_for_nonce(NONCE))
+        resp = exchange_client.post("/api/auth/handoff/exchange", json={"token": token, "nonce": NONCE})
+        assert resp.status_code == 200
+
     def test_store_down_fails_closed(self, exchange_client, monkeypatch):
         def boom(*a, **k):
             raise httpx.ConnectError("down")
