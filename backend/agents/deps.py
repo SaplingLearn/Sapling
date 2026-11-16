@@ -68,3 +68,10 @@ class SaplingDeps:
     graph_updates: list = field(default_factory=list)
     mastery_changes: list = field(default_factory=list)
     retrieval: Any = None
+    #: The text a NEW concept must appear in for `apply_graph_update_tool` to
+    #: add it this run (M7): the student's message, the context the turn was
+    #: assembled with, and what the run's read tools returned. None (the
+    #: default, for runs that never set it: evals, scripts) means no grounding
+    #: check; the per-call and per-turn caps still apply. The tutor and the
+    #: note chat set it; their tools extend it with `allow_concept_text`.
+    concept_context: list | None = None

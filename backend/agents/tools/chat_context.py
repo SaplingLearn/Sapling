@@ -357,7 +357,11 @@ async def search_course_materials_tool(
             scope={"course_offerings.course_id": f"eq.{ctx.deps.course_id}"},
             payload={"course_id": ctx.deps.course_id},
         )
-    return _harden_materials(materials)
+    hardened = _harden_materials(materials)
+    # M7: concepts named in what this search returned may be added this turn.
+    from agents.tools.graph import allow_concept_text
+    allow_concept_text(ctx.deps, *(m.model_dump_json() for m in hardened))
+    return hardened
 
 
 # read_session_history

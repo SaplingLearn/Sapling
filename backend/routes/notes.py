@@ -492,6 +492,9 @@ async def note_chat(note_id: str, body: NoteChatBody, request: Request):
         await aenforce_abuse_limit(abuse_limits.NOTE_AI_ACTION, body.user_id)
         course_id = offering_course_id(note.get("offering_id"))
         deps = _deps_for(body.user_id, course_id, note_id)
+        # M7: a concept the chat adds must come from the message or the note
+        # (the agent's read tools add what they return).
+        deps.concept_context = [body.message, note.get("title") or "", note.get("body") or ""]
         try:
             result = record_agent_usage(
                 await note_chat_agent.run(body.message, deps=deps, usage_limits=ORCHESTRATOR_LIMITS),
