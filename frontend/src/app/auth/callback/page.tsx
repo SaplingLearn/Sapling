@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useEffect } from 'react';
+import { Suspense, useEffect, useRef } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { useUser } from '@/context/UserContext';
 import { API_URL } from '@/lib/api';
@@ -10,6 +10,7 @@ import { stashPendingToken } from '@/lib/pendingToken';
 import { signInErrorMessage } from '@/components/marketing/signInErrors';
 
 interface MeBody {
+  user_id?: string;
   onboarding_completed?: boolean;
   name?: string;
   avatar_url?: string;
@@ -48,9 +49,17 @@ function CallbackInner() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const { setActiveUser } = useUser();
+  // The handoff is single-use (sec2 M2), so this effect must run once. React
+  // StrictMode (next dev) runs mount effects twice: the second POST would be
+  // refused and its fail() could win the race against the first's success.
+  const started = useRef(false);
 
   useEffect(() => {
-    const userId = searchParams.get('user_id');
+    if (started.current) return;
+    started.current = true;
+    // sec2 M2: never trust `user_id` from the URL (a crafted link could name
+    // anyone); the account comes from the session the handoff mints, via
+    // GET /api/auth/me below.
     const avatarParam = searchParams.get('avatar');
     const approvedParam = searchParams.get('is_approved');
     const authToken = searchParams.get('auth_token');
@@ -96,7 +105,7 @@ function CallbackInner() {
       fail('not_approved');
       return;
     }
-    if (approvedParam !== 'true' || !userId) {
+    if (approvedParam !== 'true' || !authToken) {
       fail(error || 'signin_failed');
       return;
     }
@@ -107,7 +116,7 @@ function CallbackInner() {
           method: 'POST',
           credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userId, ...(authToken ? { authToken } : {}) }),
+          body: JSON.stringify({ authToken }),
         });
         if (!sessionRes.ok) {
           fail('signin_failed');
@@ -125,7 +134,8 @@ function CallbackInner() {
       // "onboarded" and silently skip onboarding for a new account. The
       // half-made session is dropped so a retry starts clean.
       const me = await fetchMe();
-      if (!me) {
+      const userId = typeof me?.user_id === 'string' && me.user_id ? me.user_id : null;
+      if (!me || !userId) {
         try {
           await fetch('/api/auth/session?scope=local', { method: 'DELETE', credentials: 'include' });
         } catch {}

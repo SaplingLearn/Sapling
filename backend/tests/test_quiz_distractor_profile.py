@@ -153,7 +153,7 @@ def test_the_version_is_stamped_by_the_server_not_by_the_model():
     assert "schema_version" not in QuizContext.model_fields
 
     with _patch.object(quiz_context_service, "table") as t, \
-            _patch.object(quiz_context_service, "encrypt_json", side_effect=lambda v: v):
+            _patch.object(quiz_context_service, "encrypt_json", side_effect=lambda v, **_: v):
         quiz_context_service.save_quiz_context("u1", "n1", {"notes": "x"})
 
     written = t.return_value.upsert.call_args[0][0]["context_json"]

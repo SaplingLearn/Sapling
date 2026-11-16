@@ -17,7 +17,7 @@ from db.connection import table
 from services.admin.errors import Conflict
 from services.auth_guard import clear_account_state_cache
 from services.admin_audit import log_admin_action
-from services.encryption import decrypt_if_present
+from services.encryption import bind, decrypt_if_present
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +56,8 @@ def unapprove_user(user_id: str, actor: str | None):
         {"is_approved": False, "open_access_at": None}, filters={"id": f"eq.{user_id}"},
     )
     clear_account_state_cache(user_id)  # #756: the guard refuses it now, not at the TTL
-    email = (decrypt_if_present((rows or [{}])[0].get("email")) or "").strip()
+    email = (decrypt_if_present(
+        (rows or [{}])[0].get("email"), bind=bind("users", "email", user_id)) or "").strip()
     if "@" in email:
         _back_on_waitlist(email, user_id)
     log_admin_action(actor_id=actor, action="user.unapprove", target_type="user", target_id=user_id)

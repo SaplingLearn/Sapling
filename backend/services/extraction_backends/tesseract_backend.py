@@ -1,7 +1,53 @@
 import io
+import re
 from typing import List, Tuple
 
 from pypdf import PdfReader
+
+from services.archive_limits import check_zip_bounds
+from services.image_safety import open_image, render_pdf_page
+
+
+#: One Tesseract language code ("eng", "chi_sim"); a request may join a few
+#: with "+". The code names a traineddata file, so it is never passed on
+#: unless Tesseract reports it installed.
+_LANG_CODE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{1,31}$")
+MAX_OCR_LANGS = 3
+_installed_langs: frozenset[str] | None = None
+
+
+def reset_language_cache() -> None:
+    """Forget the installed-language list (tests)."""
+    global _installed_langs
+    _installed_langs = None
+
+
+def installed_languages() -> frozenset[str]:
+    """The languages this Tesseract has (read once per process: installing a
+    language pack means a new image, so a restart). When Tesseract cannot be
+    asked, only ``eng`` (nothing is cached, so a later call asks again)."""
+    global _installed_langs
+    if _installed_langs is None:
+        try:
+            import pytesseract
+
+            langs = frozenset(pytesseract.get_languages(config="")) - {"osd"}
+        except Exception:
+            return frozenset({"eng"})
+        _installed_langs = langs or frozenset({"eng"})
+    return _installed_langs
+
+
+def validate_lang(lang: str) -> str:
+    """``lang`` when every "+"-joined code is a well-formed, installed
+    Tesseract language (at most MAX_OCR_LANGS); else ValueError."""
+    parts = (lang or "").split("+")
+    if len(parts) > MAX_OCR_LANGS or not all(_LANG_CODE.match(p) for p in parts):
+        raise ValueError("unsupported OCR language")
+    installed = installed_languages()
+    if any(p not in installed for p in parts):
+        raise ValueError("unsupported OCR language")
+    return lang
 
 
 def _clean_text(value: str) -> str:
@@ -16,12 +62,11 @@ def _preprocess_for_ocr(image):
 
 def extract_text_from_image_bytes_impl(image_bytes: bytes, lang: str = "eng") -> str:
     try:
-        from PIL import Image
         import pytesseract
     except ImportError as e:
         raise RuntimeError(f"OCR library not installed: {e}") from e
 
-    image = Image.open(io.BytesIO(image_bytes))
+    image = open_image(image_bytes)
     image = _preprocess_for_ocr(image)
     text = pytesseract.image_to_string(image, lang=lang, config="--psm 6")
     return _clean_text(text)
@@ -51,7 +96,7 @@ def extract_text_from_pdf_ocr_impl(
     chunks: List[str] = []
     for i in range(page_count):
         page = pdf[i]
-        pil_image = page.render(scale=2).to_pil()
+        pil_image = render_pdf_page(page, scale=2)
         processed = _preprocess_for_ocr(pil_image)
         chunks.append(pytesseract.image_to_string(processed, lang=lang, config="--psm 6"))
         page.close()
@@ -60,12 +105,16 @@ def extract_text_from_pdf_ocr_impl(
 
 def extract_text_from_docx_impl(file_bytes: bytes) -> str:
     import mammoth
+
+    check_zip_bounds(file_bytes)  # a DOCX is a zip: refuse a bomb before mammoth inflates it
     result = mammoth.extract_raw_text(io.BytesIO(file_bytes))
     return _clean_text(result.value)
 
 
 def extract_text_from_pptx_impl(file_bytes: bytes) -> str:
     from pptx import Presentation
+
+    check_zip_bounds(file_bytes)  # a PPTX is a zip, as above
     prs = Presentation(io.BytesIO(file_bytes))
     chunks = []
     for slide in prs.slides:

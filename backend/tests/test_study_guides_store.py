@@ -23,7 +23,7 @@ from models.study_guide import (
     ProseItem,
     Section,
 )
-from services.encryption import decrypt_json, encrypt_json
+from services.encryption import bind, decrypt_json, encrypt_json
 from services.study_guides import store
 from services.study_guides.errors import GuideBusy, GuideInvalid, GuideNotFound
 from services.study_guides.legacy import UNTITLED
@@ -31,6 +31,11 @@ from tests.db_fakes import add_async_twins
 
 ME, OTHER = "user_guides_me", "user_guides_other"
 OFFERING = "off-cs-f26"
+
+def _opened(row: dict, column: str):
+    """A stored study_guides column opened in its own cell (M13 binding)."""
+    return decrypt_json(row[column], bind=bind("study_guides", column, row))
+
 
 
 def run(coro):
@@ -166,7 +171,7 @@ def test_the_content_marks_are_stored_but_never_sent(db):
 
     run(store.asave_content(guide, marked))
 
-    stored = decrypt_json(db.stored("g1")["content"])
+    stored = _opened(db.stored("g1"), "content")
     assert (stored["last_section_number"], stored["materials_read_at"]) == (7, read_at)
     reread = run(store.aload_guide(ME, "g1")).content
     assert (reread.last_section_number, reread.materials_read_at) == (7, read_at)
@@ -185,7 +190,7 @@ def test_content_is_ciphertext_at_rest_and_reads_back_equal(db):
     raw = db.stored(guide_id)
     assert isinstance(raw["content"], str)
     assert "while loop" not in raw["content"] and "Midterm" not in raw["content"]
-    assert decrypt_json(raw["content"]) == _at_rest(content)
+    assert _opened(raw, "content") == _at_rest(content)
     assert (raw["status"], raw["format"], raw["generated_at"]) == ("generating", 2, None)
 
     guide = run(store.aload_guide(ME, guide_id))
@@ -213,8 +218,8 @@ def test_save_keeps_the_previous_version_encrypted(db):
     raw = db.stored("g1")
     assert isinstance(raw["previous_content"], str)
     assert "while loop" not in raw["previous_content"]
-    assert decrypt_json(raw["previous_content"]) == _at_rest(before.content)
-    assert decrypt_json(raw["content"]) == _at_rest(rewritten)
+    assert _opened(raw, "previous_content") == _at_rest(before.content)
+    assert _opened(raw, "content") == _at_rest(rewritten)
     assert raw["answers"] is None
     assert after.content == rewritten
     assert (after.status, after.generated_at) == ("ready", "2026-11-12T00:00:00+00:00")
@@ -246,7 +251,7 @@ def test_save_can_keep_only_the_answers_that_survive(db):
 
     raw = db.stored("g1")["answers"]
     assert isinstance(raw, str) and "option_id" not in raw
-    assert decrypt_json(raw) == {"s1-i2": {"option_id": "b", "correct": True}}
+    assert _opened(db.stored("g1"), "answers") == {"s1-i2": {"option_id": "b", "correct": True}}
     assert after.answers == kept
 
 
@@ -280,7 +285,7 @@ def test_answers_are_ciphertext_at_rest_and_read_back_equal(db):
 
     raw = db.stored("g1")["answers"]
     assert isinstance(raw, str) and "option_id" not in raw
-    assert decrypt_json(raw) == {"s1-i2": {"option_id": "b", "correct": True}}
+    assert _opened(db.stored("g1"), "answers") == {"s1-i2": {"option_id": "b", "correct": True}}
     assert run(store.aload_guide(ME, "g1")).answers == {"s1-i2": answer}
 
 
@@ -556,7 +561,7 @@ def test_a_format_1_row_is_upgraded_on_read(db):
         ("s1", "Loops", 50), ("s2", "Functions", 50)]
     assert guide.content.sections[0].items[0].id == "s1-i1"
     # Reading does not rewrite the row.
-    assert decrypt_json(db.stored("old")["content"]) == LEGACY
+    assert _opened(db.stored("old"), "content") == LEGACY
 
 
 def test_a_legacy_plaintext_jsonb_row_still_reads(db):
@@ -572,7 +577,7 @@ def test_saving_an_upgraded_row_makes_it_format_2(db):
 
     assert (after.format, db.stored("old")["format"]) == (2, 2)
     # The step back is stored in the current shape, whatever the row was.
-    previous = GuideContent.model_validate(decrypt_json(db.stored("old")["previous_content"]))
+    previous = GuideContent.model_validate(_opened(db.stored("old"), "previous_content"))
     assert previous == guide.content
 
 

@@ -2,7 +2,7 @@ import logging
 from datetime import datetime, timezone
 
 from db.connection import table
-from services.encryption import encrypt_json, decrypt_json_column
+from services.encryption import bind, encrypt_json, decrypt_json_column
 from services.quiz.distractors import DIGEST_SCHEMA_VERSION
 
 logger = logging.getLogger(__name__)
@@ -15,7 +15,10 @@ def get_quiz_context(user_id: str, concept_node_id: str):
     )
     if rows:
         try:
-            return decrypt_json_column(rows[0]["context_json"])
+            return decrypt_json_column(
+                rows[0]["context_json"],
+                bind=bind("quiz_context", "context_json", (user_id, concept_node_id)),
+            )
         except Exception:
             logger.warning(
                 "get_quiz_context: context_json decrypt failed user=%s concept=%s; degrading to None",
@@ -42,7 +45,11 @@ def save_quiz_context(user_id: str, concept_node_id: str, context: dict):
         {
             "user_id": user_id,
             "concept_node_id": concept_node_id,
-            "context_json": encrypt_json(versioned),
+            # Bound to the natural key the upsert conflicts on (M13): the
+            # row's id is never sent, so it is not known here.
+            "context_json": encrypt_json(
+                versioned, bind=bind("quiz_context", "context_json", (user_id, concept_node_id)),
+            ),
             "updated_at": datetime.now(timezone.utc).isoformat(),
         },
         on_conflict="user_id,concept_node_id",

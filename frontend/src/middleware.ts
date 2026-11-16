@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
-import { SESSION_COOKIE_NAME, verifySession } from '@/lib/sessionToken'
+import { backendSessionCookieHeader, readSessionCookie } from '@/lib/sessionCookie'
+import { verifySession } from '@/lib/sessionToken'
+import { SIGNIN_START_PATH } from '@/lib/signinStart'
 import { resolveFrontendEnv, detectHostConfigMismatch } from '@/lib/deployGuard'
 import { isAppShellRoute, isOnboardingRoute } from '@/lib/appRoutes'
 
@@ -34,13 +36,13 @@ import { isAppShellRoute, isOnboardingRoute } from '@/lib/appRoutes'
 const RESOLVED = resolveFrontendEnv(process.env as Record<string, string | undefined>)
 const API_URL = RESOLVED.apiUrl
 
+// sec2 M2: every sign-in starts at the same-origin /auth/start, which sets
+// this browser's sign-in nonce cookie before handing on to the backend's
+// /api/auth/google (it also supplies `return_to`, for PR previews). The
+// handoff that comes back is exchanged only together with that cookie.
 function googleAuthRedirect(request: NextRequest) {
   if (!API_URL) return null
-  const u = new URL('/api/auth/google', API_URL)
-  // Lets a PR preview get the user back after sign-in; the staging backend
-  // honours only allowlisted preview origins and ignores it everywhere else.
-  u.searchParams.set('return_to', request.nextUrl.origin)
-  return u.toString()
+  return new URL(SIGNIN_START_PATH, request.url).toString()
 }
 
 function redirectToSignin(request: NextRequest, errorCode?: string) {
@@ -82,10 +84,13 @@ export async function middleware(request: NextRequest) {
     return redirectToSignin(request, 'env_misconfig')
   }
 
-  const token = request.cookies.get(SESSION_COOKIE_NAME)?.value
-  if (!token) return redirectToSignin(request)
+  // sec2 M1: `__Host-sapling_session` over https (the legacy domain-wide
+  // cookie only for a session minted before it), the plain name over http.
+  const presented = readSessionCookie(request)
+  if (!presented) return redirectToSignin(request)
+  const token = presented.token
 
-  const session = await verifySession(token)
+  const session = await verifySession(token, { legacyCookie: presented.legacy })
   if (!session) return redirectToSignin(request, 'session_expired')
 
   if (!API_URL) return redirectToSignin(request, 'google_not_configured')
@@ -102,7 +107,7 @@ export async function middleware(request: NextRequest) {
     try {
       res = await fetch(
         `${API_URL}/api/auth/me?user_id=${encodeURIComponent(session.userId)}`,
-        { signal: controller.signal, headers: { Cookie: `${SESSION_COOKIE_NAME}=${token}` } },
+        { signal: controller.signal, headers: { Cookie: backendSessionCookieHeader(token) } },
       )
     } finally {
       clearTimeout(timeout)

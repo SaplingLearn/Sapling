@@ -39,8 +39,8 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
         "#119 llm_budgets / llm_usage are service-only",
     ("main.py", "/api/admin/flags admin_flags_router", "admin_service_route"): "feature_flags is service-only",
     ("main.py", "gemini_test", "admin_service_route"): "admin LLM probe (records usage)",
-    ("main.py", "/api/auth auth.router", "service_route"):
-        "OAuth callback / test-login / pending: run before a session exists; users is account state",
+    ("main.py", "/api/auth auth_handoff_router", "service_route"):
+        "sec2 M2 handoff exchange: before a session exists; auth_handoff_consumptions is service-only",
     ("main.py", "/api/careers careers.router", "service_route"): "public; job_applications is service-only",
     ("main.py", "/api/email email_router", "service_route"): "public unsubscribe; email_suppressions is service-only",
     ("main.py", "/api/internal internal_metrics_router", "service_route"):
@@ -52,6 +52,17 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
         "until step 2e: room_messages has no policies; invite join/owner transfer/teardown/"
         "friendships are cross-user (plan §6.3: social last)",
     # ── Endpoints ──
+    ("routes/auth.py", "google_login", "service_route"): "OAuth redirect: no session yet",
+    ("routes/auth.py", "google_callback", "service_route"):
+        "OAuth callback: no session yet; upserts users/oauth_tokens/newsletter_emails (account state)",
+    ("routes/auth.py", "pending_status", "service_route"):
+        "unapproved sign-in (pending token, no session): reads the waitlist (newsletter_emails)",
+    ("routes/auth.py", "pending_join", "service_route"):
+        "unapproved sign-in (pending token, no session): writes the waitlist (newsletter_emails)",
+    ("routes/auth.py", "mint_test_session", "service_route"):
+        "local/test-only session minter: runs before a session exists",
+    ("routes/auth.py", "logout", "service_route"):
+        "writes users.sessions_valid_after; users is SELECT-only for students",
     ("routes/academics.py", "get_semesters", "service_route"): "public catalog read, no session",
     ("routes/calendar_connect.py", "calendar_callback", "service_route"):
         "Google redirect: no session, user from the signed state cookie",
@@ -157,6 +168,8 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
         "#117 stateless_locks: app_leases + claim_lease() are service-only",
     ("services/pg_lease.py", "_renew_db", "service_scope"):
         "#117 stateless_locks: renew_lease() extends the caller's own lease",
+    ("services/auth/handoff.py", "_consume_jti", "service_scope"):
+        "sec2 M2: auth_handoff_consumptions + consume_auth_handoff() are service-only",
     ("services/pg_lease.py", "_release_db", "service_scope"):
         "#117 stateless_locks: release_lease() drops the caller's own lease",
     ("services/tutor_sessions.py", "_store_row", "runs_as_service"):
@@ -176,6 +189,8 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
         "own sessions row + greeting from the service-only pending row",
     ("services/rag_service.py", "index_document_chunks", "runs_as_service"): "shared content-addressed chunks",
     ("services/rag_service.py", "index_document_chunks_detailed", "runs_as_service"): "shared chunks",
+    ("services/rag_service.py", "_uploaders_of", "runs_as_service"):
+        "M6 per-uploader cap: uploader ids of rows already retrieved for this reader, never text",
     ("services/social_cache_service.py", "get_cached_summary", "runs_as_service"): "room_summaries cache",
     ("services/social_cache_service.py", "invalidate", "runs_as_service"): "room_summaries cache",
     ("services/social_cache_service.py", "save_summary", "runs_as_service"): "room_summaries cache",

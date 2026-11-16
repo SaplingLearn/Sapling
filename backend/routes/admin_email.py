@@ -39,7 +39,7 @@ from models import EmailBroadcastBody, EmailBroadcastPreviewBody, EmailBroadcast
 from services import email_service, email_templates, email_variables, open_access
 from services.admin_audit import log_admin_action
 from services.auth_guard import get_session_user_id, require_admin, require_admin_recent
-from services.encryption import decrypt, decrypt_if_present
+from services.encryption import Binding, bind, decrypt, decrypt_if_present
 
 logger = logging.getLogger(__name__)
 
@@ -156,7 +156,8 @@ def _user_addresses() -> dict[str, str]:
                  "deleted_at": "is.null"},
         order="id.asc",
     ):
-        address = (decrypt_if_present(r.get("email")) or "").strip()
+        address = (decrypt_if_present(
+            r.get("email"), bind=bind("users", "email", r)) or "").strip()
         # decrypt_if_present hands back the raw value when it cannot decrypt;
         # ciphertext has no "@", so this also drops undecryptable rows.
         if "@" not in address:
@@ -165,13 +166,13 @@ def _user_addresses() -> dict[str, str]:
     return out
 
 
-def _plain(value) -> str:
+def _plain(value, binding: Binding) -> str:
     """A 🔒 column's plaintext, or "" when it's empty or can't be decrypted.
     Never the ciphertext: that must not end up in someone's greeting."""
     if not isinstance(value, str) or not value:
         return ""
     try:
-        return " ".join(decrypt(value).split())
+        return " ".join(decrypt(value, bind=binding).split())
     except Exception:  # noqa: BLE001
         return ""
 
@@ -190,17 +191,19 @@ def _names() -> dict[str, dict[str, str]]:
     }
     out: dict[str, dict[str, str]] = {}
     for u in page_all(table("users"), "id,email", filters={"deleted_at": "is.null"}, order="id.asc"):
-        address = _plain(u.get("email")).lower()
+        address = _plain(u.get("email"), bind("users", "email", u)).lower()
         if "@" not in address:
             continue
         p = profiles.get(u["id"]) or {}
-        name = _plain(p.get("name"))
-        first = _plain(p.get("first_name")) or (name.split()[0] if name else "")
+        name = _plain(p.get("name"), bind("user_profiles", "name", u["id"]))
+        first = _plain(p.get("first_name"), bind("user_profiles", "first_name", u["id"])) or (name.split()[0] if name else "")
         out.setdefault(address, {"first_name": first, "name": name})
     for r in page_all(table("newsletter_emails"), "email,first_name", order="created_at.asc,id.asc"):
         address = (r.get("email") or "").strip().lower()
-        first = _plain(r.get("first_name"))
-        if "@" not in address or not first:
+        if "@" not in address:
+            continue
+        first = _plain(r.get("first_name"), bind("newsletter_emails", "first_name", r))
+        if not first:
             continue
         entry = out.setdefault(address, {"first_name": "", "name": ""})
         entry["first_name"] = entry["first_name"] or first
@@ -285,10 +288,11 @@ def email_audiences(request: Request):
 
 
 def _admin_address(user_id: str) -> str | None:
-    rows = table("users").select("email", filters={"id": f"eq.{user_id}"}, limit=1)
+    rows = table("users").select("id,email", filters={"id": f"eq.{user_id}"}, limit=1)
     if not rows:
         return None
-    address = (decrypt_if_present(rows[0].get("email")) or "").strip()
+    address = (decrypt_if_present(
+        rows[0].get("email"), bind=bind("users", "email", user_id)) or "").strip()
     return address if "@" in address else None
 
 

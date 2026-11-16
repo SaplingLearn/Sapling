@@ -6,7 +6,7 @@ import json
 import time as _time
 
 from config import SESSION_SECRET
-from services.encryption import decrypt_if_present, encrypt
+from services.encryption import claim_binding, decrypt_if_present, encrypt
 
 # ── Unapproved sign-in → /pending ─────────────────────────────────────────────
 # An unapproved sign-in gets no account and no session. The hand-off to /pending
@@ -34,9 +34,9 @@ def _mint_pending_token(email: str, first_name: str = "") -> str:
     key = _pending_token_key()
     if not key:
         return ""
-    claims = {"e": encrypt(email), "exp": int(_time.time()) + _PENDING_TOKEN_TTL_SECONDS}
+    claims = {"e": encrypt(email, bind=claim_binding("e")), "exp": int(_time.time()) + _PENDING_TOKEN_TTL_SECONDS}
     if first_name:
-        claims["n"] = encrypt(first_name)
+        claims["n"] = encrypt(first_name, bind=claim_binding("n"))
     payload = json.dumps(claims)
     payload_b64 = _b64(payload.encode())
     return f"{payload_b64}.{_b64(_hmac.new(key.encode(), payload_b64.encode(), hashlib.sha256).digest())}"
@@ -60,11 +60,14 @@ def _pending_token_claims(token: str) -> dict | None:
     exp = payload.get("exp")
     if not isinstance(exp, int) or exp < int(_time.time()):
         return None
-    email = (decrypt_if_present(payload.get("e")) or "").strip() if isinstance(payload.get("e"), str) else ""
+    e = payload.get("e")
+    email = (decrypt_if_present(e, bind=claim_binding("e")) or "").strip() if isinstance(e, str) else ""
     if "@" not in email:
         return None
     name = payload.get("n")
-    first_name = (decrypt_if_present(name) or "").strip() if isinstance(name, str) else ""
+    first_name = (
+        (decrypt_if_present(name, bind=claim_binding("n")) or "").strip() if isinstance(name, str) else ""
+    )
     return {"email": email, "first_name": first_name}
 
 

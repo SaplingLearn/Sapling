@@ -211,7 +211,9 @@ async function storedGuide(guideId: string): Promise<StoredGuide> {
 /** The stored content, decrypted by the backend's own helper. */
 async function storedContent(guideId: string): Promise<GuideContent> {
   const { content_cipher } = await storedGuide(guideId);
-  return JSON.parse(await decryptText(content_cipher ?? "")) as GuideContent;
+  return JSON.parse(
+    await decryptText({ value: content_cipher ?? "", table: "study_guides", column: "content", row: guideId }),
+  ) as GuideContent;
 }
 
 const itemsOf = (content: GuideContent): Item[] => content.sections.flatMap(section => section.items);
@@ -539,7 +541,9 @@ test("a guide is made in the dialog, written, read, answered, saved and found ag
   const answered = await storedGuide(guideId);
   expect(answered.answers_type).toBe("string");
   expect(answered.answers_cipher).not.toContain(check);
-  expect(JSON.parse(await decryptText(answered.answers_cipher ?? ""))).toEqual({
+  expect(JSON.parse(await decryptText({
+    value: answered.answers_cipher ?? "", table: "study_guides", column: "answers", row: guideId,
+  }))).toEqual({
     [check]: { option_id: CHECK.wrong, correct: false },
   });
 

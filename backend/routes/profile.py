@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 from config import MAX_AVATAR_SIZE
 from db.connection import like_literal, table
 from db.scope import service_route
-from services.encryption import encrypt_if_present
+from services.encryption import bind, encrypt_if_present
 from models import (
     UpdateProfileBody,
     UpdateSettingsBody,
@@ -215,9 +215,11 @@ def update_profile(user_id: str, body: UpdateProfileBody, request: Request):
         updates_profile["username"] = candidate
 
     if body.bio is not None:
-        updates_profile["bio"] = encrypt_if_present(body.bio)
+        updates_profile["bio"] = encrypt_if_present(
+            body.bio, bind=bind("user_profiles", "bio", user_id))
     if body.location is not None:
-        updates_profile["location"] = encrypt_if_present(body.location)
+        updates_profile["location"] = encrypt_if_present(
+            body.location, bind=bind("user_profiles", "location", user_id))
     if body.website is not None:
         updates_profile["website"] = body.website
 
@@ -319,6 +321,7 @@ def update_settings(
     request: Request,
 ):
     require_self(user_id, request)
+    enforce_abuse_limit(abuse_limits.SETTINGS_WRITE, user_id)
     _get_or_create_settings(user_id)
 
     # Whitelist: only these fields may be patched via this endpoint.

@@ -13,7 +13,7 @@ from agents.tools.syllabus_adapter import syllabus_to_wire_dict
 from agents.usage import record_agent_usage
 from services.extraction_service import extract_text_from_file
 from services.assignment_dedupe import assignment_dedupe_key
-from services.encryption import encrypt_if_present
+from services.encryption import bind, encrypt_if_present
 from services.prompt_safety import wrap_document_input
 from services import upload_validation as uv
 from db.connection import table
@@ -118,13 +118,15 @@ def save_new_assignments(user_id: str, assignments: list[dict], *, source: str =
             skipped.append({"title": title, "due_date": day, "reason": reason})
             continue
         existing_keys.add(key)
+        new_id = str(uuid.uuid4())
         rows.append({
-            "id": str(uuid.uuid4()),
+            "id": new_id,
             "enrollment_id": enrollment_id,
             "title": title,
             "due_date": day,
             "assignment_type": a.get("assignment_type") or "other",
-            "notes": encrypt_if_present(a.get("notes")),  # #126: encrypt at write
+            # #126: encrypt at write, bound to the row (finding M13).
+            "notes": encrypt_if_present(a.get("notes"), bind=bind("assignments", "notes", new_id)),
             "source": source,
         })
     not_enrolled = sorted(c for c, e in enrollment_of.items() if not e)

@@ -75,6 +75,13 @@ const BOOT_VARIABLES = [
 ];
 
 const HANDLER_VARIABLES = [
+  // services/encryption.py (finding M13): the worker seals and opens
+  // document_uploads / documents / course_chunks, so it must write and refuse
+  // the same envelope as the API. Unset = off / allow; until the API sets them
+  // (the AAD rollout), list them in NOT_ON_API.
+  "ENCRYPTION_WRITE_V2",
+  "ENCRYPTION_LEGACY_READS",
+  "ENCRYPTION_STRICT_TABLES",
   // services/extraction_service.py + extraction_backends/ (document.process)
   "OCR_ENGINE",
   "GEMINI_VISION_OCR_ENABLED",

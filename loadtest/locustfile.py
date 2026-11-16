@@ -49,7 +49,9 @@ import uuid
 
 from locust import HttpUser, between, events, task
 
-SESSION_COOKIE = "sapling_session"
+# Accepted by the backend in every environment (sec2 M1); a current
+# browser session sent under the plain name is refused on a deployed backend.
+SESSION_COOKIE = "__Host-sapling_session"
 
 _TOKEN = (os.getenv("LOADTEST_SESSION_TOKEN") or "").strip()
 

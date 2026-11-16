@@ -42,7 +42,8 @@ load_dotenv(BASE / ".env")
 sys.path.insert(0, str(BASE))
 
 from db.connection import table  # noqa: E402
-from services.encryption import decrypt_if_present  # noqa: E402
+from services.encryption import bind, decrypt_if_present, encrypt_if_present  # noqa: E402
+from services.encryption_canary import abort_unless_key_verified  # noqa: E402
 from services.rag_service import chunk_id  # noqa: E402
 
 PAGE_SIZE = 1000
@@ -87,16 +88,24 @@ def plan_migration(rows: list[dict]) -> tuple[list[dict], list[str]]:
         # would derive a different id for every row (AES-GCM draws a fresh nonce
         # per write, so even two identical passages hash differently), which
         # would destroy content-addressing rather than repair it. The row keeps
-        # its stored ciphertext in the upsert; only the hash input is plaintext.
-        plaintext = decrypt_if_present(row["chunk_text"])
-        groups.setdefault(chunk_id(row["course_id"], plaintext), []).append(row)
+        # Its ciphertext is bound to its id (AAD, finding M13), so a row that
+        # moves to a new id is re-sealed for it below, never copied as is.
+        plaintext = decrypt_if_present(
+            row["chunk_text"], bind=bind("course_chunks", "chunk_text", row))
+        groups.setdefault(chunk_id(row["course_id"], plaintext), []).append(
+            {**row, "_plaintext": plaintext})
 
     upserts: list[dict] = []
     deletes: list[str] = []
     for new_id, members in groups.items():
         winner = next((m for m in members if m.get("embedding")), members[0])
         if winner["id"] != new_id:
-            upserts.append({**winner, "id": new_id, "chunk_hash": new_id})
+            upserts.append({
+                **{k: v for k, v in winner.items() if k != "_plaintext"},
+                "id": new_id, "chunk_hash": new_id,
+                "chunk_text": encrypt_if_present(
+                    winner["_plaintext"], bind=bind("course_chunks", "chunk_text", new_id)),
+            })
         deletes.extend(m["id"] for m in members if m["id"] != new_id)
     return upserts, deletes
 
@@ -119,6 +128,10 @@ def main() -> None:
     if not args.apply:
         print("Dry run — re-run with --apply to write.")
         return
+
+    # Abort unless ENCRYPTION_KEY opens this database's key canary
+    # (services/encryption_canary.py): a wrong key writes unreadable rows.
+    abort_unless_key_verified("scripts.dedupe_course_chunks")
 
     # Upsert winners under their new ids first, then delete stale ids, so an
     # interrupted run never leaves a chunk with no surviving row.

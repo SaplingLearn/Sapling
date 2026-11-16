@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 
 from db.connection import table
 from services.auth.errors import AccountDeleted, AccountNotFound
-from services.encryption import decrypt_if_present
+from services.encryption import bind, decrypt_if_present
 from services.open_access import ACCESS_NONE, access_kind, gate_open
 
 logger = logging.getLogger(__name__)
@@ -126,7 +126,8 @@ def account_overview(user_id: str) -> dict:
         "access": access,
         "onboarding_completed": bool(user[0].get("onboarding_completed", False)),
         "username": profile.get("username"),
-        "name": decrypt_if_present(profile.get("name")) or "",
+        "name": decrypt_if_present(
+            profile.get("name"), bind=bind("user_profiles", "name", user_id)) or "",
         "avatar_url": profile.get("avatar_url") or "",
         "roles": roles,
         "equipped_cosmetics": equipped_cosmetics,

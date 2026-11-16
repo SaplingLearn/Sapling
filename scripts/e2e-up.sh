@@ -326,6 +326,13 @@ echo "  ℹ FEATURE_FLAGS_SNAPSHOT_TTL_S=0, FEATURE_FLAGS_ROLES_TTL_S=0 for this
 export POSTHOG_PROJECT_TOKEN=
 export POSTHOG_PERSONAL_API_KEY=
 echo "  ℹ POSTHOG_PROJECT_TOKEN and POSTHOG_PERSONAL_API_KEY blank for this stack (ADR 0028)"
+# Finding M13 (docs/security/encryption-aad-plan.md): the lane seeds a fresh
+# database, so it writes the row-bound v2 envelope everywhere. The
+# `ciphertext` oracle opens each value under its own row's binding, and run
+# with ENCRYPTION_WRITE_V2=on it also refuses legacy v1. Production turns
+# this on only after its readers ship.
+export ENCRYPTION_WRITE_V2="${ENCRYPTION_WRITE_V2:-on}"
+echo "  ℹ ENCRYPTION_WRITE_V2=$ENCRYPTION_WRITE_V2 for this stack (production: off until the AAD rollout)"
 # The servers never inherit the cycle's locks (fds 8/9, scripts/e2e-cycle.sh):
 # a server that outlived its teardown would otherwise hold the slot's lock
 # forever and the slot would silently drop out of rotation. Without them, a

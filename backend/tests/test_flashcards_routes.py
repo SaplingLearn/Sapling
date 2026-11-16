@@ -124,7 +124,7 @@ class TestListFlashcards:
 def _doc_tables(captured, *, courses=(), docs=None, documents_raise=None):
     """table() stand-in for _get_course_documents: records the filters (and
     order/limit) sent to `courses` and `documents`."""
-    docs = [{"file_name": "a.pdf", "category": "notes",
+    docs = [{"id": "d1", "file_name": "a.pdf", "category": "notes",
              "summary": None, "concept_notes": None}] if docs is None else docs
 
     def side_effect(name):
@@ -447,7 +447,7 @@ class TestGeneratedCardsAreFiledUnderTheirCourse:
 
 class TestFlashcardEncryption:
     def test_generated_cards_encrypted_at_write(self):
-        from services.encryption import decrypt
+        from services.encryption import bind, decrypt
 
         plaintext_front = "What is a variable?"
         plaintext_back = "A named storage location for a value."
@@ -471,8 +471,8 @@ class TestFlashcardEncryption:
         for row in captured_inserts:
             assert row["front"] != plaintext_front
             assert row["back"] != plaintext_back
-            assert decrypt(row["front"]) == plaintext_front
-            assert decrypt(row["back"]) == plaintext_back
+            assert decrypt(row["front"], bind=bind("flashcards", "front", row)) == plaintext_front
+            assert decrypt(row["back"], bind=bind("flashcards", "back", row)) == plaintext_back
             # topic stays plaintext (it's a filter column):
             assert row["topic"] == plaintext_topic
 
@@ -484,7 +484,7 @@ class TestFlashcardEncryption:
         assert returned[0]["back"] == plaintext_back
 
     def test_import_commit_cards_encrypted_at_write(self):
-        from services.encryption import decrypt
+        from services.encryption import bind, decrypt
 
         plaintext_front = "Mitosis"
         plaintext_back = "Cell division"
@@ -513,8 +513,8 @@ class TestFlashcardEncryption:
         row = captured_inserts[0]
         assert row["front"] != plaintext_front
         assert row["back"] != plaintext_back
-        assert decrypt(row["front"]) == plaintext_front
-        assert decrypt(row["back"]) == plaintext_back
+        assert decrypt(row["front"], bind=bind("flashcards", "front", row)) == plaintext_front
+        assert decrypt(row["back"], bind=bind("flashcards", "back", row)) == plaintext_back
 
     def test_list_decrypts_front_and_back(self):
         from services.encryption import encrypt

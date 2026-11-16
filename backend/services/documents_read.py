@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from db.connection import table
 from db.scope import runs_as_service
-from services.encryption import decrypt_if_present, decrypt_json
+from services.encryption import bind, decrypt_if_present, decrypt_json
 
 
 def decrypt_document_row(row: dict) -> dict:
@@ -19,11 +19,11 @@ def decrypt_document_row(row: dict) -> dict:
     `extracted_text` dropped."""
     out = dict(row)
     out.pop("extracted_text", None)
-    out["summary"] = decrypt_if_present(out.get("summary"))
+    out["summary"] = decrypt_if_present(out.get("summary"), bind=bind("documents", "summary", row))
     notes = out.get("concept_notes")
     if isinstance(notes, str):
         try:
-            out["concept_notes"] = decrypt_json(notes)
+            out["concept_notes"] = decrypt_json(notes, bind=bind("documents", "concept_notes", row))
         except Exception:
             out["concept_notes"] = []
     return out

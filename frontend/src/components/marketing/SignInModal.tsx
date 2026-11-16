@@ -7,9 +7,9 @@ import { HeroCard } from "@/components/marketing/HeroCard";
 import { SaplingWordmark } from "@/components/SaplingWordmark";
 import { postSignInRoute } from "@/lib/localSeed";
 import { stashPendingToken } from "@/lib/pendingToken";
+import { signInStartPath } from "@/lib/signinStart";
 import { signInErrorMessage } from "./signInErrors";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "";
 const POPUP_TIMEOUT_MS = 3 * 60 * 1000;
 
 /** The box's heading: "Welcome back." for Sign In, "Get started." for Get
@@ -139,10 +139,11 @@ export default function SignInModal({ open, onClose, errorCode, variant = "signi
     setLocalError(null);
     setRetried(true);
 
-    // An empty API_URL is the valid same-origin config (a cross-origin value
-    // drops the session cookie), so we don't guard against it here. The
-    // redirect below resolves to the same-origin path `/api/auth/google`,
-    // which Next.js proxies to the backend.
+    // sec2 M2: sign-in starts at the same-origin /auth/start, which sets this
+    // browser's sign-in nonce cookie and hands on to the backend's
+    // /api/auth/google (proxied by Next.js); the handoff that comes back is
+    // exchanged only together with that cookie. /auth/start also supplies
+    // `return_to` (this origin), for PR previews.
 
     // BroadcastChannel-based popup flow. We don't depend on window.opener:
     // COOP severs the opener handle the moment the popup hops to a
@@ -153,11 +154,7 @@ export default function SignInModal({ open, onClose, errorCode, variant = "signi
       typeof crypto !== "undefined" &&
       typeof crypto.randomUUID === "function";
 
-    // A PR preview's origin isn't the backend's FRONTEND_URL: the staging
-    // backend sends the hand-off back here when it's an allowlisted preview
-    // origin and ignores it everywhere else.
-    const returnTo = encodeURIComponent(window.location.origin);
-    const sameTabUrl = `${API_URL}/api/auth/google?return_to=${returnTo}`;
+    const sameTabUrl = signInStartPath();
 
     if (!supportsPopup) {
       setWaiting(true);
@@ -166,7 +163,7 @@ export default function SignInModal({ open, onClose, errorCode, variant = "signi
     }
 
     const popupId = crypto.randomUUID();
-    const popupUrl = `${API_URL}/api/auth/google?popup_id=${encodeURIComponent(popupId)}&return_to=${returnTo}`;
+    const popupUrl = signInStartPath({ popupId });
 
     cleanupPopupListeners();
     const channel = new BroadcastChannel(`sapling_signin:${popupId}`);

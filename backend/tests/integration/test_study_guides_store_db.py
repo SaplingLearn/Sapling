@@ -320,7 +320,7 @@ def test_two_first_answers_at_once_record_exactly_one(db_conn):
     The compare-and-set on `updated_at` lets one through; the other re-reads
     and finds the block answered."""
     from models.study_guide import CheckAnswer
-    from services.encryption import decrypt_json
+    from services.encryption import bind, decrypt_json
     from services.study_guides import store
 
     guide_id = _new_guide()
@@ -336,7 +336,8 @@ def test_two_first_answers_at_once_record_exactly_one(db_conn):
 
     assert sorted(counted) == [False, True], counted
     winner = wrong if counted[0] else right
-    stored = decrypt_json(_row(db_conn, guide_id)["answers"])
+    stored = decrypt_json(_row(db_conn, guide_id)["answers"],
+                          bind=bind("study_guides", "answers", guide_id))
     assert stored == {"s1-i2": winner.model_dump()}
     assert run(store.aload_guide(USER, guide_id)).answers == {"s1-i2": winner}
     # A later click is not counted either.
@@ -349,7 +350,7 @@ def test_two_first_answers_at_once_record_exactly_one(db_conn):
 
 def test_content_previous_content_and_answers_are_ciphertext_and_round_trip(db_conn):
     from models.study_guide import CheckAnswer, GuideContent
-    from services.encryption import decrypt_json
+    from services.encryption import bind, decrypt_json
     from services.study_guides import store
 
     first, rewritten = _content(), _content("Rewritten for the round trip")
@@ -367,9 +368,9 @@ def test_content_previous_content_and_answers_are_ciphertext_and_round_trip(db_c
         assert "while loop" not in row[column] and "option_id" not in row[column]
     # Validated, not compared as a dict: the store keeps fields no dump has
     # (`last_section_number`, `materials_read_at`).
-    assert GuideContent.model_validate(decrypt_json(row["content"])) == rewritten
-    assert GuideContent.model_validate(decrypt_json(row["previous_content"])) == first
-    assert decrypt_json(row["answers"]) == {"s1-i2": {"option_id": "b", "correct": True}}
+    assert GuideContent.model_validate(decrypt_json(row["content"], bind=bind("study_guides", "content", row))) == rewritten
+    assert GuideContent.model_validate(decrypt_json(row["previous_content"], bind=bind("study_guides", "previous_content", row))) == first
+    assert decrypt_json(row["answers"], bind=bind("study_guides", "answers", row)) == {"s1-i2": {"option_id": "b", "correct": True}}
     after = run(store.aload_guide(USER, guide_id))
     assert (after.content, after.answers, after.format) == (rewritten, {"s1-i2": answer}, 2)
     # Another student reads none of it.

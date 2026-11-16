@@ -356,9 +356,11 @@ curl -si -X POST http://localhost:5000/api/auth/test-login \
   -d '{"user_id": "seed-user-demo"}'
 ```
 
-It sets the `sapling_session` cookie (same flags as the real session) **and**
-returns the token in the JSON body, so a Playwright `globalSetup` can inject it
-with `context.addCookies([{ name: 'sapling_session', value: token, url: … }])`
+It sets the session cookie (same flags as the real session; `sapling_session`
+on this http stack, `__Host-sapling_session` on an https one — the body's
+`cookie_name` says which) **and** returns the token in the JSON body, so a
+Playwright `globalSetup` can inject it with
+`context.addCookies([{ name: body.cookie_name, value: token, url: … }])`
 and pytest can just keep the `TestClient` cookie jar. Optional `ttl` (seconds,
 clamped to `[30, 86400]`) overrides the 1-hour default.
 
@@ -460,7 +462,7 @@ npm run build:test && npm run start:test      # Next production server on :3000
 What the profile bakes in (build-time, inlined by `next build`):
 
 - `NEXT_PUBLIC_API_URL=` **empty** — every client fetch is same-origin `/api/...`,
-  so the `sapling_session` cookie always rides along (a cross-origin value drops
+  so the session cookie always rides along (a cross-origin value drops
   it → 401). Explicitly empty matters: some callers fall back to
   `http://localhost:5000` when the var is *unset*.
 - `BACKEND_URL=http://localhost:5000` — the `/api/:path*` rewrite proxies to the

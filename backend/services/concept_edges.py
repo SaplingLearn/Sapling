@@ -34,11 +34,19 @@ def normalize(name: str) -> str:
 
 
 def build_message(course_label: str, concept_names: list[str]) -> str:
+    """The concept_edges / concept_prune user message.
+
+    sec2 M10 audit: the concept names are the student's graph text (typed,
+    or extracted from their uploads), so the listing reaches the model inside
+    the untrusted envelope; the course label is a neutralized scalar.
+    """
+    from services.prompt_safety import neutralize_delimiters, wrap_untrusted
+
     listing = "\n".join(f"- {n}" for n in sorted(concept_names, key=str.casefold))
     return (
-        f'Course: "{course_label}"\n'
+        f'Course: "{neutralize_delimiters(course_label or "")}"\n'
         f"Concepts in the student's graph for this course ({len(concept_names)}):\n"
-        f"{listing}"
+        + (wrap_untrusted(listing, source="the student's graph concept names") or "(none)")
     )
 
 

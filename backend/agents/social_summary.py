@@ -14,6 +14,7 @@ from pydantic_ai import Agent
 
 from agents._providers import model_for
 from agents.deps import SaplingDeps
+from services.prompt_safety import INJECTION_GUARD_PROMPT
 
 
 class SocialSummary(BaseModel):
@@ -30,7 +31,11 @@ _SYSTEM_PROMPT = (
     "each member's mastered and struggling concepts, write a 2-3 sentence "
     "summary that highlights the group's complementary strengths and shared "
     "goals. Keep it encouraging and concrete. Do not invent members or topics "
-    "beyond what you are given."
+    "beyond what you are given. Members are labelled \"Member 1\", \"Member "
+    "2\" and so on; refer to them only by those exact labels.\n\n"
+    # M9: concept names are written by the members; the summary is cached
+    # and shown to every member of the room.
+    + INJECTION_GUARD_PROMPT
 )
 _PROMPT_HASH = hashlib.sha256(_SYSTEM_PROMPT.encode("utf-8")).hexdigest()[:12]
 

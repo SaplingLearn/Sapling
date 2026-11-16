@@ -14,7 +14,7 @@ from typing import Optional
 
 from db.connection import table
 from db.scope import runs_as_service
-from services.encryption import decrypt_if_present
+from services.encryption import bind, decrypt_if_present
 from services.open_access import access_filter, gate_open
 from services.profiles import get_display_names
 
@@ -102,11 +102,22 @@ def _still_encrypted(value: Optional[str]) -> bool:
     return len(raw) >= _MIN_CIPHERTEXT_BYTES
 
 
+def _decrypt_emails(users: list[dict]) -> None:
+    """Decrypt each row's email in place. A stored value the seam refused (a
+    v2 email that does not open in this row) reads as None; it is flagged so
+    the list still says "unreadable" rather than showing a blank."""
+    for user in users:
+        stored = user.get("email")
+        user["email"] = decrypt_if_present(stored, bind=bind("users", "email", user))
+        if stored and user["email"] is None:
+            user["_email_refused"] = True
+
+
 def _mark_undecryptable(users: list[dict]) -> None:
     """Blank ciphertext this key can't open and flag the row, so the admin list
     shows "unreadable" instead of rendering the blob as a name/email."""
     for user in users:
-        bad_email = _still_encrypted(user.get("email"))
+        bad_email = user.pop("_email_refused", False) or _still_encrypted(user.get("email"))
         bad_name = _still_encrypted(user.get("name"))
         if bad_email:
             user["email"] = None
@@ -140,8 +151,7 @@ def paginate_users(
             limit=page_size,
             offset=offset,
         )
-        for u in rows:
-            u["email"] = decrypt_if_present(u.get("email"))
+        _decrypt_emails(rows)
         _attach_names(rows)
         _mark_undecryptable(rows)
         _attach_roles(rows)
@@ -151,8 +161,7 @@ def paginate_users(
     # (AEAD nonces aren't searchable anyway). Decrypt emails + resolve every
     # name, then filter and paginate in Python. Admin-scale, behind require_admin.
     all_rows = table("users").select(columns=_USERS_COLS, filters=_with_access(), order="created_at.desc")
-    for u in all_rows:
-        u["email"] = decrypt_if_present(u.get("email"))
+    _decrypt_emails(all_rows)
     _attach_names(all_rows)
     _mark_undecryptable(all_rows)
     needle = q.lower()

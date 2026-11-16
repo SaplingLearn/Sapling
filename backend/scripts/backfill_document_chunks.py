@@ -51,6 +51,7 @@ load_dotenv(BASE / ".env.staging")
 sys.path.insert(0, str(BASE))
 
 from db.connection import REST_URL, page_all, table  # noqa: E402
+from services.encryption_canary import abort_unless_key_verified  # noqa: E402
 from services.document_indexing import (  # noqa: E402
     FAILED,
     INDEXED,
@@ -93,6 +94,10 @@ def main(argv: list[str] | None = None) -> None:
 
     print(f"Project: {urlparse(REST_URL).hostname}")
     targets = _documents(args.doc, with_text=True)
+    if not args.dry_run:
+        # Indexing decrypts extracted_text and encrypts chunk_text: under
+        # the wrong key it indexes garbage the live app cannot read.
+        abort_unless_key_verified("scripts.backfill_document_chunks")
     unrecoverable = _documents(args.doc, with_text=False)
     # A document that ended on a failure no retry can fix (no_chunks,
     # no_course) still HAS text, so without this it would be forced, fail and

@@ -18,11 +18,15 @@ The codebase is split into a FastAPI backend (`backend/`) and a Next.js frontend
 
 **Files:** `backend/routes/auth.py`, `frontend/src/components/marketing/SignInModal.tsx`, `frontend/src/app/auth/callback/page.tsx`, `frontend/src/app/api/auth/session/route.ts`
 
-Sign-in is a full-page redirect to `${API_URL}/api/auth/google`. The backend drives the OAuth flow and the frontend never touches Google directly.
+Sign-in is a full-page redirect to the frontend's `/auth/start` (`frontend/src/app/auth/start/route.ts`), which hands on to the backend's `/api/auth/google` on the API host. The backend drives the OAuth flow and the frontend never touches Google directly.
 
 - **PKCE (S256).** Each sign-in mints a fresh 32-byte code verifier via `secrets.token_bytes(32)`. The SHA-256 challenge is sent to Google with `code_challenge_method=S256` (`auth.py` ~lines 68–73, 144–152). The verifier is carried in the OAuth `state` parameter, base64-encoded JSON: `{"action": "signin", "cv": "<verifier>"}`.
 - **Code exchange.** On callback, the backend decodes `state`, extracts the code verifier, and exchanges the code via `flow.fetch_token(code=code, code_verifier=code_verifier)`. The redirect URI is pinned to `GOOGLE_AUTH_REDIRECT_URI` (env-supplied) and validated by Google.
 - **No domain restriction; the waitlist is the gate.** Any Google account with a verified email (`verified_email: true`) may attempt sign-in. A new address gets an account only when it is approved on the waitlist (Admin → Allowlist) or while the `open_access` flag is on; otherwise nothing is stored and the visitor lands on `/pending`. A non-`bu.edu` address is only a "Non-BU" label in Admin → Allowlist, never a refusal (`services/auth/signin.py`, `services/open_access.py`, `docs/design/open-access-gate.md`). `SAPLING_FLAG_OPEN_ACCESS=off` forces the gate closed.
+- **Handoff: single use, bound to the browser (sec2 M2).** The callback does not set the session: it redirects to the frontend's `/auth/callback` with a 300 s `typ=handoff` token. Before this, the session BFF checked only its HMAC/type/expiry, so an attacker could keep their own callback link and send it to a victim, whose browser then held a 7-day session *as the attacker* (login CSRF / session fixation). Now:
+  - `/auth/start` sets an HttpOnly, host-only nonce cookie (`__Host-sapling_signin`, 600 s) and sends only `binding = base64url(sha256(nonce))` to `/api/auth/google`, which seals it into the signed OAuth state cookie; the callback signs it into the handoff (`bh`) together with a random `jti` (`backend/services/auth/handoff.py`).
+  - The BFF (`POST /api/auth/session`) sends the handoff and the nonce cookie's value to the backend's `POST /api/auth/handoff/exchange`, which refuses a handoff that is unbound, bound to another nonce (another browser), or already exchanged — `jti` is consumed in `auth_handoff_consumptions` (primary key on its SHA-256, through `consume_auth_handoff()`; migration `20261116155242`), so a replay is refused on every replica. The store fails CLOSED (503). Only then does the BFF mint the session; the nonce cookie is cleared either way.
+  - `/auth/callback` takes the account from the verified session (`GET /api/auth/me`), never from the URL's `user_id`.
 - **OAuth tokens at rest.** Google access and refresh tokens are encrypted with AES-256-GCM **before** insertion into `oauth_tokens` (`auth.py` ~lines 228–229). They are never read back in plaintext from any current code path.
 
 ### 1.2 HMAC Session Tokens
@@ -35,40 +39,49 @@ Sapling does not use JWTs. Sessions are minimal HMAC-signed payloads of the form
 base64url(payload).base64url(signature)
 ```
 
-- **Payload:** `{"user_id": "<id>", "exp": <unix_timestamp>, "typ": "session", "iat": <unix_timestamp>}`. The key name is `user_id` (snake_case) on both ends — alignment was a recent fix (commit `02b0242`).
+- **Payload:** `{"user_id": "<id>", "exp": <unix_timestamp>, "typ": "session", "iat": <unix_timestamp>, "cookie": "host"}` (`cookie: "host"` since sec2: minted for the host-only cookie, see §1.3). The key name is `user_id` (snake_case) on both ends — alignment was a recent fix (commit `02b0242`).
 - **Algorithm:** HMAC-SHA256 over the base64 payload using `SESSION_SECRET` (≥32 bytes, validated at runtime in `sessionToken.ts:6`).
 - **Frontend signs** with `crypto.subtle.importKey` + `crypto.subtle.sign('HMAC', …)`.
 - **Backend verifies** with `hmac.compare_digest()` for timing-safe comparison (`auth_guard.py:35`).
 - **Expiry:** 7 days from issue (`SESSION_MAX_AGE = 604800` in `sessionToken.ts`, `config.SESSION_MAX_AGE_SECONDS` on the backend); both ends refuse a session whose `iat` is older, whatever its `exp` says. A token minted before `iat` existed is dated `exp - 30 days`.
-- **Lookup:** Backend reads the token from the `sapling_session` cookie only. The `?auth_token=` query parameter is not a credential (tokens in URLs reach access logs, Referer headers and browser history); the OAuth handoff token travels in the frontend callback URL and reaches the session BFF in a JSON body.
+- **Lookup:** Backend reads the token from the session cookie only: `__Host-sapling_session`, or the plain `sapling_session` (the http name; on a deployed backend only the legacy-cookie grace of §1.3). The `?auth_token=` query parameter is not a credential (tokens in URLs reach access logs, Referer headers and browser history); the OAuth handoff token travels in the frontend callback URL and reaches the session BFF in a JSON body.
 - **Revocation:** `users.sessions_valid_after`; a session issued before it is refused (`auth_guard.get_session_user_id`, through its 30 s account cache).
 
 ### 1.3 Cookie Hardening
 
-**Files:** `frontend/src/app/api/auth/session/route.ts`, `frontend/wrangler.toml`
+**Files:** `frontend/src/lib/sessionCookie.ts` (the one place that names the cookie), `frontend/src/app/api/auth/session/route.ts`, `backend/services/session_tokens.py`, `backend/services/auth_guard.py`
 
 The session cookie is set exclusively by the Next.js route handler — never by the backend in any deployed environment — using these flags:
 
 | Flag        | Value                | Purpose                                             |
 |-------------|----------------------|-----------------------------------------------------|
+| name        | `__Host-sapling_session` (https); `sapling_session` (http: local dev, E2E) | The `__Host-` prefix makes the browser refuse the cookie unless it is Secure, `Path=/` and has no Domain |
 | `httpOnly`  | `true`               | Inaccessible to JavaScript; mitigates XSS exfil     |
-| `secure`    | `true`               | HTTPS-only (production builds, and any https request) |
-| `sameSite`  | `lax`                | Implicit CSRF defense for state-changing requests   |
+| `secure`    | `true`               | HTTPS-only (always for `__Host-`; production builds and any https request otherwise) |
+| `sameSite`  | `lax`                | Blocks cross-SITE sends (not sibling subdomains: see §1.6) |
 | `path`      | `/`                  | Whole site                                          |
-| `domain`    | `.saplinglearn.com`  | Shared across all subdomains (api, app, www)        |
+| `domain`    | none (host-only)     | Sent only to the exact frontend host                |
 | `maxAge`    | 7 days               | Set to `0` on sign-out for immediate deletion       |
 
-`COOKIE_DOMAIN=.saplinglearn.com` is shipped via `wrangler.toml [vars]` (commit `b1377ec`); the leading dot is what permits `api.saplinglearn.com` and the app origin to share the same session.
+**Host-only since sec2 (M1).** The cookie used to be `sapling_session; Domain=.saplinglearn.com`: sent to every subdomain (staging, `api.staging`, previews) and overwritable by any of them (cookie tossing / session fixation). Every deployed environment is https, and the frontend uses the `__Host-` names there whatever the request scheme (`usesHostCookies`), so the plain name is never the live cookie in prod/staging. There is no `COOKIE_DOMAIN` any more; `FRONTEND_ENVS.cookieDomain` (`deployGuard.ts`) is kept only to delete the legacy cookie. The browser reaches the API same-origin (`/api` rewrite), and server-side calls (middleware `/me`, sign-out revoke) send the token as `__Host-sapling_session`, which the backend reads in every environment.
 
-**One test-only exception (#381).** `POST /api/auth/test-login` (`backend/routes/auth.py`) sets `sapling_session` directly, with the same flags, so the pytest integration suite and Playwright's global setup can obtain a session without driving real Google OAuth (which is not headless-automatable). It is hard-gated on `APP_ENV in {"local", "test"}` — evaluated per request, not captured at import — and returns a stock `404 {"detail": "Not Found"}` in every other environment, so it does not advertise its existence; it is also `include_in_schema=False`, so it never appears in `/openapi.json`. The allowlist is deliberately narrower than `config.IS_LOCAL` (`{local, development, dev, test}`). See `backend/tests/test_auth_test_login.py`.
+**Transition (read-only grace, no forced logout).** A session minted before the deploy lives in the legacy domain-wide cookie. Readers (middleware, `/ingest`, the session BFF, `auth_guard`) still accept it under the plain name on https — but only a token WITHOUT the `cookie: "host"` claim, i.e. one the old BFF minted. Every such token is at most 7 days old at the deploy, so the grace ends by itself; a sibling subdomain cannot plant a *current* session under the old name because current sessions carry the claim. Signing in or out deletes the legacy cookie (`Max-Age=0`, once with the old Domain and once host-only). The grace code (`HOST_COOKIE_CLAIM` checks) can be deleted 7 days after the frontend deploy.
+
+**One test-only exception (#381).** `POST /api/auth/test-login` (`backend/routes/auth.py`) sets the session cookie directly (`__Host-sapling_session` when `SECURE_COOKIES`, else `sapling_session`, named in the body's `cookie_name`), with the same flags, and also returns a handoff bound to a fresh sign-in nonce (`signin_nonce` / `signin_cookie_name`) for journeys that drive `/auth/callback`, so the pytest integration suite and Playwright's global setup can obtain a session without driving real Google OAuth (which is not headless-automatable). It is hard-gated on `APP_ENV in {"local", "test"}` — evaluated per request, not captured at import — and returns a stock `404 {"detail": "Not Found"}` in every other environment, so it does not advertise its existence; it is also `include_in_schema=False`, so it never appears in `/openapi.json`. The allowlist is deliberately narrower than `config.IS_LOCAL` (`{local, development, dev, test}`). See `backend/tests/test_auth_test_login.py`.
 
 ### 1.4 Sign-out
 
-`UserContext.signOut()` issues `DELETE /api/auth/session`. The BFF first calls the backend's `POST /api/auth/logout` with the cookie, which sets `users.sessions_valid_after = now()` and so revokes every session the account was issued until then (sign-out is everywhere); it then writes a `Max-Age=0` cookie under the same domain/Secure/SameSite settings, and the client clears in-memory and storage state. Other backend processes honour the revocation within the guard's 30 s account cache.
+`UserContext.signOut()` issues `DELETE /api/auth/session`. The BFF first calls the backend's `POST /api/auth/logout` with the cookie, which sets `users.sessions_valid_after = now()` and so revokes every session the account was issued until then (sign-out is everywhere); it then writes a `Max-Age=0` session cookie (and deletes the legacy domain-wide one), and the client clears in-memory and storage state. Other backend processes honour the revocation within the guard's 30 s account cache.
 
 ### 1.5 Boot refusals
 
 `config.validate_config()` refuses to start a process whose `APP_ENV` is local/test/dev/development but which looks deployed (an https `FRONTEND_URL` or `GOOGLE_AUTH_REDIRECT_URI` off localhost, `SECURE_COOKIES=true`, or a hosting platform's env), and, outside local, refuses the `SESSION_SECRET` / `ENCRYPTION_KEY` values committed to the repository. FastAPI's `/docs`, `/redoc` and `/openapi.json` are served only when `APP_ENV` is local or test.
+
+### 1.6 CSRF: origin check on cookie-authenticated writes
+
+**File:** `backend/services/csrf_origin.py` (mounted in `backend/main.py`)
+
+`SameSite=Lax` treats every `*.saplinglearn.com` host as the same site, so it never stopped a sibling subdomain. The backend now refuses (403) a POST/PUT/PATCH/DELETE that carries a session cookie (either name) unless its `Origin` — or, without one, its `Referer` — is trusted: the CORS allowlist (`services/cors_origins.py`), the staging backend's PR-preview origins, or an http loopback origin on a local/test backend. A browser request with neither header (it still sends `Sec-Fetch-Site`) is refused; a request with no `Origin`, `Referer` or `Sec-Fetch-*` is a non-browser client (the frontend server's own calls, scripts) and passes — CSRF needs a victim's browser, which always sends `Origin` on unsafe requests. The `/api` rewrite forwards the browser's own `Origin`/`Sec-Fetch-*`. Exempt: `/api/internal/*` (bearer tokens) and `/api/email/unsubscribe` (signed token). Requests without a session cookie are not checked. The session BFF keeps its own same-origin check (#190).
 
 ---
 
@@ -143,7 +156,7 @@ A Next.js middleware enforces auth + approval before any of the 12 protected pat
 /gradebook, /course-planner
 ```
 
-For each request it (1) reads `sapling_session`, (2) verifies the HMAC locally via `verifySession`, (3) calls the backend `/api/auth/me` with a 3-second `AbortController` timeout, and (4) checks `is_approved`. Any failure redirects to Google sign-in or `/pending`. `NEXT_PUBLIC_LOCAL_MODE=true` bypasses the middleware for local development only.
+For each request it (1) reads the session cookie (`__Host-sapling_session`; `lib/sessionCookie.ts`), (2) verifies the HMAC locally via `verifySession`, (3) calls the backend `/api/auth/me` with a 3-second `AbortController` timeout, and (4) checks `is_approved`. Any failure redirects to Google sign-in or `/pending`. `NEXT_PUBLIC_LOCAL_MODE=true` bypasses the middleware for local development only.
 
 ---
 
@@ -234,8 +247,8 @@ All Gemini callers decrypt before constructing a prompt. None of `decrypt_if_pre
 | `POSTHOG_PROJECT_TOKEN`           | backend  | PostHog ingestion key (public by PostHog's design); unset = no PostHog client. |
 | `POSTHOG_PERSONAL_API_KEY` (+ `POSTHOG_PROJECT_ID`) | backend | PostHog personal key with `person:write`, used only to erase a deleted account's PostHog person. |
 | `LOGFIRE_TOKEN`                   | backend  | Logfire write token; unset = no trace egress. |
-| `CANOPY_METRICS_TOKEN`            | backend  | Bearer token for `GET /api/internal/metrics` (Canopy dashboard); unset = route 404s. |
-| `ACCOUNT_SYNC_PEER_TOKEN` / `ACCOUNT_SYNC_INBOUND_TOKEN` | backend | Cross-environment admin account copy: the token sent to the peer / the token accepted from it. The inbound token grants read and overwrite of any account's study data; unset = routes 404. |
+| `CANOPY_METRICS_TOKEN`            | backend  | Bearer token for `GET /api/internal/metrics` (Canopy dashboard); unset = route 404s; set but under 32 bytes = boot refused (`openssl rand -hex 32`). |
+| `ACCOUNT_SYNC_PEER_TOKEN` / `ACCOUNT_SYNC_INBOUND_TOKEN` | backend | Cross-environment admin account copy: the token sent to the peer / the token accepted from it. The inbound token grants read and overwrite of any account's study data; unset = routes 404; set but under 32 bytes = boot refused. It also keys an HMAC signature on every request (method, path + query, timestamp ±300 s, body hash), so a captured request cannot be replayed or re-aimed. Production refuses inbound imports (403); data reaches prod only by prod's own pull. |
 | `TYPESAFE_API_KEY`                | backend  | TypeSafe Jev decision model (`services/typesafe_client.py`), used only when the `decision_router` flag is on. |
 | `RECOST_API_KEY`                  | backend  | Optional Recost API-cost telemetry middleware (`main.py`). |
 | `REDIS_URL`                       | backend  | Optional cross-worker OCR/extraction cache; may embed a password. |
@@ -250,7 +263,7 @@ All Gemini callers decrypt before constructing a prompt. None of `decrypt_if_pre
 | `APP_ENV`                         | backend  | Defaults to `production` (strict). `local`/`development`/`dev`/`test` relax the `SESSION_SECRET` check; `/api/auth/test-login` exists only under `local`/`test`. |
 | `GOOGLE_AUTH_REDIRECT_URI` / `GOOGLE_REDIRECT_URI` | backend | Pinned OAuth callback URLs (sign-in / Calendar). |
 | `FRONTEND_URL`                    | backend  | The CORS origin and OAuth redirect target. |
-| `COOKIE_DOMAIN`, `DEPLOY_ENV`     | frontend | `.saplinglearn.com` (prod) for cross-subdomain session cookies; `DEPLOY_ENV` derives the backend origin and cookie domain. |
+| `DEPLOY_ENV`                      | frontend | Derives the backend origin (and the legacy cookie domain the session route deletes). `COOKIE_DOMAIN` is no longer used: the session cookie is host-only (§1.3). |
 | `SAPLING_FLAG_<KEY>`              | backend  | Per-process feature-flag override that beats every stored rule; the incident kill switch. |
 | `OCR_ENGINE`, `GOT_OCR_ENABLED`   | backend  | OCR backend selection. |
 

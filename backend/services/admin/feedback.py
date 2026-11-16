@@ -11,7 +11,7 @@ auth checks and maps ``services.admin.errors`` to HTTP statuses.
 from __future__ import annotations
 
 from db.connection import table
-from services.encryption import decrypt_if_present
+from services.encryption import bind, decrypt_if_present
 from services.profiles import get_display_names
 
 
@@ -23,8 +23,8 @@ def list_feedback(limit: int = 200):
     ) or []
     names = get_display_names([r["user_id"] for r in rows])
     for r in rows:
-        r["comment"] = decrypt_if_present(r.get("comment"))
-        r["topic"] = decrypt_if_present(r.get("topic"))
+        r["comment"] = decrypt_if_present(r.get("comment"), bind=bind("feedback", "comment", r))
+        r["topic"] = decrypt_if_present(r.get("topic"), bind=bind("feedback", "topic", r))
         r["user_name"] = names.get(r["user_id"], "")
     return {"feedback": rows}
 
@@ -37,7 +37,9 @@ def list_issue_reports(limit: int = 200):
     ) or []
     names = get_display_names([r["user_id"] for r in rows])
     for r in rows:
-        r["topic"] = decrypt_if_present(r.get("topic"))
-        r["description"] = decrypt_if_present(r.get("description"))
+        r["topic"] = decrypt_if_present(r.get("topic"), bind=bind("issue_reports", "topic", r))
+        r["description"] = decrypt_if_present(
+            r.get("description"), bind=bind("issue_reports", "description", r),
+        )
         r["user_name"] = names.get(r["user_id"], "")
     return {"reports": rows}

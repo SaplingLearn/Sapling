@@ -9,8 +9,13 @@ words the student then sees are in `services/crisis_support_copy.py`.
 
 What it is NOT: a model screen. It reads phrases, so it misses indirect
 language ("I just want everything to stop", "I won't be a problem much
-longer") and anything not in English. docs/safety/crisis-support.md has the
-limits and how the owner extends the lists below.
+longer"). Beyond English it knows only a few core phrases in Spanish, French,
+Portuguese and Chinese (sec2 M11; `CJK_EXPLICIT` for Chinese, which the
+normalized form drops). Leetspeak ("k1ll mys3lf") and Cyrillic/Greek
+look-alike letters are folded (`services/text_fold.py`). The tutor and note
+chat prompts carry a model-side backstop for everything this misses
+(`crisis_support_copy.MODEL_SAFETY_PROMPT`). docs/safety/crisis-support.md
+has the limits and how the owner extends the lists below.
 
 How matching works (every list below is a regex over `normalize(text)`):
 
@@ -107,6 +112,8 @@ import unicodedata
 from bisect import bisect_left
 from dataclasses import dataclass
 from typing import Iterable, Literal
+
+from services.text_fold import fold_confusables, fold_leet, strip_invisible
 
 Category = Literal["acute_danger", "suicidal_ideation", "self_harm"]
 #: Most severe first: when one text matches several categories, the first one
@@ -299,6 +306,92 @@ EXPLICIT: tuple[Phrase, ...] = (
     Phrase("self_harm", "self-harm with intent",
            rf"(?:{_INTENT}|started|start|keep|kept|been|ive been|stop|stopped|quit|relapse|relapsed"
            rf"|relapsing) (?:to )?{_SELF_HARM}|{_SELF_HARM} again"),
+
+    # ── sec2 M11: more English phrasings ──────────────────────────────────
+    # Means and a timeline: "stockpiling my meds", "tied a noose".
+    Phrase("acute_danger", "stockpiling pills",
+           rf"(?:stockpiling|stockpiled|hoarding|hoarded|saving up|saved up)"
+           rf" (?:my |the |some |all my |{_QUANT} )?{_PILLS}"),
+    Phrase("acute_danger", "noose", r"(?:tied|tie|tying|made|make|making) (?:a |the |my )?noose"),
+    # "going to end it tonight": "end it" only with a timeline (a bare "I'm
+    # going to end it" is as often a relationship), never "end it with ...".
+    Phrase("suicidal_ideation", "end it with a timeline",
+           rf"(?:{_INTENT}|just|finally|im|i am) (?:end|ending) it(?: all)?"
+           r" (?:tonight|today|tomorrow|this (?:week|weekend)|soon|for good|once and for all|now)"
+           r"(?! (?:with|between)(?![a-z0-9]))"),
+    Phrase("suicidal_ideation", "want it all to end",
+           rf"(?:{_WANT}|i just want|i wish) (?:it all|everything|my life) (?:to )?(?:end|be over)"
+           r"(?= ?(?:\||$|already|now|forever|for good))"),
+    Phrase("suicidal_ideation", "sleep and never wake up",
+           r"(?:go to sleep|fall asleep|sleep|close my eyes) and (?:never|not) wake up"
+           r"(?! (?:late|early|at|in time|before|on time|too|until|for))"),
+    # "I have been cutting again", "started cutting again", "cutting my arms".
+    Phrase("self_harm", "cutting again",
+           r"(?:i|ive|im|i am|i have|i was|i keep|i kept|i started|been|started|keep)"
+           r"(?: (?:been|still|just|started|back to|going back to))* (?:cutting|burning)"
+           r" (?:again|lately|every (?:day|night)|my (?:arms?|wrists?|legs?|thighs?|skin|stomach))"
+           r"|(?:relapsed|relapsing|back to|went back to|started) (?:and )?(?:started )?cutting"
+           r"(?= ?(?:\||$|again))"),
+
+    # ── sec2 M11: Spanish, French, Portuguese (normalized: no accents) ────
+    # Spanish
+    Phrase("suicidal_ideation", "es: quiero morir",
+           r"(?:me )?(?:quiero|quisiera|deseo) morir(?:me)?"
+           r"|(?:quiero|voy a|pienso|estoy pensando en|planeo|deseo) (?:matarme|suicidarme"
+           r"|quitarme la vida)"
+           r"|me (?:quiero|voy a) (?:matar|suicidar)"
+           r"|(?:ya )?no quiero (?:seguir )?vivir(?= ?(?:\||$|mas|asi|ya))"
+           r"|no quiero seguir viviendo"
+           r"|(?:tengo pensamientos|me siento) suicidas?"),
+    Phrase("self_harm", "es: me corto",
+           r"me (?:estoy cortando|corto|volvi a cortar|he cortado|corte)"
+           r"(?= ?(?:\||$|otra vez|de nuevo|los brazos|las munecas|las piernas|la piel|el brazo"
+           r"|la muneca))"
+           r"|(?:quiero|voy a|necesito) (?:cortarme|hacerme dano|lastimarme|autolesionarme)"
+           r"(?! (?:el|la|las|los|un|una) )"
+           r"|me (?:hago|estoy haciendo) dano(?= ?(?:\||$|a proposito|otra vez|de nuevo))"
+           r"|me (?:autolesiono|estoy autolesionando)"),
+    # French
+    Phrase("suicidal_ideation", "fr: je veux mourir",
+           # "je vais mourir" is as often "this exam will kill me"; only a wish
+           r"je (?:veux|voudrais) mourir|je (?:veux|voudrais|vais) (?:me tuer|me suicider)"
+           r"|jai envie de (?:mourir|me tuer|me suicider)"
+           r"|je pense a (?:me tuer|me suicider|mourir)"
+           r"|je veux en finir(?= ?(?:\||$|avec la vie|avec ma vie|avec tout))"
+           r"|je ne veux plus vivre|jai plus envie de vivre|je nai plus envie de vivre"
+           r"|jai des idees suicidaires"),
+    Phrase("self_harm", "fr: je me scarifie",
+           r"je me (?:scarifie|mutile|fais du mal)"
+           r"|je me coupe(?= ?(?:\||$|encore|souvent|a nouveau|les bras|les poignets|les veines))"
+           r"|je (?:veux|vais) me (?:scarifier|mutiler|faire du mal)"),
+    # Portuguese
+    Phrase("suicidal_ideation", "pt: quero morrer",
+           r"(?:eu )?(?:quero|queria) morrer"
+           r"|(?:vou|quero|penso em|estou pensando em) (?:me matar|me suicidar|tirar (?:a )?minha"
+           r" (?:propria )?vida)"
+           r"|nao (?:quero|aguento) mais viver"
+           r"|(?:quero|vou) acabar com (?:a )?minha vida"),
+    Phrase("self_harm", "pt: me cortando",
+           r"(?:estou|to|tou|eu) me cortando"
+           r"|me cortei (?:de novo|outra vez|ontem|hoje)"
+           r"|(?:quero|vou) me (?:cortar|machucar)(?= ?(?:\||$|de novo|outra vez|de proposito))"
+           r"|(?:me )?automutil(?:o|ando|ar)"),
+)
+
+#: Chinese phrases, matched on the NFKC text (the normalized form drops CJK).
+#: Each needs a first-person or explicit frame: "活不下去" alone is also what
+#: a plant does without water, "伤害自己" alone is "don't hurt yourself".
+CJK_EXPLICIT: tuple[Phrase, ...] = (
+    Phrase("suicidal_ideation", "zh: 想死",
+           r"我(?:真的|好|很|就是|只)?(?:想|要)(?:去)?死(?!你|您|他|她|我了|了你)"
+           r"|(?:想|要|打算|准备|準備|计划|計劃)自(?:杀|殺)"
+           r"|不想活(?:了|下去)"
+           r"|我(?:真的|快|实在|實在|已经|已經)?活不下去"
+           r"|我(?:想|要|打算|准备|準備)结束(?:我的|自己的)?生命"
+           r"|我(?:想|要|打算|准备|準備)結束(?:我的|自己的)?生命"),
+    Phrase("self_harm", "zh: 伤害自己",
+           r"我(?:想|要|又|在|会|會|一直|总是|總是|经常|經常)(?:伤害|傷害|割)自己"
+           r"|我(?:又|在|一直|有时|有時|经常|經常)?(?:自残|自殘|割腕)"),
 )
 
 #: MENTION words: matched only when the same sentence speaks in the first
@@ -505,6 +598,21 @@ GUARDS: tuple[str, ...] = (
     rf"(?:assisted|physician assisted|doctor assisted|medically assisted|altruistic|egoistic|egotistic"
     rf"|anomic|fatalistic|ritual|ritualistic|cellular|cell|mass|copycat|political|protest) {_SUICIDE}",
     r"self ?(?:harm|injury) (?:rates?|statistics|stats|data|research|studies|study|literature|prevalence)",
+    # sec2 M11: the other languages' negations and idioms ("no quiero morir",
+    # "me muero de risa", "je vais me tuer à la tâche", "morrer de rir").
+    r"no (?:me )?(?:quiero|quisiera|deseo) morir(?:me)?",
+    r"no (?:quiero|voy a|pienso|planeo) (?:matarme|suicidarme|quitarme la vida|cortarme|hacerme dano"
+    r"|lastimarme|autolesionarme)",
+    r"no me (?:quiero|voy a) (?:matar|suicidar)",
+    r"morir(?:me)? de (?:risa|verguenza|hambre|sueno|calor|frio|aburrimiento|envidia|ganas|amor|pena"
+    r"|miedo|celos)",
+    r"(?:matarme|matar) (?:estudiando|trabajando|a estudiar|de risa)",
+    r"mourir de (?:rire|faim|froid|honte|ennui|peur|chaud|envie)",
+    r"me tuer (?:a la tache|au travail|a reviser|a travailler)",
+    r"nao (?:quero|queria) morrer",
+    r"nao (?:vou|quero|penso em) (?:me matar|me suicidar|me cortar|me machucar)",
+    r"morrer de (?:rir|vergonha|fome|sono|medo|tedio|calor|frio|saudade|inveja)",
+    r"me matar de (?:estudar|rir|trabalhar)",
 )
 
 #: TOPIC_GUARDS: naming one of these anywhere in a text vetoes its MENTION
@@ -558,7 +666,10 @@ class _Forms:
 
 
 def _forms(text: str) -> _Forms:
-    folded = unicodedata.normalize("NFKD", text[:MAX_SCREEN_CHARS]).casefold()
+    # sec2 M11: Cyrillic/Greek look-alikes and invisible characters out first
+    # (services/text_fold.py, shared with the share screen).
+    text = fold_confusables(strip_invisible(text[:MAX_SCREEN_CHARS]))
+    folded = unicodedata.normalize("NFKD", text).casefold()
     folded = "".join(ch for ch in folded if not unicodedata.combining(ch))
     folded = _INVISIBLE.sub("", folded)
     folded = _APOSTROPHES.sub("", folded)
@@ -596,6 +707,9 @@ _GUARDS = tuple(_bounded(g) for g in GUARDS)
 _NEGATION_GUARDS = tuple(_bounded(g) for g in NEGATION_GUARDS)
 _TOPIC_GUARDS = tuple(_bounded(g) for g in TOPIC_GUARDS)
 _FIRST_PERSON = _bounded(FIRST_PERSON)
+_CJK = tuple((p, re.compile(p.pattern)) for p in sorted(
+    CJK_EXPLICIT, key=lambda p: CATEGORIES.index(p.category)))
+_HAS_CJK = re.compile("[㐀-鿿豈-﫿]")
 
 
 def _guarded(span: tuple[int, int], guards: list[tuple[int, int]]) -> bool:
@@ -604,13 +718,39 @@ def _guarded(span: tuple[int, int], guards: list[tuple[int, int]]) -> bool:
 
 
 def detect(text: str | None) -> CrisisMatch | None:
-    """The most severe crisis phrase in `text`, or None. Never raises on str."""
+    """The most severe crisis phrase in `text`, or None. Never raises on str.
+
+    Read as written first; then, only if nothing matched and the text has
+    leetspeak in it ("k1ll mys3lf"), once more with that folded
+    (`text_fold.fold_leet`, which leaves "988" and "2 + 2" alone). Reading
+    the plain text first keeps every answer the plain text had.
+    """
     if not text or not text.strip():
         return None
+    found = _detect(text)
+    if found is None:
+        folded = fold_leet(text[:MAX_SCREEN_CHARS])
+        if folded != text[:MAX_SCREEN_CHARS]:
+            found = _detect(folded)
+    return found
+
+
+def _cjk(text: str) -> CrisisMatch | None:
+    """`CJK_EXPLICIT` over the NFKC text (the normalized form has no CJK)."""
+    if not _HAS_CJK.search(text):
+        return None
+    raw = unicodedata.normalize("NFKC", strip_invisible(text[:MAX_SCREEN_CHARS])).casefold()
+    for phrase, regex in _CJK:
+        if regex.search(raw):
+            return CrisisMatch(phrase.category, "explicit", phrase.label)
+    return None
+
+
+def _detect(text: str) -> CrisisMatch | None:
     forms = _forms(text)
     norm = forms.text
     if not norm:
-        return None
+        return _cjk(text)
     guards: list[tuple[int, int]] | None = None  # read only once something matched
 
     def guarded(span: tuple[int, int]) -> bool:
@@ -628,6 +768,8 @@ def detect(text: str | None) -> CrisisMatch | None:
         for m in regex.finditer(norm):
             if not guarded(m.span()):
                 return CrisisMatch(phrase.category, "explicit", phrase.label)
+    if (cjk := _cjk(text)) is not None:
+        return cjk
     topic = None  # likewise: a TOPIC_GUARD is read only for a candidate mention
     for phrase, regex in _MENTIONS:
         for m in regex.finditer(norm):

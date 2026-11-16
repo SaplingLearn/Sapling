@@ -21,7 +21,7 @@ from services import email_service
 from services.admin.errors import Conflict, NotFound
 from services.admin_audit import log_admin_action
 from services.auth_guard import clear_account_state_cache
-from services.encryption import decrypt_if_present
+from services.encryption import bind, decrypt_if_present
 from services.open_access import gate_open, is_school_email, open_access_user_ids
 
 logger = logging.getLogger(__name__)
@@ -172,9 +172,9 @@ def _approve_waitlist(
             spellings.extend(r["email"] for r in existing)
             linked.extend(existing)
             if not any(r.get("joined_user_id") in open_ids for r in existing):
-                recipients.append(
-                    (existing[0]["email"], decrypt_if_present(existing[0].get("first_name"))),
-                )
+                recipients.append((existing[0]["email"], decrypt_if_present(
+                    existing[0].get("first_name"),
+                    bind=bind("newsletter_emails", "first_name", existing[0]))))
         else:
             missing.append(email)
             spellings.append(email)

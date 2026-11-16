@@ -22,7 +22,7 @@ from fastapi.testclient import TestClient
 from agents.quiz import Quiz, QuizQuestion
 from main import app
 from routes.quiz import CourseMaterial
-from services.encryption import decrypt_json_column, encrypt_json
+from services.encryption import bind, decrypt_json_column, encrypt_json
 from services.quiz.identity import question_hash
 from services.quiz.reserve import missed_question_hashes, recover_questions
 from tests.db_fakes import with_async_twins
@@ -165,7 +165,7 @@ def _generate(
 
 
 def _stored_questions(row):
-    return decrypt_json_column(row["questions_json"])
+    return decrypt_json_column(row["questions_json"], bind=bind("quiz_attempts", "questions_json", row))
 
 
 # ── services/quiz_reserve.py ────────────────────────────────────────────────

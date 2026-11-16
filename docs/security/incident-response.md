@@ -185,7 +185,7 @@ shutdown in 3.6.
 | `RESEND_API_KEY` unset | No email is sent; each send is recorded as `skipped`. | **[code: backend/services/email_service.py; backend/.env.example]** |
 | `POSTHOG_PROJECT_TOKEN` unset | No PostHog client is built at boot. Account-deletion erasure in PostHog runs off `POSTHOG_PERSONAL_API_KEY` independently. | **[doc: backend/.env.example; CLAUDE.md]** |
 | `CANOPY_METRICS_TOKEN` unset | `GET /api/internal/metrics` answers 404. | **[code: backend/config.py::canopy_metrics_token]** |
-| `ACCOUNT_SYNC_INBOUND_TOKEN` unset | `/api/internal/account-sync/*` answers 404 (stops cross-env account copy into this env). | **[code: backend/config.py; backend/.env.example]** |
+| `ACCOUNT_SYNC_INBOUND_TOKEN` unset | `/api/internal/account-sync/*` answers 404 (stops cross-env account copy into this env). Production's `/import` answers 403 even with the token set: nothing is ever pushed into prod. | **[code: backend/config.py; backend/routes/internal_account_sync.py; backend/.env.example]** |
 | `SAPLING_FLAG_OPEN_ACCESS=off` | Forces the waitlist on: no one new gets in without an admin's approval, and everyone who came in through open access loses access within about 35 s. Wins over the flag's stored setting (Admin → Allowlist), so it works while the flag store is down; an unreadable store reads as off anyway. There is no email-domain restriction (`ALLOWED_EMAIL_DOMAINS` was removed). To refuse even approved new sign-ins, revoke them on the Allowlist. | **[code: backend/services/open_access.py, backend/services/feature_flags.py; docs/design/open-access-gate.md]** |
 
 ### 3.4 Approval gate
@@ -216,8 +216,9 @@ frontend/src/lib/sessionToken.ts]**:
 - A session token is `base64url(payload).base64url(HMAC-SHA256(SESSION_SECRET, payload))`,
   payload `{"user_id", "exp", "typ"}`. Stateless: there is no session table
   and no server-side revocation list.
-- The frontend session route signs the `sapling_session` cookie with the same
-  `SESSION_SECRET` (a Cloudflare Worker secret) and a 30-day expiry; the
+- The frontend session route signs the session cookie (host-only
+  `__Host-sapling_session`) with the same `SESSION_SECRET` (a Cloudflare
+  Worker secret) and a 7-day lifetime; the
   backend verifies the HMAC, the expiry and the `typ`, then the account state.
 - The backend also accepts the token from the `auth_token` query parameter
   **[code: backend/services/auth_guard.py::presented_session_token]**.
@@ -309,8 +310,8 @@ environment has its own value. Env var names are exact
 | `POSTHOG_PROJECT_TOKEN` / `NEXT_PUBLIC_POSTHOG_KEY` | Railway; Cloudflare build variable | Public ingestion key: lets someone inject junk events, not read data. | Rotate in PostHog project settings if abused. **[guidance]** |
 | `POSTHOG_PERSONAL_API_KEY` (with `POSTHOG_PROJECT_ID`) | Railway `backend` | Personal key with `person:write`: delete or alter PostHog persons, read analytics within its scopes. | PostHog → personal API keys: roll, deploy, delete old. **[guidance]** |
 | `LOGFIRE_TOKEN` | Railway `backend` (+ worker) | Write-only token: inject spans into our Logfire project; no read. | Logfire → project → Settings → Write tokens: create, deploy, revoke old. **[doc: backend/.env.example]** |
-| `CANOPY_METRICS_TOKEN` | Railway `backend`; the same value is Canopy's `SAPLING_METRICS_TOKEN` Worker secret | Read aggregate usage counts (no per-student data). | Generate (`openssl rand -hex 32`), set on both sides. Read at call time, so no code change. **[code: backend/config.py::canopy_metrics_token]** |
-| `ACCOUNT_SYNC_INBOUND_TOKEN` / `ACCOUNT_SYNC_PEER_TOKEN` | Railway (staging inbound, prod peer, per the recommended setup) | The inbound token grants read and overwrite of any account's study data on the env that accepts it. | New long random value on both envs; unsetting the inbound token 404s the routes. **[doc: backend/.env.example]** |
+| `CANOPY_METRICS_TOKEN` | Railway `backend`; the same value is Canopy's `SAPLING_METRICS_TOKEN` Worker secret | Read aggregate usage counts (no per-student data). | Generate (`openssl rand -hex 32`), set on both sides. Read at call time, so no code change. A set value under 32 bytes refuses boot. **[code: backend/config.py::canopy_metrics_token]** |
+| `ACCOUNT_SYNC_INBOUND_TOKEN` / `ACCOUNT_SYNC_PEER_TOKEN` | Railway (staging inbound, prod peer, per the recommended setup) | The inbound token grants read and overwrite of any account's study data on the env that accepts it (never prod's: prod refuses inbound imports). It also keys each request's HMAC signature, so a captured request cannot be replayed after ±300 s or re-aimed at another account. | New value (`openssl rand -hex 32`; under 32 bytes refuses boot) on both envs at once, since the token is also the signing key; unsetting the inbound token 404s the routes. **[code: backend/config.py; backend/services/account_sync_client.py; doc: backend/.env.example]** |
 | `TYPESAFE_API_KEY` | Railway `backend` (only if `decision_router` is used) | Spend on our TypeSafe account. | Rotate in TypeSafe; or set `decision_router` off. **[code: backend/services/typesafe_client.py]** |
 | `RECOST_API_KEY` | Railway `backend` (optional) | Write cost telemetry to our Recost project. | Rotate in Recost. **[code: backend/main.py]** |
 | `REDIS_URL` (may embed a password) | Railway (only if Redis is used) | Read/poison the OCR/extraction cache (document text). | Rotate the Redis password. **[code: backend/services/cache.py; guidance]** |

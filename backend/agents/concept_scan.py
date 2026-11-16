@@ -22,6 +22,7 @@ from pydantic_ai import Agent
 
 from agents._bounded import clip_list
 from agents._providers import model_for
+from services.prompt_safety import INJECTION_GUARD_PROMPT
 from agents.deps import SaplingDeps
 
 
@@ -51,7 +52,10 @@ _SYSTEM_PROMPT = (
     "Regression', 'Big-O Analysis').\n"
     "- Do NOT repeat or paraphrase any existing concept.\n"
     "- No assignment titles, week labels, page numbers, problem numbers, "
-    "or administrative items."
+    "or administrative items.\n\n"
+    # M10 audit: the existing concepts and the document block are
+    # student-derived and arrive inside the untrusted envelope.
+    + INJECTION_GUARD_PROMPT
 )
 _PROMPT_HASH = hashlib.sha256(_SYSTEM_PROMPT.encode("utf-8")).hexdigest()[:12]
 

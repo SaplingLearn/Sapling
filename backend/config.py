@@ -88,7 +88,7 @@ AUTH_SCOPES = [
 # frontend keeps the same two values in frontend/src/lib/legal/versions.ts, and
 # tests/test_legal_versions.py fails when they differ: bump both together.
 TERMS_VERSION = "2026-10-22"
-PRIVACY_VERSION = "2026-11-03"
+PRIVACY_VERSION = "2026-11-16"
 
 
 # Transactional + broadcast email over Resend (services/email_service.py).
@@ -188,8 +188,44 @@ def validate_config() -> None:
             + f". (APP_ENV={APP_ENV!r}; set APP_ENV=local to relax SESSION_SECRET and ANTHROPIC_API_KEY for local dev.)"
         )
     _refuse_local_mode_on_a_real_deployment()
+    _refuse_test_model_mode_on_a_real_deployment()
     _refuse_committed_demo_secrets()
+    _refuse_weak_internal_tokens()
     _warn_db_user_scope_config()
+
+
+# The optional server-to-server bearer tokens. Each is the WHOLE gate of its
+# route (ACCOUNT_SYNC_INBOUND_TOKEN alone admits plaintext export and overwrite
+# of any account), so a set value must be long enough to be unguessable.
+# Unset stays fine: it means the feature is off (routes 404).
+MIN_INTERNAL_TOKEN_BYTES = 32
+
+
+def _internal_tokens() -> dict[str, str]:
+    return {
+        "CANOPY_METRICS_TOKEN": canopy_metrics_token(),
+        "ACCOUNT_SYNC_INBOUND_TOKEN": account_sync_inbound_token(),
+        "ACCOUNT_SYNC_PEER_TOKEN": account_sync_peer_token(),
+    }
+
+
+def _refuse_weak_internal_tokens() -> None:
+    """Refuse to boot when an internal bearer token is set (non-blank after
+    strip) but shorter than MIN_INTERNAL_TOKEN_BYTES utf-8 bytes. Every
+    environment, local included: a token is a deliberate opt-in. Names the
+    variable, never the value."""
+    weak = [
+        name for name, value in _internal_tokens().items()
+        if value and len(value.encode("utf-8")) < MIN_INTERNAL_TOKEN_BYTES
+    ]
+    if weak:
+        raise RuntimeError(
+            "Refusing to start: " + ", ".join(weak)
+            + (" is" if len(weak) == 1 else " are")
+            + f" set but shorter than {MIN_INTERNAL_TOKEN_BYTES} bytes. Generate one with "
+            "`openssl rand -hex 32`, or unset it to turn the route off; "
+            "see backend/.env.example."
+        )
 
 
 # The secrets committed to the repo for local dev and CI. Anyone can read them,
@@ -267,6 +303,27 @@ def _refuse_local_mode_on_a_real_deployment() -> None:
             "SESSION_SECRET), but this process looks like a real deployment ("
             + "; ".join(reasons)
             + "). Set APP_ENV=production or APP_ENV=staging on deployed services."
+        )
+
+
+def _refuse_test_model_mode_on_a_real_deployment() -> None:
+    """SAPLING_MODEL_MODE other than `real` is the test seam (#391): `function`
+    answers every student with fixed E2E constants, and turns off RAG
+    embeddings, the index sweeper and PostHog. On a deployed host that is
+    silent fake tutoring, so a process that looks deployed refuses it,
+    whatever APP_ENV says. Read the way agents/_providers.py reads it (unset or
+    blank is `real`), without importing the agents package here."""
+    mode = (os.getenv("SAPLING_MODEL_MODE") or "real").strip().lower()
+    if mode == "real":
+        return
+    reasons = real_deployment_markers()
+    if reasons:
+        raise RuntimeError(
+            f"Refusing to start: SAPLING_MODEL_MODE={mode!r} is the test seam (fixed "
+            "model answers, embeddings and analytics off) and is only for CI and the "
+            "local E2E stack, but this process looks like a real deployment ("
+            + "; ".join(reasons)
+            + "). Unset SAPLING_MODEL_MODE (or set it to 'real') on deployed services."
         )
 
 
@@ -380,9 +437,11 @@ def canopy_metrics_token() -> str:
 
     Canopy (the team dashboard) polls that route hourly with
     `Authorization: Bearer <this value>`; the same value is Canopy's
-    `SAPLING_METRICS_TOKEN` Worker secret. Optional and deliberately absent from
-    `validate_config`: unset, empty or whitespace-only means the route answers a
-    plain 404, as if it did not exist. Generate with `openssl rand -hex 32`.
+    `SAPLING_METRICS_TOKEN` Worker secret. Optional: unset, empty or
+    whitespace-only means the route answers a plain 404, as if it did not
+    exist. A SET value shorter than 32 bytes refuses boot
+    (`validate_config` → `_refuse_weak_internal_tokens`). Generate with
+    `openssl rand -hex 32`.
 
     Stripped, because a value pasted into a host's dashboard with a trailing
     newline would otherwise never match anything and fail as a silent 401.
@@ -395,9 +454,10 @@ def canopy_metrics_token() -> str:
 
 # ── Cross-environment account copy (admin account tools) ────────────────────
 #
-# OPTIONAL and deliberately absent from `validate_config`: with any of these
-# unset the copy feature is inert (the admin route answers 503, the internal
-# `/api/internal/account-sync/*` routes answer 404). Read at call time and
+# OPTIONAL: with any of these unset the copy feature is inert (the admin route
+# answers 503, the internal `/api/internal/account-sync/*` routes answer 404).
+# A SET token shorter than 32 bytes refuses boot (`validate_config` →
+# `_refuse_weak_internal_tokens`; `openssl rand -hex 32`). Read at call time and
 # stripped, like `canopy_metrics_token`, so a rotation needs no code change and
 # a pasted trailing newline cannot fail as a silent 401.
 

@@ -14,7 +14,7 @@ import re
 import secrets
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field, ValidationError
 
@@ -31,6 +31,7 @@ from config import (
     SECURE_COOKIES,
     APP_ENV,
 )
+from db.scope import service_route
 from services import events_service
 from services.auth import (
     AccountDeleted,
@@ -43,7 +44,8 @@ from services.auth import (
     welcome_and_achievements_after_sign_in,
 )
 from services.auth_guard import clear_account_state_cache, get_session_user_id, guard_off_loop
-from services.session_tokens import SESSION_COOKIE_NAME, TOKEN_TYPE_HANDOFF, mint_session
+from services.auth.handoff import clean_binding, mint_handoff, mint_test_handoff, signin_cookie_name
+from services.session_tokens import mint_session, session_cookie_name
 # Re-exports (#118): moved names routes/calendar.py, routes/admin.py, scripts
 # and tests still import from here.
 from services.auth.accounts import _mark_welcomed, _stamp_last_sign_in_for_test, _welcome_due  # noqa: F401
@@ -77,6 +79,11 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# #115: user-scoped except `_SVC` endpoints (pre-session OAuth, /pending/*,
+# /test-login; /logout writes users, SELECT-only for students). /me,
+# /local-seed and /realtime-token read only the caller's rows + catalog.
+_SVC = [Depends(service_route)]
+
 # Local-dev auto-approve fires ONLY for real local dev, NOT APP_ENV=test (which must
 # keep the #285 approval gate). So gate on APP_ENV=="local", not the broader IS_LOCAL.
 _LOCAL_AUTO_APPROVE = APP_ENV == "local"
@@ -96,17 +103,13 @@ def get_me(request: Request):
         raise HTTPException(status_code=401, detail="Not authenticated")
 
 
-@router.post("/logout")
+@router.post("/logout", dependencies=_SVC)
 def logout(request: Request):
-    """Sign out everywhere: revoke every session this account was issued up
-    to now (`users.sessions_valid_after`), so a copied cookie stops working at
-    once instead of living until its `exp`.
-
-    Authenticated by the session it revokes (an unapproved account may sign
-    out too). The frontend session BFF (DELETE /api/auth/session) calls this
-    with the browser's cookie before clearing it. 401 when the session is
-    already invalid: there is nothing left to revoke.
-    """
+    """Sign out everywhere: revoke every session issued up to now
+    (`users.sessions_valid_after`), so a copied cookie stops working at once.
+    Authenticated by the session it revokes (unapproved accounts too); the
+    session BFF (DELETE /api/auth/session) calls it before clearing the
+    cookie. 401 when the session is already invalid."""
     user_id = get_session_user_id(request, allow_unapproved=True)
     try:
         revoke_sessions(user_id)
@@ -117,8 +120,8 @@ def logout(request: Request):
     return JSONResponse({"ok": True}, headers={"Cache-Control": "no-store"})
 
 
-@router.get("/google")
-def google_login(popup_id: str = Query(None), return_to: str = Query(None)):
+@router.get("/google", dependencies=_SVC)
+def google_login(popup_id: str = Query(None), return_to: str = Query(None), binding: str = Query(None)):
     """Redirect to Google's consent screen for the identity scopes.
 
     ``include_granted_scopes`` makes the grant (and its tokens) also cover the
@@ -133,6 +136,7 @@ def google_login(popup_id: str = Query(None), return_to: str = Query(None)):
     # Kept in the signed state cookie, never re-read from the callback query: the
     # callback trusts only what /google validated and signed.
     clean_return_to = _clean_return_to(return_to)
+    clean_bind = clean_binding(binding)  # sec2 M2: sha256 of /auth/start's nonce cookie
 
     flow = Flow.from_client_config(_google_client_config(), scopes=AUTH_SCOPES)
     flow.redirect_uri = GOOGLE_AUTH_REDIRECT_URI
@@ -150,6 +154,7 @@ def google_login(popup_id: str = Query(None), return_to: str = Query(None)):
         "cv": code_verifier,
         "popup_id": clean_popup,
         **({"rt": clean_return_to} if clean_return_to else {}),
+        **({"bh": clean_bind} if clean_bind else {}),
     })
     response = RedirectResponse(auth_url)
     response.set_cookie(
@@ -170,7 +175,7 @@ SIGNIN_CANCELLED = "cancelled"
 _GOOGLE_ERROR_RE = re.compile(r"^[a-z_]{1,64}$")
 
 
-@router.get("/google/callback")
+@router.get("/google/callback", dependencies=_SVC)
 def google_callback(
     request: Request,
     background_tasks: BackgroundTasks,
@@ -188,6 +193,7 @@ def google_callback(
     code_verifier = cookie_payload.get("cv") if cookie_payload else None
     popup_id = _clean_popup_id(cookie_payload.get("popup_id")) if cookie_payload else None
     cookie_nonce = cookie_payload.get("n") if cookie_payload else None
+    signin_binding = clean_binding(cookie_payload.get("bh")) if cookie_payload else None
     # Re-checked here as well as at /google, so the token only ever leaves for an
     # origin the CURRENT config allows; anything else lands on FRONTEND_URL.
     frontend_url = (
@@ -307,16 +313,16 @@ def google_callback(
     #
     # Uses the shared minter (#381) with `typ=handoff` (#756): the API refuses a
     # handoff token as a credential, and the BFF exchanges nothing else, so a
-    # live session can no longer be re-minted into a fresh one. The `if
-    # SESSION_SECRET` guard is kept (and the secret passed explicitly) so this
-    # path still degrades to "no auth_token in the redirect" rather than raising.
+    # live session can no longer be re-minted into a fresh one. sec2 M2: plus a
+    # single-use `jti` and the browser binding `bh` (routes/auth_handoff.py).
+    # The `if SESSION_SECRET` guard keeps a missing secret a missing token.
     auth_token = ""
     if SESSION_SECRET:
-        auth_token = mint_session(
+        auth_token = mint_handoff(
             user_id,
             ttl=_REDIRECT_TOKEN_TTL_SECONDS,
             secret=SESSION_SECRET,
-            typ=TOKEN_TYPE_HANDOFF,
+            binding=signin_binding,
         )
 
     # #117: auth.login fires at the two real session-mint sites (here and
@@ -356,14 +362,14 @@ def _pending_claims(token: str) -> dict:
     return claims
 
 
-@router.post("/pending/status")
+@router.post("/pending/status", dependencies=_SVC)
 def pending_status(body: PendingTokenBody):
     """Where an unapproved sign-in's email stands on the waitlist (/pending)."""
     email = _pending_claims(body.token)["email"]
     return _pending_standing(email, _waitlist_entry(email))
 
 
-@router.post("/pending/join")
+@router.post("/pending/join", dependencies=_SVC)
 def pending_join(body: PendingTokenBody):
     """Put an unapproved sign-in's email on the waitlist. Idempotent."""
     claims = _pending_claims(body.token)
@@ -389,7 +395,7 @@ class MintTestSessionBody(BaseModel):
     )
 
 
-@router.post("/test-login", include_in_schema=False)
+@router.post("/test-login", include_in_schema=False, dependencies=_SVC)
 async def mint_test_session(request: Request):
     """Mint a `sapling_session` cookie for a seeded user. LOCAL/TEST ONLY (#381).
 
@@ -418,7 +424,8 @@ async def mint_test_session(request: Request):
     global-setup step can inject it with `context.addCookies()` instead of
     replaying the response. `handoff_token` is the same user's OAuth-redirect
     token (`typ=handoff`, #756), for a journey that drives /auth/callback the
-    way a real sign-in does: the session BFF exchanges only that type.
+    way a real sign-in does (sec2 M2: its browser holds `signin_nonce` as the
+    `signin_cookie_name` cookie). `cookie_name`: `__Host-` iff SECURE_COOKIES.
     """
     # The gate runs FIRST, before the body is even looked at. The body is parsed
     # and validated by hand rather than declared as a `MintTestSessionBody`
@@ -451,8 +458,8 @@ async def mint_test_session(request: Request):
     if not user_id:
         raise HTTPException(status_code=422, detail="user_id must not be blank")
 
-    secret = (getattr(config, "SESSION_SECRET", "") or "").strip()
-    if not secret:
+    secret = getattr(config, "SESSION_SECRET", "") or ""  # raw: verifiers use it unstripped
+    if not secret.strip():
         # config.validate_config() relaxes the SESSION_SECRET requirement for
         # IS_LOCAL, so local dev can legitimately have none. Fail loudly instead
         # of handing back a token _decode_session would reject anyway.
@@ -464,9 +471,8 @@ async def mint_test_session(request: Request):
     requested = TEST_LOGIN_DEFAULT_TTL_SECONDS if body.ttl is None else body.ttl
     ttl = max(30, min(int(requested), TEST_LOGIN_MAX_TTL_SECONDS))
     token = mint_session(user_id, ttl=ttl, secret=secret)
-    handoff_token = mint_session(
-        user_id, ttl=_REDIRECT_TOKEN_TTL_SECONDS, secret=secret, typ=TOKEN_TYPE_HANDOFF
-    )
+    handoff_token, signin_nonce = mint_test_handoff(user_id, ttl=_REDIRECT_TOKEN_TTL_SECONDS, secret=secret)
+    secure = bool(getattr(config, "SECURE_COOKIES", False))
 
     logger.warning("test-login: minted a session for %r (APP_ENV=%s)", user_id, config.APP_ENV)
 
@@ -482,19 +488,21 @@ async def mint_test_session(request: Request):
     response = JSONResponse({
         "ok": True,
         "user_id": user_id,
-        "cookie_name": SESSION_COOKIE_NAME,
+        "cookie_name": session_cookie_name(secure),
         "token": token,
         "handoff_token": handoff_token,
+        "signin_nonce": signin_nonce,
+        "signin_cookie_name": signin_cookie_name(secure),
         "expires_in": ttl,
     })
     # Same attributes the real session cookie carries (frontend BFF
     # /api/auth/session and the OAuth-state cookie above).
     response.set_cookie(
-        key=SESSION_COOKIE_NAME,
+        key=session_cookie_name(secure),
         value=token,
         max_age=ttl,
         httponly=True,
-        secure=bool(getattr(config, "SECURE_COOKIES", False)),
+        secure=secure,
         samesite="lax",
         path="/",
     )

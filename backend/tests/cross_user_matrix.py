@@ -427,7 +427,7 @@ BODY_OVERRIDES: dict[tuple[str, str], dict[str, Any]] = {
         "learning_style": "visual", "majors": ["Biology"], "course_ids": [COURSE_SHARED],
         # Any string passes request validation; B is refused at require_self
         # before the versions are compared (services/legal.py).
-        "accepted_terms_version": "2026-10-22", "accepted_privacy_version": "2026-11-03",
+        "accepted_terms_version": "2026-10-22", "accepted_privacy_version": "2026-11-16",
     },
     ("POST", "/api/calendar/save"): {"assignments": []},
     # Admin bodies: valid enough that B reaches require_admin, never more.

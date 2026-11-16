@@ -48,6 +48,7 @@ load_dotenv(BASE / ".env")
 sys.path.insert(0, str(BASE))
 
 from db.connection import REST_URL, page_all, pg_quote_value, table  # noqa: E402
+from services.encryption_canary import abort_unless_key_verified  # noqa: E402
 from services.academics import offering_course_id  # noqa: E402
 from services.chunk_visibility import (  # noqa: E402
     PRIVATE,
@@ -56,7 +57,7 @@ from services.chunk_visibility import (  # noqa: E402
     withdraw_document_chunks,
 )
 from services.chunker import chunk_document, chunk_prose  # noqa: E402
-from services.encryption import decrypt  # noqa: E402
+from services.encryption import bind, decrypt  # noqa: E402
 from services.rag_service import chunk_id  # noqa: E402
 
 #: Ids per `in.(…)` filter — see chunk_visibility._ID_BATCH.
@@ -110,7 +111,7 @@ def _located(doc: dict, cache: dict) -> list[str]:
     if not stored or not code:
         return []
     try:
-        text = decrypt(stored)
+        text = decrypt(stored, bind=bind("documents", "extracted_text", doc))
     except Exception:
         print(f"  {doc['id'][:8]} extracted_text does not decrypt under this key — skipped")
         return []
@@ -133,6 +134,10 @@ def main(argv: list[str] | None = None) -> dict:
 
     print(f"Project: {urlparse(REST_URL).hostname}")
     cache: dict = {}
+    if not args.dry_run:
+        # It re-chunks DECRYPTED extracted_text to locate rows; under the
+        # wrong key every lookup misses and withdrawals go wrong.
+        abort_unless_key_verified("scripts.backfill_course_chunk_sources")
     summary = {"live_docs": 0, "live_sources": 0, "deleted_docs": 0,
                "deleted_sources": 0, "chunks_deleted": 0, "contributors_removed": 0,
                "to_private": 0, "withdraw_failed": 0}

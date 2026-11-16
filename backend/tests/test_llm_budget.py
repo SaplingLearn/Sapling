@@ -49,7 +49,7 @@ def _fresh(monkeypatch):
 def status(monkeypatch):
     """Script `read_status`: set `.value` (a BudgetStatus, or an exception to
     raise); `.calls` counts reads."""
-    box = SimpleNamespace(value=BudgetStatus(limit=1000, used=0, source="default", reset_at=RESET),
+    box = SimpleNamespace(value=BudgetStatus(limit=10**6, used=0, source="default", reset_at=RESET),
                           calls=[], timeouts=[])
 
     def fake(user_id, *, timeout=None):
@@ -607,3 +607,103 @@ def test_the_builtin_default_matches_the_sql_fallback():
     sql = (Path(__file__).resolve().parents[1] / "db" / "migrations"
            / "20261108213311_llm_budgets_and_cost_signal.sql").read_text()
     assert f"SELECT {admin_llm.BUILTIN_DEFAULT_TOKENS}::bigint, 'default:builtin'" in sql
+
+
+# ── race safety (sec2 M4) ────────────────────────────────────────────────
+
+
+def _run_parallel(n: int, fn) -> list[BaseException | object]:
+    """n concurrent units of work (n requests), each one agent run."""
+    async def one():
+        with session_user():
+            return await Agent(_ResilientFn(fn)).run("hi")
+
+    async def all_of():
+        return await asyncio.gather(*(one() for _ in range(n)), return_exceptions=True)
+
+    return asyncio.run(all_of())
+
+
+def test_parallel_first_requests_cannot_all_pass_on_one_cached_status(status):
+    # Three runs' worth of budget left; twenty requests at once.
+    status.value = BudgetStatus(limit=3 * llm_budget.RESERVE_TOKENS_PER_RUN, used=0,
+                                source="default", reset_at=RESET)
+    fn, calls = _counting()
+    results = _run_parallel(20, fn)
+    refused = [r for r in results if isinstance(r, LLMBudgetExceeded)]
+    assert calls["n"] == 3
+    assert len(refused) == 17
+    assert len(status.calls) <= 20  # reads may overlap; admission is what is serialized
+
+
+def test_reservations_age_out_once_a_later_read_covers_them(status, monkeypatch):
+    status.value = BudgetStatus(limit=llm_budget.RESERVE_TOKENS_PER_RUN, used=0,
+                                source="default", reset_at=RESET)
+    fn, calls = _counting()
+    clock = {"t": 1_000_000.0}
+    monkeypatch.setattr(llm_budget.time, "time", lambda: clock["t"])
+    with session_user():
+        asyncio.run(Agent(_ResilientFn(fn)).run("hi"))
+    with session_user(), pytest.raises(LLMBudgetExceeded):  # the reservation counts
+        asyncio.run(Agent(_ResilientFn(fn)).run("hi"))
+    # Past the land lag a fresh read is trusted to hold that run's usage.
+    clock["t"] += llm_budget.LAND_LAG_S + llm_budget.STATUS_TTL_S + 1
+    with session_user():
+        asyncio.run(Agent(_ResilientFn(fn)).run("hi"))
+    assert calls["n"] == 2
+
+
+def test_a_failed_read_falls_back_to_the_last_good_status(status, monkeypatch):
+    status.value = _over()
+    fn, calls = _counting()
+    with session_user(), pytest.raises(LLMBudgetExceeded):
+        asyncio.run(Agent(_ResilientFn(fn)).run("hi"))
+    # The cache expires and the next read fails: the student was over
+    # budget a moment ago, so they still are; no fail-open.
+    with llm_budget._cache_lock:
+        llm_budget._cache.clear()
+    status.value = RuntimeError("db down")
+    with session_user(), pytest.raises(LLMBudgetExceeded):
+        asyncio.run(Agent(_ResilientFn(fn)).run("hi"))
+    assert calls["n"] == 0
+
+
+def test_the_status_cache_is_short():
+    assert llm_budget.STATUS_TTL_S <= 10.0
+    assert llm_budget.FAILURE_TTL_S <= 10.0
+
+
+def test_settled_runs_are_not_counted_twice_once_their_usage_has_landed(monkeypatch):
+    """Review fix: eight quick turns whose usage is already in `used` must
+    not also be charged 20K each as reservations (the old 120 s horizon
+    counted every recent run twice and refused students under budget)."""
+    clock = {"t": 1_000_000.0}
+    monkeypatch.setattr(llm_budget.time, "time", lambda: clock["t"])
+    per_run = 5_000
+    limit = 4 * llm_budget.RESERVE_TOKENS_PER_RUN
+    for turn in range(8):
+        status = BudgetStatus(limit=limit, used=turn * per_run, source="default",
+                              reset_at=RESET, read_at=clock["t"])
+        assert llm_budget._admit("u1", status) is None, f"turn {turn} refused"
+        clock["t"] += 5
+        llm_budget.note_usage_recorded("u1")  # the run's usage row is queued
+        clock["t"] += llm_budget.SETTLE_LAG_S + 1  # ...and has landed by the next read
+    with llm_budget._cache_lock:
+        assert all(r[1] is not None for r in llm_budget._reservations["u1"])
+    status = BudgetStatus(limit=limit, used=8 * per_run, source="default",
+                          reset_at=RESET, read_at=clock["t"])
+    assert llm_budget._admit("u1", status) is None
+
+
+def test_an_in_flight_or_just_settled_run_still_counts(monkeypatch):
+    clock = {"t": 1_000_000.0}
+    monkeypatch.setattr(llm_budget.time, "time", lambda: clock["t"])
+    limit = 2 * llm_budget.RESERVE_TOKENS_PER_RUN
+    status = BudgetStatus(limit=limit, used=0, source="default", reset_at=RESET, read_at=clock["t"])
+    assert llm_budget._admit("u1", status) is None  # run 1, in flight
+    assert llm_budget._admit("u1", status) is None  # run 2, in flight
+    assert llm_budget._admit("u1", status) is not None  # both still count
+    llm_budget.note_usage_recorded("u1")
+    clock["t"] += 1
+    # Run 1 settled a moment ago: a read from before it landed still counts it.
+    assert llm_budget._admit("u1", status) is not None

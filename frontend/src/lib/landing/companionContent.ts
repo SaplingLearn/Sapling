@@ -343,8 +343,8 @@ export const WIKI_DATA_FACTS = [
     detail:'Text is decrypted server-side, in flight, only to build the prompt for a study action you asked for.' },
   { fact:'Deleting a document removes it from your library, but the concepts it planted stay on your tree.',
     detail:'That is on purpose: they are yours now, and you may have studied them since. Remove one from the tree itself, where a node can be deleted directly.' },
-  { fact:'You can export everything Sapling holds on you, or delete your account outright.',
-    detail:'Both live in your profile settings.' },
+  { fact:'You can export everything Sapling holds on you, or delete your account.',
+    detail:'Both live in Settings → Data. A deleted account is hidden at once and its personal data is erased 30 days later.' },
 ] as const;
 
 /**

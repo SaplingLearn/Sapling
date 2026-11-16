@@ -20,8 +20,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from fastapi.testclient import TestClient
 
 from db.connection import table
-from services.encryption import encrypt_if_present
-from services.session_tokens import SESSION_COOKIE_NAME, mint_session
+from services.encryption import bind, encrypt_if_present
+from services.encryption_canary import abort_unless_key_verified
+from services.session_tokens import HOST_SESSION_COOKIE_NAME, mint_session
 from main import app
 
 # Deterministic default keeps the run idempotent + self-healing (a re-run reclaims a
@@ -73,14 +74,16 @@ def setup_fixture() -> None:
         {"id": OFFERING_ID, "course_id": COURSE_ID, "term_id": tid, "section": ""},
         on_conflict="id")
     table("users").upsert(
-        {"id": USER_ID, "email": encrypt_if_present(f"{USER_ID}@e2e.local"),
+        {"id": USER_ID, "email": encrypt_if_present(
+            f"{USER_ID}@e2e.local", bind=bind("users", "email", USER_ID)),
          "onboarding_completed": True, "streak_count": 0, "is_approved": True},
         on_conflict="id")
     table("user_profiles").upsert(
-        {"user_id": USER_ID, "name": encrypt_if_present("E2E User"),
-         "first_name": encrypt_if_present("E2E"), "last_name": encrypt_if_present("User")},
+        {"user_id": USER_ID,
+         **{c: encrypt_if_present(v, bind=bind("user_profiles", c, USER_ID))
+            for c, v in (("name", "E2E User"), ("first_name", "E2E"), ("last_name", "User"))}},
         on_conflict="user_id")
-    client.cookies.set(SESSION_COOKIE_NAME, mint_session(USER_ID))
+    client.cookies.set(HOST_SESSION_COOKIE_NAME, mint_session(USER_ID))
 
 
 def teardown_fixture() -> None:
@@ -133,6 +136,9 @@ def check_auth() -> None:
 
 def main() -> int:
     print("\n== e2e_staging_http ==")
+    # Abort unless ENCRYPTION_KEY opens this database's key canary
+    # (services/encryption_canary.py): a wrong key writes unreadable rows.
+    abort_unless_key_verified("db.e2e_staging_http")
     setup_fixture()
     try:
         check_auth()
