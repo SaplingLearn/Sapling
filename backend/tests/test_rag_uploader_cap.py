@@ -57,6 +57,25 @@ def test_an_unattributable_retrieval_fails_closed_to_the_cap():
     assert len(out) == MAX_CHUNKS_PER_UPLOADER
 
 
+def test_an_unattributable_retrieval_keeps_catalog_rows():
+    rows = _rows("a1", "a2", "a3", "cat1", "cat2")
+    for r in rows:
+        r["category"] = "catalog" if r["id"].startswith("cat") else "lecture"
+    with patch.object(rag_service, "_uploaders_of", side_effect=RuntimeError("down")):
+        out = cap_per_uploader(rows, reader_id="alice", k=5)
+    assert [r["id"] for r in out] == ["a1", "a2", "cat1", "cat2"]
+
+
+def test_a_transient_lookup_failure_is_retried_once():
+    rows = _rows("m1", "m2", "m3")
+    owners = {"m1": "alice", "m2": "alice", "m3": "alice"}
+    with patch.object(rag_service, "_uploaders_of",
+                      side_effect=[RuntimeError("blip"), owners]) as lookup:
+        out = cap_per_uploader(rows, reader_id="alice", k=5)
+    assert lookup.call_count == 2
+    assert len(out) == 3
+
+
 def test_retrieval_overfetches_then_caps(monkeypatch):
     """The RPC is asked for more than k so the cap can still fill k."""
     monkeypatch.setattr(rag_service, "_embed_query", lambda q: [0.1] * 768)

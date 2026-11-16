@@ -247,19 +247,37 @@ def cap_per_uploader(
     any one OTHER student's uploads.
 
     ``match_course_chunks`` does not return the uploader, so it is read here
-    in one query over the ranked ids. If that read fails the rows cannot be
-    attributed and the cap fails closed: every row counts as one uploader's
-    (at most ``per_uploader`` come back), never uncapped.
+    in one query over the ranked ids (retried once). If that read still fails
+    the student rows cannot be attributed and the cap fails closed: they all
+    count as one uploader's (at most ``per_uploader`` of them), never
+    uncapped. Catalog rows (``category='catalog'``) have no uploader by
+    construction, so they keep their slots either way.
     """
     if not rows:
         return rows
     ids = [r["id"] for r in rows if isinstance(r.get("id"), str) and r["id"]]
-    try:
-        owners = _uploaders_of(ids) if ids else {}
-    except Exception as exc:  # noqa: BLE001 — degrade to the strictest cap, never fail retrieval
-        logger.warning("[RAG] uploader lookup failed (%s); capping retrieval to %d rows",
-                       type(exc).__name__, per_uploader)
-        return rows[:min(k, per_uploader)]
+    owners: dict[str, str | None] | None = None
+    last_exc: Exception | None = None
+    for _attempt in range(2):
+        try:
+            owners = _uploaders_of(ids) if ids else {}
+            break
+        except Exception as exc:  # noqa: BLE001 — degrade to the strictest cap, never fail retrieval
+            last_exc = exc
+    if owners is None:
+        logger.warning("[RAG] uploader lookup failed twice (%s); capping student rows to %d",
+                       type(last_exc).__name__, per_uploader)
+        student = 0
+        degraded: list[dict] = []
+        for row in rows:
+            if row.get("category") != "catalog":
+                if student >= per_uploader:
+                    continue
+                student += 1
+            degraded.append(row)
+            if len(degraded) >= k:
+                break
+        return degraded
     taken: dict[str, int] = {}
     out: list[dict] = []
     for row in rows:
