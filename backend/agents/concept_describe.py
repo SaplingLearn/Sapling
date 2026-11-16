@@ -20,6 +20,7 @@ from pydantic_ai import Agent
 from agents._bounded import clip_prose
 from agents._providers import model_for
 from agents.deps import SaplingDeps
+from services.prompt_safety import INJECTION_GUARD_PROMPT, wrap_untrusted
 
 
 class ConceptDescription(BaseModel):
@@ -48,7 +49,11 @@ _SYSTEM_PROMPT = (
     "jargon they wouldn't already know.\n"
     "- No preamble ('This concept is…'), no markdown, no lists, no quotes.\n"
     "- If the concept name is ambiguous, interpret it in the context of the "
-    "given course."
+    "given course.\n\n"
+    # sec2 M10 audit: the concept name and course label are typed by the
+    # student (routes/graph.py), and the sentence is cached by (concept,
+    # course) for every student who asks. They arrive inside the envelope.
+    + INJECTION_GUARD_PROMPT
 )
 _PROMPT_HASH = hashlib.sha256(_SYSTEM_PROMPT.encode("utf-8")).hexdigest()[:12]
 # Public alias, so a cache of this agent's output can key on the prompt that
@@ -70,8 +75,14 @@ concept_describe_agent = Agent[SaplingDeps, ConceptDescription](
 
 
 def build_message(concept: str, course_label: str | None) -> str:
-    """Compose the single user message handed to the agent."""
+    """Compose the single user message handed to the agent: the student's
+    concept name and course label, inside the untrusted envelope."""
     concept = concept.strip()
+    body = f"Concept: {concept}"
     if course_label:
-        return f"Concept: {concept}\nCourse: {course_label.strip()}"
-    return f"Concept: {concept}"
+        body += f"\nCourse: {course_label.strip()}"
+    return "Describe this concept:\n" + wrap_untrusted(body, source=DESCRIBE_SOURCE)
+
+
+#: Envelope label on the describe request. A trusted literal.
+DESCRIBE_SOURCE = "the concept and course the student named"
