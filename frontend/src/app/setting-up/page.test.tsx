@@ -14,7 +14,8 @@ const replace = vi.fn();
 vi.mock('next/navigation', () => ({ useRouter: () => ({ replace }) }));
 
 const refreshProfile = vi.fn().mockResolvedValue(undefined);
-vi.mock('@/context/UserContext', () => ({ useUser: () => ({ refreshProfile }) }));
+const markOnboarded = vi.fn();
+vi.mock('@/context/UserContext', () => ({ useUser: () => ({ refreshProfile, markOnboarded }) }));
 
 import SettingUpPage from './page';
 
@@ -68,8 +69,11 @@ describe('#715 setting-up hold screen', () => {
     expect(replace).not.toHaveBeenCalled();
     await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
     await waitFor(() => expect(replace).toHaveBeenCalledWith('/dashboard'));
-    // The seed completed onboarding server-side; the context re-reads /me.
+    // The seed completed onboarding server-side; the context re-reads /me,
+    // and the shell's onboarding gate is told before the dashboard opens.
     expect(refreshProfile).toHaveBeenCalled();
+    expect(markOnboarded).toHaveBeenCalled();
+    expect(markOnboarded.mock.invocationCallOrder[0]).toBeLessThan(replace.mock.invocationCallOrder[0]);
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe('/api/auth/local-seed');
     expect(init.credentials).toBe('include');

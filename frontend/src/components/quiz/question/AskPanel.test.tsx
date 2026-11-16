@@ -545,6 +545,18 @@ describe("AskPanel — crisis support (docs/safety/crisis-support.md)", () => {
     expect(screen.getByTestId("quiz-ask-input")).not.toBeDisabled();
   });
 
+  it("the JSON fallback's card renders the same way", async () => {
+    renderPanel();
+    await screen.findByText("The base case is the exit.");
+    api.streamChat.mockRejectedValueOnce(new Error("stream refused")); // no token: the JSON rung
+    api.sendChat.mockResolvedValueOnce({ reply: "the card as text", crisis_support: crisisFixture });
+    fireEvent.change(screen.getByTestId("quiz-ask-input"), { target: { value: "honestly i want to die" } });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("quiz-ask-send"));
+    });
+    expect(await screen.findByTestId("crisis-support-card")).toBeTruthy();
+  });
+
   it("a session start answered with the card opens no session and sends nothing", async () => {
     api.startSessionStream.mockResolvedValueOnce({ session_id: null, reply: "…", crisis_support: crisisFixture });
     renderPanel();

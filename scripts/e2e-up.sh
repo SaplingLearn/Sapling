@@ -306,6 +306,19 @@ echo "▶ Starting backend (uvicorn on :$BACKEND_PORT, log: .e2e/backend.log)…
 # wants to exercise the real guard.
 export QUIZ_GENERATE_RATE_LIMIT="${QUIZ_GENERATE_RATE_LIMIT:-1000}"
 echo "  ℹ QUIZ_GENERATE_RATE_LIMIT=$QUIZ_GENERATE_RATE_LIMIT for this stack (production default is 8; #537)"
+# The study-guide limits (services/study_guides/limits.py: 20 generations, 40
+# block rewrites and 60 new guides an hour) are counted the same way, and a
+# held stack re-runs its journeys inside one hour. Same reasoning, same value.
+export STUDY_GUIDE_GENERATE_RATE_LIMIT="${STUDY_GUIDE_GENERATE_RATE_LIMIT:-1000}"
+export STUDY_GUIDE_BLOCK_RATE_LIMIT="${STUDY_GUIDE_BLOCK_RATE_LIMIT:-1000}"
+export STUDY_GUIDE_CREATE_RATE_LIMIT="${STUDY_GUIDE_CREATE_RATE_LIMIT:-1000}"
+echo "  ℹ STUDY_GUIDE_{GENERATE,BLOCK,CREATE}_RATE_LIMIT=$STUDY_GUIDE_GENERATE_RATE_LIMIT/$STUDY_GUIDE_BLOCK_RATE_LIMIT/$STUDY_GUIDE_CREATE_RATE_LIMIT for this stack (production defaults are 20/40/60)"
+# The abuse limits (backend/services/abuse_limits.py: tutor turns, note AI,
+# uploads, room messages, feedback, the public forms) are counted the same way,
+# and every journey runs as one seeded student from one address. One knob
+# scales them all; production sets none.
+export ABUSE_RATE_LIMIT_MULTIPLIER="${ABUSE_RATE_LIMIT_MULTIPLIER:-100}"
+echo "  ℹ ABUSE_RATE_LIMIT_MULTIPLIER=$ABUSE_RATE_LIMIT_MULTIPLIER for this stack (production: 1)"
 # Learning loop (PKG-14b, spec §7 / §11.4): the loop is the default — the lane
 # runs the CODE default, so nothing is exported here. Run
 # `LEARNING_LOOP_ENABLED=false make e2e-up` for the kill-switch lane (the legacy
@@ -324,7 +337,6 @@ fi
 # (config.LEARNING_GATE_TIME_SCALE defaults to 1.0); only the loop reads it.
 export LEARNING_GATE_TIME_SCALE="${LEARNING_GATE_TIME_SCALE:-0.01}"
 echo "  ℹ LEARNING_GATE_TIME_SCALE=$LEARNING_GATE_TIME_SCALE for this stack (spec §13 A5; production is 1.0)"
-
 # ADR 0029 §9: the backend caches the flag snapshot (30 s) and each user's
 # roles (60 s) per process, and the per-test TRUNCATE + re-seed writes the DB
 # directly, which clears neither — one journey's rules would leak into the

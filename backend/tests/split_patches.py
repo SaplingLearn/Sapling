@@ -103,9 +103,12 @@ def patch_social(name, new=DEFAULT, **kwargs):
 
 PROFILE_TABLE_MODULES = (
     "routes.profile",
+    "services.account_credentials",
     "services.profile.account",
     "services.profile.achievements",
     "services.profile.cosmetics",
+    "services.profile.deletion",
+    "services.profile.full_export",
     "services.profile.public",
     "services.profile.users",
 )
@@ -160,6 +163,26 @@ def patch_gradescope(name, new=DEFAULT, **kwargs):
     """``patch("routes.gradescope.<name>", ...)`` across routes/gradescope.py
     and services/gradescope/ (credentials, links, sync)."""
     return patch_in(GRADESCOPE_MODULES, name, new, **kwargs)
+
+
+# ── flashcards ────────────────────────────────────────────────────────────────
+
+# The modules the route's handler bodies moved into. services/flashcards/
+# context.py (patched by its own path since wave 3) and importing.py (the old
+# flashcard_import_service.py) are deliberately absent: see the module
+# docstring.
+FLASHCARDS_MODULES = (
+    "routes.flashcards",
+    "services.flashcards.cards",
+    "services.flashcards.generation",
+    "services.flashcards.import_flow",
+)
+
+
+def patch_flashcards(name, new=DEFAULT, **kwargs):
+    """``patch("routes.flashcards.<name>", ...)`` across routes/flashcards.py
+    and the services/flashcards/ modules its handler bodies moved into."""
+    return patch_in(FLASHCARDS_MODULES, name, new, **kwargs)
 
 
 # ── documents ─────────────────────────────────────────────────────────────────

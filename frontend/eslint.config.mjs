@@ -99,9 +99,17 @@ const eslintConfig = [
       "src/app/pending/page.tsx",
       "src/app/setting-up/page.tsx",
       "src/components/screens/Onboarding.tsx",
+      // Onboarding's screens and chrome, split out of Onboarding.tsx.
+      "src/components/onboarding/screens.tsx",
+      "src/components/onboarding/CourseStep.tsx",
+      "src/components/onboarding/LegalStep.tsx",
+      "src/components/onboarding/ConsentSheet.tsx",
+      "src/components/onboarding/chrome.tsx",
       "src/components/DocumentUploadModal.tsx",
       "src/components/TopicChecklistPanel.tsx",
       "src/components/chat/ChatPanel.tsx",
+      // The crisis-support card (docs/safety/crisis-support.md). New file, no backlog.
+      "src/components/safety/CrisisSupportCard.tsx",
       // Quiz redesign (#537). The three screens carry every answer/submit/exit
       // control the Playwright journeys drive; the three `ui/` primitives are
       // listed because those controls render INSIDE them, so a testid-less
@@ -189,9 +197,31 @@ const eslintConfig = [
       // New files, no baselined backlog.
       "src/components/screens/admin/AllowlistTab.tsx",
       "src/components/screens/admin/EmailBroadcasts.tsx",
+      // Study hub + Flashcards (#870): the two files whose one <button> a
+      // journey clicks by testid (a roadmap tile's "..." menu, the tool
+      // headers' way back). No baselined backlog. The surfaces' other files
+      // are not enrolled: see docs/frontend-testids.md "Enforcement".
+      "src/components/study/RoadmapTile.tsx",
+      "src/components/BackLink.tsx",
       // Admin "Account tools" dialog (seed / wipe / copy an account). New file,
       // no baselined backlog.
       "src/components/screens/admin/AccountToolsDialog.tsx",
+      // Study guides (the reader, the home, the New study guide dialog): every
+      // file under components/studyGuide/ that renders an intrinsic control.
+      // New files, no baselined backlog.
+      "src/components/studyGuide/home/GuidesToolbar.tsx",
+      "src/components/studyGuide/home/MaterialTiles.tsx",
+      "src/components/studyGuide/home/NewGuideModal.tsx",
+      "src/components/studyGuide/home/SortMenu.tsx",
+      "src/components/studyGuide/reader/FeedbackRow.tsx",
+      "src/components/studyGuide/reader/GuideMenu.tsx",
+      "src/components/studyGuide/reader/SectionView.tsx",
+      "src/components/studyGuide/reader/blocks/BlockFrame.tsx",
+      "src/components/studyGuide/reader/blocks/ConceptMapBlockView.tsx",
+      "src/components/studyGuide/reader/blocks/WorkedExampleBlockView.tsx",
+      "src/components/studyGuide/reader/rail/AskBox.tsx",
+      "src/components/studyGuide/reader/rail/Outline.tsx",
+      "src/components/studyGuide/reader/rail/StaleBanner.tsx",
       // Settings (#675 Data tab): NOT a no-backlog file — its pre-existing
       // controls are baselined in eslint-suppressions.json, so the rule
       // covers new elements only. Shrink that baseline as testids are added.

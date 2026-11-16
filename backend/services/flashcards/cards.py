@@ -1,22 +1,43 @@
-"""Flashcard reads behind the list and import routes (#118, moved from
-``routes/flashcards.py``), and the list's FSRS review order (learning-loop
-PKG-11: `_loop_order`)."""
+"""Flashcard rows (#118, moved from ``routes/flashcards.py``): the list, rate
+and delete handlers' bodies, the row a new card is stored as, and the
+library-document read behind the import flow. The list is in FSRS review
+order and a rating is an FSRS review (learning-loop PKG-11 / PKG-14b: for
+every student, no gate)."""
 from __future__ import annotations
 
-from datetime import datetime
+import logging
+import uuid
+from datetime import datetime, timezone
 
 from db.connection import table
+from learning.flashcard_fsrs import flashcard_fsrs_update
 from learning.fsrs import order_due
-from services.academics import term_id_for_label
-from services.encryption import decrypt_if_present, decrypt_json
+from learning.params import FLASHCARD_RATING_TO_FSRS
+from services import events_service
+from services.academics import offering_course_id, term_id_for_label
+from services.achievement_service import check_achievements
+from services.encryption import decrypt_if_present, decrypt_json, encrypt_if_present
+from services.flashcards.errors import NotFound, StorageError, Unprocessable
 from services.timestamps import parse_ts
 
+logger = logging.getLogger(__name__)
 
+CARD_NOT_FOUND_DETAIL = "Flashcard not found"
+
+#: What a failed read says when the database has no ``flashcards`` table yet.
+_MISSING_TABLE_MARKERS = ("not found", "does not exist", "42p01")
+
+#: The stored columns a listed card carries (the list adds the derived
+#: `course_id`): the card, then its FSRS state (PKG-11, migration
+#: 20260927035346_learning_flashcards_fsrs; `rate_card` writes it).
 _LEGACY_LIST_COLS = (
     "id,user_id,topic,offering_id,front,back,times_reviewed,last_rating,"
     "last_reviewed_at,created_at"
 )
 _FSRS_LIST_COLS = ",fsrs_d,fsrs_s,due_at,reps,lapses"
+#: What `rate_card` reads of the card it updates.
+_RATE_COLS = "id,times_reviewed,last_reviewed_at,fsrs_d,fsrs_s,reps,lapses"
+RATING_INVALID_DETAIL = "rating must be one of 1, 2, 3"
 
 
 def _order_due_rows(rows: list[dict], now: datetime) -> list[dict]:
@@ -53,8 +74,8 @@ def list_flashcards(
     user_id: str, topic: str | None = None, semester: str | None = None
 ) -> list[dict]:
     """The user's cards, newest first, decrypted; ``topic`` narrows to one
-    topic and ``semester`` to one term (#141). Errors propagate: the route
-    maps them."""
+    topic and ``semester`` to one term (#141). Errors propagate
+    (:func:`get_flashcards` is the route's tolerant form)."""
     filters = {"user_id": f"eq.{user_id}"}
     if topic:
         filters["topic"] = f"eq.{topic}"
@@ -66,6 +87,13 @@ def list_flashcards(
     for r in rows:
         r["front"] = decrypt_if_present(r.get("front"))
         r["back"] = decrypt_if_present(r.get("back"))
+        # The abstract course the card's offering belongs to (the id the rest
+        # of the API speaks), so the Flashcards page can show a course's cards
+        # by what they belong to. It used to match on the card's TOPIC
+        # containing the course's name, which hid every deck named for a
+        # concept ("Recursion") the moment a course was picked. None for a card
+        # with no offering.
+        r["course_id"] = offering_course_id(r["offering_id"]) if r.get("offering_id") else None
     if semester:
         # Term scoping (#141). This route is user-wide (no course id), so
         # the filter works on the cards' offering: cards from the selected
@@ -76,15 +104,165 @@ def list_flashcards(
         term_id = term_id_for_label(semester)
         allowed: set[str] = set()
         if term_id:
-            offs = table("course_offerings").select(
-                "id", filters={"term_id": f"eq.{term_id}"}
-            ) or []
-            allowed = {o["id"] for o in offs if o.get("id")}
+            allowed = _offerings_in_term(
+                {r["offering_id"] for r in rows if r.get("offering_id")}, term_id,
+            )
         rows = [
             r for r in rows
             if r.get("offering_id") is None or r["offering_id"] in allowed
         ]
     return rows
+
+
+#: Offering ids per ``in.(…)`` filter: keeps the query string bounded.
+_OFFERING_ID_CHUNK = 50
+
+
+def _offerings_in_term(offering_ids: set[str], term_id: str) -> set[str]:
+    """Which of ``offering_ids`` belong to ``term_id``. Asked by the cards' own
+    ids, never by reading the whole term: a term has more offerings than one
+    PostgREST response (max_rows) holds, and an offering past the cut would
+    hide its cards."""
+    ids = sorted(offering_ids)
+    allowed: set[str] = set()
+    for i in range(0, len(ids), _OFFERING_ID_CHUNK):
+        offs = table("course_offerings").select(
+            "id",
+            filters={
+                "id": f"in.({','.join(ids[i:i + _OFFERING_ID_CHUNK])})",
+                "term_id": f"eq.{term_id}",
+            },
+        ) or []
+        allowed.update(o["id"] for o in offs if o.get("id"))
+    return allowed
+
+
+def get_flashcards(
+    user_id: str, topic: str | None = None, semester: str | None = None,
+    *, due_only: bool = False,
+) -> dict:
+    """:func:`list_flashcards` as the list route answers it, in FSRS review
+    order (:func:`_loop_order`): ``{flashcards, due_count}``, only the due
+    cards when ``due_only``. No user, or a database with no ``flashcards``
+    table yet, is no cards; any other failure is a ``StorageError``."""
+    if not user_id:
+        return {"flashcards": []}
+    try:
+        rows, due = _loop_order(
+            list_flashcards(user_id, topic, semester), datetime.now(timezone.utc),
+        )
+    except Exception as e:
+        if any(marker in str(e).lower() for marker in _MISSING_TABLE_MARKERS):
+            return {"flashcards": []}
+        raise StorageError(str(e)) from e
+    return {"flashcards": due if due_only else rows, "due_count": len(due)}
+
+
+# ── New cards ────────────────────────────────────────────────────────────────
+
+
+def new_card_rows(
+    user_id: str, topic: str, offering_id: str | None, cards: list[dict]
+) -> list[dict]:
+    """Unsaved ``flashcards`` rows for ``cards`` (``{front, back}``), front and
+    back still in plaintext: :func:`encrypted_card` is what gets stored."""
+    now = datetime.now(timezone.utc).isoformat()
+    return [
+        {
+            "id": str(uuid.uuid4()),
+            "user_id": user_id,
+            "offering_id": offering_id,
+            "topic": topic,
+            "front": c["front"],
+            "back": c["back"],
+            "times_reviewed": 0,
+            "last_reviewed_at": None,
+            "created_at": now,
+        }
+        for c in cards
+    ]
+
+
+def encrypted_card(row: dict) -> dict:
+    """``row`` as it is written: 🔒 ``front`` / ``back``."""
+    return {
+        **row,
+        "front": encrypt_if_present(row["front"]),
+        "back": encrypt_if_present(row["back"]),
+    }
+
+
+# ── Rate / delete ────────────────────────────────────────────────────────────
+
+
+def _own_card(user_id: str, card_id: str, columns: str) -> dict:
+    """The user's card, or ``NotFound`` (the same answer for a card that does
+    not exist and one that is another student's)."""
+    try:
+        rows = table("flashcards").select(
+            columns,
+            filters={"id": f"eq.{card_id}", "user_id": f"eq.{user_id}"},
+            limit=1,
+        )
+    except Exception as e:
+        raise StorageError(str(e)) from e
+    if not rows:
+        raise NotFound(CARD_NOT_FOUND_DETAIL)
+    return rows[0]
+
+
+def rate_card(user_id: str, card_id: str, rating: int) -> dict:
+    """Record one review of the user's card: the count, rating and time, plus
+    its FSRS state (PKG-11 / PKG-14b: every rating is an FSRS review, 1/2/3 ->
+    Again/Hard/Good via ``FLASHCARD_RATING_TO_FSRS``; any other value is
+    ``Unprocessable``). Answers the card's next ``due_at`` and the FSRS
+    rating."""
+    fsrs_rating = FLASHCARD_RATING_TO_FSRS.get(rating)
+    if fsrs_rating is None:
+        raise Unprocessable(RATING_INVALID_DETAIL)
+    card = _own_card(user_id, card_id, _RATE_COLS)
+    now = datetime.now(timezone.utc)
+    payload = {
+        "times_reviewed": (card["times_reviewed"] or 0) + 1,
+        "last_rating": rating,
+        "last_reviewed_at": now.isoformat(),
+    }
+    # PKG-12 reopen: the pure helper learning/review.py shares; it returns
+    # the three columns above (same values) plus the FSRS five.
+    payload.update(flashcard_fsrs_update(card, rating, now=now))
+    table("flashcards").update(
+        payload, filters={"id": f"eq.{card_id}", "user_id": f"eq.{user_id}"},
+    )
+    events_service.log_event(
+        "flashcard.reviewed",
+        category="usage",
+        user_id=user_id,
+        payload={"card_id": card_id, "rating": rating},
+    )
+
+    # The review counter is the only thing that advances `flashcards_reviewed`
+    # (Quick Draw: review 100 cards), so this is its only possible dispatch
+    # point. Post-commit: the review is already recorded, so a failing check
+    # must not fail the rating.
+    try:
+        check_achievements(user_id, "flashcards_reviewed", {})
+    except Exception:
+        logger.exception(
+            "achievement dispatch failed after card rating user=%s card=%s",
+            user_id, card_id,
+        )
+    return {"due_at": payload["due_at"], "fsrs_rating": fsrs_rating}
+
+
+def delete_card(user_id: str, card_id: str) -> None:
+    """Delete the user's card."""
+    _own_card(user_id, card_id, "id")
+    table("flashcards").delete(
+        filters={"id": f"eq.{card_id}", "user_id": f"eq.{user_id}"}
+    )
+
+
+# ── Library documents (the import flow's source text) ────────────────────────
 
 
 def library_doc_source_text(user_id: str, document_id: str) -> str | None:

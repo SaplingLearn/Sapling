@@ -41,6 +41,7 @@ import {
   usernameMessageText,
   type UsernameState,
 } from "./settingsUsername";
+import { humanizeError } from "@/lib/errorMessage";
 
 type Tab = "profile" | "cosmetics" | "preferences" | "notifications" | "data";
 
@@ -274,7 +275,7 @@ export function Settings() {
       // Revert to whatever the user had before so the optimistic
       // paint doesn't leave a ghost of a file that never landed.
       setAvatarUrl(previousAvatar);
-      toast.error(`Upload failed: ${String(err)}`);
+      toast.error(humanizeError(err, "Couldn't upload that image. Try again."));
     } finally {
       // Always free the blob URL — whether we swapped to the
       // server URL or reverted, the blob is no longer referenced.
@@ -293,7 +294,7 @@ export function Settings() {
       setSettings(prev => prev ? { ...prev, ...updates } : prev);
       Object.assign(confirmedRef.current, updates);
     } catch (err) {
-      toast.error(`Couldn't save: ${String(err)}`);
+      toast.error(humanizeError(err, "Couldn't save your settings. Try again."));
     } finally {
       trackSaving(keys, -1);
     }
@@ -335,7 +336,7 @@ export function Settings() {
       setPreview(p);
       setPreviewOpen(true);
     } catch (err) {
-      toast.error(`Couldn't load preview: ${String(err)}`);
+      toast.error(humanizeError(err, "Couldn't load that preview."));
     }
   };
 
@@ -348,7 +349,9 @@ export function Settings() {
       await signOut();
       window.location.href = "/";
     } catch (err) {
-      alert(String(err));
+      // Was a bare `alert(String(err))`: a browser dialog showing the raw
+      // response body. This screen has a toaster like every other one.
+      toast.error(humanizeError(err, "Couldn't delete your account. Try again."));
     }
   };
 
@@ -696,7 +699,7 @@ export function Settings() {
                       URL.revokeObjectURL(url);
                       toast.success("Data exported.");
                     } catch (err) {
-                      toast.error(`Export failed: ${String(err)}`);
+                      toast.error(humanizeError(err, "Couldn't export your data. Try again."));
                     }
                   }}
                 >
@@ -955,7 +958,7 @@ function CosmeticsManager({ userId }: { userId: string }) {
       await refreshProfile();
       toast.success(cosmeticId ? "Equipped" : "Unequipped");
     } catch (err) {
-      toast.error(`Couldn't update: ${String(err)}`);
+      toast.error(humanizeError(err, "Couldn't update that. Try again."));
     } finally {
       setBusy(false);
     }

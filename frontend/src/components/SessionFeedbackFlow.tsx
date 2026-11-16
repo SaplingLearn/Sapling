@@ -5,6 +5,7 @@ import { submitFeedback } from "@/lib/api";
 import { useUser } from "@/context/UserContext";
 import { useScrollLock } from "@/lib/useScrollLock";
 import { useToast } from "./ToastProvider";
+import { LONG_TEXT_MAX } from "@/lib/inputLimits";
 
 // Numeric scale — the brand's tone is "quiet library," not emoji reactions.
 const RATINGS: { value: number; label: string }[] = [
@@ -202,6 +203,7 @@ export function SessionFeedbackFlow({ open, context, onClose }: SessionFeedbackF
             <div className="label-micro" style={{ marginBottom: 6 }}>Anything else to add?</div>
             <textarea
               value={comment}
+              maxLength={LONG_TEXT_MAX}
               onChange={e => setComment(e.target.value)}
               placeholder="Optional note…"
               rows={4}

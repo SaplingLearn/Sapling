@@ -7606,7 +7606,7 @@ def set_goal(body: LoopGoalBody, request: Request) -> dict:
     _gate(body.user_id, request)
     # crisis support: the goal text later rides every tutor prompt; it is not stored
     if crisis := crisis_support.screen(
-        body.user_id, "loop_goal", body.goal.text if body.goal is not None else None
+        request, body.user_id, "loop_goal", body.goal.text if body.goal is not None else None
     ):
         return crisis_support.json_body(crisis)
     _probe_plan_read_limit(body.user_id)
@@ -8399,7 +8399,7 @@ async def probe_answer(body: ProbeAnswerBody, request: Request) -> dict:
     loop_on = await guard_off_loop(_gate, body.user_id, request)
     # crisis support: before the rate limit; the probe item stays posed, ungraded
     if crisis := await crisis_support.screen_async(
-        body.user_id, "loop_probe_answer", body.answer, body.reason
+        request, body.user_id, "loop_probe_answer", body.answer, body.reason
     ):
         return crisis_support.json_body(crisis, graded=False)
     ai_budget.enforce_rate_limit_for(body.user_id)
@@ -8773,7 +8773,7 @@ async def review_answer(body: ReviewAnswerBody, request: Request) -> dict:
     # crisis support: the item stays due and ungraded (a flashcard carries no text);
     # `unavailable` is this route's "nothing was recorded, still answerable"
     if crisis := await crisis_support.screen_async(
-        body.user_id, "loop_review_answer", body.answer, body.reason
+        request, body.user_id, "loop_review_answer", body.answer, body.reason
     ):
         return crisis_support.json_body(crisis, correct=None, unavailable=True, refused=False)
     if body.kind == "check":  # the one review body that runs a model (the grader)

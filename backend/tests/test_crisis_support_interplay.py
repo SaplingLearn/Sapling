@@ -53,7 +53,7 @@ def crisis_flag(monkeypatch):
     return _set
 
 
-# ── A125: the notes actions screen for crisis before the integrity guard ─────
+# ── A125: a note in crisis carries the card; the integrity guard still holds ─
 
 
 NOTE_ACTIONS = {
@@ -78,34 +78,38 @@ def _note_action(action: str, body: str, guard: MagicMock):
         return client.post(f"/api/notes/n1/{action}", json=NOTE_ACTIONS[action])
 
 
-@pytest.mark.parametrize("action", sorted(NOTE_ACTIONS))
-def test_a_note_in_crisis_gets_the_card_before_the_integrity_guard(
-    action, crisis_flag, posed, records  # noqa: F811  (fixtures)
-):
-    """The note states a crisis AND quotes the student's open check (A125
-    would refuse it). The card wins: the guard never opens, the posed items
-    are never read, and no help row or integrity event is written."""
-    note = f"{CRISIS}\nTo ask the AI: {ITEM.prompt}"
-    guard = MagicMock(side_effect=integrity_guard.open_guard)
-    r = _note_action(action, note, guard)
-    assert r.status_code == 200, r.text
-    assert r.json()["crisis_support"]
-    assert r.json().get("integrity") is None
-    guard.assert_not_called()
-    posed.assert_not_called()
-    records.help.assert_not_called()
-    records.event.assert_not_called()
-
-    # control: with the crisis path off, the same note meets A125's guard
-    crisis_flag("off")
-    r = _note_action(action, note, guard)
-    guard.assert_called_once()
-    records.help.assert_called_once()
+def _expect_refused(action: str, r) -> None:
     if action == "chat":
         assert r.status_code == 200 and r.json()["reply"] == REFUSED_REPLY
         assert r.json()["integrity"] == "refused"
     else:
         assert r.status_code == 409 and r.json()["detail"] == REFUSED_DETAIL
+
+
+@pytest.mark.parametrize("action", sorted(NOTE_ACTIONS))
+def test_a_note_in_crisis_carries_the_card_and_the_integrity_guard_still_holds(
+    action, crisis_flag, posed, records  # noqa: F811  (fixtures)
+):
+    """The note states a crisis AND quotes the student's open check. Main's
+    crisis design (docs/safety/crisis-support.md): a note is stored material,
+    so it never blocks — the card rides alongside whatever the action answers
+    (crisis_support.alongside; on an error, ErrorCardMiddleware). The action
+    itself is unchanged, A125's guard included: it refuses the quoted check,
+    with its help row, before any model runs."""
+    note = f"{CRISIS}\nTo ask the AI: {ITEM.prompt}"
+    guard = MagicMock(side_effect=integrity_guard.open_guard)
+    r = _note_action(action, note, guard)
+    assert r.json()["crisis_support"]
+    _expect_refused(action, r)
+    guard.assert_called_once()
+    records.help.assert_called_once()
+
+    # control: with the crisis path off, the same note meets the same guard, no card
+    crisis_flag("off")
+    r = _note_action(action, note, guard)
+    assert "crisis_support" not in r.json()
+    _expect_refused(action, r)
+    assert guard.call_count == 2 and records.help.call_count == 2
 
 
 # ── A121: a crisis start never gets the template opener ──────────────────────

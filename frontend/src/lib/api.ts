@@ -19,90 +19,14 @@ import type {
 import { statusOf } from '@/lib/errorMessage';
 import type { WithCrisisSupport } from '@/lib/crisisSupport';
 import { createStreamPacer, type StreamPacer } from '@/lib/streamPacer';
+import { REAUTH_REQUIRED, isReauthRequired, notifyReauthRequired } from '@/lib/reauth';
+import { ApiError, apiErrorOf, errorFieldsFrom, parseErrorBody } from '@/lib/apiError';
 
 export const API_URL = '';
 
-/**
- * A failed API response. Carries the HTTP status alongside the body text so
- * callers can branch on the status instead of pattern-matching the message —
- * `lib/errorMessage.ts` reads `status` off the thrown value.
- *
- * `message` stays the raw body for backward compatibility: callers that
- * stringify the error, or read `.message`, behave exactly as they did before.
- *
- * Since #537 it also carries what the coded envelope told us. Quiz routes
- * answer with `{error: {code, message, request_id}, detail, request_id}`
- * (backend/services/quiz_errors.py::quiz_error_body) plus a `Retry-After`
- * header on 429; `code`/`requestId`/`retryAfterSec`/`body` surface that so
- * `lib/quiz/errors.ts` can tell a rate limit from a daily cap from a generation
- * timeout. All four are optional — routes outside the quiz router still answer
- * with the legacy `{detail, request_id}` shape and leave them undefined.
- */
-export interface ApiErrorFields {
-  /** `error.code` off the coded envelope, when the route sent one. */
-  code?: string;
-  /** `error.request_id` / top-level `request_id` — the support handle. */
-  requestId?: string;
-  /** Whole-seconds `Retry-After`, when the response carried the header. */
-  retryAfterSec?: number;
-  /** The parsed JSON body, when the body was JSON. */
-  body?: unknown;
-}
-
-export class ApiError extends Error {
-  readonly status: number;
-  readonly code?: string;
-  readonly requestId?: string;
-  readonly retryAfterSec?: number;
-  readonly body?: unknown;
-
-  constructor(message: string, status: number, fields: ApiErrorFields = {}) {
-    super(message);
-    this.name = 'ApiError';
-    this.status = status;
-    this.code = fields.code;
-    this.requestId = fields.requestId;
-    this.retryAfterSec = fields.retryAfterSec;
-    this.body = fields.body;
-  }
-}
-
-function parseErrorBody(text: string): unknown {
-  const trimmed = text.trim();
-  if (!trimmed.startsWith('{')) return undefined;
-  try {
-    return JSON.parse(trimmed);
-  } catch {
-    return undefined;
-  }
-}
-
-/** `Retry-After` is either whole seconds or an HTTP date. Only the numeric form
- *  is honoured — a date needs clock-skew handling nobody here wants, and the one
- *  route that sets the header (quiz.py:1238) always sends seconds. */
-function parseRetryAfter(header: string | null): number | undefined {
-  if (!header) return undefined;
-  const trimmed = header.trim();
-  if (!trimmed) return undefined;
-  const seconds = Number(trimmed);
-  return Number.isFinite(seconds) && seconds >= 0 ? Math.round(seconds) : undefined;
-}
-
-/** Pulls the coded-envelope fields out of a parsed error body, tolerating both
- *  the quiz shape and the legacy `{detail, request_id}` one. */
-function errorFieldsFrom(body: unknown): { code?: string; requestId?: string } {
-  if (body === null || typeof body !== 'object') return {};
-  const record = body as Record<string, unknown>;
-  const nested = record.error;
-  const error = nested !== null && typeof nested === 'object'
-    ? (nested as Record<string, unknown>)
-    : null;
-  const code = error && typeof error.code === 'string' ? error.code : undefined;
-  const requestId = [error?.request_id, record.request_id].find(
-    (v): v is string => typeof v === 'string' && v.length > 0,
-  );
-  return { code, requestId };
-}
+// The error every failed response is thrown as lives in lib/apiError.ts, shared
+// with the SSE client; re-exported here, where callers have always imported it.
+export { ApiError, type ApiErrorFields } from '@/lib/apiError';
 
 // ── Global 401 (#756) ─────────────────────────────────────────────────────────
 // A 401 from any session-authenticated call means the server no longer honours
@@ -140,6 +64,10 @@ function notifySessionExpired(): void {
   }
 }
 
+// Admin step-up 401s (`reauth_required`) go to lib/reauth.ts, not to the
+// session-expired listeners above: the session is alive, it is just too old
+// for an admin route.
+
 /**
  * The one sanctioned request helper: same-origin `API_URL` so the `sapling_session`
  * cookie rides along (a cross-origin `NEXT_PUBLIC_API_URL` fetch drops it — the
@@ -152,15 +80,15 @@ export async function fetchJSON<T>(path: string, options?: RequestInit): Promise
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     ...options,
   });
-  if (res.status === 401 && isSessionAuthenticated(path)) notifySessionExpired();
   if (!res.ok) {
     const err = await res.text();
     const body = parseErrorBody(err);
-    throw new ApiError(err || `HTTP ${res.status}`, res.status, {
-      ...errorFieldsFrom(body),
-      retryAfterSec: parseRetryAfter(res.headers.get('Retry-After')),
-      body,
-    });
+    if (res.status === 401 && isReauthRequired(body)) {
+      notifyReauthRequired();
+      throw new ApiError(err, res.status, { ...errorFieldsFrom(body), code: REAUTH_REQUIRED, body });
+    }
+    if (res.status === 401 && isSessionAuthenticated(path)) notifySessionExpired();
+    throw apiErrorOf(res, err);
   }
   return res.json();
 }
@@ -191,8 +119,7 @@ export interface MeResponse {
 
 // Cookie-authenticated identity lookup (backend/routes/auth.py::get_me
 // resolves the user via get_session_user_id, which reads the `sapling_session`
-// cookie or an `auth_token` query param — no `user_id` param needed either
-// way). UserContext's bootstrap falls back to this when localStorage has no
+// cookie — the only session channel; no `user_id` param needed). UserContext's bootstrap falls back to this when localStorage has no
 // `sapling_user` entry but the HttpOnly session cookie is still valid
 // (#430); the OAuth callback (src/app/auth/callback/page.tsx) already reads
 // this same endpoint off the same cookie, though via a bare `fetch` rather
@@ -349,8 +276,11 @@ export const startSession = (
   useSharedContext = true,
   modelPref?: ModelPref,
   quizAsk?: QuizAskOrigin,
+  /** Send to tutor's note, when `topic` is still its title (see startSessionStream). */
+  fromNoteId?: string,
 ) =>
-  // A crisis-support answer carries `crisis_support` and no session (session_id null).
+  // A crisis-support answer carries `crisis_support` and no session (session_id null),
+  // or, on a note's title, the session with `crisis_support_alongside`.
   fetchJSON<{ session_id: string; initial_message: string; graph_state: any } & WithCrisisSupport>('/api/learn/start-session', {
     method: 'POST',
     body: JSON.stringify({
@@ -361,6 +291,7 @@ export const startSession = (
       course_id: courseId,
       ...(modelPref ? { model_pref: modelPref } : {}),
       ...quizAskFields(quizAsk),
+      ...(fromNoteId ? { from_note_id: fromNoteId } : {}),
     }),
   });
 
@@ -455,17 +386,23 @@ export class ChatStreamError extends Error {
  * false when:
  *  - the backend said so (`ChatStreamError.retryable === false` — tool
  *    writes landed; a re-run would double-apply them), or
- *  - the failure was an HTTP 413 (request too large / processing budget —
- *    the JSON route fails the exact same way, so falling back just doubles
- *    the wait before the same error).
+ *  - the failure was an HTTP 413 (request too large / processing budget),
+ *    422 (a request the server refuses, e.g. a message over its length cap)
+ *    or 429 (rate limited: the JSON route spends the same per-student
+ *    budget) — the JSON route fails the exact same way, so falling back
+ *    just doubles the wait before the same error.
  *
  * Everything else (transport failures, idle timeouts, 5xx before any
  * token) stays retryable — the transparent JSON fallback is the whole
  * point of the ladder.
  */
+/** Statuses the JSON route answers identically (see shouldFallBackToJson). */
+const NO_JSON_FALLBACK = new Set([413, 422, 429]);
+
 export function shouldFallBackToJson(err: unknown): boolean {
   if (err instanceof ChatStreamError) return err.retryable;
-  return statusOf(err) !== 413;
+  const status = statusOf(err);
+  return status === undefined || !NO_JSON_FALLBACK.has(status);
 }
 
 export interface StreamChatHandlers {
@@ -609,6 +546,13 @@ export const startSessionStream = (
   modelPref?: ModelPref,
   handlers: StreamChatHandlers = {},
   quizAsk?: QuizAskOrigin,
+  /**
+   * Send to tutor's note (docs/safety/crisis-support.md), when `topic` is
+   * still that note's title: the backend checks it against the student's own
+   * note and, on a crisis match, starts the session with the card beside it
+   * (`crisis_support_alongside`) instead of answering with the card alone.
+   */
+  fromNoteId?: string,
 ): Promise<ChatResult> => {
   return consumeChatStream(
     '/api/learn/start-session/stream',
@@ -620,6 +564,7 @@ export const startSessionStream = (
       course_id: courseId,
       ...(modelPref ? { model_pref: modelPref } : {}),
       ...quizAskFields(quizAsk),
+      ...(fromNoteId ? { from_note_id: fromNoteId } : {}),
     },
     handlers,
   );
@@ -777,8 +722,14 @@ export const importGoogleEvents = (userId: string, daysAhead = 60) =>
     `/api/calendar/import/${encodeURIComponent(userId)}?days_ahead=${daysAhead}`,
   );
 
-export const calendarAuthUrl = (userId: string) =>
-  `${API_URL}/api/calendar/auth-url?user_id=${encodeURIComponent(userId)}`;
+/** The Google Calendar consent flow: a backend route that redirects to Google,
+ * so open it with a full page load (`window.location`), never the in-app
+ * router. `next` is where the callback lands after a successful connect; the
+ * backend honours only its allowlist (/dashboard, /gradebook, /calendar). */
+export const calendarAuthUrl = (userId: string, next?: string) =>
+  `${API_URL}/api/calendar/auth-url?user_id=${encodeURIComponent(userId)}${
+    next ? `&next=${encodeURIComponent(next)}` : ''
+  }`;
 
 export const exportToGoogleCalendar = (userId: string, assignmentIds: string[]) =>
   fetchJSON<{ exported_count: number; skipped_count: number }>('/api/calendar/export', {
@@ -1055,7 +1006,8 @@ export const generateFlashcards = (
   semester?: string,
   courseId?: string,
 ) =>
-  fetchJSON<GenerateFlashcardsResponse>('/api/flashcards/generate', {
+  // docs/safety/crisis-support.md: a crisis answer carries `crisis_support` and no cards.
+  fetchJSON<GenerateFlashcardsResponse & WithCrisisSupport>('/api/flashcards/generate', {
     method: 'POST',
     body: JSON.stringify({ user_id: userId, topic, count, semester, course_id: courseId }),
   });
@@ -1697,7 +1649,7 @@ export const importGenerate = (
     | { source: "paste"; text: string; count: number; difficulty: "recall" | "application" | "conceptual" }
     | { source: "library_doc"; documentId: string; count: number; difficulty: "recall" | "application" | "conceptual" },
 ) =>
-  fetchJSON<ImportGenerateResponse>(`/api/flashcards/import/generate`, {
+  fetchJSON<ImportGenerateResponse & WithCrisisSupport>(`/api/flashcards/import/generate`, {
     method: "POST",
     body: JSON.stringify({
       user_id: userId,
@@ -1716,75 +1668,10 @@ export const importCleanup = (userId: string, cards: ImportCard[]) =>
   });
 
 export const importCloze = (userId: string, paragraph: string) =>
-  fetchJSON<{ cards: ImportCard[]; withheld?: number }>(`/api/flashcards/import/cloze`, {
+  fetchJSON<{ cards: ImportCard[]; withheld?: number } & WithCrisisSupport>(`/api/flashcards/import/cloze`, {
     method: "POST",
     body: JSON.stringify({ user_id: userId, paragraph }),
   });
-
-// Study Guide
-export interface StudyGuideTopic {
-  name: string;
-  importance: string;
-  concepts: string[];
-}
-
-export interface StudyGuideContent {
-  exam: string;
-  due_date: string;
-  overview: string;
-  topics: StudyGuideTopic[];
-}
-
-export interface StudyGuideExam {
-  id: string;
-  title: string;
-  due_date: string;
-  assignment_type?: string | null;
-}
-
-export interface StudyGuideCacheEntry {
-  id: string;
-  course_id: string;
-  exam_id: string;
-  course_name: string;
-  exam_title: string;
-  overview: string;
-  generated_at: string;
-  // The entry's OWN term label (#475 F1): a recent guide opens as its own
-  // term, overriding the active selector for that open. null when the row's
-  // offering has no term; optional for bodies cached before the field shipped.
-  semester?: string | null;
-}
-
-// The study-guide reads take an optional `semester` (term label, #141).
-// With it, each read resolves STRICTLY to that term's offering. Omitted/"":
-// getStudyGuide/regenerateStudyGuide fall back to current-term offering
-// resolution, while getStudyGuideExams lists exams across ALL of the user's
-// enrollments of the course (every term) — that asymmetry is pre-existing
-// behavior, documented as-is.
-export const getStudyGuideExams = (userId: string, courseId: string, semester?: string) =>
-  fetchJSON<{ exams: StudyGuideExam[] }>(
-    `/api/study-guide/${encodeURIComponent(userId)}/exams?course_id=${encodeURIComponent(courseId)}` +
-      (semester ? `&semester=${encodeURIComponent(semester)}` : ''),
-  );
-
-export const getStudyGuide = (userId: string, courseId: string, examId: string, semester?: string) =>
-  fetchJSON<{ guide: StudyGuideContent; generated_at: string; cached: boolean }>(
-    `/api/study-guide/${encodeURIComponent(userId)}/guide?course_id=${encodeURIComponent(courseId)}&exam_id=${encodeURIComponent(examId)}` +
-      (semester ? `&semester=${encodeURIComponent(semester)}` : ''),
-  );
-
-export const regenerateStudyGuide = (userId: string, courseId: string, examId: string, semester?: string) =>
-  fetchJSON<{ success: boolean; guide: StudyGuideContent; generated_at: string }>(
-    '/api/study-guide/regenerate',
-    {
-      method: 'POST',
-      body: JSON.stringify({ user_id: userId, course_id: courseId, exam_id: examId, semester }),
-    },
-  );
-
-export const getCachedStudyGuides = (userId: string) =>
-  fetchJSON<{ guides: StudyGuideCacheEntry[] }>(`/api/study-guide/${encodeURIComponent(userId)}/cached`);
 
 // Feedback
 export const submitFeedback = (data: {
@@ -1813,20 +1700,38 @@ export interface OnboardingProfilePayload {
   first_name: string;
   last_name: string;
   year: string;
-  /** No longer asked for by the redesigned onboarding; the backend defaults both. */
-  majors?: string[];
-  minors?: string[];
+  /** Catalog course ids; empty when the student will add their courses later. */
   course_ids: string[];
+  /** Under 18: the account starts with a private profile and class sharing off. */
+  under_18: boolean;
+  /** The Terms and Privacy Policy versions agreed to (lib/legal/versions.ts).
+   * Anything but the current ones is a 422 `legal_outdated`. */
+  accepted_terms_version: string;
+  accepted_privacy_version: string;
 }
 
-export const submitOnboardingProfile = (payload: OnboardingProfilePayload) =>
-  fetchJSON<{ user_id: string; courses_linked: string[] }>('/api/onboarding/profile', {
+export interface OnboardingProfileResult {
+  ok: boolean;
+  user_id: string;
+  /** How many of `course_ids` the student was enrolled in. */
+  courses_linked: number;
+}
+
+/** 409 when the account finished onboarding already; 403 `not_approved` (in
+ * `detail.code`); 422 `legal_outdated` / `no_known_courses` (in `detail.code`)
+ * save nothing; a malformed body is a plain validation 422 (`detail: [...]`). */
+export const submitOnboardingProfile = (
+  payload: OnboardingProfilePayload,
+  init?: { signal?: AbortSignal },
+) =>
+  fetchJSON<OnboardingProfileResult>('/api/onboarding/profile', {
     method: 'POST',
     // Deploy-skew shim (PKG-14b): the pre-launch backend still REQUIRES
     // `learning_style` (a bare str), the post-launch one ignores it. Sending ""
     // keeps onboarding working whichever deploys first (the frontend worker or
     // Railway). Remove once both run PKG-14b.
     body: JSON.stringify({ ...payload, learning_style: '' }),
+    signal: init?.signal,
   });
 
 // Profile
@@ -2952,6 +2857,7 @@ export const unlinkNoteConcept = (noteId: string, userId: string, conceptNodeId:
   );
 
 export const summarizeNote = (noteId: string, userId: string) =>
+  // docs/safety/crisis-support.md: a crisis answer carries `crisis_support` and no summary.
   fetchJSON<{ summary?: string } & WithCrisisSupport>(`/api/notes/${noteId}/summarize`, {
     method: 'POST',
     body: JSON.stringify({ user_id: userId }),
@@ -2959,7 +2865,8 @@ export const summarizeNote = (noteId: string, userId: string) =>
 
 export const extractNoteConcepts = (noteId: string, userId: string) =>
   // `withheld` (spec §13 A125): names held back for giving away an open check's answer;
-  // a crisis-support response carries the card instead (no concepts, nothing linked)
+  // a crisis-support response carries the card instead (no concepts, nothing linked),
+  // or beside the result on a crisis line in the note (`crisis_support_alongside`)
   fetchJSON<{ concepts?: string[]; linked?: number; withheld?: number } & WithCrisisSupport>(
     `/api/notes/${noteId}/extract-concepts`,
     { method: 'POST', body: JSON.stringify({ user_id: userId }) },
@@ -3052,6 +2959,31 @@ export const adminUploadAchievementIcon = (
       method: 'POST',
       body: JSON.stringify({ file_base64: fileBase64, content_type: contentType }),
     });
+
+// Mirrors backend/services/storage_service.py::ALLOWED_CONTENT_TYPES.
+export const COSMETIC_ASSET_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+
+/**
+ * Upload an avatar-frame/banner image through the backend
+ * (`POST /api/admin/cosmetics/assets`, admin-only, service-role storage).
+ * The admin screen used to write to a storage bucket from the browser with
+ * the public anon key; nothing in the browser writes to storage now.
+ */
+export const adminUploadCosmeticAsset = async (file: File): Promise<{ asset_url: string }> => {
+  if (file.size > MAX_AVATAR_BYTES) {
+    throw new Error(
+      `That file is ${(file.size / 1024 / 1024).toFixed(1)} MB — max is ${MAX_AVATAR_BYTES / 1024 / 1024} MB.`,
+    );
+  }
+  if (!COSMETIC_ASSET_TYPES.includes(file.type)) {
+    throw new Error('Unsupported image type. Use JPEG, PNG, WebP or GIF.');
+  }
+  const file_base64 = await readFileAsBase64(file);
+  return fetchJSON<{ asset_url: string }>('/api/admin/cosmetics/assets', {
+    method: 'POST',
+    body: JSON.stringify({ file_base64, content_type: file.type }),
+  });
+};
 
 // #764: the sender withdraws a pending friend request.
 export const cancelFriendRequest = (requestId: string, userId: string) =>

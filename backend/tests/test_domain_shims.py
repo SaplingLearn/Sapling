@@ -33,3 +33,30 @@ SHIMS = {
 @pytest.mark.parametrize("old,new", sorted(SHIMS.items()))
 def test_old_path_is_the_moved_module(old, new):
     assert importlib.import_module(old) is importlib.import_module(new)
+
+
+# ── Route re-exports of moved names ──────────────────────────────────────────
+
+
+def test_flashcards_route_keeps_the_names_its_split_moved():
+    """routes/flashcards.py defined these before the #118 split moved them
+    into services/flashcards/; importers of the old route keep working."""
+    from routes import flashcards as route
+    from services.flashcards import import_flow
+
+    assert route._MAX_UPLOAD_BYTES == import_flow.MAX_UPLOAD_BYTES
+
+
+def test_flashcards_llm_http_error_answers_as_before_the_split():
+    from fastapi import HTTPException
+
+    from routes.flashcards import llm_http_error
+    from services.llm_budget import LLMBudgetExceeded, next_reset
+
+    err = llm_http_error(RuntimeError("model down"))
+    assert isinstance(err, HTTPException)
+    assert (err.status_code, err.detail) == (502, "Gemini error: model down")
+
+    refusal = LLMBudgetExceeded(limit=1, used=2, reset_at=next_reset())
+    with pytest.raises(LLMBudgetExceeded):
+        llm_http_error(refusal)

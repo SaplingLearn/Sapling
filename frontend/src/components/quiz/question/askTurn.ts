@@ -14,6 +14,7 @@ import {
   type QuizAskOrigin,
   type StreamChatHandlers,
 } from "@/lib/api";
+import { readableError } from "@/lib/errorMessage";
 import { crisisSupportIn, type CrisisSupport } from "@/lib/crisisSupport";
 
 /** The tutor mode a "why was I wrong" question wants. */
@@ -21,6 +22,20 @@ export const TUTOR_MODE = "socratic";
 
 /** The turn was aborted mid-request: the caller returns, writing nothing more. */
 export const ABORTED = Symbol("aborted");
+
+/**
+ * docs/safety/crisis-support.md: the backend answered with the crisis-support
+ * card instead of a session or a reply. The panel shows the card in the
+ * thread; no session was opened and nothing of the turn was recorded.
+ */
+export interface CrisisAnswer {
+  crisis: CrisisSupport;
+}
+
+function crisisAnswer(response: unknown): CrisisAnswer | null {
+  const crisis = crisisSupportIn(response);
+  return crisis ? { crisis } : null;
+}
 
 /** What the turn has streamed so far — shared with the panel's token handler. */
 export interface TurnProgress {
@@ -39,35 +54,14 @@ export function quizAskOrigin(
   return attemptId != null && questionIndex != null ? { attemptId, questionIndex } : undefined;
 }
 
-/** A session start the crisis screen answered (docs/safety/crisis-support.md):
- *  the card instead of a session — none was opened. */
-export interface CrisisStart {
-  crisisSupport: CrisisSupport;
-  text: string;
-}
-
-export function isCrisisStart(opened: string | null | CrisisStart): opened is CrisisStart {
-  return opened !== null && typeof opened === "object";
-}
-
-/** The start's crisis card, else its session id. */
-function startedAs(
-  started: { session_id?: string | null },
-  greeting: string | undefined,
-): string | null | CrisisStart {
-  const crisisSupport = crisisSupportIn(started);
-  if (crisisSupport) return { crisisSupport, text: greeting || "" };
-  return started.session_id ?? null;
-}
-
 /**
  * Open the tutor session on the concept. A stream that falls over retries on
  * the JSON route — the greeting is thrown away either way, so there is no
  * partial text to lose. `origin` names the quiz question (spec §13 A99): the
  * server records the help on it and, on the loop path, opens the session
- * teaching the quiz's concept. Resolves the (possibly missing) session id, the
- * crisis card when the crisis screen answered instead, or `ABORTED` when the
- * turn was cancelled while the stream was opening.
+ * teaching the quiz's concept. Resolves the (possibly missing) session id,
+ * `ABORTED` when the turn was cancelled while the stream was opening, or a
+ * `CrisisAnswer` when the crisis screen answered instead of a session.
  */
 export async function openTutorSession(
   userId: string,
@@ -75,7 +69,7 @@ export async function openTutorSession(
   courseId: string | null,
   signal: AbortSignal,
   origin?: QuizAskOrigin,
-): Promise<string | null | CrisisStart | typeof ABORTED> {
+): Promise<string | null | typeof ABORTED | CrisisAnswer> {
   try {
     const started = await startSessionStream(
       userId,
@@ -87,7 +81,7 @@ export async function openTutorSession(
       { signal },
       origin,
     );
-    return startedAs(started, started.reply);
+    return crisisAnswer(started) ?? started.session_id ?? null;
   } catch (err) {
     if (signal.aborted) return ABORTED;
     if (!shouldFallBackToJson(err)) throw err;
@@ -100,7 +94,7 @@ export async function openTutorSession(
       undefined,
       origin,
     );
-    return startedAs(started, started.initial_message);
+    return crisisAnswer(started) ?? started.session_id;
   }
 }
 
@@ -111,16 +105,6 @@ export interface ChatLeg {
   turnId: string;
   signal: AbortSignal;
   progress: TurnProgress;
-}
-
-/** The tutor's answer to one turn: its text, or the crisis card in its place. */
-export interface AskReply {
-  text: string;
-  crisisSupport: CrisisSupport | null;
-}
-
-function replyOf(res: { reply?: string | null }): AskReply {
-  return { text: res.reply || "", crisisSupport: crisisSupportIn(res) };
 }
 
 /**
@@ -134,7 +118,7 @@ export async function chatWithFallback(
   { sid, userId, message, turnId, signal, progress }: ChatLeg,
   { onToken, onProgress }: Pick<StreamChatHandlers, "onToken" | "onProgress">,
   beforeFallback: () => void,
-): Promise<AskReply | typeof ABORTED> {
+): Promise<string | typeof ABORTED | CrisisAnswer> {
   try {
     // `graph_update` events are deliberately unhandled: this panel is a
     // read of the student's own mistake, not a study turn that should
@@ -144,17 +128,18 @@ export async function chatWithFallback(
       onProgress,
       signal,
     }, turnId);
-    return replyOf(res);
+    return crisisAnswer(res) ?? (res.reply || "");
   } catch (err) {
     if (signal.aborted) return ABORTED;
     if (progress.sawToken || !shouldFallBackToJson(err)) throw err;
     beforeFallback();
     const res = await sendChat(sid, userId, message, TUTOR_MODE, true, undefined, turnId);
-    return replyOf(res);
+    return crisisAnswer(res) ?? (res.reply || "");
   }
 }
 
 /** The inline error copy for a failed turn. */
 export function askErrorCopy(err: unknown): string {
-  return err instanceof Error ? err.message : "The tutor is unavailable.";
+  // readableError: a 429 or 422 body shows its detail, never the raw JSON.
+  return err instanceof Error ? readableError(err, "The tutor is unavailable.") : "The tutor is unavailable.";
 }

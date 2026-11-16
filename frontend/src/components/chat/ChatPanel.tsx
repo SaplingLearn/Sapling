@@ -5,6 +5,7 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import styles from "./ChatPanel.module.css";
 import { Icon } from "../Icon";
+import { CHAT_MESSAGE_MAX } from "@/lib/inputLimits";
 import { CrisisSupportCard } from "../safety/CrisisSupportCard";
 import type { CrisisSupport } from "@/lib/crisisSupport";
 
@@ -336,6 +337,7 @@ const ChatInputBar = React.memo(function ChatInputBar({
         <textarea
           ref={inputRef}
           data-testid="tutor-input"
+          maxLength={CHAT_MESSAGE_MAX}
           aria-label="Message"
           value={text}
           onChange={e => setText(e.target.value)}

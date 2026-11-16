@@ -22,6 +22,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from services.prompt_safety import wrap_document_input
+
 from services import document_indexing as di
 from services import document_jobs as dj
 from services import jobs
@@ -460,8 +462,7 @@ def _process(row, *, extract=None, persist=None, existing=None, agents=None, job
     persist = persist or MagicMock(return_value=("doc-1", {"id": "doc-1"}))
     patches = list(agents if agents is not None else _agent_patches())
     post = {name: MagicMock() for name in (
-        "_invalidate_study_guide_cache", "_refresh_course_context",
-        "_check_upload_achievements")}
+        "_refresh_course_context", "_check_upload_achievements")}
     sched = MagicMock()
     chain = MagicMock()  # the learning loop's index-then-draft post-roll step
     with patch.object(dj, "table", uploads), \
@@ -471,7 +472,6 @@ def _process(row, *, extract=None, persist=None, existing=None, agents=None, job
                (lambda *a: None)), \
          patch_documents("_save_orchestrator_syllabus"), \
          patch_documents("_graph_backstop"), \
-         patch_documents("_invalidate_study_guide_cache", post["_invalidate_study_guide_cache"]), \
          patch_documents("_refresh_course_context", post["_refresh_course_context"]), \
          patch_documents("_check_upload_achievements", post["_check_upload_achievements"]), \
          patch("services.document_indexing.schedule_document_index", sched), \
@@ -522,7 +522,6 @@ def test_process_job_runs_the_pipeline_and_records_every_stage(monkeypatch, loop
         assert filters["progress->>owner"] == f"eq.{owner}"
         assert filters["stage"].startswith("eq.") and filters["stage"] != "eq.done"
     # The streaming route's post-roll, uploader threaded through.
-    out.post["_invalidate_study_guide_cache"].assert_called_once_with("u1", "off-1")
     out.post["_refresh_course_context"].assert_called_once_with("off-1", "u1")
     out.post["_check_upload_achievements"].assert_called_once_with("u1")
     if loop_on:
@@ -559,17 +558,17 @@ def test_process_job_resolves_upload_prereq_edges_once_like_the_route(prereqs_on
             concept_run.stop()
     assert out.uploads.row["stage"] == "done"
     flag.assert_called_once_with("u1")
-    kwargs = mock.call_args.kwargs
+    (prompt,), kwargs = mock.call_args  # the prompt positionally, as every worker's
     if prereqs_on:
         names.assert_called_once_with("u1", "c-1")
-        assert kwargs["output_type"] is ConceptList and "Chain Rule" in kwargs["user_prompt"]
+        assert kwargs["output_type"] is ConceptList and "Chain Rule" in prompt
         (user, course, concepts), _ = write.call_args
         assert (user, course) == ("u1", "c-1") and concepts.concepts[0].name == "Backprop"
     else:
         names.assert_not_called()
         write.assert_not_called()
-        assert set(kwargs) == {"user_prompt", "deps", "usage_limits"}
-        assert kwargs["user_prompt"] == _text()
+        assert set(kwargs) == {"deps", "usage_limits"}
+        assert prompt == wrap_document_input(_text())  # #890: the envelope
 
 
 @pytest.mark.parametrize("stage", ["done", "failed", "inline"])
@@ -724,7 +723,6 @@ def test_flag_off_sync_is_unchanged_and_never_touches_the_queue(monkeypatch, loo
          patch_documents("process_document", AsyncMock(return_value=result)), \
          patch_documents("_persist_document", return_value=("doc-1", {"id": "doc-1"})), \
          patch_documents("refresh_course_context"), \
-         patch_documents("_invalidate_study_guide_cache"), \
          patch_documents("_check_upload_achievements"), \
          patch_documents("schedule_document_index") as sched, \
          patch_documents("_index_then_check_items") as chain, \
@@ -877,7 +875,6 @@ def test_flag_on_sync_runs_inline_when_the_queue_cannot_take_it():
                AsyncMock(return_value=_make_orchestrator_result())), \
          patch_documents("_persist_document", return_value=("doc-1", {"id": "doc-1"})), \
          patch_documents("refresh_course_context"), \
-         patch_documents("_invalidate_study_guide_cache"), \
          patch_documents("_check_upload_achievements"), \
          patch_documents("schedule_document_index"):
         r = _sync_post(_client())
@@ -1245,7 +1242,6 @@ def test_flag_on_sync_records_the_inline_success():
                AsyncMock(return_value=_make_orchestrator_result())), \
          patch_documents("_persist_document", return_value=("doc-1", {"id": "doc-1"})), \
          patch_documents("refresh_course_context"), \
-         patch_documents("_invalidate_study_guide_cache"), \
          patch_documents("_check_upload_achievements"), \
          patch_documents("schedule_document_index"):
         r = _sync_post(_client())
@@ -1452,7 +1448,6 @@ def test_the_pipeline_stores_its_outcome_before_the_insert():
          patch_documents("_save_orchestrator_syllabus"), \
          patch_documents("_graph_backstop"), \
          patch("services.document_indexing.schedule_document_index"), \
-         patch_documents("_invalidate_study_guide_cache"), \
          patch_documents("_refresh_course_context"), \
          patch_documents("_check_upload_achievements"):
         for p in patches:

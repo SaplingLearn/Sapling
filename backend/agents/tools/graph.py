@@ -10,6 +10,22 @@ concepts_covered correctly for agent-path chats.
 PKG-14b (spec §11.2): the legacy tutor's mastery-write tool is gone. After
 the cutover only graded evidence through `apply_graph_update` moves a mastery
 score (spec §1, §5); the legacy tutor — the kill-switch path — records none.
+
+What injected text can and cannot do through this tool
+------------------------------------------------------
+The tutor's prompt carries text other people wrote: retrieved chunks from
+classmates' uploads (class-shared RAG rows), document summaries, note bodies.
+Every one of those arrives inside the untrusted envelope, and the system
+prompt says a passage is never a reason to call a tool. That is a request to
+a model, so the limits that matter are enforced here, in code:
+
+- Whose graph: `user_id` and `course_id` come from `ctx.deps`, never from a
+  tool argument (pinned by tests/test_prompt_injection.py), so no passage can
+  point a write at another student.
+- New concepts: `apply_graph_update_tool` always writes `initial_mastery`
+  0.0. Adding a concept never raises anyone's mastery.
+- Mastery: no tool moves it at all (PKG-14b, above), so no passage can talk
+  the model into raising a score.
 """
 
 from __future__ import annotations

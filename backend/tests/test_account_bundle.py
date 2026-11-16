@@ -308,6 +308,17 @@ def source_db() -> FakeDB:
             "id": "fc-1", "user_id": UID, "offering_id": None, "topic": "CS",
             "front": enc(A, "What is recursion?"), "back": enc(A, "A self call"),
         }],
+        # Plaintext labels (no 🔒 column). `course_id` is a catalog UUID;
+        # `exam_id` is an assignment id, which keeps its value across the copy.
+        "flashcard_sets": [
+            {"id": "fset-1", "user_id": UID, "course_id": SRC_CS, "name": "Midterm 1",
+             "concepts": ["Recursion", "Base cases"],
+             "options": {"only_due": True, "shuffle": False}, "exam_id": "asg-1",
+             "created_at": "2026-11-01T00:00:00Z", "updated_at": "2026-11-02T00:00:00Z"},
+            {"id": "fset-2", "user_id": UID, "course_id": SRC_BIO, "name": "Cells",
+             "concepts": ["Cells"], "options": {}, "exam_id": None,
+             "created_at": "2026-11-03T00:00:00Z", "updated_at": "2026-11-03T00:00:00Z"},
+        ],
         "sessions": [{
             "id": "sess-1", "user_id": UID, "offering_id": SRC_OFF_BIO, "mode": "socratic",
             "topic": "Cells", "summary_json": enc_json(A, {"bullets": ["mitochondria"]}),
@@ -319,6 +330,11 @@ def source_db() -> FakeDB:
         "study_guides": [{
             "id": "sg-1", "user_id": UID, "offering_id": SRC_OFF_CS, "exam_id": "asg-1",
             "content": enc_json(A, {"exam": "Midterm"}),
+            "previous_content": enc_json(A, {"exam": "Midterm, before the update"}),
+            "answers": enc_json(A, {"s1-i2": {"option_id": "b", "correct": True}}),
+            "scope_kind": "exam", "status": "ready", "format": 1,
+            "material_ids": ["doc-1"], "read_sections": ["s1"],
+            "saved_at": "2026-11-04T00:00:00Z", "generating_at": "2026-11-05T00:00:00Z",
         }],
         "quiz_attempts": [{
             "id": "qa-1", "user_id": UID, "concept_node_id": "node-1", "score": 3, "total": 4,
@@ -403,6 +419,10 @@ def test_export_is_plaintext_with_natural_key_catalog(use):
     assert t["messages"][1]["content"] == "Hello"
     assert t["quiz_responses"][0]["answer_text"] == {"text": "a base case"}
     assert t["topic_checklists"][0]["content"] == {"topics": [{"name": "Recursion"}]}
+    guide = t["study_guides"][0]
+    assert guide["content"] == {"exam": "Midterm"}
+    assert guide["previous_content"] == {"exam": "Midterm, before the update"}
+    assert guide["answers"] == {"s1-i2": {"option_id": "b", "correct": True}}
     assert bundle["profile"]["name"] == "Ada Student"
     assert "avatar_url" not in bundle["profile"]
     assert "equipped_banner_id" not in bundle["settings"]
@@ -500,6 +520,18 @@ def test_round_trip_reencrypts_under_the_target_key_and_remaps_catalog(use, wipe
     assert created["section"] == ""
     assert d["sessions"][0]["offering_id"] == bio_off
     assert d["flashcards"][0]["offering_id"] is None
+    # Saved sets: the course is remapped by course_code, the labels travel as
+    # the plaintext they are, and exam_id still names the (id-preserved) assignment.
+    sets = {s["id"]: s for s in d["flashcard_sets"]}
+    assert sets["fset-1"] == {
+        "id": "fset-1", "user_id": UID, "course_id": DST_CS, "name": "Midterm 1",
+        "concepts": ["Recursion", "Base cases"],
+        "options": {"only_due": True, "shuffle": False}, "exam_id": "asg-1",
+        "created_at": "2026-11-01T00:00:00Z", "updated_at": "2026-11-02T00:00:00Z",
+    }
+    assert sets["fset-1"]["exam_id"] == d["assignments"][0]["id"]
+    assert (sets["fset-2"]["course_id"], sets["fset-2"]["exam_id"]) == (DST_BIO, None)
+    assert counts["flashcard_sets"] == 2
     # Graph course ids remapped by course_code; row ids preserved.
     nodes = {n["id"]: n["course_id"] for n in d["graph_nodes"]}
     assert nodes == {"node-1": DST_CS, "node-2": DST_BIO}
@@ -509,7 +541,19 @@ def test_round_trip_reencrypts_under_the_target_key_and_remaps_catalog(use, wipe
     assert dec(KEY_B, a["points_earned"]) == "88" and dec(KEY_B, a["notes"]) == "remember the base case"
     assert [dec(KEY_B, m["content"]) for m in d["messages"]] == ["Hi", "Hello"]
     assert json.loads(dec(KEY_B, d["quiz_responses"][0]["answer_text"])) == {"text": "a base case"}
-    assert json.loads(dec(KEY_B, d["study_guides"][0]["content"])) == {"exam": "Midterm"}
+    guide = d["study_guides"][0]
+    assert json.loads(dec(KEY_B, guide["content"])) == {"exam": "Midterm"}
+    assert json.loads(dec(KEY_B, guide["previous_content"])) == {
+        "exam": "Midterm, before the update"}
+    assert json.loads(dec(KEY_B, guide["answers"])) == {
+        "s1-i2": {"option_id": "b", "correct": True}}
+    # The guide's plaintext state travels; its materials and exam keep their
+    # ids (row ids are preserved), and the source's generation claim does not.
+    assert guide["material_ids"] == [d["documents"][0]["id"]] == ["doc-1"]
+    assert guide["exam_id"] == d["assignments"][0]["id"]
+    assert (guide["scope_kind"], guide["status"], guide["format"]) == ("exam", "ready", 1)
+    assert (guide["read_sections"], guide["saved_at"]) == (["s1"], "2026-11-04T00:00:00Z")
+    assert guide["generating_at"] is None
     assert d["quiz_attempts"][0]["answers_json"] is None
     assert json.loads(dec(KEY_B, d["topic_checklists"][0]["content"]))["topics"][0]["name"] == "Recursion"
     # Achievements by slug; one the target lacks is skipped and counted.
@@ -789,5 +833,41 @@ def test_malformed_achievement_catalog_is_refused_before_the_wipe(use, wipes, ba
     bundle["catalog"]["achievements"] = bad
     use(target_db(), KEY_B, "production")
     with pytest.raises(BundleError, match="achievements"):
+        account_bundle.import_account(UID, bundle)
+    assert wipes == []
+
+
+# ── Saved flashcard sets: course-keyed, no offering ─────────────────────────
+
+
+def test_flashcard_set_course_reaches_the_catalog_without_an_offering(use, wipes, consent_clears):
+    """A set keys on the abstract course alone, so its course must reach the
+    bundle's catalog even when no exported row names an offering of it."""
+    src = source_db()
+    src.data["courses"].append({"id": "src-course-ma", "course_code": "CAS MA 123",
+                                "course_name": "Calculus", "school_id": SRC_SCHOOL})
+    src.data["flashcard_sets"].append({
+        "id": "fset-3", "user_id": UID, "course_id": "src-course-ma", "name": "Limits",
+        "concepts": ["Limits"], "options": {}, "exam_id": None,
+    })
+    use(src, KEY_A, "staging")
+    bundle = json.loads(json.dumps(account_bundle.export_account(UID)))
+    assert bundle["catalog"]["courses"]["src-course-ma"]["course_code"] == "CAS MA 123"
+
+    dst = target_db()
+    dst.data["courses"].append({"id": "dst-course-ma", "course_code": "CAS MA 123",
+                                "school_id": DST_SCHOOL})
+    use(dst, KEY_B, "production")
+    account_bundle.import_account(UID, bundle)
+
+    moved = {s["id"]: s["course_id"] for s in dst.data["flashcard_sets"]}
+    assert moved["fset-3"] == "dst-course-ma"
+
+
+def test_flashcard_set_course_outside_the_catalog_is_refused_before_the_wipe(use, wipes):
+    bundle = export_from_source(use)
+    bundle["tables"]["flashcard_sets"][0]["course_id"] = "src-course-unknown"
+    use(target_db(), KEY_B, "production")
+    with pytest.raises(BundleError, match="flashcard_sets: course src-course-unknown"):
         account_bundle.import_account(UID, bundle)
     assert wipes == []

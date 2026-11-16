@@ -1902,7 +1902,7 @@ export function LoopLearn() {
           {" "}
           <Link
             data-testid="loop-budget-study-link"
-            href="/study?mode=cards"
+            href="/study"
             style={{ color: "var(--accent)", fontWeight: 500 }}
           >
             Review flashcards
@@ -2491,7 +2491,7 @@ export function LoopLearn() {
 }
 
 function dueLink(courseIds: string[]): string {
-  return courseIds.length > 0 ? retentionHref(courseIds) : "/study?mode=cards";
+  return courseIds.length > 0 ? retentionHref(courseIds) : "/study";
 }
 
 /** The plan the panel lists: the one on screen, else the approved one /status reported. */
@@ -3109,7 +3109,7 @@ function ClosePanel({
     return (
       <CenteredCard testId="loop-close-done">
         <p ref={setFocusTarget} tabIndex={-1} style={{ margin: "0 0 12px", fontSize: 14, color: "var(--text-dim)" }}>{note}</p>
-        <Link data-testid="loop-close-study-link" href="/study?mode=cards" style={{ color: "var(--accent)" }}>
+        <Link data-testid="loop-close-study-link" href="/study" style={{ color: "var(--accent)" }}>
           Review what&apos;s due
         </Link>
       </CenteredCard>
@@ -3192,10 +3192,10 @@ function ClosePanel({
           style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", fontSize: 14, color: "var(--text-dim)" }}
         >
           <span style={{ flex: 1, minWidth: 120 }}>Session closed.</span>
-          {courseId && <Link data-testid="loop-close-retention-link" href={`/study?mode=cards&retention-course=${encodeURIComponent(courseId)}`} className="btn">
+          {courseId && <Link data-testid="loop-close-retention-link" href={retentionHref([courseId])} className="btn">
             Check retention after time away
           </Link>}
-          <Link data-testid="loop-close-study-link" href="/study?mode=cards" className="btn">
+          <Link data-testid="loop-close-study-link" href="/study" className="btn">
             Review what&apos;s due
           </Link>
           {onNew && (

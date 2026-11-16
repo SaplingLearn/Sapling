@@ -38,6 +38,9 @@ _STRICT_EXAM_PATTERN = re.compile(
     r"\b(exam|midterm|final(?!\s+draft)|finals)\b", re.IGNORECASE
 )
 
+#: The Study page's words for an exam or a quiz. See `is_assessment`.
+_ASSESSMENT_PATTERN = re.compile(r"\b(midterm|final|exam|quiz)\b", re.IGNORECASE)
+
 #: Only say something about an exam that is actually near. Beyond this, the
 #: sentence carries no proximity signal — see `days_until_next_exam`.
 PROMPT_HORIZON_DAYS = 14
@@ -75,6 +78,24 @@ def is_exam_strict(assignment: dict[str, Any]) -> bool:
     if (assignment.get("assignment_type") or "").lower() == "exam":
         return True
     return bool(_STRICT_EXAM_PATTERN.search(assignment.get("title") or ""))
+
+
+def is_assessment(assignment: dict[str, Any]) -> bool:
+    """Whether one row is an exam or a quiz as the Study page shows them:
+    its stored type, or, for an `other` (or untyped) row, its title. A
+    syllabus import stores every assignment as `other`
+    (services/documents/persistence.py), so the title is often all there
+    is; a `homework`, `reading` or `project` row is never one.
+
+    The SAME rule as `classifyAssessment` in
+    frontend/src/components/study/studyModel.ts, which makes the Study
+    page's exam tabs. The topic outline (`topic_checklist_service`) links
+    topics only to the rows this accepts, so a tab it rejects never has a
+    topic linked to it. Change the two together."""
+    kind = (assignment.get("assignment_type") or "").lower()
+    if kind in ("exam", "quiz"):
+        return True
+    return kind in ("", "other") and bool(_ASSESSMENT_PATTERN.search(assignment.get("title") or ""))
 
 
 def _today() -> date:

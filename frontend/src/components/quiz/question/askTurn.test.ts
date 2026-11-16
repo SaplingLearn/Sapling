@@ -4,7 +4,6 @@ import {
   ABORTED,
   askErrorCopy,
   chatWithFallback,
-  isCrisisStart,
   openTutorSession,
   quizAskOrigin,
   type ChatLeg,
@@ -97,7 +96,7 @@ describe("chatWithFallback", () => {
   it("returns the streamed reply, passing the handler bag through", async () => {
     api.streamChat.mockResolvedValueOnce({ reply: "Because." });
     const l = leg();
-    await expect(chatWithFallback(l, { onToken, onProgress }, vi.fn())).resolves.toEqual({ text: "Because.", crisisSupport: null });
+    await expect(chatWithFallback(l, { onToken, onProgress }, vi.fn())).resolves.toBe("Because.");
     expect(api.streamChat).toHaveBeenCalledWith(
       "s1", "u", "Why?", "socratic", true, undefined,
       { onToken, onProgress, signal: l.signal }, "turn-1",
@@ -106,7 +105,7 @@ describe("chatWithFallback", () => {
 
   it("maps an empty streamed reply to ''", async () => {
     api.streamChat.mockResolvedValueOnce({});
-    await expect(chatWithFallback(leg(), {}, vi.fn())).resolves.toEqual({ text: "", crisisSupport: null });
+    await expect(chatWithFallback(leg(), {}, vi.fn())).resolves.toBe("");
   });
 
   it("returns ABORTED when the signal was aborted", async () => {
@@ -149,7 +148,7 @@ describe("chatWithFallback", () => {
     });
     await expect(
       chatWithFallback(leg(), {}, () => order.push("beforeFallback")),
-    ).resolves.toEqual({ text: "", crisisSupport: null });
+    ).resolves.toBe("");
     expect(order).toEqual(["beforeFallback", "sendChat"]);
     expect(api.sendChat).toHaveBeenCalledWith("s1", "u", "Why?", "socratic", true, undefined, "turn-1");
   });
@@ -175,8 +174,7 @@ describe("the quiz_ask origin and the crisis card (spec §13 A99; docs/safety/cr
   it("returns the crisis card instead of a session", async () => {
     api.startSessionStream.mockResolvedValueOnce({ session_id: null, reply: "card", crisis_support: crisisFixture });
     const opened = await openTutorSession("u", "Recursion", null, new AbortController().signal);
-    expect(isCrisisStart(opened as never)).toBe(true);
-    expect(opened).toMatchObject({ text: "card", crisisSupport: { title: crisisFixture.title } });
+    expect(opened).toMatchObject({ crisis: { title: crisisFixture.title } });
   });
 
   it("carries a reply's crisis card", async () => {
@@ -186,6 +184,6 @@ describe("the quiz_ask origin and the crisis card (spec §13 A99; docs/safety/cr
       {},
       vi.fn(),
     );
-    expect(reply).toMatchObject({ text: "card", crisisSupport: { title: crisisFixture.title } });
+    expect(reply).toMatchObject({ crisis: { title: crisisFixture.title } });
   });
 });

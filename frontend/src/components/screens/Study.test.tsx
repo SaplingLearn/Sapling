@@ -1,148 +1,144 @@
 // @vitest-environment jsdom
 /**
- * Component tests for the Study screen's study-guide failure UX (#361):
- *   1. A guide whose exam is gone lands on inline guidance, with NO toast
- *   2. A genuine generation failure toasts a sentence (never the raw body)
- *      and leaves a working retry on screen
+ * Study screen: the hub, and what became of the retired `?mode=` panes.
  *
- * The recent-guides rail is the entry point under test because it's the real
- * path to a stale exam id, and it needs no dropdown interaction to reach.
+ * The tabbed Study screen is gone: Study Guide, Flashcards and Quiz have
+ * pages of their own. `?mode=guide` / `?mode=cards` survive only as
+ * redirects, so a bookmark or an open tab still lands somewhere real.
  */
-
 import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, cleanup } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import { render, screen, cleanup, waitFor, fireEvent } from "@testing-library/react";
 
+const replace = vi.fn();
+const search = { qs: "" };
 vi.mock("next/navigation", () => ({
-  usePathname: () => "/study",
-  useSearchParams: () => new URLSearchParams(),
+  useRouter: () => ({ replace, push: vi.fn() }),
+  useSearchParams: () => new URLSearchParams(search.qs),
 }));
-
-vi.mock("@/context/UserContext", () => ({
-  useUser: () => ({ userId: "u1", userReady: true }),
-}));
-
-vi.mock("@/lib/useIsMobile", () => ({
-  useIsMobile: () => false,
-}));
-
+vi.mock("@/context/UserContext", () => ({ useUser: () => ({ userId: "u1", userReady: true }) }));
+vi.mock("@/lib/useIsMobile", () => ({ useIsMobile: () => false }));
+vi.mock("@/lib/topicChecklistApi", () => ({ getTopicChecklist: vi.fn(async () => ({ topics: [] })) }));
 vi.mock("@/lib/api", () => ({
   getCourses: vi.fn(async () => ({ courses: [] })),
-  getStudyGuideExams: vi.fn(async () => ({ exams: [] })),
-  getStudyGuide: vi.fn(),
-  regenerateStudyGuide: vi.fn(),
-  getCachedStudyGuides: vi.fn(async () => ({ guides: [] })),
+  getGraph: vi.fn(async () => ({ nodes: [], edges: [], stats: {} })),
+  getAllAssignments: vi.fn(async () => ({ assignments: [] })),
+  saveAssignments: vi.fn(),
+  updateAssignment: vi.fn(),
+  deleteAssignment: vi.fn(),
   getFlashcards: vi.fn(async () => ({ flashcards: [] })),
-  generateFlashcards: vi.fn(),
-  rateFlashcard: vi.fn(),
-  deleteFlashcard: vi.fn(),
-  getDocuments: vi.fn(async () => ({ documents: [] })),
-  // PKG-12: the learning loop is off (the review probe 404s) — the legacy UI.
+  // PKG-12: the learning loop's status probe; off unless a case turns it on.
   getLoopStatus: vi.fn(async () => ({ active: false })),
+}));
+vi.mock("@/lib/studyGuide/api", () => ({ listGuides: vi.fn(async () => ({ guides: [] })) }));
+vi.mock("@/lib/quiz/api", () => ({ listAttempts: vi.fn(async () => ({ attempts: [] })) }));
+vi.mock("@/lib/studyApi", () => ({
+  getStudyDaily: vi.fn(async () => ({ goal_minutes: 30, days: [] })),
+  setStudyDailyGoal: vi.fn(),
+}));
+
+vi.mock("../learn/DueQueue", () => ({
+  DueQueue: ({ userId, courseId }: { userId: string; courseId?: string }) => (
+    <div data-testid="review-due-panel">{`${userId}:${courseId ?? "-"}`}</div>
+  ),
+}));
+vi.mock("../learn/RetentionCheck", () => ({
+  RetentionCheck: ({ initialCourseId }: { initialCourseId?: string }) => (
+    <div data-testid="retention-panel">{initialCourseId || "-"}</div>
+  ),
 }));
 
 import { Study } from "./Study";
 import { ToastProvider } from "../ToastProvider";
-import { getCachedStudyGuides, getStudyGuide } from "@/lib/api";
+import { getLoopStatus } from "@/lib/api";
 
-const mockedCached = vi.mocked(getCachedStudyGuides);
-const mockedGuide = vi.mocked(getStudyGuide);
-
-const RECENT = {
-  id: "g1",
-  course_id: "c1",
-  exam_id: "exam-deleted",
-  course_name: "Intro to CS",
-  exam_title: "Midterm 1",
-  overview: "",
-  generated_at: "2026-04-01T00:00:00Z",
-};
-
-/** Clicks the recent-guides entry, which sets the course + exam and kicks
- *  off the guide load the tests are about. */
-async function openRecentGuide() {
-  render(
-    <ToastProvider>
-      <Study />
-    </ToastProvider>,
-  );
-  await userEvent.click(await screen.findByText("Midterm 1"));
-}
+const renderStudy = () => render(<ToastProvider><Study /></ToastProvider>);
 
 beforeEach(() => {
-  mockedCached.mockResolvedValue({ guides: [RECENT] });
-  // The screen logs the real error for debuggability; keep it out of the
-  // test output.
-  vi.spyOn(console, "error").mockImplementation(() => {});
+  search.qs = "";
+  replace.mockReset();
+  vi.mocked(getLoopStatus).mockReset().mockResolvedValue({ active: false });
+});
+afterEach(cleanup);
+
+describe("Study — the retired ?mode= panes", () => {
+  it("sends ?mode=guide to the Study Guides home, with or without a course", async () => {
+    search.qs = "mode=guide&course=c1";
+    renderStudy();
+    await waitFor(() => expect(replace).toHaveBeenCalledWith("/study/guide"));
+  });
+
+  it("sends ?mode=cards to the Flashcards page, keeping the course", async () => {
+    search.qs = "mode=cards&course=c1";
+    renderStudy();
+    await waitFor(() => expect(replace).toHaveBeenCalledWith("/flashcards?course=c1"));
+  });
+
+  it("redirects a course-less pane link too", async () => {
+    search.qs = "mode=cards";
+    renderStudy();
+    await waitFor(() => expect(replace).toHaveBeenCalledWith("/flashcards"));
+  });
+
+  it("paints nothing while redirecting, so the hub never flashes first", () => {
+    search.qs = "mode=guide";
+    const { container } = renderStudy();
+    // ToastProvider's own wrapper is all that's left.
+    expect(container.querySelector("h1")).toBeNull();
+  });
+
+  it("renders the hub for a bare /study, with no redirect", async () => {
+    renderStudy();
+    expect(await screen.findByRole("heading", { name: "Study" })).toBeTruthy();
+    expect(replace).not.toHaveBeenCalled();
+  });
+
+  it("ignores an unknown mode rather than redirecting somewhere arbitrary", async () => {
+    search.qs = "mode=nonsense";
+    renderStudy();
+    expect(await screen.findByRole("heading", { name: "Study" })).toBeTruthy();
+    expect(replace).not.toHaveBeenCalled();
+  });
 });
 
-afterEach(() => {
-  cleanup();
-  vi.restoreAllMocks();
-  vi.clearAllMocks();
-});
-
-describe("Study — study guide for an exam that no longer exists", () => {
-  beforeEach(() => {
-    mockedGuide.mockRejectedValue(
-      new Error('{"detail":"Exam not found. It may have been deleted — pick another exam."}'),
-    );
+describe("Study — the learning loop's reviews above the hub (PKG-12)", () => {
+  it("renders the due queue (every course) and the retention check when the loop is on", async () => {
+    vi.mocked(getLoopStatus).mockResolvedValue({ active: true });
+    renderStudy();
+    expect((await screen.findByTestId("review-due-panel")).textContent).toBe("u1:-");
+    expect(screen.getByTestId("retention-panel")).toBeTruthy();
+    expect(getLoopStatus).toHaveBeenCalledWith("u1");
+    expect(await screen.findByRole("heading", { name: "Study" })).toBeTruthy(); // the hub stays below
   });
 
-  it("shows inline guidance instead of an error toast", async () => {
-    await openRecentGuide();
-
-    expect(await screen.findByText(/isn't around anymore/i)).toBeTruthy();
-    expect(screen.getByText(/Calendar page/i)).toBeTruthy();
-    // Toasts render with role="status"; a missing exam must produce none.
-    expect(screen.queryAllByRole("status")).toHaveLength(0);
+  it("keeps the hub alone when the loop is off", async () => {
+    renderStudy();
+    expect(await screen.findByRole("heading", { name: "Study" })).toBeTruthy();
+    await waitFor(() => expect(getLoopStatus).toHaveBeenCalled());
+    expect(screen.queryByTestId("review-due-panel")).toBeNull();
+    expect(screen.queryByTestId("retention-panel")).toBeNull();
   });
 
-  it("does not stack the generic no-exams hint on top of the guidance", async () => {
-    await openRecentGuide();
-
-    await screen.findByText(/isn't around anymore/i);
-    expect(screen.queryByText(/No exams for this course yet/i)).toBeNull();
+  it("offers a retry after a failed status read, keeping the hub", async () => {
+    vi.mocked(getLoopStatus).mockRejectedValueOnce(new Error("network")).mockResolvedValueOnce({ active: true });
+    renderStudy();
+    fireEvent.click(await screen.findByRole("button", { name: "Retry due reviews" }));
+    expect(await screen.findByTestId("review-due-panel")).toBeTruthy();
+    expect(getLoopStatus).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole("heading", { name: "Study" })).toBeTruthy();
   });
 
-  it("offers no retry — retrying a deleted exam can't succeed", async () => {
-    await openRecentGuide();
-
-    await screen.findByText(/isn't around anymore/i);
-    expect(screen.queryByRole("button", { name: /try again/i })).toBeNull();
-  });
-});
-
-describe("Study — study guide that genuinely fails to build", () => {
-  beforeEach(() => {
-    mockedGuide.mockRejectedValue(
-      new Error('{"detail":"Study guide generation failed."}'),
-    );
+  it("opens the retention check on the course a deep link names", async () => {
+    vi.mocked(getLoopStatus).mockResolvedValue({ active: true });
+    search.qs = "retention-course=c1";
+    renderStudy();
+    expect((await screen.findByTestId("retention-panel")).textContent).toBe("c1");
+    expect(replace).not.toHaveBeenCalled();
   });
 
-  it("toasts the server sentence, not the raw response body", async () => {
-    await openRecentGuide();
-
-    const toasts = await screen.findAllByRole("status");
-    const text = toasts.map(t => t.textContent).join(" ");
-    expect(text).toContain("Study guide generation failed.");
-    expect(text).not.toContain("{");
-    expect(text).not.toContain("detail");
-    expect(text).not.toContain("[object Object]");
-  });
-
-  it("keeps a working retry on screen", async () => {
-    await openRecentGuide();
-
-    const retry = await screen.findByRole("button", { name: /try again/i });
-    expect(mockedGuide).toHaveBeenCalledTimes(1);
-
-    await userEvent.click(retry);
-
-    expect(mockedGuide).toHaveBeenCalledTimes(2);
-    // Retries the exam that failed, not whatever the selects currently hold.
-    // (4th arg: the active semester — undefined here, All semesters, #141.)
-    expect(mockedGuide).toHaveBeenLastCalledWith("u1", "c1", "exam-deleted", undefined);
+  it("keeps a retired cards link that names a retention course on the hub", async () => {
+    search.qs = "mode=cards&retention-course=c 1";
+    renderStudy();
+    await waitFor(() => expect(replace).toHaveBeenCalledWith("/study?retention-course=c+1"));
   });
 });

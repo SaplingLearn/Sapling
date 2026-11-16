@@ -31,6 +31,7 @@ import type { EntryRequest } from "@/lib/quiz/source";
 import type { QuizConfig, QuizSession } from "@/lib/quiz/types";
 import type { QuizHome as QuizHomeData } from "@/lib/quiz/useQuizHome";
 import type { QuizActions } from "@/lib/quiz/useQuizSession";
+import { consumeStartParam, startStillRequested } from "@/lib/toolHrefs";
 import { usePrefersReducedMotion } from "@/lib/usePrefersReducedMotion";
 import { AdjustDialog } from "./AdjustDialog";
 import { ResumeStrip, homeColumns, masteredState, stateBody } from "./HomeStates";
@@ -77,6 +78,41 @@ export function QuizHome({ home, config, entry, session, actions, onPickedChange
   /** Remember the choices a dialog was started with (§5 B1.6). `setConfig`
    *  persists on its own; `start` does not. */
   const remember = (cfg: SessionConfig) => savePrefs(prefsFor(cfg));
+
+  // ── Arriving to start (`?start=1`) ────────────────────────────────────
+  //
+  // The Study hub's Quiz and Quiz Me ask for a quiz, not for this home: once
+  // the graph is in and /config has landed, start what the link named — the
+  // concept, or the course's queue. `armed` waits one more render because the
+  // session adopts /config's defaults in its own effect, which runs after this
+  // one; starting in the same commit would quiz on the pre-config defaults. A
+  // link that doesn't resolve (another term, nothing due in the course) leaves
+  // the student on the home with its usual explanation. Either way the marker
+  // is dropped, so a reload or a Back here never starts a second quiz.
+  const [armed, setArmed] = React.useState(false);
+  const autoStarted = React.useRef(false);
+  const { mode, pickedId, arrivalConceptId, card, startCard, effectiveConfig } = proposal;
+  React.useEffect(() => {
+    if (!entry.start || autoStarted.current || !startStillRequested()) return;
+    if (session.phase !== "home") {
+      // Arrived into a session already under way (a stored one resumed): the
+      // link has nothing left to start, and must not fire when it ends.
+      autoStarted.current = true;
+      consumeStartParam();
+      return;
+    }
+    if (home.status !== "ready" || !config) return;
+    if (!armed) {
+      setArmed(true);
+      return;
+    }
+    autoStarted.current = true;
+    const named = entry.course
+      ? mode === "course"
+      : mode === "concept" && !pickedId && Boolean(arrivalConceptId && card);
+    if (named) startCard(effectiveConfig);
+    consumeStartParam();
+  }, [entry.start, entry.course, session.phase, home.status, config, armed, mode, pickedId, arrivalConceptId, card, startCard, effectiveConfig]);
 
   // ── Dialogs ───────────────────────────────────────────────────────────
 

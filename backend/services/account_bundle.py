@@ -42,9 +42,13 @@ Never copied: OAuth tokens, roles, social (rooms/friendships), telemetry
 (events/llm_usage), feedback/issue reports, gradescope links (credentials do not
 move), cosmetics (`equipped_*`/`featured_*` ids), `avatar_url` (storage buckets
 differ), `course_chunks`, in-flight staging (`document_uploads`, `gradescope_syncs`,
-`tutor_pending_sessions`: wiped, never bundled), and every privacy/consent/notification choice in
+`tutor_pending_sessions`: wiped, never bundled), `legal_acceptances` (kept by the
+wipe and never bundled: a consent record belongs to the account in the
+environment where it was given, never to another environment's account), and
+every privacy/consent/notification choice in
 `user_settings` (see `_SETTINGS_COPIED`): consent is the person's, given on
-each environment, and is never carried from one to the other. The imported
+each environment, and is never carried from one to the other — the Terms and
+Privacy Policy accepted on one environment included. The imported
 documents therefore index under the TARGET's stored `share_class_context`.
 `users.total_xp`/`level` are not copied either: they are recomputed from the
 imported XP ledger, which is what `xp_service` treats them as (a cache of it).
@@ -110,7 +114,7 @@ ENCRYPTED: dict[str, dict[str, str]] = {
     "flashcards": {"front": TEXT, "back": TEXT},
     "sessions": {"summary_json": JSON},
     "messages": {"content": TEXT},
-    "study_guides": {"content": JSON},
+    "study_guides": {"content": JSON, "previous_content": JSON, "answers": JSON},
     "quiz_attempts": {"questions_json": JSON, "answers_json": JSON},
     "quiz_responses": {"answer_text": JSON},
     "quiz_context": {"context_json": JSON},
@@ -239,8 +243,15 @@ SPECS: tuple[_Spec, ...] = (
     _Spec("notes"),
     _Spec("note_concepts", key="note_id", parent="notes", order="note_id,concept_node_id"),
     _Spec("flashcards"),
+    # No 🔒 column (name/concepts are plaintext labels). `course_id` is remapped
+    # (_COURSE_TABLES); `exam_id` names an assignment and travels unchanged,
+    # like study_guides.exam_id, because row ids are preserved.
+    _Spec("flashcard_sets"),
     _Spec("sessions"),
     _Spec("messages", key="session_id", parent="sessions"),
+    # `exam_id` (an assignment), `material_ids` (documents) and the
+    # `document:<id>` source ids inside the content travel unchanged, because
+    # row ids are preserved.
     _Spec("study_guides"),
     _Spec("quiz_attempts"),
     _Spec("quiz_responses", key="attempt_id", parent="quiz_attempts"),
@@ -251,6 +262,9 @@ SPECS: tuple[_Spec, ...] = (
 
 # Tables whose rows carry an `offering_id` to remap.
 _OFFERING_TABLES = ("documents", "enrollments", "notes", "flashcards", "sessions", "study_guides")
+
+# Tables whose rows carry an abstract `course_id` to remap (by course_code).
+_COURSE_TABLES = ("graph_nodes", "flashcard_sets")
 
 USER_COUNTERS = (
     "total_xp", "level", "streak_count", "longest_streak", "onboarding_completed",
@@ -287,6 +301,9 @@ _ACH_XP_SOURCE = "achievement"
 _DOCUMENT_INDEX_RESET = {
     "index_attempts": 0, "index_leased_at": None, "index_chunk_count": None, "index_error": None,
 }
+
+# A generation run holding a guide on the source holds nothing here.
+_GUIDE_CLAIM_RESET = {"generating_at": None}
 
 _IN_CHUNK = 50  # ids per `in.(…)` filter — keeps the query string bounded
 _INSERT_CHUNK = 200
@@ -376,7 +393,7 @@ def _export_catalog(exported: dict[str, list[dict]]) -> dict:
         raise BundleError(f"offerings referenced but not found: {sorted(missing)}")
 
     course_ids = {o["course_id"] for o in offerings} | (
-        {r.get("course_id") for r in exported.get("graph_nodes", [])} - {None}
+        {r.get("course_id") for t in _COURSE_TABLES for r in exported.get(t, [])} - {None}
     )
     courses = _select_in("courses", "id", course_ids, "id,course_code,course_name,school_id")
     missing = course_ids - {c["id"] for c in courses}
@@ -648,16 +665,18 @@ def _target_row(name: str, row: dict, user_id: str, offering_map: dict, course_m
         if src not in offering_map:
             raise BundleError(f"{name}: offering {src} is not in the bundle's catalog")
         out["offering_id"] = offering_map[src]
-    if name == "graph_nodes" and out.get("course_id") is not None:
+    if name in _COURSE_TABLES and out.get("course_id") is not None:
         src = out["course_id"]
         if src not in course_map:
-            raise BundleError(f"graph_nodes: course {src} is not in the bundle's catalog")
+            raise BundleError(f"{name}: course {src} is not in the bundle's catalog")
         out["course_id"] = course_map[src]
     if name == "documents":
         out.update(_DOCUMENT_INDEX_RESET)
         # A soft-deleted document is never claimed by the sweeper anyway;
         # 'skipped' keeps it out of the admin unindexed list too.
         out["index_status"] = "skipped" if out.get("deleted_at") else "pending"
+    if name == "study_guides" and out.get("generating_at") is not None:
+        out.update(_GUIDE_CLAIM_RESET)
     for column, kind in ENCRYPTED.get(name, {}).items():
         if column in out:
             out[column] = _encrypt(kind, out[column])

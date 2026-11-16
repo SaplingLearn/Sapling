@@ -12,7 +12,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from config import FRONTEND_URL, MAX_AVATAR_SIZE, PORT, STORAGE_BUCKET, validate_config
+from config import APP_ENV, FRONTEND_URL, MAX_AVATAR_SIZE, PORT, STORAGE_BUCKET, validate_config
+from services.cors_origins import allowed_origins as cors_allowed_origins
 
 # App-wide log format. Per-request log lines (with request_id, duration,
 # status) are emitted from RequestIDMiddleware; this just sets the
@@ -21,6 +22,12 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
+
+# Uvicorn's access log (stdout -> Railway logs) keeps the path, never the query
+# string: query parameters can carry student text. services/access_log.py.
+from services import access_log  # noqa: E402
+
+access_log.install()
 
 from routes import graph, learn, learn_loop, quiz, calendar, social, extract, auth, documents, flashcards, study_guide, feedback, careers, onboarding, gradebook, gradescope, notes, academics, gamification
 from routes.profile import router as profile_router
@@ -40,7 +47,8 @@ from routes.email import router as email_router
 from routes.newsletter import router as newsletter_router
 from routes.internal_metrics import router as internal_metrics_router
 from routes.topic_checklist import router as topic_checklist_router
-from services import ai_budget, crisis_support
+from routes.study import router as study_router
+from services import ai_budget
 from services.quiz import config as quiz_config, errors as quiz_errors
 from services.feature_flags import nav_feature_gate
 from services.llm_budget import LLMBudgetExceeded
@@ -51,15 +59,22 @@ from db.scope import (
     admin_service_route,
     service_route,
 )
-from services.logfire_scrubber import EXTRA_PATTERNS, scrub_value
+from services.logfire_scrubber import (
+    ALL_PATTERNS,
+    PYDANTIC_AI_INSTRUMENTATION,
+    QueryStringStripProcessor,
+    scrub_value,
+    strip_query_request_hook,
+)
 from services.ops_logging import install_accounting_logfire_bridge
 from services.ai_trace_privacy import content_free_tracer_provider
-from services import otel_fastapi_compat
+from services import crisis_support, otel_fastapi_compat
 from services.request_context import (
     RequestIDMiddleware,
     current_request_id,
     privacy_signal_in,
 )
+from services.body_limit import BodySizeLimitMiddleware
 from services.encryption_canary import verify_encryption_key
 from services.learning_schema_check import check_learning_schema
 from services.storage_service import (
@@ -70,6 +85,8 @@ from services.storage_service import (
 from services.durable import init_dbos, shutdown_dbos
 from services.check_item_service import shutdown_draft_pool
 from services.index_sweeper import start_sweeper, stop_sweeper
+from services.spend_alerts import start_spend_alerts, stop_spend_alerts
+from services.account_purge_sweeper import start_purge_sweeper, stop_purge_sweeper
 from services.local_seed_watcher import (
     start_watcher as start_local_seed_watcher,
     stop_watcher as stop_local_seed_watcher,
@@ -90,21 +107,30 @@ recost_api_key = os.getenv("RECOST_API_KEY")
 # Logfire sends externally only if LOGFIRE_TOKEN is set. Operator acceptance
 # still requires reviewed capture settings, destination and delivery checks.
 #
-# Disable agent content at the source: the SDK exempts some standard GenAI
-# attributes from its scrubber. The fallback callback replaces other routed
-# content with metadata only, including short answers and nested object keys.
+# No student content leaves the process (services/logfire_scrubber.py has the
+# full story). Agent spans are instrumented WITHOUT content (prompts, outputs,
+# system instructions, tool arguments/results, exception messages), because
+# Logfire's scrubber exempts the standard GenAI message attributes; the
+# callback then replaces any other content-bearing attribute it is routed
+# with a length + sha256 fingerprint (no preview) and strips query strings
+# from URL attributes. ``ALL_PATTERNS`` makes Logfire route those attribute
+# names to the callback in addition to its built-in set (password, secret, ...).
+# URL attributes keep the path only (QueryStringStripProcessor). The agent
+# spans also go through the learning loop's content-free tracer provider
+# (services/ai_trace_privacy.py), which drops content the SDK still routes.
 logfire.configure(
     send_to_logfire="if-token-present",
     service_name="sapling-backend",
     scrubbing=logfire.ScrubbingOptions(
         callback=scrub_value,
-        extra_patterns=list(EXTRA_PATTERNS),
+        extra_patterns=list(ALL_PATTERNS),
     ),
+    # Strips query strings from URL attributes at span START, before Logfire
+    # snapshots the pending span (whose message would spell the query out).
+    additional_span_processors=[QueryStringStripProcessor()],
 )
 logfire.instrument_pydantic_ai(
-    include_content=False,
-    include_binary_content=False,
-    tracer_provider=content_free_tracer_provider(),
+    **PYDANTIC_AI_INSTRUMENTATION, tracer_provider=content_free_tracer_provider(),
 )
 install_accounting_logfire_bridge()
 
@@ -216,6 +242,16 @@ async def _start(stack: AsyncExitStack) -> None:
     # out of retrieval for good. No-op outside real model mode.
     start_sweeper()
     stack.push_async_callback(stop_sweeper)
+    # Hourly AI-spend / auth / 5xx alert emails to admins (never under pytest,
+    # APP_ENV=test or a non-real model mode; the `spend_alerts` flag is the
+    # kill switch).
+    start_spend_alerts()
+    stack.push_async_callback(stop_spend_alerts)
+    # Owner decision 2026-11-14: the daily purge of accounts their student
+    # deleted more than 30 days ago (flag `account_purge`, default off).
+    # Not started under pytest or outside real model mode.
+    start_purge_sweeper()
+    stack.push_async_callback(stop_purge_sweeper)
     # #715: on a developer's LOCAL stack only, copy the rich sample dataset
     # onto each Google account that signs in. Not started anywhere else.
     start_local_seed_watcher()
@@ -254,15 +290,27 @@ def _drop_request_arguments(_request, _attributes):
     Returning ``None`` tells Logfire to record no argument attributes at all.
 
     We keep the method, route template, status, and latency — which is what the
-    request trace is actually for. (The full URL and rendered span message do
-    still carry the raw query string; Sapling query params are ids/enums plus a
-    couple of low-sensitivity search terms, never prompts/completions/document
-    text — see docs/observability-logging-tracking.md.)
+    request trace is actually for. The URL attributes keep only the path:
+    ``strip_query_request_hook`` drops the query string (search terms can be
+    student text).
     """
     return None
 
 
-app = FastAPI(title="Sapling API", version="1.0.0", lifespan=_lifespan)
+def api_docs_urls(app_env: str) -> dict:
+    """FastAPI's docs/redoc/openapi URLs for `app_env`. The interactive docs
+    and the schema map every route and body shape, which is reconnaissance for
+    anyone probing a deployed API, so they are served only to a developer's
+    machine, CI and the local E2E stack (APP_ENV local/test)."""
+    serve = app_env in {"local", "test"}
+    return {
+        "docs_url": "/docs" if serve else None,
+        "redoc_url": "/redoc" if serve else None,
+        "openapi_url": "/openapi.json" if serve else None,
+    }
+
+
+app = FastAPI(title="Sapling API", version="1.0.0", lifespan=_lifespan, **api_docs_urls(APP_ENV))
 
 # Emit a span per HTTP request (method, route, status, latency) so request
 # traces and errors show up in Logfire alongside the Pydantic AI agent spans.
@@ -283,7 +331,19 @@ logfire.instrument_fastapi(
     capture_headers=False,
     extra_spans=False,
     request_attributes_mapper=_drop_request_arguments,
+    # The request span's URL attributes (and the span message Logfire builds
+    # from http.target) carry the raw query string; Logfire treats them as
+    # safe keys, so they are rewritten to the path here.
+    server_request_hook=strip_query_request_hook,
 )
+
+# The crisis card beside a note action's error answer (services/
+# crisis_support.py::alongside leaves it on request.state and re-raises):
+# added on the way out by a layer outside the WHOLE stack, so the generic
+# 500 that ServerErrorMiddleware produces carries it like every handled
+# error does. After instrument_fastapi, which expects ServerErrorMiddleware
+# on top of the stack it wraps.
+crisis_support.install_error_card(app)
 
 if recost_api_key and RecostMiddleware is not None:
     app.add_middleware(
@@ -292,14 +352,17 @@ if recost_api_key and RecostMiddleware is not None:
         project_id=RECOST_PROJECT_ID,
     )
 
-_extra = [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()]
-_allowed_origins = list({
-    FRONTEND_URL.rstrip("/"),
-    "http://localhost:3000",
-    "https://saplinglearn.com",
-    "https://www.saplinglearn.com",
-    *_extra,
-} - {""})
+# Localhost dev origins only on a local/test backend (services/cors_origins.py).
+_allowed_origins = cors_allowed_origins(
+    FRONTEND_URL,
+    APP_ENV,
+    [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()],
+)
+
+# Body ceiling (testathon hardening). Added BEFORE CORSMiddleware so it sits
+# INSIDE it: a 413 from here still comes back with the CORS headers a browser
+# needs in order to read it. See services/body_limit.py for the two limits.
+app.add_middleware(BodySizeLimitMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
@@ -490,6 +553,7 @@ app.include_router(auth.router,        prefix="/api/auth", dependencies=_SVC)
 app.include_router(documents.router,   prefix="/api/documents")
 app.include_router(flashcards.router,  prefix="/api/flashcards", dependencies=nav_feature_gate("/api/flashcards"))
 app.include_router(study_guide.router, prefix="/api/study-guide", dependencies=nav_feature_gate("/api/study-guide"))
+app.include_router(study_router,       prefix="/api/study", dependencies=nav_feature_gate("/api/study"))
 app.include_router(feedback.router,    prefix="/api")
 app.include_router(careers.router,     prefix="/api/careers", dependencies=_SVC)  # public; job_applications is service-only
 app.include_router(onboarding.router,  prefix="/api/onboarding")

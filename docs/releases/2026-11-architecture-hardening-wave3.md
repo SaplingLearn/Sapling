@@ -221,6 +221,15 @@ flip two flags on the same day.
 
 ## 4. Post-deploy manual step: the `study_guides` unique key
 
+> **No longer applies (2026-11-12).** Do not run this step. The study-guide
+> redesign lets a student keep several guides for the same exam, so its
+> migration `20261112094239_study_guides_durable.sql` drops
+> `ensure_study_guides_unique_key()` and, where an environment built it, the
+> index `study_guides_user_offering_exam_key`. An environment where the step
+> never ran needs nothing; one where it did is put right by that migration.
+> The same holds for §6 step 4 and the checklist line that point here. The
+> text below is kept as the record of what wave 3 shipped.
+
 Once per environment, **after** the deploy that carries #850's
 `routes/study_guide.py` is live (code from before it would 500 on regenerate
 once the index exists), as the migration role:

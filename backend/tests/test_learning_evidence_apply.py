@@ -1566,6 +1566,9 @@ SANCTIONED_EVIDENCE_PERSISTERS = frozenset(
         # question — was a SANCTIONED_EVIDENCE_CALLERS (gated) entry. #118 moved
         # the submit's body into the quiz package (spec §13 A149).
         ("services/quiz/submission.py", "submit_quiz"),
+        # main's study-guide redesign: a guide's check question, graded once,
+        # is one mc evidence as a quiz question is (PKG-14b: never a delta).
+        ("services/study_guides/answers.py", "_write_evidence"),
     }
 )
 

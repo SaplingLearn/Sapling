@@ -7,34 +7,28 @@ import { HeroCard } from "@/components/marketing/HeroCard";
 import { SaplingWordmark } from "@/components/SaplingWordmark";
 import { postSignInRoute } from "@/lib/localSeed";
 import { stashPendingToken } from "@/lib/pendingToken";
+import { signInErrorMessage } from "./signInErrors";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "";
 const POPUP_TIMEOUT_MS = 3 * 60 * 1000;
 
-const ERROR_COPY: Record<string, string> = {
-  not_approved: "Your account is pending approval. We'll email you once an admin lets you in.",
-  invalid_domain: "Sign-in is limited to approved school accounts (@bu.edu).",
-  google_not_configured: "Google sign-in is not configured on the server. Please contact support.",
-  signin_failed: "Sign-in failed. Please try again.",
-  account_deleted:
-    "This account was deleted. If you think that's a mistake, please contact support.",
-  session_expired: "Your session has expired. Please sign in again.",
-  env_misconfig: "This environment is misconfigured and can't sign you in. Please contact support.",
-  revoked: "Your access has been revoked.",
-  oauth_denied: "Sign-in was cancelled.",
-  unknown: "Something went wrong. Please try again.",
+/** The box's heading: "Welcome back." for Sign In, "Get started." for Get
+ * Started. The sign-in itself is the same; onboarding comes after it. */
+export type SignInVariant = "signin" | "start";
+
+const HEADING: Record<SignInVariant, { lead: string; accent: string; sub: string }> = {
+  signin: { lead: "Welcome", accent: "back.", sub: "Sign in with your school Google account to continue." },
+  start: { lead: "Get", accent: "started.", sub: "Sign in with your school Google account, then set up Sapling in a few steps." },
 };
 
 interface SignInModalProps {
   open: boolean;
   onClose: () => void;
   errorCode?: string | null;
-  /** Called after a successful popup sign-in instead of routing away, for a
-   * caller that carries on in place (onboarding saving a guest's answers). */
-  onSignedIn?: () => void;
+  variant?: SignInVariant;
 }
 
-export default function SignInModal({ open, onClose, errorCode, onSignedIn }: SignInModalProps) {
+export default function SignInModal({ open, onClose, errorCode, variant = "signin" }: SignInModalProps) {
   const router = useRouter();
   const { setActiveUser } = useUser();
   const [closing, setClosing] = useState(false);
@@ -88,7 +82,14 @@ export default function SignInModal({ open, onClose, errorCode, onSignedIn }: Si
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") { close(); return; }
+      if (e.key === "Escape") {
+        // The box owns Esc while it is open: nothing under it (a page's own
+        // Esc-for-back, the landing's explore mode) acts on the same press.
+        e.preventDefault();
+        e.stopPropagation();
+        close();
+        return;
+      }
       if (e.key === "Tab" && panelRef.current) {
         const focusable = Array.from(
           panelRef.current.querySelectorAll<HTMLElement>(
@@ -103,8 +104,9 @@ export default function SignInModal({ open, onClose, errorCode, onSignedIn }: Si
         else if (!e.shiftKey && active === last) { e.preventDefault(); first.focus(); }
       }
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    // Capture phase: runs before any other window keydown listener.
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
   }, [open, close]);
 
   // Move focus into the modal on open; restore it to the trigger on close.
@@ -130,9 +132,8 @@ export default function SignInModal({ open, onClose, errorCode, onSignedIn }: Si
 
   // The landing's `?error=` code (#756) shows until the student tries again.
   const visibleError = localError ?? (retried ? null : errorCode) ?? null;
-  const errorMessage = visibleError
-    ? ERROR_COPY[visibleError] ?? `Something went wrong (${visibleError}).`
-    : null;
+  const errorMessage = visibleError ? signInErrorMessage(visibleError) : null;
+  const heading = HEADING[variant];
 
   const signInWithGoogle = () => {
     setLocalError(null);
@@ -188,8 +189,7 @@ export default function SignInModal({ open, onClose, errorCode, onSignedIn }: Si
         });
         // #715: a new account on a local backend waits for its sample data
         // on the hold screen; anywhere else this is /onboarding, as before.
-        if (onSignedIn) onSignedIn();
-        else void postSignInRoute(!!data.onboardingCompleted).then(route => router.replace(route));
+        void postSignInRoute(!!data.onboardingCompleted).then(route => router.replace(route));
         onClose();
       } else if (data.error === "not_approved" && data.pendingToken) {
         // An unapproved account: /pending shows where it stands (on the
@@ -251,7 +251,7 @@ export default function SignInModal({ open, onClose, errorCode, onSignedIn }: Si
         onClick={e => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
-        aria-label="Sign in to Sapling"
+        aria-labelledby="signin-modal-title"
         data-testid="signin-modal"
       >
         <button
@@ -272,20 +272,20 @@ export default function SignInModal({ open, onClose, errorCode, onSignedIn }: Si
 
         <SaplingWordmark width={88} style={{ marginBottom: 24 }} />
 
-        <h2 style={{
+        <h2 id="signin-modal-title" data-testid="signin-title" style={{
           margin: 0,
           fontFamily: "var(--font-aleo), 'Aleo', Georgia, serif",
           fontSize: 34, lineHeight: 1.05, fontWeight: 600,
           letterSpacing: "-0.02em", color: "#1a1a1a",
         }}>
-          Welcome <span style={{ fontStyle: "italic", color: "var(--brand-forest)" }}>back.</span>
+          {heading.lead} <span style={{ fontStyle: "italic", color: "var(--brand-forest)" }}>{heading.accent}</span>
         </h2>
         <p style={{ margin: "12px 0 0", fontSize: 14, color: "#4b5563", lineHeight: 1.55 }}>
-          Sign in with your school Google account to continue.
+          {heading.sub}
         </p>
 
         {errorMessage && (
-          <div data-testid="signin-error" style={{
+          <div data-testid="signin-error" role="alert" style={{
             marginTop: 20,
             background: "rgba(220,38,38,0.08)",
             color: "#b91c1c",

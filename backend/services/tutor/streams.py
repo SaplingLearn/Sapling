@@ -13,9 +13,11 @@ from starlette.requests import Request
 
 from agents.usage import record_agent_usage
 from models import ChatBody, StartSessionBody
-from services import ai_budget, crisis_support, events_service
+from services import ai_budget, events_service
 from services.agent_events import SSE_CACHE_CONTROL, sapling_event_to_sse
 from services.auth_guard import guard_off_loop, require_self
+from services import abuse_limits
+from services.request_limits import aenforce_abuse_limit
 from services.chat_stream import stream_agent_turn
 from services.graph_service import get_graph
 from services.request_context import current_request_id
@@ -37,7 +39,7 @@ from services.tutor.run import (
     _ran_on,
     _usage_session_id,
 )
-from services.tutor.turns import _chat_turn_json, _start_session_agent, _start_texts
+from services.tutor.turns import _chat_turn_json, _start_session_agent
 from services.tutor_sessions import stash_pending
 
 
@@ -54,8 +56,7 @@ async def chat_stream(body: ChatBody, request: Request, loop_handler=None):
     persisted is replayed (here and on /chat) instead of run again.
     """
     await guard_off_loop(require_self, body.user_id, request)
-    if crisis := await crisis_support.screen_async(body.user_id, "tutor_chat", body.message):
-        return crisis_support.sse_response(crisis, request)
+    await aenforce_abuse_limit(abuse_limits.TUTOR_TURN, body.user_id)
     # #761 entry checks (not discarded, owned) before the rate-limit read (A93 review)
     await _require_turn_session(body.session_id, body.user_id)
     # A20: one rate-limit read for both paths, AFTER the ownership check (A93 review).
@@ -213,8 +214,7 @@ async def start_session_stream(body: StartSessionBody, request: Request, loop_ha
     a fresh session.
     """
     await guard_off_loop(require_self, body.user_id, request)
-    if crisis := await crisis_support.screen_async(body.user_id, "tutor_start", *_start_texts(body)):
-        return crisis_support.sse_response(crisis, request, session_id=None)
+    await aenforce_abuse_limit(abuse_limits.TUTOR_SESSION_START, body.user_id)
     # A20: one rate-limit read for both paths, AFTER the ownership check (A93 review).
     # #117: off the event loop (it reads llm_usage).
     await asyncio.to_thread(ai_budget.enforce_rate_limit_for, body.user_id)

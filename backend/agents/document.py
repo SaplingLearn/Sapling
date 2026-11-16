@@ -84,6 +84,7 @@ from agents.tools.graph import apply_concepts_to_graph
 from agents.usage import record_agent_usage
 from services.concept_prereqs import course_concept_names, write_document_prerequisites
 from services.durable import workflow as durable_workflow, step as durable_step
+from services.prompt_safety import wrap_document_input
 
 
 class DocumentProcessingResult(BaseModel):
@@ -130,11 +131,16 @@ class PipelineStep:
 # resume the workflow at the last completed worker on a worker-crash retry,
 # instead of re-running every agent from scratch. When DBOS is disabled
 # (the default), `durable_step` is a no-op and these are plain async funcs.
+#
+# Every worker sees the document inside the untrusted-content envelope
+# (`wrap_document_input`): the text is the uploader's, and the classifier's
+# answer feeds whether it is shared with the class. The steps take the raw
+# text so the DBOS checkpoint args are unchanged.
 
 @durable_step
 async def _step_classify(text: str, deps: SaplingDeps) -> DocumentClassification:
     result = record_agent_usage(
-        await classifier_agent.run(text, deps=deps, usage_limits=WORKER_LIMITS),
+        await classifier_agent.run(wrap_document_input(text), deps=deps, usage_limits=WORKER_LIMITS),
         feature="document", task="classifier", user_id=deps.user_id, request_id=deps.request_id,
     )
     return result.output
@@ -143,7 +149,7 @@ async def _step_classify(text: str, deps: SaplingDeps) -> DocumentClassification
 @durable_step
 async def _step_summary(text: str, deps: SaplingDeps) -> Summary:
     result = record_agent_usage(
-        await summary_agent.run(text, deps=deps, usage_limits=WORKER_LIMITS),
+        await summary_agent.run(wrap_document_input(text), deps=deps, usage_limits=WORKER_LIMITS),
         feature="document", task="summary", user_id=deps.user_id, request_id=deps.request_id,
     )
     return result.output
@@ -163,12 +169,13 @@ async def _step_concepts(
         await asyncio.to_thread(course_concept_names, deps.user_id, deps.course_id)
         if prerequisites else ()
     )
+    run_args = extraction_run_args(
+        wrap_document_input(text), prerequisites=prerequisites, existing_concepts=existing,
+    )
     result = record_agent_usage(
+        # The prompt positionally, as every other worker's (the envelope).
         await concept_extraction_agent.run(
-            **extraction_run_args(
-                text, prerequisites=prerequisites, existing_concepts=existing,
-            ),
-            deps=deps, usage_limits=WORKER_LIMITS,
+            run_args.pop("user_prompt"), **run_args, deps=deps, usage_limits=WORKER_LIMITS,
         ),
         feature="document", task="concepts", user_id=deps.user_id, request_id=deps.request_id,
     )
@@ -178,7 +185,7 @@ async def _step_concepts(
 @durable_step
 async def _step_syllabus(text: str, deps: SaplingDeps) -> SyllabusAssignments:
     result = record_agent_usage(
-        await syllabus_extraction_agent.run(text, deps=deps, usage_limits=WORKER_LIMITS),
+        await syllabus_extraction_agent.run(wrap_document_input(text), deps=deps, usage_limits=WORKER_LIMITS),
         feature="document", task="syllabus", user_id=deps.user_id, request_id=deps.request_id,
     )
     return result.output

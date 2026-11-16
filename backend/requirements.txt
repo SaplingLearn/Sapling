@@ -126,7 +126,7 @@ httpcore2==2.16.0
 httplib2>=0.32.0,<1
 oauthlib>=4.0.0,<5
 pyasn1>=0.6.4,<0.7
-soupsieve>=2.9.0,<3
+soupsieve>=4.0.1,<5
 urllib3>=2.8.0,<3
 
 # PostHog product analytics, LLM analytics and error tracking

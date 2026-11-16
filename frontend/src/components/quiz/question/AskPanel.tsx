@@ -51,7 +51,6 @@ import {
   ABORTED,
   askErrorCopy,
   chatWithFallback,
-  isCrisisStart,
   openTutorSession,
   quizAskOrigin,
   type TurnProgress,
@@ -106,11 +105,11 @@ interface AskTurn {
   id: number;
   role: "user" | "assistant";
   text: string;
+  /** docs/safety/crisis-support.md: the crisis card instead of a tutor reply. */
+  crisisSupport?: CrisisSupport;
   /** ADR 0020: the stream was cut off after producing this much. The partial
    *  stays in the thread, marked; Retry drops it and starts the answer over. */
   interrupted?: boolean;
-  /** docs/safety/crisis-support.md: the crisis card instead of a tutor reply. */
-  crisisSupport?: CrisisSupport;
 }
 
 /**
@@ -221,10 +220,10 @@ export function AskPanel({
             quizAskOrigin(askAttemptId, askQuestionIndex),
           );
           if (opened === ABORTED) return;
-          if (isCrisisStart(opened)) {
+          if (typeof opened === "object" && opened !== null) {
             // The card instead of a session: none was opened.
             if (runRef.current === token && mountedRef.current) {
-              setTurns(t => [...t, { id: nextId(), role: "assistant", ...opened }]);
+              setTurns(t => [...t, { id: nextId(), role: "assistant", text: "", crisisSupport: opened.crisis }]);
             }
             return;
           }
@@ -259,8 +258,12 @@ export function AskPanel({
         if (reply === ABORTED) return;
 
         if (runRef.current !== token || !mountedRef.current) return;
-        const { text, crisisSupport } = reply;
-        setTurns(t => [...t, { id: nextId(), role: "assistant", text, ...(crisisSupport ? { crisisSupport } : {}) }]);
+        setTurns(t => [
+          ...t,
+          typeof reply === "string"
+            ? { id: nextId(), role: "assistant", text: reply }
+            : { id: nextId(), role: "assistant", text: "", crisisSupport: reply.crisis },
+        ]);
       } catch (err) {
         if (controller.signal.aborted || runRef.current !== token || !mountedRef.current) return;
         // ADR 0020, and the whole reason `partial` exists: half an answer the

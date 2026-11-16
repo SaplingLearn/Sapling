@@ -420,6 +420,13 @@ class TestCancel:
 
 
 class TestDeclineCooldown:
+    @pytest.fixture(autouse=True)
+    def _recipient_is_live(self):
+        """The send path's live-recipient check reads `users` through
+        services/profiles; the recipient here is a live account."""
+        with patch_social("live_user_ids", side_effect=lambda ids: set(ids)):
+            yield
+
     def _send(self):
         return client.post("/api/social/friends/request",
                            json={"from_user_id": "u1", "to_user_id": "u2"})

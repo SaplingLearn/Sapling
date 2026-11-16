@@ -17,7 +17,7 @@ import string
 import uuid
 from datetime import datetime, timezone
 
-from db.connection import table
+from db.connection import page_all, table
 from models import CreateRoomBody, JoinRoomBody, LeaveRoomBody, PublicJoinBody
 from services.profiles import live_user_ids
 from services.social.errors import Forbidden, InvalidRequest, NotFound
@@ -50,6 +50,41 @@ def _require_member(room_id: str, user_id: str) -> None:
     )
     if not membership:
         raise Forbidden("Not a member of this room")
+
+
+#: ids per `in.(…)` filter — the same ceiling the other batched reads use,
+#: so one big page cannot build a query string too long to send.
+_IN_CHUNK = 50
+
+
+def _member_counts(room_ids: list[str]) -> dict[str, int]:
+    """`{room_id: member_count}` for every id, in one paged read per chunk.
+
+    Both room listings used to do `for room in rooms: select(room_members
+    where room_id = eq.<id>)` — one PostgREST round-trip per room, in series.
+    The public listing is the worse of the two: it reads EVERY public room in
+    the app with no limit, so the number of queries grew with the product.
+
+    Paged (`page_all`), not one select per chunk: 50 rooms' members can pass
+    PostgREST's `max_rows` (1,000), which answers 2xx with the rows cut short,
+    so an unpaged read would undercount every room past the cap in silence.
+    The order is the table's primary key, a total order, as paging requires.
+    """
+    counts: dict[str, int] = {rid: 0 for rid in room_ids}
+    if not room_ids:
+        return counts
+    for i in range(0, len(room_ids), _IN_CHUNK):
+        chunk = room_ids[i : i + _IN_CHUNK]
+        rows = page_all(
+            table("room_members"), "room_id,user_id",
+            filters={"room_id": f"in.({','.join(chunk)})"},
+            order="room_id.asc,user_id.asc",
+        )
+        for row in rows:
+            rid = row.get("room_id")
+            if rid in counts:
+                counts[rid] += 1
+    return counts
 
 
 def _live_members(member_rows) -> list[str]:
@@ -96,6 +131,22 @@ def create_room(body: CreateRoomBody):
     return {"room_id": room_id, "invite_code": invite_code}
 
 
+#: How many public rooms the discovery list reads. This query had no limit
+#: and no order at all, which is two problems:
+#:
+#: * Unbounded — it read EVERY public room in the app, for every student who
+#:   opened the Social page, and the client has no pagination to ask for less.
+#: * Non-deterministic — with no ORDER BY, Postgres may return the same rows
+#:   in a different sequence on each call, so the list visibly reshuffles
+#:   between loads for no reason the student can see.
+#:
+#: Newest-first is the useful order for discovery, and the cap is far above
+#: any plausible number of public rooms while still bounding the work and the
+#: payload. If public rooms ever outgrow it, the fix is paging the endpoint,
+#: not raising this.
+PUBLIC_ROOMS_MAX = 200
+
+
 def list_public_rooms(user_id: str):
     """Public rooms (#405): is_public=true rooms, joinable without an invite.
     The select never includes invite_code, so the public listing cannot leak
@@ -103,12 +154,12 @@ def list_public_rooms(user_id: str):
     rooms = table("rooms").select(
         "id,name,topic,course,owner_id,created_by,created_at,updated_at,is_public",
         filters={"is_public": "eq.true"},
+        order="created_at.desc",
+        limit=PUBLIC_ROOMS_MAX,
     ) or []
+    counts = _member_counts([r["id"] for r in rooms])
     out = []
     for room in rooms:
-        members = table("room_members").select(
-            "user_id", filters={"room_id": f"eq.{room['id']}"},
-        ) or []
         # Explicit projection (never a row spread): the public payload cannot
         # leak invite_code even if the row carries it.
         out.append({
@@ -121,7 +172,7 @@ def list_public_rooms(user_id: str):
             "created_at": room.get("created_at"),
             "updated_at": room.get("updated_at"),
             "is_public": True,
-            "member_count": len(members),
+            "member_count": counts.get(room["id"], 0),
         })
     return {"rooms": out}
 
@@ -231,9 +282,9 @@ def get_user_rooms(user_id: str):
         "id,name,topic,course,owner_id,created_by,invite_code,created_at,updated_at,is_public",
         filters={"id": f"in.({','.join(room_ids)})"},
     )
+    counts = _member_counts([r["id"] for r in rooms])
     for room in rooms:
-        members = table("room_members").select("user_id", filters={"room_id": f"eq.{room['id']}"})
-        room["member_count"] = len(members)
+        room["member_count"] = counts.get(room["id"], 0)
     return {"rooms": rooms}
 
 

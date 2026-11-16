@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from db.connection import table
 from services import feature_flags
 from services.admin_audit import log_admin_action
-from services.auth_guard import get_session_user_id, require_admin
+from services.auth_guard import get_session_user_id, require_admin, require_admin_recent
 from services.events_service import log_event
 from services.profiles import get_display_names
 
@@ -112,7 +112,7 @@ def list_flags(request: Request):
 
 @router.patch("/{key}")
 def update_flag(key: str, body: FlagPatch, request: Request):
-    require_admin(request)
+    require_admin_recent(request)
     actor = get_session_user_id(request)
     fd = _def(key)
     _check(fd, body.default_variant, "default_variant")
@@ -153,7 +153,7 @@ def update_flag(key: str, body: FlagPatch, request: Request):
 
 @router.put("/{key}/targets")
 def upsert_target(key: str, body: TargetBody, request: Request):
-    require_admin(request)
+    require_admin_recent(request)
     actor = get_session_user_id(request)
     fd = _def(key)
     _check(fd, body.variant, "variant")
@@ -174,7 +174,7 @@ def upsert_target(key: str, body: TargetBody, request: Request):
 
 @router.delete("/{key}/targets/{target_type}/{target_id}")
 def delete_target(key: str, target_type: Literal["user", "role"], target_id: str, request: Request):
-    require_admin(request)
+    require_admin_recent(request)
     actor = get_session_user_id(request)
     fd = _def(key)
     removed = table("feature_flag_targets").delete(filters={

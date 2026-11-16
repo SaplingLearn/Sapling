@@ -34,10 +34,10 @@ LEGACY_LIST_COLS = (
 )
 LEGACY_RATE_COLS = "id,times_reviewed"
 LEGACY_RATE_KEYS = {"times_reviewed", "last_rating", "last_reviewed_at"}
-# rate_card's select and update filters, identical on both paths: the select is
-# owner-scoped, the update targets the one card by id.
+# rate_card's select and update filters: both owner-scoped (the update names
+# the one card by id AND its owner, #890).
 RATE_SELECT_KWARGS = {"filters": {"id": "eq.card-1", "user_id": f"eq.{USER_ID}"}, "limit": 1}
-RATE_UPDATE_KWARGS = {"filters": {"id": "eq.card-1"}}
+RATE_UPDATE_KWARGS = {"filters": {"id": "eq.card-1", "user_id": f"eq.{USER_ID}"}}
 FSRS_COLS = ",fsrs_d,fsrs_s,due_at,reps,lapses"
 FSRS_KEYS = {"fsrs_d", "fsrs_s", "due_at", "reps", "lapses"}
 # Every table() the legacy handlers open, in order: list reads flashcards once;
@@ -97,7 +97,7 @@ class TestMigration:
 # ── rate_card ────────────────────────────────────────────────────────────────
 
 # One fixed instant for the whole module. Every route call below runs with
-# routes.flashcards' clock frozen at NOW (_frozen_clock), so fixture rows built
+# services.flashcards.cards' clock frozen at NOW (_frozen_clock), so fixture rows built
 # relative to NOW give exact elapsed days however long the suite has been
 # running since this module was imported.
 NOW = datetime(2026, 9, 27, 12, 0, tzinfo=timezone.utc)
@@ -114,8 +114,9 @@ _LIST_MODULES = ("routes.flashcards", "services.flashcards.cards")
 
 
 def _frozen_clock():
-    """routes.flashcards reads `datetime.now(timezone.utc)`; pin it to NOW."""
-    return patch("routes.flashcards.datetime", _FrozenDatetime)
+    """services/flashcards/cards.py (the list and rate bodies since the #118
+    route split) reads `datetime.now(timezone.utc)`; pin it to NOW."""
+    return patch_in(_LIST_MODULES, "datetime", _FrozenDatetime)
 
 
 def _rate_tables(row: dict):
@@ -152,11 +153,11 @@ def _rate(rating: int, *, gate: bool | None, row: dict, next_state=None, interva
     iv = interval or MagicMock(return_value=8.0)
     with (
         _frozen_clock(),
-        patch("routes.flashcards.table", side_effect=side_effect),
+        patch_in(_LIST_MODULES, "table", side_effect=side_effect),
         _gate_patch(gate),
         patch("learning.flashcard_fsrs.next_state", new=ns),
         patch("learning.flashcard_fsrs.interval", new=iv),
-        patch("routes.flashcards.check_achievements", new=check or MagicMock()),
+        patch_in(_LIST_MODULES, "check_achievements", new=check or MagicMock()),
     ):
         r = client.post(
             "/api/flashcards/rate",
@@ -273,7 +274,7 @@ class TestRateCard:
         boom = MagicMock(side_effect=ValueError("corrupt stored stability"))
         side_effect, calls = _rate_tables(SEEN_ROW)
         with (
-            patch("routes.flashcards.table", side_effect=side_effect),
+            patch_in(_LIST_MODULES, "table", side_effect=side_effect),
             patch("learning.flashcard_fsrs.next_state", new=boom),
         ):
             with pytest.raises(ValueError, match="corrupt stored stability"):
@@ -481,10 +482,10 @@ class TestFlashcardFsrsUpdate:
         side_effect, calls = _rate_tables(SEEN_ROW)
         with (
             _frozen_clock(),
-            patch("routes.flashcards.table", side_effect=side_effect),
+            patch_in(_LIST_MODULES, "table", side_effect=side_effect),
             _gate_patch(True),
-            patch("routes.flashcards.flashcard_fsrs_update", new=spy),
-            patch("routes.flashcards.check_achievements", new=MagicMock()),
+            patch_in(_LIST_MODULES, "flashcard_fsrs_update", new=spy),
+            patch_in(_LIST_MODULES, "check_achievements", new=MagicMock()),
         ):
             r = client.post(
                 "/api/flashcards/rate",

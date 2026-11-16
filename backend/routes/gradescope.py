@@ -39,6 +39,8 @@ from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 
+from models import Id, ShortText
+
 from db.connection import table
 from routes._errors import domain_status
 from services.auth_guard import require_self, guard_off_loop
@@ -87,14 +89,14 @@ class CredentialsBody(BaseModel):
     """Either {auth_mode: 'password', email, password} OR
     {auth_mode: 'cookies', gradescope_session, signed_token?}."""
 
-    user_id: str
+    user_id: Id
     auth_mode: AuthMode = "password"
     # password mode
-    email: str | None = None
-    password: str | None = None
-    # cookies mode
-    gradescope_session: str | None = None
-    signed_token: str | None = None
+    email: str | None = Field(default=None, max_length=320)
+    password: str | None = Field(default=None, max_length=1024)
+    # cookies mode (a session cookie is a few hundred bytes)
+    gradescope_session: str | None = Field(default=None, max_length=8192)
+    signed_token: str | None = Field(default=None, max_length=8192)
 
 
 class BuSsoBody(BaseModel):
@@ -102,9 +104,9 @@ class BuSsoBody(BaseModel):
     we never persist them. The resulting session cookies are persisted as
     if the user had pasted them themselves (auth_mode='cookies')."""
 
-    user_id: str
-    bu_username: str = Field(min_length=1)
-    bu_password: str = Field(min_length=1)
+    user_id: Id
+    bu_username: str = Field(min_length=1, max_length=320)
+    bu_password: str = Field(min_length=1, max_length=1024)
     # Caps the time the headless browser spends parked on the Duo iframe
     # waiting for the user's tap. Frontend should match this on its
     # request-timeout side.
@@ -112,10 +114,10 @@ class BuSsoBody(BaseModel):
 
 
 class LinkBody(BaseModel):
-    user_id: str
-    sapling_course_id: str
-    gradescope_course_id: str
-    semester: str | None = None
+    user_id: Id
+    sapling_course_id: Id
+    gradescope_course_id: Id
+    semester: ShortText | None = None
 
 
 class SyncResult(BaseModel):
@@ -157,6 +159,17 @@ def _reauth_required(user_id: str, creds: StoredCreds, message: str, **outcome: 
     """Stored credentials were rejected: mark them stale, answer 409."""
     _write_connection_state(user_id, {"needs_reauth": True, **outcome}, only_version=creds.updated_at)
     return _gs_error(409, GS_REAUTH_REQUIRED, message or "Gradescope rejected the saved credentials. Reconnect Gradescope.")
+
+
+#: The 502 a failed Gradescope fetch answers with. Never the exception text:
+#: some carry a scraper's internals (`Failed to list courses: <lib error>`).
+GS_UPSTREAM_DETAIL = "Couldn't reach Gradescope. Please retry shortly."
+
+
+def _upstream_error(e: Exception) -> HTTPException:
+    """Log a Gradescope fetch failure under the request id; a generic 502."""
+    logger.warning("Gradescope fetch failed [request_id=%s]: %s", current_request_id(), e)
+    return HTTPException(status_code=502, detail=GS_UPSTREAM_DETAIL)
 
 
 def _not_connected() -> JSONResponse:
@@ -214,7 +227,7 @@ def save_credentials(body: CredentialsBody, request: Request):
         except gradescope_service.GradescopeAuthError as e:
             return _gs_error(422, GS_AUTH_FAILED, str(e) or "Gradescope rejected those credentials.")
         except gradescope_service.GradescopeFetchError as e:
-            raise HTTPException(status_code=502, detail=str(e))
+            raise _upstream_error(e)
         save_password_creds(body.user_id, body.email, body.password)
     else:  # cookies
         if not body.gradescope_session:
@@ -231,7 +244,7 @@ def save_credentials(body: CredentialsBody, request: Request):
         except gradescope_service.GradescopeAuthError as e:
             return _gs_error(422, GS_AUTH_FAILED, str(e) or "Gradescope rejected those cookies.")
         except gradescope_service.GradescopeFetchError as e:
-            raise HTTPException(status_code=502, detail=str(e))
+            raise _upstream_error(e)
         save_cookie_creds(body.user_id, body.gradescope_session, body.signed_token)
     return {"ok": True}
 
@@ -290,7 +303,7 @@ async def save_credentials_via_bu_sso(body: BuSsoBody, request: Request):
     except gradescope_service.GradescopeAuthError as e:
         return _gs_error(422, GS_AUTH_FAILED, str(e) or "Gradescope auth failed.")
     except gradescope_service.GradescopeFetchError as e:
-        raise HTTPException(status_code=502, detail=str(e))
+        raise _upstream_error(e)
 
     await run_in_threadpool(  # #117: an async handler; keep the write off the loop
         save_cookie_creds, body.user_id,
@@ -355,7 +368,7 @@ def list_gradescope_courses(user_id: str, request: Request):
     except gradescope_service.GradescopeAuthError as e:
         return _reauth_required(user_id, creds, str(e))
     except gradescope_service.GradescopeFetchError as e:
-        raise HTTPException(status_code=502, detail=str(e))
+        raise _upstream_error(e)
     finally:
         if conn is not None:
             conn.session.close()

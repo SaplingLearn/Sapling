@@ -33,6 +33,7 @@ from pydantic_ai import Agent
 from agents._bounded import clip_list, clip_prose
 from agents._providers import model_for
 from agents.deps import SaplingDeps
+from services.prompt_safety import DOCUMENT_INPUT_GUARD_PROMPT
 
 #: A118: how many raw relations the model may send — a payload bound, clipped
 #: locally like every list cap (CLAUDE.md "Structured-output bounds are local
@@ -161,7 +162,8 @@ _SYSTEM_PROMPT = (
     "- importance in [0, 1]; order the list by importance desc.\n"
     "- 1-30 concepts. Prefer 4-12 for lectures/readings/study "
     "guides, up to ~15 for whole-course syllabi, 1-8 for narrow "
-    "assignments."
+    "assignments.\n\n"
+    + DOCUMENT_INPUT_GUARD_PROMPT
 )
 _PROMPT_HASH = hashlib.sha256(_SYSTEM_PROMPT.encode("utf-8")).hexdigest()[:12]
 

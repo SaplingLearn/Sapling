@@ -517,7 +517,7 @@ describe("LoopLearn — A26", () => {
     expect(banner.getAttribute("data-session-capped")).toBe("false");
     expect(banner.textContent).toContain("Tutor chat paused until");
     expect(banner.textContent).toContain("Practice and review keep working");
-    expect(screen.getByTestId("loop-budget-study-link").getAttribute("href")).toBe("/study?mode=cards");
+    expect(screen.getByTestId("loop-budget-study-link").getAttribute("href")).toBe("/study");
     await waitFor(() => expect(api.nextLoopProbe).toHaveBeenCalledWith("s9", "u1"));
     expect(toast.error).not.toHaveBeenCalled();
   });
@@ -1191,7 +1191,7 @@ describe("LoopLearn — PKG-13 fix round", () => {
     await resumedTeach();
     expect(screen.getByTestId("tutor-course-c2")).toBeTruthy();
     fireEvent.click(screen.getByTestId("loop-close-button"));
-    expect((await screen.findByTestId("loop-close-study-link")).getAttribute("href")).toBe("/study?mode=cards");
+    expect((await screen.findByTestId("loop-close-study-link")).getAttribute("href")).toBe("/study");
     cleanup();
     api.getCourses.mockResolvedValue({ courses: [] });
     render(<LoopLearn />);

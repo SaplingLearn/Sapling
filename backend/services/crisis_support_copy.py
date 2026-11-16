@@ -113,8 +113,10 @@ CLOSING: tuple[str, ...] = (
     "Whenever you're ready, we can keep studying, right where you left off.",
 )
 
-#: The card's way back: it closes the card where it shows over the page, and
-#: starts a fresh session where it stands in for the learning loop's session.
+#: The card's way back. Where it shows over the page (a dialog) it closes the
+#: card and leaves the student where they were; where it stands in for the
+#: learning loop's session (a start answered with the card) it starts a fresh
+#: session.
 DISMISS_LABEL = "Back to studying"
 
 

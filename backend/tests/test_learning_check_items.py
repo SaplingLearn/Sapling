@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 import pathlib
 import re
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -3078,7 +3078,12 @@ class TestItemSources:
 
         with patch("services.check_item_service.decide_visibility", return_value="shared") as dv:
             assert svc.document_is_item_source(_doc()) is True
-            dv.assert_called_once_with("u1", shareability="course_material", confidence=0.9)
+            # #890: the indexer's share screen rides along (stored reason, else a
+            # fresh screen of the extracted text); a clean text passes
+            dv.assert_called_once_with(
+                "u1", shareability="course_material", confidence=0.9, screen=ANY,
+            )
+            assert not dv.call_args.kwargs["screen"].blocked
             assert svc.document_is_item_source(_doc(shareability="completed_work")) is False
             assert svc.document_is_item_source(_doc(shareability="personal_notes")) is False
             assert svc.document_is_item_source(_doc(shareability=None)) is False
@@ -5077,7 +5082,8 @@ class TestUploadHook:
         queue.assert_not_called()
 
     def test_flag_off_background_tasks_are_unchanged(self, monkeypatch):
-        """Byte-identical flag-off post-roll: main's four tasks, unchanged."""
+        """Byte-identical flag-off post-roll: main's three tasks, unchanged
+        (the study-guide cache invalidation went with the durable guides)."""
         from fastapi import BackgroundTasks
 
         added = []
@@ -5086,7 +5092,6 @@ class TestUploadHook:
         )
         _upload_sync_with(monkeypatch, flag=False, mode="function")
         assert [name for name, _ in added] == [
-            "_invalidate_study_guide_cache",
             "_refresh_course_context",
             "_check_upload_achievements",
             "schedule_document_index",
@@ -5260,7 +5265,6 @@ class TestSseUploadHook:
     def test_flag_off_spawns_index_document_exactly_as_before(self, monkeypatch, mode):
         spawned, idx, gen = _sse_upload_with(monkeypatch, flag=False, mode=mode)
         assert [s[0] for s in spawned] == [
-            "invalidate_study_guide_cache",
             "update_course_context",
             "check_upload_achievements",
             "index_document",
@@ -5284,7 +5288,6 @@ class TestSseUploadHook:
         gen.assert_called_once()
         assert gen.call_args[1]["concept_names"] == ["Concept A"]
         assert [s[0] for s in spawned] == [
-            "invalidate_study_guide_cache",
             "update_course_context",
             "check_upload_achievements",
         ]

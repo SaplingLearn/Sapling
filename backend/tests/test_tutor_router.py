@@ -437,6 +437,14 @@ class _RouterSpy:
         return None
 
     def replay(self, answers=DISRUPTIVE):
+        # Replay from a cold flag cache, so the router asks the test's
+        # (monkeypatched) `router_backends`: the turn's rate limiter
+        # (services/abuse_limits.py) read the flag snapshot during the
+        # request, which warmed it with this lane's real (all-off) flags.
+        from services.feature_flags import clear_feature_flags_cache
+
+        clear_feature_flags_cache()
+
         async def run():
             return [await tutor_router.observe_tutor_turn(**kw) for kw in self.calls]
 

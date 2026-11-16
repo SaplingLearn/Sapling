@@ -1125,11 +1125,11 @@ test("budget cap: tutor chat pauses on /learn; review still serves and grades on
   await expect(banner).toContainText("Practice and review keep working");
   await expect(banner).toContainText("Tutor chat paused until"); // the daily copy (A39: not session-capped)
   expect(await banner.getAttribute("data-reset-at")).toBeTruthy();
-  await expect(page.getByTestId("loop-budget-study-link")).toHaveAttribute("href", "/study?mode=cards");
+  await expect(page.getByTestId("loop-budget-study-link")).toHaveAttribute("href", "/study");
   expect(await page.getByText("[e2e-function-model]").count()).toBe(0); // no model turn ran
 
   // ── /study: review keeps working at the hard level ───────────────────────
-  await page.goto("/study?mode=cards");
+  await page.goto("/study");
   await expect(page.getByTestId("review-due-panel")).toBeVisible();
   await expect(page.getByTestId("review-item")).toContainText(CAPPED_CARD_FRONT);
   await page.getByTestId("review-flip").click();
@@ -1235,11 +1235,11 @@ test("phone learner can check in, answer a check and reach wrap-up without horiz
   expect(await phase.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
   await page.getByTestId("loop-close-button").click();
   await expect(page.getByTestId("loop-close-done")).toBeVisible();
-  await expect(page.getByTestId("loop-close-study-link")).toHaveAttribute("href", "/study?mode=cards");
+  await expect(page.getByTestId("loop-close-study-link")).toHaveAttribute("href", "/study");
   await context.close();
 });
 
-test("a failed daily-review status read offers recovery without removing flashcards", async ({ browser }) => {
+test("a failed daily-review status read offers recovery without removing the Study hub", async ({ browser }) => {
   test.skip(killSwitchLane, "loop path: default lane only");
   const { context, page } = await signIn(browser, USER_CAPPED, "Casey Cap");
   let first = true;
@@ -1249,9 +1249,10 @@ test("a failed daily-review status read offers recovery without removing flashca
       await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ detail: "temporarily unavailable" }) });
     } else await route.continue();
   });
-  await page.goto("/study?mode=cards");
+  await page.goto("/study");
   await expect(page.getByTestId("review-status-retry")).toBeVisible();
-  await expect(page.getByText(CAPPED_CARD_FRONT, { exact: true })).toBeVisible();
+  // The due queue sits above the Study hub (screens/Study.tsx): the hub stays.
+  await expect(page.getByRole("heading", { name: "Study", exact: true })).toBeVisible();
   await page.getByTestId("review-status-retry").click();
   await expect(page.getByTestId("review-due-panel")).toBeVisible();
   await expect(page.getByTestId("review-status-retry")).toHaveCount(0);
@@ -1424,7 +1425,7 @@ test("phone retention entry creates no pose until requested and respects real de
   await page.setViewportSize({ width: 320, height: 844 });
   let opens = 0;
   page.on("request", (request) => { if (new URL(request.url()).pathname === "/api/learn/loop/posttest/start") opens += 1; });
-  await page.goto("/study?mode=cards");
+  await page.goto("/study");
   await expect(page.getByTestId("retention-open")).toBeEnabled();
   expect(opens).toBe(0);
   const response = page.waitForResponse((result) => new URL(result.url()).pathname === "/api/learn/loop/posttest/start");

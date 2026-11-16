@@ -76,6 +76,14 @@ PRIVATE_CHUNK_ID = "rich-matrix-chunk-private-a"
 #: Learning loop (spec §13 A139): an open self-explanation prompt of A's.
 SELF_EXPLANATION_PROMPT_ID = "rich-matrix-self-explain-a"
 PRIVATE_CHUNK_TEXT = "MATRIX-PRIVATE-CHUNK-91c2 A's private upload text"
+#: A saved flashcard set of A's (the rich seed has none), in COURSE_SHARED.
+FLASHCARD_SET_ID = "rich-matrix-flashcard-set-a"
+FLASHCARD_SET_NAME = "MATRIX-FLASHCARD-SET-4be1 only A saved this"
+#: A check question in A's seeded study guide (db/seed_local_rich
+#: GUIDE_CS_MIDTERM, "rich-guide-cs-f25-mid"; "s3-i3" is its other one). The
+#: block routes are probed with a block that exists, so only the guide's
+#: ownership stands between B and A's answer.
+GUIDE_CHECK_BLOCK = "s2-i4"
 
 #: Plaintext that only A's rows hold. If one shows up in a response to B (and B
 #: did not send it), that response leaked A's data. Deliberately long and
@@ -96,6 +104,7 @@ A_PRIVATE_MARKERS: tuple[str, ...] = (
     "What keyword declares a variable in Python?",       # quiz_attempts.questions_json
     "confuses = with ==",                                # quiz_context.context_json
     "The midterm's hardest questions are recursive traces",  # study_guides.content
+    "i takes the values 0, 3, 6 and 9",                  # study_guides.content: a check's answer
     "Final Project Proposal",                            # assignments.title
     "Lab 1: Microscopy",                                 # assignments.title
     "Essay Draft: Rhetorical Analysis",                  # assignments.title
@@ -104,6 +113,7 @@ A_PRIVATE_MARKERS: tuple[str, ...] = (
     PRIVATE_ROOM_NAME,
     PRIVATE_ROOM_INVITE,
     PRIVATE_CHUNK_TEXT,
+    FLASHCARD_SET_NAME,                                  # flashcard_sets.name
 )
 
 
@@ -186,12 +196,16 @@ ID_SOURCES: dict[str, IdSource] = {
     "document_id": _owned(_DOCUMENT),
     "doc_id": _owned(_DOCUMENT),            # /api/gradebook/syllabus/apply
     "card_id": _owned("SELECT id::text FROM flashcards WHERE user_id = %(a)s ORDER BY id LIMIT 1"),
+    "set_id": _owned("SELECT id::text FROM flashcard_sets WHERE user_id = %(a)s ORDER BY id LIMIT 1"),
     "node_id": _owned(_NODE),
     "concept_node_id": _owned(_NODE),
     "anchor_node_id": _owned(_NODE),
     "assignment_id": _owned(_ASSIGNMENT),
     "assignment_ids": _owned(_ASSIGNMENT, many=True),
-    "exam_id": _owned(_ASSIGNMENT),         # study guides key on an exam assignment
+    "exam_id": _owned(_ASSIGNMENT),         # flashcard sets name an exam assignment
+    "guide_id": _owned("SELECT id::text FROM study_guides WHERE user_id = %(a)s ORDER BY id LIMIT 1"),
+    "scope_id": _owned(_ASSIGNMENT),        # the exam or assignment a study guide is for
+    "material_ids": _owned(_DOCUMENT, many=True),  # the documents a study guide is made from
     "category_id": _owned(
         "SELECT c.id::text FROM gradebook_categories c JOIN enrollments e "
         "ON e.id = c.enrollment_id WHERE e.user_id = %(a)s ORDER BY c.id LIMIT 1"
@@ -239,6 +253,12 @@ EXCLUDED_PARAMS: dict[str, str] = {
     "cosmetic_id": "catalog id (cosmetics); ownership is checked against the caller",
     "achievement_ids": "catalog ids (achievements); earned-ness is checked against the caller",
     "course_ids": "onboarding catalog selection, not a user-owned row",
+    "block_id": "id of an item inside a study guide's content (the guide is probed)",
+    "option_id": "one of a check question's answer letters (a to d), not a row",
+    "from_note_id": "a tutor start's claim that its topic is the caller's note title: read only on a "
+                    "crisis match, through get_note scoped to the caller's user_id; a foreign or "
+                    "unknown id is never an error, the topic just blocks as typed "
+                    "(services/tutor/note_topic.py, test_crisis_support_routes)",
 }
 
 #: Route-level coverage outside the per-param matrix. Admin and server routes
@@ -305,7 +325,10 @@ RESOURCE_EXPECT: dict[tuple[str, str], tuple[tuple[int, ...], str]] = {
     ("POST", "/api/feedback"):
         ((200,), "the foreign session link is set to NULL; the row is B's"),
     ("POST", "/api/graph/{user_id}/nodes"):
-        ((200,), "B's node is created; the anchor lookup is filtered to B, so no edge to A's node"),
+        ((200,), "B's node is created in B's own course; the anchor lookup is filtered "
+                 "to B, so no edge to A's node. (The probed param is anchor_node_id; "
+                 "the course gate is test_graph_node_refuses_a_course_the_caller_is_"
+                 "not_enrolled_in's probe.)"),
     ("DELETE", "/api/notes/{note_id}"):
         ((200,), "no-op {'deleted': true}: the delete is filtered by user_id = B"),
     ("GET", "/api/notes/{note_id}/concepts"):
@@ -327,6 +350,9 @@ RESOURCE_EXPECT: dict[tuple[str, str], tuple[tuple[int, ...], str]] = {
         ((404,), "not enrolled in the course: academics.require_course_enrollment"),
     ("POST", "/api/notes"):
         ((404,), "not enrolled in the course: academics.require_course_enrollment"),
+    ("POST", "/api/study-guide/{user_id}/plan"):
+        ((200,), "an empty plan: the materials are filtered to B's own documents, and the "
+                 "planned outline does not read the scope"),
     ("POST", "/api/learn/start-session"):
         ((404,), "A's quiz attempt (services/quiz_ask.py); a foreign course would be "
                  "academics.require_course_enrollment's 404 too"),
@@ -351,7 +377,9 @@ RESOURCE_EXPECT: dict[tuple[str, str], tuple[tuple[int, ...], str]] = {
 SWAP_EXPECT: dict[tuple[str, str], tuple[tuple[int, ...], str]] = {
     ("POST", "/api/feedback"): ((200,), "body.user_id is ignored; the row is attributed to the session"),
     ("POST", "/api/issue-reports"): ((200,), "body.user_id is ignored; the row is attributed to the session"),
-    ("GET", "/api/profile/username/check"): ((200,), "unauthenticated availability check by design"),
+    ("GET", "/api/profile/username/check"): ((200,), "availability for the SESSION; the user_id "
+                                                     "param is accepted but ignored (it used to "
+                                                     "confirm the user_id -> username mapping)"),
 }
 
 #: Routes with a self param that are intentionally cross-user; covered by the
@@ -389,8 +417,9 @@ BODY_OVERRIDES: dict[tuple[str, str], dict[str, Any]] = {
     ("POST", "/api/documents/doc/{document_id}/scan-concepts"): {"user_id": SELF},
     ("POST", "/api/documents/course/{course_id}/scan-concepts"): {"user_id": SELF},
     ("PATCH", "/api/calendar/assignments/{assignment_id}"): {"user_id": SELF, "title": "matrix"},
-    ("POST", "/api/study-guide/regenerate"):
-        {"user_id": SELF, "course_id": Ref("course_id"), "exam_id": Ref("exam_id")},
+    # The default scope_kind is "course", which refuses any scope_id (422)
+    # before the assignment's ownership is looked at.
+    ("POST", "/api/study-guide/{user_id}/guides"): {"scope_kind": "exam"},
     ("PATCH", "/api/learn/sessions/{session_id}"): {"user_id": SELF, "topic": "matrix"},
     ("POST", "/api/learn/mode-switch"): {"new_mode": "socratic"},
     ("POST", "/api/learn/chat"): {"message": "matrix probe"},
@@ -416,6 +445,10 @@ BODY_OVERRIDES: dict[tuple[str, str], dict[str, Any]] = {
     ("POST", "/api/notes/{note_id}/chat"): {"message": "matrix probe"},
     ("POST", "/api/flashcards/import/generate"): {"source": "library_doc"},
     ("POST", "/api/flashcards/import/parse"): {"source": "anki", "payload": "front\tback"},
+    # `concepts` is a bare list[str]: the synthesized [] fails the service's
+    # 1-100 rule (422) before the exam's ownership is looked at.
+    ("POST", "/api/flashcards/sets"): {"name": "Matrix set", "concepts": ["Matrix probe"]},
+    ("PATCH", "/api/flashcards/sets/{set_id}"): {"name": "matrix"},
     ("POST", "/api/gradebook/courses/{course_id}/categories"): {"name": "Matrix", "weight": 10},
     ("PATCH", "/api/gradebook/courses/{course_id}/categories"):
         {"categories": [{"name": "Matrix", "weight": 100}]},
@@ -430,8 +463,11 @@ BODY_OVERRIDES: dict[tuple[str, str], dict[str, Any]] = {
     ("DELETE", "/api/profile/{user_id}/account"): {"confirmation": "DELETE"},
     ("POST", "/api/profile/{user_id}/avatar"): {"file_b64": "aGVsbG8="},
     ("POST", "/api/onboarding/profile"): {
-        "first_name": "Matrix", "last_name": "Probe", "year": "Senior",
+        "first_name": "Matrix", "last_name": "Probe", "year": "senior",
         "learning_style": "visual", "majors": ["Biology"], "course_ids": [COURSE_SHARED],
+        # Any string passes request validation; B is refused at require_self
+        # before the versions are compared (services/legal.py).
+        "accepted_terms_version": "2026-10-22", "accepted_privacy_version": "2026-11-03",
     },
     ("POST", "/api/calendar/save"): {"assignments": []},
     # Admin bodies: valid enough that B reaches require_admin, never more.
@@ -449,10 +485,15 @@ QUERY_OVERRIDES: dict[tuple[str, str], dict[str, Any]] = {
     ("GET", "/api/profile/username/check"): {"username": "rich-active"},
 }
 
-#: Path values for non-id path params, when the synthesized string is not one
-#: the route accepts.
+#: Path values for path params the registry does not fill, when the
+#: synthesized string is not one the route accepts or would not reach the row
+#: being probed.
 PATH_OVERRIDES: dict[tuple[str, str], dict[str, str]] = {
     ("DELETE", "/api/admin/flags/{key}/targets/{target_type}/{target_id}"): {"target_type": "user"},
+    ("POST", "/api/study-guide/{user_id}/guides/{guide_id}/blocks/{block_id}/answer"):
+        {"block_id": GUIDE_CHECK_BLOCK},
+    ("POST", "/api/study-guide/{user_id}/guides/{guide_id}/blocks/{block_id}/regenerate"):
+        {"block_id": GUIDE_CHECK_BLOCK},
 }
 
 #: Paths whose wrongful success would destroy data; run last in their group so
@@ -908,7 +949,7 @@ def allowlist_cases(a_user: str = USER_A, b_user: str = USER_B) -> list[Case]:
              expect=(200,), note="roles for a signed-in viewer (anonymous: 401, #115)"),
         Case("allowlist", "GET", "/api/profile/username/check", "/api/profile/username/check",
              query={"username": "rich-active", "user_id": b_user}, expect=(200,),
-             note="username availability"),
+             note="username availability for the signed-in viewer (anonymous: 401)"),
         Case("allowlist", "GET", "/api/social/public-rooms", "/api/social/public-rooms",
              query={"user_id": b_user}, expect=(200,),
              note="public room list: A's public room, never the private one or any invite code",

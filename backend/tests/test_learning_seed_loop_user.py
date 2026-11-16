@@ -25,6 +25,7 @@ from learning.params import (
 from services import chunk_visibility, rag_service
 from services.check_item_service import _row_to_item
 from services.encryption import decrypt_if_present
+from services.share_screen import screen_from_stored
 from services.graph_service import _normalize_concept
 
 
@@ -169,6 +170,10 @@ def test_items_are_drafted_from_an_indexed_shared_course_document(recorder, monk
             doc["user_id"],
             shareability=doc["shareability"],
             confidence=doc["shareability_confidence"],
+            # #890: the indexer's share screen of the stored text passes
+            screen=screen_from_stored(
+                doc.get("share_block_reason"), decrypt_if_present(doc["extracted_text"]),
+            ),
         )
         == chunk_visibility.SHARED
     )

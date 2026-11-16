@@ -49,6 +49,17 @@
      here and the 96% cream labels 4.61:1 (spec §13 A135; it was #688443, where
      white was 4.23:1). Going lighter means dark rail text. */
   --sidenav-bg: #5f7a3b;
+  /* Text, chips and secondary buttons on that olive where it is a fill
+     outside the rail (the Study hub's Up Next block; the rail's own scoped
+     tokens, [data-app-sidenav] below, do not reach it). White is the light
+     text that clears AA for small type there, 4.85:1: --sap-100 is 3.96:1 and
+     an 86% white 4.06:1. A chip or a secondary button is a DARK wash, as the
+     rail's selected row is: a white wash lightens the fill under white text
+     (13%: 3.77:1), a dark one darkens it (white on the wash 6.11:1, on the
+     strong wash 7.05:1) — spec §13 A135. */
+  --sidenav-fg: #ffffff;
+  --sidenav-wash: rgba(18, 17, 13, 0.16);
+  --sidenav-wash-strong: rgba(18, 17, 13, 0.26);
 
   /* Brand greens — the original ramp's lightness/chroma steps, re-hued onto
      the olive (OKLCH h≈129) so tints and the brand anchor read as one family. */
@@ -338,6 +349,11 @@ body { font-size: 14px; line-height: 1.5; }
    framer-motion crossfade so pane content never waits on the motion chunk. */
 @keyframes study-mode-enter { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 .study-mode-enter { animation: study-mode-enter 0.22s cubic-bezier(0.2, 0.85, 0.35, 1); }
+/* Arriving in Quiz / Flashcards from the Study hub: slower and softer than the
+   pane switch above, so the hand-off reads as a transition, not a cut. */
+@keyframes tool-enter { from { opacity: 0; transform: translateY(14px) scale(0.99); } to { opacity: 1; transform: none; } }
+.tool-enter { animation: tool-enter 0.45s cubic-bezier(0.22, 1, 0.36, 1) both; }
+@media (prefers-reduced-motion: reduce) { .tool-enter { animation: none; } }
 
 /* Approval gate (#290) — the "you're in" beat.
    The sapling draws itself once and the message steps in behind it; the
@@ -589,36 +605,6 @@ body { font-size: 14px; line-height: 1.5; }
   right: 24px;
   z-index: 20;
 }
-.study-tabs {
-  display: inline-flex;
-  gap: 3px;
-  padding: 3px;
-  border: 1px solid var(--border);
-  border-radius: var(--r-sm);
-  background: var(--bg-subtle);
-  isolation: isolate;
-  overflow: hidden;
-  flex-shrink: 0;
-}
-.study-tabs a {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 30px;
-  padding: 6px 12px;
-  border-radius: var(--r-xs);
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-dim);
-  text-decoration: none;
-  white-space: nowrap;
-}
-.study-tabs a[aria-current="page"] {
-  color: var(--accent);
-}
-.study-tabs a:hover { color: var(--accent); }
-
 /* The rail is the one olive-filled surface in the shell. Rather than thread
    light-on-dark colours through every row, it re-declares the semantic tokens
    its children already read (text, border, the --bg-soft active fill, the
@@ -1382,7 +1368,6 @@ body { font-size: 14px; line-height: 1.5; }
   fill: var(--text-dim);
   opacity: 0.85;
 }
-.concept-neighbourhood__edge { stroke: var(--text-muted); }
 .concept-neighbourhood__label {
   font-family: var(--font-sans);
   font-size: var(--fs-xs);

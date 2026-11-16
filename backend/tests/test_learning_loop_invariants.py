@@ -386,8 +386,13 @@ def _write_state_lines(source: str) -> list[int]:
     return lines
 
 
-def _canonical_page_all(tree: ast.Module, parents: dict[ast.AST, ast.AST]) -> bool:
-    """Trust only the unaliased, unshadowed db.connection read helper.
+def _canonical_page_all(
+    tree: ast.Module, parents: dict[ast.AST, ast.AST],
+    page_all: str = "page_all", module: str = "db.connection",
+) -> bool:
+    """Trust only the unaliased, unshadowed db.connection read helper (or,
+    with `page_all="apage_all", module="db.async_connection"`, its async twin:
+    main's #117 paged read, whose only handle operation is aselect_with_count).
 
     Reject every other binding or escaped reference conservatively, across all
     scopes. This exemption is not a general ability to pass graph handles to a
@@ -397,15 +402,15 @@ def _canonical_page_all(tree: ast.Module, parents: dict[ast.AST, ast.AST]) -> bo
         alias
         for node in tree.body
         if isinstance(node, ast.ImportFrom)
-        and node.module == "db.connection" and node.level == 0
+        and node.module == module and node.level == 0
         for alias in node.names
-        if alias.name == "page_all" and alias.asname is None
+        if alias.name == page_all and alias.asname is None
     ]
     if len(imports) != 1:
         return False
     trusted_import = imports[0]
     for node in ast.walk(tree):
-        if isinstance(node, ast.Name) and node.id == "page_all":
+        if isinstance(node, ast.Name) and node.id == page_all:
             parent = parents.get(node)
             if not (
                 isinstance(node.ctx, ast.Load)
@@ -414,17 +419,17 @@ def _canonical_page_all(tree: ast.Module, parents: dict[ast.AST, ast.AST]) -> bo
                 return False
         elif isinstance(node, ast.alias):
             bound = node.asname or node.name.split(".")[0]
-            if node.name == "*" or (bound == "page_all" and node is not trusted_import):
+            if node.name == "*" or (bound == page_all and node is not trusted_import):
                 return False
-        elif isinstance(node, ast.arg) and node.arg == "page_all":
+        elif isinstance(node, ast.arg) and node.arg == page_all:
             return False
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            if node.name == "page_all":
+            if node.name == page_all:
                 return False
         elif isinstance(node, (ast.ExceptHandler, ast.MatchAs, ast.MatchStar)):
-            if node.name == "page_all":
+            if node.name == page_all:
                 return False
-        elif isinstance(node, ast.MatchMapping) and node.rest == "page_all":
+        elif isinstance(node, ast.MatchMapping) and node.rest == page_all:
             return False
     return True
 
@@ -445,6 +450,7 @@ def _graph_table_uses(source: str) -> list[tuple[int, str, str | None, str | Non
         for child in ast.iter_child_nodes(node):
             parents[child] = node
     canonical_page_all = _canonical_page_all(tree, parents)
+    canonical_apage_all = _canonical_page_all(tree, parents, "apage_all", "db.async_connection")
     uses = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call) or not node.args:
@@ -468,6 +474,13 @@ def _graph_table_uses(source: str) -> list[tuple[int, str, str | None, str | Non
             and parent.args and parent.args[0] is node
         ):
             method = "select_with_count"
+        elif (
+            canonical_apage_all
+            and isinstance(parent, ast.Call)
+            and isinstance(parent.func, ast.Name) and parent.func.id == "apage_all"
+            and parent.args and parent.args[0] is node
+        ):
+            method = "aselect_with_count"
         enclosing = None
         up = parents.get(node)
         while up is not None:
@@ -494,6 +507,22 @@ def _graph_table_offenders(rel: str, source: str) -> list[str]:
         use = f".{method}(" if method else "a handle that is not a direct read"
         offenders.append(f"{rel}:{line} uses table({tbl!r}) for {use}; only reads allowed")
     return offenders
+
+
+@pytest.mark.parametrize("table_name", GRAPH_TABLES)
+def test_inv_01_canonical_apage_all_is_a_direct_paged_read(table_name):
+    """main's #117 async twin (db.async_connection.apage_all), e.g. graph_service's
+    paged mastery-events read: a read, trusted on the same terms as page_all."""
+    source = (
+        "from db.async_connection import apage_all\n"
+        "from db.connection import table\n"
+        "async def read_owned(user_id):\n"
+        f"    return [r async for r in apage_all(table({table_name!r}), 'id', order='id')]\n"
+    )
+    assert _graph_table_uses(source) == [(4, table_name, "aselect_with_count", "read_owned")]
+    assert _graph_table_offenders("services/reader.py", source) == []
+    aliased = source.replace("import apage_all", "import apage_all as pager").replace("in apage_all(", "in pager(")
+    assert _graph_table_uses(aliased)[0][2] is None
 
 
 @pytest.mark.parametrize("table_name", GRAPH_TABLES)

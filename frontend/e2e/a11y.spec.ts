@@ -8,8 +8,12 @@
  * Surfaces and states:
  *  - the shell's top-navigation layout, wide and on a phone with its menu open;
  *  - dashboard (and its courses key open), library (documents, a document's
- *    detail panel, the upload dialog), study (guides, a guide open, flashcards),
- *    notes, settings (every tab), another student's profile, quiz (the AI
+ *    detail panel, the upload dialog), study (the Study hub with the loop's
+ *    due reviews, its course picker open, the deadlines pop-up, the dates
+ *    editor, a concept's actions menu, the daily goal editor; the Study Guides
+ *    home, the New study guide dialog with its class list open and with a
+ *    class chosen, a guide open; flashcards), notes, settings (every tab),
+ *    another student's profile, quiz (the AI
  *    notice, home, the adjust dialog, a multiple-choice question, its checked
  *    answer, the ask panel, a written answer, results; with the quiz's
  *    learning-system flags on for the student (spec §13 A143–A147), home with
@@ -53,6 +57,14 @@ const USER_ADMIN = "rich-user-admin"; // seeded with the admin role
 const USER_SECOND = "rich-user-second";
 /** The seeded struggling concept (db/seed_local_rich.py), as the quiz journeys use it. */
 const QUIZ_NODE = "rich-node-cs-recursion";
+/** The active student's first course, CS101, and the one term whose CS101
+ *  offering has documents (db/seed_local_rich.py; study-guide.spec.ts). */
+const COURSE_CS = "rich-course-cs101";
+const GUIDE_TERM = "Fall 2025";
+/** lib/useActiveSemester.ts's storage key: the term the Study pages scope to. */
+const SEMESTER_KEY = "sapling_active_semester";
+/** The one seeded study guide (db/seed_local_rich.py; study-guide.spec.ts). */
+const SEEDED_GUIDE = { id: "rich-guide-cs-f25-mid", title: "Variables, control flow and functions" };
 
 /** Must match backend/agents/function_handlers_e2e.py::E2E_LOOP_PROBE_PROMPT */
 const LOOP_PROBE_PROMPT = "[e2e-loop] Check item: type the e2e grader's correct token to be marked correct.";
@@ -67,6 +79,7 @@ const WORKING_ATTEMPT = "working: I think it is the value the item names";
 
 const LOOP_TIMEOUT_MS = 240_000;
 const QUIZ_TIMEOUT_MS = 180_000;
+const STUDY_TIMEOUT_MS = 180_000;
 const GENERATE_TIMEOUT = 60_000;
 
 /** An `mc_reason` pose for the routed multiple-choice cards (stored-order
@@ -147,29 +160,135 @@ test("library", async ({ page }) => {
   await expectAccessible(page, "library: upload dialog");
 });
 
-test("study and flashcards", async ({ page }) => {
+/**
+ * The Study hub (components/study/StudyHub.tsx) on the student's first course,
+ * CS101, with the loop's due queue above it (screens/Study.tsx), and each
+ * panel it opens. Its exam tabs and its course field are checked from the
+ * keyboard on the way.
+ */
+async function scanStudyHub(page: Page) {
   await page.goto("/study");
-  const recent = page.getByRole("button", { name: /Midterm Exam/ });
-  await expect(recent).toBeVisible();
-  await expectAccessible(page, "study: guides");
-  // The shared select (CustomSelect), open from the keyboard: the list takes
-  // focus with an active option, and Escape hands focus back to its button.
-  const coursePicker = page.locator('button[aria-haspopup="listbox"]').first();
+  await expect(page.getByTestId("readiness-pct")).toHaveText(/^\d+%$/, { timeout: 30_000 });
+  await expect(page.getByRole("region", { name: "Roadmap" }).getByTestId(`tile-${QUIZ_NODE}`)).toBeVisible();
+  if (!killSwitchLane) await expect(page.getByTestId("review-due-panel")).toBeVisible();
+  await expectAccessible(page, "study: hub with due reviews");
+
+  // The course field (study/CoursePicker.tsx, the page's only listbox
+  // trigger), opened from the keyboard; Escape closes it and focus stays on it.
+  const coursePicker = page.locator('button[aria-haspopup="listbox"]');
+  await expect(coursePicker).toContainText("CS101");
   await coursePicker.focus();
-  await page.keyboard.press("ArrowDown");
-  const courses = page.getByRole("listbox", { name: "Course" });
-  await expect(courses).toBeFocused();
-  await expect(courses).toHaveAttribute("aria-activedescendant", /.+/);
+  await page.keyboard.press("Enter");
+  const courses = page.getByRole("listbox", { name: "Courses" });
+  await expect(courses).toBeVisible();
   await expectAccessible(page, "study: course picker open");
   await page.keyboard.press("Escape");
   await expect(courses).toHaveCount(0);
   await expect(coursePicker).toBeFocused();
-  await recent.click();
-  await expect(page.getByText("Covers variables, control flow, and functions.")).toBeVisible();
+
+  // The deadlines pop-up (the bell), and from it the dates editor.
+  await page.getByRole("button", { name: /^Upcoming deadlines,/ }).click();
+  const deadlines = page.getByRole("dialog", { name: "Upcoming deadlines" });
+  await expect(deadlines).toBeVisible();
+  await expectAccessible(page, "study: upcoming deadlines");
+  await deadlines.getByRole("button", { name: "Manage Dates" }).click();
+  const dates = page.getByRole("dialog", { name: "Exams and deadlines" });
+  await expect(dates).toBeVisible();
+  await expectAccessible(page, "study: exams and deadlines editor");
+  await dates.getByRole("button", { name: "Cancel" }).click();
+  await expect(dates).toHaveCount(0);
+
+  // A concept's "..." menu. Opening it selects the concept, so the roadmap
+  // highlights what it rests on and unlocks, and dims the rest.
+  await page.getByTestId(`tile-actions-${QUIZ_NODE}`).click();
+  const actions = page.getByRole("menu", { name: "Recursion actions" });
+  await expect(actions).toBeVisible();
+  await expectAccessible(page, "study: a concept's actions");
+  await page.keyboard.press("Escape");
+  await expect(actions).toHaveCount(0);
+
+  // The daily goal's editor: its presets, a radio group.
+  const goal = page.getByTestId("daily-goal");
+  await goal.getByRole("button", { name: /^Daily goal: \d+ minutes\. Change daily goal$/ }).click();
+  const presets = goal.getByRole("radiogroup", { name: "Daily goal, minutes a day" });
+  await expect(presets).toBeVisible();
+  await expectAccessible(page, "study: daily goal editor");
+  await page.keyboard.press("Escape");
+  await expect(presets).toHaveCount(0);
+
+  // The exam tabs: the selected tab is the row's one Tab stop, and Home and
+  // End (as the arrows do) select the tab they land on and take focus there.
+  const exams = page.getByRole("tablist", { name: "Exams" });
+  const tabs = exams.getByRole("tab");
+  await exams.getByRole("tab", { selected: true }).focus();
+  await page.keyboard.press("Home");
+  await expect(tabs.first()).toBeFocused();
+  await expect(tabs.first()).toHaveAttribute("aria-selected", "true");
+  await expect(tabs.first()).toHaveAttribute("tabindex", "0");
+  await page.keyboard.press("End");
+  await expect(tabs.last()).toBeFocused();
+  await expect(tabs.last()).toHaveAttribute("aria-selected", "true");
+}
+
+/**
+ * Study Guides (/study/guide, the hub's Study Guide tool): the home, its New
+ * study guide dialog and the seeded guide open. Under the default "All
+ * semesters" CS101 is its latest offering, which has no documents, so this
+ * runs with the term whose offering has them (as study-guide.spec.ts does) and
+ * puts the default back after.
+ */
+async function scanStudyGuides(page: Page) {
+  await page.evaluate(([key, term]) => window.localStorage.setItem(key, term), [SEMESTER_KEY, GUIDE_TERM]);
+  await page.goto("/study/guide");
+  const seededCard = page.getByTestId(`guides-card-${SEEDED_GUIDE.id}`);
+  await expect(seededCard).toBeVisible({ timeout: 20_000 });
+  await expectAccessible(page, "study: guides");
+
+  await page.getByTestId("guides-new").click();
+  const dialog = page.getByTestId("guide-new-dialog");
+  await expect(dialog).toBeVisible();
+  const classSelect = page.getByTestId("guide-new-class");
+  await expect(classSelect).toBeEnabled();
+  await expectAccessible(page, "study: new guide dialog");
+  // The shared select (CustomSelect), open from the keyboard: the list takes
+  // focus with an active option, and Escape hands focus back to its button
+  // (and closes only the list, not the dialog around it).
+  await classSelect.focus();
+  await page.keyboard.press("ArrowDown");
+  const classes = page.getByRole("listbox", { name: "Class" });
+  await expect(classes).toBeFocused();
+  await expect(classes).toHaveAttribute("aria-activedescendant", /.+/);
+  await expectAccessible(page, "study: new guide, class list open");
+  await page.keyboard.press("Escape");
+  await expect(classes).toHaveCount(0);
+  await expect(classSelect).toBeFocused();
+  await expect(dialog).toBeVisible();
+  // A class and the whole course: its materials and the planned outline.
+  await classSelect.click();
+  await page.getByTestId(`guide-new-class-option-${COURSE_CS}`).click();
+  await page.getByTestId("guide-new-scope").click();
+  await page.getByTestId("guide-new-scope-option-course").click();
+  await expect(page.getByTestId("guide-new-outline-section-0")).toBeVisible();
+  await expect(page.getByTestId("guide-new-outline")).toHaveAttribute("aria-busy", "false");
+  await expectAccessible(page, "study: new guide, a class chosen");
+  await page.getByTestId("guide-new-cancel").click();
+  await expect(dialog).toHaveCount(0);
+
+  await seededCard.click();
+  await expect(page.getByTestId("guide-title")).toHaveText(SEEDED_GUIDE.title, { timeout: 20_000 });
+  await expect(page.getByTestId("guide-generating")).toHaveCount(0);
   await expectAccessible(page, "study: guide open");
-  await page.goto("/study?mode=cards");
+  await page.evaluate((key) => window.localStorage.removeItem(key), SEMESTER_KEY);
+}
+
+test("study and flashcards", async ({ page }) => {
+  // A dozen scans over four pages: more than the default minute.
+  test.setTimeout(STUDY_TIMEOUT_MS);
+  await scanStudyHub(page);
+  await scanStudyGuides(page);
+  // The flashcards are their own page (/flashcards).
+  await page.goto("/flashcards");
   await expect(page.getByText("Flashcards", { exact: true }).first()).toBeVisible();
-  if (!killSwitchLane) await expect(page.getByTestId("review-due-panel")).toBeVisible();
   await expectAccessible(page, "study: flashcards");
 });
 
@@ -506,7 +625,7 @@ test("review queue: a flashcard, its answer, the rated result and a multiple-cho
   test.skip(killSwitchLane, "loop path: default lane only");
   const { context, page } = await signIn(browser, USER_CAPPED, "Casey Cap");
   try {
-    await page.goto("/study?mode=cards");
+    await page.goto("/study");
     await expect(page.getByTestId("review-item")).toBeVisible();
     await expectAccessible(page, "review: a flashcard");
     await page.getByTestId("review-flip").click();
@@ -547,7 +666,7 @@ test("retention check: opened with nothing eligible yet", async ({ browser }) =>
   test.skip(killSwitchLane, "loop path: default lane only");
   const { context, page } = await signIn(browser, USER_LOOP, "Lou Loop");
   try {
-    await page.goto("/study?mode=cards");
+    await page.goto("/study");
     await expect(page.getByTestId("retention-open")).toBeEnabled();
     await expectAccessible(page, "review: retention check entry");
     await page.getByTestId("retention-open").click();

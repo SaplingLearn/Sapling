@@ -128,39 +128,44 @@ the Logfire UI. Both settings live in `backend/main.py`.
 
 ### What is scrubbed / kept out of egress
 
-Agent body capture is disabled and the supported agent trace path is restricted
-to operational metadata. This is a scoped contract, not a sanitizer for every
-possible application log:
+**No student content (prompts, completions, tool arguments/results, uploaded
+document text, query strings) leaves the process.** Content is kept only as a
+length and a 16-hex `sha256` fingerprint, never a preview. Layers, all in
+`backend/main.py` + `services/logfire_scrubber.py` (module docstring has the
+details and the exact pydantic-ai 1.107 / logfire 4.37 attribute names):
 
-- **Agent prompt/output and tools:** `instrument_pydantic_ai` sets
-  `include_content=False` and `include_binary_content=False`. The pinned SDK
-  nevertheless serializes instructions inside `model_request_parameters`, which
-  Logfire exempts from callback scrubbing. `services/ai_trace_privacy.py` therefore
-  wraps the public OpenTelemetry tracer API with a finite metadata allowlist.
-  It applies to initial/later attributes, links, generic span names, events and
+- **Agent content at the source**: `instrument_pydantic_ai(include_content=False,
+  include_binary_content=False)`. This is the layer that matters: Logfire's
+  scrubber treats `gen_ai.input.messages`, `gen_ai.output.messages`,
+  `gen_ai.system_instructions`, `pydantic_ai.all_messages` and
+  `model_request_parameters` as safe keys and never routes them to a callback.
+  It also removes `final_result`, tool arguments/results (`tool_arguments` /
+  `tool_response`, or `gen_ai.tool.call.arguments` / `gen_ai.tool.call.result`
+  on instrumentation v3+) and exception messages.
+- **Content-free tracer boundary**: the pinned SDK still serializes
+  instructions inside `model_request_parameters` (a key Logfire exempts from
+  callback scrubbing), so `instrument_pydantic_ai` is also handed
+  `tracer_provider=content_free_tracer_provider()` (`services/ai_trace_privacy.py`).
+  It wraps the public OpenTelemetry tracer API with a finite metadata allowlist
+  for initial/later attributes, links, generic span names, events and
   exceptions, keeping provider/model/token/cost/trace/tool identifiers while
   omitting bodies, schemas, arbitrary keys, exception text and stack traces.
   The grader's explicit instrumentation settings use this same boundary.
-- **Fallback routed attributes:** `scrub_value` replaces the entire risky value
-  with type/length/fingerprint metadata. No short answer, first-character prefix,
-  nested key or numeric answer is retained. Logfire's default secret patterns
-  still delegate to full redaction. A callback alone is insufficient for the
-  SDK's exempt fields, which is why source capture controls and the tracer
-  boundary are required.
-- **Request bodies + params** (`fastapi.arguments.values` — chat messages, note
-  bodies, quiz answers, uploaded text): dropped entirely via a
-  `request_attributes_mapper` that returns `None`. Logfire does **not** route
-  this attribute through the scrubber, so dropping it at the source is the only
-  safe option.
+- **Scrubbing callback**: every attribute Logfire routes whose name looks like
+  content (`EXTRA_PATTERNS`) is replaced whole by
+  `[redacted, type:…, length:…, sha256:…]`; URL attributes lose their query
+  string. Logfire's built-in patterns (`password`, `secret`, `api_key`, …) are
+  still fully redacted.
+- **Query strings**: `QueryStringStripProcessor` (an additional span processor)
+  rewrites `http.url` / `http.target` / `url.full` to the path and redacts
+  `url.query` when a span STARTS, before Logfire snapshots the pending span it
+  also exports (whose message would otherwise read `GET /path ? q='…'`). The
+  FastAPI `server_request_hook` repeats it on the request span.
+- **Request bodies + params** (`fastapi.arguments.values`): dropped entirely via
+  a `request_attributes_mapper` that returns `None`.
 - **Headers**: not captured (`capture_headers=False`).
-
-**Known, in-scope limitation — query strings.** The full request URL and the
-rendered span message (`http.url`, `logfire.msg`) still contain the raw query
-string, and Logfire deliberately keeps these standard attributes unscrubbed.
-Sapling query params are ids / enums / pagination plus a couple of
-low-sensitivity free-text terms (course search `q`, `check_username`) — **never
-prompts, completions, or document text**. Convention: do not put sensitive
-free-text in query params; send it in the request body (which is dropped).
+- **Uvicorn access log** (stdout → Railway logs): `services/access_log.py`'s
+  `StripQueryStringFilter` logs the path without its query string.
 
 The AI-specific tracer does not sanitize arbitrary application/third-party logs
 or exception messages outside AI spans. Parent trace identifiers and incoming
@@ -170,11 +175,14 @@ labels. The finite accounting bridge below avoids exporting those record fields.
 
 ### Verifying the scrubbing
 
-`backend/tests/test_logfire_scrubber.py` and `test_ai_trace_privacy.py` exercise
-the actual in-memory SDK exporter with short answers, synthetic PII, dynamic
-object keys, tool arguments/results, binary input, grader output, exception text
-and parent/child traces. AST guards require source capture controls and the
-request-argument mapper. These hermetic tests make no collector/provider calls;
+`backend/tests/test_logfire_scrubber.py` runs real spans (a pydantic-ai agent
+run with a tool call; a FastAPI request with a body and a query string)
+through Logfire configured as main.py configures it, pending spans included,
+and asserts no 12-character run of any content string survives. AST guards fail
+if main.py drops any layer. `test_ai_trace_privacy.py` exercises the
+content-free tracer boundary with short answers, synthetic PII, dynamic object
+keys, tool arguments/results, binary input, grader output, exception text and
+parent/child traces. These hermetic tests make no collector/provider calls;
 they do not establish external delivery, routing, billing completeness or uptime.
 
 ### Controlled accounting signals

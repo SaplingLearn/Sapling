@@ -20,6 +20,7 @@ from pydantic_ai.exceptions import UsageLimitExceeded, UnexpectedModelBehavior
 from main import app
 from tests.db_fakes import fake_table
 from tests.split_patches import patch_documents
+from tests.upload_fixtures import docx_bytes, pptx_bytes
 
 # Spec §11.5 (PKG-14b): this module drives the legacy /api/learn/* path (or the
 # upload hook's flag-off branch), so it runs as an explicit kill-switch test.
@@ -376,7 +377,7 @@ class TestUploadValidation:
             t.return_value.select.return_value = []
             t.return_value.insert.return_value = [row]
             ct = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            r = _make_upload(filename="chapter.docx", content_type=ct)
+            r = _make_upload(filename="chapter.docx", content_type=ct, content=docx_bytes())
 
         assert r.status_code == 200
 
@@ -392,7 +393,7 @@ class TestUploadValidation:
             t.return_value.select.return_value = []
             t.return_value.insert.return_value = [row]
             ct = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-            r = _make_upload(filename="lecture.pptx", content_type=ct)
+            r = _make_upload(filename="lecture.pptx", content_type=ct, content=pptx_bytes())
 
         assert r.status_code == 200
 

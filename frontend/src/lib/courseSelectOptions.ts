@@ -1,5 +1,5 @@
 // Enrolled courses as CustomSelect options, shared by the flashcard import
-// modal and the study-guide course picker. Not `lib/quizSelection.ts`'s
+// modal and the New study guide dialog's Class field. Not `lib/quizSelection.ts`'s
 // `courseOptions`, which joins code and name into one sorted label.
 import type { EnrolledCourse } from "@/lib/api";
 

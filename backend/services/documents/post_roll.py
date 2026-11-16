@@ -2,12 +2,11 @@
 backend/services/documents/post_roll.py
 
 An upload's best-effort side effects after the document is saved (#118,
-moved from routes/documents.py): study-guide cache invalidation, the
-course-context refresh, the achievement check, the indexing — with the
-learning loop on, the ordered index-then-draft check-item chain (PKG-04,
-`_index_then_check_items`; the `check_items.document` job's body is
-`_index_then_draft`) — and the SSE route's fire-and-forget post-roll tasks
-with their shutdown drain.
+moved from routes/documents.py): the course-context refresh, the
+achievement check, the indexing — with the learning loop on, the ordered
+index-then-draft check-item chain (PKG-04, `_index_then_check_items`; the
+`check_items.document` job's body is `_index_then_draft`) — and the SSE
+route's fire-and-forget post-roll tasks with their shutdown drain.
 """
 from __future__ import annotations
 
@@ -16,7 +15,6 @@ import logging
 
 import config
 from agents._providers import model_mode
-from db.connection import table
 from services import check_item_jobs, jobs
 from services.achievement_service import check_achievements
 from services.check_item_service import (
@@ -31,23 +29,6 @@ from services.course_context_service import refresh_course_context
 from services.document_indexing import index_document, schedule_document_index
 
 logger = logging.getLogger(__name__)
-
-
-def _invalidate_study_guide_cache(user_id: str, offering_id: str) -> None:
-    """Background task: delete cached study guides so they regenerate fresh.
-
-    Study guides key on the offering (0025), matching the documents that
-    feed them.
-    """
-    try:
-        table("study_guides").delete(
-            filters={"user_id": f"eq.{user_id}", "offering_id": f"eq.{offering_id}"}
-        )
-    except Exception:
-        logger.exception(
-            "Failed to invalidate study guides cache for user=%s offering=%s",
-            user_id, offering_id,
-        )
 
 
 def _refresh_course_context(offering_id: str, user_id: str) -> None:

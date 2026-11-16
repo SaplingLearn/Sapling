@@ -94,6 +94,7 @@ AUTHENTICATED_TABLE_GRANTS: dict[str, frozenset[str]] = {
     "user_settings": frozenset({"SELECT", "INSERT", "UPDATE"}),
     **{t: _SIUD for t in (
         "oauth_tokens", "gradescope_credentials", "enrollments", "notes", "flashcards",
+        "flashcard_sets",  # 20261112060028_flashcard_sets.sql
         "sessions", "quiz_attempts", "quiz_context", "study_guides", "graph_nodes",
         "graph_edges", "friend_requests",
     )},
@@ -389,6 +390,7 @@ BACKEND_RPCS = frozenset({
     "apply_mastery_delta",           # services/graph_service.py
     "canopy_active_users",           # previous image, routes/internal_metrics.py
     "canopy_metrics",                # routes/internal_metrics.py (METRICS_RPC)
+    "claim_accounts_for_purge",      # services/account_purge_sweeper.py (20261114192918)
     "claim_documents_for_indexing",  # services/index_sweeper.py
     "claim_jobs",                    # services/jobs.py (#116)
     "claim_lease",                   # services/pg_lease.py (#117, stateless_locks)

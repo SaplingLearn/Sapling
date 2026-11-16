@@ -24,7 +24,7 @@ import uuid
 #   OCR_ASYNC_ENABLED=true
 OCR_ASYNC_ENABLED = os.getenv("OCR_ASYNC_ENABLED", "false").lower() == "true"
 
-from fastapi import APIRouter, BackgroundTasks, Body, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Request, UploadFile
 from sse_starlette.sse import EventSourceResponse
 from pydantic_ai.exceptions import UsageLimitExceeded, UnexpectedModelBehavior
 
@@ -37,6 +37,10 @@ from services.encryption import decrypt_if_present, decrypt_json
 from services.extraction_service import extract_text_from_file
 from services.agent_events import SSE_CACHE_CONTROL
 from services.request_context import current_request_id
+from services import abuse_limits
+from services.request_limits import aenforce_abuse_limit, read_within_limit
+from services.upload_validation import DOCX, PDF, PPTX, extension_of, matching_type, too_large_detail
+from models import ScanConceptsBody, UpdateDocumentBody
 from services.durable import workflow_id
 from services.document_indexing import schedule_document_index
 from services import document_jobs
@@ -71,7 +75,6 @@ from services.documents.post_roll import (  # noqa: F401  (re-export, #118)
     _check_upload_achievements,
     _index_then_check_items,
     _index_then_draft,
-    _invalidate_study_guide_cache,
     _log_post_roll_exc,
     _refresh_course_context,
     _spawn_post_roll,
@@ -104,11 +107,11 @@ router = APIRouter()
 MAX_FILE_SIZE = 100 * 1024 * 1024  # 100 MB
 
 ALLOWED_EXTENSIONS = {".pdf", ".docx", ".pptx"}
-ALLOWED_CONTENT_TYPES = {
-    "application/pdf",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-}
+ALLOWED_CONTENT_TYPES = {PDF, DOCX, PPTX}
+MISMATCHED_FILE_DETAIL = (
+    "This file doesn't look like the PDF, DOCX or PPTX its name says it is. "
+    "Please upload a different file."
+)
 
 VALID_CATEGORIES = {
     "syllabus", "lecture_notes", "slides", "reading",
@@ -166,9 +169,9 @@ async def delete_document(document_id: str, request: Request, user_id: str | Non
 
 
 @router.patch("/doc/{document_id}")
-async def update_document(document_id: str, request: Request, body: dict = Body(...)):
+async def update_document(document_id: str, request: Request, body: UpdateDocumentBody):
     """Update mutable fields on a document (currently only category)."""
-    category = body.get("category")
+    category = body.category
     if category and category not in VALID_CATEGORIES:
         raise HTTPException(status_code=400, detail=f"Invalid category '{category}'.")
     updates = {}
@@ -176,7 +179,7 @@ async def update_document(document_id: str, request: Request, body: dict = Body(
         updates["category"] = category
     if not updates:
         raise HTTPException(status_code=400, detail="No valid fields to update.")
-    user_id = await _session_or_self(body.get("user_id"), request)
+    user_id = await _session_or_self(body.user_id, request)
     await _require_owned_document(document_id, user_id)
     return await update_document_row(document_id, user_id, updates)
 
@@ -221,26 +224,29 @@ def _upload_request_id(request: Request) -> str:
     )
 
 
-async def _read_upload(file: UploadFile) -> tuple[str, bytes]:
-    """(filename, bytes) of an accepted upload: 400 on a type or size the
-    routes refuse."""
+async def _read_upload(file: UploadFile) -> tuple[str, bytes, str]:
+    """(filename, bytes, content type) of an accepted upload: 400 on a type or
+    size the routes refuse.
+
+    The extension AND the bytes decide the type; the client's declared
+    Content-Type is ignored (it is free text). The returned type is the one
+    the signature names, and is what extraction and storage see. The size cap
+    is enforced while reading, so an oversize upload is never held whole.
+    """
     filename = file.filename or ""
-    ext = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-    if ext not in ALLOWED_EXTENSIONS and file.content_type not in ALLOWED_CONTENT_TYPES:
+    ext = extension_of(filename)
+    if ext not in ALLOWED_EXTENSIONS:
         raise HTTPException(
             status_code=400,
             detail=f"Unsupported file type '{ext or file.content_type}'. Only PDF, DOCX, and PPTX are accepted.",
         )
-    file_bytes = await file.read()
-    if len(file_bytes) > MAX_FILE_SIZE:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"File exceeds the {MAX_FILE_SIZE // (1024 * 1024)} MB limit. "
-                "Please upload a smaller file."
-            ),
-        )
-    return filename, file_bytes
+    file_bytes = await read_within_limit(
+        file, MAX_FILE_SIZE, status_code=400, detail=too_large_detail(MAX_FILE_SIZE),
+    )
+    content_type = matching_type(filename, file_bytes, ALLOWED_CONTENT_TYPES)
+    if content_type is None:
+        raise HTTPException(status_code=400, detail=MISMATCHED_FILE_DETAIL)
+    return filename, file_bytes, content_type
 
 
 @router.post("/upload/sync")
@@ -270,6 +276,9 @@ async def upload_document_sync(
         response.setdefault("categories", [])
         return response
 
+    # A replay above is free; a new upload is charged (/upload shares it).
+    await aenforce_abuse_limit(abuse_limits.DOCUMENT_UPLOAD, user_id)
+
     # #115: only into a course the uploader is enrolled in (else 404). The
     # upload form sends the ABSTRACT course id; documents key on the
     # OFFERING — the uploader's own enrolled one, which the gate returns (so
@@ -277,13 +286,13 @@ async def upload_document_sync(
     # stays the key for the graph + course-context + calendar side effects.
     offering_id = await asyncio.to_thread(require_course_enrollment, user_id, course_id)
 
-    filename, file_bytes = await _read_upload(file)
+    filename, file_bytes, content_type = await _read_upload(file)
 
     # #116: with `jobs_queue` on for the uploader, extraction runs on the
     # worker (document_jobs); off, it runs here exactly as before.
     queued = await asyncio.to_thread(document_jobs.should_queue, user_id, len(file_bytes))
     extracted_text = None if queued else await asyncio.to_thread(  # #117: OCR off the loop
-        _extract_text_or_422, file_bytes, filename, file.content_type or "",
+        _extract_text_or_422, file_bytes, filename, content_type,
     )
 
     # ── AI: orchestrator (parallel workers + tool-driven graph update) ────────
@@ -310,12 +319,12 @@ async def upload_document_sync(
         response = await document_jobs.sync_via_queue(
             user_id=user_id, offering_id=offering_id, course_id=course_id,
             request_id=request_id, filename=filename,
-            content_type=file.content_type, file_bytes=file_bytes,
+            content_type=content_type, file_bytes=file_bytes,
         )
         if response is not None:
             return response
         extracted_text = await asyncio.to_thread(
-            _extract_text_or_422, file_bytes, filename, file.content_type or "",
+            _extract_text_or_422, file_bytes, filename, content_type,
         )
 
     deps = SaplingDeps(
@@ -387,7 +396,6 @@ async def upload_document_sync(
         response.setdefault("categories", [])
         return response
 
-    background_tasks.add_task(_invalidate_study_guide_cache, user_id, offering_id)
     # update_course_context aggregates an OFFERING's enrollments (#759: the
     # abstract course id matched none, so it only cleared the cache).
     background_tasks.add_task(_refresh_course_context, offering_id, user_id)
@@ -442,6 +450,8 @@ async def upload_document(
     # upload that already completed still gets its document. Threaded: a
     # sync PostgREST round trip on the loop stalls every other open stream.
     existing = await asyncio.to_thread(_existing_doc_by_request_id, user_id, request_id)
+    if not existing:  # a replay is free; a new upload is charged (/upload/sync shares it)
+        await aenforce_abuse_limit(abuse_limits.DOCUMENT_UPLOAD, user_id)
     # #115: only into a course the uploader is enrolled in (else 404).
     # Documents key on the offering (0025) — the uploader's own enrolled one,
     # which the gate returns so the check and the write agree on the term;
@@ -452,7 +462,7 @@ async def upload_document(
         else await asyncio.to_thread(require_course_enrollment, user_id, course_id)
     )
 
-    filename, file_bytes = await _read_upload(file)
+    filename, file_bytes, content_type = await _read_upload(file)
 
     deps = SaplingDeps(
         user_id=user_id,
@@ -475,7 +485,7 @@ async def upload_document(
     extracted_text: str | None = (
         None if OCR_ASYNC_ENABLED or existing or queued
         else await asyncio.to_thread(  # #117: OCR off the event loop
-            _extract_text_or_422, file_bytes, filename, file.content_type or "",
+            _extract_text_or_422, file_bytes, filename, content_type,
         )
     )
 
@@ -484,7 +494,7 @@ async def upload_document(
         document_jobs.record_inline_outcome(upload_event_stream(
             existing=existing, user_id=user_id, course_id=course_id,
             offering_id=offering_id, request_id=request_id, filename=filename,
-            content_type=file.content_type, file_bytes=file_bytes, deps=deps,
+            content_type=content_type, file_bytes=file_bytes, deps=deps,
             queued=queued, extracted_text=extracted_text,
         )),
         headers={"Cache-Control": SSE_CACHE_CONTROL},
@@ -492,10 +502,10 @@ async def upload_document(
 
 
 @router.post("/doc/{document_id}/scan-concepts")
-def scan_document_concepts(document_id: str, request: Request, body: dict = Body(...)):
+def scan_document_concepts(document_id: str, request: Request, body: ScanConceptsBody):
     """Extend the course's concept graph using one document's stored
     summary + takeaways as the seed signal."""
-    user_id = body.get("user_id")
+    user_id = body.user_id
     if not user_id:
         raise HTTPException(status_code=400, detail="user_id is required.")
     require_self(user_id, request)
@@ -542,10 +552,10 @@ def scan_document_concepts(document_id: str, request: Request, body: dict = Body
 
 
 @router.post("/course/{course_id}/scan-concepts")
-def scan_course_concepts(course_id: str, request: Request, body: dict = Body(...)):
+def scan_course_concepts(course_id: str, request: Request, body: ScanConceptsBody):
     """Extend the course's concept graph from the course label alone
     (and whatever is already in the graph)."""
-    user_id = body.get("user_id")
+    user_id = body.user_id
     if not user_id:
         raise HTTPException(status_code=400, detail="user_id is required.")
     require_self(user_id, request)

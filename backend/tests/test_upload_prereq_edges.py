@@ -57,6 +57,7 @@ from agents.deps import SaplingDeps
 from learning import planner
 from learning.params import BKT_L0, BKT_PROFICIENT
 from main import app
+from services.prompt_safety import DOCUMENT_INPUT_GUARD_PROMPT, wrap_document_input
 from tests.split_patches import patch_documents
 
 client = TestClient(app)
@@ -67,7 +68,10 @@ USER, COURSE = "u1", "c-1"
 # The concept extraction request as it was before A118, captured from
 # cf9dc75c (the commit before it) by running that agent in function mode: the
 # flag-off variant must send exactly this. Change these only with a recorded
-# eval behind the change.
+# eval behind the change. Since #890 (f9ad4e5f) every upload worker's system
+# prompt ends with the untrusted-document guard and its user prompt is the
+# document inside the envelope (services/prompt_safety.py): the flag-off
+# variant is that request, byte for byte, and A118 adds nothing to it.
 PRE_A118_SYSTEM_PROMPT = (
     "You extract key concepts from a student document. Each concept becomes a "
     "node in the student's knowledge graph and must read as a standalone topic."
@@ -76,16 +80,17 @@ PRE_A118_SYSTEM_PROMPT = (
     "- description: 1-2 sentences in the document's context.\n"
     "- importance in [0, 1]; order the list by importance desc.\n"
     "- 1-30 concepts. Prefer 4-12 for lectures/readings/study guides, up to ~15 "
-    "for whole-course syllabi, 1-8 for narrow assignments."
+    "for whole-course syllabi, 1-8 for narrow assignments.\n\n"
+    + DOCUMENT_INPUT_GUARD_PROMPT
 )
-PRE_A118_PROMPT_SHA256 = "80a7962e078a1faeddfb6b66227853f8fb43f707ad47499a9ea77c4c2a35957b"
-PRE_A118_PROMPT_VERSION = "80a7962e078a"  # the agent metadata: the sha's first 12
+PRE_A118_PROMPT_SHA256 = "e8ad6c7cacebcd19bf921e09eb0b1cc0032847c7ba2739f398d5ad1ddd52ee20"
+PRE_A118_PROMPT_VERSION = "e8ad6c7caceb"  # the agent metadata: the sha's first 12
 PRE_A118_OUTPUT_TOOL = ("final_result", "The final response which ends this conversation")
 # sha256 of the output tool's JSON schema (json.dumps, sort_keys=True).
 PRE_A118_SCHEMA_SHA256 = "28cd48497ca87a194eb030d792e56453c582e4985769938571da1bcf1f21763f"
 # The flag-on instructions, pinned so an edit to them is a deliberate one.
 PREREQUISITE_INSTRUCTIONS_SHA256 = "ce6710fb00f9aa7fe8e3ecd278d30e57a9a54cafc1731ebf7f2fc5189e8d14ee"
-PREREQ_PROMPT_VERSION = "5703f01ef1f6"  # sha256(system prompt + "\n\n" + instructions)[:12]
+PREREQ_PROMPT_VERSION = "eb0b193a22a8"  # sha256(system prompt + "\n\n" + instructions)[:12]
 
 # The walkthrough deck: (name, importance as the extraction scored it, node id).
 # The ids sort Collision Resolution 1st, Hash Table 3rd and Hash Function 5th —
@@ -835,10 +840,11 @@ def test_upload_flag_off_is_the_pre_a118_upload(db, graph_reads, flag_reads, mon
     monkeypatch.delenv(FLAG_ENV, raising=False)
     _seed_deck(db)
     cpt_run, agu, write, result = UPLOADS[route]()
-    # The pre-A118 call, argument for argument: the bare text, the agent's own
-    # prompt and schema — no instructions, no output_type, no context.
+    # The pre-A118 call, argument for argument: the document in its envelope
+    # (#890), the agent's own prompt and schema — no instructions, no
+    # output_type, no context.
     assert cpt_run.call_args_list == [
-        call(user_prompt=_TEXT, deps=ANY, usage_limits=WORKER_LIMITS),
+        call(wrap_document_input(_TEXT), deps=ANY, usage_limits=WORKER_LIMITS),
     ]
     graph_reads.assert_not_called()  # no course-concepts read, no edge read
     write.assert_not_called()  # not even a no-op step: the pre-A118 sequence
@@ -858,12 +864,13 @@ def test_upload_flag_on_extracts_with_context_and_writes_oriented_edges(
     cpt_run, agu, write, result = UPLOADS[route]()
 
     cpt_run.assert_called_once()
-    kwargs = cpt_run.call_args.kwargs
+    (prompt,), kwargs = cpt_run.call_args
     assert kwargs["instructions"] == PREREQUISITE_INSTRUCTIONS
     assert kwargs["output_type"] is ConceptList
-    assert kwargs["user_prompt"] == build_message(_TEXT, cp.course_concept_names(USER, COURSE))
-    assert "\n- Arrays\n" in kwargs["user_prompt"]
-    assert kwargs["user_prompt"].endswith("Document:\n" + _TEXT)
+    wrapped = wrap_document_input(_TEXT)
+    assert prompt == build_message(wrapped, cp.course_concept_names(USER, COURSE))
+    assert "\n- Arrays\n" in prompt
+    assert prompt.endswith("Document:\n" + wrapped)
 
     write.assert_called_once()
     agu.assert_called_once()
@@ -899,7 +906,7 @@ def test_a_pipeline_run_with_no_resolution_is_the_pre_a118_pipeline(
     ):
         result = asyncio.run(process_document(_TEXT, deps))
     assert cpt_run.call_args_list == [
-        call(user_prompt=_TEXT, deps=deps, usage_limits=WORKER_LIMITS),
+        call(wrap_document_input(_TEXT), deps=deps, usage_limits=WORKER_LIMITS),
     ]
     assert result.model_dump()["concepts"].keys() == {"concepts"}
     graph_reads.assert_not_called()

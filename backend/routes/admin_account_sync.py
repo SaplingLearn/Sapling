@@ -35,7 +35,7 @@ from services.account_summary import summarize_account
 from services.account_sync_client import PeerError
 from services.account_wipe import AccountWipeIncomplete
 from services.admin_audit import log_admin_action
-from services.auth_guard import get_session_user_id, require_admin
+from services.auth_guard import get_session_user_id, require_admin, require_admin_recent
 from services.events_service import log_event
 
 logger = logging.getLogger("sapling.admin_account_sync")
@@ -82,7 +82,7 @@ def copy_preview(user_id: str, request: Request, direction: str | None = None) -
 def copy_account(user_id: str, request: Request, body: Any = Body(default=None)) -> dict:
     # Admin FIRST, before the body is even looked at: a non-admin learns
     # nothing from a validation error. (Hence `Any` instead of a model.)
-    require_admin(request)
+    require_admin_recent(request)
     actor = get_session_user_id(request)
 
     if not isinstance(body, dict):

@@ -67,7 +67,7 @@ describe("LearningBlock", () => {
     render(<LearningBlock learning={LEARNING} conceptName="Recursion" />);
     expect(screen.getByTestId("quiz-results-due").textContent).toContain("2 concepts are due for review.");
     const review = screen.getByTestId("quiz-next-step-review");
-    expect(review.getAttribute("href")).toBe("/study?mode=cards");
+    expect(review.getAttribute("href")).toBe("/study");
     expect(review.textContent).toBe("Review what's due (2)");
     expect(screen.getByTestId("quiz-next-step-learn").getAttribute("href")).toBe("/learn?topic=Loops&course=cs111");
     expect(loop.calls.at(-1)).toEqual(["user_andres", true]);

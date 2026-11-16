@@ -45,6 +45,7 @@ from services.rag_service import (
     embedding_blocked,
     index_document_chunks_detailed,
 )
+from services.share_screen import screen_from_stored
 
 logger = logging.getLogger(__name__)
 
@@ -416,10 +417,16 @@ def _run(row: dict) -> IndexOutcome:
     # answer. It is never invented as 1.0: `shareability` holds the
     # classifier's raw label, not a gated one, so assuming confidence would
     # publish a document the live upload path kept private.
+    #
+    # The share screen likewise: the reason stored at upload, OR a fresh
+    # screen of the text being indexed (services/share_screen.py). Either
+    # one holding the document keeps it private, so neither a loosened rule
+    # nor a row from before the column existed can publish it.
     visibility = decide_visibility(
         user_id,
         shareability=row.get("shareability"),
         confidence=row.get("shareability_confidence"),
+        screen=screen_from_stored(row.get("share_block_reason"), text),
     )
 
     # Spec §13 A128: the breaker is already open, so every embed call would be

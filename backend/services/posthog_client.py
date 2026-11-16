@@ -562,9 +562,10 @@ def _submit(
 #: can count it; a third-party analytics processor, its person profiles and
 #: everyone with PostHog access would otherwise hold it, consent or not.
 _NOT_MIRRORED: frozenset[str] = frozenset({
-    "error.4xx", "flag.changed", "safety.crisis_support_shown",
+    "error.4xx", "flag.changed",
     "account.seed", "account.wipe", "account.copy_push", "account.copy_pull",
     "account.export", "account.import",
+    "safety.crisis_support_shown",
 })
 
 #: Payload keys that carry a request path. Whatever the emitter put there (a
@@ -619,8 +620,8 @@ def mirror_event(
 
     Called only from ``events_service.log_event``, after its kill-switch
     check. ``content_fp`` is never forwarded (a hash of student text).
-    ``_NOT_MIRRORED`` events (``error.4xx``, ``flag.changed``,
-    ``safety.crisis_support_shown``) are not mirrored; ``path``/``route`` become the route
+    ``_NOT_MIRRORED`` events (``error.4xx``, ``flag.changed``, the account
+    audit rows, ``safety.crisis_support_shown``) are not mirrored; ``path``/``route`` become the route
     template; the #117 category is sent as ``event_category``. Consent is
     decided on the worker, at send time.
     """

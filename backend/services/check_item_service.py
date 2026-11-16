@@ -180,6 +180,7 @@ from services.encryption import (
 from services.events_service import log_event
 from services.graph_service import _normalize_concept
 from services.request_context import current_request_id
+from services.share_screen import screen_from_stored
 
 logger = logging.getLogger("sapling.services.check_items")
 
@@ -1187,7 +1188,7 @@ def _source_rows(document_ids: Iterable[str]) -> list[dict]:
         batch = ids[start : start + _DOC_ID_BATCH]
         rows.extend(
             table("documents").select(
-                "id,user_id,shareability,shareability_confidence,extracted_text",
+                "id,user_id,shareability,shareability_confidence,share_block_reason,extracted_text",
                 filters={
                     "id": "in.(" + ",".join(pg_quote_value(d) for d in batch) + ")",
                     "deleted_at": "is.null",
@@ -1438,15 +1439,22 @@ def chunks_for_document(document_id: str) -> list[dict]:
 
 def document_is_item_source(row: dict) -> bool:
     """Shared course material only: the stored shareability is course_material
-    AND chunk_visibility.decide_visibility (confidence floor + the uploader's
-    stored consent, #629/#630) says SHARED."""
+    AND chunk_visibility.decide_visibility (confidence floor + the share screen
+    + the uploader's stored consent, #629/#630/#890) says SHARED. The screen is
+    the indexer's (document_indexing._run): the reason stored at upload, else a
+    fresh screen of the extracted text — so an item is never drafted from a
+    document the class pool would not take."""
     if row.get("shareability") != COURSE_MATERIAL:
         return False
+    screen = screen_from_stored(
+        row.get("share_block_reason"), decrypt_if_present(row.get("extracted_text")),
+    )
     return (
         decide_visibility(
             row["user_id"],
             shareability=row.get("shareability"),
             confidence=row.get("shareability_confidence"),
+            screen=screen,
         )
         == SHARED
     )
@@ -3344,7 +3352,7 @@ def _generate_for_document(
     rows = table("documents").select(
         # index_status: A128 — an unindexed source drafts `unsourced` items
         # unless its indexing was skipped by design (`source_chunks`)
-        "id,user_id,shareability,shareability_confidence,extracted_text,index_status",
+        "id,user_id,shareability,shareability_confidence,share_block_reason,extracted_text,index_status",
         filters={"id": f"eq.{document_id}", "deleted_at": "is.null"},
         limit=1,
     )

@@ -21,6 +21,7 @@ import { HelpAbusePanel } from "./admin/HelpAbusePanel";
 import { SelfExplanationPanel } from "./admin/SelfExplanationPanel";
 import { MultiConceptPanel } from "./admin/MultiConceptPanel";
 import { LoopCostPanel } from "./AdminLoopCost";
+import { AdminReauthBanner } from "./admin/AdminReauthBanner";
 import { useUser } from "@/context/UserContext";
 import { errorRateSeries, formatCompactCount, zeroFillDays, type DayPointValue } from "@/lib/daySeries";
 
@@ -712,6 +713,7 @@ function AnalyticsBody() {
         subtitle="Usage, LLM cost, and errors"
         actions={<span className="chip chip--err">Staff only</span>}
       />
+      <AdminReauthBanner />
       <div style={{
         padding: "12px 32px", borderBottom: "1px solid var(--border)",
         display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap",

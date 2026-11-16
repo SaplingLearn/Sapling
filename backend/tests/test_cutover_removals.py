@@ -37,13 +37,15 @@ def test_quiz_and_flashcards_do_not_consult_the_gate():
 def test_onboarding_ignores_learning_style():
     from models import OnboardingBody
 
-    body = OnboardingBody(user_id="u", first_name="A", last_name="B", year="1", majors=["x"], course_ids=["c"])
+    # main's onboarding (#886): a year choice and the accepted legal versions
+    base = dict(
+        user_id="u", first_name="A", last_name="B", year="junior", majors=["x"], course_ids=["c"],
+        accepted_terms_version="t", accepted_privacy_version="p",
+    )
+    body = OnboardingBody(**base)
     assert body.learning_style is None
     # A legacy client that still sends it is accepted and the value ignored.
-    assert OnboardingBody(
-        user_id="u", first_name="A", last_name="B", year="1", majors=["x"], course_ids=["c"],
-        learning_style="visual",
-    ).learning_style == "visual"
+    assert OnboardingBody(**base, learning_style="visual").learning_style == "visual"
     from routes import onboarding
 
     assert "learning_style" not in inspect.getsource(onboarding.save_onboarding_profile)

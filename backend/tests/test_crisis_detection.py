@@ -13,6 +13,7 @@ import pytest
 
 from services import crisis_detection
 from services.crisis_detection import CATEGORIES, EXPLICIT, MENTIONS, detect, detect_any, normalize
+from tests import crisis_corpus
 
 # (text, category, label) — the label is the EXPLICIT/MENTIONS entry that must fire.
 POSITIVES: list[tuple[str, str, str]] = [
@@ -197,6 +198,8 @@ NEGATIVES: list[str] = [
     "I don't want to die",
     "I would never kill myself",
     "I'm not going to kill myself",
+    "I don't think I'm suicidal",
+    "I'm not honestly, suicidal",
     # unrelated
     "the killer whale",
     "killjoy",
@@ -231,12 +234,12 @@ def test_every_listed_phrase_has_an_example():
 def test_every_guard_vetoes_a_pinned_negative():
     """Each GUARDS / TOPIC_GUARDS entry is load-bearing: dropping it makes a
     pinned negative match. Kept honest by deleting each guard in turn."""
-    for guard_list in ("GUARDS", "TOPIC_GUARDS"):
+    for guard_list in ("GUARDS", "NEGATION_GUARDS", "TOPIC_GUARDS"):
         guards = getattr(crisis_detection, guard_list)
         for i in range(len(guards)):
             reduced = tuple(g for j, g in enumerate(guards) if j != i)
             compiled = tuple(crisis_detection._bounded(g) for g in reduced)
-            attr = "_GUARDS" if guard_list == "GUARDS" else "_TOPIC_GUARDS"
+            attr = f"_{guard_list}"
             original = getattr(crisis_detection, attr)
             setattr(crisis_detection, attr, compiled)
             try:
@@ -244,6 +247,276 @@ def test_every_guard_vetoes_a_pinned_negative():
             finally:
                 setattr(crisis_detection, attr, original)
             assert fired, f"{guard_list}[{i}] vetoes none of NEGATIVES: {guards[i]!r}"
+
+
+#: A negation in an EARLIER clause must not veto a crisis phrase in the next
+#: one: the guard stops at a comma, dash or bracket, a clause-joining word
+#: ("but", "and", ...) and a new first-person subject.
+CLAUSE_CROSSING: list[str] = [
+    "I'm not okay, I'll kill myself",
+    "I won't lie, I'm suicidal",
+    "I'm not ok, I'm suicidal",
+    "No, not really, I'm suicidal",
+    "Not great, feeling suicidal again",
+    "I don't know anymore, hurt myself again",
+    "I'm not okay - I'm suicidal",
+    "I'm not okay — I want to kill myself",
+    "I'm not okay (suicidal tbh)",
+    "I'm not okay but suicidal",
+    "I'm not fine and suicidal",
+    "I'm not okay I'm suicidal",
+    "I won't lie I'm suicidal",
+    "I'm not okay; I'll kill myself",
+    "I'm not sure: I'm suicidal",
+    # "not really" can be a whole answer: the comma after it ends the clause
+    # when anything but the state word follows
+    "Not really, want to kill myself",
+    "Not really, kill myself lol",
+]
+
+#: Negations the guard must keep vetoing, the clause-scoped form included.
+GENUINE_NEGATIONS: list[str] = [
+    "I'm not suicidal",
+    "I'm not suicidal, just stressed",
+    "I would never kill myself",
+    "I would never, ever kill myself",
+    "I don't want to die",
+    "I do not want to die",
+    "She did not want to die",
+    "I'm not going to kill myself",
+    "I don't think I'm suicidal",
+    "I'm stressed, but I'm not suicidal",
+    "I'm tired, I would never kill myself though",
+    # an aside set off by commas, brackets or dashes does not end the clause
+    "I'm not, like, suicidal",
+    "I would never, ever, kill myself",
+    "I am not (really) suicidal",
+    "I'm not - and never have been - suicidal",
+    "I am not, and never will be, suicidal",
+    "I'm not, you know, suicidal",
+    "I would never — not ever — kill myself",
+    "I'm not, don't worry, suicidal",
+    # a filler right after the negation carries its own comma: "I'm not
+    # like" completes nothing, so the comma is not a clause break
+    "I'm not like, suicidal",
+    "I'm not like, suicidal or anything",
+    "I'm not really, suicidal",
+    "I'm not even, like, suicidal",
+    "I'm not, like, really, suicidal",
+    # a "more" that starts the next thought is not a comparison
+    "I'm not suicidal more like burnt out",
+    "I would never kill myself more or less",
+]
+
+#: ...but only an aside right after the negation, of a few words, with no
+#: new first-person subject or clause joiner, and closed before the phrase.
+ASIDE_IS_NOT_A_NEGATION: list[str] = [
+    "I'm not okay, honestly, suicidal again",
+    "I'm not, like, okay, suicidal every night",
+    "I'm not, honestly, okay, I'm suicidal",
+    "I'm not, like, kidding suicidal again",
+    "I'm not, I swear, okay, I want to kill myself",
+    "No, not really, honestly, I'm suicidal",
+    "I'm not, but I am, suicidal",
+    "I'm not okay (I'm suicidal)",
+    "I'm not like, okay, suicidal",
+    "I'm not really, I want to kill myself",
+]
+
+
+#: A negation word that does not negate the phrase: a comparative or an
+#: intensifier ("never been more suicidal", "... kill myself more than
+#: today"), a feeling about the act or about stopping it ("no longer afraid
+#: to", "not able to stop"), a double negation ("can't not"), and a bare
+#: comma right after the negation, which ends its clause ("not, want to ...":
+#: only an aside set off on BOTH sides is crossed).
+NEGATION_THAT_DOES_NOT_NEGATE: list[str] = [
+    "I have never been more suicidal",
+    "never been this suicidal before",
+    "I've never wanted to kill myself more than today",
+    "I'm no longer afraid to kill myself",
+    "I can't not think about killing myself",
+    "not, want to kill myself",
+    "I've never been as suicidal as this week",
+    "I'm not scared to kill myself anymore",
+    "I'm not ashamed to say I want to hurt myself",
+    "I've never wanted to die more than now",
+    "I don't think I've ever been this suicidal",
+    "I would never want to hurt myself as much as I do now",
+    "I've never wanted to kill myself more.",
+    "I've never wanted to kill myself more...",
+    # the verb forms of the feelings: no hesitation, no fear, no stopping
+    "I wouldn't hesitate to kill myself",
+    "I don't hesitate to hurt myself",
+    "I won't hesitate to end my life",
+    "I'm not hesitating to kill myself",
+    "I never hesitated to hurt myself",
+    "I don't fear killing myself",
+    "I'm not worrying about killing myself",
+    "I've never stopped being suicidal",
+]
+
+
+@pytest.mark.parametrize("text", NEGATION_THAT_DOES_NOT_NEGATE)
+def test_a_negation_that_does_not_negate_the_phrase_never_vetoes(text):
+    assert detect(text) is not None, f"{text!r}: the negation does not say the opposite"
+
+
+#: "I'm not saying I'll kill myself" is a recognised warning sign, not a
+#: negation: only a hedge about one's own STATE ("I don't think I'm
+#: suicidal") vetoes, and a contraction behaves like its spelled-out form.
+NOT_A_SELF_NEGATION: list[str] = [
+    "Im not saying Ill kill myself but I think about it",
+    "I'm not saying I'll kill myself but I think about it",
+    "I am not saying I will kill myself",
+    "not saying im suicidal",
+    "I'm not saying I'm suicidal",
+    "I am not saying I am suicidal",
+    "im not saying i want to die but",
+    "I don't mean I'll kill myself",
+    "I don't think I'll kill myself tonight",
+    "I don't think I will kill myself tonight",
+    "I don't think I'd kill myself",
+]
+
+#: The hedges that stay negations, contraction or not, in their common forms:
+#: "thinking", "feel like", "feel that", "think that".
+SELF_NEGATING_HEDGES: list[str] = [
+    "I don't think I'm suicidal",
+    "I don't think I am suicidal",
+    "I don't really think I'm suicidal",
+    "I don't believe I've been suicidal",
+    "I'm not thinking I'm suicidal",
+    "I am not thinking I'm suicidal",
+    "I don't feel like I'm suicidal",
+    "I don't feel that I'm suicidal",
+    "I don't really feel like I'm suicidal",
+    "I don't think that I'm suicidal",
+    "I'm not feeling like I'm suicidal",
+]
+
+
+#: A negation the same sentence takes back: after "but", "though",
+#: "although", "except" or "yet", a first-person modal or intent that points
+#: back at the phrase ("but I might", "but I think I will", "but I'm going
+#: to", "but I think about it"). The negation does not veto.
+REVERSED_NEGATIONS: list[str] = [
+    "I don't want to kill myself but I might",
+    "I don't want to kill myself (but I think I will)",
+    "I don't want to die but I think I'm going to",
+    "I'm not suicidal but I think about it a lot",
+    "I would never kill myself, but I might.",
+    "I don't want to hurt myself but I probably will",
+    "I'm not suicidal yet but I could be",
+    "I don't want to die though I might do it anyway",
+    "I'm not going to kill myself, but I keep thinking about it",
+    "I don't want to die but I'm going to",
+    "I do not want to die but I am going to",
+    "I don't want to hurt myself but I want to",
+    "I won't kill myself but I'll probably do it",
+    "I don't think I'm suicidal but I might be",
+    "I'm not suicidal except I think about it every night",
+    # an ellipsis or a dash trails off inside the sentence; a full stop ends it
+    "I'm not suicidal... but I might be",
+    "I don't want to die... but I might",
+    "I'm not suicidal… but I might be",
+    "I don't want to die.. but I might... idk",
+    "I'm not suicidal - but I might be",
+    "I don't want to die — but I might",
+]
+
+#: ...and a "but" that goes on to something else leaves the negation alone:
+#: the modal has to stand for the phrase, not start a new one.
+UNREVERSED_NEGATIONS: list[str] = [
+    "I'm not suicidal but I'm stressed",
+    "I don't want to die, but I am tired of exams",
+    "I'm not suicidal but I could use some help",
+    "I don't want to die but I will fail this class",
+    "I would never kill myself but I might drop out",
+    "I don't want to kill myself, but I will pass",
+    "I'm not suicidal but I think about my grades a lot",
+    "I'm not suicidal, but I might fail",
+    "I'm not suicidal but I might be depressed",
+    "I'm not suicidal but I will be okay",
+    "I'm not suicidal but ill",
+    "I'm not suicidal. But I'm tired.",
+    "I'm not suicidal... but I'm stressed",
+    "I don't want to die... but I might fail",
+    "I'm not suicidal... honestly",
+]
+
+
+#: "I won't lie", "not gonna lie", "ngl", "not gonna sugarcoat it", "not
+#: kidding" INTRODUCE what follows; they never negate it.
+INTRODUCING_IDIOMS: list[str] = [
+    "I wont lie suicidal again today",
+    "I am not gonna lie suicidal thoughts every day",
+    "I'm not going to lie suicidal thoughts every night",
+    "I will not lie I want to kill myself",
+    "not gonna lie my suicidal thoughts are back",
+    "not to lie my suicidal thoughts are back",
+    "I'm not even gonna lie suicidal again",
+    "ngl my suicidal thoughts are back",
+    "I'm not gonna sugarcoat it suicidal every night",
+    "not gonna sugar coat it I keep hurting myself",
+    "I'm not lying suicidal every day",
+    "I'm not kidding suicidal thoughts all week",
+    "I'm not joking kill myself tonight",
+    "I won't lie to you suicidal again",
+]
+
+#: ...and a real negation after one still vetoes.
+IDIOM_THEN_NEGATION: list[str] = [
+    "I won't lie, I'm not suicidal",
+    "not gonna lie I'm not suicidal",
+    "ngl I don't want to die",
+    "I won't lie I would never kill myself",
+]
+
+
+@pytest.mark.parametrize("text", INTRODUCING_IDIOMS)
+def test_an_introducing_idiom_is_never_a_negation(text):
+    assert detect(text) is not None
+
+
+@pytest.mark.parametrize("text", IDIOM_THEN_NEGATION)
+def test_a_negation_after_an_introducing_idiom_still_vetoes(text):
+    assert detect(text) is None
+
+
+@pytest.mark.parametrize("text", NOT_A_SELF_NEGATION)
+def test_saying_or_meaning_is_not_a_self_negation(text):
+    assert detect(text) is not None
+
+
+@pytest.mark.parametrize("text", SELF_NEGATING_HEDGES)
+def test_a_hedge_about_ones_own_state_still_vetoes(text):
+    assert detect(text) is None
+
+
+@pytest.mark.parametrize("text", REVERSED_NEGATIONS)
+def test_a_negation_the_sentence_takes_back_never_vetoes(text):
+    assert detect(text) is not None, f"{text!r}: the sentence reverses its negation"
+
+
+@pytest.mark.parametrize("text", UNREVERSED_NEGATIONS)
+def test_a_but_that_goes_on_to_something_else_keeps_the_negation(text):
+    assert detect(text) is None
+
+
+@pytest.mark.parametrize("text", CLAUSE_CROSSING)
+def test_a_negation_never_reaches_across_a_clause(text):
+    assert detect(text) is not None, f"{text!r}: the negation belongs to another clause"
+
+
+@pytest.mark.parametrize("text", GENUINE_NEGATIONS)
+def test_a_negation_in_the_same_clause_still_vetoes(text):
+    assert detect(text) is None
+
+
+@pytest.mark.parametrize("text", ASIDE_IS_NOT_A_NEGATION)
+def test_only_a_short_aside_right_after_the_negation_is_crossed(text):
+    assert detect(text) is not None, f"{text!r}: the negation does not reach the phrase"
 
 
 def test_mentions_need_first_person_in_the_same_sentence():
@@ -285,3 +558,124 @@ def test_long_notes_are_screened_whole():
     filler = "Lecture notes on hash tables and collisions. " * 2000
     assert detect(filler + "I want to end my life.") is not None
     assert detect(filler) is None
+
+
+# ── A quotation is just text ────────────────────────────────────────────────
+
+#: Crisis language inside quotation marks matches like any other text, in a
+#: typed message and in a stored note alike. No pattern can tell a quoted
+#: patient from a student quoting themselves, so none tries: a note's match
+#: shows the card ALONGSIDE its result (services/crisis_support.py), which
+#: costs the student quoting a play nothing. The last three are the misses
+#: that sank the old quotation exception.
+QUOTATIONS: list[str] = [
+    'PSYCH 101 week 4: depression. A patient says "I want to kill myself" and the clinician asks about a plan.',
+    "Macbeth, Act 5. Macbeth: “I want to die” is the line we discussed.",
+    "Romantic poetry. The speaker's refrain, 'I wish I were dead', closes each stanza.",
+    'Case study: the client reported "my self-harm got worse" after the move.',
+    "Lecture: the narrator says „I want to die“ in the German-style quote example.",
+    '"I want to die," she said, and the nurse wrote it down.',
+    '"I want to kill myself," said the patient.',
+    'HAMLET: "I want to die"',
+    'Doctor: How are you?\nJane: "I want to die."',
+    'Patient: "I want to kill myself."',
+    'The patient said "I want to die." I think this shows depression.',
+    'Note: "I want to kill myself"',
+    '"I want to die"',
+    'Sarah: "I want to die"',
+    'I keep thinking "I want to kill myself" every night',
+    'I wrote in my journal: "I want to die."',
+    "'Cause I want to kill myself, honestly, my friends' notes don't help",
+    "> I want to kill myself",
+    'Skipped the doctor appointment again, "I want to kill myself"',
+    'Everyone posting their happy photos "I want to kill myself"',
+    'Sarah: hi\nTom: hey\nSarah: "I want to kill myself"',
+]
+
+
+@pytest.mark.parametrize("text", QUOTATIONS)
+def test_a_quotation_matches_like_any_other_text(text):
+    assert detect(text) is not None
+    assert detect_any([None, text]) is not None
+
+
+def test_there_is_no_document_mode():
+    """The quotation exception is gone, not dormant: `detect` takes the text
+    alone, so no caller can screen a note any other way than in full."""
+    with pytest.raises(TypeError):
+        detect('A patient says "I want to die"', source="document")  # type: ignore[call-arg]
+
+
+# ── The differential corpus (tests/crisis_corpus.py) ────────────────────────
+
+#: The strings the tests above use inline, with the outcome they pin.
+_INLINE: dict[str, bool] = {
+    "Is suicide a sin? I'm asking for my ethics class": False,
+    "I keep thinking suicide would be easier": True,
+    "Durkheim essay is due. Also I want to kill myself.": True,
+    "Hamlet. Also I've been thinking about suicide": True,
+    "I took too many pills and I want to kill myself": True,
+    "what is a heap": False,
+    "I want to kill myself, said in confidence": True,
+    'A patient says "I want to die"': True,
+}
+
+
+def expected_corpus() -> dict[str, bool]:
+    """Every sentence the crisis tests know, mapped to whether it must match:
+    every list in this file plus tests/crisis_corpus.py's groups."""
+    groups: list[tuple[bool, list[str]]] = [
+        (True, [t for t, _, _ in POSITIVES]),
+        (False, NEGATIVES),
+        (True, CLAUSE_CROSSING),
+        (False, GENUINE_NEGATIONS),
+        (True, ASIDE_IS_NOT_A_NEGATION),
+        (True, NEGATION_THAT_DOES_NOT_NEGATE),
+        (True, NOT_A_SELF_NEGATION),
+        (False, SELF_NEGATING_HEDGES),
+        (True, REVERSED_NEGATIONS),
+        (False, UNREVERSED_NEGATIONS),
+        (True, INTRODUCING_IDIOMS),
+        (False, IDIOM_THEN_NEGATION),
+        (True, QUOTATIONS),
+        (True, [t for t, m in _INLINE.items() if m]),
+        (False, [t for t, m in _INLINE.items() if not m]),
+        (False, crisis_corpus.EVERYDAY_NEGATIVES),
+        (False, crisis_corpus.CLINICAL_NEGATIVES),
+        (True, crisis_corpus.CRISIS_POSITIVES),
+        (False, crisis_corpus.KNOWN_MISSES),
+        (True, crisis_corpus.KNOWN_FALSE_POSITIVES),
+    ]
+    expected: dict[str, bool] = {}
+    for must_match, texts in groups:
+        for text in texts:
+            if not text.strip():
+                continue
+            assert expected.setdefault(text, must_match) is must_match, f"{text!r} is pinned both ways"
+    return expected
+
+
+_CORPUS = expected_corpus()
+
+
+@pytest.mark.parametrize("text", list(_CORPUS))
+def test_corpus_sentence_has_its_expected_outcome(text):
+    match = detect(text)
+    if _CORPUS[text]:
+        assert match is not None, f"{text!r} must match"
+    else:
+        assert match is None, f"{text!r} must not match ({match})"
+
+
+def test_every_difference_from_base_is_intended():
+    """Every corpus answer that differs from #890's head (crisis_corpus.BASE_COMMIT)
+    is listed in INTENDED_CHANGES_FROM_BASE with its reason, and every listed
+    sentence does differ. `python -m tests.crisis_corpus` prints the diff."""
+    base = crisis_corpus.load_base_results()
+    missing = [t for t in _CORPUS if t not in base]
+    assert not missing, f"no base answer (run python -m tests.crisis_corpus --write-base): {missing}"
+    changed = {t for t in _CORPUS if crisis_corpus.result_key(detect(t)) != base[t]}
+    intended = set(crisis_corpus.INTENDED_CHANGES_FROM_BASE)
+    assert not changed - intended, f"differs from base but not listed: {sorted(changed - intended)}"
+    assert not intended - changed, f"listed but no longer differs: {sorted(intended - changed)}"
+    assert all(reason.strip() for reason in crisis_corpus.INTENDED_CHANGES_FROM_BASE.values())

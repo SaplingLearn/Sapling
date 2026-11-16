@@ -30,8 +30,9 @@ import { humanizeError } from "@/lib/errorMessage";
 import { withheldNotice } from "@/lib/integrityNotice";
 import { quizHrefForNote } from "@/lib/quiz/noteHref";
 import { useNoteAutosave, type AutosaveStatus } from "@/lib/notes/useNoteAutosave";
+import { CHAT_MESSAGE_MAX, NOTE_BODY_MAX, NOTE_TITLE_MAX } from "@/lib/inputLimits";
 import { CrisisSupportCard, useCrisisSupport } from "@/components/safety/CrisisSupportCard";
-import { crisisSupportIn, type CrisisSupport } from "@/lib/crisisSupport";
+import { crisisSupportIn, crisisSupportInError, markNoteCardShown, type CrisisSupport } from "@/lib/crisisSupport";
 import {
   layoutRowStyle,
   notesListRailStyle,
@@ -143,7 +144,9 @@ function NotetakerScreen() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const toast = useToast();
-  // docs/safety/crisis-support.md: a note action the crisis screen answered
+  // docs/safety/crisis-support.md: the card a note action's answer carries.
+  // A note that matched never blocks its action: the card shows BESIDE the
+  // result (`crisis_support_alongside`), or beside an error that carries it.
   const crisis = useCrisisSupport();
 
   const [courses, setCourses] = React.useState<Course[]>([]);
@@ -382,12 +385,13 @@ function NotetakerScreen() {
       if (!(await saveBeforeAgent(noteId))) return;
       try {
         const res = await summarizeNote(noteId, userId);
-        if (crisis.intercept(res)) return; // no summary was made or saved
+        if (crisis.intercept(res) && !res.crisis_support_alongside) return; // no summary was made
         setNotes((prev) =>
           prev.map((n) => (n.id === noteId ? { ...n, lastSummary: res.summary ?? n.lastSummary } : n)),
         );
       } catch (e) {
         console.error("Summarize failed", e);
+        crisis.intercept({ crisis_support: crisisSupportInError(e) });
         toast.error(humanizeError(e, "Couldn't summarize this note."));
       }
     });
@@ -400,12 +404,13 @@ function NotetakerScreen() {
       if (!(await saveBeforeAgent(noteId))) return;
       try {
         const res = await extractNoteConcepts(noteId, userId);
-        if (crisis.intercept(res)) return; // nothing was extracted or linked
+        if (crisis.intercept(res) && !res.crisis_support_alongside) return; // nothing was linked
         // spec §13 A125: names held back for giving away an open check's answer
         if (res?.withheld) toast.warn(withheldNotice(res.withheld, "concept"));
         await refreshActiveConcepts();
       } catch (e) {
         console.error("Extract failed", e);
+        crisis.intercept({ crisis_support: crisisSupportInError(e) });
         toast.error(humanizeError(e, "Couldn't extract concepts from this note."));
       }
     });
@@ -433,12 +438,22 @@ function NotetakerScreen() {
       if (!(await saveBeforeAgent(noteId))) return;
       try {
         const res = await sendNoteToTutor(noteId, userId);
-        if (crisis.intercept(res)) return; // the card instead of a tutor session
-        router.push(
-          `/learn?topic=${encodeURIComponent(res.topic ?? "")}&course=${encodeURIComponent(res.course_id ?? "")}`,
+        // `note` names the note, so a start on its title unchanged is screened
+        // as the student's stored material, not as a topic they typed
+        // (docs/safety/crisis-support.md): the card shows beside the session.
+        const open = () => router.push(
+          `/learn?topic=${encodeURIComponent(res.topic ?? "")}&course=${encodeURIComponent(res.course_id ?? "")}`
+            + `&note=${encodeURIComponent(noteId)}`,
         );
+        // Beside a result, the tutor opens once the card is closed, told the
+        // card was shown so its start does not pop the same one up again; a
+        // card that stands in for the result opens nothing.
+        const openAfterCard = () => { markNoteCardShown(noteId); open(); };
+        if (crisis.intercept(res, res.crisis_support_alongside ? openAfterCard : undefined)) return;
+        open();
       } catch (e) {
         console.error("Send to tutor failed", e);
+        crisis.intercept({ crisis_support: crisisSupportInError(e) });
         toast.error(humanizeError(e, "Couldn't send this note to the tutor."));
       }
     });
@@ -979,6 +994,7 @@ function NoteEditor({
       >
         <input
           value={note.title}
+          maxLength={NOTE_TITLE_MAX}
           onChange={(e) => onChange({ title: e.target.value })}
           placeholder="Untitled note"
           className="h-serif"
@@ -1018,6 +1034,7 @@ function NoteEditor({
       >
         <textarea
           value={note.body}
+          maxLength={NOTE_BODY_MAX}
           onChange={(e) => onChange({ body: e.target.value })}
           placeholder="Start writing — Sapling will pick up concepts as you go."
           className="body-serif"
@@ -1805,16 +1822,25 @@ function AIChatPanel({ noteId, userId }: { noteId: string; userId: string }) {
     try {
       const res = await noteChat(sentFor, userId, text);
       if (currentNoteRef.current !== sentFor) return;
-      const crisis = crisisSupportIn(res); // docs/safety/crisis-support.md
-      setMessages((prev) => [...prev, { role: "ai", text: res.reply, ...(crisis ? { crisis } : {}) }]);
+      // docs/safety/crisis-support.md: the card instead of a reply (a typed
+      // crisis message), or beside the reply (the note itself matched).
+      const crisis = crisisSupportIn(res);
+      const reply: ChatMessage = { role: "ai", text: res.reply };
+      setMessages((prev) => [
+        ...prev,
+        ...(crisis ? [{ role: "ai" as const, text: "", crisis }] : []),
+        ...(!crisis || res.crisis_support_alongside ? [reply] : []),
+      ]);
     } catch (e) {
       console.error("Chat failed", e);
       if (currentNoteRef.current !== sentFor) return;
+      const crisis = crisisSupportInError(e);
       // An error state, not a fake AI reply: take the unanswered question back
       // out of the thread and return it to the composer so it can be resent.
       setMessages((prev) => {
         const last = prev[prev.length - 1];
-        return last && last.role === "user" && last.text === text ? prev.slice(0, -1) : prev;
+        const kept = last && last.role === "user" && last.text === text ? prev.slice(0, -1) : prev;
+        return crisis ? [...kept, { role: "ai", text: "", crisis }] : kept;
       });
       setInput((cur) => (cur ? cur : text));
       setError("Sorry — something went wrong. Try again?");
@@ -1939,6 +1965,7 @@ function AIChatPanel({ noteId, userId }: { noteId: string; userId: string }) {
       >
         <input
           value={input}
+          maxLength={CHAT_MESSAGE_MAX}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {

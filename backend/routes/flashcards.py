@@ -1,41 +1,50 @@
+"""
+backend/routes/flashcards.py — the /api/flashcards HTTP surface.
+
+Each handler parses the request, checks the caller, calls the same-named
+function in ``services/flashcards/`` (#118; the saved-set handlers call
+``sets.py``'s ``*_flashcard_set``) and maps that package's domain errors to
+the status codes in ``_ERROR_STATUS``. A test patch must target the module
+that LOOKS UP the name now (``tests/split_patches.py::patch_flashcards``).
+"""
 from __future__ import annotations
 
-import base64
-import logging
-import uuid
-from datetime import datetime, timezone
+from contextlib import contextmanager
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from db.connection import table
-from learning.flashcard_fsrs import flashcard_fsrs_update
+from models import Id, LongText, ShortText
+
 from learning.gate import learning_loop_for_request
-from learning.params import FLASHCARD_RATING_TO_FSRS
-from services import events_service, integrity_guard
-from services.academics import resolve_offering
-from services.auth_guard import require_self, get_session_user_id
-from services.achievement_service import check_achievements
-from services.encryption import decrypt_if_present, encrypt_if_present
-from services.llm_budget import reraise_budget_refusal
-from services.tutor_sessions import session_owned_by
+from routes._errors import domain_status
+from services import crisis_support
+from services.auth_guard import require_self
 from services.flashcards import (
-    dedup_against_existing,
-    check_rate_limit,
-    library_doc_source_text,
-    list_flashcards,
-    parse_xlsx,
-    parse_anki_apkg,
-    scrape_quizlet_url,
-    extract_cards_from_image,
-    QuizletBlocked,
-    QuizletURLRejected,
-    gemini_generate_cards,
-    gemini_cleanup_cards,
-    gemini_cloze,
-    generate_flashcards as _generate,
+    FlashcardError,
+    FlashcardSetInvalid,
+    FlashcardSetLimitReached,
+    FlashcardSetNotFound,
+    FlashcardSetRateLimited,
+    InvalidRequest,
+    NotFound,
+    PayloadTooLarge,
+    RateLimited,
+    StorageError,
+    Unprocessable,
+    UpstreamError,
+    cards,
+    concept_topic,
+    create_flashcard_set,
+    delete_flashcard_set,
+    generation,
+    import_flow,
+    list_flashcard_sets,
+    suggest_flashcard_set,
+    update_flashcard_set,
 )
 from services.flashcards.cards import (  # noqa: F401  (re-export, #118)
     _FSRS_LIST_COLS,
@@ -43,13 +52,7 @@ from services.flashcards.cards import (  # noqa: F401  (re-export, #118)
     _loop_order,
     _order_due_rows,
 )
-from services.flashcards.integrity import (  # noqa: F401  (re-export, #118)
-    _CLOZE_BLANK,
-    _card_text,
-    cleanup_withheld,
-    open_card_guard,
-    screen_cards,
-)
+from services.flashcards.integrity import IntegrityRefused
 from services.flashcards.context import (  # noqa: F401  (re-export, #118)
     _COURSE_DOC_COLS,
     _COURSE_DOC_LIMIT,
@@ -58,8 +61,9 @@ from services.flashcards.context import (  # noqa: F401  (re-export, #118)
     _get_session_summary,
     _get_weak_concepts,
 )
-
-logger = logging.getLogger(__name__)
+from services.flashcards.import_flow import (  # noqa: F401  (re-export, #118)
+    MAX_UPLOAD_BYTES as _MAX_UPLOAD_BYTES,
+)
 
 router = APIRouter()
 
@@ -67,215 +71,189 @@ router = APIRouter()
 # ── Request / Response models ──────────────────────────────────────────────────
 
 class GenerateFlashcardsBody(BaseModel):
-    user_id: str
-    topic: str
+    user_id: Id
+    topic: str = Field(max_length=500)
     count: int = 5
-    session_id: str | None = None
+    session_id: Id | None = None
     # Optional term label (#141): grounds generation in the SELECTED term's
     # course documents instead of always the current term's.
-    semester: str | None = None
+    semester: ShortText | None = None
     # The selected course's abstract id (#829). When present it scopes the
     # grounding documents directly; `topic` is then only the prompt's label.
-    course_id: str | None = None
+    course_id: Id | None = None
 
 
 class FlashcardRatingBody(BaseModel):
-    user_id: str
-    card_id: str
-    # 1 = forgot, 2 = hard, 3 = easy. With the learning loop on (PKG-11) this
-    # maps to FSRS Again/Hard/Good via learning.params.FLASHCARD_RATING_TO_FSRS
-    # and any other value is a 422; the legacy path stores any int as-is.
+    user_id: Id
+    card_id: Id
+    # 1 = forgot, 2 = hard, 3 = easy: FSRS Again/Hard/Good via
+    # learning.params.FLASHCARD_RATING_TO_FSRS (PKG-11); any other value is a 422.
     rating: int
 
 
+#: Cards one import may carry (a large Anki deck is a few thousand).
+IMPORT_CARDS_MAX = 10_000
+
+
 class CardInput(BaseModel):
-    front: str
-    back: str
+    front: LongText
+    back: LongText
 
 
 class ImportParseBody(BaseModel):
-    user_id: str
+    user_id: Id
     source: Literal["anki", "xlsx", "url", "ocr"]
-    payload: str  # base64 for files, plain text for url; filename in options
+    # base64 for files (import_flow caps the decoded file at 5 MB, ~6.7 M
+    # base64 characters), plain text for url; filename in options
+    payload: str = Field(max_length=8_000_000)
     options: dict = {}
 
 
 class ImportCommitBody(BaseModel):
-    user_id: str
-    course_id: str | None = None
-    topic: str
-    cards: list[CardInput]
+    user_id: Id
+    course_id: Id | None = None
+    topic: str = Field(max_length=500)
+    cards: list[CardInput] = Field(max_length=IMPORT_CARDS_MAX)
     dedup: bool = True
 
 
 class ImportGenerateBody(BaseModel):
-    user_id: str
+    user_id: Id
     source: Literal["paste", "library_doc"]
-    text: str | None = None
-    document_id: str | None = None
+    text: str | None = Field(default=None, max_length=200_000)
+    document_id: Id | None = None
     count: int = 25
     difficulty: Literal["recall", "application", "conceptual"] = "recall"
 
 
 class ImportCleanupBody(BaseModel):
-    user_id: str
-    cards: list[CardInput]
+    user_id: Id
+    cards: list[CardInput] = Field(max_length=IMPORT_CARDS_MAX)
 
 
 class ImportClozeBody(BaseModel):
-    user_id: str
-    paragraph: str
+    user_id: Id
+    paragraph: LongText
+
+
+class FlashcardSetCreateBody(BaseModel):
+    """A saved set. Field rules (lengths, de-duplication, the option keys) are
+    `services/flashcards/sets.py`'s, answered as 422 with a readable detail."""
+    user_id: Id
+    # The service's own rules (NAME_MAX, CONCEPTS_MAX...) answer the readable
+    # 422s; these bounds only cap what is parsed at all.
+    name: ShortText
+    course_id: Id
+    concepts: list[ShortText] = Field(max_length=1000)
+    options: dict | None = None
+    exam_id: Id | None = None
+
+
+class FlashcardSetPatchBody(BaseModel):
+    """Only the fields SENT change; `exam_id: null` clears the exam."""
+    user_id: Id
+    name: ShortText | None = None
+    concepts: list[ShortText] | None = Field(default=None, max_length=1000)
+    options: dict | None = None
+    exam_id: Id | None = None
+
+
+class FlashcardSetSuggestBody(BaseModel):
+    user_id: Id
+    description: str = Field(max_length=2000)  # the service answers past DESCRIPTION_MAX
+    course_id: Id | None = None
+
+
+# ── Domain errors → HTTP ───────────────────────────────────────────────────────
+
+_ERROR_STATUS = {
+    InvalidRequest: 400, NotFound: 404, PayloadTooLarge: 413, Unprocessable: 422,
+    RateLimited: 429, StorageError: 500, UpstreamError: 502,
+    FlashcardSetInvalid: 422, FlashcardSetNotFound: 404,
+    FlashcardSetLimitReached: 409, FlashcardSetRateLimited: 429,
+    IntegrityRefused: 409,  # spec §13 A125 (services/flashcards/integrity.py)
+}
 
 
 def llm_http_error(exc: BaseException) -> HTTPException:
-    """The HTTP error a flashcard route raises when a generation failed: the
-    routes' long-standing 502 — except that a budget refusal in `exc` is
-    re-raised as itself (`llm_budget.reraise_budget_refusal`), so main.py
-    answers it with the friendly 429 the tutor and uploads use (#838)."""
-    reraise_budget_refusal(exc)
-    return HTTPException(status_code=502, detail=f"Gemini error: {exc}")
+    """Kept for importers of the pre-split route (#118): the HTTP error a
+    failed generation is answered with, now built from
+    ``generation.generation_failed`` (the 502, or the budget refusal in
+    ``exc`` re-raised as itself)."""
+    err = generation.generation_failed(exc)
+    return HTTPException(status_code=_ERROR_STATUS[UpstreamError], detail=err.detail)
 
 
-# ── Integrity guard (spec §13 A125; services/flashcards/integrity.py) ─────────
+@contextmanager
+def _flashcard_errors():
+    """Map a ``services.flashcards`` domain error to its HTTP status, same
+    detail (plus ``Retry-After`` when the error names a wait)."""
+    try:
+        yield
+    except FlashcardError as e:
+        retry = getattr(e, "retry_after", None)
+        raise HTTPException(
+            status_code=domain_status(e, _ERROR_STATUS),
+            detail=e.detail,
+            headers={"Retry-After": str(retry)} if retry is not None else None,
+        ) from e
 
 
-def _integrity_guard(user_id: str, texts) -> integrity_guard.Guard:
-    """The guard around one generator: 409 (nothing generated) when the text
-    the student sent quotes one of their posed checks. Off with the loop (the
-    gate is read here, at route entry, once)."""
-    guard = open_card_guard(user_id, texts, active=learning_loop_for_request(user_id))
-    if guard.refused:
-        raise HTTPException(status_code=409, detail=integrity_guard.REFUSED_DETAIL)
-    return guard
+def _rate_limited_import(fn, /, *args, **kwargs):
+    """Call one of the rate-limited import functions. A refusal by the import
+    limiter is answered as these routes always have: 429 with the bare
+    ``{detail}`` body and ``Retry-After``."""
+    with _flashcard_errors():
+        try:
+            return fn(*args, **kwargs)
+        except RateLimited as e:
+            return JSONResponse(
+                status_code=429,
+                content={"detail": e.detail},
+                headers={"Retry-After": str(e.retry_after)},
+            )
 
 
-def _screen_cards(guard: integrity_guard.Guard, cards: list) -> tuple[list, int]:
-    """The cards the guard lets through and how many it withheld; 409 when it
-    withheld every card: nothing is left to serve."""
-    kept, withheld = screen_cards(guard, cards)
-    if cards and not kept:
-        raise HTTPException(status_code=409, detail=integrity_guard.WITHHELD_DETAIL)
-    return kept, withheld
+def _card_inputs(items: list[CardInput]) -> list[dict]:
+    return [{"front": c.front, "back": c.back} for c in items]
 
 
-# ── Routes ─────────────────────────────────────────────────────────────────────
+# ── Cards ──────────────────────────────────────────────────────────────────────
 
 @router.post("/generate")
-def generate(body: GenerateFlashcardsBody, request: Request):
+async def generate(body: GenerateFlashcardsBody, request: Request):
     """
     Generate AI flashcards grounded in the student's actual course material.
     Pulls library documents + weak concepts from the knowledge graph automatically.
     """
-    require_self(body.user_id, request)
-    # spec §13 A125: the topic is the text this request sends the model
-    guard = _integrity_guard(body.user_id, (body.topic,))
-
-    # 1. Session summary (optional extra context). require_self only proves
-    #    the caller is body.user_id; the session must ALSO be theirs, or this
-    #    decrypts a classmate's tutor summary into the prompt. The summary is
-    #    optional enrichment, so a missing, foreign or unreadable session id
-    #    is dropped (generate without it) rather than failing the request —
-    #    and the ownership decision comes before anything of it is read.
-    context = ""
-    if body.session_id:
-        try:
-            owned = session_owned_by(body.session_id, body.user_id)
-        except Exception:
-            logger.warning(
-                "Flashcard session-ownership lookup failed; generating without session context",
-                exc_info=True,
+    # docs/safety/crisis-support.md: first, before the budget; no cards are made...
+    if crisis := await crisis_support.screen_async(request, body.user_id, "flashcard_generate", body.topic):
+        # ...unless the topic is one of the student's own graph concepts (course
+        # material, not typed): the cards are made with the card beside them
+        if await run_in_threadpool(
+            concept_topic.topic_is_graph_concept, body.user_id, body.topic, body.course_id,
+        ):
+            return await crisis_support.alongside(
+                crisis_support.ContentScreen(request, crisis), _generate(body, request),
             )
-            owned = False
-        if owned:
-            context = _get_session_summary(body.session_id)
+        return crisis_support.json_body(crisis, flashcards=[])
+    return await _generate(body, request)
 
-    # 2. Library documents for this course (term-scoped when a semester is
-    #    selected, #141)
-    documents = _get_course_documents(
-        body.user_id, body.topic, semester=body.semester, course_id=body.course_id
-    )
 
-    # 3. Concepts the student is weak on
-    weak_concepts = _get_weak_concepts(body.user_id, body.topic)
+async def _generate(body: GenerateFlashcardsBody, request: Request) -> dict:
+    """`generate`'s own work: the guard, then the generation (both blocking,
+    so off the event loop)."""
+    await run_in_threadpool(require_self, body.user_id, request)
 
-    # 4. Generate with full context
-    try:
-        cards = _generate(
-            topic=body.topic,
-            count=body.count,
-            context=context,
-            documents=documents,
-            weak_concepts=weak_concepts,
-        )
-    except Exception as e:
-        raise llm_http_error(e) from e
-    cards, withheld = _screen_cards(guard, cards)  # A125: before anything is stored
+    def run() -> dict:
+        with _flashcard_errors():
+            return generation.generate(
+                body.user_id, topic=body.topic, count=body.count, session_id=body.session_id,
+                semester=body.semester, course_id=body.course_id,
+                loop_on=learning_loop_for_request(body.user_id),  # spec §13 A125
+            )
 
-    now = datetime.now(timezone.utc).isoformat()
-    rows_to_insert = [
-        {
-            "id": str(uuid.uuid4()),
-            "user_id": body.user_id,
-            "topic": body.topic,
-            "front": encrypt_if_present(c["front"]),
-            "back": encrypt_if_present(c["back"]),
-            "times_reviewed": 0,
-            "last_reviewed_at": None,
-            "created_at": now,
-        }
-        for c in cards
-    ]
-
-    try:
-        for row in rows_to_insert:
-            table("flashcards").insert(row)
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to save flashcards. Has the flashcards table been created in Supabase? Error: {e}"
-        )
-
-    # #117 taxonomy (+ the ADR 0028 PostHog mirror). Counts only — never the
-    # topic or card text.
-    # Zero cards is not a generation (it would inflate the funnel).
-    if rows_to_insert:
-        events_service.log_event(
-            "flashcard.generated",
-            category="usage",
-            user_id=body.user_id,
-            payload={
-                "card_count": len(rows_to_insert),
-                "documents_used": len(documents),
-                "weak_concepts_used": len(weak_concepts),
-                "via": "topic",
-            },
-        )
-
-    # Check for achievements after flashcard generation
-    try:
-        from services.achievement_service import check_achievements
-        check_achievements(body.user_id, "flashcards_created", {})
-    except Exception:
-        pass
-
-    # rows_to_insert holds the ciphertext just written; the response the
-    # frontend renders (freshly generated cards, before any list re-fetch)
-    # must carry plaintext front/back, not the encrypted insert payload.
-    response_cards = [
-        {**row, "front": decrypt_if_present(row["front"]), "back": decrypt_if_present(row["back"])}
-        for row in rows_to_insert
-    ]
-
-    out = {
-        "flashcards": response_cards,
-        "context_used": {
-            "documents_found": len(documents),
-            "weak_concepts_found": len(weak_concepts),
-        }
-    }
-    if withheld:
-        out["withheld"] = withheld  # A125: cards held back for stating a posed check's key
-    return out
+    return await run_in_threadpool(run)
 
 
 @router.get("/user/{user_id}")
@@ -287,302 +265,133 @@ def get_flashcards(
     due_only: bool = False,
 ):
     require_self(user_id, request)
-    # PKG-11 / PKG-14b (spec §11.2): FSRS scheduling for every student, no
-    # gate — the kill switch does not bring the legacy list order back.
-
-    if not user_id:
-        return {"flashcards": []}
-
-    try:
-        rows, due = _loop_order(list_flashcards(user_id, topic, semester), datetime.now(timezone.utc))
-        return {"flashcards": due if due_only else rows, "due_count": len(due)}
-    except Exception as e:
-        err_str = str(e).lower()
-        if "not found" in err_str or "does not exist" in err_str or "42p01" in err_str:
-            return {"flashcards": []}
-        raise HTTPException(status_code=500, detail=str(e))
+    with _flashcard_errors():
+        return cards.get_flashcards(user_id, topic, semester, due_only=due_only)
 
 
 @router.post("/rate")
 def rate_card(body: FlashcardRatingBody, request: Request):
     require_self(body.user_id, request)
-    # PKG-11 / PKG-14b (spec §11.2): every rating is an FSRS review, no gate.
-    fsrs_rating = FLASHCARD_RATING_TO_FSRS.get(body.rating)
-    if fsrs_rating is None:
-        raise HTTPException(status_code=422, detail="rating must be one of 1, 2, 3")
-
-    cols = "id,times_reviewed,last_reviewed_at,fsrs_d,fsrs_s,reps,lapses"
-    try:
-        rows = table("flashcards").select(
-            cols,
-            filters={"id": f"eq.{body.card_id}", "user_id": f"eq.{body.user_id}"},
-            limit=1,
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-    if not rows:
-        raise HTTPException(status_code=404, detail="Flashcard not found")
-
-    now = datetime.now(timezone.utc)
-    current = rows[0]["times_reviewed"] or 0
-    payload = {
-        "times_reviewed": current + 1,
-        "last_rating": body.rating,
-        "last_reviewed_at": now.isoformat(),
-    }
-    # PKG-12 reopen: the pure helper learning/review.py shares; it returns
-    # the three legacy columns above (same values) plus the FSRS five.
-    payload.update(flashcard_fsrs_update(rows[0], body.rating, now=now))
-    table("flashcards").update(payload, filters={"id": f"eq.{body.card_id}"})
-    events_service.log_event(
-        "flashcard.reviewed",
-        category="usage",
-        user_id=body.user_id,
-        payload={"card_id": body.card_id, "rating": body.rating},
-    )
-
-    # The review counter is the only thing that advances `flashcards_reviewed`
-    # (Quick Draw: review 100 cards), so this is its only possible dispatch
-    # point. Post-commit: the review is already recorded, so a failing check
-    # must not fail the rating.
-    try:
-        check_achievements(body.user_id, "flashcards_reviewed", {})
-    except Exception:
-        logger.exception(
-            "achievement dispatch failed after card rating user=%s card=%s",
-            body.user_id, body.card_id,
-        )
-
-    return {"ok": True, "due_at": payload["due_at"], "fsrs_rating": fsrs_rating}
+    with _flashcard_errors():
+        return {"ok": True, **cards.rate_card(body.user_id, body.card_id, body.rating)}
 
 
 @router.delete("/{card_id}")
 def delete_card(card_id: str, user_id: str, request: Request):
     require_self(user_id, request)
-
-    try:
-        rows = table("flashcards").select(
-            "id",
-            filters={"id": f"eq.{card_id}", "user_id": f"eq.{user_id}"},
-            limit=1,
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-    if not rows:
-        raise HTTPException(status_code=404, detail="Flashcard not found")
-
-    table("flashcards").delete(filters={"id": f"eq.{card_id}"})
+    with _flashcard_errors():
+        cards.delete_card(user_id, card_id)
     return {"ok": True}
+
+
+# ── Saved sets ─────────────────────────────────────────────────────────────────
+#
+# A set is a name, a course, concept names and options; it owns no cards. The
+# logic is `services/flashcards/sets.py` (and `suggest.py`). `/sets/...` is two
+# segments, so it never collides with `DELETE /{card_id}` above.
+
+@router.get("/sets/{user_id}")
+def get_flashcard_sets(user_id: str, request: Request, course_id: str | None = None):
+    require_self(user_id, request)
+    return {"sets": list_flashcard_sets(user_id, course_id)}
+
+
+@router.post("/sets")
+def create_set(body: FlashcardSetCreateBody, request: Request):
+    require_self(body.user_id, request)
+    with _flashcard_errors():
+        return {"set": create_flashcard_set(
+            body.user_id, name=body.name, course_id=body.course_id,
+            concepts=body.concepts, options=body.options, exam_id=body.exam_id,
+        )}
+
+
+@router.post("/sets/suggest")
+async def suggest_set(body: FlashcardSetSuggestBody, request: Request):
+    """Concepts a described set should hold (a suggestion; nothing is saved)."""
+    # docs/safety/crisis-support.md: first, before the suggest limiter and the budget
+    if crisis := await crisis_support.screen_async(
+        request, body.user_id, "flashcard_set_suggest", body.description
+    ):
+        return crisis_support.json_body(crisis, name="", concepts=[], considered=0, backend="none")
+    # The guard can read the DB: off the event loop in an async handler (#756).
+    await run_in_threadpool(require_self, body.user_id, request)
+    with _flashcard_errors():
+        return await suggest_flashcard_set(body.user_id, body.description, body.course_id)
+
+
+@router.patch("/sets/{set_id}")
+def update_set(set_id: str, body: FlashcardSetPatchBody, request: Request):
+    require_self(body.user_id, request)
+    changes = body.model_dump(exclude_unset=True, exclude={"user_id"})
+    with _flashcard_errors():
+        return {"set": update_flashcard_set(body.user_id, set_id, changes)}
+
+
+@router.delete("/sets/{set_id}")
+def delete_set(set_id: str, user_id: str, request: Request):
+    require_self(user_id, request)
+    with _flashcard_errors():
+        delete_flashcard_set(user_id, set_id)
+    return {"deleted": True}
 
 
 # ── Import routes ──────────────────────────────────────────────────────────────
 
-_MAX_UPLOAD_BYTES = 5 * 1024 * 1024
-
-
 @router.post("/import/commit")
 def import_commit(body: ImportCommitBody, request: Request):
     require_self(body.user_id, request)
-
-    # The body carries an abstract course id (optional); flashcards key on the
-    # offering. Resolve it (None stays None — flashcards.offering_id is nullable).
-    # CREATE path: imported cards land on the CURRENT term's offering by design
-    # (#141 scopes the reads only; new content belongs to the term it's made in).
-    offering_id = resolve_offering(body.course_id) if body.course_id else None
-
-    cards = [{"front": c.front, "back": c.back} for c in body.cards]
-    skipped_count = 0
-
-    if body.dedup:
-        keep, skipped = dedup_against_existing(
-            body.user_id, offering_id, cards, topic=body.topic
+    with _flashcard_errors():
+        return import_flow.import_commit(
+            body.user_id, course_id=body.course_id, topic=body.topic,
+            cards=_card_inputs(body.cards), dedup=body.dedup,
         )
-        cards = keep
-        skipped_count = len(skipped)
-
-    now = datetime.now(timezone.utc).isoformat()
-    rows = [
-        {
-            "id": str(uuid.uuid4()),
-            "user_id": body.user_id,
-            "topic": body.topic,
-            "offering_id": offering_id,
-            "front": encrypt_if_present(c["front"]),
-            "back": encrypt_if_present(c["back"]),
-            "times_reviewed": 0,
-            "last_reviewed_at": None,
-            "created_at": now,
-        }
-        for c in cards
-    ]
-
-    if rows:
-        try:
-            table("flashcards").insert(rows)
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Insert failed: {e}")
-
-    try:
-        check_achievements(body.user_id, "flashcards_created", {"count": len(rows)})
-    except Exception:
-        pass
-
-    return {"inserted": len(rows), "skipped_duplicates": skipped_count}
 
 
 @router.post("/import/parse")
 def import_parse(body: ImportParseBody, request: Request):
     require_self(body.user_id, request)
-
-    if body.source in ("anki", "xlsx", "ocr"):
-        try:
-            file_bytes = base64.b64decode(body.payload, validate=True)
-        except Exception:
-            raise HTTPException(status_code=400, detail="payload must be valid base64")
-        if len(file_bytes) > _MAX_UPLOAD_BYTES:
-            raise HTTPException(status_code=413, detail="File exceeds 5MB limit")
-
-        withheld = 0
-        try:
-            if body.source == "xlsx":
-                cards = parse_xlsx(file_bytes)
-            elif body.source == "anki":
-                cards = parse_anki_apkg(file_bytes)
-            else:  # ocr
-                filename = (body.options or {}).get("filename", "image.png")
-                # spec §13 A125: the photographed page's text is what this request
-                # sends the card model — guarded once it is text, before the model
-                guards: list[integrity_guard.Guard] = []
-                cards = extract_cards_from_image(
-                    file_bytes,
-                    filename=filename,
-                    screen=lambda text: guards.append(_integrity_guard(body.user_id, (text,))),
-                )
-                if guards:
-                    cards, withheld = _screen_cards(guards[0], cards)
-        except ValueError as e:
-            raise HTTPException(status_code=422, detail=str(e))
-        except HTTPException:
-            raise
-        except Exception as e:
-            raise HTTPException(status_code=502, detail=f"Parser error: {e}")
-        out = {"cards": cards, "errors": []}
-        if withheld:
-            out["withheld"] = withheld
-        return out
-
-    if body.source == "url":
-        try:
-            cards = scrape_quizlet_url(body.payload)
-        except QuizletURLRejected as e:
-            raise HTTPException(status_code=400, detail=str(e))
-        except QuizletBlocked as e:
-            raise HTTPException(status_code=422, detail=str(e))
-        return {"cards": cards, "errors": []}
-
-    raise HTTPException(status_code=400, detail=f"Unsupported source: {body.source}")
+    with _flashcard_errors():
+        return import_flow.import_parse(
+            body.source, body.payload, body.options,
+            user_id=body.user_id, loop_on=learning_loop_for_request(body.user_id),
+        )
 
 
 @router.post("/import/generate")
 def import_generate(body: ImportGenerateBody, request: Request):
+    # docs/safety/crisis-support.md: first, before the import limiter and the budget
+    # (pasted text only: a library document is uploaded course material)
+    if body.source == "paste" and (crisis := crisis_support.screen(
+        request, body.user_id, "flashcard_import_paste", body.text
+    )):
+        return crisis_support.json_body(crisis, cards=[])
     require_self(body.user_id, request)
-
-    retry = check_rate_limit(body.user_id)
-    if retry is not None:
-        return JSONResponse(
-            status_code=429,
-            content={"detail": f"Rate limit hit. Try again in {retry}s."},
-            headers={"Retry-After": str(retry)},
-        )
-
-    guard = None
-    if body.source == "paste":
-        if not body.text:
-            raise HTTPException(status_code=400, detail="`text` is required for paste source")
-        source_text = body.text
-        guard = _integrity_guard(body.user_id, (source_text,))  # spec §13 A125
-    else:  # library_doc: stored course material, not request text (A125: unguarded)
-        if not body.document_id:
-            raise HTTPException(status_code=400, detail="`document_id` is required for library_doc source")
-        source_text = library_doc_source_text(body.user_id, body.document_id)
-        if source_text is None:
-            raise HTTPException(status_code=404, detail="Document not found")
-
-    try:
-        cards = gemini_generate_cards(source_text, count=body.count, difficulty=body.difficulty)
-    except Exception as e:
-        raise llm_http_error(e) from e
-    withheld = 0
-    if guard is not None:
-        cards, withheld = _screen_cards(guard, cards)
-
-    # #117 taxonomy (+ the ADR 0028 PostHog mirror): this IS the AI
-    # generation (the cards come back for review; /import/commit only
-    # persists what the student keeps — from any import source — so it does
-    # not emit, and a generate-then-commit is counted once). Counts only.
-    # Zero cards is not a generation (it would inflate the funnel).
-    if cards:
-        events_service.log_event(
-            "flashcard.generated",
-            category="usage",
-            user_id=body.user_id,
-            payload={
-                "card_count": len(cards),
-                "documents_used": 1 if body.source == "library_doc" else 0,
-                "weak_concepts_used": 0,
-                "via": body.source,
-            },
-        )
-
-    return {"cards": cards, "withheld": withheld} if withheld else {"cards": cards}
+    return _rate_limited_import(
+        import_flow.import_generate, body.user_id, source=body.source, text=body.text,
+        document_id=body.document_id, count=body.count, difficulty=body.difficulty,
+        loop_on=learning_loop_for_request(body.user_id),
+    )
 
 
 @router.post("/import/cleanup")
 def import_cleanup(body: ImportCleanupBody, request: Request):
+    # Not crisis-screened (docs/safety/crisis-support.md, "Checked and not
+    # covered"): the cards are an imported deck, someone else's material.
     require_self(body.user_id, request)
-
-    retry = check_rate_limit(body.user_id)
-    if retry is not None:
-        return JSONResponse(
-            status_code=429,
-            content={"detail": f"Rate limit hit. Try again in {retry}s."},
-            headers={"Retry-After": str(retry)},
-        )
-
-    cards = [{"front": c.front, "back": c.back} for c in body.cards]
-    # spec §13 A125: the cards' own text is what this request sends the model
-    guard = _integrity_guard(body.user_id, [t for c in cards for t in (c["front"], c["back"])])
-    try:
-        out = gemini_cleanup_cards(cards)
-    except Exception as e:
-        raise llm_http_error(e) from e
-    withheld = cleanup_withheld(guard, out)
-    if withheld:
-        # A cleaned card stating a posed check's key: the cleanup is withheld
-        # whole and the student's own cards come back as they sent them — a
-        # cleanup must never lose a card the student wrote.
-        return {"cards": cards, "withheld": withheld}
-    return {"cards": out}
+    return _rate_limited_import(
+        import_flow.import_cleanup, body.user_id, _card_inputs(body.cards),
+        loop_on=learning_loop_for_request(body.user_id),
+    )
 
 
 @router.post("/import/cloze")
 def import_cloze(body: ImportClozeBody, request: Request):
+    # docs/safety/crisis-support.md: first, before the import limiter and the budget
+    if crisis := crisis_support.screen(request, body.user_id, "flashcard_import_cloze", body.paragraph):
+        return crisis_support.json_body(crisis, cards=[])
     require_self(body.user_id, request)
-
-    retry = check_rate_limit(body.user_id)
-    if retry is not None:
-        return JSONResponse(
-            status_code=429,
-            content={"detail": f"Rate limit hit. Try again in {retry}s."},
-            headers={"Retry-After": str(retry)},
-        )
-
-    guard = _integrity_guard(body.user_id, (body.paragraph,))  # spec §13 A125
-    try:
-        cards = gemini_cloze(body.paragraph)
-    except Exception as e:
-        raise llm_http_error(e) from e
-    cards, withheld = _screen_cards(guard, cards)
-    return {"cards": cards, "withheld": withheld} if withheld else {"cards": cards}
+    return _rate_limited_import(
+        import_flow.import_cloze, body.user_id, body.paragraph,
+        loop_on=learning_loop_for_request(body.user_id),
+    )

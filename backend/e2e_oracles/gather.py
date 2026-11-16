@@ -211,6 +211,10 @@ _CIPHERTEXT_MANIFEST: tuple[tuple[str, str, str], ...] = (
     ("flashcards", "id", "front"),
     ("flashcards", "id", "back"),
     ("study_guides", "id", "content"),
+    # NULL until a guide is updated/regenerated or a check is answered; the
+    # sample below skips NULLs.
+    ("study_guides", "id", "previous_content"),
+    ("study_guides", "id", "answers"),
     ("room_summaries", "room_id", "summary"),
     # ADR 0025 / #484. UNIFORM across the table — document and catalog rows
     # alike — which is exactly what makes it assertable here: "chunk_text is

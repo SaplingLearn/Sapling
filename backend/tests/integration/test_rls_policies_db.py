@@ -34,6 +34,7 @@ BUCKETS: dict[str, frozenset[str]] = {
         "quiz_context", "study_guides", "graph_nodes", "graph_edges", "feedback",
         "issue_reports", "user_achievements", "user_cosmetics", "user_roles", "xp_events",
         "friend_requests", "friendships",
+        "flashcard_sets",  # 20261112060028_flashcard_sets.sql
     }),
     "B_via_parent": frozenset({
         "messages", "node_mastery_events", "note_concepts", "quiz_responses",
@@ -60,6 +61,8 @@ BUCKETS: dict[str, frozenset[str]] = {
         "rate_limit_hits", "feature_flags_version",  # #117
         "app_leases",  # #117 wave 3 (stateless_locks)
         "tutor_pending_sessions",  # #117 stateless_tutor_sessions
+        "legal_acceptances",  # onboarding: Terms / Privacy versions accepted
+        "email_alert_suppressions",  # #890 ops-alert unsubscribes
         # The learning loop (spec §13 A148, 20261109032302_learning_loop_rls.sql):
         "learner_state", "check_items", "check_item_draft_failures", "ai_tutor_daily_calls",
         "misconceptions", "posttest_poses", "learning_reveals", "quiz_evidence_claims",
@@ -109,6 +112,8 @@ _SEED = [
     "INSERT INTO gradebook_categories (id, enrollment_id, name, weight) "
     "VALUES ('rlsp-gb-a', 'rlsp-enr-a', 'HW', 1)",
     f"INSERT INTO sessions (id, user_id, mode, topic) VALUES ('rlsp-sess-a', '{A}', 'socratic', 't')",
+    f"INSERT INTO flashcard_sets (id, user_id, course_id, name, concepts) "
+    f"VALUES ('rlsp-fset-a', '{A}', 'rlsp-course', 'set', '[\"limits\"]')",
     "INSERT INTO messages (id, session_id, role, content) VALUES ('rlsp-msg-a', 'rlsp-sess-a', 'user', 'hi')",
     f"INSERT INTO graph_nodes (id, user_id, course_id, concept_name, mastery_score) "
     f"VALUES ('rlsp-node-a', '{A}', 'rlsp-course', 'limits', 0.5)",
@@ -219,6 +224,7 @@ A_ROWS = {
     "notes": "id = 'rlsp-note-a'",
     "documents": "id = 'rlsp-doc-a'",
     "sessions": "id = 'rlsp-sess-a'",
+    "flashcard_sets": "id = 'rlsp-fset-a'",
     "graph_nodes": "id = 'rlsp-node-a'",
     "enrollments": "id = 'rlsp-enr-a'",
     "messages": "id = 'rlsp-msg-a'",

@@ -67,7 +67,7 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
     ("services/quiz/submission.py", "_claim_quiz_evidence", "runs_as_service"):
         "quiz_evidence_claims is a service-only loop table (A148)",
     ("routes/academics.py", "get_semesters", "service_route"): "public catalog read, no session",
-    ("routes/calendar.py", "calendar_callback", "service_route"):
+    ("routes/calendar_connect.py", "calendar_callback", "service_route"):
         "Google redirect: no session, user from the signed state cookie",
     ("routes/gamification.py", "get_leaderboard", "service_route"):
         "cross-user projection (everyone's weekly XP); scope + privacy applied in code",
@@ -79,7 +79,6 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
         "cross-user projection (anonymous too); creates the target's missing rows; visibility in code",
     ("routes/profile.py", "get_roles", "service_route"):
         "roles of any live user; needs a session (anonymous is a 401)",
-    ("routes/profile.py", "delete_account", "service_scope"): "users.deleted_at: account state",
     ("services/quiz/limits.py", "_daily_spend_exceeded", "runs_as_service"): "llm_usage is service-only (bucket E)",
     # ── Learning loop stores (spec §13 A148: its tables are service-only) ──
     ("learning/help_ledger.py", "record_help", "runs_as_service"): "help ledger (learning_reveals) is service-only (A148); reached from quiz, notes, flashcards",
@@ -132,6 +131,8 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
     # ── Services ──
     ("services/academics.py", "resolve_offering", "service_scope"): "on-demand course_offerings insert (catalog)",
     ("services/academics.py", "school_peer_user_ids", "runs_as_service"): "reads other students' enrollments",
+    ("services/account_credentials.py", "_retry_delete", "runs_as_service"):
+        "after the account delete's response: oauth_tokens/gradescope_credentials of a now-deleted account",
     ("services/achievement_service.py", "check_achievements", "runs_as_service"): "awards are server decisions",
     ("services/achievement_service.py", "get_user_stat", "runs_as_service"): "achievement counters",
     ("services/achievement_service.py", "grant_linked_cosmetics", "runs_as_service"): "cosmetic awards",
@@ -170,11 +171,12 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
         "#116 document_uploads: record an inline run's outcome",
     ("services/documents_read.py", "saved_document", "runs_as_service"):
         "#116 reads back the uploader's own row the worker saved (select * incl. index columns)",
-    ("services/email_service.py", "is_suppressed", "runs_as_service"): "email_suppressions",
+    ("services/email_service.py", "is_suppressed", "runs_as_service"): "email_suppressions/email_alert_suppressions",
     ("services/email_service.py", "notification_opt_out_hashes", "runs_as_service"): "every user's opt-out",
-    ("services/email_service.py", "send_email", "runs_as_service"): "email_sends/email_suppressions",
-    ("services/email_service.py", "suppress", "runs_as_service"): "email_suppressions",
-    ("services/email_service.py", "unsuppress", "runs_as_service"): "email_suppressions",
+    ("services/email_service.py", "send_email", "runs_as_service"): "email_sends + the suppression tables",
+    ("services/email_service.py", "suppress", "runs_as_service"): "email_suppressions/email_alert_suppressions",
+    ("services/email_service.py", "suppressions_for", "runs_as_service"): "a batch's read of the suppression tables",
+    ("services/email_service.py", "unsuppress", "runs_as_service"): "email_suppressions/email_alert_suppressions",
     ("services/events_service.py", "_flush_batch", "runs_as_service"): "events/llm_usage are service-only",
     ("services/events_service.py", "_flush_rows_individually", "runs_as_service"): "events/llm_usage",
     ("services/events_service.py", "_insert_late", "runs_as_service"): "events/llm_usage",
@@ -198,8 +200,11 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
         "#116 gradescope_syncs: an inline run records its outcome",
     ("services/gradescope/jobs.py", "latest_sync", "runs_as_service"):
         "#116 gradescope_syncs: the status route's read (filtered to the caller)",
+    ("services/legal.py", "record_acceptances", "service_scope"):
+        "legal_acceptances is service-only (bucket E): the Terms/Privacy versions accepted at onboarding",
     ("services/llm_budget.py", "read_status", "runs_as_service"):
         "#119 llm_budgets / llm_usage are service-only (bucket E)",
+    ("services/profile/deletion.py", "delete_account", "service_scope"): "users.deleted_at: account state",
     ("services/profiles.py", "get_display_name", "runs_as_service"): "other users' names",
     ("services/profiles.py", "get_display_names", "runs_as_service"): "other users' names",
     ("services/profiles.py", "live_user_ids", "runs_as_service"):

@@ -15,6 +15,7 @@ import {
   whenFeedbackFree,
 } from "@/lib/feedbackPacing";
 import { useToast } from "./ToastProvider";
+import { LONG_TEXT_MAX } from "@/lib/inputLimits";
 
 /** How long a page is open before the pulse comes due. */
 export const PULSE_DELAY_MS = 2 * 60_000;
@@ -231,6 +232,7 @@ export function FeedbackFlow({ passive = true, open: openProp, onClose }: Feedba
         <div className="label-micro" style={{ marginBottom: 6 }}>Anything else? (optional)</div>
         <textarea
           value={comment}
+          maxLength={LONG_TEXT_MAX}
           onChange={e => setComment(e.target.value)}
           placeholder="Share a thought…"
           rows={3}

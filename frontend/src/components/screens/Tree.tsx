@@ -6,6 +6,7 @@ import { Icon } from "../Icon";
 import { useScrollLock } from "@/lib/useScrollLock";
 import { FilterPills } from "@/components/ui";
 import { KnowledgeGraph } from "../graph/KnowledgeGraph";
+import { useGraphSize } from "../graph/useGraphSize";
 import { FullHeightScreen } from "../FullHeightScreen";
 import { GraphPanelSkeleton } from "../Skeleton";
 import { useUser } from "@/context/UserContext";
@@ -79,8 +80,8 @@ export function Tree() {
   const [selected, setSelected] = React.useState<GraphNode | null>(null);
   const [fullscreen, setFullscreen] = React.useState(false);
 
-  const [size, setSize] = React.useState({ w: 900, h: 600 });
-  const ref = React.useRef<HTMLDivElement>(null);
+  // Measured before the first paint; the graph waits for it (`useGraphSize`).
+  const [ref, size] = useGraphSize<HTMLDivElement>({ w: 900, h: 600 });
 
   const [nodes, setNodes] = React.useState<GraphNode[]>([]);
   const [edges, setEdges] = React.useState<GraphEdge[]>([]);
@@ -102,11 +103,6 @@ export function Tree() {
 
   const toast = useToast();
 
-  React.useEffect(() => {
-    const ro = new ResizeObserver((e) => setSize({ w: e[0].contentRect.width, h: e[0].contentRect.height }));
-    if (ref.current) ro.observe(ref.current);
-    return () => ro.disconnect();
-  }, [fullscreen]);
 
   const load = React.useCallback(async () => {
     if (!userId) return;
@@ -434,7 +430,7 @@ export function Tree() {
           constant wasn't calibrated for (#341). */}
       <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
         <div ref={ref} style={{ flex: 1, minWidth: 0, position: "relative" }}>
-          {loading ? (
+          {loading || !size ? (
             <GraphPanelSkeleton />
           ) : (
             <>
@@ -754,24 +750,20 @@ function FullscreenGraph({
   highlightId?: string;
   onNodeClick: (n: GraphNode) => void;
 }) {
-  const [size, setSize] = React.useState({ w: 1200, h: 700 });
-  const ref = React.useRef<HTMLDivElement>(null);
-  React.useEffect(() => {
-    const ro = new ResizeObserver(e => setSize({ w: e[0].contentRect.width, h: e[0].contentRect.height }));
-    if (ref.current) ro.observe(ref.current);
-    return () => ro.disconnect();
-  }, []);
+  const [ref, size] = useGraphSize<HTMLDivElement>({ w: 1200, h: 700 });
   return (
     <div ref={ref} style={{ flex: 1, position: "relative" }}>
-      <KnowledgeGraph
-        nodes={nodes}
-        edges={edges}
-        width={size.w}
-        height={size.h}
-        highlightId={highlightId}
-        onNodeClick={onNodeClick}
-        legible
-      />
+      {size && (
+        <KnowledgeGraph
+          nodes={nodes}
+          edges={edges}
+          width={size.w}
+          height={size.h}
+          highlightId={highlightId}
+          onNodeClick={onNodeClick}
+          legible
+        />
+      )}
     </div>
   );
 }

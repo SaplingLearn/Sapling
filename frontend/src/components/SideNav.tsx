@@ -11,6 +11,7 @@ import { useRetentionDue } from "@/context/RetentionDueContext";
 import type { NavItem } from "@/lib/navFeatures";
 import { useVisibleNavSections } from "@/lib/useNavSections";
 import { RETENTION_NAV_HREF, RetentionDueDot } from "./RetentionDueDot";
+import { STUDY_TOOL_PATHS } from "@/lib/toolHrefs";
 
 type Entry = NavItem;
 
@@ -97,7 +98,8 @@ const NAV_HOVER_BG = "color-mix(in srgb, var(--bg-soft) 50%, transparent)";
 
 function isActive(pathname: string, href: string): boolean {
   if (href === "/dashboard") return pathname === "/" || pathname.startsWith("/dashboard");
-  if (href === "/study" && (pathname === "/quiz" || pathname.startsWith("/quiz/"))) return true;
+  // The Study tools are pages of their own; Study stays lit while you're in one.
+  if (href === "/study" && STUDY_TOOL_PATHS.some(p => pathname === p || pathname.startsWith(p + "/"))) return true;
   return pathname === href || pathname.startsWith(href + "/");
 }
 

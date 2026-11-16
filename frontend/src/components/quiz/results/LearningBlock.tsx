@@ -39,8 +39,8 @@ export function learnHref(learn: NonNullable<QuizLearning["learn"]>): string {
   return `/learn?${params.toString()}`;
 }
 
-/** Study's flashcards tab hosts the daily review queue. */
-export const REVIEW_HREF = "/study?mode=cards";
+/** The Study hub hosts the daily review queue (above the hub while the loop is on). */
+export const REVIEW_HREF = "/study";
 
 /** "in 3 days", "tomorrow", "today" — the nearest whole number of days from
  *  now; a time already past is today. */

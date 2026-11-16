@@ -44,6 +44,7 @@ from services.integrity_guard import (
 from tests import test_learn_loop_routes as _routes
 from tests.test_learning_help_ledger import _grade_appends
 from tests.test_notes_routes import fake_get_note
+from tests.split_patches import patch_flashcards
 
 gate_on, no_rate_limit, seams = _routes.gate_on, _routes.no_rate_limit, _routes.seams
 
@@ -602,8 +603,8 @@ def test_extract_concepts_refuses_a_note_holding_an_open_check(posed, records):
 def _paste(text: str, cards: list):
     gen = MagicMock(return_value=cards)
     with (
-        patch("routes.flashcards.gemini_generate_cards", gen),
-        patch("routes.flashcards.check_rate_limit", return_value=None),
+        patch_flashcards("gemini_generate_cards", gen),
+        patch_flashcards("check_rate_limit", return_value=None),
     ):
         r = client.post(
             "/api/flashcards/import/generate",
@@ -644,8 +645,8 @@ def test_a_cloze_of_the_students_own_sentence_is_kept(posed, records):
         "back": "the base case returns 1",
     }
     with (
-        patch("routes.flashcards.gemini_cloze", return_value=[card]),
-        patch("routes.flashcards.check_rate_limit", return_value=None),
+        patch_flashcards("gemini_cloze", return_value=[card]),
+        patch_flashcards("check_rate_limit", return_value=None),
     ):
         r = client.post(
             "/api/flashcards/import/cloze", json={"user_id": "u1", "paragraph": paragraph}
@@ -658,11 +659,11 @@ def test_library_doc_generation_is_not_guarded(posed, records):
     """A library document is stored course material, not request text."""
     with (
         patch("services.flashcards.cards.table") as t,  # #118: the library read moved here
-        patch(
-            "routes.flashcards.gemini_generate_cards",
+        patch_flashcards(
+            "gemini_generate_cards",
             return_value=[{"front": "q", "back": "The base case returns 1"}],
         ),
-        patch("routes.flashcards.check_rate_limit", return_value=None),
+        patch_flashcards("check_rate_limit", return_value=None),
     ):
         t.return_value.select.return_value = [{"id": "d1", "summary": None, "concept_notes": None}]
         r = client.post(
@@ -687,9 +688,11 @@ def test_every_other_flashcard_generator_is_guarded_both_ways(posed, records, su
     def call(text: str):
         if surface == "topic":
             with (
-                patch("routes.flashcards._generate", agent),
-                patch("routes.flashcards.table") as t,
-                patch("services.achievement_service.check_achievements"),
+                # #118: the topic generator's body is services/flashcards/generation.py
+                patch("services.flashcards.generation.generate_flashcards", agent),
+                patch_flashcards("table") as t,
+                patch("services.flashcards.context.table", t),
+                patch_flashcards("check_achievements"),
             ):
                 t.return_value.select.return_value = []
                 return client.post(
@@ -697,8 +700,8 @@ def test_every_other_flashcard_generator_is_guarded_both_ways(posed, records, su
                 )
         if surface == "cleanup":
             with (
-                patch("routes.flashcards.gemini_cleanup_cards", agent),
-                patch("routes.flashcards.check_rate_limit", return_value=None),
+                patch_flashcards("gemini_cleanup_cards", agent),
+                patch_flashcards("check_rate_limit", return_value=None),
             ):
                 return client.post(
                     "/api/flashcards/import/cleanup",

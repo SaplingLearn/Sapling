@@ -135,7 +135,7 @@ EXPECTED_STRUCTURED_AGENTS = {
     # learning loop PKG-09: flat 4-field SessionClose; retries=2 is the shape validator's
     "session_close_agent",
     "social_summary_agent",
-    "study_guide_agent",
+    "study_guide_outline_agent",
     "summary_agent",
     "syllabus_extraction_agent",
 }
@@ -145,6 +145,10 @@ EXPECTED_TEXT_AGENTS = {
     "note_chat_agent",
     "ocr_vision_agent",
     "socratic_agent",
+    # The section writer answers in text because its items (models/study_guide.py)
+    # are far past the budget below; services/study_guides/markup.py parses it.
+    "study_guide_block_agent",
+    "study_guide_section_agent",
     "teachback_agent",
 }
 
