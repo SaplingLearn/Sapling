@@ -220,8 +220,9 @@ def test_writes_clear_the_resolver_cache():
 ])
 def test_every_route_is_admin_only(method, path, body):
     db = _DB()
-    with patch("routes.admin_flags.require_admin",
-               side_effect=HTTPException(status_code=403, detail="Forbidden")), \
+    deny = HTTPException(status_code=403, detail="Forbidden")
+    with patch("routes.admin_flags.require_admin", side_effect=deny), \
+         patch("routes.admin_flags.require_admin_recent", side_effect=deny), \
          patch("routes.admin_flags.table", side_effect=db.table), \
          patch("services.feature_flags.table", side_effect=db.table):
         r = client.request(method, path, json=body)

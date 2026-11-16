@@ -103,7 +103,7 @@ describe('Gradescope sync results', () => {
     await user.click(screen.getByRole('button', { name: 'Retry sync' }));
     expect(await screen.findByText('Sync complete')).toBeInTheDocument();
     expect(listGradescopeLinks).toHaveBeenCalledWith('u1', 'Fall 2025');
-    expect(syncGradescopeCourse).toHaveBeenLastCalledWith('u1', 'c1', 'Fall 2025');
+    expect(syncGradescopeCourse).toHaveBeenLastCalledWith('u1', 'c1', 'Fall 2025', expect.objectContaining({ onPending: expect.any(Function) }));
     expect(onSynced).toHaveBeenCalledTimes(2);
   });
 
@@ -158,6 +158,47 @@ describe('Gradescope sync results', () => {
     await act(async () => resolveSync({ inserted: 1, updated: 0, skipped: 0, failed: 0 }));
     expect(onSynced).not.toHaveBeenCalled();
     expect(screen.queryByText('Sync complete')).not.toBeInTheDocument();
+  });
+
+  it('says a queued sync is still running, lets the dialog close, and refreshes when it ends', async () => {
+    // #116: a queued sync past the server's wait answers 202; the API helper
+    // reports it (onPending) and polls the status route for the outcome.
+    let resolveSync!: (value: Awaited<ReturnType<typeof syncGradescopeCourse>>) => void;
+    vi.mocked(syncGradescopeCourse).mockImplementation((_u, _c, _s, options) => {
+      options?.onPending?.();
+      return new Promise(resolve => { resolveSync = resolve; });
+    });
+    const onSynced = vi.fn();
+    const onClose = vi.fn();
+    const user = userEvent.setup();
+    render(<GradescopeSyncModal open userId="u1" saplingCourseId="c1" onClose={onClose} onSynced={onSynced} />);
+    await user.click(await screen.findByRole('button', { name: 'Sync now' }));
+    expect(await screen.findByRole('status')).toHaveTextContent(/Still syncing/);
+    expect(screen.getByRole('button', { name: 'Syncing…' })).toBeDisabled();
+    const close = screen.getByRole('button', { name: 'Close' });
+    expect(close).toBeEnabled();
+    await user.click(close);
+    expect(onClose).toHaveBeenCalledOnce();
+    await act(async () => resolveSync({ inserted: 2, updated: 0, skipped: 0, failed: 0 }));
+    expect(await screen.findByText('Sync complete')).toBeInTheDocument();
+    expect(onSynced).toHaveBeenCalledOnce();
+  });
+
+  it('refreshes the gradebook for a pending sync that ends after the dialog closed', async () => {
+    let resolveSync!: (value: Awaited<ReturnType<typeof syncGradescopeCourse>>) => void;
+    vi.mocked(syncGradescopeCourse).mockImplementation((_u, _c, _s, options) => {
+      options?.onPending?.();
+      return new Promise(resolve => { resolveSync = resolve; });
+    });
+    const onSynced = vi.fn();
+    const props = { userId: 'u1', saplingCourseId: 'c1', onSynced, onClose: vi.fn() };
+    const user = userEvent.setup();
+    const { rerender } = render(<GradescopeSyncModal {...props} open />);
+    await user.click(await screen.findByRole('button', { name: 'Sync now' }));
+    await screen.findByRole('status');
+    rerender(<GradescopeSyncModal {...props} open={false} />);
+    await act(async () => resolveSync({ inserted: 1, updated: 0, skipped: 0, failed: 0 }));
+    expect(onSynced).toHaveBeenCalledOnce();
   });
 
   it('keeps focus in the dialog and restores it when closing', async () => {

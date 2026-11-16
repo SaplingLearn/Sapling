@@ -18,7 +18,7 @@
 
 .quiz-root {
   --quiz-col-home: 1200px;
-  --quiz-col-question: 680px;
+  --quiz-col-question: 880px;
   --quiz-col-results: 640px;
 
   --quiz-pad-home: 52px var(--pad-xl) 32px;
@@ -99,7 +99,8 @@
 /* Nothing is signalled by colour alone, so the error card carries a heading as
    well as its tint. */
 .quiz-error {
-  max-width: var(--quiz-col-question);
+  /* A message, not a question: it keeps the narrower measure. */
+  max-width: var(--quiz-col-results);
   margin: 0 auto;
   padding: var(--pad-lg);
   border: 1px solid var(--border);
@@ -135,4 +136,9 @@
 .quiz-signin-note {
   color: var(--text-muted);
   font-size: var(--fs-md);
+}
+
+/* Phones: the question page keeps a 16px gutter instead of the desktop air. */
+@media (max-width: 640px) {
+  .quiz-root { --quiz-pad-question: 24px 16px 20px; }
 }

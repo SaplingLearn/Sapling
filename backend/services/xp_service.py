@@ -20,6 +20,7 @@ from dataclasses import dataclass
 import httpx
 
 from db.connection import MAX_ROWS, page_all, table
+from db.scope import runs_as_service
 from services.growth import level_for_xp
 
 logger = logging.getLogger(__name__)
@@ -105,6 +106,7 @@ def _ledger_total(user_id: str) -> int:
     )
 
 
+@runs_as_service  # #115: xp_events is SELECT-only for students; awards are server-side
 def record_ledger_row(
     user_id: str,
     rule_key: str,
@@ -140,6 +142,7 @@ def record_ledger_row(
     return True
 
 
+@runs_as_service  # #115: writes xp_events + users.total_xp (service-only)
 def award_xp(
     user_id: str,
     rule_key: str,
@@ -172,6 +175,7 @@ def award_xp(
     )
 
 
+@runs_as_service  # #115: writes users.total_xp (service-only)
 def settle_ledger_writes(user_id: str) -> tuple[int, int, bool]:
     """Refresh the users cache from the ledger and run the XP-driven
     achievement dispatch ONCE, after rows written by record_ledger_row

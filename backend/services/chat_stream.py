@@ -20,13 +20,37 @@ both, and the error rungs run neither. See `stream_agent_turn` for the rungs.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 from contextlib import aclosing
 from typing import Any, AsyncIterator, Awaitable, Callable
 
 from services.agent_events import SaplingEvent
+from services.llm_budget import budget_error_in
 
 logger = logging.getLogger(__name__)
+
+
+def _budget_event(exc: BaseException, request_id: str) -> SaplingEvent | None:
+    """#119: the terminal `error` for a run the per-user LLM budget refused
+    (services/llm_budget.py), or None for any other failure. Refused before
+    the run's first model request, so nothing streamed or was written; and
+    `retryable: False`, because a re-send (or the client's JSON rung) hits the
+    same budget until it resets."""
+    budget = budget_error_in(exc)
+    if budget is None:
+        return None
+    return SaplingEvent(
+        type="error",
+        step="reply",
+        message=budget.detail,
+        data={
+            "request_id": request_id,
+            "retryable": False,
+            "code": budget.code,
+            "reset_at": budget.reset_at_iso,
+        },
+    )
 
 
 def _managed(stream: Any) -> Any:
@@ -37,6 +61,27 @@ def _managed(stream: Any) -> Any:
     generator (test fakes) is wrapped in `aclosing`.
     """
     return stream if hasattr(stream, "__aenter__") else aclosing(stream)
+
+
+#: Persist tasks whose stream was cancelled mid-write (a client disconnect):
+#: held here so they run to completion instead of being garbage-collected.
+_PERSISTING: set[asyncio.Task] = set()
+
+
+async def _run_on_complete(on_complete: Callable, *args: Any) -> dict | None:
+    """Run the route's persist hook so a cancelled stream never cuts it short.
+
+    A coroutine hook (the tutor routes, over the async DB seam, #117 wave 3)
+    runs as its own task under `asyncio.shield`: a client that disconnects
+    while it runs cancels this await, not the persist. A sync hook keeps the
+    worker-thread hop, which a cancellation cannot stop either (#761).
+    """
+    if not inspect.iscoroutinefunction(on_complete):
+        return await asyncio.to_thread(on_complete, *args)
+    task = asyncio.ensure_future(on_complete(*args))
+    _PERSISTING.add(task)
+    task.add_done_callback(_PERSISTING.discard)
+    return await asyncio.shield(task)
 
 
 def merge_graph_updates(updates: list[dict]) -> dict:
@@ -162,6 +207,10 @@ async def _rung1_fallback_events(
     try:
         fallback_result = await nonstream_fallback()
     except Exception as exc:
+        budget_event = _budget_event(exc, request_id)
+        if budget_event is not None:
+            yield budget_event
+            return
         logger.exception("Nonstream fallback also failed")
         # PR #472 review: the fallback is itself a tool-calling agent run.
         # If ITS tools wrote graph/mastery before it failed, a client retry
@@ -196,7 +245,7 @@ async def stream_agent_turn(
     user_message: str,
     run_kwargs: dict,
     deps: Any,
-    on_complete: Callable[[str, dict, list], dict | None],
+    on_complete: Callable[[str, dict, list], dict | None | Awaitable[dict | None]],
     nonstream_fallback: Callable[[], Awaitable[dict]] | None = None,
     on_usage: Callable[[Any], None] | None = None,
     request_id: str = "",
@@ -208,8 +257,10 @@ async def stream_agent_turn(
     data. It persists; on the success path it is called once, after the run
     completes and BEFORE `done` is yielded, so a mid-generation disconnect
     (which cancels this generator at its current yield) persists nothing.
-    It is SYNC and runs in a worker thread (#761): anything in it that needs
-    the event loop must hand itself back (`loop.call_soon_threadsafe`).
+    A coroutine function runs shielded on the loop; a sync one runs in a
+    worker thread (#761), where anything that needs the event loop must hand
+    itself back (`loop.call_soon_threadsafe`). Either way a disconnect while
+    it runs does not stop it (`_run_on_complete`).
 
     on_usage(run_result) -> observability hook (#118): called once with the
     final `AgentRunResult` after the stream completes, BEFORE on_complete —
@@ -335,6 +386,10 @@ async def stream_agent_turn(
     # NOT BaseException: asyncio.CancelledError must propagate so a client
     # disconnect stays a cancellation — never a fallback re-run.
     except Exception as exc:
+        budget_event = _budget_event(exc, request_id)
+        if budget_event is not None:
+            yield budget_event
+            return
         write_count = len(deps.graph_updates) + len(deps.mastery_changes)
         if chunks:
             # Rung 2: text already shown. Never silently re-run — the user
@@ -487,17 +542,17 @@ async def stream_agent_turn(
     mastery = list(deps.mastery_changes)
 
     try:
-        # #761: on_complete makes synchronous DB writes; in a worker thread
-        # they never stall the event loop (and every other stream on it).
-        # `to_thread` copies this context, so request contextvars still read.
+        # #761: on_complete makes DB writes; never inline on the event loop
+        # (a sync hook goes to a worker thread, a coroutine hook awaits the
+        # async seam). Both copy this context, so request contextvars read.
         #
         # Cancel-after-persist: a client that disconnects while this runs
-        # cancels the await, but not the thread — the turn finishes
+        # cancels the await, but not the persist — the turn finishes
         # persisting and `done` is simply never delivered. The client's
         # fallback/retry must therefore not re-run the turn blindly: it
         # re-sends the turn's `turn_id`, and the route replays the stored
         # reply (routes/learn.py::_persisted_turn).
-        extra = await asyncio.to_thread(on_complete, reply, merged, mastery) or {}
+        extra = await _run_on_complete(on_complete, reply, merged, mastery) or {}
     except Exception as exc:
         # Persistence failed AFTER the reply fully streamed. Letting this
         # propagate would abort the ASGI response mid-stream with no closing

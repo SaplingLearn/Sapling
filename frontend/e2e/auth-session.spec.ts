@@ -22,8 +22,8 @@
  * instead of spinning: the same seeded-course assertion `dashboard.spec.ts`
  * (#386) uses, which only renders once `userId` resolved and the course
  * fetch completed. A regression back to the old bootstrap-only-from-
- * localStorage behavior would leave `dashboard-courses-key-toggle` unmounted
- * forever and this test would time out on the click below.
+ * localStorage behavior would leave `dashboard-courses-key` unmounted
+ * forever and this test would time out on the wait below.
  */
 import { expect, test } from "./support/fixtures";
 import { mintStorageState } from "./support/session";
@@ -45,12 +45,12 @@ test("cookie-only session hydrates the dashboard via the /api/auth/me fallback",
     // sign-in or /pending.
     await expect(page).toHaveURL(/\/dashboard$/);
 
-    // The "My courses" key toggle only mounts once enrollments have loaded
-    // (dashboard.spec.ts's same gate) — auto-waiting on the click doubles as
-    // the "dashboard data arrived, skeleton resolved" assertion. Before the
+    // The "My courses" key only mounts once enrollments have loaded
+    // (dashboard.spec.ts's same gate) — waiting for it doubles as the
+    // "dashboard data arrived, skeleton resolved" assertion. Before the
     // #430 fix this timed out: userId never resolved, so `load()` never ran
     // and the skeleton never left.
-    await page.getByTestId("dashboard-courses-key-toggle").click();
+    await expect(page.getByTestId("dashboard-courses-key")).toBeVisible({ timeout: 30_000 });
 
     // Seeded, user-specific data rendering proves identity actually
     // resolved to rich-user-active (not just that the shell mounted):

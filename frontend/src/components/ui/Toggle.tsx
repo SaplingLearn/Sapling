@@ -10,6 +10,7 @@ export function Toggle<T extends string>({
   onChange,
   size = "md",
   testid,
+  labelledBy,
 }: {
   options: { value: T; label: React.ReactNode; title?: string }[];
   value: T;
@@ -17,12 +18,17 @@ export function Toggle<T extends string>({
   size?: "sm" | "md";
   /** Container testid; each option gets `${testid}-${value}`. */
   testid?: string;
+  /** The id of the row's visible label: the row is then a group named by it,
+   *  so a screen reader says what the pressed option is a choice of. */
+  labelledBy?: string;
 }) {
   const pad = size === "sm" ? "5px 12px" : "7px 15px";
   const fs = size === "sm" ? 12 : 13;
   return (
     <div
       data-testid={testid}
+      role={labelledBy ? "group" : undefined}
+      aria-labelledby={labelledBy}
       style={{
         display: "inline-flex",
         background: "var(--bg-soft)",

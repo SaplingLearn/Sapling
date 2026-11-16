@@ -100,6 +100,38 @@ describe('session route — only a handoff token is exchanged (#756)', () => {
   });
 });
 
+describe('session route — malformed request bodies (testathon hardening)', () => {
+  async function postRaw(body: string | undefined) {
+    const { POST } = await loadRoute({ SESSION_SECRET: SECRET });
+    return POST(new NextRequest(URL, {
+      method: 'POST',
+      headers: { origin: 'https://app.saplinglearn.com', 'content-type': 'application/json' },
+      ...(body === undefined ? {} : { body }),
+    }));
+  }
+
+  it('answers 400, not 500, for a body that is not JSON', async () => {
+    // `request.json()` throws here; the throw used to escape the handler.
+    const res = await postRaw('not json at all');
+    expect(res.status).toBe(400);
+  });
+
+  it('answers 400, not 500, for an absent body', async () => {
+    const res = await postRaw(undefined);
+    expect(res.status).toBe(400);
+  });
+
+  it('answers 400 for JSON that is not an object', async () => {
+    const res = await postRaw('"just a string"');
+    expect(res.status).toBe(400);
+  });
+
+  it('answers 400 when authToken is the wrong type', async () => {
+    const res = await postRaw(JSON.stringify({ authToken: { nested: true } }));
+    expect(res.status).toBe(400);
+  });
+});
+
 describe('session route — COOKIE_DOMAIN validation (#190)', () => {
   it('does not scope the cleared cookie to an overly-broad COOKIE_DOMAIN', async () => {
     // Pre-fix: COOKIE_DOMAIN='.com' was applied verbatim → cookie.domain='.com'.
@@ -184,5 +216,166 @@ describe('session route — PR preview hosts', () => {
   it('does not treat a lookalike suffix as inside the cookie domain', async () => {
     const res = await signIn('https://evilstaging.saplinglearn.com');
     expect(res.cookies.get('sapling_session')?.domain).toBeUndefined();
+  });
+});
+
+describe('session route — minted session lifetime', () => {
+  it('mints a 7-day session carrying iat', async () => {
+    const { POST } = await loadRoute({ SESSION_SECRET: SECRET });
+    const res = await POST(new NextRequest(URL, {
+      method: 'POST',
+      headers: { origin: 'https://app.saplinglearn.com', 'content-type': 'application/json' },
+      body: JSON.stringify({ authToken: await handoff('user_1') }),
+    }));
+    const cookie = res.cookies.get('sapling_session');
+    const payload = payloadOf(cookie?.value ?? '');
+    const now = Math.floor(Date.now() / 1000);
+    expect(Math.abs((payload.iat as number) - now)).toBeLessThanOrEqual(2);
+    expect((payload.exp as number) - Math.floor(payload.iat as number)).toBe(7 * 86400);
+    expect(cookie?.maxAge).toBe(7 * 86400);
+  });
+
+  it('mints iat to the millisecond and exp in whole seconds', async () => {
+    // A whole-second iat cannot tell a session minted earlier in a sign-out's
+    // own second from one minted after it (backend auth_guard.issued_before).
+    const { POST } = await loadRoute({ SESSION_SECRET: SECRET });
+    const authToken = await handoff('user_1');
+    const spy = vi.spyOn(Date, 'now').mockReturnValue(1_700_000_012_345);
+    try {
+      const res = await POST(new NextRequest(URL, {
+        method: 'POST',
+        headers: { origin: 'https://app.saplinglearn.com', 'content-type': 'application/json' },
+        body: JSON.stringify({ authToken }),
+      }));
+      const payload = payloadOf(res.cookies.get('sapling_session')?.value ?? '');
+      expect(payload.iat).toBe(1_700_000_012.345);
+      expect(payload.iat_precision).toBe('ms');
+      expect(payload.exp).toBe(1_700_000_012 + 7 * 86400);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('marks an iat on a whole second as milliseconds, not a legacy whole-second one', async () => {
+    // JSON.stringify writes 1700000012.000 as the integer 1700000012; the
+    // backend reads such an iat as legacy (anywhere in its second) unless the
+    // token says it is to the millisecond (auth_guard.issued_before).
+    const { POST } = await loadRoute({ SESSION_SECRET: SECRET });
+    const authToken = await handoff('user_1');
+    const spy = vi.spyOn(Date, 'now').mockReturnValue(1_700_000_012_000);
+    try {
+      const res = await POST(new NextRequest(URL, {
+        method: 'POST',
+        headers: { origin: 'https://app.saplinglearn.com', 'content-type': 'application/json' },
+        body: JSON.stringify({ authToken }),
+      }));
+      const payload = payloadOf(res.cookies.get('sapling_session')?.value ?? '');
+      expect(payload.iat).toBe(1_700_000_012);
+      expect(payload.iat_precision).toBe('ms');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
+describe('session route — Secure cookie', () => {
+  async function signInOver(url: string, headers: Record<string, string> = {}) {
+    const { POST } = await loadRoute({ SESSION_SECRET: SECRET, NODE_ENV: 'development' });
+    const origin = new globalThis.URL(url).origin;
+    return POST(new NextRequest(url, {
+      method: 'POST',
+      headers: { origin, 'content-type': 'application/json', ...headers },
+      body: JSON.stringify({ authToken: await handoff('user_1') }),
+    }));
+  }
+
+  it('is Secure on an https request even outside a production build', async () => {
+    const res = await signInOver('https://app.saplinglearn.com/api/auth/session');
+    expect(res.cookies.get('sapling_session')?.secure).toBe(true);
+  });
+
+  it('is Secure behind a TLS-terminating proxy (x-forwarded-proto)', async () => {
+    const res = await signInOver('http://localhost:3000/api/auth/session', {
+      'x-forwarded-proto': 'https',
+    });
+    expect(res.cookies.get('sapling_session')?.secure).toBe(true);
+  });
+
+  it('stays non-Secure on plain-http local dev', async () => {
+    const res = await signInOver('http://localhost:3000/api/auth/session');
+    expect(res.cookies.get('sapling_session')?.secure).toBeFalsy();
+  });
+});
+
+describe('session route — sign-out revokes server-side', () => {
+  const realFetch = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+  });
+
+  function mockBackend(status = 200) {
+    const calls: { url: string; init: RequestInit }[] = [];
+    globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      calls.push({ url: String(url), init: init ?? {} });
+      return new Response(JSON.stringify({ ok: status === 200 }), { status });
+    }) as unknown as typeof fetch;
+    return calls;
+  }
+
+  const signOut = async (query = '', cookie = 'sapling_session=tok.sig') => {
+    const { DELETE } = await loadRoute({ SESSION_SECRET: SECRET, BACKEND_URL: 'http://backend:5000' });
+    return DELETE(new NextRequest(`${URL}${query}`, {
+      method: 'DELETE',
+      headers: cookie ? { cookie } : {},
+    }));
+  };
+
+  it('calls POST /api/auth/logout with the cookie before clearing it', async () => {
+    const calls = mockBackend();
+    const res = await signOut();
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toBe('http://backend:5000/api/auth/logout');
+    expect(calls[0].init.method).toBe('POST');
+    expect((calls[0].init.headers as Record<string, string>).Cookie).toBe('sapling_session=tok.sig');
+    expect(await res.json()).toMatchObject({ ok: true, revoked: true });
+    expect(res.cookies.get('sapling_session')?.value).toBe('');
+  });
+
+  it('still clears the cookie when the backend refuses or is down', async () => {
+    mockBackend(503);
+    const res = await signOut();
+    expect(await res.json()).toMatchObject({ ok: true, revoked: false });
+    expect(res.cookies.get('sapling_session')?.value).toBe('');
+
+    globalThis.fetch = vi.fn(async () => {
+      throw new TypeError('network down');
+    }) as unknown as typeof fetch;
+    const res2 = await signOut();
+    expect(res2.status).toBe(200);
+    expect(res2.cookies.get('sapling_session')?.value).toBe('');
+  });
+
+  it('scope=local only drops this cookie (the sign-in callback discarding a half-made session)', async () => {
+    const calls = mockBackend();
+    const res = await signOut('?scope=local');
+    expect(calls).toHaveLength(0);
+    expect(res.cookies.get('sapling_session')?.value).toBe('');
+  });
+
+  it('makes no backend call without a cookie', async () => {
+    const calls = mockBackend();
+    await signOut('', '');
+    expect(calls).toHaveLength(0);
+  });
+
+  it('still refuses a cross-origin sign-out', async () => {
+    const calls = mockBackend();
+    const { DELETE } = await loadRoute({ SESSION_SECRET: SECRET, BACKEND_URL: 'http://backend:5000' });
+    const res = await DELETE(new NextRequest(URL, {
+      method: 'DELETE',
+      headers: { origin: 'https://evil.example.org', cookie: 'sapling_session=tok.sig' },
+    }));
+    expect(res.status).toBe(403);
+    expect(calls).toHaveLength(0);
   });
 });

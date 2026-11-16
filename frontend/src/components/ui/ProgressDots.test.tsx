@@ -56,4 +56,12 @@ describe("ProgressDots", () => {
     expect(el).toHaveClass("progress-dots--row");
     expect(el).not.toHaveClass("progress-dots--column");
   });
+
+  it("colours each marked dot with its outcome and leaves the rest bare", () => {
+    const { container } = render(
+      <ProgressDots total={4} current={2} answered={2} outcomes={[true, false, null]} ariaLabel="Question 3 of 4" />,
+    );
+    const outcomes = Array.from(container.querySelectorAll(".progress-dots__dot")).map(d => d.getAttribute("data-outcome"));
+    expect(outcomes).toEqual(["correct", "incorrect", null, null]);
+  });
 });

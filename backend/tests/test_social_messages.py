@@ -6,7 +6,10 @@ from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
 
+import config
 from main import app
+from models import SHORT_TEXT_MAX
+from tests.split_patches import patch_social
 
 client = TestClient(app)
 
@@ -39,7 +42,7 @@ class TestGetRoomMessages:
                 m.select.return_value = []
             return m
 
-        with patch("routes.social.table", side_effect=table_side_effect):
+        with patch_social("table", side_effect=table_side_effect):
             r = client.get(f"/api/social/rooms/{ROOM_ID}/messages")
 
         assert r.status_code == 200
@@ -65,7 +68,7 @@ class TestGetRoomMessages:
                 m.select.return_value = []
             return m
 
-        with patch("routes.social.table", side_effect=table_side_effect):
+        with patch_social("table", side_effect=table_side_effect):
             r = client.get(f"/api/social/rooms/{ROOM_ID}/messages?limit=5")
 
         body = r.json()
@@ -88,7 +91,7 @@ class TestGetRoomMessages:
                 m.select.return_value = []
             return m
 
-        with patch("routes.social.table", side_effect=table_side_effect):
+        with patch_social("table", side_effect=table_side_effect):
             r = client.get(f"/api/social/rooms/{ROOM_ID}/messages?limit=5")
 
         body = r.json()
@@ -116,7 +119,7 @@ class TestGetRoomMessages:
                 m.select.return_value = []
             return m
 
-        with patch("routes.social.table", side_effect=table_side_effect):
+        with patch_social("table", side_effect=table_side_effect):
             r = client.get(f"/api/social/rooms/{ROOM_ID}/messages?before=2026-04-02T00:00:00Z&limit=20")
 
         assert r.status_code == 200
@@ -127,7 +130,7 @@ class TestGetRoomMessages:
     def test_invalid_before_rejected(self):
         # Guards against PostgREST operator injection (e.g. ?before=null or
         # ?before=gt.2026-01-01). Anything not parseable as ISO 8601 is 400.
-        with patch("routes.social.table"):
+        with patch_social("table"):
             for bad in ["null", "gt.2026-01-01", "not-a-date", "is.null", ""]:
                 if not bad:  # empty string skips the `if before:` branch; still valid
                     continue
@@ -142,7 +145,7 @@ class TestGetRoomMessages:
             else:
                 m.select.return_value = []
             return m
-        with patch("routes.social.table", side_effect=table_side_effect):
+        with patch_social("table", side_effect=table_side_effect):
             r = client.get(f"/api/social/rooms/{ROOM_ID}/messages")
         assert r.status_code == 200
         assert r.json() == {"messages": [], "has_more": False}
@@ -164,7 +167,7 @@ class TestGetRoomMessages:
                 m.select.return_value = []
             return m
 
-        with patch("routes.social.table", side_effect=table_side_effect):
+        with patch_social("table", side_effect=table_side_effect):
             r = client.get(f"/api/social/rooms/{ROOM_ID}/messages?limit=9999")
 
         assert r.status_code == 200
@@ -187,11 +190,82 @@ class TestGetRoomMessages:
                 m.select.return_value = []
             return m
 
-        with patch("routes.social.table", side_effect=table_side_effect):
+        with patch_social("table", side_effect=table_side_effect):
             r = client.get(f"/api/social/rooms/{ROOM_ID}/messages?limit=0")
 
         assert r.status_code == 200
         assert captured["limit"] == 2  # floored to 1, +1 probe row
+
+
+class TestSenderIdentityIsNotClientControlled:
+    """The transcript renders `user_name` as the message's author — the name
+    label AND the avatar. It was stored verbatim from the request body, so a
+    room member could post under any name they liked and every other member
+    saw it as genuine. Membership was checked; who the message LOOKED like
+    was not.
+    """
+
+    def _send(self, claimed_name):
+        captured = {}
+
+        def table_side_effect(name):
+            m = MagicMock()
+            if name == "room_members":
+                m.select.return_value = [{"user_id": "u1"}]
+            elif name == "room_messages":
+                def _insert(payload):
+                    captured.update(payload)
+                    return [{**payload, "id": "m1", "created_at": "2026-01-01T00:00:00Z"}]
+                m.insert.side_effect = _insert
+            else:
+                m.select.return_value = []
+            return m
+
+        with patch_social("table", side_effect=table_side_effect),              patch("services.social.messages.get_display_name", return_value="Real Name"):
+            r = client.post(
+                f"/api/social/rooms/{ROOM_ID}/messages",
+                json={"user_id": "u1", "user_name": claimed_name, "text": "hi"},
+            )
+        return r, captured
+
+    def test_claimed_name_is_ignored_in_favour_of_the_profile(self):
+        r, captured = self._send("Professor Smith (Staff)")
+        assert r.status_code == 200
+        assert captured.get("user_name") == "Real Name"
+
+    def test_an_honest_client_is_unaffected(self):
+        r, captured = self._send("Real Name")
+        assert r.status_code == 200
+        assert captured.get("user_name") == "Real Name"
+
+
+class TestTextFieldBounds:
+    """Same reasoning as TestImageDimensionBounds: these render to every
+    member, so an absurd value is a weapon against the room. Two of them also
+    reached a PostgREST filter, where an unbounded value built a query URL
+    too long to send and answered 500."""
+
+    def test_rejects_an_unbounded_message(self):
+        r = client.post(f"/api/social/rooms/{ROOM_ID}/messages",
+                        json={"user_id": "u1", "user_name": "A", "text": "x" * 4001})
+        assert r.status_code == 422
+
+    def test_rejects_an_unbounded_claimed_name(self):
+        r = client.post(f"/api/social/rooms/{ROOM_ID}/messages",
+                        json={"user_id": "u1", "user_name": "x" * (SHORT_TEXT_MAX + 1), "text": "hi"})
+        assert r.status_code == 422
+
+    def test_rejects_an_unbounded_emoji(self):
+        """100k here used to answer 500 from the toggle's PostgREST lookup."""
+        r = client.post(f"/api/social/rooms/{ROOM_ID}/messages/m1/reactions",
+                        json={"user_id": "u1", "emoji": "z" * 65})
+        assert r.status_code == 422
+
+    def test_rejects_an_unbounded_room_name(self):
+        """A public room's name renders to people who never joined it."""
+        r = client.post("/api/social/rooms/create",
+                        json={"user_id": "u1", "room_name": "n" * (SHORT_TEXT_MAX + 1), "is_public": True})
+        assert r.status_code == 422
 
 
 class TestImageDimensionBounds:
@@ -202,9 +276,17 @@ class TestImageDimensionBounds:
     """
 
     def _post(self, **extra):
-        body = {"user_id": "u1", "user_name": "Alice", "image_url": "https://x/i.png"}
+        # A room-image upload URL on the app's own bucket, so only the
+        # dimensions are under test (image_url is validated too, see
+        # test_web_hardening_inputs.py).
+        supa = "https://abcd1234.supabase.co"
+        body = {
+            "user_id": "u1", "user_name": "Alice",
+            "image_url": f"{supa}/storage/v1/object/public/chat-images/{ROOM_ID}/u1-1-i.png",
+        }
         body.update(extra)
-        return client.post(f"/api/social/rooms/{ROOM_ID}/messages", json=body)
+        with patch.object(config, "SUPABASE_URL", supa):
+            return client.post(f"/api/social/rooms/{ROOM_ID}/messages", json=body)
 
     def test_rejects_absurd_height(self):
         # Inside Postgres INTEGER range, so nothing downstream would object:

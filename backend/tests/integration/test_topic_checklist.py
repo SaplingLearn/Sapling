@@ -12,6 +12,10 @@ pytestmark = pytest.mark.integration
 
 
 def test_checklist_is_encrypted_persistent_and_enrollment_scoped(db_conn, seeded_user):
+    # The rich seed gives CS101/MATH fixture checklists (the Study roadmap's
+    # columns); this test is about the refresh path creating one, so it starts
+    # from none.
+    db_conn.execute("DELETE FROM topic_checklists")
     def handler(messages, info):
         return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {"topics": [{
             "name": "Recursion", "description": "Base cases and recursive calls.", "importance": 0.9,

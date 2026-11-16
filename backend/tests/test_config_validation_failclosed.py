@@ -11,6 +11,7 @@ import pytest
 
 import config
 from routes import auth as auth_mod
+from tests.split_patches import set_auth_session_secret
 
 
 def _set_required(monkeypatch, **overrides):
@@ -21,8 +22,17 @@ def _set_required(monkeypatch, **overrides):
         "ANTHROPIC_API_KEY": "anthropic-key",
         "SESSION_SECRET": "x" * 40,  # >= 32 bytes (strong)
         "IS_LOCAL": False,
+        "APP_ENV": "production",
+        "FRONTEND_URL": "http://localhost:3000",
+        "GOOGLE_AUTH_REDIRECT_URI": "http://localhost:5000/api/auth/google/callback",
+        "SECURE_COOKIES_EXPLICIT": False,
     }
     base.update(overrides)
+    # A fresh key, not conftest's committed all-zero test key (refused outside
+    # local, see TestCommittedDemoSecrets).
+    monkeypatch.setenv("ENCRYPTION_KEY", base.pop("ENCRYPTION_KEY", "ab" * 32))
+    for name in config._PLATFORM_MARKERS:
+        monkeypatch.delenv(name, raising=False)
     for k, v in base.items():
         monkeypatch.setattr(config, k, v)
 
@@ -84,24 +94,118 @@ class TestValidateConfig:
         config.validate_config()  # no raise — exactly at the 32-byte floor
 
 
+class TestLocalModeOnARealDeployment:
+    """APP_ENV local/test arms POST /api/auth/test-login (a session for ANY
+    user id) and relaxes SESSION_SECRET: a process that looks deployed must
+    refuse to boot in those modes."""
+
+    @pytest.mark.parametrize("app_env", ["local", "test", "dev", "development"])
+    def test_local_modes_boot_on_a_developer_machine(self, monkeypatch, app_env):
+        _set_required(monkeypatch, APP_ENV=app_env, IS_LOCAL=True, SESSION_SECRET="")
+        config.validate_config()  # the E2E stack / pytest / local dev shape
+
+    @pytest.mark.parametrize("url", [
+        "http://127.0.0.1:3101", "https://localhost:3000", "https://app.localhost",
+        "http://frontend:3000", "http://staging.saplinglearn.com",
+    ])
+    def test_local_or_plain_http_frontend_is_not_a_marker(self, monkeypatch, url):
+        _set_required(monkeypatch, APP_ENV="local", IS_LOCAL=True, FRONTEND_URL=url)
+        config.validate_config()
+
+    @pytest.mark.parametrize("app_env", ["local", "test"])
+    def test_public_https_frontend_refuses(self, monkeypatch, app_env):
+        _set_required(monkeypatch, APP_ENV=app_env, IS_LOCAL=True,
+                      FRONTEND_URL="https://saplinglearn.com")
+        with pytest.raises(RuntimeError, match="Refusing to start") as exc:
+            config.validate_config()
+        assert "FRONTEND_URL" in str(exc.value)
+
+    def test_public_https_oauth_redirect_refuses(self, monkeypatch):
+        _set_required(monkeypatch, APP_ENV="local", IS_LOCAL=True,
+                      GOOGLE_AUTH_REDIRECT_URI="https://api.saplinglearn.com/api/auth/google/callback")
+        with pytest.raises(RuntimeError, match="GOOGLE_AUTH_REDIRECT_URI"):
+            config.validate_config()
+
+    def test_explicit_secure_cookies_refuses(self, monkeypatch):
+        _set_required(monkeypatch, APP_ENV="test", IS_LOCAL=True, SECURE_COOKIES_EXPLICIT=True)
+        with pytest.raises(RuntimeError, match="SECURE_COOKIES"):
+            config.validate_config()
+
+    def test_hosting_platform_marker_refuses(self, monkeypatch):
+        _set_required(monkeypatch, APP_ENV="local", IS_LOCAL=True)
+        monkeypatch.setenv("RAILWAY_ENVIRONMENT_NAME", "production")
+        with pytest.raises(RuntimeError, match="RAILWAY_ENVIRONMENT_NAME"):
+            config.validate_config()
+
+    def test_production_on_a_real_deployment_boots(self, monkeypatch):
+        _set_required(monkeypatch, FRONTEND_URL="https://saplinglearn.com",
+                      SECURE_COOKIES_EXPLICIT=True)
+        monkeypatch.setenv("RAILWAY_ENVIRONMENT_NAME", "production")
+        config.validate_config()
+
+
+class TestCommittedDemoSecrets:
+    """The SESSION_SECRET / ENCRYPTION_KEY values committed to the repo (local
+    examples, the frontend's start:test, CI) are refused outside local, and
+    the error never carries the value."""
+
+    @pytest.mark.parametrize("secret", sorted(config.KNOWN_DEMO_SESSION_SECRETS))
+    def test_demo_session_secret_refused_outside_local(self, monkeypatch, secret):
+        _set_required(monkeypatch, SESSION_SECRET=secret)
+        with pytest.raises(RuntimeError) as exc:
+            config.validate_config()
+        assert "SESSION_SECRET" in str(exc.value)
+        assert secret not in str(exc.value)
+
+    @pytest.mark.parametrize("key", sorted(config.KNOWN_DEMO_ENCRYPTION_KEYS))
+    def test_demo_encryption_key_refused_outside_local(self, monkeypatch, key):
+        _set_required(monkeypatch, ENCRYPTION_KEY=key.upper())
+        with pytest.raises(RuntimeError) as exc:
+            config.validate_config()
+        assert "ENCRYPTION_KEY" in str(exc.value)
+        assert key not in str(exc.value).lower()
+
+    def test_demo_values_still_boot_local(self, monkeypatch):
+        _set_required(
+            monkeypatch, APP_ENV="local", IS_LOCAL=True,
+            SESSION_SECRET="sapling-local-dev-session-secret-change-only-if-you-know-why",
+            ENCRYPTION_KEY="0123456789abcdef" * 4,
+        )
+        config.validate_config()
+
+    def test_the_lists_match_the_committed_files(self):
+        """The refusal lists track the files that commit the values."""
+        from pathlib import Path
+
+        repo = Path(__file__).resolve().parents[2]
+        committed = "\n".join(
+            (repo / p).read_text()
+            for p in ("backend/.env.local.example", "frontend/.env.local.example",
+                      "frontend/package.json", "frontend/.env.example")
+        )
+        for secret in config.KNOWN_DEMO_SESSION_SECRETS:
+            assert secret in committed
+        assert "0123456789abcdef" * 4 in committed
+
+
 class TestUnsignedOAuthFallbackFailsClosed:
     def test_fails_closed_in_production(self, monkeypatch):
         # No SESSION_SECRET + not local → must refuse (pre-fix: silently used
         # the unsigned in-memory store).
-        monkeypatch.setattr(auth_mod, "SESSION_SECRET", "")
-        monkeypatch.setattr(auth_mod, "IS_LOCAL", False)
+        set_auth_session_secret(monkeypatch, "")
+        monkeypatch.setattr("services.auth.oauth_state.IS_LOCAL", False)
         with pytest.raises(RuntimeError):
             auth_mod._encode_oauth_cookie({"n": "nonce-123", "v": "verifier"})
 
     def test_allowed_in_local(self, monkeypatch):
-        monkeypatch.setattr(auth_mod, "SESSION_SECRET", "")
-        monkeypatch.setattr(auth_mod, "IS_LOCAL", True)
+        set_auth_session_secret(monkeypatch, "")
+        monkeypatch.setattr("services.auth.oauth_state.IS_LOCAL", True)
         out = auth_mod._encode_oauth_cookie({"n": "nonce-123", "v": "verifier"})
         # Unsigned payload (no "." separator) is permitted only in local dev.
         assert isinstance(out, str) and "." not in out
 
     def test_signed_when_secret_present(self, monkeypatch):
-        monkeypatch.setattr(auth_mod, "SESSION_SECRET", "supersecret-value")
+        set_auth_session_secret(monkeypatch, "supersecret-value")
         out = auth_mod._encode_oauth_cookie({"n": "nonce-123", "v": "verifier"})
         assert "." in out  # payload_b64.sig_b64
 
@@ -115,6 +219,6 @@ class TestUnsignedOAuthFallbackFailsClosed:
             json.dumps({"n": "x", "v": "y"}).encode()
         ).decode().rstrip("=")
         # Force the unsigned path (empty secret) in production mode.
-        monkeypatch.setattr(auth_mod, "SESSION_SECRET", "")
-        monkeypatch.setattr(auth_mod, "IS_LOCAL", False)
+        set_auth_session_secret(monkeypatch, "")
+        monkeypatch.setattr("services.auth.oauth_state.IS_LOCAL", False)
         assert auth_mod._decode_oauth_cookie(unsigned) is None

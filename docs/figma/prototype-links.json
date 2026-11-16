@@ -318,12 +318,6 @@
   "nth": 0
  },
  {
-  "from": "dashboard/courses-key-collapsed",
-  "label": "Search",
-  "to": "lib/grid",
-  "nth": 0
- },
- {
   "from": "dashboard/courses-key-expanded",
   "label": "Search",
   "to": "lib/grid",
@@ -415,12 +409,6 @@
  },
  {
   "from": "dashboard/upcoming-chips",
-  "label": "Start learning",
-  "to": "learn/entry-populated",
-  "nth": 0
- },
- {
-  "from": "dashboard/courses-key-collapsed",
   "label": "Start learning",
   "to": "learn/entry-populated",
   "nth": 0
@@ -522,12 +510,6 @@
   "nth": 0
  },
  {
-  "from": "dashboard/courses-key-collapsed",
-  "label": "Calendar →",
-  "to": "calendar/month",
-  "nth": 0
- },
- {
   "from": "dashboard/courses-key-expanded",
   "label": "Calendar →",
   "to": "calendar/month",
@@ -588,12 +570,6 @@
   "nth": 0
  },
  {
-  "from": "dashboard/courses-key-collapsed",
-  "label": "Review what's due · 9",
-  "to": "quiz/home-due-queue",
-  "nth": 0
- },
- {
   "from": "dashboard/courses-key-expanded",
   "label": "Review what's due · 9",
   "to": "quiz/home-due-queue",
@@ -619,12 +595,6 @@
  },
  {
   "from": "dashboard/populated-sidebar",
-  "label": "View all",
-  "to": "learn/entry-populated",
-  "nth": 0
- },
- {
-  "from": "dashboard/courses-key-collapsed",
   "label": "View all",
   "to": "learn/entry-populated",
   "nth": 0
@@ -672,12 +642,6 @@
   "nth": 0
  },
  {
-  "from": "dashboard/courses-key-collapsed",
-  "label": "CS101 · socratic · just now",
-  "to": "learn/active-idle",
-  "nth": 0
- },
- {
   "from": "dashboard/courses-key-expanded",
   "label": "CS101 · socratic · just now",
   "to": "learn/active-idle",
@@ -715,12 +679,6 @@
  },
  {
   "from": "dashboard/populated-sidebar",
-  "label": "My courses",
-  "to": "dashboard/courses-key-expanded",
-  "nth": 0
- },
- {
-  "from": "dashboard/courses-key-collapsed",
   "label": "My courses",
   "to": "dashboard/courses-key-expanded",
   "nth": 0
@@ -2754,42 +2712,6 @@
   "nth": 0
  },
  {
-  "from": "tree/checklist-loading",
-  "label": "Fullscreen",
-  "to": "tree/fullscreen",
-  "nth": 0
- },
- {
-  "from": "tree/checklist-populated",
-  "label": "Fullscreen",
-  "to": "tree/fullscreen",
-  "nth": 0
- },
- {
-  "from": "tree/checklist-semester-select",
-  "label": "Fullscreen",
-  "to": "tree/fullscreen",
-  "nth": 0
- },
- {
-  "from": "tree/checklist-stale",
-  "label": "Fullscreen",
-  "to": "tree/fullscreen",
-  "nth": 0
- },
- {
-  "from": "tree/checklist-warnings",
-  "label": "Fullscreen",
-  "to": "tree/fullscreen",
-  "nth": 0
- },
- {
-  "from": "tree/checklist-empty-filter",
-  "label": "Fullscreen",
-  "to": "tree/fullscreen",
-  "nth": 0
- },
- {
   "from": "tree/detail-concept",
   "label": "Fullscreen",
   "to": "tree/fullscreen",
@@ -2899,42 +2821,6 @@
  },
  {
   "from": "tree/toast-add-failed",
-  "label": "Mastered",
-  "to": "tree/tier-filtered",
-  "nth": 0
- },
- {
-  "from": "tree/checklist-loading",
-  "label": "Mastered",
-  "to": "tree/tier-filtered",
-  "nth": 0
- },
- {
-  "from": "tree/checklist-populated",
-  "label": "Mastered",
-  "to": "tree/tier-filtered",
-  "nth": 0
- },
- {
-  "from": "tree/checklist-semester-select",
-  "label": "Mastered",
-  "to": "tree/tier-filtered",
-  "nth": 0
- },
- {
-  "from": "tree/checklist-stale",
-  "label": "Mastered",
-  "to": "tree/tier-filtered",
-  "nth": 0
- },
- {
-  "from": "tree/checklist-warnings",
-  "label": "Mastered",
-  "to": "tree/tier-filtered",
-  "nth": 0
- },
- {
-  "from": "tree/checklist-empty-filter",
   "label": "Mastered",
   "to": "tree/tier-filtered",
   "nth": 0
@@ -3126,42 +3012,6 @@
   "nth": 0
  },
  {
-  "from": "tree/checklist-loading",
-  "label": "All courses",
-  "to": "tree/populated",
-  "nth": 0
- },
- {
-  "from": "tree/checklist-populated",
-  "label": "All courses",
-  "to": "tree/populated",
-  "nth": 0
- },
- {
-  "from": "tree/checklist-semester-select",
-  "label": "All courses",
-  "to": "tree/populated",
-  "nth": 0
- },
- {
-  "from": "tree/checklist-stale",
-  "label": "All courses",
-  "to": "tree/populated",
-  "nth": 0
- },
- {
-  "from": "tree/checklist-warnings",
-  "label": "All courses",
-  "to": "tree/populated",
-  "nth": 0
- },
- {
-  "from": "tree/checklist-empty-filter",
-  "label": "All courses",
-  "to": "tree/populated",
-  "nth": 0
- },
- {
   "from": "tree/toast-added",
   "label": "All courses",
   "to": "tree/populated",
@@ -3201,24 +3051,6 @@
   "from": "tree/toast-add-failed",
   "label": "＋ Add concept",
   "to": "tree/add-concept-composer",
-  "nth": 0
- },
- {
-  "from": "tree/course-filtered",
-  "label": "Topic checklist",
-  "to": "tree/checklist-populated",
-  "nth": 0
- },
- {
-  "from": "tree/add-concept-composer",
-  "label": "Topic checklist",
-  "to": "tree/checklist-populated",
-  "nth": 0
- },
- {
-  "from": "tree/toast-added",
-  "label": "Topic checklist",
-  "to": "tree/checklist-populated",
   "nth": 0
  },
  {

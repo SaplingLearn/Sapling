@@ -19,6 +19,13 @@ stopped midway is still a candidate and is finished on a later pass (the seed
 is idempotent), and an account that was already onboarded — a developer's own
 account with their own data — is left alone; the CLI is its way in.
 
+That first seed is two datasets: the rich copy, then the study dataset
+(`db/seed_local_study.py`: a term of study guides, quizzes, flashcards,
+documents and exams dated around today). `seed_owner` writes the second one
+only on an account that is not onboarded yet, so "never redone" covers it too:
+its rows are never re-dated or reset under a developer. If it fails, the
+account is still completed, with the rich copy alone and one warning in the log.
+
 LOCAL ONLY. It starts only when `seed_helpers.is_local_backend()` holds (APP_ENV
 local|test AND a loopback SUPABASE_URL) — the exact check the seed CLI's guard
 uses — so staging and production never run it, and GET /api/auth/local-seed

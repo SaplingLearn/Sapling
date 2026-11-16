@@ -70,6 +70,7 @@ from agents import WORKER_LIMITS  # noqa: E402
 from agents._run import run_agent_sync  # noqa: E402
 from agents.classifier import classifier_agent  # noqa: E402
 from agents.deps import SaplingDeps  # noqa: E402
+from services.prompt_safety import wrap_document_input  # noqa: E402
 from db.connection import page_all, pg_quote_value, table  # noqa: E402
 from services.chunk_visibility import (  # noqa: E402
     COURSE_MATERIAL, PERSONAL_NOTES,
@@ -98,7 +99,8 @@ def _classify(text: str) -> tuple[str, float | None]:
     )
     result = run_agent_sync(
         classifier_agent.run(
-            text[:20_000], deps=deps, usage_limits=WORKER_LIMITS,
+            wrap_document_input(text[:20_000]), deps=deps,
+            usage_limits=WORKER_LIMITS,
         )
     )
     return result.output.shareability or PERSONAL_NOTES, result.output.confidence

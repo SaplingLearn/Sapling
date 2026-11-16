@@ -17,7 +17,7 @@
 import React, { useMemo, useState } from "react";
 import type { CSSProperties } from "react";
 import { useSearchParams } from "next/navigation";
-import { StudyTabs } from "../StudyTabs";
+import { BackLink } from "../BackLink";
 import { TopBar } from "../TopBar";
 import { FullHeightScreen } from "../FullHeightScreen";
 import { AIDisclaimerChip } from "../chat/AIDisclaimerChip";
@@ -27,6 +27,8 @@ import { useActiveSemester } from "@/lib/useActiveSemester";
 import { usePrefersReducedMotion } from "@/lib/usePrefersReducedMotion";
 import { siblingsFor } from "@/lib/graph/neighbourhood";
 import { apiToGraphNode } from "@/lib/data";
+import { backLink } from "@/lib/quiz/exits";
+import { useIsNavHidden } from "@/lib/useNavHidden";
 import { parseEntry } from "@/lib/quiz/source";
 import { colorFor, entrySelection, nextConceptInQueue } from "@/lib/quiz/proposals";
 import { useQuizHome } from "@/lib/quiz/useQuizHome";
@@ -49,6 +51,8 @@ export function QuizScreen() {
   // the query string does.
   const query = searchParams.toString();
   const entry = useMemo(() => parseEntry(new URLSearchParams(query)), [query]);
+  // The header's back link avoids a page this student's flags hide (exits.ts).
+  const isNavHidden = useIsNavHidden();
 
   // `entry` rides along so the home hook can describe the concept the CARD will
   // show, which a deep link overrides (§5 B1.2).
@@ -208,8 +212,13 @@ export function QuizScreen() {
   return (
     <FullHeightScreen className="quiz-root" style={rootStyle}>
       <DisclaimerModal />
-      <TopBar title="Study" subtitle="Test what you know." actions={<><AIDisclaimerChip /><StudyTabs mode="quiz" /></>} />
-      <div className={`quiz-body quiz-body--${layout}`}>
+      {/* The Study Guide / Flashcards / Quiz switcher that sat here is gone:
+          all three are opened from the Study hub, so this page names itself
+          and offers the way back instead. */}
+      <TopBar title="Quiz" subtitle="Test what you know." actions={<><AIDisclaimerChip /><BackLink {...backLink(entry.source, isNavHidden)} /></>} />
+      {/* `study-mode-enter`: the Study tools' arrival fade (globals.css), so
+          leaving the hub for a quiz reads as a move, not a cut. */}
+      <div className={`quiz-body quiz-body--${layout} tool-enter`}>
         {/* Home is full-bleed: its resume strip has to reach both edges under
             the TopBar, so the screen wraps its own content (`.quiz-col--home`
             + `.quiz-inset--home`, see quiz.css). Question and results keep the

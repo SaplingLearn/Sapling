@@ -15,6 +15,8 @@
  * `event:` defaults to "message" if absent.
  */
 
+import { apiErrorOf } from "./apiError";
+
 export type SSEEvent<T = unknown> = {
   event: string;
   data: T;
@@ -28,19 +30,6 @@ export type SSEEvent<T = unknown> = {
  *
  * If opts.idleTimeoutMs is set, rejects if no data arrives within that time.
  */
-/** `{ code }` when `body` is a JSON envelope carrying `error.code`. */
-function errorCodeOf(body: string): { code?: string } {
-  const trimmed = body.trim();
-  if (!trimmed.startsWith("{")) return {};
-  try {
-    const parsed = JSON.parse(trimmed) as { error?: { code?: unknown } } | null;
-    const code = parsed?.error?.code;
-    return typeof code === "string" ? { code } : {};
-  } catch {
-    return {};
-  }
-}
-
 export async function* streamSSE<T = unknown>(
   url: string,
   init: RequestInit,
@@ -48,20 +37,14 @@ export async function* streamSSE<T = unknown>(
 ): AsyncGenerator<SSEEvent<T>> {
   const res = await fetch(url, init);
   if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    // Attach the status so callers can branch on it (lib/errorMessage.ts's
-    // statusOf reads `.status` off any thrown object) — the body is often a
-    // JSON `detail` payload that carries no status field of its own. The
-    // chat ladder needs this: an HTTP 413 (body too large) fails
-    // identically on the JSON fallback, so it must not be retried there.
-    //
-    // The typed `error.code` from the coded envelope rides along too, as
-    // fetchJSON's ApiError exposes it — the tutor branches on
-    // `SESSION_ENDED` (a 409 for a turn on an ended session, #762).
-    throw Object.assign(new Error(body || `HTTP ${res.status}`), {
-      status: res.status,
-      ...errorCodeOf(body),
-    });
+    const text = await res.text().catch(() => "");
+    // The same ApiError fetchJSON throws (lib/apiError.ts): the status, so
+    // callers can branch on it (lib/errorMessage.ts's statusOf; the chat
+    // ladder must not retry a 413 on the JSON fallback), the coded
+    // envelope's `code` (the tutor branches on `SESSION_ENDED`, #762),
+    // `Retry-After`, and the parsed `body`, where an error carrying the
+    // crisis card has it (`crisisSupportInError`).
+    throw apiErrorOf(res, text);
   }
   if (!res.body) {
     throw new Error("Streaming response has no body.");

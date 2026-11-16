@@ -1,71 +1,138 @@
 /**
- * Journey #289 — the first-run onboarding funnel renders and advances.
+ * Journey #289 — the first-run onboarding funnel renders, advances, and is
+ * enforced.
  *
- * There was no journey over `/onboarding` at all before this, which is a
- * notable gap: it is the first thing a newly-approved student sees, and it is
- * rendered BARE — its route sits outside `(shell)`, so it has no ShellFrame,
- * no nav and no `<main>` padding to inherit. Nothing else in the suite would
- * notice if it broke.
+ * `/onboarding` renders BARE — its route sits outside `(shell)`, so it has no
+ * ShellFrame, no nav and no `<main>` padding to inherit — and it is the first
+ * thing a newly approved student sees. Since #800 the funnel is the Claude
+ * Design flow: an intro, then nine screens over six chapters.
  *
- * This is deliberately a smoke-plus-persistence journey, not a full
- * five-step walkthrough: the steps' own field validation is unit-tested, and
- * a long scripted click-path over a funnel that is still being redesigned
- * (#289 changes its frame; the flow itself is untouched) would break on every
- * copy tweak. What it pins is the part that must not regress — the screen
- * mounts for an un-onboarded user, the nav affordances behave, and the token
- * conversion did not leave the layout collapsed.
+ * Since the 2026-11-12 onboarding decisions it is also a gate: sign in first
+ * (no guest onboarding), and onboarding is enforced. The middleware (and the
+ * shell's OnboardingGate behind it) sends an approved student who hasn't
+ * finished onboarding from the app to /onboarding, and one who has finished
+ * from /onboarding to /dashboard.
  *
- * Signs in as USER_NEW rather than the default USER_ACTIVE because it is the
- * realistic state — onboarding_completed=False. It is NOT a gate: /onboarding
- * sits outside middleware.ts's matcher and Onboarding.tsx only redirects when
- * unauthenticated, so the route would render for any signed-in user. What the
- * seed choice buys is a funnel showing its real first-run content.
+ * This stays a smoke journey, not a full walkthrough: each screen's rules
+ * (birthday, courses, the legal scroll-to-accept, the save's failures) are
+ * unit-tested in Onboarding.test.tsx, and a long scripted click-path would
+ * break on every copy tweak. What it pins is the part that must not
+ * regress: the gate in both directions, the screen mounting with a real
+ * layout box, the step machine driving the frame, and the exits — a Back
+ * button and a Sign out that are visible (Back used to be a hidden,
+ * tabIndex -1 key hint on phones).
+ *
+ * USER_NEW is the seeded approved account with onboarding_completed=False;
+ * the default storageState (USER_ACTIVE) has finished onboarding.
  */
 import { expect, test } from "./support/fixtures";
 import { mintStorageState } from "./support/session";
 import { FRONTEND_URL, USER_NEW } from "./support/stack";
 
-test("the onboarding funnel renders for an un-onboarded user (#289)", async ({ browser }) => {
+test("the onboarding funnel renders for an un-onboarded user, with Back and Sign out (#289)", async ({ browser }) => {
   const storageState = await mintStorageState(USER_NEW, "Rich New");
   const context = await browser.newContext({ storageState });
   const page = await context.newPage();
 
   try {
     await page.goto(`${FRONTEND_URL}/onboarding`);
+    await expect(page).toHaveURL(/\/onboarding$/);
 
     const gate = page.getByTestId("onboarding-gate");
     await expect(gate).toBeVisible();
 
-    // Step 0 is the welcome step: forward affordance present, Back absent.
-    await expect(page.getByTestId("onboarding-continue")).toBeVisible();
-    await expect(page.getByTestId("onboarding-back")).toHaveCount(0);
-
-    // The card must actually occupy the screen. #289 converted every
-    // hardcoded px in this file to --pad-*/--fs-* tokens; a mistyped var()
-    // resolves to nothing and silently collapses the box, which no unit test
-    // would catch and which this assertion would.
+    // The root must actually occupy the screen: it renders bare (no shell),
+    // so a broken layout collapses it, which no unit test would catch.
     const box = await gate.boundingBox();
     expect(box, "the onboarding root should have a layout box").not.toBeNull();
     expect(box!.height, "onboarding must fill the viewport, not collapse").toBeGreaterThan(400);
 
-    const card = await page.evaluate(() => {
-      const el = document.querySelector('[data-testid="onboarding-gate"] .card');
-      if (!el) return null;
-      const r = el.getBoundingClientRect();
-      const cs = getComputedStyle(el);
-      return { w: Math.round(r.width), h: Math.round(r.height), padTop: cs.paddingTop };
-    });
-    expect(card, "the onboarding card should render").not.toBeNull();
-    expect(card!.w, "card should have real width").toBeGreaterThan(200);
-    expect(card!.h, "card should have real height").toBeGreaterThan(150);
-    // A var() that failed to resolve computes to 0px, not a real length.
-    expect(card!.padTop, "card padding must resolve from --pad-*").not.toBe("0px");
+    // After the intro, the first screen asks for a first and an optional
+    // last name, both from the account, and Next is gated on the first. The
+    // way out is on screen from the start.
+    const name = page.getByTestId("onboarding-name");
+    await expect(name).toBeVisible({ timeout: 15_000 });
+    await expect(name).toHaveValue("Rich");
+    await expect(page.getByTestId("onboarding-last-name")).toHaveValue("New");
+    await expect(page.getByTestId("onboarding-sign-out")).toBeVisible();
+    const next = page.getByTestId("onboarding-continue");
+    await name.fill("   ");
+    await expect(next).toBeDisabled();
+    await name.fill("Rich");
+    await expect(next).toBeEnabled();
 
-    // Advancing off the welcome step reveals Back — the cheapest proof the
-    // step machine still drives the frame after the re-home.
+    // Advancing reaches the birthday screen: the cheapest proof the step
+    // machine drives the frame.
+    await next.click();
+    await expect(page.getByTestId("onboarding-dob-month")).toBeVisible();
+
+    // A birthday under 13 is asked about before anything is blocked, so a
+    // slipped year is put right on the spot.
+    const pick = async (field: string, value: string) => {
+      await page.getByTestId(`onboarding-dob-${field}`).click();
+      await page.getByTestId(`onboarding-dob-${field}-${value}`).click();
+    };
+    await pick("month", "1");
+    await pick("day", "1");
+    await pick("year", String(new Date().getFullYear() - 10));
+    await expect(page.getByTestId("onboarding-under13-confirm")).toBeVisible();
+    await expect(next).toBeDisabled();
+    await page.getByTestId("onboarding-under13-change").click();
+    await expect(page.getByTestId("onboarding-under13-confirm")).toHaveCount(0);
+    await expect(page.getByTestId("onboarding-blocked")).toHaveCount(0);
+    await pick("year", "2000");
+    await expect(next).toBeEnabled();
+
+    // Back is a real, visible button, reachable from the keyboard, and
+    // returns to the name screen with the answer kept.
+    const back = page.getByTestId("onboarding-back");
+    await expect(back).toBeVisible();
+    await back.focus();
+    await expect(back).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(page.getByTestId("onboarding-name")).toHaveValue("Rich");
+  } finally {
+    await context.close();
+  }
+});
+
+test("Back and Sign out stay visible on a phone-sized screen", async ({ browser }) => {
+  const storageState = await mintStorageState(USER_NEW, "Rich New");
+  const context = await browser.newContext({ storageState, viewport: { width: 390, height: 844 } });
+  const page = await context.newPage();
+
+  try {
+    await page.goto(`${FRONTEND_URL}/onboarding`);
+    const name = page.getByTestId("onboarding-name");
+    await expect(name).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId("onboarding-sign-out")).toBeVisible();
+    await name.fill("Rich");
     await page.getByTestId("onboarding-continue").click();
     await expect(page.getByTestId("onboarding-back")).toBeVisible();
   } finally {
     await context.close();
   }
+});
+
+test("an un-onboarded student opening the app is sent to /onboarding", async ({ browser }) => {
+  const storageState = await mintStorageState(USER_NEW, "Rich New");
+  const context = await browser.newContext({ storageState });
+  const page = await context.newPage();
+
+  try {
+    await page.goto(`${FRONTEND_URL}/dashboard`);
+    await expect(page).toHaveURL(/\/onboarding$/);
+    await expect(page.getByTestId("onboarding-gate")).toBeVisible();
+    await expect(page.getByTestId("app-shell")).toHaveCount(0);
+  } finally {
+    await context.close();
+  }
+});
+
+test("an onboarded student opening /onboarding is sent to the dashboard", async ({ page }) => {
+  // The default storageState is USER_ACTIVE, who has finished onboarding.
+  await page.goto(`${FRONTEND_URL}/onboarding`);
+  await expect(page).toHaveURL(/\/dashboard$/);
+  await expect(page.getByTestId("app-shell")).toBeVisible();
+  await expect(page.getByTestId("onboarding-gate")).toHaveCount(0);
 });

@@ -34,15 +34,17 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { Sheet } from "@/components/ui";
-import {
-  newTurnId,
-  sendChat,
-  shouldFallBackToJson,
-  startSession,
-  startSessionStream,
-  streamChat,
-} from "@/lib/api";
+import { newTurnId } from "@/lib/api";
 import { tutorStepLabel } from "@/components/chat/ChatPanel";
+import {
+  ABORTED,
+  askErrorCopy,
+  chatWithFallback,
+  openTutorSession,
+  type TurnProgress,
+} from "./askTurn";
+import { CrisisSupportCard } from "@/components/safety/CrisisSupportCard";
+import type { CrisisSupport } from "@/lib/crisisSupport";
 
 // The same renderer the tutor uses, loaded the same way `ChatPanel` loads it:
 // `MarkdownChat` statically imports mermaid, katex and highlight.js, and a
@@ -52,9 +54,6 @@ const MarkdownChat = dynamic(
   { ssr: false, loading: () => null },
 );
 
-/** The tutor mode a "why was I wrong" question wants. */
-const TUTOR_MODE = "socratic";
-
 /** Everything the tutor needs to know about the item that was missed. */
 export interface AskSeed {
   stem: string;
@@ -63,6 +62,9 @@ export interface AskSeed {
   correctLabel: string;
   correctText: string;
   explanation: string;
+  /** A typed answer (short answer / numeric / algebra): there are no option
+   *  letters, so it reads "You wrote 4" rather than "You chose A · …". */
+  written?: boolean;
 }
 
 export interface AskPanelProps {
@@ -84,6 +86,8 @@ interface AskTurn {
   id: number;
   role: "user" | "assistant";
   text: string;
+  /** docs/safety/crisis-support.md: the crisis card instead of a tutor reply. */
+  crisisSupport?: CrisisSupport;
   /** ADR 0020: the stream was cut off after producing this much. The partial
    *  stays in the thread, marked; Retry drops it and starts the answer over. */
   interrupted?: boolean;
@@ -98,8 +102,10 @@ export function composeAskMessage(seed: AskSeed): string {
     "I got this quiz question wrong and want to understand why.",
     "",
     `Question: ${seed.stem}`,
-    `I chose ${seed.chosenLabel}: ${seed.chosenText}`,
-    `The correct answer is ${seed.correctLabel}: ${seed.correctText}`,
+    seed.written ? `I wrote: ${seed.chosenText}` : `I chose ${seed.chosenLabel}: ${seed.chosenText}`,
+    seed.written
+      ? `The correct answer is: ${seed.correctText}`
+      : `The correct answer is ${seed.correctLabel}: ${seed.correctText}`,
     `Explanation given: ${seed.explanation}`,
     "",
     "Help me understand why.",
@@ -174,94 +180,73 @@ export function AskPanel({
       setStreaming("");
       setStatus(null);
       partialRef.current = "";
-      let sawToken = false;
-      // The partial reply so far. `streaming` state can't serve here: it is
-      // cleared before the JSON leg and again in `finally`, and ADR 0020 needs
-      // the text to outlive both.
-      let partial = "";
+      // `partial` is the reply so far. `streaming` state can't serve here: it
+      // is cleared before the JSON leg and again in `finally`, and ADR 0020
+      // needs the text to outlive both.
+      const progress: TurnProgress = { sawToken: false, partial: "" };
 
       try {
         let sid = sessionIdRef.current;
         if (!sid) {
-          try {
-            const started = await startSessionStream(
-              userId,
-              conceptName,
-              TUTOR_MODE,
-              true,
-              courseId ?? undefined,
-              undefined,
-              { signal: controller.signal },
-            );
-            sid = started.session_id ?? null;
-          } catch (err) {
-            if (controller.signal.aborted) return;
-            if (!shouldFallBackToJson(err)) throw err;
-            // The greeting is thrown away either way, so the JSON route is a
-            // straight substitute here — there is no partial text to lose.
-            const started = await startSession(
-              userId,
-              conceptName,
-              TUTOR_MODE,
-              courseId ?? undefined,
-              true,
-            );
-            sid = started.session_id;
+          const opened = await openTutorSession(userId, conceptName, courseId, controller.signal);
+          if (opened === ABORTED) return;
+          if (typeof opened === "object" && opened !== null) {
+            // The card instead of a session: none was opened.
+            if (runRef.current === token && mountedRef.current) {
+              setTurns(t => [...t, { id: nextId(), role: "assistant", text: "", crisisSupport: opened.crisis }]);
+            }
+            return;
           }
-          if (!sid) throw new Error("The tutor didn't open a session.");
+          if (!opened) throw new Error("The tutor didn't open a session.");
           if (runRef.current !== token) return;
+          sid = opened;
           sessionIdRef.current = sid;
         }
 
-        let reply: string;
-        try {
-          // `graph_update` events are deliberately unhandled: this panel is a
-          // read of the student's own mistake, not a study turn that should
-          // move the graph under the quiz.
-          const res = await streamChat(sid, userId, message, TUTOR_MODE, true, undefined, {
+        const reply = await chatWithFallback(
+          { sid, userId, message, turnId, signal: controller.signal, progress },
+          {
             onToken: delta => {
               // The pacer flushes its backlog after an abort; a closed or
               // superseded turn must not write into the panel any more.
               if (runRef.current !== token) return;
-              if (delta.trim()) sawToken = true;
-              partial += delta;
-              partialRef.current = partial;
+              if (delta.trim()) progress.sawToken = true;
+              progress.partial += delta;
+              partialRef.current = progress.partial;
               setStreaming(prev => (prev ?? "") + delta);
             },
             onProgress: step => {
               const label = tutorStepLabel(step);
               if (label && runRef.current === token) setStatus(label);
             },
-            signal: controller.signal,
-          }, turnId);
-          reply = res.reply || "";
-        } catch (err) {
-          if (controller.signal.aborted) return;
-          // Tokens already on screen, or a failure the JSON route would repeat
-          // identically (#151a) — surface it rather than silently re-running.
-          // The partial survives via the outer catch.
-          if (sawToken || !shouldFallBackToJson(err)) throw err;
-          setStreaming(null);
-          setStatus(null);
-          const res = await sendChat(sid, userId, message, TUTOR_MODE, true, undefined, turnId);
-          reply = res.reply || "";
-        }
+          },
+          () => {
+            setStreaming(null);
+            setStatus(null);
+          },
+        );
+        if (reply === ABORTED) return;
 
         if (runRef.current !== token || !mountedRef.current) return;
-        setTurns(t => [...t, { id: nextId(), role: "assistant", text: reply }]);
+        setTurns(t => [
+          ...t,
+          typeof reply === "string"
+            ? { id: nextId(), role: "assistant", text: reply }
+            : { id: nextId(), role: "assistant", text: "", crisisSupport: reply.crisis },
+        ]);
       } catch (err) {
         if (controller.signal.aborted || runRef.current !== token || !mountedRef.current) return;
         // ADR 0020, and the whole reason `partial` exists: half an answer the
         // student was already reading must not blink out and be replaced by an
         // error strip. It stays in the thread, marked unfinished. Retry drops
         // it (`retry` below) so the second attempt doesn't read as a sequel.
-        if (partial.trim()) {
+        if (progress.partial.trim()) {
           setTurns(t => [
             ...t,
-            { id: nextId(), role: "assistant", text: partial, interrupted: true },
+            { id: nextId(), role: "assistant", text: progress.partial, interrupted: true },
           ]);
         }
-        setError(err instanceof Error ? err.message : "The tutor is unavailable.");
+        setError(askErrorCopy(err));
       } finally {
         if (runRef.current === token) {
           inFlightRef.current = false;
@@ -381,11 +366,15 @@ export function AskPanel({
         <div className="quiz-ask__seed" data-testid="quiz-ask-seed">
           <p className="quiz-ask__seed-stem h-serif">{seed.stem}</p>
           <div className="quiz-ask__seed-card quiz-ask__seed-card--chosen">
-            <span className="quiz-ask__seed-label">You chose {seed.chosenLabel} ·</span>
+            <span className="quiz-ask__seed-label">
+              {seed.written ? "You wrote" : `You chose ${seed.chosenLabel} ·`}
+            </span>
             {seed.chosenText}
           </div>
           <div className="quiz-ask__seed-card quiz-ask__seed-card--correct">
-            <span className="quiz-ask__seed-label">The answer is {seed.correctLabel} ·</span>
+            <span className="quiz-ask__seed-label">
+              {seed.written ? "The answer is" : `The answer is ${seed.correctLabel} ·`}
+            </span>
             {seed.correctText}
           </div>
           {seed.explanation && (
@@ -396,7 +385,9 @@ export function AskPanel({
 
         <div className="quiz-ask__thread" aria-live="polite">
           {turns.map(turn =>
-            turn.role === "user" ? (
+            turn.crisisSupport ? (
+              <CrisisSupportCard key={turn.id} support={turn.crisisSupport} />
+            ) : turn.role === "user" ? (
               <p key={turn.id} className="quiz-ask__turn--user">
                 {turn.text}
               </p>

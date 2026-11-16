@@ -221,9 +221,19 @@ def _signoff(closing: str) -> str:
     )
 
 
-def _layout(*, title: str, preheader: str, rows: list[str], reason: str, unsubscribe_url: str) -> str:
-    """The shared shell. Every entry of `rows` must already be safe HTML rows."""
+def _layout(
+    *, title: str, preheader: str, rows: list[str], reason: str, unsubscribe_url: str | None,
+    unsubscribe_from: str = "Sapling emails",
+) -> str:
+    """The shared shell. Every entry of `rows` must already be safe HTML rows.
+    `unsubscribe_from` names what the footer link stops; `unsubscribe_url=None`
+    renders no unsubscribe line."""
     site = _site()
+    unsubscribe = (
+        f'<br>\n<a href="{_e(unsubscribe_url)}" style="color:{_MUTED};text-decoration:underline;">'
+        f"Unsubscribe</a> from {_e(unsubscribe_from)}."
+        if unsubscribe_url else ""
+    )
     return f"""<!doctype html>
 <html lang="en" xmlns="http://www.w3.org/1999/xhtml">
 <head>
@@ -256,8 +266,7 @@ def _layout(*, title: str, preheader: str, rows: list[str], reason: str, unsubsc
 </table>
 <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;">
 <tr><td class="px" align="left" style="padding:20px 48px 0 48px;font-family:{_SANS};font-size:13px;line-height:1.7;color:{_MUTED};">
-{_e(reason)}<br>
-<a href="{_e(unsubscribe_url)}" style="color:{_MUTED};text-decoration:underline;">Unsubscribe</a> from Sapling emails.
+{_e(reason)}{unsubscribe}
 </td></tr>
 </table>
 </td></tr>
@@ -267,9 +276,13 @@ def _layout(*, title: str, preheader: str, rows: list[str], reason: str, unsubsc
 """
 
 
-def _text(*blocks: str, unsubscribe_url: str, reason: str) -> str:
+def _text(
+    *blocks: str, unsubscribe_url: str | None, reason: str, unsubscribe_from: str | None = None,
+) -> str:
     body = "\n\n".join(b.strip("\n") for b in blocks if b)
-    return f"{body}\n\n--\n{reason}\nUnsubscribe: {unsubscribe_url}\n"
+    label = f"Unsubscribe from {unsubscribe_from}" if unsubscribe_from else "Unsubscribe"
+    unsubscribe = f"{label}: {unsubscribe_url}\n" if unsubscribe_url else ""
+    return f"{body}\n\n--\n{reason}\n{unsubscribe}"
 
 
 def _text_steps(items: list[tuple[str, str]]) -> str:
@@ -484,3 +497,39 @@ def broadcast(
     text = (body or "").replace("\r\n", "\n").strip()
     text = f"{text}\n\nThanks!\nThe Sapling team\n\n--\n{reason}\nUnsubscribe: {unsubscribe_url}\n"
     return clean_subject, html, text
+
+
+# ── Staff ───────────────────────────────────────────────────────────────────
+
+_OPS_REASON = "You're getting this because you are a Sapling admin."
+
+
+_OPS_UNSUBSCRIBE_FROM = "Sapling admin alerts"
+
+
+def ops_alert(
+    title: str, points: list[tuple[str, str]], *, dashboard_url: str, unsubscribe_url: str,
+) -> tuple[str, str, str]:
+    """An operational alert to admins (services/spend_alerts.py). `points` are
+    (label, detail) lines of aggregate numbers only — never student content.
+    `unsubscribe_url` is the ops-scoped link (email_service.unsubscribe_url
+    with scope `ops_alert`): it stops these alerts only, and no other
+    unsubscribe stops them."""
+    subject = f"[Sapling alert] {title}"
+    rows = [
+        _row(_headline(title)),
+        _spacer(22),
+        _row(_points(points)),
+        _row(_button(dashboard_url, "Open admin analytics")),
+    ]
+    html = _layout(
+        title=subject, preheader=title[:140], rows=rows, reason=_OPS_REASON,
+        unsubscribe_url=unsubscribe_url, unsubscribe_from=_OPS_UNSUBSCRIBE_FROM,
+    )
+    text = _text(
+        title,
+        "\n".join(f"- {label}: {detail}" for label, detail in points),
+        f"Admin analytics: {dashboard_url}",
+        unsubscribe_url=unsubscribe_url, reason=_OPS_REASON, unsubscribe_from=_OPS_UNSUBSCRIBE_FROM,
+    )
+    return subject, html, text

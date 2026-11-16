@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-30
 **Status:** Approved design, pending spec review → implementation plan
-**Companion audit:** `docs/frontend-rhythm-audit.md` (+ `.html`)
+**Companion audit:** `docs/audits/frontend-rhythm-audit.md` (+ `.html`)
 **Scope owner decisions:** shared base + marketing layer · token layer + green collapse · add `(public)` route group · alias-then-migrate
 
 ---

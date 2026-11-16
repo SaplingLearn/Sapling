@@ -49,8 +49,12 @@ def check(name: str, ok: bool, detail: str = "") -> None:
 
 
 def current_term_id() -> str | None:
-    from services.academics import current_term
-    t = current_term()
+    """The term the fixture lives in. The fixture user's enrollment comes from
+    the onboarding journey, which enrolls into `academics.onboarding_term`:
+    the current term while one runs, the next one in a gap between terms. The
+    offering, the notes and the gradebook checks all follow that one term."""
+    from services.academics import onboarding_term
+    t = onboarding_term()
     return t["id"] if t else None
 
 
@@ -98,7 +102,11 @@ def teardown_fixture() -> None:
         ("feedback", {"user_id": f"eq.{USER_ID}"}),
         ("user_profiles", {"user_id": f"eq.{USER_ID}"}),
         ("users", {"id": f"eq.{USER_ID}"}),
-        ("course_offerings", {"id": f"eq.{OFFERING_ID}"}),
+        # Every offering of the throwaway course, not only the fixture's: in a
+        # gap between terms the fixture lives in the next term (see
+        # current_term_id) while writers that default to current_term() create
+        # one in the term that just ended.
+        ("course_offerings", {"course_id": f"eq.{COURSE_ID}"}),
         ("courses", {"id": f"eq.{COURSE_ID}"}),
         ("schools", {"id": f"eq.{SCHOOL_ID}"}),
     )

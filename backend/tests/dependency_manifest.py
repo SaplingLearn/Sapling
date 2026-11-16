@@ -1,4 +1,5 @@
-"""Shared readers for requirements.txt / requirements.lock / the Dockerfile.
+"""Shared readers for requirements.txt / requirements-worker.txt /
+requirements.lock / the Dockerfile.
 
 Used by tests/test_requirements_lock.py (#163) and
 tests/test_docker_lock_install.py (#694), so the two guards agree on what the
@@ -26,10 +27,10 @@ def read(name: str) -> str:
         return fh.read()
 
 
-def requirement_lines() -> list[str]:
-    """requirements.txt lines with comments and blanks stripped."""
+def requirement_lines(name: str = "requirements.txt") -> list[str]:
+    """`name`'s requirement lines with comments and blanks stripped."""
     out = []
-    for raw in read("requirements.txt").splitlines():
+    for raw in read(name).splitlines():
         line = raw.split("#", 1)[0].strip()
         if line:
             out.append(line)
@@ -37,7 +38,17 @@ def requirement_lines() -> list[str]:
 
 
 def requirements() -> list[Requirement]:
+    """requirements.txt: the API image's set, which requirements.lock pins."""
     return [Requirement(line) for line in requirement_lines()]
+
+
+#: The worker-only extras (#116): the OCR stack, installed on top of
+#: requirements.txt in the Dockerfile's `heavy` stage, never in the `api` image.
+WORKER_REQUIREMENTS = "requirements-worker.txt"
+
+
+def worker_requirements() -> list[Requirement]:
+    return [Requirement(line) for line in requirement_lines(WORKER_REQUIREMENTS)]
 
 
 def lock_pins() -> dict[str, LockedPin]:

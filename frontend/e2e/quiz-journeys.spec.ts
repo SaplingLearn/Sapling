@@ -476,8 +476,8 @@ test("ask-without-abandoning: the tutor opens over the question, streams, closes
 
   // …and the attempt finishes normally from there.
   await page.getByTestId("quiz-next").click();
-  await answerAsYouGo(page, 2, CORRECT_LABELS[1], "Correct.");
-  await answerAsYouGo(page, 3, CORRECT_LABELS[2], "Correct.");
+  await answerAsYouGo(page, 2, CORRECT_LABELS[1], "Correct");
+  await answerAsYouGo(page, 3, CORRECT_LABELS[2], "Correct");
   await expectResults(page);
   await expect(page.getByTestId("quiz-results-score")).toHaveText(
     `${QUIZ_LENGTH - 1} of ${QUIZ_LENGTH} correct`,
@@ -710,34 +710,16 @@ test("entry points: each link shape arrives in the state it promised", async ({ 
   // (e) Plain nav — no target, so the ranked primary is the offer. The name is
   //     derived from the database through the same rule the client mirrors.
   await openQuizHome(page, "/quiz");
-  await expect(page.getByTestId("quiz-home")).toContainText("Ready for you");
   await expect(page.getByTestId("quiz-proposal")).toContainText(ranking.primary.concept_name);
 });
 
 // ── 6. Exits ───────────────────────────────────────────────────────────────
 //
-// The other three destinations ride on the runs that already reach them (one
+// The three destinations ride on the runs that already reach them (one
 // journey per destination keeps the lane short): "Back to your tree" on
 // leave-and-return, "Back to dashboard" on ask-without-abandoning, and
-// "Done → /quiz" on the keyboard pass. Cancel is the one that needs no quiz.
-
-test("exits: Cancel honours the entry source, and falls back to the dashboard without one", async ({
-  page,
-}) => {
-  test.setTimeout(120_000);
-  await preAckDisclaimer(page);
-
-  await openQuizHome(page, TREE_ENTRY);
-  await page.getByTestId("quiz-cancel").click();
-  await expectLocation(page, TREE_RETURN);
-
-  // Cancelling out of a quiz you never started, with nowhere to go back to,
-  // lands on the dashboard — never on the tree you didn't come from (§5 B1.8),
-  // and never on /learn, which is where every pre-#537 exit went.
-  await openQuizHome(page, "/quiz");
-  await page.getByTestId("quiz-cancel").click();
-  await expectLocation(page, "/dashboard");
-});
+// "Done → /quiz" on the keyboard pass. Quiz home has no Cancel link since
+// #849 — the sidebar is the way out — so it has no exit journey of its own.
 
 // ── 7. Keyboard only ───────────────────────────────────────────────────────
 

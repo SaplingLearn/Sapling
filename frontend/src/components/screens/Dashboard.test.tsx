@@ -18,7 +18,7 @@
 
 import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, cleanup, fireEvent, waitFor, within, act } from "@testing-library/react";
+import { render, screen, cleanup, waitFor, within, act } from "@testing-library/react";
 import type { EnrolledCourse } from "@/lib/api";
 import { ACTIVE_SEMESTER_STORAGE_KEY } from "@/lib/useActiveSemester";
 
@@ -154,19 +154,21 @@ describe("Dashboard course list by active semester", () => {
     expect(getGraph).not.toHaveBeenCalledWith("u1", undefined);
   });
 
-  it("shows the courses-key empty state when the active semester has no courses", async () => {
-    // Sidebar layout renders the CoursesKey overlay instead of the legacy panel.
+  it("shows the course-list empty state when the active semester has no courses", async () => {
+    // Sidebar layout: the course list sits in the mastery card of the right column.
     layoutState.pref = "sidebar";
     // A stored semester none of the enrolled courses belong to → courseProgress
-    // is empty, but courses exist, so the key must render its empty state
-    // rather than disappearing entirely.
+    // is empty, but courses exist, so the course list says so (and keeps its
+    // "Courses · Manage →" link to switch semester) while the graph key, with
+    // nothing to key, stays away.
     window.localStorage.setItem(ACTIVE_SEMESTER_STORAGE_KEY, "Summer 2026");
 
     render(<Dashboard />);
 
-    const toggle = await screen.findByTestId("dashboard-courses-key-toggle");
-    fireEvent.click(toggle);
-    expect(screen.getByText("Nothing enrolled this semester.")).toBeInTheDocument();
+    const card = await screen.findByTestId("dashboard-mastery");
+    await waitFor(() => expect(within(card).getByText("Nothing enrolled this semester.")).toBeInTheDocument());
+    expect(within(card).getByTestId("dashboard-courses-manage")).toBeInTheDocument();
+    expect(screen.queryByTestId("dashboard-courses-key")).toBeNull();
   });
 });
 

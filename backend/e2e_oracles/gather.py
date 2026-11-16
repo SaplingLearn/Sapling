@@ -211,12 +211,23 @@ _CIPHERTEXT_MANIFEST: tuple[tuple[str, str, str], ...] = (
     ("flashcards", "id", "front"),
     ("flashcards", "id", "back"),
     ("study_guides", "id", "content"),
+    # NULL until a guide is updated/regenerated or a check is answered; the
+    # sample below skips NULLs.
+    ("study_guides", "id", "previous_content"),
+    ("study_guides", "id", "answers"),
     ("room_summaries", "room_id", "summary"),
     # ADR 0025 / #484. UNIFORM across the table — document and catalog rows
     # alike — which is exactly what makes it assertable here: "chunk_text is
     # always ciphertext" is one invariant, while "ciphertext unless
     # category='catalog'" is a rule this oracle could not express.
     ("course_chunks", "id", "chunk_text"),
+    # #116 queued uploads. `file_data` (raw file bytes, encrypt_bytes) is not
+    # listed: it is binary, so the text decrypt-and-compare judge cannot read
+    # it, and it is NULL once an upload finishes.
+    ("document_uploads", "id", "result"),
+    # #117 a pending tutor session's greeting (the messages.content format);
+    # NULL on a tombstone.
+    ("tutor_pending_sessions", "session_id", "assistant_reply"),
 )
 
 

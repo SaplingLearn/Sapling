@@ -16,7 +16,7 @@
 - **No new npm dependency.** Rendering is inline SVG; framer-motion is not used by the new component.
 - All randomness and clock reads go through `@/lib/testMode` (`random()`, `now()`), never `Math.random()` / `Date.now()` — the E2E lane sets `NEXT_PUBLIC_TEST_MODE=1` and requires a deterministic DOM.
 - Under `prefers-reduced-motion: reduce` **or** `IS_TEST_MODE`, the graph parks on a **complete, laid-out, readable** frame — never blank, never mid-assembly.
-- New CSS lives inside the `.landing-page` scope in `frontend/src/app/globals.css`. Do not redefine design tokens outside that scope (`docs/frontend-rhythm-audit.md` — this is the documented cause of the pre-auth/app-shell drift bugs).
+- New CSS lives inside the `.landing-page` scope in `frontend/src/app/globals.css`. Do not redefine design tokens outside that scope (`docs/audits/frontend-rhythm-audit.md` — this is the documented cause of the pre-auth/app-shell drift bugs).
 - Any `<button>`/`<input>`/`<textarea>` in a registered E2E surface file must carry `data-testid` (`frontend/eslint.config.mjs` `no-restricted-syntax` block; see `docs/frontend-testids.md` §"Adding a surface").
 - `frontend/e2e/public-seo.spec.ts` must stay green — it is the guard that the landing page still ships SSR'd copy, social cards, and a canonical URL.
 - Run frontend checks from `frontend/`: `npm run lint`, `npx tsc --noEmit`, `npx vitest run`.

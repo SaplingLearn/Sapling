@@ -1,594 +1,456 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+/**
+ * First-run onboarding, ported from the Claude Design handoff ("Sapling
+ * Onboarding", Paper theme). Six chapters over nine screens: name, birthday →
+ * school → year + courses → two-page tour → Terms + Privacy → connect
+ * accounts, over an animated node graph that grows a cluster per finished
+ * chapter. Ends with the "Welcome to Sapling" outro and a white hand-off into
+ * the app.
+ *
+ * Onboarding needs an account (owner decision, 2026-11-12: sign in first).
+ * The middleware sends a signed-out visitor through sign-in and an onboarded
+ * student to /dashboard; the app shell sends a student who hasn't finished
+ * here. Kept from before: the per-account draft (#757, now expiring), the
+ * local-seed hold redirect (#715), the real catalog search and profile save.
+ *
+ * The pieces live in components/onboarding/: the screens, the draft, the
+ * save and its failures (profile.ts), and the intro/outro (useStage.ts).
+ */
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useUser } from "@/context/UserContext";
 import { useToast } from "@/components/ToastProvider";
-import { CustomSelect } from "@/components/CustomSelect";
-import { Icon } from "@/components/Icon";
-import {
-  onboardingCoursesSearch,
-  submitOnboardingProfile,
-  type OnboardingCourse,
-  type OnboardingProfilePayload,
-} from "@/lib/api";
 import { onboardingRedirect } from "@/lib/localSeed";
-import { useLatestRequest } from "@/lib/useLatestRequest";
-import { statusOf } from "@/lib/errorMessage";
+import { PRIVACY, TERMS } from "@/lib/legal/documents";
+import { SAPLING_WORDMARK_SRC } from "@/components/SaplingWordmark";
+import { OnboardingGraph } from "@/components/onboarding/OnboardingGraph";
+import type { GraphPhase, GraphZoom } from "@/components/onboarding/chapterLayer";
+import { ageOn, isMinor, isUnder13, rememberUnder13, under13Remembered } from "@/components/onboarding/age";
+import { CONNECTIONS, LAST, SCREENS, screenIndex, type ConnKey, type ScreenId } from "@/components/onboarding/flow";
+import {
+  EMPTY_DRAFT, advance, canAdvance, finished, type Draft,
+} from "@/components/onboarding/draft";
+import { useOnboardingDraft } from "@/components/onboarding/useOnboardingDraft";
+import { useStage } from "@/components/onboarding/useStage";
+import { useHiddenConnections, visibleChoices } from "@/components/onboarding/useHiddenConnections";
+import { classifySaveError, handoffFor, saveProfile, type Handoff, type SaveFailure } from "@/components/onboarding/profile";
+import {
+  BirthdayScreen, ConnectScreen, FeaturesScreen, NameScreen, SchoolScreen, TourScreen, type Dob,
+} from "@/components/onboarding/screens";
+import { CourseStep } from "@/components/onboarding/CourseStep";
+import { LegalStep } from "@/components/onboarding/LegalStep";
+import { ConsentSheet } from "@/components/onboarding/ConsentSheet";
+import { Actions, IntroMoment, KeyHints, OutroMoment, Progress, TopBar, Whiteout } from "@/components/onboarding/chrome";
+import "@/components/onboarding/onboarding.css";
 
-type LearningStyleId = OnboardingProfilePayload["learning_style"];
+/** Where a signed-out visitor goes: the landing, with the sign-in box open. */
+const SIGN_IN_ROUTE = "/?signin=1";
 
-const YEARS = ["freshman", "sophomore", "junior", "senior", "graduate", "other"] as const;
+const PRIMARY_LABEL: Partial<Record<ScreenId, string>> = { features: "Read the terms", connect: "Finish" };
+const BIRTHDAY = screenIndex("birthday");
 
-// Real Icon names (from components/Icon.tsx), not decorative dingbats.
-// Dingbats look clever but carry no shared meaning; icons do.
-const LEARNING_STYLES: { id: LearningStyleId; title: string; description: string; icon: string }[] = [
-  { id: "visual",   title: "Visual",          description: "I learn best through diagrams, graphs, and visuals.",             icon: "tree" },
-  { id: "reading",  title: "Reading/Writing", description: "I prefer text — notes, explanations, and written practice.",     icon: "book" },
-  { id: "auditory", title: "Auditory",        description: "I absorb material best when I hear or discuss it.",              icon: "users" },
-  { id: "hands-on", title: "Hands-on",        description: "I learn by doing — exercises, labs, and practical application.", icon: "flask" },
-  { id: "mixed",    title: "A mix of all",    description: "I learn best through a blend of modes.",                          icon: "sparkle" },
-];
+/** A save that sent the student back to fix something, shown on that screen. */
+type NoticeKind = "courses" | "legal";
+const NOTICE_SCREEN: Record<NoticeKind, ScreenId> = { courses: "courses", legal: "terms" };
 
-/** The pre-#757 key, shared by every account on the browser: one student's
- * half-finished draft prefilled the next one's form. Never read; dropped. */
-const LEGACY_DRAFT_KEY = "sapling_onboarding_draft";
-
-/** The draft lives per account (#757). */
-export function onboardingDraftKey(userId: string): string {
-  return `${LEGACY_DRAFT_KEY}:${userId}`;
+function NoticeText({ kind }: { kind: NoticeKind }) {
+  if (kind === "courses") {
+    return (
+      <>
+        None of the courses you picked are in the catalog any more. Search again, or choose
+        &ldquo;My courses aren&apos;t listed&rdquo;.
+      </>
+    );
+  }
+  return (
+    <>
+      The Terms of Service or Privacy Policy changed after this page opened. Reload to read the
+      current version, then agree again.{" "}
+      <button data-testid="onboarding-legal-reload" className="ob-textlink" onClick={() => window.location.reload()}>
+        Reload
+      </button>
+    </>
+  );
 }
 
-interface Draft {
-  first_name: string;
-  last_name: string;
-  school: string;
-  year: string;
-  majors: string[];
-  minors: string[];
-  course_ids: string[];
-  course_cache: OnboardingCourse[];
-  learning_style: LearningStyleId | null;
-  step: number;
-}
-
-const EMPTY_DRAFT: Draft = {
-  first_name: "",
-  last_name: "",
-  school: "Boston University",
-  year: "",
-  majors: [],
-  minors: [],
-  course_ids: [],
-  course_cache: [],
-  learning_style: null,
-  step: 0,
-};
-
-function loadDraft(userId: string): Draft {
-  if (typeof window === "undefined") return EMPTY_DRAFT;
-  try {
-    localStorage.removeItem(LEGACY_DRAFT_KEY);
-    const raw = localStorage.getItem(onboardingDraftKey(userId));
-    if (!raw) return EMPTY_DRAFT;
-    const parsed = JSON.parse(raw);
-    return { ...EMPTY_DRAFT, ...parsed };
-  } catch {
-    return EMPTY_DRAFT;
+function ScreenBody({
+  draft: d, patch, blocked, confirming, minor, notice, hidden,
+  onDob, onConfirmUnder13, onChangeBirthday, onSignOut, onConnect,
+}: {
+  draft: Draft;
+  patch: (p: Partial<Draft>) => void;
+  blocked: boolean;
+  confirming: boolean;
+  minor: boolean;
+  notice: NoticeKind | null;
+  hidden: Set<ConnKey>;
+  onDob: (dob: Dob) => void;
+  onConfirmUnder13: () => void;
+  onChangeBirthday: () => void;
+  onSignOut: () => void;
+  onConnect: (key: ConnKey) => void;
+}) {
+  const id = SCREENS[d.screen].id;
+  const noticeHere = notice && NOTICE_SCREEN[notice] === id ? <NoticeText kind={notice} /> : undefined;
+  switch (id) {
+    case "name":
+      return (
+        <NameScreen
+          name={d.name} lastName={d.lastName}
+          onName={v => patch({ name: v })} onLastName={v => patch({ lastName: v })}
+        />
+      );
+    case "birthday":
+      return (
+        <BirthdayScreen
+          dob={{ m: d.dobM, d: d.dobD, y: d.dobY }} blocked={blocked} confirming={confirming} minor={minor}
+          onDob={onDob} onConfirmUnder13={onConfirmUnder13} onChangeBirthday={onChangeBirthday} onSignOut={onSignOut}
+        />
+      );
+    case "school":
+      return <SchoolScreen school={d.school} onSchool={v => patch({ school: v })} onSignOut={onSignOut} />;
+    case "courses":
+      return (
+        <CourseStep
+          year={d.year}
+          courses={d.courses}
+          later={d.coursesLater}
+          notice={noticeHere}
+          onYear={v => patch({ year: v })}
+          onCourses={v => patch({ courses: v, coursesLater: false })}
+          onLater={() => patch({ courses: [], coursesLater: !d.coursesLater })}
+        />
+      );
+    case "tour":
+      return <TourScreen />;
+    case "features":
+      return <FeaturesScreen />;
+    case "terms":
+      return (
+        <LegalStep
+          key="terms" doc={TERMS} reachedEnd={d.termsEnd} agreed={d.termsOk} notice={noticeHere}
+          onReachEnd={() => patch({ termsEnd: true })}
+          onAgree={v => patch({ termsOk: v })}
+        />
+      );
+    case "privacy":
+      return (
+        <LegalStep
+          key="privacy" doc={PRIVACY} reachedEnd={d.privEnd} agreed={d.privOk}
+          onReachEnd={() => patch({ privEnd: true })}
+          onAgree={v => patch({ privOk: v })}
+        />
+      );
+    case "connect":
+      return (
+        <ConnectScreen
+          conn={d.conn}
+          hidden={hidden}
+          onConnect={onConnect}
+          onRemove={key => patch({ conn: { ...d.conn, [key]: false } })}
+        />
+      );
   }
 }
 
-const STEP_COUNT = 6;
+function scrollClass(id: ScreenId): string {
+  const wide = id === "features" ? " ob-scroll--wide" : "";
+  const legal = id === "terms" || id === "privacy" ? " ob-scroll--legal" : "";
+  return `ob-scroll${wide}${legal}`;
+}
+
+function scrimOpacity(phase: GraphPhase, zoom: GraphZoom): number {
+  return phase === "idle" || (phase === "out" && zoom === "rest") ? 0 : 1;
+}
+
+/** #715: on a local backend this account is getting (or has) the sample
+ * dataset; the hold screen waits for it and moves on to the dashboard. */
+function useLocalSeedRedirect(replace: (route: string) => void) {
+  useEffect(() => {
+    let cancelled = false;
+    void onboardingRedirect().then(route => { if (route && !cancelled) replace(route); });
+    return () => { cancelled = true; };
+  }, [replace]);
+}
+
+/** UI scale: shrinks on small screens, grows only slightly on large ones. */
+function useUiScale(rootRef: React.RefObject<HTMLDivElement | null>) {
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el) return;
+    const apply = () => {
+      const z = Math.max(0.7, Math.min(1.15, Math.min(window.innerWidth / 1440, window.innerHeight / 900)));
+      el.style.setProperty("--uiz", String(z));
+    };
+    apply();
+    window.addEventListener("resize", apply);
+    return () => window.removeEventListener("resize", apply);
+  }, [rootRef]);
+}
+
+/** Enter is Next and Esc is Back, unless a control already used the key. */
+function useOnboardingKeys(next: () => void, back: () => void, sheetOpen: boolean) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      // An open dropdown's Enter or Esc, the course search's Enter, a dialog's Esc.
+      if (e.defaultPrevented) return;
+      if (e.key === "Enter") {
+        const tag = (e.target as HTMLElement | null)?.tagName || "";
+        if (/^(BUTTON|A|SELECT|TEXTAREA)$/.test(tag) || sheetOpen) return;
+        e.preventDefault();
+        next();
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        back();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [next, back, sheetOpen]);
+}
 
 export function Onboarding() {
   const router = useRouter();
-  const { userId, userName, userReady, isAuthenticated, signOut } = useUser();
+  const { userId, userName, userReady, isAuthenticated, signOut, refreshProfile, markOnboarded } = useUser();
   const toast = useToast();
+  const { phase, zoom, introText, outroText, whiteout, enter, outro, abort } = useStage();
+  const [ageGate, setAgeGate] = useState(false);
+  // A birthday under 13, picked and not yet confirmed: kept here, never in the draft.
+  const [under13Dob, setUnder13Dob] = useState<Dob | null>(null);
+  const { draft, hydrated, setDraft, patch, discard } = useOnboardingDraft(userId, userName, resumed => {
+    setAgeGate(under13Remembered(userId));
+    setUnder13Dob(null);
+    enter(resumed);
+  });
+  const [consent, setConsent] = useState<ConnKey | null>(null);
+  const [notice, setNotice] = useState<NoticeKind | null>(null);
+  const [settingUp, setSettingUp] = useState(false);
+  // Accounts whose feature is switched off for this student aren't offered.
+  const { hidden, current: hiddenNow } = useHiddenConnections(userId);
+  const leaving = useRef(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
 
-  const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
-  // Whose draft is in state. Saving only when it matches the signed-in user
-  // keeps one account's answers from being written under another's key in
-  // the render between a user switch and the re-hydrate.
-  const [hydratedFor, setHydratedFor] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
-
-  // #715: on a local backend this account is getting (or has) the sample
-  // dataset; the hold screen waits for it and moves on to the dashboard.
+  useLocalSeedRedirect(router.replace);
+  useUiScale(rootRef);
   useEffect(() => {
-    let cancelled = false;
-    void onboardingRedirect().then(route => { if (route && !cancelled) router.replace(route); });
-    return () => { cancelled = true; };
-  }, [router]);
-
-  useEffect(() => {
-    if (!userId) return;
-    const d = loadDraft(userId);
-    const [first, ...rest] = (userName || "").split(" ");
-    setDraft({
-      ...d,
-      first_name: d.first_name || first || "",
-      last_name: d.last_name || rest.join(" ") || "",
-    });
-    setHydratedFor(userId);
-  }, [userId, userName]);
-
-  useEffect(() => {
-    if (!hydratedFor || hydratedFor !== userId) return;
-    try { localStorage.setItem(onboardingDraftKey(hydratedFor), JSON.stringify(draft)); } catch {}
-  }, [draft, hydratedFor, userId]);
-
-  useEffect(() => {
-    if (!userReady) return;
-    if (!isAuthenticated) router.replace("/");
+    if (userReady && !isAuthenticated && !leaving.current) router.replace(SIGN_IN_ROUTE);
   }, [userReady, isAuthenticated, router]);
 
-  const setField = useCallback(<K extends keyof Draft>(key: K, value: Draft[K]) => {
-    setDraft(prev => ({ ...prev, [key]: value }));
-  }, []);
+  const screen = SCREENS[draft.screen];
+  const age = ageOn(new Date(), draft.dobM, draft.dobD, draft.dobY);
+  const blocked = ageGate || isUnder13(age);
+  // Not before the signed-in account's own draft is in: after a switch of
+  // account nothing can be answered or finished until it is.
+  const active = phase === "active" && hydrated;
+  // Not while an under-13 birthday waits for its answer: the draft still
+  // holds the date picked before it.
+  const canNext = active && under13Dob === null && canAdvance(screen.id, draft, age, blocked);
+
+  // Each screen's heading takes focus as it arrives (and reads out the notice
+  // it names), in a layout effect so nothing typed right after is lost.
+  useLayoutEffect(() => {
+    if (!active) return;
+    contentRef.current?.querySelector<HTMLElement>("[data-screen-heading]")?.focus({ preventScroll: true });
+  }, [active, draft.screen]);
+
+  const go = useCallback((h: Handoff) => {
+    // The calendar consent flow is a backend redirect: a full page load.
+    if ("page" in h) window.location.assign(h.page);
+    else router.replace(h.route);
+  }, [router]);
+
+  const recover = useCallback((failure: SaveFailure) => {
+    if (failure.kind === "already") {
+      // #757: finished in another tab or a stale page; the server keeps the
+      // profile it has. Nothing to save, nothing to wait for.
+      discard();
+      // The greeting and the nav show the name that was saved there.
+      void refreshProfile();
+      markOnboarded();
+      toast.info("Your account was already set up.");
+      go({ route: "/dashboard" });
+      return;
+    }
+    if (failure.kind === "not_approved") {
+      go({ route: "/pending" });
+      return;
+    }
+    abort();
+    setSettingUp(false);
+    if (failure.kind === "courses") {
+      patch({ screen: screenIndex("courses"), courses: [], coursesLater: false });
+      setNotice("courses");
+    } else if (failure.kind === "legal") {
+      patch({ screen: screenIndex("terms"), termsEnd: false, termsOk: false, privEnd: false, privOk: false });
+      setNotice("legal");
+    } else {
+      toast.error(failure.message);
+    }
+  }, [abort, discard, go, markOnboarded, patch, refreshProfile, toast]);
+
+  // Under 13: the birthday screen says so, and nothing the student entered
+  // is kept, the birthday included.
+  const blockUnder13 = useCallback(() => {
+    setAgeGate(true);
+    setDraft({ ...EMPTY_DRAFT, screen: BIRTHDAY });
+  }, [setDraft]);
+
+  // Checked again at Finish: another tab may have confirmed an under-13
+  // birthday for this account since.
+  const refuseFinish = useCallback((): boolean => {
+    if (!under13Remembered(userId)) return false;
+    blockUnder13();
+    return true;
+  }, [userId, blockUnder13]);
+
+  const finish = useCallback((skipConnections: boolean) => {
+    // Not `active` while the draft in state is another account's.
+    if (!userId || !active) return;
+    if (refuseFinish()) return;
+    // "Skip for now" finishes with nothing chosen.
+    const final = finished(skipConnections ? { ...draft, conn: {} } : draft);
+    setDraft(final);
+    setNotice(null);
+    setSettingUp(true);
+    const saved = saveProfile({ userId, draft: final, under18: isMinor(age) }).then(
+      () => {
+        discard();
+        // The greeting and the nav show the name just chosen.
+        void refreshProfile();
+        return true;
+      },
+      (err: unknown) => {
+        recover(classifySaveError(err));
+        return false;
+      },
+    );
+    outro(() => {
+      void saved.then(ok => {
+        if (!ok) return;
+        // Before leaving: the shell would otherwise send a still-"new" student back here.
+        markOnboarded();
+        // A choice whose feature is switched off (since it was made) is dropped.
+        go(handoffFor(userId, visibleChoices(final.conn, hiddenNow())));
+      });
+    });
+  }, [userId, active, refuseFinish, draft, age, setDraft, discard, refreshProfile, recover, outro, markOnboarded, hiddenNow, go]);
 
   const next = useCallback(() => {
-    setDraft(prev => ({ ...prev, step: Math.min(prev.step + 1, STEP_COUNT - 1) }));
-  }, []);
+    if (!canNext) return;
+    if (draft.screen === LAST) {
+      finish(false);
+      return;
+    }
+    setNotice(null);
+    setDraft(advance);
+  }, [canNext, draft.screen, finish, setDraft]);
 
   const back = useCallback(() => {
-    setDraft(prev => ({ ...prev, step: Math.max(prev.step - 1, 0) }));
-  }, []);
-
-  const close = useCallback(async () => {
-    await signOut();
-    router.replace("/");
-  }, [signOut, router]);
-
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") close();
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [close]);
-
-  const canContinue = useMemo(() => {
-    switch (draft.step) {
-      case 0: return true;
-      case 1: return draft.first_name.trim().length > 0 && draft.last_name.trim().length > 0;
-      case 2: return draft.school.trim().length > 0 && draft.year.length > 0;
-      case 3: return draft.majors.length > 0;
-      case 4: return draft.course_ids.length > 0;
-      case 5: return draft.learning_style !== null;
-      default: return false;
+    if (consent) {
+      setConsent(null);
+      return;
     }
-  }, [draft]);
+    if (!active || draft.screen === 0) return;
+    setNotice(null);
+    patch({ screen: draft.screen - 1 });
+  }, [consent, active, draft.screen, patch]);
 
-  const finish = useCallback(async () => {
-    if (!userId || !draft.learning_style) return;
-    setSubmitting(true);
-    try {
-      await submitOnboardingProfile({
-        user_id: userId,
-        first_name: draft.first_name.trim(),
-        last_name: draft.last_name.trim(),
-        year: draft.year,
-        majors: draft.majors,
-        minors: draft.minors,
-        course_ids: draft.course_ids,
-        learning_style: draft.learning_style,
-      });
-      try { localStorage.removeItem(onboardingDraftKey(userId)); } catch {}
-      toast.success("Welcome to Sapling!");
-      router.replace("/dashboard");
-    } catch (err) {
-      if (statusOf(err) === 409) {
-        // #757: this account already finished onboarding (another tab, or a
-        // stale page); the server keeps the profile it has. Nothing to save.
-        try { localStorage.removeItem(onboardingDraftKey(userId)); } catch {}
-        router.replace("/dashboard");
-        return;
-      }
-      toast.error(err instanceof Error ? err.message : "Failed to save profile. Please try again.");
-    } finally {
-      setSubmitting(false);
+  const leave = useCallback(() => {
+    leaving.current = true;
+    discard();
+    void signOut().catch(() => {}).finally(() => router.replace("/"));
+  }, [discard, signOut, router]);
+
+  const onDob = useCallback((dob: Dob) => {
+    if (isUnder13(ageOn(new Date(), dob.m, dob.d, dob.y))) {
+      // Asked first: a slipped year is fixed here, not blocked for a day.
+      setUnder13Dob(dob);
+      return;
     }
-  }, [userId, draft, toast, router]);
+    patch({ dobM: dob.m, dobD: dob.d, dobY: dob.y });
+  }, [patch]);
+
+  const confirmUnder13 = useCallback(() => {
+    // Remembered for this account for a day (age.ts).
+    rememberUnder13(userId);
+    setUnder13Dob(null);
+    blockUnder13();
+  }, [userId, blockUnder13]);
+
+  // Back to the date fields with the month and day kept and the year to pick again.
+  const changeBirthday = useCallback(() => {
+    if (under13Dob) patch({ dobM: under13Dob.m, dobD: under13Dob.d, dobY: "" });
+    setUnder13Dob(null);
+  }, [under13Dob, patch]);
+
+  useOnboardingKeys(next, back, consent !== null);
+
+  const consentDef = CONNECTIONS.find(c => c.key === consent);
 
   return (
-    <div
-      data-testid="onboarding-gate"
-      style={{
-        minHeight: "100dvh",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        background: "var(--bg)",
-        padding: "var(--pad-xl) var(--pad-lg)",
-      }}
-    >
+    <div ref={rootRef} className="ob-root" data-testid="onboarding-gate">
+      <div className="ob-beam" />
+      <OnboardingGraph phase={phase} zoom={zoom} activeChapter={screen.ch} completed={draft.done} />
+      <div className="ob-scrim" aria-hidden="true" style={{ opacity: scrimOpacity(phase, zoom) }} />
+
+      <div className="ob-logo">
+        <img src={SAPLING_WORDMARK_SRC} alt="Sapling" />
+      </div>
+      <TopBar active={active} onSignOut={leave} />
+
       <div
-        className="card"
-        style={{
-          position: "relative",
-          width: "min(560px, 100%)",
-          padding: "var(--pad-xl) var(--pad-lg)",
-        }}
+        ref={contentRef}
+        className={`ob-content${active ? "" : " ob-content--hidden"}`}
+        aria-hidden={!active}
+        inert={!active || consentDef !== undefined}
       >
-        <button
-          data-testid="onboarding-close"
-          className="btn btn--ghost btn--sm"
-          aria-label="Close onboarding"
-          onClick={close}
-          style={{ position: "absolute", top: 12, right: 12 }}
-        >
-          ×
-        </button>
-
-        <div style={{ display: "flex", gap: 6, justifyContent: "center", marginBottom: 24 }}>
-          {Array.from({ length: STEP_COUNT }).map((_, i) => (
-            <div
-              key={i}
-              style={{
-                width: i === draft.step ? 28 : 8,
-                height: 6,
-                borderRadius: "var(--r-full)",
-                background: i <= draft.step ? "var(--accent)" : "var(--bg-soft)",
-                transition: "all var(--dur) var(--ease)",
-              }}
+        <div className={scrollClass(screen.id)}>
+          <div className="ob-zoom">
+            <ScreenBody
+              draft={draft}
+              patch={patch}
+              blocked={blocked}
+              confirming={under13Dob !== null}
+              minor={isMinor(age)}
+              notice={notice}
+              hidden={hidden}
+              onDob={onDob}
+              onConfirmUnder13={confirmUnder13}
+              onChangeBirthday={changeBirthday}
+              onSignOut={leave}
+              onConnect={setConsent}
             />
-          ))}
+          </div>
         </div>
-
-        {draft.step === 0 && <StepWelcome />}
-        {draft.step === 1 && (
-          <StepName
-            firstName={draft.first_name}
-            lastName={draft.last_name}
-            onFirst={v => setField("first_name", v)}
-            onLast={v => setField("last_name", v)}
-          />
-        )}
-        {draft.step === 2 && (
-          <StepSchool
-            school={draft.school}
-            year={draft.year}
-            onSchool={v => setField("school", v)}
-            onYear={v => setField("year", v)}
-          />
-        )}
-        {draft.step === 3 && (
-          <StepAcademics
-            majors={draft.majors}
-            minors={draft.minors}
-            onMajors={v => setField("majors", v)}
-            onMinors={v => setField("minors", v)}
-          />
-        )}
-        {draft.step === 4 && (
-          <StepCourses
-            selectedIds={draft.course_ids}
-            selectedCache={draft.course_cache}
-            onSelect={(ids, cache) => setDraft(prev => ({ ...prev, course_ids: ids, course_cache: cache }))}
-          />
-        )}
-        {draft.step === 5 && (
-          <StepLearningStyle
-            value={draft.learning_style}
-            onChange={v => setField("learning_style", v)}
-          />
-        )}
-
-        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 32 }}>
-          {draft.step > 0 && (
-            <button data-testid="onboarding-back" className="btn" onClick={back} disabled={submitting}>
-              Back
-            </button>
-          )}
-          <button
-            data-testid="onboarding-continue"
-            className="btn btn--primary"
-            disabled={!canContinue || submitting}
-            onClick={draft.step === STEP_COUNT - 1 ? finish : next}
-            style={{ minWidth: 130, justifyContent: "center" }}
-          >
-            {submitting ? "Saving…" : draft.step === STEP_COUNT - 1 ? "Enter Sapling →" : "Continue"}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function StepWelcome() {
-  return (
-    <div style={{ textAlign: "center" }}>
-      <div className="h-serif" style={{ fontSize: "var(--fs-5xl)", fontWeight: 500, marginBottom: 10 }}>
-        Welcome to Sapling
-      </div>
-      <div style={{ fontSize: "var(--fs-base)", color: "var(--text-dim)", lineHeight: 1.55, maxWidth: 440, margin: "0 auto" }}>
-        Let&apos;s set up your learning space. A few quick questions so the AI tutor can meet you where you are.
-      </div>
-    </div>
-  );
-}
-
-function FieldLabel({ children }: { children: React.ReactNode }) {
-  return <div className="label-micro" style={{ marginBottom: 6 }}>{children}</div>;
-}
-
-function TextInput(props: React.InputHTMLAttributes<HTMLInputElement>) {
-  const { style, ...rest } = props;
-  return (
-    <input
-      data-testid="onboarding-input"
-      {...rest}
-      style={{
-        width: "100%",
-        padding: "var(--pad-sm) var(--pad-md)",
-        fontSize: "var(--fs-base)",
-        border: "1px solid var(--border)",
-        borderRadius: "var(--r-sm)",
-        background: "var(--bg-input)",
-        color: "var(--text)",
-        ...style,
-      }}
-    />
-  );
-}
-
-function StepName({ firstName, lastName, onFirst, onLast }: {
-  firstName: string; lastName: string;
-  onFirst: (v: string) => void; onLast: (v: string) => void;
-}) {
-  return (
-    <div>
-      <div className="h-serif" style={{ fontSize: "var(--fs-4xl)", fontWeight: 500, marginBottom: 6 }}>What should we call you?</div>
-      <div style={{ fontSize: "var(--fs-md)", color: "var(--text-dim)", marginBottom: 18 }}>This is the name shown to study partners.</div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-        <div>
-          <FieldLabel>First name</FieldLabel>
-          <TextInput data-testid="onboarding-first-name" value={firstName} onChange={e => onFirst(e.target.value)} placeholder="Jose" autoFocus />
-        </div>
-        <div>
-          <FieldLabel>Last name</FieldLabel>
-          <TextInput data-testid="onboarding-last-name" value={lastName} onChange={e => onLast(e.target.value)} placeholder="Cruz" />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function StepSchool({ school, year, onSchool, onYear }: {
-  school: string; year: string;
-  onSchool: (v: string) => void; onYear: (v: string) => void;
-}) {
-  return (
-    <div>
-      <div className="h-serif" style={{ fontSize: "var(--fs-4xl)", fontWeight: 500, marginBottom: 6 }}>Where are you studying?</div>
-      <div style={{ fontSize: "var(--fs-md)", color: "var(--text-dim)", marginBottom: 18 }}>Sapling is currently limited to Boston University.</div>
-      <FieldLabel>School</FieldLabel>
-      <TextInput data-testid="onboarding-school" value={school} onChange={e => onSchool(e.target.value)} disabled style={{ marginBottom: 16 }} />
-      <FieldLabel>Year</FieldLabel>
-      <CustomSelect<string>
-        value={year}
-        placeholder="Select your year…"
-        options={YEARS.map(y => ({ value: y, label: y.charAt(0).toUpperCase() + y.slice(1) }))}
-        onChange={onYear}
-        style={{ width: "100%" }}
-      />
-    </div>
-  );
-}
-
-function StepAcademics({ majors, minors, onMajors, onMinors }: {
-  majors: string[]; minors: string[];
-  onMajors: (v: string[]) => void; onMinors: (v: string[]) => void;
-}) {
-  return (
-    <div>
-      <div className="h-serif" style={{ fontSize: "var(--fs-4xl)", fontWeight: 500, marginBottom: 6 }}>Your academic focus</div>
-      <div style={{ fontSize: "var(--fs-md)", color: "var(--text-dim)", marginBottom: 18 }}>Add at least one major. Minors are optional.</div>
-      <FieldLabel>Majors</FieldLabel>
-      <TagInput field="majors" values={majors} onChange={onMajors} placeholder="e.g. Computer Science" />
-      <div style={{ height: 14 }} />
-      <FieldLabel>Minors</FieldLabel>
-      <TagInput field="minors" values={minors} onChange={onMinors} placeholder="e.g. Philosophy" />
-    </div>
-  );
-}
-
-function TagInput({ values, onChange, placeholder, field }: {
-  values: string[]; onChange: (v: string[]) => void; placeholder?: string;
-  /** Disambiguates testids — two TagInputs render simultaneously. */
-  field: string;
-}) {
-  const [draft, setDraft] = useState("");
-  const add = () => {
-    const v = draft.trim();
-    if (!v || values.includes(v)) return;
-    onChange([...values, v]);
-    setDraft("");
-  };
-  const remove = (v: string) => onChange(values.filter(x => x !== v));
-  return (
-    <div>
-      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: values.length ? 8 : 0 }}>
-        {values.map(v => (
-          <span
-            key={v}
-            className="chip"
-            style={{ textTransform: "none", fontFamily: "var(--font-sans)", background: "var(--accent-soft)", color: "var(--accent)", borderColor: "var(--accent-border)" }}
-          >
-            {v}
-            <button data-testid={`onboarding-chip-remove-${field}-${v}`} onClick={() => remove(v)} aria-label={`Remove ${v}`} style={{ color: "inherit", fontSize: "var(--fs-md)", lineHeight: 1, marginLeft: 2 }}>
-              ×
-            </button>
-          </span>
-        ))}
-      </div>
-      <div style={{ display: "flex", gap: 8 }}>
-        <TextInput
-          data-testid={`onboarding-chip-input-${field}`}
-          value={draft}
-          onChange={e => setDraft(e.target.value)}
-          onKeyDown={e => {
-            if (e.key === "Enter" || e.key === ",") {
-              e.preventDefault();
-              add();
-            }
-          }}
-          placeholder={placeholder}
+        <Actions
+          label={PRIMARY_LABEL[screen.id] ?? "Next"}
+          canNext={canNext}
+          canBack={draft.screen > 0}
+          onNext={next}
+          onBack={back}
+          onSkip={screen.id === "connect" ? () => finish(true) : undefined}
         />
-        <button data-testid={`onboarding-chip-add-${field}`} className="btn" onClick={add} disabled={!draft.trim()}>Add</button>
       </div>
-    </div>
-  );
-}
 
-function StepCourses({ selectedIds, selectedCache, onSelect }: {
-  selectedIds: string[];
-  selectedCache: OnboardingCourse[];
-  onSelect: (ids: string[], cache: OnboardingCourse[]) => void;
-}) {
-  const [query, setQuery] = useState("");
-  const [results, setResults] = useState<OnboardingCourse[]>([]);
-  const [loading, setLoading] = useState(false);
-  // Latest query wins (#769, as in ManageCoursesModal). The debounce only
-  // stops a search that hasn't been SENT: a student who pauses after "fe"
-  // fires that broad search, and if it lands after "fe 223" it replaced the
-  // right results with twenty unrelated courses.
-  const searchReq = useLatestRequest();
-  useEffect(() => {
-    const run = searchReq.begin();
-    const t = setTimeout(() => {
-      setLoading(true);
-      onboardingCoursesSearch(query)
-        .then(r => { if (run.isCurrent()) setResults(r.courses ?? []); })
-        .catch(() => { if (run.isCurrent()) setResults([]); })
-        .finally(() => { if (run.isCurrent()) setLoading(false); });
-    }, 200);
-    return () => {
-      clearTimeout(t);
-      searchReq.cancel();
-    };
-  }, [query, searchReq]);
+      <Progress active={active} screen={draft.screen} done={draft.done} />
+      <KeyHints active={active} onNext={next} onBack={back} />
 
-  const cacheMap = useMemo(() => new Map(selectedCache.map(c => [c.id, c])), [selectedCache]);
-
-  const toggle = (course: OnboardingCourse) => {
-    const exists = selectedIds.includes(course.id);
-    if (exists) {
-      onSelect(
-        selectedIds.filter(id => id !== course.id),
-        selectedCache.filter(c => c.id !== course.id),
-      );
-    } else {
-      onSelect([...selectedIds, course.id], [...selectedCache, course]);
-    }
-  };
-
-  return (
-    <div>
-      <div className="h-serif" style={{ fontSize: "var(--fs-4xl)", fontWeight: 500, marginBottom: 6 }}>What are you studying?</div>
-      <div style={{ fontSize: "var(--fs-md)", color: "var(--text-dim)", marginBottom: 18 }}>
-        Pick a few courses to seed your knowledge tree. You can always add more later.
-      </div>
-      <TextInput
-        data-testid="onboarding-course-search"
-        value={query}
-        onChange={e => setQuery(e.target.value)}
-        placeholder="Search by code or name (e.g. CS 131)"
-        autoFocus
-      />
-      {selectedCache.length > 0 && (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 12 }}>
-          {selectedCache.map(c => (
-            <span
-              key={c.id}
-              className="chip"
-              style={{ textTransform: "none", fontFamily: "var(--font-sans)", background: "var(--accent-soft)", color: "var(--accent)", borderColor: "var(--accent-border)" }}
-            >
-              {c.course_code}
-              <button data-testid={`onboarding-course-remove-${c.course_code}`} onClick={() => toggle(c)} aria-label={`Remove ${c.course_code}`} style={{ color: "inherit", fontSize: "var(--fs-md)", lineHeight: 1, marginLeft: 2 }}>×</button>
-            </span>
-          ))}
-        </div>
+      {consentDef && (
+        <ConsentSheet
+          connection={consentDef}
+          onConfirm={() => {
+            patch({ conn: { ...draft.conn, [consentDef.key]: true } });
+            setConsent(null);
+          }}
+          onClose={() => setConsent(null)}
+        />
       )}
-      <div style={{ marginTop: 14, maxHeight: 260, overflowY: "auto", border: "1px solid var(--border)", borderRadius: "var(--r-sm)" }}>
-        {loading && <div style={{ padding: "var(--pad-md) var(--pad-sm)", fontSize: "var(--fs-sm)", color: "var(--text-muted)" }}>Searching…</div>}
-        {!loading && results.length === 0 && (
-          <div style={{ padding: "var(--pad-md) var(--pad-sm)", fontSize: "var(--fs-sm)", color: "var(--text-muted)" }}>No courses match.</div>
-        )}
-        {!loading && results.map(c => {
-          const selected = selectedIds.includes(c.id) || cacheMap.has(c.id);
-          return (
-            <button
-              data-testid={`onboarding-course-result-${c.id}`}
-              key={c.id}
-              onClick={() => toggle(c)}
-              style={{
-                width: "100%",
-                padding: "var(--pad-sm) var(--pad-md)",
-                fontSize: "var(--fs-md)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: 10,
-                background: selected ? "var(--accent-soft)" : "transparent",
-                color: selected ? "var(--accent)" : "var(--text)",
-                borderBottom: "1px solid var(--border)",
-                textAlign: "left",
-              }}
-            >
-              <span>
-                <span style={{ fontWeight: 600 }}>{c.course_code}</span>
-                <span style={{ color: "var(--text-dim)", marginLeft: 8 }}>{c.course_name}</span>
-              </span>
-              {selected && <span>✓</span>}
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
 
-function StepLearningStyle({ value, onChange }: {
-  value: LearningStyleId | null;
-  onChange: (v: LearningStyleId) => void;
-}) {
-  return (
-    <div>
-      <div className="h-serif" style={{ fontSize: "var(--fs-4xl)", fontWeight: 500, marginBottom: 6 }}>How do you learn best?</div>
-      <div style={{ fontSize: "var(--fs-md)", color: "var(--text-dim)", marginBottom: 18 }}>
-        The AI tutor adjusts its tone and pacing to match.
-      </div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-        {LEARNING_STYLES.map(s => {
-          const selected = value === s.id;
-          return (
-            <button
-              data-testid={`onboarding-learning-style-${s.id}`}
-              key={s.id}
-              role="radio"
-              aria-checked={selected}
-              onClick={() => onChange(s.id)}
-              style={{
-                padding: "var(--pad-md)",
-                border: `1.5px solid ${selected ? "var(--accent)" : "var(--border)"}`,
-                background: selected ? "var(--accent-soft)" : "var(--bg-panel)",
-                borderRadius: "var(--r-md)",
-                textAlign: "left",
-                transition: "all var(--dur-fast) var(--ease)",
-              }}
-            >
-              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
-                <span style={{ color: selected ? "var(--accent)" : "var(--text-dim)", display: "inline-flex" }}>
-                  <Icon name={s.icon} size={16} />
-                </span>
-                <span style={{ fontWeight: 600, fontSize: "var(--fs-base)", color: selected ? "var(--accent)" : "var(--text)" }}>{s.title}</span>
-              </div>
-              <div style={{ fontSize: "var(--fs-xs)", color: "var(--text-dim)", lineHeight: 1.4 }}>{s.description}</div>
-            </button>
-          );
-        })}
-      </div>
+      <IntroMoment shown={introText} started={phase !== "idle"} />
+      <OutroMoment shown={outroText} complete={phase === "complete"} />
+      <Whiteout on={whiteout} settingUp={settingUp} />
     </div>
   );
 }

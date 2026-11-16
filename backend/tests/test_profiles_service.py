@@ -80,3 +80,17 @@ class TestGetDisplayNames:
             assert flt.startswith("in.(")
             ids = flt[len("in.(") : -1].split(",")
             assert sorted(ids) == ["u1", "u2"]
+
+
+class TestLiveUserIds:
+    def test_filters_soft_deleted_and_dedups(self):
+        with patch("services.profiles.table") as t:
+            t.return_value.select.return_value = [{"id": "u1"}]
+            assert profiles.live_user_ids(["u1", "gone", "u1", ""]) == {"u1"}
+        _, kwargs = t.return_value.select.call_args
+        assert kwargs["filters"] == {"id": "in.(u1,gone)", "deleted_at": "is.null"}
+
+    def test_empty_input_reads_nothing(self):
+        with patch("services.profiles.table") as t:
+            assert profiles.live_user_ids([]) == set()
+        t.assert_not_called()

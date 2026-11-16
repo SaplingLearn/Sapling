@@ -7,6 +7,8 @@ import type {
   ExtractedSyllabusCategory,
   AllowlistEmail, EmailStatus, EmailAudience, EmailAudienceKey, EmailBroadcast, EmailBroadcastPreview,
   AchievementTrigger, AdminAuditEntry, AnalyticsOverview, PaginatedUsers,
+  AdminAccountsMeta, AdminSeedAccountResult, AdminWipeAccountResult,
+  AdminCopyAccountResult, AccountCopyDirection, AdminAccountSummary, AdminCopyPreview,
   Note, LinkedConcept,
   GraphUpdate, MasteryChange,
   AnalyticsBucket, LlmCostGroupBy,
@@ -15,91 +17,16 @@ import type {
   GamificationMe, LeaderboardRow, ActivityData, Friend,
 } from '@/lib/types';
 import { statusOf } from '@/lib/errorMessage';
+import type { WithCrisisSupport } from '@/lib/crisisSupport';
 import { createStreamPacer } from '@/lib/streamPacer';
+import { REAUTH_REQUIRED, isReauthRequired, notifyReauthRequired } from '@/lib/reauth';
+import { ApiError, apiErrorOf, errorFieldsFrom, parseErrorBody } from '@/lib/apiError';
 
 export const API_URL = '';
 
-/**
- * A failed API response. Carries the HTTP status alongside the body text so
- * callers can branch on the status instead of pattern-matching the message —
- * `lib/errorMessage.ts` reads `status` off the thrown value.
- *
- * `message` stays the raw body for backward compatibility: callers that
- * stringify the error, or read `.message`, behave exactly as they did before.
- *
- * Since #537 it also carries what the coded envelope told us. Quiz routes
- * answer with `{error: {code, message, request_id}, detail, request_id}`
- * (backend/services/quiz_errors.py::quiz_error_body) plus a `Retry-After`
- * header on 429; `code`/`requestId`/`retryAfterSec`/`body` surface that so
- * `lib/quiz/errors.ts` can tell a rate limit from a daily cap from a generation
- * timeout. All four are optional — routes outside the quiz router still answer
- * with the legacy `{detail, request_id}` shape and leave them undefined.
- */
-export interface ApiErrorFields {
-  /** `error.code` off the coded envelope, when the route sent one. */
-  code?: string;
-  /** `error.request_id` / top-level `request_id` — the support handle. */
-  requestId?: string;
-  /** Whole-seconds `Retry-After`, when the response carried the header. */
-  retryAfterSec?: number;
-  /** The parsed JSON body, when the body was JSON. */
-  body?: unknown;
-}
-
-export class ApiError extends Error {
-  readonly status: number;
-  readonly code?: string;
-  readonly requestId?: string;
-  readonly retryAfterSec?: number;
-  readonly body?: unknown;
-
-  constructor(message: string, status: number, fields: ApiErrorFields = {}) {
-    super(message);
-    this.name = 'ApiError';
-    this.status = status;
-    this.code = fields.code;
-    this.requestId = fields.requestId;
-    this.retryAfterSec = fields.retryAfterSec;
-    this.body = fields.body;
-  }
-}
-
-function parseErrorBody(text: string): unknown {
-  const trimmed = text.trim();
-  if (!trimmed.startsWith('{')) return undefined;
-  try {
-    return JSON.parse(trimmed);
-  } catch {
-    return undefined;
-  }
-}
-
-/** `Retry-After` is either whole seconds or an HTTP date. Only the numeric form
- *  is honoured — a date needs clock-skew handling nobody here wants, and the one
- *  route that sets the header (quiz.py:1238) always sends seconds. */
-function parseRetryAfter(header: string | null): number | undefined {
-  if (!header) return undefined;
-  const trimmed = header.trim();
-  if (!trimmed) return undefined;
-  const seconds = Number(trimmed);
-  return Number.isFinite(seconds) && seconds >= 0 ? Math.round(seconds) : undefined;
-}
-
-/** Pulls the coded-envelope fields out of a parsed error body, tolerating both
- *  the quiz shape and the legacy `{detail, request_id}` one. */
-function errorFieldsFrom(body: unknown): { code?: string; requestId?: string } {
-  if (body === null || typeof body !== 'object') return {};
-  const record = body as Record<string, unknown>;
-  const nested = record.error;
-  const error = nested !== null && typeof nested === 'object'
-    ? (nested as Record<string, unknown>)
-    : null;
-  const code = error && typeof error.code === 'string' ? error.code : undefined;
-  const requestId = [error?.request_id, record.request_id].find(
-    (v): v is string => typeof v === 'string' && v.length > 0,
-  );
-  return { code, requestId };
-}
+// The error every failed response is thrown as lives in lib/apiError.ts, shared
+// with the SSE client; re-exported here, where callers have always imported it.
+export { ApiError, type ApiErrorFields } from '@/lib/apiError';
 
 // ── Global 401 (#756) ─────────────────────────────────────────────────────────
 // A 401 from any session-authenticated call means the server no longer honours
@@ -137,6 +64,10 @@ function notifySessionExpired(): void {
   }
 }
 
+// Admin step-up 401s (`reauth_required`) go to lib/reauth.ts, not to the
+// session-expired listeners above: the session is alive, it is just too old
+// for an admin route.
+
 /**
  * The one sanctioned request helper: same-origin `API_URL` so the `sapling_session`
  * cookie rides along (a cross-origin `NEXT_PUBLIC_API_URL` fetch drops it — the
@@ -149,15 +80,15 @@ export async function fetchJSON<T>(path: string, options?: RequestInit): Promise
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     ...options,
   });
-  if (res.status === 401 && isSessionAuthenticated(path)) notifySessionExpired();
   if (!res.ok) {
     const err = await res.text();
     const body = parseErrorBody(err);
-    throw new ApiError(err || `HTTP ${res.status}`, res.status, {
-      ...errorFieldsFrom(body),
-      retryAfterSec: parseRetryAfter(res.headers.get('Retry-After')),
-      body,
-    });
+    if (res.status === 401 && isReauthRequired(body)) {
+      notifyReauthRequired();
+      throw new ApiError(err, res.status, { ...errorFieldsFrom(body), code: REAUTH_REQUIRED, body });
+    }
+    if (res.status === 401 && isSessionAuthenticated(path)) notifySessionExpired();
+    throw apiErrorOf(res, err);
   }
   return res.json();
 }
@@ -188,8 +119,7 @@ export interface MeResponse {
 
 // Cookie-authenticated identity lookup (backend/routes/auth.py::get_me
 // resolves the user via get_session_user_id, which reads the `sapling_session`
-// cookie or an `auth_token` query param — no `user_id` param needed either
-// way). UserContext's bootstrap falls back to this when localStorage has no
+// cookie — the only session channel; no `user_id` param needed). UserContext's bootstrap falls back to this when localStorage has no
 // `sapling_user` entry but the HttpOnly session cookie is still valid
 // (#430); the OAuth callback (src/app/auth/callback/page.tsx) already reads
 // this same endpoint off the same cookie, though via a bare `fetch` rather
@@ -324,8 +254,12 @@ export const startSession = (
   courseId?: string,
   useSharedContext = true,
   modelPref?: ModelPref,
+  /** Send to tutor's note, when `topic` is still its title (see startSessionStream). */
+  fromNoteId?: string,
 ) =>
-  fetchJSON<{ session_id: string; initial_message: string; graph_state: any }>('/api/learn/start-session', {
+  // A crisis-support answer carries `crisis_support` and no session (session_id null),
+  // or, on a note's title, the session with `crisis_support_alongside`.
+  fetchJSON<{ session_id: string; initial_message: string; graph_state: any } & WithCrisisSupport>('/api/learn/start-session', {
     method: 'POST',
     body: JSON.stringify({
       user_id: userId,
@@ -334,6 +268,7 @@ export const startSession = (
       use_shared_context: useSharedContext,
       course_id: courseId,
       ...(modelPref ? { model_pref: modelPref } : {}),
+      ...(fromNoteId ? { from_note_id: fromNoteId } : {}),
     }),
   });
 
@@ -358,7 +293,7 @@ export const sendChat = (
   modelPref?: ModelPref,
   turnId?: string,
 ) =>
-  fetchJSON<{ reply: string; graph_update: any; mastery_changes: any[]; replayed?: boolean }>('/api/learn/chat', {
+  fetchJSON<{ reply: string; graph_update: any; mastery_changes: any[]; replayed?: boolean } & WithCrisisSupport>('/api/learn/chat', {
     method: 'POST',
     body: JSON.stringify({
       session_id: sessionId,
@@ -376,7 +311,7 @@ export interface GraphDelta {
   mastery_changes: MasteryChange[];
 }
 
-export interface ChatResult {
+export interface ChatResult extends WithCrisisSupport {
   reply: string;
   graph_update: GraphUpdate;
   mastery_changes: MasteryChange[];
@@ -425,17 +360,23 @@ export class ChatStreamError extends Error {
  * false when:
  *  - the backend said so (`ChatStreamError.retryable === false` — tool
  *    writes landed; a re-run would double-apply them), or
- *  - the failure was an HTTP 413 (request too large / processing budget —
- *    the JSON route fails the exact same way, so falling back just doubles
- *    the wait before the same error).
+ *  - the failure was an HTTP 413 (request too large / processing budget),
+ *    422 (a request the server refuses, e.g. a message over its length cap)
+ *    or 429 (rate limited: the JSON route spends the same per-student
+ *    budget) — the JSON route fails the exact same way, so falling back
+ *    just doubles the wait before the same error.
  *
  * Everything else (transport failures, idle timeouts, 5xx before any
  * token) stays retryable — the transparent JSON fallback is the whole
  * point of the ladder.
  */
+/** Statuses the JSON route answers identically (see shouldFallBackToJson). */
+const NO_JSON_FALLBACK = new Set([413, 422, 429]);
+
 export function shouldFallBackToJson(err: unknown): boolean {
   if (err instanceof ChatStreamError) return err.retryable;
-  return statusOf(err) !== 413;
+  const status = statusOf(err);
+  return status === undefined || !NO_JSON_FALLBACK.has(status);
 }
 
 export interface StreamChatHandlers {
@@ -543,6 +484,13 @@ export const startSessionStream = (
   courseId?: string,
   modelPref?: ModelPref,
   handlers: StreamChatHandlers = {},
+  /**
+   * Send to tutor's note (docs/safety/crisis-support.md), when `topic` is
+   * still that note's title: the backend checks it against the student's own
+   * note and, on a crisis match, starts the session with the card beside it
+   * (`crisis_support_alongside`) instead of answering with the card alone.
+   */
+  fromNoteId?: string,
 ): Promise<ChatResult> => {
   return consumeChatStream(
     '/api/learn/start-session/stream',
@@ -553,6 +501,7 @@ export const startSessionStream = (
       use_shared_context: useSharedContext,
       course_id: courseId,
       ...(modelPref ? { model_pref: modelPref } : {}),
+      ...(fromNoteId ? { from_note_id: fromNoteId } : {}),
     },
     handlers,
   );
@@ -710,8 +659,14 @@ export const importGoogleEvents = (userId: string, daysAhead = 60) =>
     `/api/calendar/import/${encodeURIComponent(userId)}?days_ahead=${daysAhead}`,
   );
 
-export const calendarAuthUrl = (userId: string) =>
-  `${API_URL}/api/calendar/auth-url?user_id=${encodeURIComponent(userId)}`;
+/** The Google Calendar consent flow: a backend route that redirects to Google,
+ * so open it with a full page load (`window.location`), never the in-app
+ * router. `next` is where the callback lands after a successful connect; the
+ * backend honours only its allowlist (/dashboard, /gradebook, /calendar). */
+export const calendarAuthUrl = (userId: string, next?: string) =>
+  `${API_URL}/api/calendar/auth-url?user_id=${encodeURIComponent(userId)}${
+    next ? `&next=${encodeURIComponent(next)}` : ''
+  }`;
 
 export const exportToGoogleCalendar = (userId: string, assignmentIds: string[]) =>
   fetchJSON<{ exported_count: number; skipped_count: number }>('/api/calendar/export', {
@@ -976,11 +931,20 @@ export interface GenerateFlashcardsResponse {
 }
 
 // `semester` (term label, #141) grounds generation in that term's course
-// documents; omitted = current term. JSON.stringify drops it when unset.
-export const generateFlashcards = (userId: string, topic: string, count = 5, semester?: string) =>
-  fetchJSON<GenerateFlashcardsResponse>('/api/flashcards/generate', {
+// documents; omitted = every term. `courseId` (#829) scopes the documents to
+// the selected course by id — without it the backend matches `topic` against
+// the student's enrolled courses. JSON.stringify drops either when unset.
+export const generateFlashcards = (
+  userId: string,
+  topic: string,
+  count = 5,
+  semester?: string,
+  courseId?: string,
+) =>
+  // docs/safety/crisis-support.md: a crisis answer carries `crisis_support` and no cards.
+  fetchJSON<GenerateFlashcardsResponse & WithCrisisSupport>('/api/flashcards/generate', {
     method: 'POST',
-    body: JSON.stringify({ user_id: userId, topic, count, semester }),
+    body: JSON.stringify({ user_id: userId, topic, count, semester, course_id: courseId }),
   });
 
 // `semester` scopes the list to that term's offerings (term-less cards stay
@@ -1042,7 +1006,7 @@ export const importGenerate = (
     | { source: "paste"; text: string; count: number; difficulty: "recall" | "application" | "conceptual" }
     | { source: "library_doc"; documentId: string; count: number; difficulty: "recall" | "application" | "conceptual" },
 ) =>
-  fetchJSON<ImportGenerateResponse>(`/api/flashcards/import/generate`, {
+  fetchJSON<ImportGenerateResponse & WithCrisisSupport>(`/api/flashcards/import/generate`, {
     method: "POST",
     body: JSON.stringify({
       user_id: userId,
@@ -1061,75 +1025,10 @@ export const importCleanup = (userId: string, cards: ImportCard[]) =>
   });
 
 export const importCloze = (userId: string, paragraph: string) =>
-  fetchJSON<{ cards: ImportCard[] }>(`/api/flashcards/import/cloze`, {
+  fetchJSON<{ cards: ImportCard[] } & WithCrisisSupport>(`/api/flashcards/import/cloze`, {
     method: "POST",
     body: JSON.stringify({ user_id: userId, paragraph }),
   });
-
-// Study Guide
-export interface StudyGuideTopic {
-  name: string;
-  importance: string;
-  concepts: string[];
-}
-
-export interface StudyGuideContent {
-  exam: string;
-  due_date: string;
-  overview: string;
-  topics: StudyGuideTopic[];
-}
-
-export interface StudyGuideExam {
-  id: string;
-  title: string;
-  due_date: string;
-  assignment_type?: string | null;
-}
-
-export interface StudyGuideCacheEntry {
-  id: string;
-  course_id: string;
-  exam_id: string;
-  course_name: string;
-  exam_title: string;
-  overview: string;
-  generated_at: string;
-  // The entry's OWN term label (#475 F1): a recent guide opens as its own
-  // term, overriding the active selector for that open. null when the row's
-  // offering has no term; optional for bodies cached before the field shipped.
-  semester?: string | null;
-}
-
-// The study-guide reads take an optional `semester` (term label, #141).
-// With it, each read resolves STRICTLY to that term's offering. Omitted/"":
-// getStudyGuide/regenerateStudyGuide fall back to current-term offering
-// resolution, while getStudyGuideExams lists exams across ALL of the user's
-// enrollments of the course (every term) — that asymmetry is pre-existing
-// behavior, documented as-is.
-export const getStudyGuideExams = (userId: string, courseId: string, semester?: string) =>
-  fetchJSON<{ exams: StudyGuideExam[] }>(
-    `/api/study-guide/${encodeURIComponent(userId)}/exams?course_id=${encodeURIComponent(courseId)}` +
-      (semester ? `&semester=${encodeURIComponent(semester)}` : ''),
-  );
-
-export const getStudyGuide = (userId: string, courseId: string, examId: string, semester?: string) =>
-  fetchJSON<{ guide: StudyGuideContent; generated_at: string; cached: boolean }>(
-    `/api/study-guide/${encodeURIComponent(userId)}/guide?course_id=${encodeURIComponent(courseId)}&exam_id=${encodeURIComponent(examId)}` +
-      (semester ? `&semester=${encodeURIComponent(semester)}` : ''),
-  );
-
-export const regenerateStudyGuide = (userId: string, courseId: string, examId: string, semester?: string) =>
-  fetchJSON<{ success: boolean; guide: StudyGuideContent; generated_at: string }>(
-    '/api/study-guide/regenerate',
-    {
-      method: 'POST',
-      body: JSON.stringify({ user_id: userId, course_id: courseId, exam_id: examId, semester }),
-    },
-  );
-
-export const getCachedStudyGuides = (userId: string) =>
-  fetchJSON<{ guides: StudyGuideCacheEntry[] }>(`/api/study-guide/${encodeURIComponent(userId)}/cached`);
 
 // Feedback
 export const submitFeedback = (data: {
@@ -1158,16 +1057,34 @@ export interface OnboardingProfilePayload {
   first_name: string;
   last_name: string;
   year: string;
-  majors: string[];
-  minors: string[];
+  /** Catalog course ids; empty when the student will add their courses later. */
   course_ids: string[];
-  learning_style: 'visual' | 'reading' | 'auditory' | 'hands-on' | 'mixed';
+  /** Under 18: the account starts with a private profile and class sharing off. */
+  under_18: boolean;
+  /** The Terms and Privacy Policy versions agreed to (lib/legal/versions.ts).
+   * Anything but the current ones is a 422 `legal_outdated`. */
+  accepted_terms_version: string;
+  accepted_privacy_version: string;
 }
 
-export const submitOnboardingProfile = (payload: OnboardingProfilePayload) =>
-  fetchJSON<{ user_id: string; courses_linked: string[] }>('/api/onboarding/profile', {
+export interface OnboardingProfileResult {
+  ok: boolean;
+  user_id: string;
+  /** How many of `course_ids` the student was enrolled in. */
+  courses_linked: number;
+}
+
+/** 409 when the account finished onboarding already; 403 `not_approved` (in
+ * `detail.code`); 422 `legal_outdated` / `no_known_courses` (in `detail.code`)
+ * save nothing; a malformed body is a plain validation 422 (`detail: [...]`). */
+export const submitOnboardingProfile = (
+  payload: OnboardingProfilePayload,
+  init?: { signal?: AbortSignal },
+) =>
+  fetchJSON<OnboardingProfileResult>('/api/onboarding/profile', {
     method: 'POST',
     body: JSON.stringify(payload),
+    signal: init?.signal,
   });
 
 // Profile
@@ -1259,6 +1176,45 @@ export const adminFetchUsers = (params?: { q?: string; page?: number; page_size?
 // its historical `/unapprove` path; 409 on your own account.
 export const adminRemoveUserAccess = (userId: string) =>
   fetchJSON<{ unapproved: boolean }>(`/api/admin/users/${userId}/unapprove`, { method: 'PATCH' });
+
+// Admin — account tools (backend routes/admin_accounts.py; spec
+// docs/superpowers/specs/2026-11-08-admin-account-tools-design.md). Each write
+// sends the action word as `confirm` — the backend 400s without it; the UI
+// first shows a review (summary / copy-preview: what will be deleted) and
+// makes the admin type the account's email before calling these.
+export const adminAccountsMeta = () =>
+  fetchJSON<AdminAccountsMeta>('/api/admin/accounts/meta');
+
+/** Read-only: what the account holds on this environment (the seed/wipe review). 404 unknown. */
+export const adminAccountSummary = (userId: string) =>
+  fetchJSON<AdminAccountSummary>(`/api/admin/accounts/${encodeURIComponent(userId)}/summary`);
+
+/** Read-only: both sides of a copy (the copy review). 503 unconfigured, 502 peer down. */
+export const adminCopyPreview = (userId: string, direction: AccountCopyDirection) =>
+  fetchJSON<AdminCopyPreview>(
+    `/api/admin/accounts/${encodeURIComponent(userId)}/copy-preview?direction=${direction}`,
+  );
+
+/** Wipe-then-seed the account with `major`'s mock semester (replaces, never stacks). */
+export const adminSeedAccount = (userId: string, major: string) =>
+  fetchJSON<AdminSeedAccountResult>(`/api/admin/accounts/${encodeURIComponent(userId)}/seed`, {
+    method: 'POST',
+    body: JSON.stringify({ major, confirm: 'SEED' }),
+  });
+
+/** Remove the account's academic/study data; the account itself is kept. */
+export const adminWipeAccount = (userId: string) =>
+  fetchJSON<AdminWipeAccountResult>(`/api/admin/accounts/${encodeURIComponent(userId)}/wipe`, {
+    method: 'POST',
+    body: JSON.stringify({ confirm: 'WIPE' }),
+  });
+
+/** push = overwrite the peer env's copy with ours; pull = overwrite ours with the peer's. */
+export const adminCopyAccount = (userId: string, direction: AccountCopyDirection) =>
+  fetchJSON<AdminCopyAccountResult>(`/api/admin/accounts/${encodeURIComponent(userId)}/copy`, {
+    method: 'POST',
+    body: JSON.stringify({ direction, confirm: 'COPY' }),
+  });
 
 // Admin — feedback (#520; decrypted server-side, admin-only)
 export type AdminFeedbackEntry = {
@@ -1928,11 +1884,82 @@ export const unlinkGradescopeCourse = (userId: string, saplingCourseId: string, 
     { method: 'DELETE' },
   );
 
-export const syncGradescopeCourse = (userId: string, saplingCourseId: string, semester?: string) =>
-  fetchJSON<GradescopeSyncResult>(
-    `/api/gradescope/sync/${encodeURIComponent(saplingCourseId)}?user_id=${encodeURIComponent(userId)}${semester ? `&semester=${encodeURIComponent(semester)}` : ''}`,
-    { method: 'POST' },
+/** A Gradescope sync still running on the job queue (#116, `jobs_queue` on):
+ *  POST /sync answers 202 with this once it outlasts the server's wait, and
+ *  so does GET /sync/{course}/status until the sync ends. */
+export interface GradescopeSyncPending {
+  pending: true;
+  sync_id: string;
+  stage: string;
+  detail?: string;
+}
+
+export const isGradescopeSyncPending = (value: unknown): value is GradescopeSyncPending =>
+  typeof value === 'object' && value !== null && (value as { pending?: unknown }).pending === true;
+
+const gradescopeSyncPath = (userId: string, saplingCourseId: string, semester?: string, suffix = '') =>
+  `/api/gradescope/sync/${encodeURIComponent(saplingCourseId)}${suffix}?user_id=${encodeURIComponent(userId)}${semester ? `&semester=${encodeURIComponent(semester)}` : ''}`;
+
+/** The latest queued sync of a course: pending while it runs, then exactly
+ *  what the POST would have answered (the counts, or the same typed error). */
+export const getGradescopeSyncStatus = (userId: string, saplingCourseId: string, semester?: string) =>
+  fetchJSON<GradescopeSyncResult | GradescopeSyncPending>(
+    gradescopeSyncPath(userId, saplingCourseId, semester, '/status'),
   );
+
+export const GRADESCOPE_SYNC_POLL_MS = 3000;
+/** ~10 minutes of polling before giving up with the "still running" error. */
+const GRADESCOPE_SYNC_MAX_POLLS = 200;
+
+export interface GradescopeSyncOptions {
+  /** Called once when the server says the sync is still running (a 202, or
+   *  its 504 "still running" answer); polling for the outcome follows. */
+  onPending?: () => void;
+  pollMs?: number;
+}
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/** Sync a linked course. Inline (flag off) this is one POST, unchanged. A
+ *  queued sync that outlasts the server's wait answers 202 (or 504); the sync
+ *  keeps running, so this polls the status route until it ends and resolves
+ *  or rejects exactly as the POST would have. */
+export async function syncGradescopeCourse(
+  userId: string,
+  saplingCourseId: string,
+  semester?: string,
+  options: GradescopeSyncOptions = {},
+): Promise<GradescopeSyncResult> {
+  let stillRunning: ApiError;
+  try {
+    const res = await fetchJSON<GradescopeSyncResult | GradescopeSyncPending>(
+      gradescopeSyncPath(userId, saplingCourseId, semester),
+      { method: 'POST' },
+    );
+    if (!isGradescopeSyncPending(res)) return res;
+    const detail = res.detail || 'This Gradescope sync is taking longer than usual.';
+    stillRunning = new ApiError(JSON.stringify({ detail }), 504, { body: { detail } });
+  } catch (err) {
+    if (!(err instanceof ApiError) || err.status !== 504) throw err;
+    stillRunning = err;
+  }
+  options.onPending?.();
+  const pollMs = options.pollMs ?? GRADESCOPE_SYNC_POLL_MS;
+  for (let i = 0; i < GRADESCOPE_SYNC_MAX_POLLS; i++) {
+    await sleep(pollMs);
+    let status: GradescopeSyncResult | GradescopeSyncPending;
+    try {
+      status = await getGradescopeSyncStatus(userId, saplingCourseId, semester);
+    } catch (err) {
+      if (!(err instanceof ApiError)) continue; // a network blip: poll again
+      // Nothing staged (a proxy timeout on the inline path): keep the 504.
+      if (err.status === 404) throw stillRunning;
+      throw err; // the sync's own outcome, answered as the POST would have
+    }
+    if (!isGradescopeSyncPending(status)) return status;
+  }
+  throw stillRunning;
+}
 
 // ── Notes ──────────────────────────────────────────────────────────────────
 
@@ -1994,25 +2021,26 @@ export const unlinkNoteConcept = (noteId: string, userId: string, conceptNodeId:
   );
 
 export const summarizeNote = (noteId: string, userId: string) =>
-  fetchJSON<{ summary: string }>(`/api/notes/${noteId}/summarize`, {
+  // docs/safety/crisis-support.md: a crisis answer carries `crisis_support` and no summary.
+  fetchJSON<{ summary?: string } & WithCrisisSupport>(`/api/notes/${noteId}/summarize`, {
     method: 'POST',
     body: JSON.stringify({ user_id: userId }),
   });
 
 export const extractNoteConcepts = (noteId: string, userId: string) =>
-  fetchJSON<{ concepts: string[]; linked: number }>(
+  fetchJSON<{ concepts: string[]; linked: number } & WithCrisisSupport>(
     `/api/notes/${noteId}/extract-concepts`,
     { method: 'POST', body: JSON.stringify({ user_id: userId }) },
   );
 
 export const noteChat = (noteId: string, userId: string, message: string) =>
-  fetchJSON<{ reply: string }>(`/api/notes/${noteId}/chat`, {
+  fetchJSON<{ reply: string } & WithCrisisSupport>(`/api/notes/${noteId}/chat`, {
     method: 'POST',
     body: JSON.stringify({ user_id: userId, message }),
   });
 
 export const sendNoteToTutor = (noteId: string, userId: string) =>
-  fetchJSON<{ topic: string; course_id: string; preface: string }>(
+  fetchJSON<{ topic?: string; course_id?: string; preface?: string } & WithCrisisSupport>(
     `/api/notes/${noteId}/send-to-tutor`,
     { method: 'POST', body: JSON.stringify({ user_id: userId }) },
   );
@@ -2092,6 +2120,31 @@ export const adminUploadAchievementIcon = (
       method: 'POST',
       body: JSON.stringify({ file_base64: fileBase64, content_type: contentType }),
     });
+
+// Mirrors backend/services/storage_service.py::ALLOWED_CONTENT_TYPES.
+export const COSMETIC_ASSET_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+
+/**
+ * Upload an avatar-frame/banner image through the backend
+ * (`POST /api/admin/cosmetics/assets`, admin-only, service-role storage).
+ * The admin screen used to write to a storage bucket from the browser with
+ * the public anon key; nothing in the browser writes to storage now.
+ */
+export const adminUploadCosmeticAsset = async (file: File): Promise<{ asset_url: string }> => {
+  if (file.size > MAX_AVATAR_BYTES) {
+    throw new Error(
+      `That file is ${(file.size / 1024 / 1024).toFixed(1)} MB — max is ${MAX_AVATAR_BYTES / 1024 / 1024} MB.`,
+    );
+  }
+  if (!COSMETIC_ASSET_TYPES.includes(file.type)) {
+    throw new Error('Unsupported image type. Use JPEG, PNG, WebP or GIF.');
+  }
+  const file_base64 = await readFileAsBase64(file);
+  return fetchJSON<{ asset_url: string }>('/api/admin/cosmetics/assets', {
+    method: 'POST',
+    body: JSON.stringify({ file_base64, content_type: file.type }),
+  });
+};
 
 // #764: the sender withdraws a pending friend request.
 export const cancelFriendRequest = (requestId: string, userId: string) =>

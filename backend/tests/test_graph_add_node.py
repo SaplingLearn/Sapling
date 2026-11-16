@@ -18,6 +18,9 @@ from main import app
 import routes.graph as graph_routes
 import services.graph_service as gs
 
+# #117: a sync PostgREST call reached on the event loop raises here.
+pytestmark = pytest.mark.usefixtures("no_sync_db_on_loop")
+
 client = TestClient(app)
 
 ANCHOR = {"id": "n-root", "concept_name": "Math 210", "course_id": "c1"}
@@ -90,6 +93,14 @@ class TestAddNodeService:
 
 
 class TestAddNodeRoute:
+    @pytest.fixture(autouse=True)
+    def _enrolled(self, monkeypatch):
+        """The route gates on #115's require_course_enrollment. These tests
+        are about the handler's own behaviour, so stand the gate down; the
+        gate itself is pinned by test_post_refuses_a_course_the_student_is_not_in."""
+        monkeypatch.setattr(graph_routes, "require_course_enrollment",
+                            lambda user_id, course_id: "offering-1")
+
     def test_post_returns_node_and_flag(self, monkeypatch):
         monkeypatch.setattr(
             graph_routes, "add_node",
@@ -110,6 +121,20 @@ class TestAddNodeRoute:
     def test_post_missing_course_is_422(self):
         r = client.post("/api/graph/u1/nodes", json={"concept_name": "Recursion"})
         assert r.status_code == 422
+
+    def test_post_refuses_a_course_the_student_is_not_in(self, monkeypatch):
+        """#115: a course-keyed write needs enrollment. This route was the one
+        that missed it — which also meant a course id naming nothing reached
+        the FK on graph_nodes.course_id and answered 500."""
+        from fastapi import HTTPException
+
+        def _not_enrolled(user_id, course_id):
+            raise HTTPException(status_code=404, detail="Course not found")
+
+        monkeypatch.setattr(graph_routes, "require_course_enrollment", _not_enrolled)
+        r = client.post("/api/graph/u1/nodes",
+                        json={"concept_name": "Recursion", "course_id": "not-mine"})
+        assert r.status_code == 404
 
     def test_post_requires_self(self, monkeypatch):
         from fastapi import HTTPException

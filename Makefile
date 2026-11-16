@@ -2,7 +2,10 @@
 #
 # E2E stack (#384): one command to boot / tear down the whole local test stack —
 # Supabase (rootless Podman or Docker) → migrations → seed → uvicorn backend →
-# test-profile Next production build — health-checked end to end.
+# test-profile Next production build — health-checked end to end. Every run
+# boots in a numbered E2E SLOT with its own ports and Supabase project
+# (scripts/lib/e2e-slot.sh), never on the dev app's :3000/:5000, so runs can go
+# side by side. `make e2e` claims a free slot and does up → suite → down.
 # See docs/local-supabase.md ("One-command E2E stack").
 #
 # E2E exploration (#399): boot that stack, hand a Playwright-MCP-armed Claude
@@ -11,16 +14,27 @@
 # Staging -> production promotion (#516): preflight, migrate prod, confirm,
 # merge main->production, wait for the deploy, smoke. One prompt, at the merge.
 # See backend/promotion/README.md.
+#
+# Database backup (Trov #114): pg_dump (custom format, schema + data) of one
+# environment into the gitignored backups/. `make promote` takes the same dump
+# of production automatically before migrating. See backend/promotion/README.md.
 
-.PHONY: e2e-up e2e-down explore explore-down gallery-shots promote
+.PHONY: e2e e2e-up e2e-down explore explore-down gallery-shots promote backup-db
 
+# A whole cycle in a free slot: up → Playwright suite + oracles → down.
+# A subset: scripts/e2e-cycle.sh -- bash -c 'cd frontend && npx playwright test e2e/quiz*.spec.ts'
+e2e:
+	scripts/e2e-cycle.sh
+
+# Locally: hold a stack in a free slot (a background cycle owns it) / stop it.
+# CI (slot 0, CI=true) boots and tears down directly.
 e2e-up:
-	scripts/e2e-up.sh
+	@if [ "$$CI" = "true" ]; then scripts/e2e-up.sh; else scripts/e2e-cycle.sh --background; fi
 
 e2e-down:
-	scripts/e2e-down.sh
+	@if [ "$$CI" = "true" ]; then scripts/e2e-down.sh; else scripts/e2e-cycle.sh --stop; fi
 
-# Capture the /gallery product screenshots (local only; takes the stack lock).
+# Capture the /gallery product screenshots (local only; runs in a free E2E slot).
 gallery-shots:
 	scripts/gallery-shots.sh
 
@@ -32,3 +46,15 @@ explore-down:
 
 promote:
 	cd backend && venv/bin/dotenv -f .env.production run -- venv/bin/python -m promotion $(ARGS)
+
+# make backup-db ENV=<staging|prod|local>. prod/staging read SUPABASE_DB_URL
+# from the same env file `make promote` / the db/ scripts use; local is the
+# local Supabase stack's fixed DB (scripts/local-db-reset.sh; SUPABASE_DB_PORT
+# as in scripts/e2e-up.sh), never .env, so ENV=local cannot dump a remote.
+backup-db:
+	@case "$(ENV)" in \
+	  prod) cd backend && venv/bin/dotenv -f .env.production run -- venv/bin/python -m promotion.backup --env prod ;; \
+	  staging) cd backend && venv/bin/dotenv -f .env.staging run -- venv/bin/python -m promotion.backup --env staging ;; \
+	  local) cd backend && SUPABASE_DB_URL="postgresql://postgres:postgres@127.0.0.1:$${SUPABASE_DB_PORT:-54322}/postgres" venv/bin/python -m promotion.backup --env local ;; \
+	  *) echo "usage: make backup-db ENV=<staging|prod|local>" >&2; exit 2 ;; \
+	esac

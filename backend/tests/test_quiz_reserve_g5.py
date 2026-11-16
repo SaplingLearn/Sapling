@@ -23,8 +23,13 @@ from agents.quiz import Quiz, QuizQuestion
 from main import app
 from routes.quiz import CourseMaterial
 from services.encryption import decrypt_json_column, encrypt_json
-from services.quiz_identity import question_hash
-from services.quiz_reserve import missed_question_hashes, recover_questions
+from services.quiz.identity import question_hash
+from services.quiz.reserve import missed_question_hashes, recover_questions
+from tests.db_fakes import with_async_twins
+from tests.split_patches import patch_quiz
+
+# #117: a sync PostgREST call reached on the event loop raises here.
+pytestmark = pytest.mark.usefixtures("no_sync_db_on_loop")
 
 client = TestClient(app)
 
@@ -141,12 +146,12 @@ def _generate(
     )
     factory = _factory(captured, attempts=attempts, responses=responses)
     with (
-        patch("routes.quiz.table", side_effect=factory),
-        patch("services.quiz_reserve.table", side_effect=factory),
-        patch("routes.quiz.quiz_agent.run", new=agent_run),
-        patch("routes.quiz._course_material", return_value=CourseMaterial()),
-        patch("routes.quiz.recent_question_identities", return_value=[]),
-        patch("routes.quiz.days_until_next_exam", return_value=None),
+        patch_quiz("table", side_effect=with_async_twins(factory)),
+        patch("services.quiz.reserve.table", side_effect=factory),
+        patch("services.quiz.generation.quiz_agent.run", new=agent_run),
+        patch_quiz("_course_material", return_value=CourseMaterial()),
+        patch_quiz("recent_question_identities", return_value=[]),
+        patch_quiz("days_until_next_exam", return_value=None),
     ):
         r = client.post("/api/quiz/generate", json={
             "user_id": "user_andres",
@@ -172,7 +177,7 @@ def _lookup(rows, questions):
         m.select.return_value = rows
         return m
 
-    with patch("services.quiz_reserve.table", side_effect=factory):
+    with patch("services.quiz.reserve.table", side_effect=factory):
         return missed_question_hashes(SOURCE_ID, questions)
 
 
@@ -231,7 +236,7 @@ def test_missed_hashes_degrade_to_nothing_when_the_read_fails():
         m.select.side_effect = RuntimeError("PostgREST down")
         return m
 
-    with patch("services.quiz_reserve.table", side_effect=factory):
+    with patch("services.quiz.reserve.table", side_effect=factory):
         found = missed_question_hashes(SOURCE_ID, [_stored("Q1", 1)])
     assert found.hashes == []
     # "Can't tell", not "nothing was recorded" — a failed read must not
@@ -554,7 +559,7 @@ def test_a_refused_source_attempt_refunds_the_generate_slot(attempts, expected):
     student a slot. A results screen left open across a session would
     otherwise burn the whole window on 404s and then 429 a student who has
     generated nothing — the case `_refund_generate_slot` exists to prevent."""
-    with patch("routes.quiz._refund_generate_slot") as refund:
+    with patch_quiz("_refund_generate_slot") as refund:
         r, _, _ = _generate(
             attempts=attempts, body_extra={"source_attempt_id": SOURCE_ID},
         )
@@ -644,7 +649,7 @@ def test_the_daily_spend_cap_does_not_block_a_pure_reserve():
     has already been served spends nothing, so a capped student can still
     practise what they missed."""
     source_questions = [_stored("Q1", 1)]
-    with patch("routes.quiz._daily_spend_exceeded", return_value=True):
+    with patch_quiz("_daily_spend_exceeded", return_value=True):
         r, _, agent = _generate(
             attempts=[_attempt(source_questions)],
             responses=_missed(0),
@@ -657,7 +662,7 @@ def test_the_daily_spend_cap_does_not_block_a_pure_reserve():
 
 def test_the_daily_spend_cap_still_blocks_a_generated_remainder():
     source_questions = [_stored("Q1", 1)]
-    with patch("routes.quiz._daily_spend_exceeded", return_value=True):
+    with patch_quiz("_daily_spend_exceeded", return_value=True):
         r, _, agent = _generate(
             attempts=[_attempt(source_questions)],
             responses=_missed(0),
