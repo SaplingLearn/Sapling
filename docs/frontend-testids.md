@@ -607,14 +607,19 @@ dialog lists every selected address.
 | --- | --- |
 | `allowlist-search` | email search input |
 | `allowlist-add-input` / `allowlist-add` | add-an-address input and its "Allowlist" button (approves + sends the invite) |
-| `allowlist-filter-{all\|signup\|approved\|joined}` | status filter chips (with counts) |
+| `allowlist-filter-{all\|signup\|open\|approved\|joined}` | status filter chips (with counts); `open` = in (or waiting) through open access |
+| `allowlist-filter-non-bu` | toggle: only non-BU addresses (composes with the status filter and search) |
 | `allowlist-select-all` | header checkbox: selects every selectable row under the current filter |
-| `allowlist-select-{email}` | a signup row's checkbox |
+| `allowlist-select-{email}` | an unapproved row's checkbox (a signup, or an open-access row) |
 | `allowlist-row-{email}` | a table row |
+| `allowlist-status-{email}` | the row's status chip (`signup`, `open access` / `waiting`, `approved`, `joined`) |
+| `allowlist-non-bu-{email}` | the "Non-BU" label beside a non-school address (a label only) |
 | `allowlist-invite-{email}` | the row's "you're in" email status chip (`invite_status`) |
 | `allowlist-toggle-{email}` | the row's Approve / Revoke button |
 | `allowlist-bulk-approve` | "Approve selected (N)"; opens the confirm dialog |
 | `allowlist-bulk-confirm-text` | the confirm dialog's summary (count, and the not-configured caveat) |
+| `open-access-banner` | the waitlist-gate banner on the Allowlist tab; `data-open` = `true` while `open_access` is on (docs/design/open-access-gate.md) |
+| `open-access-toggle` / `open-access-confirm` / `open-access-confirm-text` | the banner's switch, and its confirm dialog's button and copy |
 | `allowlist-bulk-confirm` / `allowlist-bulk-cancel` | the confirm dialog buttons; confirm calls `adminApproveAllowlistBulk` |
 
 ### `email`

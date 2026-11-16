@@ -243,6 +243,22 @@ REGISTRY: dict[str, FlagDef] = {f.key: f for f in (
             "Daily job: remove (and revoke at Google) the credentials a deleted "
             "account still holds after its delete could not remove them. "
             "Global: per-user rules and rollouts do not apply.", False),
+    # docs/design/open-access-gate.md: the waitlist requirement. On = it is
+    # lifted: anyone who signs in (any email domain) gets in, stamped
+    # `users.open_access_at` and linked on the waitlist UNAPPROVED, so closing
+    # the gate again puts them back on the waitlist; nobody's approval is
+    # touched either way (access is computed, services/open_access.py).
+    # Accounts an admin removed stay out. "off" (the fail-closed answer) is the
+    # gated side. Resolved GLOBALLY (user_id=None): a new person has no id at
+    # sign-in, so per-user rules and rollouts do not apply. Client-visible:
+    # the landing page offers "Sign up" instead of "Join the waitlist" while
+    # it is on. Kill switch: SAPLING_FLAG_OPEN_ACCESS=off.
+    FlagDef("open_access", ("off", "on"),
+            "Open access: lift the waitlist requirement, so anyone who signs in "
+            "gets in. They are added to the waitlist unapproved and go back to "
+            "waiting when this is turned off; approvals are untouched and "
+            "removed accounts stay out. Global: per-user rules and rollouts do "
+            "not apply.", True),
     # docs/safety/crisis-support.md: the crisis-support path. On: a student
     # message that states suicidal ideation, self-harm or acute danger gets
     # the fixed resources card INSTEAD of a model turn, on every surface

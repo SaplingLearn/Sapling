@@ -392,6 +392,12 @@ export interface AllowlistEmail {
   joined_user_id: string | null;
   /** Delivery state of the "you're in" email to this address; null = never sent. */
   invite_status: InviteStatus | null;
+  /** The linked account came in through the open gate and is unapproved: in
+   *  while `open_access` is on, waiting while it is off
+   *  (docs/design/open-access-gate.md). */
+  open_access?: boolean;
+  /** A school (BU) address. False = the "Non-BU" label; a label, never a decision. */
+  school_email?: boolean;
 }
 
 /** "skipped" = Resend not configured; "suppressed" = the address unsubscribed. */

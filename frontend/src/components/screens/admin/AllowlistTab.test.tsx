@@ -9,7 +9,11 @@
  *     with exactly the selected emails; the dialog copy follows
  *     `/email/status`;
  *   - the status filter chips carry counts and compose with search;
- *   - the Invite column renders `invite_status` as chips with tooltips.
+ *   - the Invite column renders `invite_status` as chips with tooltips;
+ *   - the open-access gate banner reads and flips `open_access`, an
+ *     open-access row reads "open access" / "waiting" with the gate, stays
+ *     approvable, and the Non-BU label + filter work
+ *     (docs/design/open-access-gate.md).
  */
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -20,6 +24,8 @@ const api = vi.hoisted(() => ({
   adminApproveAllowlistBulk: vi.fn(),
   adminRevokeAllowlist: vi.fn(),
   adminEmailStatus: vi.fn(),
+  adminListFlags: vi.fn(),
+  adminUpdateFlag: vi.fn(),
 }));
 vi.mock("@/lib/api", () => api);
 
@@ -49,6 +55,12 @@ const ROWS = [
   row("frank@bu.edu", { approved_at: "2026-10-02T00:00:00Z", invite_status: "suppressed" }),
 ];
 
+const gateFlag = (variant: "on" | "off") => ({
+  key: "open_access", description: "", variants: ["off", "on"], client_visible: true,
+  default_variant: variant, rollout_percent: 0, rollout_variant: null,
+  updated_at: null, updated_by: null, updated_by_name: null, targets: [],
+});
+
 const checked = (id: string) => (screen.getByTestId(id) as HTMLInputElement).checked;
 
 describe("AllowlistTab", () => {
@@ -59,6 +71,7 @@ describe("AllowlistTab", () => {
     Object.values(toastSpies).forEach((f) => f.mockReset());
     api.adminListAllowlist.mockResolvedValue({ emails: ROWS });
     api.adminEmailStatus.mockResolvedValue({ configured: true, from_address: "hi@sapling.test" });
+    api.adminListFlags.mockResolvedValue({ flags: [gateFlag("off")] });
   });
 
   it("select-all selects only the unapproved rows the filter shows", async () => {
@@ -170,5 +183,76 @@ describe("AllowlistTab", () => {
     fireEvent.click(await screen.findByTestId("allowlist-toggle-bob@bu.edu"));
     await waitFor(() => expect(api.adminApproveAllowlist).toHaveBeenCalledWith("bob@bu.edu"));
     await waitFor(() => expect(toastSpies.success).toHaveBeenCalledWith(expect.stringContaining("email sent")));
+  });
+  describe("open access", () => {
+    const OPEN_ROWS = [
+      row("alice@bu.edu"),
+      row("gus@gmail.com", { joined_user_id: "user_gus", open_access: true, school_email: false }),
+      row("carol@bu.edu", { approved_at: "2026-10-02T00:00:00Z", school_email: true }),
+    ];
+
+    beforeEach(() => {
+      api.adminListAllowlist.mockResolvedValue({ emails: OPEN_ROWS });
+    });
+
+    it("an open-access row reads as in while the gate is open, and stays approvable", async () => {
+      api.adminListFlags.mockResolvedValue({ flags: [gateFlag("on")] });
+      render(<AllowlistTab />);
+      const banner = await screen.findByTestId("open-access-banner");
+      expect(banner.getAttribute("data-open")).toBe("true");
+      await waitFor(() =>
+        expect(screen.getByTestId("allowlist-status-gus@gmail.com").textContent).toBe("open access"));
+      expect(screen.getByTestId("allowlist-filter-open").textContent).toBe("Open access (1)");
+      // Approving keeps them in once the gate closes: selectable, Approve button.
+      expect(screen.getByTestId("allowlist-select-gus@gmail.com")).toBeTruthy();
+      expect(screen.getByTestId("allowlist-toggle-gus@gmail.com").textContent).toBe("Approve");
+    });
+
+    it("the same row reads as waiting once the gate is closed", async () => {
+      render(<AllowlistTab />);
+      const banner = await screen.findByTestId("open-access-banner");
+      expect(banner.getAttribute("data-open")).toBe("false");
+      expect(screen.getByTestId("allowlist-status-gus@gmail.com").textContent).toBe("waiting");
+    });
+
+    it("labels and filters non-BU addresses", async () => {
+      render(<AllowlistTab />);
+      await screen.findByTestId("allowlist-row-alice@bu.edu");
+      expect(screen.getByTestId("allowlist-non-bu-gus@gmail.com").textContent).toBe("Non-BU");
+      expect(screen.queryByTestId("allowlist-non-bu-carol@bu.edu")).toBeNull();
+      expect(screen.getByTestId("allowlist-filter-non-bu").textContent).toBe("Non-BU (1)");
+      fireEvent.click(screen.getByTestId("allowlist-filter-non-bu"));
+      expect(screen.queryByTestId("allowlist-row-alice@bu.edu")).toBeNull();
+      expect(screen.getByTestId("allowlist-row-gus@gmail.com")).toBeTruthy();
+    });
+
+    it("opening the gate asks first, then flips the flag default", async () => {
+      api.adminUpdateFlag.mockResolvedValue({ flag: gateFlag("on") });
+      render(<AllowlistTab />);
+      fireEvent.click(await screen.findByTestId("open-access-toggle"));
+      expect((await screen.findByTestId("open-access-confirm-text")).textContent).toContain("BU or not");
+      expect(api.adminUpdateFlag).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByTestId("open-access-confirm"));
+      await waitFor(() =>
+        expect(api.adminUpdateFlag).toHaveBeenCalledWith("open_access", { default_variant: "on" }));
+      await waitFor(() =>
+        expect(screen.getByTestId("open-access-banner").getAttribute("data-open")).toBe("true"));
+      expect(screen.getByTestId("allowlist-status-gus@gmail.com").textContent).toBe("open access");
+    });
+
+    it("hides the banner when the flags cannot be read", async () => {
+      api.adminListFlags.mockRejectedValue(new Error("403"));
+      render(<AllowlistTab />);
+      await screen.findByTestId("allowlist-row-alice@bu.edu");
+      expect(screen.queryByTestId("open-access-banner")).toBeNull();
+    });
+
+    it("the bulk confirm says open-access people get no you're-in email", async () => {
+      render(<AllowlistTab />);
+      fireEvent.click(await screen.findByTestId("allowlist-select-gus@gmail.com"));
+      fireEvent.click(screen.getByTestId("allowlist-bulk-approve"));
+      expect((await screen.findByTestId("allowlist-bulk-confirm-text")).textContent)
+        .toContain("except anyone who joined through open access");
+    });
   });
 });

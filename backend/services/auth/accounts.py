@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from db.connection import table
 from services.auth.errors import AccountDeleted, AccountNotFound
 from services.encryption import decrypt_if_present
+from services.open_access import ACCESS_NONE, access_kind, gate_open
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +57,8 @@ def account_overview(user_id: str) -> dict:
     for ``GET /api/auth/me``. Raises :class:`AccountNotFound` (no row) or
     :class:`AccountDeleted` (soft-deleted)."""
     user = table("users").select(
-        "id,is_approved,onboarding_completed,deleted_at", filters={"id": f"eq.{user_id}"}
+        "id,is_approved,open_access_at,onboarding_completed,deleted_at",
+        filters={"id": f"eq.{user_id}"},
     )
     if not user:
         raise AccountNotFound()
@@ -112,9 +114,16 @@ def account_overview(user_id: str) -> dict:
             if fr_rows:
                 equipped_cosmetics["featured_role"] = fr_rows[0]
 
+    # `is_approved` is the COMPUTED access the frontend middleware routes on
+    # (approved, or in through the open gate while it is open);
+    # `access` says which (docs/design/open-access-gate.md).
+    access = access_kind(
+        user[0], open_now=bool(user[0].get("open_access_at")) and gate_open(),
+    )
     return {
         "user_id": user_id,
-        "is_approved": bool(user[0]["is_approved"]),
+        "is_approved": access != ACCESS_NONE,
+        "access": access,
         "onboarding_completed": bool(user[0].get("onboarding_completed", False)),
         "username": profile.get("username"),
         "name": decrypt_if_present(profile.get("name")) or "",

@@ -17,8 +17,8 @@ const POPUP_TIMEOUT_MS = 3 * 60 * 1000;
 export type SignInVariant = "signin" | "start";
 
 const HEADING: Record<SignInVariant, { lead: string; accent: string; sub: string }> = {
-  signin: { lead: "Welcome", accent: "back.", sub: "Sign in with your school Google account to continue." },
-  start: { lead: "Get", accent: "started.", sub: "Sign in with your school Google account, then set up Sapling in a few steps." },
+  signin: { lead: "Welcome", accent: "back.", sub: "Sign in with your Google account to continue." },
+  start: { lead: "Get", accent: "started.", sub: "Sign in with your Google account, then set up Sapling in a few steps." },
 };
 
 interface SignInModalProps {

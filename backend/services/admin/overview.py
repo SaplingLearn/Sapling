@@ -13,11 +13,12 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 
 from db.connection import table
+from services.open_access import ACCESS_OPEN, access_kind, gate_open, has_access
 
 
 def analytics_overview():
 
-    users = table("users").select("id,is_approved,created_at") or []
+    users = table("users").select("id,is_approved,open_access_at,created_at") or []
     roles = table("roles").select("id,slug,name,color") or []
     user_roles = table("user_roles").select("role_id") or []
 
@@ -29,13 +30,18 @@ def analytics_overview():
     admin_role_ids = {r["id"] for r in roles if r.get("slug") == "admin"}
     admin_count = sum(c for rid, c in role_counter.items() if rid in admin_role_ids)
 
-    approved = sum(1 for u in users if u.get("is_approved"))
+    # People with access: approved, or in through the open gate while it is
+    # open (services/open_access.py). `open_access` counts the latter alone.
+    open_now = gate_open()
+    approved = sum(1 for u in users if has_access(u, open_now=open_now))
+    open_entrants = sum(1 for u in users if access_kind(u, open_now=open_now) == ACCESS_OPEN)
     # Waiting on approval = waitlist signups not yet approved. Unapproved
     # sign-ins don't create accounts, so `users` can't answer this.
     waitlist = table("newsletter_emails").select("approved_at") or []
     totals = {
         "users": len(users),
         "approved": approved,
+        "open_access": open_entrants,
         "pending": sum(1 for w in waitlist if not w.get("approved_at")),
         "admins": admin_count,
     }

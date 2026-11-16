@@ -33,7 +33,7 @@ variables, Cloudflare worker secrets, or a local gitignored `backend/.env.stagin
 - [ ] Authorized **JavaScript origin**: `https://staging.saplinglearn.com`
 - [ ] Copy client id/secret → `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`.
 - [ ] If the consent screen is in "testing", add your testers as test users.
-- [ ] Decide sign-in domains: keep `ALLOWED_EMAIL_DOMAINS=bu.edu`, widen (`bu.edu,saplinglearn.com`), or leave empty to allow any account (safe — Access gates it).
+- [ ] Decide whether staging needs the waitlist: any Google account can sign in, and only approved addresses get in unless the `open_access` flag is on (Admin → Allowlist). Access gates who reaches staging at all.
 
 ### Step 3 — Railway (the backend service)
 - [ ] In the existing Railway project: **Environments → create `staging`** (duplicate of production).

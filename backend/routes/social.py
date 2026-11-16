@@ -35,7 +35,7 @@ from services.social import (
 
 # Moved to services/social/ (#118); re-exported so imports and patches of the
 # old names on this module keep working.
-from services.social.directory import _LISTABLE_USER_FILTERS, _visible_profile_ids  # noqa: F401  (re-export, #118)
+from services.social.directory import _listable_user_filters, _visible_profile_ids  # noqa: F401  (re-export, #118)
 from services.social.friends import (  # noqa: F401  (re-export, #118)
     DECLINE_COOLDOWN,
     _are_friends,

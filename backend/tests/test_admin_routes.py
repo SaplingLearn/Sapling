@@ -440,7 +440,10 @@ class TestUnapproveUser:
              patch_admin("log_admin_action"):
             r = client.patch("/api/admin/users/u1/unapprove")
         assert r.status_code == 200
-        assert tables["users"].update.call_args.args[0] == {"is_approved": False}
+        # The open-access mark goes too, so the removal holds through an open
+        # gate (docs/design/open-access-gate.md).
+        assert tables["users"].update.call_args.args[0] == {
+            "is_approved": False, "open_access_at": None}
         upsert = tables["newsletter_emails"].upsert.call_args
         # #757: the entry keeps the account link, so approving it again
         # can let this account straight back in.
@@ -849,8 +852,11 @@ class TestListAllowlist:
             t.return_value.select.return_value = []  # no email_sends yet
             r = client.get("/api/admin/allowlist")
         assert r.status_code == 200
-        # invite_status is null until a "you're in" send exists for the row.
-        assert r.json() == {"emails": [{**row, "invite_status": None} for row in rows]}
+        # invite_status is null until a "you're in" send exists for the row;
+        # neither row links an open-access account, and x.co is not BU.
+        assert r.json() == {"emails": [
+            {**row, "invite_status": None, "open_access": False, "school_email": False}
+            for row in rows]}
         assert t.call_args_list[0].args == ("newsletter_emails",)
         call = t.return_value.select_with_count.call_args
         columns = call.args[0] if call.args else call.kwargs["columns"]
@@ -1027,7 +1033,7 @@ class TestAllowlistStateConsistency:
         # re-approve (or a retried revoke) can still reach the account.
         assert upd.args[0] == {"approved_at": None, "joined_at": None}
         users_update = made["users"].update.call_args
-        assert users_update.args[0] == {"is_approved": False}
+        assert users_update.args[0] == {"is_approved": False, "open_access_at": None}
         assert users_update.kwargs["filters"] == {"id": 'in.("user_1")'}
         assert audit.call_args.kwargs["payload"]["user_ids"] == ["user_1"]
 

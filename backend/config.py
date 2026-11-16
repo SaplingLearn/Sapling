@@ -52,15 +52,10 @@ ADMIN_DESTRUCTIVE_REAUTH_WINDOW_SECONDS = int(
     os.getenv("ADMIN_DESTRUCTIVE_REAUTH_WINDOW_SECONDS", str(30 * 60))
 )
 
-# Sign-in email-domain allowlist. Comma-separated; empty value = allow any domain.
-# Default preserves prod's @bu.edu-only behavior. Staging can widen this (e.g.
-# "bu.edu,saplinglearn.com") or set it empty to allow any Google account — safe
-# on staging because Cloudflare Access already gates who reaches the app at all.
-ALLOWED_EMAIL_DOMAINS = [
-    d.strip().lstrip("@").lower()
-    for d in os.getenv("ALLOWED_EMAIL_DOMAINS", "bu.edu").split(",")
-    if d.strip()
-]
+# There is no sign-in email-domain restriction (ALLOWED_EMAIL_DOMAINS was
+# removed, docs/design/open-access-gate.md): the waitlist is the only gate, and
+# a non-school address is a "Non-BU" label in Admin → Allowlist
+# (services/open_access.py), never a refusal.
 
 # Google Calendar access. Asked for ONLY by the calendar consent flow
 # (GET /api/calendar/auth-url, from onboarding's Connect step or the Calendar

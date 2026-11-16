@@ -22,6 +22,7 @@ from services.admin.errors import Conflict, NotFound
 from services.admin_audit import log_admin_action
 from services.auth_guard import clear_account_state_cache
 from services.encryption import decrypt_if_present
+from services.open_access import is_school_email
 
 logger = logging.getLogger(__name__)
 
@@ -59,14 +60,41 @@ def _send_statuses(dedupe_keys: list[str]) -> dict[str, str]:
     return statuses
 
 
+def _open_access_ids(user_ids: list[str]) -> set[str]:
+    """Which of these accounts came in through the open gate and are still
+    unapproved (`users.open_access_at`, services/open_access.py). Degrades to
+    none on a read error, like the send statuses."""
+    found: set[str] = set()
+    try:
+        for chunk in _chunks(sorted(set(u for u in user_ids if u)), 100):
+            for r in table("users").select(
+                "id", filters={"id": _in_list(chunk), "open_access_at": "not.is.null",
+                               "is_approved": "eq.false"},
+            ) or []:
+                found.add(r.get("id"))
+    except Exception:  # noqa: BLE001
+        logger.warning("open-access read failed", exc_info=True)
+    return found
+
+
 def _with_invite_status(rows: list[dict]) -> list[dict]:
-    """Attach `invite_status`: the status of that address's "you're in" send."""
+    """Attach `invite_status` (the status of that address's "you're in"
+    send), `open_access` (the linked account came in through the open gate
+    and is unapproved: it is in while the gate is open, waiting while it is
+    closed) and `school_email` (the "Non-BU" label is its negation; a label,
+    never a decision)."""
     keyed = [
         (r, email_service.waitlist_approved_key(r["email"])) if r.get("email") else (r, None)
         for r in rows
     ]
     statuses = _send_statuses([k for _, k in keyed if k])
-    return [{**r, "invite_status": statuses.get(k) if k else None} for r, k in keyed]
+    open_ids = _open_access_ids([r.get("joined_user_id") for r in rows])
+    return [
+        {**r, "invite_status": statuses.get(k) if k else None,
+         "open_access": r.get("joined_user_id") in open_ids,
+         "school_email": is_school_email(r.get("email"))}
+        for r, k in keyed
+    ]
 
 
 def _waitlist_rows(columns: str = _ALLOWLIST_COLUMNS) -> list[dict]:
@@ -123,20 +151,30 @@ def _approve_waitlist(
     stamped, via a PATCH filtered on `approved_at=is.null`. New addresses are
     inserted approved with ON CONFLICT DO NOTHING, so a concurrent signup is
     never overwritten. Returns the "you're in" recipients (address, 🔒 first
-    name — one per email) and every stored spelling, for the read-back.
+    name — one per email, none for an address whose account is already in
+    through the open gate) and every stored spelling, for the read-back.
     """
     pending_ids: list[str] = []
     missing: list[str] = []
     linked: list[dict] = []
     recipients: list[tuple[str, str | None]] = []
     spellings: list[str] = []
+    # Already using Sapling through the open gate: approving keeps them in
+    # once it closes, and a "you're in" would be news to nobody. Read before
+    # the grant below flips `is_approved`.
+    open_ids = _open_access_ids(
+        [r.get("joined_user_id") for e in wanted for r in by_lower.get(e) or []]
+    )
     for email in wanted:
         existing = by_lower.get(email)
         if existing:
             pending_ids.extend(r["id"] for r in existing if not r.get("approved_at"))
             spellings.extend(r["email"] for r in existing)
             linked.extend(existing)
-            recipients.append((existing[0]["email"], decrypt_if_present(existing[0].get("first_name"))))
+            if not any(r.get("joined_user_id") in open_ids for r in existing):
+                recipients.append(
+                    (existing[0]["email"], decrypt_if_present(existing[0].get("first_name"))),
+                )
         else:
             missing.append(email)
             spellings.append(email)
@@ -246,7 +284,10 @@ def revoke_allowlist(body: AllowlistEmailBody, actor: str | None):
         filters={"id": f"in.({','.join(r['id'] for r in twins)})"},
     )
     for chunk in _chunks(user_ids, 100):
-        table("users").update({"is_approved": False}, filters={"id": _in_list(chunk)})
+        # `open_access_at` too: a revoke holds through an open gate.
+        table("users").update(
+            {"is_approved": False, "open_access_at": None}, filters={"id": _in_list(chunk)},
+        )
         for uid in chunk:
             clear_account_state_cache(uid)  # #756: refused now, not at the TTL
     log_admin_action(

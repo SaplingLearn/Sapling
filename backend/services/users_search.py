@@ -15,16 +15,22 @@ from typing import Optional
 from db.connection import table
 from db.scope import runs_as_service
 from services.encryption import decrypt_if_present
+from services.open_access import access_filter, gate_open
 from services.profiles import get_display_names
 
 _DEFAULT_PAGE_SIZE = 50
 _MAX_PAGE_SIZE = 200
 
 # After migration 0024 the display `name` lives on user_profiles, not users.
-_USERS_COLS = "id,email,is_approved,created_at,last_sign_in_at"
-# Admin → Users lists the people who have access. Everyone waiting on approval
-# lives in Admin → Allowlist (the waitlist), so the two pages never overlap.
-_APPROVED = {"is_approved": "eq.true"}
+_USERS_COLS = "id,email,is_approved,open_access_at,created_at,last_sign_in_at"
+
+
+def _with_access() -> dict[str, str]:
+    """Admin → Users lists the people who have access: approved, or in through
+    the open gate while it is open (services/open_access.py; their rows carry
+    `open_access_at`, which the page badges). Everyone waiting on approval
+    lives in Admin → Allowlist (the waitlist)."""
+    return access_filter(open_now=gate_open())
 
 # base64(12-byte nonce || ciphertext || 16-byte GCM tag): the shortest blob
 # services/encryption.py can write. A decrypted email/name never looks like one.
@@ -129,7 +135,7 @@ def paginate_users(
     if not q:
         rows, total = table("users").select_with_count(
             columns=_USERS_COLS,
-            filters=_APPROVED,
+            filters=_with_access(),
             order="created_at.desc",
             limit=page_size,
             offset=offset,
@@ -144,7 +150,7 @@ def paginate_users(
     # Search path: name moved to user_profiles, so PostgREST can't filter it
     # (AEAD nonces aren't searchable anyway). Decrypt emails + resolve every
     # name, then filter and paginate in Python. Admin-scale, behind require_admin.
-    all_rows = table("users").select(columns=_USERS_COLS, filters=_APPROVED, order="created_at.desc")
+    all_rows = table("users").select(columns=_USERS_COLS, filters=_with_access(), order="created_at.desc")
     for u in all_rows:
         u["email"] = decrypt_if_present(u.get("email"))
     _attach_names(all_rows)

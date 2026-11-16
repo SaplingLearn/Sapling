@@ -248,7 +248,6 @@ All Gemini callers decrypt before constructing a prompt. None of `decrypt_if_pre
 |-----------------------------------|----------|------------------------------------------------------------------|
 | `SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_URL` | backend / frontend | Project base URL. |
 | `APP_ENV`                         | backend  | Defaults to `production` (strict). `local`/`development`/`dev`/`test` relax the `SESSION_SECRET` check; `/api/auth/test-login` exists only under `local`/`test`. |
-| `ALLOWED_EMAIL_DOMAINS`           | backend  | Sign-in domain allowlist, default `bu.edu`. An empty value allows any Google account. |
 | `GOOGLE_AUTH_REDIRECT_URI` / `GOOGLE_REDIRECT_URI` | backend | Pinned OAuth callback URLs (sign-in / Calendar). |
 | `FRONTEND_URL`                    | backend  | The CORS origin and OAuth redirect target. |
 | `COOKIE_DOMAIN`, `DEPLOY_ENV`     | frontend | `.saplinglearn.com` (prod) for cross-subdomain session cookies; `DEPLOY_ENV` derives the backend origin and cookie domain. |

@@ -84,8 +84,9 @@ the OAuth client's authorized redirect URIs in the Google Cloud console.
 Two local-only conveniences make it "just work", both strictly `IS_LOCAL`-gated so
 staging/prod are unaffected:
 
-- `ALLOWED_EMAIL_DOMAINS=` is empty locally, so **any** Google account can sign in
-  (prod restricts to the configured domains).
+- Any Google account can sign in (there is no email-domain restriction on any
+  environment); locally `APP_ENV=local` also auto-approves it, so it skips the
+  waitlist (docs/design/open-access-gate.md).
 - `routes/auth.py` **auto-approves new users when `IS_LOCAL`**, so a first sign-in
   skips the `/pending` approval wall (prod keeps the real approval gate).
 
