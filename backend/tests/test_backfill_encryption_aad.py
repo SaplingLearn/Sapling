@@ -69,7 +69,7 @@ def db(monkeypatch):
     monkeypatch.setattr(bf, "table", fake.table)
     monkeypatch.setattr(bf, "rpc", fake.rpc)
     from services import encryption_canary
-    monkeypatch.setattr(encryption_canary, "verify_encryption_key", lambda: "ok")
+    monkeypatch.setattr(encryption_canary, "verify_encryption_key", lambda **_kw: "ok")
     return fake
 
 
@@ -120,12 +120,12 @@ def test_key_guard_aborts_before_reading(db, monkeypatch):
 
     db.tables["notes"] = [{"id": "n1", "body": _v1("x")}]
 
-    def wrong_key():
+    def wrong_key(**_kw):
         raise encryption_canary.EncryptionKeyMismatch("wrong key")
 
     monkeypatch.setattr(encryption_canary, "verify_encryption_key", wrong_key)
     assert _run("--apply") == 2
-    monkeypatch.setattr(encryption_canary, "verify_encryption_key", lambda: "seeded")
+    monkeypatch.setattr(encryption_canary, "verify_encryption_key", lambda **_kw: "absent")
     assert _run("--apply") == 2
     assert db.selects == 0 and db.swaps == []
 

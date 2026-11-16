@@ -207,7 +207,9 @@ def _key_guard() -> None:
     from services.encryption_canary import verify_encryption_key
 
     try:
-        outcome = verify_encryption_key()
+        # seed=False: a backfill must never plant its own key's canary
+        # (services/encryption_canary.py::require_key_for_write).
+        outcome = verify_encryption_key(seed=False)
     except Exception as e:  # EncryptionKeyMismatch included
         raise Abort(f"key guard: {type(e).__name__}: {e}") from e
     if outcome != "ok":

@@ -29,7 +29,7 @@ def _aggregate(per_student_mistakes: dict[str, list[str]]) -> dict:
         for u in students
     ]
     quiz_rows = [
-        {"concept_node_id": f"n-{u}",
+        {"user_id": u, "concept_node_id": f"n-{u}",
          "context_json": {"common_mistakes": mistakes, "weak_areas": mistakes}}
         for u, mistakes in per_student_mistakes.items()
     ]

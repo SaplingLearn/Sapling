@@ -12,10 +12,15 @@ from fastapi.testclient import TestClient
 from main import app
 from services import gradescope_service as gs
 from services import request_limits
-from services.encryption import decrypt, encrypt
+from services.encryption import bind, decrypt, encrypt
 from tests.split_patches import patch_gradescope
 
 client = TestClient(app)
+
+
+def _cookies_bind(user_id="u1"):
+    """The AAD binding of gradescope_credentials.cookies_encrypted (keyed on user_id)."""
+    return bind("gradescope_credentials", "cookies_encrypted", user_id)
 
 PASSWORD = "Sup3r-Secret-Pa55word"
 BU_PASSWORD = "Bu-Secret-Pa55word"
@@ -58,7 +63,7 @@ def test_password_connect_persists_no_password():
     assert payload["auth_mode"] == "cookies"
     assert payload["password_encrypted"] is None and payload["email_encrypted"] is None
     assert PASSWORD not in str(payload)
-    blob = json.loads(decrypt(payload["cookies_encrypted"]))
+    blob = json.loads(decrypt(payload["cookies_encrypted"], bind=_cookies_bind()))
     assert blob == {"_gradescope_session": "sess-value", "signed_token": "remember-value", "via": "password"}
     assert PASSWORD not in json.dumps(blob)
 
@@ -118,7 +123,7 @@ def test_legacy_password_row_is_converted_on_its_next_login():
     fields = conversion.args[0]
     assert fields["auth_mode"] == "cookies"
     assert fields["password_encrypted"] is None and fields["email_encrypted"] is None
-    assert json.loads(decrypt(fields["cookies_encrypted"]))["via"] == "password"
+    assert json.loads(decrypt(fields["cookies_encrypted"], bind=_cookies_bind()))["via"] == "password"
     assert PASSWORD not in str(fields)
     # Only that password version: never a row the student re-saved meanwhile.
     assert conversion.kwargs["filters"] == {
@@ -214,9 +219,9 @@ def test_retire_script_apply_converts_and_can_drop_rejected():
 
 @pytest.mark.parametrize(("row", "via"), [
     ({"auth_mode": "password"}, "password"),
-    ({"auth_mode": "cookies", "cookies_encrypted": encrypt(json.dumps({"_gradescope_session": "s", "via": "password"}))}, "password"),
-    ({"auth_mode": "cookies", "cookies_encrypted": encrypt(json.dumps({"_gradescope_session": "s", "via": "bu_sso"}))}, "bu_sso"),
-    ({"auth_mode": "cookies", "cookies_encrypted": encrypt(json.dumps({"_gradescope_session": "s"}))}, "cookies"),
+    ({"auth_mode": "cookies", "cookies_encrypted": encrypt(json.dumps({"_gradescope_session": "s", "via": "password"}), bind=_cookies_bind())}, "password"),
+    ({"auth_mode": "cookies", "cookies_encrypted": encrypt(json.dumps({"_gradescope_session": "s", "via": "bu_sso"}), bind=_cookies_bind())}, "bu_sso"),
+    ({"auth_mode": "cookies", "cookies_encrypted": encrypt(json.dumps({"_gradescope_session": "s"}), bind=_cookies_bind())}, "cookies"),
     ({"auth_mode": "cookies", "cookies_encrypted": "not-ciphertext"}, "cookies"),
 ])
 def test_status_reports_connected_via(row, via):

@@ -82,7 +82,7 @@ def test_retrieval_overfetches_then_caps(monkeypatch):
     ranked = _rows(*(f"a{i}" for i in range(6)), "b1", "c1", "d1")
     owners = {r["id"]: ("mallory" if r["id"].startswith("a") else r["id"]) for r in ranked}
     with patch.object(rag_service, "rpc", return_value=ranked) as rpc, _owners(owners), \
-            patch.object(rag_service, "decrypt_if_present", side_effect=lambda v: v):
+            patch.object(rag_service, "decrypt_if_present", side_effect=lambda v, **_: v):
         got = rag_service.retrieve_chunks("q", course_id="CAS CS 330", k=5, user_id="alice")
     assert rpc.call_args[0][1]["match_count"] == 15
     assert [r["id"] for r in got] == ["a0", "a1", "b1", "c1", "d1"]
