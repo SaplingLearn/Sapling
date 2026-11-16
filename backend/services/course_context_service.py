@@ -100,14 +100,22 @@ def _generate_summary_with_gemini(
     The agent owns the analyst persona; the aggregated metrics go in the user
     message. On any agent failure we degrade to a deterministic template string
     (no second LLM call), so a summary is always produced."""
+    # M10 audit: concept names are students' graph text, so the two lists go
+    # in the untrusted envelope; the course code/name are neutralized scalars.
+    from services.prompt_safety import neutralize_delimiters, wrap_untrusted
+
+    def _concepts(names: list, source: str) -> str:
+        return wrap_untrusted("\n".join(f"- {c}" for c in names), source=source) or "None identified"
+
     user_message = (
-        f"Course: {course_code} - {course_name}\n"
+        f"Course: {neutralize_delimiters(course_code or '')} - "
+        f"{neutralize_delimiters(course_name or '')}\n"
         f"Students enrolled: {student_count}\n"
         f"Average class mastery: {avg_class_mastery:.1%}\n\n"
         "Top struggling concepts (needs attention):\n"
-        f"{chr(10).join(f'- {c}' for c in top_struggling) if top_struggling else 'None identified'}\n\n"
+        f"{_concepts(top_struggling or [], 'struggling concept names from students graphs')}\n\n"
         "Top mastered concepts (students doing well):\n"
-        f"{chr(10).join(f'- {c}' for c in top_mastered) if top_mastered else 'None identified'}"
+        f"{_concepts(top_mastered or [], 'mastered concept names from students graphs')}"
     )
 
     try:

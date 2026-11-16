@@ -556,30 +556,55 @@ def extract_cards_from_image(file_bytes: bytes, filename: str = "image.png") -> 
     markdown = extraction_service.extract_text_from_file(file_bytes, filename, content_type) or ""
     if not markdown.strip():
         return []
-    prompt = _load_prompt("flashcard_ocr_split.txt").replace("{markdown}", markdown)
+    prompt = _load_prompt("flashcard_ocr_split.txt").replace(
+        "{markdown}", _untrusted_material(markdown, "OCR text of the student's notes image"),
+    )
     return _run_flashcard_agent(prompt)
+
+
+# M10: every flashcard prompt is a fixed TASK (the prompts/flashcard_*.txt
+# template, or the code-built header in `generate_flashcards`) followed by the
+# material inside the untrusted envelope. Imported text (a URL's page, an Anki
+# deck, an OCR'd photo, pasted notes) is whatever its author wrote; it never
+# reaches the agent outside the envelope, so it cannot pose as the task. The
+# agent's system prompt says only the TASK is instructions.
+def _untrusted_material(text: str, source: str) -> str:
+    from services.prompt_safety import wrap_untrusted
+
+    return wrap_untrusted(text, source=source) or "(empty)"
+
+
+#: The only difficulty words the generation template is ever handed (the
+#: route's Literal); anything else becomes the default, never prompt text.
+_GENERATION_DIFFICULTIES = ("recall", "application", "conceptual")
 
 
 def gemini_generate_cards(source_text: str, count: int, difficulty: str) -> list[Card]:
     prompt = (
         _load_prompt("flashcard_generation.txt")
-        .replace("{count}", str(count))
-        .replace("{difficulty}", difficulty)
-        .replace("{source}", source_text)
+        .replace("{count}", str(int(count)))
+        .replace(
+            "{difficulty}",
+            difficulty if difficulty in _GENERATION_DIFFICULTIES else _GENERATION_DIFFICULTIES[0],
+        )
+        .replace("{source}", _untrusted_material(source_text, "study material the student imported"))
     )
     return _run_flashcard_agent(prompt)
 
 
 def gemini_cleanup_cards(cards: list[Card]) -> list[Card]:
     prompt = _load_prompt("flashcard_cleanup.txt").replace(
-        "{cards_json}", json.dumps(cards, ensure_ascii=False)
+        "{cards_json}",
+        _untrusted_material(json.dumps(cards, ensure_ascii=False), "flashcards the student imported"),
     )
     out = _run_flashcard_agent(prompt)
     return out if out else cards
 
 
 def gemini_cloze(paragraph: str) -> list[Card]:
-    prompt = _load_prompt("flashcard_cloze.txt").replace("{paragraph}", paragraph)
+    prompt = _load_prompt("flashcard_cloze.txt").replace(
+        "{paragraph}", _untrusted_material(paragraph, "paragraph the student pasted"),
+    )
     return _run_flashcard_agent(prompt)
 
 
@@ -601,6 +626,9 @@ def generate_flashcards(
         weak_concepts:  Concept names the student has low mastery on, weighted higher.
     """
     # ── Build document context block ──────────────────────────────────────────
+    # M10: the topic, the documents' names, summaries and concept notes, the
+    # weak concepts and the free-text context are all student-derived; they
+    # go into ONE untrusted envelope after a task header built here in code.
     doc_blocks = []
     if documents:
         for doc in documents:
@@ -622,36 +650,33 @@ def generate_flashcards(
                     parts.append("Key concepts:\n" + "\n".join(concept_lines))
             doc_blocks.append("\n".join(parts))
 
-    doc_context = ""
+    material = [f'Course/Topic: "{topic}"']
     if doc_blocks:
-        doc_context = (
-            "\n\nCOURSE MATERIAL (use this as the primary source for flashcard content):\n"
+        material.append(
+            "COURSE MATERIAL (use this as the primary source for flashcard content):\n"
             + "\n\n---\n\n".join(doc_blocks)
         )
-
-    # ── Weak concept focus block ──────────────────────────────────────────────
-    weak_block = ""
     if weak_concepts:
-        weak_block = (
-            "\n\nThe student has LOW MASTERY on these concepts — prioritize them: "
+        material.append(
+            "The student has LOW MASTERY on these concepts — prioritize them: "
             + ", ".join(weak_concepts)
         )
+    if context:
+        material.append(f"Additional context:\n{context}")
 
-    # ── Free-text context (e.g. session summary) ──────────────────────────────
-    extra_block = f"\n\nAdditional context:\n{context}" if context else ""
-
-    prompt = f"""You are an expert tutor creating study flashcards for a student.
-
-Course/Topic: "{topic}"{doc_context}{weak_block}{extra_block}
-
-Generate exactly {count} flashcards.
+    wrapped = _untrusted_material("\n\n".join(material), "the student's course material and topic")
+    prompt = f"""TASK: You are an expert tutor creating study flashcards for a student.
+Generate exactly {int(count)} flashcards from the material below.
 
 Rules:
-- Base card content on the course material provided above, not generic knowledge.
+- Base card content on the course material provided below, not generic knowledge.
 - Each card must have a clear FRONT (question or term) and a BACK (answer or definition).
 - Vary difficulty: include recall, conceptual, and application questions.
-- Prioritize concepts the student has low mastery on if listed above.
+- Prioritize concepts the student has low mastery on if the material lists them.
 - Be specific — avoid vague or trivially obvious cards.
-- Do NOT repeat questions already listed in the existing Q&A pairs above."""
+- Do NOT repeat questions already listed in any existing Q&A pairs in the material.
+
+MATERIAL:
+{wrapped}"""
 
     return _run_flashcard_agent(prompt)
