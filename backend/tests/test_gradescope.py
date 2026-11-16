@@ -784,7 +784,7 @@ class TestBuSsoCredentials:
         assert "private-password" not in str(payload)
         assert json.loads(decrypt(
             payload["cookies_encrypted"],
-            bind=bind("gradescope_credentials", "cookies_encrypted", "u1"))) == cookies
+            bind=bind("gradescope_credentials", "cookies_encrypted", "u1"))) == {**cookies, "via": "bu_sso"}
 
     def test_unusable_sso_cookie_is_never_saved(self):
         saved = MagicMock()

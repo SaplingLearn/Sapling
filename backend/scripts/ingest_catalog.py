@@ -29,6 +29,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from db.connection import table  # noqa: E402
 from services.encryption import bind, encrypt_if_present  # noqa: E402
+from services.encryption_canary import abort_unless_key_verified  # noqa: E402
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 
@@ -107,6 +108,10 @@ def embed_batch(texts: list[str]) -> list[list[float]]:
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 def main() -> None:
+    # Abort unless ENCRYPTION_KEY opens this database's key canary
+    # (services/encryption_canary.py): a wrong key writes unreadable rows.
+    # Before the (billable) embedding pass, not just before the upsert.
+    abort_unless_key_verified("scripts.ingest_catalog")
     with open(CATALOG_FILE, encoding="utf-8") as f:
         catalog: list[dict] = json.load(f)
 

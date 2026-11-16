@@ -33,6 +33,25 @@ describe("ConnectedAccounts Gradescope card", () => {
     expect(screen.getByRole("button", { name: "Reconnect" })).toBeInTheDocument();
   });
 
+  it("asks a password user to enter the password again: Sapling never kept it", async () => {
+    vi.mocked(getGradescopeStatus).mockResolvedValue({
+      has_credentials: true, auth_mode: "cookies", connected_via: "password", last_synced_at: null,
+      state: "needs_reauth", needs_reauth: true, connected: false, last_sync_error: "auth_failed",
+    });
+    render(<ConnectedAccounts />);
+    expect(await screen.findByText("Session expired · enter your password again")).toBeInTheDocument();
+  });
+
+  it("labels a session from a password sign-in by how it was made, not as saved credentials", async () => {
+    vi.mocked(getGradescopeStatus).mockResolvedValue({
+      has_credentials: true, auth_mode: "cookies", connected_via: "password", last_synced_at: null,
+      state: "connected", needs_reauth: false, connected: true,
+    });
+    render(<ConnectedAccounts />);
+    expect(await screen.findByText("Session saved · password")).toBeInTheDocument();
+    expect(screen.queryByText(/Credentials saved/)).not.toBeInTheDocument();
+  });
+
   it("reports a disconnected account (links may survive) as not connected", async () => {
     vi.mocked(getGradescopeStatus).mockResolvedValue({
       has_credentials: false, auth_mode: null, last_synced_at: null, state: "disconnected",

@@ -25,6 +25,7 @@ from agents.usage import record_agent_usage, served_model_name
 from db.connection import table
 from models import GenerateQuizBody
 from services import events_service
+from services.log_privacy import safe_exception_text
 from services.auth_guard import require_self, guard_off_loop
 from services.llm_budget import LLMBudgetExceeded
 from services.quiz.config import (
@@ -626,9 +627,11 @@ async def _quiz_via_agent(
                 # logscan oracle reports those as findings, and this path
                 # is a handled degradation, not a bug (same rule the
                 # quiz_context seam skip follows).
+                # safe_exception_text: a validation failure's text quotes
+                # the model output (services/log_privacy.py).
                 logger.warning(
                     "quiz: top-up run failed (%s: %s); serving what we have",
-                    type(e).__name__, e,
+                    type(e).__name__, safe_exception_text(e),
                 )
                 break
             if len(wire_questions) >= num_questions:

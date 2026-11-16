@@ -4,4 +4,4 @@
 // backend/config.py holds the same two values (a backend test reads
 // this file, so the two cannot drift). Change one only with the text it dates.
 export const TERMS_VERSION = "2026-10-22";
-export const PRIVACY_VERSION = "2026-11-03";
+export const PRIVACY_VERSION = "2026-11-16";

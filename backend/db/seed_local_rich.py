@@ -33,6 +33,7 @@ from config import get_mastery_tier            # noqa: E402
 from db import seed_helpers as h               # noqa: E402
 from db import seed_local_study                # noqa: E402
 from db.connection import table                # noqa: E402
+from services.encryption_canary import abort_unless_key_verified  # noqa: E402
 from models.study_guide import (               # noqa: E402
     GUIDE_FORMAT,
     CheckBlock,
@@ -1235,6 +1236,11 @@ def main(argv: list[str] | None = None) -> None:
     # Programmatic callers (integration/reset fixtures) retain the no-flag seed.
     args = parser.parse_args(argv if argv is not None else [])
     _guard_local()
+    # Abort unless ENCRYPTION_KEY opens this database's key canary
+    # (services/encryption_canary.py): a wrong key writes unreadable rows.
+    # A fresh local database is seeded before any backend boots, so an empty
+    # canary is seeded here, as the first boot would.
+    abort_unless_key_verified("db.seed_local_rich", allow_seed=True)
     h.reset_counts()
     if args.owner_email is None and args.owner_user_id is None:
         _seed_dataset()

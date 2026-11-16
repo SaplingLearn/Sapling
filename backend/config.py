@@ -92,7 +92,7 @@ AUTH_SCOPES = [
 # frontend keeps the same two values in frontend/src/lib/legal/versions.ts, and
 # tests/test_legal_versions.py fails when they differ: bump both together.
 TERMS_VERSION = "2026-10-22"
-PRIVACY_VERSION = "2026-11-03"
+PRIVACY_VERSION = "2026-11-16"
 
 
 # Transactional + broadcast email over Resend (services/email_service.py).
@@ -191,6 +191,7 @@ def validate_config() -> None:
             + f". (APP_ENV={APP_ENV!r}; set APP_ENV=local to relax SESSION_SECRET for local dev.)"
         )
     _refuse_local_mode_on_a_real_deployment()
+    _refuse_test_model_mode_on_a_real_deployment()
     _refuse_committed_demo_secrets()
     _warn_db_user_scope_config()
 
@@ -270,6 +271,27 @@ def _refuse_local_mode_on_a_real_deployment() -> None:
             "SESSION_SECRET), but this process looks like a real deployment ("
             + "; ".join(reasons)
             + "). Set APP_ENV=production or APP_ENV=staging on deployed services."
+        )
+
+
+def _refuse_test_model_mode_on_a_real_deployment() -> None:
+    """SAPLING_MODEL_MODE other than `real` is the test seam (#391): `function`
+    answers every student with fixed E2E constants, and turns off RAG
+    embeddings, the index sweeper and PostHog. On a deployed host that is
+    silent fake tutoring, so a process that looks deployed refuses it,
+    whatever APP_ENV says. Read the way agents/_providers.py reads it (unset or
+    blank is `real`), without importing the agents package here."""
+    mode = (os.getenv("SAPLING_MODEL_MODE") or "real").strip().lower()
+    if mode == "real":
+        return
+    reasons = real_deployment_markers()
+    if reasons:
+        raise RuntimeError(
+            f"Refusing to start: SAPLING_MODEL_MODE={mode!r} is the test seam (fixed "
+            "model answers, embeddings and analytics off) and is only for CI and the "
+            "local E2E stack, but this process looks like a real deployment ("
+            + "; ".join(reasons)
+            + "). Unset SAPLING_MODEL_MODE (or set it to 'real') on deployed services."
         )
 
 

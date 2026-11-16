@@ -28,6 +28,11 @@ logging.basicConfig(
 from services import access_log  # noqa: E402
 
 access_log.install()
+# httpx logs each outbound URL at INFO (PostgREST query strings carry emails),
+# and validation tracebacks carry model output: services/log_privacy.py.
+from services import log_privacy  # noqa: E402
+
+log_privacy.install()
 
 from routes import graph, learn, quiz, calendar, social, extract, auth, documents, flashcards, study_guide, feedback, careers, onboarding, gradebook, gradescope, notes, academics, gamification
 from routes.profile import router as profile_router
@@ -375,6 +380,32 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
     )
 
 
+def _scrub_validation_errors(errors: list) -> list:
+    """Pydantic's errors without what the client sent.
+
+    Each error carries ``input``: the rejected value, or the WHOLE body when a
+    required field is missing, so a 422 on /api/gradescope/credentials echoed
+    the password back (and a too-long one verbatim). ``ctx['error']`` is the
+    validator's exception, whose text can quote the value too. Both go, on
+    every route; ``loc``/``type``/``msg`` (what the frontend reads, via
+    lib/errorMessage.ts) and the other ``ctx`` limits stay."""
+    out = []
+    for err in errors:
+        if not isinstance(err, dict):
+            out.append(err)
+            continue
+        err = {k: v for k, v in err.items() if k != "input"}
+        ctx = err.get("ctx")
+        if isinstance(ctx, dict):
+            ctx = {k: v for k, v in ctx.items() if k != "error"}
+            if ctx:
+                err["ctx"] = ctx
+            else:
+                err.pop("ctx")
+        out.append(err)
+    return out
+
+
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     rid = getattr(request.state, "request_id", None) or current_request_id()
@@ -386,7 +417,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     # (#540 A3) failing precisely when a route adds the kind of cross-field
     # rule the envelope exists to report. Encoded ONCE and reused, so the
     # payload and the machine detail can never disagree.
-    errors = jsonable_encoder(exc.errors())
+    errors = jsonable_encoder(_scrub_validation_errors(exc.errors()))
     code, message = quiz_errors.validation_error_code(errors)
     if code is quiz_errors.QuizErrorCode.QUIZ_COUNT_OUT_OF_RANGE:
         message = (
