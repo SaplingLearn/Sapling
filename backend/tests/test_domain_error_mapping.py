@@ -128,6 +128,35 @@ def test_domain_status_reraises_a_wrapped_scope_refusal(index):
     assert info.value is original
 
 
+def test_domain_status_respects_a_refusal_dropped_with_from_none():
+    """`raise X from None` means the service handled the refusal and chose
+    its own answer; it is not dug back out of the suppressed context."""
+    from db.scope import ScopeUnavailable
+
+    try:
+        try:
+            raise ScopeUnavailable("token rejected")
+        except ScopeUnavailable:
+            raise _Mapped("handled") from None
+    except _Mapped as wrapped:
+        assert domain_status(wrapped, {_Mapped: 409}) == 409
+
+
+def test_domain_status_still_finds_an_implicit_context():
+    """A refusal that merely happened during handling (no `from`) still counts."""
+    from db.scope import ScopeUnavailable
+
+    original = ScopeUnavailable("token rejected")
+    try:
+        try:
+            raise original
+        except ScopeUnavailable:
+            raise _Mapped("wrapped")
+    except _Mapped as wrapped:
+        with pytest.raises(ScopeUnavailable):
+            domain_status(wrapped, {_Mapped: 500})
+
+
 def test_flashcards_list_answers_503_when_the_token_is_rejected(monkeypatch):
     """Seen under enforce in the E2E lane: a rejected token on the flashcards
     list came back as a 500 StorageError instead of the fail-closed 503."""

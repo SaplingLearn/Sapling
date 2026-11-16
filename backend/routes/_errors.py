@@ -20,16 +20,27 @@ logger = logging.getLogger(__name__)
 _SCOPE_ERRORS = ("ScopedAccessDenied", "ScopeUnavailable", "UnscopedQueryError")
 
 
+def _next_in_chain(exc: BaseException) -> BaseException | None:
+    """The exception Python would print as this one's cause: the explicit
+    ``__cause__``, else the implicit ``__context__`` unless ``raise ... from
+    None`` suppressed it (as services/log_privacy.py's chain walk does)."""
+    if exc.__cause__ is not None:
+        return exc.__cause__
+    return None if exc.__suppress_context__ else exc.__context__
+
+
 def _scope_cause(exc: BaseException) -> BaseException | None:
     """A ``db.scope`` refusal this domain error was raised from, if any.
-    Matched by module + name so this helper never imports db.scope."""
+    Matched by module + name so this helper never imports db.scope. A
+    refusal the service deliberately dropped (``raise X from None``) is not
+    dug back out: the service chose its own answer."""
     seen: set[int] = set()
-    cur: BaseException | None = exc.__cause__ or exc.__context__
+    cur = _next_in_chain(exc)
     while cur is not None and id(cur) not in seen:
         seen.add(id(cur))
         if type(cur).__module__ == "db.scope" and type(cur).__name__ in _SCOPE_ERRORS:
             return cur
-        cur = cur.__cause__ or cur.__context__
+        cur = _next_in_chain(cur)
     return None
 
 
