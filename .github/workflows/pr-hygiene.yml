@@ -14,7 +14,8 @@
 #
 # Needs no secrets, checks nothing out, and runs no PR code, so it is safe on
 # forks. Drafts get only the type check; bot PRs (e.g. Dependabot) are not
-# failed.
+# failed; promotion PRs (main -> production, opened by `make promote`) are
+# exempt.
 name: PR hygiene
 
 on:
@@ -45,6 +46,15 @@ jobs:
             const isBot = pr.user && pr.user.type === "Bot";
             const TYPES = ["feat", "fix", "docs", "refactor", "perf", "test", "ci", "chore", "build", "revert"];
             const problems = [];
+
+            // 0. A promotion PR (main -> production) is opened by `make promote`
+            //    (backend/promotion), carries already-reviewed commits, and its
+            //    title is fixed by the runner. Nothing here applies to it.
+            if (pr.base.ref === "production" && branch === "main") {
+              await core.summary.addHeading("PR hygiene", 3)
+                .addRaw("Promotion PR (main -> production): exempt.").write();
+              return;
+            }
 
             // 1. Type: Conventional Commit title, else the branch prefix.
             let type = null;
