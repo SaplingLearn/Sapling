@@ -279,6 +279,16 @@ def claim_binding(claim: str) -> Binding:
 
 
 # ── Settings (read per call: cheap, and tests can flip them) ────────────────
+#
+# These are env vars, NOT services/feature_flags.py flags, deliberately (the
+# one sanctioned exception to CLAUDE.md's "never gate with a new env var"):
+# every encrypt/decrypt reads them synchronously, including inside async
+# handlers, in offline scripts and backfills, in the worker, and in the boot
+# key check before anything else runs. A flag read can hit the database on a
+# snapshot miss (a sync DB call on the event loop) and can be unreachable; the
+# ciphertext format must not depend on the flag store answering. They are
+# per-process settings that the API and the worker must share
+# (.railway/railway.ts HANDLER_VARIABLES pins that).
 
 _ON = {"1", "true", "on", "yes"}
 
