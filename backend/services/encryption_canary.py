@@ -28,11 +28,18 @@ import httpx
 
 from config import SUPABASE_URL
 from db.connection import table
-from services.encryption import decrypt, encrypt
+from services.encryption import bind, decrypt, encrypt
 
 logger = logging.getLogger(__name__)
 
 CANARY_PLAINTEXT = "sapling-encryption-key-check:v1"
+
+#: The canary's AES-GCM binding (docs/security/encryption-aad-plan.md). A seed
+#: follows ENCRYPTION_WRITE_V2 like every other bound write; a read always
+#: accepts the legacy v1 canary, whatever ENCRYPTION_LEGACY_READS says: it is
+#: a key check, not data, and the AAD backfill never rewrites it (a v2 canary
+#: would make a rollback to pre-v2 code refuse to boot).
+CANARY_BINDING = bind("encryption_key_check", "canary", 1)
 
 
 class EncryptionKeyMismatch(RuntimeError):
@@ -46,7 +53,7 @@ def _read_canary() -> str | None:
 
 def _check(canary: str) -> None:
     try:
-        ok = decrypt(canary) == CANARY_PLAINTEXT
+        ok = decrypt(canary, bind=CANARY_BINDING, allow_legacy=True) == CANARY_PLAINTEXT
     except Exception:
         ok = False
     if not ok:
@@ -71,7 +78,7 @@ def verify_encryption_key() -> str:
             # Re-read either way, so losing a seed race to a different key is
             # caught here rather than on the next boot.
             table("encryption_key_check").upsert(
-                {"id": 1, "canary": encrypt(CANARY_PLAINTEXT)},
+                {"id": 1, "canary": encrypt(CANARY_PLAINTEXT, bind=CANARY_BINDING)},
                 on_conflict="id",
                 ignore_duplicates=True,
             )

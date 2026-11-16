@@ -232,20 +232,33 @@ _CIPHERTEXT_MANIFEST: tuple[tuple[str, str, str], ...] = (
 
 
 def run_ciphertext(args: argparse.Namespace) -> tuple[list[Finding], int]:
-    """`ciphertext`: sample rows off `_CIPHERTEXT_MANIFEST`, decrypt-and-compare."""
-    from services.encryption import decrypt
+    """`ciphertext`: sample rows off `_CIPHERTEXT_MANIFEST`, decrypt-and-compare.
+
+    Each value is opened under its OWN row's binding (finding M13), so a v2
+    value moved in from another row is a finding. When this process writes v2
+    (`ENCRYPTION_WRITE_V2`, which the stack shares), legacy v1 is one too."""
+    from services import encryption
 
     conn = _db_conn()
+    require_v2 = encryption.write_v2_enabled()
     findings: list[Finding] = []
     for table, pk_col, column in _CIPHERTEXT_MANIFEST:
-        # Identifiers come only from the hardcoded manifest above, never from
-        # user input — safe to interpolate directly into SQL text.
+        key_cols = encryption.column_spec(table, column).key
+        cols = ", ".join(f'"{c}"' for c in dict.fromkeys([pk_col, *key_cols, column]))
+        # Identifiers come only from the hardcoded manifest above and the
+        # registry in services/encryption.py, never from user input — safe to
+        # interpolate directly into SQL text.
         rows = conn.execute(
-            f'SELECT "{pk_col}", "{column}" FROM "{table}" '
+            f'SELECT {cols} FROM "{table}" '
             f'WHERE "{column}" IS NOT NULL LIMIT 50'
         ).fetchall()
-        pairs = [(r[pk_col], r[column]) for r in rows]
-        findings.extend(judges.ciphertext_findings(table, column, pairs, decrypt))
+
+        def _open(value, row, _t=table, _c=column):
+            return encryption.decrypt(value, bind=encryption.bind(_t, _c, row))
+
+        triples = [(r[pk_col], r[column], r) for r in rows]
+        findings.extend(judges.ciphertext_findings(
+            table, column, triples, _open, require_v2=require_v2))
     return findings, 0
 
 

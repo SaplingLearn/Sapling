@@ -21,6 +21,11 @@ from unittest.mock import MagicMock
 import pytest
 
 os.environ.setdefault("ENCRYPTION_KEY", "0" * 64)  # 32-byte all-zero key for deterministic tests
+# The suite writes the v2 (AAD-bound) envelope, so a writer and a reader that
+# disagree on a binding fail here rather than in production (finding M13,
+# services/encryption.py). Legacy v1 reads stay allowed, as in production
+# until the backfill has run.
+os.environ.setdefault("ENCRYPTION_WRITE_V2", "on")
 # Tests run as local mode so validate_config() (invoked by the one test that
 # enters the FastAPI lifespan) doesn't reject the short dummy SESSION_SECRET the
 # CI env supplies. Production defaults APP_ENV=production (strict). #174.
