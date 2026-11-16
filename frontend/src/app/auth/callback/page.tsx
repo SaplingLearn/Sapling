@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useEffect } from 'react';
+import { Suspense, useEffect, useRef } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { useUser } from '@/context/UserContext';
 import { API_URL } from '@/lib/api';
@@ -49,8 +49,14 @@ function CallbackInner() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const { setActiveUser } = useUser();
+  // The handoff is single-use (sec2 M2), so this effect must run once. React
+  // StrictMode (next dev) runs mount effects twice: the second POST would be
+  // refused and its fail() could win the race against the first's success.
+  const started = useRef(false);
 
   useEffect(() => {
+    if (started.current) return;
+    started.current = true;
     // sec2 M2: never trust `user_id` from the URL (a crafted link could name
     // anyone); the account comes from the session the handoff mints, via
     // GET /api/auth/me below.

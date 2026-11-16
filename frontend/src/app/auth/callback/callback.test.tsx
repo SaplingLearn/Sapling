@@ -73,6 +73,23 @@ describe('#191 callback persistence gate', () => {
     expect(setActiveUser).toHaveBeenCalledWith('u1', 'Nina', 'av', { persist: true });
   });
 
+  it('sec2 M2: exchanges the single-use handoff once under StrictMode', async () => {
+    search = 'auth_token=h&is_approved=true';
+    const fetchMock = stubFetch(() => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ user_id: 'u1', onboarding_completed: true, name: 'Nina' }),
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<React.StrictMode><CallbackPage /></React.StrictMode>);
+    await waitFor(() => expect(replace).toHaveBeenCalledWith('/dashboard'));
+    const posts = fetchMock.mock.calls.filter(
+      ([u, init]) => String(u).includes('/api/auth/session') && init?.method === 'POST',
+    );
+    expect(posts).toHaveLength(1);
+    expect(replace).not.toHaveBeenCalledWith(expect.stringContaining('error='));
+  });
+
   it('#757: retries a transient /me failure instead of guessing', async () => {
     search = 'user_id=u1&auth_token=h&is_approved=true&avatar=g-av';
     let calls = 0;
