@@ -53,7 +53,7 @@ npm run cf:deploy           # build + deploy (production)
 npm run cf:deploy:staging   # build + deploy --env staging
 ```
 
-`BACKEND_URL` must be set as a build-time variable for any deploy (prod: `https://api.saplinglearn.com`, staging: `https://api.staging.saplinglearn.com`) — the build fails loudly otherwise, and `wrangler.toml [vars]` (runtime-only) will not fix it. Signed-in sessions also need `SESSION_SECRET` (matching the backend) and `COOKIE_DOMAIN`.
+`BACKEND_URL` must be set as a build-time variable for any deploy (prod: `https://api.saplinglearn.com`, staging: `https://api.staging.saplinglearn.com`) — the build fails loudly otherwise, and `wrangler.toml [vars]` (runtime-only) will not fix it. Signed-in sessions also need `SESSION_SECRET` (matching the backend). There is no `COOKIE_DOMAIN`: the session cookie is host-only (`__Host-sapling_session` over https; SECURITY.md §1.3).
 
 ## Layout
 

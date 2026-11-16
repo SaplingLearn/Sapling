@@ -211,8 +211,9 @@ frontend/src/lib/sessionToken.ts]**:
 - A session token is `base64url(payload).base64url(HMAC-SHA256(SESSION_SECRET, payload))`,
   payload `{"user_id", "exp", "typ"}`. Stateless: there is no session table
   and no server-side revocation list.
-- The frontend session route signs the `sapling_session` cookie with the same
-  `SESSION_SECRET` (a Cloudflare Worker secret) and a 30-day expiry; the
+- The frontend session route signs the session cookie (host-only
+  `__Host-sapling_session`) with the same `SESSION_SECRET` (a Cloudflare
+  Worker secret) and a 7-day lifetime; the
   backend verifies the HMAC, the expiry and the `typ`, then the account state.
 - The backend also accepts the token from the `auth_token` query parameter
   **[code: backend/services/auth_guard.py::presented_session_token]**.

@@ -5,9 +5,9 @@
  *
  * Implemented as a route handler, not a next.config rewrite, so the upstream
  * request is built from a header allowlist and never carries the student's
- * `sapling_session` cookie or IP — see src/lib/ingestProxy.ts for the full
+ * session cookie or IP — see src/lib/ingestProxy.ts for the full
  * reason. Not an open relay: only the endpoints the SDK config uses, only
- * with a `sapling_session` that verifies (never forwarded), only plain
+ * with a session cookie that verifies (never forwarded), only plain
  * (un-encoded) bodies, capped at MAX_INGEST_BODY_BYTES, and only events for
  * this deployment's project key under the session's own account id.
  */
@@ -26,7 +26,7 @@ import {
   upstreamRequestHeaders,
   upstreamTarget,
 } from "@/lib/ingestProxy";
-import { SESSION_COOKIE_NAME, verifySession } from "@/lib/sessionToken";
+import { verifiedSessionCookie } from "@/lib/sessionCookie";
 
 export const dynamic = "force-dynamic";
 
@@ -44,8 +44,7 @@ async function proxy(request: NextRequest): Promise<Response> {
   }
   // Not an open relay: analytics only runs for signed-in students, so the
   // session must verify (local HMAC + expiry, as middleware.ts does).
-  const token = request.cookies.get(SESSION_COOKIE_NAME)?.value;
-  const session = token ? await verifySession(token) : null;
+  const session = await verifiedSessionCookie(request);
   if (!session) return new Response(null, { status: 403 });
 
   const init: RequestInit = {

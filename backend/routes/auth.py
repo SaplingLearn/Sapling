@@ -43,7 +43,8 @@ from services.auth import (
     welcome_and_achievements_after_sign_in,
 )
 from services.auth_guard import clear_account_state_cache, get_session_user_id, guard_off_loop
-from services.session_tokens import SESSION_COOKIE_NAME, TOKEN_TYPE_HANDOFF, mint_session
+from services.auth.handoff import clean_binding, mint_handoff, mint_test_handoff, signin_cookie_name
+from services.session_tokens import mint_session, session_cookie_name
 # Re-exports (#118): moved names routes/calendar.py, routes/admin.py, scripts
 # and tests still import from here.
 from services.auth.accounts import _mark_welcomed, _stamp_last_sign_in_for_test, _welcome_due  # noqa: F401
@@ -118,7 +119,7 @@ def logout(request: Request):
 
 
 @router.get("/google")
-def google_login(popup_id: str = Query(None), return_to: str = Query(None)):
+def google_login(popup_id: str = Query(None), return_to: str = Query(None), binding: str = Query(None)):
     """Redirect to Google's consent screen for the identity scopes.
 
     ``include_granted_scopes`` makes the grant (and its tokens) also cover the
@@ -133,6 +134,7 @@ def google_login(popup_id: str = Query(None), return_to: str = Query(None)):
     # Kept in the signed state cookie, never re-read from the callback query: the
     # callback trusts only what /google validated and signed.
     clean_return_to = _clean_return_to(return_to)
+    clean_bind = clean_binding(binding)  # sec2 M2: sha256 of /auth/start's nonce cookie
 
     flow = Flow.from_client_config(_google_client_config(), scopes=AUTH_SCOPES)
     flow.redirect_uri = GOOGLE_AUTH_REDIRECT_URI
@@ -150,6 +152,7 @@ def google_login(popup_id: str = Query(None), return_to: str = Query(None)):
         "cv": code_verifier,
         "popup_id": clean_popup,
         **({"rt": clean_return_to} if clean_return_to else {}),
+        **({"bh": clean_bind} if clean_bind else {}),
     })
     response = RedirectResponse(auth_url)
     response.set_cookie(
@@ -188,6 +191,7 @@ def google_callback(
     code_verifier = cookie_payload.get("cv") if cookie_payload else None
     popup_id = _clean_popup_id(cookie_payload.get("popup_id")) if cookie_payload else None
     cookie_nonce = cookie_payload.get("n") if cookie_payload else None
+    signin_binding = clean_binding(cookie_payload.get("bh")) if cookie_payload else None
     # Re-checked here as well as at /google, so the token only ever leaves for an
     # origin the CURRENT config allows; anything else lands on FRONTEND_URL.
     frontend_url = (
@@ -311,16 +315,16 @@ def google_callback(
     #
     # Uses the shared minter (#381) with `typ=handoff` (#756): the API refuses a
     # handoff token as a credential, and the BFF exchanges nothing else, so a
-    # live session can no longer be re-minted into a fresh one. The `if
-    # SESSION_SECRET` guard is kept (and the secret passed explicitly) so this
-    # path still degrades to "no auth_token in the redirect" rather than raising.
+    # live session can no longer be re-minted into a fresh one. sec2 M2: plus a
+    # single-use `jti` and the browser binding `bh` (routes/auth_handoff.py).
+    # The `if SESSION_SECRET` guard keeps a missing secret a missing token.
     auth_token = ""
     if SESSION_SECRET:
-        auth_token = mint_session(
+        auth_token = mint_handoff(
             user_id,
             ttl=_REDIRECT_TOKEN_TTL_SECONDS,
             secret=SESSION_SECRET,
-            typ=TOKEN_TYPE_HANDOFF,
+            binding=signin_binding,
         )
 
     # #117: auth.login fires at the two real session-mint sites (here and
@@ -422,7 +426,8 @@ async def mint_test_session(request: Request):
     global-setup step can inject it with `context.addCookies()` instead of
     replaying the response. `handoff_token` is the same user's OAuth-redirect
     token (`typ=handoff`, #756), for a journey that drives /auth/callback the
-    way a real sign-in does: the session BFF exchanges only that type.
+    way a real sign-in does (sec2 M2: its browser holds `signin_nonce` as the
+    `signin_cookie_name` cookie). `cookie_name`: `__Host-` iff SECURE_COOKIES.
     """
     # The gate runs FIRST, before the body is even looked at. The body is parsed
     # and validated by hand rather than declared as a `MintTestSessionBody`
@@ -468,9 +473,8 @@ async def mint_test_session(request: Request):
     requested = TEST_LOGIN_DEFAULT_TTL_SECONDS if body.ttl is None else body.ttl
     ttl = max(30, min(int(requested), TEST_LOGIN_MAX_TTL_SECONDS))
     token = mint_session(user_id, ttl=ttl, secret=secret)
-    handoff_token = mint_session(
-        user_id, ttl=_REDIRECT_TOKEN_TTL_SECONDS, secret=secret, typ=TOKEN_TYPE_HANDOFF
-    )
+    handoff_token, signin_nonce = mint_test_handoff(user_id, ttl=_REDIRECT_TOKEN_TTL_SECONDS, secret=secret)
+    secure = bool(getattr(config, "SECURE_COOKIES", False))
 
     logger.warning("test-login: minted a session for %r (APP_ENV=%s)", user_id, config.APP_ENV)
 
@@ -486,19 +490,21 @@ async def mint_test_session(request: Request):
     response = JSONResponse({
         "ok": True,
         "user_id": user_id,
-        "cookie_name": SESSION_COOKIE_NAME,
+        "cookie_name": session_cookie_name(secure),
         "token": token,
         "handoff_token": handoff_token,
+        "signin_nonce": signin_nonce,
+        "signin_cookie_name": signin_cookie_name(secure),
         "expires_in": ttl,
     })
     # Same attributes the real session cookie carries (frontend BFF
     # /api/auth/session and the OAuth-state cookie above).
     response.set_cookie(
-        key=SESSION_COOKIE_NAME,
+        key=session_cookie_name(secure),
         value=token,
         max_age=ttl,
         httponly=True,
-        secure=bool(getattr(config, "SECURE_COOKIES", False)),
+        secure=secure,
         samesite="lax",
         path="/",
     )

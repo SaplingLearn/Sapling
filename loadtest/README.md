@@ -32,7 +32,7 @@ exists only on `APP_ENV=local|test`; elsewhere pass a pre-minted
 
 ### One token = one student (single-user mode)
 
-A `sapling_session` token authenticates exactly one `user_id`, and the
+A session token (sent as the `__Host-sapling_session` cookie) authenticates exactly one `user_id`, and the
 routes under test check that the session IS the user they are asked about
 (`require_self`). So when `LOADTEST_SESSION_TOKEN` is set, every simulated
 user acts as the token's own `user_id` (read from the token's payload) and
@@ -48,7 +48,7 @@ any `429`s in that light.
 |---|---|---|
 | `LOADTEST_USER_IDS` | `rich-user-active` | comma list of seeded users; simulated users take them in turn (ignored with `LOADTEST_SESSION_TOKEN`) |
 | `LOADTEST_TEST_LOGIN` | `1` | mint sessions through `/api/auth/test-login` |
-| `LOADTEST_SESSION_TOKEN` | unset | a `sapling_session` token to use instead: single-user mode, every simulated user is the token's `user_id` |
+| `LOADTEST_SESSION_TOKEN` | unset | a session token (the `__Host-sapling_session` cookie value) to use instead: single-user mode, every simulated user is the token's `user_id` |
 | `LOADTEST_TUTOR_SESSION` | unset | an existing tutor session id; unset, each user starts one |
 | `LOADTEST_CHAT` | `1` | `0` drops the chat task (reads only) |
 

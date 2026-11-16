@@ -95,9 +95,8 @@ describe('startReauth / takePostSignInPath', () => {
   it('stashes the admin page and goes through Google sign-in on this origin', () => {
     startReauth();
     expect(window.sessionStorage.getItem(POST_SIGNIN_PATH_KEY)).toBe('/admin?tab=flags');
-    expect(assign).toHaveBeenCalledWith(
-      `https://app.saplinglearn.com/api/auth/google?return_to=${encodeURIComponent("https://app.saplinglearn.com")}`,
-    );
+    // sec2 M2: through /auth/start, which sets the sign-in nonce cookie.
+    expect(assign).toHaveBeenCalledWith('https://app.saplinglearn.com/auth/start');
   });
 
   it('returns the stashed admin path once', () => {

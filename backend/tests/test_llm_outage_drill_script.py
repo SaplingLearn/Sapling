@@ -20,7 +20,7 @@ def _backend(*, fail: set[str] = frozenset(), sse_error: bool = False, admin: bo
         seen.append(f"{request.method} {path}")
         if path == "/api/auth/test-login":
             return httpx.Response(200, json={"token": "tok"})
-        assert request.headers.get("cookie") == "sapling_session=tok" or path == "/api/auth/test-login"
+        assert request.headers.get("cookie") == "__Host-sapling_session=tok" or path == "/api/auth/test-login"
         if path.startswith("/api/admin/"):
             if not admin:
                 return httpx.Response(403, json={"detail": "Admin access required"})

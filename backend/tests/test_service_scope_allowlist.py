@@ -41,6 +41,8 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
     ("main.py", "gemini_test", "admin_service_route"): "admin LLM probe (records usage)",
     ("main.py", "/api/auth auth.router", "service_route"):
         "OAuth callback / test-login / pending: run before a session exists; users is account state",
+    ("main.py", "/api/auth auth_handoff_router", "service_route"):
+        "sec2 M2 handoff exchange: before a session exists; auth_handoff_consumptions is service-only",
     ("main.py", "/api/careers careers.router", "service_route"): "public; job_applications is service-only",
     ("main.py", "/api/email email_router", "service_route"): "public unsubscribe; email_suppressions is service-only",
     ("main.py", "/api/internal internal_metrics_router", "service_route"):
@@ -157,6 +159,8 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
         "#117 stateless_locks: app_leases + claim_lease() are service-only",
     ("services/pg_lease.py", "_renew_db", "service_scope"):
         "#117 stateless_locks: renew_lease() extends the caller's own lease",
+    ("services/auth/handoff.py", "_consume_jti", "service_scope"):
+        "sec2 M2: auth_handoff_consumptions + consume_auth_handoff() are service-only",
     ("services/pg_lease.py", "_release_db", "service_scope"):
         "#117 stateless_locks: release_lease() drops the caller's own lease",
     ("services/tutor_sessions.py", "_store_row", "runs_as_service"):

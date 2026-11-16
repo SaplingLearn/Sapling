@@ -22,9 +22,10 @@ binding = "ASSETS"
 directory = ".open-next/assets"
 
 # DEPLOY_ENV is the single source of truth (see src/lib/deployGuard.ts): the
-# middleware derives the backend origin and the session route derives the cookie
-# domain from it at runtime. NEXT_PUBLIC_API_URL/BACKEND_URL/COOKIE_DOMAIN below
-# are kept as explicit fallbacks. IMPORTANT: these `[vars]` are RUNTIME-only —
+# middleware derives the backend origin from it at runtime (and the session
+# route the LEGACY cookie domain it clears; the session cookie itself is
+# host-only, sec2 M1). NEXT_PUBLIC_API_URL/BACKEND_URL below are kept as
+# explicit fallbacks. IMPORTANT: these `[vars]` are RUNTIME-only —
 # the /api rewrite and NEXT_PUBLIC_* inlining are baked at BUILD time, so the
 # staging Workers Build must ALSO set DEPLOY_ENV=staging as a build variable.
 #
@@ -37,14 +38,14 @@ directory = ".open-next/assets"
 DEPLOY_ENV = "production"
 NEXT_PUBLIC_API_URL = "https://api.saplinglearn.com"
 BACKEND_URL = "https://api.saplinglearn.com"
-COOKIE_DOMAIN = ".saplinglearn.com"
 
 [observability]
 enabled = true
 
 # --- Staging environment (deploy: `npm run cf:deploy:staging`) ---
-# Same code as prod; points at the staging backend and scopes cookies to the
-# staging subdomain only (NOT .saplinglearn.com — that would share with prod).
+# Same code as prod; points at the staging backend. The session cookie is
+# host-only (`__Host-sapling_session`, sec2 M1) in every environment, so there
+# is no COOKIE_DOMAIN: no environment's cookie reaches another's hosts.
 [env.staging]
 name = "frontend-staging"
 
@@ -52,7 +53,6 @@ name = "frontend-staging"
 DEPLOY_ENV = "staging"
 NEXT_PUBLIC_API_URL = "https://api.staging.saplinglearn.com"
 BACKEND_URL = "https://api.staging.saplinglearn.com"
-COOKIE_DOMAIN = ".staging.saplinglearn.com"
 
 [env.staging.observability]
 enabled = true
@@ -64,11 +64,10 @@ enabled = true
 # be `npx wrangler preview --env staging` — without --env it targets the PROD
 # `frontend` worker. Previews talk to the staging backend, which sends the
 # OAuth hand-off back to an allowlisted *-frontend-staging.saplinglearn.workers.dev
-# origin (routes/auth.py `_clean_return_to`); the session route then sets a
-# host-only cookie there. SESSION_SECRET is a Preview secret (dashboard /
+# origin (routes/auth.py `_clean_return_to`); the session route sets its
+# host-only cookie there, as everywhere. SESSION_SECRET is a Preview secret (dashboard /
 # `wrangler secret`), never here, and must equal the staging backend's.
 [env.staging.previews.vars]
 DEPLOY_ENV = "staging"
 NEXT_PUBLIC_API_URL = "https://api.staging.saplinglearn.com"
 BACKEND_URL = "https://api.staging.saplinglearn.com"
-COOKIE_DOMAIN = ".staging.saplinglearn.com"

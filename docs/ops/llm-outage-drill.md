@@ -48,7 +48,7 @@ a drill. The old `SAPLING_LLM_FORCE_OUTAGE` variable does nothing any more
       Gemini; with a bad key the fallback gets a 401, which never falls back
       again, and every request errors. Embeddings use the same key, so if RAG
       works on staging the key is fine.
-- [ ] You have an **admin** test account on staging and its `sapling_session`
+- [ ] You have an **admin** test account on staging and its `__Host-sapling_session`
       cookie (browser dev tools → Application → Cookies, on the staging app
       after signing in). The script reads the drill state and the per-model
       rollup through admin endpoints. A non-admin session still runs the
@@ -80,7 +80,7 @@ a drill. The old `SAPLING_LLM_FORCE_OUTAGE` variable does nothing any more
    `llm_fallback` is `off`. Then, from `backend/`:
 
    ```bash
-   export SAPLING_DRILL_SESSION='<admin sapling_session cookie>'
+   export SAPLING_DRILL_SESSION='<admin __Host-sapling_session cookie>'
    python -m scripts.llm_outage_drill \
        --url https://api.staging.saplinglearn.com --i-know \
        --user-id <that account's users.id> --expect errors
