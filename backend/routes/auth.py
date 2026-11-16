@@ -78,15 +78,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# #115 (RLS step 2): this router is user-scoped like every other one; the
-# endpoints that must run as the service role carry `dependencies=_SVC`:
-# the OAuth redirect/callback, /pending/* and /test-login run before (or
-# instead of) a session, and /logout writes `users.sessions_valid_after`
-# (users is SELECT-only for students). Unmarked, so the student's own token:
-# GET /me (own users, user_profiles, user_roles and user_settings rows plus
-# the roles/cosmetics catalog), GET /local-seed (its own users row) and GET
-# /realtime-token (no PostgREST call of its own; the guard's account read is
-# service_scope'd in services/auth_guard.py).
+# #115: user-scoped except `_SVC` endpoints (pre-session OAuth, /pending/*,
+# /test-login; /logout writes users, SELECT-only for students). /me,
+# /local-seed and /realtime-token read only the caller's rows + catalog.
 _SVC = [Depends(service_route)]
 
 # Local-dev auto-approve fires ONLY for real local dev, NOT APP_ENV=test (which must
