@@ -388,3 +388,22 @@ class TestCleanupScript:
         filters = users.select.call_args.kwargs["filters"]
         assert filters["open_access_at"] == "is.null"
         assert filters["is_approved"] == "eq.false"
+
+
+def test_open_access_waitlist_row_binds_its_first_name(monkeypatch):
+    """sec2 M13 x open access: the entrant's waitlist row seals first_name
+    under its cell binding, so the bound readers (allowlist, admin email)
+    open it once v2 writes are on."""
+    from services.auth import waitlist
+    from services.encryption import bind, decrypt
+
+    monkeypatch.setenv("ENCRYPTION_WRITE_V2", "on")
+    written = {}
+    fake = MagicMock()
+    fake.upsert.side_effect = lambda row, **_k: written.update(row)
+    monkeypatch.setattr(waitlist, "table", lambda name: fake)
+    monkeypatch.setattr(waitlist, "_waitlist_entry", lambda email: None)
+    waitlist._link_open_access_entry("ada@example.com", "Ada", None, "user_1")
+    assert written["first_name"].startswith("enc2:")
+    assert decrypt(written["first_name"],
+                   bind=bind("newsletter_emails", "first_name", "ada@example.com")) == "Ada"

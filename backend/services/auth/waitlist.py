@@ -80,7 +80,9 @@ def _link_open_access_entry(
     try:
         if entry is None:
             table("newsletter_emails").upsert(
-                {"email": email, "first_name": encrypt(first_name) if first_name else None},
+                {"email": email, "first_name": encrypt(
+                    first_name, bind=bind("newsletter_emails", "first_name", email),
+                ) if first_name else None},
                 on_conflict="email",
                 ignore_duplicates=True,
             )
