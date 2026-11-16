@@ -45,10 +45,11 @@ logger = logging.getLogger(__name__)
 CANARY_PLAINTEXT = "sapling-encryption-key-check:v1"
 
 #: The canary's AES-GCM binding (docs/security/encryption-aad-plan.md). A seed
-#: follows ENCRYPTION_WRITE_V2 like every other bound write; a read always
-#: accepts the legacy v1 canary, whatever ENCRYPTION_LEGACY_READS says: it is
-#: a key check, not data, and the AAD backfill never rewrites it (a v2 canary
-#: would make a rollback to pre-v2 code refuse to boot).
+#: is ALWAYS v1, whatever ENCRYPTION_WRITE_V2 says, and a read always accepts
+#: the legacy v1 canary, whatever ENCRYPTION_LEGACY_READS says: it is a key
+#: check, not data, and the AAD backfill never rewrites it. A v2 canary would
+#: make a rollback to pre-v2 code (which cannot parse ``enc2:``) refuse to
+#: boot. A v2 canary seeded by an older build still verifies.
 CANARY_BINDING = bind("encryption_key_check", "canary", 1)
 
 
@@ -95,7 +96,7 @@ def verify_encryption_key(*, seed: bool = True) -> str:
             # Re-read either way, so losing a seed race to a different key is
             # caught here rather than on the next boot.
             table("encryption_key_check").upsert(
-                {"id": 1, "canary": encrypt(CANARY_PLAINTEXT, bind=CANARY_BINDING)},
+                {"id": 1, "canary": encrypt(CANARY_PLAINTEXT, bind=CANARY_BINDING, v2=False)},
                 on_conflict="id",
                 ignore_duplicates=True,
             )

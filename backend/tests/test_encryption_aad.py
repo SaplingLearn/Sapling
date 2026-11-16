@@ -279,14 +279,23 @@ def test_canary_v1_still_verifies_even_with_legacy_reads_off(monkeypatch):
     assert encryption_canary.verify_encryption_key() == "ok"
 
 
-def test_canary_seeds_v2_and_verifies(monkeypatch):
+def test_canary_seeds_v1_even_with_v2_writes_on(monkeypatch):
+    # A v2 canary would make a rollback to pre-v2 code refuse to boot.
+    monkeypatch.setenv("ENCRYPTION_WRITE_V2", "on")
     seeded = {}
     t = MagicMock()
     t.select.side_effect = lambda *a, **k: [{"canary": seeded["canary"]}] if seeded else []
     t.upsert.side_effect = lambda data, **k: seeded.update(data)
     monkeypatch.setattr(encryption_canary, "table", lambda name: t)
     assert encryption_canary.verify_encryption_key() == "seeded"
-    assert seeded["canary"].startswith("enc2:")
+    assert not seeded["canary"].startswith("enc2:")
+    assert encryption_canary.verify_encryption_key() == "ok"
+
+
+def test_a_v2_canary_from_an_older_build_still_verifies(monkeypatch):
+    v2 = encrypt(encryption_canary.CANARY_PLAINTEXT, bind=encryption_canary.CANARY_BINDING, v2=True)
+    t = _canary_table(v2)
+    monkeypatch.setattr(encryption_canary, "table", lambda name: t)
     assert encryption_canary.verify_encryption_key() == "ok"
 
 
