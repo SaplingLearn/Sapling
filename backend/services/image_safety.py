@@ -22,9 +22,12 @@ import warnings
 
 from PIL import Image
 
-#: Largest image decoded: ~40 MP (a 7000 x 5700 photo). A phone camera is 12-50 MP;
-#: OCR needs far less.
-MAX_IMAGE_PIXELS = 40_000_000
+#: Largest image decoded: 64 MP (8000 x 8000). Full-resolution phone photos
+#: run up to 48-50 MP (8064 x 6048, 8160 x 6120) and a student photographing
+#: notes must get through; past that is a 108/200 MP sensor mode or a
+#: crafted canvas. (PIL's own default ceiling is ~89 MP, but there it only
+#: warns; here anything past this is refused, so the bound is the real one.)
+MAX_IMAGE_PIXELS = 64_000_000
 #: Largest bitmap one PDF page is rendered to. A letter page at scale 2 is
 #: ~2 MP; a poster-sized page renders at a lower scale instead.
 MAX_RENDER_PIXELS = 16_000_000

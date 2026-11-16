@@ -34,11 +34,11 @@ def _png(width: int, height: int) -> bytes:
 
 
 def test_pil_is_configured_process_wide():
-    assert Image.MAX_IMAGE_PIXELS == image_safety.MAX_IMAGE_PIXELS == 40_000_000
+    assert Image.MAX_IMAGE_PIXELS == image_safety.MAX_IMAGE_PIXELS == 64_000_000
 
 
 def test_a_decompression_bomb_is_refused_at_open():
-    bomb = _png(10_000, 5_000)  # 50 M pixels, a few KB on the wire
+    bomb = _png(10_000, 7_000)  # 70 M pixels, a few KB on the wire
     assert len(bomb) < 200_000
     with pytest.raises(ImageTooLarge):
         image_safety.open_image(bomb)
@@ -46,6 +46,10 @@ def test_a_decompression_bomb_is_refused_at_open():
 
 def test_an_ordinary_image_opens():
     assert image_safety.open_image(_png(800, 600)).size == (800, 600)
+
+
+def test_a_full_resolution_48mp_phone_photo_opens():
+    assert image_safety.open_image(_png(8064, 6048)).size == (8064, 6048)
 
 
 @pytest.mark.parametrize("engine", ["tesseract", "docling"])
@@ -56,7 +60,7 @@ def test_every_image_ocr_path_refuses_the_bomb(engine, monkeypatch):
     with patch("services.extraction_service.extract_pdf_with_docling") as docling, \
          patch("pytesseract.image_to_string") as tess:
         with pytest.raises(ImageTooLarge):
-            extraction_service.extract_text_from_image_bytes(_png(10_000, 5_000))
+            extraction_service.extract_text_from_image_bytes(_png(10_000, 7_000))
     docling.assert_not_called()
     tess.assert_not_called()
 
@@ -67,7 +71,7 @@ def test_the_image_route_answers_413_for_a_bomb():
     client = TestClient(app)
     with patch("routes.extract.validate_lang", side_effect=lambda lang: lang):
         r = client.post("/api/extract/image",
-                        files={"file": ("x.png", _png(10_000, 5_000), "image/png")})
+                        files={"file": ("x.png", _png(10_000, 7_000), "image/png")})
     assert r.status_code == 413, r.text
 
 
