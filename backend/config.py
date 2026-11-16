@@ -92,7 +92,7 @@ AUTH_SCOPES = [
 # frontend keeps the same two values in frontend/src/lib/legal/versions.ts, and
 # tests/test_legal_versions.py fails when they differ: bump both together.
 TERMS_VERSION = "2026-10-22"
-PRIVACY_VERSION = "2026-11-03"
+PRIVACY_VERSION = "2026-11-16"
 
 
 # Transactional + broadcast email over Resend (services/email_service.py).

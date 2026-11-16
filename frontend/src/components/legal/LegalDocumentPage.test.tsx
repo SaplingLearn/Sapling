@@ -35,7 +35,7 @@ describe('public legal pages', () => {
   it('/privacy is the shared Privacy Policy, dated by its version', () => {
     render(<PrivacyPage />);
     expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Privacy Policy');
-    expect(screen.getByTestId('legal-updated').textContent).toBe('Last updated: November 3, 2026');
+    expect(screen.getByTestId('legal-updated').textContent).toBe('Last updated: November 16, 2026');
     expectWhole(PRIVACY);
     expect(screen.getAllByRole('heading', { level: 2 })).toHaveLength(PRIVACY.sections.length);
   });

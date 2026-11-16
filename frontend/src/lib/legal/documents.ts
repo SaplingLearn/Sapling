@@ -190,8 +190,22 @@ export const PRIVACY: LegalDocument = {
       ],
     },
     {
-      title: "5. Data Retention",
-      body: "We retain your data for as long as your account is active. You may request deletion of your account and associated data by submitting a request through the app's feedback tool.",
+      title: "5. Data Retention and Account Deletion",
+      body: "We retain your data for as long as your account is active. You can delete your account yourself at any time under Settings → Data. If you delete it by mistake, email us at ",
+      link: CONTACT,
+      bodySuffix: " before the 30 days below are up. When you delete your account:",
+      list: [
+        "Straight away, your account is hidden, you are signed out, and it can no longer be signed in to. We also delete your Google sign-in tokens (and revoke Sapling's access at Google), delete any Gradescope login you saved, and ask PostHog to delete the product analytics it holds about you.",
+        "30 days after the deletion, we permanently erase your personal data: your name and email address, profile and avatar, settings, uploaded documents and notes, knowledge graph, quizzes, flashcards, study guides, tutoring sessions, gradebook and calendar data, feedback and bug reports, friendships, and the record of which Terms and Privacy Policy versions you accepted. You leave every study room, and the messages you sent there are replaced by a “deleted message” placeholder with their text, images and your name removed. This erasure cannot be undone.",
+        "After the 30 days we keep only the following, with no name or email address attached, linked to an anonymous account ID:",
+      ],
+      highlights: [
+        { label: "AI usage records:", text: "for each AI response we generated for you, the model, the number of tokens processed and the cost (never your prompt or the AI's reply), which we need for billing." },
+        { label: "Usage telemetry:", text: "records of actions in the app made of IDs, counts and settings, never the text you wrote." },
+        { label: "Moderation records:", text: "a ban from a study room, if you had one." },
+        { label: "Shared course material:", text: "an excerpt of course material you uploaded and shared with your class stays available to classmates only while one of their own uploads still contains it." },
+      ],
+      bodyAfter: "If you later sign in again with the same Google account, you start a new, empty account.",
     },
     {
       title: "6. Security",
