@@ -26,13 +26,30 @@ const PY_DECRYPT = `
 import json, sys
 from dotenv import load_dotenv
 load_dotenv()  # services.encryption reads ENCRYPTION_KEY straight from env
-from services.encryption import decrypt_if_present
-values = json.load(sys.stdin)
-sys.stdout.write(json.dumps([decrypt_if_present(v) for v in values]))
+from services.encryption import bind, decrypt_if_present
+items = json.load(sys.stdin)
+sys.stdout.write(json.dumps([
+    decrypt_if_present(
+        i["value"],
+        bind=bind(i["table"], i["column"], tuple(i["row"]) if isinstance(i["row"], list) else i["row"]),
+    )
+    for i in items
+]))
 `;
 
+/** One encrypted cell: its raw value plus the (table, column, row key) it is
+ *  bound to (sec2 M13: a v2 value only opens in its own cell). `row` is the
+ *  registry key for that column in `backend/services/encryption.py`
+ *  (`ENCRYPTED_COLUMNS`), e.g. a message's `session_id` or a row's `id`. */
+export type EncryptedCell = {
+  value: string;
+  table: string;
+  column: string;
+  row: string | string[];
+};
+
 /** Decrypt a batch of raw column values via the backend's own helper. */
-export function decryptTexts(values: string[]): Promise<string[]> {
+export function decryptTexts(values: EncryptedCell[]): Promise<string[]> {
   const repoRoot = path.resolve(__dirname, "..", "..", "..");
   const backendDir = path.join(repoRoot, "backend");
   const python =
@@ -66,7 +83,7 @@ export function decryptTexts(values: string[]): Promise<string[]> {
 }
 
 /** Decrypt one raw column value. */
-export async function decryptText(value: string): Promise<string> {
+export async function decryptText(value: EncryptedCell): Promise<string> {
   const [plain] = await decryptTexts([value]);
   return plain;
 }

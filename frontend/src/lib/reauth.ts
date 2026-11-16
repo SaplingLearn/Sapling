@@ -69,7 +69,6 @@ export function startReauth(): void {
   // Absolute, on this origin: /auth/start sets the sign-in nonce cookie
   // (sec2 M2) and hands on to the backend's /api/auth/google. A route
   // handler, not a page: it needs a full navigation, never router.push.
-  // eslint-disable-next-line @next/next/no-location-assign-relative-destination
   window.location.assign(`${window.location.origin}${signInStartPath()}`);
 }
 

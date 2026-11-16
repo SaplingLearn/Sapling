@@ -154,18 +154,28 @@ test("a new local Google account is seeded with the sample data and lands on the
     // And under THIS stack's key: the backend's own helper decrypts a study
     // row's text columns to something else. It hands an undecryptable value
     // back unchanged, so "differs from what is stored" is the whole proof.
-    const [stored] = await queryRaw(
-      `SELECT
-         (SELECT front FROM flashcards
-           WHERE user_id = $1 AND id LIKE 'study-%' ORDER BY id LIMIT 1) AS flashcard,
-         (SELECT summary FROM documents
-           WHERE user_id = $1 AND id LIKE 'study-%' ORDER BY id LIMIT 1) AS summary,
-         (SELECT m.content FROM messages m JOIN sessions s ON s.id = m.session_id
-           WHERE s.user_id = $1 AND m.id LIKE 'study-%' ORDER BY m.id LIMIT 1) AS message`,
+    const [row] = await queryRaw(
+      `SELECT f.id AS flashcard_id, f.front AS flashcard,
+              d.id AS document_id, d.summary AS summary,
+              m.session_id AS message_session, m.content AS message
+         FROM (SELECT id, front FROM flashcards
+                WHERE user_id = $1 AND id LIKE 'study-%' ORDER BY id LIMIT 1) f,
+              (SELECT id, summary FROM documents
+                WHERE user_id = $1 AND id LIKE 'study-%' ORDER BY id LIMIT 1) d,
+              (SELECT m.session_id, m.content FROM messages m JOIN sessions s ON s.id = m.session_id
+                WHERE s.user_id = $1 AND m.id LIKE 'study-%' ORDER BY m.id LIMIT 1) m`,
       [userId],
     );
-    const atRest = [stored.flashcard, stored.summary, stored.message] as string[];
-    const decrypted = await decryptTexts(atRest);
+    const stored = row as Record<
+      "flashcard_id" | "flashcard" | "document_id" | "summary" | "message_session" | "message",
+      string
+    >;
+    const atRest = [stored.flashcard, stored.summary, stored.message];
+    const decrypted = await decryptTexts([
+      { value: stored.flashcard, table: "flashcards", column: "front", row: stored.flashcard_id },
+      { value: stored.summary, table: "documents", column: "summary", row: stored.document_id },
+      { value: stored.message, table: "messages", column: "content", row: stored.message_session },
+    ]);
     for (const [index, plain] of decrypted.entries()) {
       expect(plain, "a study row's text decrypts with the stack's key").toBeTruthy();
       expect(plain).not.toBe(atRest[index]);
