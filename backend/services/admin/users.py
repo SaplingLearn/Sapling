@@ -50,7 +50,11 @@ def unapprove_user(user_id: str, actor: str | None):
     Admin → Allowlist as a signup; their account and data are kept."""
     if user_id == actor:
         raise Conflict("You cannot remove your own access.")
-    rows = table("users").update({"is_approved": False}, filters={"id": f"eq.{user_id}"})
+    # Clearing `open_access_at` too makes the removal hold through an open
+    # gate (docs/design/open-access-gate.md).
+    rows = table("users").update(
+        {"is_approved": False, "open_access_at": None}, filters={"id": f"eq.{user_id}"},
+    )
     clear_account_state_cache(user_id)  # #756: the guard refuses it now, not at the TTL
     email = (decrypt_if_present((rows or [{}])[0].get("email")) or "").strip()
     if "@" in email:

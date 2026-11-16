@@ -8,7 +8,6 @@
  */
 export const SIGN_IN_ERROR_COPY: Record<string, string> = {
   not_approved: "Your account is pending approval. We'll email you once an admin lets you in.",
-  invalid_domain: "Sign-in is limited to approved school accounts (@bu.edu).",
   email_not_verified:
     "Google hasn't verified this account's email address. Verify it with Google, then sign in again.",
   google_not_configured: "Google sign-in is not configured on the server. Please contact support.",

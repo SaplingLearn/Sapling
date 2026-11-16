@@ -22,7 +22,7 @@ Sign-in is a full-page redirect to `${API_URL}/api/auth/google`. The backend dri
 
 - **PKCE (S256).** Each sign-in mints a fresh 32-byte code verifier via `secrets.token_bytes(32)`. The SHA-256 challenge is sent to Google with `code_challenge_method=S256` (`auth.py` ~lines 68–73, 144–152). The verifier is carried in the OAuth `state` parameter, base64-encoded JSON: `{"action": "signin", "cv": "<verifier>"}`.
 - **Code exchange.** On callback, the backend decodes `state`, extracts the code verifier, and exchanges the code via `flow.fetch_token(code=code, code_verifier=code_verifier)`. The redirect URI is pinned to `GOOGLE_AUTH_REDIRECT_URI` (env-supplied) and validated by Google.
-- **Domain restriction.** Only `@bu.edu` accounts may sign in. Other domains are redirected to `${FRONTEND_URL}/auth?error=invalid_domain` (`auth.py` ~lines 186–189).
+- **No domain restriction; the waitlist is the gate.** Any Google account with a verified email (`verified_email: true`) may attempt sign-in. A new address gets an account only when it is approved on the waitlist (Admin → Allowlist) or while the `open_access` flag is on; otherwise nothing is stored and the visitor lands on `/pending`. A non-`bu.edu` address is only a "Non-BU" label in Admin → Allowlist, never a refusal (`services/auth/signin.py`, `services/open_access.py`, `docs/design/open-access-gate.md`). `SAPLING_FLAG_OPEN_ACCESS=off` forces the gate closed.
 - **OAuth tokens at rest.** Google access and refresh tokens are encrypted with AES-256-GCM **before** insertion into `oauth_tokens` (`auth.py` ~lines 228–229). They are never read back in plaintext from any current code path.
 
 ### 1.2 HMAC Session Tokens
@@ -248,7 +248,6 @@ All Gemini callers decrypt before constructing a prompt. None of `decrypt_if_pre
 |-----------------------------------|----------|------------------------------------------------------------------|
 | `SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_URL` | backend / frontend | Project base URL. |
 | `APP_ENV`                         | backend  | Defaults to `production` (strict). `local`/`development`/`dev`/`test` relax the `SESSION_SECRET` check; `/api/auth/test-login` exists only under `local`/`test`. |
-| `ALLOWED_EMAIL_DOMAINS`           | backend  | Sign-in domain allowlist, default `bu.edu`. An empty value allows any Google account. |
 | `GOOGLE_AUTH_REDIRECT_URI` / `GOOGLE_REDIRECT_URI` | backend | Pinned OAuth callback URLs (sign-in / Calendar). |
 | `FRONTEND_URL`                    | backend  | The CORS origin and OAuth redirect target. |
 | `COOKIE_DOMAIN`, `DEPLOY_ENV`     | frontend | `.saplinglearn.com` (prod) for cross-subdomain session cookies; `DEPLOY_ENV` derives the backend origin and cookie domain. |

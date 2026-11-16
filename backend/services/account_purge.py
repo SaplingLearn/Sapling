@@ -277,7 +277,7 @@ def _drop_leftover_contributions(user_id: str) -> int:
 
 def _stub_user(user_id: str, now: datetime) -> None:
     table("users").update(
-        {"email": None, "google_id": None, "is_approved": False,
+        {"email": None, "google_id": None, "is_approved": False, "open_access_at": None,
          "onboarding_completed": False, "last_sign_in_at": None, "welcomed_at": None,
          "purged_at": now.isoformat(), "purge_claimed_at": None},
         filters={"id": f"eq.{user_id}", "purged_at": "is.null"},

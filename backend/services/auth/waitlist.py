@@ -8,7 +8,9 @@ from services.encryption import encrypt
 logger = logging.getLogger(__name__)
 
 
-def _waitlist_entries(email: str, columns: str = "id,email,approved_at,joined_at") -> list[dict]:
+def _waitlist_entries(
+    email: str, columns: str = "id,email,approved_at,joined_at,joined_user_id",
+) -> list[dict]:
     """Every waitlist row (`newsletter_emails`) for `email`, approved first.
 
     Case-insensitive, because the waitlist keeps the email as typed — so one
@@ -59,6 +61,37 @@ def _mark_waitlist_joined(entry_id: str, user_id: str) -> None:
         )
     except Exception:
         logger.warning("waitlist joined stamp failed", exc_info=True)
+
+
+def _link_open_access_entry(
+    email: str, first_name: str, entry: dict | None, user_id: str,
+) -> None:
+    """Put an open-access entrant on the waitlist, UNAPPROVED, linked to the
+    account (docs/design/open-access-gate.md).
+
+    The row is how Admin → Allowlist sees them, and what an admin approves to
+    keep them in once the gate closes. `approved_at` and `joined_at` stay
+    NULL: "joined" means joined as approved (`_grant_linked_accounts` stamps
+    it when an admin approves them). Only `joined_user_id` is set, the one
+    link back to the account (users.email is nonce-encrypted). Best-effort:
+    never breaks sign-in; an approval reaches the account at the next sign-in
+    anyway.
+    """
+    try:
+        if entry is None:
+            table("newsletter_emails").upsert(
+                {"email": email, "first_name": encrypt(first_name) if first_name else None},
+                on_conflict="email",
+                ignore_duplicates=True,
+            )
+            entry = _waitlist_entry(email)
+        if entry and not entry.get("joined_user_id"):
+            table("newsletter_emails").update(
+                {"joined_user_id": user_id},
+                filters={"id": f"eq.{entry['id']}", "joined_user_id": "is.null"},
+            )
+    except Exception:
+        logger.warning("open-access waitlist link failed", exc_info=True)
 
 
 def _pending_standing(email: str, entry: dict | None) -> dict:

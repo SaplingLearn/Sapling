@@ -36,7 +36,7 @@ from pydantic import BaseModel, Field
 import config
 from db.connection import page_all, pg_quote_value, table
 from models import EmailBroadcastBody, EmailBroadcastPreviewBody, EmailBroadcastTestBody
-from services import email_service, email_templates, email_variables
+from services import email_service, email_templates, email_variables, open_access
 from services.admin_audit import log_admin_action
 from services.auth_guard import get_session_user_id, require_admin, require_admin_recent
 from services.encryption import decrypt, decrypt_if_present
@@ -114,29 +114,47 @@ def _suppressed_hashes() -> set[str]:
     }
 
 
+def _open_access_user_ids() -> set[str]:
+    """Accounts in through the open gate right now (services/open_access.py):
+    unapproved on the waitlist, but already using Sapling. Empty while the
+    gate is closed — then they are simply waiting."""
+    if not open_access.gate_open():
+        return set()
+    return open_access.open_access_user_ids()
+
+
 def _waitlist_entries() -> dict[str, dict]:
-    """normalized address → {to, approved, joined}. Case twins merge: approved
-    or joined if ANY twin is."""
+    """normalized address → {to, approved, joined, has_access}. Case twins
+    merge: approved or joined if ANY twin is. `has_access` marks an open-access
+    entrant while the gate is open, so "still waiting" never mails them."""
     entries: dict[str, dict] = {}
+    open_ids = _open_access_user_ids()
     for r in page_all(
-        table("newsletter_emails"), "email,approved_at,joined_at", order="created_at.asc,id.asc",
+        table("newsletter_emails"), "email,approved_at,joined_at,joined_user_id",
+        order="created_at.asc,id.asc",
     ):
         address = (r.get("email") or "").strip()
         norm = address.lower()
         if "@" not in norm:
             continue
-        entry = entries.setdefault(norm, {"to": address, "approved": False, "joined": False})
+        entry = entries.setdefault(
+            norm, {"to": address, "approved": False, "joined": False, "has_access": False},
+        )
         entry["approved"] = entry["approved"] or bool(r.get("approved_at"))
         entry["joined"] = entry["joined"] or bool(r.get("joined_at"))
+        entry["has_access"] = entry["has_access"] or r.get("joined_user_id") in open_ids
     return entries
 
 
 def _user_addresses() -> dict[str, str]:
-    """normalized address → address, for every approved, non-deleted user."""
+    """normalized address → address, for every non-deleted user with access
+    (approved, or in through the open gate while it is open)."""
     out: dict[str, str] = {}
     for r in page_all(
         table("users"), "id,email",
-        filters={"is_approved": "eq.true", "deleted_at": "is.null"}, order="id.asc",
+        filters={**open_access.access_filter(open_now=open_access.gate_open()),
+                 "deleted_at": "is.null"},
+        order="id.asc",
     ):
         address = (decrypt_if_present(r.get("email")) or "").strip()
         # decrypt_if_present hands back the raw value when it cannot decrypt;
@@ -228,7 +246,9 @@ def resolve_audiences(keys: Iterable[str]) -> dict[str, dict[str, str]]:
         if key == "waitlist_all":
             picked = (e["to"] for e in waitlist.values())
         elif key == "waitlist_pending":
-            picked = (e["to"] for e in waitlist.values() if not e["approved"])
+            picked = (
+                e["to"] for e in waitlist.values() if not e["approved"] and not e["has_access"]
+            )
         elif key == "waitlist_approved_not_joined":
             picked = (e["to"] for e in waitlist.values() if e["approved"] and not e["joined"])
         elif key == "users_all":
