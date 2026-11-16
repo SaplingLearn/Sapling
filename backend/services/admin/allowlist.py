@@ -22,7 +22,7 @@ from services.admin.errors import Conflict, NotFound
 from services.admin_audit import log_admin_action
 from services.auth_guard import clear_account_state_cache
 from services.encryption import decrypt_if_present
-from services.open_access import is_school_email
+from services.open_access import gate_open, is_school_email
 
 logger = logging.getLogger(__name__)
 
@@ -151,20 +151,23 @@ def _approve_waitlist(
     stamped, via a PATCH filtered on `approved_at=is.null`. New addresses are
     inserted approved with ON CONFLICT DO NOTHING, so a concurrent signup is
     never overwritten. Returns the "you're in" recipients (address, 🔒 first
-    name — one per email, none for an address whose account is already in
-    through the open gate) and every stored spelling, for the read-back.
+    name — one per email, none for an address whose account is using
+    Sapling through the open gate right now) and every stored spelling, for
+    the read-back.
     """
     pending_ids: list[str] = []
     missing: list[str] = []
     linked: list[dict] = []
     recipients: list[tuple[str, str | None]] = []
     spellings: list[str] = []
-    # Already using Sapling through the open gate: approving keeps them in
-    # once it closes, and a "you're in" would be news to nobody. Read before
-    # the grant below flips `is_approved`.
+    # Using Sapling through the open gate right now: approving keeps them in
+    # once it closes, and a "you're in" would be news to nobody. While the
+    # gate is CLOSED they are back on /pending, so the approval is what lets
+    # them in and they get the email like anyone else. Read before the grant
+    # below flips `is_approved`.
     open_ids = _open_access_ids(
         [r.get("joined_user_id") for e in wanted for r in by_lower.get(e) or []]
-    )
+    ) if gate_open() else set()
     for email in wanted:
         existing = by_lower.get(email)
         if existing:

@@ -139,7 +139,9 @@ has_access(user) = not deleted AND (
 - **Welcome** goes to an open-access entrant on their first sign-in (they got
   in).
 - **"You're in"** is still sent only when an admin approves an address, and
-  is skipped when that address already joined through open access.
+  is skipped when that address is using Sapling through the open gate right
+  now (gate open). With the gate closed an open-access entrant is back on
+  `/pending`, so the approval is what lets them in and they get the email.
 
 ## 8. Build pieces
 

@@ -262,7 +262,12 @@ class TestListings:
              "created_at": "2026-11-02T00:00:00Z"},
             {"id": "c", "is_approved": False, "created_at": "2026-11-03T00:00:00Z"},
         ]
-        tables = {"users": users, "roles": [], "user_roles": [], "newsletter_emails": []}
+        waitlist = [
+            {"approved_at": None, "joined_user_id": "b"},     # in through the gate
+            {"approved_at": None, "joined_user_id": None},    # waiting
+            {"approved_at": APPROVED_AT, "joined_user_id": "a"},
+        ]
+        tables = {"users": users, "roles": [], "user_roles": [], "newsletter_emails": waitlist}
 
         def factory(name):
             m = MagicMock()
@@ -272,9 +277,11 @@ class TestListings:
         monkeypatch.setattr(overview, "gate_open", lambda: True)
         totals = overview.analytics_overview()["totals"]
         assert totals["approved"] == 2 and totals["open_access"] == 1
+        assert totals["pending"] == 1  # the open-access entrant is in, not waiting
         monkeypatch.setattr(overview, "gate_open", lambda: False)
         totals = overview.analytics_overview()["totals"]
         assert totals["approved"] == 1 and totals["open_access"] == 0
+        assert totals["pending"] == 2  # gate closed: back to waiting
 
 
 # ── admin actions ────────────────────────────────────────────────────────────
@@ -285,6 +292,7 @@ class TestAllowlistApprove:
         """They already use Sapling; approving keeps them in once the gate
         closes and says nothing new."""
         from services.admin import allowlist
+        monkeypatch.setattr(allowlist, "gate_open", lambda: True)
         monkeypatch.setattr(allowlist, "_open_access_ids", lambda ids: {"user_1"})
         monkeypatch.setattr(allowlist, "_grant_linked_accounts", lambda rows, now: None)
         monkeypatch.setattr(allowlist, "table", lambda name: MagicMock())
@@ -297,6 +305,21 @@ class TestAllowlistApprove:
         recipients, _ = allowlist._approve_waitlist(
             ["open@gmail.com", "wait@bu.edu", "new@bu.edu"], by_lower, "now")
         assert [a for a, _ in recipients] == ["wait@bu.edu", "new@bu.edu"]
+
+    def test_youre_in_email_for_an_open_access_account_once_the_gate_closes(self, monkeypatch):
+        """With the gate closed they are back on /pending: the approval is
+        what lets them in, so they are told, like any other approval."""
+        from services.admin import allowlist
+        monkeypatch.setattr(allowlist, "gate_open", lambda: False)
+        monkeypatch.setattr(allowlist, "_open_access_ids", lambda ids: {"user_1"})
+        monkeypatch.setattr(allowlist, "_grant_linked_accounts", lambda rows, now: None)
+        monkeypatch.setattr(allowlist, "table", lambda name: MagicMock())
+        by_lower = {
+            "open@gmail.com": [{"id": "w1", "email": "open@gmail.com", "approved_at": None,
+                                "joined_user_id": "user_1"}],
+        }
+        recipients, _ = allowlist._approve_waitlist(["open@gmail.com"], by_lower, "now")
+        assert [a for a, _ in recipients] == ["open@gmail.com"]
 
     def test_rows_carry_open_access_and_the_school_label(self, monkeypatch):
         from services.admin import allowlist

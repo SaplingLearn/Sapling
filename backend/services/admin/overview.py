@@ -34,15 +34,20 @@ def analytics_overview():
     # open (services/open_access.py). `open_access` counts the latter alone.
     open_now = gate_open()
     approved = sum(1 for u in users if has_access(u, open_now=open_now))
-    open_entrants = sum(1 for u in users if access_kind(u, open_now=open_now) == ACCESS_OPEN)
+    open_ids = {u.get("id") for u in users if access_kind(u, open_now=open_now) == ACCESS_OPEN}
     # Waiting on approval = waitlist signups not yet approved. Unapproved
-    # sign-ins don't create accounts, so `users` can't answer this.
-    waitlist = table("newsletter_emails").select("approved_at") or []
+    # sign-ins don't create accounts, so `users` can't answer this. An
+    # open-access entrant's row is unapproved too, but while the gate is open
+    # they are in, not waiting (they are counted under `open_access`).
+    waitlist = table("newsletter_emails").select("approved_at,joined_user_id") or []
     totals = {
         "users": len(users),
         "approved": approved,
-        "open_access": open_entrants,
-        "pending": sum(1 for w in waitlist if not w.get("approved_at")),
+        "open_access": len(open_ids),
+        "pending": sum(
+            1 for w in waitlist
+            if not w.get("approved_at") and w.get("joined_user_id") not in open_ids
+        ),
         "admins": admin_count,
     }
 
