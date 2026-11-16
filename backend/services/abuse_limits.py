@@ -64,6 +64,64 @@ SYLLABUS_EXTRACT = abuse_limit(
     detail="You've uploaded a lot of syllabi in a short time.",
 )
 
+#: /doc/{id}/scan-concepts and /course/{id}/scan-concepts share one budget:
+#: each is a concept-scan model call plus a graph write that re-summarises
+#: the course. A button a student presses once per document.
+CONCEPT_SCAN = abuse_limit(
+    "concept-scan", limit=20, window_sec=10 * _MINUTE,
+    detail="You've scanned for concepts a lot in a short time.",
+)
+
+# ── Flashcards (routes/flashcards.py) ───────────────────────────────────────
+
+#: POST /generate: one model call per concept. The Flashcards page calls it
+#: once per missing concept, one after another, so a big set is a steady
+#: trickle (each call waits for the last); 30 a minute is past that pace.
+FLASHCARD_GENERATE = abuse_limit(
+    "flashcard-generate", limit=30, window_sec=_MINUTE,
+    detail="You're generating flashcards faster than we can make them.",
+)
+#: Most cards one /generate (per concept) or /import/generate may ask for.
+#: The UI offers 3/5/10 per concept and 10/25/50 per import.
+FLASHCARD_GENERATE_MAX_COUNT = 20
+FLASHCARD_IMPORT_MAX_COUNT = 50
+
+# ── Knowledge graph (routes/graph.py) ───────────────────────────────────────
+
+#: Concept descriptions (one model call on a cache miss). The quiz home
+#: prefetches on hover, so this is a generous per-minute budget.
+CONCEPT_DESCRIBE = abuse_limit(
+    "concept-describe", limit=60, window_sec=_MINUTE,
+    detail="You're asking for concept descriptions too quickly.",
+)
+#: Add/remove a course or a concept: each can re-summarise the course with a
+#: model call inline (course_context_service), so they share one budget.
+GRAPH_EDIT = abuse_limit(
+    "graph-edit", limit=30, window_sec=_MINUTE,
+    detail="You're changing your map too quickly.",
+)
+
+# ── Study guides, rooms, settings: model work behind ordinary actions ───────
+
+#: A study-guide check answer (a mastery write; the course re-summary runs
+#: after the response).
+STUDY_GUIDE_ANSWER = abuse_limit(
+    "guide-answer", limit=60, window_sec=_MINUTE,
+    detail="You're answering checks too quickly.",
+)
+#: A study room's overview (its member summary is a model call whenever a
+#: member's map changed).
+ROOM_OVERVIEW = abuse_limit(
+    "room-overview", limit=30, window_sec=_MINUTE,
+    detail="You're refreshing the room too quickly.",
+)
+#: Settings writes (toggling class sharing re-summarises every course after
+#: the response).
+SETTINGS_WRITE = abuse_limit(
+    "settings-write", limit=30, window_sec=_MINUTE,
+    detail="You're changing settings too quickly.",
+)
+
 # ── Study-room messages (routes/social.py) ──────────────────────────────────
 
 #: Messages posted, per sender: what everyone else in the room must read.

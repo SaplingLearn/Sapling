@@ -37,7 +37,7 @@ from services.extraction_service import extract_text_from_file
 from services.agent_events import SSE_CACHE_CONTROL
 from services.request_context import current_request_id
 from services import abuse_limits
-from services.request_limits import aenforce_abuse_limit, read_within_limit
+from services.request_limits import aenforce_abuse_limit, enforce_abuse_limit, read_within_limit
 from services.upload_validation import DOCX, PDF, PPTX, extension_of, matching_type, too_large_detail
 from models import ScanConceptsBody, UpdateDocumentBody
 from services.durable import workflow_id
@@ -480,6 +480,7 @@ def scan_document_concepts(document_id: str, request: Request, body: ScanConcept
     if not user_id:
         raise HTTPException(status_code=400, detail="user_id is required.")
     require_self(user_id, request)
+    enforce_abuse_limit(abuse_limits.CONCEPT_SCAN, user_id)
     _validate_user_sync(user_id)
 
     rows = table("documents").select(
@@ -530,6 +531,7 @@ def scan_course_concepts(course_id: str, request: Request, body: ScanConceptsBod
     if not user_id:
         raise HTTPException(status_code=400, detail="user_id is required.")
     require_self(user_id, request)
+    enforce_abuse_limit(abuse_limits.CONCEPT_SCAN, user_id)
     _validate_user_sync(user_id)
     require_course_enrollment(user_id, course_id)  # #115
     try:

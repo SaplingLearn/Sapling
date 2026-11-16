@@ -42,6 +42,15 @@ bearer token, which the route checks BEFORE it reads a single body byte, so
 an unauthenticated caller never reaches the allocation at all. The bound only
 caps what a holder of the peer token can make this process hold in memory.
 
+The multipart ceiling is only for a caller with a valid session (sec2): the
+body is spooled BEFORE any route's auth check runs, so without this an
+anonymous client could make the worker spool 120 MB per request to any
+upload path. A multipart body with no session cookie whose signature and
+expiry check out (``auth_guard._decode_session``: pure CPU, no DB read) gets
+``anonymous_multipart_max_bytes`` instead — above the one public upload
+(`routes/careers.py`'s 5 MB resume plus its form fields). Revocation is not
+checked here; the route's own guard still does that.
+
 These are a backstop, not the real validation: each route keeps its own,
 tighter, better-explained limit. This exists so that a body which is absurd
 by any measure is refused before it is read, instead of after.
@@ -86,6 +95,10 @@ UPLOAD_PATHS = frozenset({
 #: Above the flashcard importer's ~6.7 MB base64 payload.
 DEFAULT_JSON_MAX_BYTES = 12 * 1024 * 1024
 
+#: Multipart to an upload path with no valid session: above the public
+#: careers form (a 5 MB resume plus a few short fields).
+DEFAULT_ANONYMOUS_MULTIPART_MAX_BYTES = 12 * 1024 * 1024
+
 #: The server-to-server account-copy import (routes/internal_account_sync.py).
 #: Exact path: main.py mounts that router at /api/internal/account-sync.
 ACCOUNT_IMPORT_PATH = "/api/internal/account-sync/import"
@@ -106,6 +119,20 @@ def _detail(limit: int) -> str:
 
 def _too_large(limit: int) -> HTTPException:
     return HTTPException(status_code=413, detail=_detail(limit))
+
+
+def _has_valid_session(scope: Scope) -> bool:
+    """Whether the request carries a session cookie that verifies (signature,
+    expiry, type, age). Pure CPU; any doubt is False."""
+    from starlette.requests import Request
+
+    from services import auth_guard  # lazy: main imports this module early
+
+    try:
+        auth_guard._decode_session(Request(scope))
+    except Exception:
+        return False
+    return True
 
 
 class BodySizeLimitMiddleware:
@@ -134,10 +161,12 @@ class BodySizeLimitMiddleware:
         multipart_max_bytes: int = DEFAULT_MULTIPART_MAX_BYTES,
         account_import_max_bytes: int = DEFAULT_ACCOUNT_IMPORT_MAX_BYTES,
         upload_paths: frozenset[str] = UPLOAD_PATHS,
+        anonymous_multipart_max_bytes: int = DEFAULT_ANONYMOUS_MULTIPART_MAX_BYTES,
     ) -> None:
         self.app = app
         self.json_max_bytes = json_max_bytes
         self.multipart_max_bytes = multipart_max_bytes
+        self.anonymous_multipart_max_bytes = min(anonymous_multipart_max_bytes, multipart_max_bytes)
         self.account_import_max_bytes = account_import_max_bytes
         self.upload_paths = upload_paths
 
@@ -148,7 +177,9 @@ class BodySizeLimitMiddleware:
         if path in self.upload_paths:
             content_type = Headers(scope=scope).get("content-type", "")
             if content_type.lower().startswith("multipart/form-data"):
-                return self.multipart_max_bytes
+                if _has_valid_session(scope):
+                    return self.multipart_max_bytes
+                return self.anonymous_multipart_max_bytes
         return self.json_max_bytes
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:

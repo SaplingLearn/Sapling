@@ -17,7 +17,8 @@ from sse_starlette.sse import EventSourceResponse
 from starlette.background import BackgroundTask
 
 from models.study_guide import AnswerBody, GenerateBody, GuidePatch, GuideRequest
-from services import study_guides
+from services import abuse_limits, study_guides
+from services.request_limits import aenforce_abuse_limit
 from services.agent_events import SSE_CACHE_CONTROL, sapling_event_to_sse
 from services.auth_guard import require_self
 from services.request_context import current_request_id
@@ -129,6 +130,7 @@ async def answer_check(
     background_tasks: BackgroundTasks,
 ):
     await run_in_threadpool(require_self, user_id, request)
+    await aenforce_abuse_limit(abuse_limits.STUDY_GUIDE_ANSWER, user_id)
     with _guide_errors():
         # The class-aggregate refresh a mastery write triggers runs after the
         # response.
