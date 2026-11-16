@@ -100,3 +100,27 @@ jobs:
           SAPLING_MODEL_MODE: function
           SAPLING_FUNCTION_HANDLERS: agents.function_handlers_e2e
         run: RUN_INTEGRATION=1 python -m pytest -m integration -q
+      # #115 (RLS step 2, finding H5): the same lane again with every request
+      # running as the student under `db_user_scope=enforce`, so a missing
+      # policy or grant, or a code path that needs the service role and is not
+      # marked, fails a PR here instead of 503/404-ing students after the flag
+      # moves in production. The env override beats any stored flag config
+      # (services/feature_flags.py::explain), and the integration conftest
+      # supplies the local stack's public signing + anon keys.
+      #
+      # Why here and not an enforce leg in e2e.yml: this job already has the
+      # stack up, runs on every PR (e2e.yml runs only after a merge to main, so
+      # it could not block one), and the rerun costs minutes, not a second
+      # 15-minute browser job. The cross-user matrix is left out because it
+      # already parametrizes itself over off AND enforce in the step above.
+      # test_db_user_scope_lane_db.py fails this step if the override stops
+      # reaching the app or the local PostgREST rejects the minted token, so
+      # it cannot silently degrade into a second `off` run.
+      - name: Run integration tests under db_user_scope=enforce
+        env:
+          SAPLING_MODEL_MODE: function
+          SAPLING_FUNCTION_HANDLERS: agents.function_handlers_e2e
+          SAPLING_FLAG_DB_USER_SCOPE: enforce
+        run: >-
+          RUN_INTEGRATION=1 python -m pytest -m integration -q
+          --ignore=tests/integration/test_cross_user_matrix_db.py

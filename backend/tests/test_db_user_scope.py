@@ -18,7 +18,7 @@ What is pinned:
   re-run user-scoped and a divergence logged + evented; writes never shadowed;
 * ``service_scope`` / ``runs_as_service``: sync, async, nested, and across the
   sanctioned thread hops (and NOT across a raw thread, by design);
-* the auth guard, the flag store and the auth router stay service role under
+* the auth guard, the flag store and the pre-session auth endpoints stay service role under
   enforce, or every request would 500.
 """
 from __future__ import annotations
@@ -618,7 +618,7 @@ def test_admin_router_rechecks_admin_once_past_off(wire, real_guard, keys, monke
     assert seen == ["checked"]
 
 
-# ── The guard, the flag store and the auth router stay service ─────────────
+# ── The guard, the flag store and the pre-session auth endpoints stay service
 
 
 def test_guard_and_flag_store_reads_stay_service_under_enforce(wire, real_guard, keys, monkeypatch):
@@ -663,22 +663,41 @@ def test_require_admin_role_read_stays_service_under_enforce(wire, real_guard, k
     assert wire.for_table("user_roles") and wire.scoped() == []
 
 
-def test_auth_router_and_test_login_stay_service_under_enforce(wire, monkeypatch):
+def test_test_login_stays_service_under_enforce(wire, monkeypatch):
     """Through main.app: POST /api/auth/test-login signs every Playwright
-    journey in, and /api/auth/me reads `users`; under enforce with no keys at
-    all, neither may fail closed (the auth router is service role)."""
+    journey in before any session exists; under enforce with no keys at all
+    it must not fail closed (the endpoint is marked service)."""
     import main
 
     monkeypatch.setenv(FLAG_ENV, "enforce")
     client = TestClient(main.app, raise_server_exceptions=False)
     r = client.post("/api/auth/test-login", json={"user_id": "user_andres"})
     assert r.status_code == 200, r.text
+    assert wire.scoped() == []
+
+
+def test_auth_me_runs_as_the_student_under_enforce(wire, real_guard, keys, monkeypatch):
+    """GET /api/auth/me reads only the caller's own rows (users, user_profiles,
+    user_roles, user_settings) plus catalog rows, so it is user-scoped: under
+    enforce every one of its reads carries the student's token, while the
+    guard's account-state read stays service (services/auth_guard.py)."""
+    import main
+
+    monkeypatch.setenv(FLAG_ENV, "enforce")
+    monkeypatch.setattr(auth_guard, "account_record",
+                        lambda uid: auth_guard.AccountRecord(auth_guard.ACCOUNT_ACTIVE))
     wire.rows = lambda verb, url, headers: (
         [{"id": "user_andres", "is_approved": True, "onboarding_completed": True,
           "deleted_at": None}] if url.endswith("/users") else [])
-    r = client.get("/api/auth/me", cookies={"sapling_session": "x"})
+    client = TestClient(main.app, raise_server_exceptions=False)
+    r = client.get("/api/auth/me", cookies=_cookie("user_andres"))
     assert r.status_code == 200, r.text
-    assert wire.scoped() == []
+    assert r.json()["user_id"] == "user_andres"
+    for name in ("users", "user_profiles", "user_roles", "user_settings"):
+        calls = wire.for_table(name)
+        assert calls and all(
+            "Bearer " in str((c[2].get("headers") or {}).get("Authorization", "")) for c in calls
+        ), name
 
 
 def test_public_catalog_route_needs_no_session_under_enforce(wire, monkeypatch):

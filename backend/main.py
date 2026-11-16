@@ -540,10 +540,11 @@ app.include_router(calendar.router,    prefix="/api/calendar", dependencies=nav_
 # two-sided friendships are cross-user by design (plan §6.3: social last).
 app.include_router(social.router,      prefix="/api/social", dependencies=nav_feature_gate("/api/social") + _SVC)
 app.include_router(extract.router,     prefix="/api/extract")
-# Auth flows run before (or instead of) a session: the OAuth callback's user
-# upserts, POST /test-login (every Playwright journey signs in through it),
-# /pending/*, /me's account read.
-app.include_router(auth.router,        prefix="/api/auth", dependencies=_SVC)
+# Auth: user-scoped except the endpoints routes/auth.py marks service itself
+# (the OAuth callback's user upserts, POST /test-login — every Playwright
+# journey signs in through it — /pending/* and /logout). GET /me, /local-seed
+# and /realtime-token run as the student under `enforce`.
+app.include_router(auth.router,        prefix="/api/auth")
 # sec2 M2: the BFF's single-use OAuth handoff exchange (server to server, no session).
 app.include_router(auth_handoff_router, prefix="/api/auth", dependencies=_SVC)
 app.include_router(documents.router,   prefix="/api/documents")

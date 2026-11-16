@@ -14,7 +14,7 @@ import re
 import secrets
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field, ValidationError
 
@@ -31,6 +31,7 @@ from config import (
     SECURE_COOKIES,
     APP_ENV,
 )
+from db.scope import service_route
 from services import events_service
 from services.auth import (
     AccountDeleted,
@@ -78,6 +79,11 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# #115: user-scoped except `_SVC` endpoints (pre-session OAuth, /pending/*,
+# /test-login; /logout writes users, SELECT-only for students). /me,
+# /local-seed and /realtime-token read only the caller's rows + catalog.
+_SVC = [Depends(service_route)]
+
 # Local-dev auto-approve fires ONLY for real local dev, NOT APP_ENV=test (which must
 # keep the #285 approval gate). So gate on APP_ENV=="local", not the broader IS_LOCAL.
 _LOCAL_AUTO_APPROVE = APP_ENV == "local"
@@ -97,17 +103,13 @@ def get_me(request: Request):
         raise HTTPException(status_code=401, detail="Not authenticated")
 
 
-@router.post("/logout")
+@router.post("/logout", dependencies=_SVC)
 def logout(request: Request):
-    """Sign out everywhere: revoke every session this account was issued up
-    to now (`users.sessions_valid_after`), so a copied cookie stops working at
-    once instead of living until its `exp`.
-
-    Authenticated by the session it revokes (an unapproved account may sign
-    out too). The frontend session BFF (DELETE /api/auth/session) calls this
-    with the browser's cookie before clearing it. 401 when the session is
-    already invalid: there is nothing left to revoke.
-    """
+    """Sign out everywhere: revoke every session issued up to now
+    (`users.sessions_valid_after`), so a copied cookie stops working at once.
+    Authenticated by the session it revokes (unapproved accounts too); the
+    session BFF (DELETE /api/auth/session) calls it before clearing the
+    cookie. 401 when the session is already invalid."""
     user_id = get_session_user_id(request, allow_unapproved=True)
     try:
         revoke_sessions(user_id)
@@ -118,7 +120,7 @@ def logout(request: Request):
     return JSONResponse({"ok": True}, headers={"Cache-Control": "no-store"})
 
 
-@router.get("/google")
+@router.get("/google", dependencies=_SVC)
 def google_login(popup_id: str = Query(None), return_to: str = Query(None), binding: str = Query(None)):
     """Redirect to Google's consent screen for the identity scopes.
 
@@ -173,7 +175,7 @@ SIGNIN_CANCELLED = "cancelled"
 _GOOGLE_ERROR_RE = re.compile(r"^[a-z_]{1,64}$")
 
 
-@router.get("/google/callback")
+@router.get("/google/callback", dependencies=_SVC)
 def google_callback(
     request: Request,
     background_tasks: BackgroundTasks,
@@ -364,14 +366,14 @@ def _pending_claims(token: str) -> dict:
     return claims
 
 
-@router.post("/pending/status")
+@router.post("/pending/status", dependencies=_SVC)
 def pending_status(body: PendingTokenBody):
     """Where an unapproved sign-in's email stands on the waitlist (/pending)."""
     email = _pending_claims(body.token)["email"]
     return _pending_standing(email, _waitlist_entry(email))
 
 
-@router.post("/pending/join")
+@router.post("/pending/join", dependencies=_SVC)
 def pending_join(body: PendingTokenBody):
     """Put an unapproved sign-in's email on the waitlist. Idempotent."""
     claims = _pending_claims(body.token)
@@ -397,7 +399,7 @@ class MintTestSessionBody(BaseModel):
     )
 
 
-@router.post("/test-login", include_in_schema=False)
+@router.post("/test-login", include_in_schema=False, dependencies=_SVC)
 async def mint_test_session(request: Request):
     """Mint a `sapling_session` cookie for a seeded user. LOCAL/TEST ONLY (#381).
 
