@@ -84,7 +84,10 @@ _next_slot = 0.0
 _HASH_LABEL = b"sapling-email-v1"
 _UNSUB_LABEL = b"sapling-email-unsubscribe-v1"
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
-_EMAILISH = re.compile(r"[^\s@<>\"'(),;:]+@[^\s@<>\"'(),;:]+")
+# The lookbehind starts a match only at the beginning of a run of address
+# characters: without it, `sub` re-scans a long @-less run from every offset
+# (quadratic). Same matches either way.
+_EMAILISH = re.compile(r"(?<![^\s@<>\"'(),;:])[^\s@<>\"'(),;:]+@[^\s@<>\"'(),;:]+")
 _MAX_ERROR_LEN = 300
 
 #: How long a `queued` claim is trusted before it is presumed dead. One live
