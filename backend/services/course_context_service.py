@@ -29,7 +29,7 @@ from agents._run import run_agent_sync
 from agents.course_summary import course_summary_agent
 from agents.usage import record_agent_usage
 from services import jobs
-from services.encryption import decrypt_json_column
+from services.encryption import bind, decrypt_json_column
 from services.feature_flags import flag_on
 
 logger = logging.getLogger(__name__)
@@ -328,7 +328,8 @@ def update_course_context(offering_id: str) -> None:
             node_filter = ",".join(chunk)
             try:
                 rows = table("quiz_context").select(
-                    "concept_node_id,context_json",
+                    # user_id: half of the context_json binding (AAD).
+                    "user_id,concept_node_id,context_json",
                     filters={"concept_node_id": f"in.({node_filter})"},
                 )
             except Exception:
@@ -360,8 +361,11 @@ def update_course_context(offering_id: str) -> None:
 
         for ctx in ctx_rows:
             cj = ctx.get("context_json") or {}
+            # Outside the try: a row without its key is a select bug, not a
+            # corrupt value to skip quietly.
+            where = bind("quiz_context", "context_json", ctx)
             try:
-                cj = decrypt_json_column(cj) or {}
+                cj = decrypt_json_column(cj, bind=where) or {}
             except Exception:
                 cj = {}
 

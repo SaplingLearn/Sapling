@@ -15,7 +15,7 @@ from starlette.concurrency import run_in_threadpool
 from db.connection import table
 from models import StartSessionBody
 from services.academics import offering_course_id, require_course_enrollment, resolve_offering
-from services.encryption import decrypt_if_present
+from services.encryption import bind, decrypt_if_present
 
 logger = logging.getLogger(__name__)
 
@@ -143,7 +143,7 @@ def _get_catalog_chunk(course_code: str) -> str:
         return ""
     try:
         rows = table("course_chunks").select(
-            "chunk_text",
+            "id,chunk_text",
             filters={"course_id": f"eq.{course_code}", "category": "eq.catalog"},
             limit=5,
         )
@@ -151,7 +151,9 @@ def _get_catalog_chunk(course_code: str) -> str:
         # below (#484): both read the text, and against ciphertext the first
         # would never match and the second would compare base64 lengths.
         for row in rows or []:
-            row["chunk_text"] = decrypt_if_present(row.get("chunk_text"))
+            row["chunk_text"] = decrypt_if_present(
+                row.get("chunk_text"), bind=bind("course_chunks", "chunk_text", row),
+            ) or ""
         if rows:
             # Prefer a chunk that has an explicit Prerequisites line; fall back
             # to the longest chunk. Handles courses scraped from two listing

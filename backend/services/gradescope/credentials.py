@@ -17,7 +17,7 @@ from pydantic import BaseModel
 
 from db.connection import table
 from services.gradescope import client as gradescope_service
-from services.encryption import decrypt, encrypt
+from services.encryption import bind, decrypt, encrypt
 from services.gradescope.errors import GradescopeCredsError
 
 logger = logging.getLogger(__name__)
@@ -72,16 +72,20 @@ def _load_creds(user_id: str) -> StoredCreds | None:
     row = rows[0]
     mode: AuthMode = row.get("auth_mode") or "password"
     meta = {"updated_at": row.get("updated_at"), "needs_reauth": bool(row.get("needs_reauth"))}
+    def _open(column: str) -> str | None:
+        value = row.get(column)
+        return decrypt(value, bind=bind("gradescope_credentials", column, user_id)) if value else None
+
     try:
         if mode == "password":
             return StoredCreds(
                 auth_mode="password",
-                email=decrypt(row["email_encrypted"]) if row.get("email_encrypted") else None,
-                password=decrypt(row["password_encrypted"]) if row.get("password_encrypted") else None,
+                email=_open("email_encrypted"),
+                password=_open("password_encrypted"),
                 **meta,
             )
         else:  # cookies
-            raw = decrypt(row["cookies_encrypted"]) if row.get("cookies_encrypted") else None
+            raw = _open("cookies_encrypted")
             payload = json.loads(raw) if raw else {}
             return StoredCreds(
                 auth_mode="cookies",
@@ -156,8 +160,9 @@ def save_password_creds(user_id: str, email: str, password: str) -> None:
     payload: dict[str, Any] = {
         "user_id": user_id,
         "auth_mode": "password",
-        "email_encrypted": encrypt(email),
-        "password_encrypted": encrypt(password),
+        "email_encrypted": encrypt(email, bind=bind("gradescope_credentials", "email_encrypted", user_id)),
+        "password_encrypted": encrypt(
+            password, bind=bind("gradescope_credentials", "password_encrypted", user_id)),
         "cookies_encrypted": None,
     }
     _save_creds(payload)
@@ -177,6 +182,7 @@ def save_cookie_creds(user_id: str, gradescope_session: str | None, signed_token
         "auth_mode": "cookies",
         "email_encrypted": None,
         "password_encrypted": None,
-        "cookies_encrypted": encrypt(cookie_blob),
+        "cookies_encrypted": encrypt(
+            cookie_blob, bind=bind("gradescope_credentials", "cookies_encrypted", user_id)),
     }
     _save_creds(payload)

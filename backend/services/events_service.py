@@ -107,6 +107,13 @@ safety.crisis_support_shown   system    surface (services/crisis_support.SURFACE
                                         crisis screen and got the resources card instead of a
                                         model turn. Never the text, not even content_fp; NOT
                                         mirrored to PostHog (docs/safety/crisis-support.md)
+encryption.binding_mismatch   system    table, column, reason (unbound_read | malformed |
+                                        unknown_kid | auth_failed), version — a v2 🔒 value
+                                        that does not open in the cell it was read from.
+                                        No user id, never the value (finding M13)
+encryption.legacy_refused     system    table, column, reason (legacy_value | non_string),
+                                        version — a v1/plaintext value after legacy reads
+                                        were turned off for that table
 decision.made                 system    feature, backend (who answered: jev | flash_lite |
                                         function | none), requested, fallback_reason (an
                                         enum-like reason, never a message), model, latency_ms,
@@ -284,6 +291,16 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     # never even a content fingerprint. NOT mirrored to PostHog
     # (posthog_client._NOT_MIRRORED says why).
     "safety.crisis_support_shown",
+    # Finding M13 (docs/security/encryption-aad-plan.md, services/encryption.py):
+    # a 🔒 value refused at read. category="system", NO user id (the decrypt
+    # seam does not know one), payload table / column / reason / version only:
+    # never the value, the plaintext or the row key.
+    # - encryption.binding_mismatch: a v2 value did not open in the cell it
+    #   was read from (moved, swapped, tampered, unbound read, unknown kid);
+    # - encryption.legacy_refused: a v1 or plaintext value read after legacy
+    #   reads were turned off for that table (plaintext injection).
+    "encryption.binding_mismatch",
+    "encryption.legacy_refused",
 })
 
 #: Category for rows the SERVER emits about a request (e.g. decision.made, one

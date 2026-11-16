@@ -349,7 +349,7 @@ def notification_opt_out_hashes(*, fresh: bool = False) -> frozenset:
     if not fresh and cached is not None and now - cached[0] < OPT_OUT_TTL_S:
         return cached[1]
 
-    from services.encryption import decrypt_if_present
+    from services.encryption import bind, decrypt_if_present
 
     ids = [
         r["user_id"]
@@ -363,7 +363,8 @@ def notification_opt_out_hashes(*, fresh: bool = False) -> frozenset:
     for i in range(0, len(ids), 100):
         chunk = ",".join(pg_quote_value(u) for u in ids[i:i + 100])
         for r in table("users").select("id,email", filters={"id": f"in.({chunk})"}) or []:
-            address = (decrypt_if_present(r.get("email")) or "").strip()
+            address = (decrypt_if_present(
+                r.get("email"), bind=bind("users", "email", r)) or "").strip()
             if "@" in address:  # undecryptable ciphertext has no "@"
                 hashes.add(recipient_hash(address))
     result = frozenset(hashes)

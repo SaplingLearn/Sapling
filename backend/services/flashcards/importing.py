@@ -38,7 +38,7 @@ from agents.flashcard import flashcard_agent
 from agents.usage import record_agent_usage
 from services import extraction_service, request_limits
 from services.archive_limits import check_zip_bounds
-from services.encryption import decrypt_if_present
+from services.encryption import bind, decrypt_if_present
 from services.llm_budget import LLMBudgetExceeded
 
 logger = logging.getLogger(__name__)
@@ -82,9 +82,10 @@ def dedup_against_existing(
     elif topic:
         filters["topic"] = f"eq.{topic}"
 
-    existing = table("flashcards").select("front", filters=filters) or []
+    existing = table("flashcards").select("id,front", filters=filters) or []
     existing_norm = [
-        _normalize(decrypt_if_present(r.get("front", "")) or "") for r in existing
+        _normalize(decrypt_if_present(r.get("front", ""), bind=bind("flashcards", "front", r)) or "")
+        for r in existing
     ]
 
     keep: list[Card] = []

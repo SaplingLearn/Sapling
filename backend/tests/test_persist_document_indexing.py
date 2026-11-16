@@ -8,7 +8,7 @@ queue.
 """
 from unittest.mock import MagicMock, patch
 
-from services.encryption import decrypt_if_present
+from services.encryption import bind, decrypt_if_present
 from tests.split_patches import patch_documents
 
 
@@ -60,7 +60,10 @@ def test_extracted_text_is_stored_at_insert_and_encrypted():
     calls, _ = _persist()
     stored = calls[-1]["extracted_text"]
     assert stored != "gradient descent notes"
-    assert decrypt_if_present(stored) == "gradient descent notes"
+    # Sealed for this document's row (AAD, finding M13): the id is minted
+    # before the insert.
+    where = bind("documents", "extracted_text", calls[-1]["id"])
+    assert decrypt_if_present(stored, bind=where) == "gradient descent notes"
 
 
 def test_extracted_text_ciphertext_never_reaches_the_client():

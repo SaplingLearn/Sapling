@@ -230,7 +230,7 @@ def pipeline(monkeypatch):
     )
     failed = []
     monkeypatch.setattr(dj, "_routes", lambda: docs)
-    monkeypatch.setattr(dj, "decrypt_bytes", lambda raw: b"%PDF")
+    monkeypatch.setattr(dj, "decrypt_bytes", lambda raw, **_: b"%PDF")
     t = MagicMock()  # the run's fenced stage writes report a won row
     monkeypatch.setattr(dj, "table", t)
     monkeypatch.setattr(dj, "_finish_failed", lambda run, code: failed.append(code))

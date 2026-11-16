@@ -51,7 +51,7 @@ load_dotenv(BASE / ".env")
 sys.path.insert(0, str(BASE))
 
 from db.connection import page_all, table  # noqa: E402
-from services.encryption import decrypt, encrypt  # noqa: E402
+from services.encryption import Binding, bind, decrypt, encrypt, is_v2  # noqa: E402
 
 #: Rows encrypted per round. Each row is its own PATCH (see `_write`), issued
 #: concurrently across WRITE_WORKERS threads; the batch only bounds how much
@@ -60,8 +60,13 @@ WRITE_BATCH = 25
 WRITE_WORKERS = 8
 
 
-def _is_ciphertext(value: str) -> bool:
-    """True when `value` already decrypts.
+def _is_ciphertext(value: str, where: Binding) -> bool:
+    """True when `value` already decrypts in its cell (`where`).
+
+    A v2 value (AAD-bound, finding M13) counts whatever happens: it is
+    ciphertext by its envelope, and re-sealing it would double-encrypt.
+    Legacy values are classified with legacy reads allowed, so turning
+    ENCRYPTION_LEGACY_READS off cannot make a v1 value look like plaintext.
 
     Uses `decrypt` rather than `decrypt_if_present` on purpose: the latter logs
     a WARNING on every failure, and over a table of thousands of
@@ -69,8 +74,10 @@ def _is_ciphertext(value: str) -> bool:
     has work to do". A plaintext string surviving base64 decoding AND AES-GCM's
     authentication tag is not a case worth engineering around.
     """
+    if is_v2(value):
+        return True
     try:
-        decrypt(value)
+        decrypt(value, bind=where, allow_legacy=True)
         return True
     except Exception:
         return False
@@ -91,16 +98,17 @@ def _assert_key_matches_database() -> None:
     """
     table_name, column = _KEY_WITNESS
     rows = table(table_name).select(
-        column, filters={column: "not.is.null"}, limit=20,
+        f"id,{column}", filters={column: "not.is.null"}, limit=20,
     )
-    values = [r[column] for r in rows or [] if r.get(column)]
+    values = [(r[column], bind(table_name, column, r)) for r in rows or [] if r.get(column)]
     if not values:
         print(
             f"  ! no {table_name}.{column} rows to verify ENCRYPTION_KEY "
             "against — proceeding, but confirm the key matches this database"
         )
         return
-    if not any(_is_ciphertext(v) for v in values):
+    # Only a value that OPENS proves the key (a v2 envelope alone does not).
+    if not any(_opens(v, where) for v, where in values):
         sys.exit(
             f"REFUSING to run: none of {len(values)} {table_name}.{column} "
             "values decrypt with this ENCRYPTION_KEY, so the key does not "
@@ -109,6 +117,14 @@ def _assert_key_matches_database() -> None:
             "them. Check which .env is loaded against which SUPABASE_URL."
         )
     print(f"  key verified against {table_name}.{column}")
+
+
+def _opens(value: str, where: Binding) -> bool:
+    try:
+        decrypt(value, bind=where, allow_legacy=True)
+        return True
+    except Exception:
+        return False
 
 
 def _rows():
@@ -187,11 +203,12 @@ def main() -> None:
         text = row.get("chunk_text")
         if text is None:
             continue
-        if _is_ciphertext(text):
+        where = bind("course_chunks", "chunk_text", row)
+        if _is_ciphertext(text, where):
             already += 1
             continue
         pending += 1
-        todo.append({"id": row["id"], "chunk_text": encrypt(text)})
+        todo.append({"id": row["id"], "chunk_text": encrypt(text, bind=where)})
         if not args.dry_run and len(todo) >= batch_size:
             _write(todo[:batch_size])
             written += len(todo[:batch_size])

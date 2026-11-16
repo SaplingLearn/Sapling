@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from services.encryption import decrypt_json, encrypt_json
+from services.encryption import bind, decrypt_json, encrypt_json
 from services.quiz.distractors import DIGEST_SCHEMA_VERSION
 from services.quiz.context import get_quiz_context, save_quiz_context
 
@@ -51,7 +51,7 @@ def test_save_quiz_context_upserts_ciphertext():
     # Stamped here rather than on the agent's output schema: the digest prompt
     # feeds the previous context back to the model, so a model-owned version
     # field would drift on its own.
-    assert decrypt_json(row["context_json"]) == {
+    assert decrypt_json(row["context_json"], bind=bind("quiz_context", "context_json", row)) == {
         **context, "schema_version": DIGEST_SCHEMA_VERSION,
     }
     assert row["user_id"] == "u1"

@@ -11,7 +11,13 @@ from db.connection import table
 from services import events_service
 from services.academics import offering_course_id, term_id_for_label
 from services.achievement_service import check_achievements
-from services.encryption import decrypt_if_present, decrypt_json, encrypt_if_present
+from services.encryption import (
+    EncryptionError,
+    bind,
+    decrypt_if_present,
+    decrypt_json,
+    encrypt_if_present,
+)
 from services.flashcards.errors import NotFound, StorageError
 
 logger = logging.getLogger(__name__)
@@ -59,8 +65,8 @@ def list_flashcards(
         ) or []
     ]
     for r in rows:
-        r["front"] = decrypt_if_present(r.get("front"))
-        r["back"] = decrypt_if_present(r.get("back"))
+        r["front"] = decrypt_if_present(r.get("front"), bind=bind("flashcards", "front", r))
+        r["back"] = decrypt_if_present(r.get("back"), bind=bind("flashcards", "back", r))
         # The abstract course the card's offering belongs to (the id the rest
         # of the API speaks), so the Flashcards page can show a course's cards
         # by what they belong to. It used to match on the card's TOPIC
@@ -153,11 +159,12 @@ def new_card_rows(
 
 
 def encrypted_card(row: dict) -> dict:
-    """``row`` as it is written: 🔒 ``front`` / ``back``."""
+    """``row`` as it is written: 🔒 ``front`` / ``back``, bound to the row's
+    id (minted by :func:`new_card_rows`, M13)."""
     return {
         **row,
-        "front": encrypt_if_present(row["front"]),
-        "back": encrypt_if_present(row["back"]),
+        "front": encrypt_if_present(row["front"], bind=bind("flashcards", "front", row)),
+        "back": encrypt_if_present(row["back"], bind=bind("flashcards", "back", row)),
     }
 
 
@@ -238,11 +245,13 @@ def library_doc_source_text(user_id: str, document_id: str) -> str | None:
     if not rows:
         return None
     doc = rows[0]
-    doc_summary = decrypt_if_present(doc.get("summary")) or ""
+    doc_summary = decrypt_if_present(doc.get("summary"), bind=bind("documents", "summary", doc)) or ""
     notes_raw = doc.get("concept_notes")
     if isinstance(notes_raw, str):
         try:
-            doc_notes = decrypt_json(notes_raw)
+            doc_notes = decrypt_json(notes_raw, bind=bind("documents", "concept_notes", doc))
+        except EncryptionError:
+            doc_notes = {}  # refused (moved/tampered): never the raw value
         except Exception:
             doc_notes = notes_raw
     else:

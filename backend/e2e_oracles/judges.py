@@ -14,6 +14,10 @@ from collections.abc import Callable
 
 from e2e_oracles.findings import Finding
 
+#: The v2 envelope's prefix (services/encryption.py::V2_PREFIX), restated so
+#: this module still imports no service.
+V2_PREFIX = "enc2:"
+
 
 def _duplicates(ids: list[str]) -> dict[str, int]:
     return {k: v for k, v in Counter(ids).items() if v > 1}
@@ -113,17 +117,23 @@ def ciphertext_findings(
     table: str,
     column: str,
     rows: list[tuple],
-    decrypt_fn: Callable[[str], str],
+    decrypt_fn: Callable[..., str],
+    *,
+    require_v2: bool = False,
 ) -> list[Finding]:
     """Flag rows in `table.column` that are not encrypted at rest.
 
-    `rows` are `(pk, value)`. A value is "encrypted at rest" iff
-    `decrypt_fn(value)` succeeds AND the plaintext differs from the raw value.
-    Non-str values are findings too. Evidence truncates the raw value to 32
+    `rows` are `(pk, value)` or `(pk, value, ctx)`; with a `ctx` the judge
+    calls `decrypt_fn(value, ctx)` (the gatherer passes the row, so a v2 value
+    is opened under ITS row's binding: a value that only opens elsewhere, i.e.
+    was moved, is a finding). A value is "encrypted at rest" iff the decrypt
+    succeeds AND the plaintext differs from the raw value. Non-str values are
+    findings too. With `require_v2` (the stack wrote v2, finding M13) a legacy
+    v1 value is a finding as well. Evidence truncates the raw value to 32
     chars so a possibly-plaintext value is never fully leaked into reports.
     """
     findings: list[Finding] = []
-    for pk, value in rows:
+    for pk, value, *ctx in rows:
         if not isinstance(value, str):
             findings.append(
                 Finding(
@@ -134,7 +144,7 @@ def ciphertext_findings(
             )
             continue
         try:
-            not_encrypted = decrypt_fn(value) == value
+            not_encrypted = decrypt_fn(value, *ctx) == value
         except Exception:
             not_encrypted = True
         if not_encrypted:
@@ -142,6 +152,14 @@ def ciphertext_findings(
                 Finding(
                     oracle="ciphertext",
                     summary=f"{table}.{column} not encrypted at rest (pk={pk})",
+                    evidence={"pk": pk, "value_prefix": value[:32]},
+                )
+            )
+        elif require_v2 and not value.startswith(V2_PREFIX):
+            findings.append(
+                Finding(
+                    oracle="ciphertext",
+                    summary=f"{table}.{column} legacy v1 ciphertext, not row-bound v2 (pk={pk})",
                     evidence={"pk": pk, "value_prefix": value[:32]},
                 )
             )

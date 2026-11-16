@@ -14,7 +14,7 @@ enrollment; tests mock enrollment_id_for and user_enrollment_ids accordingly.
 from unittest.mock import patch
 
 from services.calendar_service import insert_new_assignments
-from services.encryption import decrypt
+from services.encryption import bind, decrypt
 
 PLAINTEXT_NOTES = "Bring a calculator; covers chapters 3-5 (private)."
 
@@ -45,7 +45,7 @@ class TestAssignmentNotesEncryptedAtRest:
         # column holds ciphertext that is NOT the plaintext...
         assert written != PLAINTEXT_NOTES
         # ...and decrypts back to the original.
-        assert decrypt(written) == PLAINTEXT_NOTES
+        assert decrypt(written, bind=bind("assignments", "notes", captured["rows"][0])) == PLAINTEXT_NOTES
 
     def test_none_notes_stay_none(self):
         captured = {}

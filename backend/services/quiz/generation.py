@@ -39,7 +39,7 @@ from services.request_limits import aclaim_rate_limit
 # fastapi's HTTPException, through the package's one fastapi seam (errors.py:
 # QuizAPIError IS an HTTPException, the #540 A3 envelope contract).
 from services.quiz.errors import HTTPException, QuizAPIError, QuizErrorCode
-from services.encryption import encrypt_json
+from services.encryption import bind, encrypt_json
 from services.quiz.grading import WRITTEN_TYPES
 from services.academics import course_offering_ids
 from services.exam_proximity import days_until_next_exam, exam_prompt_line
@@ -911,7 +911,8 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
         "user_id": body.user_id,
         "concept_node_id": body.concept_node_id,
         "difficulty": body.difficulty,
-        "questions_json": encrypt_json(questions),
+        "questions_json": encrypt_json(
+            questions, bind=bind("quiz_attempts", "questions_json", quiz_id)),
     }
     # H3/#555: recorded so the question "do deadline-aware quizzes perform
     # differently?" is answerable later. Omitted when unknown rather than
