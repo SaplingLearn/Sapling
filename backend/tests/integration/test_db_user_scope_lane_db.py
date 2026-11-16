@@ -1,7 +1,8 @@
 """The integration lane really runs in the `db_user_scope` mode its env names (#115).
 
-integration.yml runs this lane twice: once with the flag unset (``off``) and
-once with ``SAPLING_FLAG_DB_USER_SCOPE=enforce``, so every request a test
+integration.yml runs this lane with the flag unset (``off``) on every PR, and
+on main (and a manual dispatch) a second time with
+``SAPLING_FLAG_DB_USER_SCOPE=enforce``, so every request a test
 drives through the app (quiz, uploads, study days, gradescope links, …) also
 runs as the student, under the RLS policies and grants. That second run is
 only worth its minutes while the env var actually reaches the app and the

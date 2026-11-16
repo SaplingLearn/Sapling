@@ -109,14 +109,19 @@ jobs:
       # supplies the local stack's public signing + anon keys.
       #
       # Why here and not an enforce leg in e2e.yml: this job already has the
-      # stack up, runs on every PR (e2e.yml runs only after a merge to main, so
-      # it could not block one), and the rerun costs minutes, not a second
-      # 15-minute browser job. The cross-user matrix is left out because it
+      # stack up, and the rerun costs minutes, not a second 15-minute browser
+      # job. It runs on pushes to main and on a manual dispatch (run this
+      # workflow on a PR branch that touches routes, policies or grants), NOT
+      # on every PR push: Actions minutes are billed, the plain run above
+      # already gates every PR, and `enforce` is not the production default,
+      # so a regression it catches surfaces on main before the flag can move.
+      # The cross-user matrix is left out because it
       # already parametrizes itself over off AND enforce in the step above.
       # test_db_user_scope_lane_db.py fails this step if the override stops
       # reaching the app or the local PostgREST rejects the minted token, so
       # it cannot silently degrade into a second `off` run.
       - name: Run integration tests under db_user_scope=enforce
+        if: github.event_name != 'pull_request'
         env:
           SAPLING_MODEL_MODE: function
           SAPLING_FUNCTION_HANDLERS: agents.function_handlers_e2e

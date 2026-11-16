@@ -154,7 +154,9 @@ So the gate before ANY enforce step (admins included) is not the report alone:
    with `SAPLING_FLAG_DB_USER_SCOPE=enforce` (step "Run integration tests under
    db_user_scope=enforce" in `.github/workflows/integration.yml`;
    `test_db_user_scope_lane_db.py` fails that step if the override stops
-   reaching the app). No new `KNOWN_LEAKS` entry, and every write route of
+   reaching the app; that step runs on pushes to `main` and on a manual
+   dispatch, not on every PR push, so for a PR touching routes, policies or
+   grants dispatch the workflow on its branch). No new `KNOWN_LEAKS` entry, and every write route of
    `unverified_writes` covered by a matrix case or an integration test.
 2. The Chapter 1 E2E lane green **under enforce** as well as by default (§10
    has the command and the last verified result).
