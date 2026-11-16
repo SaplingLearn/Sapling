@@ -28,6 +28,11 @@ logging.basicConfig(
 from services import access_log  # noqa: E402
 
 access_log.install()
+# httpx logs each outbound URL at INFO (PostgREST query strings carry emails),
+# and validation tracebacks carry model output: services/log_privacy.py.
+from services import log_privacy  # noqa: E402
+
+log_privacy.install()
 
 from routes import graph, learn, quiz, calendar, social, extract, auth, documents, flashcards, study_guide, feedback, careers, onboarding, gradebook, gradescope, notes, academics, gamification
 from routes.profile import router as profile_router

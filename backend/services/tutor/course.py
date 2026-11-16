@@ -62,7 +62,11 @@ async def _get_course_id_for_topic(topic: str, user_id: str) -> str:
             if label and topic_trim == label:
                 return abstract_course_id
     except Exception as e:
-        logger.warning("Failed to resolve course_id for topic=%r user_id=%r: %s", topic_trim, user_id, e)
+        # Never the topic itself: it is the student's typed text.
+        logger.warning(
+            "Failed to resolve course_id for topic (%d chars) user_id=%r: %s",
+            len(topic_trim), user_id, type(e).__name__,
+        )
     
     # Fallback: find via graph_nodes - look for nodes matching topic
     # that have a course_id
