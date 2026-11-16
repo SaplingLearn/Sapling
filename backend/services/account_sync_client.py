@@ -15,13 +15,38 @@ Both probe the peer first (`ping`) to learn which environment it is: a peer
 that reports OUR `APP_ENV` is a misconfiguration pointing at ourselves, and is
 refused (409) before anything is wiped. Failures raise `PeerError` carrying
 the status the admin route should answer: the peer's 404 `account_not_found`
-→ 404, 409 → 409, 400 (the peer's BundleError) → 400 with its detail, anything
-else → 502.
+→ 404, 409 → 409, 400 (the peer's BundleError) → 400 with its detail, 403 (a
+production peer refusing an import) → 403, anything else → 502.
+
+Direction rules. Production never accepts an inbound import
+(`refuses_inbound_import`): its `/import` route answers 403, and `push`
+refuses a peer that reports production BEFORE exporting anything, so a copy
+INTO production happens only as production's own `pull` (production GETs the
+peer's export and imports it locally via `account_bundle.import_account`,
+never through the route). Production's `push` (prod → staging) and a pull of
+production's export are unaffected. The recommended deploy
+(backend/.env.example) goes further: only production holds a peer URL +
+token, so only production starts a copy.
+
+Every request is signed (`sign_request`; the routes check it with
+`verify_signature`): `X-Sapling-Sync-Timestamp` (unix seconds) and
+`X-Sapling-Sync-Signature`, the hex HMAC-SHA256 keyed with the bearer token
+over `METHOD\\nRAW_PATH_WITH_QUERY\\nTIMESTAMP\\nsha256_hex(body)`. The bearer
+token is still checked first; the signature binds it to the method, path,
+account, body and a ±`SIGNATURE_MAX_SKEW_SECONDS` window, so a captured
+request cannot be replayed later or re-aimed at another account. The client
+signs the exact bytes it sends: each URL (query included) is built once as an
+`httpx.URL` whose `raw_path` is signed, and the import body is serialized once
+and sent as `content=`.
 """
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
 import logging
+import time
 from typing import Any
 
 import httpx
@@ -46,6 +71,71 @@ _SUMMARY_TIMEOUT = httpx.Timeout(30.0, connect=5.0)
 ACCOUNT_NOT_FOUND = "account_not_found"
 
 
+# The environment that never accepts an inbound import (`APP_ENV`, lower-case).
+PRODUCTION_ENV = "production"
+PRODUCTION_REFUSES_IMPORT = (
+    "production does not accept inbound account imports; pull from production instead"
+)
+
+TIMESTAMP_HEADER = "X-Sapling-Sync-Timestamp"
+SIGNATURE_HEADER = "X-Sapling-Sync-Signature"
+# How far a signed timestamp may sit from the receiver's clock, either way.
+SIGNATURE_MAX_SKEW_SECONDS = 300
+
+
+def refuses_inbound_import(env: str | None) -> bool:
+    """Whether an environment named `env` refuses `/import` (production only)."""
+    return (env or "").strip().lower() == PRODUCTION_ENV
+
+
+def _as_bytes(value: str | bytes) -> bytes:
+    return value if isinstance(value, bytes) else value.encode("utf-8")
+
+
+def _canonical(method: str, raw_path: str | bytes, body: bytes, ts: int) -> bytes:
+    # METHOD \n raw path (query included, as on the wire) \n ts \n sha256_hex(body)
+    return b"\n".join((
+        method.upper().encode("ascii"),
+        _as_bytes(raw_path),
+        str(int(ts)).encode("ascii"),
+        hashlib.sha256(body).hexdigest().encode("ascii"),
+    ))
+
+
+def sign_request(token: str, method: str, raw_path: str | bytes, body: bytes, ts: int) -> str:
+    """Hex HMAC-SHA256 of one internal sync request, keyed with the bearer token.
+
+    `raw_path` is the request target exactly as sent: the percent-encoded path
+    plus `?query` when there is one. `body` is the exact body bytes (b"" for a
+    GET). The one canonical string both ends use.
+    """
+    return hmac.new(
+        _as_bytes(token), _canonical(method, raw_path, body, ts), hashlib.sha256,
+    ).hexdigest()
+
+
+def verify_signature(
+    token: str, method: str, raw_path: str | bytes, body: bytes,
+    timestamp: str | None, signature: str | None, *, now: float | None = None,
+) -> bool:
+    """Whether `signature` signs this request under `token` at a fresh `timestamp`.
+
+    False for a missing, non-integer or stale (beyond ±SIGNATURE_MAX_SKEW_SECONDS
+    of `now`) timestamp and for a missing or wrong signature. Constant-time compare.
+    """
+    if not timestamp or not signature:
+        return False
+    ts_text = timestamp.strip()
+    if not ts_text.isascii() or not ts_text.isdigit() or len(ts_text) > 12:
+        return False
+    ts = int(ts_text)
+    current = time.time() if now is None else now
+    if abs(current - ts) > SIGNATURE_MAX_SKEW_SECONDS:
+        return False
+    expected = sign_request(token, method, raw_path, body, ts).encode("ascii")
+    return hmac.compare_digest(signature.strip().encode("utf-8"), expected)
+
+
 class PeerError(RuntimeError):
     """The peer could not do what was asked. `status` is the code to answer."""
 
@@ -65,14 +155,27 @@ def is_configured() -> bool:
     return _configured() is not None
 
 
-def _headers(token: str) -> dict[str, str]:
-    return {"Authorization": f"Bearer {token}"}
+def _target(url: str, route: str, user_id: str | None = None) -> httpx.URL:
+    """The peer URL for `route`, query included. Built once and passed to httpx
+    as-is, so the `raw_path` signed is the request target sent."""
+    params = {"user_id": user_id} if user_id is not None else None
+    return httpx.URL(f"{url}{SYNC_PATH}/{route}", params=params)
+
+
+def _headers(token: str, method: str, target: httpx.URL, body: bytes = b"") -> dict[str, str]:
+    ts = int(time.time())
+    return {
+        "Authorization": f"Bearer {token}",
+        TIMESTAMP_HEADER: str(ts),
+        SIGNATURE_HEADER: sign_request(token, method, target.raw_path, body, ts),
+    }
 
 
 def _ping(url: str, token: str) -> str | None:
     """The peer's APP_ENV, or None on any failure. Never raises."""
     try:
-        resp = httpx.get(f"{url}{SYNC_PATH}/ping", headers=_headers(token), timeout=_PING_TIMEOUT)
+        target = _target(url, "ping")
+        resp = httpx.get(target, headers=_headers(token, "GET", target), timeout=_PING_TIMEOUT)
         if resp.status_code != 200:
             return None
         env = resp.json().get("env")
@@ -122,6 +225,10 @@ def _raise_for_peer(resp: httpx.Response, peer_env: str, *, missing: str) -> Non
     detail = _peer_detail(resp)
     if resp.status_code == 404 and detail == ACCOUNT_NOT_FOUND:
         raise PeerError(404, missing)
+    if resp.status_code == 403:
+        # A production peer refusing an inbound import. `push` refuses one
+        # before sending; this is the peer's own word for the same rule.
+        raise PeerError(403, f"{peer_env}: {detail[:300] or 'refused'}")
     if resp.status_code == 409:
         raise PeerError(409, f"{peer_env}: {detail[:200] or 'operation already running'}")
     if resp.status_code == 400:
@@ -143,11 +250,9 @@ def peer_summary(user_id: str) -> dict[str, Any]:
     bare 404 → 502).
     """
     url, token, peer_env = _peer()
+    target = _target(url, "summary", user_id)
     try:
-        resp = httpx.get(
-            f"{url}{SYNC_PATH}/summary", params={"user_id": user_id},
-            headers=_headers(token), timeout=_SUMMARY_TIMEOUT,
-        )
+        resp = httpx.get(target, headers=_headers(token, "GET", target), timeout=_SUMMARY_TIMEOUT)
     except httpx.HTTPError as exc:
         raise PeerError(502, f"{peer_env} summary failed: {type(exc).__name__}") from exc
     if resp.status_code == 404 and _peer_detail(resp) == ACCOUNT_NOT_FOUND:
@@ -168,15 +273,24 @@ def push(user_id: str) -> dict[str, Any]:
 
     Returns `{"peer_env", "counts"}` — counts as reported by the peer's import.
     Raises `PeerError`, or the local `AccountNotFound` / `BundleError` from the
-    export.
+    export. A peer that reports production is refused (403) before anything is
+    exported or sent: production accepts no inbound import, so a copy into
+    production is production's own `pull`.
     """
     url, token, peer_env = _peer()
-    bundle = account_bundle.export_account(user_id)
-    try:
-        resp = httpx.post(
-            f"{url}{SYNC_PATH}/import", params={"user_id": user_id}, json=bundle,
-            headers=_headers(token), timeout=_TRANSFER_TIMEOUT,
+    if refuses_inbound_import(peer_env):
+        raise PeerError(
+            403,
+            f"{peer_env} does not accept inbound account imports; to copy into {peer_env}, "
+            f"pull from {peer_env}'s admin account tools instead",
         )
+    bundle = account_bundle.export_account(user_id)
+    # Serialized once: the signature covers exactly these bytes.
+    body = json.dumps(bundle).encode("utf-8")
+    target = _target(url, "import", user_id)
+    headers = {**_headers(token, "POST", target, body), "Content-Type": "application/json"}
+    try:
+        resp = httpx.post(target, content=body, headers=headers, timeout=_TRANSFER_TIMEOUT)
     except httpx.HTTPError as exc:
         raise PeerError(502, f"{peer_env} import failed: {type(exc).__name__}") from exc
     _raise_for_peer(resp, peer_env, missing=f"account must sign in on {peer_env} first")
@@ -191,11 +305,9 @@ def pull(user_id: str) -> dict[str, Any]:
     `AccountNotFound` / `BundleError` from the import.
     """
     url, token, peer_env = _peer()
+    target = _target(url, "export", user_id)
     try:
-        resp = httpx.get(
-            f"{url}{SYNC_PATH}/export", params={"user_id": user_id},
-            headers=_headers(token), timeout=_TRANSFER_TIMEOUT,
-        )
+        resp = httpx.get(target, headers=_headers(token, "GET", target), timeout=_TRANSFER_TIMEOUT)
     except httpx.HTTPError as exc:
         raise PeerError(502, f"{peer_env} export failed: {type(exc).__name__}") from exc
     _raise_for_peer(resp, peer_env, missing=f"account does not exist on {peer_env}")

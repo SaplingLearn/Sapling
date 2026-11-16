@@ -234,8 +234,8 @@ All Gemini callers decrypt before constructing a prompt. None of `decrypt_if_pre
 | `POSTHOG_PROJECT_TOKEN`           | backend  | PostHog ingestion key (public by PostHog's design); unset = no PostHog client. |
 | `POSTHOG_PERSONAL_API_KEY` (+ `POSTHOG_PROJECT_ID`) | backend | PostHog personal key with `person:write`, used only to erase a deleted account's PostHog person. |
 | `LOGFIRE_TOKEN`                   | backend  | Logfire write token; unset = no trace egress. |
-| `CANOPY_METRICS_TOKEN`            | backend  | Bearer token for `GET /api/internal/metrics` (Canopy dashboard); unset = route 404s. |
-| `ACCOUNT_SYNC_PEER_TOKEN` / `ACCOUNT_SYNC_INBOUND_TOKEN` | backend | Cross-environment admin account copy: the token sent to the peer / the token accepted from it. The inbound token grants read and overwrite of any account's study data; unset = routes 404. |
+| `CANOPY_METRICS_TOKEN`            | backend  | Bearer token for `GET /api/internal/metrics` (Canopy dashboard); unset = route 404s; set but under 32 bytes = boot refused (`openssl rand -hex 32`). |
+| `ACCOUNT_SYNC_PEER_TOKEN` / `ACCOUNT_SYNC_INBOUND_TOKEN` | backend | Cross-environment admin account copy: the token sent to the peer / the token accepted from it. The inbound token grants read and overwrite of any account's study data; unset = routes 404; set but under 32 bytes = boot refused. It also keys an HMAC signature on every request (method, path + query, timestamp ±300 s, body hash), so a captured request cannot be replayed or re-aimed. Production refuses inbound imports (403); data reaches prod only by prod's own pull. |
 | `TYPESAFE_API_KEY`                | backend  | TypeSafe Jev decision model (`services/typesafe_client.py`), used only when the `decision_router` flag is on. |
 | `RECOST_API_KEY`                  | backend  | Optional Recost API-cost telemetry middleware (`main.py`). |
 | `REDIS_URL`                       | backend  | Optional cross-worker OCR/extraction cache; may embed a password. |
