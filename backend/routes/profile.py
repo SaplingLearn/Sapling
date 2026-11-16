@@ -319,6 +319,7 @@ def update_settings(
     request: Request,
 ):
     require_self(user_id, request)
+    enforce_abuse_limit(abuse_limits.SETTINGS_WRITE, user_id)
     _get_or_create_settings(user_id)
 
     # Whitelist: only these fields may be patched via this endpoint.

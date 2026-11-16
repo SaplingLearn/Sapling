@@ -163,7 +163,7 @@ class TestImportParse:
         body = {
             "user_id": "u1",
             "source": "ocr",
-            "payload": self._b64(b"png bytes"),
+            "payload": self._b64(b"\x89PNG\r\n\x1a\n png bytes"),
             "options": {"filename": "notes.png"},
         }
         with _mock_self(), patch_flashcards("extract_cards_from_image") as p:
@@ -324,7 +324,7 @@ def test_import_llm_routes_answer_a_budget_refusal_with_its_429(path, target, bo
 def test_ocr_parse_answers_a_budget_refusal_with_its_429():
     """`/import/parse` with source `ocr` runs the flashcard agent: a refused
     run is the budget's 429, not a 502 "Parser error"."""
-    body = {"user_id": "u1", "source": "ocr", "payload": base64.b64encode(b"img").decode()}
+    body = {"user_id": "u1", "source": "ocr", "payload": base64.b64encode(b"\x89PNG\r\n\x1a\nimg").decode()}
     with _mock_self(), patch_flashcards("extract_cards_from_image", side_effect=_refused):
         r = client.post("/api/flashcards/import/parse", json=body)
     assert r.status_code == 429, r.text

@@ -112,6 +112,7 @@ def get_user_rooms(user_id: str, request: Request):
 @router.get("/rooms/{room_id}/overview")
 def room_overview(room_id: str, request: Request):
     viewer_id = get_session_user_id(request)
+    enforce_abuse_limit(abuse_limits.ROOM_OVERVIEW, viewer_id)
     with _social_errors():
         return overview.room_overview(room_id, viewer_id)
 

@@ -8,9 +8,11 @@ from pydantic import BaseModel, Field, ValidationError
 from typing import Optional
 from pydantic_ai.exceptions import AgentRunError
 
-from services import cache, llm_budget
+from services import abuse_limits, cache, llm_budget
 from services.academics import require_course_enrollment
 from services.auth_guard import guard_off_loop, require_self
+from services.flashcards.concept_topic import topic_is_graph_concept
+from services.request_limits import enforce_abuse_limit
 from services.graph_service import (
     aget_graph, aget_recommendations, aget_courses,
     add_course, delete_course, update_course_color,
@@ -89,6 +91,7 @@ async def list_courses(user_id: str, request: Request):
 @router.post("/{user_id}/courses")
 def create_course(user_id: str, body: AddCourseBody, request: Request):
     require_self(user_id, request)
+    enforce_abuse_limit(abuse_limits.GRAPH_EDIT, user_id)  # may re-summarise inline
     result = add_course(user_id, body.course_id, body.color, body.nickname, body.term)
     if "error" in result:
         raise HTTPException(status_code=404, detail=result["error"])
@@ -108,6 +111,7 @@ def remove_course(
     """Drop the course for ONE term (``?term=<label>``; default: the current
     term). Other terms' enrollments — and their gradebooks — survive (#766)."""
     require_self(user_id, request)
+    enforce_abuse_limit(abuse_limits.GRAPH_EDIT, user_id)
     result = delete_course(user_id, course_id, term)
     if "error" in result:
         raise HTTPException(status_code=404, detail=result["error"])
@@ -135,6 +139,7 @@ class AddNodeBody(BaseModel):
 @router.post("/{user_id}/nodes")
 def create_node(user_id: str, body: AddNodeBody, request: Request):
     require_self(user_id, request)
+    enforce_abuse_limit(abuse_limits.GRAPH_EDIT, user_id)
     if not body.concept_name.strip():
         raise HTTPException(status_code=422, detail="concept_name must be non-empty")
     if not body.course_id.strip():
@@ -158,6 +163,7 @@ def create_node(user_id: str, body: AddNodeBody, request: Request):
 @router.delete("/{user_id}/nodes/{node_id}")
 def remove_node(user_id: str, node_id: str, request: Request):
     require_self(user_id, request)
+    enforce_abuse_limit(abuse_limits.GRAPH_EDIT, user_id)
     result = delete_node(user_id, node_id)
     if "error" in result:
         raise HTTPException(status_code=404, detail=result["error"])
@@ -205,6 +211,7 @@ def describe_concept(user_id: str, body: ConceptDescriptionBody, request: Reques
     handed straight to the agent.
     """
     require_self(user_id, request)
+    enforce_abuse_limit(abuse_limits.CONCEPT_DESCRIBE, user_id)
     concept = body.concept.strip()[:_MAX_CONCEPT_LEN]
     if not concept:
         raise HTTPException(status_code=400, detail="concept is required")
@@ -212,6 +219,11 @@ def describe_concept(user_id: str, body: ConceptDescriptionBody, request: Reques
     cache_key = _description_cache_key(concept, course_label) if cache.enabled() else None
     if cache_key and (hit := cache.get_str(cache_key)):
         return {"description": hit}
+    # Every caller describes one of the student's OWN concepts (the map's
+    # focus card, the quiz home's rows); anything else would make this a
+    # free general-purpose model call.
+    if not topic_is_graph_concept(user_id, concept, None):
+        raise HTTPException(status_code=404, detail="That concept isn't on your map.")
     deps = SaplingDeps(
         user_id=user_id,
         course_id=None,
