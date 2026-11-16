@@ -9,7 +9,7 @@
  *
  * Kept deliberately in lock-step with e2e/global-setup.ts:
  *   - mint through the frontend origin (proves the same-origin /api proxy);
- *   - cookie flags mirror the real `sapling_session` (HttpOnly/Lax, and
+ *   - cookie flags mirror the real session cookie (HttpOnly/Lax, and
  *     secure:true — Chromium accepts Secure cookies on http://localhost);
  *   - the cookie alone WAS not a signed-in browser before #430: client
  *     identity lived only in localStorage (`UserContext` reads
@@ -52,7 +52,14 @@ type StorageState = {
  * session BFF exchanges only the OAuth redirect's `typ=handoff` token. */
 export async function mintSessionToken(
   userId: string,
-): Promise<{ token: string; handoffToken: string; expiresIn: number }> {
+): Promise<{
+  token: string;
+  cookieName: string;
+  handoffToken: string;
+  signinNonce: string;
+  signinCookieName: string;
+  expiresIn: number;
+}> {
   const res = await fetch(`${FRONTEND_URL}/api/auth/test-login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -68,10 +75,13 @@ export async function mintSessionToken(
   }
   const body = (await res.json()) as {
     token?: string;
+    cookie_name?: string;
     handoff_token?: string;
+    signin_nonce?: string;
+    signin_cookie_name?: string;
     expires_in?: number;
   };
-  if (!body.token || !body.handoff_token) {
+  if (!body.token || !body.handoff_token || !body.signin_nonce) {
     throw new Error(
       `test-login returned no token for ${userId}: ` +
         JSON.stringify(body).slice(0, 200),
@@ -79,7 +89,12 @@ export async function mintSessionToken(
   }
   return {
     token: body.token,
+    cookieName: body.cookie_name ?? "sapling_session",
     handoffToken: body.handoff_token,
+    // sec2 M2: the handoff is bound to this nonce; a journey that opens the
+    // callback sets it as the browser's sign-in cookie first.
+    signinNonce: body.signin_nonce,
+    signinCookieName: body.signin_cookie_name ?? "sapling_signin",
     expiresIn: body.expires_in ?? 3600,
   };
 }
@@ -97,13 +112,13 @@ export async function mintStorageState(
   displayName: string,
   opts?: { omitLocalStorage?: boolean },
 ): Promise<StorageState> {
-  const { token, expiresIn } = await mintSessionToken(userId);
+  const { token, cookieName, expiresIn } = await mintSessionToken(userId);
 
   const { hostname } = new URL(FRONTEND_URL);
   return {
     cookies: [
       {
-        name: "sapling_session",
+        name: cookieName,
         value: token,
         domain: hostname,
         path: "/",

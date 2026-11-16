@@ -38,7 +38,7 @@ export default async function globalSetup(): Promise<void> {
         "and re-run `make e2e-up`.",
     );
   }
-  const body = (await res.json()) as { token?: string; expires_in?: number };
+  const body = (await res.json()) as { token?: string; expires_in?: number; cookie_name?: string };
   if (!body.token) {
     throw new Error(
       `test-login returned no token: ${JSON.stringify(body).slice(0, 200)}`,
@@ -55,7 +55,9 @@ export default async function globalSetup(): Promise<void> {
   const storageState = {
     cookies: [
       {
-        name: "sapling_session",
+        // The http E2E stack uses the plain `sapling_session`; an https
+        // backend says `__Host-sapling_session` (sec2 M1).
+        name: body.cookie_name ?? "sapling_session",
         value: body.token,
         domain: hostname,
         path: "/",

@@ -22,7 +22,7 @@ from fastapi.testclient import TestClient
 from db.connection import table
 from services.encryption import bind, encrypt_if_present
 from services.encryption_canary import abort_unless_key_verified
-from services.session_tokens import SESSION_COOKIE_NAME, mint_session
+from services.session_tokens import HOST_SESSION_COOKIE_NAME, mint_session
 from main import app
 
 # Deterministic default keeps the run idempotent + self-healing (a re-run reclaims a
@@ -83,7 +83,7 @@ def setup_fixture() -> None:
          **{c: encrypt_if_present(v, bind=bind("user_profiles", c, USER_ID))
             for c, v in (("name", "E2E User"), ("first_name", "E2E"), ("last_name", "User"))}},
         on_conflict="user_id")
-    client.cookies.set(SESSION_COOKIE_NAME, mint_session(USER_ID))
+    client.cookies.set(HOST_SESSION_COOKIE_NAME, mint_session(USER_ID))
 
 
 def teardown_fixture() -> None:

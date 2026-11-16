@@ -15,7 +15,9 @@
  * the OAuth redirect would leave a first sign-in: a fresh users row
  * (support/db.ts::insertGoogleAccount) and the handoff token test-login mints
  * alongside the session (#756: the only kind the session BFF exchanges),
- * handed to the same-tab /auth/callback as `auth_token`.
+ * handed to the same-tab /auth/callback as `auth_token`. The handoff is bound
+ * to a sign-in nonce (sec2 M2), so the browser gets that nonce's cookie first,
+ * as /auth/start would have set it.
  *
  * Timing-robust by design: the watcher idles on a 30s poll but every
  * `pending` status answer nudges it awake, so it can finish the seed before
@@ -48,10 +50,13 @@ test("a new local Google account is seeded with the sample data and lands on the
   const googleId = `e2e${randomUUID().replace(/-/g, "")}`;
   const userId = `user_${googleId}`;
   await insertGoogleAccount(userId, googleId);
-  const { handoffToken } = await mintSessionToken(userId);
+  const { handoffToken, signinNonce, signinCookieName } = await mintSessionToken(userId);
 
   // A clean browser: not the USER_ACTIVE storageState every spec starts from.
   const context = await browser.newContext({ storageState: { cookies: [], origins: [] } });
+  await context.addCookies([
+    { name: signinCookieName, value: signinNonce, url: FRONTEND_URL, httpOnly: true, sameSite: "Lax" },
+  ]);
   const page = await context.newPage();
   const visited: string[] = [];
   page.on("framenavigated", (frame) => {
@@ -60,7 +65,6 @@ test("a new local Google account is seeded with the sample data and lands on the
 
   try {
     const callback = new URL("/auth/callback", FRONTEND_URL);
-    callback.searchParams.set("user_id", userId);
     callback.searchParams.set("is_approved", "true");
     callback.searchParams.set("auth_token", handoffToken);
     await page.goto(callback.toString());

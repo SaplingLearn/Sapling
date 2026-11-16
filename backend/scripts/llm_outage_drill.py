@@ -11,12 +11,12 @@ Run from backend/:
 
     python -m scripts.llm_outage_drill                        # localhost:5000, test-login
     python -m scripts.llm_outage_drill --url http://localhost:8000 --user-id rich-user-active
-    SAPLING_DRILL_SESSION=<sapling_session cookie> \\
+    SAPLING_DRILL_SESSION=<__Host-sapling_session cookie> \\
         python -m scripts.llm_outage_drill --url https://<staging-api> --i-know
 
 Auth: on localhost (APP_ENV=local/test) it mints a session through
 ``POST /api/auth/test-login`` for ``--user-id``. Anywhere else pass the
-``sapling_session`` cookie of an ADMIN test account in ``SAPLING_DRILL_SESSION``
+``__Host-sapling_session`` cookie of an ADMIN test account in ``SAPLING_DRILL_SESSION``
 (never on the command line, where it lands in shell history) — admin, so the
 script can also read ``/api/admin/llm/drill`` and the per-model rollup. A
 non-admin session still runs the requests; it just can't show the models.
@@ -42,7 +42,10 @@ from urllib.parse import urlparse
 
 import httpx
 
-SESSION_COOKIE = "sapling_session"
+# The backend reads `__Host-sapling_session` in every environment (sec2 M1);
+# a browser's current session must be sent under it (on a deployed backend
+# the plain name is honoured only for a pre-sec2 session).
+SESSION_COOKIE = "__Host-sapling_session"
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 REQUEST_TIMEOUT_S = 300.0
 #: Tests inject an httpx.MockTransport here; None = the real network.

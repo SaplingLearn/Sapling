@@ -36,6 +36,7 @@ log_privacy.install()
 
 from routes import graph, learn, quiz, calendar, social, extract, auth, documents, flashcards, study_guide, feedback, careers, onboarding, gradebook, gradescope, notes, academics, gamification
 from routes.profile import router as profile_router
+from routes.auth_handoff import router as auth_handoff_router
 from routes.admin_flags import router as admin_flags_router
 from routes.flags import router as flags_router
 from routes.admin import router as admin_router
@@ -76,6 +77,7 @@ from services.request_context import (
     privacy_signal_in,
 )
 from services.body_limit import BodySizeLimitMiddleware
+from services.csrf_origin import CsrfOriginMiddleware
 from services.encryption_canary import verify_encryption_key
 from services.storage_service import (
     ALLOWED_CONTENT_TYPES,
@@ -335,6 +337,12 @@ _allowed_origins = cors_allowed_origins(
 # needs in order to read it. See services/body_limit.py for the two limits.
 app.add_middleware(BodySizeLimitMiddleware)
 
+# sec2 M1: an unsafe request carrying the session cookie must come from an
+# origin on the same allowlist (services/csrf_origin.py has the full rule and
+# its exemptions). Outside the body limit, so a refused request is never read;
+# inside CORS and RequestIDMiddleware, so its 403 is logged like any other.
+app.add_middleware(CsrfOriginMiddleware, allowed_origins=_allowed_origins)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_allowed_origins,
@@ -536,6 +544,8 @@ app.include_router(extract.router,     prefix="/api/extract")
 # upserts, POST /test-login (every Playwright journey signs in through it),
 # /pending/*, /me's account read.
 app.include_router(auth.router,        prefix="/api/auth", dependencies=_SVC)
+# sec2 M2: the BFF's single-use OAuth handoff exchange (server to server, no session).
+app.include_router(auth_handoff_router, prefix="/api/auth", dependencies=_SVC)
 app.include_router(documents.router,   prefix="/api/documents")
 app.include_router(flashcards.router,  prefix="/api/flashcards", dependencies=nav_feature_gate("/api/flashcards"))
 app.include_router(study_guide.router, prefix="/api/study-guide", dependencies=nav_feature_gate("/api/study-guide"))

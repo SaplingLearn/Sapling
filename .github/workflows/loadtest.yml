@@ -78,7 +78,7 @@ jobs:
           TARGET_URL: ${{ inputs.target_url }}
           LOADTEST_USER_IDS: ${{ inputs.user_ids }}
           LOADTEST_CHAT: ${{ inputs.chat && '1' || '0' }}
-          # Optional: a pre-minted sapling_session for targets without
+          # Optional: a pre-minted session token (sent as __Host-sapling_session) for targets without
           # /api/auth/test-login (APP_ENV other than local/test).
           LOADTEST_SESSION_TOKEN: ${{ secrets.LOADTEST_SESSION_TOKEN }}
           USERS: ${{ inputs.users }}

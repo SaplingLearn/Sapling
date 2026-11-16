@@ -55,7 +55,12 @@ export interface ResolvedFrontendEnv {
   env: FrontendEnv | null;
   /** Backend origin (used for BACKEND_URL and NEXT_PUBLIC_API_URL). */
   apiUrl: string;
-  /** Cookie `Domain` attribute, or undefined for a host-only cookie. */
+  /**
+   * The `Domain` the session cookie USED to carry (`.saplinglearn.com` /
+   * `.staging.saplinglearn.com`), or undefined. sec2 M1: the session cookie
+   * is now host-only (`__Host-sapling_session`, no Domain); this is read only
+   * to DELETE the legacy domain-wide cookie (lib/sessionCookie.ts).
+   */
   cookieDomain: string | undefined;
   /** True when values came from DEPLOY_ENV, not explicit env vars. */
   derived: boolean;

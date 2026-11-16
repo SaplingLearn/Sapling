@@ -11,6 +11,8 @@
  * gets the real listener plumbing.
  */
 
+import { signInStartPath } from '@/lib/signinStart';
+
 /** The `detail.code` (or coded-envelope `error.code`) of an admin step-up 401. */
 export const REAUTH_REQUIRED = 'reauth_required';
 
@@ -54,7 +56,7 @@ export function isReauthRequired(body: unknown): boolean {
  * Send the admin through Google sign-in again (same tab), remembering the
  * current admin page so the callback can return there. A fresh sign-in mints
  * a fresh session, which satisfies the step-up window. Same-origin
- * `/api/auth/google`, as the sign-in modal and /pending use.
+ * `/auth/start`, as the sign-in modal and /pending use.
  */
 export function startReauth(): void {
   if (typeof window === 'undefined') return;
@@ -64,9 +66,11 @@ export function startReauth(): void {
       `${window.location.pathname}${window.location.search}`,
     );
   } catch {}
-  const returnTo = encodeURIComponent(window.location.origin);
-  // Absolute, on this origin: the /api rewrite proxies it to the backend.
-  window.location.assign(`${window.location.origin}/api/auth/google?return_to=${returnTo}`);
+  // Absolute, on this origin: /auth/start sets the sign-in nonce cookie
+  // (sec2 M2) and hands on to the backend's /api/auth/google. A route
+  // handler, not a page: it needs a full navigation, never router.push.
+  // eslint-disable-next-line @next/next/no-location-assign-relative-destination
+  window.location.assign(`${window.location.origin}${signInStartPath()}`);
 }
 
 /**

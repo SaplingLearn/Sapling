@@ -37,7 +37,8 @@ const RESOLVED = resolveFrontendEnv(process.env);
 if (RESOLVED.derived) {
   process.env.BACKEND_URL = RESOLVED.apiUrl;
   process.env.NEXT_PUBLIC_API_URL = RESOLVED.apiUrl;
-  if (RESOLVED.cookieDomain) process.env.COOKIE_DOMAIN = RESOLVED.cookieDomain;
+  // COOKIE_DOMAIN is not set here any more: the session cookie is host-only
+  // (sec2 M1); the legacy domain is derived where it is cleared.
 }
 
 // .trim() defends against a stray leading/trailing space in the build
