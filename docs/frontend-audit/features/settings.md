@@ -1,6 +1,6 @@
 # Feature · Settings
 
-> Covers: `/settings/page.tsx` + `CosmeticsManager.tsx`. All account, profile, notification, appearance, privacy, cosmetics, and danger-zone controls. Also hosts the **Profile Preview modal**, which is the only place public-profile rendering happens (since `/profile` doesn't exist — see `QUESTIONS.md` Q10).
+> Covers: `/settings/page.tsx` + `CosmeticsManager.tsx`. All account, profile, notification, appearance, privacy, cosmetics, and danger-zone controls. Also hosts the **Profile Preview modal**, which is the only place public-profile rendering happens (since `/profile` doesn't exist — see `questions.md` Q10).
 
 ---
 

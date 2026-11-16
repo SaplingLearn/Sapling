@@ -5,6 +5,7 @@ import type { NextConfig } from "next";
 import { initOpenNextCloudflareForDev } from "@opennextjs/cloudflare";
 import { checkFrontendDeployEnv, resolveFrontendEnv } from "./src/lib/deployGuard";
 import { TRAILING_SLASH_REDIRECT } from "./src/lib/trailingSlashRedirect";
+import { securityHeaders } from "./src/lib/securityHeaders";
 
 // Cross-check BEFORE deriving: checkFrontendDeployEnv's "explicit lock"
 // branch exists to fail the build when DEPLOY_ENV disagrees with explicit
@@ -78,6 +79,14 @@ if (process.env.NODE_ENV === "production") {
 }
 
 const nextConfig: NextConfig = {
+  // `next dev` blocks cross-origin requests for its /_next dev resources (HMR,
+  // chunks, fonts) from any host but localhost, so opening the dev server by
+  // LAN IP — e.g. from a phone — renders unhydrated with fallback fonts.
+  // Comma-separated hosts in DEV_ALLOWED_ORIGINS opt in; dev-only, ignored by builds.
+  allowedDevOrigins: (process.env.DEV_ALLOWED_ORIGINS ?? "")
+    .split(",")
+    .map((h) => h.trim())
+    .filter(Boolean),
   // `standalone` is ignored by @opennextjs/cloudflare (it does its own
   // packaging), but keeping it lets `next build` alone still produce a
   // runnable Docker-style server if anyone ever deploys that way.
@@ -108,18 +117,12 @@ const nextConfig: NextConfig = {
       TRAILING_SLASH_REDIRECT,
     ];
   },
+  // HSTS, nosniff, referrer, framing, permissions and the CSP (enforced +
+  // report-only) — the set and the reasoning behind each value live in
+  // src/lib/securityHeaders.ts, pinned by its test. Evaluated at build time,
+  // so the CSP names the build's NEXT_PUBLIC_SUPABASE_URL project.
   async headers() {
-    return [
-      {
-        source: "/(.*)",
-        headers: [
-          {
-            key: "Cross-Origin-Opener-Policy",
-            value: "same-origin-allow-popups",
-          },
-        ],
-      },
-    ];
+    return [{ source: "/(.*)", headers: securityHeaders(process.env) }];
   },
 };
 

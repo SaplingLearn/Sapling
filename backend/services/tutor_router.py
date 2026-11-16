@@ -227,7 +227,7 @@ async def _observe(state: dict, *, user_id: str | None, request_id: str | None,
         # unreadable store, the executor already shut down at lifespan
         # teardown, a bug — is a WARNING and the turn is simply not routed.
         try:
-            backends = await asyncio.to_thread(decisions.router_backends, user_id)
+            backends = await decisions.router_backends_off_loop(user_id)
         except decisions.FlagUnreadable:
             logger.warning("tutor router: decision_router flag unreadable; turn not routed")
             return None
@@ -239,8 +239,13 @@ async def _observe(state: dict, *, user_id: str | None, request_id: str | None,
     primary, shadow = backends
     if primary == decisions.OFF:
         return None
-    return await _route(state, user_id=user_id, request_id=request_id, extra=extra,
-                        primary=primary, shadow=shadow)
+    from services import llm_budget
+
+    # #119: observe-only work after the turn persisted; the per-user LLM
+    # budget never refuses it (its tokens still count).
+    with llm_budget.background_work():
+        return await _route(state, user_id=user_id, request_id=request_id, extra=extra,
+                            primary=primary, shadow=shadow)
 
 
 def observe_tutor_turn(

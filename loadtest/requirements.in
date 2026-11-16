@@ -1,0 +1,3 @@
+# Load-test tooling only (#117). Not a backend dependency: install in a
+# separate venv (uv venv .venv-loadtest && uv pip install --require-hashes -r loadtest/requirements.lock).
+locust==2.37.10

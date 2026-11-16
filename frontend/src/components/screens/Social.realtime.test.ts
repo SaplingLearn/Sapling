@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mergeLatestMessages, planMessageRealtimeAction } from './Social';
+import { mergeLatestMessages, planMessageRealtimeAction, planRoomRealtime } from './Social';
 
 /**
  * #124: room_messages realtime payloads carry ciphertext `text`. The component
@@ -75,5 +75,26 @@ describe('mergeLatestMessages (#764)', () => {
   it('an empty refetch leaves the list alone', () => {
     const prev = [msg('a', 10)];
     expect(mergeLatestMessages(prev, [])).toBe(prev);
+  });
+});
+
+/**
+ * RLS step 2e (#115): the study-room channels join only on an applied minted
+ * token. There is no anon path: room_messages has RLS on and no anon SELECT.
+ * Without a token (first fetch, after expiry, or none this session after a
+ * 503) the room waits on REST.
+ */
+describe('planRoomRealtime (RLS step 2e)', () => {
+  it('joins only on an applied token', () => {
+    expect(planRoomRealtime('token')).toBe('token');
+  });
+
+  it('waits for the minted token (first fetch, or after expiry)', () => {
+    expect(planRoomRealtime('off')).toBe('wait');
+    expect(planRoomRealtime('pending')).toBe('wait');
+  });
+
+  it('token permanently unavailable (404/503): REST only, never the anon key', () => {
+    expect(planRoomRealtime('unavailable')).toBe('wait');
   });
 });

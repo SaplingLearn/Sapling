@@ -5,9 +5,12 @@ generate quiz, send to tutor) come in Phase 4 below.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from fastapi import APIRouter, HTTPException, Request
+from typing import Annotated
+
 from pydantic import BaseModel, Field
 from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded
 
@@ -19,17 +22,25 @@ from agents.note_summary import note_summary_agent
 from agents.tools.graph import apply_concepts_to_graph
 from agents.usage import record_agent_usage
 from db.connection import table
-from services import events_service
-from services.academics import offering_course_id, resolve_offering, term_id_for_label
+from models import CHAT_MESSAGE_MAX, Id
+from services import crisis_support, events_service
+from services.academics import (
+    course_offering_ids, offering_course_id, require_course_enrollment, resolve_offering,
+    term_id_for_label, user_offering_ids_for_course,
+)
 from services.auth_guard import get_session_user_id, require_self, guard_off_loop
+from services import abuse_limits
+from services.request_limits import aenforce_abuse_limit
 from services.notes_service import (
     create_note,
     delete_note,
     get_note,
     link_concept,
+    link_prechecked_concepts,
     list_linked_concepts,
     list_notes,
     save_summary,
+    tutor_topic,
     unlink_concept,
     update_note,
 )
@@ -81,7 +92,7 @@ async def _run_note_worker(agent, user_prompt: str, deps: SaplingDeps, *, action
         ) from e
 
 
-def _course_meta(offering_id: str | None, cache: dict) -> dict:
+async def _course_meta(offering_id: str | None, cache: dict) -> dict:
     """Resolve an offering to its abstract course id + human labels.
 
     Notes key on the OFFERING (a course taught in a term), but the notetaker
@@ -93,10 +104,10 @@ def _course_meta(offering_id: str | None, cache: dict) -> dict:
     if not offering_id:
         return {"course_id": None, "course_code": None, "course_name": None}
     if offering_id not in cache:
-        course_id = offering_course_id(offering_id)
+        course_id = await asyncio.to_thread(offering_course_id, offering_id)
         course = {}
         if course_id:
-            rows = table("courses").select(
+            rows = await table("courses").aselect(
                 "id,course_code,course_name",
                 filters={"id": f"eq.{course_id}"}, limit=1,
             )
@@ -109,20 +120,37 @@ def _course_meta(offering_id: str | None, cache: dict) -> dict:
     return cache[offering_id]
 
 
+def _course_offering_ids(user_id: str, course_id: str) -> list[str]:
+    """Every offering of ``course_id`` a note of the student's can sit in:
+    all of the course's offerings, or — if that read cannot tell — the ones
+    the student is enrolled in (#831 follow-up)."""
+    ids = course_offering_ids(course_id)
+    return ids if ids is not None else user_offering_ids_for_course(user_id, course_id)
+
+
+#: Note bounds (the notetaker's inputs carry the same maxLength). A note body is
+#: plain text; 200k characters is a ~100-page set of lecture notes.
+NOTE_TITLE_MAX = 300
+NOTE_BODY_MAX = 200_000
+NOTE_TAG_MAX = 64
+NOTE_TAGS_MAX = 50
+NoteTag = Annotated[str, Field(max_length=NOTE_TAG_MAX)]
+
+
 class CreateNoteBody(BaseModel):
-    user_id: str
-    course_id: str
-    title: str = ""
-    body: str = ""
-    tags: list[str] = Field(default_factory=list)
+    user_id: Id
+    course_id: Id
+    title: str = Field(default="", max_length=NOTE_TITLE_MAX)
+    body: str = Field(default="", max_length=NOTE_BODY_MAX)
+    tags: list[NoteTag] = Field(default_factory=list, max_length=NOTE_TAGS_MAX)
 
 
 class UpdateNoteBody(BaseModel):
-    user_id: str
-    title: str | None = None
-    body: str | None = None
-    tags: list[str] | None = None
-    course_id: str | None = None
+    user_id: Id
+    title: str | None = Field(default=None, max_length=NOTE_TITLE_MAX)
+    body: str | None = Field(default=None, max_length=NOTE_BODY_MAX)
+    tags: list[NoteTag] | None = Field(default=None, max_length=NOTE_TAGS_MAX)
+    course_id: Id | None = None
 
 
 @router.get("/user/{user_id}")
@@ -133,30 +161,31 @@ async def list_user_notes(
     semester: str | None = None,
 ):
     await guard_off_loop(require_self, user_id, request)
-    # The API speaks abstract course ids; notes key on the offering. Resolve
-    # the (current-term) offering for the requested course before filtering —
-    # or, with a `semester` (term label, #141), STRICTLY that term's offering:
-    # an unknown label or a term with no offering of the course answers with
-    # the empty shape, never a silent fall-back to another term. `semester`
-    # without `course_id` is ignored (this is the course-filtered read; the
-    # notetaker UI itself carries no semester context — the param exists for
-    # API completeness).
-    offering_id = None
-    semester_missed = False
+    # The API speaks abstract course ids; notes key on the offering. A course
+    # filter covers EVERY offering of the course (#831 follow-up): a note is
+    # filed under the student's enrollment (any term, the #115 gate) and,
+    # before that gate, under the term it was written in, so the current
+    # term's offering alone hid notes from past terms. Rows stay the
+    # caller's own (`list_notes` filters on user_id). With a `semester` (term
+    # label, #141) it is STRICTLY that term's offering: an unknown label or a
+    # term with no offering of the course answers with the empty shape, never
+    # a silent fall-back to another term. `semester` without `course_id` is
+    # ignored (the notetaker UI itself carries no semester context — the
+    # param exists for API completeness).
+    offering_id: str | list[str] | None = None
     if course_id:
         if semester:
-            term_id = term_id_for_label(semester)
+            term_id = await asyncio.to_thread(term_id_for_label, semester)
             offering_id = (
-                resolve_offering(course_id, term_id, fallback=False)
+                await asyncio.to_thread(resolve_offering, course_id, term_id, fallback=False)
                 if term_id
                 else None
-            )
-            semester_missed = offering_id is None
+            ) or []
         else:
-            offering_id = resolve_offering(course_id)
+            offering_id = await asyncio.to_thread(_course_offering_ids, user_id, course_id)
     notes = (
         []
-        if semester_missed
+        if offering_id == []
         else await list_notes(user_id=user_id, offering_id=offering_id)
     )
     # Attach the abstract course id + labels resolved from each note's offering.
@@ -165,12 +194,12 @@ async def list_user_notes(
     # resolve the courses row once.
     meta_cache: dict = {}
     for n in notes:
-        n.update(_course_meta(n.get("offering_id"), meta_cache))
+        n.update(await _course_meta(n.get("offering_id"), meta_cache))
     # ETag from each note's (id, updated_at) — any create/edit/delete changes the
     # set or bumps updated_at. A matching If-None-Match returns 304 and skips
     # re-serializing the (already-decrypted) note list.
     etag = make_etag(
-        "notes", user_id, offering_id or "",
+        "notes", user_id, ",".join(offering_id) if isinstance(offering_id, list) else offering_id or "",
         *sorted(f"{n.get('id')}:{n.get('updated_at')}" for n in notes),
     )
     not_modified = conditional(request, etag)
@@ -182,11 +211,14 @@ async def list_user_notes(
 @router.post("")
 async def create(body: CreateNoteBody, request: Request):
     await guard_off_loop(require_self, body.user_id, request)
-    # Abstract course id from the client → the current-term offering the note
-    # is stored against (create=True so a fresh note lands in the real term).
-    # CREATE path: deliberately NOT semester-scoped (#141) — new content
-    # belongs to the current term by design.
-    offering_id = resolve_offering(body.course_id, create=True)
+    # #115: only under a course the student is enrolled in (else 404). The
+    # gate returns the offering the note is stored against: the student's own
+    # enrollment in the abstract course — the current term's when they hold
+    # it, else their latest term's — so the check and the write agree.
+    # CREATE path: deliberately NOT semester-scoped (#141).
+    offering_id = await asyncio.to_thread(
+        require_course_enrollment, body.user_id, body.course_id,
+    )
     note = await create_note(
         user_id=body.user_id,
         offering_id=offering_id,
@@ -196,7 +228,7 @@ async def create(body: CreateNoteBody, request: Request):
     )
     # Same F4 enrichment as the read paths so a freshly created note carries its
     # abstract course_id + labels (else it shows "Unknown course" until reload).
-    note.update(_course_meta(note.get("offering_id") or offering_id, {}))
+    note.update(await _course_meta(note.get("offering_id") or offering_id, {}))
     # create_note (services/notes_service.py) inserts a single notes row per
     # call and this route calls it exactly once — award immediately after it
     # returns, keyed on the freshly-created note id so a client retry is an
@@ -228,7 +260,7 @@ async def read(note_id: str, request: Request, user_id: str):
         raise HTTPException(status_code=404, detail="Note not found.")
     # Same offering → course_id/label enrichment as the list route (F4), so a
     # single-note read returns a consistent shape.
-    note.update(_course_meta(note.get("offering_id"), {}))
+    note.update(await _course_meta(note.get("offering_id"), {}))
     return note
 
 
@@ -243,10 +275,12 @@ async def patch(note_id: str, body: UpdateNoteBody, request: Request):
     if body.tags is not None:
         patch_dict["tags"] = body.tags
     if body.course_id is not None:
-        # RE-HOME path: moving a note onto another abstract course files it
-        # under that course's CURRENT-term offering — deliberately not
-        # semester-scoped (#141), like the create path above.
-        patch_dict["offering_id"] = resolve_offering(body.course_id, create=True)
+        # RE-HOME path: moving a note onto another abstract course passes the
+        # same #115 gate as create (404 unless enrolled) and files it under
+        # the offering the gate returns — not semester-scoped (#141).
+        patch_dict["offering_id"] = await asyncio.to_thread(
+            require_course_enrollment, body.user_id, body.course_id,
+        )
     if not patch_dict:
         raise HTTPException(status_code=400, detail="No fields to update.")
     updated = await update_note(
@@ -265,8 +299,8 @@ async def remove(note_id: str, request: Request, user_id: str):
 
 
 class LinkConceptBody(BaseModel):
-    user_id: str
-    concept_node_id: str
+    user_id: Id
+    concept_node_id: Id
 
 
 @router.get("/{note_id}/concepts")
@@ -286,6 +320,8 @@ async def link_concept_route(
         user_id=body.user_id,
         concept_node_id=body.concept_node_id,
     )
+    # One 404 for an unowned note, an unowned node, and a node that does not
+    # exist or vanished mid-request (#115: no existence oracle).
     if not ok:
         raise HTTPException(status_code=404, detail="Note not found.")
     return {"linked": True}
@@ -308,7 +344,7 @@ async def unlink_concept_route(
 
 
 class AgentActionBody(BaseModel):
-    user_id: str
+    user_id: Id
 
 
 async def _lookup_concept_nodes_by_name(
@@ -350,6 +386,14 @@ def _note_user_prompt(note: dict) -> str:
     return f"Title: {title}\n\nBody:\n{body_text}"
 
 
+def _note_texts(note: dict) -> tuple[str | None, ...]:
+    """The student-written note text an agent action hands a model (the title
+    and body; `last_summary` is model output, not the student's words),
+    screened in full (a quotation like the rest). A match never blocks the
+    action: `crisis_support.alongside` shows the card beside its answer."""
+    return (note.get("title"), note.get("body"))
+
+
 def _deps_for(user_id: str, course_id: str | None, note_id: str | None) -> SaplingDeps:
     from db.connection import _client  # type: ignore  # only for opaque pass-through
     return SaplingDeps(
@@ -367,19 +411,24 @@ async def summarize(note_id: str, body: AgentActionBody, request: Request):
     note = await get_note(note_id=note_id, user_id=body.user_id)
     if not note:
         raise HTTPException(status_code=404, detail="Note not found.")
-    user_prompt = _note_user_prompt(note)
-    # The graph keys on the abstract course; the note carries the offering.
-    course_id = offering_course_id(note.get("offering_id"))
-    deps = _deps_for(body.user_id, course_id, note_id)
-    result = record_agent_usage(
-        await _run_note_worker(
-            note_summary_agent, user_prompt, deps, action="summarization"
-        ),
-        feature="notes", task="note_summary", user_id=body.user_id,
-    )
-    summary_text = result.output.summary
-    await save_summary(note_id=note_id, user_id=body.user_id, summary=summary_text)
-    return {"summary": summary_text}
+    # docs/safety/crisis-support.md: the note never blocks; a match shows the card alongside
+    screen = await crisis_support.screen_content_async(request, body.user_id, "note_summarize", *_note_texts(note))
+
+    async def action() -> dict:
+        await aenforce_abuse_limit(abuse_limits.NOTE_AI_ACTION, body.user_id)
+        user_prompt = _note_user_prompt(note)
+        # The graph keys on the abstract course; the note carries the offering.
+        course_id = offering_course_id(note.get("offering_id"))
+        deps = _deps_for(body.user_id, course_id, note_id)
+        result = record_agent_usage(
+            await _run_note_worker(note_summary_agent, user_prompt, deps, action="summarization"),
+            feature="notes", task="note_summary", user_id=body.user_id,
+        )
+        summary_text = result.output.summary
+        await save_summary(note_id=note_id, user_id=body.user_id, summary=summary_text)
+        return {"summary": summary_text}
+
+    return await crisis_support.alongside(screen, action())
 
 
 @router.post("/{note_id}/extract-concepts")
@@ -390,70 +439,80 @@ async def extract_concepts(
     note = await get_note(note_id=note_id, user_id=body.user_id)
     if not note:
         raise HTTPException(status_code=404, detail="Note not found.")
-    user_prompt = _note_user_prompt(note)
-    # Concepts land in the abstract-course graph; resolve offering → course.
-    course_id = offering_course_id(note.get("offering_id"))
-    deps = _deps_for(body.user_id, course_id, note_id)
-    result = record_agent_usage(
-        await _run_note_worker(
-            note_concepts_agent, user_prompt, deps, action="concept extraction"
-        ),
-        feature="notes", task="note_concepts", user_id=body.user_id,
+    # docs/safety/crisis-support.md: the note never blocks; a match shows the card alongside
+    screen = await crisis_support.screen_content_async(
+        request, body.user_id, "note_extract_concepts", *_note_texts(note)
     )
-    names = [n.strip() for n in (result.output.concepts or []) if n and n.strip()]
-    await apply_concepts_to_graph(
-        user_id=body.user_id, course_id=course_id, concept_names=names
-    )
-    nodes = await _lookup_concept_nodes_by_name(
-        user_id=body.user_id, course_id=course_id, names=names
-    )
-    for n in nodes:
-        await link_concept(
-            note_id=note_id, user_id=body.user_id,
-            concept_node_id=n["id"],
+
+    async def action() -> dict:
+        await aenforce_abuse_limit(abuse_limits.NOTE_AI_ACTION, body.user_id)
+        user_prompt = _note_user_prompt(note)
+        # Concepts land in the abstract-course graph; resolve offering → course.
+        course_id = offering_course_id(note.get("offering_id"))
+        deps = _deps_for(body.user_id, course_id, note_id)
+        result = record_agent_usage(
+            await _run_note_worker(note_concepts_agent, user_prompt, deps, action="concept extraction"),
+            feature="notes", task="note_concepts", user_id=body.user_id,
         )
-    return {"concepts": names, "linked": len(nodes)}
+        names = [n.strip() for n in (result.output.concepts or []) if n and n.strip()]
+        await apply_concepts_to_graph(user_id=body.user_id, course_id=course_id, concept_names=names)
+        nodes = await _lookup_concept_nodes_by_name(user_id=body.user_id, course_id=course_id, names=names)
+        # Both sides are already proven the student's: get_note above is
+        # user-scoped and the lookup filters graph_nodes by user_id, so one bulk
+        # idempotent write replaces link_concept's per-node re-checks.
+        linked = await link_prechecked_concepts(note_id=note_id, node_ids=[n["id"] for n in nodes])
+        return {"concepts": names, "linked": linked}
+
+    return await crisis_support.alongside(screen, action())
 
 
 class NoteChatBody(BaseModel):
-    user_id: str
-    message: str
+    user_id: Id
+    message: str = Field(max_length=CHAT_MESSAGE_MAX)
 
 
 @router.post("/{note_id}/chat")
 async def note_chat(note_id: str, body: NoteChatBody, request: Request):
+    # docs/safety/crisis-support.md: the typed message blocks, before every limit and budget
+    if crisis := await crisis_support.screen_async(request, body.user_id, "note_chat", body.message):
+        return crisis_support.json_body(crisis, degraded=False)
     await guard_off_loop(require_self, body.user_id, request)
     note = await get_note(note_id=note_id, user_id=body.user_id)
     if not note:
         raise HTTPException(status_code=404, detail="Note not found.")
-    course_id = offering_course_id(note.get("offering_id"))
-    deps = _deps_for(body.user_id, course_id, note_id)
-    try:
-        result = record_agent_usage(
-            await note_chat_agent.run(
-                body.message, deps=deps, usage_limits=ORCHESTRATOR_LIMITS
-            ),
-            feature="notes", task="note_chat", user_id=body.user_id,
-        )
-    except UsageLimitExceeded as e:
-        # Only a real budget trip reaches the in-band degrade, so the budget
-        # wording in _CHAT_DEGRADED_REPLY is accurate. Retrying is safe with no
-        # partial-write rollback: any graph write apply_graph_update_tool made
-        # before the trip is idempotent (apply_graph_update upserts nodes
-        # on_conflict, and note_chat writes no mastery events or edges).
-        logger.warning(
-            "note_chat agent hit its usage budget; degrading in-band", exc_info=e
-        )
-        return {"reply": _CHAT_DEGRADED_REPLY, "degraded": True}
-    except UnexpectedModelBehavior as e:
-        # Not a budget signal — a genuine bug. Surface it as a 5xx (never the
-        # budget reply) so alerting fires; the log carries a traceback.
-        logger.exception("note_chat agent returned unexpected model behavior")
-        raise HTTPException(
-            status_code=500,
-            detail="Something went wrong answering that.",
-        ) from e
-    return {"reply": result.output, "degraded": False}
+    # ...the note the chat agent reads never blocks: a match shows the card alongside
+    # Re-read every turn: the card goes beside each answer, the event once a
+    # day per note version.
+    screen = await crisis_support.screen_content_async(
+        request, body.user_id, "note_chat", *_note_texts(note),
+        once_a_day=(note_id, note.get("updated_at")),
+    )
+
+    async def action() -> dict:
+        await aenforce_abuse_limit(abuse_limits.NOTE_AI_ACTION, body.user_id)
+        course_id = offering_course_id(note.get("offering_id"))
+        deps = _deps_for(body.user_id, course_id, note_id)
+        try:
+            result = record_agent_usage(
+                await note_chat_agent.run(body.message, deps=deps, usage_limits=ORCHESTRATOR_LIMITS),
+                feature="notes", task="note_chat", user_id=body.user_id,
+            )
+        except UsageLimitExceeded as e:
+            # Only a real budget trip reaches the in-band degrade, so the budget
+            # wording in _CHAT_DEGRADED_REPLY is accurate. Retrying is safe with no
+            # partial-write rollback: any graph write apply_graph_update_tool made
+            # before the trip is idempotent (apply_graph_update upserts nodes
+            # on_conflict, and note_chat writes no mastery events or edges).
+            logger.warning("note_chat agent hit its usage budget; degrading in-band", exc_info=e)
+            return {"reply": _CHAT_DEGRADED_REPLY, "degraded": True}
+        except UnexpectedModelBehavior as e:
+            # Not a budget signal — a genuine bug. Surface it as a 5xx (never the
+            # budget reply) so alerting fires; the log carries a traceback.
+            logger.exception("note_chat agent returned unexpected model behavior")
+            raise HTTPException(status_code=500, detail="Something went wrong answering that.") from e
+        return {"reply": result.output, "degraded": False}
+
+    return await crisis_support.alongside(screen, action())
 
 
 @router.post("/{note_id}/send-to-tutor")
@@ -464,28 +523,43 @@ async def send_to_tutor(
     note = await get_note(note_id=note_id, user_id=body.user_id)
     if not note:
         raise HTTPException(status_code=404, detail="Note not found.")
-    title = (note.get("title") or "").strip() or "Untitled note"
-    topic = title.splitlines()[0][:80]
-    preface_parts: list[str] = []
-    if note.get("last_summary"):
-        preface_parts.append(f"Note summary: {note['last_summary']}")
-    body_text = (note.get("body") or "").strip()
-    if body_text:
-        preface_parts.append(f"Note excerpt:\n{body_text[:1500]}")
-    preface = "\n\n".join(preface_parts)
-    return {
-        "topic": topic,
-        # The tutor session starts from the abstract course id (the graph key).
-        "course_id": offering_course_id(note.get("offering_id")),
-        "preface": preface,
-    }
+    # docs/safety/crisis-support.md: the note never blocks; a match shows the card alongside,
+    # recorded here; the /learn start it hands over records no second card for this version.
+    screen = await crisis_support.screen_content_async(
+        request, body.user_id, "note_send_to_tutor", *_note_texts(note),
+        hands_off_note=(note_id, note.get("updated_at")),
+    )
+
+    async def action() -> dict:
+        # No model runs here (the tutor session is limited where it starts),
+        # so the cheap note budget, not a note-AI unit.
+        await aenforce_abuse_limit(abuse_limits.NOTE_LOOKUP, body.user_id)
+        preface_parts: list[str] = []
+        if note.get("last_summary"):
+            preface_parts.append(f"Note summary: {note['last_summary']}")
+        body_text = (note.get("body") or "").strip()
+        if body_text:
+            preface_parts.append(f"Note excerpt:\n{body_text[:1500]}")
+        return {
+            "topic": tutor_topic(note),
+            # The tutor session starts from the abstract course id (the graph key).
+            "course_id": offering_course_id(note.get("offering_id")),
+            "preface": "\n\n".join(preface_parts),
+        }
+
+    return await crisis_support.alongside(screen, action())
 
 
 @router.post("/{note_id}/generate-quiz")
 async def generate_quiz_from_note(
     note_id: str, body: AgentActionBody, request: Request
 ):
+    # No NOTE_AI_ACTION unit: this picks a linked concept and runs no model.
+    # The quiz itself is generated (and limited) by /api/quiz/generate. The
+    # cheap note budget bounds it, charged before any read (no crisis screen
+    # here, so nothing has to come first).
     await guard_off_loop(require_self, body.user_id, request)
+    await aenforce_abuse_limit(abuse_limits.NOTE_LOOKUP, body.user_id)
     note = await get_note(note_id=note_id, user_id=body.user_id)
     if not note:
         raise HTTPException(status_code=404, detail="Note not found.")

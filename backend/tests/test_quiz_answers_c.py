@@ -25,6 +25,11 @@ from fastapi.testclient import TestClient
 from main import app
 from agents.quiz import Quiz, QuizQuestion
 from services import events_service
+from tests.db_fakes import with_async_twins
+from tests.split_patches import patch_quiz
+
+# #117: a sync PostgREST call reached on the event loop raises here.
+pytestmark = pytest.mark.usefixtures("no_sync_db_on_loop")
 
 client = TestClient(app)
 
@@ -121,44 +126,6 @@ def _answer(body_extra=None, attempt_id="quiz1"):
     })
 
 
-def test_retry_grades_in_progress_and_uses_the_first_persisted_result():
-    factory, _ = _tables()
-    with (
-        patch("routes.quiz.table", side_effect=factory),
-        patch("routes.quiz.rpc", return_value=[{"retry_correct": True}]) as record,
-    ):
-        url = "/api/quiz/attempts/quiz1/retry"
-        payload = {"question_id": 1, "question_index": 0, "selected_index": 1}
-        first = client.post(url, json=payload)
-        repeated = client.post(url, json={**payload, "selected_index": 0})
-
-    assert first.status_code == repeated.status_code == 200
-    assert first.json() == repeated.json() == {"correct": True, "points": 0.5}
-    assert [call.args[1]["p_correct"] for call in record.call_args_list] == [True, False]
-
-
-def test_skip_persists_without_revealing_the_solution():
-    factory, responses = _tables()
-    with patch("routes.quiz.table", side_effect=factory):
-        result = _answer({"selected_index": None, "skipped": True})
-    assert result.status_code == 200
-    assert result.json()["skipped"] is True
-    assert result.json()["correct_index"] == -1
-    assert result.json()["explanation"] == ""
-    assert responses.rows[0]["skipped"] is True
-    assert not responses.rows[0]["is_correct"]
-
-
-def test_missed_answer_offers_a_hint_without_revealing_the_solution():
-    factory, _ = _tables()
-    with patch("routes.quiz.table", side_effect=factory):
-        result = _answer({"selected_index": 0, "allow_retry": True})
-    assert result.status_code == 200
-    assert result.json()["retry_hint"]
-    assert result.json()["correct_index"] == -1
-    assert result.json()["explanation"] == ""
-
-
 # ── C1: per-question answer endpoint ────────────────────────────────────────
 
 
@@ -170,7 +137,7 @@ class TestAnswerEndpoint:
                    "correct_answer": "0.5", "explanation": "One divided by two.", "difficulty": "easy"}
         monkeypatch.setitem(globals(), "QUESTIONS", [written])
         factory, responses = _tables()
-        with patch("routes.quiz.table", side_effect=factory):
+        with patch_quiz("table", side_effect=with_async_twins(factory)):
             first = client.post("/api/quiz/attempts/quiz1/answer", json={"question_index": 0, "answer_text": "1/2"})
             second = client.post("/api/quiz/attempts/quiz1/answer", json={"question_index": 0, "answer_text": "99"})
         assert first.status_code == second.status_code == 200
@@ -190,7 +157,7 @@ class TestAnswerEndpoint:
 
     def test_grades_and_persists_a_response(self):
         factory, responses = _tables()
-        with patch("routes.quiz.table", side_effect=factory):
+        with patch_quiz("table", side_effect=with_async_twins(factory)):
             r = _answer({"time_ms": 4200, "confidence": 0.8})
         assert r.status_code == 200
         data = r.json()
@@ -213,7 +180,7 @@ class TestAnswerEndpoint:
 
     def test_last_question_has_no_next(self):
         factory, _ = _tables()
-        with patch("routes.quiz.table", side_effect=factory):
+        with patch_quiz("table", side_effect=with_async_twins(factory)):
             r = _answer({"question_index": 1, "selected_index": 1})
         assert r.status_code == 200
         data = r.json()
@@ -223,7 +190,7 @@ class TestAnswerEndpoint:
 
     def test_reanswer_returns_first_recorded_response(self):
         factory, responses = _tables()
-        with patch("routes.quiz.table", side_effect=factory):
+        with patch_quiz("table", side_effect=with_async_twins(factory)):
             first = _answer({"selected_index": 1})
             second = _answer({"selected_index": 0})   # tries to revise → no
         assert first.status_code == 200
@@ -235,7 +202,7 @@ class TestAnswerEndpoint:
 
     def test_completed_attempt_409s(self):
         factory, _ = _tables(completed_at="2026-08-12T00:00:00Z")
-        with patch("routes.quiz.table", side_effect=factory):
+        with patch_quiz("table", side_effect=with_async_twins(factory)):
             r = _answer()
         assert r.status_code == 409
         assert r.json()["error"]["code"] == "QUIZ_ATTEMPT_ALREADY_COMPLETED"
@@ -246,14 +213,14 @@ class TestAnswerEndpoint:
             mock.select.return_value = []
             return mock
 
-        with patch("routes.quiz.table", side_effect=factory):
+        with patch_quiz("table", side_effect=with_async_twins(factory)):
             r = _answer(attempt_id="nope")
         assert r.status_code == 404
         assert r.json()["error"]["code"] == "QUIZ_ATTEMPT_NOT_FOUND"
 
     def test_bad_indexes_400(self):
         factory, _ = _tables()
-        with patch("routes.quiz.table", side_effect=factory):
+        with patch_quiz("table", side_effect=with_async_twins(factory)):
             r_q = _answer({"question_index": 9})
             r_o = _answer({"selected_index": 9})
         for r in (r_q, r_o):
@@ -265,7 +232,7 @@ class TestAnswerEndpoint:
         the id the client displayed makes an off-by-one visible instead of
         silently grading the wrong question (which idempotency then locks in)."""
         factory, _ = _tables()
-        with patch("routes.quiz.table", side_effect=factory):
+        with patch_quiz("table", side_effect=with_async_twins(factory)):
             r = _answer({"question_index": 0, "selected_index": 1})
         assert r.status_code == 200
         data = r.json()
@@ -277,7 +244,7 @@ class TestAnswerEndpoint:
         when both are present they must agree, so passing the 1-based id as
         the 0-based index fails loudly instead of grading question 2."""
         factory, responses = _tables()
-        with patch("routes.quiz.table", side_effect=factory):
+        with patch_quiz("table", side_effect=with_async_twins(factory)):
             r = _answer({"question_index": 1, "selected_index": 0, "question_id": 1})
         assert r.status_code == 400
         assert r.json()["error"]["code"] == "QUIZ_QUESTION_INVALID"
@@ -357,8 +324,8 @@ class TestIncludeAnswerKey:
 
         factory, captured = _generate_factory()
         with (
-            patch("routes.quiz.table", side_effect=factory),
-            patch("routes.quiz.quiz_agent.run",
+            patch_quiz("table", side_effect=with_async_twins(factory)),
+            patch("services.quiz.generation.quiz_agent.run",
                   new=AsyncMock(return_value=SimpleNamespace(output=_fake_quiz()))),
         ):
             with caplog.at_level("INFO", logger="routes.quiz"):
@@ -395,8 +362,8 @@ class TestIncludeAnswerKey:
 
         factory, captured = _generate_factory()
         with (
-            patch("routes.quiz.table", side_effect=factory),
-            patch("routes.quiz.quiz_agent.run",
+            patch_quiz("table", side_effect=with_async_twins(factory)),
+            patch("services.quiz.generation.quiz_agent.run",
                   new=AsyncMock(return_value=SimpleNamespace(output=_fake_quiz()))),
         ):
             r = _post_generate({})
@@ -412,8 +379,8 @@ class TestIncludeAnswerKey:
         the opt-in path is observable before it's deleted outright."""
         factory, _ = _generate_factory()
         with (
-            patch("routes.quiz.table", side_effect=factory),
-            patch("routes.quiz.quiz_agent.run",
+            patch_quiz("table", side_effect=with_async_twins(factory)),
+            patch("services.quiz.generation.quiz_agent.run",
                   new=AsyncMock(return_value=SimpleNamespace(output=_fake_quiz()))),
         ):
             with caplog.at_level("INFO", logger="routes.quiz"):
@@ -439,8 +406,8 @@ class TestAnswerKeyFlagTelemetry:
     def _generate(self, extra):
         factory, _ = _generate_factory()
         with (
-            patch("routes.quiz.table", side_effect=factory),
-            patch("routes.quiz.quiz_agent.run",
+            patch_quiz("table", side_effect=with_async_twins(factory)),
+            patch("services.quiz.generation.quiz_agent.run",
                   new=AsyncMock(return_value=SimpleNamespace(output=_fake_quiz()))),
         ):
             r = _post_generate(extra)
@@ -504,17 +471,39 @@ class TestSubmitReconciliation:
     def _submit_mocks(self, responses):
         factory, _ = _tables(responses=responses)
         return (
-            patch("routes.quiz.table", side_effect=factory),
-            patch("routes.quiz.apply_graph_update"),
-            patch("routes.quiz.get_quiz_context", return_value={}),
+            patch_quiz("table", side_effect=with_async_twins(factory)),
+            patch_quiz("apply_graph_update"),
+            patch_quiz("get_quiz_context", return_value={}),
             patch(
-                "routes.quiz.quiz_context_agent.run",
+                "services.quiz.submission.quiz_context_agent.run",
                 new=AsyncMock(return_value=SimpleNamespace(
                     output=SimpleNamespace(model_dump=lambda: {})
                 )),
             ),
-            patch("routes.quiz.save_quiz_context"),
+            patch_quiz("save_quiz_context"),
         )
+
+    def test_deferred_submit_grades_written_draft_and_returns_skipped_solution(self, monkeypatch):
+        from contextlib import ExitStack
+
+        written = {"id": 2, "question": "What is half?", "type": "numeric", "options": [],
+                   "correct_answer": "0.5", "explanation": "One divided by two.", "difficulty": "easy"}
+        monkeypatch.setitem(globals(), "QUESTIONS", [QUESTIONS[0], written])
+        responses = _ResponsesTable()
+        with ExitStack() as stack:
+            for mock in self._submit_mocks(responses):
+                stack.enter_context(mock)
+            response = client.post("/api/quiz/submit", json={
+                "quiz_id": "quiz1", "deferred": True,
+                "answers": [{"question_id": 1, "skipped": True}, {"question_id": 2, "answer_text": "1/2"}],
+            })
+
+        assert response.status_code == 200
+        assert response.json()["score"] == 1
+        skipped, answered = response.json()["results"]
+        assert skipped["skipped"] is True and skipped["correct_answer"] == "B"
+        assert skipped["explanation"] and answered["correct"] is True
+        assert responses.rows == []
 
     def test_persisted_answers_match_what_was_graded(self):
         """answers_json is the attempt's record of what the student answered
@@ -542,16 +531,16 @@ class TestSubmitReconciliation:
             return t
 
         with (
-            patch("routes.quiz.table", side_effect=capturing),
-            patch("routes.quiz.apply_graph_update"),
-            patch("routes.quiz.get_quiz_context", return_value={}),
+            patch_quiz("table", side_effect=with_async_twins(capturing)),
+            patch_quiz("apply_graph_update"),
+            patch_quiz("get_quiz_context", return_value={}),
             patch(
-                "routes.quiz.quiz_context_agent.run",
+                "services.quiz.submission.quiz_context_agent.run",
                 new=AsyncMock(return_value=SimpleNamespace(
                     output=SimpleNamespace(model_dump=lambda: {})
                 )),
             ),
-            patch("routes.quiz.save_quiz_context"),
+            patch_quiz("save_quiz_context"),
         ):
             r = client.post("/api/quiz/submit", json={
                 "quiz_id": "quiz1",
@@ -597,16 +586,16 @@ class TestSubmitReconciliation:
             return t
 
         with (
-            patch("routes.quiz.table", side_effect=capturing),
-            patch("routes.quiz.apply_graph_update"),
-            patch("routes.quiz.get_quiz_context", return_value={}),
+            patch_quiz("table", side_effect=with_async_twins(capturing)),
+            patch_quiz("apply_graph_update"),
+            patch_quiz("get_quiz_context", return_value={}),
             patch(
-                "routes.quiz.quiz_context_agent.run",
+                "services.quiz.submission.quiz_context_agent.run",
                 new=AsyncMock(return_value=SimpleNamespace(
                     output=SimpleNamespace(model_dump=lambda: {})
                 )),
             ),
-            patch("routes.quiz.save_quiz_context"),
+            patch_quiz("save_quiz_context"),
         ):
             r = client.post("/api/quiz/submit", json={
                 "quiz_id": "quiz1", "answers": [],

@@ -14,7 +14,12 @@
  *
  * Propagation mechanics (frontend/src/components/screens/Social.tsx):
  * the client subscribes to Supabase Realtime `postgres_changes` on
- * `room_messages` over a websocket. A FOREIGN insert event carries ciphertext
+ * `room_messages` over a websocket, authenticated with the backend-minted
+ * bridge token (GET /api/auth/realtime-token, RLS step 2e): room_messages has
+ * RLS on and no anon SELECT, so the backend needs SUPABASE_JWT_SIGNING_KEY
+ * (backend/.env.local.example) for this journey to see anything live. The
+ * "Subscribed to PostgreSQL" frame below therefore also proves the token was
+ * accepted. A FOREIGN insert event carries ciphertext
  * `text` (#124), so the client treats it purely as a "something changed"
  * signal and re-fetches through the decrypting REST endpoint
  * (GET /api/social/rooms/{id}/messages). Own sends render optimistically and

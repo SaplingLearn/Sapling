@@ -18,31 +18,22 @@ import {
   adminListRoleCosmetics, adminLinkRoleCosmetic, adminUnlinkRoleCosmetic,
   adminAuditLog, adminAnalyticsOverview,
   adminListFeedback, adminListIssueReports,
+  adminUploadCosmeticAsset, COSMETIC_ASSET_TYPES,
   type AdminFeedbackEntry, type AdminIssueReport,
 } from "@/lib/api";
-import { supabase } from "@/lib/supabase";
 import type { Role, Cosmetic, CosmeticType, RarityTier, AdminAuditEntry, AnalyticsOverview, AdminUserListItem as AdminUser } from "@/lib/types";
 import { AchievementWiki } from "./admin/AchievementWiki";
 import { FeatureFlagsTab } from "./admin/FeatureFlags";
 import { AllowlistTab } from "./admin/AllowlistTab";
 import { EmailBroadcastsTab } from "./admin/EmailBroadcasts";
+import { AccountToolsDialog } from "./admin/AccountToolsDialog";
+import { AdminReauthBanner } from "./admin/AdminReauthBanner";
 import { fieldStyle } from "./admin/adminStyles";
 
 type Tab = "users" | "allowlist" | "email" | "roles" | "flags" | "achievements" | "cosmetics" | "analytics" | "audit" | "feedback";
 
 const RARITIES: RarityTier[] = ["common", "uncommon", "rare", "epic", "legendary"];
 const COSMETIC_TYPES: CosmeticType[] = ["avatar_frame", "banner", "name_color", "title"];
-
-const COSMETIC_BUCKET = "cosmetic-assets";
-
-async function uploadCosmeticAsset(file: File): Promise<string> {
-  const ext = file.name.split(".").pop() || "png";
-  const path = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
-  const { error } = await supabase.storage.from(COSMETIC_BUCKET).upload(path, file, { cacheControl: "3600", upsert: false });
-  if (error) throw error;
-  const { data } = supabase.storage.from(COSMETIC_BUCKET).getPublicUrl(path);
-  return data.publicUrl;
-}
 
 export function Admin() {
   const { isAdmin } = useUser();
@@ -69,6 +60,7 @@ export function Admin() {
         subtitle="School-wide moderation and catalog management"
         actions={<span className="chip chip--err">Staff only</span>}
       />
+      <AdminReauthBanner />
       <div style={{ padding: "12px 32px", borderBottom: "1px solid var(--border)", display: "flex", gap: 4, overflowX: "auto" }}>
         {tabs.map((t) => (
           <button
@@ -127,6 +119,7 @@ function UsersTab() {
   const [assignRoleId, setAssignRoleId] = React.useState<string>("");
   const [loading, setLoading] = React.useState(true);
   const [removeFor, setRemoveFor] = React.useState<AdminUser | null>(null);
+  const [toolsFor, setToolsFor] = React.useState<AdminUser | null>(null);
 
   const load = React.useCallback(async () => {
     setLoading(true);
@@ -308,6 +301,13 @@ function UsersTab() {
                   <td style={{ padding: "10px 16px", textAlign: "right", whiteSpace: "nowrap" }}>
                     <button
                       className="btn btn--sm btn--ghost"
+                      data-testid={`admin-user-account-tools-${u.id}`}
+                      onClick={() => setToolsFor(u)}
+                    >
+                      Account tools
+                    </button>
+                    <button
+                      className="btn btn--sm btn--ghost"
                       data-testid={`admin-user-remove-access-${u.id}`}
                       onClick={() => setRemoveFor(u)}
                     >
@@ -335,6 +335,7 @@ function UsersTab() {
         onCancel={() => setRemoveFor(null)}
         onConfirm={removeAccess}
       />
+      <AccountToolsDialog user={toolsFor} onClose={() => setToolsFor(null)} />
     </>
   );
 }
@@ -602,8 +603,10 @@ function CosmeticsTab() {
     if (!file) return;
     setUploading(true);
     try {
-      const url = await uploadCosmeticAsset(file);
-      setForm(f => ({ ...f, asset_url: url }));
+      // Through the backend (admin-only, service-role storage): the browser
+      // never writes to storage with the anon key.
+      const { asset_url } = await adminUploadCosmeticAsset(file);
+      setForm(f => ({ ...f, asset_url }));
       toast.success("Asset uploaded");
     } catch (err) {
       toast.error(`Upload failed: ${String(err)}`);
@@ -695,7 +698,7 @@ function CosmeticsTab() {
               <input
                 ref={fileRef}
                 type="file"
-                accept="image/*"
+                accept={COSMETIC_ASSET_TYPES.join(",")}
                 style={{ display: "none" }}
                 onChange={e => onFilePicked(e.target.files?.[0] ?? null)}
               />

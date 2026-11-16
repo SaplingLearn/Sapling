@@ -20,7 +20,7 @@ import type {
   AttemptsPage,
   GenerateResult,
   QuizConfig,
-  RetryResult,
+  QuizSubmissionAnswer,
   SubmitResult,
 } from "./types";
 
@@ -95,26 +95,15 @@ export const generateQuiz = (p: {
  */
 export const answerQuestion = (
   attemptId: string,
-  p: { questionIndex: number; selectedIndex: number | null; questionId: number; answerText?: string; skipped?: boolean; allowRetry?: boolean },
+  p: { questionIndex: number; selectedIndex: number | null; questionId: number; answerText?: string },
 ): Promise<AnswerResult> =>
   fetchJSON<AnswerResult>(`/api/quiz/attempts/${encodeURIComponent(attemptId)}/answer`, {
     method: "POST",
     body: JSON.stringify({
       question_index: p.questionIndex,
-      ...(p.skipped ? { skipped: true } : p.answerText !== undefined ? { answer_text: p.answerText } : { selected_index: p.selectedIndex }),
-      ...(p.allowRetry ? { allow_retry: true } : {}),
+      ...(p.answerText !== undefined ? { answer_text: p.answerText } : { selected_index: p.selectedIndex }),
       question_id: p.questionId,
     }),
-  });
-
-export const retryQuestion = (
-  attemptId: string,
-  questionId: number,
-  answer: { answer_text: string } | { selected_index: number },
-): Promise<RetryResult> =>
-  fetchJSON<RetryResult>(`/api/quiz/attempts/${encodeURIComponent(attemptId)}/retry`, {
-    method: "POST",
-    body: JSON.stringify({ question_id: questionId, question_index: questionId - 1, ...answer }),
   });
 
 /**
@@ -129,13 +118,14 @@ export const retryQuestion = (
  */
 export const submitQuiz = (
   attemptId: string,
-  answers: { question_id: number; selected_label: string }[],
+  answers: QuizSubmissionAnswer[],
   signal?: AbortSignal,
+  deferred = false,
 ): Promise<SubmitResult> =>
   fetchJSON<SubmitResult>("/api/quiz/submit", {
     method: "POST",
     ...(signal ? { signal } : {}),
-    body: JSON.stringify({ quiz_id: attemptId, answers }),
+    body: JSON.stringify({ quiz_id: attemptId, answers, ...(deferred ? { deferred: true } : {}) }),
   });
 
 /**

@@ -49,7 +49,7 @@ def test_save_quiz_context_upserts_one_row_and_encrypts(db_conn):
     write already failed with 42P10; after it, the second must replace the
     first (one row), the raw column must be ciphertext, and the app read
     must round-trip the latest payload."""
-    from services.quiz_context_service import get_quiz_context, save_quiz_context
+    from services.quiz.context import get_quiz_context, save_quiz_context
 
     node_id = _seeded_node_id(db_conn)
     save_quiz_context(USER, node_id, {"weak_areas": ["first write"]})
@@ -78,7 +78,7 @@ def test_save_quiz_context_upserts_one_row_and_encrypts(db_conn):
     # The caller's payload round-trips, plus the server-stamped digest
     # version (#554). Stamped in save_quiz_context rather than on the agent's
     # output schema, so it is present on every write regardless of writer.
-    from services.quiz_distractors import DIGEST_SCHEMA_VERSION
+    from services.quiz.distractors import DIGEST_SCHEMA_VERSION
 
     assert get_quiz_context(USER, node_id) == {
         "weak_areas": ["second write"],

@@ -38,6 +38,7 @@ from agents.syllabus_extraction import (
     syllabus_extraction_agent,
 )
 from _replay import run_with_cassette  # noqa: E402  (sibling, sys.path-injected)
+from services.prompt_safety import wrap_document_input  # noqa: E402  (as the upload pipeline sends it)
 
 
 # Loose patterns that recognize concrete calendar dates in plain English,
@@ -407,7 +408,7 @@ async def _run(case_input: str) -> SyllabusAssignments:
         dataset="syllabus_extraction",
         case_name=case_name,
         agent=syllabus_extraction_agent,
-        case_input=case_input,
+        case_input=wrap_document_input(case_input),
         output_model=SyllabusAssignments,
     )
 

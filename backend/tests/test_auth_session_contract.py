@@ -2,12 +2,14 @@
 Cross-service session-token contract (#168).
 
 In every deployed environment the backend never sets the `sapling_session`
-cookie itself — the frontend session BFF mints it (30-day `SESSION_MAX_AGE`) in
-a format that must stay compatible with what `auth_guard._decode_session`
-verifies. (The one exception is `POST /api/auth/test-login`, gated to
-`APP_ENV in {local, test}`; see test_auth_test_login.py.) These tests assert
-the backend accepts a long-lived token in that format (so sessions do NOT die at
-5 minutes) and rejects expired/tampered ones.
+cookie itself — the frontend session BFF mints it (7-day `SESSION_MAX_AGE`, with
+an `iat` claim) in a format that must stay compatible with what
+`auth_guard._decode_session` verifies. (The one exception is `POST
+/api/auth/test-login`, gated to `APP_ENV in {local, test}`; see
+test_auth_test_login.py.) These tests assert the backend accepts a long-lived
+token in that format (so sessions do NOT die at 5 minutes), still reads a
+pre-`iat` 30-day cookie until it is 7 days old, and rejects expired/tampered
+ones.
 
 Scope caveat: `_mint` below is a Python re-implementation of the format, so this
 suite verifies the backend decoder against a locally-minted token — it does not
@@ -29,18 +31,23 @@ from starlette.requests import Request
 
 from services import auth_guard
 
-# Mirrors frontend/src/lib/sessionToken.ts SESSION_MAX_AGE.
-FRONTEND_SESSION_MAX_AGE = 2592000  # 30 days
+# Mirrors frontend/src/lib/sessionToken.ts SESSION_MAX_AGE (and backend
+# config.SESSION_MAX_AGE_SECONDS).
+FRONTEND_SESSION_MAX_AGE = 604800  # 7 days
+# What the BFF minted before `iat` existed.
+LEGACY_SESSION_MAX_AGE = 2592000  # 30 days
 SHARED_SECRET = "shared-session-secret-at-least-32-bytes-long!!"
 
 
-def _mint(user_id: str, ttl_seconds: int, secret: str) -> str:
+def _mint(user_id: str, ttl_seconds: int, secret: str, *, iat: int | None = None,
+          legacy: bool = False) -> str:
     """Mint a token in the shape both services use:
-    base64url(no pad) JSON {"user_id","exp"} . base64url(HMAC-SHA256(payload_b64)).
+    base64url(no pad) JSON {"user_id","exp","iat"} . base64url(HMAC-SHA256(payload_b64)).
 
     #756 added a `typ` claim to every NEW token; this one deliberately omits it,
-    so it is the LEGACY format — which the decoder must keep reading as a
-    session (cookies minted before the claim live for 30 days).
+    which the decoder must keep reading as a session. `legacy=True` also omits
+    `iat`, the format the BFF minted before server-side revocation (30-day
+    cookies), which the decoder dates as `exp - 30 days`.
 
     This mirrors the *backend* mint (services/session_tokens.mint_session)
     byte-for-byte. It is close to, but not byte-identical with, the frontend's
@@ -58,7 +65,11 @@ def _mint(user_id: str, ttl_seconds: int, secret: str) -> str:
     the outside, which it could not do by calling the code under test.
     (test_auth_test_login.py asserts the two agree byte-for-byte.)
     """
-    payload = json.dumps({"user_id": user_id, "exp": int(time.time()) + ttl_seconds}).encode()
+    now = int(time.time()) if iat is None else iat
+    claims = {"user_id": user_id, "exp": now + ttl_seconds}
+    if not legacy:
+        claims["iat"] = now
+    payload = json.dumps(claims).encode()
     payload_b64 = base64.urlsafe_b64encode(payload).decode().rstrip("=")
     sig = hmac.new(secret.encode(), payload_b64.encode(), hashlib.sha256).digest()
     sig_b64 = base64.urlsafe_b64encode(sig).decode().rstrip("=")
@@ -81,31 +92,59 @@ def _shared_secret(monkeypatch):
     monkeypatch.setattr(auth_guard, "SESSION_SECRET", SHARED_SECRET)
 
 
-def test_frontend_30_day_cookie_is_accepted_by_backend():
+def test_frontend_7_day_cookie_is_accepted_by_backend():
     token = _mint("user_alice", FRONTEND_SESSION_MAX_AGE, SHARED_SECRET)
     payload = auth_guard._real_decode_session(_request(cookie=token))
     assert payload["user_id"] == "user_alice"
     # The token is valid far beyond 5 minutes — no premature "Session expired".
-    assert payload["exp"] - int(time.time()) > 29 * 24 * 3600
+    assert payload["exp"] - int(time.time()) > 6 * 24 * 3600
 
 
-def test_legacy_unused_auth_token_query_param_is_still_accepted():
-    """Characterization of a legacy credential channel that no client uses.
+def test_session_older_than_the_max_age_is_expired_whatever_its_exp():
+    """A session lives at most config.SESSION_MAX_AGE_SECONDS from `iat`, even
+    when its `exp` says otherwise (a token minted with a longer lifetime)."""
+    old = int(time.time()) - FRONTEND_SESSION_MAX_AGE - 60
+    token = _mint("user_alice", LEGACY_SESSION_MAX_AGE, SHARED_SECRET, iat=old)
+    with pytest.raises(HTTPException) as exc:
+        auth_guard._real_decode_session(_request(cookie=token))
+    assert exc.value.detail == "Session expired"
 
-    `_decode_session` reads `?auth_token=` before the cookie, but nothing sends
-    it to the backend: routes/auth.py puts the redirect token in a URL pointing
-    at the *frontend*, and frontend/src/app/auth/callback/page.tsx reads it there
-    and POSTs it to the session BFF in a JSON body. This test pins current
-    behaviour, it does not endorse the channel — the decoder applies no
-    ttl check here (since #756 it does refuse a `typ=handoff` token, here and
-    in the cookie alike), so a 30-day session token in `?auth_token=` is
-    accepted identically, and session tokens in URLs leak via access logs,
-    Referer headers, and browser history. Removing the channel is a follow-up
-    (out of scope for #168, which is about session lifetime).
-    """
-    token = _mint("user_bob", 300, SHARED_SECRET)
-    payload = auth_guard._real_decode_session(_request(query=f"auth_token={token}"))
-    assert payload["user_id"] == "user_bob"
+
+def test_session_issued_in_the_future_is_rejected():
+    token = _mint("user_alice", 3600, SHARED_SECRET, iat=int(time.time()) + 3600)
+    with pytest.raises(HTTPException) as exc:
+        auth_guard._real_decode_session(_request(cookie=token))
+    assert exc.value.status_code == 401
+
+
+def test_legacy_30_day_cookie_without_iat_lives_7_days_from_issue():
+    """A cookie the BFF minted before `iat` existed (30-day `exp`) is dated
+    `exp - 30 days`: honoured while younger than 7 days, then expired."""
+    fresh = _mint("user_alice", LEGACY_SESSION_MAX_AGE, SHARED_SECRET, legacy=True)
+    payload = auth_guard._real_decode_session(_request(cookie=fresh))
+    assert payload["user_id"] == "user_alice"
+    eight_days_ago = int(time.time()) - 8 * 86400
+    stale = _mint("user_alice", LEGACY_SESSION_MAX_AGE, SHARED_SECRET, iat=eight_days_ago, legacy=True)
+    with pytest.raises(HTTPException) as exc:
+        auth_guard._real_decode_session(_request(cookie=stale))
+    assert exc.value.detail == "Session expired"
+
+
+def test_auth_token_query_param_is_not_a_credential():
+    """`?auth_token=` used to be read before the cookie, though no client sent
+    it: routes/auth.py puts the redirect token in a URL pointing at the
+    *frontend*, and frontend/src/app/auth/callback/page.tsx reads it there and
+    POSTs it to the session BFF in a JSON body. Session tokens in URLs leak via
+    access logs, Referer headers and browser history, so the channel is gone:
+    a perfectly valid session in the query string authenticates nothing."""
+    token = _mint("user_bob", FRONTEND_SESSION_MAX_AGE, SHARED_SECRET)
+    with pytest.raises(HTTPException) as exc:
+        auth_guard._real_decode_session(_request(query=f"auth_token={token}"))
+    assert exc.value.status_code == 401
+    assert auth_guard.presented_session_token(_request(query=f"auth_token={token}")) is None
+    # The same token in the cookie is accepted, and the cookie wins over a query param.
+    both = _request(cookie=token, query="auth_token=garbage.sig")
+    assert auth_guard._real_decode_session(both)["user_id"] == "user_bob"
 
 
 def test_expired_token_is_rejected():
@@ -171,6 +210,6 @@ def test_wellformed_redirect_ttl_override_is_parsed_and_clamped(raw, expected):
 
 def test_malformed_redirect_ttl_override_warns(caplog):
     import routes.auth as auth
-    with caplog.at_level("WARNING", logger=auth.logger.name):
+    with caplog.at_level("WARNING", logger="services.auth.oauth_state"):
         auth._parse_redirect_ttl("abc")
     assert "SAPLING_AUTH_REDIRECT_TOKEN_TTL" in caplog.text

@@ -54,16 +54,12 @@ export interface QuizQuestionContext {
   stem: string;
   part: number;
   parts: number;
-  graph: {
-    x_label: string;
-    y_label: string;
-    points: [number, number][];
-  } | null;
+  graph: { x_label: string; y_label: string; points: [number, number][] } | null;
 }
 
 export interface WireQuestion {
-  context?: QuizQuestionContext;
   numeric_unit?: string;
+  context?: QuizQuestionContext;
   material_context?: "course_material" | "catalog" | "general";
   type?: QuestionType;
   id: number;
@@ -101,9 +97,6 @@ export interface GenerateResult {
 
 export interface AnswerResult {
   answer_text?: string;
-  skipped?: boolean;
-  retry_hint?: string;
-  selected_index?: number | null;
   correct_answer?: string | null;
   question_index: number;
   question_id: number;
@@ -164,10 +157,9 @@ export type SubmitGamification =
   | (SubmitAward & GamificationMe)
   | (SubmitAward & { [K in keyof GamificationMe]?: undefined });
 
-export interface RetryResult {
-  correct: boolean;
-  points: number;
-}
+export type QuizSubmissionAnswer = { question_id: number } & (
+  { selected_label: string } | { answer_text: string } | { skipped: true }
+);
 
 export interface SubmitResult {
   score: number;
@@ -179,9 +171,8 @@ export interface SubmitResult {
     selected: string;
     correct: boolean;
     correct_answer: string;
-    explanation: string;
     skipped?: boolean;
-    retry_points?: number;
+    explanation: string;
   }[];
   /** Optional while `useGamificationDelta` still reads `/me` around the
    *  submit (R-9); the client migration to this field is a later pass. The
@@ -232,9 +223,6 @@ export interface AttemptDetail {
     selected_index: number | null;
     answer_text?: string | null;
     is_correct: boolean;
-    skipped?: boolean;
-    retry_hint?: string;
-    retry_correct?: boolean | null;
     answered_at: string;
   }[];
   score: number | null;
@@ -279,11 +267,12 @@ export type QuizScope =
   | { kind: "missed"; conceptId: string; missedCount: number };
 
 export interface QuizItem {
+  skipped?: boolean;
   answerText?: string;
   index: number;
   question: WireQuestion;
   selectedIndex: number | null;
-  verdict: { skipped?: boolean; retryHint?: string; isCorrect: boolean; correctIndex: number; explanation: string; correctAnswer?: string | null } | null;
+  verdict: { isCorrect: boolean; correctIndex: number; explanation: string; correctAnswer?: string | null } | null;
   flagged: boolean;
 }
 

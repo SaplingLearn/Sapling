@@ -427,7 +427,7 @@ test("ask-without-abandoning: the tutor opens over the question, streams, closes
   await expect(adjust).toBeVisible();
   await page.getByTestId("quiz-seg-feedback-as-you-go").click();
   await expect(adjust).toContainText(
-    "After each answer you'll see whether it was right. Missed answers get a retry and a worked solution at the end.",
+    "After each answer you'll see whether it was right and which answer was correct, before moving on.",
   );
   await page.getByTestId("quiz-adjust-start").click();
   await expect(page.getByTestId("quiz-answer-options")).toBeVisible({
@@ -435,11 +435,12 @@ test("ask-without-abandoning: the tutor opens over the question, streams, closes
   });
   await expectOnQuestion(page, 1);
 
+  // Get it wrong on purpose.
+  const chosen = wrongLabelFor(1);
   const correct = CORRECT_LABELS[0];
-  const chosen = correct;
   await chooseAndSubmit(page, chosen);
   const verdict = page.getByTestId("quiz-review-verdict");
-  await expect(verdict).toContainText("Correct.", {
+  await expect(verdict).toContainText(`Not quite — the answer is ${correct}.`, {
     timeout: SUBMIT_TIMEOUT,
   });
   await expect(verdict).toContainText(explanationOf(1, correct));
@@ -467,7 +468,7 @@ test("ask-without-abandoning: the tutor opens over the question, streams, closes
   // THE POINT: the question is exactly as it was left — same item, same
   // choice, same verdict. The old screen navigated away and lost all of it.
   await expectOnQuestion(page, 1);
-  await expect(verdict).toContainText("Correct.");
+  await expect(verdict).toContainText(`Not quite — the answer is ${correct}.`);
   await expect(page.getByTestId(`quiz-answer-option-${chosen}`)).toHaveAttribute(
     "aria-checked",
     "true",
@@ -475,18 +476,18 @@ test("ask-without-abandoning: the tutor opens over the question, streams, closes
 
   // …and the attempt finishes normally from there.
   await page.getByTestId("quiz-next").click();
-  await answerAsYouGo(page, 2, CORRECT_LABELS[1], "Correct.");
-  await answerAsYouGo(page, 3, CORRECT_LABELS[2], "Correct.");
+  await answerAsYouGo(page, 2, CORRECT_LABELS[1], "Correct");
+  await answerAsYouGo(page, 3, CORRECT_LABELS[2], "Correct");
   await expectResults(page);
   await expect(page.getByTestId("quiz-results-score")).toHaveText(
-    `${QUIZ_LENGTH} of ${QUIZ_LENGTH} correct`,
+    `${QUIZ_LENGTH - 1} of ${QUIZ_LENGTH} correct`,
     { timeout: SUBMIT_TIMEOUT },
   );
 
   const attempts = await appAttempts();
   expect(attempts).toHaveLength(1);
   expect(attempts[0].completed_at).not.toBeNull();
-  expect(Number(attempts[0].score)).toBe(QUIZ_LENGTH);
+  expect(Number(attempts[0].score)).toBe(QUIZ_LENGTH - 1);
 
   // The dashboard exit (R-10): a quiz reached from the dashboard says so, and
   // goes back there rather than to the tree — or, as before #537, to /learn.
@@ -538,7 +539,7 @@ test("missed review: the results screen explains the wrong answer and asks for a
   await expect(list).toContainText("One to look at");
   const item = page.getByTestId(`quiz-missed-${questionId}`);
   await expect(item).toContainText(stemOf(1));
-  await expect(item).toContainText(`You chose ${chosen} (${optionTextOf(1, chosen)}) · the answer is ${correct}`);
+  await expect(item).toContainText(`You chose ${chosen} · the answer is ${correct}`);
 
   const explain = page.getByTestId(`quiz-missed-explain-${questionId}`);
   const explanation = item.locator(`#quiz-missed-explanation-${questionId}`);
@@ -703,34 +704,16 @@ test("entry points: each link shape arrives in the state it promised", async ({ 
   // (e) Plain nav — no target, so the ranked primary is the offer. The name is
   //     derived from the database through the same rule the client mirrors.
   await openQuizHome(page, "/quiz");
-  await expect(page.getByTestId("quiz-home")).toContainText("Ready for you");
   await expect(page.getByTestId("quiz-proposal")).toContainText(ranking.primary.concept_name);
 });
 
 // ── 6. Exits ───────────────────────────────────────────────────────────────
 //
-// The other three destinations ride on the runs that already reach them (one
+// The three destinations ride on the runs that already reach them (one
 // journey per destination keeps the lane short): "Back to your tree" on
 // leave-and-return, "Back to dashboard" on ask-without-abandoning, and
-// "Done → /quiz" on the keyboard pass. Cancel is the one that needs no quiz.
-
-test("exits: Cancel honours the entry source, and falls back to the dashboard without one", async ({
-  page,
-}) => {
-  test.setTimeout(120_000);
-  await preAckDisclaimer(page);
-
-  await openQuizHome(page, TREE_ENTRY);
-  await page.getByTestId("quiz-cancel").click();
-  await expectLocation(page, TREE_RETURN);
-
-  // Cancelling out of a quiz you never started, with nowhere to go back to,
-  // lands on the dashboard — never on the tree you didn't come from (§5 B1.8),
-  // and never on /learn, which is where every pre-#537 exit went.
-  await openQuizHome(page, "/quiz");
-  await page.getByTestId("quiz-cancel").click();
-  await expectLocation(page, "/dashboard");
-});
+// "Done → /quiz" on the keyboard pass. Quiz home has no Cancel link since
+// #849 — the sidebar is the way out — so it has no exit journey of its own.
 
 // ── 7. Keyboard only ───────────────────────────────────────────────────────
 

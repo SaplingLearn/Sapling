@@ -5,14 +5,15 @@ from pathlib import Path
 
 import logfire
 from dotenv import load_dotenv
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from config import FRONTEND_URL, MAX_AVATAR_SIZE, PORT, STORAGE_BUCKET, validate_config
+from config import APP_ENV, FRONTEND_URL, MAX_AVATAR_SIZE, PORT, STORAGE_BUCKET, validate_config
+from services.cors_origins import allowed_origins as cors_allowed_origins
 
 # App-wide log format. Per-request log lines (with request_id, duration,
 # status) are emitted from RequestIDMiddleware; this just sets the
@@ -22,6 +23,12 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 
+# Uvicorn's access log (stdout -> Railway logs) keeps the path, never the query
+# string: query parameters can carry student text. services/access_log.py.
+from services import access_log  # noqa: E402
+
+access_log.install()
+
 from routes import graph, learn, quiz, calendar, social, extract, auth, documents, flashcards, study_guide, feedback, careers, onboarding, gradebook, gradescope, notes, academics, gamification
 from routes.profile import router as profile_router
 from routes.admin_flags import router as admin_flags_router
@@ -29,20 +36,41 @@ from routes.flags import router as flags_router
 from routes.admin import router as admin_router
 from routes.admin_analytics import router as admin_analytics_router
 from routes.admin_documents import router as admin_documents_router
+from routes.admin_jobs import router as admin_jobs_router
+from routes.admin_llm import router as admin_llm_router
 from routes.admin_email import router as admin_email_router
+from routes.admin_accounts import router as admin_accounts_router
+from routes.admin_account_sync import router as admin_account_sync_router
+from routes.internal_account_sync import router as internal_account_sync_router
 from routes.email import router as email_router
 from routes.newsletter import router as newsletter_router
 from routes.internal_metrics import router as internal_metrics_router
 from routes.topic_checklist import router as topic_checklist_router
-from services import quiz_config, quiz_errors
+from routes.study import router as study_router
+from services.quiz import config as quiz_config, errors as quiz_errors
 from services.feature_flags import nav_feature_gate
-from services.logfire_scrubber import EXTRA_PATTERNS, scrub_value
-from services import otel_fastapi_compat
+from services.llm_budget import LLMBudgetExceeded
+from db.scope import (
+    ScopeUnavailable,
+    ScopedAccessDenied,
+    UnscopedQueryError,
+    admin_service_route,
+    service_route,
+)
+from services.logfire_scrubber import (
+    ALL_PATTERNS,
+    PYDANTIC_AI_INSTRUMENTATION,
+    QueryStringStripProcessor,
+    scrub_value,
+    strip_query_request_hook,
+)
+from services import crisis_support, otel_fastapi_compat
 from services.request_context import (
     RequestIDMiddleware,
     current_request_id,
     privacy_signal_in,
 )
+from services.body_limit import BodySizeLimitMiddleware
 from services.encryption_canary import verify_encryption_key
 from services.storage_service import (
     ALLOWED_CONTENT_TYPES,
@@ -51,6 +79,8 @@ from services.storage_service import (
 )
 from services.durable import init_dbos, shutdown_dbos
 from services.index_sweeper import start_sweeper, stop_sweeper
+from services.spend_alerts import start_spend_alerts, stop_spend_alerts
+from services.account_purge_sweeper import start_purge_sweeper, stop_purge_sweeper
 from services.local_seed_watcher import (
     start_watcher as start_local_seed_watcher,
     stop_watcher as stop_local_seed_watcher,
@@ -71,23 +101,27 @@ recost_api_key = os.getenv("RECOST_API_KEY")
 # Logfire: free local traces during dev; sends to logfire.pydantic.dev only
 # if LOGFIRE_TOKEN is set. Safe to leave on in all environments.
 #
-# Scrubbing: Pydantic AI's instrumentation writes the full prompt text and
-# model output to span attributes (gen_ai.prompt, all_messages_events,
-# input/output.value, ...). For Sapling those carry user-uploaded document
-# text — names, emails, student work — which we never want exfiltrated to
-# logfire.pydantic.dev. ``scrub_value`` redacts those paths before egress,
-# keeping a sha256 fingerprint of the body for debugging. ``EXTRA_PATTERNS``
-# ensures the callback fires for prompt/completion/messages attribute names
-# in addition to Logfire's built-in pattern set (password, secret, ...).
+# No student content leaves the process (services/logfire_scrubber.py has the
+# full story). Agent spans are instrumented WITHOUT content (prompts, outputs,
+# system instructions, tool arguments/results, exception messages), because
+# Logfire's scrubber exempts the standard GenAI message attributes; the
+# callback then replaces any other content-bearing attribute it is routed
+# with a length + sha256 fingerprint (no preview) and strips query strings
+# from URL attributes. ``ALL_PATTERNS`` makes Logfire route those attribute
+# names to the callback in addition to its built-in set (password, secret, ...).
+# URL attributes keep the path only (QueryStringStripProcessor).
 logfire.configure(
     send_to_logfire="if-token-present",
     service_name="sapling-backend",
     scrubbing=logfire.ScrubbingOptions(
         callback=scrub_value,
-        extra_patterns=list(EXTRA_PATTERNS),
+        extra_patterns=list(ALL_PATTERNS),
     ),
+    # Strips query strings from URL attributes at span START, before Logfire
+    # snapshots the pending span (whose message would spell the query out).
+    additional_span_processors=[QueryStringStripProcessor()],
 )
-logfire.instrument_pydantic_ai()
+logfire.instrument_pydantic_ai(**PYDANTIC_AI_INSTRUMENTATION)
 
 # ── App lifespan: self-bootstrap external resources ─────────────────────────
 #
@@ -160,6 +194,11 @@ async def _start(stack: AsyncExitStack) -> None:
     # The decision seam's pooled Jev client (#642) for this loop: closed after
     # the tutor-router drain below, whose decisions still use it.
     stack.push_async_callback(typesafe_client.aclose_clients)
+    # #117: the async DB seam's per-loop httpx.AsyncClient (built lazily on
+    # first use, flag `async_db_client`); closed after every request-path
+    # producer below has drained.
+    from db import async_connection
+    stack.push_async_callback(async_connection.aclose_clients)
     # Let in-flight tutor-router decisions finish before the client and the
     # events worker close: each one emits a decision.made row (bounded by the
     # router's own backstop).
@@ -184,6 +223,16 @@ async def _start(stack: AsyncExitStack) -> None:
     # out of retrieval for good. No-op outside real model mode.
     start_sweeper()
     stack.push_async_callback(stop_sweeper)
+    # Hourly AI-spend / auth / 5xx alert emails to admins (never under pytest,
+    # APP_ENV=test or a non-real model mode; the `spend_alerts` flag is the
+    # kill switch).
+    start_spend_alerts()
+    stack.push_async_callback(stop_spend_alerts)
+    # Owner decision 2026-11-14: the daily purge of accounts their student
+    # deleted more than 30 days ago (flag `account_purge`, default off).
+    # Not started under pytest or outside real model mode.
+    start_purge_sweeper()
+    stack.push_async_callback(stop_purge_sweeper)
     # #715: on a developer's LOCAL stack only, copy the rich sample dataset
     # onto each Google account that signs in. Not started anywhere else.
     start_local_seed_watcher()
@@ -207,15 +256,27 @@ def _drop_request_arguments(_request, _attributes):
     Returning ``None`` tells Logfire to record no argument attributes at all.
 
     We keep the method, route template, status, and latency — which is what the
-    request trace is actually for. (The full URL and rendered span message do
-    still carry the raw query string; Sapling query params are ids/enums plus a
-    couple of low-sensitivity search terms, never prompts/completions/document
-    text — see docs/observability-logging-tracking.md.)
+    request trace is actually for. The URL attributes keep only the path:
+    ``strip_query_request_hook`` drops the query string (search terms can be
+    student text).
     """
     return None
 
 
-app = FastAPI(title="Sapling API", version="1.0.0", lifespan=_lifespan)
+def api_docs_urls(app_env: str) -> dict:
+    """FastAPI's docs/redoc/openapi URLs for `app_env`. The interactive docs
+    and the schema map every route and body shape, which is reconnaissance for
+    anyone probing a deployed API, so they are served only to a developer's
+    machine, CI and the local E2E stack (APP_ENV local/test)."""
+    serve = app_env in {"local", "test"}
+    return {
+        "docs_url": "/docs" if serve else None,
+        "redoc_url": "/redoc" if serve else None,
+        "openapi_url": "/openapi.json" if serve else None,
+    }
+
+
+app = FastAPI(title="Sapling API", version="1.0.0", lifespan=_lifespan, **api_docs_urls(APP_ENV))
 
 # Emit a span per HTTP request (method, route, status, latency) so request
 # traces and errors show up in Logfire alongside the Pydantic AI agent spans.
@@ -236,7 +297,19 @@ logfire.instrument_fastapi(
     capture_headers=False,
     extra_spans=False,
     request_attributes_mapper=_drop_request_arguments,
+    # The request span's URL attributes (and the span message Logfire builds
+    # from http.target) carry the raw query string; Logfire treats them as
+    # safe keys, so they are rewritten to the path here.
+    server_request_hook=strip_query_request_hook,
 )
+
+# The crisis card beside a note action's error answer (services/
+# crisis_support.py::alongside leaves it on request.state and re-raises):
+# added on the way out by a layer outside the WHOLE stack, so the generic
+# 500 that ServerErrorMiddleware produces carries it like every handled
+# error does. After instrument_fastapi, which expects ServerErrorMiddleware
+# on top of the stack it wraps.
+crisis_support.install_error_card(app)
 
 if recost_api_key and RecostMiddleware is not None:
     app.add_middleware(
@@ -245,14 +318,17 @@ if recost_api_key and RecostMiddleware is not None:
         project_id=RECOST_PROJECT_ID,
     )
 
-_extra = [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()]
-_allowed_origins = list({
-    FRONTEND_URL.rstrip("/"),
-    "http://localhost:3000",
-    "https://saplinglearn.com",
-    "https://www.saplinglearn.com",
-    *_extra,
-} - {""})
+# Localhost dev origins only on a local/test backend (services/cors_origins.py).
+_allowed_origins = cors_allowed_origins(
+    FRONTEND_URL,
+    APP_ENV,
+    [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()],
+)
+
+# Body ceiling (testathon hardening). Added BEFORE CORSMiddleware so it sits
+# INSIDE it: a 413 from here still comes back with the CORS headers a browser
+# needs in order to read it. See services/body_limit.py for the two limits.
+app.add_middleware(BodySizeLimitMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
@@ -328,6 +404,56 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     )
 
 
+# #115 (RLS step 2, db/scope.py): the user-scoped client's three refusals. All
+# three exist only once the `db_user_scope` flag is past `off`, and none of
+# them ever falls back to the service role:
+# - a user-scoped write PostgREST refused (RLS WITH CHECK / no grant) reads
+#   as "not found", the same answer a row the policy hides already gives;
+# - the user-scoped credential could not be built, or PostgREST rejected it
+#   (key/kid mismatch after a rotation): 503, the operator's problem;
+# - a request with no session subject reached the DB from a path not marked
+#   service: 500, an unmarked public route (fail closed).
+@app.exception_handler(ScopedAccessDenied)
+async def scoped_access_denied_handler(request: Request, exc: ScopedAccessDenied):
+    return await http_exception_handler(
+        request, StarletteHTTPException(status_code=404, detail="Not found"),
+    )
+
+
+@app.exception_handler(ScopeUnavailable)
+async def scope_unavailable_handler(request: Request, exc: ScopeUnavailable):
+    return await http_exception_handler(
+        request,
+        StarletteHTTPException(status_code=503, detail="Service temporarily unavailable."),
+    )
+
+
+@app.exception_handler(UnscopedQueryError)
+async def unscoped_query_handler(request: Request, exc: UnscopedQueryError):
+    logging.getLogger("main").error("unscoped query refused: %s", exc)
+    return await http_exception_handler(
+        request, StarletteHTTPException(status_code=500, detail="Internal server error."),
+    )
+
+
+# #119: a student past today's LLM token budget (services/llm_budget.py). The
+# exception IS a 429 HTTPException (so routes' `except HTTPException: raise`
+# pass it through); this only adds `error.reset_at` for clients that want to
+# say when it resets. Quiz routes convert it to their own coded 429 first.
+@app.exception_handler(LLMBudgetExceeded)
+async def llm_budget_exceeded_handler(request: Request, exc: LLMBudgetExceeded):
+    rid = getattr(request.state, "request_id", None) or current_request_id()
+    content = quiz_errors.error_content(
+        request.url.path, exc.status_code, exc.detail, rid, code=exc.code,
+    )
+    if isinstance(content.get("error"), dict):
+        content["error"]["reset_at"] = exc.reset_at_iso
+    headers = dict(exc.headers or {})
+    if rid:
+        headers["X-Request-ID"] = rid
+    return JSONResponse(status_code=exc.status_code, content=content, headers=headers)
+
+
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
     logging.getLogger("main").exception("Unhandled exception")
@@ -357,33 +483,57 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 # #771: a hidden nav feature (`hide_<feature>` "on") 404s on its API too, not
 # just in the nav. Which routers each flag gates — and the paths another
 # visible surface still needs — is services/feature_flags.py::NAV_FEATURE_API.
+#
+# #115 (RLS step 2): routers whose DB calls run as the service role even when
+# the `db_user_scope` flag puts every other request under the student's own
+# token (docs/security/rls-step2-plan.md §3.2, §4.3). `_SVC` marks the
+# request; `_ADMIN_SVC` also re-checks admin first once the flag is past
+# `off`. Every router mounted below without one of these is user-scoped.
+_SVC = [Depends(service_route)]
+_ADMIN_SVC = [Depends(admin_service_route)]
 app.include_router(graph.router,       prefix="/api/graph")
 app.include_router(topic_checklist_router, prefix="/api/topic-checklist")
 app.include_router(learn.router,       prefix="/api/learn")
 app.include_router(quiz.router,        prefix="/api/quiz", dependencies=nav_feature_gate("/api/quiz"))
 app.include_router(calendar.router,    prefix="/api/calendar", dependencies=nav_feature_gate("/api/calendar"))
-app.include_router(social.router,      prefix="/api/social", dependencies=nav_feature_gate("/api/social"))
+# Social stays service role until step 2e: room_messages has no policies or
+# grants yet, and invite-code join / owner transfer / room teardown /
+# two-sided friendships are cross-user by design (plan §6.3: social last).
+app.include_router(social.router,      prefix="/api/social", dependencies=nav_feature_gate("/api/social") + _SVC)
 app.include_router(extract.router,     prefix="/api/extract")
-app.include_router(auth.router,        prefix="/api/auth")
+# Auth flows run before (or instead of) a session: the OAuth callback's user
+# upserts, POST /test-login (every Playwright journey signs in through it),
+# /pending/*, /me's account read.
+app.include_router(auth.router,        prefix="/api/auth", dependencies=_SVC)
 app.include_router(documents.router,   prefix="/api/documents")
 app.include_router(flashcards.router,  prefix="/api/flashcards", dependencies=nav_feature_gate("/api/flashcards"))
 app.include_router(study_guide.router, prefix="/api/study-guide", dependencies=nav_feature_gate("/api/study-guide"))
+app.include_router(study_router,       prefix="/api/study", dependencies=nav_feature_gate("/api/study"))
 app.include_router(feedback.router,    prefix="/api")
-app.include_router(careers.router,     prefix="/api/careers")
+app.include_router(careers.router,     prefix="/api/careers", dependencies=_SVC)  # public; job_applications is service-only
 app.include_router(onboarding.router,  prefix="/api/onboarding")
 app.include_router(profile_router,     prefix="/api/profile")
 # Mounted BEFORE admin_router so its specific /flags paths win over any
 # generic admin_router route that could otherwise shadow them.
-app.include_router(admin_flags_router, prefix="/api/admin/flags")
+app.include_router(admin_flags_router, prefix="/api/admin/flags", dependencies=_ADMIN_SVC)
 app.include_router(flags_router,       prefix="/api/flags")
-app.include_router(admin_router,       prefix="/api/admin")
-app.include_router(admin_analytics_router, prefix="/api/admin/analytics")
-app.include_router(admin_documents_router, prefix="/api/admin/documents")
-app.include_router(admin_email_router, prefix="/api/admin/email")
-app.include_router(newsletter_router,  prefix="/api/newsletter")
+# Admin account tools (seed by major / wipe / copy between environments).
+# Mounted before the generic admin router so its /accounts paths win.
+app.include_router(admin_accounts_router, prefix="/api/admin/accounts", dependencies=_ADMIN_SVC)
+app.include_router(admin_account_sync_router, prefix="/api/admin/accounts", dependencies=_ADMIN_SVC)
+# #116: the job queue's depth and dead letters (`jobs` is service-only).
+# Mounted before the generic admin router so /jobs is never shadowed.
+app.include_router(admin_jobs_router,  prefix="/api/admin/jobs", dependencies=_ADMIN_SVC)
+# #119: per-user LLM budgets + the outage-drill state. Before admin_router.
+app.include_router(admin_llm_router,   prefix="/api/admin/llm", dependencies=_ADMIN_SVC)
+app.include_router(admin_router,       prefix="/api/admin", dependencies=_ADMIN_SVC)
+app.include_router(admin_analytics_router, prefix="/api/admin/analytics", dependencies=_ADMIN_SVC)
+app.include_router(admin_documents_router, prefix="/api/admin/documents", dependencies=_ADMIN_SVC)
+app.include_router(admin_email_router, prefix="/api/admin/email", dependencies=_ADMIN_SVC)
+app.include_router(newsletter_router,  prefix="/api/newsletter", dependencies=_SVC)  # public; newsletter_emails is service-only
 # Public, no session: the unsubscribe page linked from every email (and the
 # RFC 8058 one-click POST). Token-authenticated; see routes/email.py.
-app.include_router(email_router,       prefix="/api/email")
+app.include_router(email_router,       prefix="/api/email", dependencies=_SVC)
 app.include_router(gradebook.router,   prefix="/api/gradebook", dependencies=nav_feature_gate("/api/gradebook"))
 app.include_router(gradescope.router,  prefix="/api/gradescope")
 app.include_router(notes.router,       prefix="/api/notes", dependencies=nav_feature_gate("/api/notes"))
@@ -391,7 +541,10 @@ app.include_router(academics.router,   prefix="/api", tags=["academics"])
 app.include_router(gamification.router, prefix="/api/gamification", dependencies=nav_feature_gate("/api/gamification"))
 # Server-to-server (Canopy's hourly poll): bearer-token auth of its own, no user
 # session, 404 unless CANOPY_METRICS_TOKEN is set. See routes/internal_metrics.py.
-app.include_router(internal_metrics_router, prefix="/api/internal")
+app.include_router(internal_metrics_router, prefix="/api/internal", dependencies=_SVC)
+# Server-to-server account copy between staging and prod; own bearer token
+# (ACCOUNT_SYNC_INBOUND_TOKEN, unset -> 404), never auth_guard.
+app.include_router(internal_account_sync_router, prefix="/api/internal/account-sync", dependencies=_SVC)
 
 
 @app.get("/api/health")
@@ -415,7 +568,7 @@ def health():
     }
 
 
-@app.get("/api/gemini-test")
+@app.get("/api/gemini-test", dependencies=_ADMIN_SVC)
 def gemini_test(request: Request):
     """Admin-only LLM connectivity check. Shows a clear error if the API
     key is missing/wrong. The path predates the Anthropic swap (ADR 0030); it

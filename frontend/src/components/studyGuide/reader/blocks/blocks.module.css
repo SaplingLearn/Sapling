@@ -1,0 +1,194 @@
+/* The typed blocks inside a guide's sections.
+
+   Every block shares one frame (BlockFrame): a header with an icon tile, the
+   kind as a `.label-micro`, the title and its actions, then the body, then an
+   optional footer. A block is the one thing in the article with a surface,
+   so it reads as something to use, not something to read past. */
+
+.block {
+  border: 1px solid var(--border); border-radius: var(--r-lg); overflow: hidden;
+  background: var(--bg-panel); box-shadow: var(--shadow-sm);
+  font-family: var(--font-sans); font-size: 15px; line-height: 1.45; color: var(--text);
+}
+.head {
+  display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: center; justify-content: space-between;
+  min-height: 52px; padding: 8px 12px 8px 14px;
+  border-bottom: 1px solid var(--border); background: var(--bg);
+}
+.heading { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; min-width: 0; }
+.tile { flex: none; width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; }
+.title { font-weight: 700; }
+.actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.regenerate, .treeLink {
+  display: inline-flex; align-items: center; height: 36px; padding: 0 12px;
+  border-radius: var(--r-md); color: var(--text-dim); font-size: var(--fs-md); font-weight: 700; text-decoration: none;
+  transition: background-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.treeLink { color: var(--brand-forest); }
+.regenerate:hover:not(:disabled), .treeLink:hover { background: var(--bg-soft); color: var(--text); }
+.regenerating { display: flex; flex-direction: column; gap: 12px; padding: 18px; font-size: var(--fs-md); color: var(--text-muted); }
+.foot {
+  display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; justify-content: space-between;
+  padding: 10px 14px; border-top: 1px solid var(--border); font-size: var(--fs-md); color: var(--text-muted);
+}
+.foot a { color: inherit; }
+
+/* Tile tones, one per kind of block. */
+.info { background: var(--info-soft); color: var(--info); }
+.err { background: var(--err-soft); color: var(--err); }
+.accent { background: var(--sap-100); color: var(--brand-forest); }
+.amber { background: var(--warn-soft); color: var(--warn); }
+.plum { background: color-mix(in srgb, var(--c-plum) 14%, var(--bg-panel)); color: var(--c-plum); }
+
+/* Shared by the block bodies. */
+.body { display: flex; flex-direction: column; gap: 14px; padding: 18px; }
+.rows { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; }
+.stack { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.dim { color: var(--text-dim); }
+.small { font-size: var(--fs-md); color: var(--text-muted); }
+.tier { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-sm); font-weight: 700; }
+.tierDot { flex: none; width: 10px; height: 10px; border-radius: var(--r-xs); }
+
+/* ── chart ───────────────────────────────────────────────────────────────── */
+
+.chartBody { display: flex; flex-wrap: wrap; gap: 8px 24px; align-items: center; padding: 18px; }
+.chart { flex: 3 1 380px; min-width: 0; display: block; height: auto; font-family: var(--font-sans); }
+.chartGrid { stroke: var(--border); }
+.chartAxis { stroke: var(--text-dim); stroke-width: 1.5; }
+.chartAxisLabel { font-size: var(--fs-md); fill: var(--text-dim); }
+.chartTick { font-family: var(--font-mono); font-size: var(--fs-xs); fill: var(--text-muted); }
+.chartLine { fill: none; stroke-width: 3.5; stroke-linecap: round; stroke-linejoin: round; }
+.chartLineAfter { stroke-dasharray: 9 7; }
+.chartGuide { stroke: var(--text-muted); stroke-width: 1; stroke-dasharray: 3 4; }
+.chartDot { fill: var(--bg-panel); stroke: var(--text); stroke-width: 3; }
+.chartDotAfter { fill: var(--warn); }
+.chartMarkLabel { font-size: var(--fs-md); fill: var(--text); }
+/* What only After shows fades in when the toggle flips. */
+.chartEnter { animation: chartFade 260ms var(--ease) both; }
+@keyframes chartFade { from { opacity: 0; } to { opacity: 1; } }
+
+.chartSide { flex: 1 1 160px; display: flex; flex-direction: column; gap: 14px; }
+.readout { display: flex; flex-direction: column; gap: 2px; padding-bottom: 14px; border-bottom: 1px solid var(--border); }
+.readoutValue { font-family: var(--font-serif); font-size: var(--fs-3xl); font-weight: 600; line-height: 1.1; }
+.readoutNote, .readoutMoved { font-size: var(--fs-md); font-weight: 700; color: var(--text-muted); }
+.readoutMoved { color: var(--warn); }
+.legend { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; font-size: var(--fs-md); font-weight: 700; }
+.legend li { display: inline-flex; align-items: center; gap: 8px; }
+.legendLine { width: 18px; height: 3px; border-radius: 2px; background: currentColor; }
+.legendDashed { width: 18px; border-top: 3px dashed currentColor; }
+
+/* ── common mistakes ─────────────────────────────────────────────────────── */
+
+.mistake { display: flex; gap: 14px; padding: 16px; border-bottom: 1px solid var(--border); }
+.mistake:last-child { border-bottom: 0; }
+.badge { flex: none; width: 24px; height: 24px; border-radius: 7px; display: grid; place-items: center; font-size: var(--fs-md); font-weight: 700; }
+
+/* ── formula ─────────────────────────────────────────────────────────────── */
+
+.formula {
+  display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 22px 24px;
+  overflow-x: auto; background: var(--sap-50); color: var(--sap-900); font-size: 20px;
+}
+.spoken { margin: 0; font-size: var(--fs-md); color: var(--sap-700); text-align: center; }
+
+/* ── worked example ──────────────────────────────────────────────────────── */
+
+.counter { padding: 0 6px; font-family: var(--font-mono); font-size: var(--fs-sm); color: var(--text-muted); }
+.problem { margin: 0; font-family: var(--font-serif); font-size: 17px; line-height: 1.55; }
+.steps { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; }
+.step { display: flex; gap: 14px; padding: 12px 0; border-top: 1px solid var(--border); }
+.step[hidden] { display: none; }
+.stepNumber {
+  flex: none; width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--brand-forest); color: #fff; font-size: var(--fs-md); font-weight: 700;
+}
+.math { font-family: var(--font-mono); font-size: var(--fs-base); color: var(--sap-900); overflow-wrap: anywhere; }
+.stepActions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* ── comparison ──────────────────────────────────────────────────────────── */
+
+.tableWrap { overflow-x: auto; }
+.table { width: 100%; min-width: 520px; border-collapse: collapse; }
+.table th, .table td { padding: 13px 16px; text-align: left; border-bottom: 1px solid var(--border); }
+.table tbody tr:last-child th, .table tbody tr:last-child td { border-bottom: 0; }
+.table thead td { width: 34%; }
+.table thead th { font-family: var(--font-serif); font-size: var(--fs-xl); font-weight: 600; }
+.table tbody th { font-weight: 700; color: var(--text-dim); }
+.table .emphasis { background: var(--sap-50); }
+.table .emphasis th { color: var(--sap-900); }
+.table .emphasis td { font-weight: 700; }
+.tested {
+  display: inline-flex; align-items: center; height: 20px; padding: 0 7px; margin-left: 6px;
+  border-radius: var(--r-full); background: var(--brand-forest); color: #fff;
+  font-size: var(--fs-xs); font-weight: 700; white-space: nowrap; vertical-align: 1px;
+}
+
+/* ── concept map ─────────────────────────────────────────────────────────── */
+
+.concepts { display: flex; flex-wrap: wrap; gap: 8px; align-items: stretch; padding: 18px; }
+.concept {
+  flex: 1 1 140px; min-height: 84px; padding: 12px 14px; text-align: left;
+  display: flex; flex-direction: column; gap: 6px;
+  border: 1.5px solid var(--border-strong); border-radius: var(--r-md); background: var(--bg-panel);
+  transition: background-color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
+}
+.concept:hover { background: var(--bg-subtle); }
+.concept[aria-pressed="true"] {
+  border-color: var(--brand-forest); background: var(--sap-50);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-forest) 14%, transparent);
+}
+.conceptName { font-weight: 700; }
+
+.prompts {
+  display: flex; flex-direction: column; gap: 10px; margin: 0 18px 18px; padding: 14px 16px;
+  border-radius: var(--r-md); background: var(--sap-50); border: 1px solid var(--sap-200);
+}
+.promptsHead { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.promptsTitle { display: inline-flex; align-items: center; gap: 8px; font-weight: 700; color: var(--sap-900); }
+.close { flex: none; width: 36px; height: 36px; border-radius: var(--r-md); display: grid; place-items: center; color: var(--sap-700); }
+.close:hover { background: var(--sap-100); }
+.promptList { display: flex; flex-wrap: wrap; gap: 8px; }
+.option {
+  min-height: 40px; padding: 0 14px; border: 1px solid var(--sap-200); border-radius: var(--r-md);
+  background: var(--bg-panel); color: var(--sap-900); font-size: var(--fs-base);
+  transition: border-color var(--dur-fast) var(--ease);
+}
+.option:hover:not(:disabled) { border-color: var(--brand-forest); }
+.option:disabled { opacity: 0.6; cursor: not-allowed; }
+
+/* ── key terms ───────────────────────────────────────────────────────────── */
+
+.term { display: flex; flex-wrap: wrap; gap: 4px 20px; padding: 14px 16px; border-bottom: 1px solid var(--border); }
+.term:last-child { border-bottom: 0; }
+.term dt { flex: 0 0 160px; font-family: var(--font-serif); font-size: 17px; font-weight: 600; }
+.term dd { flex: 1 1 260px; margin: 0; color: var(--text-dim); }
+
+/* ── check yourself ──────────────────────────────────────────────────────── */
+
+.counts {
+  display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: var(--r-full);
+  background: color-mix(in srgb, var(--c-plum) 14%, var(--bg-panel)); color: var(--c-plum);
+  font-size: var(--fs-sm); font-weight: 700;
+}
+.question {
+  margin: 0; max-width: 56ch; overflow-wrap: anywhere;
+  font-family: var(--font-serif); font-size: 19px; font-weight: 600; line-height: 1.4;
+}
+.answers { display: flex; flex-direction: column; gap: 8px; }
+.right, .wrong {
+  display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; justify-content: space-between;
+  padding: 14px 16px; border-radius: var(--r-md);
+}
+.right { background: var(--sap-100); color: var(--sap-800); }
+.wrong { background: var(--err-soft); color: color-mix(in srgb, var(--err) 80%, var(--ink-900)); }
+.resultText { flex: 1 1 280px; }
+.moved { display: inline-flex; align-items: center; gap: 8px; font-weight: 700; }
+
+/* ── print (Export PDF) ──────────────────────────────────────────────────── */
+
+/* A block stays in one piece, with every step shown and no controls. */
+@media print {
+  .block { break-inside: avoid; box-shadow: none; }
+  .actions, .stepActions, .prompts { display: none !important; }
+  .step[hidden] { display: flex !important; }
+}

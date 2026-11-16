@@ -6,8 +6,9 @@ All Supabase calls are mocked so no live DB connection is needed.
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
+from db.connection import MAX_ROWS
 import services.graph_service as gs
 from services.graph_service import (
     get_graph,
@@ -20,6 +21,10 @@ from services.graph_service import (
 )
 
 
+# #117: a sync PostgREST call reached on the event loop raises here.
+pytestmark = pytest.mark.usefixtures("no_sync_db_on_loop")
+
+
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 def _mock_table(data: dict):
@@ -30,6 +35,8 @@ def _mock_table(data: dict):
     def _factory(name):
         mock = MagicMock()
         mock.select.return_value = data.get(name, [])
+        # page_all (the node-events read) pages through select_with_count.
+        mock.select_with_count.return_value = (data.get(name, []), len(data.get(name, [])))
         mock.insert.return_value = []
         mock.update.return_value = []
         mock.delete.return_value = []
@@ -58,6 +65,7 @@ def _cached_mock_table(data: dict):
         if name not in mocks:
             m = MagicMock()
             m.select.return_value = data.get(name, [])
+            m.select_with_count.return_value = (data.get(name, []), len(data.get(name, [])))
             m.insert.return_value = []
             m.update.return_value = []
             m.delete.return_value = []
@@ -330,6 +338,176 @@ class TestGetGraph:
         node = next(n for n in result["nodes"] if n["id"] == "n1")
         assert node["learning_velocity"] == 0.0
         assert node["mastery_events"] == []
+
+
+# ── get_graph: week_delta (the Study hub's "+N% this week") ──────────────────
+
+def _days_ago_iso(days: float) -> str:
+    return (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+
+def _event(node_id: str, delta: float, days_ago: float) -> dict:
+    return {"node_id": node_id, "delta": delta, "reason": "r",
+            "created_at": _days_ago_iso(days_ago)}
+
+
+class TestWeekDelta:
+    """Each concept node carries ``week_delta``: its summed mastery deltas of
+    the last 7 days, over EVERY event of the week. ``mastery_events`` keeps
+    only the node's last five, so summing those under-counts a busy week."""
+
+    NODES = [
+        {"id": "n1", "concept_name": "Loops", "mastery_tier": "learning",
+         "mastery_score": 0.5, "times_studied": 9, "user_id": "u1", "course_id": "c1"},
+        {"id": "n2", "concept_name": "Sets", "mastery_tier": "unexplored",
+         "mastery_score": 0.0, "times_studied": 0, "user_id": "u1", "course_id": "c1"},
+    ]
+
+    def _tables(self, events: list):
+        import copy
+        return _cached_mock_table({
+            "users": [{"streak_count": 1}],
+            "graph_nodes": copy.deepcopy(self.NODES),
+            "graph_edges": [],
+            "node_mastery_events": events,
+            "enrollments": [_enrollment_row("c1", "CS", "Intro CS")],
+        })
+
+    def _graph(self, events: list) -> dict:
+        factory, _ = self._tables(events)
+        with patch("services.graph_service.table", side_effect=factory):
+            return get_graph("u1")
+
+    @staticmethod
+    def _node(graph: dict, node_id: str) -> dict:
+        return next(n for n in graph["nodes"] if n["id"] == node_id)
+
+    def test_sums_every_event_of_the_week_not_the_last_five(self):
+        # Oldest first, as the read orders them: one from before the window,
+        # then eight inside it.
+        events = [_event("n1", 0.30, 10)] + [
+            _event("n1", 0.05, d) for d in (6, 5, 4, 3, 2, 1, 0.5, 0)]
+        n1 = self._node(self._graph(events), "n1")
+        assert n1["week_delta"] == pytest.approx(0.40)
+        # The trimmed tail the client used to sum holds five of the eight.
+        assert len(n1["mastery_events"]) == 5
+        assert sum(e["delta"] for e in n1["mastery_events"]) == pytest.approx(0.25)
+
+    def test_is_zero_for_a_node_with_no_event_this_week(self):
+        graph = self._graph([_event("n1", 0.2, 30), _event("n1", 0.2, 8)])
+        assert self._node(graph, "n1")["week_delta"] == 0.0
+        assert self._node(graph, "n2")["week_delta"] == 0.0  # no events at all
+        assert isinstance(self._node(graph, "n1")["week_delta"], float)
+
+    def test_the_window_is_a_rolling_seven_days(self):
+        graph = self._graph([_event("n1", 0.5, 7.01), _event("n1", 0.1, 6.99)])
+        assert self._node(graph, "n1")["week_delta"] == pytest.approx(0.1)
+
+    def test_is_the_net_change_and_never_negative_zero(self):
+        graph = self._graph([_event("n1", 0.2, 3), _event("n1", -0.05, 2),
+                             _event("n2", 0.1, 2), _event("n2", -0.1, 1)])
+        assert self._node(graph, "n1")["week_delta"] == pytest.approx(0.15)
+        assert str(self._node(graph, "n2")["week_delta"]) == "0.0"
+
+    def test_reads_naive_and_z_suffixed_timestamps_as_utc(self):
+        now = datetime.now(timezone.utc)
+        graph = self._graph([
+            {"node_id": "n1", "delta": 0.1,
+             "created_at": now.replace(tzinfo=None).isoformat()},
+            {"node_id": "n1", "delta": 0.2,
+             "created_at": now.strftime("%Y-%m-%dT%H:%M:%SZ")},
+            {"node_id": "n1", "delta": 9.0, "created_at": "not a timestamp"},
+        ])
+        assert self._node(graph, "n1")["week_delta"] == pytest.approx(0.3)
+
+    def test_a_subject_root_carries_no_week_delta(self):
+        root = self._node(self._graph([_event("n1", 0.2, 1)]), "subject_root__c1")
+        assert "week_delta" not in root
+
+    def test_a_short_history_is_one_read(self):
+        factory, mocks = self._tables([_event("n1", 0.2, 1)])
+        with patch("services.graph_service.table", side_effect=factory):
+            get_graph("u1")
+        events = mocks["node_mastery_events"]
+        events.select_with_count.assert_called_once()
+        events.select.assert_not_called()
+        kwargs = events.select_with_count.call_args.kwargs
+        assert set(kwargs["filters"]["node_id"][4:-1].split(",")) == {"n1", "n2"}
+        # Offset paging needs a total order (db.connection.page_all).
+        assert kwargs["order"] == "created_at.asc,id.asc"
+
+    # PostgREST caps one response at MAX_ROWS, and the read sorts oldest
+    # first: an unpaged read would cut off the NEWEST events, the very ones
+    # mastery_events, learning velocity and week_delta are computed from.
+
+    def _paged(self, pages: list):
+        """The events read answers ``pages`` (one (rows, total) per page, or
+        an exception); an unpaged ``select`` would see only the first page."""
+        factory, _ = self._tables(pages[0][0] if isinstance(pages[0], tuple) else [])
+        events_tbl = factory("node_mastery_events")
+        events_tbl.select_with_count.side_effect = pages
+        return factory, events_tbl
+
+    def _long_history(self):
+        """MAX_ROWS old events, then this week's three on the second page."""
+        recent = [_event("n1", 0.07, 2), _event("n1", 0.02, 1), _event("n2", 0.03, 0.5)]
+        return [([_event("n1", 0.001, 400)] * MAX_ROWS, 0), (recent, 0)], recent
+
+    def test_a_history_longer_than_one_response_is_read_to_the_end(self):
+        pages, recent = self._long_history()
+        factory, events_tbl = self._paged(pages)
+        with patch("services.graph_service.table", side_effect=factory):
+            graph = get_graph("u1")
+        assert events_tbl.select_with_count.call_count == 2
+        assert events_tbl.select_with_count.call_args.kwargs["offset"] == MAX_ROWS
+        n1, n2 = self._node(graph, "n1"), self._node(graph, "n2")
+        assert n1["week_delta"] == pytest.approx(0.09)
+        assert n2["week_delta"] == pytest.approx(0.03)
+        # The kept tail is the NEWEST five, not five 400-day-old rows.
+        assert n1["mastery_events"][-2:] == recent[:2]
+        assert n2["mastery_events"] == recent[2:]
+        assert n1["learning_velocity"] > 0 and n2["learning_velocity"] > 0
+
+    def test_a_failed_history_read_sends_no_week_delta_rather_than_zero(self):
+        """A PostgREST blip on the events read is NOT "no events this week":
+        sending 0.0 would show "+0% this week" on every concept."""
+        import asyncio
+
+        from tests.db_fakes import with_async_twins
+
+        for run in (lambda: get_graph("u1"), lambda: asyncio.run(gs.aget_graph("u1"))):
+            factory, _ = self._paged([RuntimeError("PostgREST down")])
+            with patch("services.graph_service.table", side_effect=with_async_twins(factory)):
+                graph = run()
+            for node_id in ("n1", "n2"):
+                node = self._node(graph, node_id)
+                assert "week_delta" not in node
+                assert node["mastery_events"] == []
+                assert node["learning_velocity"] == 0.0
+
+    def test_a_failed_second_page_sends_no_week_delta(self):
+        pages, _ = self._long_history()
+        factory, _ = self._paged([pages[0], RuntimeError("PostgREST down")])
+        with patch("services.graph_service.table", side_effect=factory):
+            graph = get_graph("u1")
+        assert "week_delta" not in self._node(graph, "n1")
+
+    def test_the_async_twin_answers_the_same_long_history(self):
+        import asyncio
+
+        from tests.db_fakes import with_async_twins
+
+        answers = []
+        for run in (lambda: get_graph("u1"), lambda: asyncio.run(gs.aget_graph("u1"))):
+            factory, events_tbl = self._paged(self._long_history()[0])
+            with patch("services.graph_service.table", side_effect=with_async_twins(factory)):
+                answers.append({
+                    n["id"]: (n.get("week_delta"),
+                              [e["delta"] for e in n.get("mastery_events") or []])
+                    for n in run()["nodes"]})
+            assert events_tbl.select_with_count.call_count == 2
+        assert answers[0] == answers[1]
+        assert answers[0]["n1"][0] == pytest.approx(0.09)
 
 
 # ── get_courses ───────────────────────────────────────────────────────────────
@@ -619,6 +797,32 @@ class TestApplyGraphUpdate:
         # mastery_events column is gone (replaced by node_mastery_events).
         assert "mastery_events" not in payload
         assert kwargs["on_conflict"] == "user_id,course_id,concept_name"
+
+    def test_course_context_refresh_runs_inline_by_default(self):
+        factory, _ = _bulk_factory(existing_nodes=[])
+        update = {"new_nodes": [{"concept_name": "Recursion", "initial_mastery": 0.0}],
+                  "updated_nodes": [], "new_edges": []}
+        with patch("services.graph_service.table", side_effect=factory), \
+             patch("services.academics.user_offering_ids_for_course", return_value=["off-1"]), \
+             patch("services.course_context_service.refresh_course_context") as refresh:
+            apply_graph_update("u1", update, course_id="c1")
+        refresh.assert_called_once_with("off-1", user_id="u1")
+
+    def test_course_context_refresh_is_handed_to_defer(self):
+        # The refresh can make an LLM call; a route that passes `defer` (the quiz
+        # submit passes background_tasks.add_task) must not wait on it.
+        factory, _ = _bulk_factory(existing_nodes=[])
+        update = {"new_nodes": [{"concept_name": "Recursion", "initial_mastery": 0.0}],
+                  "updated_nodes": [], "new_edges": []}
+        deferred = []
+        with patch("services.graph_service.table", side_effect=factory), \
+             patch("services.academics.user_offering_ids_for_course", return_value=["off-1"]), \
+             patch("services.course_context_service.refresh_course_context") as refresh:
+            apply_graph_update("u1", update, course_id="c1", defer=deferred.append)
+            refresh.assert_not_called()
+            assert len(deferred) == 1
+            deferred[0]()
+        refresh.assert_called_once_with("off-1", user_id="u1")
 
     def test_skips_insert_for_existing_node_case_insensitive(self):
         existing = [
@@ -1456,12 +1660,12 @@ def test_graph_route_passes_semester_through():
 
     captured = {}
 
-    def fake_get_graph(user_id, semester=None):
+    async def fake_get_graph(user_id, semester=None):
         captured["user_id"] = user_id
         captured["semester"] = semester
         return {"nodes": [], "edges": [], "stats": {}}
 
-    with patch.object(graph_route, "get_graph", side_effect=fake_get_graph):
+    with patch.object(graph_route, "aget_graph", side_effect=fake_get_graph):
         client = TestClient(app)
         resp = client.get("/api/graph/user_andres?semester=Spring%202026")
 
@@ -1571,3 +1775,183 @@ class TestRemoveCourseRoute:
                    return_value={"deleted": False, "error": "Unknown term: X"}):
             r = self._client().delete("/api/graph/u1/courses/cs101?term=X")
         assert r.status_code == 404
+
+
+# ── async read twins (#117, docs/design/async-db-client.md §4.1 wave 1) ──────
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+_PARITY_GRAPHS = {
+    "empty": {"users": [{"streak_count": 5, "last_active_date": None}],
+              "graph_nodes": [], "graph_edges": [], "enrollments": []},
+    "full": {
+        "users": [{"streak_count": 2,
+                   "last_active_date": datetime.now(timezone.utc).date().isoformat()}],
+        "enrollments": [
+            _enrollment_row("c1", "CS101", "Intro CS", offering_id="off-1"),
+            _enrollment_row("c1", "CS101", "Intro CS", offering_id="off-2"),
+            _enrollment_row("c2", "MA", "Math", term="Fall 2025"),
+        ],
+        "graph_nodes": [
+            {"id": "n1", "concept_name": "Loops", "mastery_tier": "learning",
+             "mastery_score": 0.5, "course_id": "c1", "times_studied": 2, "user_id": "u1"},
+            {"id": "n2", "concept_name": "Sets", "mastery_tier": "mastered",
+             "mastery_score": 0.9, "course_id": "c2", "times_studied": 1, "user_id": "u1"},
+        ],
+        "graph_edges": [
+            {"id": "e1", "source_node_id": "n1", "target_node_id": "n2", "strength": 0.4},
+            {"id": "e2", "source_node_id": "n1", "target_node_id": "gone", "strength": 0.4},
+        ],
+        "node_mastery_events": [
+            {"node_id": "n1", "delta": 0.2, "reason": "r", "created_at": _now_iso()},
+        ],
+    },
+}
+
+
+class TestAsyncReadTwins:
+    """Each `a*` twin returns exactly what its sync sibling returns over the
+    same rows (the routes' behaviour must not depend on which one ran)."""
+
+    @staticmethod
+    def _both(fn, afn, data, *args, extra_patches=()):
+        import asyncio
+        import copy
+        from contextlib import ExitStack
+
+        from tests.db_fakes import with_async_twins
+
+        out = []
+        for run in (lambda: fn(*args), lambda: asyncio.run(afn(*args))):
+            factory, mocks = _cached_mock_table(copy.deepcopy(data))
+            with ExitStack() as stack:
+                stack.enter_context(patch(
+                    "services.graph_service.table", side_effect=with_async_twins(factory)))
+                for p in extra_patches:
+                    stack.enter_context(p())
+                out.append((run(), {n: m.method_calls for n, m in mocks.items()}))
+        return out
+
+    @pytest.mark.parametrize("scenario", sorted(_PARITY_GRAPHS))
+    def test_aget_graph_matches_get_graph(self, scenario):
+        (sync, _), (asynced, _) = self._both(
+            gs.get_graph, gs.aget_graph, _PARITY_GRAPHS[scenario], "u1")
+        assert asynced == sync
+
+    def test_aget_graph_semester_scope_matches(self):
+        patches = (
+            lambda: patch("services.academics.term_id_for_label", return_value="t-fall"),
+            lambda: patch("services.academics.user_course_ids_for_term", return_value={"c2"}),
+        )
+        (sync, _), (asynced, _) = self._both(
+            gs.get_graph, gs.aget_graph, _PARITY_GRAPHS["full"], "u1", "Fall 2025",
+            extra_patches=patches)
+        assert asynced == sync
+        assert {n["id"] for n in asynced["nodes"]} == {"n2", "subject_root__c2"}
+
+    def test_aget_graph_inserts_a_missing_user_like_the_sync_one(self):
+        data = {"users": [], "graph_nodes": [], "graph_edges": [], "enrollments": []}
+        (_, sync_calls), (_, async_calls) = self._both(gs.get_graph, gs.aget_graph, data, "u1")
+        inserts = [c for c in async_calls["users"] if c[0] == "insert"]
+        assert inserts == [c for c in sync_calls["users"] if c[0] == "insert"]
+        assert inserts and inserts[0].args[0] == {"id": "u1", "streak_count": 0}
+
+    def test_aget_courses_matches_get_courses(self):
+        data = {**_PARITY_GRAPHS["full"], "graph_nodes": [{"id": "n1"}, {"id": "n2"}]}
+        (sync, _), (asynced, _) = self._both(gs.get_courses, gs.aget_courses, data, "u1")
+        assert asynced == sync
+        assert [c["course_id"] for c in asynced] == ["c1", "c2"]
+
+    def test_aget_graph_runs_its_independent_reads_concurrently(self):
+        """#117 review: the enrollments, nodes, edges and streak reads used to
+        be awaited one after another. Each waits here until all four have
+        started, so a sequential run never gets past the first."""
+        import asyncio
+
+        rows = _PARITY_GRAPHS["full"]
+
+        async def go():
+            barrier = asyncio.Barrier(4)
+
+            def factory(name):
+                mock = MagicMock()
+
+                async def aselect(cols="*", filters=None, **_k):
+                    if name == "users" and cols == "id":  # aensure_user_exists: first, alone
+                        return [{"id": "u1"}]
+                    if name in ("enrollments", "graph_nodes", "graph_edges", "users"):
+                        await asyncio.wait_for(barrier.wait(), 2)
+                    return rows.get(name, [])
+                mock.aselect = AsyncMock(side_effect=aselect)
+                return mock
+
+            with patch("services.graph_service.table", side_effect=factory):
+                return await gs.aget_graph("u1")
+
+        graph = asyncio.run(go())
+        assert {"n1", "n2"} <= {n["id"] for n in graph["nodes"]}
+
+    def test_aget_courses_counts_concurrently_and_keeps_order(self):
+        import asyncio
+
+        enrollments = [_enrollment_row(f"c{i}", f"C{i}", f"Course {i}") for i in range(20)]
+        live, peak = [0], [0]
+
+        def factory(name):
+            mock = MagicMock()
+
+            async def aselect(cols="*", filters=None, **_k):
+                if name == "enrollments":
+                    return enrollments
+                live[0] += 1
+                peak[0] = max(peak[0], live[0])
+                await asyncio.sleep(0.01)
+                live[0] -= 1
+                return [{"id": f"n{j}"} for j in range(int(filters["course_id"][len("eq.c"):]))]
+            mock.aselect = AsyncMock(side_effect=aselect)
+            return mock
+
+        with patch("services.graph_service.table", side_effect=factory):
+            courses = asyncio.run(gs.aget_courses("u1"))
+        assert [c["course_id"] for c in courses] == [f"c{i}" for i in range(20)]
+        assert [c["node_count"] for c in courses] == list(range(20))
+        assert peak[0] == gs._COURSE_COUNT_CONCURRENCY
+
+    def test_aget_courses_empty_on_enrollment_read_failure(self):
+        import asyncio
+
+        from tests.db_fakes import with_async_twins
+
+        def factory(name):
+            mock = MagicMock()
+            mock.select.side_effect = Exception("DB error")
+            return mock
+
+        with patch("services.graph_service.table", side_effect=with_async_twins(factory)):
+            assert asyncio.run(gs.aget_courses("u1")) == []
+
+    @pytest.mark.parametrize("semester,allowed", [
+        (None, None), ("Fall 2025", {"c1"}), ("Fall 2025", set()), ("Nope", None),
+    ])
+    def test_aget_recommendations_matches(self, semester, allowed):
+        data = {"graph_nodes": [
+            {"concept_name": "A", "mastery_score": 0.1, "mastery_tier": "struggling"},
+            {"concept_name": "B", "mastery_score": 0.0, "mastery_tier": "unexplored"},
+            {"concept_name": "C", "mastery_score": 0.6, "mastery_tier": "learning"},
+        ]}
+        term = None if semester == "Nope" else "t-fall"
+        patches = (
+            lambda: patch("services.academics.term_id_for_label", return_value=term),
+            lambda: patch("services.academics.user_course_ids_for_term",
+                          return_value=allowed or set()),
+        )
+        (sync, sync_calls), (asynced, async_calls) = self._both(
+            gs.get_recommendations, gs.aget_recommendations, data, "u1", semester,
+            extra_patches=patches)
+        assert asynced == sync
+        sync_reads = [c for c in sync_calls.get("graph_nodes", []) if c[0] == "select"]
+        async_reads = [c for c in async_calls.get("graph_nodes", []) if c[0] == "select"]
+        assert async_reads == sync_reads
+        assert bool(sync) == (semester is None or bool(allowed))

@@ -98,7 +98,7 @@ def test_sweep_marks_only_stale_unfinished_attempts(db_conn):
 
     from db.connection import table
     from routes.quiz import _sweep_abandoned
-    from services.quiz_config import QUIZ_ATTEMPT_ABANDON_TTL_HOURS
+    from services.quiz.config import QUIZ_ATTEMPT_ABANDON_TTL_HOURS
 
     node_id = _node_id(db_conn)
     stale_id, fresh_id, done_id = (str(uuid.uuid4()) for _ in range(3))

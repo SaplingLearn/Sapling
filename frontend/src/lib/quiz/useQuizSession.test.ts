@@ -118,7 +118,7 @@ const START = {
   courseId: "course-1",
 };
 
-it("submits a written answer through the server grader and completes the attempt", async () => {
+it("submits written drafts together through the final server grader", async () => {
   quizApi.generateQuiz.mockResolvedValue({ ...generated(1), questions: [{
     id: 1, type: "numeric", question: "What is half?", difficulty: "easy", options: [],
   }] });
@@ -131,9 +131,10 @@ it("submits a written answer through the server grader and completes the attempt
   act(() => result.current.actions.write?.("1/2"));
   await act(async () => { result.current.actions.submitAnswer(); });
   await waitFor(() => expect(result.current.session.phase).toBe("results"));
-  expect(quizApi.answerQuestion).toHaveBeenCalledWith("attempt-1", {
-    questionIndex: 0, questionId: 1, selectedIndex: null, answerText: "1/2", allowRetry: true,
-  });
+  expect(quizApi.answerQuestion).not.toHaveBeenCalled();
+  expect(quizApi.submitQuiz).toHaveBeenCalledWith("attempt-1", [
+    { question_id: 1, answer_text: "1/2" },
+  ], expect.any(AbortSignal), true);
   expect(result.current.session.items[0].answerText).toBe("1/2");
 });
 
@@ -188,12 +189,8 @@ describe("start → answer → answer → submit", () => {
       result.current.actions.submitAnswer();
     });
     await waitFor(() => expect(result.current.session.cursor).toBe(1));
-    expect(quizApi.answerQuestion).toHaveBeenCalledWith("attempt-1", {
-      questionIndex: 0,
-      selectedIndex: 1,
-      questionId: 1,
-      allowRetry: true,
-    });
+    expect(quizApi.answerQuestion).not.toHaveBeenCalled();
+    expect(quizApi.submitQuiz).not.toHaveBeenCalled();
 
     act(() => result.current.actions.select(2));
     await act(async () => {
@@ -204,11 +201,31 @@ describe("start → answer → answer → submit", () => {
     expect(quizApi.submitQuiz).toHaveBeenCalledWith("attempt-1", [
       { question_id: 1, selected_label: "B" },
       { question_id: 2, selected_label: "C" },
-    ], expect.any(AbortSignal));
+    ], expect.any(AbortSignal), true);
     expect(result.current.session.result).toEqual(SUBMIT_RESULT);
     expect(result.current.session.xp).toEqual({ before: 100, after: 130, streak: 4 });
     // The stored record is cleared once the attempt is scored.
     expect(loadSession()).toBeNull();
+  });
+
+  it("advances a skipped question locally and sends it only in the final submission", async () => {
+    const { result } = mount();
+    await waitFor(() => expect(result.current.config).not.toBeNull());
+    act(() => result.current.actions.start(START));
+    await waitFor(() => expect(result.current.session.phase).toBe("active"));
+
+    act(() => result.current.actions.skipAnswer?.());
+    expect(result.current.session.cursor).toBe(1);
+    expect(quizApi.answerQuestion).not.toHaveBeenCalled();
+    expect(quizApi.submitQuiz).not.toHaveBeenCalled();
+
+    act(() => result.current.actions.select(2));
+    act(() => result.current.actions.finish());
+    await waitFor(() => expect(result.current.session.phase).toBe("results"));
+    expect(quizApi.submitQuiz).toHaveBeenCalledWith("attempt-1", [
+      { question_id: 1, skipped: true },
+      { question_id: 2, selected_label: "C" },
+    ], expect.any(AbortSignal), true);
   });
 
   it("omits the XP line when a gamification read failed (R-9 — never invented)", async () => {
@@ -233,7 +250,7 @@ describe("start → answer → answer → submit", () => {
   it("retries a dropped answer exactly once, and never a rejected one", async () => {
     const { result } = mount();
     await waitFor(() => expect(result.current.config).not.toBeNull());
-    act(() => result.current.actions.start(START));
+    act(() => result.current.actions.start(START, { count: 5, difficulty: "medium", feedback: "as-you-go" }));
     await waitFor(() => expect(result.current.session.phase).toBe("active"));
 
     quizApi.answerQuestion
@@ -244,7 +261,8 @@ describe("start → answer → answer → submit", () => {
     await act(async () => {
       result.current.actions.submitAnswer();
     });
-    await waitFor(() => expect(result.current.session.cursor).toBe(1));
+    await waitFor(() => expect(result.current.session.phase).toBe("answered"));
+    act(() => result.current.actions.next());
     expect(quizApi.answerQuestion).toHaveBeenCalledTimes(2);
 
     quizApi.answerQuestion.mockReset();
@@ -432,7 +450,8 @@ describe("#537 browser-lane regressions", () => {
     act(() => first.result.current.actions.confirmLeave());
     const parked = loadSession();
     expect(parked?.attemptId).toBe("attempt-1");
-    expect(parked?.items[0].verdict).not.toBeNull();
+    expect(parked?.items[0].selectedIndex).toBe(1);
+    expect(parked?.items[0].verdict).toBeNull();
     first.unmount();
 
     // The verification call never answers — a dropped connection, a 401 after a
@@ -547,7 +566,7 @@ describe("a double-pressed Submit only answers once", () => {
 
     const { result } = mount();
     await waitFor(() => expect(result.current.config).not.toBeNull());
-    act(() => result.current.actions.start(START));
+    act(() => result.current.actions.start(START, { count: 5, difficulty: "medium", feedback: "as-you-go" }));
     await waitFor(() => expect(result.current.session.phase).toBe("active"));
 
     act(() => result.current.actions.select(1));
@@ -561,7 +580,8 @@ describe("a double-pressed Submit only answers once", () => {
     await act(async () => {
       release(answerResult(0));
     });
-    await waitFor(() => expect(result.current.session.cursor).toBe(1));
+    await waitFor(() => expect(result.current.session.phase).toBe("answered"));
+    act(() => result.current.actions.next());
     expect(quizApi.answerQuestion).toHaveBeenCalledTimes(1);
 
     // The guard is per item, not a one-shot latch: the next question submits.
@@ -579,7 +599,7 @@ describe("a double-pressed Submit only answers once", () => {
 
     const { result } = mount();
     await waitFor(() => expect(result.current.config).not.toBeNull());
-    act(() => result.current.actions.start(START));
+    act(() => result.current.actions.start(START, { count: 5, difficulty: "medium", feedback: "as-you-go" }));
     await waitFor(() => expect(result.current.session.phase).toBe("active"));
 
     act(() => result.current.actions.select(1));
@@ -591,7 +611,8 @@ describe("a double-pressed Submit only answers once", () => {
     await act(async () => {
       result.current.actions.retry();
     });
-    await waitFor(() => expect(result.current.session.cursor).toBe(1));
+    await waitFor(() => expect(result.current.session.phase).toBe("answered"));
+    act(() => result.current.actions.next());
     expect(quizApi.answerQuestion).toHaveBeenCalledTimes(2);
   });
 });
@@ -965,7 +986,7 @@ describe("#760 — pending requests: per-request tracking, cancel, timeout", () 
     }
   });
 
-  it("cancels a hung submit back onto the final verdict, and See results submits again", async () => {
+  it("cancels a hung submit back onto the draft and permits resubmitting", async () => {
     quizApi.generateQuiz.mockResolvedValue(generated(1));
     let signal: AbortSignal | undefined;
     quizApi.submitQuiz.mockImplementationOnce(
@@ -985,12 +1006,12 @@ describe("#760 — pending requests: per-request tracking, cancel, timeout", () 
 
     await act(async () => { result.current.actions.cancel(); });
     expect(signal?.aborted).toBe(true);
-    expect(result.current.session.phase).toBe("answered");
+    expect(result.current.session.phase).toBe("active");
     // The aborted chain must not surface its AbortError as a submit failure.
     expect(result.current.session.error).toBeNull();
     await waitFor(() => expect(result.current.pending).toBe(false));
 
-    act(() => result.current.actions.next());
+    act(() => result.current.actions.finish());
     await waitFor(() => expect(result.current.session.phase).toBe("results"));
     expect(quizApi.submitQuiz).toHaveBeenCalledTimes(2);
   });

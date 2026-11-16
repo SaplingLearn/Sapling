@@ -29,6 +29,16 @@ import { useToast } from "@/components/ToastProvider";
 import { humanizeError } from "@/lib/errorMessage";
 import { quizHrefForNote } from "@/lib/quiz/noteHref";
 import { useNoteAutosave, type AutosaveStatus } from "@/lib/notes/useNoteAutosave";
+import { CHAT_MESSAGE_MAX, NOTE_BODY_MAX, NOTE_TITLE_MAX } from "@/lib/inputLimits";
+import { CrisisSupportCard, useCrisisSupport } from "@/components/safety/CrisisSupportCard";
+import { crisisSupportIn, crisisSupportInError, markNoteCardShown, type CrisisSupport } from "@/lib/crisisSupport";
+import {
+  layoutRowStyle,
+  notesListRailStyle,
+  editorFrameStyle,
+  noteDetailRailStyle,
+  chatRailStyle,
+} from "@/lib/notes/notetakerLayout";
 
 type Mastery = "mastered" | "learning" | "struggling" | "unexplored";
 
@@ -133,6 +143,10 @@ function NotetakerScreen() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const toast = useToast();
+  // docs/safety/crisis-support.md: the card a note action's answer carries.
+  // A note that matched never blocks its action: the card shows BESIDE the
+  // result (`crisis_support_alongside`), or beside an error that carries it.
+  const crisis = useCrisisSupport();
 
   const [courses, setCourses] = React.useState<Course[]>([]);
   const [notes, setNotes] = React.useState<Note[]>([]);
@@ -369,12 +383,14 @@ function NotetakerScreen() {
     await runAction(noteId, "summarize", async () => {
       if (!(await saveBeforeAgent(noteId))) return;
       try {
-        const { summary } = await summarizeNote(noteId, userId);
+        const res = await summarizeNote(noteId, userId);
+        if (crisis.intercept(res) && !res.crisis_support_alongside) return; // no summary was made
         setNotes((prev) =>
-          prev.map((n) => (n.id === noteId ? { ...n, lastSummary: summary } : n)),
+          prev.map((n) => (n.id === noteId ? { ...n, lastSummary: res.summary ?? n.lastSummary } : n)),
         );
       } catch (e) {
         console.error("Summarize failed", e);
+        crisis.intercept({ crisis_support: crisisSupportInError(e) });
         toast.error(humanizeError(e, "Couldn't summarize this note."));
       }
     });
@@ -386,10 +402,12 @@ function NotetakerScreen() {
     await runAction(noteId, "extract", async () => {
       if (!(await saveBeforeAgent(noteId))) return;
       try {
-        await extractNoteConcepts(noteId, userId);
+        const res = await extractNoteConcepts(noteId, userId);
+        if (crisis.intercept(res) && !res.crisis_support_alongside) return; // nothing was linked
         await refreshActiveConcepts();
       } catch (e) {
         console.error("Extract failed", e);
+        crisis.intercept({ crisis_support: crisisSupportInError(e) });
         toast.error(humanizeError(e, "Couldn't extract concepts from this note."));
       }
     });
@@ -416,12 +434,23 @@ function NotetakerScreen() {
     await runAction(noteId, "tutor", async () => {
       if (!(await saveBeforeAgent(noteId))) return;
       try {
-        const { topic, course_id } = await sendNoteToTutor(noteId, userId);
-        router.push(
-          `/learn?topic=${encodeURIComponent(topic)}&course=${encodeURIComponent(course_id)}`,
+        const res = await sendNoteToTutor(noteId, userId);
+        // `note` names the note, so a start on its title unchanged is screened
+        // as the student's stored material, not as a topic they typed
+        // (docs/safety/crisis-support.md): the card shows beside the session.
+        const open = () => router.push(
+          `/learn?topic=${encodeURIComponent(res.topic ?? "")}&course=${encodeURIComponent(res.course_id ?? "")}`
+            + `&note=${encodeURIComponent(noteId)}`,
         );
+        // Beside a result, the tutor opens once the card is closed, told the
+        // card was shown so its start does not pop the same one up again; a
+        // card that stands in for the result opens nothing.
+        const openAfterCard = () => { markNoteCardShown(noteId); open(); };
+        if (crisis.intercept(res, res.crisis_support_alongside ? openAfterCard : undefined)) return;
+        open();
       } catch (e) {
         console.error("Send to tutor failed", e);
+        crisis.intercept({ crisis_support: crisisSupportInError(e) });
         toast.error(humanizeError(e, "Couldn't send this note to the tutor."));
       }
     });
@@ -499,94 +528,19 @@ function NotetakerScreen() {
   }
 
   if (!active) {
-    return (
-      <>
-        <div
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            height: "100%",
-            padding: 32,
-            gap: 12,
-          }}
-        >
-          <div style={{ display: "flex", width: "100%", alignItems: "center", justifyContent: "space-between", gap: 16 }}><div className="label-micro">Notetaker</div></div>
-          <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", gap: 12 }}>
-          <h2
-            className="h-serif"
-            style={{
-              margin: 0,
-              fontSize: 28,
-              fontWeight: 500,
-              letterSpacing: "-0.015em",
-            }}
-          >
-            No notes yet
-          </h2>
-          <p
-            style={{
-              margin: 0,
-              maxWidth: 420,
-              color: "var(--text-dim)",
-              fontSize: 14,
-              lineHeight: 1.6,
-            }}
-          >
-            Pick a course to start — Sapling will link the concepts you write to its
-            knowledge graph.
-          </p>
-          <button
-            type="button"
-            onClick={() => setPickerOpen(true)}
-            className="btn btn--primary"
-            disabled={courses.length === 0}
-            style={{ marginTop: 8 }}
-          >
-            <Icon name="plus" size={13} /> Create your first note
-          </button>
-          {courses.length === 0 && (
-            <p style={{ margin: 0, fontSize: 12, color: "var(--text-muted)" }}>
-              Add a course first to start taking notes.
-            </p>
-          )}
-          </div>
-        </div>
-        {pickerOpen && (
-          <CoursePickerModal
-            courses={courses}
-            onPick={createNoteIn}
-            onClose={() => setPickerOpen(false)}
-          />
-        )}
-      </>
-    );
+    return renderEmptyState({
+      courses,
+      pickerOpen,
+      onOpenPicker: () => setPickerOpen(true),
+      onPick: createNoteIn,
+      onClosePicker: () => setPickerOpen(false),
+    });
   }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
-      <div
-        style={{
-          flex: 1,
-          minHeight: 0,
-          display: "flex",
-          gap: fullscreen ? 24 : 16,
-          padding: fullscreen ? "24px 24px 24px 24px" : "32px 32px 24px",
-          transition:
-            "gap var(--dur-slow) var(--ease), padding var(--dur-slow) var(--ease)",
-        }}
-      >
-        <div
-          style={{
-            flex: fullscreen ? "0 0 0px" : "0 0 clamp(260px, 22%, 320px)",
-            minWidth: 0,
-            opacity: fullscreen ? 0 : 1,
-            overflow: "hidden",
-            pointerEvents: fullscreen ? "none" : undefined,
-            transition:
-              "flex-basis var(--dur-slow) var(--ease), opacity var(--dur) var(--ease)",
-          }}
-          aria-hidden={fullscreen}
-        >
+      <div style={layoutRowStyle(fullscreen)}>
+        <div style={notesListRailStyle(fullscreen)} aria-hidden={fullscreen}>
           <NotesList
             notes={filtered}
             totalCount={notes.length}
@@ -610,14 +564,7 @@ function NotetakerScreen() {
             justifyContent: "center",
           }}
         >
-          <div
-            style={{
-              width: "100%",
-              maxWidth: fullscreen ? "min(1200px, 96%)" : "none",
-              display: "flex",
-              transition: "max-width var(--dur-slow) var(--ease)",
-            }}
-          >
+          <div style={editorFrameStyle(fullscreen)}>
             <NoteEditor
               note={active}
               onChange={updateActive}
@@ -629,18 +576,7 @@ function NotetakerScreen() {
           </div>
         </div>
 
-        <div
-          style={{
-            flex: fullscreen ? "0 0 0px" : "0 0 clamp(280px, 22%, 340px)",
-            minWidth: 0,
-            opacity: fullscreen ? 0 : 1,
-            overflow: "hidden",
-            pointerEvents: fullscreen ? "none" : undefined,
-            transition:
-              "flex-basis var(--dur-slow) var(--ease), opacity var(--dur) var(--ease)",
-          }}
-          aria-hidden={fullscreen}
-        >
+        <div style={noteDetailRailStyle(fullscreen)} aria-hidden={fullscreen}>
           <NoteDetail
             note={active}
             course={courseFor(active.courseId)}
@@ -657,22 +593,7 @@ function NotetakerScreen() {
           />
         </div>
 
-        <div
-          style={{
-            flex: fullscreen ? "0 0 clamp(300px, 24%, 380px)" : "0 0 0px",
-            minWidth: 0,
-            opacity: fullscreen ? 1 : 0,
-            overflow: "hidden",
-            pointerEvents: fullscreen ? undefined : "none",
-            display: "flex",
-            flexDirection: "column",
-            paddingTop: fullscreen ? 32 : 0,
-            paddingBottom: fullscreen ? 32 : 0,
-            transition:
-              "flex-basis var(--dur-slow) var(--ease), opacity var(--dur) var(--ease), padding var(--dur-slow) var(--ease)",
-          }}
-          aria-hidden={!fullscreen}
-        >
+        <div style={chatRailStyle(fullscreen)} aria-hidden={!fullscreen}>
           {/* Keyed per note: switching notes starts a fresh thread + composer. */}
           <AIChatPanel key={active.id} noteId={active.id} userId={userId} />
         </div>
@@ -694,7 +615,89 @@ function NotetakerScreen() {
           onClose={() => setConceptPickerOpen(false)}
         />
       )}
+      {crisis.dialog}
     </div>
+  );
+}
+
+/**
+ * The no-notes screen. A plain render helper rather than a component, so the
+ * element tree (and its reconciliation against the editor layout once the
+ * first note exists) is exactly what the inline branch rendered.
+ */
+function renderEmptyState({
+  courses,
+  pickerOpen,
+  onOpenPicker,
+  onPick,
+  onClosePicker,
+}: {
+  courses: Course[];
+  pickerOpen: boolean;
+  onOpenPicker: () => void;
+  onPick: (courseId: string) => void;
+  onClosePicker: () => void;
+}) {
+  return (
+    <>
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          height: "100%",
+          padding: 32,
+          gap: 12,
+        }}
+      >
+        <div style={{ display: "flex", width: "100%", alignItems: "center", justifyContent: "space-between", gap: 16 }}><div className="label-micro">Notetaker</div></div>
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", gap: 12 }}>
+        <h2
+          className="h-serif"
+          style={{
+            margin: 0,
+            fontSize: 28,
+            fontWeight: 500,
+            letterSpacing: "-0.015em",
+          }}
+        >
+          No notes yet
+        </h2>
+        <p
+          style={{
+            margin: 0,
+            maxWidth: 420,
+            color: "var(--text-dim)",
+            fontSize: 14,
+            lineHeight: 1.6,
+          }}
+        >
+          Pick a course to start — Sapling will link the concepts you write to its
+          knowledge graph.
+        </p>
+        <button
+          type="button"
+          onClick={onOpenPicker}
+          className="btn btn--primary"
+          disabled={courses.length === 0}
+          style={{ marginTop: 8 }}
+        >
+          <Icon name="plus" size={13} /> Create your first note
+        </button>
+        {courses.length === 0 && (
+          <p style={{ margin: 0, fontSize: 12, color: "var(--text-muted)" }}>
+            Add a course first to start taking notes.
+          </p>
+        )}
+        </div>
+      </div>
+      {pickerOpen && (
+        <CoursePickerModal
+          courses={courses}
+          onPick={onPick}
+          onClose={onClosePicker}
+        />
+      )}
+    </>
   );
 }
 
@@ -984,6 +987,7 @@ function NoteEditor({
       >
         <input
           value={note.title}
+          maxLength={NOTE_TITLE_MAX}
           onChange={(e) => onChange({ title: e.target.value })}
           placeholder="Untitled note"
           className="h-serif"
@@ -1023,6 +1027,7 @@ function NoteEditor({
       >
         <textarea
           value={note.body}
+          maxLength={NOTE_BODY_MAX}
           onChange={(e) => onChange({ body: e.target.value })}
           placeholder="Start writing — Sapling will pick up concepts as you go."
           className="body-serif"
@@ -1770,7 +1775,7 @@ function ConceptPickerModal({
   );
 }
 
-type ChatMessage = { role: "user" | "ai"; text: string };
+type ChatMessage = { role: "user" | "ai"; text: string; crisis?: CrisisSupport };
 
 function AIChatPanel({ noteId, userId }: { noteId: string; userId: string }) {
   const [messages, setMessages] = React.useState<ChatMessage[]>([]);
@@ -1808,17 +1813,27 @@ function AIChatPanel({ noteId, userId }: { noteId: string; userId: string }) {
     setError(null);
     setSending(true);
     try {
-      const { reply } = await noteChat(sentFor, userId, text);
+      const res = await noteChat(sentFor, userId, text);
       if (currentNoteRef.current !== sentFor) return;
-      setMessages((prev) => [...prev, { role: "ai", text: reply }]);
+      // docs/safety/crisis-support.md: the card instead of a reply (a typed
+      // crisis message), or beside the reply (the note itself matched).
+      const crisis = crisisSupportIn(res);
+      const reply: ChatMessage = { role: "ai", text: res.reply };
+      setMessages((prev) => [
+        ...prev,
+        ...(crisis ? [{ role: "ai" as const, text: "", crisis }] : []),
+        ...(!crisis || res.crisis_support_alongside ? [reply] : []),
+      ]);
     } catch (e) {
       console.error("Chat failed", e);
       if (currentNoteRef.current !== sentFor) return;
+      const crisis = crisisSupportInError(e);
       // An error state, not a fake AI reply: take the unanswered question back
       // out of the thread and return it to the composer so it can be resent.
       setMessages((prev) => {
         const last = prev[prev.length - 1];
-        return last && last.role === "user" && last.text === text ? prev.slice(0, -1) : prev;
+        const kept = last && last.role === "user" && last.text === text ? prev.slice(0, -1) : prev;
+        return crisis ? [...kept, { role: "ai", text: "", crisis }] : kept;
       });
       setInput((cur) => (cur ? cur : text));
       setError("Sorry — something went wrong. Try again?");
@@ -1877,7 +1892,9 @@ function AIChatPanel({ noteId, userId }: { noteId: string; userId: string }) {
             check a definition, or surface related ideas.
           </div>
         ) : (
-          messages.map((m, i) => (
+          messages.map((m, i) => m.crisis ? (
+            <CrisisSupportCard key={i} support={m.crisis} />
+          ) : (
             <div
               key={i}
               style={{
@@ -1941,6 +1958,7 @@ function AIChatPanel({ noteId, userId }: { noteId: string; userId: string }) {
       >
         <input
           value={input}
+          maxLength={CHAT_MESSAGE_MAX}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {

@@ -1,0 +1,39 @@
+name: Feature / user story
+description: Propose new functionality as a user story with acceptance criteria.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: story
+    attributes:
+      label: User story
+      description: Who wants this, what they want, and why.
+      placeholder: As a student, I want … so that …
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Concrete, checkable outcomes. The PR that closes this issue copies these.
+      placeholder: |
+        - [ ] Given …, when …, then …
+        - [ ] …
+    validations:
+      required: true
+  - type: textarea
+    id: design
+    attributes:
+      label: Design
+      description: Figma link, sketch, or screenshot. Write "n/a" for backend-only work.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options: [frontend, backend, agents / LLM, database, infrastructure / CI]
+    validations:
+      required: true
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      options: [P0 (blocker), P1 (high), P2 (medium), P3 (polish)]

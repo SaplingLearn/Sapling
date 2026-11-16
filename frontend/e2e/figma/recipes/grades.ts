@@ -577,8 +577,7 @@ const SEARCH_RESULTS = {
 
 async function openManageCourses(page: Page): Promise<void> {
   await page.goto("/dashboard");
-  await page.getByTestId("dashboard-courses-key-toggle").click({ timeout: 30_000 });
-  await page.getByTestId("dashboard-courses-manage").click();
+  await page.getByTestId("dashboard-courses-manage").click({ timeout: 30_000 });
   await expect(page.getByText("Courses & Semesters").last()).toBeVisible();
 }
 

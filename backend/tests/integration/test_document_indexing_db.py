@@ -188,6 +188,7 @@ def test_one_sweep_cannot_spend_a_documents_whole_budget(db_conn, monkeypatch):
         _finish(doc_id, IndexOutcome("failed", 0, "ServerError"), lease=lease)
 
     monkeypatch.setenv("SAPLING_MODEL_MODE", "real")   # the sweeper runs only in real mode
+    monkeypatch.setenv("INDEX_SWEEPER_ENABLED", "true")  # and, unset, only in production
     monkeypatch.setattr(index_sweeper, "index_document", always_fails)
 
     index_sweeper.sweep_once()

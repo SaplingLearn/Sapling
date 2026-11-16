@@ -16,6 +16,7 @@ import type { GradebookCourseSummary } from "@/lib/types";
 import { SyllabusUploadFlow } from "@/components/Gradebook/SyllabusUploadFlow";
 import { TranscriptModal } from "@/components/Gradebook/TranscriptModal";
 import { Button, EmptyState } from "@/components/ui";
+import { useCalendarConnectError } from "@/lib/useCalendarConnectError";
 
 const SAMPLE_SEMESTERS = ["Spring 2026", "Fall 2025"];
 const SAMPLE_COURSES: Record<string, GradebookCourseSummary[]> = {
@@ -97,6 +98,9 @@ const SAMPLE_COURSES: Record<string, GradebookCourseSummary[]> = {
 
 export function GradebookLanding() {
   const { userId, userReady } = useUser();
+  // Onboarding sends a student who chose Gradescope too here through the
+  // Google Calendar connect; a connect that failed says so on this page.
+  useCalendarConnectError();
 
   const [semesters, setSemesters] = React.useState<string[]>([]);
   const [selected, setSelected] = React.useState<string>("");

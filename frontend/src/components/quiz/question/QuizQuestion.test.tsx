@@ -186,26 +186,10 @@ describe("QuizQuestion — the question", () => {
     expect(actions.submitAnswer).toHaveBeenCalledOnce();
   });
 
-  it.each([
-    ["numeric", "1/0"],
-    ["symbolic", "x^"],
-  ] as const)("keeps Submit disabled for malformed %s answers", (type, answerText) => {
-    const actions = makeActions();
-    renderScreen(makeSession({ items: [item(0, {
-      question: { ...question(1), type, options: [], material_context: "general" },
-      answerText,
-    })] }), actions);
-    expect(screen.queryByTestId("quiz-material-context")).not.toBeInTheDocument();
-    expect(screen.getByTestId("quiz-submit-answer")).toBeDisabled();
-    fireEvent.keyDown(screen.getByRole("textbox", { name: /^Your answer/ }), { key: "Enter" });
-    expect(actions.submitAnswer).not.toHaveBeenCalled();
-  });
-
   it.each(["short_answer", "numeric", "symbolic"] as const)("supports %s without answer choices", type => {
     const actions = makeActions();
     const session = makeSession({ items: [item(0, { question: { ...question(1), type, options: [] } })] });
     const view = renderScreen(session, actions);
-    const validAnswer = type === "numeric" ? "3/4" : "2(x+1)";
     const input = screen.getByRole("textbox", { name: /^Your answer/ });
     expect(screen.queryByRole("radiogroup")).not.toBeInTheDocument();
     expect(screen.getByTestId("quiz-submit-answer")).toBeDisabled();
@@ -213,13 +197,14 @@ describe("QuizQuestion — the question", () => {
     expect(actions.write).toHaveBeenCalledWith("2(x+1)");
     fireEvent.keyDown(input, { key: "a" });
     expect(actions.select).not.toHaveBeenCalled();
-    view.rerender(<QuizQuestion session={{ ...session, items: [{ ...session.items[0], answerText: validAnswer }] }} actions={actions} config={null} concept={CONCEPT} userId="user-1" courseId="course-cs101" />);
+    view.rerender(<QuizQuestion session={{ ...session, items: [{ ...session.items[0], answerText: "2(x+1)" }] }} actions={actions} config={null} concept={CONCEPT} userId="user-1" courseId="course-cs101" />);
     fireEvent.click(screen.getByTestId("quiz-submit-answer"));
     expect(actions.submitAnswer).toHaveBeenCalledOnce();
   });
   it.each([
     ["numeric", /Enter only the number, without units/],
     ["symbolic", /single-letter variables/],
+    ["short_answer", /Write a brief answer/],
   ] as const)("shows the %s answer format rules on screen, not only to screen readers", (type, rule) => {
     renderScreen(makeSession({ items: [item(0, { question: { ...question(1), type, options: [] } })] }));
     const hint = screen.getByTestId("quiz-format-hint");
@@ -229,78 +214,6 @@ describe("QuizQuestion — the question", () => {
     expect(hint).not.toHaveClass("quiz-question__hint");
     expect(screen.getByRole("textbox", { name: /^Your answer/ })).toHaveAccessibleDescription(rule);
     expect(screen.queryByText(/Keyboard: press A to F/)).not.toBeInTheDocument();
-  });
-
-  it("uses formatted choice rows and arrow navigation on retry", () => {
-    const { container } = renderScreen(makeSession({
-      phase: "answered",
-      attemptId: "attempt-1",
-      items: [item(0, {
-        selectedIndex: 0,
-        verdict: { isCorrect: false, correctIndex: -1, explanation: "", retryHint: "Check the first step." },
-      })],
-    }));
-    const rows = screen.getAllByRole("radio");
-    expect(rows[0]).toHaveClass("answer-option");
-    expect(container.querySelector('input[type="radio"]')).toBeNull();
-    fireEvent.keyDown(rows[0], { key: "ArrowDown" });
-    expect(rows[0]).toHaveAttribute("aria-checked", "true");
-    fireEvent.keyDown(rows[0], { key: "ArrowDown" });
-    expect(rows[1]).toHaveAttribute("aria-checked", "true");
-    expect(rows[1]).toHaveFocus();
-  });
-
-  it("shows the previous written answer and a blank retry field", () => {
-    renderScreen(makeSession({
-      phase: "answered",
-      attemptId: "attempt-1",
-      items: [item(0, {
-        question: { ...question(1), type: "numeric", options: [] },
-        answerText: "0.25",
-        verdict: { isCorrect: false, correctIndex: -1, explanation: "", retryHint: "Check the units." },
-      })],
-    }));
-    const input = screen.getByRole("textbox", { name: "Enter a number" });
-    const previous = screen.getByText("Previous answer").parentElement!;
-    expect(screen.getByText("Try again")).toBeVisible();
-    expect(input).toHaveValue("");
-    expect(previous).toHaveTextContent("0.25");
-    expect(input.compareDocumentPosition(previous) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(screen.getByText("Check the units.")).toBeVisible();
-  });
-
-  it("can skip a written question with an empty answer", () => {
-    const actions = { ...makeActions(), skipAnswer: vi.fn() };
-    renderScreen(makeSession({ items: [item(0, {
-      question: { ...question(1), type: "numeric", options: [] },
-      answerText: "",
-    })] }), actions);
-    expect(screen.getByTestId("quiz-submit-answer")).toBeDisabled();
-    fireEvent.click(screen.getByRole("button", { name: "Skip question" }));
-    expect(actions.skipAnswer).toHaveBeenCalledOnce();
-    expect(actions.submitAnswer).not.toHaveBeenCalled();
-  });
-
-  it("shows the part question above its graph without a data disclosure or short-answer hint", () => {
-    renderScreen(makeSession({ items: [item(0, {
-      question: {
-        ...question(1),
-        question: "What is the stopping condition?",
-        type: "short_answer",
-        options: [],
-        context: {
-          stem: "Use the recursion example.",
-          part: 1,
-          parts: 2,
-          graph: { x_label: "Step", y_label: "Value", points: [[0, 0], [1, 0.5]] },
-        },
-      },
-    })] }));
-    const stem = screen.getByRole("heading", { name: "What is the stopping condition?" });
-    const graph = screen.getByRole("img", { name: "Value by Step" });
-    expect(stem.compareDocumentPosition(graph) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(screen.queryByText("Graph data")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("quiz-format-hint")).not.toBeInTheDocument();
   });
 
   it("ends the expected-answer feedback with exactly one full stop", () => {
@@ -338,7 +251,7 @@ describe("QuizQuestion — the question", () => {
     }
     expect(screen.getByTestId("quiz-progress")).toHaveAttribute("aria-label", "Question 2 of 3");
     expect(screen.getByText("Recursion · CS101")).toBeInTheDocument();
-    expect(screen.queryByText("MEDIUM")).not.toBeInTheDocument();
+    expect(screen.getByText("MEDIUM")).toBeInTheDocument();
   });
 
   it("gives the radiogroup exactly one tab stop — the selection, else the first row", () => {
@@ -606,6 +519,11 @@ describe("QuizQuestion — the verdict", () => {
         }),
       ),
     );
+    // The last question, but two were skipped: Next goes back for them.
+    expect(screen.getByTestId("quiz-next")).toHaveTextContent("Next");
+
+    const done = { selectedIndex: 0, verdict: { isCorrect: true, correctIndex: 0, explanation: "" } };
+    rerender(props(makeSession({ phase: "answered", cursor: 2, items: [item(0, done), item(1, done), item(2, done)] })));
     expect(screen.getByTestId("quiz-next")).toHaveTextContent("See results");
 
     rerender(props(makeSession({ phase: "submitting" })));
@@ -674,13 +592,17 @@ describe("QuizQuestion — flag and generating", () => {
     expect(screen.getByTestId("quiz-flag")).toHaveAttribute("aria-pressed", "true");
   });
 
-  it("shows the skeleton while the quiz is being written, and says so", () => {
+  it("shows a status with a progress bar while the quiz is being written", () => {
     const { container } = renderScreen(
       makeSession({ phase: "generating", items: [], attemptId: null }),
     );
     expect(screen.getByTestId("quiz-generating")).toBeInTheDocument();
-    expect(screen.getByText("Writing your quiz…")).toBeInTheDocument();
-    expect(container.querySelectorAll(".quiz-question__skeleton-row")).toHaveLength(4);
+    const status = screen.getByRole("status");
+    expect(status).toHaveTextContent("Writing your quiz");
+    expect(status).toHaveTextContent(/questions on Recursion/);
+    expect(container.querySelector(".quiz-generating__bar .quiz-generating__fill")).not.toBeNull();
+    // No skeleton of a layout the quiz may not have.
+    expect(container.querySelector(".quiz-question__skeleton-row")).toBeNull();
     expect(screen.queryByTestId("quiz-answer-options")).toBeNull();
   });
 
@@ -831,4 +753,77 @@ describe("QuizQuestion — Ask about this never orphans the attempt", () => {
     expect(actions.select).not.toHaveBeenCalled();
     expect(actions.requestLeave).not.toHaveBeenCalled();
   });
+});
+
+describe("QuizQuestion — each format looks like itself", () => {
+  it.each([
+    ["multiple_choice", "Multiple choice"],
+    ["short_answer", "Short answer"],
+    ["numeric", "Numeric"],
+    ["symbolic", "Algebra"],
+  ] as const)("tags a %s question with its format", (type, label) => {
+    const options = type === "multiple_choice" ? question(1).options : [];
+    renderScreen(makeSession({ items: [item(0, { question: { ...question(1), type, options } })] }));
+    expect(screen.getByTestId("quiz-format-tag")).toHaveTextContent(label);
+  });
+
+  it("raises the exponents in an algebra stem", () => {
+    renderScreen(makeSession({ items: [item(0, { question: { ...question(1), type: "symbolic", options: [], question: "Expand (x + 1)^2." } })] }));
+    const stem = document.getElementById("quiz-question-stem")!;
+    expect(stem).toHaveTextContent("Expand (x + 1)2.");
+    expect(stem.querySelector("sup")).toHaveTextContent("2");
+  });
+
+  it("marks the verdict card with its outcome, and leaves it bare before one", () => {
+    const view = renderScreen(makeSession());
+    expect(screen.getByTestId("quiz-review-verdict")).not.toHaveAttribute("data-outcome");
+    view.unmount();
+    renderScreen(makeSession({ phase: "answered", items: [
+      item(0, { selectedIndex: 1, verdict: { isCorrect: true, correctIndex: 1, explanation: "" } }), item(1), item(2),
+    ] }));
+    expect(screen.getByTestId("quiz-review-verdict")).toHaveAttribute("data-outcome", "correct");
+  });
+
+  it("folds the symbol keys and entry rules away once a written answer is marked", () => {
+    renderScreen(makeSession({ phase: "answered", config: { count: 1, difficulty: "easy", feedback: "as-you-go" },
+      items: [item(0, { question: { ...question(1), type: "symbolic", options: [] }, answerText: "x^2",
+        verdict: { isCorrect: false, correctIndex: -1, explanation: "", correctAnswer: "x^2 + 1" } })] }));
+    expect(document.querySelector(".quiz-question__written")).toHaveAttribute("data-marked", "true");
+    expect(screen.getByTestId("quiz-review-verdict").querySelector("sup")).toHaveTextContent("2");
+  });
+
+  it("keeps the tally on the rail as you go, and holds it back in at-end mode", () => {
+    const marked = [
+      item(0, { selectedIndex: 1, verdict: { isCorrect: true, correctIndex: 1, explanation: "" } }),
+      item(1, { selectedIndex: 0, verdict: { isCorrect: false, correctIndex: 1, explanation: "" } }),
+      item(2),
+    ];
+    const dots = () => Array.from(document.querySelectorAll(".progress-dots__dot")).map(d => d.getAttribute("data-outcome"));
+    const view = renderScreen(makeSession({ phase: "answered", cursor: 1, items: marked }));
+    expect(dots()).toEqual(["correct", "incorrect", null]);
+    view.unmount();
+    renderScreen(makeSession({ phase: "answered", cursor: 1, items: marked,
+      config: { count: 3, difficulty: "easy", feedback: "at-end" } }));
+    expect(dots()).toEqual([null, null, null]);
+  });
+
+  it("puts the outcome on the chosen answer, and announces it in the verdict", () => {
+    renderScreen(makeSession({ phase: "answered", items: [
+      item(0, { selectedIndex: 0, verdict: { isCorrect: false, correctIndex: 1, explanation: "Because." } }), item(1), item(2),
+    ] }));
+    expect(screen.getByTestId("quiz-answer-option-A").querySelector(".answer-option__status")).toHaveTextContent("Incorrect");
+    expect(screen.getByTestId("quiz-answer-option-B").querySelector(".answer-option__status")).toBeNull();
+    const verdict = screen.getByTestId("quiz-review-verdict");
+    expect(screen.getByTestId("quiz-verdict-outcome")).toHaveTextContent("Incorrect.");
+    expect(verdict.querySelector(".card")).toHaveTextContent("Because.");
+  });
+
+  it("marks a written answer on its own field", () => {
+    renderScreen(makeSession({ phase: "answered", config: { count: 1, difficulty: "easy", feedback: "as-you-go" },
+      items: [item(0, { question: { ...question(1), type: "short_answer", options: [] }, answerText: "base case",
+        verdict: { isCorrect: true, correctIndex: -1, explanation: "", correctAnswer: "base case" } })] }));
+    expect(document.querySelector(".quiz-written__field .quiz-written__status")).toHaveTextContent("Correct");
+    expect(screen.getByTestId("quiz-verdict-outcome")).toHaveTextContent("Correct.");
+  });
+
 });

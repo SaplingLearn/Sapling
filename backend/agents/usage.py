@@ -119,8 +119,10 @@ def record_agent_usage(
     """Record token usage for an agent run and return ``result`` unchanged.
 
     ``user_id`` is optional: pass it where the actor is in scope (routes with a
-    ``deps.user_id`` / request body) for per-user rollups; omit it and the
-    request_id from the contextvar still attributes the row. Pass
+    ``deps.user_id`` / request body); omit it and ``log_llm_usage`` attributes
+    the row to the acting user — the request's session user, or the job's
+    (``request_context.current_acting_user``, #119) — and the request_id
+    from the contextvar still correlates it. Pass
     ``request_id`` explicitly from code that runs OUTSIDE the request
     contextvar (a detached task, an SSE generator), where the implicit lookup
     finds nothing.

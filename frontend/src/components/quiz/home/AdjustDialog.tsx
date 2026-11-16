@@ -23,7 +23,7 @@ import { accentStyle } from "./accent";
 
 const NOTES = {
   "as-you-go":
-    "After each answer you'll see whether it was right. Missed answers get a retry and a worked solution at the end.",
+    "After each answer you'll see whether it was right and which answer was correct, before moving on.",
   "at-end": "Answers stay hidden while you work — you'll review everything on the results screen.",
 } as const;
 

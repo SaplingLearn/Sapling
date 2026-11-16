@@ -1,0 +1,509 @@
+/* The Flashcards home and builder.
+
+   HOME: one olive hero that asks what to study, then the student's sets as
+   decks (paper cards under a band of their own colour, on a coloured stack,
+   with a play button) and, while decks are ticked,
+   a dark mix bar floating over the bottom. It is the one place on the page
+   that leads with colour; every colour is an app token (globals.css) or a
+   tint of one.
+
+   BUILD (further down): the concept map and tray, in the Study hub's plainer
+   language: sections open on the page, told apart by hairlines, micro labels
+   and whitespace; tiles are the hub's own .tile / .tileSel.
+
+   Width comes from the CONTAINER, not the viewport, as in the hub: the side
+   nav collapses and expands, and a viewport query is wrong in one of the two. */
+
+.home {
+  container-type: inline-size;
+  container-name: fchome;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* ── the hero ────────────────────────────────────────────────────────────── */
+
+/* The side nav's olive (--sidenav-bg), the same green as the hub's Up Next
+   block. The prompt on the left, three figures on the right of a hairline. */
+.hero {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 26px; align-items: center;
+  padding: 22px 24px; border-radius: var(--r-lg);
+  background: var(--sidenav-bg); color: #fff;
+}
+.heroMain { min-width: 0; }
+.hero .heroTitle { margin: 0 0 12px; font-size: 24px; line-height: 1.2; letter-spacing: -0.01em; color: #fff; }
+.prompt { display: flex; gap: 8px; }
+.promptField {
+  flex: 1; min-width: 0; height: 46px; padding: 0 14px;
+  border: 0; border-radius: var(--r-md); background: var(--bg-panel);
+  font: inherit; font-size: 15px; color: var(--text);
+}
+.promptField::placeholder { color: color-mix(in srgb, var(--text-muted) 70%, var(--bg-panel)); }
+.promptField:disabled { opacity: 0.7; }
+/* On olive the app's forest focus ring disappears: a paper ring instead. */
+.hero :focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.promptGo {
+  height: 46px; padding: 0 18px; flex-shrink: 0;
+  display: inline-flex; align-items: center; gap: 7px;
+  border: 0; border-radius: var(--r-md); background: var(--brand-forest); color: #fff;
+  font: inherit; font-size: var(--fs-base); font-weight: 600; white-space: nowrap; cursor: pointer;
+  transition: filter var(--dur-fast) var(--ease), opacity var(--dur-fast) var(--ease);
+}
+.promptGo:hover:not(:disabled) { filter: brightness(1.08); }
+.promptGo:disabled { opacity: 0.6; cursor: not-allowed; }
+.ideas { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 12px; }
+.idea {
+  height: 26px; padding: 0 11px; max-width: 100%;
+  border: 0; border-radius: var(--r-full); background: rgba(255, 255, 255, 0.15); color: #fff;
+  font: inherit; font-size: var(--fs-sm); font-weight: 500; cursor: pointer;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  transition: background-color var(--dur-fast) var(--ease);
+}
+.idea:hover { background: rgba(255, 255, 255, 0.26); }
+/* Only there when a sort found nothing. */
+.heroNote:empty { display: none; }
+.heroNote { margin: 10px 0 0; min-height: 17px; font-size: var(--fs-sm); line-height: 17px; color: rgba(255, 255, 255, 0.92); }
+.stats { display: flex; gap: 22px; margin: 0; padding-left: 26px; border-left: 1px solid rgba(255, 255, 255, 0.22); }
+.stat { display: flex; flex-direction: column-reverse; }
+.stat .statFigure { margin: 0; font-size: 28px; font-weight: 600; line-height: 1; color: #fff; font-variant-numeric: tabular-nums; }
+.statLabel { margin-top: 3px; font-size: var(--fs-xs); opacity: 0.85; }
+
+/* ── your sets: the deck grid ────────────────────────────────────────────── */
+
+/* The bottom padding is the mix bar's room: always there, so the bar lays
+   over the page instead of pushing it. */
+.sets { padding-bottom: 64px; }
+.setsHead { display: flex; align-items: center; gap: 10px; margin: 24px 0 12px; }
+.setsHint { margin-left: auto; font-size: var(--fs-sm); color: var(--text-dim); }
+.decks {
+  list-style: none; margin: 0; padding: 0;
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 28px 16px;
+}
+
+/* A deck: a paper card with a band of its own colour across the top, on two
+   layers in that colour, so it reads as a coloured stack without being tinted
+   edge to edge.
+
+   Five palettes, each three stops (and what sits on the band):
+     --deck       the band: a mid, saturated tone
+     --deck-on    text and controls ON the band (4.5:1 or better against it)
+     --deck-pill  the translucent pill behind the tag (it deepens the band
+                  under light text, lightens it under dark text)
+     --deck-soft  the pale tint: back layer, chips, the bar's track
+     --deck-ink   dark text and controls on paper and on the soft tint
+   Every one is an app token or a mix of app tokens. */
+.deck { position: relative; height: 250px; }
+/* The builder's columns (and the tray's bar of them) wear the same palettes. */
+.deck, .column, .trayMixSeg {
+  --deck: color-mix(in srgb, var(--sidenav-bg) 75%, var(--brand-forest));
+  --deck-on: #fff;
+  --deck-pill: rgba(0, 0, 0, 0.2);
+  --deck-soft: var(--sap-100);
+  --deck-ink: var(--brand-forest);
+}
+.deck[data-palette="blue"], .column[data-palette="blue"], .trayMixSeg[data-palette="blue"] {
+  --deck: var(--info);
+  --deck-soft: var(--info-soft);
+  --deck-ink: color-mix(in srgb, var(--info) 75%, var(--text));
+}
+/* A deep ochre, not the pale --state-progress tan: every band carries white
+   text and white controls (4.6:1 here), so no palette is the odd one out. */
+.deck[data-palette="amber"], .column[data-palette="amber"], .trayMixSeg[data-palette="amber"] {
+  --deck: #9F6916;
+  --deck-soft: color-mix(in srgb, var(--state-progress) 28%, var(--bg-panel));
+  --deck-ink: color-mix(in srgb, #9F6916 80%, var(--text));
+}
+/* The plum pair the Study hub uses for its quiz tool. */
+.deck[data-palette="plum"], .column[data-palette="plum"], .trayMixSeg[data-palette="plum"] {
+  --deck: #7A4A78;
+  --deck-soft: #EBDDEE;
+  --deck-ink: color-mix(in srgb, #7A4A78 85%, var(--text));
+}
+.deck[data-palette="clay"], .column[data-palette="clay"], .trayMixSeg[data-palette="clay"] {
+  --deck: color-mix(in srgb, var(--err) 65%, var(--warn));
+  --deck-soft: color-mix(in srgb, var(--err-soft) 70%, var(--warn-soft));
+  --deck-ink: color-mix(in srgb, var(--err) 70%, var(--text));
+}
+
+/* Two offset layers behind the face, in the deck's colour: the back one the
+   soft stop, the nearer one a stronger mix. */
+.layer {
+  position: absolute; left: 18px; right: 18px; top: 0; height: 100%; border-radius: var(--r-lg);
+  background: color-mix(in srgb, var(--deck) 30%, var(--deck-soft));
+  transform: translateY(12px);
+  transition: transform var(--dur) var(--ease);
+}
+.layerTwo {
+  left: 9px; right: 9px;
+  background: color-mix(in srgb, var(--deck) 62%, var(--deck-soft));
+  transform: translateY(6px);
+}
+.face {
+  position: absolute; inset: 0; display: flex; flex-direction: column;
+  border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--bg-panel);
+  transition: box-shadow var(--dur-fast) var(--ease), transform var(--dur) var(--ease);
+}
+/* Hover or focus: the deck lifts and its layers fan out a little. */
+.deck:hover .face, .deck:focus-within .face { transform: translateY(-2px); }
+.deck:hover .layer, .deck:focus-within .layer { transform: translateY(15px) rotate(1.2deg); }
+.deck:hover .layerTwo, .deck:focus-within .layerTwo { transform: translateY(8px) rotate(-0.8deg); }
+.deckSel .face { box-shadow: 0 0 0 2px var(--deck-ink); }
+/* The deck that owns the open menu sits above the decks after it. */
+.deckMenuOpen { z-index: 3; }
+.deck[data-busy] .face { opacity: 0.85; }
+/* The body is one button under everything else on the face. */
+.deckOpen {
+  position: absolute; inset: 0; z-index: 0;
+  border: 0; border-radius: var(--r-lg); background: transparent; cursor: pointer;
+}
+.deckOpen:focus-visible { outline: 2px solid var(--deck-ink); outline-offset: 2px; }
+
+/* The band: about 42% of the deck. */
+.band {
+  position: relative; flex: 0 0 104px; min-height: 0; overflow: hidden; pointer-events: none;
+  display: flex; flex-direction: column; padding: 11px 14px 12px;
+  border-radius: calc(var(--r-lg) - 1px) calc(var(--r-lg) - 1px) 0 0;
+  background: var(--deck); color: var(--deck-on);
+}
+/* The card count as a big faint numeral bleeding off the bottom right. */
+.band .motif {
+  position: absolute; right: -4px; bottom: -30px;
+  font-size: 104px; font-weight: 600; line-height: 1; letter-spacing: -0.04em;
+  color: var(--deck-on); opacity: 0.12; user-select: none;
+}
+/* The tag's row; its right end is the corner's (menu, tick). */
+.bandTop { position: relative; display: flex; align-items: center; min-height: 22px; padding-right: 56px; }
+.deckTag {
+  min-width: 0; padding: 2px 8px; border-radius: var(--r-full);
+  background: var(--deck-pill); color: var(--deck-on);
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.04em; text-transform: uppercase;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.band .deckName {
+  position: relative; margin-top: auto;
+  font-size: var(--fs-xl); line-height: 1.2; letter-spacing: -0.01em; color: var(--deck-on);
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden;
+}
+
+/* Top right of the band: the "..." menu and the tick. */
+.corner { position: absolute; top: 11px; right: 12px; z-index: 1; display: flex; align-items: center; gap: 6px; }
+.deckMenuOwner { position: relative; display: flex; flex-shrink: 0; }
+.deckMore {
+  width: 22px; height: 22px; padding: 0; display: grid; place-items: center;
+  border: 0; border-radius: 6px; background: var(--deck-pill); color: var(--deck-on); cursor: pointer;
+}
+.deckTick {
+  appearance: none; -webkit-appearance: none;
+  width: 20px; height: 20px; margin: 0; flex-shrink: 0; display: grid; place-items: center;
+  border: 1.5px solid var(--deck-on); border-radius: 6px; background: var(--deck-pill); cursor: pointer;
+}
+/* Ticked: filled, with the band's colour for the mark. */
+.deckTick:checked { background: var(--deck-on); }
+.deckTick:checked::after {
+  content: ""; width: 4px; height: 9px; margin-top: -2px;
+  border: solid var(--deck); border-width: 0 2px 2px 0; transform: rotate(45deg);
+}
+.deckMore:focus-visible, .deckTick:focus-visible { outline: 2px solid var(--deck-on); outline-offset: 2px; }
+/* The tick and the menu show on hover or focus, and stay while in use. */
+.deckTick, .deckMore { opacity: 0; transition: opacity var(--dur-fast) var(--ease); }
+.deck:hover .deckTick, .deck:focus-within .deckTick, .deckTick:checked,
+.deck:hover .deckMore, .deck:focus-within .deckMore, .deckMore[aria-expanded="true"] { opacity: 1; }
+/* No hover to reveal them with: always there on touch. */
+@media (hover: none) {
+  .deckTick, .deckMore { opacity: 1; }
+}
+
+/* The paper body. Every row keeps its height whether or not a deck has
+   anything to put in it, so the decks of a row line up. */
+.deckBody {
+  position: relative; flex: 1; min-height: 0; pointer-events: none;
+  display: flex; flex-direction: column; padding: 10px 14px 12px;
+}
+.deckMeta { font-size: var(--fs-xs); line-height: 16px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* One line of chips. The model picks names that should fit; on a narrow deck
+   a chip shortens with an ellipsis and the "+N" keeps its place. */
+.peek { display: flex; gap: 4px; height: 20px; margin-top: 7px; overflow: hidden; }
+.peekChip, .peekMore {
+  height: 20px; padding: 0 8px; border-radius: var(--r-full); flex-shrink: 0;
+  background: var(--deck-soft); color: var(--deck-ink);
+  font-size: var(--fs-xs); font-weight: 600; line-height: 20px; white-space: nowrap;
+}
+.peekChip { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.peekMore { padding: 0 6px; background: transparent; }
+.masteryBlock { margin-top: 10px; }
+.mastery { display: flex; height: 6px; overflow: hidden; border-radius: var(--r-full); background: var(--deck-soft); }
+.mastery i { display: block; height: 100%; }
+.mastery i[data-kind="mastered"], .legendDot[data-kind="mastered"] { background: var(--state-mastery); }
+.mastery i[data-kind="learning"], .legendDot[data-kind="learning"] { background: var(--state-progress); }
+.mastery i[data-kind="struggling"], .legendDot[data-kind="struggling"] { background: var(--state-struggle); }
+.legend {
+  display: flex; gap: 10px; height: 15px; margin-top: 5px; overflow: hidden;
+  font-size: 10.5px; line-height: 15px; color: var(--text-muted); white-space: nowrap;
+}
+.legendItem { display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.legendDot { width: 6px; height: 6px; border-radius: 50%; }
+.deckFoot { margin-top: auto; display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 34px; }
+.deckFact { min-width: 0; font-size: var(--fs-xs); font-weight: 600; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.deckFactUrgent { color: var(--warn); }
+.play {
+  width: 34px; height: 34px; flex-shrink: 0; display: grid; place-items: center; pointer-events: auto;
+  border: 0; border-radius: 50%; background: var(--deck-ink); color: var(--bg-panel); cursor: pointer;
+  transition: transform var(--dur-fast) var(--ease), opacity var(--dur-fast) var(--ease);
+}
+.play svg { margin-left: 2px; }
+.play:hover:not(:disabled) { transform: scale(1.08); }
+.play:disabled { opacity: 0.5; cursor: not-allowed; }
+.play:focus-visible { outline: 2px solid var(--deck-ink); outline-offset: 2px; }
+
+/* The last cell: build a set by hand. */
+.deckNew {
+  position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  border: 1.5px dashed var(--border-strong); border-radius: var(--r-lg); background: transparent;
+  font: inherit; font-size: var(--fs-md); font-weight: 600; color: var(--text-dim); text-align: center; cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease);
+}
+.deckNew small { font-size: var(--fs-sm); font-weight: 400; color: var(--text-muted); }
+.deckNew:hover { border-color: var(--brand-forest); color: var(--brand-forest); background: var(--sap-50); }
+.deckGhost { border-radius: var(--r-lg); }
+
+/* Which concept is being made, or why nothing started. */
+.deckStatus { margin: 16px 0 0; min-height: 17px; font-size: var(--fs-sm); line-height: 17px; color: var(--text-dim); }
+
+/* ── the mix bar ─────────────────────────────────────────────────────────── */
+
+/* A zero-height anchor stuck to the bottom of the scrolling page: the bar
+   hangs above it, over the content, and takes no room of its own. */
+.mixAnchor {
+  position: sticky; bottom: 0; z-index: 20; height: 0;
+  display: flex; justify-content: center; pointer-events: none;
+}
+@keyframes fcMixIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: none; }
+}
+.mix {
+  position: absolute; bottom: 18px; max-width: 100%; pointer-events: auto;
+  display: flex; align-items: center; flex-wrap: wrap; justify-content: center; gap: 8px 10px;
+  padding: 8px 8px 8px 16px; border-radius: 12px;
+  background: var(--text); color: #fff; font-size: var(--fs-md);
+  box-shadow: 0 12px 30px rgba(25, 37, 11, 0.3);
+  animation: fcMixIn var(--dur) var(--ease) both;
+}
+.mixCount { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.mixBtn {
+  height: 30px; padding: 0 12px; border: 0; border-radius: var(--r-sm);
+  background: rgba(255, 255, 255, 0.14); color: #fff;
+  font: inherit; font-size: var(--fs-md); font-weight: 500; white-space: nowrap; cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease), opacity var(--dur-fast) var(--ease);
+}
+.mixBtn:hover:not(:disabled) { background: rgba(255, 255, 255, 0.24); }
+.mixBtn:disabled { opacity: 0.6; cursor: not-allowed; }
+.mixBtn:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.mixPrimary, .mixPrimary:hover:not(:disabled) { background: #fff; color: var(--text); font-weight: 600; }
+
+@keyframes fcPop {
+  from { opacity: 0; transform: translateY(-6px) scale(0.98); }
+  to   { opacity: 1; transform: none; }
+}
+.menu {
+  position: absolute; right: 0; top: calc(100% + 4px); z-index: 21;
+  min-width: 180px; padding: 4px; display: flex; flex-direction: column; gap: 2px;
+  background: var(--bg-panel); border: 1px solid var(--border); border-radius: var(--r-md);
+  box-shadow: var(--shadow-lg);
+  animation: fcPop var(--dur-fast) var(--ease) both; transform-origin: top right;
+}
+.menuItem {
+  height: 32px; padding: 0 8px; border: 0; border-radius: var(--r-sm); background: transparent;
+  font: inherit; font-size: var(--fs-md); font-weight: 600; color: var(--text);
+  text-align: left; white-space: nowrap; cursor: pointer;
+}
+.menuItem:hover { background: var(--bg-subtle); }
+.menuDanger { color: var(--err); }
+.menuArmed, .menuArmed:hover { background: var(--err-soft); }
+
+/* Renaming a deck in place: the field takes the name's spot on the band. */
+.rename { position: relative; z-index: 1; display: flex; margin-top: auto; pointer-events: auto; }
+.field {
+  width: 100%; min-width: 0; box-sizing: border-box; height: 36px; padding: 0 10px;
+  border: 1px solid var(--border-strong); border-radius: var(--r-sm); background: var(--bg-input);
+  font: inherit; font-size: var(--fs-md); color: var(--text);
+}
+.field::placeholder { color: var(--text-muted); }
+.rename .field { height: 32px; }
+
+.quiet { margin: 0; font-size: var(--fs-md); color: var(--text-muted); }
+.quiet a { color: var(--brand-forest); font-weight: 600; }
+
+/* The tray's head: its label and Clear on one line. */
+.trayHead { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 24px; }
+.trayClear { height: 24px; padding: 0 8px; margin-right: -8px; font-size: var(--fs-sm); color: var(--text-dim); }
+
+/* ── BUILD: the map and the tray ─────────────────────────────────────────── */
+
+/* What "Sort it" did, said at the top of the builder it opened. */
+.buildNote {
+  margin: 0 0 14px; padding: 10px 14px; border-radius: var(--r-md);
+  background: var(--sap-50); color: var(--text-dim); font-size: var(--fs-md);
+}
+
+.body {
+  display: grid;
+  /* The tray is the hub's rail, narrower: it holds five short lines. Clamped,
+     so it gives ground as the container narrows. */
+  grid-template-columns: minmax(0, 1fr) clamp(240px, 26cqi, 300px);
+  column-gap: 32px; align-items: start;
+  padding-top: 16px; border-top: 1px solid var(--border);
+}
+.map { min-width: 0; }
+.mapHead { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 12px; }
+/* The hub's roadmap grid: columns share the row, at most four across (a track
+   is never narrower than a quarter of the row less the three 16px gaps), and
+   200px is the floor below which they wrap. */
+.columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(max(200px, calc((100% - 48px) / 4 - 0.1px)), 1fr));
+  gap: 20px 16px; align-items: start;
+}
+/* A column is one block: the unit's band on top and its concepts as rows
+   under it, inside the same rounded shape and divided by hairlines, so they
+   read as part of the unit and not as loose cards. */
+.column {
+  display: flex; flex-direction: column; min-width: 0; overflow: hidden;
+  border-radius: var(--r-md); background: var(--bg-subtle);
+}
+/* A column's head is a band of its colour, like a deck's: the unit's name,
+   how much of it is ticked, and the box that ticks all of it. */
+.colHead {
+  display: flex; align-items: center; gap: 10px; height: 42px; padding: 0 14px;
+  background: var(--deck); color: var(--deck-on); cursor: pointer;
+}
+.colLabel { flex: 1; min-width: 0; font-size: var(--fs-md); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.colCount {
+  flex-shrink: 0; padding: 1px 7px; border-radius: var(--r-full);
+  background: var(--deck-pill); font-size: var(--fs-xs); color: var(--deck-on);
+}
+.colHead:has(.check:focus-visible) { outline: 2px solid var(--deck-on); outline-offset: -3px; }
+.colHead .check:focus-visible { outline: none; }
+
+.check { width: 15px; height: 15px; margin: 0; flex-shrink: 0; accent-color: var(--brand-forest); cursor: pointer; }
+/* The boxes are drawn here, not by the browser: an empty square, FILLED when
+   ticked (no tick mark), and for a unit with only some of its concepts ticked
+   a smaller filled square inside (no dash). */
+.column .check {
+  appearance: none; -webkit-appearance: none;
+  width: 16px; height: 16px; display: grid; place-items: center;
+  border: 1.5px solid var(--border-strong); border-radius: 4px; background: var(--bg-panel);
+  transition: background-color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+/* Filled with the band's own colour, so a ticked box matches its unit. */
+.column .tile .check:checked { border-color: transparent; background: var(--deck); }
+/* On the band the box is drawn in the band's text colour. */
+.column .colHead .check { border-color: var(--deck-on); background: transparent; }
+.column .colHead .check:checked { background: var(--deck-on); }
+.column .colHead .check:indeterminate::after { content: ""; width: 8px; height: 8px; border-radius: 2px; background: var(--deck-on); }
+/* A concept: a row of the unit, with no fill, edge or radius of its own and
+   a hairline above it. Two lines tall (the name, its cards under it). Hover
+   is a wash of the column's colour. */
+.column .tile {
+  border-radius: 0; background: transparent; box-shadow: none;
+  border-top: 1px solid var(--border);
+}
+.column .colHead + .tile { border-top: 0; }
+.column .tile:hover { background: color-mix(in srgb, var(--deck-soft) 50%, transparent); }
+/* Ticked changes the box only: the row keeps its fill. (The hub's selected
+   tile fill and ring are undone here; hover stays the same wash.) */
+.column .tileOn { background: transparent; }
+.column .tileOn:hover { background: color-mix(in srgb, var(--deck-soft) 50%, transparent); }
+/* The band's inset, so every box sits in one line under the unit's own. */
+.column .tileHit { align-items: center; padding: 12px 14px; gap: 10px; }
+.column .tile .check { margin-top: 0; }
+.column .tileName { font-size: var(--fs-base); }
+.column .tileMeta { margin-top: 1px; }
+.column .dot { margin-top: 0; }
+.column .tile:has(.check:focus-visible) { outline-offset: -2px; }
+
+/* Laid over the hub's .tile (fill, hover, selected ring). */
+.tile { display: flex; align-items: stretch; min-width: 0; border-radius: var(--r-md); }
+.tileHit { flex: 1; min-width: 0; display: flex; align-items: flex-start; gap: 9px; padding: 9px 11px; cursor: pointer; }
+.tile .check { margin-top: 1px; }
+/* Taking one of your own concepts off the map again. */
+.tileRemove {
+  width: 26px; margin: 5px 5px 5px 0; flex-shrink: 0; display: grid; place-items: center;
+  border: 0; border-radius: var(--r-sm); background: transparent; color: var(--text-muted); cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.tileRemove:hover { background: var(--border); color: var(--text); }
+/* The tile is the checkbox's label, so the focus ring goes round it. */
+.tile .check:focus-visible { outline: none; }
+.tile:has(.check:focus-visible) { outline: 2px solid var(--deck-ink, var(--accent)); outline-offset: 2px; }
+.tileText { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.tileName { font-size: var(--fs-md); font-weight: 600; line-height: 1.25; text-wrap: pretty; overflow-wrap: anywhere; }
+.tileMeta { font-size: var(--fs-xs); color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dot { width: 8px; height: 8px; margin-top: 4px; border-radius: 50%; flex-shrink: 0; }
+
+
+.tray {
+  position: sticky; top: 12px; min-width: 0;
+  display: flex; flex-direction: column;
+  padding-left: 24px; border-left: 1px solid var(--border);
+}
+.tray .trayCount { margin-top: 6px; font-size: var(--fs-xl); line-height: 1.3; color: var(--text); }
+/* The selection as a bar of the columns' colours, each as wide as its share. */
+.trayMix { display: flex; gap: 2px; height: 6px; margin-top: 8px; overflow: hidden; border-radius: var(--r-full); background: var(--bg-subtle); }
+.trayMixSeg { display: block; flex: 1 0 0; height: 100%; background: var(--deck); transition: flex-grow var(--dur) var(--ease); }
+/* Two lines are always reserved for each of the tray's changing lines, so a
+   tick never moves the options or the buttons under it. */
+.trayLine { min-height: 34px; margin-top: 6px; font-size: var(--fs-sm); line-height: 17px; color: var(--text-muted); }
+.opts { display: flex; flex-direction: column; margin-top: 8px; border-top: 1px solid var(--border); }
+.opt {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  min-height: 42px; border-bottom: 1px solid var(--border); font-size: var(--fs-md);
+}
+/* The label gives way (it wraps); the control keeps its width. */
+.opt > :last-child { flex-shrink: 0; }
+.optOff > span:first-child { color: var(--text-muted); }
+.nameRow { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; min-height: 18px; margin: 14px 0 6px; }
+.linkBtn {
+  padding: 0; border: 0; background: transparent;
+  font: inherit; font-size: var(--fs-sm); font-weight: 600; color: var(--brand-forest);
+  text-decoration: underline; text-underline-offset: 2px; cursor: pointer;
+}
+.trayActions { display: flex; gap: 8px; margin-top: 10px; }
+.start { flex: 1; min-width: 0; height: 38px; justify-content: center; font-weight: 600; }
+.save { height: 38px; white-space: nowrap; }
+.save:disabled { opacity: 0.5; cursor: not-allowed; }
+.status { min-height: 34px; margin-top: 8px; font-size: var(--fs-sm); line-height: 17px; color: var(--text-dim); }
+
+/* Below this the tray no longer leaves the map a usable column, so it goes
+   under it and both take the full width. */
+@container fchome (max-width: 860px) {
+  .body { grid-template-columns: minmax(0, 1fr); row-gap: 24px; }
+  .tray { position: static; padding: 16px 0 0; border-left: 0; border-top: 1px solid var(--border); }
+}
+
+/* The decks: four across on a wide page, fewer as it narrows. */
+@container fchome (max-width: 1000px) {
+  .decks { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+/* The figures drop under the prompt, across a hairline. */
+@container fchome (max-width: 760px) {
+  .hero { grid-template-columns: minmax(0, 1fr); gap: 14px; padding: 18px 18px 16px; }
+  .stats { padding: 14px 0 0; border-left: 0; border-top: 1px solid rgba(255, 255, 255, 0.22); }
+  .decks { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .setsHint { display: none; }
+}
+@container fchome (max-width: 460px) {
+  .decks { grid-template-columns: minmax(0, 1fr); }
+  .prompt { flex-direction: column; }
+  .promptGo { justify-content: center; }
+  .promptField { flex: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mix { animation: none; }
+  .face, .layer, .play, .deckTick, .deckMore { transition: none; }
+  .deck:hover .face, .deck:focus-within .face, .play:hover:not(:disabled) { transform: none; }
+  .deck:hover .layer, .deck:focus-within .layer { transform: translateY(12px); }
+  .deck:hover .layerTwo, .deck:focus-within .layerTwo { transform: translateY(6px); }
+}

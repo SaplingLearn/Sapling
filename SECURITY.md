@@ -2,6 +2,12 @@
 
 This document describes the security controls currently implemented in Sapling. It is sourced directly from the code; every claim cites the file (and where useful, the line) that implements it.
 
+> **Verification date.** §4 (Secrets and Configuration), §7 (Logging), §8 (Dependency Surface) and the Related documents section were re-checked against the code on **2026-11-14**. Other sections carry their original sourcing and may lag the code; where they disagree, the code wins.
+
+## Reporting a vulnerability
+
+Do not open a public issue for a security problem. Message a maintainer directly (see "Team" in the [README](README.md)) with the affected route or file, steps to reproduce, and the impact. We acknowledge reports within a few days and credit reporters in the fix PR unless asked not to.
+
 The codebase is split into a FastAPI backend (`backend/`) and a Next.js frontend (`frontend/`) deployed to Cloudflare Workers. The threat model assumes a hostile public internet, untrusted user-uploaded content, and the need to keep student PII unreadable to anyone who lifts the database.
 
 ---
@@ -29,12 +35,13 @@ Sapling does not use JWTs. Sessions are minimal HMAC-signed payloads of the form
 base64url(payload).base64url(signature)
 ```
 
-- **Payload:** `{"user_id": "<id>", "exp": <unix_timestamp>}`. The key name is `user_id` (snake_case) on both ends — alignment was a recent fix (commit `02b0242`).
+- **Payload:** `{"user_id": "<id>", "exp": <unix_timestamp>, "typ": "session", "iat": <unix_timestamp>}`. The key name is `user_id` (snake_case) on both ends — alignment was a recent fix (commit `02b0242`).
 - **Algorithm:** HMAC-SHA256 over the base64 payload using `SESSION_SECRET` (≥32 bytes, validated at runtime in `sessionToken.ts:6`).
 - **Frontend signs** with `crypto.subtle.importKey` + `crypto.subtle.sign('HMAC', …)`.
 - **Backend verifies** with `hmac.compare_digest()` for timing-safe comparison (`auth_guard.py:35`).
-- **Expiry:** 30 days (`SESSION_MAX_AGE = 2_592_000` in `sessionToken.ts:1`); enforced on both ends (`auth_guard.py:48`, `sessionToken.ts:60`).
-- **Lookup:** Backend reads the token from cookie `sapling_session` first, falling back to the `auth_token` query parameter (`auth_guard.py:19`).
+- **Expiry:** 7 days from issue (`SESSION_MAX_AGE = 604800` in `sessionToken.ts`, `config.SESSION_MAX_AGE_SECONDS` on the backend); both ends refuse a session whose `iat` is older, whatever its `exp` says. A token minted before `iat` existed is dated `exp - 30 days`.
+- **Lookup:** Backend reads the token from the `sapling_session` cookie only. The `?auth_token=` query parameter is not a credential (tokens in URLs reach access logs, Referer headers and browser history); the OAuth handoff token travels in the frontend callback URL and reaches the session BFF in a JSON body.
+- **Revocation:** `users.sessions_valid_after`; a session issued before it is refused (`auth_guard.get_session_user_id`, through its 30 s account cache).
 
 ### 1.3 Cookie Hardening
 
@@ -45,11 +52,11 @@ The session cookie is set exclusively by the Next.js route handler — never by 
 | Flag        | Value                | Purpose                                             |
 |-------------|----------------------|-----------------------------------------------------|
 | `httpOnly`  | `true`               | Inaccessible to JavaScript; mitigates XSS exfil     |
-| `secure`    | `true`               | HTTPS-only                                          |
+| `secure`    | `true`               | HTTPS-only (production builds, and any https request) |
 | `sameSite`  | `lax`                | Implicit CSRF defense for state-changing requests   |
 | `path`      | `/`                  | Whole site                                          |
 | `domain`    | `.saplinglearn.com`  | Shared across all subdomains (api, app, www)        |
-| `maxAge`    | 30 days              | Set to `0` on sign-out for immediate deletion       |
+| `maxAge`    | 7 days               | Set to `0` on sign-out for immediate deletion       |
 
 `COOKIE_DOMAIN=.saplinglearn.com` is shipped via `wrangler.toml [vars]` (commit `b1377ec`); the leading dot is what permits `api.saplinglearn.com` and the app origin to share the same session.
 
@@ -57,7 +64,11 @@ The session cookie is set exclusively by the Next.js route handler — never by 
 
 ### 1.4 Sign-out
 
-`UserContext.signOut()` issues `DELETE /api/auth/session`, which writes a `Max-Age=0` cookie under the same domain/Secure/SameSite settings, then clears in-memory and storage state. Tokens are stateless, so revocation is by cookie deletion + 30-day expiry; there is no server-side blacklist.
+`UserContext.signOut()` issues `DELETE /api/auth/session`. The BFF first calls the backend's `POST /api/auth/logout` with the cookie, which sets `users.sessions_valid_after = now()` and so revokes every session the account was issued until then (sign-out is everywhere); it then writes a `Max-Age=0` cookie under the same domain/Secure/SameSite settings, and the client clears in-memory and storage state. Other backend processes honour the revocation within the guard's 30 s account cache.
+
+### 1.5 Boot refusals
+
+`config.validate_config()` refuses to start a process whose `APP_ENV` is local/test/dev/development but which looks deployed (an https `FRONTEND_URL` or `GOOGLE_AUTH_REDIRECT_URI` off localhost, `SECURE_COOKIES=true`, or a hosting platform's env), and, outside local, refuses the `SESSION_SECRET` / `ENCRYPTION_KEY` values committed to the repository. FastAPI's `/docs`, `/redoc` and `/openapi.json` are served only when `APP_ENV` is local or test.
 
 ---
 
@@ -71,7 +82,7 @@ Three building blocks gate every authenticated route:
 
 - **`get_session_user_id(request)`** — verifies the HMAC token and returns the `user_id`; raises `401` on missing/invalid/expired tokens.
 - **`require_self(user_id, request)`** — confirms the session user matches the target resource owner; raises `403 "Forbidden: not your account"` otherwise.
-- **`require_admin(request)`** — joins `user_roles` to `roles` and checks for the `admin` slug; raises `403 "Admin access required"` otherwise.
+- **`require_admin(request)`** — joins `user_roles` to `roles` and checks for the `admin` slug; raises `403 "Admin access required"` otherwise. Step-up: the session must also have been issued within `ADMIN_REAUTH_WINDOW_SECONDS` (12 h), else `401` with `detail.code = "reauth_required"` and the admin console asks for a fresh Google sign-in. **`require_admin_recent(request)`** applies the stricter `ADMIN_DESTRUCTIVE_REAUTH_WINDOW_SECONDS` (30 min) to account wipe/seed/copy, role assign/revoke, email broadcasts and feature-flag changes.
 - **`require_role(role_slug)`** — generic factory that returns a checker for any role.
 
 Errors are surfaced as standard FastAPI `HTTPException` with deterministic status codes (`401` unauthenticated, `403` authorized-but-forbidden).
@@ -200,24 +211,51 @@ All Gemini callers decrypt before constructing a prompt. None of `decrypt_if_pre
 
 ## 4. Secrets and Configuration
 
-**Files:** `backend/config.py`, `backend/.env.example`, `frontend/wrangler.toml`, `frontend/.env*`
+**Files:** `backend/config.py`, `backend/.env.example`, `backend/services/encryption.py`, `backend/db/user_jwt.py`, `backend/services/typesafe_client.py`, `backend/main.py`, `frontend/wrangler.toml`, `frontend/.env.example`
 
-`.env`, `.env.local`, and other secret files are gitignored. The runtime contract:
+*Verified against the code on 2026-11-14.* `.env`, `.env.local`, and other secret files are gitignored. Backend secrets are Railway service variables (the `worker` service references them from the API service, `.railway/railway.ts`); frontend secrets are Cloudflare Worker secrets or Workers Builds build variables. Where each one is set, its blast radius and how to rotate it: [`docs/security/incident-response.md` §4](docs/security/incident-response.md#4-key-and-secret-rotation).
+
+**Secrets** (names exactly as the code reads them):
 
 | Variable                          | Surface  | Purpose                                                          |
 |-----------------------------------|----------|------------------------------------------------------------------|
-| `SUPABASE_URL`                    | both     | Project base URL.                                                |
-| `SUPABASE_SERVICE_KEY`            | backend  | RLS-bypass service role key. Never exposed to the browser.       |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY`   | frontend | Browser-safe key used only for Realtime room subscriptions.      |
-| `ENCRYPTION_KEY`                  | backend  | 64-hex-char (32-byte) AES-256-GCM key.                           |
-| `SESSION_SECRET`                  | both     | HMAC-SHA256 secret for session tokens (≥32 bytes).               |
-| `GOOGLE_CLIENT_ID` / `_SECRET`    | backend  | OAuth credentials.                                               |
-| `GOOGLE_AUTH_REDIRECT_URI`        | backend  | Pinned OAuth callback URL.                                       |
-| `GEMINI_API_KEY`                  | backend  | LLM access.                                                      |
-| `COOKIE_DOMAIN`                   | frontend | `.saplinglearn.com` for cross-subdomain session cookies.         |
-| `OCR_ENGINE`, `GOT_OCR_ENABLED`   | backend  | OCR backend selection.                                           |
+| `SUPABASE_SERVICE_KEY`            | backend  | RLS-bypass service role key for PostgREST and Storage. Never exposed to the browser. Required at startup. |
+| `SUPABASE_JWT_SIGNING_KEY`        | backend  | One JWK that signs backend-minted student JWTs (`db_user_scope`) and the browser Realtime token (`db/user_jwt.py`). Optional; unset, those paths answer 503 / fail closed. |
+| `SUPABASE_ANON_KEY`               | backend  | The project's anon/publishable key, sent as `apikey` on user-scoped requests. Public by design. |
+| `SUPABASE_DB_URL`                 | backend (ops) | Postgres URI (password inside) for the migration runner and `make backup-db`; unused by the app runtime. |
+| `STAGING_SUPABASE_DB_URL`         | ops / CI | Staging's Postgres URI, read by the promotion runner (also a GitHub Actions secret). |
+| `DBOS_DATABASE_URL`               | backend  | Postgres URI for the optional DBOS durable-workflow shim (`services/durable.py`); only when DBOS is enabled. |
+| `ENCRYPTION_KEY`                  | backend  | 64-hex-char (32-byte) AES-256-GCM key for column encryption. Required. |
+| `SESSION_SECRET`                  | both     | HMAC-SHA256 secret (≥32 bytes) for session tokens, OAuth state, `/pending` tokens and email recipient hashes / unsubscribe tokens. Backend and frontend values must be equal. |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | backend | Google OAuth client (sign-in and Calendar). |
+| `ANTHROPIC_API_KEY`               | backend  | Claude, the provider for every agent (ADR 0030). Required at startup. |
+| `GEMINI_API_KEY`                  | backend  | Gemini embeddings for RAG, and any slot pointed at a `gemini-*` model. Required at startup. |
+| `RESEND_API_KEY`                  | backend  | Resend email sending; unset = nothing is sent (sends recorded `skipped`). |
+| `POSTHOG_PROJECT_TOKEN`           | backend  | PostHog ingestion key (public by PostHog's design); unset = no PostHog client. |
+| `POSTHOG_PERSONAL_API_KEY` (+ `POSTHOG_PROJECT_ID`) | backend | PostHog personal key with `person:write`, used only to erase a deleted account's PostHog person. |
+| `LOGFIRE_TOKEN`                   | backend  | Logfire write token; unset = no trace egress. |
+| `CANOPY_METRICS_TOKEN`            | backend  | Bearer token for `GET /api/internal/metrics` (Canopy dashboard); unset = route 404s. |
+| `ACCOUNT_SYNC_PEER_TOKEN` / `ACCOUNT_SYNC_INBOUND_TOKEN` | backend | Cross-environment admin account copy: the token sent to the peer / the token accepted from it. The inbound token grants read and overwrite of any account's study data; unset = routes 404. |
+| `TYPESAFE_API_KEY`                | backend  | TypeSafe Jev decision model (`services/typesafe_client.py`), used only when the `decision_router` flag is on. |
+| `RECOST_API_KEY`                  | backend  | Optional Recost API-cost telemetry middleware (`main.py`). |
+| `REDIS_URL`                       | backend  | Optional cross-worker OCR/extraction cache; may embed a password. |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY`   | frontend | Browser-safe key used only for Realtime room subscriptions. |
+| `NEXT_PUBLIC_POSTHOG_KEY`         | frontend | PostHog project key (public), inlined at build time; unset = analytics off. |
 
-`ENCRYPTION_KEY` and `SESSION_SECRET` are validated at import time — invalid or missing values fail fast.
+**Non-secret configuration** that still matters for security:
+
+| Variable                          | Surface  | Purpose                                                          |
+|-----------------------------------|----------|------------------------------------------------------------------|
+| `SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_URL` | backend / frontend | Project base URL. |
+| `APP_ENV`                         | backend  | Defaults to `production` (strict). `local`/`development`/`dev`/`test` relax the `SESSION_SECRET` check; `/api/auth/test-login` exists only under `local`/`test`. |
+| `ALLOWED_EMAIL_DOMAINS`           | backend  | Sign-in domain allowlist, default `bu.edu`. An empty value allows any Google account. |
+| `GOOGLE_AUTH_REDIRECT_URI` / `GOOGLE_REDIRECT_URI` | backend | Pinned OAuth callback URLs (sign-in / Calendar). |
+| `FRONTEND_URL`                    | backend  | The CORS origin and OAuth redirect target. |
+| `COOKIE_DOMAIN`, `DEPLOY_ENV`     | frontend | `.saplinglearn.com` (prod) for cross-subdomain session cookies; `DEPLOY_ENV` derives the backend origin and cookie domain. |
+| `SAPLING_FLAG_<KEY>`              | backend  | Per-process feature-flag override that beats every stored rule; the incident kill switch. |
+| `OCR_ENGINE`, `GOT_OCR_ENABLED`   | backend  | OCR backend selection. |
+
+`ENCRYPTION_KEY` is validated when `services/encryption.py` is imported (missing, non-hex or wrong-length values raise). `validate_config()` runs at the start of the API lifespan and of `python -m worker`, before any request is served, and and refuses to boot without `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, and, outside local `APP_ENV`s, a `SESSION_SECRET` of at least 32 bytes. The encryption-key canary (`services/encryption_canary.py`) then refuses to boot with a key that cannot open the database's `encryption_key_check` row.
 
 ### Supabase key split
 
@@ -274,7 +312,18 @@ All backends are lazy-imported to keep cold start sub-second. Failures degrade D
 
 ## 7. Logging
 
-`backend/main.py`'s `RequestLogMiddleware` records method, path, status, duration, and a random 8-char request id. It does **not** log request or response bodies, user ids, emails, names, tokens, or any decrypted column. Errors include the exception class name and traceback only.
+*Verified against the code on 2026-11-14.*
+
+`RequestIDMiddleware` (`backend/services/request_context.py`, installed in `backend/main.py`) emits one line per request with the request id, method, URL **path** (never the full URL, so no query string), status and duration. It does **not** log request or response bodies, emails, names, tokens, or any decrypted column. Errors include the exception class name and traceback only; error responses carry the request id (`X-Request-ID`) for correlation. The uvicorn access log drops query strings too, so a token passed as `?auth_token=` never reaches process logs.
+
+**Logfire** (`LOGFIRE_TOKEN`; unset = no egress) receives FastAPI request traces and Pydantic AI agent spans, scrubbed before they leave the process (`backend/services/logfire_scrubber.py`, wired in `backend/main.py`):
+
+- Agents are instrumented with `include_content=False`, so prompts, model output, system instructions and tool-call arguments/results are not captured at all; any other content attribute the scrubber is routed is replaced whole by `[redacted, type:…, length:…, sha256:…]`: a length and a content fingerprint, never the content.
+- URL query strings are stripped from span attributes (a span processor plus the FastAPI request hook).
+- Parsed endpoint arguments (request bodies, query/path params) are never recorded on request spans (`_drop_request_arguments` in `main.py`).
+- Logfire's default patterns (`password`, `secret`, `api key`, …) still redact matching attributes outright.
+
+The in-house `events` table holds ids, counts and enums only; free text that must be correlatable is stored as a fingerprint (`backend/services/events_service.py`).
 
 Encryption helpers log a structured warning when `decrypt_if_present` falls back to a raw value; that's the operator signal that legacy plaintext is still being read on a column and the backfill should be re-run.
 
@@ -282,18 +331,32 @@ Encryption helpers log a structured warning when `decrypt_if_present` falls back
 
 ## 8. Dependency Surface
 
-Security-relevant packages currently in use (no version audit performed; assume upstream patching):
+*Verified against the repo on 2026-11-14.*
 
-**Backend (`backend/requirements.txt`)**
-- `cryptography>=42,<46` — AES-GCM primitive.
-- `fastapi`, `uvicorn` — web framework.
-- `google-auth-oauthlib`, `google-api-python-client` — OAuth flow.
-- `docling>=2.15`, `transformers>=4.46`, `torch>=2.5` — OCR / document extraction.
+**What pins dependencies today**
+
+- **Backend lock with hashes.** `backend/requirements.lock` is `requirements.txt` compiled by `uv pip compile --generate-hashes` (every package pinned with sha256 hashes). CI installs it with `pip install --require-hashes -r requirements.lock` (`.github/workflows/ci.yml`), so a tampered or substituted wheel fails the install.
+- **Image follows the lock.** The Docker image cannot use `--require-hashes` (the OCR stack in `requirements-worker.txt` is outside the lock, and torch comes from the CPU wheel index), so `backend/scripts/lock_constraints.py` turns the lock into a constraints file and `verify`s the installed set against it (`backend/Dockerfile`, #694). Every locked package resolves to its locked version; the OCR stack's own transitive dependencies (numpy, scipy, huggingface-hub, …) still float.
+- **Frontend lock.** `frontend/package-lock.json`, installed with `npm ci` in CI on a pinned npm (10.9.x, enforced by `engine-strict` in `frontend/.npmrc`); `npm run check:lockfile` guards the lockfile format.
+
+**What audits them: nothing automated.** There is no `pip-audit`, `npm audit`, OSV scanner, Snyk, Trivy or CodeQL step in `.github/workflows/`, and no `.github/dependabot.yml` or Renovate config (Dependabot is only mentioned in a comment in `pr-hygiene.yml`). Advisories have been handled by hand (CVE upgrades in #808, per `docs/architecture-hardening-plan.md`). Whether GitHub's repository-level Dependabot alerts are enabled is a repo setting, not visible in the code. Gap: add an advisory scan to CI (e.g. `pip-audit -r requirements.lock` and `npm audit --omit=dev`) and a Dependabot config.
+
+Security-relevant packages currently in use:
+
+**Backend (`backend/requirements.txt`, `backend/requirements-worker.txt`)**
+- `cryptography>=50.0.2,<51` — AES-GCM primitive.
+- `fastapi`, `uvicorn[standard]` — web framework (exact pins in `requirements.txt`).
+- `google-auth-oauthlib`, `google-api-python-client` — OAuth flow and Calendar.
+- `pydantic-ai-slim[google,anthropic]>=1.107.7,<2`, `anthropic>=0.108.0,<1` — the only LLM seam.
+- `logfire[fastapi]` — tracing (scrubbed, see §7).
+- `docling>=2.15,<3`, `transformers>=4.46,<5`, `torch>=2.5,<3` — OCR / document extraction, worker image only.
 
 **Frontend (`frontend/package.json`)**
 - `@supabase/supabase-js` — Realtime client.
 - `react`, `next` — UI + middleware.
 - `@opennextjs/cloudflare` — Workers adapter.
+
+---
 
 ---
 
@@ -313,4 +376,13 @@ Security-relevant packages currently in use (no version audit performed; assume 
 | CORS                  | Configured frontend origin + localhost | `backend/main.py`                                      |
 | TLS                   | Cloudflare Workers edge termination    | `frontend/wrangler.toml`                               |
 | Uploads               | Type + size validation, no raw persist | `backend/routes/documents.py`, `backend/services/storage_service.py` |
-| Logging               | No PII / token / body logging          | `backend/main.py`                                      |
+| Logging               | No PII / token / body / query-string logging; Logfire spans scrubbed | `backend/services/request_context.py`, `backend/services/logfire_scrubber.py`, `backend/main.py` |
+
+---
+
+## Related documents
+
+*Added 2026-11-14.*
+
+- [`docs/security/incident-response.md`](docs/security/incident-response.md) — incident roles, severity levels, kill switches and shutdown steps, key and secret rotation, breach-notification orientation (not legal advice), evidence preservation.
+- [`docs/security/data-inventory.md`](docs/security/data-inventory.md) — what personal data Sapling holds, where, and which columns are encrypted.

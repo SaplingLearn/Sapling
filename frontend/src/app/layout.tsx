@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import React from 'react';
 import localFont from 'next/font/local';
 import { resolveSiteUrl } from '@/lib/deployGuard';
+import { GUMMI_BOOT_SCRIPT } from '@/lib/licensedFonts';
 import { UserProvider } from '@/context/UserContext';
 import { FlagsProvider } from '@/context/FlagsContext';
 import { ToastProvider } from '@/components/ToastProvider';
@@ -18,8 +19,9 @@ import './globals.css';
  * that layout looked right and only the letterforms were wrong. The warning
  * for it sits in the dev log, which nobody reads while the page renders.
  *
- * The type is the approved Pen set from the redesign (#728): Aleo for
- * headings and long-form, SUSE for UI, IBM Plex Mono for numerals and code.
+ * The type is the approved Pen set from the redesign (#728) — Aleo for
+ * long-form reading text, SUSE for UI, IBM Plex Mono for numerals and code —
+ * with headings since moved to the licensed Gummi (below, loaded at runtime).
  * Each woff2 in ./fonts is a lossless conversion of the official
  * google/fonts binary (ttf SHA-256 62b6cb49… Aleo, 9b4c074d… Aleo Italic,
  * 16bda691… SUSE, 6a3412f0… / a9b4c49b… / d3c38e55… / ac27abd6… Plex Mono
@@ -40,6 +42,14 @@ const aleo = localFont({
   fallback: ['Georgia', 'serif'],
   adjustFontFallback: 'Times New Roman',
 });
+
+/*
+ * Gummi (ZEKUTYPE, via fonts.xyz), the heading face, is NOT loaded here: it is
+ * commercially licensed (saplinglearn.com only, no redistribution), so its
+ * files live outside the repo on fonts.saplinglearn.com and GUMMI_BOOT_SCRIPT
+ * (below, in <head>) switches it on only on a licensed host. Everywhere else
+ * `--font-gummi` stays on Aleo. See lib/licensedFonts.ts.
+ */
 
 const suse = localFont({
   src: './fonts/SUSE-variable.woff2',
@@ -123,6 +133,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       data-density="compact"
       className={`${aleo.variable} ${suse.variable} ${plexMono.variable} ${caveat.variable}`}
     >
+      <head>
+        {/* Before first paint, so a licensed host never flashes Aleo for long. */}
+        <script dangerouslySetInnerHTML={{ __html: GUMMI_BOOT_SCRIPT }} />
+      </head>
       <body>
         <ErrorBoundary>
           <ToastProvider>

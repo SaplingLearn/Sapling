@@ -113,7 +113,7 @@ def test_final_result_tool_sent_to_the_model_has_no_length_constraints():
 
 
 def test_caps_match_the_product_contract():
-    from services.quiz_config import QUIZ_MAX_QUESTIONS
+    from services.quiz.config import QUIZ_MAX_QUESTIONS
 
     assert MAX_QUESTIONS == QUIZ_MAX_QUESTIONS == 10
     assert MAX_ACCEPTED_ANSWERS == 8
@@ -235,7 +235,7 @@ def test_malformed_item_inside_the_caps_is_still_a_validation_error():
 
 
 def test_multipart_context_and_graph_survive_keyless_projection():
-    from routes.quiz import _agent_question_to_wire, _attach_question_contexts, _strip_answer_key
+    from services.quiz.wire import _agent_question_to_wire, _attach_question_contexts, _strip_answer_key
 
     quiz = Quiz.model_validate({
         "questions": [_mcq(), _mcq(question="What is the second result?")],

@@ -28,7 +28,7 @@ from agents.tools.graph_read import (
 )
 from agents.tools.quiz_history import read_recent_quiz_attempts_tool
 from services.prompt_safety import INJECTION_GUARD_PROMPT
-from services.quiz_config import QUIZ_MAX_QUESTIONS
+from services.quiz.config import QUIZ_MAX_QUESTIONS
 
 logger = logging.getLogger(__name__)
 
@@ -130,7 +130,6 @@ class Quiz(BaseModel):
     # schema (see MAX_QUESTIONS above).
     questions: list[QuizQuestion]
     contexts: list[QuizContext] = Field(default_factory=list)
-    retry_hints: list[str] = Field(default_factory=list)
 
     @field_validator("questions", mode="before")
     @classmethod
@@ -301,8 +300,6 @@ _SYSTEM_PROMPT += (
     "correct_answer, including delimiters. Keep written grading keys and aliases "
     "in their plain input format. "
     "For written questions, options must be empty. Explain the reasoning after grading. "
-    "In retry_hints, write one brief hint per question in the same order. Suggest a "
-    "method or a first step without naming the correct choice or giving the result. "
     "Write complete worked solutions in explanation, including intermediate math steps."
     "Keep every item focused on the requested concept and the supplied course material."
 )

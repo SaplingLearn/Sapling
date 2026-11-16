@@ -1,8 +1,7 @@
 """Tests for the #147 one-shot LLM → Pydantic AI agent migration.
 
 Covers the study-group summary paths on /api/social/rooms/{id}/overview
-(cache miss / cache hit / agent failure) and the StudyGuide typed output's
-serialization back to the legacy JSON contract.
+(cache miss / cache hit / agent failure).
 """
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -10,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi.testclient import TestClient
 
 from main import app
+from tests.split_patches import patch_social
 
 client = TestClient(app)
 
@@ -40,12 +40,12 @@ class TestRoomOverviewSummary:
             return_value=SimpleNamespace(output=SimpleNamespace(summary="Strong together."))
         )
         save = MagicMock()
-        with patch("routes.social.table", side_effect=_social_table_side_effect), \
-             patch("routes.social.get_display_names", return_value={"u1": "Alice"}), \
-             patch("routes.social.get_graph", return_value=_GRAPH), \
-             patch("routes.social.get_cached_summary", return_value=None), \
-             patch("routes.social.social_summary_agent.run", new=agent_run), \
-             patch("routes.social.save_summary", new=save):
+        with patch_social("table", side_effect=_social_table_side_effect), \
+             patch_social("get_display_names", return_value={"u1": "Alice"}), \
+             patch_social("get_graph", return_value=_GRAPH), \
+             patch_social("get_cached_summary", return_value=None), \
+             patch("services.social.overview.social_summary_agent.run", new=agent_run), \
+             patch_social("save_summary", new=save):
             r = client.get(f"/api/social/rooms/{ROOM_ID}/overview")
         assert r.status_code == 200
         assert r.json()["ai_summary"] == "Strong together."
@@ -54,11 +54,11 @@ class TestRoomOverviewSummary:
 
     def test_cache_hit_does_not_run_agent(self):
         agent_run = AsyncMock()
-        with patch("routes.social.table", side_effect=_social_table_side_effect), \
-             patch("routes.social.get_display_names", return_value={"u1": "Alice"}), \
-             patch("routes.social.get_graph", return_value=_GRAPH), \
-             patch("routes.social.get_cached_summary", return_value="cached summary"), \
-             patch("routes.social.social_summary_agent.run", new=agent_run):
+        with patch_social("table", side_effect=_social_table_side_effect), \
+             patch_social("get_display_names", return_value={"u1": "Alice"}), \
+             patch_social("get_graph", return_value=_GRAPH), \
+             patch_social("get_cached_summary", return_value="cached summary"), \
+             patch("services.social.overview.social_summary_agent.run", new=agent_run):
             r = client.get(f"/api/social/rooms/{ROOM_ID}/overview")
         assert r.status_code == 200
         assert r.json()["ai_summary"] == "cached summary"
@@ -66,11 +66,11 @@ class TestRoomOverviewSummary:
 
     def test_agent_failure_falls_back_and_returns_200(self):
         boom = AsyncMock(side_effect=RuntimeError("gemini down"))
-        with patch("routes.social.table", side_effect=_social_table_side_effect), \
-             patch("routes.social.get_display_names", return_value={"u1": "Alice"}), \
-             patch("routes.social.get_graph", return_value=_GRAPH), \
-             patch("routes.social.get_cached_summary", return_value=None), \
-             patch("routes.social.social_summary_agent.run", new=boom):
+        with patch_social("table", side_effect=_social_table_side_effect), \
+             patch_social("get_display_names", return_value={"u1": "Alice"}), \
+             patch_social("get_graph", return_value=_GRAPH), \
+             patch_social("get_cached_summary", return_value=None), \
+             patch("services.social.overview.social_summary_agent.run", new=boom):
             r = client.get(f"/api/social/rooms/{ROOM_ID}/overview")
         assert r.status_code == 200
         assert r.json()["ai_summary"] == (
@@ -78,20 +78,22 @@ class TestRoomOverviewSummary:
         )
 
 
-class TestStudyGuideOutputShape:
-    def test_model_dumps_to_legacy_contract(self):
-        from agents.study_guide import StudyGuide, Topic
+def test_a_budget_refusal_says_so_instead_of_the_generic_summary():
+    """#838: the student's daily LLM budget refused the summary. The overview
+    still loads (members, room); the summary line says why, and is not cached."""
+    from services.llm_budget import LLMBudgetExceeded, next_reset
 
-        guide = StudyGuide(
-            exam="Midterm",
-            due_date="2026-05-01",
-            overview="Covers chapters 1-5.",
-            topics=[Topic(name="Limits", importance="Foundational.", concepts=["a", "b", "c"])],
-        )
-        d = guide.model_dump()
-        assert set(d.keys()) == {"exam", "due_date", "overview", "topics"}
-        assert d["topics"][0] == {
-            "name": "Limits",
-            "importance": "Foundational.",
-            "concepts": ["a", "b", "c"],
-        }
+    refused = AsyncMock(side_effect=LLMBudgetExceeded(limit=1, used=2, reset_at=next_reset()))
+    save = MagicMock()
+    with patch_social("table", side_effect=_social_table_side_effect), \
+         patch_social("get_display_names", return_value={"u1": "Alice"}), \
+         patch_social("get_graph", return_value=_GRAPH), \
+         patch_social("get_cached_summary", return_value=None), \
+         patch("services.social.overview.social_summary_agent.run", new=refused), \
+         patch_social("live_user_ids", return_value={"u1"}), \
+         patch_social("save_summary", new=save):
+        r = client.get(f"/api/social/rooms/{ROOM_ID}/overview")
+    assert r.status_code == 200
+    assert "today's limit for AI features" in r.json()["ai_summary"]
+    assert r.json()["members"][0]["name"] == "Alice"
+    save.assert_not_called()

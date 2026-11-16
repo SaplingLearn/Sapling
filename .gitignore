@@ -21,6 +21,7 @@ yarn-error.log*
 
 # ---- Python ----
 .venv/
+.venv-loadtest/
 venv/
 __pycache__/
 *.py[cod]
@@ -28,11 +29,21 @@ __pycache__/
 *.egg-info/
 dist/
 *.egg
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
 
 # ---- Database ----
 *.db
 *.sqlite
 *.sqlite3
+# pg_dump backups (make backup-db / make promote, Trov #114): real data, never commit
+/backups/
+*.dump
+*.sql.gz
 
 # ---- RAG data (large files — stored in Supabase Storage) ----
 backend/data/*.json
@@ -50,8 +61,10 @@ backend/data/*.json
 Thumbs.db
 
 # ---- LLM code helpers ----
-.claude/
-!.claude/
+# .claude/ holds shared, tracked team tooling (agents/, commands/, skills/).
+# Only the per-machine pieces are ignored.
+.claude/worktrees/
+.claude/settings.local.json
 .cursor/
 .copilot/
 .github/copilot/
@@ -69,6 +82,10 @@ Thumbs.db
 # ---- Worktrees ----
 .worktrees/
 
+# ---- Root-level scratch exports ----
+# Reference PDFs belong under docs/; loose PDFs at the root are local scratch.
+/*.pdf
+
 # ---- Local E2E stack run dir (PIDs + logs, scripts/e2e-up.sh, #384) ----
 .e2e/
 
@@ -83,3 +100,11 @@ Thumbs.db
 *.sw[a-p]
 .*.sw[a-p]
 *~
+.idea/
+.vscode/
+*.orig
+*.rej
+
+# ---- Logs ----
+*.log
+logs/

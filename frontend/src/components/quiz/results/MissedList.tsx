@@ -16,8 +16,8 @@
  * students won't open would cost more than the shift does.
  */
 
-import { QuizProblemContext } from "../QuizProblemContext";
 import { QuizMath } from "../QuizMath";
+import { QuizProblemContext } from "../QuizProblemContext";
 import React from "react";
 import { Button } from "@/components/ui";
 import type { QuizSession, WireQuestion } from "@/lib/quiz/types";
@@ -35,11 +35,11 @@ export interface MissedItem {
   correctLabel: string;
   correctText: string;
   explanation: string;
-  written?: boolean;
-  question?: WireQuestion;
+  /** A typed answer: `chosenText` / `correctText` ARE the answers (there are
+   *  no option letters), so the line reads "You wrote 4 · the answer is 2". */
+  written: boolean;
   skipped?: boolean;
-  retryPoints?: number;
-  correct?: boolean;
+  context?: WireQuestion["context"];
 }
 
 /**
@@ -70,16 +70,14 @@ export function buildMissedItems(session: QuizSession, correct = false): MissedI
       return {
         questionId: String(r.question_id),
         stem: question?.question ?? "",
-        chosenLabel: written ? "Your answer" : r.selected,
+        chosenLabel: written ? "" : r.selected,
         chosenText: textFor(r.selected),
-        correctLabel: written ? "Expected" : r.correct_answer,
+        correctLabel: written ? "" : r.correct_answer,
         correctText: textFor(r.correct_answer),
         explanation: r.explanation,
         written,
-        question,
         skipped: r.skipped,
-        retryPoints: r.retry_points,
-        correct: r.correct,
+        context: question?.context,
       };
     });
 }
@@ -107,7 +105,6 @@ export function MissedList({ items, onAsk, testid = "quiz-missed-list", heading 
   // one is not exposed as a landmark, which would leave "One to look at" as
   // loose text rather than the heading of the block it introduces.
   const headingId = `${testid}-heading`;
-  const rowIdPrefix = testid.replace(/-list$/, "");
 
   return (
     <section className="quiz-missed" data-testid={testid} aria-labelledby={headingId}>
@@ -116,30 +113,24 @@ export function MissedList({ items, onAsk, testid = "quiz-missed-list", heading 
       </div>
       {items.map(item => {
         const open = expanded[item.questionId] ?? true;
-        const panelId = `${rowIdPrefix}-explanation-${item.questionId}`;
-        const chosen = item.chosenText ? `${item.chosenLabel} (${item.chosenText})` : item.chosenLabel;
-        const expected = item.correctText ? `${item.correctLabel} (${item.correctText})` : item.correctLabel;
+        const prefix = testid.replace(/-list$/, "");
+        const panelId = `${prefix}-explanation-${item.questionId}`;
         const stem = item.stem && <p className="h-serif quiz-missed__stem"><QuizMath text={item.stem} /></p>;
+        const expected = item.written ? item.correctText : item.correctLabel;
+        const chosen = item.written ? item.chosenText : item.chosenLabel;
+
         return (
           <div
             key={item.questionId}
             className="quiz-missed__item"
-            data-testid={`${rowIdPrefix}-${item.questionId}`}
+            data-testid={`${prefix}-${item.questionId}`}
           >
-            {item.question?.context
-              ? <QuizProblemContext context={item.question.context}>{stem}</QuizProblemContext>
-              : stem}
-            {(item.question?.context || item.retryPoints !== undefined) && (
-              <p>{item.correct ? 1 : item.retryPoints ?? 0} of 1 point</p>
-            )}
+            {item.context ? <QuizProblemContext context={item.context}>{stem}</QuizProblemContext> : stem}
             <p className="quiz-missed__line">
-              <QuizMath text={item.skipped
-                ? `Skipped · Expected: ${item.correctText || item.correctLabel}`
-                : item.written
-                ? `Your answer: ${item.chosenText || "No answer"} · Expected: ${item.correctText}`
-                : item.chosenLabel
-                  ? `You chose ${chosen} · the answer is ${expected}`
-                  : `No answer · the answer is ${expected}`} />
+              {item.skipped ? "Skipped" : chosen ? <>{item.written ? "You wrote " : "You chose "}<QuizMath text={chosen} /></> : "No answer"}
+              {" · the answer is "}
+              <QuizMath text={expected} />
+              {!item.written && item.correctText && <>. <QuizMath text={item.correctText} /></>}
             </p>
             <div className="quiz-missed__actions">
               {item.explanation && (
@@ -147,7 +138,7 @@ export function MissedList({ items, onAsk, testid = "quiz-missed-list", heading 
                   variant="link"
                   aria-expanded={open}
                   aria-controls={panelId}
-                  data-testid={`quiz-missed-explain-${item.questionId}`}
+                  data-testid={`${prefix}-explain-${item.questionId}`}
                   // Flipped off `prev`, not off `open`: `open` is captured from
                   // the render that attached this handler, so two clicks
                   // batched into one render would collapse into one toggle.
@@ -163,7 +154,7 @@ export function MissedList({ items, onAsk, testid = "quiz-missed-list", heading 
               )}
               <Button
                 size="sm"
-                data-testid={`quiz-missed-ask-${item.questionId}`}
+                data-testid={`${prefix}-ask-${item.questionId}`}
                 onClick={event => onAsk(item, event.currentTarget)}
               >
                 Ask about this
