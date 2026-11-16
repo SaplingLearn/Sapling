@@ -63,8 +63,12 @@ Race safety (sec2 M4): that lag let N parallel first requests all read the
 same "under budget" status and all start. :func:`_admit` makes the decision
 check-and-reserve under one lock: each admitted run reserves
 ``RESERVE_TOKENS_PER_RUN`` in process memory, and later decisions add every
-reservation not yet visible in the status they read (those newer than the
-read minus ``LAND_LAG_S``). With R tokens left, a burst admits about
+reservation not yet visible in the status they read. A run whose usage row
+has been queued (``note_usage_recorded``, called by ``log_llm_usage``) is
+settled: it stops counting once a status read is ``SETTLE_LAG_S`` past the
+queueing, since its real usage is in ``used`` by then. A run still in flight
+counts until it settles, or for at most ``LAND_LAG_S`` if it never reports.
+With R tokens left, a burst admits about
 R / RESERVE_TOKENS_PER_RUN runs, not N. A failed read falls back to the
 user's last good status of the day (plus reservations) instead of failing
 fully open; only a user never read today fails open.
@@ -102,6 +106,9 @@ RESERVE_TOKENS_PER_RUN = 20_000
 #: it: the run's length plus events_service's async usage queue. A
 #: reservation older than (read time - this) is taken to be in `used`.
 LAND_LAG_S = 120.0
+#: How long after a run's usage row is QUEUED it may still be missing from a
+#: status read (events_service flushes about once a second; the rest is slack).
+SETTLE_LAG_S = 15.0
 #: How long a FAILED status read is remembered (the run fails open meanwhile).
 FAILURE_TTL_S = 10.0
 #: Bound on one status read (the RPC's per-call HTTP timeout); past it the
@@ -261,8 +268,9 @@ _cache_lock = threading.Lock()
 #: The last status each user's read RETURNED (until its reset): what a failed
 #: read falls back to instead of failing fully open.
 _last_good: dict[str, BudgetStatus] = {}
-#: time.time() of each run admitted per user and not yet known to be in a read.
-_reservations: dict[str, list[float]] = {}
+#: Each run admitted per user and not yet known to be in a read, as
+#: [admitted_at, settled_at | None] (settled = its usage row was queued).
+_reservations: dict[str, list[list[float | None]]] = {}
 
 
 def clear_llm_budget_cache(user_id: str | None = None) -> None:
@@ -355,17 +363,41 @@ def _admit(user_id: str, status: BudgetStatus) -> BudgetStatus | None:
     if status.limit is None:
         return None
     now = time.time()
-    # Reservations older than this are taken to be in status.used already.
-    horizon = (status.read_at or now) - LAND_LAG_S
+    read_at = status.read_at or now
     with _cache_lock:
-        live = [t for t in _reservations.get(user_id, ()) if t > horizon]
+        live = [r for r in _reservations.get(user_id, ()) if _pending(r, now=now, read_at=read_at)]
         used = status.used + len(live) * RESERVE_TOKENS_PER_RUN
         if used >= status.limit:
             _reservations[user_id] = live
             return replace(status, used=used)
-        live.append(now)
+        live.append([now, None])
         _reservations[user_id] = live
     return None
+
+
+def _pending(reservation: list[float | None], *, now: float, read_at: float) -> bool:
+    """Is this reservation's usage still missing from a status read at
+    ``read_at``? In flight: yes, up to LAND_LAG_S (a run that never reports
+    its usage stops counting then). Settled: only while its row may not
+    have landed before the read."""
+    admitted_at, settled_at = reservation
+    if settled_at is None:
+        return admitted_at > now - LAND_LAG_S
+    return settled_at > read_at - SETTLE_LAG_S
+
+
+def note_usage_recorded(user_id: str | None) -> None:
+    """A foreground run for ``user_id`` just queued its usage row: settle its
+    reservation (the oldest unsettled one), so a status read past
+    SETTLE_LAG_S stops counting it on top of the real usage. Never raises."""
+    if not user_id or _BACKGROUND.get():
+        return
+    now = time.time()
+    with _cache_lock:
+        for reservation in _reservations.get(user_id, ()):
+            if reservation[1] is None:
+                reservation[1] = now
+                return
 
 
 # ── the gate ────────────────────────────────────────────────────────────────

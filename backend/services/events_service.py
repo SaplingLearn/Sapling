@@ -494,6 +494,14 @@ def log_llm_usage(
     except Exception:  # pragma: no cover - defensive
         logger.exception("log_llm_usage failed; row dropped")
         return
+    # The run's real usage is on its way into llm_usage: stop counting its
+    # budget reservation once that has had time to land (sec2 M4).
+    try:
+        from services import llm_budget
+
+        llm_budget.note_usage_recorded(user_id)
+    except Exception:  # pragma: no cover - defensive
+        logger.debug("log_llm_usage: budget settle slipped", exc_info=True)
     # ADR 0028: the PostHog LLM-analytics mirror of the same row — a
     # privacy-mode $ai_generation (model, tokens, cost, trace id; never
     # content), behind the same kill switch, queued for the consent worker.
