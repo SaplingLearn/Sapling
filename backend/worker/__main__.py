@@ -135,12 +135,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def boot() -> None:
     """The API lifespan's pre-serve checks. Raises on any failure."""
-    from agents._providers import freeze_model_mode
+    from agents._providers import freeze_model_mode, warn_if_anthropic_key_missing
     from config import validate_config
     from services.encryption_canary import verify_encryption_key
 
     mode = freeze_model_mode()
     validate_config()
+    warn_if_anthropic_key_missing()
     verify_encryption_key()
     logger.info("worker.boot model_mode=%s", mode)
 

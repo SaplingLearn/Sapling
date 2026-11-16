@@ -32,8 +32,9 @@ SECURE_COOKIES_EXPLICIT: bool = _sc_env is not None and _sc_env.strip().lower() 
 
 # Deployment mode (#174). Defaults to "production" so the config is fail-closed:
 # a deployment that sets nothing gets the strict checks. Set APP_ENV=local (or
-# development/dev/test) to relax SESSION_SECRET for local dev. A process that
-# looks like a real deployment refuses to boot in those modes (validate_config).
+# development/dev/test) to relax SESSION_SECRET and ANTHROPIC_API_KEY for local
+# dev. A process that looks like a real deployment refuses to boot in those
+# modes (validate_config).
 APP_ENV = os.getenv("APP_ENV", "production").strip().lower()
 IS_LOCAL = APP_ENV in {"local", "development", "dev", "test"}
 
@@ -165,8 +166,9 @@ def validate_config() -> None:
     SESSION_SECRET is required outside local dev (IS_LOCAL) and must be a
     strong secret — a whitespace-only or short value would silently become a
     weak HMAC signing key. We require >= 32 bytes after stripping, matching the
-    frontend (lib/sessionToken.ts). The other four are always required
-    (CI/tests supply dummy values).
+    frontend (lib/sessionToken.ts). ANTHROPIC_API_KEY is also optional locally
+    so the backend can start without Claude access; AI requests still need a
+    real key. Supabase credentials and GEMINI_API_KEY remain required.
     """
     missing = []
     if not SUPABASE_URL:
@@ -175,7 +177,7 @@ def validate_config() -> None:
         missing.append("SUPABASE_SERVICE_KEY")
     if not GEMINI_API_KEY:
         missing.append("GEMINI_API_KEY")
-    if not ANTHROPIC_API_KEY:
+    if not IS_LOCAL and not ANTHROPIC_API_KEY:
         missing.append("ANTHROPIC_API_KEY")
     if not IS_LOCAL and len((SESSION_SECRET or "").strip().encode("utf-8")) < 32:
         missing.append("SESSION_SECRET (must be set and >= 32 bytes)")
@@ -183,7 +185,7 @@ def validate_config() -> None:
         raise RuntimeError(
             "Missing required configuration: "
             + ", ".join(missing)
-            + f". (APP_ENV={APP_ENV!r}; set APP_ENV=local to relax SESSION_SECRET for local dev.)"
+            + f". (APP_ENV={APP_ENV!r}; set APP_ENV=local to relax SESSION_SECRET and ANTHROPIC_API_KEY for local dev.)"
         )
     _refuse_local_mode_on_a_real_deployment()
     _refuse_committed_demo_secrets()
