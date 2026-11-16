@@ -56,6 +56,13 @@ RUN pip install --no-cache-dir --require-hashes -r requirements.lock \
 
 COPY . .
 
+# Run as an unprivileged user. Nothing writes under /app at runtime (uploads
+# and exports go to Supabase, temp files to /tmp), and the home directory takes
+# whatever library caches appear. The source stays root-owned: read-only to
+# the process.
+RUN useradd --create-home --uid 10001 --shell /usr/sbin/nologin sapling
+USER sapling
+
 EXPOSE 5000
 
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "5000"]
@@ -140,10 +147,18 @@ RUN pip install --no-cache-dir --require-hashes -r requirements.lock \
     && rm /tmp/lock-constraints.txt /tmp/cpu-index-report.json
 
 # BU SSO launches Chromium on the server; the Python wheel alone is insufficient.
+# Installed to a shared path, not root's home (~/.cache/ms-playwright under
+# /root, mode 700), so the unprivileged user below can launch it.
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 RUN python -m playwright install --with-deps chromium \
     && rm -rf /var/lib/apt/lists/*
 
 COPY . .
+
+# Unprivileged, as in the api stage. Its home directory is writable for the
+# OCR stack's model caches (Hugging Face / Docling / torch under ~/.cache).
+RUN useradd --create-home --uid 10001 --shell /usr/sbin/nologin sapling
+USER sapling
 
 EXPOSE 5000
 
