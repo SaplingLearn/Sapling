@@ -176,6 +176,8 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
         "own sessions row + greeting from the service-only pending row",
     ("services/rag_service.py", "index_document_chunks", "runs_as_service"): "shared content-addressed chunks",
     ("services/rag_service.py", "index_document_chunks_detailed", "runs_as_service"): "shared chunks",
+    ("services/rag_service.py", "_uploaders_of", "runs_as_service"):
+        "M6 per-uploader cap: uploader ids of rows already retrieved for this reader, never text",
     ("services/social_cache_service.py", "get_cached_summary", "runs_as_service"): "room_summaries cache",
     ("services/social_cache_service.py", "invalidate", "runs_as_service"): "room_summaries cache",
     ("services/social_cache_service.py", "save_summary", "runs_as_service"): "room_summaries cache",
