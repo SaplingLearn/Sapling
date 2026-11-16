@@ -520,7 +520,7 @@ def test_a_first_seed_that_stopped_before_the_study_dataset_gets_it_on_the_next_
 # ── the default dataset: the baseline every other lane asserts on ───────────
 
 #: sha256 of the default dataset, encrypted columns decrypted (see _digest).
-BASELINE_DIGEST = "f6cf9ed52bd3ca878dd61cb2b760ad7fa6ead999228d02bfc7bde510e10667e9"
+BASELINE_DIGEST = "8a9c6974d31c7c1790ed946084d5e354cbf5aeccb8fc4cf75b588df785d5ecef"  # M8: min_mistake_contributors on the stats rows
 
 
 def _digest(db) -> str:

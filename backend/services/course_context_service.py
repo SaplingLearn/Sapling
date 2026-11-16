@@ -37,6 +37,22 @@ logger = logging.getLogger(__name__)
 #: The job that runs update_course_context on the queue (#116).
 COURSE_CONTEXT_JOB = "course_context.refresh"
 
+#: M8: an aggregated mistake (or weak area) reaches classmates' quiz prompts
+#: only when at least this many DISTINCT students' quiz notes contain it. With
+#: n=1 allowed, one student's written quiz answers could write the "common
+#: class mistakes" every classmate's quiz agent reads. Stamped on each stats
+#: row as `min_mistake_contributors` (migration
+#: 20261116162354_offering_stats_min_contributors.sql); the reader
+#: (agents/tools/graph_read.py) serves only rows stamped at or above it, so
+#: rows aggregated before this rule are never served.
+MIN_MISTAKE_CONTRIBUTORS = 3
+
+
+def _mistake_key(text: str) -> str:
+    """How two students' notes are judged to name the same mistake: case,
+    whitespace and trailing punctuation folded."""
+    return " ".join((text or "").split()).casefold().rstrip(" .;:!?")
+
 
 def _generate_data_hash(stats_rows: list) -> str:
     """Generate a hash of the stats data to detect changes."""
@@ -281,6 +297,9 @@ def update_course_context(offering_id: str) -> None:
     # ── 4. Group by concept_name, track per-user scores ───────────────────────
     concept_data: dict = {}
 
+    #: graph node id -> the student who owns it, so a quiz-context row (keyed
+    #: on its node) can be counted per distinct student (M8).
+    node_owner: dict = {}
     for n in node_rows:
         name = n["concept_name"]
         if name not in concept_data:
@@ -288,6 +307,7 @@ def update_course_context(offering_id: str) -> None:
         concept_data[name]["scores"].append(float(n["mastery_score"] or 0.0))
         concept_data[name]["tiers"].append(n["mastery_tier"] or "unexplored")
         concept_data[name]["node_ids"].append(n["id"])
+        node_owner[n["id"]] = n.get("user_id")
 
     # ── 5. Compute per-concept metrics ────────────────────────────────────────
     concept_metrics: dict = {}
@@ -353,31 +373,42 @@ def update_course_context(offering_id: str) -> None:
         # a merge-duplicates UPDATE on an existing row — and never mentions
         # this column in its payload, so an existing row's value (including
         # anything written out-of-band) is left untouched, not reset.
-        common_misconceptions: list = []
-        prerequisite_gaps: list = []
-        seen_misconceptions: set = set()
-        seen_prereqs: set = set()
+        # M8: each entry is counted once per DISTINCT student (a student's
+        # notes on one concept can vouch for a mistake only once), and only
+        # entries at least MIN_MISTAKE_CONTRIBUTORS students share are kept.
+        # A row whose owner cannot be told is not counted at all.
+        mistakes: dict = {}  # key -> {"text": first spelling, "students": set}
+        weak: dict = {}
+
+        def _count(bucket: dict, value, student) -> None:
+            text = value.strip() if isinstance(value, str) else ""
+            key = _mistake_key(text)
+            if not key:
+                return
+            entry = bucket.setdefault(key, {"text": text, "students": set()})
+            entry["students"].add(student)
 
         for ctx in ctx_rows:
+            student = node_owner.get(ctx.get("concept_node_id"))
+            if not student:
+                continue
             cj = ctx.get("context_json") or {}
             try:
                 cj = decrypt_json_column(cj) or {}
             except Exception:
                 cj = {}
 
-            for m in cj.get("common_mistakes", []):
-                m = (m or "").strip()
-                if m and m.lower() not in seen_misconceptions:
-                    seen_misconceptions.add(m.lower())
-                    common_misconceptions.append(m)
+            for m in cj.get("common_mistakes", []) or []:
+                _count(mistakes, m, student)
+            for w in cj.get("weak_areas", []) or []:
+                _count(weak, w, student)
 
-            for w in cj.get("weak_areas", []):
-                w = (w or "").strip()
-                if w and w.lower() not in seen_prereqs:
-                    seen_prereqs.add(w.lower())
-                    prerequisite_gaps.append(w)
+        def _shared(bucket: dict) -> list:
+            kept = [e for e in bucket.values() if len(e["students"]) >= MIN_MISTAKE_CONTRIBUTORS]
+            kept.sort(key=lambda e: -len(e["students"]))  # most widely shared first
+            return [e["text"] for e in kept]
 
-        return common_misconceptions[:20], prerequisite_gaps[:20]
+        return _shared(mistakes)[:20], _shared(weak)[:20]
 
     # ── 7. Upsert into course_concept_stats (quiz arrays per concept) ─────────
     for name, metrics in concept_metrics.items():
@@ -396,6 +427,8 @@ def update_course_context(offering_id: str) -> None:
                 "pct_unexplored": metrics["pct_unexplored"],
                 "common_misconceptions": cm,
                 "prerequisite_gaps": pg,
+                # M8: the distinct-student floor these arrays were built under.
+                "min_mistake_contributors": MIN_MISTAKE_CONTRIBUTORS,
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             },
             on_conflict="offering_id,concept_name",
