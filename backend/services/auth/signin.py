@@ -18,8 +18,8 @@ logger = logging.getLogger(__name__)
 def _email_domain_allowed(email: str) -> bool:
     """Whether `email`'s domain is permitted to sign in.
 
-    Controlled by config.ALLOWED_EMAIL_DOMAINS (default ["bu.edu"]). An empty
-    allowlist permits any domain — used on staging, which is already gated by
+    Controlled by config.ALLOWED_EMAIL_DOMAINS (default ["bu.edu"], or empty
+    under APP_ENV=local). An empty allowlist permits any domain — used on staging, which is already gated by
     Cloudflare Access.
     """
     if not ALLOWED_EMAIL_DOMAINS:
