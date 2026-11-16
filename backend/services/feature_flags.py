@@ -758,6 +758,38 @@ def flag_on(key: str, user_id: str | None) -> bool:
     return fd is not None and flag_variant(key, user_id) != fd.variants[0]
 
 
+def last_known_flag_on(key: str, user_id: str | None) -> bool:
+    """:func:`flag_on`, except while the flag store is UNREADABLE: then the
+    answer comes from the last snapshot this process read (however old)
+    instead of the fail-closed default.
+
+    For a flag whose "on" must survive an outage (sec2 M11: `crisis_support`,
+    where failing closed would silently stop showing crisis resources the
+    owner switched on). It never turns a flag on that the last good read had
+    off, and a process that has never read the store still answers off, so
+    the default is unchanged. Role targets are read from the per-user cache
+    only (no read during an outage); an uncached user resolves as holding no
+    role. Every other failure (an unregistered flag, an invalid stored
+    variant, a resolution error) still fails closed.
+    """
+    fd = REGISTRY.get(key)
+    if fd is None:
+        return False
+    resolution = explain(key, user_id)
+    if not (resolution.step == "fail_closed" and resolution.detail == STORE_UNREADABLE):
+        return resolution.variant != fd.variants[0]
+    with _lock:
+        stale = _snapshot
+    if stale is None:
+        return False
+    roles = _roles_peek(user_id) if user_id else None
+    last = explain(key, user_id, _snapshot=stale[1], _roles_known=roles if roles is not None else ())
+    if last.variant != fd.variants[0]:
+        _warn_once(f"last_known:{key}", "feature flag store unreadable; %r answers from the "
+                   "last snapshot read (%s)", key, last.step)
+    return last.variant != fd.variants[0]
+
+
 def resolved_client_flags(user_id: str | None) -> dict[str, str]:
     """Every client-visible flag from ONE snapshot read. Resolving them one by
     one would retry the store per flag during an outage — 11 timeouts in a
