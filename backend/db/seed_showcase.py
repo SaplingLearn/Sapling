@@ -51,6 +51,7 @@ from db.seed_local_rich import (                                   # noqa: E402
     USER_SECOND,
 )
 from services.encryption import encrypt_if_present                 # noqa: E402
+from services.encryption_canary import abort_unless_key_verified  # noqa: E402
 
 
 def _guard_local() -> None:
@@ -192,6 +193,9 @@ def overlay_room_messages() -> None:
 
 def main() -> None:
     _guard_local()
+    # Abort unless ENCRYPTION_KEY opens this database's key canary
+    # (services/encryption_canary.py): a wrong key writes unreadable rows.
+    abort_unless_key_verified("db.seed_showcase", allow_seed=True)
     overlay_people()
     overlay_rooms()
     overlay_room_messages()

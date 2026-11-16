@@ -72,6 +72,7 @@ from agents.classifier import classifier_agent  # noqa: E402
 from agents.deps import SaplingDeps  # noqa: E402
 from services.prompt_safety import wrap_document_input  # noqa: E402
 from db.connection import page_all, pg_quote_value, table  # noqa: E402
+from services.encryption_canary import abort_unless_key_verified  # noqa: E402
 from services.chunk_visibility import (  # noqa: E402
     COURSE_MATERIAL, PERSONAL_NOTES,
 )
@@ -167,6 +168,12 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true", default=True)
     parser.add_argument("--apply", dest="dry_run", action="store_false")
     args = parser.parse_args()
+
+    # PAGED.    args = parser.parse_args()
+    if not args.dry_run:
+        # It classifies DECRYPTED text and withdraws chunks by it; under the
+        # wrong key it would decide on ciphertext. services/encryption_canary.py.
+        abort_unless_key_verified("scripts.backfill_document_shareability")
 
     # PAGED. An unbounded read stops at PostgREST's max_rows and answers 206 —
     # a 2xx — so the script would report a clean summary having silently skipped

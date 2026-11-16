@@ -69,6 +69,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from db import seed_helpers as h               # noqa: E402
 from db.connection import table                # noqa: E402
 from services.encryption import encrypt_if_present, encrypt_json  # noqa: E402
+from services.encryption_canary import abort_unless_key_verified  # noqa: E402
 
 _ENCRYPTED_TEXT = {
     "assignments": ("points_possible", "points_earned"),
@@ -242,6 +243,10 @@ def main(argv: list[str] | None = None) -> None:
     if not h.local_supabase_url():
         url = (os.getenv("SUPABASE_URL") or "").strip()
         sys.exit(f"REFUSING: SUPABASE_URL {url!r} is not local.")
+
+    # Abort unless ENCRYPTION_KEY opens this database's key canary
+    # (services/encryption_canary.py): a wrong key writes unreadable rows.
+    abort_unless_key_verified("db.seed_local_study", allow_seed=True)
 
     from db.seed_local_owner import resolve_owner
     try:

@@ -43,6 +43,7 @@ sys.path.insert(0, str(BASE))
 
 from db.connection import table  # noqa: E402
 from services.encryption import decrypt_if_present  # noqa: E402
+from services.encryption_canary import abort_unless_key_verified  # noqa: E402
 from services.rag_service import chunk_id  # noqa: E402
 
 PAGE_SIZE = 1000
@@ -119,6 +120,10 @@ def main() -> None:
     if not args.apply:
         print("Dry run — re-run with --apply to write.")
         return
+
+    # Abort unless ENCRYPTION_KEY opens this database's key canary
+    # (services/encryption_canary.py): a wrong key writes unreadable rows.
+    abort_unless_key_verified("scripts.dedupe_course_chunks")
 
     # Upsert winners under their new ids first, then delete stale ids, so an
     # interrupted run never leaves a chunk with no surviving row.

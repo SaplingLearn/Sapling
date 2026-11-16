@@ -50,6 +50,29 @@ def pytest_configure(config):
         "real_course_enrollment: run the REAL course-enrollment check on course-keyed "
         "writes (#115) instead of the hermetic bypass (_bypass_course_enrollment).",
     )
+    config.addinivalue_line(
+        "markers",
+        "real_script_key_guard: run the REAL write-mode ENCRYPTION_KEY check "
+        "(encryption_canary.require_key_for_write) instead of the hermetic pass.",
+    )
+
+
+@pytest.fixture(autouse=True)
+def _bypass_script_key_guard(request, monkeypatch):
+    """Write-mode scripts (backfills, seeders) refuse to write unless the
+    database's key canary opens (services/encryption_canary.py). The hermetic
+    suite drives their main() against mocked tables, where the canary read
+    would go to the network; pass the check there. The integration and staging
+    lanes run it for real, as does any test marked `real_script_key_guard`."""
+    node = request.node
+    if (node.get_closest_marker("real_script_key_guard")
+            or node.get_closest_marker("integration")
+            or node.get_closest_marker("e2e_staging")):
+        return
+    from services import encryption_canary
+
+    monkeypatch.setattr(encryption_canary, "require_key_for_write",
+                        lambda script, *, allow_seed=False: "ok")
 
 
 @pytest.fixture(autouse=True)

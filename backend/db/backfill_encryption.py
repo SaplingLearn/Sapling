@@ -42,6 +42,7 @@ import sys
 from typing import Any, Callable
 
 from db.connection import table
+from services.encryption_canary import abort_unless_key_verified
 from services.encryption import (
     decrypt,
     decrypt_json,
@@ -366,6 +367,11 @@ def main() -> int:
     print(f"Backfill mode: {mode}")
     print(f"Tables: {', '.join(targets)}")
     print()
+    if args.apply:
+        # Every value this key cannot decrypt is treated as plaintext and
+        # encrypted: under the wrong key that double-encrypts the whole
+        # environment beyond recovery. services/encryption_canary.py.
+        abort_unless_key_verified("db.backfill_encryption")
 
     grand_total = 0
     for name in targets:

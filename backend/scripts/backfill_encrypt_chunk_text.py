@@ -52,6 +52,7 @@ sys.path.insert(0, str(BASE))
 
 from db.connection import page_all, table  # noqa: E402
 from services.encryption import decrypt, encrypt  # noqa: E402
+from services.encryption_canary import abort_unless_key_verified  # noqa: E402
 
 #: Rows encrypted per round. Each row is its own PATCH (see `_write`), issued
 #: concurrently across WRITE_WORKERS threads; the batch only bounds how much
@@ -178,6 +179,10 @@ def main() -> None:
     args = parser.parse_args()
     batch_size = max(1, args.batch_size)
 
+    if not args.dry_run:
+        # The key canary first: the witness check below proceeds when it
+        # finds nothing to verify against (services/encryption_canary.py).
+        abort_unless_key_verified("scripts.backfill_encrypt_chunk_text")
     _assert_key_matches_database()
 
     seen = already = pending = written = 0

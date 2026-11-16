@@ -21,6 +21,7 @@ from fastapi.testclient import TestClient
 
 from db.connection import table
 from services.encryption import encrypt_if_present
+from services.encryption_canary import abort_unless_key_verified
 from services.session_tokens import SESSION_COOKIE_NAME, mint_session
 from main import app
 
@@ -133,6 +134,9 @@ def check_auth() -> None:
 
 def main() -> int:
     print("\n== e2e_staging_http ==")
+    # Abort unless ENCRYPTION_KEY opens this database's key canary
+    # (services/encryption_canary.py): a wrong key writes unreadable rows.
+    abort_unless_key_verified("db.e2e_staging_http")
     setup_fixture()
     try:
         check_auth()

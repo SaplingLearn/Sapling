@@ -34,6 +34,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import get_mastery_tier  # noqa: E402  (tier ↔ score stay consistent)
 from db import seed_helpers as h  # noqa: E402
 from services.encryption import encrypt_if_present  # noqa: E402
+from services.encryption_canary import abort_unless_key_verified  # noqa: E402
 
 # ─── Deterministic ids (everything namespaced `seed-…`) ──────────────────────
 
@@ -373,6 +374,10 @@ def _print_summary() -> None:
 
 def main() -> None:
     """Seed the staging demo dataset. Idempotent; safe to re-run."""
+    # Abort unless ENCRYPTION_KEY opens this database's key canary
+    # (services/encryption_canary.py): a wrong key writes unreadable rows.
+    # A fresh database may be seeded first, so this seeds an empty canary.
+    abort_unless_key_verified("db.seed_staging", allow_seed=True)
     h.reset_counts()  # fresh per-run summary (also keeps re-runs in one process honest)
     seed_school()
     seed_courses()
