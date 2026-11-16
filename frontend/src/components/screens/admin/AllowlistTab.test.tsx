@@ -55,10 +55,11 @@ const ROWS = [
   row("frank@bu.edu", { approved_at: "2026-10-02T00:00:00Z", invite_status: "suppressed" }),
 ];
 
-const gateFlag = (variant: "on" | "off") => ({
+const gateFlag = (variant: "on" | "off", envOverride: "on" | "off" | null = null) => ({
   key: "open_access", description: "", variants: ["off", "on"], client_visible: true,
   default_variant: variant, rollout_percent: 0, rollout_variant: null,
   updated_at: null, updated_by: null, updated_by_name: null, targets: [],
+  env_override: envOverride,
 });
 
 const checked = (id: string) => (screen.getByTestId(id) as HTMLInputElement).checked;
@@ -240,19 +241,48 @@ describe("AllowlistTab", () => {
       expect(screen.getByTestId("allowlist-status-gus@gmail.com").textContent).toBe("open access");
     });
 
-    it("hides the banner when the flags cannot be read", async () => {
+    it("hides the banner when the flags cannot be read, and claims neither in nor waiting", async () => {
       api.adminListFlags.mockRejectedValue(new Error("403"));
       render(<AllowlistTab />);
       await screen.findByTestId("allowlist-row-alice@bu.edu");
       expect(screen.queryByTestId("open-access-banner")).toBeNull();
+      // Gate state unknown: the row is neither "in" nor "waiting".
+      expect(screen.getByTestId("allowlist-status-gus@gmail.com").textContent).toBe("open access");
     });
 
-    it("the bulk confirm says open-access people get no you're-in email", async () => {
+    it("shows the env-forced state and hides the switch", async () => {
+      // Stored default on, but SAPLING_FLAG_OPEN_ACCESS=off wins on the server.
+      api.adminListFlags.mockResolvedValue({ flags: [gateFlag("on", "off")] });
       render(<AllowlistTab />);
+      const banner = await screen.findByTestId("open-access-banner");
+      expect(banner.getAttribute("data-open")).toBe("false");
+      expect(banner.getAttribute("data-forced")).toBe("true");
+      expect(screen.getByTestId("open-access-forced").textContent).toContain("SAPLING_FLAG_OPEN_ACCESS=off");
+      expect(screen.queryByTestId("open-access-toggle")).toBeNull();
+      await waitFor(() =>
+        expect(screen.getByTestId("allowlist-status-gus@gmail.com").textContent).toBe("waiting"));
+    });
+
+    it("while the gate is open, the bulk confirm says open-access people get no you're-in email", async () => {
+      api.adminListFlags.mockResolvedValue({ flags: [gateFlag("on")] });
+      render(<AllowlistTab />);
+      await waitFor(() =>
+        expect(screen.getByTestId("open-access-banner").getAttribute("data-open")).toBe("true"));
       fireEvent.click(await screen.findByTestId("allowlist-select-gus@gmail.com"));
       fireEvent.click(screen.getByTestId("allowlist-bulk-approve"));
       expect((await screen.findByTestId("allowlist-bulk-confirm-text")).textContent)
         .toContain("except anyone who joined through open access");
+    });
+
+    it("while the gate is closed, the bulk confirm promises everyone the email", async () => {
+      // Back on /pending: the approval is what lets them in, so the backend sends it.
+      render(<AllowlistTab />);
+      await waitFor(() =>
+        expect(screen.getByTestId("open-access-banner").getAttribute("data-open")).toBe("false"));
+      fireEvent.click(await screen.findByTestId("allowlist-select-gus@gmail.com"));
+      fireEvent.click(screen.getByTestId("allowlist-bulk-approve"));
+      expect((await screen.findByTestId("allowlist-bulk-confirm-text")).textContent)
+        .toBe("Each gets a “you’re in” email.");
     });
   });
 });

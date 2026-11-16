@@ -713,6 +713,15 @@ def explain(key: str, user_id: str | None, *, fresh: bool = False,
         return Resolution(off, "fail_closed", f"resolution error: {type(exc).__name__}")
 
 
+def env_override(key: str) -> str | None:
+    """The variant `SAPLING_FLAG_<KEY>` forces right now, or None. It wins
+    over every stored setting (:func:`explain`), so an admin surface that
+    shows the stored default must show this beside it."""
+    fd = REGISTRY.get(key)
+    env = (os.getenv(f"SAPLING_FLAG_{key.upper()}") or "").strip().lower()
+    return env if fd is not None and env in fd.variants else None
+
+
 def cached_explain(key: str, user_id: str | None) -> Resolution | None:
     """:func:`explain` without any I/O, or None when answering would need a
     store read (a cold snapshot, or a role lookup this user has no fresh

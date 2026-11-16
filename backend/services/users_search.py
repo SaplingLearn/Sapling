@@ -28,8 +28,8 @@ _USERS_COLS = "id,email,is_approved,open_access_at,created_at,last_sign_in_at"
 def _with_access() -> dict[str, str]:
     """Admin → Users lists the people who have access: approved, or in through
     the open gate while it is open (services/open_access.py; their rows carry
-    `open_access_at`, which the page badges). Everyone waiting on approval
-    lives in Admin → Allowlist (the waitlist)."""
+    `open_access_at`, which the page shows as an "open access" chip).
+    Everyone waiting on approval lives in Admin → Allowlist (the waitlist)."""
     return access_filter(open_now=gate_open())
 
 # base64(12-byte nonce || ciphertext || 16-byte GCM tag): the shortest blob

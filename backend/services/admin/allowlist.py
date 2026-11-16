@@ -22,7 +22,7 @@ from services.admin.errors import Conflict, NotFound
 from services.admin_audit import log_admin_action
 from services.auth_guard import clear_account_state_cache
 from services.encryption import decrypt_if_present
-from services.open_access import gate_open, is_school_email
+from services.open_access import gate_open, is_school_email, open_access_user_ids
 
 logger = logging.getLogger(__name__)
 
@@ -62,19 +62,16 @@ def _send_statuses(dedupe_keys: list[str]) -> dict[str, str]:
 
 def _open_access_ids(user_ids: list[str]) -> set[str]:
     """Which of these accounts came in through the open gate and are still
-    unapproved (`users.open_access_at`, services/open_access.py). Degrades to
-    none on a read error, like the send statuses."""
-    found: set[str] = set()
+    unapproved and live (`open_access_user_ids`, services/open_access.py).
+    Degrades to none on a read error, like the send statuses."""
+    wanted = {u for u in user_ids if u}
+    if not wanted:
+        return set()
     try:
-        for chunk in _chunks(sorted(set(u for u in user_ids if u)), 100):
-            for r in table("users").select(
-                "id", filters={"id": _in_list(chunk), "open_access_at": "not.is.null",
-                               "is_approved": "eq.false"},
-            ) or []:
-                found.add(r.get("id"))
+        return open_access_user_ids() & wanted
     except Exception:  # noqa: BLE001
         logger.warning("open-access read failed", exc_info=True)
-    return found
+        return set()
 
 
 def _with_invite_status(rows: list[dict]) -> list[dict]:

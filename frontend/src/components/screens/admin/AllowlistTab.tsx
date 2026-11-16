@@ -52,9 +52,13 @@ export function rowStatus(row: AllowlistEmail): RowStatus {
 const approvable = (row: AllowlistEmail) => !row.approved_at;
 
 /** The status chip's text and style. An open-access row reads as "in" only
- *  while the gate is open. */
-function statusChip(st: RowStatus, gateOpen: boolean): { label: string; cls: string; title?: string } {
+ *  while the gate is open, and "waiting" only while it is known to be closed:
+ *  with the gate's state unread (null) it claims neither. */
+function statusChip(st: RowStatus, gateOpen: boolean | null): { label: string; cls: string; title?: string } {
   if (st === "open") {
+    if (gateOpen === null) {
+      return { label: "open access", cls: "chip", title: "Joined through open access. Whether open access is on right now could not be read." };
+    }
     return gateOpen
       ? { label: "open access", cls: "chip--info", title: "Using Sapling through open access. Approve to keep them in when you require the waitlist again." }
       : { label: "waiting", cls: "chip--warn", title: "Joined during open access; back on the waitlist now that it is required." };
@@ -119,7 +123,8 @@ export function AllowlistTab() {
   const [query, setQuery] = React.useState("");
   const [filter, setFilter] = React.useState<Filter>("all");
   const [nonBuOnly, setNonBuOnly] = React.useState(false);
-  const [gateOpen, setGateOpen] = React.useState(false);
+  // null until the banner has read the gate (and if that read fails).
+  const [gateOpen, setGateOpen] = React.useState<boolean | null>(null);
   const [selected, setSelected] = React.useState<Set<string>>(() => new Set());
   const [newEmail, setNewEmail] = React.useState("");
   const [busy, setBusy] = React.useState(false);
@@ -263,7 +268,7 @@ export function AllowlistTab() {
         <span style={{ color: "var(--text)" }}>{emails.length}</span> address{emails.length === 1 ? "" : "es"} · {" "}
         <span style={{ color: "var(--accent)" }}>{emails.filter((e) => e.approved_at).length} approved</span> · {counts.joined} joined
         {counts.signup > 0 && <> · <span style={{ color: "var(--warn)" }}>{counts.signup} unapproved signups</span></>}
-        {counts.open > 0 && <> · {counts.open} {gateOpen ? "in through open access" : "waiting after open access"}</>}
+        {counts.open > 0 && <> · {counts.open} {gateOpen === null ? "joined through open access" : gateOpen ? "in through open access" : "waiting after open access"}</>}
       </div>
       <div className="card" style={{ padding: 0 }}>
         <div style={{ display: "flex", flexWrap: "wrap", padding: "12px 16px", borderBottom: "1px solid var(--border)", alignItems: "center", gap: 12 }}>
@@ -433,8 +438,10 @@ export function AllowlistTab() {
         <p className="flags__confirm-text" style={{ marginBottom: 12 }} data-testid="allowlist-bulk-confirm-text">
           {notConfigured
             ? "The approvals will be saved, but no emails go out until Resend is configured."
-            : selectedRows.some((e) => e.open_access)
-              ? "Each gets a “you’re in” email, except anyone who joined through open access: they already use Sapling."
+            : gateOpen !== false && selectedRows.some((e) => e.open_access)
+              ? gateOpen
+                ? "Each gets a “you’re in” email, except anyone who joined through open access: they already use Sapling."
+                : "Each gets a “you’re in” email, except anyone who joined through open access while it is on."
               : `Each gets a “you’re in” email.`}
         </p>
         <ul

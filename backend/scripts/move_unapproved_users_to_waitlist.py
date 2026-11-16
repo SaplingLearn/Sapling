@@ -45,9 +45,14 @@ _OWNED = ("oauth_tokens", "user_profiles", "user_settings", "user_roles")
 
 
 def _unapproved() -> list[dict]:
+    # `open_access_at IS NULL`: an open-access entrant (services/open_access.py)
+    # is unapproved by design and may not have onboarded yet. It is not a
+    # leftover pending row, and while the gate is open it HAS access; deleting
+    # it would wipe a live student's account.
     return table("users").select(
         "id,email,onboarding_completed",
-        filters={"is_approved": "eq.false", "deleted_at": "is.null"},
+        filters={"is_approved": "eq.false", "deleted_at": "is.null",
+                 "open_access_at": "is.null"},
     ) or []
 
 

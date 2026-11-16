@@ -517,6 +517,10 @@ export interface AdminUserListItem {
   /** The row's email/name are sealed under a different ENCRYPTION_KEY. */
   undecryptable?: boolean;
   is_approved: boolean;
+  /** Set when the account came in through the open gate (`open_access`)
+   *  without an admin's approval: it is listed only while the gate is open,
+   *  and goes back to the waitlist when it closes. */
+  open_access_at?: string | null;
   is_admin?: boolean;
   last_sign_in_at: string | null;
   created_at: string;

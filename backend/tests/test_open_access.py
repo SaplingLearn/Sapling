@@ -276,7 +276,8 @@ class TestListings:
         monkeypatch.setattr(overview, "table", factory)
         monkeypatch.setattr(overview, "gate_open", lambda: True)
         totals = overview.analytics_overview()["totals"]
-        assert totals["approved"] == 2 and totals["open_access"] == 1
+        # `approved` is approvals only; the open-access entrant is counted apart.
+        assert totals["approved"] == 1 and totals["open_access"] == 1
         assert totals["pending"] == 1  # the open-access entrant is in, not waiting
         monkeypatch.setattr(overview, "gate_open", lambda: False)
         totals = overview.analytics_overview()["totals"]
@@ -331,3 +332,59 @@ class TestAllowlistApprove:
         ])
         assert [(r["open_access"], r["school_email"]) for r in rows] == [
             (True, False), (False, True)]
+
+
+# ── the shared open-access read, the kill switch, the cleanup script ─────────
+
+
+class TestOpenAccessIds:
+    def test_one_read_of_live_unapproved_marked_accounts(self, monkeypatch):
+        seen = {}
+
+        def fake_page_all(handle, columns, *, filters, order):
+            seen["filters"] = filters
+            return [{"id": "user_1"}, {"id": "user_2"}]
+        monkeypatch.setattr(open_access, "page_all", fake_page_all)
+        monkeypatch.setattr(open_access, "table", lambda name: MagicMock())
+        assert open_access.open_access_user_ids() == {"user_1", "user_2"}
+        # A soft-deleted entrant is not "in" (sign-in and the guard refuse it).
+        assert seen["filters"] == {"open_access_at": "not.is.null", "is_approved": "eq.false",
+                                   "deleted_at": "is.null"}
+
+    def test_allowlist_intersects_and_degrades_to_none(self, monkeypatch):
+        from services.admin import allowlist
+        monkeypatch.setattr(allowlist, "open_access_user_ids", lambda: {"user_1", "user_9"})
+        assert allowlist._open_access_ids(["user_1", "user_2", None]) == {"user_1"}
+        assert allowlist._open_access_ids([None]) == set()
+
+        def boom():
+            raise RuntimeError("db down")
+        monkeypatch.setattr(allowlist, "open_access_user_ids", boom)
+        assert allowlist._open_access_ids(["user_1"]) == set()
+
+
+class TestEnvOverride:
+    @pytest.mark.parametrize("env,expected", [("off", "off"), ("on", "on"), ("", None), ("bogus", None)])
+    def test_env_override(self, monkeypatch, env, expected):
+        from services import feature_flags
+        monkeypatch.setenv("SAPLING_FLAG_OPEN_ACCESS", env)
+        assert feature_flags.env_override("open_access") == expected
+
+    def test_unregistered_flag_has_no_override(self, monkeypatch):
+        from services import feature_flags
+        monkeypatch.setenv("SAPLING_FLAG_NOPE", "on")
+        assert feature_flags.env_override("nope") is None
+
+
+class TestCleanupScript:
+    def test_never_selects_open_access_entrants(self, monkeypatch):
+        """An open-access entrant is unapproved by design and may not have
+        onboarded; the one-off cleanup must not delete a live account."""
+        from scripts import move_unapproved_users_to_waitlist as script
+        users = MagicMock()
+        users.select.return_value = []
+        monkeypatch.setattr(script, "table", lambda name: users)
+        script._unapproved()
+        filters = users.select.call_args.kwargs["filters"]
+        assert filters["open_access_at"] == "is.null"
+        assert filters["is_approved"] == "eq.false"

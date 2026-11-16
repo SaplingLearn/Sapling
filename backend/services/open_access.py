@@ -21,6 +21,7 @@ Admin → Allowlist ("Non-BU"), nothing else.
 """
 from __future__ import annotations
 
+from db.connection import page_all, table
 from services.feature_flags import flag_on
 
 FLAG = "open_access"
@@ -60,6 +61,21 @@ def access_filter(*, open_now: bool) -> dict[str, str]:
     if open_now:
         return {"or": "(is_approved.eq.true,open_access_at.not.is.null)"}
     return {"is_approved": "eq.true"}
+
+
+def open_access_user_ids() -> set[str]:
+    """Every live account that came in through the open gate and is still
+    unapproved (`open_access_at` set, `is_approved` false, not deleted),
+    whatever the gate's state: in while it is open, waiting while it is
+    closed. One paged read; the set is small next to the waitlist."""
+    return {
+        r["id"] for r in page_all(
+            table("users"), "id",
+            filters={"open_access_at": "not.is.null", "is_approved": "eq.false",
+                     "deleted_at": "is.null"},
+            order="id.asc",
+        ) if r.get("id")
+    }
 
 
 def is_school_email(email: str | None) -> bool:

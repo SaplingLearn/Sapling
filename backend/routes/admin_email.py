@@ -120,14 +120,7 @@ def _open_access_user_ids() -> set[str]:
     gate is closed — then they are simply waiting."""
     if not open_access.gate_open():
         return set()
-    return {
-        r["id"] for r in page_all(
-            table("users"), "id",
-            filters={"open_access_at": "not.is.null", "is_approved": "eq.false",
-                     "deleted_at": "is.null"},
-            order="id.asc",
-        ) if r.get("id")
-    }
+    return open_access.open_access_user_ids()
 
 
 def _waitlist_entries() -> dict[str, dict]:

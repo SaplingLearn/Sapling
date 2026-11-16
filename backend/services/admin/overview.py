@@ -13,7 +13,7 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 
 from db.connection import table
-from services.open_access import ACCESS_OPEN, access_kind, gate_open, has_access
+from services.open_access import ACCESS_OPEN, access_kind, gate_open
 
 
 def analytics_overview():
@@ -30,10 +30,11 @@ def analytics_overview():
     admin_role_ids = {r["id"] for r in roles if r.get("slug") == "admin"}
     admin_count = sum(c for rid, c in role_counter.items() if rid in admin_role_ids)
 
-    # People with access: approved, or in through the open gate while it is
-    # open (services/open_access.py). `open_access` counts the latter alone.
+    # `approved` is an admin's approval only; people in through the open gate
+    # while it is open (services/open_access.py) are `open_access`, so the two
+    # never double-count and closing the gate never moves `approved`.
     open_now = gate_open()
-    approved = sum(1 for u in users if has_access(u, open_now=open_now))
+    approved = sum(1 for u in users if u.get("is_approved"))
     open_ids = {u.get("id") for u in users if access_kind(u, open_now=open_now) == ACCESS_OPEN}
     # Waiting on approval = waitlist signups not yet approved. Unapproved
     # sign-ins don't create accounts, so `users` can't answer this. An
