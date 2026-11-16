@@ -6,6 +6,7 @@ import sys
 
 import pytest
 
+import config
 import routes.auth as auth
 
 
@@ -33,31 +34,45 @@ def test_empty_allowlist_allows_any(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    ("app_env", "allowed_domains", "expected"),
+    ("app_env", "raw", "expected"),
     [
         ("local", None, []),
         ("production", None, ["bu.edu"]),
         ("staging", None, ["bu.edu"]),
-        (None, None, ["bu.edu"]),
+        ("test", None, ["bu.edu"]),
+        ("dev", None, ["bu.edu"]),
         ("local", "bu.edu", ["bu.edu"]),
         ("production", "", []),
         ("local", " @BU.EDU, saplinglearn.com ", ["bu.edu", "saplinglearn.com"]),
     ],
 )
-def test_domain_config_defaults_and_overrides(app_env, allowed_domains, expected):
-    # Isolate config's import-time settings from the developer's .env and from
-    # modules already imported by the test suite.
+def test_domain_config_defaults_and_overrides(app_env, raw, expected):
+    assert config.parse_allowed_email_domains(raw, app_env) == expected
+
+
+def test_import_time_allowlist_follows_app_env():
+    """One subprocess for the wiring: config reads APP_ENV and the unset
+    variable at import, isolated from the developer's .env."""
     env = {**os.environ, "PYTHON_DOTENV_DISABLED": "1"}
-    for key, value in (("APP_ENV", app_env), ("ALLOWED_EMAIL_DOMAINS", allowed_domains)):
-        env.pop(key, None)
-        if value is not None:
-            env[key] = value
+    env.pop("ALLOWED_EMAIL_DOMAINS", None)
+    script = (
+        "import importlib, json, os, config\n"
+        "out = {}\n"
+        "for app_env in ('local', 'production'):\n"
+        "    os.environ['APP_ENV'] = app_env\n"
+        "    out[app_env] = importlib.reload(config).ALLOWED_EMAIL_DOMAINS\n"
+        "os.environ.pop('APP_ENV')\n"
+        "out['unset'] = importlib.reload(config).ALLOWED_EMAIL_DOMAINS\n"
+        "print(json.dumps(out))\n"
+    )
     result = subprocess.run(
-        [sys.executable, "-c", "import config, json; print(json.dumps(config.ALLOWED_EMAIL_DOMAINS))"],
+        [sys.executable, "-c", script],
         cwd=Path(__file__).resolve().parents[1],
         env=env,
         capture_output=True,
         text=True,
         check=True,
     )
-    assert json.loads(result.stdout) == expected
+    assert json.loads(result.stdout) == {
+        "local": [], "production": ["bu.edu"], "unset": ["bu.edu"],
+    }

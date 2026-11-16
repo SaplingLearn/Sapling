@@ -411,6 +411,31 @@ def warn_if_anthropic_key_missing() -> None:
             "Claude-backed feature (document processing, the tutor, quizzes, "
             "note actions) will fail until it is set in backend/.env."
         )
+        return
+    fallback_tasks = claude_fallback_tasks_without_key()
+    if fallback_tasks:
+        _logger.warning(
+            "ANTHROPIC_API_KEY is not set: no primary slot needs it, but %d "
+            "slot(s) (%s) fall back to Claude when the llm_fallback flag is on; "
+            "those fallbacks will fail until the key is set.",
+            len(fallback_tasks), ", ".join(fallback_tasks),
+        )
+
+
+def claude_fallback_tasks_without_key() -> list[str]:
+    """Tasks whose llm_fallback model is Claude while no key is configured.
+
+    Separate from `anthropic_key_missing` (primaries only): the fallback runs
+    only behind the `llm_fallback` flag, which is a per-request DB read and
+    cannot be checked at boot, so this is a softer warning."""
+    if ANTHROPIC_API_KEY or _model_mode() != "real":
+        return []
+    return [
+        task
+        for task in _DEFAULTS
+        if (name := fallback_model_name_for(task, model_name_for(task)))
+        and provider_for_model(name) == "anthropic"
+    ]
 
 
 # ── #354 root-cause fix: loop-scoped provider, resolved at READ time ───────

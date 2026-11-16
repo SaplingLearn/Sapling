@@ -60,11 +60,14 @@ ADMIN_DESTRUCTIVE_REAUTH_WINDOW_SECONDS = int(
 # Explicit values override either default. Staging can widen this (e.g.
 # "bu.edu,saplinglearn.com") or set it empty to allow any Google account — safe
 # on staging because Cloudflare Access already gates who reaches the app at all.
-ALLOWED_EMAIL_DOMAINS = [
-    d.strip().lstrip("@").lower()
-    for d in os.getenv("ALLOWED_EMAIL_DOMAINS", "" if APP_ENV == "local" else "bu.edu").split(",")
-    if d.strip()
-]
+def parse_allowed_email_domains(raw: str | None, app_env: str) -> list[str]:
+    """The allowlist for an ALLOWED_EMAIL_DOMAINS value (None = unset)."""
+    if raw is None:
+        raw = "" if app_env == "local" else "bu.edu"
+    return [d.strip().lstrip("@").lower() for d in raw.split(",") if d.strip()]
+
+
+ALLOWED_EMAIL_DOMAINS = parse_allowed_email_domains(os.getenv("ALLOWED_EMAIL_DOMAINS"), APP_ENV)
 
 # Google Calendar access. Asked for ONLY by the calendar consent flow
 # (GET /api/calendar/auth-url, from onboarding's Connect step or the Calendar

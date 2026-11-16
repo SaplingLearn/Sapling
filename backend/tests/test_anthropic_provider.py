@@ -29,6 +29,7 @@ from agents._providers import (
     _DEFAULTS,
     _anthropic_profile,
     anthropic_key_missing,
+    claude_fallback_tasks_without_key,
     model_for,
     provider_for_model,
     provider_model,
@@ -297,6 +298,33 @@ def test_anthropic_key_missing_only_when_a_real_claude_slot_has_no_key(monkeypat
     for task in _DEFAULTS:
         monkeypatch.setenv(f"SAPLING_MODEL_{task.upper()}", "gemini-2.5-flash")
     assert anthropic_key_missing() is False
+
+
+def test_claude_fallbacks_of_gemini_primaries_are_reported_without_a_key(monkeypatch):
+    """Every primary on Gemini needs no key, but their llm_fallback models are
+    Claude: the boot warning must still name them."""
+    monkeypatch.delenv("SAPLING_MODEL_MODE", raising=False)
+    monkeypatch.setattr(_providers, "ANTHROPIC_API_KEY", "")
+    for task in _DEFAULTS:
+        monkeypatch.setenv(f"SAPLING_MODEL_{task.upper()}", "gemini-2.5-flash")
+    assert anthropic_key_missing() is False
+    claude_default_tasks = [
+        t for t in _DEFAULTS if provider_for_model(_DEFAULTS[t]) == "anthropic"
+    ]
+    assert claude_fallback_tasks_without_key() == claude_default_tasks
+
+    monkeypatch.setattr(_providers, "ANTHROPIC_API_KEY", "sk-ant-test")
+    assert claude_fallback_tasks_without_key() == []
+
+
+def test_boot_warning_names_fallback_only_slots(monkeypatch, caplog):
+    monkeypatch.delenv("SAPLING_MODEL_MODE", raising=False)
+    monkeypatch.setattr(_providers, "ANTHROPIC_API_KEY", "")
+    for task in _DEFAULTS:
+        monkeypatch.setenv(f"SAPLING_MODEL_{task.upper()}", "gemini-2.5-flash")
+    with caplog.at_level("WARNING", logger=_providers._logger.name):
+        _providers.warn_if_anthropic_key_missing()
+    assert "fall back to Claude" in caplog.text
 
 
 # ── Local bounds (Claude can't enforce maxLength/maxItems at decode) ─────
