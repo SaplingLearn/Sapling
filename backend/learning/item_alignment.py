@@ -39,6 +39,7 @@ from collections.abc import Iterable, Mapping
 from typing import NamedTuple
 
 from learning.checks import KEY_HOLD_FLAGS, PROVENANCE_FLAGS, STAFF_HOLD_FLAGS
+from learning.echoed_ids import echoed_id
 from learning.item_lint import LINT_FLAGS
 
 RUBRIC_UNASKED_DROPPED = "rubric_unasked_dropped"
@@ -117,14 +118,14 @@ def collect(
     asked: dict[str, dict[str, bool]] = {}
     conflicted: set[str] = set()
     for item, criterion, value in criteria:
-        item, criterion = str(item).strip(), str(criterion).strip().lower()
+        item, criterion = echoed_id(item), str(criterion).strip().lower()
         seen = asked.setdefault(item, {})
         if criterion in seen and seen[criterion] != bool(value):
             conflicted.add(item)
         seen[criterion] = bool(value)
     tested: dict[str, str] = {}
     for item, concept in concepts:
-        item = str(item).strip()
+        item = echoed_id(item)
         if item in tested and _answer_key(tested[item]) != _answer_key(concept):
             conflicted.add(item)
         tested.setdefault(item, str(concept))
@@ -198,7 +199,7 @@ def collect_components(
     conflicted: set[str] = set()
     for table, rows in ((asked, criteria), (needed, components)):
         for item, key, value in rows:
-            item, key = str(item).strip(), str(key).strip().lower()
+            item, key = echoed_id(item), str(key).strip().lower()
             seen = table.setdefault(item, {})
             if key in seen and seen[key] != bool(value):
                 conflicted.add(item)

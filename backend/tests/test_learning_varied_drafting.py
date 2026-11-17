@@ -312,12 +312,14 @@ def test_flag_off_drafts_with_the_plain_drafter_and_stores_no_surface(loop_on):
 
 def test_varied_drafts_with_the_varied_drafter_and_stores_each_descriptor(loop_on):
     from services import check_item_service as svc
-    from services.encryption import decrypt_if_present, encrypt_if_present
+    from services.encryption import bind, decrypt_if_present, encrypt_if_present
 
     stored_surface = {
+        "id": "ci-old",
         "concept_key": "learning rate",
         "surface_representation": "verbal",
-        "surface_context": encrypt_if_present("Old  Lecture"),
+        # finding M13: sealed for its own row
+        "surface_context": encrypt_if_present("Old  Lecture", bind=bind("check_items", "surface_context", "ci-old")),
     }
     factory, mocks = _cached_tables({"check_items": [stored_surface]})
     calls = []
@@ -343,7 +345,9 @@ def test_varied_drafts_with_the_varied_drafter_and_stores_each_descriptor(loop_o
     assert out.items_created == 2
     rows = [r for c in mocks["check_items"].upsert.call_args_list for r in c[0][0]]
     assert [r["surface_representation"] for r in rows] == ["applied", "numeric"]
-    assert [decrypt_if_present(r["surface_context"]) for r in rows] == ["scene 0", "scene 1"]
+    assert [
+        decrypt_if_present(r["surface_context"], bind=bind("check_items", "surface_context", r)) for r in rows
+    ] == ["scene 0", "scene 1"]
     assert all(r["surface_context"] != "scene 0" for r in rows)  # stored encrypted
     assert all(r["answer_kind"] == "free" and r["stepwise"] is False for r in rows)
 
@@ -430,13 +434,16 @@ def test_the_drafting_version_is_unchanged_off_and_covers_the_varied_prompts_on(
 
 def test_used_surfaces_reads_decrypts_and_lists_each_once():
     from services.check_item_service import used_surfaces
-    from services.encryption import encrypt_if_present
+    from services.encryption import bind, encrypt_if_present
+
+    def sealed(rid, text):  # finding M13: each context sealed for its own row
+        return encrypt_if_present(text, bind=bind("check_items", "surface_context", rid))
 
     rows = [
-        {"concept_key": "a", "surface_representation": "applied", "surface_context": encrypt_if_present("Bus  stop")},
-        {"concept_key": "a", "surface_representation": "applied", "surface_context": encrypt_if_present("Bus stop")},
-        {"concept_key": "a", "surface_representation": "cartoon", "surface_context": encrypt_if_present("x")},
-        {"concept_key": "b", "surface_representation": "numeric", "surface_context": encrypt_if_present("Scores")},
+        {"id": "i1", "concept_key": "a", "surface_representation": "applied", "surface_context": sealed("i1", "Bus  stop")},
+        {"id": "i2", "concept_key": "a", "surface_representation": "applied", "surface_context": sealed("i2", "Bus stop")},
+        {"id": "i3", "concept_key": "a", "surface_representation": "cartoon", "surface_context": sealed("i3", "x")},
+        {"id": "i4", "concept_key": "b", "surface_representation": "numeric", "surface_context": sealed("i4", "Scores")},
     ]
     factory, mocks = _cached_tables({"check_items": rows})
     with patch("services.check_item_service.table", side_effect=factory):
@@ -500,7 +507,7 @@ def test_the_upload_hook_passes_the_flags_only_when_one_is_on(monkeypatch, flags
 def test_a_plain_draft_names_no_new_column_and_a_varied_one_both():
     from learning.surface import SurfacedCheckItemDraft
     from services.check_item_service import _build_row
-    from services.encryption import decrypt_if_present
+    from services.encryption import bind, decrypt_if_present
 
     plain = _build_row("c", "learning rate", None, _draft(), allowed={"c1"}, source_docs=[])
     assert not {"surface_representation", "surface_context", "apex_key", "component_keys"} & set(plain)
@@ -509,7 +516,7 @@ def test_a_plain_draft_names_no_new_column_and_a_varied_one_both():
     )
     row = _build_row("c", "learning rate", None, surfaced, allowed={"c1"}, source_docs=[])
     assert row["surface_representation"] == "numeric"
-    assert decrypt_if_present(row["surface_context"]) == "Phone contacts"
+    assert decrypt_if_present(row["surface_context"], bind=bind("check_items", "surface_context", row)) == "Phone contacts"
     # a descriptor is whole or absent (the migration's CHECK)
     half = SurfacedCheckItemDraft(**_draft().model_dump(), surface_representation="numeric")
     row = _build_row("c", "learning rate", None, half, allowed={"c1"}, source_docs=[])
@@ -544,17 +551,17 @@ def test_the_e2e_handler_answers_the_plain_and_the_varied_drafter(monkeypatch):
 
 def test_an_alignment_re_tag_carries_the_surface_descriptor():
     """The A119 backfill re-keys an item it re-tags: the moved row keeps the
-    A140 descriptor as stored (the context still ciphertext), and the backfill
-    reads it."""
+    A140 descriptor (the context still ciphertext, re-sealed for the new id:
+    finding M13), and the backfill reads it."""
     from learning.item_alignment import CONCEPT_RETAGGED, Alignment
     from services import check_item_service as svc
-    from services.encryption import decrypt_if_present, encrypt_if_present
+    from services.encryption import bind, decrypt_if_present, encrypt_if_present
     from tests.test_learning_check_items import _item
     from tests.test_learning_item_keys import _row
 
     assert {"surface_representation", "surface_context"} <= set(svc._ALIGN_COLUMNS.split(","))
     item = _item(concept_key="recursion")
-    context = encrypt_if_present("e2e step sizes")
+    context = encrypt_if_present("e2e step sizes", bind=bind("check_items", "surface_context", item.id))
     row = _row(item) | {
         "key_checked_at": "2026-11-08T01:00:00+00:00",
         "aligned_at": None,
@@ -568,8 +575,10 @@ def test_an_alignment_re_tag_carries_the_surface_descriptor():
     ((moved,),) = mocks["check_items"].upsert.call_args[0][:1]
     assert moved["concept_key"] == "base case" and moved["id"] != item.id
     assert moved["surface_representation"] == "numeric"
-    assert moved["surface_context"] == context  # copied untouched
-    assert decrypt_if_present(moved["surface_context"]) == "e2e step sizes"
+    assert moved["surface_context"] != context  # re-sealed for the new row's id
+    assert decrypt_if_present(
+        moved["surface_context"], bind=bind("check_items", "surface_context", moved)
+    ) == "e2e step sizes"
     # an item drafted before A140 moves without one, as before
     bare = _row(item) | {"key_checked_at": None, "aligned_at": None}
     factory, mocks = _cached_tables({})

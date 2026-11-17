@@ -11,7 +11,7 @@ import re
 REPO = pathlib.Path(__file__).resolve().parents[2]
 
 # services/check_item_service._build_row: every column written through
-# encrypt_if_present / encrypt_json (the A22 set, plus final_answer from A34).
+# seal() (a bound encrypt_if_present) / encrypt_json (the A22 set, plus final_answer from A34).
 ENCRYPTED = (
     "prompt",
     "reference_answer",
@@ -36,12 +36,15 @@ def test_the_ciphertext_oracle_covers_every_encrypted_check_items_column():
 def test_the_list_matches_what_the_service_encrypts():
     src = (REPO / "backend" / "services" / "check_item_service.py").read_text()
     body = src.split("def _build_row(", 1)[1].split("\ndef ", 1)[0]
-    direct = set(re.findall(r'"(\w+)": encrypt_(?:if_present|json)\(', body))
+    # Finding M13: each value is sealed for its own cell through the local
+    # `seal(column, value)` (encrypt_if_present bound to check_items.<column>),
+    # so the sealed column is named twice: as the row key and in the binding.
+    direct = set(re.findall(r'"(\w+)": seal\("\1", ', body))
     # A140: the surface context is set on the row after it is built (varied runs only)
-    direct |= set(re.findall(r'row\["(\w+)"\] = encrypt_(?:if_present|json)\(', body))
+    direct |= set(re.findall(r'row\["(\w+)"\] = seal\("\1", ', body))
     # options_json / correct_option are encrypted into locals first (mc_reason only)
-    assert re.search(r"options = encrypt_json\(", body)
-    assert re.search(r"correct_option = encrypt_if_present\(", body)
+    assert re.search(r'options = encrypt_json\(.*\n.*bind=bind\(_TABLE, "options_json", rid\)\)', body)
+    assert re.search(r'correct_option = seal\("correct_option", ', body)
     assert direct | {"options_json", "correct_option"} == set(ENCRYPTED)
 
 

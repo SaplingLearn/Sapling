@@ -272,7 +272,9 @@ for (const kind of ["check", "probe"] as const) {
           const messages = await queryRaw("SELECT content FROM messages WHERE session_id=$1 AND role='user' ORDER BY created_at", [fixture.session_id]);
           expect(messages).toHaveLength(1);
           expect(messages[0].content).not.toBe(originalAnswer);
-          expect(await decryptText(messages[0].content as string)).toBe(originalAnswer);
+          expect(await decryptText({
+            value: messages[0].content as string, table: "messages", column: "content", row: fixture.session_id,
+          })).toBe(originalAnswer);
         } else {
           expect(final.loop_state.probe!.history).toHaveLength(1);
           expect(final.loop_state.probe!.history![0]).toMatchObject({ grade_operation_id: fixture.operation_id, idk: true, correct: false });

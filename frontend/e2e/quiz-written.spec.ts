@@ -104,7 +104,7 @@ test("written quiz: incorrect answers show their actual response and expected an
   expect(attempts[0]).toMatchObject({ score: 0, total: 3 });
   expect(attempts[0].completed_at).toBeTruthy();
   const responses = await queryRaw(
-    "SELECT selected_index, answer_text, is_correct FROM quiz_responses WHERE attempt_id = $1 ORDER BY question_index",
+    "SELECT question_index, selected_index, answer_text, is_correct FROM quiz_responses WHERE attempt_id = $1 ORDER BY question_index",
     [attempts[0].id],
   );
   expect(responses).toHaveLength(3);
@@ -115,7 +115,10 @@ test("written quiz: incorrect answers show their actual response and expected an
     expect(String(response.answer_text)).not.toMatch(/^\s*\{/); // no plaintext JSON at rest
     return String(response.answer_text);
   });
-  const plaintext = await decryptTexts(ciphertext);
+  const plaintext = await decryptTexts(ciphertext.map((value, index) => ({
+    value, table: "quiz_responses", column: "answer_text",
+    row: [String(attempts[0].id), String(responses[index].question_index)],
+  })));
   for (const [index, value] of plaintext.entries()) {
     expect(ciphertext[index]).not.toBe(value);
     expect(JSON.parse(value)).toEqual({ text: cases[index].answer });

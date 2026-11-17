@@ -1039,7 +1039,7 @@ def test_brief_skips_a_close_that_fails_to_decrypt(monkeypatch):
         nodes=[{"id": "n1", "concept_name": "Good Concept"}],
     )
 
-    def decrypt(v):
+    def decrypt(v, **_):  # bind= (finding M13)
         if v == "garbage":
             raise ValueError("bad ciphertext")
         return v

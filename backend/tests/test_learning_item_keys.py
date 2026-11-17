@@ -452,7 +452,7 @@ class TestGenerationWrite:
         """The solver sees the options under their STORED letters (the server's
         slot key), not the drafter's order (correct first), and its letter is
         compared with the stored correct letter."""
-        from services.encryption import decrypt_if_present
+        from services.encryption import bind, decrypt_if_present
 
         drafts = [_mc("Learning Rate", level, prompt=f"Stem {n}: which does the rate scale?")
                   for n, level in enumerate((1, 2, 3, 1, 2, 3))]
@@ -462,10 +462,10 @@ class TestGenerationWrite:
         stored_letters = set()
         for draft, sent in zip(drafts, sent_items):
             row = rows[question_hash(draft.prompt)]
-            stored_letter = decrypt_if_present(row["correct_option"])
+            stored_letter = decrypt_if_present(row["correct_option"], bind=bind("check_items", "correct_option", row))
             stored_letters.add(stored_letter)
             assert _letter_of(sent, _CORRECT_TEXT) == stored_letter
-            stored = json.loads(decrypt_if_present(row["options_json"]))
+            stored = json.loads(decrypt_if_present(row["options_json"], bind=bind("check_items", "options_json", row)))
             assert [(o["letter"], o["text"]) for o in stored] == list(sent.options)
             assert row["canonical_verified"] is True
         # the drafter writes the correct option FIRST: a key the slot moved off A
@@ -475,13 +475,13 @@ class TestGenerationWrite:
     def test_a_solver_picking_the_drafters_first_option_is_disputed_off_slot_a(self, monkeypatch):
         """Picking A — where the drafter wrote the key — agrees only where the
         server's slot put the key at A; anywhere else it is a dispute."""
-        from services.encryption import decrypt_if_present
+        from services.encryption import bind, decrypt_if_present
 
         drafts = [_mc("Learning Rate", level, prompt=f"Stem {n}: which does the rate scale?")
                   for n, level in enumerate((1, 2, 3, 1, 2, 3))]
         _, table_, _, _, _ = _generate(monkeypatch, drafts, _solver(lambda i: (True, "A")))
         for row in _stored(table_):
-            at_a = decrypt_if_present(row["correct_option"]) == "A"
+            at_a = decrypt_if_present(row["correct_option"], bind=bind("check_items", "correct_option", row)) == "A"
             assert row["canonical_verified"] is at_a
             assert (KEY_DISPUTED in row["lint_flags"]) is not at_a
 
@@ -1533,3 +1533,26 @@ class TestAuditScript:
         out = capsys.readouterr().out
         assert "all: 30 audited (27 correct, 3 wrong, 0 ambiguous); key-error rate 10.0% (95% CI 3.5%–25.6%)" in out
         assert "verified: 30 audited" in out and "held: 0 audited" in out
+
+
+# ── an echoed `ITEM <id>` label still names its item (2026-11-17) ───────────
+
+
+def test_an_answer_naming_its_item_by_the_whole_label_is_matched():
+    """Claude echoed `"ITEM 1"` for the listed id `"1"`; every answer of the
+    batch went unmatched and every draft was dropped as unverified. The label
+    is removed; the rest must still be a listed id exactly."""
+    from learning.echoed_ids import echoed_id
+    from learning.item_keys import collect_matches, collect_solutions
+
+    assert echoed_id("ITEM 1") == "1"
+    assert echoed_id(" item: 7 ") == "7"
+    assert echoed_id("Item #12") == "12"
+    assert echoed_id("item-3") == "item-3"  # an id that only starts with the letters
+    assert echoed_id("items") == "items"
+    assert echoed_id("3") == "3"
+    solved = collect_solutions([("ITEM 1", True, "B"), ("2", True, "10")])
+    assert set(solved) == {"1", "2"} and solved["1"].answer == "B"
+    # a label and a bare id naming the same item in disagreement still conflict
+    assert "1" not in collect_solutions([("ITEM 1", True, "B"), ("1", True, "C")])
+    assert collect_matches([("ITEM 4", True)]) == {"4": True}

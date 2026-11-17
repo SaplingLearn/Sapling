@@ -56,6 +56,7 @@ from learning.checks import (
     answer_run,
     stated_value,
 )
+from learning.echoed_ids import echoed_id
 from learning.item_alignment import merge_flags
 from learning.params import NUMERIC_GATE_EDGE_SLACK
 
@@ -207,7 +208,7 @@ def collect_solutions(rows: Iterable[tuple[str, bool, str]]) -> dict[str, Solved
     seen: dict[str, Solved] = {}
     conflicted: set[str] = set()
     for item, solvable, answer in rows:
-        item = str(item).strip()
+        item = echoed_id(item)
         solved = Solved(bool(solvable), str(answer or "").strip())
         if item in seen and _norm(seen[item]) != _norm(solved):
             conflicted.add(item)
@@ -225,7 +226,7 @@ def collect_matches(rows: Iterable[tuple[str, bool]]) -> dict[str, bool]:
     seen: dict[str, bool] = {}
     conflicted: set[str] = set()
     for item, same in rows:
-        item = str(item).strip()
+        item = echoed_id(item)
         if item in seen and seen[item] != bool(same):
             conflicted.add(item)
         seen.setdefault(item, bool(same))

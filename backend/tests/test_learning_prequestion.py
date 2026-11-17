@@ -391,7 +391,7 @@ def test_the_guess_is_stored_encrypted_and_no_idea_stores_none():
     from unittest.mock import MagicMock
 
     from learning import prequestion_store as store
-    from services.encryption import decrypt_json
+    from services.encryption import bind, decrypt_json
 
     t = MagicMock()
     with patch.object(store, "table", return_value=t):
@@ -402,7 +402,9 @@ def test_the_guess_is_stored_encrypted_and_no_idea_stores_none():
                            item=_item("f1", "free", 1), no_idea=True, guess=None, posed_at=_NOW)
     first, second = (c.args[0] for c in t.insert_ignore_duplicates.call_args_list)
     assert first["guess_json"] != '{"option":"A","reason":"it lists"}'
-    assert decrypt_json(first["guess_json"]) == {"option": "A", "reason": "it lists"}
+    # finding M13: sealed for the row's natural key (user, session, node)
+    assert decrypt_json(first["guess_json"], bind=bind("learning_prequestions", "guess_json", first)) == {
+        "option": "A", "reason": "it lists"}
     assert first["no_idea"] is False and first["format"] == "mc_reason" and first["difficulty"] == 1
     assert second["guess_json"] is None and second["no_idea"] is True
     assert t.insert_ignore_duplicates.call_args.kwargs["on_conflict"] == "user_id,session_id,node_id"

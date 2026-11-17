@@ -72,7 +72,11 @@ def test_real_agent_shape_retries_are_bounded_and_settle_usage_once(bad_rounds, 
         assert "done" not in types and types.count("retract") == 2
         assert completed == persisted == [] and incomplete == [usage]
         assert usage.input_tokens > 0 and usage.output_tokens > 0
-        assert "question_shape:2 sentences" in caplog.text
+        # main's log privacy (services/log_privacy.install_exception_redaction,
+        # installed by every entry point and process-wide once any test has run
+        # it) withholds a ModelRetry's text from a logged traceback; either way
+        # the bounded retry is what the log names
+        assert "question_shape:2 sentences" in caplog.text or "model retry withheld" in caplog.text
         assert "usage is incomplete" in caplog.text
 
 

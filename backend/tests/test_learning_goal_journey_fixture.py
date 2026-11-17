@@ -11,7 +11,7 @@ from learning import misconceptions, planner, probe
 from learning.checks import posttest_reserve_hash, question_hash, select_item
 from learning.params import BKT_PROFICIENT, PROBE_SESSION_CAP
 from services.check_item_service import _row_to_item
-from services.encryption import decrypt_if_present, encrypt_if_present, encrypt_json
+from services.encryption import bind, decrypt_if_present, encrypt_if_present, encrypt_json
 
 
 @pytest.fixture
@@ -24,21 +24,28 @@ def assets(monkeypatch):
     templates = {}
     for slug in fixture.SLUGS:
         for difficulty in fixture.DIAGNOSTIC_COUNTS:
-            templates[f"rich-check-{slug}-free-d{difficulty}"] = {
-                "id": f"rich-check-{slug}-free-d{difficulty}",
+            tid = f"rich-check-{slug}-free-d{difficulty}"
+
+            def seal(column, value, tid=tid):  # finding M13: bound to the template's own row
+                return encrypt_if_present(value, bind=bind("check_items", column, tid))
+
+            templates[tid] = {
+                "id": tid,
                 "course_id": fixture.COURSE_CS,
                 "concept_key": slug,
                 "document_id": "reviewed-course-document",
                 "format": "free",
                 "difficulty": difficulty,
-                "prompt": encrypt_if_present(f"{prompt} [{slug}, free, difficulty {difficulty}]"),
-                "reference_answer": encrypt_if_present(reference),
-                "final_answer": encrypt_if_present(final),
+                "prompt": seal("prompt", f"{prompt} [{slug}, free, difficulty {difficulty}]"),
+                "reference_answer": seal("reference_answer", reference),
+                "final_answer": seal("final_answer", final),
                 "rubric_json": encrypt_json(
-                    [{"id": "r1", "text": "States the seeded final answer."}]
+                    [{"id": "r1", "text": "States the seeded final answer."}],
+                    bind=bind("check_items", "rubric_json", tid),
                 ),
                 "common_wrong_json": encrypt_json(
-                    [{"key": "wrong", "text": "Gives a different answer."}]
+                    [{"key": "wrong", "text": "Gives a different answer."}],
+                    bind=bind("check_items", "common_wrong_json", tid),
                 ),
                 "source_chunk_ids": [f"course-chunk-{slug}"],
                 "source_document_ids": ["reviewed-course-document"],
@@ -111,7 +118,7 @@ def test_diagnostic_assets_only_seed_priors_not_observations(assets):
     for name, row in assets.writes:
         if name != "check_items":
             continue
-        plaintext = decrypt_if_present(row["prompt"])
+        plaintext = decrypt_if_present(row["prompt"], bind=bind("check_items", "prompt", row))
         assert row["prompt"] != plaintext
         assert row["question_hash"] == question_hash(plaintext)
         assert row["document_id"] == "reviewed-course-document"

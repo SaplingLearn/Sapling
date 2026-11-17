@@ -31,7 +31,7 @@ def test_actual_grade_carries_final_help_exposure_and_recheck_provenance(
     seams, rung, recheck, seen, late_floor, expected
 ):
     seams.store["doc"]["steps"]["qh-1"]["rung"] = rung
-    seams.store["doc"]["goal"] = encode_goal(LoopGoal(target_node_ids=["node-1"]))
+    seams.store["doc"]["goal"] = encode_goal(LoopGoal(target_node_ids=["node-1"]), "s1")
     seams.seen_hashes.return_value = {"qh-1"} if seen else set()
     body = LoopCheckAnswerBody(
         session_id="s1", user_id="u1", question_hash="qh-1", answer="n == 0 returns1"
@@ -62,7 +62,7 @@ def test_actual_check_tags_durable_provenance_in_goal_and_coursewide_sessions(
 ):
     seams.store["doc"]["steps"]["qh-1"]["rung"] = 0
     if goal:
-        seams.store["doc"]["goal"] = encode_goal(LoopGoal(target_node_ids=["node-1"]))
+        seams.store["doc"]["goal"] = encode_goal(LoopGoal(target_node_ids=["node-1"]), "s1")
     if synthetic:
         seams.store["doc"]["steps"]["qh-1"]["refusals"] = rl.CHECK_REFUSALS_AS_IDK - 1
     seams.grade.side_effect = _grader(

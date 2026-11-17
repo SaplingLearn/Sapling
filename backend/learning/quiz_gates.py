@@ -51,6 +51,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 
 from learning import item_keys
+from learning.echoed_ids import echoed_id
 from learning.item_alignment import NONE, concept_key
 from learning.params import MISCONCEPTION_CONFIDENCE
 from learning.quiz_plan import is_key
@@ -137,7 +138,7 @@ def collect_concepts(rows: Iterable[tuple[str, str]]) -> dict[str, str]:
     seen: dict[str, str] = {}
     conflicted: set[str] = set()
     for item, concept in rows:
-        item = str(item).strip()
+        item = echoed_id(item)
         if item in seen and _answer_key(seen[item]) != _answer_key(concept):
             conflicted.add(item)
         seen.setdefault(item, str(concept))

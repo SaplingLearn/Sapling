@@ -717,6 +717,7 @@ function renderGraphCard({
   graphArea: React.ReactNode;
 }) {
   const { keyHoverCourse, setKeyHoverCourse, graphHoverCourse, zoomedCourse, zoomToCourse } = focus;
+  const conceptCount = stats.total || nodes.filter((n) => !n.is_subject_root).length;
   return (
     // Flex-column so the inner gRef can flex: 1 and fill whatever
     // height the grid row decides (courses + upcoming stacked on the
@@ -734,7 +735,7 @@ function renderGraphCard({
         <div>
           <div className="label-micro">Your knowledge graph</div>
           <div className="h-serif" style={{ fontSize: 20, marginTop: 2 }}>
-            {stats.total || nodes.filter((n) => !n.is_subject_root).length} concepts across {scopedCourses.length} courses
+            {`${conceptCount} ${conceptCount === 1 ? "concept" : "concepts"} across ${scopedCourses.length} ${scopedCourses.length === 1 ? "course" : "courses"}`}
           </div>
         </div>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>

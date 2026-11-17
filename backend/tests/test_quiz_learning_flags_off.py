@@ -186,33 +186,39 @@ def _capture_request(monkeypatch, variant: str) -> dict:
 
 #: Captured at 50e9ded8: sha256 of json.dumps(system parts) / of the user parts
 #: / of the sorted function tools / of the output tool's schema (sort_keys).
+#: Re-pinned at the main merge (5df15a9c) for main's security text ONLY, the
+#: user parts and the schema unchanged: "system" for finding M6 (the
+#: INJECTION_GUARD_PROMPT gained its "Links:" sentence) and "tools" for M8
+#: (the peer-misconceptions tool's description: each string now rides the
+#: untrusted envelope). PROMPT_VERSION is the system prompt's hash, so it and
+#: the stored attempt's `prompt_version` (the flows' "written") move with M6.
 PRE_QUIZ_LEARNING_REQUESTS = {
     "adaptive_mc_grounded": {
         "schema": "bd904b2453ac0ae827901ac8ce3ab7f18f16df8c1cdefa6e3b6c8eb12ce12035",
-        "system": "5c8336ecb938886d74503cb90e53bfaf250214ab4b0aab5f2d7e91d6d7eb4e40",
-        "tools": "4fc284cee330971fbb51cc66515c2dd2d7b4918344505da1e86d9e622b8de293",
+        "system": "4cd6686ba6446d8c651d7af8902fe5c7ed9aa35a8017671b8c067136ee20aa00",
+        "tools": "6dec5d638c6e3ebb365a6653ffadac71ab807406c5270512393a9c08539f3092",
         "user": "2a5eccf15e95ebc676976aeb7ae92f07666f2caa08323bcad7507568526f1eb5",
     },
     "easy_mc_plain": {
         "schema": "bd904b2453ac0ae827901ac8ce3ab7f18f16df8c1cdefa6e3b6c8eb12ce12035",
-        "system": "5c8336ecb938886d74503cb90e53bfaf250214ab4b0aab5f2d7e91d6d7eb4e40",
-        "tools": "4fc284cee330971fbb51cc66515c2dd2d7b4918344505da1e86d9e622b8de293",
+        "system": "4cd6686ba6446d8c651d7af8902fe5c7ed9aa35a8017671b8c067136ee20aa00",
+        "tools": "6dec5d638c6e3ebb365a6653ffadac71ab807406c5270512393a9c08539f3092",
         "user": "6aff0ade36748df53fe30ad0bf8cf48fe9effa24dcbd1dedcce47ad347dc45c0",
     },
     "hard_mixed_grounded": {
         "schema": "bd904b2453ac0ae827901ac8ce3ab7f18f16df8c1cdefa6e3b6c8eb12ce12035",
-        "system": "5c8336ecb938886d74503cb90e53bfaf250214ab4b0aab5f2d7e91d6d7eb4e40",
-        "tools": "4fc284cee330971fbb51cc66515c2dd2d7b4918344505da1e86d9e622b8de293",
+        "system": "4cd6686ba6446d8c651d7af8902fe5c7ed9aa35a8017671b8c067136ee20aa00",
+        "tools": "6dec5d638c6e3ebb365a6653ffadac71ab807406c5270512393a9c08539f3092",
         "user": "29c91f082cd026cf1bb36152f812b9008b34c26ba27c698fb2cf39f585fcabd7",
     },
     "medium_short_answer": {
         "schema": "bd904b2453ac0ae827901ac8ce3ab7f18f16df8c1cdefa6e3b6c8eb12ce12035",
-        "system": "5c8336ecb938886d74503cb90e53bfaf250214ab4b0aab5f2d7e91d6d7eb4e40",
-        "tools": "4fc284cee330971fbb51cc66515c2dd2d7b4918344505da1e86d9e622b8de293",
+        "system": "4cd6686ba6446d8c651d7af8902fe5c7ed9aa35a8017671b8c067136ee20aa00",
+        "tools": "6dec5d638c6e3ebb365a6653ffadac71ab807406c5270512393a9c08539f3092",
         "user": "dd1fb0015246de5b5fe5871410714e086b3551b9c10f61da825e96013ce2126b",
     },
 }
-PRE_QUIZ_LEARNING_PROMPT_VERSION = "9063bad6e844"
+PRE_QUIZ_LEARNING_PROMPT_VERSION = "1ecd8b32758b"
 _OUTPUT_TOOL = ("final_result", "The agent's structured output.")
 
 
@@ -347,9 +353,14 @@ def _flow(monkeypatch, *, question_format: str, difficulty: str = "adaptive") ->
             stack.enter_context(quiz_agent.override(model=model_for("quiz")))
             stack.enter_context(quiz_planned_agent.override(model=model_for("quiz")))
             stack.enter_context(patch_quiz("table", side_effect=with_async_twins(tables)))
-            stack.enter_context(patch_quiz("encrypt_json", side_effect=lambda v: {"enc": v}))
+            # finding M13: every seal and open now names its cell (bind=); the
+            # stand-in ignores it, so the flow digests are unchanged by it
+            stack.enter_context(patch_quiz("encrypt_json", side_effect=lambda v, **_: {"enc": v}))
             stack.enter_context(
-                patch_quiz("decrypt_json_column", side_effect=lambda v: v.get("enc") if isinstance(v, dict) and "enc" in v else v)
+                patch_quiz(
+                    "decrypt_json_column",
+                    side_effect=lambda v, **_: v.get("enc") if isinstance(v, dict) and "enc" in v else v,
+                )
             )
             # main (#117): the route claims through the async limiter twin
             stack.enter_context(patch_quiz("aclaim_rate_limit", new=AsyncMock(return_value=(None, 1.0))))
@@ -421,7 +432,7 @@ PRE_QUIZ_LEARNING_FLOWS = {
         "evidence": "4987621eb470f0100c53e3ef45410c23ab76c0b61d0873f61686262dc13c99b2",
         "generate": "f23f85b95a4272e3f11f9c83ba801c24e325c4fcf7735cde3f49a024bf724ca3",
         "submit": "066ea06ded4f555715975fb082bea236b3ef18c5a47e50ab1c2dc6fa194a7277",
-        "written": "06e978f69a2b050c8e1044e0f44aa64697a705e9adbf4efeae589d9509e19d34",
+        "written": "bdcd5c66c758a228294bcef22a986260b357581b33a3e20f3823dcabd5897a6a",
     },
     "short_answer": {
         "answers": "b3f730d39498e86edad172f99e28027046c8464feb23d2c2250611976184ae0d",
@@ -429,7 +440,7 @@ PRE_QUIZ_LEARNING_FLOWS = {
         "evidence": "d8eff42c09f8d84957e2776f4171e7f30917602b05257a89387b0d86ebfe44d2",
         "generate": "a15cfc7761c15c5378057eb8c2cf4fdce965c6386c9fd7de8be1ad3fef072fa8",
         "submit": "0ea1f5cfa8a5e2e6d9497412629bf2c48fbae66a25e2f67eaa1a8bc5294c6d85",
-        "written": "0bf04da6d08a44621a3329811aafa89ee1be1a371da3933f9f760ebc578a30b1",
+        "written": "9155c9a85a2759ece65b6e71033f65366cbebdcf58b6ea2b6ce399c0d089f804",
     },
 }
 

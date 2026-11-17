@@ -418,7 +418,7 @@ def test_record_is_one_atomic_rpc_with_encrypted_evidence():
     index) — a read-then-write lost increments and could open two rows under
     concurrency. `evidence_text` is encrypted here; nothing is read back."""
     from learning import misconceptions
-    from services.encryption import decrypt_if_present
+    from services.encryption import bind, decrypt_if_present
 
     with (
         patch.object(misconceptions, "rpc", return_value=[{"id": "m1", "count": 3}]) as rpc,
@@ -431,7 +431,9 @@ def test_record_is_one_atomic_rpc_with_encrypted_evidence():
     assert params_["p_wrong_key"] == "k1" and params_["p_check_item_id"] == "ci1"
     assert params_["p_id"]
     assert params_["p_evidence_text"] != "the derivative of x^2 is x"
-    assert decrypt_if_present(params_["p_evidence_text"]) == "the derivative of x^2 is x"
+    # finding M13: sealed for the open row's natural key (user, node, wrong key)
+    sealed_for = bind("misconceptions", "evidence_text", ("u1", "n1", "k1"))
+    assert decrypt_if_present(params_["p_evidence_text"], bind=sealed_for) == "the derivative of x^2 is x"
     assert params_["p_question_hash"] is None  # no item named: an unknown support (A123)
     assert out == {"id": "m1", "count": 3}
 

@@ -2571,7 +2571,7 @@ class TestCreateItems:
     def test_encrypts_at_write_and_hashes_plaintext(self):
         from learning.checks import item_id, question_hash
         from services import check_item_service as svc
-        from services.encryption import decrypt_if_present
+        from services.encryption import bind, decrypt_if_present
 
         factory, mocks = _cached_tables({})
         with patch("services.check_item_service.table", side_effect=factory):
@@ -2597,16 +2597,16 @@ class TestCreateItems:
         assert row["question_hash"] == question_hash(_draft().prompt)
         assert (
             row["prompt"] != _draft().prompt
-            and decrypt_if_present(row["prompt"]) == _draft().prompt
+            and decrypt_if_present(row["prompt"], bind=bind("check_items", "prompt", row)) == _draft().prompt
         )
-        assert decrypt_if_present(row["reference_answer"]) == _draft().reference_answer
+        assert decrypt_if_present(row["reference_answer"], bind=bind("check_items", "reference_answer", row)) == _draft().reference_answer
         assert row["final_answer"] != _draft().final_answer  # A34: encrypted at write
-        assert decrypt_if_present(row["final_answer"]) == _draft().final_answer
-        assert json.loads(decrypt_if_present(row["rubric_json"])) == [
+        assert decrypt_if_present(row["final_answer"], bind=bind("check_items", "final_answer", row)) == _draft().final_answer
+        assert json.loads(decrypt_if_present(row["rubric_json"], bind=bind("check_items", "rubric_json", row))) == [
             {"id": "r1", "text": "Names the step size."},
             {"id": "r2", "text": "Ties it to the gradient direction."},
         ]
-        assert json.loads(decrypt_if_present(row["common_wrong_json"])) == [
+        assert json.loads(decrypt_if_present(row["common_wrong_json"], bind=bind("check_items", "common_wrong_json", row))) == [
             {
                 "key": "rate_is_iterations",
                 "text": "Confuses the rate with the number of iterations.",
@@ -2627,7 +2627,7 @@ class TestCreateItems:
         from learning.checks import lettered_options
         from services import check_item_service as svc
         from services.encryption import derive_key
-        from services.encryption import decrypt_if_present, decrypt_json
+        from services.encryption import bind, decrypt_if_present, decrypt_json
 
         numeric = _draft(
             prompt="What learning rate does the worked example use?",
@@ -2647,21 +2647,21 @@ class TestCreateItems:
         options, letter = lettered_options(
             _mc_draft(), slot_key=derive_key(svc.OPTION_SLOT_PURPOSE)
         )
-        assert decrypt_json(mc["options_json"]) == [o.model_dump() for o in options]
-        assert [o["letter"] for o in decrypt_json(mc["options_json"])] == ["A", "B", "C", "D"]
-        assert mc["correct_option"] != letter and decrypt_if_present(mc["correct_option"]) == letter
-        (right,) = [o for o in decrypt_json(mc["options_json"]) if o["wrong_key"] is None]
+        assert decrypt_json(mc["options_json"], bind=bind("check_items", "options_json", mc)) == [o.model_dump() for o in options]
+        assert [o["letter"] for o in decrypt_json(mc["options_json"], bind=bind("check_items", "options_json", mc))] == ["A", "B", "C", "D"]
+        assert mc["correct_option"] != letter and decrypt_if_present(mc["correct_option"], bind=bind("check_items", "correct_option", mc)) == letter
+        (right,) = [o for o in decrypt_json(mc["options_json"], bind=bind("check_items", "options_json", mc)) if o["wrong_key"] is None]
         assert right == {"letter": letter, "text": "The update step size", "wrong_key": None}
         # A37: the common wrong reasons are the distractors' own misconceptions,
         # so every stored option key is a stored wrong reason's key
-        wrong = json.loads(decrypt_if_present(mc["common_wrong_json"]))
+        wrong = json.loads(decrypt_if_present(mc["common_wrong_json"], bind=bind("check_items", "common_wrong_json", mc)))
         assert wrong == [{"key": k, "text": _MISCONCEPTIONS[k]} for _, _, k in _MC_OPTIONS[1:]]
-        keys = {o["wrong_key"] for o in decrypt_json(mc["options_json"]) if o["wrong_key"]}
+        keys = {o["wrong_key"] for o in decrypt_json(mc["options_json"], bind=bind("check_items", "options_json", mc)) if o["wrong_key"]}
         assert keys == {w["key"] for w in wrong}
         assert num["answer_kind"] == "numeric" and num["tolerance"] == 0.001
         assert (
             num["canonical_answer"] != "0.01"
-            and decrypt_if_present(num["canonical_answer"]) == "0.01"
+            and decrypt_if_present(num["canonical_answer"], bind=bind("check_items", "canonical_answer", num)) == "0.01"
         )
         assert num["canonical_verified"] is False and num["options_json"] is None
 
@@ -2674,18 +2674,18 @@ class TestCreateItems:
         supporting fact. Free and teachback rubrics are stored as written."""
         from learning.checks import MC_REASON_CRITERION
         from services import check_item_service as svc
-        from services.encryption import decrypt_if_present
+        from services.encryption import bind, decrypt_if_present
 
         factory, mocks = _cached_tables({})
         with patch("services.check_item_service.table", side_effect=factory):
             svc.create_items("course-1", "learning rate", "doc-1", [_mc_draft(), _draft()])
         mc, free = mocks["check_items"].upsert.call_args[0][0]
-        assert json.loads(decrypt_if_present(mc["rubric_json"])) == [
+        assert json.loads(decrypt_if_present(mc["rubric_json"], bind=bind("check_items", "rubric_json", mc))) == [
             {"id": "r1", "text": "Names the step size."},
             {"id": "r2", "text": "Ties it to the gradient direction."},
             {"id": "r3", "text": MC_REASON_CRITERION},
         ]
-        assert len(json.loads(decrypt_if_present(free["rubric_json"]))) == 2
+        assert len(json.loads(decrypt_if_present(free["rubric_json"], bind=bind("check_items", "rubric_json", free)))) == 2
 
     def test_invalid_drafts_are_dropped_not_stored(self, caplog):
         from services import check_item_service as svc
@@ -2710,7 +2710,7 @@ class TestCreateItems:
         the row stores the correct option with no key and the re-keyed
         distractors' misconceptions as its common wrong reasons."""
         from services import check_item_service as svc
-        from services.encryption import decrypt_if_present, decrypt_json
+        from services.encryption import bind, decrypt_if_present, decrypt_json
 
         draft = _mc_draft(
             options=_opts(
@@ -2728,10 +2728,10 @@ class TestCreateItems:
             ids = svc.create_items("course-1", "learning rate", None, [draft])
         (row,) = mocks["check_items"].upsert.call_args[0][0]
         assert len(ids) == 1
-        options = decrypt_json(row["options_json"])
-        letter = decrypt_if_present(row["correct_option"])
+        options = decrypt_json(row["options_json"], bind=bind("check_items", "options_json", row))
+        letter = decrypt_if_present(row["correct_option"], bind=bind("check_items", "correct_option", row))
         assert [o["letter"] for o in options if o["wrong_key"] is None] == [letter]
-        wrong = json.loads(decrypt_if_present(row["common_wrong_json"]))
+        wrong = json.loads(decrypt_if_present(row["common_wrong_json"], bind=bind("check_items", "common_wrong_json", row)))
         assert [w["key"] for w in wrong] == [
             "counts_iterations",
             "treats_rate_as_loss",

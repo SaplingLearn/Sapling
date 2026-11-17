@@ -176,7 +176,7 @@ describe("Dashboard load → screen", () => {
 
   it("maps nodes with the enrolled courses and strips edges to the graph's fields", async () => {
     render(<Dashboard />);
-    await screen.findByText(/concepts across/);
+    await screen.findByText(/concepts? across/);
     const g = mainGraph();
     const nodes = g.nodes as { id: string; color: string; course_id: string }[];
     expect(nodes.map((n) => n.id)).toEqual(["n1", "n2", "root"]);
@@ -194,7 +194,7 @@ describe("Dashboard load → screen", () => {
       ],
     }) as never);
     render(<Dashboard />);
-    await screen.findByText(/concepts across/);
+    await screen.findByText(/concepts? across/);
     const week = screen.getByText("This week").closest(".card") as HTMLElement;
     const marks = within(week).getAllByLabelText(/completed|today|missed|upcoming/).map((el) => el.getAttribute("aria-label"));
     expect(marks).toEqual(["completed", "missed", "today", "upcoming", "upcoming", "upcoming", "upcoming"]);
@@ -380,7 +380,7 @@ describe("Dashboard legacy (topnav) wiring", () => {
 
   it("node clicks open the tutor on the node", async () => {
     render(<Dashboard />);
-    await screen.findByText(/concepts across/);
+    await screen.findByText(/concepts? across/);
     act(() => mainGraph().onNodeClick!(((mainGraph().nodes as unknown[])[0])));
     expect(push).toHaveBeenCalledTimes(1);
     expect(push.mock.calls[0][0]).toMatch(/^\/learn/);
@@ -472,7 +472,7 @@ describe("Dashboard sidebar layout", () => {
 describe("Dashboard fullscreen graph", () => {
   it("opens, closes on Escape and on the close button, and routes a node click", async () => {
     render(<Dashboard />);
-    await screen.findByText(/concepts across/);
+    await screen.findByText(/concepts? across/);
     fireEvent.click(screen.getByRole("button", { name: "Fullscreen graph" }));
     expect(screen.getByText("Press Esc to exit")).toBeInTheDocument();
     expect(fullscreenGraph().width).toBe(1200);
@@ -515,7 +515,7 @@ describe("Dashboard suggest card", () => {
   it("an unknown suggestion renders no card", async () => {
     searchParams = new URLSearchParams("suggest=Nope");
     render(<Dashboard />);
-    await screen.findByText(/concepts across/);
+    await screen.findByText(/concepts? across/);
     expect(screen.queryByText("Try this next:")).toBeNull();
     expect(mainGraph().highlightId).toBeUndefined();
   });

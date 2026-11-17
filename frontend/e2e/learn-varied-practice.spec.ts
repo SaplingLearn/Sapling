@@ -119,12 +119,12 @@ test("an upload with the varied-practice flags on drafts surfaces and the combin
   // A140: every item of the upload's concepts states its surface — the
   // representation in plaintext, the context encrypted — a different one per item
   const items = (await queryRaw(
-    `SELECT concept_key, surface_representation, surface_context
+    `SELECT id, concept_key, surface_representation, surface_context
        FROM check_items
       WHERE $1 = ANY(source_document_ids) AND apex_key IS NULL
       ORDER BY concept_key, created_at, id`,
     [docId],
-  )) as { concept_key: string; surface_representation: string | null; surface_context: string | null }[];
+  )) as { id: string; concept_key: string; surface_representation: string | null; surface_context: string | null }[];
   expect(items.length).toBeGreaterThan(0);
   expect(new Set(items.map((i) => i.concept_key))).toEqual(new Set(["gradient descent", "learning rate"]));
   for (const item of items) {
@@ -132,7 +132,9 @@ test("an upload with the varied-practice flags on drafts surfaces and the combin
     expect(item.surface_context).not.toBeNull();
     expect(E2E_SURFACES.map(([, c]) => c)).not.toContain(item.surface_context); // ciphertext at rest
   }
-  const contexts = await decryptTexts(items.map((i) => i.surface_context as string));
+  const contexts = await decryptTexts(items.map((i) => ({
+    value: i.surface_context as string, table: "check_items", column: "surface_context", row: i.id,
+  })));
   const surfaces = items.map((i, n) => [i.surface_representation, contexts[n]]);
   for (const s of surfaces) expect(E2E_SURFACES).toContainEqual(s);
   for (const concept of ["gradient descent", "learning rate"]) {

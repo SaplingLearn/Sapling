@@ -452,12 +452,13 @@ test("loop user completes probe → plan → check (explicit submission) with a 
   expect(evidence[0].checked).toBeGreaterThanOrEqual(1);
 
   const closed = (await queryRaw(
-    `SELECT close_json, close_phase FROM sessions WHERE user_id = $1 AND close_json IS NOT NULL`,
+    `SELECT id, close_json, close_phase FROM sessions WHERE user_id = $1 AND close_json IS NOT NULL`,
     [USER_LOOP],
-  )) as { close_json: string; close_phase: string }[];
+  )) as { id: string; close_json: string; close_phase: string }[];
+  const closeCell = { value: closed[0]?.close_json ?? "", table: "sessions", column: "close_json", row: closed[0]?.id ?? "" };
   expect(closed).toHaveLength(1);
   expect(closed[0].close_json).not.toContain("summary"); // ciphertext at rest
-  expect(await decryptText(closed[0].close_json)).toContain(CLOSE_SUMMARY); // decrypts to the record
+  expect(await decryptText(closeCell)).toContain(CLOSE_SUMMARY); // decrypts to the record
 
   // spec §13 A117: an honest wrap-up. USER_LOOP has no evidence before this session
   // (the fixtures re-seed before every test), so every concept is a first measurement
@@ -465,7 +466,7 @@ test("loop user completes probe → plan → check (explicit submission) with a 
   // (where teaching on it began, else after its last check-in answer), any other at
   // its first evidence; every concept ends at its last evidence. Recomputed here from
   // the journal and the probe history, and the wrap-up's direction from those two.
-  const record = JSON.parse(await decryptText(closed[0].close_json)) as {
+  const record = JSON.parse(await decryptText(closeCell)) as {
     concepts: { node_id: string; p_before: number; p_after: number; baseline?: string }[];
   };
   const journal = (await queryRaw(
@@ -701,7 +702,7 @@ for (const width of [1440, 390]) {
         expect(typeof previous?.close_json).toBe("string");
         const ciphertext = previous!.close_json!;
         expect(ciphertext.trim().length).toBeGreaterThan(0);
-        const plaintext = await decryptText(ciphertext);
+        const plaintext = await decryptText({ value: ciphertext, table: "sessions", column: "close_json", row: previous!.id });
         expect(plaintext).not.toBe(ciphertext); // Legacy plaintext fallback cannot pass as encryption.
         expect(JSON.parse(plaintext)).toEqual(closePayload.close);
         expect(sessions.find((session) => session.id === freshSession)).toMatchObject({ ended_at: null, close_json: null, close_phase: null, loop_state: { phase: "probe" } });
@@ -873,7 +874,9 @@ async function walkToTheCheckPosingTurn(page: Page, reply: string, served: strin
       return rows.length;
     }, { timeout: DB_POLL_TIMEOUT_MS })
     .toBe(4); // the opener, the first teach turn, the check-posing turn, the check pose
-  const texts = await decryptTexts(rows.map((row) => row.content));
+  const texts = await decryptTexts(rows.map((row) => ({
+    value: row.content, table: "messages", column: "content", row: sessionId ?? "",
+  })));
   expect(texts[0]).toBe(LOOP_PROBE_OPENER);
   expect(texts).toContain(LOOP_TUTOR_REPLY);
   expect(texts).toContain(served);
@@ -994,14 +997,17 @@ test("spec §13 A138 (segment_prequestion on): a new segment opens on an ungrade
 
     // The guess is stored encrypted, with no evidence anywhere.
     const rows = (await queryRaw(
-      `SELECT question_hash, no_idea, guess_json, session_id FROM learning_prequestions WHERE user_id = $1`,
+      `SELECT question_hash, no_idea, guess_json, session_id, node_id FROM learning_prequestions WHERE user_id = $1`,
       [USER_LOOP],
-    )) as { question_hash: string; no_idea: boolean; guess_json: string | null; session_id: string }[];
+    )) as { question_hash: string; no_idea: boolean; guess_json: string | null; session_id: string; node_id: string }[];
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ question_hash: guessHash, no_idea: false, session_id: sessionId });
     expect(rows[0].guess_json).toBeTruthy();
     expect(rows[0].guess_json).not.toContain("option"); // ciphertext at rest
-    expect(JSON.parse(await decryptText(rows[0].guess_json!))).toMatchObject({ option: "A" });
+    expect(JSON.parse(await decryptText({
+      value: rows[0].guess_json!, table: "learning_prequestions", column: "guess_json",
+      row: [USER_LOOP, rows[0].session_id, rows[0].node_id],
+    }))).toMatchObject({ option: "A" });
     const [onItem] = (await queryRaw(
       `SELECT count(*)::int AS n FROM node_mastery_events e JOIN graph_nodes g ON g.id = e.node_id
         WHERE g.user_id = $1 AND e.event_type = 'evidence' AND e.question_hash = $2`,
@@ -1083,14 +1089,16 @@ test("spec §13 A139 (self_explanation_prompts on): the worked example asks why 
 
     // Stored encrypted with its juncture; never evidence.
     const rows = (await queryRaw(
-      `SELECT juncture, status, reply_chars, reply_text, session_id FROM learning_self_explanations WHERE user_id = $1`,
+      `SELECT id, juncture, status, reply_chars, reply_text, session_id FROM learning_self_explanations WHERE user_id = $1`,
       [USER_LOOP],
-    )) as { juncture: string; status: string; reply_chars: number; reply_text: string; session_id: string }[];
+    )) as { id: string; juncture: string; status: string; reply_chars: number; reply_text: string; session_id: string }[];
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ juncture: "worked_example", status: "replied", session_id: sessionId });
     expect(Number(rows[0].reply_chars)).toBe(reply.length);
     expect(rows[0].reply_text).not.toContain(reply); // ciphertext at rest
-    expect(await decryptText(rows[0].reply_text)).toBe(reply);
+    expect(await decryptText({
+      value: rows[0].reply_text, table: "learning_self_explanations", column: "reply_text", row: rows[0].id,
+    })).toBe(reply);
     expect(await evidenceCount(USER_LOOP)).toBe(evidenceBefore);
 
     // The next tutor turn acknowledges the reply (flag-on prompt; the function-mode

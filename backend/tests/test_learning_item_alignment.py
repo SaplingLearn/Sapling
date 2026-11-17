@@ -148,9 +148,9 @@ def _verifier(decide, calls=None):
 
 
 def _rubric(row) -> list[dict]:
-    from services.encryption import decrypt_if_present
+    from services.encryption import bind, decrypt_if_present
 
-    return json.loads(decrypt_if_present(row["rubric_json"]))
+    return json.loads(decrypt_if_present(row["rubric_json"], bind=bind("check_items", "rubric_json", row)))
 
 
 def _generate(
@@ -669,19 +669,25 @@ def _checkitem(*, id="i1", key="open addressing", prompt=LIVE_PROMPT, lint=None,
 
 
 def _raw(item: CheckItem) -> dict:
-    """The stored row as read (ciphertext columns stand in as tokens)."""
+    """The stored row as read: each 🔒 column sealed for this row's own cell
+    (finding M13), standing in for the stored value by a labelled token."""
+    from services.encryption import bind, encrypt
+
+    def cipher(column: str, label: str) -> str:
+        return encrypt(label, bind=bind("check_items", column, item.id))
+
     return {
         "id": item.id,
         "course_id": item.course_id,
         "concept_key": item.concept_key,
         "format": item.format,
         "difficulty": item.difficulty,
-        "prompt": "<cipher prompt>",
-        "reference_answer": "<cipher reference>",
-        "rubric_json": "<cipher rubric>",
-        "common_wrong_json": "<cipher wrong>",
-        "options_json": "<cipher options>",
-        "correct_option": "<cipher letter>",
+        "prompt": cipher("prompt", "<cipher prompt>"),
+        "reference_answer": cipher("reference_answer", "<cipher reference>"),
+        "rubric_json": cipher("rubric_json", "<cipher rubric>"),
+        "common_wrong_json": cipher("common_wrong_json", "<cipher wrong>"),
+        "options_json": cipher("options_json", "<cipher options>"),
+        "correct_option": cipher("correct_option", "<cipher letter>"),
         "answer_kind": "free",
         "canonical_answer": None,
         "tolerance": None,
@@ -692,7 +698,7 @@ def _raw(item: CheckItem) -> dict:
         "question_hash": item.question_hash,
         "graded": False,
         "created_at": "2026-11-07T00:00:00+00:00",
-        "final_answer": "<cipher final>",
+        "final_answer": cipher("final_answer", "<cipher final>"),
         "lint_flags": item.lint_flags,
         "aligned_at": None,
         "document_id": "doc-1",
@@ -801,13 +807,16 @@ class TestBackfill:
         qh = question_hash(LIVE_PROMPT)
         assert moved["id"] == item_id(COURSE, "load factor", qh) and moved["concept_key"] == "load factor"
         assert conflict == "course_id,concept_key,question_hash"
-        assert moved["prompt"] == "<cipher prompt>"  # every other column copied as stored
+        # every other column carried as stored, re-sealed for the new id (finding M13)
+        from services.encryption import bind, decrypt
+
+        assert moved["prompt"].startswith("enc2:")
+        assert decrypt(moved["prompt"], bind=bind("check_items", "prompt", moved)) == "<cipher prompt>"
+        assert decrypt(moved["final_answer"], bind=bind("check_items", "final_answer", moved)) == "<cipher final>"
         assert moved["question_hash"] == qh and moved["created_at"] == "2026-11-07T00:00:00+00:00"
         assert moved["lint_flags"] == [ia.RUBRIC_UNASKED_DROPPED, ia.CONCEPT_RETAGGED]
         assert moved["aligned_at"]
-        from services.encryption import decrypt_if_present
-
-        assert json.loads(decrypt_if_present(moved["rubric_json"])) == [
+        assert _rubric(moved) == [
             {"id": "r1", "text": LIVE_R1},
             {"id": "r2", "text": MC_REASON_CRITERION},
         ]

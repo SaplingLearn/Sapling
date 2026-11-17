@@ -492,7 +492,7 @@ def _cued_quiz():
 @pytest.mark.parametrize("quiz,flags", [(_fake_quiz, []), (_cued_quiz, [CORRECT_LONGEST])])
 @pytest.mark.parametrize("keyed", [False, True])
 def test_generate_stores_the_codes_and_never_serves_them(quiz, flags, keyed):
-    from services.encryption import decrypt_json_column
+    from services.encryption import bind, decrypt_json_column
 
     factory, captured = _generate_factory()
     with (
@@ -502,7 +502,9 @@ def test_generate_stores_the_codes_and_never_serves_them(quiz, flags, keyed):
     ):
         r = _post_generate({"include_answer_key": keyed})
     assert r.status_code == 200, r.text
-    stored = decrypt_json_column(captured["payload"]["questions_json"])
+    stored = decrypt_json_column(  # finding M13: opened in its own attempt's cell
+        captured["payload"]["questions_json"], bind=bind("quiz_attempts", "questions_json", captured["payload"])
+    )
     assert [q["lint_flags"] for q in stored] == [flags]
     served = r.json()["questions"][0]
     assert "lint_flags" not in served

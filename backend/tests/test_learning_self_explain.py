@@ -105,7 +105,7 @@ def test_the_loop_state_record_holds_no_text():
 
 def test_the_reply_is_stored_encrypted_with_its_length_and_a_skip_stores_none():
     from learning import self_explain_store as store
-    from services.encryption import decrypt_if_present
+    from services.encryption import bind, decrypt_if_present
 
     t = MagicMock()
     t.update.return_value = []  # no 'open' row: the serve-time write failed
@@ -121,7 +121,9 @@ def test_the_reply_is_stored_encrypted_with_its_length_and_a_skip_stores_none():
     replied, skipped = (c.args[0] for c in t.insert_ignore_duplicates.call_args_list)
     assert replied["status"] == "replied" and replied["reply_chars"] == len("Each step halves the value.")
     assert replied["reply_text"] != "Each step halves the value."
-    assert decrypt_if_present(replied["reply_text"]) == "Each step halves the value."
+    assert decrypt_if_present(  # finding M13: sealed for the prompt's own row
+        replied["reply_text"], bind=bind("learning_self_explanations", "reply_text", replied)
+    ) == "Each step halves the value."
     assert skipped["status"] == "skipped" and skipped["reply_text"] is None and skipped["reply_chars"] is None
     assert replied["juncture"] == "worked_example" and replied["rung"] == 4
     assert replied["prompted_at"].startswith("2026-09-")  # UTC from the prompt's unix seconds

@@ -605,7 +605,7 @@ def test_a_first_seed_that_stopped_before_the_study_dataset_gets_it_on_the_next_
 #: sha256 of the default dataset, encrypted columns decrypted (see _digest).
 #: Includes the learning loop's seed (the loop users, the check-item bank, the
 #: capped student's spend and due card) and M8's min_mistake_contributors.
-BASELINE_DIGEST = "3f0993df50fe892b3997823e3c5e2d416d512d0afca55f8e26dcb4df83337587"
+BASELINE_DIGEST = "79fe6f898fd6ee7210095a41c44b2c5d8bf31046a9f84253e719e934b605c6e6"
 
 #: Stamped from the clock on every seed, by design (seed_learning_loop: the
 #: capped student's spend and due card must be "today" on every run), so the

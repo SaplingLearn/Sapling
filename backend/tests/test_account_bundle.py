@@ -477,10 +477,12 @@ def test_legacy_plaintext_in_an_encrypted_column_travels_as_is(use):
 
 def test_unlisted_encrypted_column_fails_the_export(use):
     db = source_db()
-    db.data["sessions"][0]["close_json"] = enc(KEY_A, "a new 🔒 column nobody listed")
+    # A hypothetical future column: every real sessions 🔒 column (close_json
+    # and loop_brief included) is in encryption.ENCRYPTED_COLUMNS now.
+    db.data["sessions"][0]["future_secret"] = enc(KEY_A, "a new 🔒 column nobody listed")
     use(db, KEY_A, "staging")
 
-    with pytest.raises(BundleError, match=r"sessions\.close_json.*not in account_bundle\.ENCRYPTED"):
+    with pytest.raises(BundleError, match=r"sessions\.future_secret.*not in account_bundle\.ENCRYPTED"):
         account_bundle.export_account(UID)
 
 
@@ -511,10 +513,10 @@ def test_a_v2_value_moved_from_another_row_fails_the_export(use):
 
 def test_unlisted_v2_column_fails_the_export_without_opening_it(use):
     db = source_db()
-    db.data["sessions"][0]["close_json"] = f"{encryption.V2_PREFIX}0:AAAA"
+    db.data["sessions"][0]["future_secret"] = f"{encryption.V2_PREFIX}0:AAAA"
     use(db, KEY_A, "staging")
 
-    with pytest.raises(BundleError, match=r"sessions\.close_json.*not in account_bundle\.ENCRYPTED"):
+    with pytest.raises(BundleError, match=r"sessions\.future_secret.*not in account_bundle\.ENCRYPTED"):
         account_bundle.export_account(UID)
 
 

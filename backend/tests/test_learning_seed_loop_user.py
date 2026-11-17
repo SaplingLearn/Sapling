@@ -24,7 +24,7 @@ from learning.params import (
 )
 from services import chunk_visibility, rag_service
 from services.check_item_service import _row_to_item
-from services.encryption import decrypt_if_present
+from services.encryption import bind, decrypt_if_present
 from services.share_screen import screen_from_stored
 from services.graph_service import _normalize_concept
 
@@ -116,17 +116,19 @@ def test_check_items_are_shared_course_assets_encrypted_and_hashed(recorder):
     assert {r["concept_key"] for r in items} == keys
     for r in items:
         assert "node_id" not in r and r["course_id"] == seed.COURSE_CS  # A2
-        plain = decrypt_if_present(r["prompt"])
+        plain = decrypt_if_present(r["prompt"], bind=bind("check_items", "prompt", r))
         assert plain != r["prompt"], "prompt stored in plaintext"
         assert plain.startswith(E2E_LOOP_PROBE_PROMPT)
         for col in ("reference_answer", "final_answer", "rubric_json", "common_wrong_json"):
-            assert decrypt_if_present(r[col]) != r[col], f"{col} stored in plaintext"
-        assert decrypt_if_present(r["reference_answer"]) == E2E_LOOP_REFERENCE
-        assert decrypt_if_present(r["final_answer"]) == E2E_LOOP_FINAL_ANSWER  # A34
+            assert decrypt_if_present(r[col], bind=bind("check_items", col, r)) != r[col], (
+                f"{col} stored in plaintext"
+            )
+        assert decrypt_if_present(r["reference_answer"], bind=bind("check_items", "reference_answer", r)) == E2E_LOOP_REFERENCE
+        assert decrypt_if_present(r["final_answer"], bind=bind("check_items", "final_answer", r)) == E2E_LOOP_FINAL_ANSWER  # A34
         # the E2E grader grades on the token anywhere in its message (prompt + reference)
         assert E2E_GRADER_CORRECT_TOKEN not in plain + E2E_LOOP_REFERENCE
-        assert len(json.loads(decrypt_if_present(r["rubric_json"]))) >= CHECK_ITEM_MIN_RUBRIC
-        assert len(json.loads(decrypt_if_present(r["common_wrong_json"]))) >= CHECK_ITEM_MIN_WRONG
+        assert len(json.loads(decrypt_if_present(r["rubric_json"], bind=bind("check_items", "rubric_json", r)))) >= CHECK_ITEM_MIN_RUBRIC
+        assert len(json.loads(decrypt_if_present(r["common_wrong_json"], bind=bind("check_items", "common_wrong_json", r)))) >= CHECK_ITEM_MIN_WRONG
         assert r["graded"] is False
         assert len(r["question_hash"]) == 64
     assert len({(r["course_id"], r["concept_key"], r["question_hash"]) for r in items}) == len(
@@ -172,18 +174,19 @@ def test_items_are_drafted_from_an_indexed_shared_course_document(recorder, monk
             confidence=doc["shareability_confidence"],
             # #890: the indexer's share screen of the stored text passes
             screen=screen_from_stored(
-                doc.get("share_block_reason"), decrypt_if_present(doc["extracted_text"]),
+                doc.get("share_block_reason"), decrypt_if_present(doc["extracted_text"], bind=bind("documents", "extracted_text", doc)),
             ),
         )
         == chunk_visibility.SHARED
     )
     for col in ("summary", "concept_notes", "extracted_text"):
-        assert decrypt_if_present(doc[col]) != doc[col], f"documents.{col} in plaintext"
+        opened = decrypt_if_present(doc[col], bind=bind("documents", col, doc))
+        assert opened is not None and opened != doc[col], f"documents.{col} in plaintext"
 
     chunks = recorder.rows["course_chunks"]
     assert len(chunks) == seed.SEED_LOOP_CONCEPTS == doc["index_chunk_count"]
     for c in chunks:
-        plain = decrypt_if_present(c["chunk_text"])
+        plain = decrypt_if_present(c["chunk_text"], bind=bind("course_chunks", "chunk_text", c))
         assert plain != c["chunk_text"], "chunk_text stored in plaintext"
         # ids hash the PLAINTEXT (encryption after hashing, ADR 0025)
         assert c["id"] == c["chunk_hash"] == rag_service.chunk_id(seed.COURSE_CS_CODE, plain)
@@ -250,8 +253,8 @@ def test_capped_user_has_one_due_flashcard(recorder):
     cards = recorder.rows["flashcards"]
     assert len(cards) == 1 and cards[0]["user_id"] == seed.USER_CAPPED
     assert cards[0]["offering_id"] == seed.OFF_CS_S26
-    assert decrypt_if_present(cards[0]["front"]) != cards[0]["front"]  # 🔒 front/back (#518)
-    assert decrypt_if_present(cards[0]["back"]) != cards[0]["back"]
+    assert decrypt_if_present(cards[0]["front"], bind=bind("flashcards", "front", cards[0])) not in (None, cards[0]["front"])  # 🔒 front/back (#518)
+    assert decrypt_if_present(cards[0]["back"], bind=bind("flashcards", "back", cards[0])) not in (None, cards[0]["back"])
     assert cards[0]["due_at"] < datetime.now(timezone.utc).isoformat()
 
 

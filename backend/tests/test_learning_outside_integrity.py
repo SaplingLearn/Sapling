@@ -721,7 +721,8 @@ def test_every_other_flashcard_generator_is_guarded_both_ways(posed, records, su
                 json={
                     "user_id": "u1",
                     "source": "ocr",
-                    "payload": base64.b64encode(b"img").decode(),
+                    # main's upload hardening sniffs the bytes: a real PNG signature
+                    "payload": base64.b64encode(b"\x89PNG\r\n\x1a\n" + b"\0" * 16).decode(),
                     "options": {"filename": "page.png"},
                 },
             )

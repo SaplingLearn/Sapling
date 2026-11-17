@@ -13,7 +13,7 @@ from pydantic import ValidationError
 from learning.evidence import Evidence, PlanningPersistenceUnavailable, evidence_weight
 from learning.params import STUDENT_CONFIDENCE_LEVELS, WEIGHT_MULTI_CONCEPT
 from learning import grade_checkpoint as cp
-from services.encryption import decrypt, encrypt
+from services.encryption import V2_PREFIX, decrypt, encrypt
 
 NOW = datetime(2026, 10, 19, 15, 30, tzinfo=timezone.utc)
 PRIVATE = "synthetic-private-learner-text"
@@ -42,6 +42,11 @@ def payload(kind="check", *, course_id="course"):
             "evidence": [evidence], "continuation": continuation}
 
 
+def opened(sealed):
+    """The sealed JSON, opened in the session's own loop_state (finding M13)."""
+    return decrypt(sealed, bind=cp._binding("session"))
+
+
 def bindings(value):
     return {key: value[key] for key in ("kind", "operation_id", "user_id", "session_id", "course_id", "question_hash")}
 
@@ -65,7 +70,7 @@ def test_metadata_serialization_is_deterministic_but_encryption_is_randomized():
     assert first != second
     expected = json.dumps(checkpoint.model_dump(mode="json"), sort_keys=True,
                           separators=(",", ":"), allow_nan=False)
-    assert decrypt(first) == decrypt(second) == expected
+    assert opened(first) == opened(second) == expected
     assert cp.open_checkpoint(first, **bindings(checkpoint.model_dump())) == checkpoint
 
 
@@ -157,13 +162,13 @@ def test_ignored_raw_evidence_keys_cannot_serialize_reference_or_rubric():
                                 learner_answer="unapproved-extra-copy")
     checkpoint = cp.GradeCheckpoint.model_validate(data)
     sealed = cp.seal(checkpoint)
-    decoded = json.loads(decrypt(sealed))
+    decoded = json.loads(opened(sealed))
     # the Evidence contract as it serializes: spec §13 A141's `multi_concept`
     # is dumped only when set, so a single-concept row seals byte-identically
     assert set(decoded["evidence"][0]) == set(Evidence.model_fields) - {"multi_concept"}
-    assert "forbidden-reference" not in decrypt(sealed)
-    assert "forbidden-rubric" not in decrypt(sealed)
-    assert "unapproved-extra-copy" not in decrypt(sealed)
+    assert "forbidden-reference" not in opened(sealed)
+    assert "forbidden-rubric" not in opened(sealed)
+    assert "unapproved-extra-copy" not in opened(sealed)
     assert decoded["continuation"]["answer"]["answer_text"] == PRIVATE
 
 
@@ -173,7 +178,7 @@ def test_a_multi_concept_observation_keeps_its_partial_weight_through_recovery()
     data = payload()
     data["evidence"][0]["multi_concept"] = True
     sealed = cp.seal(cp.GradeCheckpoint.model_validate(data))
-    assert json.loads(decrypt(sealed))["evidence"][0]["multi_concept"] is True
+    assert json.loads(opened(sealed))["evidence"][0]["multi_concept"] is True
     recovered = Evidence.model_validate(cp.open_checkpoint(sealed, **bindings(data)).evidence[0])
     assert recovered.multi_concept is True
     single = Evidence.model_validate(payload()["evidence"][0])
@@ -184,12 +189,23 @@ def test_a_multi_concept_observation_keeps_its_partial_weight_through_recovery()
 def test_mutating_any_authenticated_ciphertext_component_rejects_recovery(part):
     data = payload()
     sealed = cp.seal(cp.GradeCheckpoint.model_validate(data))
-    raw = bytearray(base64.b64decode(sealed))
+    # the v2 envelope (finding M13): "enc2:" kid ":" base64(nonce || ct || tag)
+    assert sealed.startswith(V2_PREFIX)
+    head, body = sealed.rsplit(":", 1)
+    raw = bytearray(base64.b64decode(body))
     index = {"nonce": 0, "ciphertext": 12, "tag": -1}[part]
     raw[index] ^= 1
-    altered = base64.b64encode(raw).decode()
+    altered = f"{head}:{base64.b64encode(raw).decode()}"
     with pytest.raises(PlanningPersistenceUnavailable):
         cp.open_checkpoint(altered, **bindings(data))
+
+
+def test_a_checkpoint_moved_into_another_session_does_not_open():
+    """Finding M13: sealed for its own session's loop_state."""
+    data = payload()
+    sealed = cp.seal(cp.GradeCheckpoint.model_validate(data))
+    with pytest.raises(PlanningPersistenceUnavailable):
+        cp.open_checkpoint(sealed, **{**bindings(data), "session_id": "another-session"})
 
 
 @pytest.mark.parametrize("value", [None, {}, [], 7, b"ciphertext", "", "not encrypted"])

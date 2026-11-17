@@ -360,7 +360,7 @@ def test_recorded_written_grades_keep_conservative_evidence_and_guards(
     evidence channel nor help/replay policy. First recorded answers still win,
     including an incorrect answer later retried with the correct key."""
     from learning.evidence import Evidence, is_strong_channel
-    from services.encryption import decrypt_json_column
+    from services.encryption import bind, decrypt_json_column
     from services.quiz_identity import question_hash
 
     qh = question_hash(f"Written {kind} example?", [])
@@ -455,8 +455,13 @@ def test_recorded_written_grades_keep_conservative_evidence_and_guards(
     assert repeat.json()["score"] == 1
     assert len(responses.rows) == 2
     assert responses.rows[0]["selected_index"] is None
-    assert decrypt_json_column(responses.rows[0]["answer_text"]) == {"text": selected}
-    assert decrypt_json_column(attempts["written-first"]["answers_json"]) == [
+    # finding M13: each value opened in its own cell
+    response = responses.rows[0]
+    assert decrypt_json_column(
+        response["answer_text"], bind=bind("quiz_responses", "answer_text", response)
+    ) == {"text": selected}
+    attempt = attempts["written-first"]
+    assert decrypt_json_column(attempt["answers_json"], bind=bind("quiz_attempts", "answers_json", attempt)) == [
         {"question_id": 1, "answer_text": selected}
     ]
 
