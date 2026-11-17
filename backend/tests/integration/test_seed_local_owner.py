@@ -7,7 +7,7 @@ import pytest
 from db import seed_local_rich
 from e2e_oracles import judges
 from e2e_oracles.gather import _CIPHERTEXT_MANIFEST, _ORPHAN_CHECKS
-from services.encryption import decrypt
+from services.encryption import bind, decrypt
 from tests.integration.conftest import _client_for
 
 pytestmark = pytest.mark.integration
@@ -77,9 +77,15 @@ def test_personal_account_seed_populates_api_surfaces_and_stays_idempotent(
 
     for name, pk, column in _CIPHERTEXT_MANIFEST:
         rows = db_conn.execute(
-            f'SELECT "{pk}", "{column}" FROM "{name}" WHERE "{column}" IS NOT NULL',
+            f'SELECT * FROM "{name}" WHERE "{column}" IS NOT NULL',
         ).fetchall()
-        assert judges.ciphertext_findings(name, column, [(r[pk], r[column]) for r in rows], decrypt) == []
+        # Each value opens in its own cell (finding M13): the row's binding.
+        cell = {r[column]: r for r in rows}
+
+        def opened(value, name=name, column=column, cell=cell):
+            return decrypt(value, bind=bind(name, column, cell[value]))
+
+        assert judges.ciphertext_findings(name, column, [(r[pk], r[column]) for r in rows], opened) == []
     for name, sql in _ORPHAN_CHECKS:
         assert judges.orphan_findings(name, [r["id"] for r in db_conn.execute(sql).fetchall()]) == []
 

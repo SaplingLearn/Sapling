@@ -28,9 +28,15 @@ logging.basicConfig(
 from services import access_log  # noqa: E402
 
 access_log.install()
+# httpx logs each outbound URL at INFO (PostgREST query strings carry emails),
+# and validation tracebacks carry model output: services/log_privacy.py.
+from services import log_privacy  # noqa: E402
+
+log_privacy.install()
 
 from routes import graph, learn, learn_loop, quiz, calendar, social, extract, auth, documents, flashcards, study_guide, feedback, careers, onboarding, gradebook, gradescope, notes, academics, gamification
 from routes.profile import router as profile_router
+from routes.auth_handoff import router as auth_handoff_router
 from routes.admin_flags import router as admin_flags_router
 from routes.flags import router as flags_router
 from routes.admin import router as admin_router
@@ -75,6 +81,7 @@ from services.request_context import (
     privacy_signal_in,
 )
 from services.body_limit import BodySizeLimitMiddleware
+from services.csrf_origin import CsrfOriginMiddleware
 from services.encryption_canary import verify_encryption_key
 from services.learning_schema_check import check_learning_schema
 from services.storage_service import (
@@ -172,6 +179,10 @@ async def _lifespan(_app: FastAPI):
     # resolved to its partner's model logs an ERROR — once each, with one event
     # (queued; the events worker below drains it). Warn only: never blocks boot.
     check_slot_guards()
+    # APP_ENV=local may boot without ANTHROPIC_API_KEY; say so once, up front,
+    # rather than leaving a developer to find it in a request's 502 traceback.
+    from agents._providers import warn_if_anthropic_key_missing
+    warn_if_anthropic_key_missing()
     # Refuse to boot with an ENCRYPTION_KEY that isn't this database's: the
     # read helpers fail soft, so a mismatch otherwise surfaces as garbage reads
     # and writes the real environment can never decrypt.
@@ -364,6 +375,12 @@ _allowed_origins = cors_allowed_origins(
 # needs in order to read it. See services/body_limit.py for the two limits.
 app.add_middleware(BodySizeLimitMiddleware)
 
+# sec2 M1: an unsafe request carrying the session cookie must come from an
+# origin on the same allowlist (services/csrf_origin.py has the full rule and
+# its exemptions). Outside the body limit, so a refused request is never read;
+# inside CORS and RequestIDMiddleware, so its 403 is logged like any other.
+app.add_middleware(CsrfOriginMiddleware, allowed_origins=_allowed_origins)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_allowed_origins,
@@ -409,6 +426,32 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
     )
 
 
+def _scrub_validation_errors(errors: list) -> list:
+    """Pydantic's errors without what the client sent.
+
+    Each error carries ``input``: the rejected value, or the WHOLE body when a
+    required field is missing, so a 422 on /api/gradescope/credentials echoed
+    the password back (and a too-long one verbatim). ``ctx['error']`` is the
+    validator's exception, whose text can quote the value too. Both go, on
+    every route; ``loc``/``type``/``msg`` (what the frontend reads, via
+    lib/errorMessage.ts) and the other ``ctx`` limits stay."""
+    out = []
+    for err in errors:
+        if not isinstance(err, dict):
+            out.append(err)
+            continue
+        err = {k: v for k, v in err.items() if k != "input"}
+        ctx = err.get("ctx")
+        if isinstance(ctx, dict):
+            ctx = {k: v for k, v in ctx.items() if k != "error"}
+            if ctx:
+                err["ctx"] = ctx
+            else:
+                err.pop("ctx")
+        out.append(err)
+    return out
+
+
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     rid = getattr(request.state, "request_id", None) or current_request_id()
@@ -420,7 +463,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     # (#540 A3) failing precisely when a route adds the kind of cross-field
     # rule the envelope exists to report. Encoded ONCE and reused, so the
     # payload and the machine detail can never disagree.
-    errors = jsonable_encoder(exc.errors())
+    errors = jsonable_encoder(_scrub_validation_errors(exc.errors()))
     code, message = quiz_errors.validation_error_code(errors)
     if code is quiz_errors.QuizErrorCode.QUIZ_COUNT_OUT_OF_RANGE:
         message = (
@@ -546,10 +589,13 @@ app.include_router(calendar.router,    prefix="/api/calendar", dependencies=nav_
 # two-sided friendships are cross-user by design (plan §6.3: social last).
 app.include_router(social.router,      prefix="/api/social", dependencies=nav_feature_gate("/api/social") + _SVC)
 app.include_router(extract.router,     prefix="/api/extract")
-# Auth flows run before (or instead of) a session: the OAuth callback's user
-# upserts, POST /test-login (every Playwright journey signs in through it),
-# /pending/*, /me's account read.
-app.include_router(auth.router,        prefix="/api/auth", dependencies=_SVC)
+# Auth: user-scoped except the endpoints routes/auth.py marks service itself
+# (the OAuth callback's user upserts, POST /test-login — every Playwright
+# journey signs in through it — /pending/* and /logout). GET /me, /local-seed
+# and /realtime-token run as the student under `enforce`.
+app.include_router(auth.router,        prefix="/api/auth")
+# sec2 M2: the BFF's single-use OAuth handoff exchange (server to server, no session).
+app.include_router(auth_handoff_router, prefix="/api/auth", dependencies=_SVC)
 app.include_router(documents.router,   prefix="/api/documents")
 app.include_router(flashcards.router,  prefix="/api/flashcards", dependencies=nav_feature_gate("/api/flashcards"))
 app.include_router(study_guide.router, prefix="/api/study-guide", dependencies=nav_feature_gate("/api/study-guide"))

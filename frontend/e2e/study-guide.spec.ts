@@ -208,7 +208,9 @@ async function storedGuide(guideId: string): Promise<StoredGuide> {
 /** The stored content, decrypted by the backend's own helper. */
 async function storedContent(guideId: string): Promise<GuideContent> {
   const { content_cipher } = await storedGuide(guideId);
-  return JSON.parse(await decryptText(content_cipher ?? "")) as GuideContent;
+  return JSON.parse(
+    await decryptText({ value: content_cipher ?? "", table: "study_guides", column: "content", row: guideId }),
+  ) as GuideContent;
 }
 
 const itemsOf = (content: GuideContent): Item[] => content.sections.flatMap(section => section.items);
@@ -565,10 +567,17 @@ test("a guide is made in the dialog, written, read, answered, saved and found ag
   await expectGuideEvidence(counted[0], false);
   const masteryAfterWrong = await masteryOf(NODE_ID);
 
-  // Then the right one: graded and explained, and nothing more is counted.
+  // Then the right one: the server answers `counted: false`, and the reader
+  // keeps the first answer shown, as a reload would (b4cacb93). Nothing more
+  // is counted.
+  const laterAnswer = page.waitForResponse(
+    response => response.request().method() === "POST" && response.url().endsWith(`/${check}/answer`),
+  );
   await pickCheckOption(page, check, CHECK.right);
-  await expect(result).toContainText(`Correct. ${CHECK.explainCorrect}`);
-  await expect(rightOption).toHaveClass(/answer-option--correct/);
+  expect((await (await laterAnswer).json()).counted).toBe(false);
+  await expect(result).toContainText(`Not quite. ${CHECK.explainIncorrect}`);
+  await expect(wrongOption).toHaveClass(/answer-option--chosen-wrong/);
+  await expect(rightOption).toHaveClass(/answer-option--default/);
 
   expect(await guideCheckEvents(baseline)).toEqual(counted);
   expect(await masteryOf(NODE_ID)).toBeCloseTo(masteryAfterWrong, 6);
@@ -576,7 +585,9 @@ test("a guide is made in the dialog, written, read, answered, saved and found ag
   const answered = await storedGuide(guideId);
   expect(answered.answers_type).toBe("string");
   expect(answered.answers_cipher).not.toContain(check);
-  expect(JSON.parse(await decryptText(answered.answers_cipher ?? ""))).toEqual({
+  expect(JSON.parse(await decryptText({
+    value: answered.answers_cipher ?? "", table: "study_guides", column: "answers", row: guideId,
+  }))).toEqual({
     [check]: { option_id: CHECK.wrong, correct: false },
   });
 

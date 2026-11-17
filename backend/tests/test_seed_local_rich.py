@@ -10,7 +10,7 @@ from db import local_study_data, seed_helpers as h, seed_local_owner as owner_se
 from e2e_oracles import judges
 from e2e_oracles.gather import _CIPHERTEXT_MANIFEST
 from models.study_guide import GuideContent
-from services.encryption import decrypt, decrypt_json, encrypt
+from services.encryption import ENCRYPTED_COLUMNS, bind, decrypt, decrypt_json, encrypt
 from services import profiles
 from tests.seed_memory_db import MemoryDatabase, use_study_seed
 
@@ -188,8 +188,16 @@ def test_owner_seed_keeps_oracle_ciphertext_and_foreign_keys_clean(database, req
     _seed_personal()
     for table_name, pk, column in _CIPHERTEXT_MANIFEST:
         # .get: the database, not the study seed, numbers an outline row.
-        pairs = [(row.get(pk), row[column]) for row in local_database.rows[table_name] if row.get(column) is not None]
-        assert judges.ciphertext_findings(table_name, column, pairs, decrypt) == []
+        rows = [row for row in local_database.rows[table_name] if row.get(column) is not None]
+        pairs = [(row.get(pk), row[column]) for row in rows]
+        # Each value opens in its own cell (finding M13): a value the owner
+        # seed copied without re-sealing it for the owner's row would not.
+        cell = {row[column]: row for row in rows}
+
+        def opened(value, table_name=table_name, column=column, cell=cell):
+            return decrypt(value, bind=bind(table_name, column, cell[value]))
+
+        assert judges.ciphertext_findings(table_name, column, pairs, opened) == []
     references = {
         "enrollments": {"user_id": "users", "offering_id": "course_offerings"},
         "graph_nodes": {"user_id": "users", "course_id": "courses"},
@@ -225,7 +233,8 @@ def test_owner_seed_keeps_oracle_ciphertext_and_foreign_keys_clean(database, req
 
 def _seeded_guide(db, user_id):
     row = next(r for r in db.rows["study_guides"] if r["user_id"] == user_id)
-    return row, GuideContent.model_validate(decrypt_json(row["content"]))
+    return row, GuideContent.model_validate(
+        decrypt_json(row["content"], bind=bind("study_guides", "content", row)))
 
 
 def test_the_seeded_guide_is_a_ready_format_2_guide_with_every_seedable_block(local_database):
@@ -595,7 +604,7 @@ def test_a_first_seed_that_stopped_before_the_study_dataset_gets_it_on_the_next_
 
 #: sha256 of the default dataset, encrypted columns decrypted (see _digest).
 #: Includes the learning loop's seed (the loop users, the check-item bank, the
-#: capped student's spend and due card).
+#: capped student's spend and due card) and M8's min_mistake_contributors.
 BASELINE_DIGEST = "3f0993df50fe892b3997823e3c5e2d416d512d0afca55f8e26dcb4df83337587"
 
 #: Stamped from the clock on every seed, by design (seed_learning_loop: the
@@ -604,19 +613,27 @@ BASELINE_DIGEST = "3f0993df50fe892b3997823e3c5e2d416d512d0afca55f8e26dcb4df83337
 _CLOCK_COLUMNS = {("flashcards", "due_at"), ("llm_usage", "created_at")}
 
 
+_SEALED = {(spec.table, spec.column) for spec in ENCRYPTED_COLUMNS}
+
+
 def _digest(db) -> str:
-    def plain(value):
-        if not isinstance(value, str):
+    def plain(name, key, value, row):
+        if not isinstance(value, str) or (name, key) not in _SEALED:
             return value
         try:
-            return decrypt(value)  # a nonce makes two encryptions of one value differ
+            # A nonce makes two encryptions of one value differ; each opens
+            # with its own row's binding.
+            return decrypt(value, bind=bind(name, key, row))
         except Exception:
             return value
 
-    def cell(name, key, value):
-        return "<now>" if (name, key) in _CLOCK_COLUMNS and value is not None else plain(value)
+    def cell(name, key, value, row):
+        if (name, key) in _CLOCK_COLUMNS and value is not None:
+            return "<now>"
+        return plain(name, key, value, row)
 
-    rows = {name: [{key: cell(name, key, value) for key, value in row.items()} for row in table_rows]
+    rows = {name: [{key: cell(name, key, value, row) for key, value in row.items()}
+                   for row in table_rows]
             for name, table_rows in sorted(db.rows.items())}
     return hashlib.sha256(json.dumps(rows, sort_keys=True).encode()).hexdigest()
 

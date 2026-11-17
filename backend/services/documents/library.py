@@ -15,7 +15,7 @@ from starlette.concurrency import run_in_threadpool
 from db.connection import table
 from services.academics import offering_course_id
 from services.check_item_service import retire_items_for_documents
-from services.encryption import decrypt_if_present, decrypt_json
+from services.encryption import bind, decrypt_if_present, decrypt_json
 
 logger = logging.getLogger(__name__)
 
@@ -36,11 +36,12 @@ async def list_user_documents(user_id: str) -> list[dict]:
         await run_in_threadpool(_courses_for_offerings, offering_ids) if offering_ids else {}
     )
     for d in docs:
-        d["summary"] = decrypt_if_present(d.get("summary"))
+        d["summary"] = decrypt_if_present(d.get("summary"), bind=bind("documents", "summary", d))
         notes_raw = d.get("concept_notes")
         if isinstance(notes_raw, str):
             try:
-                d["concept_notes"] = decrypt_json(notes_raw)
+                d["concept_notes"] = decrypt_json(
+                    notes_raw, bind=bind("documents", "concept_notes", d))
             except Exception:
                 # decrypt_json re-raises when both decrypt AND plaintext
                 # parse fail (a genuinely corrupted row) — degrade that one

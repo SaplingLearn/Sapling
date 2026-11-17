@@ -183,7 +183,7 @@ class TestListDocuments:
              "category": "other", "concept_notes": "CORRUPTED_CIPHERTEXT"},
         ]
 
-        def fake_decrypt_json(value):
+        def fake_decrypt_json(value, **_kw):
             if value == "CORRUPTED_CIPHERTEXT":
                 raise ValueError("decrypt and plaintext parse both failed")
             return [{"name": "Concept A", "description": "d"}]

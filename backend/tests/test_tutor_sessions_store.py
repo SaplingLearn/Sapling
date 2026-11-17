@@ -20,7 +20,7 @@ from fastapi.testclient import TestClient
 
 from main import app
 from services import tutor_sessions as ts
-from services.encryption import decrypt_if_present
+from services.encryption import bind, decrypt_if_present
 from tests.agent_run_fakes import run_result
 from tests.db_fakes import add_async_twins
 from tests.split_patches import patch_tutor
@@ -245,7 +245,10 @@ def test_a_session_started_on_one_replica_continues_on_the_other(db):
     r = _chat(sid)
     assert r.status_code == 200, r.text
     assert [s["id"] for s in db.rows["sessions"]] == [sid]
-    roles = [(m["role"], decrypt_if_present(m["content"])) for m in db.rows["messages"]]
+    # The greeting was sealed for messages.content of this session before the
+    # SQL copy, so it opens in its new row (AES-GCM AAD keyed on session_id).
+    roles = [(m["role"], decrypt_if_present(m["content"], bind=bind("messages", "content", m)))
+             for m in db.rows["messages"]]
     assert roles[0] == ("assistant", GREETING)
     assert [role for role, _ in roles] == ["assistant", "user", "assistant"]
     assert db.store(sid) is None, "materialised: the pending row is gone"
@@ -422,4 +425,8 @@ def test_the_stash_carries_the_bounds():
     assert (params["p_ttl_seconds"], params["p_tombstone_ttl_seconds"], params["p_max_entries"]) == (
         ts.PENDING_TTL_SECONDS, ts.DISCARD_TOMBSTONE_TTL_SECONDS, ts.PENDING_MAX_ENTRIES)
     assert params["p_graph_update"] is None, "an empty graph update stores NULL, like messages"
-    assert decrypt_if_present(params["p_assistant_reply"]) == GREETING
+    # Sealed for the messages row the materialisation copies it into.
+    assert decrypt_if_present(params["p_assistant_reply"],
+                              bind=bind("messages", "content", "s1")) == GREETING
+    assert decrypt_if_present(params["p_assistant_reply"],
+                              bind=bind("messages", "content", "s2")) is None

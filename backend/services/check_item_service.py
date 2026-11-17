@@ -172,6 +172,10 @@ from services.academics import course_offering_ids
 from services.chunk_visibility import COURSE_MATERIAL, SHARED, _share_flags, decide_visibility
 from services.chunker import chunk_document
 from services.encryption import (
+    ENCRYPTED_COLUMNS,
+    bind,
+    decrypt,
+    encrypt,
     decrypt_if_present,
     derive_key,
     encrypt_if_present,
@@ -265,6 +269,11 @@ def _build_row(
     # A37: an mc_reason item's wrong reasons are its distractors' misconceptions,
     # the keys its stored options carry; free and teachback pair their lists.
     wrong = [w.model_dump() for w in common_wrong(draft)]
+    rid = item_id(course_id, key, qh)
+
+    def seal(column: str, value):
+        return encrypt_if_present(value, bind=bind(_TABLE, column, rid))
+
     options = None
     correct_option = None
     texts: list[str] = []
@@ -274,28 +283,29 @@ def _build_row(
         # keyed by the server secret; the stored shape ([{letter, text,
         # wrong_key}] + the letter) is what the grader and the routes read.
         lettered, letter = lettered_options(draft, slot_key=derive_key(OPTION_SLOT_PURPOSE))
-        options = encrypt_json([o.model_dump() for o in lettered])
-        correct_option = encrypt_if_present(letter)
+        options = encrypt_json([o.model_dump() for o in lettered],
+                               bind=bind(_TABLE, "options_json", rid))
+        correct_option = seal("correct_option", letter)
         texts = [o.text for o in lettered]
         correct = next(i for i, o in enumerate(lettered) if o.letter == letter)
     numeric = draft.answer_kind == _NUMERIC
     row = {
-        "id": item_id(course_id, key, qh),
+        "id": rid,
         "course_id": course_id,
         "concept_key": key,
         "document_id": document_id,
         "format": draft.format,
         "difficulty": draft.difficulty,
-        "prompt": encrypt_if_present(draft.prompt),
-        "reference_answer": encrypt_if_present(draft.reference_answer),
+        "prompt": seal("prompt", draft.prompt),
+        "reference_answer": seal("reference_answer", draft.reference_answer),
         # A34: stated by the generator, verbatim from the reference; validated.
-        "final_answer": encrypt_if_present(draft.final_answer),
-        "rubric_json": encrypt_if_present(json.dumps(rubric)),
-        "common_wrong_json": encrypt_if_present(json.dumps(wrong)),
+        "final_answer": seal("final_answer", draft.final_answer),
+        "rubric_json": seal("rubric_json", json.dumps(rubric)),
+        "common_wrong_json": seal("common_wrong_json", json.dumps(wrong)),
         "options_json": options,
         "correct_option": correct_option,
         "answer_kind": draft.answer_kind,
-        "canonical_answer": encrypt_if_present(draft.canonical_answer) if numeric else None,
+        "canonical_answer": seal("canonical_answer", draft.canonical_answer) if numeric else None,
         "tolerance": parse_tolerance(draft),
         # A22: never an agent output; true only on an independent agreement
         # check (A124: the blind solve agreed with the key) or an instructor
@@ -329,7 +339,7 @@ def _build_row(
         # run names both (one upsert's rows share their keys).
         found = surface_of(draft)
         row["surface_representation"] = found.representation if found else None
-        row["surface_context"] = encrypt_if_present(draft.surface_context) if found else None
+        row["surface_context"] = seal("surface_context", draft.surface_context) if found else None
     if multi_concept_components is not None:
         # A141: a multi-concept item's apex and components (plaintext concept
         # keys, like concept_key, which is their SEP-joined form)
@@ -627,7 +637,7 @@ def _json_column(row: dict, column: str, default):
     if raw is None:
         return default
     try:
-        return json.loads(decrypt_if_present(raw))
+        return json.loads(decrypt_if_present(raw, bind=bind(_TABLE, column, row)))
     except (TypeError, ValueError):
         logger.warning("check item %s: %s is not valid JSON", row.get("id"), column)
         return default
@@ -644,6 +654,10 @@ def _hydrate(model, entries, column: str, item_id_: str):
 def _row_to_item(row: dict) -> CheckItem:
     """The single decrypt boundary for check_items rows."""
     rid = row.get("id")
+
+    def opened(column: str):
+        return decrypt_if_present(row.get(column), bind=bind(_TABLE, column, rid))
+
     rubric = _hydrate(RubricItem, _json_column(row, "rubric_json", []), "rubric_json", rid) or []
     wrong = (
         _hydrate(WrongReason, _json_column(row, "common_wrong_json", []), "common_wrong_json", rid)
@@ -660,14 +674,14 @@ def _row_to_item(row: dict) -> CheckItem:
         document_id=row.get("document_id"),
         format=row.get("format"),
         difficulty=row.get("difficulty"),
-        prompt=decrypt_if_present(row.get("prompt")) or "",
-        reference_answer=decrypt_if_present(row.get("reference_answer")) or "",
+        prompt=opened("prompt") or "",
+        reference_answer=opened("reference_answer") or "",
         rubric=rubric,
         common_wrong=wrong,
         options=options,
-        correct_option=decrypt_if_present(row.get("correct_option")),
+        correct_option=opened("correct_option"),
         answer_kind=row.get("answer_kind") or "free",
-        canonical_answer=decrypt_if_present(row.get("canonical_answer")),
+        canonical_answer=opened("canonical_answer"),
         tolerance=row.get("tolerance"),
         canonical_verified=bool(row.get("canonical_verified")),
         stepwise=bool(row.get("stepwise")),
@@ -676,7 +690,7 @@ def _row_to_item(row: dict) -> CheckItem:
         graded=bool(row.get("graded")),
         created_at=row.get("created_at"),
         # A34: None on a legacy row — checks.is_servable keeps it from being served.
-        final_answer=decrypt_if_present(row.get("final_answer")),
+        final_answer=opened("final_answer"),
         # A113: None on a row the linter has not read yet (plaintext codes).
         lint_flags=_lint_flags(row.get("lint_flags")),
     )
@@ -845,12 +859,13 @@ def concept_surfaces(course_id: str, concept_key: str) -> dict[str, Surface | No
     only for a student with varied_isomorphs on. Raises on a failed read (the
     caller degrades to its plain order)."""
     rows = table(_TABLE).select(
-        "question_hash,surface_representation,surface_context",
+        "id,question_hash,surface_representation,surface_context",
         filters={"course_id": f"eq.{course_id}", "concept_key": f"eq.{concept_key}"},
     )
     return {
         row["question_hash"]: surface(
-            row.get("surface_representation"), decrypt_if_present(row.get("surface_context"))
+            row.get("surface_representation"),
+            decrypt_if_present(row.get("surface_context"), bind=bind(_TABLE, "surface_context", row)),
         )
         for row in rows or []
         if row.get("question_hash")
@@ -1110,6 +1125,22 @@ def mark_aligned(item_ids: Iterable[str], *, at: str) -> int:
     return len(ids)
 
 
+#: check_items' 🔒 columns (the registry's), for a re-key's reseal.
+_SEALED_COLUMNS = tuple(s.column for s in ENCRYPTED_COLUMNS if s.table == _TABLE)
+
+
+def reseal_row_for_id(row: dict, old_id: str, new_id: str) -> None:
+    """Open each 🔒 value of ``row`` in its old cell and seal it for the new
+    id, in place. A value that does not open in its own cell is refused: a
+    re-key must never carry a value it cannot vouch for."""
+    for column in _SEALED_COLUMNS:
+        value = row.get(column)
+        if value is None:
+            continue
+        plain = decrypt(value, bind=bind(_TABLE, column, old_id))
+        row[column] = encrypt(plain, bind=bind(_TABLE, column, new_id))
+
+
 def apply_item_alignment(row: dict, item: CheckItem, result: Alignment, *, at: str) -> str:
     """Write what the check changed on one stored item: its rubric rebuilt
     from the kept criteria (checks.rubric_entries — numbered and closed with
@@ -1130,13 +1161,25 @@ def apply_item_alignment(row: dict, item: CheckItem, result: Alignment, *, at: s
     }
     if len(result.keep) < len(criteria):
         rubric = rubric_entries([criteria[i] for i in result.keep], item.format)
-        update["rubric_json"] = encrypt_if_present(json.dumps([r.model_dump() for r in rubric]))
+        rubric_text = json.dumps([r.model_dump() for r in rubric])
+    else:
+        rubric_text = None
     if result.concept_key == item.concept_key:
+        if rubric_text is not None:
+            update["rubric_json"] = encrypt_if_present(
+                rubric_text, bind=bind(_TABLE, "rubric_json", item.id))
         table(_TABLE).update(update, filters={"id": f"eq.{item.id}"}, prefer_return_minimal=True)
         return item.id
     new_id = item_id(item.course_id, result.concept_key, item.question_hash)
     columns = [*_COLUMNS.split(","), *_RETAG_CARRIED]
     moved = {c: row[c] for c in columns if c in row}
+    # M13: every 🔒 value is bound to its row's id, so a re-keyed row's values
+    # are opened in the old cell and sealed again for the new one (never copied
+    # as is: under the new id they would not open).
+    reseal_row_for_id(moved, item.id, new_id)
+    if rubric_text is not None:
+        update["rubric_json"] = encrypt_if_present(
+            rubric_text, bind=bind(_TABLE, "rubric_json", new_id))
     moved.update(update, id=new_id, concept_key=result.concept_key)
     table(_TABLE).upsert([moved], on_conflict=_ON_CONFLICT)
     retire_items_by_id([item.id])
@@ -1432,7 +1475,8 @@ def chunks_for_document(document_id: str) -> list[dict]:
     out = []
     for row in rows:
         chunk = dict(row)
-        chunk["chunk_text"] = decrypt_if_present(chunk.get("chunk_text"))
+        chunk["chunk_text"] = decrypt_if_present(
+            chunk.get("chunk_text"), bind=bind("course_chunks", "chunk_text", chunk))
         out.append(chunk)
     return out
 
@@ -1447,7 +1491,8 @@ def document_is_item_source(row: dict) -> bool:
     if row.get("shareability") != COURSE_MATERIAL:
         return False
     screen = screen_from_stored(
-        row.get("share_block_reason"), decrypt_if_present(row.get("extracted_text")),
+        row.get("share_block_reason"),
+        decrypt_if_present(row.get("extracted_text"), bind=bind("documents", "extracted_text", row)),
     )
     return (
         decide_visibility(
@@ -1490,7 +1535,8 @@ def source_chunks(doc_row: dict) -> list[dict]:
         if not shared:
             logger.info("check items: document %s has no shared chunks; skipped", doc_id)
         return shared
-    text = decrypt_if_present(doc_row.get("extracted_text"))
+    text = decrypt_if_present(doc_row.get("extracted_text"),
+                              bind=bind("documents", "extracted_text", doc_row))
     if not text or not str(text).strip():
         logger.warning("check items: document %s has no chunks and no extracted text", doc_id)
         return []
@@ -2378,7 +2424,7 @@ def used_surfaces(course_id: str, keys: Iterable[str]) -> dict[str, list[tuple[s
         return {}
     try:
         rows = table(_TABLE).select(
-            "concept_key,surface_representation,surface_context",
+            "id,concept_key,surface_representation,surface_context",
             filters={
                 "course_id": f"eq.{course_id}",
                 "concept_key": f"in.({','.join(pg_quote_value(k) for k in keys)})",
@@ -2395,7 +2441,8 @@ def used_surfaces(course_id: str, keys: Iterable[str]) -> dict[str, list[tuple[s
         return {}
     out: dict[str, list[tuple[str, str]]] = {}
     for row in rows or []:
-        context = decrypt_if_present(row.get("surface_context"))
+        context = decrypt_if_present(row.get("surface_context"),
+                                     bind=bind(_TABLE, "surface_context", row))
         if surface(row.get("surface_representation"), context) is None:
             continue
         entry = (row["surface_representation"], " ".join(str(context).split()))

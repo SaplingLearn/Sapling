@@ -15,7 +15,7 @@ from fastapi.testclient import TestClient
 from agents.quiz import PROMPT_VERSION, Quiz, QuizQuestion
 from main import app
 from routes.quiz import CourseMaterial
-from services.encryption import decrypt_json_column
+from services.encryption import bind, decrypt_json_column
 from services.quiz.identity import question_hash
 from services.quiz.repetition import RecentQuestion
 from tests.db_fakes import with_async_twins
@@ -93,7 +93,7 @@ def _generate(
 
 
 def _stored(row):
-    return decrypt_json_column(row["questions_json"])
+    return decrypt_json_column(row["questions_json"], bind=bind("quiz_attempts", "questions_json", row))
 
 
 @pytest.mark.parametrize(("kind", "answer"), [("short_answer", "base case"), ("numeric", "0.5"), ("symbolic", "2x+2")])

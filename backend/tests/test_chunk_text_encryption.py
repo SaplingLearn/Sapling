@@ -24,7 +24,7 @@ from tests.split_patches import patch_quiz
 
 import pytest
 
-from services.encryption import decrypt, encrypt
+from services.encryption import bind, decrypt, encrypt
 from tests.split_patches import patch_tutor
 
 
@@ -46,10 +46,14 @@ def test_chunk_text_is_stored_as_ciphertext(mock_embed):
             "CAS CS 330", "doc-1", "u1", [text],
             visibility="shared", category="lecture_notes",
         )
-        stored = mock_table.return_value.upsert.call_args[0][0][0]["chunk_text"]
+        row = mock_table.return_value.upsert.call_args[0][0][0]
+        stored = row["chunk_text"]
 
     assert stored != text
-    assert decrypt(stored) == text
+    # Bound to the content-hash id (AAD, finding M13): opens only in its row.
+    assert decrypt(stored, bind=bind("course_chunks", "chunk_text", row["id"])) == text
+    with pytest.raises(Exception):
+        decrypt(stored, bind=bind("course_chunks", "chunk_text", "another-chunk"))
 
 
 @patch("services.rag_service._embed_documents_batch")
@@ -179,8 +183,8 @@ def test_the_catalog_block_decrypts_before_choosing_a_chunk():
 
     short_with_prereq = "CS 330. Prerequisites: CS 112."
     long_without = "CS 330. " + ("Algorithms and data structures. " * 20)
-    rows = [{"chunk_text": encrypt(long_without)},
-            {"chunk_text": encrypt(short_with_prereq)}]
+    rows = [{"id": "cat-1", "chunk_text": encrypt(long_without)},
+            {"id": "cat-2", "chunk_text": encrypt(short_with_prereq)}]
 
     def _table(name):
         m = MagicMock()
@@ -240,9 +244,12 @@ def test_the_dedupe_script_groups_on_plaintext():
     # ids go, the winner included, because it is re-inserted under the new id.
     assert [u["id"] for u in upserts] == [chunk_id("CAS CS 330", text)]
     assert sorted(deletes) == ["legacy-a", "legacy-b"]
-    # The row carries its stored ciphertext forward; only the hash input was
-    # plaintext.
-    assert upserts[0]["chunk_text"] == rows[0]["chunk_text"]
+    # The row moves to a new id, so its text is re-sealed for that id (AAD,
+    # finding M13): the old ciphertext would not open in the new row.
+    new_id = chunk_id("CAS CS 330", text)
+    assert upserts[0]["chunk_text"] != rows[0]["chunk_text"]
+    assert decrypt(upserts[0]["chunk_text"],
+                   bind=bind("course_chunks", "chunk_text", new_id)) == text
 
 
 # ── The invariant the lane can fail on ──────────────────────────────────────
@@ -287,7 +294,8 @@ def test_backfill_patches_each_row_by_id_and_never_upserts():
     (data, filters), kwargs = chunks.update.call_args
     assert filters == {"id": "eq.c1"}
     assert set(data) == {"chunk_text"}          # nothing else is (re)written
-    assert decrypt(data["chunk_text"]) == "plain passage"
+    assert decrypt(data["chunk_text"], bind=bind("course_chunks", "chunk_text", "c1")) \
+        == "plain passage"
     assert kwargs == {"prefer_return_minimal": True}
     assert paged.call_args[0][1] == "id,chunk_text"
 
@@ -297,6 +305,9 @@ def test_backfill_writes_every_row_and_skips_ciphertext():
 
     rows = [{"id": f"c{i}", "chunk_text": f"t{i}"} for i in range(7)]
     rows.append({"id": "done", "chunk_text": encrypt("already")})
+    # A v2 (AAD-bound) value is ciphertext too: re-sealing it would double-encrypt.
+    rows.append({"id": "done-v2", "chunk_text": encrypt(
+        "already", bind=bind("course_chunks", "chunk_text", "done-v2"), v2=True)})
     chunks, _ = _run_backfill(bf, rows, "--batch-size", "3")
     patched = sorted(c[0][1]["id"] for c in chunks.update.call_args_list)
     assert patched == sorted(f"eq.c{i}" for i in range(7))
@@ -339,7 +350,8 @@ class TestBackfillKeyGuard:
         def _table(name):
             m = MagicMock()
             if name == "users":
-                m.select.return_value = [{"email": v} for v in witness_values]
+                m.select.return_value = [
+                    {"id": f"u{i}", "email": v} for i, v in enumerate(witness_values)]
             else:
                 m.select.return_value = []
             return m

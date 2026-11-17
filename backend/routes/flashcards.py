@@ -21,8 +21,9 @@ from models import Id, LongText, ShortText
 
 from learning.gate import learning_loop_for_request
 from routes._errors import domain_status
-from services import crisis_support
+from services import abuse_limits, crisis_support
 from services.auth_guard import require_self
+from services.request_limits import aenforce_abuse_limit
 from services.flashcards import (
     FlashcardError,
     FlashcardSetInvalid,
@@ -73,7 +74,7 @@ router = APIRouter()
 class GenerateFlashcardsBody(BaseModel):
     user_id: Id
     topic: str = Field(max_length=500)
-    count: int = 5
+    count: int = Field(default=5, ge=1, le=abuse_limits.FLASHCARD_GENERATE_MAX_COUNT)
     session_id: Id | None = None
     # Optional term label (#141): grounds generation in the SELECTED term's
     # course documents instead of always the current term's.
@@ -122,7 +123,7 @@ class ImportGenerateBody(BaseModel):
     source: Literal["paste", "library_doc"]
     text: str | None = Field(default=None, max_length=200_000)
     document_id: Id | None = None
-    count: int = 25
+    count: int = Field(default=25, ge=1, le=abuse_limits.FLASHCARD_IMPORT_MAX_COUNT)
     difficulty: Literal["recall", "application", "conceptual"] = "recall"
 
 
@@ -244,6 +245,7 @@ async def _generate(body: GenerateFlashcardsBody, request: Request) -> dict:
     """`generate`'s own work: the guard, then the generation (both blocking,
     so off the event loop)."""
     await run_in_threadpool(require_self, body.user_id, request)
+    await aenforce_abuse_limit(abuse_limits.FLASHCARD_GENERATE, body.user_id)
 
     def run() -> dict:
         with _flashcard_errors():
@@ -351,11 +353,10 @@ def import_commit(body: ImportCommitBody, request: Request):
 @router.post("/import/parse")
 def import_parse(body: ImportParseBody, request: Request):
     require_self(body.user_id, request)
-    with _flashcard_errors():
-        return import_flow.import_parse(
-            body.source, body.payload, body.options,
-            user_id=body.user_id, loop_on=learning_loop_for_request(body.user_id),
-        )
+    return _rate_limited_import(
+        import_flow.import_parse, body.user_id, body.source, body.payload, body.options,
+        loop_on=learning_loop_for_request(body.user_id),
+    )
 
 
 @router.post("/import/generate")

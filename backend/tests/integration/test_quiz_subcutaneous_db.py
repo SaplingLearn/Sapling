@@ -150,7 +150,7 @@ def test_generate_default_response_never_reveals_the_correct_option(
     tests/test_quiz_answers_c.py so the two lanes cannot drift; its
     docstring carries the non-circularity argument for the hard-coded
     allowlists it uses."""
-    from services.encryption import decrypt_json_column
+    from services.encryption import bind, decrypt_json_column
 
     r = _generate(authed_client)
     assert r.status_code == 200, r.text
@@ -158,7 +158,8 @@ def test_generate_default_response_never_reveals_the_correct_option(
 
     row = _attempt_row(db_conn, body["quiz_id"], "questions_json")
     assert row is not None, "generate returned 200 but wrote no attempt row"
-    assert_keyless_projection(body, decrypt_json_column(row["questions_json"]))
+    assert_keyless_projection(body, decrypt_json_column(
+        row["questions_json"], bind=bind("quiz_attempts", "questions_json", body["quiz_id"])))
 
 
 @pytest.mark.parametrize("difficulty", _advertised_difficulties())
@@ -248,10 +249,11 @@ def test_the_full_loop_generates_answers_submits_and_persists_what_it_graded(
     # (here EMPTY) payload. `isinstance(..., str)` alone does not say that:
     # `encrypt_json([])` is a str too, so storing the empty payload instead
     # would pass. Decrypt and count.
-    from services.encryption import decrypt_json_column
+    from services.encryption import bind, decrypt_json_column
 
     assert isinstance(row["answers_json"], str), "answers_json must be ciphertext"
-    graded = decrypt_json_column(row["answers_json"])
+    graded = decrypt_json_column(
+        row["answers_json"], bind=bind("quiz_attempts", "answers_json", quiz_id))
     assert len(graded) == 3, (
         "submit stored the request payload (empty) instead of the three "
         "responses it actually graded"
@@ -582,10 +584,11 @@ def _sat_and_missed(authed_client):
 
 
 def _stored_questions(db_conn, quiz_id):
-    from services.encryption import decrypt_json_column
+    from services.encryption import bind, decrypt_json_column
 
     row = _attempt_row(db_conn, quiz_id, "questions_json")
-    return decrypt_json_column(row["questions_json"])
+    return decrypt_json_column(
+        row["questions_json"], bind=bind("quiz_attempts", "questions_json", quiz_id))
 
 
 def test_practising_the_missed_questions_re_serves_them_verbatim(

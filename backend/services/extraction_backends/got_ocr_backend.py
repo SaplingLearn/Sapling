@@ -5,7 +5,6 @@ must be converted to the native got_ocr2 format before they can be used here.
 """
 
 import hashlib
-import io
 import json
 import os
 import re
@@ -108,9 +107,10 @@ def extract_page_with_got_ocr(image_bytes: bytes, ocr_type: str = "format") -> s
     model, processor = _load_model()
 
     import torch
-    from PIL import Image
 
-    with Image.open(io.BytesIO(image_bytes)) as source:
+    from services.image_safety import open_image
+
+    with open_image(image_bytes) as source:
         image = source.convert("RGB")
     try:
         # BatchFeature.to casts floating image tensors to the model's dtype,

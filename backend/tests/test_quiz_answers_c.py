@@ -25,6 +25,7 @@ from fastapi.testclient import TestClient
 from main import app
 from agents.quiz import Quiz, QuizQuestion
 from services import events_service
+from services.encryption import bind
 from tests.db_fakes import with_async_twins
 from tests.split_patches import patch_quiz
 
@@ -146,7 +147,8 @@ class TestAnswerEndpoint:
         assert second.json()["recorded"] is False
         assert len(responses.rows) == 1
         assert responses.rows[0]["answer_text"] != "1/2"
-        assert decrypt_json_column(responses.rows[0]["answer_text"]) == {"text": "1/2"}
+        assert decrypt_json_column(responses.rows[0]["answer_text"],
+                                   bind=bind("quiz_responses", "answer_text", responses.rows[0])) == {"text": "1/2"}
         with ExitStack() as stack:
             for mock in TestSubmitReconciliation()._submit_mocks(responses):
                 stack.enter_context(mock)
@@ -335,7 +337,8 @@ class TestIncludeAnswerKey:
         q = r.json()["questions"][0]
         assert all("correct" not in o for o in q["options"])
         # Storage keeps the key — grading stays server-side.
-        stored = decrypt_json_column(captured["payload"]["questions_json"])
+        stored = decrypt_json_column(captured["payload"]["questions_json"],
+                                   bind=bind("quiz_attempts", "questions_json", captured["payload"]))
         assert any(o.get("correct") for o in stored[0]["options"])
         # Filtered by logger name (M6): caplog's handler captures every
         # propagating logger, not just ours, so an unfiltered scan could
@@ -370,7 +373,8 @@ class TestIncludeAnswerKey:
             r = _post_generate({})
         assert r.status_code == 200
         assert_keyless_projection(
-            r.json(), decrypt_json_column(captured["payload"]["questions_json"]),
+            r.json(), decrypt_json_column(captured["payload"]["questions_json"],
+                                   bind=bind("quiz_attempts", "questions_json", captured["payload"])),
         )
 
     def test_explicit_true_keeps_the_key_and_logs(self, caplog):
@@ -535,7 +539,7 @@ class TestSubmitReconciliation:
         assert r.status_code == 200
         stored = [d for d in update_calls if "answers_json" in d]
         assert len(stored) == 1
-        answers = decrypt_json_column(stored[0]["answers_json"])
+        answers = decrypt_json_column(stored[0]["answers_json"], bind=bind("quiz_attempts", "answers_json", "quiz1"))
         by_qid = {str(a["question_id"]): a["selected_label"] for a in answers}
         assert by_qid["1"] == "B", "stored answer must be the graded (recorded) one"
         assert by_qid["2"] == "A"
@@ -583,7 +587,7 @@ class TestSubmitReconciliation:
         assert r.status_code == 200
         assert r.json()["score"] == 2
         stored = [d for d in update_calls if "answers_json" in d][0]
-        answers = decrypt_json_column(stored["answers_json"])
+        answers = decrypt_json_column(stored["answers_json"], bind=bind("quiz_attempts", "answers_json", "quiz1"))
         assert len(answers) == 2, (
             "a perfect score with an empty stored answer set is a contradictory "
             "attempt record"

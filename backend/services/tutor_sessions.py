@@ -50,7 +50,7 @@ from fastapi import HTTPException
 from db.async_connection import arpc
 from db.connection import rpc, table
 from db.scope import runs_as_service
-from services.encryption import decrypt_if_present, encrypt_if_present
+from services.encryption import bind, decrypt_if_present, encrypt_if_present
 from services.session_modes import NOT_REVIEW, REVIEW_MODE
 
 # Maps session_id -> pending payload (cleared on first chat, end-session
@@ -150,7 +150,11 @@ def _view(row: dict | None, user_id: str | None = None) -> tuple[dict | None, st
             "course_id": row.get("course_id"),
             "offering_id": row.get("offering_id"),
             "use_shared_context": row.get("use_shared_context"),
-            "assistant_reply": decrypt_if_present(row.get("assistant_reply")),
+            # Sealed for messages.content (the materialisation copies it there).
+            "assistant_reply": decrypt_if_present(
+                row.get("assistant_reply"),
+                bind=bind("tutor_pending_sessions", "assistant_reply", row),
+            ),
         }, None
     if not _within(row.get("discarded_at"), DISCARD_TOMBSTONE_TTL_SECONDS):
         return None, None
@@ -185,7 +189,11 @@ def _stash_params(session_id: str, payload: dict) -> dict:
         "p_offering_id": payload.get("offering_id"),
         "p_use_shared_context": bool(payload.get("use_shared_context", True)),
         # The messages.content format: materialisation copies it as is.
-        "p_assistant_reply": encrypt_if_present(payload["assistant_reply"]),
+        # Bound to messages.content of this session (the AAD key is the
+        # session id, which the SQL copy keeps), so the copied value opens there.
+        "p_assistant_reply": encrypt_if_present(
+            payload["assistant_reply"], bind=bind("messages", "content", session_id),
+        ),
         "p_graph_update": payload.get("graph_update") or None,
         "p_ttl_seconds": PENDING_TTL_SECONDS,
         "p_tombstone_ttl_seconds": DISCARD_TOMBSTONE_TTL_SECONDS,

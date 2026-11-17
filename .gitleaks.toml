@@ -39,6 +39,12 @@ paths = ['''^backend/tests/test_config_validation_failclosed\.py$''']
 regexes = ['''^0123456789abcdef$''']
 
 [[allowlists]]
+description = """A marker string standing in for model output in the log-privacy test (sec2 M12): the test proves this text never reaches a log record. Not a credential."""
+condition = "AND"
+paths = ['''^backend/tests/test_log_privacy\.py$''']
+regexes = ['''^STUDENT_ESSAY_SENTENCE_7f3a$''']
+
+[[allowlists]]
 description = "Placeholder API keys the CI / E2E / eval lanes set so config validation passes; never valid credentials."
 regexes = [
   '''^e2e-dummy-key-no-billing$''',

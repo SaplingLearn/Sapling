@@ -11,24 +11,30 @@ import json
 import math
 
 from learning.params import BKT_PROFICIENT
-from services.encryption import decrypt_if_present, encrypt_if_present
+from services.encryption import decrypt_if_present, encrypt_if_present, nested_bind
 
 
-def encode_goal(goal) -> dict | None:
+def _goal_binding(session_id: str):
+    """The goal text's binding (finding M13): sealed for its own session's
+    loop_state, so it opens nowhere else."""
+    return nested_bind("sessions", "loop_state", "goal.text_encrypted", session_id)
+
+
+def encode_goal(goal, session_id: str) -> dict | None:
     if goal is None:
         return None
     return {
         "target_node_ids": list(goal.target_node_ids),
-        "text_encrypted": encrypt_if_present(goal.text),
+        "text_encrypted": encrypt_if_present(goal.text, bind=_goal_binding(session_id)),
     }
 
 
-def public_goal(state: dict) -> dict | None:
+def public_goal(state: dict, session_id: str) -> dict | None:
     goal = state.get("goal")
     if not isinstance(goal, dict) or not goal.get("target_node_ids"):
         return None
     return {
-        "text": decrypt_if_present(goal.get("text_encrypted")) or "",
+        "text": decrypt_if_present(goal.get("text_encrypted"), bind=_goal_binding(session_id)) or "",
         "target_node_ids": list(goal["target_node_ids"]),
     }
 

@@ -429,7 +429,11 @@ class TestToolReturnWrapping:
 
         with patch.object(graph_read, "read_misconceptions_for_course", _fake):
             out = asyncio.run(graph_read.read_misconceptions_for_course_tool(_ctx()))
-        assert UNTRUSTED_END not in out[0].text
+        # M8: each peer-derived mistake is wrapped in the envelope, and the
+        # forged END inside it is neutralized (only the real one remains).
+        assert out[0].text.startswith(UNTRUSTED_BEGIN_PREFIX)
+        assert out[0].text.rstrip().endswith(UNTRUSTED_END)
+        assert out[0].text.count(UNTRUSTED_END) == 1
         assert "[(blocked)" in out[0].text
         assert UNTRUSTED_END not in out[0].related_concept
 

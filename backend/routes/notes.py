@@ -510,8 +510,9 @@ async def note_chat(note_id: str, body: NoteChatBody, request: Request):
             return {"reply": integrity_guard.REFUSED_REPLY, "degraded": False, "integrity": "refused"}
         course_id = offering_course_id(note.get("offering_id"))
         deps = _deps_for(body.user_id, course_id, note_id)
-        deps.note = note
-        deps.integrity = guard  # the agent's graph writes are screened too
+        deps.note, deps.integrity = note, guard  # the agent's graph writes are screened too
+        # M7: a new concept must come from the message or the note (read tools add theirs)
+        deps.concept_context = [body.message, note.get("title") or "", note.get("body") or ""]
         try:
             result = record_agent_usage(
                 await note_chat_agent.run(body.message, deps=deps, usage_limits=ORCHESTRATOR_LIMITS),

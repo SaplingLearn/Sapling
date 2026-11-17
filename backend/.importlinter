@@ -68,6 +68,17 @@ ignore_imports =
     db.local_study_data.guides -> services.study_guides.verify
     db.seed_showcase -> services.encryption
     db.seed_staging -> services.encryption
+    # sec2 M14/M13: every encrypting ops script checks the key canary before
+    # it writes (services/encryption_canary.py); the AAD backfill also seals
+    # through services.encryption like the app does.
+    db.seed_staging -> services.encryption_canary
+    db.seed_showcase -> services.encryption_canary
+    db.seed_local_rich -> services.encryption_canary
+    db.seed_local_study -> services.encryption_canary
+    db.e2e_staging_http -> services.encryption_canary
+    db.backfill_encryption -> services.encryption_canary
+    db.backfill_encryption_aad -> services.encryption_canary
+    db.backfill_encryption_aad -> services.encryption
     db.e2e_staging_http -> services.encryption
     db.e2e_staging_http -> services.session_tokens
     db.e2e_staging_http -> services.academics

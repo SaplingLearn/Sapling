@@ -12,7 +12,7 @@ import logging
 from datetime import datetime, timezone
 
 from db.connection import table
-from services.encryption import decrypt_if_present, encrypt_if_present
+from services.encryption import bind, decrypt_if_present, encrypt_if_present
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +71,8 @@ def close_prompt(
     closed = {
         "status": "replied" if text else "skipped",
         "closed_at": closed_at.isoformat(),
-        "reply_text": encrypt_if_present(text) if text else None,
+        "reply_text": encrypt_if_present(
+            text, bind=bind(TABLE, "reply_text", prompt["id"])) if text else None,
         "reply_chars": len(text) if text else None,
     }
     mine = {"id": f"eq.{prompt['id']}", "user_id": f"eq.{user_id}"}
@@ -81,6 +82,7 @@ def close_prompt(
     if table(TABLE).insert_ignore_duplicates(row, on_conflict="id"):
         return WON
     got = table(TABLE).select("status,reply_text", filters=mine, limit=1) or []
-    if got and got[0].get("status") == closed["status"] and (decrypt_if_present(got[0].get("reply_text")) or "") == text:
+    opened = decrypt_if_present(got[0].get("reply_text"), bind=bind(TABLE, "reply_text", prompt["id"])) if got else None
+    if got and got[0].get("status") == closed["status"] and (opened or "") == text:
         return SAME
     return LOST

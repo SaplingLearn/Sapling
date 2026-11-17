@@ -394,7 +394,9 @@ def test_misconceptions_tool_filters_by_the_students_offerings_not_the_course_id
     ):
         out = asyncio.run(read_misconceptions_for_course_tool(_ctx()))
 
-    assert [m.text for m in out] == ["All recursion is infinite"]
+    # M8: delivered inside the untrusted envelope.
+    assert len(out) == 1 and "All recursion is infinite" in out[0].text
+    assert out[0].text.startswith("[BEGIN UNTRUSTED CONTENT")
 
     queried = [f.get("offering_id") for f in seen_filters]
     # Every offering asked for, none skipped — a single shared LIMIT would let

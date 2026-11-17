@@ -280,7 +280,7 @@ def test_store_close_creates_missing_lazy_row_then_updates(monkeypatch):
 
     t = _SessionsTable(existing=[])
     monkeypatch.setattr(sc, "table", lambda name: t)
-    monkeypatch.setattr(sc, "encrypt_json", lambda v: "CIPHER")
+    monkeypatch.setattr(sc, "encrypt_json", lambda v, **_: "CIPHER")
 
     sc.store_close(
         "sess-1",
@@ -313,7 +313,7 @@ def test_store_close_existing_row_updates_only(monkeypatch):
 
     t = _SessionsTable(existing=[{"id": "sess-1"}])
     monkeypatch.setattr(sc, "table", lambda name: t)
-    monkeypatch.setattr(sc, "encrypt_json", lambda v: "CIPHER")
+    monkeypatch.setattr(sc, "encrypt_json", lambda v, **_: "CIPHER")
     sc.store_close(
         "sess-1", "user_andres", _record(), "close", row_defaults={"mode": "socratic", "topic": "T"}
     )
@@ -326,7 +326,7 @@ def test_store_close_without_offering_omits_it(monkeypatch):
 
     t = _SessionsTable(existing=[])
     monkeypatch.setattr(sc, "table", lambda name: t)
-    monkeypatch.setattr(sc, "encrypt_json", lambda v: "CIPHER")
+    monkeypatch.setattr(sc, "encrypt_json", lambda v, **_: "CIPHER")
     sc.store_close(
         "s",
         "u",
@@ -343,7 +343,7 @@ def test_store_close_encrypts_the_full_record(monkeypatch):
     t = _SessionsTable(existing=[{"id": "sess-1"}])
     seen = {}
     monkeypatch.setattr(sc, "table", lambda name: t)
-    monkeypatch.setattr(sc, "encrypt_json", lambda v: seen.setdefault("v", v) and "CIPHER")
+    monkeypatch.setattr(sc, "encrypt_json", lambda v, **_: seen.setdefault("v", v) and "CIPHER")
     sc.store_close(
         "sess-1", "u", _record(), "close", row_defaults={"mode": "socratic", "topic": "T"}
     )
@@ -858,7 +858,7 @@ def _wire_brief(
     monkeypatch.setattr(
         lb, "open_keys", lambda user_id, keys: {k for k in keys if k not in set(resolved_keys)}
     )
-    monkeypatch.setattr(lb, "decrypt_json_column", lambda v: v)  # rows are plaintext dicts
+    monkeypatch.setattr(lb, "decrypt_json_column", lambda v, **_: v)  # rows are plaintext dicts
     monkeypatch.setattr(lb, "days_until_next_exam", lambda user_id, course_id: exam_days)
     monkeypatch.setattr(
         lb, "course_offering_ids", lambda course_id: None if offerings is None else list(offerings)
@@ -1096,7 +1096,7 @@ def _wire_store(monkeypatch, *, brief: str, row_ok: bool = True):
             ensured.append((session_id, user_id, row_defaults)) or row_ok
         ),
     )
-    monkeypatch.setattr(lb, "encrypt_if_present", lambda v: None if v is None else f"CIPHER({v})")
+    monkeypatch.setattr(lb, "encrypt_if_present", lambda v, **_: None if v is None else f"CIPHER({v})")
     monkeypatch.setattr(lb, "build_brief", lambda user_id, course_id, node_ids: brief)
     return lb, ensured, updates
 
@@ -1266,8 +1266,8 @@ def _wire_close(
     # PKG-10: the session's open misconception keys come from the store
     monkeypatch.setattr(loop, "open_for", lambda uid, ids: [dict(r) for r in open_rows])
     monkeypatch.setattr(sc, "table", tables)
-    monkeypatch.setattr(sc, "encrypt_json", lambda v: "CIPHER")
-    monkeypatch.setattr(loop, "decrypt_if_present", lambda v: v)
+    monkeypatch.setattr(sc, "encrypt_json", lambda v, **_: "CIPHER")
+    monkeypatch.setattr(loop, "decrypt_if_present", lambda v, **_: v)
     store = _loop_store(monkeypatch, loop_state)
     return tables, events, store
 
@@ -1533,7 +1533,7 @@ def test_close_is_idempotent_once_stored(monkeypatch):
     tables, events, _ = _wire_close(
         monkeypatch, evidence=[EVIDENCE_N1], loop_state={"phase": "close"}, close_json=stored
     )
-    monkeypatch.setattr(loop, "decrypt_json_column", lambda v: v)
+    monkeypatch.setattr(loop, "decrypt_json_column", lambda v, **_: v)
     monkeypatch.setattr(loop, "run_session_close", _fake_run(AssertionError()))
     r = client.post("/api/learn/loop/close", json={"session_id": "s1", "user_id": UID})
     assert r.status_code == 200
@@ -1680,7 +1680,7 @@ def _wire_history(monkeypatch, *, n: int, loop_brief, row: bool = True):
     sessions.select.return_value = [{"id": "s1", "loop_brief": loop_brief}] if row else []
     monkeypatch.setattr(loop, "table", lambda name: sessions)
     monkeypatch.setattr(
-        loop, "decrypt_if_present", lambda v: None if v is None else v.removeprefix("CIPHER:")
+        loop, "decrypt_if_present", lambda v, **_: None if v is None else v.removeprefix("CIPHER:")
     )
     return loop, msgs, sessions
 
@@ -1871,7 +1871,7 @@ def test_end_session_flag_off_is_byte_identical(monkeypatch):
     called = []
     setattr_tutor(monkeypatch, "table", with_async_twins(factory))
     monkeypatch.setattr(loop, "table", factory)
-    setattr_tutor(monkeypatch, "encrypt_json", lambda v: "LEGACY")
+    setattr_tutor(monkeypatch, "encrypt_json", lambda v, **_: "LEGACY")
 
     async def must_not_run(*a, **k):
         called.append(a)
@@ -1898,7 +1898,7 @@ def test_end_session_flag_on_loop_session_closes_then_writes_legacy_summary(monk
     called = []
     setattr_tutor(monkeypatch, "table", with_async_twins(factory))
     monkeypatch.setattr(loop, "table", factory)
-    setattr_tutor(monkeypatch, "encrypt_json", lambda v: "LEGACY")
+    setattr_tutor(monkeypatch, "encrypt_json", lambda v, **_: "LEGACY")
 
     async def fake_close(session_id, user_id, **kw):
         called.append((session_id, user_id))
@@ -1921,7 +1921,7 @@ def test_end_session_flag_on_session_without_loop_state_does_not_close(monkeypat
     called = []
     setattr_tutor(monkeypatch, "table", with_async_twins(factory))
     monkeypatch.setattr(loop, "table", factory)
-    setattr_tutor(monkeypatch, "encrypt_json", lambda v: "LEGACY")
+    setattr_tutor(monkeypatch, "encrypt_json", lambda v, **_: "LEGACY")
 
     async def fake_close(*a, **k):
         called.append(a)
@@ -1957,7 +1957,7 @@ def test_end_session_defers_legacy_end_when_close_persistence_fails(monkeypatch,
     factory, tables = _legacy_end_session_tables({"phase": "teach"})
     setattr_tutor(monkeypatch, "table", with_async_twins(factory))
     monkeypatch.setattr(loop, "table", factory)
-    setattr_tutor(monkeypatch, "encrypt_json", lambda v: "LEGACY")
+    setattr_tutor(monkeypatch, "encrypt_json", lambda v, **_: "LEGACY")
 
     async def boom(session_id, user_id, **kw):
         raise RuntimeError("close store failed: SECRET")
@@ -2312,7 +2312,7 @@ def test_a_close_finding_phase_close_serves_the_stored_close(monkeypatch):
         return t
 
     monkeypatch.setattr(loop, "table", factory)
-    monkeypatch.setattr(loop, "decrypt_json_column", lambda v: v)
+    monkeypatch.setattr(loop, "decrypt_json_column", lambda v, **_: v)
     calls = []
     monkeypatch.setattr(loop, "run_session_close", _fake_run(_close_out(), calls))
     r = client.post("/api/learn/loop/close", json={"session_id": "s1", "user_id": UID})
@@ -2331,7 +2331,7 @@ def test_a_racing_second_store_never_overwrites_or_emits(monkeypatch):
         evidence=[EVIDENCE_N1],
         loop_state={"phase": "teach", "close_claim": "dead", "close_claim_at": 1.0},
     )
-    monkeypatch.setattr(loop, "decrypt_json_column", lambda v: v)
+    monkeypatch.setattr(loop, "decrypt_json_column", lambda v, **_: v)
 
     async def first_close_lands_meanwhile(draft, *, user_id, request_id, session_id=None):
         tables.rows["sessions"][0]["close_json"] = {"summary": "FIRST.", "model_written": True}
@@ -2480,7 +2480,7 @@ def test_end_session_rate_limited_stores_the_deterministic_close(monkeypatch):
     )
     tables.rows["sessions"][0]["started_at"] = "2026-09-29T00:00:00+00:00"
     setattr_tutor(monkeypatch, "table", with_async_twins(tables))
-    setattr_tutor(monkeypatch, "encrypt_json", lambda v: "LEGACY")
+    setattr_tutor(monkeypatch, "encrypt_json", lambda v, **_: "LEGACY")
 
     def limited(uid):
         raise AIBudgetExceeded(
@@ -2516,7 +2516,7 @@ def test_end_session_while_a_check_is_graded_defers_all_end_writes(monkeypatch, 
     )
     tables.rows["sessions"][0]["started_at"] = "2026-09-29T00:00:00+00:00"
     setattr_tutor(monkeypatch, "table", with_async_twins(tables))
-    setattr_tutor(monkeypatch, "encrypt_json", lambda v: "LEGACY")
+    setattr_tutor(monkeypatch, "encrypt_json", lambda v, **_: "LEGACY")
     with caplog.at_level("WARNING"):
         r = client.post("/api/learn/end-session", json={"session_id": "s1", "user_id": UID})
     assert r.status_code == 409 and events == []
@@ -2552,7 +2552,7 @@ def test_end_session_after_a_stale_grading_claim_closes_and_ends(monkeypatch):
     )
     tables.rows["sessions"][0]["started_at"] = "2026-09-29T00:00:00+00:00"
     setattr_tutor(monkeypatch, "table", with_async_twins(tables))
-    setattr_tutor(monkeypatch, "encrypt_json", lambda v: "LEGACY")
+    setattr_tutor(monkeypatch, "encrypt_json", lambda v, **_: "LEGACY")
     monkeypatch.setattr(loop, "_now_s", lambda: now)
     monkeypatch.setattr(loop, "_unreleased_items", lambda doc: [])
     monkeypatch.setattr(loop, "run_session_close", _fake_run(None))  # unavailable → deterministic

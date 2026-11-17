@@ -301,6 +301,7 @@ class TestRouterDispatch:
         dummy_img = Image.new("RGB", (2, 2), color="white")
         rendered.to_pil = MagicMock(return_value=dummy_img)
         fake_page.render = MagicMock(return_value=rendered)
+        fake_page.get_size = MagicMock(return_value=(612.0, 792.0))  # US letter, in points
         fake_page.close = MagicMock()
 
         with (
@@ -376,6 +377,7 @@ class TestGeminiVisionFallback:
         rendered = MagicMock()
         rendered.to_pil = MagicMock(return_value=Image.new("RGB", (2, 2), color="white"))
         fake_page.render = MagicMock(return_value=rendered)
+        fake_page.get_size = MagicMock(return_value=(612.0, 792.0))  # US letter, in points
         fake_page.close = MagicMock()
         return fake_pdf
 
@@ -507,6 +509,7 @@ def _fake_pdf(pages=2):
     rendered = MagicMock()
     rendered.to_pil = MagicMock(return_value=Image.new("RGB", (2, 2), color="white"))
     fake_page.render = MagicMock(return_value=rendered)
+    fake_page.get_size = MagicMock(return_value=(612.0, 792.0))  # US letter, in points
     fake_page.close = MagicMock()
     return fake_pdf
 

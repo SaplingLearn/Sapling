@@ -42,6 +42,7 @@ from services.flashcards.importing import (
 )
 from services.flashcards.integrity import card_guard, cleanup_withheld, screened, with_withheld
 from services.llm_budget import reraise_budget_refusal
+from services.upload_validation import GIF, JPEG, PDF, PNG, WEBP, sniff_type
 
 logger = logging.getLogger(__name__)
 
@@ -103,22 +104,38 @@ def _decode_upload(payload: str) -> bytes:
     return file_bytes
 
 
+#: What the OCR source accepts, by the file's BYTES (the PhotoTab picker
+#: offers images and PDFs). The client's `options.filename` is never used:
+#: the extraction router picks its parser from the name, so a lying name
+#: would route a file to a parser it was not checked for.
+_OCR_TYPES = {PNG: "png", JPEG: "jpg", GIF: "gif", WEBP: "webp", PDF: "pdf"}
+
+
+def _ocr_filename(file_bytes: bytes) -> str:
+    """A name whose extension is the type the bytes ARE, or Unprocessable."""
+    ext = _OCR_TYPES.get(sniff_type(file_bytes))
+    if ext is None:
+        raise Unprocessable("Upload a photo (PNG, JPG, GIF or WebP) or a PDF.")
+    return f"import.{ext}"
+
+
 def _parse_file(
-    source: str, file_bytes: bytes, options: dict | None, user_id: str | None, loop_on: bool,
+    source: str, file_bytes: bytes, user_id: str, loop_on: bool,
 ) -> tuple[list[dict], int]:
     """The file's cards and how many the integrity guard withheld (OCR only)."""
+    # Before the try: its refusal is the student's file, not a parser error.
+    ocr_name = _ocr_filename(file_bytes) if source == "ocr" else ""
     try:
         if source == "xlsx":
             return parse_xlsx(file_bytes), 0
         if source == "anki":
             return parse_anki_apkg(file_bytes), 0
-        filename = (options or {}).get("filename", "image.png")
         # spec §13 A125: the photographed page's text is what this request
         # sends the card model — guarded once it is text, before the model
         guards: list = []
         cards = extract_cards_from_image(
             file_bytes,
-            filename=filename,
+            filename=ocr_name,
             screen=lambda text: guards.append(card_guard(user_id, (text,), active=loop_on)),
         )
         return screened(guards[0], cards) if guards else (cards, 0)
@@ -143,19 +160,23 @@ def _scrape(url: str) -> list[dict]:
 
 
 def import_parse(
+    user_id: str,
     source: str,
     payload: str,
     options: dict | None = None,
     *,
-    user_id: str | None = None,
     loop_on: bool = False,
 ) -> dict:
     """Cards read out of an upload (``anki`` / ``xlsx`` / ``ocr``: base64 file
-    bytes) or a Quizlet page (``url``). Nothing is saved. ``loop_on`` (the
-    route's learning-loop gate) guards the OCR text (spec §13 A125)."""
+    bytes) or a Quizlet page (``url``). Nothing is saved. Charged to the
+    import limiter like its siblings: every source parses an attacker-shaped
+    file or fetches a page, and ``ocr`` runs OCR and the flashcard agent.
+    ``loop_on`` (the route's learning-loop gate) guards the OCR text (spec
+    §13 A125)."""
+    _claim_rate_slot(user_id)
     withheld = 0
     if source in ("anki", "xlsx", "ocr"):
-        cards, withheld = _parse_file(source, _decode_upload(payload), options, user_id, loop_on)
+        cards, withheld = _parse_file(source, _decode_upload(payload), user_id, loop_on)
     elif source == "url":
         cards = _scrape(payload)
     else:

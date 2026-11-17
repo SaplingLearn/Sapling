@@ -14,7 +14,7 @@ from db.connection import pg_quote_value, table
 from learning.bkt import tier_for
 from models.study_guide import Tier
 from services.concept_edges import normalize as concept_key
-from services.encryption import decrypt_json_column
+from services.encryption import bind, decrypt_json_column
 from services.tool_signals import Expect, report_empty_result_async
 
 logger = logging.getLogger(__name__)
@@ -81,10 +81,11 @@ def tiers(scores: dict[str, float]) -> dict[str, Tier]:
     return {name: tier_for(score) for name, score in scores.items()}
 
 
-def _digest_mistakes(context_json) -> list[str]:
-    """The mistakes one quiz digest holds, without repeats. Raises when the
-    column does not decrypt."""
-    digest = decrypt_json_column(context_json)
+def _digest_mistakes(row: dict) -> list[str]:
+    """The mistakes one quiz digest (a ``quiz_context`` row) holds, without
+    repeats. Raises when the column does not decrypt."""
+    digest = decrypt_json_column(
+        row.get("context_json"), bind=bind("quiz_context", "context_json", row))
     if not isinstance(digest, dict):
         return []
     texts: dict[str, str] = {}
@@ -102,7 +103,7 @@ def _mistakes_by_node(rows: list[dict]) -> dict[str, list[str]]:
     found: dict[str, list[str]] = {}
     for row in rows:
         try:
-            texts = _digest_mistakes(row.get("context_json"))
+            texts = _digest_mistakes(row)
         except Exception as exc:  # a wrong key, a damaged value, not JSON
             logger.warning(
                 "study guide: a quiz digest did not decrypt (%s); left out", type(exc).__name__,
@@ -123,7 +124,8 @@ async def amistakes(user_id: str, course_id: str, concepts: list[str]) -> list[Q
     nodes.sort(key=lambda n: wanted[concept_key(n["concept_name"])])
     node_ids = f"in.({','.join(pg_quote_value(n['id']) for n in nodes)})"
     rows = await table("quiz_context").aselect(
-        "concept_node_id,context_json",
+        # user_id + concept_node_id are context_json's binding (M13).
+        "user_id,concept_node_id,context_json",
         filters={"user_id": f"eq.{user_id}", "concept_node_id": node_ids},
     ) or []
     by_node = _mistakes_by_node(rows)

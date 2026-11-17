@@ -30,6 +30,7 @@ from agents.deps import SaplingDeps
 from agents.tools.chat_context import search_course_materials_tool
 from agents.tools.graph import apply_graph_update_tool
 from agents.tools.note_context import read_active_note_tool
+from services.crisis_support_copy import MODEL_SAFETY_PROMPT
 from services.prompt_safety import INJECTION_GUARD_PROMPT
 
 
@@ -53,6 +54,9 @@ _PROMPT = (
     "questions here and point them to that question's card in their learning "
     "session, whose hints go one step at a time. You may explain the "
     "underlying idea in general terms, without solving that question.\n\n"
+    # sec2 M11: the model-side crisis backstop, flag or no flag.
+    + MODEL_SAFETY_PROMPT
+    + "\n\n"
     "Tone: warm, concise, no filler. Use math/code blocks where helpful "
     "(LaTeX `$x^2$`, ```mermaid```, ```plot```). Keep replies short — "
     "this is a sidecar chat, not a tutoring session."

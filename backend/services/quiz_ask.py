@@ -33,7 +33,7 @@ from fastapi import HTTPException
 from db.connection import page_all, table
 from learning.help_ledger import record_help
 from learning.params import RUNG_NO_CREDIT_MIN
-from services.encryption import decrypt_json_column
+from services.encryption import bind, decrypt_json_column
 from services.quiz.identity import wire_question_hash
 
 logger = logging.getLogger(__name__)
@@ -70,7 +70,9 @@ def resolve_quiz_ask(user_id: str, attempt_id: str, question_index: int) -> Quiz
     )
     if not rows or rows[0].get("user_id") != user_id:
         raise HTTPException(status_code=404, detail=_NOT_FOUND)
-    questions = decrypt_json_column(rows[0].get("questions_json")) or []
+    questions = decrypt_json_column(
+        rows[0].get("questions_json"), bind=bind("quiz_attempts", "questions_json", attempt_id),
+    ) or []
     if not isinstance(questions, list) or not 0 <= int(question_index) < len(questions):
         raise HTTPException(status_code=404, detail=_NOT_FOUND)
     qh = wire_question_hash(questions[int(question_index)])

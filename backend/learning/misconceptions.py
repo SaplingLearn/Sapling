@@ -51,7 +51,7 @@ from learning.params import (
     NOVICE_FLOOR_MISSES,
     RECHECK_RELEASE_WINDOW_HOURS,
 )
-from services.encryption import encrypt_if_present
+from services.encryption import bind, encrypt_if_present
 from services.events_service import log_event
 
 logger = logging.getLogger("sapling.learning.misconceptions")
@@ -430,7 +430,9 @@ def record(
                 "p_node_id": node_id,
                 "p_check_item_id": check_item_id,
                 "p_wrong_key": wrong_key,
-                "p_evidence_text": encrypt_if_present(evidence_text),
+                # Bound to the upsert's natural key (the row may keep an older id).
+                "p_evidence_text": encrypt_if_present(evidence_text, bind=bind(
+                    "misconceptions", "evidence_text", (user_id, node_id, wrong_key))),
                 "p_question_hash": question_hash,
             },
         )

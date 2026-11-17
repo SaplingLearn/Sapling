@@ -37,7 +37,7 @@ from learning.params import (
 from learning.session_close import BASELINES, ensure_session_row
 from learning.void_store import voided_sessions
 from services.academics import course_offering_ids
-from services.encryption import decrypt_json_column, encrypt_if_present
+from services.encryption import bind, decrypt_json_column, encrypt_if_present
 from services.exam_proximity import days_until_next_exam
 from services.graph_service import _normalize_concept
 from services.session_modes import NOT_REVIEW
@@ -161,7 +161,7 @@ def _read_closes(user_id: str, course_id: str | None) -> list[tuple[str, dict]]:
         if row.get("id") in void_sessions:
             continue
         try:
-            close = decrypt_json_column(row.get("close_json"))
+            close = decrypt_json_column(row.get("close_json"), bind=bind("sessions", "close_json", row))
         except Exception as exc:
             logger.warning(
                 "learner_brief: close %s skipped (%s)", row.get("id"), type(exc).__name__
@@ -324,6 +324,7 @@ def store_brief(
         logger.warning("learner_brief: sessions row %s missing; brief not stored", session_id)
         return brief
     table("sessions").update(
-        {"loop_brief": encrypt_if_present(brief)}, filters={"id": f"eq.{session_id}"}
+        {"loop_brief": encrypt_if_present(brief, bind=bind("sessions", "loop_brief", session_id))},
+        filters={"id": f"eq.{session_id}"},
     )
     return brief

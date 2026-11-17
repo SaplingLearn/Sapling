@@ -94,7 +94,7 @@ from services.academics import resolve_offering, user_offering_ids_for_course
 from services.achievement_service import check_achievements
 from services.check_item_service import list_items
 from services.varied_practice import familiarity_for  # spec §13 A140
-from services.encryption import decrypt_if_present
+from services.encryption import bind, decrypt_if_present
 from services.events_service import log_event
 from services.exam_proximity import days_until_next_exam
 from services.graph_service import _normalize_concept, apply_graph_update
@@ -1149,8 +1149,8 @@ def serve(
             "topic": item.topic,
             "cost_s": item.cost_s,
             "sr": sr,
-            "front": decrypt_if_present(row.get("front")),
-            "back": decrypt_if_present(row.get("back")),
+            "front": decrypt_if_present(row.get("front"), bind=bind("flashcards", "front", item.id)),
+            "back": decrypt_if_present(row.get("back"), bind=bind("flashcards", "back", item.id)),
         }
     payload = {
         "kind": "check",

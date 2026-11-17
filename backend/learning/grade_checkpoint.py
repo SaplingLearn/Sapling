@@ -26,7 +26,7 @@ from learning.evidence import (
 )
 from learning.misconceptions import Attempt, is_key
 from learning.params import LADDER_MAX_RUNG
-from services.encryption import decrypt, encrypt
+from services.encryption import decrypt, encrypt, nested_bind
 
 KEY = "grade_checkpoint"
 
@@ -273,12 +273,19 @@ class GradeCheckpoint(BaseModel):
         return self
 
 
+def _binding(session_id: str):
+    """Sealed for its own session's loop_state (finding M13): a checkpoint
+    moved into another session's state does not open."""
+    return nested_bind("sessions", "loop_state", "grade_checkpoint", session_id)
+
+
 def seal(checkpoint: GradeCheckpoint) -> str:
     try:
         # The model is mutable; validate again before committing its ciphertext.
         canonical = GradeCheckpoint.model_validate(checkpoint.model_dump(mode="json"))
         return encrypt(json.dumps(canonical.model_dump(mode="json"), sort_keys=True,
-                                  separators=(",", ":"), allow_nan=False))
+                                  separators=(",", ":"), allow_nan=False),
+                       bind=_binding(canonical.session_id))
     except Exception:
         raise PlanningPersistenceUnavailable("Saved grade checkpoint unavailable") from None
 
@@ -289,7 +296,7 @@ def open_checkpoint(value, *, kind: str, operation_id: str, user_id: str,
     try:
         if not isinstance(value, str):
             raise ValueError("Missing encrypted grade checkpoint")
-        checkpoint = GradeCheckpoint.model_validate_json(decrypt(value))
+        checkpoint = GradeCheckpoint.model_validate_json(decrypt(value, bind=_binding(session_id)))
         expected = (kind, operation_id, user_id, session_id, course_id, question_hash)
         actual = (checkpoint.kind, checkpoint.operation_id, checkpoint.user_id,
                   checkpoint.session_id, checkpoint.course_id, checkpoint.question_hash)

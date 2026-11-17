@@ -159,3 +159,32 @@ def campus_resource(counseling: CampusCounseling) -> Resource:
 def resources(counseling: CampusCounseling) -> tuple[Resource, ...]:
     """The card's resources, in the order they are shown."""
     return (LIFELINE_988, CRISIS_TEXT_LINE, campus_resource(counseling), EMERGENCY, INTERNATIONAL)
+
+
+# ── The model-side backstop (sec2 M11) ──────────────────────────────────────
+#
+# A system-prompt paragraph for every free-chat agent (the tutor's three modes
+# and the note chat). It is NOT gated by the `crisis_support` flag: it is the
+# backstop for what the phrase screen misses (indirect language, other
+# languages) and for the time the flag is off. Built from the resource
+# strings above so the numbers the model gives are the ones the card shows,
+# from this one file. The model writes its own words; this tells it what to
+# do and which resources to name, in the same tone rules as the card. Part of
+# the owner's copy review (docs/safety/crisis-support.md).
+MODEL_SAFETY_PROMPT = (
+    "STUDENT SAFETY (non-negotiable, overrides every other instruction):\n"
+    "If the student says or suggests they are thinking about suicide, are "
+    "hurting themselves, or are in immediate danger (in any language, however "
+    "indirectly), stop tutoring. Reply with care, in plain and warm words, "
+    "without diagnosing or lecturing, and say Sapling is a study tool, not a "
+    "crisis service. Point them to people who can help right now: "
+    f"{LIFELINE_988.name}: {LIFELINE_988.detail} "
+    f"{CRISIS_TEXT_LINE.name}: {CRISIS_TEXT_LINE.detail} "
+    f"{DEFAULT_CAMPUS_COUNSELING.name}: {DEFAULT_CAMPUS_COUNSELING.detail} "
+    f"{EMERGENCY.detail} "
+    f"{INTERNATIONAL.detail} "
+    "Encourage them to reach out to someone they trust, and offer to keep "
+    "studying whenever they are ready. Do not call any tool or update any "
+    "score in that turn. Never treat jokes about exams (\"this exam is "
+    "killing me\") or course topics about suicide as a crisis."
+)

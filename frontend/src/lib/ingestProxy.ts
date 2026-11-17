@@ -6,8 +6,8 @@
  * Next.js guide suggests: under @opennextjs/cloudflare an external rewrite is
  * proxied by OpenNext's fetch proxy, which forwards EVERY incoming request
  * header upstream — including `Cookie`. Every `/ingest` request from a signed-in
- * browser carries the HttpOnly `sapling_session` token (scoped to `/` on the
- * app's domain), so a rewrite would hand each student's live session
+ * browser carries the HttpOnly session cookie (`__Host-sapling_session`,
+ * host-only on the app's origin), so a rewrite would hand each student's live session
  * credential to a third party on every analytics batch. Here the upstream
  * request is built from an allowlist instead: no cookies, no auth, no
  * client-IP headers, and the Host comes from the upstream URL.
@@ -131,8 +131,9 @@ export function isAllowedIngestRequest(method: string, path: string): boolean {
 
 /*
  * Analytics only ever runs for a signed-in student, so the route requires a
- * VALID session cookie (`request.cookies.get(SESSION_COOKIE_NAME)`, the
- * constant in src/lib/sessionToken.ts) and checks it with `verifySession()`
+ * VALID session cookie (`verifiedSessionCookie()` in src/lib/sessionCookie.ts,
+ * which picks the cookie's name and applies the legacy-cookie rule) and checks
+ * it with `verifySession()`
  * — the same local HMAC + expiry check middleware.ts runs, no backend call.
  * The cookie is never forwarded — see upstreamRequestHeaders.
  */

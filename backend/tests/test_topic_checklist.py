@@ -19,7 +19,7 @@ from agents.topic_checklist import TopicOutline, topic_checklist_agent
 from services import academics, ai_budget, checklist_budget
 from services.checklist_budget_run import ChecklistDispatches
 from services import topic_checklist_service as svc
-from services.encryption import decrypt_json, encrypt_if_present
+from services.encryption import bind, decrypt_json, encrypt_if_present
 
 NOW = datetime(2026, 10, 12, 12, tzinfo=timezone.utc)
 
@@ -178,7 +178,8 @@ def test_get_never_calls_model_and_refresh_is_encrypted_idempotent(state):
     assert not result["needs_refresh"]
     stored = copy.deepcopy(db["topic_checklists"])
     assert "Recursion" not in stored[0]["content"]
-    assert decrypt_json(stored[0]["content"]) == outline().model_dump()
+    assert decrypt_json(stored[0]["content"], bind=bind(
+        "topic_checklists", "content", stored[0])) == outline().model_dump()
     assert svc.refresh_checklist("u", "course")["topics"] == result["topics"]
     assert len(calls) == 1 and db["topic_checklists"] == stored
 
@@ -600,7 +601,7 @@ def test_checkmark_does_not_rebuild_the_evidence_snapshot(state, monkeypatch):
     initial = svc.refresh_checklist("u", "course")
     db["_reads"].clear()
 
-    def no_decrypt(value):
+    def no_decrypt(value, **_kw):
         raise AssertionError("set_reviewed decrypted evidence text")
 
     monkeypatch.setattr(svc, "decrypt_if_present", no_decrypt)

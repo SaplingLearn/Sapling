@@ -47,7 +47,7 @@ const res = await fetch(`${BACKEND}/api/auth/test-login`, {
 });
 const setCookie = res.headers.getSetCookie?.() ?? [];
 const token = setCookie
-  .find((c) => c.startsWith('sapling_session='))
+  .find((c) => c.startsWith('sapling_session=') || c.startsWith('__Host-sapling_session='))
   ?.split(';')[0]
   .split('=')[1];
 if (!token) {
@@ -55,6 +55,7 @@ if (!token) {
   process.exit(2);
 }
 await ctx.addCookies([
+  // The local http stack's plain cookie name (sec2 M1: `__Host-` is https only).
   { name: 'sapling_session', value: token, domain: 'localhost', path: '/' },
 ]);
 

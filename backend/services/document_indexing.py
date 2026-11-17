@@ -37,7 +37,7 @@ from services.chunk_visibility import (
 )
 from services.chunker import chunk_for_category
 from services import jobs
-from services.encryption import decrypt, decrypt_if_present
+from services.encryption import bind, decrypt, decrypt_if_present
 from services.events_service import log_event
 from services.feature_flags import flag_on
 from services.rag_service import (
@@ -390,7 +390,7 @@ def _run(row: dict) -> IndexOutcome:
         # ciphertext and index it as course material. extracted_text has been
         # encrypted since the column was added (0030); there is no legacy
         # plaintext to tolerate.
-        text = decrypt(stored)
+        text = decrypt(stored, bind=bind("documents", "extracted_text", doc_id))
     except Exception:
         logger.warning(
             "[RAG] extracted_text for doc %s does not decrypt under this "
@@ -492,7 +492,8 @@ def _run(row: dict) -> IndexOutcome:
     if landed:
         _observe_course_relevance(
             doc_id, course_code, user_id, category,
-            decrypt_if_present(row.get("summary")) or "", chunks[0],
+            decrypt_if_present(row.get("summary"), bind=bind("documents", "summary", doc_id)) or "",
+            chunks[0],
         )
     if best is not None and error is None and landed >= best.total:
         return IndexOutcome(INDEXED, landed)

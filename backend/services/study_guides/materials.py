@@ -7,14 +7,13 @@ Only the student's own ``documents`` rows are read, never the shared
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any
 
 from db.connection import pg_quote_value, table
 from models.study_guide import MaterialOption, Source
-from services.encryption import decrypt, decrypt_json_column
+from services.encryption import bind, decrypt, decrypt_json_column
 from services.study_guides.scopes import MAX_ID_CHARS, Scope
 
 logger = logging.getLogger(__name__)
@@ -130,16 +129,20 @@ async def _arows(
     ) or []
 
 
-def _column(row: dict, column: str, read: Callable[[Any], Any]) -> Any:
-    """``read`` of one column of a document, or None when it is empty or
-    cannot be read (a wrong key, a damaged value, not JSON). An unreadable
-    column is left out with a warning and costs the document only that
-    column; its value is never used as text."""
+def _column(row: dict, column: str, *, as_json: bool = False) -> Any:
+    """One column of a document opened (JSON when ``as_json``), or None when
+    it is empty or cannot be read (a wrong key, a damaged or moved value, not
+    JSON). An unreadable column is left out with a warning and costs the
+    document only that column; its value is never used as text. Bound to the
+    document's id (M13)."""
     value = row.get(column)
     if not value:
         return None
     try:
-        return read(value)
+        binding = bind("documents", column, row)
+        if as_json:
+            return decrypt_json_column(value, bind=binding)
+        return decrypt(value, bind=binding)
     except Exception as exc:
         logger.warning(
             "study guide: document %s %s did not decrypt (%s); left out",
@@ -153,7 +156,7 @@ def _notes(row: dict) -> list[tuple[str, str]]:
     stored before encryption (plain JSON) read as they are
     (``decrypt_json_column``); notes that are not a list of notes (a sentence
     some old rows hold) are none."""
-    raw = _column(row, "concept_notes", decrypt_json_column)
+    raw = _column(row, "concept_notes", as_json=True)
     if not isinstance(raw, list):
         return []
     pairs = [
@@ -164,7 +167,7 @@ def _notes(row: dict) -> list[tuple[str, str]]:
 
 
 def _text(row: dict, column: str) -> str:
-    text = _column(row, column, decrypt)
+    text = _column(row, column)
     return text.strip() if isinstance(text, str) else ""
 
 

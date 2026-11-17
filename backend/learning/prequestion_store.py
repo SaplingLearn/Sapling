@@ -16,7 +16,7 @@ from datetime import datetime
 
 from db.connection import table
 from db.scope import runs_as_service
-from services.encryption import decrypt_json, encrypt_json
+from services.encryption import bind, decrypt_json, encrypt_json
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +48,8 @@ def store_answer(
         "format": item.format,
         "difficulty": int(item.difficulty),
         "no_idea": bool(no_idea),
-        "guess_json": None if no_idea else encrypt_json(guess or {}),
+        "guess_json": None if no_idea else encrypt_json(guess or {}, bind=bind(
+            _TABLE, "guess_json", (user_id, session_id, node_id))),
         "posed_at": posed_at.isoformat(),
     }
     table(_TABLE).insert_ignore_duplicates(row, on_conflict="user_id,session_id,node_id")
@@ -73,7 +74,8 @@ def stored_answer(user_id: str, session_id: str, node_id: str) -> dict | None:
     return {
         "question_hash": row.get("question_hash"),
         "no_idea": no_idea,
-        "guess": None if no_idea else decrypt_json(row.get("guess_json")),
+        "guess": None if no_idea else decrypt_json(
+            row.get("guess_json"), bind=bind(_TABLE, "guess_json", (user_id, session_id, node_id))),
     }
 
 

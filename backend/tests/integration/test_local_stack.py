@@ -14,7 +14,7 @@ import pytest
 
 from db.connection import table
 from services.encryption import (
-    decrypt_if_present, decrypt_numeric, encrypt_if_present,
+    bind, decrypt_if_present, decrypt_numeric, encrypt_if_present,
 )
 from tests.integration.conftest import COURSE_CS, USER_ACTIVE, USER_SECOND
 
@@ -54,7 +54,8 @@ def test_note_created_via_app_is_encrypted_at_rest(authed_client, db_conn):
     assert row is not None, "note the app claims to have written is absent in raw SQL"
     raw_body = row["body"]
     assert raw_body != secret, "body stored as plaintext — encryption-on-write regressed"
-    assert decrypt_if_present(raw_body) == secret, "ciphertext does not round-trip back"
+    assert decrypt_if_present(raw_body, bind=bind("notes", "body", note_id)) == secret, \
+        "ciphertext does not round-trip back"
 
 
 def test_db_roundtrip_write_read_delete(db_conn):

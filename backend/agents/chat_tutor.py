@@ -33,6 +33,7 @@ from pydantic_ai import Agent, Tool
 
 from agents._providers import model_for
 from agents.deps import SaplingDeps
+from services.crisis_support_copy import MODEL_SAFETY_PROMPT
 from services.prompt_safety import INJECTION_GUARD_PROMPT
 from agents.tools.chat_context import (
     read_session_history_tool,
@@ -92,6 +93,10 @@ _SHARED_PREAMBLE = (
     # #150: injection resistance — single source of truth in
     # services/prompt_safety.py, shared with the legacy preamble.
     + INJECTION_GUARD_PROMPT
+    + "\n\n"
+    # sec2 M11: the model-side crisis backstop, flag or no flag; one source
+    # of wording with the crisis card (services/crisis_support_copy.py).
+    + MODEL_SAFETY_PROMPT
     + "\n\n"
     + _ACADEMIC_INTEGRITY
     + "\n\n"

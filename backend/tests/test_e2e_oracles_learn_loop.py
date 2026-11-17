@@ -405,7 +405,7 @@ def test_run_learn_loop_gathers_activity_and_decrypts_messages(monkeypatch):
         }
     )
     monkeypatch.setattr(gather, "_db_conn", lambda: conn)
-    monkeypatch.setattr(enc, "decrypt_if_present", lambda v: SENTINEL if v == "ct" else v)
+    monkeypatch.setattr(enc, "decrypt_if_present", lambda v, **_: SENTINEL if v == "ct" else v)
     findings, _ = gather.run_learn_loop(SimpleNamespace(user="x", expect_loop_activity=True))
     summaries = " | ".join(f.summary for f in findings)
     assert "evidence" in summaries and "final answer" in summaries

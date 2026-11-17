@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 
 from db.connection import table
 from models import EditMessageBody, SendMessageBody, ToggleReactionBody
-from services.encryption import decrypt_if_present, encrypt_if_present
+from services.encryption import bind, decrypt_if_present, encrypt_if_present
 from services.profiles import get_display_name
 from services.social.errors import Conflict, Forbidden, InvalidRequest, NotFound
 from services.social.rooms import _require_member
@@ -45,6 +45,15 @@ def _message_in_room(room_id: str, message_id: str | None) -> str | None:
         "id", filters={"id": f"eq.{canonical}", "room_id": f"eq.{room_id}"},
     )
     return canonical if rows else None
+
+
+def _row_key(message_id: str) -> str:
+    """`message_id` as the database returns it (a canonical lowercase uuid),
+    the form readers bind the text with."""
+    try:
+        return str(uuid.UUID(str(message_id)))
+    except ValueError:
+        return message_id
 
 
 def get_room_messages(room_id: str, viewer_id: str, before: str | None = None, limit: int = 50):
@@ -108,14 +117,16 @@ def get_room_messages(room_id: str, viewer_id: str, before: str | None = None, l
             reply_map[rr["id"]] = {
                 "id": rr["id"],
                 "user_name": rr["user_name"],
-                "text": None if rr.get("is_deleted") else decrypt_if_present(rr.get("text")),
+                "text": None if rr.get("is_deleted") else decrypt_if_present(
+                    rr.get("text"), bind=bind("room_messages", "text", rr),
+                ),
             }
 
     enriched = []
     for r in rows:
         mid = r["id"]
         emoji_map = reactions_by_msg.get(mid, {})
-        r["text"] = decrypt_if_present(r.get("text"))
+        r["text"] = decrypt_if_present(r.get("text"), bind=bind("room_messages", "text", r))
         r["reactions"] = [{"emoji": e, "user_ids": uids} for e, uids in emoji_map.items()]
         r["reply_to"] = reply_map.get(r.get("reply_to_id")) if r.get("reply_to_id") else None
         enriched.append(r)
@@ -148,11 +159,17 @@ def send_room_message(room_id: str, body: SendMessageBody):
     # never the client's `user_name` (which let a member post as anyone).
     sender_name = get_display_name(body.user_id) or SENDER_NAME_FALLBACK
 
+    # The id is minted here, not by the column default: the text is sealed
+    # to its row (AES-GCM associated data, services/encryption.py).
+    message_id = str(uuid.uuid4())
     row = table("room_messages").insert({
+        "id": message_id,
         "room_id": room_id,
         "user_id": body.user_id,
         "user_name": sender_name,
-        "text": encrypt_if_present(body.text or None),
+        "text": encrypt_if_present(
+            body.text or None, bind=bind("room_messages", "text", message_id),
+        ),
         "image_url": body.image_url or None,
         "image_width": body.image_width or None,
         "image_height": body.image_height or None,
@@ -160,7 +177,9 @@ def send_room_message(room_id: str, body: SendMessageBody):
     })
 
     if row:
-        row[0]["text"] = decrypt_if_present(row[0].get("text"))
+        row[0]["text"] = decrypt_if_present(
+            row[0].get("text"), bind=bind("room_messages", "text", row[0].get("id") or message_id),
+        )
 
     # Check for achievements after message send. Posting is the only thing
     # that advances room_replies (`helping-hand`: answer in someone else's
@@ -209,7 +228,8 @@ def edit_room_message(room_id: str, message_id: str, body: EditMessageBody):
     # #764: conditional on is_deleted=false, so an edit racing a delete cannot
     # write fresh text onto the just-deleted (and just-cleared) message.
     edited = table("room_messages").update(
-        {"text": encrypt_if_present(body.text), "edited_at": datetime.now(timezone.utc).isoformat()},
+        {"text": encrypt_if_present(body.text, bind=bind("room_messages", "text", _row_key(message_id))),
+         "edited_at": datetime.now(timezone.utc).isoformat()},
         filters={"id": f"eq.{message_id}", "room_id": f"eq.{room_id}", "user_id": f"eq.{body.user_id}",
                  "is_deleted": "eq.false"},
     )

@@ -248,6 +248,15 @@ function UsersTab() {
                       ) : (
                         <span style={{ fontStyle: "italic", color: "var(--text-muted)" }}>No profile name</span>
                       )}
+                      {!u.is_approved && u.open_access_at && (
+                        <span
+                          className="chip chip--info"
+                          data-testid="admin-user-open-access"
+                          title="In through open access, not approved: goes back to the waitlist when you require it again. Approve them under Allowlist to keep them in."
+                        >
+                          open access
+                        </span>
+                      )}
                     </div>
                   </td>
                   <td style={{ padding: "10px 16px", color: "var(--text-dim)" }}>

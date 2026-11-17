@@ -37,7 +37,8 @@ from typing import TYPE_CHECKING             # noqa: E402
 
 if TYPE_CHECKING:  # the guide models load pydantic-ai: imported where a guide is built
     from models.study_guide import GuideContent, Source
-from services.encryption import encrypt_if_present, encrypt_json  # noqa: E402
+from services.encryption_canary import abort_unless_key_verified  # noqa: E402
+from services.encryption import bind, encrypt_if_present, encrypt_json  # noqa: E402
 
 logger = logging.getLogger(__name__)
 _MAX_REASON_CHARS = 300
@@ -274,7 +275,7 @@ def seed_users(writer=h) -> None:
             "users",
             {
                 "id": uid,
-                "email": encrypt_if_present(email),
+                "email": encrypt_if_present(email, bind=bind("users", "email", uid)),
                 "onboarding_completed": onboarding_completed,
                 "streak_count": streak_count,
                 "is_approved": is_approved,
@@ -286,7 +287,8 @@ def seed_users(writer=h) -> None:
             row = {"user_id": uid}
             for key in _PROFILE_ENCRYPTED_FIELDS:
                 if key in profile:
-                    row[key] = encrypt_if_present(profile[key])
+                    row[key] = encrypt_if_present(profile[key],
+                                                  bind=bind("user_profiles", key, uid))
             for key in _PROFILE_PLAIN_FIELDS:
                 if key in profile:
                     row[key] = profile[key]
@@ -510,8 +512,11 @@ def seed_gradebook(writer=h) -> None:
                 "source": source,
                 # 🔒 points (numeric semantics; decrypt_numeric at read). None (ungraded)
                 # stays None — encrypt_if_present(None) is a no-op.
-                "points_possible": encrypt_if_present(str(possible)),
-                "points_earned": encrypt_if_present(str(earned)) if earned is not None else None,
+                "points_possible": encrypt_if_present(
+                    str(possible), bind=bind("assignments", "points_possible", asg_id)),
+                "points_earned": encrypt_if_present(
+                    str(earned), bind=bind("assignments", "points_earned", asg_id),
+                ) if earned is not None else None,
             },
         )
 
@@ -578,7 +583,7 @@ def seed_rooms(writer=h) -> None:
                 "user_id": user_id,
                 "user_name": user_name,
                 # 🔒 text
-                "text": encrypt_if_present(text),
+                "text": encrypt_if_present(text, bind=bind("room_messages", "text", msg_id)),
             },
         )
 
@@ -623,8 +628,8 @@ def seed_notes_documents(writer=h) -> None:
                 "user_id": user_id,
                 "offering_id": off_id,
                 # 🔒 title / body
-                "title": encrypt_if_present(title),
-                "body": encrypt_if_present(body),
+                "title": encrypt_if_present(title, bind=bind("notes", "title", note_id)),
+                "body": encrypt_if_present(body, bind=bind("notes", "body", note_id)),
                 "tags": tags,
             },
         )
@@ -639,9 +644,11 @@ def seed_notes_documents(writer=h) -> None:
                 "file_name": file_name,
                 "category": category,
                 # 🔒 summary / concept_notes / extracted_text
-                "summary": encrypt_if_present(summary),
-                "concept_notes": encrypt_json([{"name": c_name, "description": c_desc}]),
-                "extracted_text": encrypt_if_present(extracted),
+                "summary": encrypt_if_present(summary, bind=bind("documents", "summary", doc_id)),
+                "concept_notes": encrypt_json([{"name": c_name, "description": c_desc}],
+                                              bind=bind("documents", "concept_notes", doc_id)),
+                "extracted_text": encrypt_if_present(
+                    extracted, bind=bind("documents", "extracted_text", doc_id)),
             },
         )
 
@@ -703,7 +710,8 @@ def seed_topic_checklists(writer=h) -> None:
                 # fixture silently standing in for a generated outline.
                 "input_hash": f"rich-seed-{key}",
                 # 🔒 content
-                "content": encrypt_json({"topics": _checklist_topics(groups, source_id)}),
+                "content": encrypt_json({"topics": _checklist_topics(groups, source_id)},
+                                        bind=bind("topic_checklists", "content", enrollment_id)),
             },
             "enrollment_id",
         )
@@ -736,8 +744,8 @@ def seed_flashcards(writer=h) -> None:
                 "offering_id": off_id,
                 "topic": topic,
                 # 🔒 front / back (#518)
-                "front": encrypt_if_present(front),
-                "back": encrypt_if_present(back),
+                "front": encrypt_if_present(front, bind=bind("flashcards", "front", fc_id)),
+                "back": encrypt_if_present(back, bind=bind("flashcards", "back", fc_id)),
             },
         )
 
@@ -962,7 +970,8 @@ def seed_study_guides(writer=h) -> None:
             "generated_at": _GUIDE_MADE_AT,
             "created_at": _GUIDE_MADE_AT,
             # 🔒 content (#518)
-            "content": encrypt_json(_cs_midterm_guide(sources).model_dump(mode="json")),
+            "content": encrypt_json(_cs_midterm_guide(sources).model_dump(mode="json"),
+                                    bind=bind("study_guides", "content", GUIDE_CS_MIDTERM)),
         },
     )
 
@@ -972,7 +981,8 @@ def seed_room_summaries(writer=h) -> None:
     # can't go through insert_if_absent.
     writer.insert_by_keys("room_summaries", {
         "room_id": ROOM_STUDY,
-        "summary": encrypt_if_present("The group is reviewing recursion before the midterm."),
+        "summary": encrypt_if_present("The group is reviewing recursion before the midterm.",
+                                      bind=bind("room_summaries", "summary", ROOM_STUDY)),
         "member_hash": "rich-member-hash-v1",
     }, "room_id")
 
@@ -1047,6 +1057,9 @@ def seed_offering_concept_stats(writer=h) -> None:
                 "pct_struggling": 0.5,
                 "pct_unexplored": 0.25,
                 "common_misconceptions": misconceptions,
+                # M8: stamped as aggregated under the distinct-student floor,
+                # which is the only kind of row the quiz's reader serves.
+                "min_mistake_contributors": 3,
                 # No `effective_explanations` key — #572, see
                 # services/course_context_service.py::_parse_quiz_context_to_arrays.
                 "prerequisite_gaps": [],
@@ -1066,8 +1079,11 @@ def seed_quiz(writer=h) -> None:
                 "total": total,
                 "difficulty": difficulty,
                 # 🔒 questions_json / answers_json
-                "questions_json": encrypt_json(questions),
-                "answers_json": encrypt_json(answers) if answers is not None else None,
+                "questions_json": encrypt_json(
+                    questions, bind=bind("quiz_attempts", "questions_json", qa_id)),
+                "answers_json": encrypt_json(
+                    answers, bind=bind("quiz_attempts", "answers_json", qa_id),
+                ) if answers is not None else None,
                 "completed_at": completed_at,
             },
         )
@@ -1080,7 +1096,9 @@ def seed_quiz(writer=h) -> None:
             "user_id": USER_ACTIVE,
             "concept_node_id": "rich-node-cs-variables",
             "context_json": encrypt_json(
-                {"misconceptions": ["confuses = with =="], "asked": 2}
+                {"misconceptions": ["confuses = with =="], "asked": 2},
+                bind=bind("quiz_context", "context_json",
+                          (USER_ACTIVE, "rich-node-cs-variables")),
             ),
         },
     )
@@ -1097,8 +1115,9 @@ def seed_feedback(writer=h) -> None:
             "type": "global",
             "rating": 4,
             "selected_options": ["tutor"],
-            "comment": encrypt_if_present("The tutor cited the wrong lecture."),
-            "topic": encrypt_if_present("chat"),
+            "comment": encrypt_if_present("The tutor cited the wrong lecture.",
+                                          bind=bind("feedback", "comment", "rich-fb-1")),
+            "topic": encrypt_if_present("chat", bind=bind("feedback", "topic", "rich-fb-1")),
         },
     )
     writer.insert_if_absent(
@@ -1106,8 +1125,11 @@ def seed_feedback(writer=h) -> None:
         "rich-issue-1",
         {
             "user_id": USER_ACTIVE,
-            "topic": encrypt_if_present("Upload stuck"),
-            "description": encrypt_if_present("Syllabus upload spins forever."),
+            "topic": encrypt_if_present("Upload stuck",
+                                        bind=bind("issue_reports", "topic", "rich-issue-1")),
+            "description": encrypt_if_present(
+                "Syllabus upload spins forever.",
+                bind=bind("issue_reports", "description", "rich-issue-1")),
             "screenshot_urls": [],
         },
     )
@@ -1153,7 +1175,8 @@ def seed_sessions(writer=h) -> None:
                 "topic": topic,
                 "name": name,
                 # 🔒 summary_json
-                "summary_json": encrypt_json(summary),
+                "summary_json": encrypt_json(summary,
+                                             bind=bind("sessions", "summary_json", sess_id)),
             },
         )
 
@@ -1165,7 +1188,8 @@ def seed_sessions(writer=h) -> None:
                 "session_id": sess_id,
                 "role": role,
                 # 🔒 content
-                "content": encrypt_if_present(content),
+                "content": encrypt_if_present(content,
+                                              bind=bind("messages", "content", sess_id)),
             },
         )
 
@@ -1275,7 +1299,8 @@ def seed_learning_loop() -> None:
                 "doc_id": LOOP_DOC_ID,
                 "uploader_id": USER_LOOP,
                 "chunk_index": i,
-                "chunk_text": encrypt_if_present(text),  # 🔒
+                "chunk_text": encrypt_if_present(  # 🔒
+                    text, bind=bind("course_chunks", "chunk_text", cid)),
                 "chunk_hash": cid,
                 "embedding": _seed_embedding(text),
                 "category": LOOP_DOC_CATEGORY,
@@ -1300,11 +1325,15 @@ def seed_learning_loop() -> None:
             "file_name": "binary-and-bits-notes.pdf",
             "category": LOOP_DOC_CATEGORY,
             # 🔒 summary / concept_notes / extracted_text
-            "summary": encrypt_if_present("Notes on binary numbers, bitwise operators and two's complement."),
+            "summary": encrypt_if_present(
+                "Notes on binary numbers, bitwise operators and two's complement.",
+                bind=bind("documents", "summary", LOOP_DOC_ID)),
             "concept_notes": encrypt_json(
-                [{"name": concept, "description": sentence} for _, concept, sentence in LOOP_NODES]
+                [{"name": concept, "description": sentence} for _, concept, sentence in LOOP_NODES],
+                bind=bind("documents", "concept_notes", LOOP_DOC_ID),
             ),
-            "extracted_text": encrypt_if_present(notes),
+            "extracted_text": encrypt_if_present(
+                notes, bind=bind("documents", "extracted_text", LOOP_DOC_ID)),
             "shareability": "course_material",
             "shareability_confidence": LOOP_DOC_SHAREABILITY_CONFIDENCE,
             "index_status": "indexed",
@@ -1320,23 +1349,31 @@ def seed_learning_loop() -> None:
         for fmt in SEED_LOOP_FORMATS:
             for difficulty in CHECK_ITEM_DIFFICULTIES:
                 prompt = f"{E2E_LOOP_PROBE_PROMPT} [{concept}, {fmt}, difficulty {difficulty}]"
+                item_id = f"rich-check-{slug}-{fmt}-d{difficulty}"
+
+                def seal(column, value, _id=item_id):
+                    return encrypt_if_present(value, bind=bind("check_items", column, _id))
+
+                def seal_json(column, value, _id=item_id):
+                    return encrypt_json(value, bind=bind("check_items", column, _id))
+
                 h.upsert(
                     "check_items",
                     {
-                        "id": f"rich-check-{slug}-{fmt}-d{difficulty}",
+                        "id": item_id,
                         "course_id": COURSE_CS,
                         "concept_key": concept_key,
                         "document_id": LOOP_DOC_ID,
                         "format": fmt,
                         "difficulty": difficulty,
-                        "prompt": encrypt_if_present(prompt),  # 🔒
-                        "reference_answer": encrypt_if_present(E2E_LOOP_REFERENCE),  # 🔒
-                        "final_answer": encrypt_if_present(E2E_LOOP_FINAL_ANSWER),  # 🔒 A34
-                        "rubric_json": encrypt_json([  # 🔒
+                        "prompt": seal("prompt", prompt),  # 🔒
+                        "reference_answer": seal("reference_answer", E2E_LOOP_REFERENCE),  # 🔒
+                        "final_answer": seal("final_answer", E2E_LOOP_FINAL_ANSWER),  # 🔒 A34
+                        "rubric_json": seal_json("rubric_json", [  # 🔒
                             {"id": "r1", "text": "States the seeded final answer."},
                             {"id": "r2", "text": f"Names {concept}."},
                         ]),
-                        "common_wrong_json": encrypt_json([  # 🔒
+                        "common_wrong_json": seal_json("common_wrong_json", [  # 🔒
                             {"key": "wrong_token", "text": "Gives a different answer."},
                         ]),
                         "source_chunk_ids": [chunk_ids[slug]],
@@ -1383,8 +1420,8 @@ def seed_learning_loop() -> None:
             "offering_id": OFF_CS_S26,
             "topic": LOOP_NODES[0][1],
             # 🔒 front / back (#518)
-            "front": encrypt_if_present(front),
-            "back": encrypt_if_present(back),
+            "front": encrypt_if_present(front, bind=bind("flashcards", "front", card_id)),
+            "back": encrypt_if_present(back, bind=bind("flashcards", "back", card_id)),
             "due_at": (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(),  # due (PKG-11)
         },
     )
@@ -1429,7 +1466,8 @@ def _seed_owner_chunks(writer) -> None:
             "doc_id": doc_id,
             "uploader_id": USER_ACTIVE,
             "chunk_index": 0,
-            "chunk_text": encrypt_if_present(extracted),
+            "chunk_text": encrypt_if_present(
+                extracted, bind=bind("course_chunks", "chunk_text", f"{doc_id}-chunk-0")),
             "embedding": embedding,
             "category": category,
             "visibility": "private",
@@ -1503,6 +1541,11 @@ def main(argv: list[str] | None = None) -> None:
     # Programmatic callers (integration/reset fixtures) retain the no-flag seed.
     args = parser.parse_args(argv if argv is not None else [])
     _guard_local()
+    # Abort unless ENCRYPTION_KEY opens this database's key canary
+    # (services/encryption_canary.py): a wrong key writes unreadable rows.
+    # A fresh local database is seeded before any backend boots, so an empty
+    # canary is seeded here, as the first boot would.
+    abort_unless_key_verified("db.seed_local_rich", allow_seed=True)
     h.reset_counts()
     if args.owner_email is None and args.owner_user_id is None:
         _seed_dataset()

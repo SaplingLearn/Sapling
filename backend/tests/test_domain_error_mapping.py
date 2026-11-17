@@ -101,3 +101,76 @@ def test_gradescope_maps_a_subclass_to_its_parents_status():
 def test_gradescope_maps_the_bare_base_to_500():
     err = gradescope_routes._link_http_error(GradescopeLinkError("boom"))
     assert (err.status_code, err.detail) == (500, "boom")
+
+
+# ── #115: a db_user_scope refusal wrapped in a domain error ──────────────────
+
+def _scope_errors():
+    from db.scope import ScopeUnavailable, UnscopedQueryError
+
+    return [ScopeUnavailable("token rejected"), UnscopedQueryError("no subject")]
+
+
+@pytest.mark.parametrize("index", [0, 1], ids=["unavailable", "unscoped"])
+def test_domain_status_reraises_a_wrapped_scope_refusal(index):
+    """A service that wraps every failure in its own domain error (flashcards'
+    StorageError) must not turn an enforce refusal into a 500 carrying the
+    refusal's text: the refusal itself reaches main.py's handler."""
+    original = _scope_errors()[index]
+    try:
+        try:
+            raise original
+        except Exception as e:
+            raise _Mapped(str(e)) from e
+    except _Mapped as wrapped:
+        with pytest.raises(type(original)) as info:
+            domain_status(wrapped, {_Mapped: 500})
+    assert info.value is original
+
+
+def test_domain_status_respects_a_refusal_dropped_with_from_none():
+    """`raise X from None` means the service handled the refusal and chose
+    its own answer; it is not dug back out of the suppressed context."""
+    from db.scope import ScopeUnavailable
+
+    try:
+        try:
+            raise ScopeUnavailable("token rejected")
+        except ScopeUnavailable:
+            raise _Mapped("handled") from None
+    except _Mapped as wrapped:
+        assert domain_status(wrapped, {_Mapped: 409}) == 409
+
+
+def test_domain_status_still_finds_an_implicit_context():
+    """A refusal that merely happened during handling (no `from`) still counts."""
+    from db.scope import ScopeUnavailable
+
+    original = ScopeUnavailable("token rejected")
+    try:
+        try:
+            raise original
+        except ScopeUnavailable:
+            raise _Mapped("wrapped")
+    except _Mapped as wrapped:
+        with pytest.raises(ScopeUnavailable):
+            domain_status(wrapped, {_Mapped: 500})
+
+
+def test_flashcards_list_answers_503_when_the_token_is_rejected(monkeypatch):
+    """Seen under enforce in the E2E lane: a rejected token on the flashcards
+    list came back as a 500 StorageError instead of the fail-closed 503."""
+    from fastapi.testclient import TestClient
+
+    import main
+    from db.scope import ScopeUnavailable
+    from services.flashcards import cards
+
+    def rejected(*_a, **_k):
+        raise ScopeUnavailable("PostgREST rejected the user-scoped token (flashcards)")
+
+    monkeypatch.setattr(cards, "list_flashcards", rejected)
+    monkeypatch.setattr("routes.flashcards.require_self", lambda *_a, **_k: None)
+    r = TestClient(main.app, raise_server_exceptions=False).get("/api/flashcards/user/u1")
+    assert r.status_code == 503, r.text
+    assert "PostgREST" not in r.text

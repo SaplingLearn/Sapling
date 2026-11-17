@@ -71,7 +71,7 @@ describe('middleware — sign-in return origin (PR previews)', () => {
     vi.resetModules();
   });
 
-  it('sends its own origin as return_to on the Google sign-in redirect', async () => {
+  it('starts sign-in at its own /auth/start (which sets the nonce and the return origin)', async () => {
     // API_URL is resolved at import, so load a staging-configured copy.
     vi.resetModules();
     vi.stubEnv('DEPLOY_ENV', 'staging');
@@ -80,9 +80,82 @@ describe('middleware — sign-in return origin (PR previews)', () => {
     const preview = 'https://pr-742-frontend-staging.saplinglearn.workers.dev';
     const res = await stagingMiddleware(new NextRequest(`${preview}/dashboard`));
     const location = new URL(res.headers.get('location') ?? '');
-    expect(location.origin).toBe('https://api.staging.saplinglearn.com');
-    expect(location.pathname).toBe('/api/auth/google');
-    expect(location.searchParams.get('return_to')).toBe(preview);
+    // sec2 M2: /auth/start sets this browser's sign-in nonce cookie, then
+    // hands on to the backend's /api/auth/google with return_to = this origin.
+    expect(location.origin).toBe(preview);
+    expect(location.pathname).toBe('/auth/start');
+  });
+});
+
+describe('middleware — host-only session cookie (sec2 M1)', () => {
+  const SECRET = 's'.repeat(32);
+  const enc = (bytes: Uint8Array) =>
+    btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+    vi.resetModules();
+  });
+
+  async function sign(payload: Record<string, unknown>): Promise<string> {
+    const payloadB64 = enc(new TextEncoder().encode(JSON.stringify(payload)));
+    const key = await crypto.subtle.importKey(
+      'raw', new TextEncoder().encode(SECRET), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'],
+    );
+    const sig = new Uint8Array(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(payloadB64)));
+    return `${payloadB64}.${enc(sig)}`;
+  }
+
+  /** The production middleware, with /me answering approved + onboarded. */
+  async function prod() {
+    vi.resetModules();
+    vi.stubEnv('SESSION_SECRET', SECRET);
+    vi.stubEnv('DEPLOY_ENV', 'production');
+    const fetchSpy = vi.fn(async () => new Response(
+      JSON.stringify({ is_approved: true, onboarding_completed: true }),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    ));
+    vi.stubGlobal('fetch', fetchSpy);
+    const { middleware: mw } = await import('./middleware');
+    const { signSession } = await import('@/lib/sessionToken');
+    const run = (cookie: string) =>
+      mw(new NextRequest('https://saplinglearn.com/dashboard', { headers: { cookie } }));
+    return { run, fetchSpy, signSession };
+  }
+
+  const cookieSentToBackend = (spy: ReturnType<typeof vi.fn>) =>
+    ((spy.mock.calls[0] as unknown[])[1] as { headers: Record<string, string> }).headers.Cookie;
+
+  it('reads __Host-sapling_session and forwards it under that name', async () => {
+    const { run, fetchSpy, signSession } = await prod();
+    const token = await signSession('user_1');
+    const res = await run(`__Host-sapling_session=${token}`);
+    expect(res.headers.get('location')).toBeNull();
+    expect(cookieSentToBackend(fetchSpy)).toBe(`__Host-sapling_session=${token}`);
+  });
+
+  it('honours a pre-sec2 session in the legacy domain-wide cookie (nobody is logged out)', async () => {
+    const { run, fetchSpy } = await prod();
+    const now = Math.floor(Date.now() / 1000);
+    const legacy = await sign({ user_id: 'user_1', exp: now + 3600, typ: 'session', iat: now - 60 });
+    const res = await run(`sapling_session=${legacy}`);
+    expect(res.headers.get('location')).toBeNull();
+    expect(cookieSentToBackend(fetchSpy)).toBe(`__Host-sapling_session=${legacy}`);
+  });
+
+  it('refuses a current session tossed in under the legacy name by a sibling subdomain', async () => {
+    const { run, fetchSpy, signSession } = await prod();
+    const res = await run(`sapling_session=${await signSession('attacker')}`);
+    expect(new URL(res.headers.get('location') ?? '').searchParams.get('error')).toBe('session_expired');
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('prefers the host-only cookie when both are present', async () => {
+    const { run, fetchSpy, signSession } = await prod();
+    const token = await signSession('user_1');
+    await run(`sapling_session=junk.junk; __Host-sapling_session=${token}`);
+    expect(cookieSentToBackend(fetchSpy)).toBe(`__Host-sapling_session=${token}`);
   });
 });
 

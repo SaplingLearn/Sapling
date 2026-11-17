@@ -13,7 +13,7 @@ from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserProm
 from db.connection import table
 from models import ChatBody
 from services.agent_events import SaplingEvent, sapling_event_to_sse
-from services.encryption import decrypt_if_present, encrypt_if_present
+from services.encryption import bind, decrypt_if_present, encrypt_if_present
 from services.tutor_sessions import (
     araise_if_discarded,
     raise_if_discarded,
@@ -52,7 +52,7 @@ async def _load_message_history(session_id: str, *, exclude_id: str | None = Non
         filters={"session_id": f"eq.{session_id}"},
         order="created_at.asc",
     )
-    return _history_from_rows(rows, exclude_id)
+    return _history_from_rows(rows, session_id, exclude_id)
 
 
 def _load_message_history_sync(session_id: str, *, exclude_id: str | None = None) -> list:
@@ -64,10 +64,10 @@ def _load_message_history_sync(session_id: str, *, exclude_id: str | None = None
         filters={"session_id": f"eq.{session_id}"},
         order="created_at.asc",
     )
-    return _history_from_rows(rows, exclude_id)
+    return _history_from_rows(rows, session_id, exclude_id)
 
 
-def _history_from_rows(rows: list | None, exclude_id: str | None) -> list:
+def _history_from_rows(rows: list | None, session_id: str, exclude_id: str | None) -> list:
     """The `messages` rows of `_load_message_history` as Pydantic AI messages
     (its docstring has the mapping)."""
     history: list = []
@@ -75,7 +75,9 @@ def _history_from_rows(rows: list | None, exclude_id: str | None) -> list:
         if exclude_id and r.get("id") == exclude_id:
             continue
         raw_role = (r.get("role") or "").lower()
-        content = decrypt_if_present(r.get("content"))
+        content = decrypt_if_present(
+            r.get("content"), bind=bind("messages", "content", session_id),
+        )
         if not content:
             continue
         if raw_role == "user":
@@ -92,7 +94,7 @@ def _message_row(session_id: str, role: str, content: str, graph_update, message
         "id": message_id or str(uuid.uuid4()),
         "session_id": session_id,
         "role": role,
-        "content": encrypt_if_present(content),
+        "content": encrypt_if_present(content, bind=bind("messages", "content", session_id)),
         "graph_update_json": graph_update if graph_update else None,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -170,7 +172,9 @@ async def _persisted_turn(session_id: str, turn_id: str | None) -> dict | None:
         except ValueError:
             graph_update = {}
     return {
-        "reply": decrypt_if_present(rows[0].get("content")) or "",
+        "reply": decrypt_if_present(
+            rows[0].get("content"), bind=bind("messages", "content", session_id),
+        ) or "",
         "graph_update": graph_update,
         "mastery_changes": [],
         "replayed": True,

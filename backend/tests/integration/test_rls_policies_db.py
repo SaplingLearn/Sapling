@@ -70,6 +70,7 @@ BUCKETS: dict[str, frozenset[str]] = {
         "learning_evidence_operations", "check_item_reports", "check_item_reviews",
         "learning_evidence_voids", "misconception_attempts", "check_item_audits",
         "posttest_skips", "learning_prequestions", "learning_self_explanations",
+        "auth_handoff_consumptions",  # sec2 M2: single-use OAuth handoffs
     }),
 }
 

@@ -15,7 +15,7 @@ from starlette.requests import Request
 from db.connection import table
 from services.auth_guard import require_self, guard_off_loop
 from services.quiz.errors import QuizAPIError, QuizErrorCode
-from services.encryption import decrypt_json_column
+from services.encryption import bind, decrypt_json_column
 from services.quiz.attempts import (
     _aload_owned_attempt,
     _arecent_activity,
@@ -124,7 +124,9 @@ async def get_attempt(attempt_id: str, request: Request):
     attempt = await _aload_owned_attempt(attempt_id, request)
 
     responses = await table("quiz_responses").aselect(
-        "question_index,selected_index,answer_text,is_correct,time_ms,confidence,answered_at",
+        # attempt_id + question_index are answer_text's binding (M13).
+        "attempt_id,question_index,selected_index,answer_text,is_correct,time_ms,confidence,"
+        "answered_at",
         filters={"attempt_id": f"eq.{attempt_id}"},
         order="question_index.asc",
     ) or []
@@ -150,7 +152,9 @@ async def get_attempt(attempt_id: str, request: Request):
         active_attempt_ids={attempt_id} if status == "in_progress" else None,
     )
 
-    questions = decrypt_json_column(attempt["questions_json"]) or []
+    questions = decrypt_json_column(
+        attempt["questions_json"], bind=bind("quiz_attempts", "questions_json", attempt_id),
+    ) or []
     if questions and not all(_is_wire_question(q) for q in questions):
         # A stored shape this code doesn't recognise has no safe keyless
         # projection — passing it through would ship whatever key it holds

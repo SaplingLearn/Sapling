@@ -33,7 +33,7 @@ from db import seed_helpers as h
 from db.connection import table
 from db.seed_local_rich import COURSE_CS, LOOP_NODES
 from learning.checks import question_hash
-from services.encryption import encrypt_if_present, encrypt_json
+from services.encryption import bind, encrypt_if_present, encrypt_json
 
 #: (n, difficulty) of the cloned items.
 VARIANTS = ((1, 1), (2, 1), (3, 2))
@@ -60,25 +60,38 @@ def options(final_answer: str) -> list[tuple[str, str, str | None]]:
 def prequestion_item(template: dict, *, slug: str, concept: str, n: int, difficulty: int, final_answer: str) -> dict:
     """One multiple-choice clone of a rich free item: hash the NEW plaintext
     prompt before encrypting it (ADR 0025's order, as the rich seed does)."""
+    from services.check_item_service import reseal_row_for_id
+
     row = {key: value for key, value in template.items() if key != "created_at"}
+    rid = f"rich-check-{slug}-mc-pq{n}"
+    # M13: the template's values are bound to ITS id; open and seal them again
+    # for the clone's, then seal the new values for it.
+    reseal_row_for_id(row, template["id"], rid)
+
+    def seal(column, value):
+        return encrypt_if_present(value, bind=bind("check_items", column, rid))
+
+    def seal_json(column, value):
+        return encrypt_json(value, bind=bind("check_items", column, rid))
+
     prompt = (
         f"[e2e-loop] Prequestion item {n}: which option is the seeded sentinel phrase? "
         f"[{concept}, mc_reason, difficulty {difficulty}]"
     )
     opts = options(final_answer)
     row.update(
-        id=f"rich-check-{slug}-mc-pq{n}",
+        id=rid,
         format="mc_reason",
         difficulty=difficulty,
-        prompt=encrypt_if_present(prompt),
+        prompt=seal("prompt", prompt),
         question_hash=question_hash(prompt),
-        options_json=encrypt_json([{"letter": letter, "text": text, "wrong_key": key} for letter, text, key in opts]),
-        correct_option=encrypt_if_present(CORRECT),
+        options_json=seal_json("options_json", [{"letter": letter, "text": text, "wrong_key": key} for letter, text, key in opts]),
+        correct_option=seal("correct_option", CORRECT),
         # A34: the correct option's text, stated as the item's final answer
-        final_answer=encrypt_if_present(final_answer),
-        reference_answer=encrypt_if_present(f"The option that names it is B. Final answer: {final_answer}."),
+        final_answer=seal("final_answer", final_answer),
+        reference_answer=seal("reference_answer", f"The option that names it is B. Final answer: {final_answer}."),
         canonical_answer=None,
-        common_wrong_json=encrypt_json([{"key": key, "text": f"Picks {text}."} for _, text, key in opts if key]),
+        common_wrong_json=seal_json("common_wrong_json", [{"key": key, "text": f"Picks {text}."} for _, text, key in opts if key]),
         graded=False,
     )
     return row
@@ -111,4 +124,8 @@ def item_sentinel(base: str, slug: str, n: int) -> str:
 
 
 if __name__ == "__main__":
+    from services.encryption_canary import abort_unless_key_verified
+
+    # M14: never seal under a key the database was not written with.
+    abort_unless_key_verified("scripts.seed_learning_teach_prompts")
     seed_teach_prompt_items()

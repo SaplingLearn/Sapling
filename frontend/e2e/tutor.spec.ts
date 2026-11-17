@@ -117,8 +117,8 @@ test("tutor turn renders a reply and persists encrypted to messages", async ({
   // echoes plaintext input back, so decrypt-equality alone can't prove
   // encryption — the ciphertext assertions above close that hole.
   const [userPlain, assistantPlain] = await decryptTexts([
-    userRow.content,
-    assistantRow.content,
+    { value: userRow.content, table: "messages", column: "content", row: SESSION_ID },
+    { value: assistantRow.content, table: "messages", column: "content", row: SESSION_ID },
   ]);
   expect(userPlain).toBe(STUDENT_MESSAGE);
   expect(assistantPlain).toBe(TUTOR_REPLY);

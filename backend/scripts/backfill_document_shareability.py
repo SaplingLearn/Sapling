@@ -72,11 +72,12 @@ from agents.classifier import classifier_agent  # noqa: E402
 from agents.deps import SaplingDeps  # noqa: E402
 from services.prompt_safety import wrap_document_input  # noqa: E402
 from db.connection import page_all, pg_quote_value, table  # noqa: E402
+from services.encryption_canary import abort_unless_key_verified  # noqa: E402
 from services.chunk_visibility import (  # noqa: E402
     COURSE_MATERIAL, PERSONAL_NOTES,
 )
 from services.chunker import chunk_document, chunk_prose  # noqa: E402
-from services.encryption import decrypt_if_present  # noqa: E402
+from services.encryption import bind, decrypt_if_present  # noqa: E402
 from services.rag_service import chunk_id  # noqa: E402
 
 #: Enough text to judge. Below this the classifier invents a document (the same
@@ -168,6 +169,12 @@ def main() -> None:
     parser.add_argument("--apply", dest="dry_run", action="store_false")
     args = parser.parse_args()
 
+    # PAGED.    args = parser.parse_args()
+    if not args.dry_run:
+        # It classifies DECRYPTED text and withdraws chunks by it; under the
+        # wrong key it would decide on ciphertext. services/encryption_canary.py.
+        abort_unless_key_verified("scripts.backfill_document_shareability")
+
     # PAGED. An unbounded read stops at PostgREST's max_rows and answers 206 —
     # a 2xx — so the script would report a clean summary having silently skipped
     # everything past the first page, and the operator would move on to the
@@ -185,7 +192,8 @@ def main() -> None:
     for doc in docs:
         doc_id = doc["id"]
         user_id = doc.get("user_id") or ""
-        text = decrypt_if_present(doc.get("extracted_text")) or ""
+        text = decrypt_if_present(
+            doc.get("extracted_text"), bind=bind("documents", "extracted_text", doc)) or ""
         if len(text.strip()) < MIN_CHARS:
             answer, confidence = PERSONAL_NOTES, None
             why = "no readable extracted_text"

@@ -27,6 +27,7 @@ from typing import Callable, Tuple
 from pypdf import PdfReader
 
 from services import cache
+from services.image_safety import ImageTooLarge, render_pdf_page
 from services.extraction_backends import tesseract_backend
 from services.extraction_backends.docling_backend import (
     DoclingUnavailableError,
@@ -167,6 +168,8 @@ def extract_text_from_image_bytes(image_bytes: bytes, lang: str = "eng") -> str:
 
     try:
         pdf_bytes = _image_to_pdf_bytes(image_bytes)
+    except ImageTooLarge:
+        raise
     except Exception:
         # PIL could not read the image: not a Docling failure, so no alarm.
         logger.debug("image not convertible for Docling; using tesseract", exc_info=True)
@@ -182,8 +185,9 @@ def extract_text_from_image_bytes(image_bytes: bytes, lang: str = "eng") -> str:
 
 
 def _image_to_pdf_bytes(image_bytes: bytes) -> bytes:
-    from PIL import Image
-    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    from services.image_safety import open_image
+
+    img = open_image(image_bytes).convert("RGB")
     buf = io.BytesIO()
     img.save(buf, format="PDF")
     return buf.getvalue()
@@ -300,7 +304,7 @@ def _rescue_flagged_pages(
             continue
         try:
             page = pdf[idx]
-            pil = page.render(scale=2).to_pil()
+            pil = render_pdf_page(page, scale=2)
             buf = io.BytesIO()
             pil.save(buf, format="PNG")
             page.close()

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from db.connection import table
 from services import academics
-from services.encryption import decrypt_if_present, decrypt_numeric
+from services.encryption import bind, decrypt_if_present, decrypt_numeric
 from services.gradebook import grades
 
 
@@ -103,9 +103,11 @@ def load_assignments(enrollment_id: str, *, order: str | None = None, decrypt: b
     )
     if decrypt:
         for a in assigns:
-            a["points_possible"] = decrypt_numeric(a.get("points_possible"))
-            a["points_earned"] = decrypt_numeric(a.get("points_earned"))
-            a["notes"] = decrypt_if_present(a.get("notes"))
+            a["points_possible"] = decrypt_numeric(
+                a.get("points_possible"), bind=bind("assignments", "points_possible", a))
+            a["points_earned"] = decrypt_numeric(
+                a.get("points_earned"), bind=bind("assignments", "points_earned", a))
+            a["notes"] = decrypt_if_present(a.get("notes"), bind=bind("assignments", "notes", a))
     return assigns
 
 

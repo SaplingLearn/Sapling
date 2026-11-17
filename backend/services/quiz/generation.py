@@ -30,6 +30,8 @@ from agents.usage import record_agent_usage, served_model_name
 from db.connection import table
 from models import GenerateQuizBody
 from services import events_service
+from services.log_privacy import safe_exception_text
+from services.prompt_safety import neutralize_delimiters
 from services.auth_guard import guard_off_loop, require_admin, require_self
 from services.llm_budget import LLMBudgetExceeded
 from services.quiz.config import (
@@ -48,7 +50,7 @@ from learning import quiz_evidence, quiz_gates
 # fastapi's HTTPException, through the package's one fastapi seam (errors.py:
 # QuizAPIError IS an HTTPException, the #540 A3 envelope contract).
 from services.quiz.errors import HTTPException, QuizAPIError, QuizErrorCode
-from services.encryption import encrypt_json
+from services.encryption import bind, encrypt_json
 from services.quiz.grading import WRITTEN_TYPES
 from services.academics import course_offering_ids
 from services.exam_proximity import days_until_next_exam, exam_prompt_line
@@ -264,7 +266,7 @@ def _quiz_user_message(
     and do-not-repeat list."""
     if plan is not None:
         return build_planned_message(
-            concept_name=concept_name,
+            concept_name=neutralize_delimiters(concept_name),
             question_format=question_format,
             specs=plan.specs,
             keys=plan.keys,
@@ -273,7 +275,7 @@ def _quiz_user_message(
         )
     if material.block:
         return (
-            "COURSE MATERIAL for '" + concept_name + "':\n\n" + material.block
+            "COURSE MATERIAL for '" + neutralize_delimiters(concept_name) + "':\n\n" + material.block
             + "\n\n[GENERATE QUIZ]\n" + routing_msg
         )
     return routing_msg
@@ -351,6 +353,14 @@ async def _quiz_via_agent(
     on this single run. Anything else (None, unknown string) falls
     through to model_for("quiz") at agent-construction time.
     """
+    if use_shared_context:
+        # M8: class-derived data follows the STORED consent
+        # (`user_settings.share_class_context`), not only the request body's
+        # `use_shared_context`, which defaults to True on the wire: a student
+        # who opted out in settings never gets classmates' aggregates because
+        # a client sent the default. A read failure counts as opted out.
+        from services.chunk_visibility import shares_class_context
+        use_shared_context = await asyncio.to_thread(shares_class_context, user_id)
     deps = SaplingDeps(
         user_id=user_id,
         course_id=course_id,
@@ -528,7 +538,9 @@ async def _quiz_via_agent(
 
     routing_msg = (
         f"{difficulty_clause} "
-        f"The target concept is '{concept_name}' "
+        # The concept name is the student's graph text: a short scalar, so
+        # delimiter neutralization (#150), as every other concept name gets.
+        f"The target concept is '{neutralize_delimiters(concept_name)}' "
         f"(concept_node_id={concept_node_id}). Follow the workflow in your "
         f"system prompt; pass concept_node_id='{concept_node_id}' to "
         f"read_recent_quiz_attempts."
@@ -734,9 +746,11 @@ async def _quiz_via_agent(
                 # logscan oracle reports those as findings, and this path
                 # is a handled degradation, not a bug (same rule the
                 # quiz_context seam skip follows).
+                # safe_exception_text: a validation failure's text quotes
+                # the model output (services/log_privacy.py).
                 logger.warning(
                     "quiz: top-up run failed (%s: %s); serving what we have",
-                    type(e).__name__, e,
+                    type(e).__name__, safe_exception_text(e),
                 )
                 break
             if len(wire_questions) >= num_questions:
@@ -1119,7 +1133,8 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
         "user_id": body.user_id,
         "concept_node_id": body.concept_node_id,
         "difficulty": body.difficulty,
-        "questions_json": encrypt_json(questions),
+        "questions_json": encrypt_json(
+            questions, bind=bind("quiz_attempts", "questions_json", quiz_id)),
     }
     # H3/#555: recorded so the question "do deadline-aware quizzes perform
     # differently?" is answerable later. Omitted when unknown rather than

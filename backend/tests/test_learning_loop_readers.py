@@ -70,7 +70,7 @@ def test_chunks_for_ids_keeps_only_what_the_reader_may_see(monkeypatch):
             {"course_chunks": CHUNKS, "course_chunk_contributors": [{"chunk_id": "c4"}]}, calls
         ),
     )
-    monkeypatch.setattr(rag, "decrypt_if_present", lambda s: f"plain:{s}")
+    monkeypatch.setattr(rag, "decrypt_if_present", lambda s, **_: f"plain:{s}")
     got = rag.chunks_for_ids(["c4", "c3", "c2", "c1", "c1"], user_id="u1")
     assert [r["id"] for r in got] == ["c4", "c2", "c1"], (
         "contributed, own upload, shared — request order, deduped"
@@ -100,7 +100,7 @@ def test_chunks_for_ids_skips_the_contributor_read_when_everything_is_visible(mo
 
     calls: list = []
     monkeypatch.setattr(rag, "table", _fake_table({"course_chunks": CHUNKS[:2]}, calls))
-    monkeypatch.setattr(rag, "decrypt_if_present", lambda s: s)
+    monkeypatch.setattr(rag, "decrypt_if_present", lambda s, **_: s)
     assert [r["id"] for r in rag.chunks_for_ids(["c1", "c2"], user_id="u1")] == ["c1", "c2"]
     assert [name for name, _ in calls] == ["course_chunks"]
 

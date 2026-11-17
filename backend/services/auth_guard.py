@@ -21,8 +21,11 @@ import config
 from config import SESSION_SECRET
 from db.connection import table
 from db.scope import service_scope
-from services import events_service
+from services import events_service, open_access
 from services.session_tokens import (
+    HOST_COOKIE_CLAIM,
+    HOST_COOKIE_CLAIM_VALUE,
+    HOST_SESSION_COOKIE_NAME,
     IAT_PRECISION_CLAIM,
     IAT_PRECISION_MS,
     SESSION_COOKIE_NAME,
@@ -44,18 +47,38 @@ logger = logging.getLogger(__name__)
 # that failed" should use error.*, and "denial decisions" auth.permission_denied.
 
 
+def _presented_session_cookie(request: Request) -> tuple[str | None, bool]:
+    """(raw token, whether it came under the LEGACY name).
+
+    The host-only `__Host-sapling_session` wins whenever it is present. The
+    plain `sapling_session` is the session cookie itself on an http backend
+    (local dev, the E2E stack: `config.SECURE_COOKIES` off); on a deployed
+    (https) one it can only be the legacy `Domain=.saplinglearn.com` cookie,
+    which `_decode_session` honours read-only for sessions minted before the
+    host-only cookie (`HOST_COOKIE_CLAIM`)."""
+    host = request.cookies.get(HOST_SESSION_COOKIE_NAME)
+    if host:
+        return host, False
+    plain = request.cookies.get(SESSION_COOKIE_NAME)
+    if plain:
+        return plain, bool(getattr(config, "SECURE_COOKIES", False))
+    return None, False
+
+
 def presented_session_token(request: Request) -> str | None:
     """The raw session token the request carries, UNVERIFIED — the one place
-    that knows where a session token may come from: the `sapling_session`
-    cookie, and nothing else. `_decode_session` verifies what this returns;
-    `presents_credentials` only asks whether it is there.
+    that knows where a session token may come from: the session cookie
+    (`__Host-sapling_session`, or the plain `sapling_session`; see
+    `_presented_session_cookie`), and nothing else. `_decode_session`
+    verifies what this returns; `presents_credentials` only asks whether it
+    is there.
 
     An `?auth_token=` query parameter used to be read first. No client sent it
     (the OAuth handoff token travels in the FRONTEND's callback URL and reaches
     the session BFF in a JSON body; the browser reaches the API with the
     cookie), and a credential in a URL lands in access logs, Referer headers
     and browser history, so the channel is gone."""
-    return request.cookies.get(SESSION_COOKIE_NAME)
+    return _presented_session_cookie(request)[0]
 
 
 def presents_credentials(request: Request) -> bool:
@@ -134,7 +157,7 @@ def _decode_session(request: Request) -> dict:
     signature, `exp`, `typ`, and the session's age (`iat`, at most
     config.SESSION_MAX_AGE_SECONDS). Pure CPU — no DB read; revocation
     (`users.sessions_valid_after`) is checked by `get_session_user_id`."""
-    token = presented_session_token(request)
+    token, legacy_cookie = _presented_session_cookie(request)
     if not token or not SESSION_SECRET:
         raise HTTPException(status_code=401, detail="Not authenticated")
 
@@ -178,6 +201,14 @@ def _decode_session(request: Request) -> dict:
     if payload.get("typ", TOKEN_TYPE_SESSION) != TOKEN_TYPE_SESSION:
         raise HTTPException(status_code=401, detail="Invalid session token")
 
+    # The legacy `Domain=.saplinglearn.com` cookie (a deployed backend reading
+    # the plain name) is honoured only for a session minted before the
+    # host-only cookie existed: every session the BFF mints now says so
+    # (`"cookie": "host"`), and one that does arriving under the old name was
+    # planted by a sibling subdomain (cookie tossing), not left over.
+    if legacy_cookie and payload.get(HOST_COOKIE_CLAIM) == HOST_COOKIE_CLAIM_VALUE:
+        raise HTTPException(status_code=401, detail="Invalid session token")
+
     # The session's age, whatever its `exp` says: a session lives at most
     # SESSION_MAX_AGE_SECONDS from issue (a pre-iat 30-day cookie included),
     # and one "issued" in the future is forged or from a broken clock.
@@ -193,14 +224,17 @@ def _decode_session(request: Request) -> dict:
 # ── Account state (#756) ─────────────────────────────────────────────────────
 # A valid signature only says the token was issued; the account may since have
 # been deleted (soft delete: `users.deleted_at`), had its access removed
-# (`users.is_approved = false`, Admin → Users), or signed out, which revokes
+# (`users.is_approved = false`, Admin → Users), lost the access the open gate
+# gave it (`open_access` turned off, services/open_access.py), or signed out, which revokes
 # every session issued before it (`users.sessions_valid_after`). The guard
 # therefore reads the `users` row too — through a short-TTL per-process cache,
 # so an authenticated request does not pay a DB round-trip each time.
 #
 # Invalidation story (CLAUDE.md's cache rule): bounded staleness. An entry lives
 # at most ACCOUNT_STATE_TTL_SECONDS, so a deletion, approval change or sign-out
-# made by ANY process is honoured everywhere within that window. Mutators in
+# made by ANY process is honoured everywhere within that window. The open gate
+# is resolved into the cached state too, so turning `open_access` off is
+# honoured within this TTL plus the flag store's own convergence (~5 s). Mutators in
 # this process call `clear_account_state_cache(user_id)` to make it immediate
 # (profile.delete_account and POST /api/auth/logout do). Failures to read are
 # never cached.
@@ -252,7 +286,8 @@ def _read_account_state(user_id: str) -> AccountRecord:
     # it; a scoped miss here would 500 every request under enforce.
     with service_scope():
         rows = table("users").select(
-            "id,deleted_at,is_approved,sessions_valid_after", filters={"id": f"eq.{user_id}"}
+            "id,deleted_at,is_approved,open_access_at,sessions_valid_after",
+            filters={"id": f"eq.{user_id}"},
         )
     if not rows:
         return AccountRecord(ACCOUNT_MISSING)
@@ -260,7 +295,12 @@ def _read_account_state(user_id: str) -> AccountRecord:
     valid_after = _parse_timestamp(row.get("sessions_valid_after"))
     if row.get("deleted_at"):
         return AccountRecord(ACCOUNT_DELETED, valid_after)
-    if not row.get("is_approved"):
+    # The flag is read only for an account the open gate could let in, so an
+    # approved account's request never depends on the flag store. It fails
+    # closed: an unreadable store reads as a closed gate.
+    if not row.get("is_approved") and not (
+        row.get("open_access_at") and open_access.gate_open()
+    ):
         return AccountRecord(ACCOUNT_UNAPPROVED, valid_after)
     return AccountRecord(ACCOUNT_ACTIVE, valid_after)
 

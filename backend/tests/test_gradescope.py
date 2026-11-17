@@ -597,7 +597,7 @@ class TestSyncPersistence:
         return response, tables
 
     def test_import_encrypts_scores_and_preserves_existing_missing_scores(self):
-        from services.encryption import decrypt
+        from services.encryption import bind, decrypt
 
         response, tables = self._sync([
             {"id": "new", "name": "Homework 1", "points_earned": 0, "points_possible": 10},
@@ -609,8 +609,10 @@ class TestSyncPersistence:
         inserted = tables["assignments"].insert.call_args.args[0]
         assert inserted["enrollment_id"] == "fall-enrollment"
         assert inserted["category_id"] == "cat"
-        assert float(decrypt(inserted["points_earned"])) == 0
-        assert float(decrypt(inserted["points_possible"])) == 10
+        assert float(decrypt(inserted["points_earned"],
+                             bind=bind("assignments", "points_earned", inserted))) == 0
+        assert float(decrypt(inserted["points_possible"],
+                             bind=bind("assignments", "points_possible", inserted))) == 10
         updated = tables["assignments"].update.call_args.args[0]
         assert "points_earned" not in updated and "points_possible" not in updated
         assert "category_id" not in updated
@@ -760,7 +762,7 @@ class TestRemoveLink:
 
 class TestBuSsoCredentials:
     def test_validated_sso_stores_only_encrypted_cookies(self):
-        from services.encryption import decrypt
+        from services.encryption import bind, decrypt
         import json
 
         saved = MagicMock()
@@ -780,7 +782,9 @@ class TestBuSsoCredentials:
         assert payload["auth_mode"] == "cookies"
         assert payload["password_encrypted"] is None and payload["email_encrypted"] is None
         assert "private-password" not in str(payload)
-        assert json.loads(decrypt(payload["cookies_encrypted"])) == cookies
+        assert json.loads(decrypt(
+            payload["cookies_encrypted"],
+            bind=bind("gradescope_credentials", "cookies_encrypted", "u1"))) == {**cookies, "via": "bu_sso"}
 
     def test_unusable_sso_cookie_is_never_saved(self):
         saved = MagicMock()

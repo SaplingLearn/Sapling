@@ -83,6 +83,7 @@ from learning.turn_shape import (
 )
 # neutralise_control_tags moved to services.prompt_safety (PKG-09 reopen): the learner
 # brief (learning/, which never imports agents/) neutralises the same tags.
+from services.crisis_support_copy import MODEL_SAFETY_PROMPT
 from services.prompt_safety import INJECTION_GUARD_PROMPT, neutralise_control_tags, wrap_untrusted
 
 Phase = Literal["teach", "hint", "feedback"]
@@ -177,6 +178,10 @@ _LOOP_SYSTEM_PROMPT = (
     "text (x^2, (a+b)/c, sqrt(x)) — no LaTeX macros and no $...$ or \\( \\) "
     "delimiters unless the phase block says the answer is released.\n\n"
     + INJECTION_GUARD_PROMPT
+    + "\n\n"
+    # sec2 M11: the model-side crisis backstop in every free-chat prompt, flag
+    # or no flag; one source of wording with the crisis card.
+    + MODEL_SAFETY_PROMPT
     + "\n\n"
     + _ACADEMIC_INTEGRITY
     + "\n\n"

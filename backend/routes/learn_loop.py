@@ -290,7 +290,7 @@ from services.academics import (
 from services.agent_events import SSE_CACHE_CONTROL, SaplingEvent, sapling_event_to_sse
 from services.ai_budget import AIBudgetExceeded, enforce_rate_limit
 from services.auth_guard import get_session_user_id, guard_off_loop, require_self
-from services.encryption import decrypt_if_present, decrypt_json_column, derive_key
+from services.encryption import bind, decrypt_if_present, decrypt_json_column, derive_key
 from services.chat_stream import stream_structured_turn
 from services.check_item_service import (
     course_has_items,
@@ -811,7 +811,7 @@ def _load_loop_history(
     if rows:
         stored = rows[0].get("loop_brief")
         if stored is not None:
-            brief = decrypt_if_present(stored) or ""
+            brief = decrypt_if_present(stored, bind=bind("sessions", "loop_brief", session_id)) or ""
         elif user_id and _now_s() - _BRIEF_FAILED.get(session_id, float("-inf")) > (
             LEARNER_BRIEF_RETRY_AFTER_S
         ):
@@ -2184,7 +2184,7 @@ class _LoopTurn:
             course_id=self.course_id,
             loop_state=self.state,
         )
-        return _with_goal_context(history, self.state, self.user_id)
+        return _with_goal_context(history, self.state, self.user_id, self.session_id)
 
     def plan(self, decision) -> None:
         """Tier + run assembly for `decision`, the ai_budget verdict the calling
@@ -3246,12 +3246,12 @@ class _LoopOpener(_LoopTurn):
         # quiz's concept from the first turn (the materialised row keeps this doc)
         self.state = quiz_ask_state(self.quiz_ask.node_id) if self.quiz_ask is not None else {}
         if body.goal is not None:
-            self.state["goal"] = encode_goal(body.goal)
+            self.state["goal"] = encode_goal(body.goal, self.session_id)
             self.state["goal_version"] = 1
         self._derive(None)
 
     def history(self) -> list:
-        return _with_goal_context([], self.state, self.user_id)
+        return _with_goal_context([], self.state, self.user_id, self.session_id)
 
     def _probing(self) -> bool:
         """The new session opens in the probe phase (every session but a quiz-ask
@@ -4315,7 +4315,7 @@ def status(request: Request, user_id: str = Query(...), session_id: str = Query(
         "active": True,
         "session_id": session_id,
         "loop_phase": _loop_phase(state),  # PKG-08: probe | plan | teach (resume point)
-        **_learning_scope_payload(state), **approved_plan_view(state, lambda ids: _plan_node_names(user_id, ids)),
+        **_learning_scope_payload(state, session_id), **approved_plan_view(state, lambda ids: _plan_node_names(user_id, ids)),
         "phase": phase,
         "pending_grade": pending_grade,
         # PKG-13 reopen: the open item's pose, so a resuming client restores the
@@ -7138,7 +7138,7 @@ def _close_misconception_keys(user_id: str, evidence: list[dict]) -> list[str]:
 
 
 def _stored_close(row: dict) -> dict:
-    record = decrypt_json_column(row.get("close_json")) or {}
+    record = decrypt_json_column(row.get("close_json"), bind=bind("sessions", "close_json", row)) or {}
     return {
         "close": record,
         "model_written": bool(record.get("model_written")),
@@ -7200,10 +7200,9 @@ def _session_record(session_id: str) -> tuple[list[dict], list[dict]]:
     msgs = table("messages").select(
         "role,content", filters={"session_id": f"eq.{session_id}"}, order="created_at.asc"
     )
-    transcript = [
-        {"role": m.get("role"), "content": decrypt_if_present(m.get("content"))}
-        for m in msgs or []
-    ]
+    sealed = bind("messages", "content", session_id)
+    transcript = [{"role": m.get("role"), "content": decrypt_if_present(m.get("content"), bind=sealed)}
+                  for m in msgs or []]
     evidence = list(
         table("node_mastery_events").select(
             # A117: the columns learning.probe.is_probe_row binds a row's planning
@@ -7567,11 +7566,11 @@ def _check_goal_version(doc: dict, expected: int) -> None:
         raise HTTPException(status_code=409, detail="Goal changed; refresh the learning session")
 
 
-def _learning_scope_payload(state: dict) -> dict:
+def _learning_scope_payload(state: dict, session_id: str) -> dict:
     pr = state.get("probe") or {}
     skills = pr.get("scope", pr.get("skills", []))
     payload = {
-        "goal": public_goal(state),
+        "goal": public_goal(state, session_id),
         "goal_version": goal_version(state),
         "diagnosis": probe_policy.diagnostic_summary(
             pr.get("history") or [], skills=skills,
@@ -7588,8 +7587,8 @@ def _learning_scope_payload(state: dict) -> dict:
     return payload
 
 
-def _with_goal_context(history: list, state: dict, user_id: str) -> list:
-    goal = public_goal(state)
+def _with_goal_context(history: list, state: dict, user_id: str, session_id: str) -> list:
+    goal = public_goal(state, session_id)
     if goal is None:
         return history
     names = _plan_node_names(user_id, goal["target_node_ids"])
@@ -7622,7 +7621,7 @@ def set_goal(body: LoopGoalBody, request: Request) -> dict:
     states = _plan_states(body.user_id, course_id)
     _validate_goal(body.goal, states)
     _consume_pending(body.session_id, body.user_id)
-    encoded = encode_goal(body.goal)
+    encoded = encode_goal(body.goal, body.session_id)
     now = _now_s()
 
     def change(doc: dict) -> None:
@@ -7643,7 +7642,7 @@ def set_goal(body: LoopGoalBody, request: Request) -> dict:
         doc["phase"] = "probe"
 
     saved = _update_loop_state(body.session_id, change, require_open=True)
-    return {"phase": "probe", **_learning_scope_payload(saved)}
+    return {"phase": "probe", **_learning_scope_payload(saved, body.session_id)}
 
 
 def _probe_doc(doc: dict) -> dict:
@@ -7900,7 +7899,7 @@ def probe_next(body: ProbeNextBody, request: Request) -> dict:
     state = _load_loop_state(body.session_id)
     _require_phase(state, "probe")
     if _pending_grade(state):
-        return {"done": False, "pending_grade": _pending_grade(state), **_learning_scope_payload(state)}
+        return {"done": False, "pending_grade": _pending_grade(state), **_learning_scope_payload(state, body.session_id)}
     request_id = _request_id(request)
     version = goal_version(state)
     fixed = (
@@ -7932,7 +7931,7 @@ def probe_next(body: ProbeNextBody, request: Request) -> dict:
             # A128: the student's own upload is still being drafted — the UI says
             # "preparing" instead of "no check items" (present only when true)
             **_preparing(body.user_id, course_id, no_items=True),
-            **_learning_scope_payload(saved),
+            **_learning_scope_payload(saved, body.session_id),
         }
 
     states = _plan_states(body.user_id, course_id)
@@ -8074,10 +8073,10 @@ def probe_next(body: ProbeNextBody, request: Request) -> dict:
 
     saved = _update_if_changed(body.session_id, state, select)
     if out.get("pending_grade"):
-        return {"done": False, "pending_grade": out["pending_grade"], **_learning_scope_payload(saved)}
+        return {"done": False, "pending_grade": out["pending_grade"], **_learning_scope_payload(saved, body.session_id)}
     if out.get("done"):
         _emit_probe_done(saved, body.user_id, request_id)
-        return {"done": True, "phase": "plan", **_learning_scope_payload(saved)}
+        return {"done": True, "phase": "plan", **_learning_scope_payload(saved, body.session_id)}
     item = out["item"]
     if out.get("new"):  # A93: posed — in the scan set until graded
         _ledger(record_posed, body.user_id, item.question_hash, source="probe", session_id=body.session_id)
@@ -8091,7 +8090,7 @@ def probe_next(body: ProbeNextBody, request: Request) -> dict:
         "difficulty": pose["difficulty"],
         "prompt": pose["prompt"],
         "options": pose["options"],
-        **_learning_scope_payload(saved),
+        **_learning_scope_payload(saved, body.session_id),
     }
 
 
@@ -8383,7 +8382,7 @@ def _finish_probe_checkpoint(checkpoint, request, *, loop_on, deps=None):
     response = {
         "graded": True, "correct": checkpoint.continuation["correct"], "p_known": p_after,
         "probe_done": bool(out.get("done")), "novice_floor": bool(out.get("novice_floor")),
-        **_learning_scope_payload(saved),
+        **_learning_scope_payload(saved, checkpoint.session_id),
     }
     if reference is not None:
         response["reference_answer"] = reference
@@ -8541,7 +8540,7 @@ def plan_get(request: Request, user_id: str = Query(...), session_id: str = Quer
 
     saved = _update_if_changed(session_id, state, store, require_open=bool(state.get("goal")))
     if not ids:
-        return {"concepts": [], "order": list(PLAN_ORDER), "empty": True, "phase": "teach", **_learning_scope_payload(saved)}
+        return {"concepts": [], "order": list(PLAN_ORDER), "empty": True, "phase": "teach", **_learning_scope_payload(saved, session_id)}
     names = _plan_node_names(user_id, ids)
     return {
         "concepts": [
@@ -8556,7 +8555,7 @@ def plan_get(request: Request, user_id: str = Query(...), session_id: str = Quer
             for n in ids
         ],
         "order": list(PLAN_ORDER),
-        **_learning_scope_payload(saved),
+        **_learning_scope_payload(saved, session_id),
     }
 
 

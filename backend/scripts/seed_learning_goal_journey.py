@@ -28,7 +28,7 @@ from db import seed_helpers as h
 from db.connection import table
 from db.seed_local_rich import COURSE_CS, USER_LOOP, loop_node_id
 from learning.checks import question_hash
-from services.encryption import decrypt_if_present, encrypt_if_present
+from services.encryption import bind, decrypt_if_present, encrypt_if_present
 
 SLUGS = ("binary", "bitwise")
 DIAGNOSTIC_COUNTS = {1: 1, 2: 6, 3: 3}
@@ -58,16 +58,21 @@ def fixture_item(template: dict, *, slug: str, stage: str, format: str, variant:
     Hash the novel plaintext BEFORE canonical encryption. The fixture's
     variation marker identifies the scripted case, not a calibrated question.
     """
+    from services.check_item_service import reseal_row_for_id
+
     row = {key: value for key, value in template.items() if key != "created_at"}
     difficulty = int(template["difficulty"])
     row["id"] = f"rich-goal-{slug}-{stage}-{format}-d{difficulty}-{variant}"
+    # M13: the template's values are bound to ITS id; open and seal them again
+    # for the clone's.
+    reseal_row_for_id(row, template["id"], row["id"])
     prompt = (
-        f"{decrypt_if_present(template['prompt'])} "
+        f"{decrypt_if_present(template['prompt'], bind=bind('check_items', 'prompt', template))} "
         f"[goal journey {stage}, {format}, variant {variant}]"
     )
     row.update(
         format=format,
-        prompt=encrypt_if_present(prompt),
+        prompt=encrypt_if_present(prompt, bind=bind("check_items", "prompt", row)),
         question_hash=question_hash(prompt),
         graded=False,
     )
@@ -118,7 +123,8 @@ def _seed_readiness_concept(templates: dict) -> None:
                 template, slug="place-value", stage="readiness", format="free", variant=variant
             )
             prompt = f"{stem} [{READINESS_CONCEPT}, free, difficulty {difficulty}, readiness variant {variant}]"
-            row["prompt"], row["question_hash"] = encrypt_if_present(prompt), question_hash(prompt)
+            row["prompt"] = encrypt_if_present(prompt, bind=bind("check_items", "prompt", row))
+            row["question_hash"] = question_hash(prompt)
             row["concept_key"] = _normalize_concept(READINESS_CONCEPT)
             h.upsert("check_items", row, on_conflict="course_id,concept_key,question_hash")
     h.upsert(
@@ -221,4 +227,9 @@ def seed_goal_continuation_items(stage: str) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("stage", choices=("diagnostic", "practice", "readiness", "unavailable"))
-    seed_goal_continuation_items(parser.parse_args().stage)
+    stage = parser.parse_args().stage
+    from services.encryption_canary import abort_unless_key_verified
+
+    # M14: never seal under a key the database was not written with.
+    abort_unless_key_verified("scripts.seed_learning_goal_journey")
+    seed_goal_continuation_items(stage)

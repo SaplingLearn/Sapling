@@ -803,7 +803,7 @@ def test_serve_persists_its_delta_through_the_cas_store(store):
 def test_serve_flashcard_decrypts_front_and_back(monkeypatch):
     from learning import review
 
-    monkeypatch.setattr(review, "decrypt_if_present", lambda v: f"plain:{v}")
+    monkeypatch.setattr(review, "decrypt_if_present", lambda v, **_: f"plain:{v}")
     item = _item("flashcard", 1.0, id="f1", topic="T")
     payload = review.serve(
         item, card_row={"id": "f1", "front": "c1", "back": "c2"}, loop_state={"sr": {}}
@@ -1967,7 +1967,7 @@ def test_review_next_skips_an_item_that_no_longer_loads(client, monkeypatch, sto
     monkeypatch.setattr(review, "log_event", lambda *a, **k: None)
     monkeypatch.setattr("routes.learn_loop.get_check_item", lambda item_id: None)
     monkeypatch.setattr(review, "load_card", lambda u, cid: _card_row(id=cid))
-    monkeypatch.setattr(review, "decrypt_if_present", lambda v: v)
+    monkeypatch.setattr(review, "decrypt_if_present", lambda v, **_: v)
     with _loop():
         r = client.get(f"{REVIEW}/next?user_id={USER}")
     assert r.status_code == 200 and r.json()["item"]["kind"] == "flashcard"

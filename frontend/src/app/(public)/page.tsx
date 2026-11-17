@@ -18,6 +18,7 @@ import { IntroOverlay } from '@/components/landing-v5/IntroOverlay';
 import { Navbar } from '@/components/landing-v5/Navbar';
 import { NAV_LIGHT } from '@/components/landing-v5/navTheme';
 import { useLanding, type ScrambleStep } from '@/components/landing/useLanding';
+import { useOpenAccess } from '@/lib/openAccess';
 
 const HERO_CASCADE: ScrambleStep[] = [
   { slot: 2, text: 'Grow Your Knowledge', durationMs: 1200, delayMs: 200 },
@@ -52,6 +53,12 @@ export default function LandingPage() {
   // box ("Get started."), and onboarding follows sign-in. A signed-in visitor
   // goes straight to /onboarding or /dashboard.
   const getStarted = useGetStarted(useCallback(() => openSignIn('start'), [openSignIn]));
+  // Open access (docs/design/open-access-gate.md): with the waitlist lifted,
+  // the beta CTAs say "Sign up" and go straight to sign-in, which lets anyone
+  // in. Otherwise they open the waitlist dialog.
+  const openAccess = useOpenAccess();
+  const betaCta = openAccess ? () => void getStarted() : () => setBetaOpen(true);
+  const betaLabel = openAccess ? 'Sign up' : 'Sign up for Beta Testing';
 
   // The document scrollbar is hidden while the landing is mounted: the page
   // is a guided scroll cinema and the bar reads as stray chrome against the
@@ -129,7 +136,8 @@ export default function LandingPage() {
       <Hero
         heroMounted={state.heroMounted}
         heroText2={state.heroText2}
-        onBeta={() => setBetaOpen(true)}
+        onBeta={betaCta}
+        ctaLabel={betaLabel}
       />
 
       {/* ═══ Descent band ═══
@@ -178,7 +186,7 @@ export default function LandingPage() {
         onSubscribe={actions.subscribe}
       />
 
-      <FinalCta onGetStarted={() => setBetaOpen(true)} />
+      <FinalCta onGetStarted={betaCta} ctaLabel={betaLabel} />
 
       <SiteFooter />
 

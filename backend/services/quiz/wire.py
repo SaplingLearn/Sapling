@@ -12,7 +12,7 @@ import re
 
 from agents.quiz import QuizQuestion
 from services.quiz.config import CONCRETE_DIFFICULTIES
-from services.encryption import decrypt_json_column
+from services.encryption import bind, decrypt_json_column
 from services.quiz.grading import WRITTEN_TYPES, numeric_value
 from services.quiz.algebra import equivalent_algebra
 from services.fingerprint import fingerprint
@@ -62,7 +62,8 @@ _KEYLESS_OPTION_KEYS = ("label", "text")
 def _written_response_text(row: dict) -> str:
     if not row.get("answer_text"):
         return ""
-    value = decrypt_json_column(row["answer_text"])
+    # Bound to (attempt_id, question_index): callers select both (M13).
+    value = decrypt_json_column(row["answer_text"], bind=bind("quiz_responses", "answer_text", row))
     return value.get("text", "") if isinstance(value, dict) else ""
 
 

@@ -14,7 +14,7 @@ from services.academics import (
     term_id_for_label,
     user_enrolled_course_ids,
 )
-from services.encryption import decrypt_if_present, decrypt_json
+from services.encryption import EncryptionError, bind, decrypt_if_present, decrypt_json
 
 logger = logging.getLogger(__name__)
 
@@ -22,14 +22,16 @@ logger = logging.getLogger(__name__)
 def _get_session_summary(session_id: str) -> str:
     try:
         rows = table("sessions").select(
-            "summary_json", filters={"id": f"eq.{session_id}"}, limit=1
+            "id,summary_json", filters={"id": f"eq.{session_id}"}, limit=1
         )
         if not rows or not rows[0].get("summary_json"):
             return ""
         raw = rows[0]["summary_json"]
         if isinstance(raw, str):
             try:
-                return json.dumps(decrypt_json(raw))
+                return json.dumps(decrypt_json(raw, bind=bind("sessions", "summary_json", session_id)))
+            except EncryptionError:
+                return ""  # refused (moved/tampered): never the raw value
             except Exception:
                 return raw
         return json.dumps(raw)
@@ -40,7 +42,8 @@ def _get_session_summary(session_id: str) -> str:
 # Grounding reads at most this many of the course's documents, newest first:
 # the prompt inlines every summary + concept list it is handed.
 _COURSE_DOC_LIMIT = 50
-_COURSE_DOC_COLS = "file_name,category,summary,concept_notes"
+#: `id` is the 🔒 columns' binding (M13).
+_COURSE_DOC_COLS = "id,file_name,category,summary,concept_notes"
 
 
 def _enrolled_course_by_name(user_id: str, course_name: str) -> str | None:
@@ -131,10 +134,10 @@ def _get_course_documents(
             limit=_COURSE_DOC_LIMIT,
         ) or []
         for d in docs:
-            d["summary"] = decrypt_if_present(d.get("summary"))
+            d["summary"] = decrypt_if_present(d.get("summary"), bind=bind("documents", "summary", d))
             notes_raw = d.get("concept_notes")
             if isinstance(notes_raw, str):
-                d["concept_notes"] = decrypt_json(notes_raw)
+                d["concept_notes"] = decrypt_json(notes_raw, bind=bind("documents", "concept_notes", d))
         return docs
     except Exception:
         logger.warning(

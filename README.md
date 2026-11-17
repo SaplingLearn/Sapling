@@ -215,7 +215,6 @@ Copy the example files as described above. The job worker (`python -m worker`, f
 | `GOOGLE_REDIRECT_URI` | | Calendar callback (default `http://localhost:5000/api/calendar/callback`) |
 | `APP_ENV` | | `local` for development (relaxes `SESSION_SECRET`), `staging`, or `production` (default, fail-closed) |
 | `PORT` / `FRONTEND_URL` | | Backend port (default `5000`) and allowed CORS origin (default `http://localhost:3000`) |
-| `ALLOWED_EMAIL_DOMAINS` | | Comma-separated sign-in allowlist (default `bu.edu`; empty allows any domain) |
 | `SUPABASE_DB_URL` | For migrations | Session-mode pooler URI (port 5432). Used only by `python -m db.migrate`. |
 | `SAPLING_MODEL_<TASK>` | | Per-agent model override, e.g. `SAPLING_MODEL_CHAT_TUTOR=claude-sonnet-5-5`. One per agent task (`CLASSIFIER`, `SUMMARY`, `QUIZ`, `CHAT_TUTOR`, `STUDY_GUIDE`, `FLASHCARD`, ...); the full list and defaults are `_DEFAULTS` in `backend/agents/_providers.py`. |
 | `OCR_ENGINE` | | `docling` (default), `auto` (adds GOT-OCR for math), or `tesseract` |

@@ -35,7 +35,7 @@ from models import (
 from services import academics
 from services.achievement_service import check_achievements
 from services.auth_guard import require_self
-from services.encryption import encrypt_if_present, decrypt_if_present, decrypt_numeric
+from services.encryption import bind, encrypt_if_present, decrypt_if_present, decrypt_numeric
 from services.gradebook import (
     DocumentNotOwned,
     InvalidCategoryWeights,
@@ -275,11 +275,13 @@ def create_assignment(body: CreateAssignmentBody, request: Request):
         "enrollment_id": enr["id"],
         "title": body.title,
         "category_id": body.category_id,
-        "points_possible": encrypt_if_present(body.points_possible),
-        "points_earned": encrypt_if_present(body.points_earned),
+        "points_possible": encrypt_if_present(
+            body.points_possible, bind=bind("assignments", "points_possible", new_id)),
+        "points_earned": encrypt_if_present(
+            body.points_earned, bind=bind("assignments", "points_earned", new_id)),
         "due_date": body.due_date,
         "assignment_type": body.assignment_type,
-        "notes": encrypt_if_present(body.notes),
+        "notes": encrypt_if_present(body.notes, bind=bind("assignments", "notes", new_id)),
         "source": "manual",
         "curve_class_mean": body.curve_class_mean,
         "curve_class_sd": body.curve_class_sd,
@@ -291,9 +293,11 @@ def create_assignment(body: CreateAssignmentBody, request: Request):
     # ciphertext, matching the read path in get_course.
     row = inserted[0] if inserted else None
     if row:
-        row["points_possible"] = decrypt_numeric(row.get("points_possible"))
-        row["points_earned"] = decrypt_numeric(row.get("points_earned"))
-        row["notes"] = decrypt_if_present(row.get("notes"))
+        row["points_possible"] = decrypt_numeric(
+            row.get("points_possible"), bind=bind("assignments", "points_possible", new_id))
+        row["points_earned"] = decrypt_numeric(
+            row.get("points_earned"), bind=bind("assignments", "points_earned", new_id))
+        row["notes"] = decrypt_if_present(row.get("notes"), bind=bind("assignments", "notes", new_id))
     _check_grade_achievements(body.user_id)
     return {"assignment": row}
 
@@ -316,7 +320,8 @@ def update_assignment_route(assignment_id: str, body: UpdateAssignmentBody, requ
     patch_data = {k: v for k, v in incoming.items() if k in ALLOWED}
     for k in ENCRYPTED_FIELDS:
         if k in incoming:
-            patch_data[k] = encrypt_if_present(incoming[k])
+            patch_data[k] = encrypt_if_present(
+                incoming[k], bind=bind("assignments", k, assignment_id))
     if not patch_data:
         return {"updated": False}
     table("assignments").update(

@@ -132,8 +132,8 @@ test("stream that fails to open falls back to the JSON turn transparently (#356 
   expect(assistantRow.content).not.toBe(TUTOR_REPLY);
   // …and decrypting to exactly what was sent and rendered.
   const [userPlain, assistantPlain] = await decryptTexts([
-    userRow.content,
-    assistantRow.content,
+    { value: userRow.content, table: "messages", column: "content", row: SESSION_ID },
+    { value: assistantRow.content, table: "messages", column: "content", row: SESSION_ID },
   ]);
   expect(userPlain).toBe(STUDENT_MESSAGE);
   expect(assistantPlain).toBe(TUTOR_REPLY);
@@ -179,8 +179,8 @@ test("Stop mid-stream keeps the partial, marks it interrupted, persists nothing;
   expect(userRow.content).not.toBe(STUDENT_SLOW_MESSAGE);
   expect(assistantRow.content).not.toBe(SLOW_REPLY);
   const [userPlain, assistantPlain] = await decryptTexts([
-    userRow.content,
-    assistantRow.content,
+    { value: userRow.content, table: "messages", column: "content", row: SESSION_ID },
+    { value: assistantRow.content, table: "messages", column: "content", row: SESSION_ID },
   ]);
   expect(userPlain).toBe(STUDENT_SLOW_MESSAGE);
   expect(assistantPlain).toBe(SLOW_REPLY);

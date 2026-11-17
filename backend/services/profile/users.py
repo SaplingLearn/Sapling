@@ -7,7 +7,7 @@ route answers as a 404.
 import httpx
 
 from db.connection import table
-from services.encryption import decrypt_if_present
+from services.encryption import bind, decrypt_if_present
 from services.session_modes import NOT_REVIEW
 from services.profile.errors import UserNotFound
 
@@ -94,7 +94,7 @@ def _get_or_create_profile(user_id: str) -> dict:
     """Return the decrypted user_profiles row, creating it if missing."""
     row = _get_or_create_row("user_profiles", _PROFILE_COLS, user_id)
     for col in _PROFILE_ENCRYPTED:
-        row[col] = decrypt_if_present(row.get(col))
+        row[col] = decrypt_if_present(row.get(col), bind=bind("user_profiles", col, user_id))
     return row
 
 
@@ -128,7 +128,7 @@ def _get_user_or_404(user_id: str) -> dict:
     a 404 too (and keeps the profile/settings rows from being re-created).
     """
     user = dict(_live_user_or_404(user_id, _USERS_COLS))
-    user["email"] = decrypt_if_present(user.get("email"))
+    user["email"] = decrypt_if_present(user.get("email"), bind=bind("users", "email", user_id))
     profile = _get_or_create_profile(user_id)
     # Merge profile fields onto the identity row (id/email/streak/created_at win).
     merged = {**profile, **user}

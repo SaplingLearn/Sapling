@@ -342,7 +342,9 @@ export function Settings() {
 
   const handleDelete = async () => {
     if (!userId) return;
-    const conf = window.prompt('Type "DELETE" to confirm account deletion.');
+    const conf = window.prompt(
+      'Type "DELETE" to delete your account. It is hidden now and its personal data is erased in 30 days.',
+    );
     if (conf !== "DELETE") return;
     try {
       await deleteAccount(userId, conf);
@@ -727,7 +729,14 @@ export function Settings() {
               <div className="card" style={{ padding: "var(--pad-lg)", borderColor: "var(--err)" }}>
                 <div style={{ fontWeight: 600, marginBottom: 4 }}>Delete account</div>
                 <div style={{ fontSize: 12, color: "var(--text-dim)", marginBottom: 12 }}>
-                  Permanently delete your account and all data. This cannot be undone.
+                  Your account is hidden and you are signed out right away, and your Google and
+                  Gradescope connections are removed. Your personal data is permanently erased
+                  30 days later. Records without your content (AI usage and cost, usage
+                  telemetry) are kept; see section 5 of the{" "}
+                  <Link href="/privacy" style={{ color: "var(--accent)" }}>
+                    Privacy Policy
+                  </Link>
+                  .
                 </div>
                 <button className="btn btn--sm btn--danger" onClick={handleDelete}>Delete my account</button>
               </div>

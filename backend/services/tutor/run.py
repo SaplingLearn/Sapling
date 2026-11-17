@@ -408,6 +408,11 @@ def _prepare_chat_run(
         if graph_block:
             context_blocks.append(graph_block)
 
+    # M7: the text a NEW concept must appear in this turn: the student's own
+    # message and the context assembled for it. The run's read tools extend
+    # it with what they return (agents/tools/graph.py::allow_concept_text).
+    deps.concept_context = [user_message, *context_blocks]
+
     if context_blocks:
         user_message = "\n\n".join(context_blocks) + "\n\n[STUDENT QUESTION]\n" + user_message
 

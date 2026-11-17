@@ -90,8 +90,14 @@ screens the learning loop's routes the same way: see "Surfaces covered".)
    body's `user_id`): a stranger gets the route's 401/403 before anything is
    read or recorded about anyone. Ordinary text pays for detection only.
 3. **Flag.** Then the `crisis_support` flag is read for that student. It is
-   `off` by default and fails closed, so with the flag off every route
-   behaves exactly as before.
+   `off` by default, so with the flag off every route behaves exactly as
+   before. While the flag store is unreadable the read answers from the last
+   snapshot the process read (`feature_flags.last_known_flag_on`), so an
+   outage cannot silently switch off a card the owner turned on; a process
+   that never read the store still answers off. Independently of the flag,
+   the tutor and note-chat system prompts carry a model-side backstop
+   (`crisis_support_copy.MODEL_SAFETY_PROMPT`, built from the same resource
+   strings) for whatever the phrase screen misses.
 4. **Respond.** On a match with the flag on, the route returns the card
    instead of its result (a note's content: beside it, see below):
    - JSON routes: `{"reply": <the copy as text>, "crisis_support": {...}}`

@@ -38,7 +38,7 @@ import logging
 
 from db.connection import table
 from services import jobs
-from services.encryption import decrypt_json
+from services.encryption import bind, decrypt_json
 from services.feature_flags import flag_on
 
 logger = logging.getLogger(__name__)
@@ -81,7 +81,8 @@ def _concept_names(doc_id: str) -> list[str] | None:
         return None
     raw = rows[0].get("concept_notes")
     try:
-        notes = decrypt_json(raw) if isinstance(raw, str) else (raw or [])
+        notes = (decrypt_json(raw, bind=bind("documents", "concept_notes", rows[0]))
+                 if isinstance(raw, str) else (raw or []))
     except Exception:
         logger.warning("check items: concept notes of doc %s unreadable; drafting none", doc_id)
         notes = []

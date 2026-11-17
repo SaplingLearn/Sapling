@@ -115,15 +115,26 @@ _JSON_COLUMNS: dict[str, set[str]] = {
 }
 
 
-def _plain_value(table_name: str, column: str, value: Any) -> Any:
+def _binding(table_name: str, column: str, row: dict) -> encryption.Binding | None:
+    """The cell's AES-GCM binding when it is a registered 🔒 column (finding
+    M13), else None (an unlisted column only ever holds legacy v1)."""
+    try:
+        return encryption.bind(table_name, column, row)
+    except (encryption.UnknownColumn, encryption.MissingRowKey):
+        return None
+
+
+def _plain_value(table_name: str, column: str, value: Any, row: dict) -> Any:
     """Decrypt `value` when it is our ciphertext; parse JSON columns."""
-    if not isinstance(value, str) or not account_bundle._looks_like_ciphertext(value):  # noqa: SLF001
+    if not isinstance(value, str) or not (
+        encryption.is_v2(value) or account_bundle._looks_like_ciphertext(value)  # noqa: SLF001
+    ):
         return _parse_json(table_name, column, value)
     try:
-        text = encryption.decrypt(value)
+        text = encryption.decrypt(value, bind=_binding(table_name, column, row))
     except Exception:
         listed = column in account_bundle.ENCRYPTED.get(table_name, {})
-        if listed:
+        if listed or encryption.is_v2(value) or _binding(table_name, column, row):
             logger.warning("self export: %s.%s does not decrypt", table_name, column)
             return UNREADABLE
         return value  # base64-shaped plaintext in a plaintext column (an id, a hash)
@@ -145,7 +156,7 @@ def _parse_json(table_name: str, column: str, value: Any, *, decrypted: bool = F
 def plain_row(table_name: str, row: dict) -> dict:
     """`row` decrypted, with secret-named columns removed."""
     return {
-        column: _plain_value(table_name, column, value)
+        column: _plain_value(table_name, column, value, row)
         for column, value in row.items()
         if not _SECRET_COLUMN.search(column)
     }

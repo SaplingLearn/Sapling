@@ -9,7 +9,7 @@ from db.connection import MAX_ROWS, page_all, table
 from services.session_modes import NOT_REVIEW
 from db.scope import runs_as_service
 from services.gradebook import grades
-from services.encryption import decrypt_numeric
+from services.encryption import bind, decrypt_numeric
 from services.xp_service import award_xp_safe
 
 logger = logging.getLogger(__name__)
@@ -328,8 +328,10 @@ def _course_grade_a_count(user_id: str) -> int:
             filters={"enrollment_id": f"eq.{enr['id']}"},
         ) or []
         for a in assignments:
-            a["points_possible"] = decrypt_numeric(a.get("points_possible"))
-            a["points_earned"] = decrypt_numeric(a.get("points_earned"))
+            a["points_possible"] = decrypt_numeric(
+                a.get("points_possible"), bind=bind("assignments", "points_possible", a))
+            a["points_earned"] = decrypt_numeric(
+                a.get("points_earned"), bind=bind("assignments", "points_earned", a))
         percent = grades.current_grade(
             categories, assignments,
             curve_mode=enr.get("curve_mode") or "raw",

@@ -13,11 +13,12 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 
 from db.connection import table
+from services.open_access import ACCESS_OPEN, access_kind, gate_open
 
 
 def analytics_overview():
 
-    users = table("users").select("id,is_approved,created_at") or []
+    users = table("users").select("id,is_approved,open_access_at,created_at") or []
     roles = table("roles").select("id,slug,name,color") or []
     user_roles = table("user_roles").select("role_id") or []
 
@@ -29,14 +30,25 @@ def analytics_overview():
     admin_role_ids = {r["id"] for r in roles if r.get("slug") == "admin"}
     admin_count = sum(c for rid, c in role_counter.items() if rid in admin_role_ids)
 
+    # `approved` is an admin's approval only; people in through the open gate
+    # while it is open (services/open_access.py) are `open_access`, so the two
+    # never double-count and closing the gate never moves `approved`.
+    open_now = gate_open()
     approved = sum(1 for u in users if u.get("is_approved"))
+    open_ids = {u.get("id") for u in users if access_kind(u, open_now=open_now) == ACCESS_OPEN}
     # Waiting on approval = waitlist signups not yet approved. Unapproved
-    # sign-ins don't create accounts, so `users` can't answer this.
-    waitlist = table("newsletter_emails").select("approved_at") or []
+    # sign-ins don't create accounts, so `users` can't answer this. An
+    # open-access entrant's row is unapproved too, but while the gate is open
+    # they are in, not waiting (they are counted under `open_access`).
+    waitlist = table("newsletter_emails").select("approved_at,joined_user_id") or []
     totals = {
         "users": len(users),
         "approved": approved,
-        "pending": sum(1 for w in waitlist if not w.get("approved_at")),
+        "open_access": len(open_ids),
+        "pending": sum(
+            1 for w in waitlist
+            if not w.get("approved_at") and w.get("joined_user_id") not in open_ids
+        ),
         "admins": admin_count,
     }
 

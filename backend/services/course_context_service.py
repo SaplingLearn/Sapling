@@ -40,13 +40,29 @@ from agents._run import run_agent_sync
 from agents.course_summary import course_summary_agent
 from agents.usage import record_agent_usage
 from services import jobs
-from services.encryption import decrypt_json_column
+from services.encryption import bind, decrypt_json_column
 from services.feature_flags import flag_on
 
 logger = logging.getLogger(__name__)
 
 #: The job that runs update_course_context on the queue (#116).
 COURSE_CONTEXT_JOB = "course_context.refresh"
+
+#: M8: an aggregated mistake (or weak area) reaches classmates' quiz prompts
+#: only when at least this many DISTINCT students' quiz notes contain it. With
+#: n=1 allowed, one student's written quiz answers could write the "common
+#: class mistakes" every classmate's quiz agent reads. Stamped on each stats
+#: row as `min_mistake_contributors` (migration
+#: 20261116162354_offering_stats_min_contributors.sql); the reader
+#: (agents/tools/graph_read.py) serves only rows stamped at or above it, so
+#: rows aggregated before this rule are never served.
+MIN_MISTAKE_CONTRIBUTORS = 3
+
+
+def _mistake_key(text: str) -> str:
+    """How two students' notes are judged to name the same mistake: case,
+    whitespace and trailing punctuation folded."""
+    return " ".join((text or "").split()).casefold().rstrip(" .;:!?")
 
 
 def _generate_data_hash(stats_rows: list) -> str:
@@ -95,14 +111,22 @@ def _generate_summary_with_gemini(
     The agent owns the analyst persona; the aggregated metrics go in the user
     message. On any agent failure we degrade to a deterministic template string
     (no second LLM call), so a summary is always produced."""
+    # M10 audit: concept names are students' graph text, so the two lists go
+    # in the untrusted envelope; the course code/name are neutralized scalars.
+    from services.prompt_safety import neutralize_delimiters, wrap_untrusted
+
+    def _concepts(names: list, source: str) -> str:
+        return wrap_untrusted("\n".join(f"- {c}" for c in names), source=source) or "None identified"
+
     user_message = (
-        f"Course: {course_code} - {course_name}\n"
+        f"Course: {neutralize_delimiters(course_code or '')} - "
+        f"{neutralize_delimiters(course_name or '')}\n"
         f"Students enrolled: {student_count}\n"
         f"Average class mastery: {avg_class_mastery:.1%}\n\n"
         "Top struggling concepts (needs attention):\n"
-        f"{chr(10).join(f'- {c}' for c in top_struggling) if top_struggling else 'None identified'}\n\n"
+        f"{_concepts(top_struggling or [], 'struggling concept names from students graphs')}\n\n"
         "Top mastered concepts (students doing well):\n"
-        f"{chr(10).join(f'- {c}' for c in top_mastered) if top_mastered else 'None identified'}"
+        f"{_concepts(top_mastered or [], 'mastered concept names from students graphs')}"
     )
 
     try:
@@ -226,6 +250,54 @@ def clear_course_context_cache() -> None:
         _cache_generation += 1
 
 
+def _concept_metrics(node_rows: list) -> tuple[dict, list, dict]:
+    """Steps 4-5 of `update_course_context`: per-concept metrics over the
+    class's graph nodes, every score, and node id -> owning student (M8)."""
+    # ── 4. Group by concept_name, track per-user scores ───────────────────────
+    concept_data: dict = {}
+
+    #: graph node id -> the student who owns it, so a quiz-context row (keyed
+    #: on its node) can be counted per distinct student (M8).
+    node_owner: dict = {}
+    for n in node_rows:
+        name = n["concept_name"]
+        if name not in concept_data:
+            concept_data[name] = {"scores": [], "tiers": [], "node_ids": []}
+        concept_data[name]["scores"].append(float(n["mastery_score"] or 0.0))
+        concept_data[name]["tiers"].append(n["mastery_tier"] or "unexplored")
+        concept_data[name]["node_ids"].append(n["id"])
+        node_owner[n["id"]] = n.get("user_id")
+
+    # ── 5. Compute per-concept metrics ────────────────────────────────────────
+    concept_metrics: dict = {}
+    all_scores: list = []
+
+    for name, data in concept_data.items():
+        scores = data["scores"]
+        tiers = data["tiers"]
+        n_s = len(scores)
+
+        if n_s == 0:
+            continue
+
+        avg_mastery = sum(scores) / n_s
+        all_scores.extend(scores)
+
+        struggling_count = sum(1 for t in tiers if t == "struggling")
+        mastered_count = sum(1 for t in tiers if t == "mastered")
+        unexplored_count = sum(1 for t in tiers if t == "unexplored")
+
+        concept_metrics[name] = {
+            "avg_mastery_score": round(avg_mastery, 4),
+            "pct_struggling": round(struggling_count / n_s, 4),
+            "pct_mastered": round(mastered_count / n_s, 4),
+            "pct_unexplored": round(unexplored_count / n_s, 4),
+            "student_count": n_s,
+            "node_ids": data["node_ids"],
+        }
+    return concept_metrics, all_scores, node_owner
+
+
 @runs_as_service  # #115: reads every classmate's graph + quiz context; under a user scope it would silently compute class stats from one student
 def update_course_context(offering_id: str) -> None:
     """
@@ -290,44 +362,7 @@ def update_course_context(offering_id: str) -> None:
     if not node_rows:
         return  # No graph data yet for this course
 
-    # ── 4. Group by concept_name, track per-user scores ───────────────────────
-    concept_data: dict = {}
-
-    for n in node_rows:
-        name = n["concept_name"]
-        if name not in concept_data:
-            concept_data[name] = {"scores": [], "tiers": [], "node_ids": []}
-        concept_data[name]["scores"].append(float(n["mastery_score"] or 0.0))
-        concept_data[name]["tiers"].append(n["mastery_tier"] or "unexplored")
-        concept_data[name]["node_ids"].append(n["id"])
-
-    # ── 5. Compute per-concept metrics ────────────────────────────────────────
-    concept_metrics: dict = {}
-    all_scores: list = []
-    
-    for name, data in concept_data.items():
-        scores = data["scores"]
-        tiers = data["tiers"]
-        n_s = len(scores)
-        
-        if n_s == 0:
-            continue
-            
-        avg_mastery = sum(scores) / n_s
-        all_scores.extend(scores)
-        
-        struggling_count = sum(1 for t in tiers if t == "struggling")
-        mastered_count = sum(1 for t in tiers if t == "mastered")
-        unexplored_count = sum(1 for t in tiers if t == "unexplored")
-        
-        concept_metrics[name] = {
-            "avg_mastery_score": round(avg_mastery, 4),
-            "pct_struggling": round(struggling_count / n_s, 4),
-            "pct_mastered": round(mastered_count / n_s, 4),
-            "pct_unexplored": round(unexplored_count / n_s, 4),
-            "student_count": n_s,
-            "node_ids": data["node_ids"],
-        }
+    concept_metrics, all_scores, node_owner = _concept_metrics(node_rows)
 
     # ── 6. Helpers: quiz_context rows for a set of graph node ids ────────────
     def _fetch_quiz_context_rows(node_ids: list) -> list:
@@ -340,7 +375,8 @@ def update_course_context(offering_id: str) -> None:
             node_filter = ",".join(chunk)
             try:
                 rows = table("quiz_context").select(
-                    "concept_node_id,context_json",
+                    # user_id: half of the context_json binding (AAD).
+                    "user_id,concept_node_id,context_json",
                     filters={"concept_node_id": f"in.({node_filter})"},
                 )
             except Exception:
@@ -365,35 +401,49 @@ def update_course_context(offering_id: str) -> None:
         # a merge-duplicates UPDATE on an existing row — and never mentions
         # this column in its payload, so an existing row's value (including
         # anything written out-of-band) is left untouched, not reset.
-        common_misconceptions: list = []
-        prerequisite_gaps: list = []
-        seen_misconceptions: set = set()
-        seen_prereqs: set = set()
+        # M8: each entry is counted once per DISTINCT student (a student's
+        # notes on one concept can vouch for a mistake only once), and only
+        # entries at least MIN_MISTAKE_CONTRIBUTORS students share are kept.
+        # A row whose owner cannot be told is not counted at all.
+        mistakes: dict = {}  # key -> {"text": first spelling, "students": set}
+        weak: dict = {}
+
+        def _count(bucket: dict, value, student) -> None:
+            text = value.strip() if isinstance(value, str) else ""
+            key = _mistake_key(text)
+            if not key:
+                return
+            entry = bucket.setdefault(key, {"text": text, "students": set()})
+            entry["students"].add(student)
 
         for ctx in ctx_rows:
+            student = node_owner.get(ctx.get("concept_node_id"))
+            if not student:
+                continue
             cj = ctx.get("context_json") or {}
+            # Outside the try: a row without its key is a select bug, not a
+            # corrupt value to skip quietly.
+            where = bind("quiz_context", "context_json", ctx)
             try:
-                cj = decrypt_json_column(cj) or {}
+                cj = decrypt_json_column(cj, bind=where) or {}
             except Exception:
                 cj = {}
 
-            for m in cj.get("common_mistakes", []):
-                m = (m or "").strip()
-                if m and m.lower() not in seen_misconceptions:
-                    seen_misconceptions.add(m.lower())
-                    common_misconceptions.append(m)
+            for m in cj.get("common_mistakes", []) or []:
+                _count(mistakes, m, student)
+            for w in cj.get("weak_areas", []) or []:
+                _count(weak, w, student)
 
-            for w in cj.get("weak_areas", []):
-                w = (w or "").strip()
-                if w and w.lower() not in seen_prereqs:
-                    seen_prereqs.add(w.lower())
-                    prerequisite_gaps.append(w)
+        def _shared(bucket: dict) -> list:
+            kept = [e for e in bucket.values() if len(e["students"]) >= MIN_MISTAKE_CONTRIBUTORS]
+            kept.sort(key=lambda e: -len(e["students"]))  # most widely shared first
+            return [e["text"] for e in kept]
 
-        return common_misconceptions[:20], prerequisite_gaps[:20]
+        return _shared(mistakes)[:20], _shared(weak)[:20]
 
     # ── 7. Upsert into course_concept_stats (quiz arrays per concept) ─────────
     for name, metrics in concept_metrics.items():
-        node_ids_for_concept = concept_data.get(name, {}).get("node_ids", [])
+        node_ids_for_concept = metrics.get("node_ids", [])
         ctx_rows = _fetch_quiz_context_rows(node_ids_for_concept)
         cm, pg = _parse_quiz_context_to_arrays(ctx_rows)
 
@@ -408,6 +458,8 @@ def update_course_context(offering_id: str) -> None:
                 "pct_unexplored": metrics["pct_unexplored"],
                 "common_misconceptions": cm,
                 "prerequisite_gaps": pg,
+                # M8: the distinct-student floor these arrays were built under.
+                "min_mistake_contributors": MIN_MISTAKE_CONTRIBUTORS,
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             },
             on_conflict="offering_id,concept_name",

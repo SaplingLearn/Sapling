@@ -44,7 +44,7 @@ from learning.params import (
 # A117: the probe's journal-row rule is the one the A112 pre/post report reads
 # a pretest by (learning_gain.pretest_outcome) — one source, learning/probe.py
 from learning.probe import is_probe_row, probe_history_hashes
-from services.encryption import encrypt_json
+from services.encryption import bind, encrypt_json
 
 logger = logging.getLogger("sapling.learning.session_close")
 
@@ -341,7 +341,8 @@ def store_close(
     # Review MAJOR 2: written once — the update matches only while close_json is
     # still null (`is.null`, never an equality filter on the ciphertext, inv 9).
     rows = table("sessions").update(
-        {"close_json": encrypt_json(record.model_dump()), "close_phase": phase},
+        {"close_json": encrypt_json(record.model_dump(), bind=bind("sessions", "close_json", session_id)),
+         "close_phase": phase},
         filters={"id": f"eq.{session_id}", "close_json": "is.null"},
     )
     return bool(rows)

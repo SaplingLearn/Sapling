@@ -253,9 +253,8 @@ describe('#757 an approval that lands while the student waits', () => {
     expect(state.textContent).toContain('nina@bu.edu');
     expect(screen.queryByTestId('pending-join')).toBeNull();
     fireEvent.click(screen.getByTestId('pending-signin-again'));
-    expect(assign).toHaveBeenCalledWith(
-      `/api/auth/google?return_to=${encodeURIComponent('https://app.example')}`,
-    );
+    // sec2 M2: through /auth/start, which sets the sign-in nonce cookie.
+    expect(assign).toHaveBeenCalledWith('/auth/start');
     expect(sessionStorage.getItem(PENDING_TOKEN_KEY)).toBeNull();
   });
 

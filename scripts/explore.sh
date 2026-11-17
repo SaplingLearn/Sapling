@@ -136,7 +136,7 @@ import json, sys, time
 body = json.loads(sys.argv[1]); user = sys.argv[2]; name = sys.argv[3]; origin = sys.argv[4]
 state = {
     "cookies": [{
-        "name": "sapling_session", "value": body["token"],
+        "name": body.get("cookie_name") or "sapling_session", "value": body["token"],
         "domain": "localhost", "path": "/",
         "expires": time.time() + float(body.get("expires_in") or 3600),
         "httpOnly": True, "secure": False, "sameSite": "Lax",

@@ -3,6 +3,7 @@ import re
 from typing import Annotated, Optional, Union, List, Literal
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 
+from services.email_shape import is_email_shape
 from services.quiz.config import QUIZ_MIN_QUESTIONS, QUIZ_MAX_QUESTIONS
 from learning.evidence import StudentConfidence
 from learning.params import GRADER_ANSWER_MAX_CHARS
@@ -1137,14 +1138,16 @@ class AllowlistEmailBody(BaseModel):
     @classmethod
     def _normalize(cls, v: str) -> str:
         email = (v or "").strip().lower()
-        if not email or len(email) > 254 or not _EMAIL_SHAPE.match(email):
+        if not _email_shape_ok(email):
             raise ValueError("invalid email address")
         return email
 
 
 # One address, no spaces, a dot in the domain. Deliberately loose (the waitlist
 # signup already validated with EmailStr); it only has to stop pasted junk.
-_EMAIL_SHAPE = re.compile(r"^[^@\s,;<>()\"]+@[^@\s,;<>()\"]+\.[^@\s,;<>()\"]+$")
+# Length-first and linear (services/email_shape.py).
+def _email_shape_ok(email: str) -> bool:
+    return is_email_shape(email, max_len=254, extra_forbidden=',;<>()"')
 ALLOWLIST_BULK_MAX = 500
 
 
@@ -1160,7 +1163,7 @@ class AllowlistBulkBody(BaseModel):
         bad: list[str] = []
         for raw in v:
             email = (raw or "").strip().lower()
-            if not email or len(email) > 254 or not _EMAIL_SHAPE.match(email):
+            if not _email_shape_ok(email):
                 bad.append(raw)
                 continue
             seen.setdefault(email, None)

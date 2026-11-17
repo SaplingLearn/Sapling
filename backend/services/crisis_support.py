@@ -50,9 +50,14 @@ Order inside a screen: `crisis_detection.detect_any` first (pure: an ordinary
 request pays only that, and reads no flag), then, on a match only, the caller
 is AUTHENTICATED (`require_self` on the request's user id: a 401/403 for a
 stranger, before anything is read or recorded about them), then the
-`crisis_support` flag for this student (fail-closed "off": the route behaves
+`crisis_support` flag for this student (off by default: the route behaves
 exactly as before), then the one `safety.crisis_support_shown` event and the
-fixed response built from `services/crisis_support_copy.py`.
+fixed response built from `services/crisis_support_copy.py`. The flag is read
+with `feature_flags.last_known_flag_on` (sec2 M11): while the flag store is
+unreadable it answers from the last snapshot this process read instead of
+failing closed, so an outage cannot silently stop a card the owner switched
+on; it never turns on a flag the last good read had off, and a process that
+never read the store answers off.
 
 The event is category `system` (not the student's activity, so the usage
 rollups skip it) and is NOT mirrored to PostHog (`posthog_client.
@@ -83,7 +88,9 @@ from services import crisis_support_copy as crisis_copy
 from services import events_service
 from services.agent_events import SSE_CACHE_CONTROL, SaplingEvent, sapling_event_to_sse
 from services.crisis_detection import CrisisMatch, detect_any
-from services.feature_flags import flag_on
+# Named `flag_on` here (the tests patch it); the store-outage behaviour is
+# `last_known_flag_on`'s (see the module doc).
+from services.feature_flags import last_known_flag_on as flag_on
 from services.request_context import current_request_id
 
 logger = logging.getLogger(__name__)

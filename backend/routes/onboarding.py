@@ -13,7 +13,7 @@ from services import legal
 from services.academics import onboarding_term, resolve_offering, user_enrolled_course_ids
 from services.auth_guard import require_self
 from services.chunk_visibility import resync_user_chunk_visibility
-from services.encryption import encrypt_if_present
+from services.encryption import bind, encrypt_if_present
 
 logger = logging.getLogger(__name__)
 
@@ -280,9 +280,9 @@ def save_onboarding_profile(
     table("user_profiles").upsert(
         {
             "user_id": user_id,
-            "name": encrypt_if_present(name),
-            "first_name": encrypt_if_present(body.first_name),
-            "last_name": encrypt_if_present(body.last_name),
+            "name": encrypt_if_present(name, bind=bind("user_profiles", "name", user_id)),
+            "first_name": encrypt_if_present(body.first_name, bind=bind("user_profiles", "first_name", user_id)),
+            "last_name": encrypt_if_present(body.last_name, bind=bind("user_profiles", "last_name", user_id)),
             "year": body.year,
             "majors": body.majors,
             "minors": body.minors,
