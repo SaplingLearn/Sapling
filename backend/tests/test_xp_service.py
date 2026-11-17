@@ -355,3 +355,46 @@ class TestConcurrentAwards:
         assert handles["users"].update.call_count == _CACHE_CAS_ATTEMPTS
         assert result.awarded == 30
         assert result.leveled_up is False
+
+
+class TestRecordLedgerRow:
+    def test_writes_the_supplied_created_at(self):
+        tbl, handles = _tables()
+        with patch("services.xp_service.table", side_effect=tbl):
+            from services.xp_service import record_ledger_row
+            assert record_ledger_row(
+                "u1", "achievement_unlocked", source_type="achievement",
+                source_id="a1", amount=50, created_at="2026-09-01T00:00:00+00:00",
+            ) is True
+        row = handles["xp_events"].insert.call_args[0][0]
+        assert row["created_at"] == "2026-09-01T00:00:00+00:00"
+        assert row["idempotency_key"] == "achievement_unlocked:achievement:a1"
+
+    def test_omits_created_at_so_the_default_stamps_it(self):
+        tbl, handles = _tables()
+        with patch("services.xp_service.table", side_effect=tbl):
+            from services.xp_service import record_ledger_row
+            record_ledger_row("u1", "quiz_completed", source_type="quiz",
+                              source_id="q1", amount=30)
+        assert "created_at" not in handles["xp_events"].insert.call_args[0][0]
+
+    def test_a_conflict_is_false_not_an_error(self):
+        response = MagicMock(status_code=409)
+
+        def _conflict(_data):
+            raise httpx.HTTPStatusError("dup", request=MagicMock(), response=response)
+        tbl, _ = _tables(insert=_conflict)
+        with patch("services.xp_service.table", side_effect=tbl):
+            from services.xp_service import record_ledger_row
+            assert record_ledger_row("u1", "quiz_completed", source_type="quiz",
+                                     source_id="q1", amount=30) is False
+
+
+class TestSettleLedgerWrites:
+    def test_refreshes_once_then_dispatches_with_the_level_up(self):
+        with patch("services.xp_service._refresh_cache", return_value=(500, 3, True)) as r, \
+             patch("services.xp_service._dispatch_xp_achievements") as d:
+            from services.xp_service import settle_ledger_writes
+            assert settle_ledger_writes("u1") == (500, 3, True)
+        r.assert_called_once_with("u1")
+        d.assert_called_once_with("u1", leveled_up=True)

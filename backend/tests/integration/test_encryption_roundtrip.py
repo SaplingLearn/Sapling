@@ -18,7 +18,7 @@ import-ordering reason the conftest documents).
 """
 import pytest
 
-from services.encryption import decrypt_if_present, decrypt_json, decrypt_numeric
+from services.encryption import bind, decrypt_if_present, decrypt_json, decrypt_numeric
 
 pytestmark = pytest.mark.integration
 
@@ -62,12 +62,27 @@ _NUMERIC_COLUMNS = [
 ]
 
 
+class _Cell(str):
+    """A stored string that remembers its cell's AES-GCM binding (finding M13)."""
+
+    binding = None
+
+
 def _raw(db_conn, table: str, id_col: str, id_val: str, column: str):
     row = db_conn.execute(
-        f'SELECT "{column}" FROM "{table}" WHERE "{id_col}" = %s', (id_val,)
+        f'SELECT * FROM "{table}" WHERE "{id_col}" = %s', (id_val,)
     ).fetchone()
     assert row is not None, f"seed row {table}.{id_col}={id_val!r} is missing"
-    return row[column]
+    raw = row[column]
+    if isinstance(raw, str):
+        raw = _Cell(raw)
+        raw.binding = bind(table, column, row)
+    return raw
+
+
+def _b(raw):
+    """The binding of the cell `raw` was read from (by `_raw`)."""
+    return raw.binding
 
 
 @pytest.mark.parametrize(
@@ -81,7 +96,7 @@ def test_text_column_is_ciphertext_at_rest_and_decrypts(
     raw = _raw(db_conn, table, id_col, id_val, column)
     assert raw is not None, f"{label} is NULL — seed did not populate it"
     assert raw != expected, f"{label} stored as PLAINTEXT — encryption-at-rest regressed"
-    assert decrypt_if_present(raw) == expected, f"{label} ciphertext does not round-trip"
+    assert decrypt_if_present(raw, bind=_b(raw)) == expected, f"{label} ciphertext does not round-trip"
 
 
 @pytest.mark.parametrize(
@@ -95,7 +110,7 @@ def test_numeric_column_is_ciphertext_at_rest_and_decrypts(
     raw = _raw(db_conn, "assignments", "id", id_val, column)
     assert raw is not None, f"{label} is NULL — seed did not populate it"
     assert str(raw) != str(expected), f"{label} stored as PLAINTEXT — encryption-at-rest regressed"
-    assert decrypt_numeric(raw) == expected, f"{label} does not decrypt to the seeded number"
+    assert decrypt_numeric(raw, bind=_b(raw)) == expected, f"{label} does not decrypt to the seeded number"
 
 
 def test_sessions_summary_json_is_ciphertext_at_rest_and_decrypts(db_conn):
@@ -103,7 +118,7 @@ def test_sessions_summary_json_is_ciphertext_at_rest_and_decrypts(db_conn):
     pair — a column that's easy to enumerate with the wrong helper (#398 comment)."""
     raw = _raw(db_conn, "sessions", "id", "rich-sess-cs-recursion", "summary_json")
     assert raw is not None, "sessions.summary_json is NULL — seed did not populate it"
-    decoded = decrypt_json(raw)
+    decoded = decrypt_json(raw, bind=_b(raw))
     assert isinstance(decoded, dict) and "bullets" in decoded
     assert "Discussed base cases" in decoded["bullets"]
 
@@ -113,20 +128,20 @@ def test_quiz_attempts_questions_json_is_ciphertext_and_decrypts(db_conn):
     raw = _raw(db_conn, "quiz_attempts", "id", "rich-qa-cs-variables-1", "questions_json")
     assert raw is not None
     assert isinstance(raw, str), "questions_json stored as PLAINTEXT JSONB — encryption regressed"
-    decoded = decrypt_json(raw)
+    decoded = decrypt_json(raw, bind=_b(raw))
     assert decoded[0]["q"] == "What keyword declares a variable in Python?"
 
 
 def test_quiz_attempts_answers_json_is_ciphertext_and_decrypts(db_conn):
     raw = _raw(db_conn, "quiz_attempts", "id", "rich-qa-cs-variables-1", "answers_json")
     assert isinstance(raw, str)
-    assert decrypt_json(raw)[0]["correct"] is True
+    assert decrypt_json(raw, bind=_b(raw))[0]["correct"] is True
 
 
 def test_quiz_context_context_json_is_ciphertext_and_decrypts(db_conn):
     raw = _raw(db_conn, "quiz_context", "id", "rich-qc-cs-variables", "context_json")
     assert isinstance(raw, str)
-    decoded = decrypt_json(raw)
+    decoded = decrypt_json(raw, bind=_b(raw))
     assert decoded["asked"] == 2
 
 
@@ -134,14 +149,48 @@ def test_study_guides_content_is_ciphertext_and_decrypts(db_conn):
     """#518: study_guides.content needs the JSON pair (encrypt_json/decrypt_json)."""
     raw = _raw(db_conn, "study_guides", "id", "rich-guide-cs-f25-mid", "content")
     assert isinstance(raw, str), "content stored as PLAINTEXT JSONB — encryption regressed"
-    decoded = decrypt_json(raw)
-    assert decoded["exam"] == "Midterm Exam"
+    decoded = decrypt_json(raw, bind=_b(raw))
+    assert decoded["title"] == "Variables, control flow and functions"
+    assert decoded["scope_label"] == "Midterm Exam"
+
+
+def test_study_guides_previous_content_and_answers_are_ciphertext_and_decrypt(db_conn):
+    """The seed leaves both NULL (a guide never updated, no check answered), so
+    this one writes them through the store, the only writer of the table, and
+    reads them back raw. It also runs the once-only answer's compare-and-set
+    against the real `updated_at` trigger."""
+    import asyncio
+
+    from models.study_guide import CheckAnswer, GuideContent
+    from services.study_guides import store
+
+    user, guide_id = "rich-user-active", "rich-guide-cs-f25-mid"
+    seeded = asyncio.run(store.aload_guide(user, guide_id))
+    rewritten = seeded.content.model_copy(update={"title": "Rewritten for the round trip"})
+    saved = asyncio.run(store.asave_content(seeded, rewritten, keep_previous=True))
+    answer = CheckAnswer(option_id="b", correct=True)
+    assert asyncio.run(store.arecord_answer(saved, "s2-i4", answer)) is True
+    # A second click that loaded the guide before the first one wrote.
+    assert asyncio.run(store.arecord_answer(saved, "s2-i4", answer)) is False
+
+    previous = _raw(db_conn, "study_guides", "id", guide_id, "previous_content")
+    assert isinstance(previous, str), "previous_content stored as PLAINTEXT JSONB"
+    assert "recursive traces" not in previous
+    # Validated, not compared as a dict: the store keeps fields no dump has
+    # (`last_section_number`, `materials_read_at`).
+    assert GuideContent.model_validate(decrypt_json(previous, bind=_b(previous))) == seeded.content
+
+    answers = _raw(db_conn, "study_guides", "id", guide_id, "answers")
+    assert isinstance(answers, str), "answers stored as PLAINTEXT JSONB"
+    assert "option_id" not in answers
+    assert decrypt_json(answers, bind=_b(answers)) == {"s2-i4": {"option_id": "b", "correct": True}}
+    assert asyncio.run(store.aload_guide(user, guide_id)).content == rewritten
 
 
 def test_documents_concept_notes_uses_json_encryption(db_conn):
     """documents.concept_notes is stored via encrypt_json (a list of concepts)."""
     raw = _raw(db_conn, "documents", "id", "rich-doc-cs-syllabus", "concept_notes")
     assert raw is not None, "documents.concept_notes is NULL — seed did not populate it"
-    decoded = decrypt_json(raw)
+    decoded = decrypt_json(raw, bind=_b(raw))
     assert isinstance(decoded, list) and decoded
     assert any(c.get("name") == "Variables" for c in decoded)

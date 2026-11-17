@@ -27,6 +27,7 @@ from typing import Callable, Tuple
 from pypdf import PdfReader
 
 from services import cache
+from services.image_safety import ImageTooLarge, render_pdf_page
 from services.extraction_backends import tesseract_backend
 from services.extraction_backends.docling_backend import (
     DoclingUnavailableError,
@@ -50,9 +51,9 @@ logger = logging.getLogger(__name__)
 # to Tesseract, which drops table rows, with no log line at all).
 _DOCLING_UNAVAILABLE_WARNED = False
 
-# Set whenever an installed Docling failed and Tesseract took over, so
-# extract_text_from_file can skip caching the degraded text (it would outlive
-# the fix by the cache TTL).
+# Set whenever an installed Docling failed and Tesseract took over, or a
+# GOT-OCR / vision page rescue raised, so extract_text_from_file can skip
+# caching the degraded text (it would outlive the fix by the cache TTL).
 _DOCLING_FELL_BACK: contextvars.ContextVar[bool] = contextvars.ContextVar(
     "docling_fell_back", default=False
 )
@@ -166,6 +167,8 @@ def extract_text_from_image_bytes(image_bytes: bytes, lang: str = "eng") -> str:
 
     try:
         pdf_bytes = _image_to_pdf_bytes(image_bytes)
+    except ImageTooLarge:
+        raise
     except Exception:
         # PIL could not read the image: not a Docling failure, so no alarm.
         logger.debug("image not convertible for Docling; using tesseract", exc_info=True)
@@ -181,8 +184,9 @@ def extract_text_from_image_bytes(image_bytes: bytes, lang: str = "eng") -> str:
 
 
 def _image_to_pdf_bytes(image_bytes: bytes) -> bytes:
-    from PIL import Image
-    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    from services.image_safety import open_image
+
+    img = open_image(image_bytes).convert("RGB")
     buf = io.BytesIO()
     img.save(buf, format="PDF")
     return buf.getvalue()
@@ -251,6 +255,12 @@ def extract_text_from_pdf_ocr(
     return markdown, page_count
 
 
+def _budget_error_in(exc: BaseException):
+    from services.llm_budget import budget_error_in  # lazy: keeps this module light
+
+    return budget_error_in(exc)
+
+
 def _join_pages(per_page: list) -> str:
     return "\n\n".join(md for md in per_page if md).strip()
 
@@ -293,7 +303,7 @@ def _rescue_flagged_pages(
             continue
         try:
             page = pdf[idx]
-            pil = page.render(scale=2).to_pil()
+            pil = render_pdf_page(page, scale=2)
             buf = io.BytesIO()
             pil.save(buf, format="PNG")
             page.close()
@@ -303,7 +313,17 @@ def _rescue_flagged_pages(
                 rescued.add(idx)
         except unavailable_error:
             break
-        except Exception:
+        except Exception as exc:
+            # #119: the per-user LLM budget refusing a page is not a page
+            # outcome — every later page would be refused too, and it must
+            # reach the upload as its 429 / terminal event. Propagating also
+            # keeps the partial document out of the shared OCR cache
+            # (extract_text_from_file writes it only after a clean return).
+            if _budget_error_in(exc) is not None:
+                raise
+            # A page whose rescue RAISED (quota, network) is a degraded
+            # result too: never cache it under the content key.
+            _DOCLING_FELL_BACK.set(True)
             continue
 
     return per_page, rescued

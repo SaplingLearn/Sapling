@@ -184,6 +184,18 @@ def router_backends(user_id: str | None) -> tuple[str, str]:
     return _backends_for(explain(ROUTER_FLAG, user_id))
 
 
+async def router_backends_off_loop(user_id: str | None) -> tuple[str, str]:
+    """:func:`router_backends` for code on the event loop: no I/O when the
+    flag cache can answer, else one bounded store read in a worker thread
+    (feature_flags.resolve_off_loop). Raises :class:`FlagUnreadable` like
+    :func:`router_backends`, and whatever the thread hop raises."""
+    from services.feature_flags import resolve_off_loop
+
+    return await resolve_off_loop(
+        lambda: router_backends_cached(user_id), lambda: router_backends(user_id),
+    )
+
+
 def router_backends_cached(user_id: str | None) -> tuple[str, str] | None:
     """:func:`router_backends` without I/O — safe on the event loop — or None
     when the flag cache is cold for this student. Raises
@@ -485,7 +497,20 @@ def _agent_prompt(state: Any, questions: Sequence[Question]) -> str:
                 "levels": {k: d for k, d in q.levels},
             }
         specs.append(spec)
-    return json.dumps({"state": state, "questions": specs}, ensure_ascii=False, default=str)
+    # sec2 M10 audit: the questions are code-built (trusted); the state
+    # carries a student's chat turn, so it goes inside the untrusted envelope
+    # (still JSON inside it, so the agent reads the same structure).
+    from services.prompt_safety import wrap_untrusted
+
+    state_json = json.dumps(state, ensure_ascii=False, default=str)
+    return (
+        "QUESTIONS:\n" + json.dumps({"questions": specs}, ensure_ascii=False, default=str)
+        + "\n\nSTATE:\n" + (wrap_untrusted(state_json, source=DECISION_STATE_SOURCE) or state_json)
+    )
+
+
+#: Envelope label on the decision agent's state. A trusted literal.
+DECISION_STATE_SOURCE = "the state to judge"
 
 
 async def _run_agent(

@@ -38,6 +38,7 @@ import {
 } from "@/lib/api";
 import { now } from "@/lib/testMode";
 import { humanizeError } from "@/lib/errorMessage";
+import { CALENDAR_ERROR_PARAM, calendarConnectError } from "@/lib/calendarConnect";
 
 type View = "month" | "week" | "day" | "table";
 
@@ -58,14 +59,6 @@ const TYPE_OPTIONS = [
   { value: "project", label: "Project" },
   { value: "other", label: "Other" },
 ];
-
-const GOOGLE_CONNECTION_ERRORS: Record<string, string> = {
-  access_denied: "Google Calendar connection was canceled. Connect again when you're ready.",
-  google_not_configured: "Google Calendar connection is currently unavailable. Please try again later.",
-  missing_code: "Google Calendar didn't finish connecting. Please connect again.",
-  invalid_state: "Google Calendar connection expired or could not be verified. Please connect again.",
-  oauth_exchange_failed: "Google Calendar couldn't finish connecting. Please try again.",
-};
 
 function dateKey(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -167,7 +160,7 @@ export function Calendar() {
   const handledCallback = React.useRef<string | null>(null);
   // Consume callback feedback once, including under Strict Mode effect replay.
   React.useEffect(() => {
-    const error = search.get("calendar_error");
+    const error = search.get(CALENDAR_ERROR_PARAM);
     const connected = search.get("connected") === "true";
     if (!error && !connected) {
       handledCallback.current = null;
@@ -177,16 +170,14 @@ export function Calendar() {
     if (handledCallback.current === callback) return;
     handledCallback.current = callback;
     if (error) {
-      toast.error(Object.hasOwn(GOOGLE_CONNECTION_ERRORS, error)
-        ? GOOGLE_CONNECTION_ERRORS[error]
-        : "Google Calendar couldn't connect. Please try again.");
+      toast.error(calendarConnectError(error));
     } else {
       toast.success("Google Calendar connected");
       void load();
     }
     const next = new URLSearchParams(search.toString());
     next.delete("connected");
-    next.delete("calendar_error");
+    next.delete(CALENDAR_ERROR_PARAM);
     const qs = next.toString();
     router.replace(qs ? `/calendar?${qs}` : "/calendar");
   }, [search, router, toast, load]);
@@ -293,6 +284,8 @@ export function Calendar() {
     toast.success(`Exported ${ids.length} row${ids.length === 1 ? "" : "s"}.`);
   };
 
+  const refreshGoogleEvents = () => setGoogleRefresh(n => n + 1);
+
   const topActions = (
     <>
       <Toggle
@@ -320,28 +313,18 @@ export function Calendar() {
       <button data-testid="calendar-import-syllabus" className="btn btn--sm" onClick={() => setUploadOpen(true)}>
         <Icon name="upload" size={12} /> Import syllabus
       </button>
-      {googleConnected ? (
-        <>
-          <button data-testid="calendar-export-all-google" className="btn btn--sm" onClick={() => void exportGoogle()} disabled={exportingGoogle || changingGoogleEvents || loading || Boolean(loadError)}>
-            <Icon name="send" size={12} /> {exportingGoogle ? "Exporting…" : "Export all to Google"}
-          </button>
-          {googleEventsEnabled && <button data-testid="calendar-refresh-google" className="btn btn--sm" onClick={() => setGoogleRefresh(n => n + 1)} disabled={importingGoogle || changingGoogleEvents}>
-            <Icon name="cal" size={12} /> {importingGoogle ? "Loading…" : "Refresh Google events"}
-          </button>}
-          <button
-            data-testid="calendar-toggle-google-events"
-            className="btn btn--sm"
-            onClick={toggleGoogleEvents}
-            disabled={exportingGoogle || changingGoogleEvents}
-          >
-            {changingGoogleEvents ? "Updating…" : googleEventsEnabled ? "Disconnect events" : "Reconnect events"}
-          </button>
-        </>
-      ) : (
-        <button data-testid="calendar-connect-google" className="btn btn--sm btn--primary" onClick={connect}>
-          <Icon name="cal" size={12} /> Connect Google
-        </button>
-      )}
+      <GoogleCalendarActions
+        connected={googleConnected}
+        eventsEnabled={googleEventsEnabled}
+        exporting={exportingGoogle}
+        updating={changingGoogleEvents}
+        importing={importingGoogle}
+        calendarUnavailable={loading || Boolean(loadError)}
+        onConnect={connect}
+        onExport={() => void exportGoogle()}
+        onRefresh={refreshGoogleEvents}
+        onToggle={toggleGoogleEvents}
+      />
     </>
   );
 
@@ -355,19 +338,16 @@ export function Calendar() {
         actions={topActions}
       />
 
-      {googleConnected && (
-        <p style={{ margin: "12px 32px 0", fontSize: 12, color: "var(--text-muted)" }}>
-          {googleEventsEnabled ? "Google events appear automatically for the dates you’re viewing. Refresh to fetch changes." : "Google events are hidden. Your Google account remains connected."} Google exports add dated assignments once. Later edits and deletions in Sapling won’t update Google events. Undated and already exported assignments are skipped.
-        </p>
-      )}
-
-      {googleConnected && googleEventsEnabled && (
-        <div style={{ margin: "8px 32px", fontSize: 12 }} aria-live="polite">
-          {importingGoogle ? "Loading Google events…" : googleError
-            ? <span role="alert">{googleError} <button data-testid="calendar-retry-google" className="btn btn--sm" onClick={() => setGoogleRefresh(n => n + 1)}>Retry Google events</button> <button data-testid="calendar-reauthorize-google" className="btn btn--sm" onClick={connect}>Reauthorize Google</button></span>
-            : `${linkedEvents.length} Google event${linkedEvents.length === 1 ? "" : "s"} linked for this ${view === "table" ? "year" : "view"}.`}
-        </div>
-      )}
+      <GoogleCalendarStatus
+        connected={googleConnected}
+        eventsEnabled={googleEventsEnabled}
+        importing={importingGoogle}
+        error={googleError}
+        eventCount={linkedEvents.length}
+        view={view}
+        onConnect={connect}
+        onRefresh={refreshGoogleEvents}
+      />
 
       {/* Crossfade/slide the calendar body when the view (or load state)
           changes, keyed on that state. Mirrors Study.tsx's mode="wait"
@@ -427,6 +407,79 @@ export function Calendar() {
         </section>
       )}
     </div>
+  );
+}
+
+function GoogleCalendarActions({
+  connected, eventsEnabled, exporting, updating, importing, calendarUnavailable,
+  onConnect, onExport, onRefresh, onToggle,
+}: {
+  connected: boolean;
+  eventsEnabled: boolean;
+  exporting: boolean;
+  updating: boolean;
+  importing: boolean;
+  calendarUnavailable: boolean;
+  onConnect: () => void;
+  onExport: () => void;
+  onRefresh: () => void;
+  onToggle: () => void;
+}) {
+  return (
+    <>
+      {connected ? (
+        <>
+          <button data-testid="calendar-export-all-google" className="btn btn--sm" onClick={onExport} disabled={exporting || updating || calendarUnavailable}>
+            <Icon name="send" size={12} /> {exporting ? "Exporting…" : "Export all to Google"}
+          </button>
+          {eventsEnabled && <button data-testid="calendar-refresh-google" className="btn btn--sm" onClick={onRefresh} disabled={importing || updating}>
+            <Icon name="cal" size={12} /> {importing ? "Loading…" : "Refresh Google events"}
+          </button>}
+          <button
+            data-testid="calendar-toggle-google-events"
+            className="btn btn--sm"
+            onClick={onToggle}
+            disabled={exporting || updating}
+          >
+            {updating ? "Updating…" : eventsEnabled ? "Disconnect events" : "Reconnect events"}
+          </button>
+        </>
+      ) : (
+        <button data-testid="calendar-connect-google" className="btn btn--sm btn--primary" onClick={onConnect}>
+          <Icon name="cal" size={12} /> Connect Google
+        </button>
+      )}
+    </>
+  );
+}
+
+function GoogleCalendarStatus({
+  connected, eventsEnabled, importing, error, eventCount, view, onConnect, onRefresh,
+}: {
+  connected: boolean;
+  eventsEnabled: boolean;
+  importing: boolean;
+  error: string | null;
+  eventCount: number;
+  view: View;
+  onConnect: () => void;
+  onRefresh: () => void;
+}) {
+  if (!connected) return null;
+  return (
+    <>
+      <p style={{ margin: "12px 32px 0", fontSize: 12, color: "var(--text-muted)" }}>
+          {eventsEnabled ? "Google events appear automatically for the dates you’re viewing. Refresh to fetch changes." : "Google events are hidden. Your Google account remains connected."} Google exports add dated assignments once. Later edits and deletions in Sapling won’t update Google events. Undated and already exported assignments are skipped.
+      </p>
+
+      {eventsEnabled && (
+        <div style={{ margin: "8px 32px", fontSize: 12 }} aria-live="polite">
+          {importing ? "Loading Google events…" : error
+            ? <span role="alert">{error} <button data-testid="calendar-retry-google" className="btn btn--sm" onClick={onRefresh}>Retry Google events</button> <button data-testid="calendar-reauthorize-google" className="btn btn--sm" onClick={onConnect}>Reauthorize Google</button></span>
+            : `${eventCount} Google event${eventCount === 1 ? "" : "s"} linked for this ${view === "table" ? "year" : "view"}.`}
+        </div>
+      )}
+    </>
   );
 }
 
@@ -738,7 +791,7 @@ function AssignmentTable({
       toast.success("Assignment deleted.");
       await onReload();
     } catch (err) {
-      toast.error(`Delete failed: ${String(err)}`);
+      toast.error(humanizeError(err, "Couldn't delete that. Try again."));
     } finally {
       setDeletingId(null);
     }
@@ -771,7 +824,7 @@ function AssignmentTable({
       await onReload();
       cancel();
     } catch (err) {
-      toast.error(`Save failed: ${String(err)}`);
+      toast.error(humanizeError(err, "Couldn't save that. Try again."));
     } finally {
       setSaving(false);
     }

@@ -223,9 +223,17 @@ class TestFlashLiteBackend:
         urgent = result.answers["urgent"]
         assert urgent.probability == pytest.approx(0.9)
         assert abs(2 * urgent.probability - 1) == pytest.approx(urgent.confidence)
-        # The prompt carried the state and every question spec.
-        prompt = json.loads(calls[0][0].parts[-1].content)
-        assert prompt["state"] == STATE
+        # The prompt carried the state and every question spec. sec2 M10
+        # audit: the questions (code-built) lead; the state follows inside
+        # the untrusted envelope, still as JSON.
+        text = calls[0][0].parts[-1].content
+        head, _, tail = text.partition("\n\nSTATE:\n")
+        assert head.startswith("QUESTIONS:\n")
+        lines = tail.splitlines()
+        assert lines[0].startswith("[BEGIN UNTRUSTED CONTENT source=the state to judge]")
+        assert lines[-1] == "[END UNTRUSTED CONTENT]"
+        assert json.loads("\n".join(lines[2:-1])) == STATE
+        prompt = json.loads(head.removeprefix("QUESTIONS:\n"))
         assert [q["key"] for q in prompt["questions"]] == ["urgent", "team", "mood"]
         assert prompt["questions"][2]["levels"] == {
             "calm": "Calm", "frustrated": "Frustrated", "angry": "Very angry",

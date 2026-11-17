@@ -16,16 +16,29 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from fastapi.testclient import TestClient
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 
 from agents._providers import UnregisteredHandlerError
 from main import app
-from routes.graph import _MAX_CONCEPT_LEN, _MAX_COURSE_LABEL_LEN
+from routes.graph import DESCRIBE_FAILED_DETAIL, _MAX_CONCEPT_LEN, _MAX_COURSE_LABEL_LEN
+
+# #117: a sync PostgREST call reached on the event loop raises here.
+pytestmark = pytest.mark.usefixtures("no_sync_db_on_loop")
 
 client = TestClient(app)
 
 URL = "/api/graph/user_andres/concept-description"
+
+
+@pytest.fixture(autouse=True)
+def _on_the_map():
+    """Every concept these tests describe is on the student's map (sec2 M4's
+    graph check); a test that needs otherwise patches it again inside."""
+    with patch("routes.graph.topic_is_graph_concept", return_value=True) as on_map:
+        yield on_map
 
 
 def _result(description: str):
@@ -72,7 +85,9 @@ def test_agent_failure_translates_to_502():
          patch("routes.graph.run_agent_sync", side_effect=UnexpectedModelBehavior("model exploded")):
         resp = client.post(URL, json={"concept": "Recursion"})
     assert resp.status_code == 502
-    assert "concept-description agent failed" in resp.json()["detail"]
+    assert resp.json()["detail"] == DESCRIBE_FAILED_DETAIL
+    # The exception text stays in the log, never the response.
+    assert "model exploded" not in resp.text
 
 
 def test_unregistered_handler_error_translates_to_502():
@@ -91,7 +106,7 @@ def test_unregistered_handler_error_translates_to_502():
          ):
         resp = client.post(URL, json={"concept": "Recursion"})
     assert resp.status_code == 502
-    assert "concept-description agent failed" in resp.json()["detail"]
+    assert resp.json()["detail"] == DESCRIBE_FAILED_DETAIL
 
 
 def test_empty_concept_rejected_with_400():
@@ -124,6 +139,64 @@ def test_unrelated_key_error_falls_through_to_500():
         resp = safe_client.post(URL, json={"concept": "Recursion"})
     assert resp.status_code == 500
     assert resp.json()["detail"] == "Internal server error."
+
+
+
+# ── Budget refusal (#119; release doc wave 2 §11) ─────────────────────────────
+
+
+def _refusal():
+    from datetime import datetime, timedelta, timezone
+
+    from services.llm_budget import LLMBudgetExceeded
+
+    return LLMBudgetExceeded(
+        limit=10, used=12, reset_at=datetime.now(timezone.utc) + timedelta(hours=2))
+
+
+def _assert_friendly_429(resp):
+    from services.llm_budget import ERROR_CODE
+
+    assert resp.status_code == 429, resp.text
+    body = resp.json()
+    # main.py's LLMBudgetExceeded handler: the same 429 the tutor and uploads
+    # answer with, never "concept-description agent failed".
+    assert body["error"]["code"] == ERROR_CODE
+    assert body["error"]["reset_at"]
+    assert "limit for AI features" in body["detail"]
+    assert int(resp.headers["Retry-After"]) > 0
+
+
+def test_budget_refusal_from_the_agent_run_is_the_friendly_429():
+    """The REAL run_agent_sync drives the run; the refusal raised inside it
+    (where _providers' budget gate raises) reaches the client as the 429."""
+    async def _refused_run(*_a, **_k):
+        raise _refusal()
+
+    with patch("routes.graph.concept_describe_agent.run", side_effect=_refused_run):
+        resp = client.post(URL, json={"concept": "Recursion"})
+    _assert_friendly_429(resp)
+
+
+def test_budget_refusal_wrapped_in_an_agent_error_is_still_the_429():
+    """A refusal that surfaces wrapped in an error the route maps to 502
+    (AgentRunError, a transport error) is unwrapped, not mislabelled."""
+    from pydantic_ai.exceptions import AgentRunError
+
+    wrapped = AgentRunError("run failed")
+    wrapped.__cause__ = _refusal()
+    with _agent_run_stub(), patch("routes.graph.run_agent_sync", side_effect=wrapped):
+        resp = client.post(URL, json={"concept": "Recursion"})
+    _assert_friendly_429(resp)
+
+
+def test_a_refused_description_is_not_cached():
+    fake = _FakeCache()
+    with _agent_run_stub(), patch("routes.graph.cache", fake), \
+         patch("routes.graph.run_agent_sync", side_effect=_refusal()):
+        resp = client.post(URL, json={"concept": "Recursion"})
+    assert resp.status_code == 429
+    assert fake.store == {}
 
 
 # ── Cross-student description cache (#97's Redis cache) ───────────────────────
@@ -199,3 +272,30 @@ def test_cache_key_names_the_model_mode_and_prompt_version():
         stand_in = _description_cache_key("Recursion", "CS101")
     assert real != stand_in
     assert PROMPT_VERSION in real
+
+
+# ── sec2 M4: only the student's own concepts, and a per-user budget ──────────
+
+
+def test_a_concept_off_the_students_map_is_refused_without_a_model_call():
+    run = MagicMock()
+    with _agent_run_stub(), patch("routes.graph.run_agent_sync", run), \
+         patch("routes.graph.topic_is_graph_concept", return_value=False) as on_map:
+        resp = client.post(URL, json={"concept": "Write me a cover letter"})
+    assert resp.status_code == 404
+    run.assert_not_called()
+    on_map.assert_called_once_with("user_andres", "Write me a cover letter", None)
+
+
+def test_descriptions_are_rate_limited_per_user():
+    from services import abuse_limits
+
+    with _agent_run_stub(), \
+         patch("routes.graph.run_agent_sync", return_value=_result("A thing.")) as run:
+        codes = [
+            client.post(URL, json={"concept": "Recursion"}).status_code
+            for _ in range(abuse_limits.CONCEPT_DESCRIBE.limit + 1)
+        ]
+    assert codes[:-1] == [200] * abuse_limits.CONCEPT_DESCRIBE.limit
+    assert codes[-1] == 429
+    assert run.call_count == abuse_limits.CONCEPT_DESCRIBE.limit

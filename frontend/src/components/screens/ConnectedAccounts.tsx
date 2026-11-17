@@ -11,7 +11,11 @@ import {
   type GradescopeStatus,
 } from "@/lib/api";
 import { humanizeError } from "@/lib/errorMessage";
-import { gradescopeConnectionState } from "@/components/Gradebook/gradescopeState";
+import {
+  gradescopeConnectionState,
+  gradescopeModeLabel,
+  gradescopeReauthShort,
+} from "@/components/Gradebook/gradescopeState";
 
 /**
  * Connected Accounts — settings surface for managing third-party
@@ -173,8 +177,7 @@ function ProviderCard({
   const state = status ? gradescopeConnectionState(status) : null;
   const connected = state === "connected" || state === "needs_reauth"; // credentials saved
   const needsReauth = state === "needs_reauth";
-  const modeLabel =
-    status?.auth_mode === "cookies" ? "session cookies (SSO)" : "password";
+  const modeLabel = status ? gradescopeModeLabel(status) : "";
   const syncProblem = state === "connected" && status?.last_sync_error
     ? SYNC_ERROR_COPY[status.last_sync_error]
     : null;
@@ -245,9 +248,9 @@ function ProviderCard({
             : state === null
               ? "Couldn't check status"
               : needsReauth
-                ? "Sign-in expired · reconnect needed"
+                ? (status ? gradescopeReauthShort(status) : "")
                 : connected
-                  ? `Credentials saved · ${modeLabel}`
+                  ? `Session saved · ${modeLabel}`
                   : "Not connected"}
         </div>
         <p

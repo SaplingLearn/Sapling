@@ -21,7 +21,8 @@ from services.academics import (
     user_enrollment_ids,
     user_offering_ids_for_course,
 )
-from services.encryption import decrypt_if_present, decrypt_json, encrypt_json
+from services.encryption import bind, decrypt_if_present, decrypt_json, encrypt_json
+from services.exam_proximity import is_assessment
 from services.request_limits import check_rate_limit
 
 logger = logging.getLogger(__name__)
@@ -102,20 +103,29 @@ def _tracked_graph(user_id: str, course_id: str) -> tuple[list[dict], list[tuple
     return nodes, relationships
 
 
-def _assessments(scope: dict, columns: str) -> tuple[list[dict], int]:
-    """Every exam/quiz of the enrollment, independent of today's date.
+#: Assignments read to find an enrollment's exams and quizzes. `other` rows
+#: are kept or not by their title (`is_assessment`), so more are read than kept.
+ASSESSMENT_READ_LIMIT = MAX_ASSESSMENTS * 4
+
+
+def _assessments(scope: dict, columns: str) -> tuple[list[dict], bool]:
+    """Every exam/quiz of the enrollment (`is_assessment`), independent of
+    today's date, and whether any was left out.
 
     The evidence (and so its hash) must not move as days pass; the upcoming
     window is applied only when presenting (see present()). Keeps the latest
     MAX_ASSESSMENTS, returned in due-date order.
     """
-    rows, count = table("assignments").select_with_count(columns, filters={
+    rows = table("assignments").select(columns, filters={
         "enrollment_id": f"eq.{scope['enrollment_id']}",
-        "assignment_type": "in.(exam,quiz)", "due_date": "not.is.null",
-    }, order="due_date.desc,id", limit=MAX_ASSESSMENTS)
-    rows = [r for r in rows if r.get("due_date")]
-    rows.sort(key=lambda r: (r["due_date"], r["id"]))
-    return rows, count
+        "or": "(assignment_type.in.(exam,quiz,other),assignment_type.is.null)",
+        "due_date": "not.is.null",
+    }, order="due_date.desc,id", limit=ASSESSMENT_READ_LIMIT) or []
+    kept = [r for r in rows if r.get("due_date") and is_assessment(r)]
+    left_out = len(kept) > MAX_ASSESSMENTS or len(rows) >= ASSESSMENT_READ_LIMIT
+    kept = kept[:MAX_ASSESSMENTS]
+    kept.sort(key=lambda r: (r["due_date"], r["id"]))
+    return kept, left_out
 
 
 def build_snapshot(user_id: str, scope: dict, today: date | None = None, *, evidence: bool = True) -> dict:
@@ -165,7 +175,8 @@ def build_snapshot(user_id: str, scope: dict, today: date | None = None, *, evid
         "course_id": f"eq.{course['course_code']}", "category": "eq.catalog",
     }, order="created_at.desc,id", limit=5)
     for row in catalogs:
-        add_source(f"catalog:{row['id']}", "BU catalog", decrypt_if_present(row.get("chunk_text")) if evidence else None)
+        add_source(f"catalog:{row['id']}", "BU catalog", decrypt_if_present(
+            row.get("chunk_text"), bind=bind("course_chunks", "chunk_text", row)) if evidence else None)
 
     docs, doc_count = table("documents").select_with_count(
         "id,file_name,summary,extracted_text,concept_notes" if evidence else "id,file_name", filters={
@@ -176,20 +187,21 @@ def build_snapshot(user_id: str, scope: dict, today: date | None = None, *, evid
     for row in docs:
         # Include concept notes even on older uploads without stored full text.
         text = "\n".join(filter(None, [
-            decrypt_if_present(row.get("summary")),
-            decrypt_if_present(row.get("concept_notes")),
-            decrypt_if_present(row.get("extracted_text")),
+            decrypt_if_present(row.get("summary"), bind=bind("documents", "summary", row)),
+            decrypt_if_present(row.get("concept_notes"), bind=bind("documents", "concept_notes", row)),
+            decrypt_if_present(row.get("extracted_text"), bind=bind("documents", "extracted_text", row)),
         ])) if evidence else None
         add_source(f"document:{row['id']}", row["file_name"], text)
 
-    assessments, assessment_count = _assessments(
+    assessments, assessments_left_out = _assessments(
         scope, "id,title,due_date,assignment_type,notes" if evidence else "id,title,due_date,assignment_type",
     )
     for row in assessments:
         if len(row["title"]) > 256:
             truncated = True
             row["title"] = row["title"][:256]
-        notes = (decrypt_if_present(row.pop("notes", None)) or "") if evidence else ""
+        notes = (decrypt_if_present(row.pop("notes", None), bind=bind("assignments", "notes", row))
+                 or "") if evidence else ""
         add_source(f"assessment:{row['id']}", row["title"], f"{row['title']}\n{notes}")
 
     # Tracked graph concepts are evidence for material already processed; scores
@@ -208,7 +220,13 @@ def build_snapshot(user_id: str, scope: dict, today: date | None = None, *, evid
         return {"payload": payload, "nodes": nodes}
     digest = hashlib.sha256(json.dumps({"version": PROMPT_VERSION, **payload}, sort_keys=True).encode()).hexdigest()
     return {"payload": payload, "hash": digest, "nodes": nodes,
-            "truncated": truncated or doc_count > MAX_DOCUMENTS or assessment_count > MAX_ASSESSMENTS}
+            "truncated": truncated or doc_count > MAX_DOCUMENTS or assessments_left_out}
+
+
+def _outline_json(cache: dict):
+    """The cached outline's JSON, opened in its own cell (keyed on the
+    enrollment, AAD finding M13)."""
+    return decrypt_json(cache["content"], bind=bind("topic_checklists", "content", cache))
 
 
 def _cache(scope: dict) -> dict | None:
@@ -233,19 +251,30 @@ def _parse_timestamp(value: str | None) -> datetime | None:
     return stamp.replace(tzinfo=timezone.utc) if stamp.tzinfo is None else stamp
 
 
+def _linked_ids(topic_assessment_ids: list[str], enrolled: list[dict]) -> list[str]:
+    """The ids of the enrollment's assessments a topic is linked to, in due-date
+    order. An id the outline kept for an assessment since deleted is dropped."""
+    wanted = set(topic_assessment_ids)
+    return [a["id"] for a in enrolled if a["id"] in wanted]
+
+
 def present(scope: dict, snapshot: dict, cache: dict | None, now: datetime) -> dict:
     """The checklist as served. Freshness (``needs_refresh``/``warnings``) is
     reported only for a full evidence snapshot; a live snapshot (a checkmark)
     leaves those to the client's last GET/refresh."""
-    outline = TopicOutline.model_validate(decrypt_json(cache["content"])) if cache and snapshot["payload"]["sources"] else None
+    outline = TopicOutline.model_validate(_outline_json(cache)) if cache and snapshot["payload"]["sources"] else None
     progress = list(page_all(table("topic_checklist_progress"), "topic_key,reviewed_at", filters={
         "enrollment_id": f"eq.{scope['enrollment_id']}",
     }, order="topic_key")) if cache else []
     reviewed = {r["topic_key"]: r["reviewed_at"] for r in progress}
     nodes = {normalized_name(n["concept_name"]): n for n in snapshot["nodes"]}
     # The upcoming window is a presentation concern only (never in the hash).
+    # It governs `assessments` (what is shown as coming up, and urgency);
+    # `assessment_ids` is every exam/quiz the outline links, whatever its date,
+    # so an exam already sat still says which topics it was on.
     window_end = (now.date() + timedelta(days=ASSESSMENT_WINDOW_DAYS)).isoformat()
-    assessments = {a["id"]: a for a in snapshot["payload"]["assessments"]
+    enrolled = snapshot["payload"]["assessments"]
+    assessments = {a["id"]: a for a in enrolled
                    if now.date().isoformat() <= a["due_date"][:10] <= window_end}
     source_labels = {s["id"]: s["label"] for s in snapshot["payload"]["sources"]}
     topics = []
@@ -278,6 +307,7 @@ def present(scope: dict, snapshot: dict, cache: dict | None, now: datetime) -> d
             "review_reasons": (["Weak mastery"] if weak else []) + (["Review overdue"] if stale else []),
             "priority": "high" if urgent and status != "mastered" or weak or prereq_gaps else "normal",
             "assessments": linked,
+            "assessment_ids": _linked_ids(topic.assessment_ids, enrolled),
             "sources": [{"id": s, "label": source_labels[s]} for s in topic.source_ids if s in source_labels],
             "node_id": node["id"] if node else None,
         })
@@ -327,7 +357,7 @@ def refresh_checklist(user_id: str, course_id: str, semester: str | None = None)
     if retry is not None:
         raise HTTPException(429, "Please wait before generating another checklist.", headers={"Retry-After": str(retry)})
     try:
-        prior = TopicOutline.model_validate(decrypt_json(cache["content"])) if cache else None
+        prior = TopicOutline.model_validate(_outline_json(cache)) if cache else None
         outline = run_agent_sync(_generate({**snapshot["payload"],
             "existing_topic_names": [t.name for t in prior.topics] if prior else [],
         }, user_id))
@@ -337,7 +367,9 @@ def refresh_checklist(user_id: str, course_id: str, semester: str | None = None)
         raise HTTPException(503, "Topic generation is temporarily unavailable. Please try again.") from None
     cache = {
         "enrollment_id": scope["enrollment_id"], "input_hash": snapshot["hash"],
-        "content": encrypt_json(outline.model_dump()), "generated_at": now.isoformat(),
+        "content": encrypt_json(outline.model_dump(), bind=bind(
+            "topic_checklists", "content", scope["enrollment_id"])),
+        "generated_at": now.isoformat(),
     }
     table("topic_checklists").upsert(cache, on_conflict="enrollment_id")
     return present(scope, snapshot, cache, now)
@@ -347,7 +379,7 @@ def set_reviewed(user_id: str, course_id: str, key: str, checked: bool, semester
     now = datetime.now(timezone.utc)
     scope = resolve_scope(user_id, course_id, semester)
     cache = _cache(scope)
-    if not cache or key not in {topic_key(t.name) for t in TopicOutline.model_validate(decrypt_json(cache["content"])).topics}:
+    if not cache or key not in {topic_key(t.name) for t in TopicOutline.model_validate(_outline_json(cache)).topics}:
         raise HTTPException(404, "Topic not found in this checklist.")
     filters = {"enrollment_id": f"eq.{scope['enrollment_id']}", "topic_key": f"eq.{key}"}
     if checked:

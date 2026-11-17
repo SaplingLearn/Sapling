@@ -64,6 +64,8 @@ export type GraphEdge = {
   source: string;
   target: string;
   strength: number;
+  /** Absent on synthesized course spokes and on older payloads. */
+  relationship_type?: "related" | "prerequisite" | "builds_on" | "part_of";
 };
 
 // Deep-link from a knowledge-graph node into the AI Tutor (`/learn`).

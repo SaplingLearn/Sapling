@@ -45,7 +45,7 @@ def _index():
 
 
 def test_the_stored_column_is_ciphertext(db_conn):
-    from services.encryption import decrypt
+    from services.encryption import bind, decrypt
     from services.rag_service import chunk_id
 
     assert _index() == 1
@@ -56,7 +56,7 @@ def test_the_stored_column_is_ciphertext(db_conn):
     ).fetchone()
 
     assert row["chunk_text"] != TEXT
-    assert decrypt(row["chunk_text"]) == TEXT
+    assert decrypt(row["chunk_text"], bind=bind("course_chunks", "chunk_text", row)) == TEXT
     # …and the id is still the PLAINTEXT content hash, so a re-upload merges.
     assert row["id"] == chunk_id(COURSE_CODE, TEXT)
     assert row["chunk_hash"] == row["id"]

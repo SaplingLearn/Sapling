@@ -1,8 +1,13 @@
 import pytest
 
 from models import AnswerQuestionBody
-from services.quiz_grading import grade_written
-from services.quiz_algebra import equivalent_algebra
+from services.quiz.grading import grade_written
+from services.quiz.algebra import equivalent_algebra
+from tests.db_fakes import with_async_twins
+from tests.split_patches import patch_quiz
+
+# #117: a sync PostgREST call reached on the event loop raises here.
+pytestmark = pytest.mark.usefixtures("no_sync_db_on_loop")
 
 
 @pytest.mark.parametrize("answer", ["0.5", "1/2", "2 / 4", "50%", "5e-1", "+.5", "０.５"])
@@ -172,7 +177,7 @@ def test_numeric_accepts_thousands_separators_and_mixed_numbers(answer, expected
 
 @pytest.mark.parametrize("answer", ["1,00", "1,5", "10,00,000", "1 2", "1 1/2/3", "1 -1/2", ",100"])
 def test_numeric_rejects_ambiguous_separators(answer):
-    from services.quiz_grading import numeric_value
+    from services.quiz.grading import numeric_value
     assert numeric_value(answer) is None
 
 
@@ -194,8 +199,8 @@ def _topup_message(question_format, first):
         SimpleNamespace(output=Quiz.model_validate({"questions": [_item(question="Fresh?")]})),
     ])
     with (
-        patch("routes.quiz.table", side_effect=_generate_factory()),
-        patch("routes.quiz.quiz_agent.run", new=run),
+        patch_quiz("table", side_effect=with_async_twins(_generate_factory())),
+        patch("services.quiz.generation.quiz_agent.run", new=run),
     ):
         TestClient(app).post("/api/quiz/generate", json={
             "user_id": "user_andres", "concept_node_id": "node1", "num_questions": 3,

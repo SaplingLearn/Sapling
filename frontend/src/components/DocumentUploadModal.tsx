@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { Icon } from "./Icon";
 import { CustomSelect } from "./CustomSelect";
 import { useScrollLock } from "@/lib/useScrollLock";
+import { useLatestRequest } from "@/lib/useLatestRequest";
 import { useToast } from "./ToastProvider";
 import {
   uploadDocumentStream,
@@ -16,6 +17,7 @@ import {
   type UploadEvent,
   type UploadResultData,
 } from "@/lib/api";
+import { humanizeError } from "@/lib/errorMessage";
 
 const MAX_FILES = 5;
 const MAX_SIZE = 100 * 1024 * 1024;
@@ -127,13 +129,22 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
     }
   }, [open, abortAll]);
 
+  // Latest query wins (#769): an older in-flight search must not land after
+  // a newer one and replace its results.
+  const courseSearchReq = useLatestRequest();
   React.useEffect(() => {
+    const run = courseSearchReq.begin();
     if (!courseQuery.trim()) { setCourseResults([]); return; }
     const t = setTimeout(() => {
-      onboardingCoursesSearch(courseQuery).then(r => setCourseResults(r.courses ?? [])).catch(() => setCourseResults([]));
+      onboardingCoursesSearch(courseQuery)
+        .then(r => { if (run.isCurrent()) setCourseResults(r.courses ?? []); })
+        .catch(() => { if (run.isCurrent()) setCourseResults([]); });
     }, 200);
-    return () => clearTimeout(t);
-  }, [courseQuery]);
+    return () => {
+      clearTimeout(t);
+      courseSearchReq.cancel();
+    };
+  }, [courseQuery, courseSearchReq]);
 
   const allCourses = React.useMemo<CourseOption[]>(() => {
     const seen = new Set(courses.map(c => c.course_id));
@@ -289,7 +300,7 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
         await updateDocumentCategory(item.docId, userId, next);
         toast.success("Category updated");
       } catch (err) {
-        toast.error(`Failed: ${String(err)}`);
+        toast.error(humanizeError(err, "Couldn't upload that file. Try again."));
       }
     }
   };
@@ -308,7 +319,7 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
         ? prev
         : [...prev, { course_id: courseId, course_code: course.course_code, course_name: course.course_name }]);
     } catch (err) {
-      toast.error(`Failed: ${String(err)}`);
+      toast.error(humanizeError(err, "Couldn't upload that file. Try again."));
     } finally {
       setAddingCourse(false);
     }

@@ -280,7 +280,7 @@ export function QuizPrimitivesGallery() {
           <ConceptNode size={14} variant={{ kind: "dot" }} courseColor={COURSE_COLOR} {...marks.baseCases} />
           <ConceptNode size={15} variant={{ kind: "dot" }} courseColor={COURSE_COLOR} {...marks.recursion} />
         </Row>
-        <Row label="node · 26px, with the glow">
+        <Row label="node · 26px">
           <ConceptNode size={26} courseColor={COURSE_COLOR} {...marks.recursion} />
           <ConceptNode size={26} courseColor={COURSE_COLOR} {...marks.baseCases} />
           <ConceptNode size={26} courseColor={COURSE_COLOR} {...marks.mastered} />

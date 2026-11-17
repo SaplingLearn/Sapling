@@ -1,11 +1,14 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+
+from db.scope import service_route
 
 from services.academics import current_term, list_terms
 
 router = APIRouter()
 
 
-@router.get("/semesters")
+# #115: public (no session) catalog read -> service role under db_user_scope.
+@router.get("/semesters", dependencies=[Depends(service_route)])
 def get_semesters():
     """All terms (semesters), most recent first — for the frontend SemesterChips (#138).
 

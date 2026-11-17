@@ -1,10 +1,13 @@
-"""Owner seeding against real local Supabase, with raw SQL and app API assertions."""
+"""Owner seeding against real local Supabase, with raw SQL and app API assertions.
+
+A new local account gets the rich copy and then the study dataset
+(`db.seed_local_study`), so the counts below are the two together."""
 import pytest
 
 from db import seed_local_rich
 from e2e_oracles import judges
 from e2e_oracles.gather import _CIPHERTEXT_MANIFEST, _ORPHAN_CHECKS
-from services.encryption import decrypt
+from services.encryption import bind, decrypt
 from tests.integration.conftest import _client_for
 
 pytestmark = pytest.mark.integration
@@ -20,7 +23,7 @@ def test_personal_account_seed_populates_api_surfaces_and_stays_idempotent(
 
     paths = [
         (f"/api/graph/{uid}/courses", "courses", 4),
-        (f"/api/documents/user/{uid}", "documents", 3),
+        (f"/api/documents/user/{uid}", "documents", 38),
         (f"/api/notes/user/{uid}", "notes", 2),
         (f"/api/social/rooms/{uid}", "rooms", 2),
     ]
@@ -38,13 +41,17 @@ def test_personal_account_seed_populates_api_surfaces_and_stays_idempotent(
 
     graph = client.get(f"/api/graph/{uid}")
     assert graph.status_code == 200, graph.text
-    assert len([n for n in graph.json()["nodes"] if n.get("mastery_tier") != "subject_root"]) == 13
+    assert len([n for n in graph.json()["nodes"] if n.get("mastery_tier") != "subject_root"]) == 51
     quizzes = client.get("/api/quiz/attempts", params={"user_id": uid})
     assert quizzes.status_code == 200, quizzes.text
-    assert len(quizzes.json()["attempts"]) == 3
+    # The account has 44 attempts; the list answers its newest page of 20.
+    assert len(quizzes.json()["attempts"]) == 20
     gradebook = client.get("/api/gradebook/summary", params={"user_id": uid, "semester": "Fall 2025"})
     assert gradebook.status_code == 200, gradebook.text
     assert len(gradebook.json()["courses"]) == 2
+    guides = client.get(f"/api/study-guide/{uid}/guides")
+    assert guides.status_code == 200, guides.text
+    assert len(guides.json()["guides"]) == 14
     me = client.get("/api/auth/me")
     assert me.status_code == 200 and me.json()["onboarding_completed"] is True
 
@@ -56,7 +63,10 @@ def test_personal_account_seed_populates_api_surfaces_and_stays_idempotent(
 
     # Compare stored rows, including ciphertext/timestamps, rather than only
     # counts: a merge-upsert would re-encrypt and overwrite edits on every run.
-    tables = ["users", "enrollments", "graph_nodes", "documents", "notes", "quiz_attempts", "course_chunks"]
+    tables = [
+        "users", "enrollments", "graph_nodes", "documents", "notes", "quiz_attempts", "course_chunks",
+        "study_guides", "flashcards", "flashcard_sets", "quiz_responses",
+    ]
     before = {
         name: db_conn.execute(f'SELECT * FROM "{name}" ORDER BY id').fetchall()
         for name in tables
@@ -67,9 +77,15 @@ def test_personal_account_seed_populates_api_surfaces_and_stays_idempotent(
 
     for name, pk, column in _CIPHERTEXT_MANIFEST:
         rows = db_conn.execute(
-            f'SELECT "{pk}", "{column}" FROM "{name}" WHERE "{column}" IS NOT NULL',
+            f'SELECT * FROM "{name}" WHERE "{column}" IS NOT NULL',
         ).fetchall()
-        assert judges.ciphertext_findings(name, column, [(r[pk], r[column]) for r in rows], decrypt) == []
+        # Each value opens in its own cell (finding M13): the row's binding.
+        cell = {r[column]: r for r in rows}
+
+        def opened(value, name=name, column=column, cell=cell):
+            return decrypt(value, bind=bind(name, column, cell[value]))
+
+        assert judges.ciphertext_findings(name, column, [(r[pk], r[column]) for r in rows], opened) == []
     for name, sql in _ORPHAN_CHECKS:
         assert judges.orphan_findings(name, [r["id"] for r in db_conn.execute(sql).fetchall()]) == []
 

@@ -20,8 +20,11 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
+import httpx
+
 from db.connection import table
 from services.encryption import (
+    bind,
     decrypt_if_present,
     encrypt_if_present,
 )
@@ -39,9 +42,10 @@ def _now_iso() -> str:
 
 def _decrypt_row(row: dict) -> dict:
     out = dict(row)
-    out["title"] = decrypt_if_present(out.get("title")) or ""
-    out["body"] = decrypt_if_present(out.get("body")) or ""
-    out["last_summary"] = decrypt_if_present(out.get("last_summary"))
+    out["title"] = decrypt_if_present(out.get("title"), bind=bind("notes", "title", row)) or ""
+    out["body"] = decrypt_if_present(out.get("body"), bind=bind("notes", "body", row)) or ""
+    out["last_summary"] = decrypt_if_present(
+        out.get("last_summary"), bind=bind("notes", "last_summary", row))
     out["tags"] = list(out.get("tags") or [])
     return out
 
@@ -59,8 +63,8 @@ async def create_note(
         "id": note_id,
         "user_id": user_id,
         "offering_id": offering_id,
-        "title": encrypt_if_present(title) if title else None,
-        "body": encrypt_if_present(body) if body else None,
+        "title": encrypt_if_present(title, bind=bind("notes", "title", note_id)) if title else None,
+        "body": encrypt_if_present(body, bind=bind("notes", "body", note_id)) if body else None,
         "tags": list(tags or []),
         "created_at": now,
         "updated_at": now,
@@ -91,12 +95,25 @@ async def get_note(note_id: str, user_id: str) -> dict | None:
     return _decrypt_row(rows[0])
 
 
+def tutor_topic(note: dict) -> str:
+    """The topic Send to tutor opens the tutor on: the first line of the
+    note's title, at most 80 characters ("Untitled note" without one). A tutor
+    start re-derives it to tell the note's title from a typed topic
+    (services/tutor/note_topic.py), so both sides read it here."""
+    title = (note.get("title") or "").strip() or "Untitled note"
+    return title.splitlines()[0][:80].strip()
+
+
 async def list_notes(
     user_id: str,
-    offering_id: str | None = None,
+    offering_id: str | list[str] | None = None,
 ) -> list[dict]:
+    """The user's live notes, newest first. ``offering_id`` narrows them to
+    one offering, or (a list) to any of several — a course's offerings."""
     filters: dict[str, str] = {"user_id": f"eq.{user_id}", "deleted_at": "is.null"}
-    if offering_id:
+    if isinstance(offering_id, list):
+        filters["offering_id"] = f"in.({','.join(offering_id)})"
+    elif offering_id:
         filters["offering_id"] = f"eq.{offering_id}"
 
     def _fetch() -> list[dict]:
@@ -117,9 +134,11 @@ async def update_note(
 ) -> dict | None:
     update: dict[str, Any] = {"updated_at": _now_iso()}
     if "title" in patch:
-        update["title"] = encrypt_if_present(patch["title"]) if patch["title"] else None
+        update["title"] = (encrypt_if_present(patch["title"], bind=bind("notes", "title", note_id))
+                           if patch["title"] else None)
     if "body" in patch:
-        update["body"] = encrypt_if_present(patch["body"]) if patch["body"] else None
+        update["body"] = (encrypt_if_present(patch["body"], bind=bind("notes", "body", note_id))
+                          if patch["body"] else None)
     if "tags" in patch:
         update["tags"] = list(patch["tags"] or [])
     if "offering_id" in patch:
@@ -157,7 +176,8 @@ async def save_summary(
 ) -> dict | None:
     """Persist the latest `/summarize` agent output on the note row."""
     update = {
-        "last_summary": encrypt_if_present(summary) if summary else None,
+        "last_summary": (encrypt_if_present(summary, bind=bind("notes", "last_summary", note_id))
+                         if summary else None),
         "last_summary_at": _now_iso(),
         "updated_at": _now_iso(),
     }
@@ -178,53 +198,131 @@ async def save_summary(
     return _decrypt_row(rows[0])
 
 
-async def _note_belongs_to_user(note_id: str, user_id: str) -> bool:
+async def _owned(
+    table_name: str, row_id: str, user_id: str, extra: dict | None = None
+) -> bool:
+    """The one ownership probe behind the note AND node checks: does
+    `table_name` hold a row `row_id` owned by `user_id`? A row that is
+    someone else's, and a row that does not exist (or vanished), are the
+    same False — callers turn both into one 404, so the answer is never an
+    existence oracle for another student's ids."""
+    filters = {"id": f"eq.{row_id}", "user_id": f"eq.{user_id}", **(extra or {})}
+
     def _fetch() -> list[dict]:
-        return table("notes").select(
-            "id",
-            filters={
-                "id": f"eq.{note_id}",
-                "user_id": f"eq.{user_id}",
-                "deleted_at": "is.null",
-            },
-            limit=1,
-        ) or []
+        return table(table_name).select("id", filters=filters, limit=1) or []
     rows = await asyncio.to_thread(_fetch)
     return bool(rows)
+
+
+async def _note_belongs_to_user(note_id: str, user_id: str) -> bool:
+    return await _owned("notes", note_id, user_id, {"deleted_at": "is.null"})
+
+
+async def _node_belongs_to_user(node_id: str, user_id: str) -> bool:
+    return await _owned("graph_nodes", node_id, user_id)
+
+
+# Postgres foreign_key_violation. PostgREST answers it with a 409 — the same
+# status as a unique conflict — so only the body's SQLSTATE tells them apart.
+_FK_VIOLATION = "23503"
+
+
+def _is_fk_violation(exc: httpx.HTTPStatusError) -> bool:
+    if exc.response.status_code != 409:
+        return False
+    try:
+        body = exc.response.json()
+    except ValueError:
+        return False
+    return isinstance(body, dict) and body.get("code") == _FK_VIOLATION
+
+
+def _upsert_links(rows: list[dict]) -> bool:
+    """Write junction rows idempotently: ON CONFLICT (note_id,
+    concept_node_id) DO NOTHING, so re-linking an already-linked concept
+    (or re-running extract-concepts) is a no-op, not a PK-conflict 500.
+
+    Returns False when a row's note or node vanished between the caller's
+    ownership check and this write (the FK refuses it) — the same answer as
+    a node the caller never owned. Any other failure propagates."""
+    try:
+        table("note_concepts").upsert(
+            rows, on_conflict="note_id,concept_node_id", ignore_duplicates=True
+        )
+    except httpx.HTTPStatusError as exc:
+        if _is_fk_violation(exc):
+            return False
+        raise
+    return True
 
 
 async def link_concept(
     note_id: str, user_id: str, concept_node_id: str
 ) -> bool:
-    """Insert a (note_id, concept_node_id) row. Returns True on success,
-    False if the note does not belong to user_id (silent reject — caller
-    converts to 404)."""
+    """Link a concept node to a note (idempotent). Returns True when the
+    link exists afterwards, False if the note OR the concept node does not
+    belong to user_id — including a node (or note) that does not exist or
+    was deleted mid-request (silent reject — caller converts to 404).
+
+    The node check closes a cross-user write (#115): without it a caller
+    could link another student's graph node to their own note, and the
+    FK answer (insert ok vs. violation) was an existence oracle for any
+    node id. A foreign node, a missing node and one that vanishes between
+    the check and the write all take the same False.
+    """
     if not await _note_belongs_to_user(note_id, user_id):
         return False
+    if not await _node_belongs_to_user(concept_node_id, user_id):
+        return False
+    row = {"note_id": note_id, "concept_node_id": concept_node_id}
+    return await asyncio.to_thread(_upsert_links, [row])
 
-    def _insert() -> None:
-        table("note_concepts").insert(
-            {"note_id": note_id, "concept_node_id": concept_node_id}
-        )
-    await asyncio.to_thread(_insert)
-    return True
+
+async def link_prechecked_concepts(note_id: str, node_ids: list[str]) -> int:
+    """Bulk-link nodes to a note with NO ownership checks — one write
+    instead of two probes plus an insert per node.
+
+    The caller MUST already have proved both sides belong to the student:
+    the note via a user-scoped read (`get_note`), the nodes via a
+    `graph_nodes` select filtered by the same `user_id` (extract-concepts
+    does both). Anything else goes through `link_concept`.
+
+    Idempotent like `link_concept`. If the batch hits an FK violation (a
+    node deleted concurrently), it retries row by row so the survivors still
+    link. Returns how many links exist afterwards."""
+    ids = list(dict.fromkeys(i for i in node_ids if i))
+    if not ids:
+        return 0
+    rows = [{"note_id": note_id, "concept_node_id": i} for i in ids]
+    if await asyncio.to_thread(_upsert_links, rows):
+        return len(rows)
+    linked = 0
+    for row in rows:
+        if await asyncio.to_thread(_upsert_links, [row]):
+            linked += 1
+    return linked
 
 
 async def unlink_concept(
     note_id: str, user_id: str, concept_node_id: str
 ) -> bool:
+    """Remove a (note, node) link. False — the caller's 404 — when the note
+    or the node is not the caller's (or no longer exists), and when there
+    was no such link to remove."""
     if not await _note_belongs_to_user(note_id, user_id):
         return False
+    if not await _node_belongs_to_user(concept_node_id, user_id):
+        return False
 
-    def _delete() -> None:
-        table("note_concepts").delete(
+    def _delete() -> list:
+        return table("note_concepts").delete(
             filters={
                 "note_id": f"eq.{note_id}",
                 "concept_node_id": f"eq.{concept_node_id}",
             }
-        )
-    await asyncio.to_thread(_delete)
-    return True
+        ) or []
+    removed = await asyncio.to_thread(_delete)
+    return bool(removed)
 
 
 async def list_linked_concepts(note_id: str, user_id: str) -> list[dict]:

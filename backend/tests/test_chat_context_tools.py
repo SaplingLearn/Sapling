@@ -90,7 +90,7 @@ class TestSearchCourseMaterialsUserScope:
             return []
 
         with patch("agents.tools.chat_context.table") as t, patch(
-            "agents.tools.chat_context.decrypt_if_present", side_effect=lambda v: v
+            "agents.tools.chat_context.decrypt_if_present", side_effect=lambda v, **_kw: v
         ):
             t.return_value.select.side_effect = _row_scoped_select
             result = _run(
@@ -154,7 +154,7 @@ class TestSearchCourseMaterials:
             },
         ]
         with patch("agents.tools.chat_context.table") as t, patch(
-            "agents.tools.chat_context.decrypt_if_present", side_effect=lambda v: v
+            "agents.tools.chat_context.decrypt_if_present", side_effect=lambda v, **_kw: v
         ):
             t.return_value.select.return_value = rows
             result = _run(
@@ -188,7 +188,7 @@ class TestSearchCourseMaterials:
             },
         ]
         with patch("agents.tools.chat_context.table") as t, patch(
-            "agents.tools.chat_context.decrypt_if_present", side_effect=lambda v: v
+            "agents.tools.chat_context.decrypt_if_present", side_effect=lambda v, **_kw: v
         ):
             t.return_value.select.return_value = rows
             result = _run(
@@ -210,12 +210,12 @@ class TestSearchCourseMaterials:
             },
         ]
 
-        def fake_decrypt(value):
+        def fake_decrypt(value, **_kw):
             if value == "ENC::summary_blob":
                 return "decrypted summary text"
             return value
 
-        def fake_decrypt_json(value):
+        def fake_decrypt_json(value, **_kw):
             assert value == "ENC::notes_blob"
             return [{"name": "Foo", "description": "decrypted note"}]
 
@@ -260,7 +260,7 @@ class TestReadSessionHistory:
             },
         ]
 
-        def fake_decrypt(value):
+        def fake_decrypt(value, **_kw):
             return {
                 "ENC::user_msg": "what is recursion?",
                 "ENC::asst_msg": "It is a function that calls itself.",
@@ -291,7 +291,7 @@ class TestReadSessionHistory:
             {"role": "model", "content": "keeper", "created_at": "t3"},
         ]
         with patch("agents.tools.chat_context.table") as t, patch(
-            "agents.tools.chat_context.decrypt_if_present", side_effect=lambda v: v
+            "agents.tools.chat_context.decrypt_if_present", side_effect=lambda v, **_kw: v
         ):
             t.return_value.select.return_value = rows
             result = _run(read_session_history("sess_1"))
@@ -591,7 +591,7 @@ def _patch_both_tables(factory):
     stack.enter_context(patch("agents.tools.chat_context.table", side_effect=factory))
     stack.enter_context(patch("services.academics.table", side_effect=factory))
     stack.enter_context(
-        patch("agents.tools.chat_context.decrypt_if_present", side_effect=lambda v: v)
+        patch("agents.tools.chat_context.decrypt_if_present", side_effect=lambda v, **_kw: v)
     )
     return stack
 
@@ -647,7 +647,7 @@ class TestSearchCourseMaterialsOfferingScope:
 
         with patch("agents.tools.chat_context.table", side_effect=_table), \
                 patch("services.academics.table", side_effect=_table), \
-                patch("agents.tools.chat_context.decrypt_if_present", side_effect=lambda v: v):
+                patch("agents.tools.chat_context.decrypt_if_present", side_effect=lambda v, **_kw: v):
             result = _run(
                 search_course_materials("course_cs132", "convex hull", user_id="user_mine")
             )

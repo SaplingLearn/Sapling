@@ -15,6 +15,8 @@ import { API_URL, getMe, onSessionExpired } from '@/lib/api';
 import { readAccountSettings } from '@/lib/accountSettings';
 import { isAppShellRoute } from '@/lib/appRoutes';
 import { clearUserScopedStorage } from '@/lib/userScopedStorage';
+import { purgeGuestOnboardingDraft } from '@/lib/onboardingDraft';
+import { cacheBustedAvatar, isDeadSessionStatus, profileFields } from './userProfile';
 import {
   ACCOUNT_REFRESH_MS,
   accountRefreshDue,
@@ -41,6 +43,15 @@ interface UserContextValue {
   setActiveUser: (id: string, name: string, avatar?: string, opts?: { persist?: boolean }) => void;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
+  /**
+   * GET /api/auth/me's `onboarding_completed` for this account; null until it
+   * has answered (and after an account change). The shell sends a student
+   * whose answer is `false` to /onboarding (components/OnboardingGate.tsx).
+   */
+  onboardingCompleted: boolean | null;
+  /** The onboarding save just finished (or found it already finished): the
+   * shell may let this account in without waiting for the next /me. */
+  markOnboarded: () => void;
   // Direct setter exposed so callers can do an optimistic UI update
   // (e.g. show a local blob URL for an avatar the user just picked
   // before the upload finishes). The next refreshProfile() will
@@ -62,6 +73,8 @@ export const UserContext = createContext<UserContextValue>({
   setActiveUser: () => {},
   signOut: () => Promise.resolve(),
   refreshProfile: () => Promise.resolve(),
+  onboardingCompleted: null,
+  markOnboarded: () => {},
   setAvatarUrl: () => {},
 });
 
@@ -72,6 +85,48 @@ export function shouldBounceToSignin(pathname: string): boolean {
   return isAppShellRoute(pathname);
 }
 
+/**
+ * The identity persisted in `sapling_user`, or null when there isn't a usable
+ * one — absent, unparseable, or parsed to something that doesn't name an
+ * account. A value that is present but unusable is REMOVED: leaving it is what
+ * made a corrupt copy permanent, since every later boot read the same bad
+ * bytes and took the same broken path.
+ */
+function readStoredIdentity(): { id: string; name: string; avatar: string } | null {
+  let raw: string | null = null;
+  try {
+    raw = localStorage.getItem('sapling_user');
+  } catch {
+    return null; // storage disabled (private mode, blocked cookies)
+  }
+  if (!raw) return null;
+
+  let parsed: unknown = null;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    parsed = null;
+  }
+  // `typeof null === 'object'`, and an array would destructure to undefined
+  // ids — both have to fail this check, not just non-objects.
+  const ok =
+    typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) &&
+    typeof (parsed as { id?: unknown }).id === 'string' &&
+    (parsed as { id: string }).id !== '';
+  if (!ok) {
+    try {
+      localStorage.removeItem('sapling_user');
+    } catch {}
+    return null;
+  }
+  const value = parsed as { id: string; name?: unknown; avatar?: unknown };
+  return {
+    id: value.id,
+    name: typeof value.name === 'string' ? value.name : '',
+    avatar: typeof value.avatar === 'string' ? value.avatar : '',
+  };
+}
+
 /** The account id persisted in `sapling_user`, or '' (none / unreadable). */
 function persistedIdentity(): string {
   try {
@@ -79,6 +134,37 @@ function persistedIdentity(): string {
     return saved && typeof saved.id === 'string' ? saved.id : '';
   } catch {
     return '';
+  }
+}
+
+/**
+ * Write a display name /me just confirmed through to `sapling_user`, so the
+ * next page load boots with it — only onto this account's own copy, and only
+ * when it changed. An unreadable or unwritable copy is left as it is.
+ */
+function persistConfirmedName(uid: string, name: string): void {
+  try {
+    const saved = JSON.parse(localStorage.getItem('sapling_user') ?? 'null');
+    if (saved && saved.id === uid && saved.name !== name) {
+      localStorage.setItem('sapling_user', JSON.stringify({ ...saved, name }));
+    }
+  } catch {}
+}
+
+/** On an auth-flow route (`/auth/*`), which owns its own identity bootstrap. */
+function onAuthFlowRoute(): boolean {
+  return typeof window !== 'undefined' && window.location.pathname.startsWith('/auth');
+}
+
+/**
+ * After a cleared session: on a shell route there is no usable UI left
+ * (every screen gates on userId) and the next server navigation would be
+ * bounced by the middleware anyway — bounce now, with the same greppable
+ * code the middleware uses.
+ */
+function bounceToSigninFromShell(): void {
+  if (typeof window !== 'undefined' && shouldBounceToSignin(window.location.pathname)) {
+    window.location.replace('/?error=session_expired');
   }
 }
 
@@ -94,6 +180,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
   const [equippedCosmetics, setEquippedCosmetics] = useState<EquippedCosmetics>({});
   const [featuredRole, setFeaturedRole] = useState<Role | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [onboardingCompleted, setOnboardingCompleted] = useState<boolean | null>(null);
   // Account changes and newer profile loads invalidate older responses,
   // including a 401 or a body that finishes after sign-out.
   const profileGeneration = React.useRef(0);
@@ -112,7 +199,11 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     }
     // A repeated confirmation of the same account must not cancel its
     // profile load: userId would be unchanged, so the effect would not retry.
-    if (id !== activeIdentity.current) profileGeneration.current += 1;
+    if (id !== activeIdentity.current) {
+      profileGeneration.current += 1;
+      // Another account's onboarding answer says nothing about this one.
+      setOnboardingCompleted(null);
+    }
     activeIdentity.current = id;
     setUserId(id);
     setUserName(name);
@@ -128,16 +219,39 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
-    const saved = localStorage.getItem('sapling_user');
-    if (saved) {
-      try {
-        const { id, name, avatar } = JSON.parse(saved);
-        activeIdentity.current = id;
-        setUserId(id);
-        setUserName(name);
-        if (avatar) setAvatarUrl(avatar);
-        setIsAuthenticated(true);
-      } catch {}
+    // Onboarding needs an account now (sign in first): drop any answers the
+    // old signed-out "guest" onboarding left on this browser.
+    purgeGuestOnboardingDraft();
+    // A STORED COPY ONLY COUNTS IF IT ACTUALLY NAMES SOMEONE.
+    //
+    // This was `try { const {id,...} = JSON.parse(saved) } catch {}` followed
+    // unconditionally by `setUserReady(true); return;` — so a `sapling_user`
+    // value that could not be read still took the fast path and RETURNED,
+    // skipping the cookie fallback below. Two ways that bites, both of them
+    // sticky, because the bad value stays in localStorage and every reload
+    // repeats the same thing until the student clears site data by hand:
+    //
+    //   * Malformed JSON (or `null`) throws, the catch swallows it, and a
+    //     student holding a perfectly valid `sapling_session` cookie is left
+    //     with userReady=true and no userId — so every screen gated on
+    //     `userReady && userId` renders its signed-out/empty state. Signed in,
+    //     shown as signed out, permanently.
+    //   * JSON that parses to a non-object (`5`, `"x"`, `[]`) does NOT throw
+    //     when destructured: `id` comes out `undefined`, and the old code
+    //     still called `setIsAuthenticated(true)`. The app then believed it
+    //     was authenticated as nobody.
+    //
+    // The recovery path for "no stored identity" already exists and is
+    // exactly right here: fall through to the cookie-identified getMe(). So
+    // validate the shape, drop a copy that fails (it is what makes this
+    // sticky), and only take the fast path on a usable id.
+    const stored = readStoredIdentity();
+    if (stored) {
+      activeIdentity.current = stored.id;
+      setUserId(stored.id);
+      setUserName(stored.name);
+      if (stored.avatar) setAvatarUrl(stored.avatar);
+      setIsAuthenticated(true);
       setUserReady(true);
       return;
     }
@@ -178,6 +292,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
         // localStorage, so the next bootstrap takes the fast synchronous
         // path above instead of hitting the network again.
         setActiveUser(me.user_id, me.name || '', me.avatar_url || '');
+        if (typeof me.onboarding_completed === 'boolean') setOnboardingCompleted(me.onboarding_completed);
       } catch {
         // No identity source is left, for any reason: a 401 (no/expired
         // session), a 404 (the cookie names a user row that no longer
@@ -217,6 +332,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     setEquippedCosmetics({});
     setFeaturedRole(null);
     setIsAdmin(false);
+    setOnboardingCompleted(null);
     // #756: every user-scoped key, not just the identity — a shared browser
     // must not hand the next student this one's semester, drafts or quiz.
     clearUserScopedStorage();
@@ -296,22 +412,15 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
       const res = await fetch(`${API_URL}/api/auth/me?user_id=${encodeURIComponent(uid)}`, { credentials: 'include' });
       if (generation !== profileGeneration.current) return;
       if (!res.ok) {
-        // #191: a definitive 401 (no live session) or 404 (user row gone —
-        // the stale-session family) means the identity this client holds is
+        // #191: a definitive 401/404 means the identity this client holds is
         // dead: clear it so isAuthenticated stops asserting a session the
         // server won't honor. This effect already runs on every authed
         // mount, so the stale-localStorage case self-heals with no extra
         // request. Transient failures (5xx, network) fall through and keep
         // the session — a server blip must not sign the user out.
-        if (res.status === 401 || res.status === 404) {
+        if (isDeadSessionStatus(res.status)) {
           clearStaleClientAuth();
-          // On a shell route a cleared session has no usable UI left (every
-          // screen gates on userId) and the next server navigation would be
-          // bounced by the middleware anyway — bounce now, with the same
-          // greppable code the middleware uses.
-          if (typeof window !== 'undefined' && shouldBounceToSignin(window.location.pathname)) {
-            window.location.replace('/?error=session_expired');
-          }
+          bounceToSigninFromShell();
         }
         return;
       }
@@ -330,7 +439,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
         clearStaleClientAuth();
         // The auth-flow routes own their own bootstrap (see the cookie
         // fallback above): just drop the stale identity there.
-        if (typeof window !== 'undefined' && window.location.pathname.startsWith('/auth')) return;
+        if (onAuthFlowRoute()) return;
         setActiveUser(data.user_id, data.name || '', data.avatar_url || '');
         return;
       }
@@ -339,41 +448,25 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
       // confirmed name so the next page load boots with it.
       if (data.name) {
         setUserName(data.name);
-        try {
-          const saved = JSON.parse(localStorage.getItem('sapling_user') ?? 'null');
-          if (saved && saved.id === uid && saved.name !== data.name) {
-            localStorage.setItem('sapling_user', JSON.stringify({ ...saved, name: data.name }));
-          }
-        } catch {}
+        persistConfirmedName(uid, data.name);
       }
-      setUsername(data.username ?? null);
-      setRoles(data.roles ?? []);
-      setEquippedCosmetics(data.equipped_cosmetics ?? {});
-      setIsAdmin(data.is_admin ?? false);
+      if (typeof data.onboarding_completed === 'boolean') setOnboardingCompleted(data.onboarding_completed);
+      const profile = profileFields(data);
+      setUsername(profile.username);
+      setRoles(profile.roles);
+      setEquippedCosmetics(profile.equippedCosmetics);
+      setIsAdmin(profile.isAdmin);
       // Avatar URL has to be refreshed here too — Settings.tsx calls
       // refreshProfile() after a successful avatar upload to pick up
       // the new image, and without this line the avatar stayed on
       // whatever value setActiveUser put in at login (often empty,
-      // showing the initial-letter fallback in <Avatar>).
-      //
-      // Cache-bust with `?v=<timestamp>` because the storage URL is
-      // deterministic — every upload writes to
-      // `avatars/{user_id}/avatar.{ext}`, so a re-upload produces an
-      // identical URL and browsers serve the cached old image. The
-      // timestamp changes on every refresh, which forces a re-fetch
-      // from Supabase Storage's CDN once per refreshProfile() call.
-      // Avatars are small (<5 MB cap, usually <100 KB after
-      // browser-side compression), so the extra fetch per refresh is
-      // not a meaningful bandwidth concern.
-      const rawAvatar = (data.avatar_url ?? '').trim();
-      if (rawAvatar) {
-        const sep = rawAvatar.includes('?') ? '&' : '?';
-        setAvatarUrl(`${rawAvatar}${sep}v=${Date.now()}`);
-      } else {
-        setAvatarUrl('');
-      }
-      const fr = data.equipped_cosmetics?.featured_role ?? null;
-      setFeaturedRole(fr);
+      // showing the initial-letter fallback in <Avatar>). The cache-bust
+      // (see cacheBustedAvatar) forces a re-fetch from Supabase Storage's
+      // CDN once per refreshProfile() call; avatars are small (<5 MB cap,
+      // usually <100 KB after browser-side compression), so the extra
+      // fetch per refresh is not a meaningful bandwidth concern.
+      setAvatarUrl(cacheBustedAvatar(data.avatar_url, Date.now()));
+      setFeaturedRole(profile.featuredRole);
     } catch {}
   }, [clearStaleClientAuth, setActiveUser]);
 
@@ -405,6 +498,8 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
 
   const refreshProfile = useCallback(async () => { await fetchProfileData(userId); }, [userId, fetchProfileData]);
 
+  const markOnboarded = useCallback(() => setOnboardingCompleted(true), []);
+
   const signOut = useCallback(async () => {
     try {
       await fetch('/api/auth/session', { method: 'DELETE' });
@@ -421,9 +516,11 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
       userId, userName, avatarUrl, userReady, isAuthenticated,
       username, roles, equippedCosmetics, featuredRole, isAdmin,
       setActiveUser, signOut, refreshProfile, setAvatarUrl,
+      onboardingCompleted, markOnboarded,
     }),
     [userId, userName, avatarUrl, userReady, isAuthenticated,
-     username, roles, equippedCosmetics, featuredRole, isAdmin, setActiveUser, refreshProfile, signOut]
+     username, roles, equippedCosmetics, featuredRole, isAdmin, setActiveUser, refreshProfile, signOut,
+     onboardingCompleted, markOnboarded]
   );
 
   return <UserContext.Provider value={value}>{children}</UserContext.Provider>;

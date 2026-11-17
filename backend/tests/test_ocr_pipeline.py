@@ -428,7 +428,7 @@ class TestNotesEncryptedAtWrite:
             patch("services.academics.enrollment_id_for", return_value="enr-1"),
             patch.object(
                 calendar_service, "encrypt_if_present",
-                side_effect=lambda v: f"enc({v})",
+                side_effect=lambda v, **_: f"enc({v})",
             ) as enc,
         ):
             n = calendar_service.insert_new_assignments(
@@ -442,7 +442,8 @@ class TestNotesEncryptedAtWrite:
         assert n == 1
         row = captured["rows"][0]
         # notes went through encrypt_if_present — not persisted as plaintext.
-        enc.assert_any_call("secret note")
+        enc.assert_any_call(
+            "secret note", bind=calendar_service.bind("assignments", "notes", row["id"]))
         assert row["notes"] == "enc(secret note)"
         assert row["notes"] != "secret note"
 

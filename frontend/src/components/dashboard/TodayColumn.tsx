@@ -50,8 +50,20 @@ export type PlanItem = {
 };
 
 /** Days the deadline is in, as the chip the old Upcoming card showed. */
+/**
+ * When an assignment is due, in ms. A date-only `due_date` ("2026-11-09")
+ * means the END of that day in the student's own zone: `new Date()` would
+ * read it as UTC midnight, so anyone west of UTC saw today's work as
+ * OVERDUE from the morning on.
+ */
+export function dueAtMs(due: string): number {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(due);
+  if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 23, 59, 59, 999).getTime();
+  return new Date(due).getTime();
+}
+
 export function dueChip(dueIso: string, nowMs: number): PlanChip {
-  const diffMs = new Date(dueIso).getTime() - nowMs;
+  const diffMs = dueAtMs(dueIso) - nowMs;
   const hours = diffMs / 3_600_000;
   const days = Math.ceil(diffMs / 86_400_000);
   if (hours <= 0) return { label: "OVERDUE", tone: "err" };
@@ -119,14 +131,22 @@ export function buildTodayPlan(input: {
   const byScore = (a: GraphNode, b: GraphNode) => a.mastery_score - b.mastery_score;
   const struggling = concepts.filter((n) => n.mastery_tier === "struggling").sort(byScore);
   const learning = concepts.filter((n) => n.mastery_tier === "learning").sort(byScore);
-  const weak = struggling[0] ?? learning[0];
+  // A concept worked on today holds the slot (ticked), even if that work
+  // moved it out of the weak tiers or another concept is now weaker —
+  // re-picking the weakest on every render would swap the finished item for
+  // a fresh one and the checklist could never complete.
+  const doneToday = concepts
+    .filter((n) => localDayKey(n.last_studied_at) === todayKey && n.mastery_tier !== "unexplored")
+    .sort(byScore)[0];
+  const weak = doneToday ?? struggling[0] ?? learning[0];
   if (weak) {
     items.push({
       key: `quiz-${weak.id}`,
       title: `Quiz: ${weak.name}`,
       meta: join(
         courseLabel(weak.course_id),
-        weak.mastery_tier === "struggling" ? "you're struggling here" : "still learning",
+        doneToday ? "reviewed today"
+          : weak.mastery_tier === "struggling" ? "you're struggling here" : "still learning",
       ),
       checkable: true,
       done: localDayKey(weak.last_studied_at) === todayKey,
@@ -138,8 +158,8 @@ export function buildTodayPlan(input: {
 
   // 3. The nearest deadline, if it's close.
   const soon = [...assignments]
-    .sort((a, b) => new Date(a.due_date).getTime() - new Date(b.due_date).getTime())
-    .find((a) => new Date(a.due_date).getTime() - nowMs <= DUE_SOON_DAYS * 86_400_000);
+    .sort((a, b) => dueAtMs(a.due_date) - dueAtMs(b.due_date))
+    .find((a) => dueAtMs(a.due_date) - nowMs <= DUE_SOON_DAYS * 86_400_000);
   if (soon) {
     items.push({
       key: `due-${soon.id}`,
@@ -290,7 +310,8 @@ export function TodayColumn(props: {
   relTime: (iso: string | null | undefined) => string;
   navigate: (href: string) => void;
   openCourses: () => void;
-  /** Per-course progress rows, rendered at the foot of the mastery card. */
+  /** Per-course progress rows, rendered at the foot of the mastery card,
+   *  under a "Courses · Manage →" header (the Courses & Semesters hub). */
   courseRows?: React.ReactNode;
 }) {
   const { sessions, nodes, assignments, hasCourses, stats, bestStreak, xpDays, today, weekDays, nowMs, courseLabel, relTime, navigate, openCourses, courseRows } = props;
@@ -347,20 +368,24 @@ export function TodayColumn(props: {
           borderColor: "color-mix(in srgb, var(--warn-soft) 70%, var(--border))",
         }}
       >
-        <div style={{ display: "flex", alignItems: "flex-end", gap: 12, marginBottom: 12 }}>
-          <span aria-hidden style={{ color: "var(--alert-warn)", opacity: stats.streak > 0 ? 1 : 0.35, display: "grid" }}>
-            <Icon name="fire" size={28} />
-          </span>
-          <div>
-            <span
-              className="h-serif"
-              style={{ fontSize: 34, fontWeight: 600, lineHeight: 1, color: stats.streak > 0 ? "var(--warn)" : "var(--text-dim)" }}
-            >
-              {stats.streak}
-            </span>{" "}
-            <span style={{ fontSize: 13, color: "var(--text-dim)" }}>
-              {stats.streak === 1 ? "day" : "days"}{stats.streak > 0 ? " in a row" : ""}
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
+          {/* Flame + count read as one unit: a tight gap, centred on the
+              number (the icon's viewBox carries its own side bearing). */}
+          <div data-testid="dashboard-streak-count" style={{ display: "flex", alignItems: "center", gap: 2 }}>
+            <span aria-hidden style={{ color: "var(--alert-warn)", opacity: stats.streak > 0 ? 1 : 0.35, display: "grid", marginLeft: -4 }}>
+              <Icon name="fire" size={28} />
             </span>
+            <div>
+              <span
+                className="h-serif"
+                style={{ fontSize: 34, fontWeight: 600, lineHeight: 1, color: stats.streak > 0 ? "var(--warn)" : "var(--text-dim)" }}
+              >
+                {stats.streak}
+              </span>{" "}
+              <span style={{ fontSize: 13, color: "var(--text-dim)" }}>
+                {stats.streak === 1 ? "day" : "days"}{stats.streak > 0 ? " in a row" : ""}
+              </span>
+            </div>
           </div>
           {/* The message rides the top row (not its own line) to keep the
               card short enough for the plan's reserved slots above it. */}
@@ -408,48 +433,65 @@ export function TodayColumn(props: {
         </div>
       </div>
 
-      {/* Today's plan */}
-      <div className="card" data-testid="dashboard-plan" style={{ padding: "16px 18px" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "var(--text-muted)" }}>
-          <span data-testid="dashboard-plan-progress">{doneCount} of {checkable.length} done today</span>
-          <span>{today.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}</span>
-        </div>
-        <div
-          role="progressbar"
-          aria-label="Today's plan"
-          aria-valuemin={0}
-          aria-valuemax={checkable.length}
-          aria-valuenow={doneCount}
-          style={{ height: 4, borderRadius: 99, background: "var(--bg-soft)", overflow: "hidden", margin: "8px 0 10px" }}
-        >
-          <div
-            style={{
-              height: "100%", borderRadius: 99, background: "var(--state-mastery)",
-              width: `${checkable.length ? (doneCount / checkable.length) * 100 : 0}%`,
-              transition: "width var(--dur) var(--ease)",
-            }}
-          />
-        </div>
-        {/* Room for PLAN_SLOTS items whatever today's count, so the cards
-            below don't jump as the plan fills up. */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 6, minHeight: PLAN_SLOTS * PLAN_ROW_H + (PLAN_SLOTS - 1) * 6 }}>
-          {plan.map((item) => (
-            <PlanRow key={item.key} item={item} primary={item.key === primaryKey} onSelect={() => select(item)} />
-          ))}
-        </div>
-      </div>
-
-      {/* Mastery */}
-      {/* flex: 1 — the last card takes the rest of the column, so the column
-          runs the full height of the graph beside it. */}
+      {/* Courses, then mastery */}
+      {/* flex: 1 — this card takes the column's spare height, so the column
+          runs the full height of the graph beside it (its course rows spread
+          into it). Today's plan sits below it, at its natural height. */}
       <div
         className="card"
         data-testid="dashboard-mastery"
-        // 28px at the bottom keeps the last course bar above the floating
-        // report button, which is pinned over this card's bottom-right corner.
-        style={{ padding: "16px 18px 28px", flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}
+        style={{ padding: "16px 18px", flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}
       >
-        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
+        {/* The course list's own header, like "Upcoming · Calendar →": a
+            label on the left so the link never sits alone on its line. */}
+        <div
+          style={{
+            display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
+          }}
+        >
+          <div className="label-micro">Courses</div>
+          <button
+            type="button"
+            className="btn btn--ghost btn--sm"
+            data-testid="dashboard-courses-manage"
+            onClick={openCourses}
+            title="Add or remove courses, switch semester"
+            style={{ marginRight: -8, fontSize: 12, height: 24, padding: "0 8px" }}
+          >
+            Manage →
+          </button>
+        </div>
+        {!courseRows && (
+          <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>
+            {hasCourses ? "Nothing enrolled this semester." : "No courses yet."}
+          </div>
+        )}
+        {courseRows && (
+          // basis 0 + grow: the rows take the card's spare height (up to
+          // COURSE_ROW_MAX each, so a tall window doesn't strand them) and
+          // space-between spreads them. minHeight 0 + overflow: a student with
+          // many courses scrolls this list instead of stretching the page.
+          <div
+            data-testid="dashboard-course-rows"
+            style={{
+              marginTop: 4,
+              // basis auto, not 0: with no definite card height (mobile stacks
+              // the column) a 0 basis collapsed the rows to nothing.
+              flex: "1 1 auto", minHeight: 0, overflowY: "auto",
+              maxHeight: React.Children.count(courseRows) * COURSE_ROW_MAX,
+              display: "flex", flexDirection: "column", justifyContent: "space-between", gap: 4,
+            }}
+          >
+            {courseRows}
+          </div>
+        )}
+        {/* Below the courses: the mastery summary across them, divided off. */}
+        <div
+          style={{
+            display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8,
+            marginTop: 18, paddingTop: 12, borderTop: "1px solid var(--border)",
+          }}
+        >
           {stats.total > 0 ? (
             <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
               <span className="h-serif" style={{ fontSize: 26, fontWeight: 600, lineHeight: 1 }}>{stats.mastered}</span>
@@ -487,23 +529,39 @@ export function TodayColumn(props: {
             </div>
           </>
         )}
-        {courseRows && (
-          // basis 0 + grow: the rows take the card's spare height (up to
-          // COURSE_ROW_MAX each, so a tall window doesn't strand them) and
-          // space-between spreads them. minHeight 0 + overflow: a student with
-          // many courses scrolls this list instead of stretching the page.
+      </div>
+
+      {/* Today's plan */}
+      {/* Last card: 28px at the bottom keeps its last item above the floating
+          report button, which is pinned over the column's bottom-right corner. */}
+      <div className="card" data-testid="dashboard-plan" style={{ padding: "16px 18px 28px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "var(--text-muted)" }}>
+          <span data-testid="dashboard-plan-progress">{doneCount} of {checkable.length} done today</span>
+          <span>{today.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}</span>
+        </div>
+        <div
+          role="progressbar"
+          aria-label="Today's plan"
+          aria-valuemin={0}
+          aria-valuemax={checkable.length}
+          aria-valuenow={doneCount}
+          style={{ height: 4, borderRadius: 99, background: "var(--bg-soft)", overflow: "hidden", margin: "8px 0 10px" }}
+        >
           <div
-            data-testid="dashboard-course-rows"
             style={{
-              marginTop: 10, paddingTop: 8, borderTop: "1px solid var(--border)",
-              flex: "1 1 0", minHeight: 0, overflowY: "auto",
-              maxHeight: React.Children.count(courseRows) * COURSE_ROW_MAX,
-              display: "flex", flexDirection: "column", justifyContent: "space-between", gap: 4,
+              height: "100%", borderRadius: 99, background: "var(--state-mastery)",
+              width: `${checkable.length ? (doneCount / checkable.length) * 100 : 0}%`,
+              transition: "width var(--dur) var(--ease)",
             }}
-          >
-            {courseRows}
-          </div>
-        )}
+          />
+        </div>
+        {/* Room for PLAN_SLOTS items whatever today's count, so the cards
+            below don't jump as the plan fills up. */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, minHeight: PLAN_SLOTS * PLAN_ROW_H + (PLAN_SLOTS - 1) * 6 }}>
+          {plan.map((item) => (
+            <PlanRow key={item.key} item={item} primary={item.key === primaryKey} onSelect={() => select(item)} />
+          ))}
+        </div>
       </div>
     </div>
   );

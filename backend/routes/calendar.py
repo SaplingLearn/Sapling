@@ -1,49 +1,33 @@
 """
 backend/routes/calendar.py
 
-Syllabus extraction, assignment CRUD, Google Calendar OAuth and sync.
+Syllabus extraction, assignment CRUD, Google Calendar sync. The Google Calendar
+consent flow (/auth-url, /callback) lives in routes/calendar_connect.py.
 Migrated from SQLite to Supabase REST API.
 """
 
-import hmac as _hmac
 import json
-import secrets
 from datetime import datetime, timezone, timedelta
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from fastapi import Request as FastAPIRequest
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse
 
-from config import (
-    GOOGLE_CLIENT_ID,
-    GOOGLE_CLIENT_SECRET,
-    GOOGLE_AUTH_REDIRECT_URI,
-    AUTH_SCOPES,
-    FRONTEND_URL,
-    SECURE_COOKIES,
-)
+from config import GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
 from db.connection import table
-from models import SaveAssignmentsBody, StudyBlockBody, ExportBody, SyncBody
+from models import SaveAssignmentsBody, StudyBlockBody, ExportBody, SyncBody, UpdateCalendarAssignmentBody
 from services import academics
 from services.auth_guard import require_self, get_session_user_id, guard_off_loop
-from services.calendar_service import extract_assignments_from_file, insert_new_assignments
-from services.encryption import encrypt, encrypt_if_present, decrypt, decrypt_if_present
-from services.request_context import current_request_id
-# Reuse the sign-in flow's OAuth primitives (PKCE + HMAC-signed state cookie) as
-# the single source of truth for CSRF handling — see routes/auth.py. These are
-# pure helpers with no request state, so importing them keeps the calendar
-# connect flow DRY without duplicating the security-critical bits.
-from routes.auth import (
-    _google_client_config,
-    _encode_state,
-    _decode_state,
-    _generate_pkce_pair,
-    _encode_oauth_cookie,
-    _decode_oauth_cookie,
+from services.calendar_service import (
+    extract_assignments_from_file, extraction_failed, read_syllabus_upload, save_new_assignments,
 )
+from services.encryption import bind, decrypt, decrypt_if_present, encrypt
+from services.request_context import current_request_id
+from services import abuse_limits
+from services.request_limits import aenforce_abuse_limit
+from routes.calendar_connect import router as consent_router
 
 try:
-    from google_auth_oauthlib.flow import Flow
     from googleapiclient.discovery import build
     from google.oauth2.credentials import Credentials
     from google.auth.transport.requests import Request
@@ -52,14 +36,21 @@ except ImportError:
     GOOGLE_AVAILABLE = False
 
 router = APIRouter()
+# The Google Calendar consent flow (/auth-url, /callback) lives in its own
+# module and is included here, so it shares this router's /api/calendar mount
+# and its hide_calendar gate (main.py).
+router.include_router(consent_router)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _get_refreshed_credentials(token_row: dict) -> "Credentials":
+    user_id = token_row["user_id"]
     creds = Credentials(
-        token=decrypt(token_row["access_token"]),
-        refresh_token=decrypt(token_row["refresh_token"]),
+        token=decrypt(token_row["access_token"], bind=bind("oauth_tokens", "access_token", user_id)),
+        # NULL when Google never sent one; then there is nothing to refresh with.
+        refresh_token=decrypt_if_present(
+            token_row.get("refresh_token"), bind=bind("oauth_tokens", "refresh_token", user_id)),
         client_id=GOOGLE_CLIENT_ID,
         client_secret=GOOGLE_CLIENT_SECRET,
         token_uri="https://oauth2.googleapis.com/token",
@@ -82,13 +73,14 @@ def _get_refreshed_credentials(token_row: dict) -> "Credentials":
         creds.refresh(Request())
         table("oauth_tokens").update(
             {
-                "access_token": encrypt(creds.token),
+                "access_token": encrypt(
+                    creds.token, bind=bind("oauth_tokens", "access_token", user_id)),
                 # expires_at is TIMESTAMPTZ (migration 0024); "" is not a valid
                 # timestamptz, so pass None when a refresh yields no expiry
                 # (mirrors the auth.py callback which fixed the same hazard).
                 "expires_at": creds.expiry.isoformat() if creds.expiry else None,
             },
-            filters={"user_id": f"eq.{token_row['user_id']}"},
+            filters={"user_id": f"eq.{user_id}"},
         )
 
     return creds
@@ -158,134 +150,13 @@ def _read_assignments(user_id, *, due_gte=None, limit=None):
             "title": r["title"],
             "due_date": r["due_date"],
             "assignment_type": r.get("assignment_type"),
-            "notes": decrypt_if_present(r.get("notes")),
+            "notes": decrypt_if_present(r.get("notes"), bind=bind("assignments", "notes", r)),
             "google_event_id": r.get("google_event_id"),
             "course_id": meta.get("course_id"),
             "course_code": meta.get("course_code") or "",
             "course_name": meta.get("course_name") or "",
         })
     return out
-
-
-# ── Google Calendar OAuth connect ─────────────────────────────────────────────
-# Calendar consent uses the registered sign-in callback. Signed state dispatches
-# back here, retaining the initiating user's identity and independent CSRF cookie.
-
-CALENDAR_OAUTH_STATE_COOKIE = "sapling_calendar_oauth_state"
-_CALENDAR_OAUTH_COOKIE_MAX_AGE = 600
-
-
-def _calendar_client_config() -> dict:
-    """Reuse the registered sign-in callback; signed state routes the response."""
-    return _google_client_config()
-
-
-@router.get("/auth-url")
-def calendar_auth_url(request: FastAPIRequest, user_id: str = Query(...)):
-    """Begin the Google Calendar consent flow for the authenticated user.
-
-    ``require_self`` ties the initiating request to the caller's session, and the
-    user_id is then sealed into the HMAC-signed state cookie — so the callback
-    binds the resulting tokens to *this* user and never to an attacker-supplied
-    parameter (the holistic auth-scoping concern on #61, sibling of #123).
-    """
-    require_self(user_id, request)
-    if not GOOGLE_AVAILABLE or not GOOGLE_CLIENT_ID:
-        raise HTTPException(status_code=400, detail="Google Calendar not configured")
-
-    code_verifier, code_challenge = _generate_pkce_pair()
-    nonce = secrets.token_urlsafe(32)
-
-    flow = Flow.from_client_config(_calendar_client_config(), scopes=AUTH_SCOPES)
-    flow.redirect_uri = GOOGLE_AUTH_REDIRECT_URI
-    auth_url, _ = flow.authorization_url(
-        prompt="consent",             # force a refresh_token even on re-consent
-        access_type="offline",        # so long-lived sync survives token expiry
-        state=_encode_state({"action": "calendar", "n": nonce}),
-        code_challenge=code_challenge,
-        code_challenge_method="S256",
-    )
-
-    resp = RedirectResponse(auth_url)
-    resp.set_cookie(
-        key=CALENDAR_OAUTH_STATE_COOKIE,
-        value=_encode_oauth_cookie({"n": nonce, "cv": code_verifier, "uid": user_id}),
-        max_age=_CALENDAR_OAUTH_COOKIE_MAX_AGE,
-        httponly=True,
-        secure=SECURE_COOKIES,
-        samesite="lax",
-        path="/",
-    )
-    return resp
-
-
-@router.get("/callback")
-def calendar_callback(
-    request: FastAPIRequest,
-    code: str = Query(None),
-    state: str = Query(None),
-    error: str = Query(None),
-):
-    """Handle Google's redirect: validate CSRF state, exchange the code, and
-    store the tokens scoped to the user sealed in the signed state cookie."""
-    cookie_payload = _decode_oauth_cookie(request.cookies.get(CALENDAR_OAUTH_STATE_COOKIE))
-
-    def _finish(query: str) -> RedirectResponse:
-        resp = RedirectResponse(f"{FRONTEND_URL}/calendar?{query}")
-        resp.set_cookie(
-            key=CALENDAR_OAUTH_STATE_COOKIE,
-            value="",
-            max_age=0,
-            httponly=True,
-            secure=SECURE_COOKIES,
-            samesite="lax",
-            path="/",
-        )
-        return resp
-
-    if error:
-        # User denied consent (or Google returned an error) — bounce cleanly.
-        return _finish("calendar_error=access_denied")
-    if not GOOGLE_AVAILABLE:
-        return _finish("calendar_error=google_not_configured")
-    if not code:
-        return _finish("calendar_error=missing_code")
-
-    # CSRF: the state nonce must match the one sealed in the signed cookie, and
-    # the user_id is read from that cookie (not a request param) so tokens can
-    # only ever bind to the session that initiated the connect.
-    state_nonce = (_decode_state(state) or {}).get("n") if state else None
-    cookie_nonce = cookie_payload.get("n") if cookie_payload else None
-    user_id = cookie_payload.get("uid") if cookie_payload else None
-    if (
-        not cookie_payload
-        or not cookie_nonce
-        or not state_nonce
-        or not user_id
-        or not _hmac.compare_digest(str(state_nonce), str(cookie_nonce))
-    ):
-        return _finish("calendar_error=invalid_state")
-
-    flow = Flow.from_client_config(_calendar_client_config(), scopes=AUTH_SCOPES)
-    flow.redirect_uri = GOOGLE_AUTH_REDIRECT_URI
-    try:
-        flow.fetch_token(code=code, code_verifier=cookie_payload.get("cv"))
-    except Exception:
-        return _finish("calendar_error=oauth_exchange_failed")
-    creds = flow.credentials
-
-    table("oauth_tokens").upsert(
-        {
-            "user_id": user_id,
-            "access_token": encrypt(creds.token),
-            "refresh_token": encrypt_if_present(creds.refresh_token),
-            "calendar_events_enabled": True,
-            # expires_at is TIMESTAMPTZ (0024): None, not "", when absent.
-            "expires_at": creds.expiry.isoformat() if creds.expiry else None,
-        },
-        on_conflict="user_id",
-    )
-    return _finish("connected=true")
 
 
 # ── Syllabus extraction ───────────────────────────────────────────────────────
@@ -296,23 +167,18 @@ async def extract(request: FastAPIRequest, file: UploadFile = File(...), user_id
         await guard_off_loop(require_self, user_id, request)
     else:
         user_id = await guard_off_loop(get_session_user_id, request)
-    file_bytes = await file.read()
-    filename = file.filename or "upload"
-    content_type = file.content_type or "application/octet-stream"
-    request_id = (
-        getattr(request.state, "request_id", None)
-        or current_request_id()
-        or ""
-    )
+    await aenforce_abuse_limit(abuse_limits.SYLLABUS_EXTRACT, user_id)
+    file_bytes, content_type = await read_syllabus_upload(file)  # 400 type / 413 size
+    request_id = getattr(request.state, "request_id", None) or current_request_id() or ""
     try:
-        result = await extract_assignments_from_file(
-            file_bytes, filename, content_type,
-            user_id=user_id or "",
-            request_id=request_id,
+        return await extract_assignments_from_file(
+            file_bytes, file.filename or "upload", content_type,
+            user_id=user_id or "", request_id=request_id,
         )
-        return result
-    except Exception as e:
-        return {"error": str(e), "assignments": [], "warnings": [str(e)]}
+    except HTTPException:
+        raise  # e.g. the LLM budget's 429 (#119)
+    except Exception:
+        return extraction_failed(request_id)  # logged; never the exception text
 
 
 # ── Assignment CRUD ───────────────────────────────────────────────────────────
@@ -326,12 +192,12 @@ def save_assignments(body: SaveAssignmentsBody, request: FastAPIRequest):
             "course_id": a.course_id,
             "due_date": a.due_date,
             "assignment_type": a.assignment_type,
-            "notes": a.notes,  # raw; insert_new_assignments encrypts
+            "notes": a.notes,  # raw; save_new_assignments encrypts
         }
         for a in body.assignments
     ]
-    saved = insert_new_assignments(body.user_id, payload, source="manual")
-    return {"saved_count": saved}
+    # {saved_count, skipped_count, skipped: [{title, due_date, reason}]}
+    return save_new_assignments(body.user_id, payload, source="manual")
 
 
 @router.get("/upcoming/{user_id}")
@@ -349,8 +215,8 @@ def get_all_assignments(user_id: str, request: FastAPIRequest):
 
 
 @router.patch("/assignments/{assignment_id}")
-def update_assignment(assignment_id: str, body: dict, request: FastAPIRequest):
-    user_id = body.get("user_id")
+def update_assignment(assignment_id: str, body: UpdateCalendarAssignmentBody, request: FastAPIRequest):
+    user_id = body.user_id
     if not user_id:
         raise HTTPException(status_code=400, detail="user_id is required")
     require_self(user_id, request)
@@ -367,7 +233,7 @@ def update_assignment(assignment_id: str, body: dict, request: FastAPIRequest):
         raise HTTPException(status_code=404, detail="Assignment not found")
 
     ALLOWED = {"title", "due_date", "assignment_type"}  # course_id no longer settable here
-    patch = {k: v for k, v in body.items() if k in ALLOWED}
+    patch = {k: v for k, v in body.model_dump(exclude_unset=True).items() if k in ALLOWED}
     # A cleared date input arrives as "": that means "no date" (the column is
     # nullable since 0012), and "" is not a valid DATE literal for PostgREST.
     if patch.get("due_date") == "":
@@ -421,6 +287,9 @@ def suggest_study_blocks(body: StudyBlockBody, request: FastAPIRequest):
 
 @router.get("/status/{user_id}")
 def calendar_status(user_id: str, request: FastAPIRequest):
+    """Whether the student's Google Calendar is connected. A token row exists
+    only for a grant that covers the calendar scopes, created only by the
+    consent flow (routes/calendar_connect.py), so the row is the answer."""
     require_self(user_id, request)
     rows = table("oauth_tokens").select(
         "access_token,expires_at,calendar_events_enabled",
@@ -561,7 +430,8 @@ def sync_to_google(body: SyncBody, request: FastAPIRequest):
         course_label = f"[{cc}] " if cc else (f"{cn}: " if cn else "")
         event = {
             "summary": f"{course_label}{a['title']}" if course_label else a["title"],
-            "description": decrypt_if_present(a.get("notes")) or "",
+            "description": decrypt_if_present(
+                a.get("notes"), bind=bind("assignments", "notes", a)) or "",
             "start": {"date": a["due_date"]},
             "end": {"date": a["due_date"]},
         }
@@ -620,7 +490,8 @@ def export_to_google(body: ExportBody, request: FastAPIRequest):
 
         event = {
             "summary": f"{course_label}{a['title']}" if course_label else a["title"],
-            "description": decrypt_if_present(a.get("notes")) or "",
+            "description": decrypt_if_present(
+                a.get("notes"), bind=bind("assignments", "notes", a)) or "",
             "start": {"date": a["due_date"]},
             "end": {"date": a["due_date"]},
         }

@@ -16,12 +16,15 @@ test_learn_routes.py::test_use_shared_context_false_appends_constraint.)
 Run from backend/:
     python -m pytest tests/test_shared_course_context.py -v
 """
+import asyncio
 import sys
 import os
 import json
 import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch, MagicMock
+
+from tests.db_fakes import fake_table, with_async_twins
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -191,14 +194,21 @@ class TestUpdateCourseContext(unittest.TestCase):
              "mastery_tier": "learning", "user_id": "u1"},
             {"id": "n2", "concept_name": "Loops", "mastery_score": 0.3,
              "mastery_tier": "learning", "user_id": "u2"},
+            {"id": "n3", "concept_name": "Loops", "mastery_score": 0.3,
+             "mastery_tier": "learning", "user_id": "u3"},
         ]
         nodes_tbl = MagicMock()
         nodes_tbl.select.return_value = node_rows
+        # M8: three distinct students share the off-by-one mistake (so it is
+        # kept, once); "boundary conditions" comes from u2 and u3 only.
         quiz_rows = [
-            {"concept_node_id": "n1",
+            {"user_id": "u1", "concept_node_id": "n1",
              "context_json": {"common_mistakes": ["Off-by-one error", "off-by-one error"], "weak_areas": []}},
-            {"concept_node_id": "n2",
+            {"user_id": "u2", "concept_node_id": "n2",
              "context_json": {"common_mistakes": ["OFF-BY-ONE ERROR"], "weak_areas": ["boundary conditions"]}},
+            {"user_id": "u3", "concept_node_id": "n3",
+             "context_json": {"common_mistakes": ["off-by-one error."],
+                              "weak_areas": ["Boundary conditions"]}},
         ]
 
         stats_tbl = MagicMock()
@@ -213,11 +223,13 @@ class TestUpdateCourseContext(unittest.TestCase):
             from services.course_context_service import update_course_context
             update_course_context("off-1")
 
-        # All three "off-by-one" variants are the same after .lower() — only one kept
+        # All "off-by-one" variants are the same after folding — only one kept
         stats_tbl.upsert.assert_called_once()
         upsert_payload = stats_tbl.upsert.call_args[0][0]
         self.assertEqual(len(upsert_payload["common_misconceptions"]), 1)
-        self.assertEqual(len(upsert_payload["prerequisite_gaps"]), 1)
+        # M8: two students are below the three-student floor.
+        self.assertEqual(upsert_payload["prerequisite_gaps"], [])
+        self.assertEqual(upsert_payload["min_mistake_contributors"], 3)
 
     @patch("services.academics.table")
     @patch("services.course_context_service.table")
@@ -235,18 +247,20 @@ class TestUpdateCourseContext(unittest.TestCase):
         self.assertNotIn("effective_explanations", QuizContext.model_fields)
 
         node_rows = [
-            {"id": "n1", "concept_name": "Loops", "mastery_score": 0.3,
-             "mastery_tier": "learning", "user_id": "u1"},
+            {"id": f"n{i}", "concept_name": "Loops", "mastery_score": 0.3,
+             "mastery_tier": "learning", "user_id": f"u{i}"}
+            for i in (1, 2, 3)  # M8: three students, so the arrays clear the floor
         ]
         nodes_tbl = MagicMock()
         nodes_tbl.select.return_value = node_rows
         quiz_rows = [
-            {"concept_node_id": "n1",
+            {"user_id": f"u{i}", "concept_node_id": f"n{i}",
              "context_json": {
                  "common_mistakes": ["Off-by-one error"],
                  "weak_areas": ["boundary conditions"],
                  "effective_explanations": ["A worked example with a number line"],
-             }},
+             }}
+            for i in (1, 2, 3)
         ]
 
         stats_tbl = MagicMock()
@@ -508,7 +522,7 @@ class TestApplyGraphUpdateTriggersContext(unittest.TestCase):
 
 class TestLearnHelpers(unittest.TestCase):
 
-    @patch("routes.learn.table")
+    @patch("services.tutor.course.table")
     def test_resolve_course_when_topic_matches_course_code(self, mock_table):
         # enrollments → course_offerings → courses; returns the ABSTRACT course_id.
         enrolled_tbl = MagicMock()
@@ -524,13 +538,13 @@ class TestLearnHelpers(unittest.TestCase):
             if name == "enrollments": return enrolled_tbl
             return node_tbl
 
-        mock_table.side_effect = _factory
+        mock_table.side_effect = with_async_twins(_factory)
 
         from routes.learn import _get_course_id_for_topic
-        result = _get_course_id_for_topic("CS101", "user1")
+        result = asyncio.run(_get_course_id_for_topic("CS101", "user1"))
         self.assertEqual(result, "course-1")
 
-    @patch("routes.learn.table")
+    @patch("services.tutor.course.table")
     def test_resolve_course_when_topic_is_concept(self, mock_table):
         enrolled_tbl = MagicMock()
         enrolled_tbl.select.return_value = []
@@ -542,40 +556,43 @@ class TestLearnHelpers(unittest.TestCase):
             if name == "enrollments": return enrolled_tbl
             return node_tbl
 
-        mock_table.side_effect = _factory
+        mock_table.side_effect = with_async_twins(_factory)
 
         from routes.learn import _get_course_id_for_topic
-        result = _get_course_id_for_topic("Loops", "user1")
+        result = asyncio.run(_get_course_id_for_topic("Loops", "user1"))
         self.assertEqual(result, "course-1")
 
-    @patch("routes.learn.table")
+    @patch("services.tutor.course.table")
     def test_resolve_course_unknown_topic_returns_empty(self, mock_table):
+        mock_table.return_value = fake_table()
         mock_table.return_value.select.return_value = []
 
         from routes.learn import _get_course_id_for_topic
-        result = _get_course_id_for_topic("RandomTopic", "user1")
+        result = asyncio.run(_get_course_id_for_topic("RandomTopic", "user1"))
         self.assertEqual(result, "")
 
     def test_resolve_course_empty_topic_returns_empty(self):
         from routes.learn import _get_course_id_for_topic
-        result = _get_course_id_for_topic("", "user1")
+        result = asyncio.run(_get_course_id_for_topic("", "user1"))
         self.assertEqual(result, "")
 
-    @patch("routes.learn.table")
+    @patch("services.tutor.course.table")
     def test_get_session_offering_id_found(self, mock_table):
         # Sessions key on the offering (0025); the helper returns it.
+        mock_table.return_value = fake_table()
         mock_table.return_value.select.return_value = [{"offering_id": "off-1"}]
 
         from routes.learn import _get_session_offering_id
-        result = _get_session_offering_id("session-abc")
+        result = asyncio.run(_get_session_offering_id("session-abc"))
         self.assertEqual(result, "off-1")
 
-    @patch("routes.learn.table")
+    @patch("services.tutor.course.table")
     def test_get_session_offering_id_not_found(self, mock_table):
+        mock_table.return_value = fake_table()
         mock_table.return_value.select.return_value = []
 
         from routes.learn import _get_session_offering_id
-        result = _get_session_offering_id("session-missing")
+        result = asyncio.run(_get_session_offering_id("session-missing"))
         self.assertEqual(result, "")
 
 

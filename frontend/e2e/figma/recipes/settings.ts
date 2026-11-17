@@ -459,7 +459,7 @@ const CONNECTIONS: RecipeBook = {
     run: async (page) => {
       await mockJson(page, GS, { has_credentials: true, auth_mode: "password", last_synced_at: "2026-03-10T14:20:00Z" });
       await page.goto("/settings/connections");
-      await text(page, /Credentials saved · password/i);
+      await text(page, /Session saved · password/i);
       await text(page, /Last sync ·/);
     },
   },

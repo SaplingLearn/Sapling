@@ -12,6 +12,11 @@ on:
   push:
     branches: [main]
 
+# Least privilege: the GITHUB_TOKEN is read-only unless a job
+# grants itself more.
+permissions:
+  contents: read
+
 jobs:
   integration:
     runs-on: ubuntu-latest
@@ -20,7 +25,7 @@ jobs:
       run:
         working-directory: backend
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       # Supabase's ports sit INSIDE Linux's default ephemeral source-port range,
       # so an outbound connection this job makes can be handed 54322 as its
       # source port and Docker's later bind of 0.0.0.0:54322 then fails with
@@ -37,10 +42,10 @@ jobs:
       - name: Preflight (reserve the Supabase ports)
         working-directory: .
         run: scripts/preflight-ports.sh
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.13'
-      - uses: supabase/setup-cli@v1
+      - uses: supabase/setup-cli@1dedf2c611547ede7232d26866dd3c56ab903bbb # v1.7.3
         with:
           # Pinned, never `latest`. `latest` makes the action resolve the
           # newest release through the UNAUTHENTICATED GitHub releases API
@@ -95,3 +100,32 @@ jobs:
           SAPLING_MODEL_MODE: function
           SAPLING_FUNCTION_HANDLERS: agents.function_handlers_e2e
         run: RUN_INTEGRATION=1 python -m pytest -m integration -q
+      # #115 (RLS step 2, finding H5): the same lane again with every request
+      # running as the student under `db_user_scope=enforce`, so a missing
+      # policy or grant, or a code path that needs the service role and is not
+      # marked, fails a PR here instead of 503/404-ing students after the flag
+      # moves in production. The env override beats any stored flag config
+      # (services/feature_flags.py::explain), and the integration conftest
+      # supplies the local stack's public signing + anon keys.
+      #
+      # Why here and not an enforce leg in e2e.yml: this job already has the
+      # stack up, and the rerun costs minutes, not a second 15-minute browser
+      # job. It runs on pushes to main and on a manual dispatch (run this
+      # workflow on a PR branch that touches routes, policies or grants), NOT
+      # on every PR push: Actions minutes are billed, the plain run above
+      # already gates every PR, and `enforce` is not the production default,
+      # so a regression it catches surfaces on main before the flag can move.
+      # The cross-user matrix is left out because it
+      # already parametrizes itself over off AND enforce in the step above.
+      # test_db_user_scope_lane_db.py fails this step if the override stops
+      # reaching the app or the local PostgREST rejects the minted token, so
+      # it cannot silently degrade into a second `off` run.
+      - name: Run integration tests under db_user_scope=enforce
+        if: github.event_name != 'pull_request'
+        env:
+          SAPLING_MODEL_MODE: function
+          SAPLING_FUNCTION_HANDLERS: agents.function_handlers_e2e
+          SAPLING_FLAG_DB_USER_SCOPE: enforce
+        run: >-
+          RUN_INTEGRATION=1 python -m pytest -m integration -q
+          --ignore=tests/integration/test_cross_user_matrix_db.py

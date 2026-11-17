@@ -7,10 +7,12 @@ import logging
 from typing import Any, Optional
 
 from db.connection import table
+from db.scope import runs_as_service
 
 log = logging.getLogger(__name__)
 
 
+@runs_as_service  # #115: admin_audit_log is service-only
 def log_admin_action(
     actor_id: str,
     action: str,

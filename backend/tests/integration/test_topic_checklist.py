@@ -4,7 +4,7 @@ from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
 
 from agents.topic_checklist import topic_checklist_agent
-from services.encryption import decrypt_json
+from services.encryption import bind, decrypt_json
 from services.topic_checklist_service import topic_key
 from tests.integration.conftest import USER_ACTIVE, _client_for
 
@@ -12,6 +12,10 @@ pytestmark = pytest.mark.integration
 
 
 def test_checklist_is_encrypted_persistent_and_enrollment_scoped(db_conn, seeded_user):
+    # The rich seed gives CS101/MATH fixture checklists (the Study roadmap's
+    # columns); this test is about the refresh path creating one, so it starts
+    # from none.
+    db_conn.execute("DELETE FROM topic_checklists")
     def handler(messages, info):
         return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {"topics": [{
             "name": "Recursion", "description": "Base cases and recursive calls.", "importance": 0.9,
@@ -31,7 +35,8 @@ def test_checklist_is_encrypted_persistent_and_enrollment_scoped(db_conn, seeded
     cache = db_conn.execute("SELECT * FROM topic_checklists").fetchone()
     assert cache["enrollment_id"] == "rich-enr-active-cs101-s26"
     assert "Recursion" not in cache["content"]
-    assert decrypt_json(cache["content"])["topics"][0]["name"] == "Recursion"
+    assert decrypt_json(cache["content"], bind=bind(
+        "topic_checklists", "content", cache))["topics"][0]["name"] == "Recursion"
 
     mutation = client.patch(path + f"/topics/{topic_key('Recursion')}", json={"checked": True}, params={"semester": "Spring 2026"})
     assert mutation.status_code == 200 and mutation.json()["topics"][0]["checked"]

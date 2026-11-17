@@ -69,7 +69,7 @@ def test_import_cannot_read_another_users_google_account(monkeypatch):
     from services import auth_guard
 
     monkeypatch.setattr(calendar, "require_self", auth_guard._real_require_self)
-    monkeypatch.setattr(auth_guard, "get_session_user_id", lambda request: "someone-else")
+    monkeypatch.setattr(auth_guard, "get_session_user_id", lambda request, *, allow_unapproved=False: "someone-else")
     with patch.object(calendar, "_require_google_creds") as creds:
         response = client.get(f"/api/calendar/import/u1?{RANGE}")
     assert response.status_code == 403

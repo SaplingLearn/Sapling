@@ -9,7 +9,7 @@ presentation noise, sensitive to content.
 
 import pytest
 
-from services.quiz_identity import (
+from services.quiz.identity import (
     QUESTION_HASH_LEN,
     normalize_text,
     question_hash,

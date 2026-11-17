@@ -7,6 +7,7 @@ import { useToast } from "./ToastProvider";
 import { useUser } from "@/context/UserContext";
 import { useScrollLock } from "@/lib/useScrollLock";
 import { submitIssueReport, API_URL } from "@/lib/api";
+import { LONG_TEXT_MAX } from "@/lib/inputLimits";
 
 const TOPICS = ["Bug", "Feature", "Polish", "Content", "Other"] as const;
 type Topic = typeof TOPICS[number];
@@ -164,6 +165,7 @@ export function ReportIssueFlow({ open, onClose }: ReportIssueFlowProps) {
         <div className="label-micro" style={{ marginBottom: 6 }}>What happened?</div>
         <textarea
           value={description}
+          maxLength={LONG_TEXT_MAX}
           onChange={e => setDescription(e.target.value)}
           placeholder="Describe the issue…"
           rows={4}

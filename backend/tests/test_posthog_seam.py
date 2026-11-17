@@ -25,6 +25,7 @@ from fastapi.testclient import TestClient
 
 from services import analytics_consent, events_service, feature_flags, posthog_client
 from services.analytics_consent import Consent
+from tests.split_patches import patch_flashcards, patch_profile_table
 
 # The shape production actually issues (routes/auth.py: f"user_{google_id}").
 # users.id is TEXT, not a UUID — a UUID-only rule would drop every real user.
@@ -358,11 +359,11 @@ class TestFlashcardEvents:
     def test_generate_emits_flashcard_generated(self, sink):
         from main import app
 
-        with patch("routes.flashcards._get_course_documents", return_value=[{"x": 1}]), \
-             patch("routes.flashcards._get_weak_concepts", return_value=["a", "b"]), \
-             patch("routes.flashcards._generate", return_value=[{"front": SECRET, "back": "b"}]), \
-             patch("routes.flashcards.table") as t, \
-             patch("services.achievement_service.check_achievements"):
+        with patch_flashcards("_get_course_documents", return_value=[{"x": 1}]), \
+             patch_flashcards("_get_weak_concepts", return_value=["a", "b"]), \
+             patch_flashcards("generate_flashcards", return_value=[{"front": SECRET, "back": "b"}]), \
+             patch_flashcards("table") as t, \
+             patch_flashcards("check_achievements"):
             t.return_value.select.return_value = []
             r = TestClient(app).post("/api/flashcards/generate", json={
                 "user_id": USER_ID, "topic": "CS", "count": 1,
@@ -384,15 +385,15 @@ class TestFlashcardEvents:
         from main import app
 
         cards = [{"front": SECRET, "back": "b"}, {"front": "q", "back": "a"}]
-        with patch("routes.flashcards.check_rate_limit", return_value=None), \
-             patch("routes.flashcards.gemini_generate_cards", return_value=cards):
+        with patch_flashcards("check_rate_limit", return_value=None), \
+             patch_flashcards("gemini_generate_cards", return_value=cards):
             r = TestClient(app).post("/api/flashcards/import/generate", json={
                 "user_id": USER_ID, "source": "paste", "text": "notes", "count": 2,
             })
         assert r.status_code == 200
-        with patch("routes.flashcards.table"), \
-             patch("routes.flashcards.check_achievements"), \
-             patch("routes.flashcards.resolve_offering", return_value=None):
+        with patch_flashcards("table"), \
+             patch_flashcards("check_achievements"), \
+             patch_flashcards("resolve_offering", return_value=None):
             r = TestClient(app).post("/api/flashcards/import/commit", json={
                 "user_id": USER_ID, "topic": "CS", "cards": cards, "dedup": False,
             })
@@ -408,8 +409,8 @@ class TestFlashcardEvents:
         """#677 re-review: a generation that yields no cards must not count."""
         from main import app
 
-        with patch("routes.flashcards.check_rate_limit", return_value=None), \
-             patch("routes.flashcards.gemini_generate_cards", return_value=[]):
+        with patch_flashcards("check_rate_limit", return_value=None), \
+             patch_flashcards("gemini_generate_cards", return_value=[]):
             r = TestClient(app).post("/api/flashcards/import/generate", json={
                 "user_id": USER_ID, "source": "paste", "text": "notes", "count": 2,
             })
@@ -420,8 +421,8 @@ class TestFlashcardEvents:
     def test_rate_emits_flashcard_reviewed(self, sink):
         from main import app
 
-        with patch("routes.flashcards.table") as t, \
-             patch("routes.flashcards.check_achievements"):
+        with patch_flashcards("table") as t, \
+             patch_flashcards("check_achievements"):
             t.return_value.select.return_value = [{"id": "c1", "times_reviewed": 2}]
             r = TestClient(app).post("/api/flashcards/rate", json={
                 "user_id": USER_ID, "card_id": "c1", "rating": 3,
@@ -617,8 +618,8 @@ class TestDeletePerson:
             return m
 
         with patch("routes.profile.require_self"), \
-             patch("routes.profile.table", side_effect=table_side_effect), \
-             patch("routes.profile.delete_posthog_person",
+             patch_profile_table(side_effect=table_side_effect), \
+             patch("services.profile.deletion.delete_posthog_person",
                    side_effect=lambda uid: order.append(f"posthog:{uid}")):
             r = TestClient(app).request(
                 "DELETE", f"/api/profile/{USER_ID}/account", json={"confirmation": "DELETE"},
@@ -630,8 +631,8 @@ class TestDeletePerson:
         from main import app
 
         with patch("routes.profile.require_self"), \
-             patch("routes.profile.table"), \
-             patch("routes.profile.delete_posthog_person") as delete:
+             patch_profile_table(), \
+             patch("services.profile.deletion.delete_posthog_person") as delete:
             r = TestClient(app).request(
                 "DELETE", f"/api/profile/{USER_ID}/account", json={"confirmation": "nope"},
             )
@@ -861,7 +862,7 @@ class TestSettingsContract:
         consent_db.answers[USER_ID] = Consent.DENIED  # the DB after the write
         table_side_effect, captured = self._tables({"user_id": USER_ID})
         with patch("routes.profile.require_self"), \
-             patch("routes.profile.table", side_effect=table_side_effect):
+             patch_profile_table(side_effect=table_side_effect):
             r = TestClient(app).patch(
                 f"/api/profile/{USER_ID}/settings", json={"analytics_opt_out": True},
             )
@@ -875,7 +876,7 @@ class TestSettingsContract:
 
         table_side_effect, _ = self._tables({"user_id": USER_ID})
         with patch("routes.profile.require_self"), \
-             patch("routes.profile.table", side_effect=table_side_effect), \
+             patch_profile_table(side_effect=table_side_effect), \
              patch("routes.profile.clear_analytics_consent_cache") as clear:
             TestClient(app).patch(f"/api/profile/{USER_ID}/settings", json={"theme": "dark"})
         clear.assert_not_called()
@@ -887,7 +888,7 @@ class TestSettingsContract:
         assert "analytics_opt_out" in _SETTINGS_COLS.split(",")
         table_side_effect, _ = self._tables({"user_id": USER_ID, "analytics_opt_out": True})
         with patch("routes.profile.require_self"), \
-             patch("routes.profile.table", side_effect=table_side_effect):
+             patch_profile_table(side_effect=table_side_effect):
             r = TestClient(app).get(f"/api/profile/{USER_ID}/settings")
         assert r.status_code == 200 and r.json()["analytics_opt_out"] is True
 
@@ -896,7 +897,7 @@ class TestSettingsContract:
 
         table_side_effect, captured = self._tables({"user_id": USER_ID})
         with patch("routes.profile.require_self"), \
-             patch("routes.profile.table", side_effect=table_side_effect):
+             patch_profile_table(side_effect=table_side_effect):
             r = TestClient(app).patch(
                 f"/api/profile/{USER_ID}/settings", json={"analytics_opt_out": "maybe"},
             )
@@ -954,8 +955,8 @@ class TestDeletedUsers:
         analytics_consent.consent_for(USER_ID)  # cached ALLOWED
         consent_db.answers[USER_ID] = Consent.DENIED  # the row after the soft delete
         with patch("routes.profile.require_self"), \
-             patch("routes.profile.table"), \
-             patch("routes.profile.delete_posthog_person"):
+             patch_profile_table(), \
+             patch("services.profile.deletion.delete_posthog_person"):
             r = TestClient(app).request(
                 "DELETE", f"/api/profile/{USER_ID}/account", json={"confirmation": "DELETE"},
             )
@@ -2149,7 +2150,7 @@ class TestSettingsEtagVersion:
             return m
 
         with patch("routes.profile.require_self"), \
-             patch("routes.profile.table", side_effect=table_side_effect):
+             patch_profile_table(side_effect=table_side_effect):
             client = TestClient(app)
             r = client.get(f"/api/profile/{USER_ID}/settings")
             assert r.status_code == 200
@@ -2185,7 +2186,8 @@ class TestRequestContextIsNarrow:
             "/api/work/42", headers={"Cookie": "sapling_session=SECRETCOOKIE"},
         )
         assert seen["type"] is RequestView
-        assert set(seen["slots"]) == {"state", "_scope", "_template"}
+        # `method` (#115's shadow report) is a plain string like the template.
+        assert set(seen["slots"]) == {"state", "method", "_scope", "_template"}
         assert seen["user"] == USER_ID  # request.state is the same dict
         assert seen["route"] == "/api/work/{item_id}"
         assert seen["has_headers"] is False

@@ -22,10 +22,9 @@ const CONCEPT = "E2E Manual Concept";
 
 test("Tree add-concept persists, renders, and dedups on re-add (#330)", async ({ page }) => {
   await page.goto(`${FRONTEND_URL}/tree`);
-  // The course filter is a dropdown in the Tree toolbar; pick by testid, not
-  // label — "MATH210" is a prefix of the graph node's a11y activate button
+  // The course key on the graph is the Tree's course filter; pick by testid,
+  // not label — "MATH210" is a prefix of the graph node's a11y activate button
   // ("MATH210 - Linear Algebra"), so a text match is a strict-mode trap.
-  await page.getByTestId("graph-course-filter").click();
   await page.getByTestId(`graph-course-filter-${COURSE_ID}`).click();
 
   await page.getByTestId("graph-add-concept").click();

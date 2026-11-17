@@ -277,7 +277,6 @@ async function signInWaiting(page: Page): Promise<void> {
 
 const SIGNIN_ERRORS: Record<string, RegExp> = {
   not_approved: /pending approval/,
-  invalid_domain: /approved school accounts/,
   signin_failed: /Sign-in failed/,
   session_expired: /session has expired/,
   oauth_denied: /Sign-in was cancelled/,

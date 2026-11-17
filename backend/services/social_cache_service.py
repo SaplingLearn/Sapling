@@ -12,7 +12,8 @@ import hashlib
 from datetime import datetime, timezone
 
 from db.connection import table
-from services.encryption import decrypt_if_present, encrypt_if_present
+from db.scope import runs_as_service
+from services.encryption import bind, decrypt_if_present, encrypt_if_present
 
 
 def _compute_hash(member_summaries: list[str]) -> str:
@@ -20,6 +21,7 @@ def _compute_hash(member_summaries: list[str]) -> str:
     return hashlib.sha256(joined.encode()).hexdigest()[:16]
 
 
+@runs_as_service  # #115: room_summaries cache (cross-user)
 def get_cached_summary(room_id: str, member_summaries: list[str]) -> str | None:
     current_hash = _compute_hash(member_summaries)
     rows = table("room_summaries").select(
@@ -27,15 +29,18 @@ def get_cached_summary(room_id: str, member_summaries: list[str]) -> str | None:
         filters={"room_id": f"eq.{room_id}"},
     )
     if rows and rows[0]["member_hash"] == current_hash:
-        return decrypt_if_present(rows[0]["summary"])
+        return decrypt_if_present(
+            rows[0]["summary"], bind=bind("room_summaries", "summary", room_id),
+        )
     return None
 
 
+@runs_as_service  # #115: room_summaries is read-only for students; cache writes are server-side
 def save_summary(room_id: str, member_summaries: list[str], summary: str) -> None:
     table("room_summaries").upsert(
         {
             "room_id": room_id,
-            "summary": encrypt_if_present(summary),
+            "summary": encrypt_if_present(summary, bind=bind("room_summaries", "summary", room_id)),
             "member_hash": _compute_hash(member_summaries),
             "updated_at": datetime.now(timezone.utc).isoformat(),
         },
@@ -43,5 +48,6 @@ def save_summary(room_id: str, member_summaries: list[str], summary: str) -> Non
     )
 
 
+@runs_as_service  # #115: room_summaries cache write
 def invalidate(room_id: str) -> None:
     table("room_summaries").delete({"room_id": f"eq.{room_id}"})

@@ -3,7 +3,7 @@ import json
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
-from services.quiz_signals import (
+from services.quiz.signals import (
     CourseScope,
     QuizSignals,
     gather_signals,
@@ -78,7 +78,7 @@ def _gather(
         course_name=course_name,
         name_failed=name_failed,
     )
-    with patch("services.quiz_signals.table", side_effect=reads):
+    with patch("services.quiz.signals.table", side_effect=reads):
         signals = gather_signals(
             "u1", "node1", scope=scope,
             course_id="c1", concept_name="Gradient Descent", **kw,
@@ -118,14 +118,14 @@ class TestGatherSignals:
             m.select_with_count.return_value = (tables.get(name, []), len(tables.get(name, [])))
             return m
 
-        with patch("services.quiz_signals.table", side_effect=factory):
+        with patch("services.quiz.signals.table", side_effect=factory):
             return gather_signals("u1", "node1", scope=_NO_SCOPE, **kw)
 
     def test_times_studied_is_passed_in_not_re_read(self):
         """generate_quiz already fetches that row to resolve the concept name
         and course. Re-reading it would spend a round-trip to learn something
         we were already told."""
-        with patch("services.quiz_signals.table") as t:
+        with patch("services.quiz.signals.table") as t:
             t.return_value.select.return_value = []
             s = gather_signals("u1", "node1", scope=_NO_SCOPE, times_studied=7)
 
@@ -137,7 +137,7 @@ class TestGatherSignals:
     def test_reports_the_true_count_not_a_saturated_page(self):
         """`select_with_count` — `len(rows)` under a LIMIT would report the cap
         as though it were a fact about the student."""
-        with patch("services.quiz_signals.table") as t:
+        with patch("services.quiz.signals.table") as t:
             t.return_value.select_with_count.return_value = ([{"id": "a"}], 37)
             t.return_value.select.return_value = []
             s = gather_signals("u1", "node1", scope=_NO_SCOPE)
@@ -149,7 +149,7 @@ class TestGatherSignals:
         abandoned even before the lazy sweep stamps it — and the sweep runs on
         the history reads, not on generation. Checking only the NULL stamps
         would report week-old attempts to the model as active."""
-        with patch("services.quiz_signals.table") as t:
+        with patch("services.quiz.signals.table") as t:
             t.return_value.select_with_count.return_value = ([], 0)
             t.return_value.select.return_value = []
             gather_signals("u1", "node1", scope=_NO_SCOPE)
@@ -175,7 +175,7 @@ class TestGatherSignals:
                 {"attempt_id": "old-live", "answered_at": recent},
             ], 2),
         })
-        with patch("services.quiz_signals.table", side_effect=reads):
+        with patch("services.quiz.signals.table", side_effect=reads):
             s = gather_signals("u1", "node1", scope=_NO_SCOPE)
 
         assert s.in_flight_attempts == 2, "1 fresh + 1 old-but-active, counted once"
@@ -191,7 +191,7 @@ class TestGatherSignals:
 
     def test_in_flight_skips_the_activity_read_when_nothing_is_old(self):
         reads = _Reads({"quiz_attempts": ([], 3)})
-        with patch("services.quiz_signals.table", side_effect=reads):
+        with patch("services.quiz.signals.table", side_effect=reads):
             s = gather_signals("u1", "node1", scope=_NO_SCOPE)
         assert s.in_flight_attempts == 3
         assert "quiz_responses" not in reads.calls
@@ -205,21 +205,21 @@ class TestGatherSignals:
             m.select_with_count.side_effect = RuntimeError("db down")
             return m
 
-        with patch("services.quiz_signals.table", side_effect=factory):
+        with patch("services.quiz.signals.table", side_effect=factory):
             s = gather_signals("u1", "node1", scope=_NO_SCOPE)
 
         assert s.in_flight_attempts is None
         assert s.velocity_per_day is None
 
     def test_never_raises(self):
-        with patch("services.quiz_signals.table", side_effect=RuntimeError("boom")):
+        with patch("services.quiz.signals.table", side_effect=RuntimeError("boom")):
             assert isinstance(gather_signals("u1", "node1", scope=_NO_SCOPE), QuizSignals)
 
     def test_velocity_reuses_the_graph_service_computation(self):
         """Not a second copy of the 14-day rule — #557 is what two copies of
         one number costs."""
         with (
-            patch("services.quiz_signals.table") as t,
+            patch("services.quiz.signals.table") as t,
             patch("services.graph_service._compute_velocity", return_value=0.05) as calc,
         ):
             t.return_value.select.return_value = [{"delta": 0.03, "created_at": "x"}]
@@ -271,7 +271,7 @@ def test_velocity_matches_what_the_graph_screen_shows():
     ]
     expected = _compute_velocity(ascending)
 
-    with patch("services.quiz_signals.table") as t:
+    with patch("services.quiz.signals.table") as t:
         # PostgREST hands them back newest-first, as this module asks.
         t.return_value.select.return_value = list(reversed(ascending))
         got = gather_signals("u1", "node1", scope=_NO_SCOPE).velocity_per_day
@@ -316,7 +316,7 @@ class TestCourseScope:
 
     def test_without_a_course_neither_new_signal_is_attempted(self):
         reads = _Reads()
-        with patch("services.quiz_signals.table", side_effect=reads):
+        with patch("services.quiz.signals.table", side_effect=reads):
             s = gather_signals(
                 "u1", "node1", scope=_NO_SCOPE, concept_name="Gradient Descent",
             )
@@ -336,7 +336,7 @@ class TestCourseScope:
         enrollment, which is what makes it worth an alarm: every path that
         creates graph data for a course (upload, tutoring) resolves an
         offering with `create=True` on the way through."""
-        with patch("services.quiz_signals.report_empty_result") as report:
+        with patch("services.quiz.signals.report_empty_result") as report:
             s, _, _ = _gather(
                 {"flashcards": ([], 0)}, offerings=(), has_graph=True,
             )
@@ -361,7 +361,7 @@ class TestCourseScope:
         caller passes is what reaches the reporter — `None` included, which is
         "I did not look, go and check"."""
         for known in (True, None):
-            with patch("services.quiz_signals.report_empty_result") as report:
+            with patch("services.quiz.signals.report_empty_result") as report:
                 _gather({"flashcards": ([], 0)}, offerings=(), has_graph=known)
             assert report.call_args.kwargs["plausible"] is known
 
@@ -371,7 +371,7 @@ class TestCourseScope:
         input, and firing on ordinary emptiness is the alarm fatigue that
         would train everyone to ignore it — so nothing is reported when the
         scope resolves and the reads are simply empty."""
-        with patch("services.quiz_signals.report_empty_result") as report:
+        with patch("services.quiz.signals.report_empty_result") as report:
             s, _, _ = _gather(
                 {"flashcards": ([], 0), "sessions": ([], 0)}, has_graph=True,
             )
@@ -705,7 +705,7 @@ class TestCalendarDayArithmetic:
     """
 
     def test_the_module_uses_the_shared_calendar_rule(self):
-        from services import quiz_signals
+        from services.quiz import signals as quiz_signals
         from services.timestamps import calendar_days_since
 
         assert quiz_signals._days_since is calendar_days_since

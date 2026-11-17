@@ -28,7 +28,8 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from db.connection import table  # noqa: E402
-from services.encryption import encrypt_if_present  # noqa: E402
+from services.encryption import bind, encrypt_if_present  # noqa: E402
+from services.encryption_canary import abort_unless_key_verified  # noqa: E402
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 
@@ -107,6 +108,10 @@ def embed_batch(texts: list[str]) -> list[list[float]]:
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 def main() -> None:
+    # Abort unless ENCRYPTION_KEY opens this database's key canary
+    # (services/encryption_canary.py): a wrong key writes unreadable rows.
+    # Before the (billable) embedding pass, not just before the upsert.
+    abort_unless_key_verified("scripts.ingest_catalog")
     with open(CATALOG_FILE, encoding="utf-8") as f:
         catalog: list[dict] = json.load(f)
 
@@ -176,7 +181,8 @@ def main() -> None:
     # in a mixed table that makes a genuine decrypt failure indistinguishable
     # from a legitimately-plaintext row.
     for rec in records:
-        rec["chunk_text"] = encrypt_if_present(rec["chunk_text"])
+        rec["chunk_text"] = encrypt_if_present(
+            rec["chunk_text"], bind=bind("course_chunks", "chunk_text", rec["id"]))
 
     # Upsert to Supabase in batches of BATCH_SIZE
     print("\nUpserting to course_chunks...")

@@ -25,6 +25,12 @@ from fastapi.testclient import TestClient
 from main import app
 from agents.quiz import Quiz, QuizQuestion
 from services import events_service
+from services.encryption import bind
+from tests.db_fakes import with_async_twins
+from tests.split_patches import patch_quiz
+
+# #117: a sync PostgREST call reached on the event loop raises here.
+pytestmark = pytest.mark.usefixtures("no_sync_db_on_loop")
 
 client = TestClient(app)
 
@@ -132,7 +138,7 @@ class TestAnswerEndpoint:
                    "correct_answer": "0.5", "explanation": "One divided by two.", "difficulty": "easy"}
         monkeypatch.setitem(globals(), "QUESTIONS", [written])
         factory, responses = _tables()
-        with patch("routes.quiz.table", side_effect=factory):
+        with patch_quiz("table", side_effect=with_async_twins(factory)):
             first = client.post("/api/quiz/attempts/quiz1/answer", json={"question_index": 0, "answer_text": "1/2"})
             second = client.post("/api/quiz/attempts/quiz1/answer", json={"question_index": 0, "answer_text": "99"})
         assert first.status_code == second.status_code == 200
@@ -141,7 +147,8 @@ class TestAnswerEndpoint:
         assert second.json()["recorded"] is False
         assert len(responses.rows) == 1
         assert responses.rows[0]["answer_text"] != "1/2"
-        assert decrypt_json_column(responses.rows[0]["answer_text"]) == {"text": "1/2"}
+        assert decrypt_json_column(responses.rows[0]["answer_text"],
+                                   bind=bind("quiz_responses", "answer_text", responses.rows[0])) == {"text": "1/2"}
         with ExitStack() as stack:
             for mock in TestSubmitReconciliation()._submit_mocks(responses):
                 stack.enter_context(mock)
@@ -152,7 +159,7 @@ class TestAnswerEndpoint:
 
     def test_grades_and_persists_a_response(self):
         factory, responses = _tables()
-        with patch("routes.quiz.table", side_effect=factory):
+        with patch_quiz("table", side_effect=with_async_twins(factory)):
             r = _answer({"time_ms": 4200, "confidence": 0.8})
         assert r.status_code == 200
         data = r.json()
@@ -175,7 +182,7 @@ class TestAnswerEndpoint:
 
     def test_last_question_has_no_next(self):
         factory, _ = _tables()
-        with patch("routes.quiz.table", side_effect=factory):
+        with patch_quiz("table", side_effect=with_async_twins(factory)):
             r = _answer({"question_index": 1, "selected_index": 1})
         assert r.status_code == 200
         data = r.json()
@@ -185,7 +192,7 @@ class TestAnswerEndpoint:
 
     def test_reanswer_returns_first_recorded_response(self):
         factory, responses = _tables()
-        with patch("routes.quiz.table", side_effect=factory):
+        with patch_quiz("table", side_effect=with_async_twins(factory)):
             first = _answer({"selected_index": 1})
             second = _answer({"selected_index": 0})   # tries to revise → no
         assert first.status_code == 200
@@ -197,7 +204,7 @@ class TestAnswerEndpoint:
 
     def test_completed_attempt_409s(self):
         factory, _ = _tables(completed_at="2026-08-12T00:00:00Z")
-        with patch("routes.quiz.table", side_effect=factory):
+        with patch_quiz("table", side_effect=with_async_twins(factory)):
             r = _answer()
         assert r.status_code == 409
         assert r.json()["error"]["code"] == "QUIZ_ATTEMPT_ALREADY_COMPLETED"
@@ -208,14 +215,14 @@ class TestAnswerEndpoint:
             mock.select.return_value = []
             return mock
 
-        with patch("routes.quiz.table", side_effect=factory):
+        with patch_quiz("table", side_effect=with_async_twins(factory)):
             r = _answer(attempt_id="nope")
         assert r.status_code == 404
         assert r.json()["error"]["code"] == "QUIZ_ATTEMPT_NOT_FOUND"
 
     def test_bad_indexes_400(self):
         factory, _ = _tables()
-        with patch("routes.quiz.table", side_effect=factory):
+        with patch_quiz("table", side_effect=with_async_twins(factory)):
             r_q = _answer({"question_index": 9})
             r_o = _answer({"selected_index": 9})
         for r in (r_q, r_o):
@@ -227,7 +234,7 @@ class TestAnswerEndpoint:
         the id the client displayed makes an off-by-one visible instead of
         silently grading the wrong question (which idempotency then locks in)."""
         factory, _ = _tables()
-        with patch("routes.quiz.table", side_effect=factory):
+        with patch_quiz("table", side_effect=with_async_twins(factory)):
             r = _answer({"question_index": 0, "selected_index": 1})
         assert r.status_code == 200
         data = r.json()
@@ -239,7 +246,7 @@ class TestAnswerEndpoint:
         when both are present they must agree, so passing the 1-based id as
         the 0-based index fails loudly instead of grading question 2."""
         factory, responses = _tables()
-        with patch("routes.quiz.table", side_effect=factory):
+        with patch_quiz("table", side_effect=with_async_twins(factory)):
             r = _answer({"question_index": 1, "selected_index": 0, "question_id": 1})
         assert r.status_code == 400
         assert r.json()["error"]["code"] == "QUIZ_QUESTION_INVALID"
@@ -319,8 +326,8 @@ class TestIncludeAnswerKey:
 
         factory, captured = _generate_factory()
         with (
-            patch("routes.quiz.table", side_effect=factory),
-            patch("routes.quiz.quiz_agent.run",
+            patch_quiz("table", side_effect=with_async_twins(factory)),
+            patch("services.quiz.generation.quiz_agent.run",
                   new=AsyncMock(return_value=SimpleNamespace(output=_fake_quiz()))),
         ):
             with caplog.at_level("INFO", logger="routes.quiz"):
@@ -329,7 +336,8 @@ class TestIncludeAnswerKey:
         q = r.json()["questions"][0]
         assert all("correct" not in o for o in q["options"])
         # Storage keeps the key — grading stays server-side.
-        stored = decrypt_json_column(captured["payload"]["questions_json"])
+        stored = decrypt_json_column(captured["payload"]["questions_json"],
+                                   bind=bind("quiz_attempts", "questions_json", captured["payload"]))
         assert any(o.get("correct") for o in stored[0]["options"])
         # Filtered by logger name (M6): caplog's handler captures every
         # propagating logger, not just ours, so an unfiltered scan could
@@ -357,14 +365,15 @@ class TestIncludeAnswerKey:
 
         factory, captured = _generate_factory()
         with (
-            patch("routes.quiz.table", side_effect=factory),
-            patch("routes.quiz.quiz_agent.run",
+            patch_quiz("table", side_effect=with_async_twins(factory)),
+            patch("services.quiz.generation.quiz_agent.run",
                   new=AsyncMock(return_value=SimpleNamespace(output=_fake_quiz()))),
         ):
             r = _post_generate({})
         assert r.status_code == 200
         assert_keyless_projection(
-            r.json(), decrypt_json_column(captured["payload"]["questions_json"]),
+            r.json(), decrypt_json_column(captured["payload"]["questions_json"],
+                                   bind=bind("quiz_attempts", "questions_json", captured["payload"])),
         )
 
     def test_explicit_true_keeps_the_key_and_logs(self, caplog):
@@ -374,8 +383,8 @@ class TestIncludeAnswerKey:
         the opt-in path is observable before it's deleted outright."""
         factory, _ = _generate_factory()
         with (
-            patch("routes.quiz.table", side_effect=factory),
-            patch("routes.quiz.quiz_agent.run",
+            patch_quiz("table", side_effect=with_async_twins(factory)),
+            patch("services.quiz.generation.quiz_agent.run",
                   new=AsyncMock(return_value=SimpleNamespace(output=_fake_quiz()))),
         ):
             with caplog.at_level("INFO", logger="routes.quiz"):
@@ -401,8 +410,8 @@ class TestAnswerKeyFlagTelemetry:
     def _generate(self, extra):
         factory, _ = _generate_factory()
         with (
-            patch("routes.quiz.table", side_effect=factory),
-            patch("routes.quiz.quiz_agent.run",
+            patch_quiz("table", side_effect=with_async_twins(factory)),
+            patch("services.quiz.generation.quiz_agent.run",
                   new=AsyncMock(return_value=SimpleNamespace(output=_fake_quiz()))),
         ):
             r = _post_generate(extra)
@@ -466,16 +475,16 @@ class TestSubmitReconciliation:
     def _submit_mocks(self, responses):
         factory, _ = _tables(responses=responses)
         return (
-            patch("routes.quiz.table", side_effect=factory),
-            patch("routes.quiz.apply_graph_update"),
-            patch("routes.quiz.get_quiz_context", return_value={}),
+            patch_quiz("table", side_effect=with_async_twins(factory)),
+            patch_quiz("apply_graph_update"),
+            patch_quiz("get_quiz_context", return_value={}),
             patch(
-                "routes.quiz.quiz_context_agent.run",
+                "services.quiz.submission.quiz_context_agent.run",
                 new=AsyncMock(return_value=SimpleNamespace(
                     output=SimpleNamespace(model_dump=lambda: {})
                 )),
             ),
-            patch("routes.quiz.save_quiz_context"),
+            patch_quiz("save_quiz_context"),
         )
 
     def test_persisted_answers_match_what_was_graded(self):
@@ -504,16 +513,16 @@ class TestSubmitReconciliation:
             return t
 
         with (
-            patch("routes.quiz.table", side_effect=capturing),
-            patch("routes.quiz.apply_graph_update"),
-            patch("routes.quiz.get_quiz_context", return_value={}),
+            patch_quiz("table", side_effect=with_async_twins(capturing)),
+            patch_quiz("apply_graph_update"),
+            patch_quiz("get_quiz_context", return_value={}),
             patch(
-                "routes.quiz.quiz_context_agent.run",
+                "services.quiz.submission.quiz_context_agent.run",
                 new=AsyncMock(return_value=SimpleNamespace(
                     output=SimpleNamespace(model_dump=lambda: {})
                 )),
             ),
-            patch("routes.quiz.save_quiz_context"),
+            patch_quiz("save_quiz_context"),
         ):
             r = client.post("/api/quiz/submit", json={
                 "quiz_id": "quiz1",
@@ -529,7 +538,7 @@ class TestSubmitReconciliation:
         assert r.status_code == 200
         stored = [d for d in update_calls if "answers_json" in d]
         assert len(stored) == 1
-        answers = decrypt_json_column(stored[0]["answers_json"])
+        answers = decrypt_json_column(stored[0]["answers_json"], bind=bind("quiz_attempts", "answers_json", "quiz1"))
         by_qid = {str(a["question_id"]): a["selected_label"] for a in answers}
         assert by_qid["1"] == "B", "stored answer must be the graded (recorded) one"
         assert by_qid["2"] == "A"
@@ -559,16 +568,16 @@ class TestSubmitReconciliation:
             return t
 
         with (
-            patch("routes.quiz.table", side_effect=capturing),
-            patch("routes.quiz.apply_graph_update"),
-            patch("routes.quiz.get_quiz_context", return_value={}),
+            patch_quiz("table", side_effect=with_async_twins(capturing)),
+            patch_quiz("apply_graph_update"),
+            patch_quiz("get_quiz_context", return_value={}),
             patch(
-                "routes.quiz.quiz_context_agent.run",
+                "services.quiz.submission.quiz_context_agent.run",
                 new=AsyncMock(return_value=SimpleNamespace(
                     output=SimpleNamespace(model_dump=lambda: {})
                 )),
             ),
-            patch("routes.quiz.save_quiz_context"),
+            patch_quiz("save_quiz_context"),
         ):
             r = client.post("/api/quiz/submit", json={
                 "quiz_id": "quiz1", "answers": [],
@@ -577,7 +586,7 @@ class TestSubmitReconciliation:
         assert r.status_code == 200
         assert r.json()["score"] == 2
         stored = [d for d in update_calls if "answers_json" in d][0]
-        answers = decrypt_json_column(stored["answers_json"])
+        answers = decrypt_json_column(stored["answers_json"], bind=bind("quiz_attempts", "answers_json", "quiz1"))
         assert len(answers) == 2, (
             "a perfect score with an empty stored answer set is a contradictory "
             "attempt record"

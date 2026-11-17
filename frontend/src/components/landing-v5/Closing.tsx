@@ -28,7 +28,14 @@ const MOTES: { d: number; s: React.CSSProperties }[] = [
   { d: 0.37, s: { left: '14.2%', top: '81%', width: 5.6, height: 5.6, background: '#96B86F', opacity: 0.46, animation: 'nodeFloatB 16s ease-in-out -8s infinite' } },
 ];
 
-export function FinalCta({ onGetStarted }: { onGetStarted: () => void }) {
+export function FinalCta({
+  onGetStarted,
+  ctaLabel = 'Sign up for Beta Testing',
+}: {
+  onGetStarted: () => void;
+  /** "Sign up" while open access is on (docs/design/open-access-gate.md). */
+  ctaLabel?: string;
+}) {
   return (
     <section id="cta" className="ld-cta" style={{ position: 'relative', padding: '130px 24px 120px', zIndex: 1 }}>
       <DragField section="cta" />
@@ -53,7 +60,7 @@ export function FinalCta({ onGetStarted }: { onGetStarted: () => void }) {
       </div>
 
       <FadeIn style={{ position: 'relative', zIndex: 1, maxWidth: 768, margin: '0 auto', textAlign: 'center' }}>
-        <h2 style={{ margin: 0, fontFamily: "var(--font-aleo), 'Aleo', Georgia, serif", fontSize: 'clamp(2.8rem, 6vw, 4.6rem)', fontWeight: 600, letterSpacing: '-0.02em', lineHeight: 1.05, color: '#191F13' }}>
+        <h2 style={{ margin: 0, fontFamily: "var(--font-gummi), Georgia, serif", fontSize: 'clamp(2.8rem, 6vw, 4.6rem)', fontWeight: 600, letterSpacing: '-0.02em', lineHeight: 1.05, color: '#191F13' }}>
           Ready to <br /> Start <em style={{ color: '#445D22', paddingRight: 8 }}>Growing?</em>
         </h2>
         <p style={{ margin: '24px 0 0', color: '#697062', fontSize: 17, fontWeight: 400 }}>
@@ -65,7 +72,7 @@ export function FinalCta({ onGetStarted }: { onGetStarted: () => void }) {
             className="ld-btn-solid"
             style={{ display: 'inline-flex', alignItems: 'center', gap: 8, background: '#445D22', color: '#fff', border: 'none', borderRadius: 6, padding: '14px 32px', fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", fontWeight: 600, fontSize: 15.5, whiteSpace: 'nowrap', cursor: 'pointer', transition: 'filter 200ms' }}
           >
-            Sign up for Beta Testing
+            {ctaLabel}
           </button>
         </div>
       </FadeIn>

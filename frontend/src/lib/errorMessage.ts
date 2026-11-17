@@ -59,6 +59,11 @@ function detailOf(body: Body): string | undefined {
 
   const detail = body.detail;
   if (typeof detail === "string") return detail.trim() || undefined;
+  // A coded detail (`{code, message}`, e.g. the auth guard's not_approved,
+  // the admin step-up's `reauth_required` or onboarding's legal_outdated)
+  // carries its own sentence.
+  const detailMessage = asRecord(detail)?.message;
+  if (typeof detailMessage === "string" && detailMessage.trim()) return detailMessage.trim();
   // FastAPI request-validation failures nest the message under detail[].msg.
   if (Array.isArray(detail)) {
     for (const entry of detail) {
@@ -88,16 +93,21 @@ function statusFrom(err: unknown, body: Body | null): number | undefined {
   return undefined;
 }
 
-/** Pulls what the server actually told us out of a thrown error. */
-export function extractErrorDetail(err: unknown): ErrorDetail {
+/** The response body behind an error, parsed, when there is one. */
+function bodyOf(err: unknown): Body | null {
   // `ApiError.body` is the already-parsed response body (#537). Prefer it over
   // re-parsing `message`, which is the same JSON as text.
   const parsedBody = asRecord(err) && !Array.isArray(err)
     ? asRecord((err as { body?: unknown }).body)
     : null;
-  const body = parsedBody
+  return parsedBody
     ?? (err instanceof Error ? null : asRecord(err))
     ?? asRecord(parseJson(rawMessage(err)));
+}
+
+/** Pulls what the server actually told us out of a thrown error. */
+export function extractErrorDetail(err: unknown): ErrorDetail {
+  const body = bodyOf(err);
   const out: ErrorDetail = {};
   const detail = body ? detailOf(body) : undefined;
   if (detail) out.detail = detail;
@@ -109,6 +119,23 @@ export function extractErrorDetail(err: unknown): ErrorDetail {
 /** The HTTP status behind an error, when one can be recovered. */
 export function statusOf(err: unknown): number | undefined {
   return extractErrorDetail(err).status;
+}
+
+/**
+ * The machine-readable code behind an error, when the server sent one:
+ * `ApiError.code` (the quiz routes' `error.code` envelope), or `detail.code`
+ * from a coded HTTPException such as the auth guard's 403 `not_approved` or
+ * onboarding's 422 `legal_outdated` / `no_known_courses`.
+ */
+export function errorCodeOf(err: unknown): string | undefined {
+  const own = asRecord(err)?.code;
+  if (typeof own === "string" && own) return own;
+  const body = bodyOf(err);
+  for (const holder of [body?.error, body?.detail]) {
+    const code = asRecord(holder)?.code;
+    if (typeof code === "string" && code) return code;
+  }
+  return undefined;
 }
 
 const NOT_FOUND_TEXT = /\bnot found\b/i;
@@ -169,5 +196,20 @@ function looksHuman(text: string): boolean {
 export function humanizeError(err: unknown, fallback: string): string {
   const { detail, status } = extractErrorDetail(err);
   if (detail && looksHuman(detail)) return detail;
+  return statusCopy(status) ?? fallback;
+}
+
+/**
+ * `humanizeError` for call sites that used to show `err.message` as is: a
+ * plain sentence an `Error` was thrown with (a stream error, a client-side
+ * check) still reads through, but a raw response body never does — a 429's
+ * `{"detail": "... Try again in 30 seconds."}` shows its detail, and a body
+ * with nothing readable falls back to the status copy or `fallback`.
+ */
+export function readableError(err: unknown, fallback: string): string {
+  const { detail, status } = extractErrorDetail(err);
+  if (detail && looksHuman(detail)) return detail;
+  const raw = rawMessage(err).trim();
+  if (parseJson(raw) === null && !HTTP_STATUS_RE.test(raw) && looksHuman(raw)) return raw;
   return statusCopy(status) ?? fallback;
 }

@@ -13,69 +13,136 @@ from agents.tools.syllabus_adapter import syllabus_to_wire_dict
 from agents.usage import record_agent_usage
 from services.extraction_service import extract_text_from_file
 from services.assignment_dedupe import assignment_dedupe_key
-from services.encryption import encrypt_if_present
+from services.encryption import bind, encrypt_if_present
+from services.prompt_safety import wrap_document_input
+from services import upload_validation as uv
 from db.connection import table
 
 logger = logging.getLogger(__name__)
 
+#: Syllabus extraction (routes/calendar.py /extract): the same document types as
+#: a document upload plus a photographed or pasted syllabus, checked by name AND
+#: signature (services/upload_validation.py). 20 MB matches the OCR routes.
+EXTRACT_MAX_BYTES = 20 * 1024 * 1024
+EXTRACT_ALLOWED_TYPES = (uv.PDF, uv.DOCX, uv.PPTX, uv.PNG, uv.JPEG, uv.WEBP, uv.TEXT)
+EXTRACT_UNSUPPORTED_DETAIL = (
+    "Unsupported file. Upload a PDF, DOCX, PPTX, TXT, or a PNG, JPEG or WEBP image."
+)
+#: What a failed extraction answers with: never the exception text.
+EXTRACT_FAILED_MESSAGE = "We couldn't read assignments from this file. Try a different file."
 
-def load_existing_assignment_keys(user_id: str) -> set:
-    from services.academics import user_enrollment_ids
-    enrollments = user_enrollment_ids(user_id)
-    if not enrollments:
-        return set()
-    ids = ",".join(e["id"] for e in enrollments)
-    existing_rows = table("assignments").select(
-        "title,due_date", filters={"enrollment_id": f"in.({ids})"},
+
+async def read_syllabus_upload(upload) -> tuple[bytes, str]:
+    """(bytes, sniffed type) of a syllabus upload: 400 on a type it is not by
+    name AND signature, 413 past EXTRACT_MAX_BYTES (enforced while reading)."""
+    return await uv.read_checked_upload(
+        upload, allowed=EXTRACT_ALLOWED_TYPES, max_bytes=EXTRACT_MAX_BYTES,
+        unsupported_detail=EXTRACT_UNSUPPORTED_DETAIL,
     )
-    return {assignment_dedupe_key(r.get("title"), r.get("due_date")) for r in (existing_rows or [])}
 
 
-def insert_new_assignments(user_id: str, assignments: list[dict], *, source: str = "manual") -> int:
-    """Insert assignments (deduped per the user's enrollment set, #16) on the
-    enrollment-keyed schema. Each assignment must carry a ``course_id`` — it is
-    resolved to the user's EXISTING enrollment. Returns rows inserted.
+def extraction_failed(request_id: str) -> dict:
+    """/extract's answer to an unexpected failure: the exception (current, in
+    an ``except`` block) is logged under the request id; the client gets the
+    generic message in the route's usual shape, never the exception text,
+    which can name paths, hosts and driver internals."""
+    logger.exception("syllabus extraction failed [request_id=%s]", request_id)
+    return {"error": EXTRACT_FAILED_MESSAGE, "assignments": [], "warnings": [EXTRACT_FAILED_MESSAGE]}
 
-    A calendar/syllabus write never creates an enrollment (#766): with
-    ``create=True`` a save for a course the student had dropped silently
-    re-enrolled them. Assignments for a course the student isn't enrolled in
-    are skipped (and logged), like courseless ones."""
+
+#: Why a row of a save was not written. A skip's ``reason`` is always one of
+#: these fixed codes, never free text (nothing about another row or course).
+SKIP_DUPLICATE = "duplicate"
+SKIP_NO_ENROLLMENT = "no_enrollment"
+
+
+def load_existing_assignment_keys(enrollment_ids) -> set[tuple[str, str, str]]:
+    """``(enrollment_id, title, day)`` of every assignment in those enrollments,
+    title and day normalized by ``assignment_dedupe_key``. ``title`` and
+    ``due_date`` are plaintext columns (only notes and points are encrypted),
+    so they compare as stored."""
+    ids = sorted({e for e in enrollment_ids if e})
+    if not ids:
+        return set()
+    existing_rows = table("assignments").select(
+        "enrollment_id,title,due_date", filters={"enrollment_id": f"in.({','.join(ids)})"},
+    )
+    return {
+        (r.get("enrollment_id"), *assignment_dedupe_key(r.get("title"), r.get("due_date")))
+        for r in (existing_rows or [])
+    }
+
+
+def save_new_assignments(user_id: str, assignments: list[dict], *, source: str = "manual") -> dict:
+    """Insert assignments on the enrollment-keyed schema and say what was left
+    out: ``{"saved_count", "skipped_count", "skipped": [{"title", "due_date",
+    "reason"}]}``, skips in request order.
+
+    Each assignment must carry a ``course_id``: it is resolved to the user's
+    EXISTING enrollment. A calendar/syllabus write never creates an enrollment
+    (#766): with ``create=True`` a save for a course the student had dropped
+    silently re-enrolled them. An assignment for a course the student isn't
+    enrolled in, or with no course, is skipped as ``no_enrollment``.
+
+    A duplicate (#16) is the same trimmed title on the same calendar day IN
+    THE SAME ENROLLMENT, already stored or earlier in this batch. The key was
+    user-wide while assignments were keyed on ``user_id`` with a free-text
+    course name; since they hang off an enrollment, a "Final Exam" on one day
+    in two courses is two assignments, and the user-wide key dropped the
+    second without a word. Skipped as ``duplicate``.
+
+    A row with no title or no due date is dropped uncounted, as before."""
     from services.academics import enrollment_id_for
-    existing_keys = load_existing_assignment_keys(user_id)
-    rows = []
-    not_enrolled: set[str] = set()
+    dated = []
     for a in assignments:
-        title = (a.get("title") or "").strip()
-        due_raw = (a.get("due_date") or "").strip()
-        if not title or not due_raw:
+        title, day = assignment_dedupe_key(a.get("title"), a.get("due_date"))
+        if title and day:
+            dated.append((title, day, a))
+    enrollment_of = {
+        course_id: enrollment_id_for(user_id, course_id, create=False)
+        for course_id in dict.fromkeys(a.get("course_id") for _, _, a in dated)
+        if course_id
+    }
+    existing_keys = load_existing_assignment_keys(enrollment_of.values())
+    rows = []
+    skipped = []
+    for title, day, a in dated:
+        enrollment_id = enrollment_of.get(a.get("course_id"))
+        key = (enrollment_id, title, day)
+        reason = (
+            SKIP_NO_ENROLLMENT if not enrollment_id  # decision: every assignment is course-tied
+            else SKIP_DUPLICATE if key in existing_keys
+            else None
+        )
+        if reason:
+            skipped.append({"title": title, "due_date": day, "reason": reason})
             continue
-        key = assignment_dedupe_key(title, due_raw)
-        if key in existing_keys:
-            continue
-        course_id = a.get("course_id")
-        enrollment_id = enrollment_id_for(user_id, course_id, create=False) if course_id else None
-        if not enrollment_id:
-            if course_id:
-                not_enrolled.add(course_id)
-            continue  # decision: every assignment is course-tied
         existing_keys.add(key)
+        new_id = str(uuid.uuid4())
         rows.append({
-            "id": str(uuid.uuid4()),
+            "id": new_id,
             "enrollment_id": enrollment_id,
             "title": title,
-            "due_date": key[1],
+            "due_date": day,
             "assignment_type": a.get("assignment_type") or "other",
-            "notes": encrypt_if_present(a.get("notes")),  # #126: encrypt at write
+            # #126: encrypt at write, bound to the row (finding M13).
+            "notes": encrypt_if_present(a.get("notes"), bind=bind("assignments", "notes", new_id)),
             "source": source,
         })
+    not_enrolled = sorted(c for c, e in enrollment_of.items() if not e)
     if not_enrolled:
         logger.info(
             "calendar: skipped assignments for %d course(s) user=%s is not "
-            "enrolled in: %s", len(not_enrolled), user_id, sorted(not_enrolled),
+            "enrolled in: %s", len(not_enrolled), user_id, not_enrolled,
         )
     if rows:
         table("assignments").insert(rows)
-    return len(rows)
+    return {"saved_count": len(rows), "skipped_count": len(skipped), "skipped": skipped}
+
+
+def insert_new_assignments(user_id: str, assignments: list[dict], *, source: str = "manual") -> int:
+    """:func:`save_new_assignments`, answering only the number of rows inserted."""
+    return save_new_assignments(user_id, assignments, source=source)["saved_count"]
 
 
 def _degraded_result(text: str, *, warning: str | None = None) -> dict:
@@ -128,7 +195,8 @@ async def _extract_via_agent(
     )
     result = record_agent_usage(
         await syllabus_extraction_agent.run(
-            extracted_text, deps=deps, usage_limits=WORKER_LIMITS
+            wrap_document_input(extracted_text), deps=deps,
+            usage_limits=WORKER_LIMITS,
         ),
         feature="document", task="syllabus", user_id=user_id,
     )

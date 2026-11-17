@@ -1,0 +1,125 @@
+# Import-boundary contracts (#118, docs/design/domain-modules.md). Run from
+# backend/: `lint-imports`. Gated in CI (ci.yml, after ruff).
+#
+# The contracts model the import graph as it is today and fail on NEW
+# violations. Every `ignore_imports` entry is a known, existing exception with
+# its reason; the list may only shrink. An entry that stops matching an import
+# fails the run (import-linter's default `unmatched_ignore_imports_alerting =
+# error`), so a fixed exception has to be deleted here too.
+[importlinter]
+root_packages =
+    routes
+    services
+    db
+    agents
+    worker
+    models
+include_external_packages = False
+
+[importlinter:contract:layers]
+name = Layering: routes/worker -> services/agents/models -> db
+type = layers
+# routes and the job worker are the two entry layers and never import each
+# other. services, agents and models import each other in both directions
+# today (services run agents; agent tools read services; request models
+# validate against service constants), so they share one non-independent layer.
+# db is the bottom: the table()/rpc chokepoint and the ops scripts beside it.
+layers =
+    routes | worker
+    services : agents : models
+    db
+ignore_imports =
+    # db/ -> services/: request-scoped context the client stamps onto every
+    # PostgREST call (route template, request id, the #115 user-scoped
+    # client's subject/mode), imported lazily inside the functions that need
+    # it. Moving request_context/auth_guard/feature_flags below db is a
+    # separate refactor, not part of #118.
+    db.connection -> services.request_context
+    db.async_connection -> services.request_context
+    db.async_connection -> services.feature_flags
+    db.scope -> services.request_context
+    db.scope -> services.auth_guard
+    db.scope -> services.feature_flags
+    db.scope -> services.events_service
+    # db/ ops scripts (seeds, backfills, the E2E staging helper) are CLIs that
+    # live beside the migration runner, not part of the data-access layer;
+    # they encrypt and resolve exactly like the app does.
+    db.backfill_encryption -> services.encryption
+    db.seed_local_owner -> services.encryption
+    db.seed_local_owner -> services.profiles
+    db.seed_local_rich -> services.encryption
+    # The rich seed builds its sample study guide from the guide contract's
+    # own models, so the seeded content always validates against it.
+    db.seed_local_rich -> models.study_guide
+    # The local study seed also stores a course outline under the hash the app
+    # would compute for it (so the Study page does not regenerate it), which
+    # only the outline service can produce.
+    db.seed_local_study -> services.encryption
+    db.seed_local_study -> services.topic_checklist_service
+    # Its dataset (db/local_study_data) writes study guides as the guide
+    # contract's own models, and builds each one the way a generation run
+    # leaves it: the server's section shares, and the server's citation and
+    # block check, which decides a chart's `illustrative` flag and stamps a
+    # quiz mistake's evidence line. A second copy of those rules would drift.
+    db.local_study_data.blocks -> models.study_guide
+    db.local_study_data.guides -> models.study_guide
+    db.local_study_data.guides -> services.study_guides.plan
+    db.local_study_data.guides -> services.study_guides.signals
+    db.local_study_data.guides -> services.study_guides.verify
+    db.seed_showcase -> services.encryption
+    db.seed_staging -> services.encryption
+    # sec2 M14/M13: every encrypting ops script checks the key canary before
+    # it writes (services/encryption_canary.py); the AAD backfill also seals
+    # through services.encryption like the app does.
+    db.seed_staging -> services.encryption_canary
+    db.seed_showcase -> services.encryption_canary
+    db.seed_local_rich -> services.encryption_canary
+    db.seed_local_study -> services.encryption_canary
+    db.e2e_staging_http -> services.encryption_canary
+    db.backfill_encryption -> services.encryption_canary
+    db.backfill_encryption_aad -> services.encryption_canary
+    db.backfill_encryption_aad -> services.encryption
+    db.e2e_staging_http -> services.encryption
+    db.e2e_staging_http -> services.session_tokens
+    db.e2e_staging_http -> services.academics
+    # services/ -> routes/: the one left; goes away with the remaining splits.
+    # document_jobs reaches the documents persistence helpers through
+    # routes/documents.py's re-exports (lazily) so a test patch on the route
+    # module still intercepts the queued path (see its module docstring).
+    services.document_jobs -> routes.documents
+
+[importlinter:contract:domains]
+name = Domain packages import each other only through the package __init__
+type = forbidden
+# services.<domain>.<anything> is a domain's internals: another domain must go
+# through `services.<domain>` (its __init__ exports). A domain importing its
+# OWN internals is not forbidden (import-linter skips overlapping
+# source/forbidden pairs). Direct imports only: a chain through a flat service
+# module is that module's business, not a domain reaching into another.
+source_modules =
+    services.admin
+    services.auth
+    services.documents
+    services.flashcards
+    services.gradebook
+    services.gradescope
+    services.profile
+    services.quiz
+    services.social
+    services.study
+    services.study_guides
+    services.tutor
+forbidden_modules =
+    services.admin.*
+    services.auth.*
+    services.documents.*
+    services.flashcards.*
+    services.gradebook.*
+    services.gradescope.*
+    services.profile.*
+    services.quiz.*
+    services.social.*
+    services.study.*
+    services.study_guides.*
+    services.tutor.*
+allow_indirect_imports = True

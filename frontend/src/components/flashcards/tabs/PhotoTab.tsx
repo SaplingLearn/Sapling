@@ -5,6 +5,8 @@ import { useToast } from "../../ToastProvider";
 import { useUser } from "@/context/UserContext";
 import { importParse } from "@/lib/api";
 import type { ParsedCard } from "@/lib/flashcardParsers";
+import s from "../FlashcardImportModal.module.css";
+import { humanizeError } from "@/lib/errorMessage";
 
 interface Props { onCards: (cards: ParsedCard[]) => void }
 
@@ -37,31 +39,34 @@ export function PhotoTab({ onCards }: Props) {
       onCards(res.cards.map((c, i) => ({ front: c.front, back: c.back, row: i + 1 })));
       toast.success(`Extracted ${res.cards.length} cards from image.`);
     } catch (err) {
-      toast.error(`OCR failed: ${String(err)}`);
+      toast.error(humanizeError(err, "Couldn't read text from that photo."));
     } finally {
       setBusy(false);
     }
   };
 
   return (
-    <div
-      onDragOver={e => e.preventDefault()}
-      onDrop={e => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) handleFile(f); }}
-      onClick={() => inputRef.current?.click()}
-      style={{
-        border: "2px dashed var(--border)", borderRadius: "var(--r-md)",
-        padding: 32, textAlign: "center", color: "var(--text-muted)", cursor: "pointer",
-      }}
-    >
-      <Icon name="doc" size={20} />
-      <div style={{ marginTop: 8, fontSize: 13 }}>
-        {busy ? "Reading image…" : "Drop or click to upload a photo of notes (.png, .jpg, .pdf)"}
-      </div>
+    <div className={s.tab}>
+      <button
+        type="button"
+        className={s.drop}
+        onClick={() => inputRef.current?.click()}
+        onDragOver={e => e.preventDefault()}
+        onDrop={e => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) handleFile(f); }}
+      >
+        <Icon name="doc" size={20} />
+        <span className={s.dropText}>
+          {busy ? "Reading image…" : "Drop or click to upload a photo of notes (.png, .jpg, .pdf)"}
+        </span>
+      </button>
+      {/* Opened by the button above, which is what the keyboard reaches. */}
       <input
         ref={inputRef}
         type="file"
         accept="image/*,.pdf"
-        style={{ display: "none" }}
+        hidden
+        tabIndex={-1}
+        aria-label="Photo to import"
         onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f); e.target.value = ""; }}
       />
     </div>

@@ -89,40 +89,10 @@ def bare(name: str) -> str:
     return name.split(".")[-1]
 
 
-def main() -> int:
-    url = os.getenv("SUPABASE_DB_URL")
-    if not url:
-        print("SUPABASE_DB_URL is not set", file=sys.stderr)
-        return 2
-
-    files = sorted(p.name for p in MIGRATIONS.glob("*.sql"))
-    conn = psycopg.connect(url)
-
-    if not ledger_exists(conn):
-        print("NO LEDGER — this database has never been migrated by db/migrate.py.")
-        print(NO_LEDGER_REMEDIATION)
-        return 1
-
-    recorded = recorded_filenames(conn)
-    pending, orphans = ledger_diff(files, recorded)
-
-    print(f"on disk {len(files)} | recorded {len(recorded)} | pending {len(pending)}\n")
-
-    print("PENDING")
-    for p in pending:
-        print(f"  {p}")
-    if not pending:
-        print("  none")
-
-    print("\nORPHANS (recorded here, absent from the repo)")
-    for o in orphans:
-        clash = [f for f in files if f.split("_")[0] == o.split("_")[0]]
-        note = f"  <-- NUMBER COLLIDES WITH {clash[0]}" if clash else ""
-        print(f"  {o}{note}")
-    if not orphans:
-        print("  none")
-
-    # Which objects the pending migrations would create, that already exist.
+def report_already_exists(conn, pending: list[str]) -> bool:
+    """Print the ALREADY EXISTS section: objects the pending migrations would
+    create that already exist. True when one of them belongs to a migration
+    without IF NOT EXISTS, i.e. the apply would fail."""
     print("\nALREADY EXISTS (pending migration, object already present)")
     found_any = False
     unsafe_already = False
@@ -165,8 +135,12 @@ def main() -> int:
                 print(f"      {h}")
     if not found_any:
         print("  none — the ledger is behind, not lying")
+    return unsafe_already
 
-    # Data blockers: a pending UNIQUE index that live rows already violate.
+
+def report_data_blockers(conn, pending: list[str]) -> bool:
+    """Print the DATA BLOCKERS section. True when live rows already violate a
+    UNIQUE index a pending migration would create."""
     print("\nDATA BLOCKERS (pending UNIQUE index vs rows already present)")
     blocked = False
     for name in pending:
@@ -190,6 +164,44 @@ def main() -> int:
                     print(f"      {d}")
     if not blocked:
         print("  none")
+    return blocked
+
+
+def main() -> int:
+    url = os.getenv("SUPABASE_DB_URL")
+    if not url:
+        print("SUPABASE_DB_URL is not set", file=sys.stderr)
+        return 2
+
+    files = sorted(p.name for p in MIGRATIONS.glob("*.sql"))
+    conn = psycopg.connect(url)
+
+    if not ledger_exists(conn):
+        print("NO LEDGER — this database has never been migrated by db/migrate.py.")
+        print(NO_LEDGER_REMEDIATION)
+        return 1
+
+    recorded = recorded_filenames(conn)
+    pending, orphans = ledger_diff(files, recorded)
+
+    print(f"on disk {len(files)} | recorded {len(recorded)} | pending {len(pending)}\n")
+
+    print("PENDING")
+    for p in pending:
+        print(f"  {p}")
+    if not pending:
+        print("  none")
+
+    print("\nORPHANS (recorded here, absent from the repo)")
+    for o in orphans:
+        clash = [f for f in files if f.split("_")[0] == o.split("_")[0]]
+        note = f"  <-- NUMBER COLLIDES WITH {clash[0]}" if clash else ""
+        print(f"  {o}{note}")
+    if not orphans:
+        print("  none")
+
+    unsafe_already = report_already_exists(conn, pending)
+    blocked = report_data_blockers(conn, pending)
 
     # Exit nonzero on anything that makes "apply the backlog" unsafe, so this
     # can gate CI as-is. PENDING alone is not drift — that is the normal state

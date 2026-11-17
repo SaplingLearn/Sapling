@@ -12,16 +12,29 @@ that a rejection from it actually propagates rather than being swallowed.
 """
 from unittest.mock import MagicMock, patch
 
+import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from main import app
+from tests.split_patches import patch_social
 
 client = TestClient(app)
 
 
 def _tables(handles):
     return lambda name: handles[name]
+
+
+@pytest.fixture(autouse=True)
+def _every_recipient_is_live():
+    """send_friend_request first checks the recipient names a live account
+    (services/profiles.live_user_ids, its own `users` read); these tests are
+    about the request rows, so every id is live. A dead or unknown recipient
+    is tests/test_id_bounds_and_friend_fk.py's. Tests that patch
+    live_user_ids themselves override this."""
+    with patch_social("live_user_ids", side_effect=lambda ids: set(ids)):
+        yield
 
 
 class TestSendRequest:
@@ -32,14 +45,14 @@ class TestSendRequest:
         handles["friend_requests"].insert.return_value = [
             {"id": "r1", "from_user_id": "u1", "to_user_id": "u2", "status": "pending"}
         ]
-        with patch("routes.social.table", side_effect=_tables(handles)):
+        with patch_social("table", side_effect=_tables(handles)):
             r = client.post("/api/social/friends/request",
                             json={"from_user_id": "u1", "to_user_id": "u2"})
         assert r.status_code == 200
         assert r.json()["request"]["status"] == "pending"
 
     def test_rejects_self_friending(self):
-        with patch("routes.social.table"):
+        with patch_social("table"):
             r = client.post("/api/social/friends/request",
                             json={"from_user_id": "u1", "to_user_id": "u1"})
         assert r.status_code == 400
@@ -47,7 +60,7 @@ class TestSendRequest:
     def test_rejects_when_already_friends(self):
         handles = {"friend_requests": MagicMock(), "friendships": MagicMock()}
         handles["friendships"].select.return_value = [{"friend_id": "u2"}]
-        with patch("routes.social.table", side_effect=_tables(handles)):
+        with patch_social("table", side_effect=_tables(handles)):
             r = client.post("/api/social/friends/request",
                             json={"from_user_id": "u1", "to_user_id": "u2"})
         assert r.status_code == 409
@@ -66,7 +79,7 @@ class TestSendRequest:
             {"id": "r1", "from_user_id": "u1", "to_user_id": "u2",
              "status": "pending", "responded_at": None}
         ]
-        with patch("routes.social.table", side_effect=_tables(handles)):
+        with patch_social("table", side_effect=_tables(handles)):
             r = client.post("/api/social/friends/request",
                             json={"from_user_id": "u1", "to_user_id": "u2"})
         assert r.status_code == 200
@@ -94,7 +107,7 @@ class TestSendRequest:
             {"id": "r1", "from_user_id": "u1", "to_user_id": "u2",
              "status": "pending", "responded_at": None}
         ]
-        with patch("routes.social.table", side_effect=_tables(handles)):
+        with patch_social("table", side_effect=_tables(handles)):
             r = client.post("/api/social/friends/request",
                             json={"from_user_id": "u1", "to_user_id": "u2"})
         assert r.status_code == 200
@@ -110,8 +123,8 @@ class TestAccept:
             {"id": "r1", "from_user_id": "u1", "to_user_id": "u2", "status": "pending"}
         ]
         handles["friendships"].select.return_value = []  # not friends yet
-        with patch("routes.social.table", side_effect=_tables(handles)), \
-             patch("routes.social.check_achievements") as check:
+        with patch_social("table", side_effect=_tables(handles)), \
+             patch_social("check_achievements") as check:
             r = client.post("/api/social/friends/requests/r1/accept?user_id=u2")
         assert r.status_code == 200
         written = handles["friendships"].upsert.call_args[0][0]
@@ -132,8 +145,8 @@ class TestAccept:
              "status": "accepted"}
         ]
         handles["friendships"].select.return_value = [{"friend_id": "u1"}]
-        with patch("routes.social.table", side_effect=_tables(handles)), \
-             patch("routes.social.check_achievements"):
+        with patch_social("table", side_effect=_tables(handles)), \
+             patch_social("check_achievements"):
             r = client.post("/api/social/friends/requests/r1/accept?user_id=u2")
         assert r.status_code == 200
         assert r.json()["accepted"] is True
@@ -152,8 +165,8 @@ class TestAccept:
         ]
         # Already friends from the first accept.
         handles["friendships"].select.return_value = [{"friend_id": "u2"}]
-        with patch("routes.social.table", side_effect=_tables(handles)), \
-             patch("routes.social.check_achievements"):
+        with patch_social("table", side_effect=_tables(handles)), \
+             patch_social("check_achievements"):
             r = client.post("/api/social/friends/requests/r2/accept?user_id=u1")
         assert r.status_code == 200
         assert r.json()["accepted"] is True
@@ -177,8 +190,8 @@ class TestAccept:
              "status": "declined"}
         ]
         handles["friendships"].select.return_value = []  # not friends
-        with patch("routes.social.table", side_effect=_tables(handles)), \
-             patch("routes.social.check_achievements"):
+        with patch_social("table", side_effect=_tables(handles)), \
+             patch_social("check_achievements"):
             r = client.post("/api/social/friends/requests/r1/accept?user_id=u2")
         assert r.status_code == 409
         handles["friendships"].upsert.assert_not_called()
@@ -197,8 +210,8 @@ class TestAccept:
              "status": "pending"}
         ]
         handles["friendships"].select.return_value = []
-        with patch("routes.social.table", side_effect=_tables(handles)), \
-             patch("routes.social.check_achievements"):
+        with patch_social("table", side_effect=_tables(handles)), \
+             patch_social("check_achievements"):
             r = client.post("/api/social/friends/requests/r1/accept?user_id=u2")
         assert r.status_code == 200
         handles["friendships"].insert.assert_not_called()
@@ -210,14 +223,14 @@ class TestAccept:
         handles["friend_requests"].select.return_value = [
             {"id": "r1", "from_user_id": "u1", "to_user_id": "u2", "status": "pending"}
         ]
-        with patch("routes.social.table", side_effect=_tables(handles)):
+        with patch_social("table", side_effect=_tables(handles)):
             r = client.post("/api/social/friends/requests/r1/accept?user_id=u9")
         assert r.status_code == 403
 
     def test_missing_request_is_404(self):
         handles = {"friend_requests": MagicMock(), "friendships": MagicMock()}
         handles["friend_requests"].select.return_value = []
-        with patch("routes.social.table", side_effect=_tables(handles)):
+        with patch_social("table", side_effect=_tables(handles)):
             r = client.post("/api/social/friends/requests/nope/accept?user_id=u2")
         assert r.status_code == 404
 
@@ -225,7 +238,7 @@ class TestAccept:
 class TestRemove:
     def test_deletes_both_directions(self):
         handles = {"friendships": MagicMock()}
-        with patch("routes.social.table", side_effect=_tables(handles)):
+        with patch_social("table", side_effect=_tables(handles)):
             r = client.delete("/api/social/friends/u2?user_id=u1")
         assert r.status_code == 200
         assert handles["friendships"].delete.call_count == 2
@@ -236,12 +249,51 @@ class TestList:
         handles = {"friendships": MagicMock(), "users": MagicMock()}
         handles["friendships"].select.return_value = [{"friend_id": "u2"}]
         handles["users"].select.return_value = [{"id": "u2", "level": 7, "total_xp": 900}]
-        with patch("routes.social.table", side_effect=_tables(handles)), \
-             patch("routes.social.get_display_names", return_value={"u2": "Priya Nair"}):
+        with patch_social("table", side_effect=_tables(handles)), \
+             patch_social("get_display_names", return_value={"u2": "Priya Nair"}):
             r = client.get("/api/social/friends/u1")
         assert r.json()["friends"] == [
             {"user_id": "u2", "name": "Priya Nair", "level": 7, "total_xp": 900}
         ]
+
+
+class TestDeletedAccountsAreDropped:
+    """#115: a soft-deleted account leaves every list that shows OTHER
+    students — the delete is soft, so its rows stay behind."""
+
+    def test_list_friends_reads_live_users_only(self):
+        handles = {"friendships": MagicMock(), "users": MagicMock()}
+        handles["friendships"].select.return_value = [{"friend_id": "u2"}, {"friend_id": "gone"}]
+        handles["users"].select.return_value = [{"id": "u2", "level": 7, "total_xp": 900}]
+        with patch_social("table", side_effect=_tables(handles)), \
+             patch_social("get_display_names", return_value={"u2": "Priya"}) as names:
+            r = client.get("/api/social/friends/u1")
+        _, kwargs = handles["users"].select.call_args
+        assert kwargs["filters"]["deleted_at"] == "is.null"
+        assert [f["user_id"] for f in r.json()["friends"]] == ["u2"]
+        names.assert_called_once_with(["u2"])
+
+    def test_friend_requests_drop_deleted_counterparts(self):
+        handles = {"friend_requests": MagicMock()}
+        handles["friend_requests"].select.side_effect = [
+            [{"id": "r1", "from_user_id": "u2", "created_at": "t"},
+             {"id": "r2", "from_user_id": "gone", "created_at": "t"}],
+            [{"id": "r3", "to_user_id": "gone2", "created_at": "t"}],
+        ]
+        with patch_social("table", side_effect=_tables(handles)), \
+             patch_social("live_user_ids", return_value={"u2"}), \
+             patch_social("get_display_names", return_value={"u2": "Priya"}):
+            r = client.get("/api/social/friends/requests?user_id=u1")
+        body = r.json()
+        assert [x["id"] for x in body["incoming"]] == ["r1"]
+        assert body["outgoing"] == []
+
+    def test_room_members_drop_deleted_accounts(self):
+        from routes.social import _live_members
+        with patch_social("live_user_ids", return_value={"u1", "u3"}):
+            assert _live_members(
+                [{"user_id": "u1"}, {"user_id": "gone"}, {"user_id": "u3"}]
+            ) == ["u1", "u3"]
 
 
 class TestAuthGuard:
@@ -258,7 +310,7 @@ class TestAuthGuard:
         handles["friend_requests"].insert.return_value = [
             {"id": "r1", "from_user_id": "u1", "to_user_id": "u2", "status": "pending"}
         ]
-        with patch("routes.social.table", side_effect=_tables(handles)), \
+        with patch_social("table", side_effect=_tables(handles)), \
              patch("routes.social.require_self") as guard:
             r = client.post("/api/social/friends/request",
                             json={"from_user_id": "u1", "to_user_id": "u2"})
@@ -270,8 +322,8 @@ class TestAuthGuard:
         handles["friend_requests"].select.return_value = [
             {"id": "r1", "from_user_id": "u1", "to_user_id": "u2", "status": "pending"}
         ]
-        with patch("routes.social.table", side_effect=_tables(handles)), \
-             patch("routes.social.check_achievements"), \
+        with patch_social("table", side_effect=_tables(handles)), \
+             patch_social("check_achievements"), \
              patch("routes.social.require_self") as guard:
             r = client.post("/api/social/friends/requests/r1/accept?user_id=u2")
         assert r.status_code == 200
@@ -282,7 +334,7 @@ class TestAuthGuard:
         handles["friend_requests"].select.return_value = [
             {"id": "r1", "from_user_id": "u1", "to_user_id": "u2", "status": "pending"}
         ]
-        with patch("routes.social.table", side_effect=_tables(handles)), \
+        with patch_social("table", side_effect=_tables(handles)), \
              patch("routes.social.require_self") as guard:
             r = client.post("/api/social/friends/requests/r1/decline?user_id=u2")
         assert r.status_code == 200
@@ -290,7 +342,7 @@ class TestAuthGuard:
 
     def test_remove_checks_user_id(self):
         handles = {"friendships": MagicMock()}
-        with patch("routes.social.table", side_effect=_tables(handles)), \
+        with patch_social("table", side_effect=_tables(handles)), \
              patch("routes.social.require_self") as guard:
             r = client.delete("/api/social/friends/u2?user_id=u1")
         assert r.status_code == 200
@@ -299,7 +351,7 @@ class TestAuthGuard:
     def test_list_friends_checks_user_id(self):
         handles = {"friendships": MagicMock()}
         handles["friendships"].select.return_value = []
-        with patch("routes.social.table", side_effect=_tables(handles)), \
+        with patch_social("table", side_effect=_tables(handles)), \
              patch("routes.social.require_self") as guard:
             r = client.get("/api/social/friends/u1")
         assert r.status_code == 200
@@ -308,7 +360,7 @@ class TestAuthGuard:
     def test_list_friend_requests_checks_user_id(self):
         handles = {"friend_requests": MagicMock()}
         handles["friend_requests"].select.return_value = []
-        with patch("routes.social.table", side_effect=_tables(handles)), \
+        with patch_social("table", side_effect=_tables(handles)), \
              patch("routes.social.require_self") as guard:
             r = client.get("/api/social/friends/requests?user_id=u1")
         assert r.status_code == 200

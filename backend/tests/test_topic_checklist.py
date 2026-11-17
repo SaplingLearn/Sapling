@@ -12,7 +12,7 @@ from pydantic_ai.models.function import FunctionModel
 from agents.topic_checklist import TopicOutline, topic_checklist_agent
 from services import academics
 from services import topic_checklist_service as svc
-from services.encryption import decrypt_json, encrypt_if_present
+from services.encryption import bind, decrypt_json, encrypt_if_present
 
 NOW = datetime(2026, 10, 12, 12, tzinfo=timezone.utc)
 
@@ -35,6 +35,12 @@ class MemoryTable:
         for key, expression in (filters or {}).items():
             if key == "and":
                 if row.get("due_date", "") > expression.split("lte.")[1].rstrip(")"):
+                    return False
+                continue
+            if key == "or":
+                # The one `or` sent: `(assignment_type.in.(...),assignment_type.is.null)`.
+                kinds = expression.split("in.(")[1].split(")")[0].split(",")
+                if row.get("assignment_type") is not None and row["assignment_type"] not in kinds:
                     return False
                 continue
             op, value = expression.split(".", 1)
@@ -142,7 +148,8 @@ def test_get_never_calls_model_and_refresh_is_encrypted_idempotent(state):
     assert not result["needs_refresh"]
     stored = copy.deepcopy(db["topic_checklists"])
     assert "Recursion" not in stored[0]["content"]
-    assert decrypt_json(stored[0]["content"]) == outline().model_dump()
+    assert decrypt_json(stored[0]["content"], bind=bind(
+        "topic_checklists", "content", stored[0])) == outline().model_dump()
     assert svc.refresh_checklist("u", "course")["topics"] == result["topics"]
     assert len(calls) == 1 and db["topic_checklists"] == stored
 
@@ -203,6 +210,40 @@ def test_mastery_updates_do_not_regenerate_but_new_materials_do(state):
     result = svc.refresh_checklist("u", "course")
     assert len(calls) == 2
     assert next(t for t in result["topics"] if t["name"] == "Functions")["checked"]
+
+
+def test_a_syllabus_exam_stored_as_other_is_an_assessment(state):
+    """A syllabus import stores every assignment as `other`. The Study page
+    makes "Midterm 1" an exam tab by its title, so the outline must see it
+    too, or no topic is ever linked to that tab."""
+    db, calls = state
+    db["assignments"].extend([
+        {"id": "mid", "enrollment_id": "enr", "title": "Midterm 1", "assignment_type": "other", "due_date": "2026-10-20"},
+        {"id": "untyped-quiz", "enrollment_id": "enr", "title": "Quiz 3", "assignment_type": None, "due_date": "2026-10-22"},
+        {"id": "pset", "enrollment_id": "enr", "title": "Problem set 3", "assignment_type": "other", "due_date": "2026-10-21"},
+        {"id": "review", "enrollment_id": "enr", "title": "Exam review sheet", "assignment_type": "homework", "due_date": "2026-10-19"},
+    ])
+    svc.refresh_checklist("u", "course", "Fall 2026")
+    assert [a["id"] for a in calls[0]["assessments"]] == ["exam", "mid", "untyped-quiz", "late"]
+
+
+@pytest.mark.parametrize(("kind", "title", "expected"), [
+    ("exam", "Anything", True),
+    ("quiz", "Weekly check", True),
+    ("other", "Midterm 1", True),
+    ("other", "FINAL EXAM", True),
+    ("other", "Final project", True),  # the Study page calls this an exam too
+    (None, "Quiz 3", True),
+    ("other", "Examples of recursion", False),
+    ("other", "Problem set 3", False),
+    ("homework", "Exam review sheet", False),
+    ("reading", "Final chapter", False),
+    ("project", "Quiz app", False),
+])
+def test_an_assessment_is_what_the_study_page_calls_an_exam_or_a_quiz(kind, title, expected):
+    """`exam_proximity.is_assessment`, as the checklist uses it. Mirrors
+    `classifyAssessment` (frontend/src/components/study/studyModel.ts)."""
+    assert svc.is_assessment({"assignment_type": kind, "title": title}) is expected
 
 
 def test_sources_and_assessments_are_owner_offering_scoped(state):
@@ -387,6 +428,36 @@ def test_assessment_window_still_governs_display_and_urgency(state, monkeypatch)
     assert next(t for t in later["topics"] if t["name"] == "Recursion")["assessments"] == []
 
 
+def test_assessment_ids_name_every_linked_assessment_whatever_its_date(state, monkeypatch):
+    """`assessments` is the upcoming window; `assessment_ids` is what the
+    outline links, so a past exam and one far ahead still name their topics."""
+    db, _ = state
+    db["assignments"] += [
+        {"id": "past", "enrollment_id": "enr", "title": "Quiz 1", "assignment_type": "quiz", "due_date": "2026-09-20"},
+        {"id": "gone", "enrollment_id": "enr", "title": "Quiz 2", "assignment_type": "quiz", "due_date": "2026-10-01"},
+    ]
+    linked = outline().model_dump()
+    linked["topics"][1]["assessment_ids"] = ["late", "exam", "gone", "past"]  # not in date order
+
+    async def generate(payload, user_id):
+        return TopicOutline.model_validate(linked)
+
+    monkeypatch.setattr(svc, "_generate", generate)
+    svc.refresh_checklist("u", "course")
+    # The student deletes Quiz 2; the stored outline still names it.
+    db["assignments"] = [a for a in db["assignments"] if a["id"] != "gone"]
+    result = svc.get_checklist("u", "course")
+    recursion = next(t for t in result["topics"] if t["name"] == "Recursion")
+    # NOW is 2026-10-12: "past" is behind it, "late" is 64 days out.
+    assert [a["id"] for a in recursion["assessments"]] == ["exam"]
+    assert recursion["assessment_ids"] == ["past", "exam", "late"]
+    assert next(t for t in result["topics"] if t["name"] == "Functions")["assessment_ids"] == []
+    assert [a["id"] for a in result["assessments"]] == ["exam"]
+    # A checkmark's cheap live view carries the same links.
+    checked = svc.set_reviewed("u", "course", recursion["id"], True)
+    assert next(t for t in checked["topics"] if t["name"] == "Recursion")["assessment_ids"] == ["past", "exam", "late"]
+
+
 def test_generation_rate_limit_and_cached_reads(state):
     db, calls = state
     for index in range(6):
@@ -460,7 +531,7 @@ def test_checkmark_does_not_rebuild_the_evidence_snapshot(state, monkeypatch):
     initial = svc.refresh_checklist("u", "course")
     db["_reads"].clear()
 
-    def no_decrypt(value):
+    def no_decrypt(value, **_kw):
         raise AssertionError("set_reviewed decrypted evidence text")
 
     monkeypatch.setattr(svc, "decrypt_if_present", no_decrypt)

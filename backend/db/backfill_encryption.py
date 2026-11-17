@@ -34,6 +34,15 @@ Per-table only (useful for staged rollouts):
 
 Run from the `backend/` directory with the venv active so config + the
 encryption module + the supabase client all resolve correctly.
+
+Superseded for new work by ``db/backfill_encryption_aad.py`` (finding M13),
+which seals legacy plaintext AND re-seals v1 ciphertext in the AAD-bound v2
+envelope. This script predates the row bindings: it seals plaintext as v1
+(unbound — some of its columns, e.g. ``users.name``, no longer exist and are
+not in ``encryption.ENCRYPTED_COLUMNS``), and the AAD backfill upgrades those
+values afterwards. A v2 (``enc2:``) value is already encrypted by its prefix
+alone and is never touched: opening it unbound would fail, which this script
+would otherwise read as "plaintext" and encrypt a second time.
 """
 from __future__ import annotations
 
@@ -42,12 +51,14 @@ import sys
 from typing import Any, Callable
 
 from db.connection import table
+from services.encryption_canary import abort_unless_key_verified
 from services.encryption import (
     decrypt,
     decrypt_json,
     encrypt,
     encrypt_if_present,
     encrypt_json,
+    is_v2,
 )
 
 
@@ -56,9 +67,12 @@ from services.encryption import (
 def _is_already_encrypted(value: Any) -> bool:
     """True if `value` is a valid base64 AES-GCM ciphertext under the
     current ENCRYPTION_KEY. False for None, non-strings, plaintext,
-    or ciphertext under a different key."""
+    or ciphertext under a different key. A v2 value is ciphertext by its
+    prefix (it opens only with its row's binding)."""
     if value is None or not isinstance(value, str):
         return False
+    if is_v2(value):
+        return True
     try:
         decrypt(value)
         return True
@@ -71,6 +85,8 @@ def _is_already_encrypted_json(value: Any) -> bool:
     these are TEXT, so a legacy JSONB row is now a JSON string."""
     if value is None or not isinstance(value, str):
         return False
+    if is_v2(value):
+        return True
     try:
         decrypt_json(value)
         return True
@@ -307,7 +323,18 @@ def backfill_flashcards(apply: bool) -> dict:
 
 
 def backfill_study_guides(apply: bool) -> dict:
-    return _encrypt_json_column("study_guides", "content", pk="id", apply=apply)
+    # previous_content and answers are written encrypted from the start
+    # (services/study_guides/store.py); they are here so a plaintext value
+    # written by hand or by a restore is still caught.
+    columns = ("content", "previous_content", "answers")
+    counts = {
+        column: _encrypt_json_column("study_guides", column, pk="id", apply=apply)
+        for column in columns
+    }
+    return {
+        "scanned": counts["content"]["scanned"],
+        **{column: counts[column][column] for column in columns},
+    }
 
 
 def backfill_room_summaries(apply: bool) -> dict:
@@ -355,6 +382,11 @@ def main() -> int:
     print(f"Backfill mode: {mode}")
     print(f"Tables: {', '.join(targets)}")
     print()
+    if args.apply:
+        # Every value this key cannot decrypt is treated as plaintext and
+        # encrypted: under the wrong key that double-encrypts the whole
+        # environment beyond recovery. services/encryption_canary.py.
+        abort_unless_key_verified("db.backfill_encryption")
 
     grand_total = 0
     for name in targets:

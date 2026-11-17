@@ -10,6 +10,7 @@ import { SaplingWordmark } from '@/components/SaplingWordmark';
 // fillStyle where CSS var() doesn't resolve. Anchored on the olive brand
 // (#445D22 = --brand-forest, #7B9E51 = --ld-mid, #B1D28B = --ld-pale) with
 // amber/coral as the warm complement and warm greys for the quiet points.
+// OnboardingGraph uses the same colors, so the landing and onboarding match.
 const CLUSTER_COLORS = ['#A39E8F', '#D97706', '#7B9E51', '#445D22', '#B1D28B', '#E27A63'];
 /** See the legibility-glow comment in the hero content. */
 const HERO_SCRIM: CSSProperties = {
@@ -39,12 +40,15 @@ export function Hero({
   heroMounted,
   heroText2,
   onBeta,
+  ctaLabel = 'Sign up for Beta Testing',
 }: {
   /** True once the intro overlay has cleared and the hero may rise. */
   heroMounted: boolean;
   /** The tagline under it, likewise. */
   heroText2: string;
   onBeta: () => void;
+  /** "Sign up" while open access is on (docs/design/open-access-gate.md). */
+  ctaLabel?: string;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const heroContentRef = useRef<HTMLDivElement>(null);
@@ -131,6 +135,7 @@ export function Hero({
       rotAngle += 0.0008;
       const fl = 1000, cx = width / 2, cy = height / 2, t = now() * 0.001;
       const mx = mouseRef.current.x, my = mouseRef.current.y;
+      const py = parallaxYRef.current;
 
       const proj = nodes.map(n => {
         const ny = n.oy + Math.sin(t * 0.4 + n.seed) * 15;
@@ -139,7 +144,7 @@ export function Hero({
         x -= mx * (z + fl) * 0.02;
         const y2 = ny - my * (z + fl) * 0.02;
         const sc = fl / (fl + z);
-        return { x: x * sc + cx, y: y2 * sc + cy - parallaxYRef.current, z, sc, n };
+        return { x: x * sc + cx, y: y2 * sc + cy - py, z, sc, n };
       }).sort((a, b) => b.z - a.z);
 
       ctx.globalCompositeOperation = 'source-over';
@@ -380,7 +385,7 @@ export function Hero({
           opacity: heroMounted ? 1 : 0,
           transform: heroMounted ? 'translateY(0)' : 'translateY(25px)',
           transition: 'all 700ms cubic-bezier(0.22,1,0.36,1) 500ms',
-        }} className="font-aleo text-2xl sm:text-3xl md:text-4xl text-[var(--text-dim)] max-w-xl mx-auto mt-2 leading-[1.2] tracking-tight font-medium">
+        }} className="font-gummi text-2xl sm:text-3xl md:text-4xl text-[var(--text-dim)] max-w-xl mx-auto mt-2 leading-[1.2] tracking-tight font-medium">
           {heroText2 || ' '}
         </p>
 
@@ -412,7 +417,7 @@ export function Hero({
         }} className="flex flex-col items-center gap-4 mt-10 md:mt-[52px]">
           <div style={{ position: 'relative', display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
             <Button variant="primary" size="xl" onClick={onBeta}>
-              Sign up for Beta Testing
+              {ctaLabel}
             </Button>
           </div>
         </div>
