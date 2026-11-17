@@ -49,6 +49,9 @@ export { compare, shrink, shrinkable };
 
 export const FRONTEND = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 export const BASELINE_FILE = "max-lines-baseline.json";
+
+/** Extensions ESLint can lint here (JS/TS, any module flavour, with or without JSX). */
+const LINTABLE = /\.[cm]?[jt]sx?$/;
 const RULE = "max-lines";
 const MESSAGE = /^File has too many lines \((\d+)\)\. Maximum allowed is \d+\.$/;
 
@@ -134,6 +137,9 @@ export async function measure(root = FRONTEND, baselined = [], options) {
   const eslint = measuringESLint(root, opts, baselined);
   const files = [];
   for (const rel of trackedFiles(root)) {
+    // Only a source file can be linted, so skip the rest before reading it:
+    // the lockfile, images, fonts and JSON fixtures cost seconds per run.
+    if (!LINTABLE.test(rel)) continue;
     const full = path.join(root, rel);
     if (rawLineCount(fs.readFileSync(full, "utf8")) <= opts.max) continue;
     if (!(await eslint.isPathIgnored(full))) files.push(rel);

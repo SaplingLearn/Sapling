@@ -343,8 +343,33 @@ def test_storage_bulk_delete_sends_the_paths_and_raises_on_failure(monkeypatch):
         "avatars/u1/avatar.webp", "avatars/u1/avatar.gif"]
 
 
-def test_the_issue_bucket_is_the_one_screenshots_upload_to():
-    assert ap.ISSUE_BUCKET == storage_service.ISSUE_BUCKET
+def test_the_issue_bucket_is_the_one_screenshots_upload_to(monkeypatch):
+    """Purge deletes from ap.ISSUE_BUCKET; the upload must PUT into that same
+    bucket, or a purged account's screenshots stay behind in Storage. Read off
+    the URL the upload really sends, not off a shared constant."""
+    import asyncio
+    import httpx
+
+    sent: list[str] = []
+
+    class _Client:
+        def __init__(self, *a, **kw):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def put(self, url, **kw):
+            sent.append(url)
+            return httpx.Response(200, request=httpx.Request("PUT", url))
+
+    monkeypatch.setattr(storage_service.httpx, "AsyncClient", _Client)
+    path = asyncio.run(storage_service.upload_issue_screenshot("user_1", b"x", "image/png"))
+    assert len(sent) == 1
+    assert sent[0].endswith(f"/storage/v1/object/{ap.ISSUE_BUCKET}/{path}")
 
 
 def test_a_classmates_shared_chunk_survives(db, storage, revoked, events):

@@ -34,7 +34,7 @@ jobs:
           cache-dependency-path: backend/requirements.lock
       # node runs pyright for the type-check ratchet below. The cache key is
       # the ratchet's own lockfile (backend/scripts/pyright).
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22"
           cache: npm
@@ -289,7 +289,7 @@ jobs:
       # must not turn main red), and skipped rather than posted when the run
       # failed or the report cannot be trusted. Posted as its own context so it
       # never mixes with canopy/coverage's backend series.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22"
           cache: npm

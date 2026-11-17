@@ -99,8 +99,15 @@ def measure() -> tuple[Counter[str], list[dict]]:
     errors = [d for d in report["generalDiagnostics"] if d["severity"] == "error"]
     counts: Counter[str] = Counter()
     for d in errors:
-        rel = Path(d["file"]).resolve().relative_to(BACKEND).as_posix()
-        counts[f"{rel}::{d.get('rule', 'error')}"] += 1
+        # A diagnostic with no file, or one outside backend/ (a config or
+        # environment error), is pyright failing to check the code, not a
+        # countable type error: say so instead of a KeyError/ValueError.
+        try:
+            d["rel"] = Path(d["file"]).resolve().relative_to(BACKEND).as_posix()
+        except (KeyError, ValueError):
+            sys.stderr.write(json.dumps(d, indent=2) + "\n")
+            raise SystemExit("type_ratchet: pyright reported an error outside backend/ code") from None
+        counts[f"{d['rel']}::{d.get('rule', 'error')}"] += 1
     return counts, errors
 
 
@@ -115,8 +122,7 @@ def main() -> int:
         file, rule = key.split("::")
         lines = []
         for d in errors:
-            rel = Path(d["file"]).resolve().relative_to(BACKEND).as_posix()
-            if rel == file and d.get("rule", "error") == rule:
+            if d["rel"] == file and d.get("rule", "error") == rule:
                 line = d["range"]["start"]["line"] + 1
                 lines.append(f"{file}:{line}: {d['message'].splitlines()[0]}")
         return lines

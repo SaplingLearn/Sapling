@@ -439,24 +439,24 @@ def main() -> int:
     if args.apply:
         # Every value this key cannot decrypt is treated as plaintext and
         # encrypted: under the wrong key that double-encrypts the whole
-        # environment beyond recovery. services/encryption_canary.py.
+        # environment beyond recovery. A positive canary match or exit 2
+        # (services/encryption_canary.py).
         abort_unless_key_verified("db.backfill_encryption")
-
-    # With the wrong key every cell fails to decrypt, which is exactly what
-    # legacy plaintext looks like. --apply was gated above (a positive match or
-    # exit 2). A dry run only reads, so it may go on unconfirmed, but says so.
-    # seed=False: this script must never write the canary itself (a wrong key
-    # would then lock the real backend out).
-    try:
-        key_check = verify_encryption_key(seed=False)
-    except EncryptionKeyMismatch as e:
-        print(f"REFUSING to run: {e}")
-        return 2
-    if key_check in ("skipped", "absent"):
-        # "absent" = no canary yet; "skipped" = the canary read failed.
-        print("WARNING: this database has no readable key canary, so the key could not be")
-        print("         confirmed. Check SUPABASE_URL and ENCRYPTION_KEY are the same environment's.")
-        print()
+    else:
+        # A dry run only reads, so it may go on unconfirmed, but says so. A
+        # definite mismatch still stops it: with the wrong key every cell
+        # looks like plaintext, so its counts would be meaningless.
+        # seed=False: this script must never write the canary itself.
+        try:
+            key_check = verify_encryption_key(seed=False)
+        except EncryptionKeyMismatch as e:
+            print(f"REFUSING to run: {e}")
+            return 2
+        if key_check in ("skipped", "absent"):
+            # "absent" = no canary yet; "skipped" = the canary read failed.
+            print("WARNING: this database has no readable key canary, so the key could not be")
+            print("         confirmed. Check SUPABASE_URL and ENCRYPTION_KEY are the same environment's.")
+            print()
 
     UNDECRYPTABLE.clear()
     grand_total = 0
@@ -481,6 +481,14 @@ def main() -> int:
     print(f"{verb} {grand_total} cells total.")
     if not args.apply:
         print("Re-run with --apply to write.")
+    elif grand_total:
+        # What this script writes is v1, unbound to its row. A table whose
+        # bound reads refuse legacy values (ENCRYPTION_LEGACY_READS=refuse or
+        # ENCRYPTION_STRICT_TABLES) cannot read these cells until they are
+        # re-sealed as v2.
+        print("Next: python -m db.backfill_encryption_aad --apply, to bind these cells to their")
+        print("rows (v2). Until then, keep ENCRYPTION_LEGACY_READS=allow and these tables out of")
+        print("ENCRYPTION_STRICT_TABLES.")
     if UNDECRYPTABLE:
         print()
         print("Left untouched: cells that look like ciphertext but do not open with this key")

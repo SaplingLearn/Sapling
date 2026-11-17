@@ -11,7 +11,7 @@ from fastapi import HTTPException
 from config import SUPABASE_URL, SUPABASE_SERVICE_KEY, STORAGE_BUCKET, MAX_AVATAR_SIZE
 import httpx
 
-from services.upload_validation import sniff_image
+from services.upload_validation import IMAGE_EXTENSION, sniff_image
 
 logger = logging.getLogger(__name__)
 
@@ -157,8 +157,7 @@ async def upload_issue_screenshot(user_id: str, file_bytes: bytes, content_type:
     # it was for the existing sync helpers above.
     from db.connection import SUPABASE_KEY, SUPABASE_URL as DB_SUPABASE_URL
 
-    ext = _EXT_MAP.get(content_type, "png")
-    path = f"{user_id}/{uuid.uuid4()}.{ext}"
+    path = f"{user_id}/{uuid.uuid4()}.{IMAGE_EXTENSION[content_type]}"
     url = f"{DB_SUPABASE_URL}/storage/v1/object/{ISSUE_BUCKET}/{path}"
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:

@@ -224,18 +224,40 @@ def test_ordinary_plaintext_never_looks_like_ciphertext():
     assert bf._looks_like_ciphertext(encrypt("x")) is True
 
 
-def test_main_refuses_to_run_with_the_wrong_key(db, monkeypatch, capsys):
-    """With the wrong key EVERY cell fails to decrypt, which is what legacy
-    plaintext looks like; --apply would wrap the whole database a second time."""
-    def mismatch(*, seed):
-        assert seed is False  # an ops script must never write the canary
-        raise bf.EncryptionKeyMismatch("ENCRYPTION_KEY does not match the database")
+def _mismatch(*, seed):
+    assert seed is False  # an ops script must never write the canary
+    raise encryption_canary.EncryptionKeyMismatch("ENCRYPTION_KEY does not match the database")
 
+
+def test_dry_run_refuses_to_run_with_the_wrong_key(db, monkeypatch, capsys):
+    """With the wrong key EVERY cell fails to decrypt, which is what legacy
+    plaintext looks like: even a dry run's counts would be meaningless."""
+    monkeypatch.setattr(bf, "verify_encryption_key", _mismatch)
+    db.rows["messages"] = [{"id": 1, "content": "x"}]
+    monkeypatch.setattr("sys.argv", ["backfill_encryption"])
+    assert bf.main() == 2
+    assert "REFUSING to run" in capsys.readouterr().out
+    assert db.selected == [] and db.updates == []
+
+
+@pytest.mark.real_script_key_guard
+def test_apply_refuses_to_run_with_the_wrong_key(db, monkeypatch, capsys):
+    """--apply would wrap the whole database a second time: the shared write
+    guard exits 2 before anything is read, and reads the canary only once."""
+    calls = []
+
+    def mismatch(*, seed):
+        calls.append(seed)
+        _mismatch(seed=seed)
+
+    monkeypatch.setattr(encryption_canary, "verify_encryption_key", mismatch)
     monkeypatch.setattr(bf, "verify_encryption_key", mismatch)
     db.rows["messages"] = [{"id": 1, "content": "x"}]
     monkeypatch.setattr("sys.argv", ["backfill_encryption", "--apply"])
-    assert bf.main() == 2
-    assert "REFUSING to run" in capsys.readouterr().out
+    with pytest.raises(SystemExit) as exited:
+        bf.main()
+    assert exited.value.code == 2
+    assert calls == [False]
     assert db.selected == [] and db.updates == []
 
 
