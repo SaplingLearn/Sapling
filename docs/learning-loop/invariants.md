@@ -259,10 +259,14 @@ module; the tutor uses `instructions=`);
 
 ## 9. The kill switch and the flags
 
-**Rule.** `LEARNING_LOOP_ENABLED` alone decides whether the loop runs, for
-everyone; it is read at process start, and the gate is evaluated **once per
-request, at route entry**, its answer carried on `SaplingDeps.learning_loop`
-— agents, tools and services never call the gate. With it off, every loop
+**Rule.** The loop runs for a student only when the `LEARNING_LOOP_ENABLED`
+kill switch is open (read at process start; thrown, it is off for everyone
+with no read of any kind) AND the student's `learning_loop` flag is on (it
+ships off). The gate is evaluated **once per request, at route entry**, never
+on the event loop, its answer carried on `SaplingDeps.learning_loop` —
+agents, tools and services never call the gate (the quiz's `quiz_flags` and
+the upload post-rolls' uploader gate are the named route-entry exceptions).
+Off either way is the same pre-loop app for that student. With it off, every loop
 route answers 404 (the rate-limited ones before authentication and the rate
 limiter even run; the others after the ownership check), except the status
 probe `/review/active`, which answers `{"active": false}`; and no request
@@ -285,8 +289,11 @@ the measurement protocol without anyone deciding to.
 table read), `inv_15_gate_never_inside_chat_stream`,
 `backend/tests/test_learning_gate_route_entry.py`,
 `backend/tests/test_kill_switch_gate_first.py`,
-`backend/tests/test_kill_switch_spelling_warning.py`, the inertness scan in
-`backend/tests/test_learning_zpd_policy.py`, and the E2E kill-switch lane.
+`backend/tests/test_kill_switch_spelling_warning.py`,
+`backend/tests/test_learning_loop_flag.py` (flag off answers every loop route
+as the kill switch does; every `kill_switch` test runs both ways), the
+inertness scan in `backend/tests/test_learning_zpd_policy.py`, and the E2E
+kill-switch lane.
 
 ## 10. Models: frozen mode, routed tiers, budget first, the function seam
 

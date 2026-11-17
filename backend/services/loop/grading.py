@@ -25,13 +25,12 @@ from learning.params import CHECK_REFUSALS_AS_IDK
 from models import ChatBody, LoopCheckAnswerBody
 from services.tutor import _consume_pending_off_loop
 from services.tutor import _agent_turn_or_http_error
-from services.auth_guard import guard_off_loop
 from services.check_item_service import get_check_item
 
 from services.loop.constants import _ALREADY_GRADED
 from services.loop.state import (
     _arm_for,
-    _gate,
+    _agate,
     _item_like,
     _load_loop_state,
     _now_s,
@@ -317,7 +316,7 @@ def _submission_turn(
 
 # crisis support: a crisis answer leaves the item posed and ungraded (no claim, no evidence)
 async def check_answer(body: LoopCheckAnswerBody, request: Request):
-    loop_on = await guard_off_loop(_gate, body.user_id, request)
+    loop_on = await _agate(body.user_id, request)
     await _consume_pending_off_loop(body.session_id, body.user_id)
     sub = await _agent_turn_or_http_error(
         _grade_submission(body, request, loop_on=loop_on), what="loop grader"
@@ -328,7 +327,7 @@ async def check_answer(body: LoopCheckAnswerBody, request: Request):
 
 
 async def check_answer_stream(body: LoopCheckAnswerBody, request: Request):
-    loop_on = await guard_off_loop(_gate, body.user_id, request)
+    loop_on = await _agate(body.user_id, request)
     await _consume_pending_off_loop(body.session_id, body.user_id)
     sub = await _agent_turn_or_http_error(
         _grade_submission(body, request, loop_on=loop_on), what="loop grader"

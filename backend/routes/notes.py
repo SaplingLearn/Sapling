@@ -384,12 +384,11 @@ def _note_user_prompt(note: dict) -> str:
     return f"Title: {title}\n\nBody:\n{body_text}"
 
 
-async def _integrity_guard(
-    user_id: str, surface: str, texts: Iterable[str | None]
-) -> integrity_guard.Guard:
-    """Spec §13 A125 (services/note_guard.py): 409 when the text quotes a posed
-    check. Off with the loop (the gate is read here, at route entry, once)."""
-    guard = await open_note_guard(user_id, surface, texts, active=learning_loop_for_request(user_id))
+async def _integrity_guard(user_id: str, surface: str, texts: Iterable[str | None]) -> integrity_guard.Guard:
+    """Spec §13 A125 (services/note_guard.py): 409 when the text quotes a posed check.
+    Off with the loop (kill switch, or the student's `learning_loop` flag), read once."""
+    active = await asyncio.to_thread(learning_loop_for_request, user_id)
+    guard = await open_note_guard(user_id, surface, texts, active=active)
     if guard.refused:
         raise HTTPException(status_code=409, detail=integrity_guard.REFUSED_DETAIL)
     return guard
@@ -505,7 +504,7 @@ async def note_chat(note_id: str, body: NoteChatBody, request: Request):
         # spec §13 A125: the message and the note the agent grounds in (deps.note, which
         # read_active_note serves) are checked before any model call; the reply after
         guard = await open_note_guard(body.user_id, "note_chat", note_chat_texts(body.message, note),
-                                      active=learning_loop_for_request(body.user_id))
+                                      active=await asyncio.to_thread(learning_loop_for_request, body.user_id))
         if guard.refused:
             return {"reply": integrity_guard.REFUSED_REPLY, "degraded": False, "integrity": "refused"}
         course_id = offering_course_id(note.get("offering_id"))

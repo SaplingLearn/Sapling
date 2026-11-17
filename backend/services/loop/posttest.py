@@ -40,7 +40,7 @@ from services.feature_flags import flag_on
 from services.graph_service import _normalize_concept
 from services.request_limits import check_rate_limit
 
-from services.loop.state import _arm_for, _gate, _item_like, _request_id
+from services.loop.state import _agate, _arm_for, _gate, _item_like, _request_id
 from services.loop.learner import _band_for, _learner_state
 from services.loop.served import _POSES
 from services.loop.reveals import _ledger, _refloor, _reveal_floor
@@ -206,7 +206,7 @@ async def posttest_answer(body: PosttestAnswerBody, request: Request):
     (learning_gain.clamp_visibility), and never read by the grade."""
     if not body.user_id:
         body.user_id = await guard_off_loop(get_session_user_id, request)
-    loop_on = await guard_off_loop(_gate, body.user_id, request)
+    loop_on = await _agate(body.user_id, request)
     node = await asyncio.to_thread(_posttest_node, body.user_id, body.node_id)  # #117
     course_id, key = node["course_id"], _normalize_concept(node.get("concept_name") or "")
     # #117: every sync PostgREST read and write below hops off the event loop

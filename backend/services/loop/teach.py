@@ -7,17 +7,16 @@ import asyncio
 from starlette.requests import Request
 from models import ActionBody, ChatBody, StartSessionBody
 from services.tutor import _consume_pending_off_loop
-from services.auth_guard import guard_off_loop
 
 from services.loop.flags import _ACTION_PROMPTS
-from services.loop.state import _gate, _teaching_open
+from services.loop.state import _agate, _teaching_open
 from services.loop.turn import _LoopTurn
 from services.loop.opener import _LoopOpener
 from services.loop.runner import _json_turn, _sse
 
 
 async def chat(body: ChatBody, request: Request):
-    loop_on = await guard_off_loop(_gate, body.user_id, request)
+    loop_on = await _agate(body.user_id, request)
     await _consume_pending_off_loop(body.session_id, body.user_id)
     await asyncio.to_thread(_teaching_open, body.session_id, body.user_id)  # #117: off the loop
     return await _json_turn(
@@ -27,7 +26,7 @@ async def chat(body: ChatBody, request: Request):
 
 
 async def chat_stream(body: ChatBody, request: Request):
-    loop_on = await guard_off_loop(_gate, body.user_id, request)
+    loop_on = await _agate(body.user_id, request)
     await _consume_pending_off_loop(body.session_id, body.user_id)
     await asyncio.to_thread(_teaching_open, body.session_id, body.user_id)  # #117: off the loop
     # #117: building the turn reads the session's state; off the event loop
@@ -41,7 +40,7 @@ async def action(body: ActionBody, request: Request):
     """An "[ACTION: ...]" turn: in the check phase a hint at the item's current
     rung, otherwise the current phase. Assistant-only persistence; never graded
     (invariant 26)."""
-    loop_on = await guard_off_loop(_gate, body.user_id, request)
+    loop_on = await _agate(body.user_id, request)
     await _consume_pending_off_loop(body.session_id, body.user_id)
     await asyncio.to_thread(_teaching_open, body.session_id, body.user_id)  # #117: off the loop
     message = f"[ACTION: {_ACTION_PROMPTS.get(body.action_type, '')}]"
@@ -68,7 +67,7 @@ async def action(body: ActionBody, request: Request):
 # crisis support: a crisis topic or goal opens no session (nothing is stashed or
 # written). The legacy /api/learn routes that delegate here screen first themselves.
 async def start_session(body: StartSessionBody, request: Request):
-    loop_on = await guard_off_loop(_gate, body.user_id, request)
+    loop_on = await _agate(body.user_id, request)
     result = await _json_turn(
         lambda: _LoopOpener(body=body, request=request, loop_on=loop_on),
         "loop start-session agent",
@@ -86,6 +85,6 @@ async def start_session(body: StartSessionBody, request: Request):
 
 
 async def start_session_stream(body: StartSessionBody, request: Request):
-    loop_on = await guard_off_loop(_gate, body.user_id, request)
+    loop_on = await _agate(body.user_id, request)
     # #117: the opener's reads, off the event loop
     return _sse(await asyncio.to_thread(_LoopOpener, body=body, request=request, loop_on=loop_on))

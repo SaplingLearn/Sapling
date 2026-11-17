@@ -79,7 +79,11 @@ python scripts/learning_release_verify.py --probe \
   --output /private/new-staging-health.json
 ```
 
-Use a normally authenticated, approved staging QA account. The tool neither
+`--expect-loop` reads the loop's state for that one account: `enabled` needs
+the kill switch open AND the account's `learning_loop` flag on (the flag ships
+off, so give the QA account a user rule on the admin Flags page first);
+`disabled` holds when either is off. Use a normally authenticated, approved
+staging QA account. The tool neither
 mints tokens nor calls test-login. The token file must be regular, owned by the
 operator and mode 0600. Only the API origin receives its cookie. Redirects are
 rejected. HTTP is accepted only for explicit `--allow-loopback-http` targets.
@@ -546,6 +550,47 @@ id `quiz:<question_hash>`. `REQUIRED_COLUMNS` does not change.
    loop's readers see them) until a correct answer closes them or they age out
    after `MISCONCEPTION_RECENT_DAYS`.
 
+### Turning the learning loop on: the `learning_loop` flag
+
+The whole learning system is behind one per-student flag, `learning_loop`
+(`backend/services/feature_flags.py`), **default off**, client-visible. The
+loop is on for a student only when the `LEARNING_LOOP_ENABLED` kill switch is
+open AND their flag is on. Before this flag, an unset `LEARNING_LOOP_ENABLED`
+meant the loop was on for everyone, so production had to be pinned
+`LEARNING_LOOP_ENABLED=false` before a promote. That is no longer needed: a
+deploy with the variable unset turns the loop on for nobody until the flag
+is. Leave the variable unset in every environment (or remove a `false` pin
+once the flag is deployed and verified off), and keep it as the emergency
+brake: `false` + redeploy turns the loop off for everyone whatever the flag
+says. It is listed among the worker's variables and the flag among its kill
+switches (`.railway/railway.ts`), because the worker's upload post-roll reads
+both.
+
+Order, all from the admin Flags page (`/admin`, the `learning_loop` row), no
+deploy:
+
+1. Confirm the flag resolves off for a student account (the explain view;
+   `GET /api/flags` shows `"learning_loop": "off"`), and that Learn, Study and
+   the quiz look as before.
+2. A user rule `on` for the owner's own account. Walk Learn, Study's review
+   queue and a retention check, and an upload in a course with material
+   (drafting starts for the owner's uploads only).
+3. A class: a user rule per student of the offering, or a role the class's
+   students hold. Run `backend/scripts/backfill_check_items.py --course
+   <course id>` (dry run first) for that course: the material its flag-off
+   students uploaded earlier has no check items, because a flag-off upload
+   drafts nothing.
+4. Everyone: a percentage rollout, then the stored default `on`. Backfill the
+   remaining courses the same way.
+
+Rollback at any step is the same page (the rule removed, or the default back
+to `off`): those students are back on the pre-loop app at their next request,
+with nothing deleted. Every quiz learning flag needs `learning_loop` on as
+well, so the quiz flags may be configured ahead of it and take effect only
+for students the loop is on for. Staff tools (the admin learning-loop
+analytics, the check-item review queue, the key audit) are not behind the
+flag.
+
 ### Kill-switch and rollback drill
 
 1. Capture candidate and rollback artifact identities, approved environment,
@@ -557,6 +602,9 @@ id `quiz:<question_hash>`. `REQUIRED_COLUMNS` does not change.
    `hide_tutor` only hides the Tutor nav entry — it gates no API, and
    `/api/learn/loop` still serves quiz-ask sessions, Study's daily review and the
    delayed post-test (`services/feature_flags.py::NAV_FEATURES_NOT_ENFORCED`).
+   The per-student flag is the routine way to turn the loop off for some or
+   all students (no redeploy); the drill exercises the kill switch, which
+   must hold with the QA account's `learning_loop` flag on.
 3. Run the authenticated status verifier with `--expect-loop disabled` and a
    browser drill of Learn and Study. Confirm the legacy tutor has no mastery
    writer; no quiz/flashcard deltas or legacy tier thresholds are restored.

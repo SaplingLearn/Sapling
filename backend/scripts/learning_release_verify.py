@@ -447,7 +447,7 @@ def probe_loop(fetch, base: str, user_id: str, expectation: str) -> dict:
         "status": "passed",
         "expected_loop": expectation,
         "http_status": status,
-        "scope": "Authenticated read-only status; does not certify browser fallback, old sessions or zero model writes.",
+        "scope": "Authenticated read-only status for this user (the kill switch and their learning_loop flag); does not certify other users, browser fallback, old sessions or zero model writes.",
     }
 
 
@@ -698,7 +698,16 @@ def main(argv=None) -> int:
     parser.add_argument("--timeout", type=float, default=10)
     parser.add_argument("--session-token-file", type=Path)
     parser.add_argument("--user-id")
-    parser.add_argument("--expect-loop", choices=("enabled", "disabled"))
+    parser.add_argument(
+        "--expect-loop",
+        choices=("enabled", "disabled"),
+        help=(
+            "The loop's state for --user-id: enabled = the LEARNING_LOOP_ENABLED kill "
+            "switch is open AND that user's learning_loop flag is on (it ships off: give "
+            "the QA account a user rule first); disabled = either is off. The probe "
+            "cannot tell which one turned it off."
+        ),
+    )
     parser.add_argument(
         "--db-audit",
         action="store_true",

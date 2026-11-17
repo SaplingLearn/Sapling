@@ -21,9 +21,12 @@ review's `grade_review`; invariant 26). The reference answer of the active
 check item lives only on the turn object — never in deps, the prefix, a log
 line, or an event payload.
 
-The gate (`learning.gate.learning_loop_for_request`) is read ONCE per request,
-at route entry (A38 00); a delegating legacy route carries its own read in on
-`request.state.learning_loop`, and the result rides on
+The gate (`learning.gate.learning_loop_for_request`: the env kill switch, then
+the student's `learning_loop` flag) is read ONCE per request, at route entry
+(A38 00) and off the event loop: a rate-limited route's `_kill_switch_first`
+dependency, or a delegating legacy route, carries it in on
+`request.state.learning_loop` (an `async def` handler without either reads it
+in the threadpool, `state._agate`), and the result rides on
 `SaplingDeps.learning_loop`.
 
 Loop state: PKG-06's `learning.loop_state_store` returns the typed `LoopState`;

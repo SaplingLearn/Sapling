@@ -17,12 +17,11 @@ from learning.help_ledger import mark_graded, record_posed
 from models import ReviewAnswerBody
 from services import ai_budget, crisis_support
 from services.academics import user_offering_ids_for_course
-from services.auth_guard import guard_off_loop
 from services.check_item_service import get_check_item
 from services import varied_practice
 
 from services.loop.constants import _ALREADY_GRADED, _WITHDRAWN_ITEM
-from services.loop.state import _gate, _gate_value, _item_like, _request_id, _StateConflict
+from services.loop.state import _agate, _gate, _gate_value, _item_like, _request_id, _StateConflict
 from services.loop.learner import _node_for_item
 from services.loop.reveals import _ledger, _refloor, _reveal_floor
 
@@ -164,7 +163,7 @@ async def review_answer(body: ReviewAnswerBody, request: Request) -> dict:
     write), a flashcard through PKG-11's FSRS path. The item, its node (A2) and
     its reference are re-loaded here. Grading is a claim (A52): a second submit of
     the same served item is a 409 and is never graded or written twice."""
-    loop_on = await guard_off_loop(_gate, body.user_id, request)
+    loop_on = await _agate(body.user_id, request)
     # crisis support: the item stays due and ungraded (a flashcard carries no text);
     # `unavailable` is this route's "nothing was recorded, still answerable"
     if crisis := await crisis_support.screen_async(

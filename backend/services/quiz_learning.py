@@ -29,6 +29,7 @@ from datetime import datetime, timedelta, timezone
 from db.connection import page_all, pg_quote_value, table
 from db.scope import runs_as_service
 from learning import item_keys, quiz_gates, quiz_plan
+from learning.gate import learning_loop_for_request
 from learning.evidence import PREREQ_RELATIONSHIP_TYPE
 from learning.learner_state import read_states
 from learning.params import (
@@ -39,6 +40,7 @@ from learning.params import (
     RUNG_NO_CREDIT_MIN,
 )
 from services import events_service, prompt_dimensions
+from services.feature_flags import flag_on
 
 logger = logging.getLogger("sapling.quiz_learning")
 
@@ -48,6 +50,20 @@ PLANNED_QUESTIONS_FLAG = "quiz_planned_questions"
 ITEM_GATES_FLAG = "quiz_item_gates"
 MISCONCEPTIONS_FLAG = "quiz_misconceptions"
 RESULTS_ROUTING_FLAG = "quiz_results_routing"
+
+
+
+def quiz_flags(user_id: str | None, *keys: str) -> tuple[bool, ...]:
+    """The quiz learning flags `keys` for this student, resolved once for the
+    request (a route-entry helper: the routes call it first thing, in the
+    threadpool). Each is on only when the learning loop is on for the student
+    too — the env kill switch, then their `learning_loop` flag — and that gate
+    is read first: off, no quiz flag is read and every answer is False, so the
+    quiz is the pre-loop quiz (tests/test_quiz_learning_flags_off.py)."""
+    if not learning_loop_for_request(user_id):
+        return tuple(False for _ in keys)
+    return tuple(flag_on(key, user_id) for key in keys)
+
 
 #: The model slot every quiz check runs on (agents/_providers.py).
 CHECK_TASK = "quiz_check"

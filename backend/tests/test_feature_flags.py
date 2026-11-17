@@ -322,6 +322,7 @@ def test_resolved_client_flags_only_client_visible(monkeypatch):
 def test_resolved_client_flags_reads_the_store_once_even_when_it_is_down(monkeypatch):
     """One outage = one store read for the whole map, not one per flag; every
     flag fails closed, and an env override still wins."""
+    monkeypatch.delenv("SAPLING_FLAG_LEARNING_LOOP", raising=False)  # the suite's (conftest)
     monkeypatch.setenv("SAPLING_FLAG_HIDE_TREE", "on")
     factory = _tables(fail=True)
     calls = []
