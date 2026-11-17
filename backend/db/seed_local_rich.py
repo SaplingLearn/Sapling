@@ -146,6 +146,12 @@ def loop_node_id(user_id: str, slug: str) -> str:
     return f"rich-node-{'loop' if user_id == USER_LOOP else 'capped'}-{slug}"
 
 
+def loop_item_id(slug: str, fmt: str, difficulty: int) -> str:
+    """The id of one placeholder check item (seed_learning_loop). The showcase
+    overlay (db/seed_showcase_loop.py) removes exactly these rows."""
+    return f"rich-check-{slug}-{fmt}-d{difficulty}"
+
+
 # ─── Seed steps ──────────────────────────────────────────────────────────────
 
 
@@ -1349,7 +1355,7 @@ def seed_learning_loop() -> None:
         for fmt in SEED_LOOP_FORMATS:
             for difficulty in CHECK_ITEM_DIFFICULTIES:
                 prompt = f"{E2E_LOOP_PROBE_PROMPT} [{concept}, {fmt}, difficulty {difficulty}]"
-                item_id = f"rich-check-{slug}-{fmt}-d{difficulty}"
+                item_id = loop_item_id(slug, fmt, difficulty)
 
                 def seal(column, value, _id=item_id):
                     return encrypt_if_present(value, bind=bind("check_items", column, _id))
