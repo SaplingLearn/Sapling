@@ -292,7 +292,7 @@ def save_onboarding_profile(
     )
 
     # 3. Enrollments. The response reports how many courses are linked.
-    courses_linked = _enroll_in_courses(user_id, course_ids, term["id"]) if course_ids else 0
+    courses_linked = _enroll_in_courses(user_id, course_ids, term["id"]) if course_ids and term is not None else 0
 
     # 4. A minor starts private, server-side: the birthday screen promises it,
     # and a client-side PATCH after completion could fail or never be sent.

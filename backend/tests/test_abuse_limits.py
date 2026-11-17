@@ -10,7 +10,8 @@
 * Failures answer with generic text; the exception stays in the log.
 """
 import io
-from unittest.mock import MagicMock, patch
+from contextlib import contextmanager
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
@@ -25,6 +26,18 @@ client = TestClient(app)
 
 #: TestClient's `request.client.host`.
 TESTCLIENT_IP = "testclient"
+
+
+@contextmanager
+def _issue_storage(status: int = 200):
+    """Stub the async Storage client behind ``storage_service.upload_issue_screenshot``;
+    yields the AsyncMock behind its ``put``."""
+    put = AsyncMock(return_value=MagicMock(status_code=status, text=""))
+    ctx = MagicMock()
+    ctx.__aenter__ = AsyncMock(return_value=MagicMock(put=put))
+    ctx.__aexit__ = AsyncMock(return_value=False)
+    with patch("services.storage_service.httpx.AsyncClient", return_value=ctx):
+        yield put
 
 
 def _exhaust(limit: request_limits.AbuseLimit, subject: str) -> None:
@@ -189,11 +202,11 @@ def test_syllabus_extract_answers_429_once_its_budget_is_spent():
 
 def test_issue_screenshot_answers_429_once_its_budget_is_spent():
     _exhaust(abuse_limits.ISSUE_SCREENSHOT_UPLOAD, "user_andres")
-    with patch("routes.feedback.httpx") as hx:
+    with _issue_storage() as put:
         r = client.post("/api/issue-reports/screenshot",
                         files={"file": ("s.png", PNG_BYTES, "image/png")})
     _assert_rate_limited(r, abuse_limits.ISSUE_SCREENSHOT_UPLOAD)
-    hx.put.assert_not_called()
+    put.assert_not_called()
 
 
 CAREERS_FORM = {
@@ -467,23 +480,22 @@ def test_syllabus_extract_rejects_an_oversize_file(monkeypatch):
 
 
 def test_issue_screenshot_rejects_markup_labelled_as_an_image():
-    with patch("routes.feedback.httpx") as hx:
+    with _issue_storage() as put:
         r = client.post("/api/issue-reports/screenshot",
                         files={"file": ("shot.png", b"<svg onload='alert(1)'/>", "image/png")})
     assert r.status_code == 415
-    hx.put.assert_not_called()
+    put.assert_not_called()
 
 
 def test_issue_screenshot_is_stored_as_what_its_bytes_are():
     from tests.upload_fixtures import JPEG_BYTES
 
-    with patch("routes.feedback.httpx") as hx:
-        hx.put.return_value.status_code = 200
+    with _issue_storage() as put:
         r = client.post("/api/issue-reports/screenshot",
                         files={"file": ("shot.html", JPEG_BYTES, "image/png")})
     assert r.status_code == 200
     assert r.json()["path"].endswith(".jpg")
-    assert hx.put.call_args.kwargs["headers"]["Content-Type"] == "image/jpeg"
+    assert put.call_args.kwargs["headers"]["Content-Type"] == "image/jpeg"
 
 
 def test_careers_resume_must_be_a_document_by_its_bytes():
