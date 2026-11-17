@@ -28,7 +28,7 @@ HELPERS = {
 #: path (relative to backend/) -> (unbound call count, why).
 UNBOUND: dict[str, tuple[int, str]] = {
     "db/backfill_encryption.py": (
-        7, "the old plaintext -> v1 backfill (offline). Its map names columns the "
+        6, "the old plaintext -> v1 backfill (offline). Its map names columns the "
            "registry no longer has; it skips enc2: by prefix, and "
            "db/backfill_encryption_aad.py binds whatever it writes."),
     "db/backfill_encryption_aad.py": (
