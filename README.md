@@ -3,7 +3,7 @@
 An AI study companion that builds a live knowledge graph of what you know as you learn.
 
 [![CI](https://github.com/SaplingLearn/Sapling/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/SaplingLearn/Sapling/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![License: Proprietary](https://img.shields.io/badge/License-Proprietary-red.svg)](LICENSE)
 ![Python](https://img.shields.io/badge/-Python-3776AB?style=flat-square&logo=python&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=fff)
 ![Next.js](https://img.shields.io/badge/Next.js-000000?logo=nextdotjs&logoColor=white)
@@ -361,6 +361,8 @@ Built in Boston University's XC 475 Spark! Innovation Program (Fall 2026).
 
 ## License
 
-[MIT](LICENSE) © 2026 Andres Lopez, Jack He, Luke Cooper, and Jose Gael Cruz-Lopez
+Copyright © 2026 SaplingLabs Inc. All rights reserved.
 
-The MIT license covers the code in this repository. The Gummi heading font is a commercially licensed third-party font and is not in this repository: it is served from `fonts.saplinglearn.com` to licensed hosts only, and every other host renders headings in Aleo. See [`docs/licensed-fonts.md`](docs/licensed-fonts.md).
+This software and its source code are proprietary and confidential. No license is granted to use, copy, modify, or distribute it, in whole or in part, without prior written permission from SaplingLabs Inc. See [LICENSE](LICENSE).
+
+Third-party dependencies keep their own licenses, and their terms still apply. The Gummi heading font is a commercially licensed third-party font and is not in this repository: it is served from `fonts.saplinglearn.com` to licensed hosts only, and every other host renders headings in Aleo. See [`docs/licensed-fonts.md`](docs/licensed-fonts.md).
