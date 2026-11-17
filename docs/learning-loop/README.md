@@ -156,6 +156,7 @@ same calls run against fixed, deterministic handlers.
 | [data-model.md](data-model.md) | every learning table and SQL function: columns, what is append-only, what is encrypted, who writes it |
 | [invariants.md](invariants.md) | the rules you must not break, why, and which test enforces each |
 | [operations.md](operations.md) | flags, model slots and cost, migrations and their rollout order, the release verifier, every test lane with its command, running locally with real models |
+| [flag-rollout.md](flag-rollout.md) | turning on each learning-loop flag: what it changes, what must be true first, rollout steps, what to watch, rollback |
 | [amendments.md](amendments.md) | one line per §13 amendment, by theme and in order, with the code to read |
 | [glossary.md](glossary.md) | a spec term in plain words, and its name in the code |
 | [contributing.md](contributing.md) | the checklist for changing the loop safely |
