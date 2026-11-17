@@ -22,6 +22,12 @@ from tests import test_learn_loop_routes as _routes
 from tests import test_learning_probe_planner as _probe
 from tests import test_learning_posttest as _post
 from tests.test_learn_loop_routes import client
+from tests.split_patches import patch_loop, setattr_loop
+import services.loop.practice
+import services.loop.reveals
+import services.loop.reviews
+import services.loop.runner
+import services.loop.turn
 
 gate_on, no_rate_limit, seams = _routes.gate_on, _routes.no_rate_limit, _routes.seams
 probe, _no_rate_limit = _probe.probe, _probe._no_rate_limit
@@ -57,7 +63,7 @@ def test_record_help_and_posed_insert_hash_and_rung_rows_only():
     assert set(help_ledger.SOURCES) == {
         "loop", "review", "posttest", "probe", "scan", "quiz", "outside", "prequestion",
     }
-    from routes.learn_loop import PREQUESTION_SOURCE
+    from services.loop.flags import PREQUESTION_SOURCE
 
     assert PREQUESTION_SOURCE in help_ledger.SOURCES
 
@@ -119,14 +125,13 @@ def test_mark_graded_closes_only_the_items_ungraded_posed_rows():
 @pytest.fixture
 def ledger(monkeypatch):
     """An in-memory help ledger at the route seam: (user, hash) → rungs."""
-    import routes.learn_loop as ll
 
     rows: dict = defaultdict(list)
-    monkeypatch.setattr(ll, "record_help", lambda u, h, r, **kw: rows[(u, h)].append(int(r)))
-    monkeypatch.setattr(ll, "max_help", lambda u, h: max(rows[(u, h)], default=0))
-    monkeypatch.setattr(ll, "earliest_open_pose", lambda u, h: None)
-    monkeypatch.setattr(ll, "revealed_hashes", lambda u: set())
-    monkeypatch.setattr(ll, "unscanned_since", lambda u, p: False)
+    setattr_loop(monkeypatch, "record_help", lambda u, h, r, **kw: rows[(u, h)].append(int(r)))
+    setattr_loop(monkeypatch, "max_help", lambda u, h: max(rows[(u, h)], default=0))
+    setattr_loop(monkeypatch, "earliest_open_pose", lambda u, h: None)
+    setattr_loop(monkeypatch, "revealed_hashes", lambda u: set())
+    setattr_loop(monkeypatch, "unscanned_since", lambda u, p: False)
     return rows
 
 
@@ -143,7 +148,7 @@ ITEMS = [_item(1, "a" * 64), _item(2, "b" * 64), _item(3, "c" * 64), _item(4, "d
 
 
 def _hint_turn(ll, item, rung, *, h6=False, sibling=None, paused=False):
-    turn = MagicMock(spec=ll._LoopTurn)
+    turn = MagicMock(spec=services.loop.turn._LoopTurn)
     turn.user_id, turn.session_id, turn.phase, turn.item = "u", "sA", "hint", item
     turn.rung, turn.served_as_h6, turn.revealed_hash, turn.paused = rung, h6, sibling, paused
     turn.text, turn.tier = "payload", "none"
@@ -156,75 +161,73 @@ def test_an_h6_in_session_a_floors_the_same_item_graded_in_session_b(monkeypatch
     student, so B's grade of it carries no unassisted credit."""
     import routes.learn_loop as ll
 
-    monkeypatch.setattr(ll, "seen_hashes", lambda u: set())
-    monkeypatch.setattr(ll, "_concept_key_for_node", lambda u, n: "k")
-    monkeypatch.setattr(ll, "list_items", lambda c, k: list(ITEMS))
-    monkeypatch.setattr(ll, "_band_for", lambda u, n: ("develop", 0.5))
+    setattr_loop(monkeypatch, "seen_hashes", lambda u: set())
+    setattr_loop(monkeypatch, "_concept_key_for_node", lambda u, n: "k")
+    setattr_loop(monkeypatch, "list_items", lambda c, k: list(ITEMS))
+    setattr_loop(monkeypatch, "_band_for", lambda u, n: ("develop", 0.5))
     a, b = {"concept": "n1", "teach_turns": 2}, {"concept": "n1", "teach_turns": 2}
-    qa = ll._activate_next_item("u", "c1", a, now=1.0)
-    qb = ll._activate_next_item("u", "c1", b, now=2.0)
+    qa = services.loop.practice._activate_next_item("u", "c1", a, now=1.0)
+    qb = services.loop.practice._activate_next_item("u", "c1", b, now=2.0)
     assert qa == qb  # the same item is open in both sessions
     item = next(i for i in ITEMS if i.question_hash == qa)
-    assert ll._reveal_floor("u", item, None) == 0  # before any help
-    ll._LoopTurn._record_planned_help(_hint_turn(ll, item, Rung.H6))  # the H6 payload, in A
-    assert ll._reveal_floor("u", item, None) == int(Rung.H6)  # B's grade: no credit
-    assert ll._reveal_floor("u", item, None) >= params.RUNG_NO_CREDIT_MIN
+    assert services.loop.reveals._reveal_floor("u", item, None) == 0  # before any help
+    services.loop.turn._LoopTurn._record_planned_help(_hint_turn(ll, item, Rung.H6))  # the H6 payload, in A
+    assert services.loop.reveals._reveal_floor("u", item, None) == int(Rung.H6)  # B's grade: no credit
+    assert services.loop.reveals._reveal_floor("u", item, None) >= params.RUNG_NO_CREDIT_MIN
 
 
 def test_a_lower_hint_elsewhere_floors_the_grade_as_assisted(ledger):
     import routes.learn_loop as ll
 
     item = ITEMS[0]
-    ll._LoopTurn._record_planned_help(_hint_turn(ll, item, Rung.H2))
-    assert ll._reveal_floor("u", item, None) == int(Rung.H2)
+    services.loop.turn._LoopTurn._record_planned_help(_hint_turn(ll, item, Rung.H2))
+    assert services.loop.reveals._reveal_floor("u", item, None) == int(Rung.H2)
 
 
 def test_an_h4_sibling_payload_is_help_on_the_sibling_and_a_paused_turn_is_none(ledger):
     import routes.learn_loop as ll
 
     item, sibling = ITEMS[0], ITEMS[1]
-    ll._LoopTurn._record_planned_help(_hint_turn(ll, item, Rung.H4, sibling=sibling.question_hash))
+    services.loop.turn._LoopTurn._record_planned_help(_hint_turn(ll, item, Rung.H4, sibling=sibling.question_hash))
     assert ledger[("u", item.question_hash)] == [int(Rung.H4)]
     assert ledger[("u", sibling.question_hash)] == [params.RUNG_NO_CREDIT_MIN]
-    ll._LoopTurn._record_planned_help(_hint_turn(ll, ITEMS[2], Rung.H3, paused=True))
+    services.loop.turn._LoopTurn._record_planned_help(_hint_turn(ll, ITEMS[2], Rung.H3, paused=True))
     assert ledger[("u", ITEMS[2].question_hash)] == []  # nothing was served
 
 
 def test_a_leaking_payload_served_as_h6_is_recorded_as_h6(ledger):
     import routes.learn_loop as ll
 
-    ll._LoopTurn._record_planned_help(_hint_turn(ll, ITEMS[0], Rung.H4, h6=True))
+    services.loop.turn._LoopTurn._record_planned_help(_hint_turn(ll, ITEMS[0], Rung.H4, h6=True))
     assert ledger[("u", ITEMS[0].question_hash)] == [int(Rung.H6)]
 
 
 def test_the_floor_reads_the_first_ungraded_pose_for_the_unscanned_rule(monkeypatch, ledger):
     """An item first posed long ago and re-posed today: a marker between the two
     still floors it (the earliest ungraded pose anchors the rule)."""
-    import routes.learn_loop as ll
     from datetime import datetime, timezone
 
     first = datetime(2026, 9, 1, tzinfo=timezone.utc)
     today = datetime(2026, 9, 30, tzinfo=timezone.utc)
     seen = {}
-    monkeypatch.setattr(ll, "earliest_open_pose", lambda u, h: first)
-    monkeypatch.setattr(ll, "unscanned_since", lambda u, p: seen.setdefault("anchor", p) <= first)
-    assert ll._reveal_floor("u", ITEMS[0], today) == params.RUNG_ASSISTED_MIN
+    setattr_loop(monkeypatch, "earliest_open_pose", lambda u, h: first)
+    setattr_loop(monkeypatch, "unscanned_since", lambda u, p: seen.setdefault("anchor", p) <= first)
+    assert services.loop.reveals._reveal_floor("u", ITEMS[0], today) == params.RUNG_ASSISTED_MIN
     assert seen["anchor"] == first
 
 
 def test_refloor_raises_the_pending_evidence_of_the_item_only(monkeypatch):
-    import routes.learn_loop as ll
 
-    monkeypatch.setattr(ll, "_reveal_floor", lambda u, i, p: 4)
+    setattr_loop(monkeypatch, "_reveal_floor", lambda u, i, p: 4)
     rows = [
         {"question_hash": ITEMS[0].question_hash, "max_rung": 0, "assisted": False},
         {"question_hash": "other", "max_rung": 0, "assisted": False},
     ]
-    assert ll._refloor(rows, "u", ITEMS[0], None, 1) == 4
+    assert services.loop.reveals._refloor(rows, "u", ITEMS[0], None, 1) == 4
     assert rows[0] == {"question_hash": ITEMS[0].question_hash, "max_rung": 4, "assisted": True}
     assert rows[1]["max_rung"] == 0
-    monkeypatch.setattr(ll, "_reveal_floor", lambda u, i, p: 0)
-    assert ll._refloor(rows, "u", ITEMS[0], None, 2) == 2  # never lowers
+    setattr_loop(monkeypatch, "_reveal_floor", lambda u, i, p: 0)
+    assert services.loop.reveals._refloor(rows, "u", ITEMS[0], None, 2) == 2  # never lowers
 
 
 # ── wiring: every surface records, every grade re-reads inside its claim ────
@@ -232,7 +235,7 @@ def test_refloor_raises_the_pending_evidence_of_the_item_only(monkeypatch):
 
 def test_the_hint_route_records_the_granted_rung(gate_on, seams):
     seams.store["doc"] = _routes._state(offered=True, attempted_at=[_routes.T0 + 10])
-    with patch("routes.learn_loop.record_help") as rec:
+    with patch_loop("record_help") as rec:
         r = _routes.client.post("/api/learn/loop/hint", json=_routes._hint())
     assert r.json()["rung"] == 2
     rec.assert_called_once()
@@ -272,8 +275,8 @@ def test_the_check_route_rereads_the_floor_inside_the_claim_before_the_write(gat
     with (
         agent_p,
         usage_p,
-        patch("routes.learn_loop._reveal_floor", side_effect=[0, params.RUNG_NO_CREDIT_MIN]),
-        patch("routes.learn_loop.mark_graded") as graded,
+        patch_loop("_reveal_floor", side_effect=[0, params.RUNG_NO_CREDIT_MIN]),
+        patch_loop("mark_graded") as graded,
     ):
         r = client.post("/api/learn/loop/check/answer", json=_routes._answer(answer="n == 0 returns 1"))
     assert r.status_code == 200, r.text
@@ -293,8 +296,8 @@ def test_the_probe_grades_with_the_help_floor_and_rereads_it(probe):
     """M2: probe submissions had max_rung=0 and no floor."""
     _probe._answer_doc(probe)
     with (
-        patch("routes.learn_loop._reveal_floor", side_effect=[int(Rung.H2), params.RUNG_NO_CREDIT_MIN]),
-        patch("routes.learn_loop.mark_graded") as graded,
+        patch_loop("_reveal_floor", side_effect=[int(Rung.H2), params.RUNG_NO_CREDIT_MIN]),
+        patch_loop("mark_graded") as graded,
     ):
         r = client.post(f"{_probe.LOOP}/probe/answer", json=_probe._answer(answer="because"))
     assert r.status_code == 200, r.text
@@ -305,7 +308,7 @@ def test_the_probe_grades_with_the_help_floor_and_rereads_it(probe):
 
 
 def test_probe_next_records_a_newly_posed_item_once(probe):
-    with patch("routes.learn_loop.record_posed") as posed:
+    with patch_loop("record_posed") as posed:
         first = client.post(f"{_probe.LOOP}/probe/next", json=_probe.NEXT).json()
         again = client.post(f"{_probe.LOOP}/probe/next", json=_probe.NEXT).json()
     assert first["question_hash"] == again["question_hash"]  # served again until answered
@@ -317,8 +320,8 @@ def test_probe_next_records_a_newly_posed_item_once(probe):
 def test_the_posttest_rereads_the_floor_inside_the_claim(gate_on, one_item, grader_says, applied):
     grader_says(correct=True, confidence=0.9)
     with (
-        patch("routes.learn_loop._reveal_floor", side_effect=[0, params.RUNG_NO_CREDIT_MIN]),
-        patch("routes.learn_loop.mark_graded") as graded,
+        patch_loop("_reveal_floor", side_effect=[0, params.RUNG_NO_CREDIT_MIN]),
+        patch_loop("mark_graded") as graded,
     ):
         r = client.post(_post.ANSWER, json=_post._answer(answer="a function with its lexical scope"))
     assert r.status_code == 200, r.text
@@ -337,7 +340,7 @@ def test_an_expired_pose_keeps_its_item_bound_to_the_node(gate_on, one_item):
     _post._pose(
         one_item, qh="q2", posed=_post.NOW - timedelta(hours=params.POSTTEST_POSE_TTL_HOURS + 1)
     )
-    with patch("routes.learn_loop.record_posed") as posed:
+    with patch_loop("record_posed") as posed:
         items = client.post(_post.START, json={"course_id": "c", "user_id": "u"}).json()["items"]
     assert [i["question_hash"] for i in items] == ["q2"]
     pose = one_item["poses"][("u", "n1", _post.W1)]  # A112: renewed in its own window
@@ -349,16 +352,15 @@ def test_a_retracted_attempt_is_scanned_too():
     """A93 (M4): a retract no longer forgets what the student already saw."""
     import asyncio
 
-    import routes.learn_loop as ll
     from tests import test_learning_teach_reveal as _tr
 
     turn = _tr._turn()
     events = [_tr._tok("old text"), _tr.SaplingEvent(type="retract", step="reply", message=""), _tr._tok("new")]
     with (
-        patch("routes.learn_loop.ai_budget"),
-        patch("routes.learn_loop.stream_structured_turn", _tr._stream_with(events, then=RuntimeError())),
+        patch_loop("ai_budget"),
+        patch_loop("stream_structured_turn", _tr._stream_with(events, then=RuntimeError())),
     ):
-        asyncio.run(_tr._drain(ll._stream_turn(turn)))
+        asyncio.run(_tr._drain(services.loop.runner._stream_turn(turn)))
     scanned = [c.args[0] for c in turn.record_relayed.call_args_list]
     assert "old text" in scanned and scanned[-1] == "new"
 
@@ -374,7 +376,6 @@ def test_grade_review_applies_the_refloor_right_before_its_one_write(monkeypatch
     import inspect
 
     from learning import review
-    import routes.learn_loop as ll
 
     grade, _calls = _rv._grade(correct=True)
     monkeypatch.setattr(review, "grade_answer", grade)
@@ -400,5 +401,5 @@ def test_grade_review_applies_the_refloor_right_before_its_one_write(monkeypatch
     _rv._grade_check(item, _rv._check_item("n-due", "qh-1"), loop_state, answer="x", refloor=refloor)
     assert [k for k, _ in order] == ["refloor", "write"]
     assert order[1][1]["max_rung"] == params.RUNG_NO_CREDIT_MIN
-    route = inspect.getsource(ll.review_answer)
+    route = inspect.getsource(services.loop.reviews.review_answer)
     assert "refloor=" in route and "_refloor(" in route and "mark_graded" in route

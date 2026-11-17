@@ -1,7 +1,7 @@
 """Spec §10's third gate, earnest-revise ≤ 5% (spec §13 A109). Pure.
 
 The one reader of the feedback zpd.step's `earnest_blocked` bool (written by
-`learning.zpd_events.emit_zpd_step`, set by routes/learn_loop.py's /hint when
+`learning.zpd_events.emit_zpd_step`, set by services/loop/attempts.py's /hint when
 the ceiling or the H6 gate denied a rung on a step with a genuine attempt).
 The admin learning-loop KPI and scripts/derive_zpd_metrics.py share it. It
 lives outside the PKG-06 layer on purpose: those two callers must not import

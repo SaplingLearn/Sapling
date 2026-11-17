@@ -84,7 +84,7 @@ def evidence_confidence(value: float | None) -> float | None:
 
 def is_idk_answer(text: str | None) -> bool:
     """A16's idk split for a written quiz answer, the loop route's rule
-    (routes/learn_loop.py::_is_idk_phrase; parity pinned by test): the text
+    (services/loop/claims.py::_is_idk_phrase; parity pinned by test): the text
     holds a gates.IDK_PATTERNS phrase that `gates.non_attempt_phrases`
     returns, so a hedged answer ("idk maybe 7") is an answer, and "idk" is
     none. An idk states no confidence (A127 (c)).

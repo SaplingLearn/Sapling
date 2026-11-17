@@ -190,7 +190,7 @@ def test_allowlist_matches_exact_existing_sites_and_main_installs_bridge():
         module = {
             "sapling.agents.usage": "agents.usage",
             "services.chat_stream": "services.chat_stream",
-            "routes.learn_loop": "routes.learn_loop",
+            "routes.learn_loop": "services.loop.continuation",
         }[name]
         source = root / (module.replace(".", "/") + ".py")
         tree = ast.parse(source.read_text())

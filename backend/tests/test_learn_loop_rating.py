@@ -21,6 +21,7 @@ from tests.test_learn_loop_routes import (
     _state,
     client,
 )
+from tests.split_patches import patch_loop
 
 # the route suite's fixtures (no_rate_limit is autouse there, so here too)
 gate_on, no_rate_limit, seams = _routes.gate_on, _routes.no_rate_limit, _routes.seams
@@ -31,7 +32,7 @@ RATING = "/api/learn/loop/rating"
 
 @pytest.fixture
 def gate_off():
-    with patch("routes.learn_loop.learning_loop_for_request", return_value=False) as g:
+    with patch_loop("learning_loop_for_request", return_value=False) as g:
         yield g
 
 
@@ -51,7 +52,7 @@ def run_check_answer(gate_on, seams):
     """One genuine answer to /check/answer/stream; returns the done event's data."""
 
     def _run(**answer):
-        with patch("routes.learn_loop.stream_structured_turn", _fake_stream("Right. Next?")):
+        with patch_loop("stream_structured_turn", _fake_stream("Right. Next?")):
             r = client.post(
                 "/api/learn/loop/check/answer/stream",
                 json=_answer(**(answer or {"answer": "n == 0 returns 1"})),
@@ -66,7 +67,7 @@ def run_check_answer(gate_on, seams):
 @pytest.fixture
 def run_chat_turn(gate_on, seams):
     def _run(message):
-        with patch("routes.learn_loop.stream_structured_turn", _fake_stream("Try again?")):
+        with patch_loop("stream_structured_turn", _fake_stream("Try again?")):
             r = client.post(
                 "/api/learn/loop/chat/stream",
                 json={"session_id": "s1", "user_id": "u1", "message": message},

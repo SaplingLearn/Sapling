@@ -8,6 +8,7 @@ import pytest
 
 from tests.integration.conftest import USER_ACTIVE
 from tests.integration.test_learning_goals_db import _session
+from tests.split_patches import setattr_loop
 
 pytestmark = pytest.mark.integration
 
@@ -15,19 +16,18 @@ pytestmark = pytest.mark.integration
 def test_interrupted_tutor_timing_survives_a_cold_worker(authed_client, db_conn, monkeypatch):
     import config
     from learning import turn_activity
-    from routes import learn_loop
     from services.agent_events import SaplingEvent
 
     monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", True)
     session = _session(state={"phase": "teach", "served_at": 1})
-    monkeypatch.setattr(learn_loop, "_context_blocks", lambda **kwargs: [])
+    setattr_loop(monkeypatch, "_context_blocks", lambda **kwargs: [])
 
     async def interrupted(**kwargs):
         row = db_conn.execute("SELECT loop_state FROM sessions WHERE id=%s", (session,)).fetchone()
         assert row["loop_state"][turn_activity.KEY]["state"] == "pending"
         yield SaplingEvent(type="error", step="reply", message="Synthetic provider interruption", data={"retryable": True})
 
-    monkeypatch.setattr(learn_loop, "stream_structured_turn", interrupted)
+    setattr_loop(monkeypatch, "stream_structured_turn", interrupted)
     response = authed_client.post("/api/learn/loop/chat/stream", json={"user_id": USER_ACTIVE, "session_id": session, "message": "Explain this concept"})
     assert response.status_code == 200 and '"error"' in response.text and '"done"' not in response.text
     row = db_conn.execute("SELECT loop_state FROM sessions WHERE id=%s", (session,)).fetchone()

@@ -1,7 +1,7 @@
 """Eval-side misconception-confrontation judge (PKG-10).
 
 Reads ONE served loop-tutor reply against the misconception the route told the
-tutor to confront (routes.learn_loop.confront_line_for) and answers three
+tutor to confront (services.loop.guard.confront_line_for) and answers three
 structured questions: does the reply confront the misconception with a
 contradiction the student must resolve (spec §3.3; research: Lehman 2013,
 contradiction-induced confusion), or does it only state the correction; and

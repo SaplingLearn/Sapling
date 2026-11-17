@@ -23,6 +23,7 @@ import pytest
 from learning import gates, params
 from learning.ladder import Rung, intent
 from tests import test_learn_loop_routes as routes
+from tests.split_patches import patch_loop
 
 gate_on, no_rate_limit, seams = routes.gate_on, routes.no_rate_limit, routes.seams
 client, T0 = routes.client, routes.T0
@@ -128,9 +129,9 @@ def _scenario(seams, plan, *, strict: bool):
     clock = {"t": T0}
     out = []
     with (
-        patch("routes.learn_loop._now_s", side_effect=lambda: clock["t"]),
-        patch("routes.learn_loop._help_gate_strict_on", return_value=strict),
-        patch("routes.learn_loop.record_help") as ledger,
+        patch_loop("_now_s", side_effect=lambda: clock["t"]),
+        patch_loop("_help_gate_strict_on", return_value=strict),
+        patch_loop("record_help") as ledger,
     ):
         for at, text in plan:
             clock["t"] = T0 + at
@@ -304,8 +305,8 @@ def test_strict_keeps_the_novice_worked_example_first_then_h5_after_time_alone(g
     clock = {"t": T0 + 1}
     body = {"session_id": "s1", "user_id": "u1", "question_hash": "qh-1"}
     with (
-        patch("routes.learn_loop._now_s", side_effect=lambda: clock["t"]),
-        patch("routes.learn_loop._help_gate_strict_on", return_value=True),
+        patch_loop("_now_s", side_effect=lambda: clock["t"]),
+        patch_loop("_help_gate_strict_on", return_value=True),
     ):
         assert client.post(HINT, json=body).json() == {"rung": 4, "intent": intent(Rung.H4)}
         clock["t"] = T0 + 1 + 50
@@ -326,7 +327,7 @@ def test_strict_a_rung_granted_meanwhile_is_seen_on_the_fresh_document(gate_on, 
         doc["steps"]["qh-1"].update(rung=1, last_rung_at=routes.NOW, rungs=[{"rung": 1, "at": routes.NOW}])
 
     seams.store["conflicts"], seams.store["racer"] = 1, granted_meanwhile
-    with patch("routes.learn_loop._help_gate_strict_on", return_value=True):
+    with patch_loop("_help_gate_strict_on", return_value=True):
         r = client.post(ATTEMPT, json=routes._attempt(attempt_text="the base case"))
     assert r.json()["counted"] is False
     assert seams.store["doc"]["steps"]["qh-1"]["attempts"] == 0
@@ -345,9 +346,9 @@ def test_strict_the_help_floor_and_the_evidence_rung_read_as_before(gate_on, sea
         with (
             agent_p,
             usage_p,
-            patch("routes.learn_loop._help_gate_strict_on", return_value=True),
-            patch("routes.learn_loop._reveal_floor", return_value=floor),
-            patch("routes.learn_loop.mark_graded"),
+            patch_loop("_help_gate_strict_on", return_value=True),
+            patch_loop("_reveal_floor", return_value=floor),
+            patch_loop("mark_graded"),
         ):
             r = client.post("/api/learn/loop/check/answer", json=routes._answer(answer="n == 0 returns 1"))
         assert r.status_code == 200, r.text
@@ -361,7 +362,7 @@ def test_the_attempt_text_is_never_stored_and_the_digests_are_keyed(gate_on, sea
     doc = json.dumps(seams.store["doc"])
     for word in ("base", "case", "returns", "one"):
         assert f'"{word}"' not in doc and word not in seams.store["doc"]["steps"]["qh-1"]["attempt_tokens"]
-    from routes.learn_loop import _token_digest
+    from services.loop.attempts import _token_digest
 
     tokens = seams.store["doc"]["steps"]["qh-1"]["attempt_tokens"]
     assert _token_digest("qh-1", "base") in tokens
@@ -370,7 +371,7 @@ def test_the_attempt_text_is_never_stored_and_the_digests_are_keyed(gate_on, sea
 
 def test_the_novelty_memory_is_bounded_and_errs_toward_counting(gate_on, seams):
     entry: dict = {"attempt_tokens": [f"{i:012x}" for i in range(params.HELP_NOVELTY_DIGESTS_MAX)]}
-    from routes.learn_loop import _remember_attempt_tokens
+    from services.loop.attempts import _remember_attempt_tokens
 
     _remember_attempt_tokens(entry, frozenset({"ffffffffffff"}))
     assert len(entry["attempt_tokens"]) == params.HELP_NOVELTY_DIGESTS_MAX
@@ -384,7 +385,7 @@ def test_flag_off_hint_reads_nothing_more_than_before(gate_on, seams):
     """Off, /hint's denial is _rung_gate_denial's: the strict wording reads
     the item and the band only when the flag is on."""
     seams.store["doc"] = routes._state(attempted_at=[])
-    with patch("routes.learn_loop._help_gate_strict_on", return_value=False) as flag:
+    with patch_loop("_help_gate_strict_on", return_value=False) as flag:
         assert client.post(HINT, json=routes._hint()).json() == {"denied": "no_genuine_attempt"}
     flag.assert_called_once_with("u1")
     seams.item.assert_not_called()
@@ -399,7 +400,7 @@ def test_the_flag_is_server_only_off_first_and_off_when_unconfigured(monkeypatch
     monkeypatch.delenv("SAPLING_FLAG_HELP_GATE_STRICT", raising=False)
     fd = ff.REGISTRY["help_gate_strict"]
     assert fd.variants == ("off", "on") and not fd.client_visible
-    from routes.learn_loop import HELP_GATE_STRICT_FLAG, _help_gate_strict_on
+    from services.loop.flags import HELP_GATE_STRICT_FLAG, _help_gate_strict_on
 
     assert HELP_GATE_STRICT_FLAG == "help_gate_strict"
     with patch("services.feature_flags.read_config", return_value=ff.Snapshot(flags={}, targets={})):
@@ -410,7 +411,7 @@ def test_the_flag_is_server_only_off_first_and_off_when_unconfigured(monkeypatch
 
 def test_the_flag_resolves_per_student(monkeypatch):
     from services import feature_flags as ff
-    from routes.learn_loop import _help_gate_strict_on
+    from services.loop.flags import _help_gate_strict_on
 
     snap = ff.Snapshot(
         flags={"help_gate_strict": {"key": "help_gate_strict", "default_variant": "off",

@@ -8,13 +8,13 @@ from __future__ import annotations
 
 import copy
 import json
-from unittest.mock import patch
 
 import pytest
 from pydantic_ai.models.function import FunctionModel
 
 from agents.loop_tutor import loop_tutor_agent
 from tests import test_learn_loop_routes as routes
+from tests.split_patches import patch_loop
 
 gate_on, no_rate_limit, seams = routes.gate_on, routes.no_rate_limit, routes.seams
 DETAIL = "feedback pending; retry feedback before another check"
@@ -25,7 +25,7 @@ NEXT = routes.ITEM.model_copy(update={"id": "item-next", "question_hash": "qh-ne
 def test_pending_feedback_blocks_activation_without_mutating_grade_or_counters(
     gate_on, seams, flag
 ):
-    from routes.learn_loop import _phase_for
+    from services.loop.state import _phase_for
 
     state = routes._plan_state(teach_turns=2, concept_checks=1)
     state.update(routes._graded("not_yet", feedback_given=flag))
@@ -98,9 +98,9 @@ def test_real_shape_failure_retries_saved_feedback_once_then_allows_next_check(g
     seams.item.side_effect = lambda item_id: NEXT if item_id == NEXT.id else routes.ITEM
 
     with (
-        patch("routes.learn_loop.loop_tutor_agent", loop_tutor_agent),
-        patch("routes.learn_loop.tier_run_kwargs", return_value={"model": model}),
-        patch("routes.learn_loop.record_agent_usage", side_effect=lambda result, **kwargs: result),
+        patch_loop("loop_tutor_agent", loop_tutor_agent),
+        patch_loop("tier_run_kwargs", return_value={"model": model}),
+        patch_loop("record_agent_usage", side_effect=lambda result, **kwargs: result),
     ):
         failed = routes.client.post(
             "/api/learn/loop/check/answer/stream", json=routes._answer(answer="it never stops")

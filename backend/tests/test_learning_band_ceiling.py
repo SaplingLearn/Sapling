@@ -12,7 +12,6 @@ of tests/test_learn_loop_routes.py. No DB, no model.
 
 from __future__ import annotations
 
-from unittest.mock import patch
 
 import pytest
 
@@ -21,6 +20,7 @@ from learning.ladder import Rung, intent
 from learning.policy import BandAction, CeilingReason, LearnerView, StepState
 from tests import test_learn_loop_routes as routes
 from tests.test_learning_band_control import HIT, MISS, _answer, _learner_reads
+from tests.split_patches import patch_loop
 
 gate_on, no_rate_limit, seams = routes.gate_on, routes.no_rate_limit, routes.seams
 
@@ -229,8 +229,8 @@ def test_model_text_stays_below_h6_until_the_answer_is_released(gate_on, seams):
     seams.p_known["node-1"] = 0.1  # novice, prerequisite proficient: H5 + 1
     agent, seen = routes._json_agent()
     with (
-        patch("routes.learn_loop.loop_tutor_agent", agent),
-        patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
+        patch_loop("loop_tutor_agent", agent),
+        patch_loop("record_agent_usage", side_effect=lambda r, **k: r),
     ):
         body = routes.client.post(
             "/api/learn/loop/chat", json={"session_id": "s1", "user_id": "u1", "message": "explain"}
@@ -247,8 +247,8 @@ def test_the_leak_check_runs_below_h6_at_a_moved_ceiling(gate_on, seams):
     seams.p_known["node-1"] = 0.1
     agent, _ = routes._json_agent()
     with (
-        patch("routes.learn_loop.loop_tutor_agent", agent),
-        patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
+        patch_loop("loop_tutor_agent", agent),
+        patch_loop("record_agent_usage", side_effect=lambda r, **k: r),
     ):
         body = routes.client.post(
             "/api/learn/loop/chat", json={"session_id": "s1", "user_id": "u1", "message": "Continue"}
@@ -265,10 +265,10 @@ def test_a_rung_down_never_lowers_the_help_floor(gate_on, seams):
     seams.store["doc"]["band_ceiling"] = {"node-1": DOWN}
     agent, _ = routes._json_agent()
     with (
-        patch("routes.learn_loop.max_help", return_value=3),
-        patch("routes.learn_loop.opportunity_window", return_value=None),
-        patch("routes.learn_loop.loop_tutor_agent", agent),
-        patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
+        patch_loop("max_help", return_value=3),
+        patch_loop("opportunity_window", return_value=None),
+        patch_loop("loop_tutor_agent", agent),
+        patch_loop("record_agent_usage", side_effect=lambda r, **k: r),
     ):
         r = routes.client.post(
             "/api/learn/loop/check/answer",
@@ -279,7 +279,7 @@ def test_a_rung_down_never_lowers_the_help_floor(gate_on, seams):
 
 
 def test_a_malformed_stored_clause_moves_nothing():
-    from routes.learn_loop import _band_ceiling_delta
+    from services.loop.learner import _band_ceiling_delta
 
     for raw in ({"node-1": 2}, {"node-1": True}, {"node-1": "1"}, ["node-1"], None):
         assert _band_ceiling_delta({"band_ceiling": raw}, "node-1") == 0

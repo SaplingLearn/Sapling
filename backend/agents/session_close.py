@@ -19,7 +19,7 @@ at that measurement, never at the BKT prior.
 `shape_close` is the structural half of what the student is served: the
 bounded record with the summary cut back to its last complete sentence, a plan
 that is not "If …, then …" dropped and a self-evaluation that is not one
-question replaced by the fixed one. `routes.learn_loop.served_close` adds the
+question replaced by the fixed one. `services.loop.closing.served_close` adds the
 leak half (the deterministic close when any text states the answer of an item
 the session posed but never released; the PKG-06 leak layer is reached only
 from the loop route).
@@ -242,7 +242,7 @@ async def run_session_close(
         request_id=request_id,
         session_id=session_id,
         feature="session_close",
-        # reached only through routes.learn_loop.close_session, behind the gate
+        # reached only through services.loop.closing.close_session, behind the gate
         # read once at route entry (A38 00); the close agent has no tools
         learning_loop=True,
     )
@@ -308,7 +308,7 @@ def is_if_then(text: str) -> bool:
 
 def shape_close(output: SessionClose, draft: CloseDraft) -> CloseRecord:
     """The structural half of the served close (the leak half needs the
-    session's items and lives in routes.learn_loop.served_close):
+    session's items and lives in services.loop.closing.served_close):
     `normalise_close`, the summary cut back to its last complete sentence (none
     left: the deterministic close), a plan not in "If …, then …" form dropped,
     and a self-evaluation that is not exactly one question replaced by

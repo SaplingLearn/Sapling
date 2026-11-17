@@ -47,7 +47,7 @@ _SENTENCE_END = re.compile(r"[.?!][\"'”’)\]]*\s+|\n+")
 
 
 def _option_text(item) -> str | None:
-    """The text of an mc_reason item's correct option (routes.learn_loop.option_text)."""
+    """The text of an mc_reason item's correct option (services.loop.guard.option_text)."""
     for option in getattr(item, "options", None) or []:
         if option.letter == getattr(item, "correct_option", None):
             return option.text

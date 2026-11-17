@@ -36,7 +36,7 @@ def _now() -> datetime:
 
 def _open_pose() -> str:
     from learning.params import POSTTEST_WINDOWS_DAYS
-    from routes.learn_loop import _record_poses
+    from services.loop.posttest_poses import _record_poses
 
     node = f"it-node-{uuid.uuid4().hex[:10]}"
     _record_poses(
@@ -65,7 +65,7 @@ def _row(db_conn, node: str) -> dict:
 
 
 def test_a_claim_names_the_posed_item_only(db_conn):
-    from routes.learn_loop import _claim_pose
+    from services.loop.posttest_poses import _claim_pose
 
     node = _open_pose()
     assert _claim_pose(USER, node, "qh-some-other-item", "c1", _now()) is None
@@ -75,7 +75,7 @@ def test_a_claim_names_the_posed_item_only(db_conn):
 def test_release_on_error_frees_the_pose_for_the_next_submission(db_conn):
     """A refusal, an outage or an error grades nothing: the claim is released
     (answered stays NULL) and the next submission can claim it at once."""
-    from routes.learn_loop import _claim_pose, _release_pose
+    from services.loop.posttest_poses import _claim_pose, _release_pose
 
     node = _open_pose()
     now = _now()
@@ -87,7 +87,7 @@ def test_release_on_error_frees_the_pose_for_the_next_submission(db_conn):
 
 
 def test_a_release_never_reopens_an_answered_pose(db_conn):
-    from routes.learn_loop import _answer_pose, _claim_pose, _release_pose
+    from services.loop.posttest_poses import _answer_pose, _claim_pose, _release_pose
 
     node = _open_pose()
     now = _now()
@@ -100,7 +100,7 @@ def test_a_release_never_reopens_an_answered_pose(db_conn):
 
 
 def test_a_foreign_claim_releases_nothing(db_conn):
-    from routes.learn_loop import _claim_pose, _release_pose
+    from services.loop.posttest_poses import _claim_pose, _release_pose
 
     node = _open_pose()
     assert _claim_pose(USER, node, QH, "c1", _now()) is not None
@@ -112,7 +112,7 @@ def test_concurrent_submissions_answer_the_pose_once(db_conn):
     """The route's grade cycle — claim, then close the pose before the one flush
     — run by 8 simultaneous submitters (separate PostgREST requests, as separate
     backend processes would send): exactly one closes it; nobody else may flush."""
-    from routes.learn_loop import _answer_pose, _claim_pose
+    from services.loop.posttest_poses import _answer_pose, _claim_pose
 
     node = _open_pose()
     now = _now()

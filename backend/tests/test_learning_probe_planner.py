@@ -9,6 +9,9 @@ from dataclasses import dataclass
 # PKG-05's map; probe.py takes it as an argument (invariant 2 keeps agents out).
 from agents.tools.check import CHANNEL_FOR_FORMAT
 from learning import params as P
+from tests.split_patches import patch_loop
+import services.loop.planning
+import services.loop.state
 
 
 # ── fixtures ────────────────────────────────────────────────────────────────
@@ -389,10 +392,9 @@ from learning.policy import LoopState  # noqa: E402
 from main import app  # noqa: E402
 from services import ai_budget  # noqa: E402
 
-import routes.learn_loop as _rl  # noqa: E402
 
 client = TestClient(app)
-_REAL_SESSION_SCOPE = _rl._session_scope
+_REAL_SESSION_SCOPE = services.loop.state._session_scope
 LOOP = "/api/learn/loop"
 UID = "u1"
 NEXT = {"session_id": "s1", "user_id": UID}
@@ -427,7 +429,6 @@ def _without_scope_metadata(body, *, diagnosis_status):
 def _ci(item_id, node, fmt, difficulty, qh, **over):
     """A decrypted PKG-04 item bound to the student's node (A2) the way the
     route binds it (`_BoundItem`)."""
-    import routes.learn_loop as rl
 
     fields = dict(
         id=item_id,
@@ -444,7 +445,7 @@ def _ci(item_id, node, fmt, difficulty, qh, **over):
         question_hash=qh,
     )
     fields.update(over)
-    return rl._BoundItem(CheckItem(**fields), node)
+    return services.loop.planning._BoundItem(CheckItem(**fields), node)
 
 
 def _node_items(node, n, *, difficulty=2):
@@ -500,7 +501,7 @@ def probe():
     with ExitStack() as stack:
 
         def p(name, **kw):
-            return stack.enter_context(patch(f"routes.learn_loop.{name}", **kw))
+            return stack.enter_context(patch_loop(name, **kw))
 
         ns = SimpleNamespace(store=store, p_known=p_known, receipts={}, commits=[])
         def canonical_history(user_id, course_id, nodes):
@@ -726,12 +727,12 @@ GATED_ROUTES = [
 def test_gate_false_is_404_and_reads_nothing(method, path, body):
     reads = []
     with (
-        patch("routes.learn_loop.learning_loop_for_request", return_value=False) as gate,
-        patch("routes.learn_loop.table", side_effect=lambda name: reads.append(name) or _Boom()),
-        patch("routes.learn_loop._consume_pending") as consume,
-        patch("routes.learn_loop.load_loop_state") as load,
-        patch("routes.learn_loop.ai_budget") as budget,
-        patch("routes.learn_loop.check_rate_limit") as reads_limit,
+        patch_loop("learning_loop_for_request", return_value=False) as gate,
+        patch_loop("table", side_effect=lambda name: reads.append(name) or _Boom()),
+        patch_loop("_consume_pending") as consume,
+        patch_loop("load_loop_state") as load,
+        patch_loop("ai_budget") as budget,
+        patch_loop("check_rate_limit") as reads_limit,
     ):
         r = (
             client.post(f"{LOOP}{path}", json=body)
@@ -755,7 +756,7 @@ def test_probe_routes_reject_foreign_session(probe, method, path, body):
     probe.table.side_effect = lambda name: sessions if name == "sessions" else _Boom()
     probe.table.return_value = None
     probe.scope.side_effect = _REAL_SESSION_SCOPE
-    with patch("routes.learn_loop.load_loop_state") as load:
+    with patch_loop("load_loop_state") as load:
         r = (
             client.post(f"{LOOP}{path}", json=body)
             if method == "post"
@@ -1248,12 +1249,13 @@ _PKG08_HANDLERS = ("probe_next", "probe_answer", "_probe_submission", "plan_get"
 def test_probe_and_plan_handlers_never_touch_the_tutor_budget():
     """A20 pinned in source: none of PKG-08's handlers names ai_budget.check or
     ai_budget.count_tutor_call — the grader's cap lives inside grade() (PKG-06b)."""
-    src = (pathlib.Path(__file__).resolve().parents[1] / "routes" / "learn_loop.py").read_text()
-    defs = {
-        n.name: n
-        for n in ast.walk(ast.parse(src))
-        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
-    }
+    # a handler's BODY, over its route wrapper (#118: the bodies live in services/loop/)
+    root = pathlib.Path(__file__).resolve().parents[1]
+    defs = {}
+    for path in [*sorted((root / "services" / "loop").glob("*.py")), root / "routes" / "learn_loop.py"]:
+        for n in ast.walk(ast.parse(path.read_text())):
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                defs.setdefault(n.name, n)
     assert set(_PKG08_HANDLERS) <= set(defs), set(_PKG08_HANDLERS) - set(defs)
     for name in _PKG08_HANDLERS:
         loads = {
@@ -1275,7 +1277,7 @@ def test_probe_answer_double_submit_writes_once(probe):
     """A52 for the probe: grading runs under a claim. A resubmission after the
     grade is a 409, and two submissions in flight at once grade and write once."""
     from models import ProbeAnswerBody
-    from routes.learn_loop import _probe_submission
+    from services.loop.probe_grading import _probe_submission
 
     _answer_doc(probe)
     gate = asyncio.Event()
@@ -1332,7 +1334,7 @@ def test_probe_answer_lost_continuation_keeps_checkpoint_then_replays_one_operat
     operation = current["grading_claim"]
     assert KEY in current and len(probe.commits) == 1
     assert probe.store["doc"]["probe"]["history"] == []
-    with patch("routes.learn_loop._now_s", return_value=NOW + LOOP_GRADING_CLAIM_STALE_S + 1):
+    with patch_loop("_now_s", return_value=NOW + LOOP_GRADING_CLAIM_STALE_S + 1):
         waiting = client.post(f"{LOOP}/probe/next", json=NEXT).json()
     assert waiting["done"] is False
     assert waiting["pending_grade"] == {"kind": "probe", "question_hash": "h-A-3"}
@@ -1382,7 +1384,6 @@ def test_probe_answer_for_a_withdrawn_item_counts_as_not_asked(probe):
 def test_probe_items_binds_items_to_the_students_nodes():
     """A2: the student's node → concept_key = _normalize_concept(concept_name) →
     the course's items for those keys, in ONE items read, each bound to the node."""
-    import routes.learn_loop as rl
 
     nodes = MagicMock()
     nodes.select.return_value = [
@@ -1404,13 +1405,10 @@ def test_probe_items_binds_items_to_the_students_nodes():
         final_answer="f",
     )
     with (
-        patch("routes.learn_loop.table", return_value=nodes),
-        patch(
-            "routes.learn_loop.items_for_concepts",
-            return_value={"recursion": [item], "big-o": []},
-        ) as ifc,
+        patch_loop("table", return_value=nodes),
+        patch_loop("items_for_concepts", return_value={"recursion": [item], "big-o": []}) as ifc,
     ):
-        out = rl._probe_items(UID, "c1", ["A", "B"])
+        out = services.loop.planning._probe_items(UID, "c1", ["A", "B"])
     assert [(o.id, o.node_id, o.question_hash) for o in out] == [("i1", "A", "h1")]
     assert out[0].item is item
     ifc.assert_called_once()
@@ -1473,7 +1471,6 @@ def test_plan_get_wrong_phase_is_409(probe):
 def test_plan_get_reviews_only_due():
     """GET /plan's due reviews: only nodes whose FSRS due date has passed
     (fsrs_due_at ≤ now), then PKG-02's order_due, then budget_select's cap."""
-    import routes.learn_loop as rl
     from learning.fsrs import budget_items, order_due
 
     now = datetime(2026, 9, 29, 12, tzinfo=timezone.utc)
@@ -1494,8 +1491,8 @@ def test_plan_get_reviews_only_due():
     states["FUTURE"] = st("FUTURE", due_days=+2)
     states["NEVER"] = st("NEVER", due_days=None)
     states["NOW"] = st("NOW", due_days=0)
-    with patch("routes.learn_loop.read_states", return_value=states) as rs:
-        out = rl._plan_due_reviews(UID, list(states), now=now)
+    with patch_loop("read_states", return_value=states) as rs:
+        out = services.loop.planning._plan_due_reviews(UID, list(states), now=now)
     assert rs.call_args.args[0] == UID
     due_rows = [
         {"node_id": n, "fsrs_s": s.fsrs_s, "fsrs_last_review_at": s.fsrs_last_review_at}
@@ -1636,7 +1633,7 @@ def test_probe_next_and_plan_get_are_rate_limited_per_user(probe, method, path):
             return client.post(f"{LOOP}{path}", json={**NEXT, "user_id": uid})
         return client.get(f"{LOOP}{path}", params={**PLAN_Q, "user_id": uid})
 
-    with patch("routes.learn_loop.config.LOOP_PROBE_PLAN_READS_PER_MIN", 2):
+    with patch('config.LOOP_PROBE_PLAN_READS_PER_MIN', 2):
         codes = [call(UID).status_code for _ in range(3)]
         other = call("u2")
     assert codes == [200, 200, 429]
@@ -1676,7 +1673,7 @@ def test_the_pre_flush_recheck_renews_the_claim(probe):
     probe.agu.side_effect = write
     later = NOW + 50
     clock = iter([NOW])
-    with patch("routes.learn_loop._now_s", side_effect=lambda: next(clock, later)):
+    with patch_loop("_now_s", side_effect=lambda: next(clock, later)):
         r = client.post(f"{LOOP}/probe/answer", json=_answer(answer="because"))
     assert r.status_code == 200, r.text
     assert stamps and stamps[0]["grading_claim_at"] == later
@@ -1728,12 +1725,9 @@ def test_a_non_empty_proposal_stays_in_plan(probe):
 def test_plan_approve_stores_the_learner_brief(probe):
     _planning(probe, proposed=["R1", "N1", "N2", "K"])
     calls = []
-    with patch(
-        "routes.learn_loop.store_brief",
-        side_effect=lambda session_id, user_id, course_id, node_ids, **kw: (
+    with patch_loop("store_brief", side_effect=lambda session_id, user_id, course_id, node_ids, **kw: (
             calls.append((session_id, user_id, course_id, list(node_ids))) or "B"
-        ),
-    ):
+        )):
         r = client.post(
             f"{LOOP}/plan/approve",
             json={"session_id": "s1", "user_id": UID, "concept_ids": ["R1", "N2"]},
@@ -1747,7 +1741,7 @@ def test_plan_approve_stores_the_learner_brief(probe):
 def test_plan_approve_survives_a_brief_failure(probe, caplog):
     _planning(probe, proposed=["R1", "N1"])
     with (
-        patch("routes.learn_loop.store_brief", side_effect=RuntimeError("pg down")),
+        patch_loop("store_brief", side_effect=RuntimeError("pg down")),
         caplog.at_level("WARNING"),
     ):
         r = client.post(
@@ -1761,7 +1755,7 @@ def test_plan_approve_survives_a_brief_failure(probe, caplog):
 
 def test_plan_approve_rejected_stores_no_brief(probe):
     _planning(probe, proposed=["R1", "N1"])
-    with patch("routes.learn_loop.store_brief") as store:
+    with patch_loop("store_brief") as store:
         r = client.post(
             f"{LOOP}/plan/approve",
             json={"session_id": "s1", "user_id": UID, "concept_ids": ["ZZ"]},

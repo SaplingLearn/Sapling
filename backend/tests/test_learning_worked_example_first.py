@@ -18,7 +18,7 @@ No DB, no model.
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -28,8 +28,9 @@ from learning.ladder import Rung, intent
 from learning.learner_state import LearnerState
 from learning.params import BAND_DEVELOP_MAX, BKT_L0, RUNG_NO_CREDIT_MIN
 from learning.policy import CeilingReason, LearnerView, StepState
-from routes.learn_loop import _prereq_proficient as REAL_PREREQ_PROFICIENT
+from services.loop.learner import _prereq_proficient as REAL_PREREQ_PROFICIENT
 from tests import test_learn_loop_routes as routes
+from tests.split_patches import patch_loop
 
 gate_on, no_rate_limit, seams = routes.gate_on, routes.no_rate_limit, routes.seams
 
@@ -109,8 +110,8 @@ def _states(**p):
 )
 def test_prereq_proficient_is_true_only_for_a_known_proficient_prerequisite(edges, p, expected):
     with (
-        patch("routes.learn_loop._prerequisite_edges", return_value=edges),
-        patch("routes.learn_loop.read_states", side_effect=_states(**p)),
+        patch_loop("_prerequisite_edges", return_value=edges),
+        patch_loop("read_states", side_effect=_states(**p)),
     ):
         assert REAL_PREREQ_PROFICIENT("u1", "node-1") is expected
 
@@ -139,10 +140,10 @@ def test_a_novice_teach_turn_without_the_prerequisite_is_told_worked_example_fir
     seams.p_known["node-1"] = NOVICE_P
     agent, seen = routes._json_agent()
     with (
-        patch("routes.learn_loop._prereq_proficient", REAL_PREREQ_PROFICIENT),
-        patch("routes.learn_loop._prerequisite_edges", return_value=[]),  # zero edges
-        patch("routes.learn_loop.loop_tutor_agent", agent),
-        patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
+        patch_loop("_prereq_proficient", REAL_PREREQ_PROFICIENT),
+        patch_loop("_prerequisite_edges", return_value=[]),  # zero edges
+        patch_loop("loop_tutor_agent", agent),
+        patch_loop("record_agent_usage", side_effect=lambda r, **k: r),
     ):
         body = routes.client.post(
             "/api/learn/loop/chat", json={"session_id": "s1", "user_id": "u1", "message": "explain"}
@@ -159,10 +160,10 @@ def test_a_novice_teach_turn_with_a_proficient_prerequisite_stays_attempt_first(
     seams.p_known["node-0"] = 0.9
     agent, seen = routes._json_agent()
     with (
-        patch("routes.learn_loop._prereq_proficient", REAL_PREREQ_PROFICIENT),
-        patch("routes.learn_loop._prerequisite_edges", return_value=[("node-0", "node-1")]),
-        patch("routes.learn_loop.loop_tutor_agent", agent),
-        patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
+        patch_loop("_prereq_proficient", REAL_PREREQ_PROFICIENT),
+        patch_loop("_prerequisite_edges", return_value=[("node-0", "node-1")]),
+        patch_loop("loop_tutor_agent", agent),
+        patch_loop("record_agent_usage", side_effect=lambda r, **k: r),
     ):
         body = routes.client.post(
             "/api/learn/loop/chat", json={"session_id": "s1", "user_id": "u1", "message": "explain"}
@@ -185,8 +186,8 @@ def test_zero_edges_make_a_novices_first_item_open_on_the_worked_example(gate_on
     seams.p_known["node-1"] = NOVICE_P
     seams.list_items.return_value = [routes.ITEM]
     with (
-        patch("routes.learn_loop._prereq_proficient", REAL_PREREQ_PROFICIENT),
-        patch("routes.learn_loop._prerequisite_edges", return_value=[]),
+        patch_loop("_prereq_proficient", REAL_PREREQ_PROFICIENT),
+        patch_loop("_prerequisite_edges", return_value=[]),
     ):
         body = _check_next()
     assert body["check"]["worked_first"] is True
@@ -208,8 +209,8 @@ def test_other_learners_get_an_ordinary_pose(gate_on, seams, p, edges, parent_p)
         seams.p_known["node-0"] = parent_p
     seams.list_items.return_value = [routes.ITEM]
     with (
-        patch("routes.learn_loop._prereq_proficient", REAL_PREREQ_PROFICIENT),
-        patch("routes.learn_loop._prerequisite_edges", return_value=edges),
+        patch_loop("_prereq_proficient", REAL_PREREQ_PROFICIENT),
+        patch_loop("_prerequisite_edges", return_value=edges),
     ):
         body = _check_next()
     assert "worked_first" not in body["check"]
@@ -240,8 +241,8 @@ def test_a_teach_turn_activation_carries_the_worked_example_flag(gate_on, seams)
     seams.list_items.return_value = [routes.ITEM]
     agent, _ = routes._json_agent()
     with (
-        patch("routes.learn_loop.loop_tutor_agent", agent),
-        patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
+        patch_loop("loop_tutor_agent", agent),
+        patch_loop("record_agent_usage", side_effect=lambda r, **k: r),
     ):
         body = routes.client.post(
             "/api/learn/loop/chat", json={"session_id": "s1", "user_id": "u1", "message": "go on"}
@@ -269,7 +270,7 @@ def worked(gate_on, seams):
 
 
 def test_the_first_hint_is_the_worked_example_with_no_attempt_before_it(worked):
-    with patch("routes.learn_loop.record_help") as help_ledger:
+    with patch_loop("record_help") as help_ledger:
         assert _hint() == {"rung": int(Rung.H4), "intent": intent(Rung.H4)}
     entry = worked.store["doc"]["steps"]["qh-1"]
     assert entry["rung"] == int(Rung.H4) and entry["last_rung_at"] == routes.NOW
@@ -284,11 +285,11 @@ def test_after_the_worked_example_h5_keeps_the_attempt_and_dwell_gate(worked):
     entry = worked.store["doc"]["steps"]["qh-1"]
     later = routes.NOW + 30
     entry.update(attempted_at=[later - 1], attempts=1)  # a failed genuine attempt after H4
-    with patch("routes.learn_loop._now_s", return_value=later):
+    with patch_loop("_now_s", return_value=later):
         assert _hint() == {"rung": int(Rung.H5), "intent": intent(Rung.H5)}
         entry = worked.store["doc"]["steps"]["qh-1"]
         entry.update(attempted_at=[later - 1, later + 20], attempts=2)
-    with patch("routes.learn_loop._now_s", return_value=later + 60):
+    with patch_loop("_now_s", return_value=later + 60):
         assert _hint() == {"denied": "ceiling"}  # §3.3: the not-known novice row stops at H5
 
 
@@ -327,8 +328,8 @@ def test_the_worked_example_is_the_leak_checked_sibling_template(worked):
     worked.list_items.return_value = [routes.ITEM, shown]
     never = MagicMock(side_effect=AssertionError("a leak-clean worked example needs no model"))
     with (
-        patch("routes.learn_loop.loop_tutor_agent", MagicMock(run=never)),
-        patch("routes.learn_loop.record_help") as help_ledger,
+        patch_loop("loop_tutor_agent", MagicMock(run=never)),
+        patch_loop("record_help") as help_ledger,
     ):
         body = routes.client.post(
             "/api/learn/loop/action", json={"session_id": "s1", "user_id": "u1", "action_type": "hint"}
@@ -359,8 +360,8 @@ def test_a_leaking_sibling_is_never_the_worked_example(worked):
     worked.list_items.return_value = [routes.ITEM, leaky]
     agent, _ = routes._json_agent("Here is a different recursion, worked step by step.")
     with (
-        patch("routes.learn_loop.loop_tutor_agent", agent),
-        patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
+        patch_loop("loop_tutor_agent", agent),
+        patch_loop("record_agent_usage", side_effect=lambda r, **k: r),
     ):
         body = routes.client.post(
             "/api/learn/loop/action", json={"session_id": "s1", "user_id": "u1", "action_type": "hint"}

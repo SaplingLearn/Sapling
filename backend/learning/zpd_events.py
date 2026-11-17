@@ -10,7 +10,7 @@ The payload's `request_id` (zpd.leak) is exempt from the length cap: it is the
 same value as the events row's request_id column (request_context accepts up
 to 128 chars). Emitted by nobody in PKG-06; PKG-07, PKG-08 and PKG-10 call
 them; zpd.band_adjust and zpd.wheelspin are emitted by the check route's
-graded-check path (spec §13 A122: routes/learn_loop.py::_emit_band_verdict).
+graded-check path (spec §13 A122: services/loop/checkpoint.py::_emit_band_verdict).
 zpd.step's `earnest_blocked` key (spec §13 A109) is read by
 `learning.earnest_revise`, outside this layer (the admin KPI and the nightly
 metrics script must not import a PKG-06 module); zpd.attempt (spec §13 A133,

@@ -15,7 +15,7 @@ flowchart TB
   end
   subgraph RT["backend/routes/"]
     LEARN["learn.py<br/>(legacy tutor, delegates when the gate is on)"]
-    LOOP["learn_loop.py<br/>/api/learn/loop/*"]
+    LOOP["routes/learn_loop.py → services/loop/<br/>/api/learn/loop/*"]
     QZ["quiz.py, flashcards.py"]
     DOCS["documents.py<br/>(upload → drafting)"]
     ADMR["admin_check_items.py,<br/>admin_analytics.py"]
@@ -101,7 +101,7 @@ Two tests police imports, and they are the reason the layout above holds:
   honest.
 - **The PKG-06 layer is inert.** `policy`, `gates`, `leak`, `ladder`,
   `loop_state_store` and `zpd_events` may be imported only by a short list of
-  sanctioned importers (`backend/routes/learn_loop.py`,
+  sanctioned importers (every module of `backend/services/loop/`,
   `backend/learning/review.py`, `backend/learning/served_scan.py`,
   `backend/services/integrity_guard.py`, `backend/learning/stem_match.py`) plus
   a few named single imports (for example `backend/agents/grader.py` may import
@@ -212,20 +212,24 @@ but not yet alone. The layer decides how much help a turn may give.
 | `backend/learning/self_explain_report.py` | pure (listed) | The self-explanation report: prompts shown, replied, skipped, and the next item's unassisted success after a reply or not (A139). |
 | `backend/learning/multi_concept_report.py` | pure (listed) | Multi-concept items stored, held, served and answered, with a Wilson interval on the correct rate (A141). |
 
-## `backend/routes/learn_loop.py` — the loop's HTTP surface
+## `backend/routes/learn_loop.py` and `backend/services/loop/` — the loop's HTTP surface and its code
 
-One 8,900-line module, mounted at `/api/learn/loop` by `backend/main.py`. Its
-docstring states its rules; the main ones:
+The route is mounted at `/api/learn/loop` by `backend/main.py` and is thin
+(#118): one wrapper per handler that keeps the FastAPI signature, the
+dependencies and the docstring OpenAPI publishes, and calls the same-named
+function in the `backend/services/loop/` package. The package's docstring
+(`backend/services/loop/__init__.py`) states the rules; the main ones:
 
 - Every route is `require_self` (the session user must be the `user_id` in the
   request) and gated: when `learning.gate.learning_loop_for_request` is false
   it answers `404 {"detail": "learning loop not enabled"}`. The one exception
   is `GET /review/active`, the frontend's status probe, which answers
   `200 {"active": false}` instead (A78). The gate is read once per request,
-  at entry.
+  at entry (`backend/services/loop/state.py::_gate`).
 - Every route that can run a model carries the rate limit
   (`_RATE_LIMITED`); routes that take student text also run the crisis screen
-  first (`_screened`).
+  first (`_screened`). Both stay in the route, after the kill switch
+  (`backend/routes/learn_loop.py::_kill_switch_first`).
 - `loop_state` is written only through `update_loop_state` (compare-and-set)
   with a closure that has no side effects; events and message rows follow the
   save.
@@ -233,24 +237,27 @@ docstring states its rules; the main ones:
   invariant 26). The active item's reference answer lives only on the turn
   object (`_LoopTurn`) — never in deps, the prompt prefix, a log line or an
   event.
+- The async handlers make no sync PostgREST call on the event loop: each
+  hops to a worker thread (#117), pinned by
+  `backend/tests/test_loop_handlers_off_loop.py`.
 
-The file is organised in banner-commented sections (`# ── … ──`). In order:
+The package's modules, lowest first (each imports only the ones above it):
 
-| Section | Main contents |
+| Module | Main contents |
 |---|---|
-| Loop state | `_load_loop_state`, `_update_loop_state`, phase helpers, `_require_no_pending_feedback` |
-| Learner state, band, ceiling | `_learner_view`, `_band_for`, `_ceiling_for`, `_genuine` |
-| Context and run assembly | `_context_blocks`, `_prepare_loop_run`, failed-retrieval notices (A128), the tool-less continuation |
-| The served text | `served_model_text`, `served_template`, `loop_leak_rung` — what the student actually receives (A48) |
-| Served reveals of open, posed items | `stated_items`, `_persist_reveals`, `_reveal_floor` (A88, A93); the scan set itself, `posed_items`, lives in `backend/services/loop_posed.py::posed_items` (A149: the integrity guard reads it too) |
-| The served session close | `served_close`, `close_states_answer` |
-| The turn | `_LoopTurn` (one turn, JSON and streamed), the misconception confrontation line |
-| Item activation and the current concept | `_activate_next_item`, `_advance_cursor`, `_isomorph_after_unknown` (A27); the multi-concept pick and the familiarity order (A140, A141) |
-| Band control on the plan | `_apply_band_control`, `_repair_cursor`, `plan_focus` (A122) |
-| The segment prequestion | `_pose_prequestion`, `_posed_prequestion`, `_undo_pose` (A138) |
-| The segment prequestion's answer; the self-explanation reply | `_prequestion_answer`, `_prequestion_turn`; `self_explain_reply` (A138, A139) |
-| Run sites | `_run_turn_json`, `_stream_turn`, `_continue_turn` — where models actually run, each after `ai_budget.check` |
-| Endpoints | the route handlers below |
+| `constants`, `flags` | Fixed texts and details; the per-student flags (`_tutor_v2_on`, `_help_gate_strict_on`, `_prequestion_on`, `_self_explain_on`) |
+| `state` | The route-entry gate, `_load_loop_state`, `_update_loop_state`, phase helpers, `_require_no_pending_feedback`, the closing and grading guards |
+| `history`, `learner` | The turn's history and learner brief; `_learner_view`, `_band_for`, `_ceiling_for`, `_genuine` |
+| `context`, `continuation` | `_context_blocks`, `_prepare_loop_run`, failed-retrieval notices (A128); the tool-less continuation |
+| `served`, `reveals`, `guard` | `served_model_text`, `served_template`, `loop_leak_rung` — what the student actually receives (A48); `_persist_reveals`, `_reveal_floor` (A88, A93); the leak guard and the misconception confrontation line |
+| `posed` | The scan set itself, `posed_items` (A149: the integrity guard reads it too) |
+| `planning`, `cursor`, `pose`, `practice` | Goal, probe and plan state shared across paths; `_advance_cursor`; the segment prequestion's pose (A138) and the self-explanation prompts (A139); `_activate_next_item`, `_isomorph_after_unknown` (A27), `_apply_band_control`, `_repair_cursor`, `plan_focus` (A122) |
+| `turn`, `opener`, `runner` | `_LoopTurn` (one turn, JSON and streamed); `_LoopOpener`; the run sites `_run_turn_json`, `_stream_turn`, `_continue_turn` — where models actually run, each after `ai_budget.check` |
+| `sessions`, `teach` | `GET /status`, `GET /sessions`; chat, action and session start |
+| `claims`, `checkpoint`, `grading` | The submission's claim and misconceptions; the grade checkpoint and band verdict; `_grade_submission` and `POST /check/answer` |
+| `reviews`, `reports`, `posttest_poses`, `posttest` | `/review/*`; rating and report; the post-test's poses and handlers |
+| `attempts`, `prequestion`, `next_check`, `self_explain` | Attempts and hints; the prequestion's answer; the next check; the self-explanation reply |
+| `closing`, `goal`, `probe`, `probe_grading`, `plan` | The session close (`close_session`, `served_close`); the goal; the probe and its grader; the plan |
 
 ### Routes
 

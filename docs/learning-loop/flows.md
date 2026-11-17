@@ -195,7 +195,7 @@ under-covered concepts).
 
 ## 2. A session: probe → plan → teach ⇄ check → close
 
-`backend/routes/learn_loop.py` runs the session; `sessions.loop_state` holds
+`backend/routes/learn_loop.py` (its bodies in `backend/services/loop/`) runs the session; `sessions.loop_state` holds
 its state. Every write to that document is a compare-and-set
 (`loop_state_store.update_loop_state`), so two overlapping requests (a
 streamed turn and a "Check me") cannot overwrite each other.
@@ -613,7 +613,7 @@ sequenceDiagram
     RT-->>UI: verdict, then one feedback turn
 ```
 
-1. **Before grading.** `backend/routes/learn_loop.py::_grade_submission`
+1. **Before grading.** `backend/services/loop/grading.py::_grade_submission`
    checks the kill switch, the crisis screen and the rate limit, that the
    item is the current one and still servable (a held item answers 409
    "check item withdrawn"), and that it is not already graded. A plea with no

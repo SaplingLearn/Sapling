@@ -14,7 +14,7 @@ learner state patched at the route seam. No DB, no model.
 from __future__ import annotations
 
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -23,6 +23,8 @@ from learning.learner_state import LearnerState
 from learning.ladder import Rung
 from learning.policy import BandAction, CursorMove, Opportunity, Prerequisite
 from tests import test_learn_loop_routes as routes
+from tests.split_patches import patch_loop
+import services.loop.learner
 
 gate_on, no_rate_limit, seams = routes.gate_on, routes.no_rate_limit, routes.seams
 
@@ -267,10 +269,10 @@ def _answer(seams, window, *, correct=True, edges=()):
     seams.grade.return_value = routes.CORRECT if correct else routes.WRONG
     agent, _ = routes._json_agent()
     with (
-        patch("routes.learn_loop.opportunity_window", return_value=window) as read_window,
-        patch("routes.learn_loop._prerequisite_edges", return_value=list(edges)),
-        patch("routes.learn_loop.loop_tutor_agent", agent),
-        patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
+        patch_loop("opportunity_window", return_value=window) as read_window,
+        patch_loop("_prerequisite_edges", return_value=list(edges)),
+        patch_loop("loop_tutor_agent", agent),
+        patch_loop("record_agent_usage", side_effect=lambda r, **k: r),
     ):
         r = routes.client.post(
             "/api/learn/loop/check/answer",
@@ -356,7 +358,7 @@ def test_easier_with_a_weak_prerequisite_repairs_it_first_then_comes_back(loop):
     assert doc["concept"] == "node-0" and doc["concept_checks"] == 0 and doc["teach_turns"] == 0
     assert _band_events(loop)[0]["window_stats"]["repair"] is True
     # the prerequisite's checks done, the cursor comes back to the concept
-    from routes.learn_loop import _advance_cursor
+    from services.loop.cursor import _advance_cursor
 
     assert _advance_cursor(doc) is True and doc["concept"] == "node-1"
 
@@ -452,27 +454,27 @@ def test_a_failed_window_read_applies_no_verdict_and_the_grade_stands(loop):
 
 @pytest.mark.parametrize("failing", ["learner", "prerequisites"])
 def test_a_failed_read_yields_no_verdict_rather_than_an_invented_one(failing):
-    from routes.learn_loop import _band_verdict
+    from services.loop.checkpoint import _band_verdict
 
-    reads = {"learner": "routes.learn_loop.read_states", "prerequisites": "routes.learn_loop._prerequisite_edges"}
+    reads = {"learner": "read_states", "prerequisites": "_prerequisite_edges"}
     state = {"node-1": LearnerState(user_id="u1", node_id="node-1", p_known=0.4, opps=2, exists=True)}
     with (
-        patch("routes.learn_loop.opportunity_window", return_value=[MISS]),
-        patch("routes.learn_loop.read_states", return_value=state),
-        patch("routes.learn_loop._prerequisite_edges", return_value=[]),
-        patch(reads[failing], side_effect=RuntimeError("store down")),
+        patch_loop("opportunity_window", return_value=[MISS]),
+        patch_loop("read_states", return_value=state),
+        patch_loop("_prerequisite_edges", return_value=[]),
+        patch_loop(reads[failing], side_effect=RuntimeError("store down")),
     ):
         assert _band_verdict("u1", "node-1", 2) is None
 
 
 def test_band_verdict_reads_prerequisites_only_when_the_verdict_checks_them():
-    from routes.learn_loop import _band_verdict
+    from services.loop.checkpoint import _band_verdict
 
     state = {"node-1": LearnerState(user_id="u1", node_id="node-1", p_known=0.6, opps=4, exists=True)}
     with (
-        patch("routes.learn_loop.opportunity_window", return_value=[HIT] * 4),
-        patch("routes.learn_loop.read_states", return_value=state),
-        patch("routes.learn_loop._prerequisite_edges") as edges,
+        patch_loop("opportunity_window", return_value=[HIT] * 4),
+        patch_loop("read_states", return_value=state),
+        patch_loop("_prerequisite_edges") as edges,
     ):
         got = _band_verdict("u1", "node-1", 2)
     edges.assert_not_called()  # HARDER checks no prerequisite
@@ -503,7 +505,7 @@ def test_the_verdict_is_read_once_even_when_its_save_retries(loop):
 
 
 def test_a_verdict_on_a_concept_the_cursor_left_moves_no_cursor():
-    from routes.learn_loop import _apply_band_control
+    from services.loop.practice import _apply_band_control
 
     state = routes._plan_state(concept="node-2", plan={"approved": ["node-1", "node-2"], "cursor": 1})
     entry = {"node_id": "node-1", "band_control": {"action": "stop_practice", "difficulty": None, "repair": None}}
@@ -529,7 +531,7 @@ def test_a_malformed_stored_verdict_is_ignored_safely(stored):
     """A malformed field is ignored; a valid action still applies what it
     names. The ceiling clause comes from the action itself, never a stored
     number, so a bad difficulty cannot stop HARDER's one rung down."""
-    from routes.learn_loop import _apply_band_control
+    from services.loop.practice import _apply_band_control
 
     state = routes._plan_state()
     entry = {"node_id": "node-1", "band_control": stored}
@@ -546,7 +548,7 @@ def test_a_malformed_stored_verdict_is_ignored_safely(stored):
 
 
 def test_without_a_plan_the_verdict_sets_only_the_difficulty_and_the_ceiling():
-    from routes.learn_loop import _apply_band_control
+    from services.loop.practice import _apply_band_control
 
     state = {"phase": "teach", "concept": "node-1"}
     entry = {"node_id": "node-1", "band_control": {"action": "easier_check_prereqs", "difficulty": 1, "repair": "node-0"}}
@@ -585,9 +587,9 @@ def test_band_control_reads_happen_after_the_flush(loop):
     window = MagicMock(side_effect=lambda *a: order.append("window") or [HIT] * 4)
     agent, _ = routes._json_agent()
     with (
-        patch("routes.learn_loop.opportunity_window", window),
-        patch("routes.learn_loop.loop_tutor_agent", agent),
-        patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
+        patch_loop("opportunity_window", window),
+        patch_loop("loop_tutor_agent", agent),
+        patch_loop("record_agent_usage", side_effect=lambda r, **k: r),
     ):
         routes.client.post(
             "/api/learn/loop/check/answer",
@@ -647,7 +649,6 @@ def test_upload_prerequisite_edges_feed_band_controls_prerequisite_status():
     edges decide the prerequisite status A122 reads (proficient, or a weak
     parent to repair), where a concept with no edge at all is UNKNOWN."""
     from learning.evidence import PREREQ_RELATIONSHIP_TYPE
-    from routes import learn_loop
     from services.concept_prereqs import edge_payload
 
     payload = edge_payload("node-0", "node-1")
@@ -660,23 +661,23 @@ def test_upload_prerequisite_edges_feed_band_controls_prerequisite_status():
         }
 
     with (
-        patch("routes.learn_loop._prerequisite_edges", return_value=[stored]),
-        patch("routes.learn_loop.read_states", side_effect=states(0.95)),
+        patch_loop("_prerequisite_edges", return_value=[stored]),
+        patch_loop("read_states", side_effect=states(0.95)),
     ):
-        prereqs = learn_loop._prerequisites("u1", "node-1")
+        prereqs = services.loop.learner._prerequisites("u1", "node-1")
         assert [p.node_id for p in prereqs] == ["node-0"]
         assert policy.prerequisite_status(prereqs) is policy.PrerequisiteStatus.PROFICIENT
-        assert learn_loop._prereq_proficient("u1", "node-1") is True
-        assert learn_loop._prerequisites("u1", "node-0") == []  # the dependent is never a parent
+        assert services.loop.learner._prereq_proficient("u1", "node-1") is True
+        assert services.loop.learner._prerequisites("u1", "node-0") == []  # the dependent is never a parent
     with (
-        patch("routes.learn_loop._prerequisite_edges", return_value=[stored]),
-        patch("routes.learn_loop.read_states", side_effect=states(0.2)),
+        patch_loop("_prerequisite_edges", return_value=[stored]),
+        patch_loop("read_states", side_effect=states(0.2)),
     ):
-        weak = learn_loop._prerequisites("u1", "node-1")
+        weak = services.loop.learner._prerequisites("u1", "node-1")
         assert policy.repair_target(weak).node_id == "node-0"
-        assert learn_loop._prereq_proficient("u1", "node-1") is False
-    with patch("routes.learn_loop._prerequisite_edges", return_value=[]):
-        none = learn_loop._prerequisites("u1", "node-1")
+        assert services.loop.learner._prereq_proficient("u1", "node-1") is False
+    with patch_loop("_prerequisite_edges", return_value=[]):
+        none = services.loop.learner._prerequisites("u1", "node-1")
         assert policy.prerequisite_status(none) is policy.PrerequisiteStatus.UNKNOWN
 
 
@@ -717,7 +718,7 @@ def test_every_band_control_move_records_why_the_cursor_moved(
     order (`_advance_cursor` clears the reason) — so plan_focus reports it, and
     with `loop_tutor_v2` on the next teach turn names the new concept and why."""
     from agents.loop_tutor import plan_focus_block, plan_focus_line
-    from routes.learn_loop import plan_focus
+    from services.loop.practice import plan_focus
 
     _learner_reads(loop, **reads)
     _answer(loop, window, correct=correct, edges=edges)
@@ -727,7 +728,8 @@ def test_every_band_control_move_records_why_the_cursor_moved(
 
 
 def test_a_repair_that_comes_back_returns_to_plan_order(loop):
-    from routes.learn_loop import _advance_cursor, plan_focus
+    from services.loop.cursor import _advance_cursor
+    from services.loop.practice import plan_focus
 
     _learner_reads(loop, p=0.4, prereqs={"node-0": 0.2})
     _answer(loop, [MISS], correct=False, edges=[("node-0", "node-1")])
@@ -743,7 +745,7 @@ def test_an_unknown_answer_names_the_isomorph_reask_until_it_is_answered(seams, 
     `_isomorph_after_unknown` re-asks by — while the re-ask is pending, and never
     after it is answered (a recorded reason would outlive it)."""
     from agents.loop_tutor import plan_focus_line
-    from routes.learn_loop import plan_focus
+    from services.loop.practice import plan_focus
 
     unknown = {"question_hash": "qh-1", "node_id": "node-1", "correct": False, "difficulty": 2}
     seams.store["doc"] = {**routes._plan_state(), "attempts": [unknown]}

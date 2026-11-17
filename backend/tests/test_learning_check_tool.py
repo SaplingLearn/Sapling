@@ -1494,7 +1494,8 @@ def test_nothing_calls_the_grading_helpers_yet():
     found, scanned = [], set()
     for rel, path in inv._application_py_files():
         scanned.add(rel)
-        if rel in SANCTIONED_GRADING_CALLERS:
+        # #118: the loop route's bodies live in the services/loop/ package
+        if rel in SANCTIONED_GRADING_CALLERS or rel.startswith("services/loop/"):
             continue
         found += [f"{rel}:{line} {what}" for line, what in _grading_refs(path.read_text())]
     assert found == [], "\n".join(found)

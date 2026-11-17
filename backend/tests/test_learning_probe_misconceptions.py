@@ -25,7 +25,6 @@ built at plan approval and a later check on the concept (A75 (d)) carry it on.
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import patch
 
 import pytest
 
@@ -33,6 +32,7 @@ from agents.grader import GradeResult
 from learning.checks import RubricItem, WrongReason
 from tests import test_learning_probe_planner as _planner
 from tests.test_learning_probe_planner import LOOP, UID, _ci, _probing, client
+from tests.split_patches import patch_loop
 
 probe, _no_rate_limit = _planner.probe, _planner._no_rate_limit
 
@@ -351,7 +351,7 @@ def real_probe(probe, graded):
     probe.full = _probe_items()
     probe.grade.side_effect = grade_answer
     _probing(probe, current=None)
-    with patch("routes.learn_loop.record") as rec:
+    with patch_loop("record") as rec:
         probe.record = rec
         yield probe
 
@@ -432,9 +432,7 @@ def test_no_row_when_the_probe_flush_fails(real_probe):
 
     _answer(real_probe, 1)
     _pose(real_probe, 2)
-    with patch(
-        "routes.learn_loop.flush_pending", side_effect=PlanningPersistenceUnavailable("down")
-    ):
+    with patch_loop("flush_pending", side_effect=PlanningPersistenceUnavailable("down")):
         r = client.post(
             f"{LOOP}/probe/answer",
             json={

@@ -1,18 +1,20 @@
 """The learning loop's scan set (spec §13 A93/A101; owner decision 1): every
 item POSED to a student and not yet graded — `posed_items`.
 
-Moved out of routes/learn_loop.py with the #118 layout (spec §13 A149): the
-loop's turn assembly reads it once per turn, and the loop's integrity guard on
-the AI surfaces OUTSIDE the loop (services/integrity_guard.py, spec §13 A125)
-reads the same set — a service must not import a route (backend/.importlinter).
-routes/learn_loop.py imports `posed_items` and `_ts` from here under the names
-it always used, so a patch on `routes.learn_loop.posed_items` still reaches the
-loop's own read, and one on `services.loop_posed.posed_items` the guard's.
+Moved out of routes/learn_loop.py with the #118 layout (spec §13 A149), and
+into the loop's package (was services/loop_posed.py) when the route was split
+into services/loop/: the loop's turn assembly reads it once per turn, and the
+loop's integrity guard on the AI surfaces OUTSIDE the loop
+(services/integrity_guard.py, spec §13 A125) reads the same set through the
+package (`from services.loop import posed_items`). The loop's modules import
+`posed_items` and `_ts` from here under the names they always used, so a
+`patch_loop("posed_items")` reaches the loop's own reads, and a patch on
+`services.loop.posed.posed_items` the guard's.
 
 PKG-06: `learning.loop_state_store` (its `seen_hashes`) is a PKG-06 module, so
-this module is a sanctioned PKG-06 importer
-(tests/test_learning_zpd_policy.py); nothing the app loads at boot imports it —
-the loop route does, and the guard only inside an active guard.
+this module is a sanctioned PKG-06 importer (the whole services/loop/ package
+is; tests/test_learning_zpd_policy.py); nothing the app loads at boot imports
+it — the loop's modules do, and the guard only inside an active guard.
 """
 from __future__ import annotations
 
@@ -27,8 +29,8 @@ from learning.params import LOOP_SCAN_POSED_MAX
 from services.check_item_service import items_by_hash, items_by_ids
 from services.session_modes import NOT_REVIEW
 
-# Log records keep the name they had in routes/learn_loop.py: an operator (or
-# a caplog test) filters on it.
+# Log records keep the name they had in routes/learn_loop.py, as every module
+# of the package does: an operator (or a caplog test) filters on it.
 logger = logging.getLogger("routes.learn_loop")
 
 POSES = "posttest_poses"  # spec §13 A87: the post-test commits when it is opened

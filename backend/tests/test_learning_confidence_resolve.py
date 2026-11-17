@@ -25,7 +25,6 @@ import pathlib
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Optional, get_args
-from unittest.mock import patch
 
 import pytest
 
@@ -40,6 +39,9 @@ from learning.params import (
 from tests import test_learn_loop_routes as _routes
 from tests import test_learning_probe_planner as _planner
 from tests.test_learn_loop_routes import ITEM, _answer, _feedback_agent, _state, client
+from tests.split_patches import patch_loop
+import services.loop.closing
+import services.loop.practice
 
 BACKEND = pathlib.Path(__file__).resolve().parents[1]
 MIGRATION = BACKEND / "db" / "migrations" / "20261108092032_learning_student_confidence.sql"
@@ -304,13 +306,12 @@ def test_sure_and_wrong_without_a_key_stamps_the_verdict_and_records_nothing(gra
 def test_guessing_and_wrong_is_a_gap_so_no_isomorph_is_re_asked(grader):
     """§3.3 "wrong with low confidence → gap: teach" — the check route's
     re-ask of an isomorph follows `unknown` only (A75 (g))."""
-    import routes.learn_loop as rl
 
     deps = _deps()
     out = _graded(deps, confidence="guessing")
     assert out.verdict == "gap" and out.diagnosis["record"] is None
     twin = _item(qh="qh-2", item_id="item-2")
-    assert rl._isomorph_after_unknown(deps.loop_state, "n1", [_item(), twin], set()) is None
+    assert services.loop.practice._isomorph_after_unknown(deps.loop_state, "n1", [_item(), twin], set()) is None
 
 
 @pytest.mark.parametrize("confidence", ["fairly_sure", None])
@@ -738,13 +739,12 @@ def test_a_resolved_key_leaves_the_brief(store):
 
 
 def test_a_resolved_key_leaves_the_session_close(store):
-    import routes.learn_loop as rl
 
     store.rows = [_row()]
     evidence = [{"node_id": "n1"}]
-    assert rl._close_misconception_keys("u1", evidence) == ["k1"]
+    assert services.loop.closing._close_misconception_keys("u1", evidence) == ["k1"]
     _resolve_k1(store)
-    assert rl._close_misconception_keys("u1", evidence) == []
+    assert services.loop.closing._close_misconception_keys("u1", evidence) == []
 
 
 # ── 6. the routes resolve after their claimed save ─────────────────────────
@@ -759,8 +759,8 @@ def real_check(gate_on, seams, grader, store):
     seams.store["doc"] = _state(rung=0)
     grader["result"] = _grade_result(correct=True)
     with (
-        patch("routes.learn_loop.grade_answer", grade_answer),
-        patch("routes.learn_loop.record") as rec,
+        patch_loop("grade_answer", grade_answer),
+        patch_loop("record") as rec,
     ):
         seams.record = rec
         yield seams
@@ -835,7 +835,7 @@ def real_probe(probe, grader, store):
     probe.grade.side_effect = grade_answer
     grader["result"] = _grade_result(correct=True)
     _planner._probing(probe, current=None)
-    with patch("routes.learn_loop.record"):
+    with patch_loop("record"):
         yield probe
 
 

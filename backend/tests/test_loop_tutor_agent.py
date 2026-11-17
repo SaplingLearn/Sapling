@@ -494,13 +494,13 @@ def test_loop_eval_serves_through_the_production_path():
         "body": "No further call happens.",
         "question": "Why does that end the chain?",
     }
-    from routes.learn_loop import released_lead
+    from services.loop.served import released_lead
 
     case = next(c for c in mod.CASES if c.name == "hint_develop_h1_pump")
     leaky = {**out, "body": "At n == 0 the function returns 1."}
     raw, served, turn = mod.served_texts(leaky, case.inputs, case.metadata)
     assert raw == render_turn(leaky)
-    from routes.learn_loop import LADDER_FALLBACK_LINES
+    from services.loop.served import LADDER_FALLBACK_LINES
 
     assert served == LADDER_FALLBACK_LINES[1] and WITHHELD not in served and turn == served, (
         "fix round 2 (N1): a leak is the rung's ladder line, never masked"

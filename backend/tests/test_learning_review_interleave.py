@@ -17,12 +17,13 @@ import random
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
 from learning import params
 from learning.interleave import confusable_partners, serve_order
+from tests.split_patches import patch_loop, setattr_loop
 
 NOW = datetime(2026, 11, 7, 12, 0, tzinfo=timezone.utc)
 PAST = (NOW - timedelta(days=3)).isoformat()
@@ -626,15 +627,13 @@ def test_review_next_serves_the_sibling_of_the_concept_just_graded(queue_env, mo
     )
     monkeypatch.setattr(review, "review_retention", lambda u, c: params.FSRS_RETENTION_DEFAULT)
     monkeypatch.setattr(review, "log_event", lambda *a, **kw: None)
-    monkeypatch.setattr("routes.learn_loop._review_now", lambda: NOW)
-    monkeypatch.setattr("routes.learn_loop._pause_novice", lambda user_id: False)
-    monkeypatch.setattr("routes.learn_loop.user_offering_ids_for_course", lambda u, c: ["off-1"])
-    monkeypatch.setattr(
-        "routes.learn_loop.get_check_item", lambda item_id: _check_item(item_id.removeprefix("ci-"))
-    )
+    setattr_loop(monkeypatch, "_review_now", lambda: NOW)
+    setattr_loop(monkeypatch, "_pause_novice", lambda user_id: False)
+    setattr_loop(monkeypatch, "user_offering_ids_for_course", lambda u, c: ["off-1"])
+    setattr_loop(monkeypatch, "get_check_item", lambda item_id: _check_item(item_id.removeprefix("ci-")))
     with (
-        patch("routes.learn_loop.require_self", return_value=None),
-        patch("routes.learn_loop.learning_loop_for_request", return_value=True),
+        patch_loop("require_self", return_value=None),
+        patch_loop("learning_loop_for_request", return_value=True),
     ):
         r = TestClient(app).get(f"/api/learn/loop/review/next?user_id={USER}&course_id={COURSE}")
     assert r.status_code == 200, r.text
@@ -742,17 +741,15 @@ def test_review_next_never_re_serves_a_reported_open_item_as_the_partner(
     )
     monkeypatch.setattr(review, "review_retention", lambda u, c: params.FSRS_RETENTION_DEFAULT)
     monkeypatch.setattr(review, "log_event", lambda *a, **kw: None)
-    monkeypatch.setattr("routes.learn_loop._review_now", lambda: NOW)
-    monkeypatch.setattr("routes.learn_loop._pause_novice", lambda user_id: False)
-    monkeypatch.setattr("routes.learn_loop.user_offering_ids_for_course", lambda u, c: ["off-1"])
-    monkeypatch.setattr(
-        "routes.learn_loop.get_check_item", lambda item_id: _check_item(item_id.removeprefix("ci-"))
-    )
+    setattr_loop(monkeypatch, "_review_now", lambda: NOW)
+    setattr_loop(monkeypatch, "_pause_novice", lambda user_id: False)
+    setattr_loop(monkeypatch, "user_offering_ids_for_course", lambda u, c: ["off-1"])
+    setattr_loop(monkeypatch, "get_check_item", lambda item_id: _check_item(item_id.removeprefix("ci-")))
 
     def served() -> dict:
         with (
-            patch("routes.learn_loop.require_self", return_value=None),
-            patch("routes.learn_loop.learning_loop_for_request", return_value=True),
+            patch_loop("require_self", return_value=None),
+            patch_loop("learning_loop_for_request", return_value=True),
         ):
             r = TestClient(app).get(f"/api/learn/loop/review/next?user_id={USER}&course_id={COURSE}")
         assert r.status_code == 200, r.text

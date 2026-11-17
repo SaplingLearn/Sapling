@@ -17,6 +17,7 @@ import psycopg
 import pytest
 
 from learning.params import POSTTEST_WINDOWS_DAYS
+import services.loop.posttest_poses
 
 pytestmark = pytest.mark.integration
 
@@ -34,12 +35,11 @@ def _open_pose(node, *, qh="q1", posed=None, window=W1):
     (`learn_loop._new_pose`). Every answer column is NULL in it, so a renewal
     resets the outcome as the route's does (A89/A93, A112). A row without them
     keeps the old outcome on the upsert, and the outcome CHECK refuses it."""
-    from routes import learn_loop
 
     at = posed or _now()
     choice = SimpleNamespace(item=SimpleNamespace(question_hash=qh), match="none", source="reserve")
     span = SimpleNamespace(first_id=None, first_at=at - timedelta(days=window), last_at=at - timedelta(days=1))
-    learn_loop._record_poses([learn_loop._new_pose(USER, COURSE, node, window, choice, span, at)])
+    services.loop.posttest_poses._record_poses([services.loop.posttest_poses._new_pose(USER, COURSE, node, window, choice, span, at)])
 
 
 def _row(db_conn, node, window=W1):
@@ -55,7 +55,6 @@ def _node():
 
 
 def test_concurrent_claims_have_exactly_one_winner(db_conn):
-    from routes import learn_loop
 
     node = _node()
     _open_pose(node)
@@ -63,7 +62,7 @@ def test_concurrent_claims_have_exactly_one_winner(db_conn):
     wins, lock = [], threading.Lock()
 
     def claim(c):
-        row = learn_loop._claim_pose(USER, node, "q1", c, now)
+        row = services.loop.posttest_poses._claim_pose(USER, node, "q1", c, now)
         if row is not None:
             with lock:
                 wins.append(c)
@@ -79,7 +78,6 @@ def test_concurrent_claims_have_exactly_one_winner(db_conn):
 
 def test_the_or_filter_takes_over_only_a_stale_claim_with_iso_z_microseconds(db_conn):
     from learning.params import LOOP_GRADING_CLAIM_STALE_S
-    from routes import learn_loop
 
     node = _node()
     _open_pose(node)
@@ -89,66 +87,62 @@ def test_the_or_filter_takes_over_only_a_stale_claim_with_iso_z_microseconds(db_
         "UPDATE posttest_poses SET claim = 'held', claimed_at = %s WHERE node_id = %s",
         (fresh, node),
     )
-    assert learn_loop._claim_pose(USER, node, "q1", "late", now) is None
+    assert services.loop.posttest_poses._claim_pose(USER, node, "q1", "late", now) is None
     stale = now - timedelta(seconds=LOOP_GRADING_CLAIM_STALE_S) - timedelta(microseconds=5)
     db_conn.execute("UPDATE posttest_poses SET claimed_at = %s WHERE node_id = %s", (stale, node))
-    assert learn_loop._claim_pose(USER, node, "q1", "taker", now) is not None
+    assert services.loop.posttest_poses._claim_pose(USER, node, "q1", "taker", now) is not None
     assert _row(db_conn, node)["claim"] == "taker"
 
 
 def test_a_claim_with_no_claimed_at_is_claimable(db_conn):
     """m10: a claim string with a NULL claimed_at (a torn write) never wedges."""
-    from routes import learn_loop
 
     node = _node()
     _open_pose(node)
     db_conn.execute(
         "UPDATE posttest_poses SET claim = 'torn', claimed_at = NULL WHERE node_id = %s", (node,)
     )
-    assert learn_loop._claim_pose(USER, node, "q1", "mine", _now()) is not None
+    assert services.loop.posttest_poses._claim_pose(USER, node, "q1", "mine", _now()) is not None
 
 
 def test_an_answered_pose_is_never_claimable_and_never_reopened(db_conn):
-    from routes import learn_loop
 
     node = _node()
     _open_pose(node)
     now = _now()
-    assert learn_loop._claim_pose(USER, node, "q1", "a", now) is not None
-    assert learn_loop._answer_pose(USER, node, "a", now, correct=True, max_rung=0) is True
-    learn_loop._release_pose(USER, node, "a")  # a late release never reopens it
+    assert services.loop.posttest_poses._claim_pose(USER, node, "q1", "a", now) is not None
+    assert services.loop.posttest_poses._answer_pose(USER, node, "a", now, correct=True, max_rung=0) is True
+    services.loop.posttest_poses._release_pose(USER, node, "a")  # a late release never reopens it
     row = _row(db_conn, node)
     assert row["answered_at"] is not None and row["claim"] is None
     assert row["correct"] is True and row["max_rung"] == 0  # A112: the outcome, in the same write
     far = now + timedelta(hours=1)
-    assert learn_loop._claim_pose(USER, node, "q1", "b", far) is None
+    assert services.loop.posttest_poses._claim_pose(USER, node, "q1", "b", far) is None
 
 
 def test_a_taken_over_claim_cannot_close_the_pose(db_conn):
     """m1: the claim is re-validated before the flush."""
     from learning.params import LOOP_GRADING_CLAIM_STALE_S
-    from routes import learn_loop
 
     node = _node()
     _open_pose(node)
     now = _now()
-    assert learn_loop._claim_pose(USER, node, "q1", "slow", now) is not None
+    assert services.loop.posttest_poses._claim_pose(USER, node, "q1", "slow", now) is not None
     later = now + timedelta(seconds=LOOP_GRADING_CLAIM_STALE_S + 1)
-    assert learn_loop._claim_pose(USER, node, "q1", "fast", later) is not None
-    assert learn_loop._answer_pose(USER, node, "slow", later, correct=True, max_rung=0) is False
-    assert learn_loop._answer_pose(USER, node, "fast", later, correct=True, max_rung=0) is True
+    assert services.loop.posttest_poses._claim_pose(USER, node, "q1", "fast", later) is not None
+    assert services.loop.posttest_poses._answer_pose(USER, node, "slow", later, correct=True, max_rung=0) is False
+    assert services.loop.posttest_poses._answer_pose(USER, node, "fast", later, correct=True, max_rung=0) is True
 
 
 def test_the_upsert_renews_a_window_and_a_new_window_is_its_own_row(db_conn):
     """A112: one row per (student, node, window) — a re-pose in a window renews
     that row (A89/A93); the next window adds a row and leaves the first alone."""
-    from routes import learn_loop
 
     node = _node()
     _open_pose(node)
     now = _now()
-    learn_loop._claim_pose(USER, node, "q1", "a", now)
-    learn_loop._answer_pose(USER, node, "a", now, correct=False, max_rung=0)
+    services.loop.posttest_poses._claim_pose(USER, node, "q1", "a", now)
+    services.loop.posttest_poses._answer_pose(USER, node, "a", now, correct=False, max_rung=0)
     _open_pose(node, qh="q2")  # the same window again: replaces the row
     row = _row(db_conn, node)
     assert row["question_hash"] == "q2" and row["answered_at"] is None and row["claim"] is None
@@ -166,14 +160,13 @@ def test_a_claim_names_the_open_window_only(db_conn):
     """A112: the same item bound into a later window (A93) — the expired row of
     the first window is never claimed or closed by the answer to the second."""
     from learning.params import POSTTEST_POSE_TTL_HOURS
-    from routes import learn_loop
 
     node = _node()
     now = _now()
     _open_pose(node, posed=now - timedelta(hours=POSTTEST_POSE_TTL_HOURS + 1))  # expired
     _open_pose(node, window=W2)
-    assert learn_loop._claim_pose(USER, node, "q1", "c", now) is not None
-    assert learn_loop._answer_pose(USER, node, "c", now, correct=True, max_rung=0) is True
+    assert services.loop.posttest_poses._claim_pose(USER, node, "q1", "c", now) is not None
+    assert services.loop.posttest_poses._answer_pose(USER, node, "c", now, correct=True, max_rung=0) is True
     assert _row(db_conn, node, W2)["answered_at"] is not None
     first = _row(db_conn, node, W1)
     assert first["answered_at"] is None and first["claim"] is None and first["correct"] is None
@@ -219,14 +212,13 @@ def test_the_windows_migration_is_idempotent_and_keys_by_window(db_conn):
 def test_an_expired_pose_is_void(db_conn):
     """A89: POSTTEST_POSE_TTL_HOURS after posed_at the pose cannot be claimed."""
     from learning.params import POSTTEST_POSE_TTL_HOURS
-    from routes import learn_loop
 
     now = _now()
     old, young = _node(), _node()
     _open_pose(old, posed=now - timedelta(hours=POSTTEST_POSE_TTL_HOURS, seconds=1))
     _open_pose(young, posed=now - timedelta(hours=POSTTEST_POSE_TTL_HOURS - 1))
-    assert learn_loop._claim_pose(USER, old, "q1", "x", now) is None
-    assert learn_loop._claim_pose(USER, young, "q1", "y", now) is not None
+    assert services.loop.posttest_poses._claim_pose(USER, old, "q1", "x", now) is None
+    assert services.loop.posttest_poses._claim_pose(USER, young, "q1", "y", now) is not None
     assert _row(db_conn, old)["claim"] is None
 
 

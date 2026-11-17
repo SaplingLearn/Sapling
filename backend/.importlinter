@@ -104,6 +104,7 @@ source_modules =
     services.flashcards
     services.gradebook
     services.gradescope
+    services.loop
     services.profile
     services.quiz
     services.social
@@ -117,6 +118,7 @@ forbidden_modules =
     services.flashcards.*
     services.gradebook.*
     services.gradescope.*
+    services.loop.*
     services.profile.*
     services.quiz.*
     services.social.*

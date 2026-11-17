@@ -24,10 +24,18 @@ from learning.ladder import Rung
 from services.chat_stream import SaplingEvent
 from tests import test_learn_loop_routes as _routes
 from tests.test_learn_loop_routes import client
+from tests.split_patches import patch_loop
+import learning.loop_state_store
+import services.loop.posed
+import services.loop.posttest_poses
+import services.loop.reveals
+import services.loop.runner
+import services.loop.turn
+import services.tutor_sessions
 
 gate_on, no_rate_limit, seams = _routes.gate_on, _routes.no_rate_limit, _routes.seams
-from routes.learn_loop import posed_items as _REAL_POSED_ITEMS  # noqa: E402
-from services import loop_posed  # noqa: E402  (spec §13 A149: the scan set's home)
+from services.loop.posed import posed_items as _REAL_POSED_ITEMS  # noqa: E402
+from services.loop import posed as loop_posed  # noqa: E402  (spec §13 A149: the scan set's home)
 POSED = datetime(2026, 9, 29, 12, 0, tzinfo=timezone.utc)
 
 
@@ -61,7 +69,7 @@ LEGACY = _item("qh-legacy", None)  # no final answer: not servable, skipped
 
 
 def test_stated_items_names_every_given_item_the_text_states():
-    from routes.learn_loop import stated_items
+    from services.loop.served import stated_items
 
     text = "Key idea: At n == 0 it returns 1.\n\nEach frame waits on the call stack.\n\nWhy?"
     assert stated_items(text, [BASE, STACK], rung=Rung.H0, given="") == ["qh-base", "qh-stack"]
@@ -69,13 +77,13 @@ def test_stated_items_names_every_given_item_the_text_states():
 
 
 def test_a_non_servable_item_is_skipped_never_raises():
-    from routes.learn_loop import stated_items
+    from services.loop.served import stated_items
 
     assert stated_items("It returns 1.", [LEGACY, BASE], rung=Rung.H0, given="") == ["qh-base"]
 
 
 def test_an_item_the_check_raises_on_counts_as_stated_fail_closed():
-    from routes.learn_loop import stated_items
+    from services.loop.served import stated_items
 
     # A101: the rules are compiled once per turn — a build that raises, or a
     # check that raises, counts as stated
@@ -103,7 +111,6 @@ def _by_ids(items):
 
 
 def test_posed_items_reads_every_posed_ungraded_source():
-    from routes import learn_loop
 
     now = POSED + timedelta(hours=100)
     loop_rows = [
@@ -145,18 +152,18 @@ def test_posed_items_reads_every_posed_ungraded_source():
     ]
     ledger = [("qh-ledger", POSED + timedelta(hours=1)), ("qh-seen", POSED)]
     with (
-        patch("services.loop_posed.page_all", side_effect=_pages(loop_rows, review_rows)),
-        patch("routes.learn_loop.get_check_item", side_effect=AssertionError("one read per id")),
-        patch("services.loop_posed.items_by_ids", side_effect=_by_ids(items)) as ibi,
-        patch("services.loop_posed.table", return_value=poses_tbl),
+        patch("services.loop.posed.page_all", side_effect=_pages(loop_rows, review_rows)),
+        patch_loop("get_check_item", side_effect=AssertionError("one read per id")),
+        patch("services.loop.posed.items_by_ids", side_effect=_by_ids(items)) as ibi,
+        patch("services.loop.posed.table", return_value=poses_tbl),
         patch(
-            "services.loop_posed.items_by_hash",
+            "services.loop.posed.items_by_hash",
             side_effect=lambda hs: [i for i in by_hash if i.question_hash in hs],
         ) as ibh,
-        patch("services.loop_posed.ungraded_posed_window", return_value=(ledger, None)) as ug,
-        patch("services.loop_posed.seen_hashes", return_value={"qh-seen"}),
+        patch("services.loop.posed.ungraded_posed_window", return_value=(ledger, None)) as ug,
+        patch("services.loop.posed.seen_hashes", return_value={"qh-seen"}),
     ):
-        got, overflow = learn_loop.posed_items("u1", now=now)
+        got, overflow = services.loop.posed.posed_items("u1", now=now)
     assert {i.question_hash for i, _ in got} == {"qh-a", "qh-e", "qh-r", "qh-p", "qh-probe", "qh-ledger"}
     assert overflow is None
     ibi.assert_called_once()  # A101 (a): one batched read for every posed id
@@ -172,10 +179,10 @@ def _open_world(*, loop_rows=(), review_rows=(), poses=(), ledger=((), None), se
     poses_tbl = MagicMock()
     poses_tbl.select.return_value = list(poses)
     with (
-        patch("services.loop_posed.page_all", side_effect=_pages(list(loop_rows), list(review_rows))),
-        patch("services.loop_posed.table", return_value=poses_tbl),
-        patch("services.loop_posed.ungraded_posed_window", return_value=(list(ledger[0]), ledger[1])),
-        patch("services.loop_posed.seen_hashes", return_value=set(seen)),
+        patch("services.loop.posed.page_all", side_effect=_pages(list(loop_rows), list(review_rows))),
+        patch("services.loop.posed.table", return_value=poses_tbl),
+        patch("services.loop.posed.ungraded_posed_window", return_value=(list(ledger[0]), ledger[1])),
+        patch("services.loop.posed.seen_hashes", return_value=set(seen)),
     ):
         yield
 
@@ -187,7 +194,6 @@ def test_a_seen_item_that_is_currently_open_stays_in_the_scan_set():
     graded X at floor 0. Every CURRENTLY OPEN item — an open review entry, an
     ungraded step, a probe's current item, an unanswered pose — is scanned,
     seen or not; the seen filter applies to the ledger's historical rows only."""
-    from routes import learn_loop
 
     x, step, probe, pose, hist = (
         _item("qh-x", "returns 1"),
@@ -212,10 +218,10 @@ def test_a_seen_item_that_is_currently_open_stays_in_the_scan_set():
     )
     with (
         world,
-        patch("services.loop_posed.items_by_ids", side_effect=_by_ids({"id-qh-x": x, "id-qh-step": step})),
-        patch("services.loop_posed.items_by_hash", side_effect=lambda hs: [i for i in (probe, pose, hist) if i.question_hash in hs]),
+        patch("services.loop.posed.items_by_ids", side_effect=_by_ids({"id-qh-x": x, "id-qh-step": step})),
+        patch("services.loop.posed.items_by_hash", side_effect=lambda hs: [i for i in (probe, pose, hist) if i.question_hash in hs]),
     ):
-        got, _ = learn_loop.posed_items("u1", now=POSED)
+        got, _ = services.loop.posed.posed_items("u1", now=POSED)
     assert {i.question_hash for i, _ in got} == {"qh-x", "qh-step", "qh-probe", "qh-pose"}
 
 
@@ -230,8 +236,8 @@ def test_the_seen_review_item_exploit_is_closed(gate_on, seams):
     )
     with (
         world,
-        patch("services.loop_posed.items_by_ids", side_effect=_by_ids({"id-qh-x": x})),
-        patch("services.loop_posed.items_by_hash", return_value=[]),
+        patch("services.loop.posed.items_by_ids", side_effect=_by_ids({"id-qh-x": x})),
+        patch("services.loop.posed.items_by_hash", return_value=[]),
     ):
         got = _REAL_POSED_ITEMS("u1", now=POSED)  # `seams` patches the module's name
     assert got is not None and [i.question_hash for i, _ in got[0]] == ["qh-x"]
@@ -245,7 +251,6 @@ def test_the_seen_review_item_exploit_is_closed(gate_on, seams):
 def test_the_fan_out_is_cut_before_any_item_is_loaded(monkeypatch):
     """M2 (d): the candidates are ranked by posed time and cut to the window
     first — only the kept ones are read."""
-    from routes import learn_loop
 
     monkeypatch.setattr(loop_posed, "LOOP_SCAN_POSED_MAX", 3)
     steps = {
@@ -256,19 +261,18 @@ def test_the_fan_out_is_cut_before_any_item_is_loaded(monkeypatch):
     with (
         world,
         patch(
-            "services.loop_posed.items_by_ids",
+            "services.loop.posed.items_by_ids",
             side_effect=lambda ids: loaded.extend(ids) or [_item(i[3:], "x") for i in ids],
         ),
-        patch("services.loop_posed.items_by_hash", return_value=[]),
+        patch("services.loop.posed.items_by_hash", return_value=[]),
     ):
-        got, overflow = learn_loop.posed_items("u1", now=POSED)
+        got, overflow = services.loop.posed.posed_items("u1", now=POSED)
     assert loaded == ["id-qh-7", "id-qh-8", "id-qh-9"]  # the newest three, nothing else read
     assert [i.question_hash for i, _ in got] == ["qh-9", "qh-8", "qh-7"]
     assert overflow == datetime.fromtimestamp(6.0, timezone.utc)  # the newest left out
 
 
 def test_posed_items_beyond_the_window_report_the_overflow_edge(monkeypatch):
-    from routes import learn_loop
 
     monkeypatch.setattr(params, "LOOP_SCAN_POSED_MAX", 2)
     monkeypatch.setattr(loop_posed, "LOOP_SCAN_POSED_MAX", 2)
@@ -276,16 +280,15 @@ def test_posed_items_beyond_the_window_report_the_overflow_edge(monkeypatch):
     world = _open_world(ledger=([("qh-2", t[2]), ("qh-1", t[1])], t[0]))
     with (
         world,
-        patch("services.loop_posed.items_by_hash", side_effect=lambda hs: [_item(h, h) for h in hs]),
-        patch("services.loop_posed.items_by_ids", return_value=[]),
+        patch("services.loop.posed.items_by_hash", side_effect=lambda hs: [_item(h, h) for h in hs]),
+        patch("services.loop.posed.items_by_ids", return_value=[]),
     ):
-        got, overflow = learn_loop.posed_items("u1", now=POSED)
+        got, overflow = services.loop.posed.posed_items("u1", now=POSED)
     assert [i.question_hash for i, _ in got] == ["qh-2", "qh-1"]  # newest first, bounded
     assert overflow == t[0]  # the ledger read's edge: the marker's time
 
 
 def test_the_overflow_edge_is_the_later_of_the_window_and_the_ledger_edge(monkeypatch):
-    from routes import learn_loop
 
     monkeypatch.setattr(loop_posed, "LOOP_SCAN_POSED_MAX", 1)
     t = [POSED + timedelta(minutes=m) for m in range(4)]
@@ -298,19 +301,18 @@ def test_the_overflow_edge_is_the_later_of_the_window_and_the_ledger_edge(monkey
     )
     with (
         world,
-        patch("services.loop_posed.items_by_hash", side_effect=lambda hs: [_item(h, h) for h in hs]),
-        patch("services.loop_posed.items_by_ids", return_value=[]),
+        patch("services.loop.posed.items_by_hash", side_effect=lambda hs: [_item(h, h) for h in hs]),
+        patch("services.loop.posed.items_by_ids", return_value=[]),
     ):
-        got, overflow = learn_loop.posed_items("u1", now=POSED)
+        got, overflow = services.loop.posed.posed_items("u1", now=POSED)
     assert [i.question_hash for i, _ in got] == ["qh-new"]
     assert overflow == t[2]
 
 
 def test_posed_items_is_none_when_anything_cannot_be_read(caplog):
-    from routes import learn_loop
 
-    with patch("services.loop_posed.page_all", side_effect=RuntimeError("down")):
-        assert learn_loop.posed_items("u1", now=POSED) is None
+    with patch("services.loop.posed.page_all", side_effect=RuntimeError("down")):
+        assert services.loop.posed.posed_items("u1", now=POSED) is None
     assert "could not be read" in caplog.text
 
 
@@ -321,8 +323,8 @@ def _chat(seams, body, *, state=None):
     seams.store["doc"] = state if state is not None else _routes._plan_state()
     agent, seen = _routes._json_agent(body)
     with (
-        patch("routes.learn_loop.loop_tutor_agent", agent),
-        patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
+        patch_loop("loop_tutor_agent", agent),
+        patch_loop("record_agent_usage", side_effect=lambda r, **k: r),
     ):
         out = client.post(
             "/api/learn/loop/chat", json={"session_id": "s1", "user_id": "u1", "message": "explain"}
@@ -409,8 +411,8 @@ def _open():
     agent, _ = _routes._json_agent("Welcome. At n == 0 the base case returns 1. Ready?")
     topic_p, offering_p, graph_p = _routes._opener_patches()
     with (
-        patch("routes.learn_loop.loop_tutor_agent", agent),
-        patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
+        patch_loop("loop_tutor_agent", agent),
+        patch_loop("record_agent_usage", side_effect=lambda r, **k: r),
         patch("services.quiz_ask.table", side_effect=_tables()),
         patch("services.quiz_ask.record_help"),
         topic_p,
@@ -430,7 +432,7 @@ def test_the_openers_reveals_are_durable_before_the_session_row_exists(gate_on, 
     assert r.status_code == 200
     sid = r.json()["session_id"]
     seams.record_reveals.assert_called_once_with("u1", ["qh-base"], session_id=sid, source="teach")
-    learn_loop.PENDING_SESSIONS.pop(sid, None)
+    services.tutor_sessions.PENDING_SESSIONS.pop(sid, None)
     assert not hasattr(learn_loop, "_PENDING_REVEALS")  # no in-memory pending map at all
     assert not hasattr(learn_loop, "_consume_loop_pending")
 
@@ -438,14 +440,13 @@ def test_the_openers_reveals_are_durable_before_the_session_row_exists(gate_on, 
 def test_an_opener_whose_reveals_cannot_be_recorded_is_not_served(gate_on, seams):
     """No session row to fall back to: the opener fails (nothing served, no
     pending session) rather than serve a reveal it cannot record."""
-    from routes import learn_loop
 
     seams.open_posed.return_value = ([(BASE, POSED)], None)
     seams.record_reveals.side_effect = RuntimeError("down")
-    before = set(learn_loop.PENDING_SESSIONS)
+    before = set(services.tutor_sessions.PENDING_SESSIONS)
     r = _open()
     assert r.status_code >= 500
-    assert set(learn_loop.PENDING_SESSIONS) == before
+    assert set(services.tutor_sessions.PENDING_SESSIONS) == before
 
 
 def _store_tables(reveal_rows):
@@ -475,7 +476,6 @@ def test_every_consumer_reads_the_persisted_reveal_with_nothing_consumed(path):
     first. Now nothing is pending: each reader sees the learning_reveals row
     directly, through loop_state_store.revealed_hashes."""
     from learning import loop_state_store, review
-    from routes import learn_loop
 
     rows = [{"id": "r1", "question_hash": "qh-base"}]
     with (
@@ -483,14 +483,14 @@ def test_every_consumer_reads_the_persisted_reveal_with_nothing_consumed(path):
         patch("learning.loop_state_store._MasteryEventsRead", _store_tables([])),
     ):
         if path == "reveal_floor":
-            with patch("routes.learn_loop.unscanned_since", return_value=False):
-                assert learn_loop._reveal_floor("u1", BASE, POSED) == params.RUNG_NO_CREDIT_MIN
+            with patch_loop("unscanned_since", return_value=False):
+                assert services.loop.reveals._reveal_floor("u1", BASE, POSED) == params.RUNG_NO_CREDIT_MIN
         elif path == "posttest_excluded":
-            assert "qh-base" in learn_loop._posttest_excluded("u1")
+            assert "qh-base" in services.loop.posttest_poses._posttest_excluded("u1")
         elif path == "check_activation":
             # _activate_next_item excludes revealed_hashes (its own route test)
-            assert learn_loop.revealed_hashes is loop_state_store.revealed_hashes
-            assert "qh-base" in learn_loop.revealed_hashes("u1")
+            assert learning.loop_state_store.revealed_hashes is loop_state_store.revealed_hashes
+            assert "qh-base" in learning.loop_state_store.revealed_hashes("u1")
         else:
             assert "qh-base" in review.revealed_hashes("u1")
 
@@ -507,13 +507,12 @@ def test_every_consumer_reads_the_persisted_reveal_with_nothing_consumed(path):
     ],
 )
 def test_reveal_floor(revealed, unscanned, expected):
-    from routes import learn_loop
 
     with (
-        patch("routes.learn_loop.revealed_hashes", return_value=revealed),
-        patch("routes.learn_loop.unscanned_since", return_value=unscanned) as since,
+        patch_loop("revealed_hashes", return_value=revealed),
+        patch_loop("unscanned_since", return_value=unscanned) as since,
     ):
-        assert learn_loop._reveal_floor("u1", BASE, POSED) == expected
+        assert services.loop.reveals._reveal_floor("u1", BASE, POSED) == expected
     if not revealed:
         since.assert_called_once_with("u1", POSED)
 
@@ -521,17 +520,16 @@ def test_reveal_floor(revealed, unscanned, expected):
 def test_reveal_floor_fails_closed_when_a_read_fails():
     """A93 (minor 8): a failed read is NO credit (RUNG_NO_CREDIT_MIN), not
     merely assisted — the floor it could not read may have been H4–H6."""
-    from routes import learn_loop
 
-    with patch("routes.learn_loop.revealed_hashes", side_effect=RuntimeError("down")):
-        assert learn_loop._reveal_floor("u1", BASE, POSED) == params.RUNG_NO_CREDIT_MIN
+    with patch_loop("revealed_hashes", side_effect=RuntimeError("down")):
+        assert services.loop.reveals._reveal_floor("u1", BASE, POSED) == params.RUNG_NO_CREDIT_MIN
     with (
-        patch("routes.learn_loop.revealed_hashes", return_value=set()),
-        patch("routes.learn_loop.unscanned_since", side_effect=RuntimeError("down")),
+        patch_loop("revealed_hashes", return_value=set()),
+        patch_loop("unscanned_since", side_effect=RuntimeError("down")),
     ):
-        assert learn_loop._reveal_floor("u1", BASE, POSED) == params.RUNG_NO_CREDIT_MIN
-    with patch("routes.learn_loop.max_help", side_effect=RuntimeError("down")):
-        assert learn_loop._reveal_floor("u1", BASE, POSED) == params.RUNG_NO_CREDIT_MIN
+        assert services.loop.reveals._reveal_floor("u1", BASE, POSED) == params.RUNG_NO_CREDIT_MIN
+    with patch_loop("max_help", side_effect=RuntimeError("down")):
+        assert services.loop.reveals._reveal_floor("u1", BASE, POSED) == params.RUNG_NO_CREDIT_MIN
 
 
 def test_a_check_is_floored_from_when_it_was_first_shown(gate_on, seams):
@@ -539,7 +537,7 @@ def test_a_check_is_floored_from_when_it_was_first_shown(gate_on, seams):
     with (
         agent_p,
         usage_p,
-        patch("routes.learn_loop._reveal_floor", return_value=params.RUNG_ASSISTED_MIN) as floor,
+        patch_loop("_reveal_floor", return_value=params.RUNG_ASSISTED_MIN) as floor,
     ):
         r = client.post(
             "/api/learn/loop/check/answer", json=_routes._answer(answer="n == 0 returns 1")
@@ -592,15 +590,14 @@ async def _drain(gen, *, stop_after=None):
     ids=["raises", "cancelled", "disconnected"],
 )
 def test_an_unfinished_stream_scans_and_records_the_relayed_text(then, stop_after):
-    from routes import learn_loop
 
     turn = _turn()
     events = [_tok("At n == 0 "), _tok("it returns 1.")]
     with (
-        patch("routes.learn_loop.ai_budget"),
-        patch("routes.learn_loop.stream_structured_turn", _stream_with(events, then=then)),
+        patch_loop("ai_budget"),
+        patch_loop("stream_structured_turn", _stream_with(events, then=then)),
     ):
-        asyncio.run(_drain(learn_loop._stream_turn(turn), stop_after=stop_after))
+        asyncio.run(_drain(services.loop.runner._stream_turn(turn), stop_after=stop_after))
     turn.touch_served_at.assert_called_once()  # A85: the anchor moves on a disconnect too
     # A93 (M3): scanned as it is relayed; A105 (review m3): text whose scan already
     # returned is not scanned again at the end (a cancellation mid-scan still is —
@@ -616,38 +613,33 @@ def test_an_unfinished_stream_scans_and_records_the_relayed_text(then, stop_afte
 
 
 def test_a_retract_discards_what_was_relayed_before_it():
-    from routes import learn_loop
 
     turn = _turn()
     events = [_tok("old"), SaplingEvent(type="retract", step="reply", message=""), _tok("new")]
     with (
-        patch("routes.learn_loop.ai_budget"),
-        patch(
-            "routes.learn_loop.stream_structured_turn", _stream_with(events, then=RuntimeError())
-        ),
+        patch_loop("ai_budget"),
+        patch_loop("stream_structured_turn", _stream_with(events, then=RuntimeError())),
     ):
-        asyncio.run(_drain(learn_loop._stream_turn(turn)))
+        asyncio.run(_drain(services.loop.runner._stream_turn(turn)))
     assert turn.record_relayed.call_args.args[0] == "new"
 
 
 def test_a_finished_stream_scans_each_delta_and_adds_no_end_scan():
     """A101: every delta is scanned as relayed; a stream that finished is not
     scanned again at its end (complete() scans its final text)."""
-    from routes import learn_loop
 
     turn = _turn()
     done = SaplingEvent(type="done", step="reply", message="Complete.", data={})
     with (
-        patch("routes.learn_loop.ai_budget"),
-        patch("routes.learn_loop.stream_structured_turn", _stream_with([_tok("x"), _tok(""), done])),
+        patch_loop("ai_budget"),
+        patch_loop("stream_structured_turn", _stream_with([_tok("x"), _tok(""), done])),
     ):
-        asyncio.run(_drain(learn_loop._stream_turn(turn)))
+        asyncio.run(_drain(services.loop.runner._stream_turn(turn)))
     assert [c.args[0] for c in turn.record_relayed.call_args_list] == ["x"]  # an empty delta: none
     turn.touch_served_at.assert_not_called()
 
 
 def test_persist_reveals_falls_back_to_loop_state_then_logs(caplog):
-    from routes import learn_loop
 
     saved = {}
 
@@ -658,36 +650,36 @@ def test_persist_reveals_falls_back_to_loop_state_then_logs(caplog):
         return doc
 
     with (
-        patch("routes.learn_loop.record_reveals", side_effect=RuntimeError("down")),
-        patch("routes.learn_loop._update_loop_state", side_effect=_update),
+        patch_loop("record_reveals", side_effect=RuntimeError("down")),
+        patch_loop("_update_loop_state", side_effect=_update),
     ):
-        learn_loop._persist_reveals("u1", "s1", ["qh-base"], unscanned=False, source="x", at=POSED)
+        services.loop.reveals._persist_reveals("u1", "s1", ["qh-base"], unscanned=False, source="x", at=POSED)
     assert saved["s1"]["revealed"] == ["qh-base"]
     with (
-        patch("routes.learn_loop.record_unscanned", side_effect=RuntimeError("down")),
-        patch("routes.learn_loop._update_loop_state", side_effect=_update),
+        patch_loop("record_unscanned", side_effect=RuntimeError("down")),
+        patch_loop("_update_loop_state", side_effect=_update),
     ):
-        learn_loop._persist_reveals("u1", "s2", [], unscanned=True, source="x", at=POSED)
+        services.loop.reveals._persist_reveals("u1", "s2", [], unscanned=True, source="x", at=POSED)
     assert saved["s2"]["reveal_unscanned"] == [{"at": POSED.timestamp(), "source": "x"}]
-    with patch("routes.learn_loop.record_reveals", side_effect=RuntimeError("down")):
-        learn_loop._persist_reveals("u1", None, ["qh-base"], unscanned=False, source="x", at=POSED)
+    with patch_loop("record_reveals", side_effect=RuntimeError("down")):
+        services.loop.reveals._persist_reveals("u1", None, ["qh-base"], unscanned=False, source="x", at=POSED)
     assert "LOST" in caplog.text
 
 
 def _relay_turn(learn_loop):
-    turn = MagicMock(spec=learn_loop._LoopTurn)
+    turn = MagicMock(spec=services.loop.turn._LoopTurn)
     turn.user_id, turn.session_id, turn.phase, turn.tier = "u1", "s1", "teach", "standard"
     turn.item, turn.given = None, ""
     turn.reveal_hashes, turn.reveal_unscanned = [], False
-    turn._scan_served = lambda text: learn_loop._LoopTurn._scan_served(turn, text)
-    turn._record_relayed = lambda text: learn_loop._LoopTurn._record_relayed(turn, text)
+    turn._scan_served = lambda text: services.loop.turn._LoopTurn._scan_served(turn, text)
+    turn._record_relayed = lambda text: services.loop.turn._LoopTurn._record_relayed(turn, text)
     return turn
 
 
 def _real_relay_turn(learn_loop):
     turn = _relay_turn(learn_loop)
-    turn._record_served = lambda: learn_loop._LoopTurn._record_served(turn)
-    turn._scan_set = lambda: learn_loop._LoopTurn._scan_set(turn)
+    turn._record_served = lambda: services.loop.turn._LoopTurn._record_served(turn)
+    turn._scan_set = lambda: services.loop.turn._LoopTurn._scan_set(turn)
     turn.reveal_overflow, turn.reveal_fallback = None, None
     return turn
 
@@ -698,11 +690,11 @@ def test_record_relayed_scans_the_open_items_and_persists(gate_on, seams):
     turn = _real_relay_turn(learn_loop)
     seams.open_posed.return_value = ([(BASE, POSED)], None)
     with (
-        patch("routes.learn_loop.record_reveals") as rec,
-        patch("routes.learn_loop._persist_reveals") as persist,
+        patch_loop("record_reveals") as rec,
+        patch_loop("_persist_reveals") as persist,
     ):
-        learn_loop._LoopTurn.record_relayed(turn, "At n == 0 it returns 1.")
-        learn_loop._LoopTurn.record_relayed(turn, "At n == 0 it returns 1. More.")
+        services.loop.turn._LoopTurn.record_relayed(turn, "At n == 0 it returns 1.")
+        services.loop.turn._LoopTurn.record_relayed(turn, "At n == 0 it returns 1. More.")
     (call,) = rec.call_args_list  # A93: recorded once per turn, however often scanned
     assert call.args[:2] == ("u1", ["qh-base"]) and call.kwargs["session_id"] == "s1"
     persist.assert_not_called()  # the primary store worked: no fallback
@@ -715,10 +707,10 @@ def test_record_relayed_falls_back_to_loop_state_when_the_store_fails(gate_on, s
     turn = _real_relay_turn(learn_loop)
     seams.open_posed.return_value = ([(BASE, POSED)], None)
     with (
-        patch("routes.learn_loop.record_reveals", side_effect=RuntimeError("down")),
-        patch("routes.learn_loop._persist_reveals") as persist,
+        patch_loop("record_reveals", side_effect=RuntimeError("down")),
+        patch_loop("_persist_reveals") as persist,
     ):
-        learn_loop._LoopTurn.record_relayed(turn, "At n == 0 it returns 1.")
+        services.loop.turn._LoopTurn.record_relayed(turn, "At n == 0 it returns 1.")
     (call,) = persist.call_args_list
     assert call.args[:3] == ("u1", "s1", ["qh-base"]) and call.kwargs["source"] == "teach:relayed"
     turn._emit_reveal.assert_called_once()
@@ -729,7 +721,7 @@ def test_record_relayed_never_raises(gate_on, seams, caplog):
 
     turn = _relay_turn(learn_loop)
     seams.open_posed.side_effect = RuntimeError("boom")
-    learn_loop._LoopTurn.record_relayed(turn, "text")
+    services.loop.turn._LoopTurn.record_relayed(turn, "text")
     assert "could not be scanned" in caplog.text
 
 

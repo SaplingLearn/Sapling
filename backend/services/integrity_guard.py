@@ -9,7 +9,7 @@ the notes chat, summary and concept extraction (routes/notes.py) and the
 flashcard generators (routes/flashcards.py):
 
 1. ONE bounded read per request of the student's posed-and-ungraded items: the
-   loop's own scan set, `services/loop_posed.py::posed_items` (A93/A101 — every open
+   loop's own scan set, `services/loop/posed.py::posed_items` (A93/A101 — every open
    check, open review item and unanswered post-test pose, the ungraded steps of
    ended sessions and the ledger's posed rows; the newest LOOP_SCAN_POSED_MAX,
    loaded in batched reads). Both checks below use that one read.
@@ -93,12 +93,12 @@ WITHHELD_DETAIL = (
 
 
 def _posed(user_id: str):
-    """The loop's own scan set (A93/A101), `services/loop_posed.py::posed_items`:
+    """The loop's own scan set (A93/A101), `services/loop/posed.py::posed_items`:
     ([(item, first posed at)], overflow edge), or None when it cannot be read.
     Imported at call time, inside an ACTIVE guard only: it reaches the PKG-06
     layer (`learning.loop_state_store`), which nothing may load at boot (the
     inertness scan, tests/test_learning_zpd_policy.py)."""
-    from services.loop_posed import posed_items
+    from services.loop import posed_items
 
     return posed_items(user_id, now=datetime.now(timezone.utc))
 

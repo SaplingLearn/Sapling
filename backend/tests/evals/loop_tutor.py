@@ -29,7 +29,7 @@ Recording runs the real agent with the route's run shape — `phase_prefix` at
 the route's clamped model ceiling, `deps.loop_turn = turn_limits(...)`,
 `tier_run_kwargs(tier, tool_choice=context_policy(...).tool_choice)`,
 LOOP_LIMITS — and, when the run ends without a structured turn, the route's
-tool-less rescue (`routes.learn_loop.continuation_plan` under
+tool-less rescue (`services.loop.continuation.continuation_plan` under
 `override(tools=[], toolsets=[])`). The cassette (`cassettes/<slot>/<case>.json`,
 a `LoopRecording`) stores the raw LoopTurnOut, every raw model attempt, the
 request/retry counts, the tool calls, and the hashes it was recorded under:
@@ -38,7 +38,7 @@ JSON schema — a field description is sent to Gemini), `model` (the slot's mode
 name) and `input_sha256` (the assembled case message + the slot's run
 settings). Replay REFUSES a recording whose hashes differ (StaleRecordingError)
 and recomputes the served text: `turn_shape.render_turn`, then
-`routes.learn_loop.served_model_text` at `loop_leak_rung` (served mode, the
+`services.loop.served.served_model_text` at `loop_leak_rung` (served mode, the
 item's correct_option and its text; a leak becomes the rung's ladder line). The served text is then read by the eval-side rung
 judge (`_rung_judge.ajudge_rung`, its own cassettes, stale-checked on the
 served text's sha).
@@ -246,7 +246,7 @@ def _leak_rung(case_input: LoopInput, meta: dict) -> Rung:
     """The route's loop_leak_rung for the case (a hint case's ceiling IS the
     rung the hint is served at). routes.learn_loop is imported lazily: it pulls
     in the app."""
-    from routes.learn_loop import loop_leak_rung
+    from services.loop.served import loop_leak_rung
 
     return loop_leak_rung(
         phase=case_input[0],
@@ -270,7 +270,7 @@ def served_texts(
     the released answer); `turn` is served minus that lead. The default
     variant's served text is exactly 7fa9cd0e's (the rung judgements are
     keyed on it)."""
-    from routes.learn_loop import served_lead, served_model_text, served_render
+    from services.loop.served import served_lead, served_model_text, served_render
 
     raw = render_turn(output)
     rendered = served_render(
@@ -720,7 +720,8 @@ def _leak_guard(case_input: LoopInput, meta: dict, v2: bool = V2):
     item answers)."""
     if case_input[0] == "teach" or _released(meta):
         return None
-    from routes.learn_loop import _item_check_kwargs, _LeakGuard
+    from services.loop.served import _item_check_kwargs
+    from services.loop.guard import _LeakGuard
 
     answer = _item_check_kwargs(
         reference=meta["reference"],
@@ -731,7 +732,7 @@ def _leak_guard(case_input: LoopInput, meta: dict, v2: bool = V2):
     )
     rung = _leak_rung(case_input, meta)
     given = _visible(case_input, meta)
-    from routes.learn_loop import served_render
+    from services.loop.served import served_render
 
     return _LeakGuard(
         lambda text: detect_leak(emitted=text, rung=rung, given=given, **answer).leaked,
@@ -791,7 +792,7 @@ async def record_turn(slot: str, case_input: LoopInput, v2: bool = V2) -> LoopRe
     from pydantic_ai import capture_run_messages
     from pydantic_ai.exceptions import UnexpectedModelBehavior
 
-    from routes.learn_loop import continuation_plan
+    from services.loop.continuation import continuation_plan
 
     phase = case_input[0]
     meta = _META[_INPUT_TO_NAME[case_input]]
