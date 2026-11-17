@@ -34,7 +34,8 @@ def test_interrupted_tutor_timing_survives_a_cold_worker(authed_client, db_conn,
     activity = row["loop_state"][turn_activity.KEY]
     assert activity["state"] == "interrupted" and activity["at"] > 1
     assert row["loop_state"]["served_at"] == 1
-    learn_loop._FAILED_TURN_ANCHORS.clear()
+    # #117: the failure anchor is in the document too, never only in this process
+    assert row["loop_state"][turn_activity.FAILED_KEY] == activity["at"]
     # A separately imported process has no route cache and does its own real
     # adapter read. Only prose-free operational metadata is printed by it.
     code = "from learning.loop_state_store import load_loop_state; import json,sys; print(json.dumps(load_loop_state(sys.argv[1]).state.to_json()['turn_activity']))"

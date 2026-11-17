@@ -207,6 +207,33 @@ REGISTRY: dict[tuple[str, int], dict[str, Change]] = {
             requires=("AND NOT EXISTS (SELECT 1 FROM learning_evidence_voids v WHERE v.event_id = e.id)",)
         ),
     },
+    # #117 stateless_tutor_sessions (main's, not a loop function): in scope
+    # because the learning loop's pending sessions carry their loop document
+    # (20261111030007). Each definition is the previous one plus its change.
+    ("materialize_tutor_session", 5): {
+        # the atomic first turn: row lock, sessions row + greeting, pending row gone
+        "20261109024225_tutor_pending_sessions.sql": Change(
+            requires=(
+                "FOR UPDATE",
+                "ON CONFLICT (id) DO NOTHING",
+                "INSERT INTO public.messages (session_id, role, content, graph_update_json, created_at)",
+                "DELETE FROM public.tutor_pending_sessions t WHERE t.session_id = p_session_id",
+                "outcome := 'foreign'",
+            )
+        ),
+        # a loop session's row keeps the document it started with
+        "20261111030007_tutor_pending_loop_state.sql": Change(
+            requires=("COALESCE(r.loop_state, '{}'::jsonb)",)
+        ),
+    },
+    ("discard_tutor_session", 5): {
+        # a tombstone keeps no content
+        "20261109024225_tutor_pending_sessions.sql": Change(
+            requires=("assistant_reply = NULL, graph_update = NULL", "FOR UPDATE")
+        ),
+        # ... and no loop document
+        "20261111030007_tutor_pending_loop_state.sql": Change(requires=("loop_state = NULL",)),
+    },
     ("checklist_budget_reconcile", None): {},  # arity filled below
 }
 

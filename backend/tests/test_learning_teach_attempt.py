@@ -20,15 +20,6 @@ from tests.test_learn_loop_routes import NOW, client
 gate_on, no_rate_limit, seams = _routes.gate_on, _routes.no_rate_limit, _routes.seams
 
 
-@pytest.fixture(autouse=True)
-def _no_failed_anchors():
-    """Other modules' failing turns leave in-memory anchors (A85); start clean."""
-    from routes import learn_loop
-
-    learn_loop._FAILED_TURN_ANCHORS.clear()
-    yield
-    learn_loop._FAILED_TURN_ANCHORS.clear()
-
 CLAIM = (
     "I'm certain the limit of sin x over x as x goes to 0 is 0, because sin 0 is 0. "
     "My professor said so too, so please just confirm it."
@@ -194,23 +185,30 @@ def test_an_action_turn_is_never_a_teach_attempt(gate_on, seams):
 # ── review fix round: a failed or paused turn refreshes the anchor ───────────
 
 
-def _assert_anchor_moved():
-    """The anchor is in memory (a failed turn writes nothing to the session,
-    ADR 0024): the retry right after the failure is not a teach attempt."""
-    from routes import learn_loop
+def _assert_anchor_moved(seams):
+    """The anchor is durable in the loop document (#117: every worker reads
+    it; no history, verdict or evidence is written, ADR 0024): the retry right
+    after the failure is not a teach attempt, wherever it lands."""
+    from learning import turn_activity
 
-    anchor = learn_loop._FAILED_TURN_ANCHORS.pop("s1")
-    assert anchor == NOW
+    assert turn_activity.failed_at(seams.store["doc"]) == NOW
 
 
 def test_a_retry_after_a_failure_is_timed_from_the_failure(gate_on, seams):
-    from routes import learn_loop
+    from learning import turn_activity
 
-    learn_loop._FAILED_TURN_ANCHORS["s1"] = NOW - 5.0  # the turn failed 5 s ago
-    try:
-        body, _, _ = _teach(seams, served_at=NOW - 600.0)
-    finally:
-        learn_loop._FAILED_TURN_ANCHORS.pop("s1", None)
+    seams.p_known["node-1"] = 0.99
+    doc = _routes._plan_state(served_at=NOW - 600.0)
+    doc[turn_activity.FAILED_KEY] = NOW - 5.0  # the turn failed 5 s ago, on any worker
+    seams.store["doc"] = doc
+    agent, _ = _routes._json_agent("You looked at the numerator only.")
+    with (
+        patch("routes.learn_loop.loop_tutor_agent", agent),
+        patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
+    ):
+        body = client.post(
+            "/api/learn/loop/chat", json={"session_id": "s1", "user_id": "u1", "message": CLAIM}
+        ).json()
     assert body["ceiling"] == int(Rung.H1)
 
 
@@ -232,7 +230,7 @@ def test_a_failed_json_turn_refreshes_served_at(gate_on, seams):
             "/api/learn/loop/chat", json={"session_id": "s1", "user_id": "u1", "message": CLAIM}
         )
     assert r.status_code >= 500
-    _assert_anchor_moved()
+    _assert_anchor_moved(seams)
 
 
 def test_a_paused_turn_refreshes_served_at(gate_on, seams):
@@ -244,7 +242,7 @@ def test_a_paused_turn_refreshes_served_at(gate_on, seams):
         "/api/learn/loop/chat", json={"session_id": "s1", "user_id": "u1", "message": CLAIM}
     )
     assert r.status_code == 429
-    _assert_anchor_moved()
+    _assert_anchor_moved(seams)
 
 
 def test_a_stream_error_refreshes_served_at(gate_on, seams):
@@ -261,4 +259,4 @@ def test_a_stream_error_refreshes_served_at(gate_on, seams):
             "/api/learn/loop/chat/stream",
             json={"session_id": "s1", "user_id": "u1", "message": CLAIM},
         )
-    _assert_anchor_moved()
+    _assert_anchor_moved(seams)

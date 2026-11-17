@@ -640,11 +640,10 @@ TEACH_ATTEMPT_CEILING_RAISE = 1
 # slots answer a confident wrong claim with a next-step hint, and two prompt
 # rounds at H2 did not change that; develop/novice keep the one-rung raise
 TEACH_ATTEMPT_CEILING_RAISE_PROFIC = 2
-# † PKG-14 (spec §13 A85): a failed or paused turn's teach independent-time
-# anchor is durable in materialised sessions.loop_state.turn_activity. A conservative
-# process cache covers a failed final timing write; it never grants credit.
-# At most this many cached anchors are held (oldest evicted first).
-LOOP_FAILED_ANCHORS_MAX = 10_000
+# PKG-14 (spec §13 A85): a failed or paused turn's teach independent-time
+# anchor is durable in materialised sessions.loop_state (turn_activity and
+# turn_failed_at, learning/turn_activity.py), so every worker reads it (#117).
+# The per-process anchor cache, bounded by LOOP_FAILED_ANCHORS_MAX, is gone.
 # Bounded snapshot/version retries for the tagged evidence transaction. A lost
 # acknowledgment retries its identical operation before any snapshot rebuild.
 EVIDENCE_TRANSACTION_RETRIES = 3

@@ -12,6 +12,11 @@ from __future__ import annotations
 import math
 
 KEY = "turn_activity"
+#: When a materialised turn last failed (errored, paused, cancelled or
+#: disconnected) — the anchor a teach attempt's independent time is timed from
+#: at the latest. In the loop document, so every worker reads it (#117); it
+#: replaced a per-process cache.
+FAILED_KEY = "turn_failed_at"
 
 
 class StaleTurnActivity(RuntimeError):
@@ -76,3 +81,21 @@ def interrupt(doc: dict, operation_id: str, now: float) -> None:
         "state": "interrupted",
         "at": max(float(now), prior if prior is not None else 0.0),
     }
+
+
+def fail(doc: dict, operation_id: str, now: float) -> None:
+    """A turn ended without being served: ``interrupt`` its own operation (a
+    newer one's timing is left alone) and move the failure anchor to ``now``
+    (never back). The anchor is recorded even when the operation's pending
+    marker never landed, so the time spent waiting on a failed turn is never
+    independent work time on any worker."""
+    interrupt(doc, operation_id, now)
+    if _time(now) is None:
+        raise ValueError("Invalid failure time")
+    prior = failed_at(doc)
+    doc[FAILED_KEY] = max(float(now), prior if prior is not None else 0.0)
+
+
+def failed_at(doc: dict) -> float | None:
+    """The latest durable failure anchor, or None (absent or malformed)."""
+    return _time(doc.get(FAILED_KEY))
