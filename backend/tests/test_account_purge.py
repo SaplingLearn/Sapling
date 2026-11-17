@@ -53,6 +53,7 @@ def db(monkeypatch):
     fake = PurgeDB()
     for module in (aw, cv, ap, ac, social_rooms, social_cache_service):
         monkeypatch.setattr(module, "table", fake.table)
+    monkeypatch.setattr(aw, "rpc", fake.rpc)  # the wipe's learning_account_erase
     return fake
 
 
@@ -450,7 +451,12 @@ def test_every_user_id_table_is_covered_by_the_purge():
 
 def test_cascades_the_fake_models_are_the_wipes():
     # The purge leans on the wipe's documented cascades; keep the fakes aligned.
-    assert {c for c in CASCADES if not c.startswith("course_chunk")} <= set(aw.WIPED_BY_CASCADE)
+    # A fake cascade into a table the wipe also deletes directly (the loop's
+    # learner_state / misconceptions, which cascade from graph_nodes too) is
+    # a belt, not a dependency.
+    assert {
+        c for c in CASCADES if not c.startswith("course_chunk") and c not in aw.WIPED_DIRECTLY
+    } <= set(aw.WIPED_BY_CASCADE)
 
 
 # ── sign-in after the purge ─────────────────────────────────────────────────
