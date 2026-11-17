@@ -13,7 +13,7 @@ this test's own request.
 import httpx
 import pytest
 
-from services.encryption import decrypt_if_present
+from services.encryption import bind, decrypt_if_present
 from tests.integration.conftest import USER_ACTIVE
 
 pytestmark = pytest.mark.integration
@@ -69,10 +69,14 @@ def test_screenshot_is_stored_at_the_path_the_report_keeps(authed_client, db_con
         )
         assert filed.status_code == 200, filed.text
         # The seed already holds a report for this user, so pick ours by topic.
+        # topic is sealed to its row (sec2 M13): open it with that row's binding.
         rows = db_conn.execute(
-            "SELECT topic, screenshot_urls FROM issue_reports WHERE user_id = %s", (USER_ACTIVE,)
+            "SELECT id, topic, screenshot_urls FROM issue_reports WHERE user_id = %s", (USER_ACTIVE,)
         ).fetchall()
-        kept = [r["screenshot_urls"] for r in rows if decrypt_if_present(r["topic"]) == TOPIC]
+        kept = [
+            r["screenshot_urls"] for r in rows
+            if decrypt_if_present(r["topic"], bind=bind("issue_reports", "topic", r["id"])) == TOPIC
+        ]
         assert kept == [[path]]
 
         got = _storage("GET", kept[0][0])
