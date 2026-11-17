@@ -236,7 +236,7 @@ class QueryStringStripProcessor(SpanProcessor):
     def on_start(self, span: Any, parent_context: Any = None) -> None:
         try:
             _strip_span_urls(span)
-        except Exception:  # pragma: no cover — never break tracing
+        except Exception:  # pragma: no cover  # noqa: BLE001 — never break tracing
             return
 
 
@@ -254,5 +254,5 @@ def strip_query_request_hook(span: Any, scope: dict | None = None) -> None:
         if span is None or not span.is_recording():
             return
         _strip_span_urls(span)
-    except Exception:  # pragma: no cover — defensive; never fail a request
+    except Exception:  # pragma: no cover  # noqa: BLE001 — defensive; never fail a request
         return

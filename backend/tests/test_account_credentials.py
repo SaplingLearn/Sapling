@@ -97,7 +97,7 @@ def test_self_delete_hides_the_account_then_removes_credentials():
     assert writes == [("update", "users"), ("delete", "oauth_tokens"),
                       ("delete", "gradescope_credentials")]
     assert "deleted_at" in tables.log[0][2]
-    for op, name, filters in tables.log[1:]:
+    for _op, name, filters in tables.log[1:]:
         assert filters == {"user_id": f"eq.{USER}"}, name
     # The grant is revoked after the response: refresh token first. The
     # credentials are already gone, so nothing is retried.

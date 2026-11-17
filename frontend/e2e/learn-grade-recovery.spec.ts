@@ -118,7 +118,11 @@ async function holdGrade(kind: Kind, originalAnswer: string): Promise<Fixture> {
   const backend = path.resolve(__dirname, "..", "..", "backend");
   const python = process.env.E2E_SEED_PYTHON?.trim() || path.join(backend, "venv", "bin", "python");
   return new Promise((resolve, reject) => {
-    const child = spawn(python, ["-c", PY_HOLD_GRADE], { cwd: backend, timeout: 45_000 });
+    // The fixture runs the app in-process, so it needs the lane's per-student
+    // `learning_loop` flag itself: scripts/e2e-up.sh exports it to the stack's
+    // backend, not to this Playwright process (default lane only, see the skip).
+    const env = { ...process.env, SAPLING_FLAG_LEARNING_LOOP: process.env.SAPLING_FLAG_LEARNING_LOOP ?? "on" };
+    const child = spawn(python, ["-c", PY_HOLD_GRADE], { cwd: backend, timeout: 45_000, env });
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (chunk) => { stdout += chunk; });

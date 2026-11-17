@@ -167,6 +167,8 @@ def main() -> int:
                     from agents.concept_edges import concept_edges_agent
                     from agents.deps import SaplingDeps
                     agent_bits = (WORKER_LIMITS, run_agent_sync, concept_edges_agent, SaplingDeps)
+                # Method or property, on either side of pydantic-ai's move.
+                from agents.usage import _run_usage
                 limits, run_sync, agent, deps_cls = agent_bits
                 t0 = time.monotonic()
                 result = run_sync(agent.run(
@@ -175,7 +177,7 @@ def main() -> int:
                                   request_id="backfill-concept-edges"),
                     usage_limits=limits,
                 ))
-                u = result.usage()
+                u = _run_usage(result)
                 usage = {"input_tokens": u.input_tokens, "output_tokens": u.output_tokens,
                          "seconds": round(time.monotonic() - t0, 1)}
                 proposed = [e.model_dump() for e in result.output.edges]

@@ -143,6 +143,20 @@ def _cache_and_thinking(usage: Any) -> tuple[int | None, int | None]:
     return cached, thinking
 
 
+def _run_usage(result: Any) -> Any:
+    """The run's usage, on either side of pydantic-ai's method -> property move.
+
+    1.107.x deprecates ``result.usage()`` for the property ``result.usage``
+    (removed in 2.0); older 1.x only has the method. A RunUsage instance means
+    the property form, anything else (an older bound method, a test double)
+    is called as before.
+    """
+    from pydantic_ai.usage import RunUsage
+
+    usage = result.usage
+    return usage if isinstance(usage, RunUsage) else usage()
+
+
 def record_agent_usage(
     result: Any,
     *,
@@ -176,7 +190,7 @@ def record_agent_usage(
     same guarded, never-raises contract.
     """
     try:
-        usage = result.usage()
+        usage = _run_usage(result)
         cached_tokens, thinking_tokens = _cache_and_thinking(usage)
         events_service.log_llm_usage(
             feature=feature, task=task, model=served_model_name(result, task), usage=usage,

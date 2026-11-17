@@ -70,9 +70,9 @@ TOMBSTONE_NAME = "Deleted user"
 
 #: Storage buckets holding the student's own files (besides avatars, which
 #: live in config.STORAGE_BUCKET): chat images (frontend Social.tsx) and
-#: issue-report screenshots (routes/feedback.py::ISSUE_BUCKET).
+#: issue-report screenshots (services/storage_service.py::ISSUE_BUCKET).
 CHAT_IMAGES_BUCKET = "chat-images"
-ISSUE_BUCKET = "issues-media-files"
+ISSUE_BUCKET = storage_service.ISSUE_BUCKET
 
 #: Deleted outright after the wipe: (table, column naming the student).
 PURGE_DELETES: tuple[tuple[str, str], ...] = (
@@ -242,7 +242,7 @@ def _delete_files(user_id: str) -> None:
     """The avatar and the issue-report screenshots, before the rows naming them go."""
     storage_service.delete_objects(storage_service.STORAGE_BUCKET, storage_service.avatar_paths(user_id))
     # screenshot_urls is client-supplied too: only paths under the student's
-    # own upload prefix (`<user id>/<uuid>.<ext>`, routes/feedback.py) go.
+    # own upload prefix (`<user id>/<uuid>.<ext>`, storage_service.upload_issue_screenshot) go.
     # `_storage_path` already refuses a `.`/`..`/empty segment, so the prefix
     # check cannot be climbed out of.
     shots = [

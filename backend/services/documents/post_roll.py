@@ -42,7 +42,7 @@ def _check_upload_achievements(user_id: str) -> None:
     try:
         check_achievements(user_id, "documents_uploaded", {})
     except Exception:
-        pass
+        logger.warning("documents_uploaded achievement check failed", exc_info=True)
 
 
 async def _stream_index_steps(

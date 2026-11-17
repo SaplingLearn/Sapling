@@ -58,7 +58,7 @@ def delete_account(
     try:
         with service_scope():
             delete_credentials(user_id)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — the soft delete happened; the row delete is retried
         # The account is hidden, so the guard refuses the student's retry. Do
         # not fail the delete that happened: the after-response task below
         # retries the row delete before it revokes the grant (with the tokens

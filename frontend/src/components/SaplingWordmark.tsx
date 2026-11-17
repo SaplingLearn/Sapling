@@ -20,7 +20,6 @@ export function SaplingWordmark({
   className?: string;
 }) {
   return (
-    // eslint-disable-next-line @next/next/no-img-element -- a static vector; next/image adds nothing for SVG
     <img
       src={tone === "light" ? SAPLING_WORDMARK_LIGHT_SRC : SAPLING_WORDMARK_SRC}
       alt={decorative ? "" : "Sapling"}

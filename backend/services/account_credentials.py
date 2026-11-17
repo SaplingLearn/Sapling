@@ -64,7 +64,7 @@ def _plain(value, binding: Binding) -> str | None:
         return None
     try:
         return decrypt(value, bind=binding) or None
-    except Exception:
+    except Exception:  # noqa: BLE001 — an unreadable token is never sent anywhere
         return None
 
 
@@ -107,7 +107,7 @@ async def _retry_delete(user_id: str) -> bool:
         try:
             await asyncio.to_thread(delete_credentials, user_id)
             return True
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — never raises; logged after the last retry
             error = type(exc).__name__
     logger.error(
         "[account] credentials of deleted account %s are still stored after %d retries (%s);"
@@ -181,7 +181,7 @@ def revoke_google_tokens(tokens: list[str]) -> bool:
                 headers={"Content-Type": "application/x-www-form-urlencoded"},
                 timeout=_REVOKE_TIMEOUT_S,
             )
-        except Exception as exc:  # network, TLS, timeout: best effort
+        except Exception as exc:  # noqa: BLE001 — network, TLS, timeout: best effort, never raises
             logger.warning("[account] Google token revoke failed: %s", type(exc).__name__)
             continue
         if resp.status_code == 200:

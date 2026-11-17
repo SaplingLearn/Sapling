@@ -106,7 +106,7 @@ function Toggle({
 
 export function Settings() {
   const toast = useToast();
-  const { userId, userName, avatarUrl, userReady, signOut, refreshProfile, setAvatarUrl } = useUser();
+  const { userId, userName, avatarUrl, userReady, signOut, setAvatarUrl } = useUser();
   const [tab, setTab] = React.useState<Tab>("profile");
   const [settings, setSettings] = React.useState<UserSettings | null>(null);
   const [layoutPref, setLayoutPref] = useLayoutPref();
@@ -733,7 +733,7 @@ export function Settings() {
                   Gradescope connections are removed. Your personal data is permanently erased
                   30 days later. Records without your content (AI usage and cost, usage
                   telemetry) are kept; see section 5 of the{" "}
-                  <Link href="/privacy" style={{ color: "var(--accent)" }}>
+                  <Link href="/privacy" style={{ color: "var(--accent)", textDecoration: "underline" }}>
                     Privacy Policy
                   </Link>
                   .

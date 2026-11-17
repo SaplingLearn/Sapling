@@ -35,8 +35,8 @@ def upload_asset(body: CosmeticAssetBody, actor: str | None):
     """
     try:
         file_bytes = base64.b64decode(body.file_base64, validate=True)
-    except Exception:
-        raise InvalidRequest("file_base64 is not valid base64")
+    except ValueError:  # binascii.Error is a ValueError, as is a non-ASCII str
+        raise InvalidRequest("file_base64 is not valid base64") from None
     if not file_bytes:
         raise InvalidRequest("file is empty")
     asset_key = uuid.uuid4().hex
