@@ -74,7 +74,7 @@ def test_read_only_check_never_seeds_an_empty_table():
     a canary that then locks the real backend out."""
     t = _tbl([])
     with patch("services.encryption_canary.table", return_value=t):
-        assert encryption_canary.verify_encryption_key(seed=False) == "skipped"
+        assert encryption_canary.verify_encryption_key(seed=False) == "absent"
     t.upsert.assert_not_called()
 
 

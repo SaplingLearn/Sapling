@@ -12,6 +12,7 @@ import json
 import pytest
 
 from db import backfill_encryption as bf
+from services import encryption_canary
 from e2e_oracles.gather import _CIPHERTEXT_MANIFEST
 from services.encryption import decrypt, decrypt_json, encrypt, encrypt_json
 
@@ -255,16 +256,22 @@ def test_base64_shaped_plaintext_is_left_reported_and_not_a_success(db, monkeypa
     assert "oauth_tokens.access_token: 1" in out and "base64-shaped" in out
 
 
-def test_apply_refuses_when_the_canary_cannot_be_read(db, monkeypatch, capsys):
-    """verify_encryption_key answers "skipped" for a failed canary read too, so
-    it is not a confirmed key: --apply with the wrong key would encrypt every
-    plaintext cell under it. A dry run only reads, so it still goes ahead."""
-    monkeypatch.setattr(bf, "verify_encryption_key", lambda *, seed: "skipped")
+@pytest.mark.real_script_key_guard
+@pytest.mark.parametrize("status", ["skipped", "absent"])
+def test_apply_refuses_when_the_canary_cannot_be_read(db, monkeypatch, capsys, status):
+    """No canary ("absent") or a failed read ("skipped") is not a confirmed key:
+    --apply with the wrong key would encrypt every plaintext cell under it, so
+    the shared write guard (encryption_canary.abort_unless_key_verified) exits 2
+    before anything is read. A dry run only reads, so it still goes ahead."""
+    monkeypatch.setattr(bf, "verify_encryption_key", lambda *, seed: status)
+    monkeypatch.setattr(encryption_canary, "verify_encryption_key", lambda *, seed: status)
     db.rows["messages"] = [{"id": 1, "content": "x"}]
 
     monkeypatch.setattr("sys.argv", ["backfill_encryption", "--apply"])
-    assert bf.main() == 2
-    assert "REFUSING to --apply" in capsys.readouterr().out
+    with pytest.raises(SystemExit) as exited:
+        bf.main()
+    assert exited.value.code == 2
+    assert "ABORT:" in capsys.readouterr().err
     assert db.selected == [] and db.updates == []
 
     monkeypatch.setattr("sys.argv", ["backfill_encryption"])
