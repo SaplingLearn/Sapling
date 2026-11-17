@@ -15,6 +15,8 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from models import CreateRoomBody, JoinRoomBody, MatchBody, PublicJoinBody, SendMessageBody, EditMessageBody, ToggleReactionBody, LeaveRoomBody, FriendRequestBody
 from routes._errors import domain_status
 from services.auth_guard import require_self, get_session_user_id
+from services import abuse_limits
+from services.request_limits import enforce_abuse_limit
 from services.social import (
     Conflict,
     Forbidden,
@@ -33,7 +35,7 @@ from services.social import (
 
 # Moved to services/social/ (#118); re-exported so imports and patches of the
 # old names on this module keep working.
-from services.social.directory import _LISTABLE_USER_FILTERS, _visible_profile_ids  # noqa: F401  (re-export, #118)
+from services.social.directory import _listable_user_filters, _visible_profile_ids  # noqa: F401  (re-export, #118)
 from services.social.friends import (  # noqa: F401  (re-export, #118)
     DECLINE_COOLDOWN,
     _are_friends,
@@ -110,6 +112,7 @@ def get_user_rooms(user_id: str, request: Request):
 @router.get("/rooms/{room_id}/overview")
 def room_overview(room_id: str, request: Request):
     viewer_id = get_session_user_id(request)
+    enforce_abuse_limit(abuse_limits.ROOM_OVERVIEW, viewer_id)
     with _social_errors():
         return overview.room_overview(room_id, viewer_id)
 
@@ -169,6 +172,7 @@ def get_room_messages(room_id: str, request: Request, before: str | None = None,
 @router.post("/rooms/{room_id}/messages")
 def send_room_message(room_id: str, body: SendMessageBody, request: Request):
     require_self(body.user_id, request)
+    enforce_abuse_limit(abuse_limits.SOCIAL_MESSAGE_SEND, body.user_id)
     with _social_errors():
         return messages.send_room_message(room_id, body)
 
@@ -183,6 +187,7 @@ def delete_room_message(room_id: str, message_id: str, request: Request, user_id
 @router.patch("/rooms/{room_id}/messages/{message_id}")
 def edit_room_message(room_id: str, message_id: str, body: EditMessageBody, request: Request):
     require_self(body.user_id, request)
+    enforce_abuse_limit(abuse_limits.SOCIAL_MESSAGE_EDIT, body.user_id)
     with _social_errors():
         return messages.edit_room_message(room_id, message_id, body)
 
@@ -190,6 +195,7 @@ def edit_room_message(room_id: str, message_id: str, body: EditMessageBody, requ
 @router.post("/rooms/{room_id}/messages/{message_id}/reactions")
 def toggle_reaction(room_id: str, message_id: str, body: ToggleReactionBody, request: Request):
     require_self(body.user_id, request)
+    enforce_abuse_limit(abuse_limits.SOCIAL_REACTION, body.user_id)
     with _social_errors():
         return messages.toggle_reaction(room_id, message_id, body)
 

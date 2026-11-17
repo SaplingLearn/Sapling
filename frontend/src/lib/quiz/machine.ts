@@ -314,301 +314,423 @@ function advanceAfterAnswer(session: QuizSession, index: number): QuizSession {
     : { ...session, phase: "active", cursor: next };
 }
 
-export function reduce(session: QuizSession, event: QuizEvent): QuizSession {
-  switch (event.type) {
-    case "CONFIGURE": {
-      if (session.phase !== "home" && session.phase !== "configuring") return session;
-      return { ...session, phase: event.open ? "configuring" : "home" };
-    }
+type QuizEventType = QuizEvent["type"];
+type EventOf<T extends QuizEventType> = Extract<QuizEvent, { type: T }>;
+type Handler<T extends QuizEventType> = (session: QuizSession, event: EventOf<T>) => QuizSession;
 
-    case "START": {
-      if (session.phase !== "home" && session.phase !== "configuring" && session.phase !== "results") {
-        return session;
-      }
-      // `source` is deliberately not settable here: invariant 2 (source is
-      // identical on entry and on every terminal transition) holds structurally
-      // because no event can overwrite it except RESUME's stored restore.
-      return generatingFrom(session, {
-        intent: event.start.intent,
-        scope: event.start.scope,
-        conceptId: event.start.conceptId,
-        courseId: event.start.courseId,
-        config: event.config,
-        queueIndex: 0,
-        // `?? null`, never the bare optional: an explicit `undefined` in the
-        // patch would overwrite `generatingFrom`'s own null and put a value
-        // outside the type into the session.
-        sourceAttemptId: event.start.sourceAttemptId ?? null,
-      });
-    }
+function inPhase(session: QuizSession, ...phases: Phase[]): boolean {
+  return phases.includes(session.phase);
+}
 
-    case "GENERATED": {
-      if (session.phase !== "generating") return session;
-      const { result } = event;
-      if (result.questions.length === 0) {
-        // The route 502s rather than serving an empty quiz (R1 §C), so this is
-        // belt and braces — but a blank, control-less panel is exactly the #184
-        // bug, and it is cheap to make impossible.
-        return {
-          ...session,
-          phase: "error",
-          error: {
-            code: "QUIZ_GENERATION_FAILED",
-            message: QUIZ_ERROR_COPY.QUIZ_GENERATION_FAILED,
-            retryable: true,
-          },
-        };
-      }
-      return {
-        ...session,
-        phase: "active",
-        attemptId: result.quiz_id,
-        items: itemsFor(result.questions),
-        cursor: 0,
-        error: null,
-        deliveredShort: result.delivered_count < result.requested_count,
-        // G5: absent whenever the request didn't name a source attempt, which
-        // is the same thing as "there is nothing to claim about re-serving".
-        reserved: result.source
-          ? {
-            reservedCount: result.source.reserved_count,
-            regeneratedCount: result.source.regenerated_count,
-          }
-          : null,
-      };
-    }
+function onConfigure(session: QuizSession, event: EventOf<"CONFIGURE">): QuizSession {
+  if (!inPhase(session, "home", "configuring")) return session;
+  return { ...session, phase: event.open ? "configuring" : "home" };
+}
 
-    case "GENERATE_FAILED": {
-      if (session.phase !== "generating") return session;
-      return { ...session, phase: "error", error: event.error };
-    }
+function onStart(session: QuizSession, event: EventOf<"START">): QuizSession {
+  if (!inPhase(session, "home", "configuring", "results")) return session;
+  // `source` is deliberately not settable here: invariant 2 (source is
+  // identical on entry and on every terminal transition) holds structurally
+  // because no event can overwrite it except RESUME's stored restore.
+  return generatingFrom(session, {
+    intent: event.start.intent,
+    scope: event.start.scope,
+    conceptId: event.start.conceptId,
+    courseId: event.start.courseId,
+    config: event.config,
+    queueIndex: 0,
+    // `?? null`, never the bare optional: an explicit `undefined` in the
+    // patch would overwrite `generatingFrom`'s own null and put a value
+    // outside the type into the session.
+    sourceAttemptId: event.start.sourceAttemptId ?? null,
+  });
+}
 
-    case "WRITE": {
-      if (session.phase !== "active") return session;
-      const item = session.items[session.cursor];
-      if (!item || item.verdict || !isWrittenType(item.question.type)) return session;
-      return withItem(session, session.cursor, { answerText: event.text.slice(0, 2000) });
-    }
-
-    case "SELECT": {
-      if (session.phase !== "active") return session;
-      if (!session.items[session.cursor]) return session;
-      return withItem(session, session.cursor, { selectedIndex: event.index });
-    }
-
-    case "SUBMIT_ANSWER": {
-      // State-neutral by design: the network call is the hook's job and the
-      // "pending" look is local to the footer button. `canSubmitAnswer` is the
-      // predicate that actually gates it, in the hook and on the button alike.
-      return session;
-    }
-
-    case "ANSWER_RECORDED": {
-      if (session.phase !== "active") return session;
-      const index = event.result.question_index;
-      const target = session.items[index];
-      if (!target) return session;
-      // A response for an item already left behind can only be a duplicate or a
-      // late arrival. `advanceAfterAnswer` positions the cursor from the
-      // RESPONDED index, so honouring one would drag the quiz backwards under
-      // the student — re-revealing an old verdict in as-you-go, or re-asking a
-      // question in at-end. `/answer` is idempotent server-side, so there is
-      // nothing to reconcile: drop it.
-      if (index < session.cursor || target.verdict !== null) return session;
-      // `recorded: false` is an idempotent replay or a lost race — the answer
-      // still stands, so it advances exactly like a fresh record (invariant 6).
-      const scored = withItem(session, index, {
-        ...(event.result.answer_text !== undefined ? { answerText: event.result.answer_text } : {}),
-        verdict: {
-          isCorrect: event.result.is_correct,
-          correctIndex: event.result.correct_index,
-          correctAnswer: event.result.correct_answer,
-          explanation: event.result.explanation,
-        },
-      });
-      return advanceAfterAnswer(scored, index);
-    }
-
-    case "ANSWER_FAILED": {
-      if (session.phase !== "active") return session;
-      return { ...session, phase: "error", error: event.error };
-    }
-
-    case "NEXT": {
-      if (session.phase !== "answered") return session;
-      // On to the next question still unanswered (skipped ones included);
-      // results once there are none.
-      const next = nextUnansweredIndex(session.items, session.cursor);
-      return next < 0
-        ? { ...session, phase: "submitting" }
-        : { ...session, phase: "active", cursor: next };
-    }
-
-    case "GO_TO": {
-      // Moving between questions, either way. Never mid-request or mid-dialog:
-      // only from a question that is on screen and waiting.
-      if (session.phase !== "active" && session.phase !== "answered") return session;
-      const target = session.items[event.index];
-      if (!target || event.index === session.cursor) return session;
-      // An unsubmitted multiple-choice pick is dropped on the way out: a
-      // selection with no verdict reads as RECORDED (see isUnanswered), and a
-      // draft must never be mistaken for an answer the server has. A written
-      // draft is kept — its text never counts as recorded.
-      const current = session.items[session.cursor];
-      const left = current && !current.verdict && !isWrittenType(current.question.type) && session.phase === "active"
-        ? withItem(session, session.cursor, { selectedIndex: null })
-        : session;
-      return { ...left, cursor: event.index, phase: isUnanswered(target) ? "active" : "answered" };
-    }
-
-    case "FINISH": {
-      if (session.phase !== "active" && session.phase !== "answered") return session;
-      if (session.items.length === 0) return session;
-      if (session.items.some(i => i.selectedIndex === null && !i.verdict)) return session;
-      return { ...session, phase: "submitting" };
-    }
-
-    case "REQUEST_LEAVE": {
-      if (session.phase !== "active" && session.phase !== "answered") return session;
-      return { ...session, phase: "confirm-leave" };
-    }
-
-    case "CANCEL_LEAVE": {
-      if (session.phase !== "confirm-leave") return session;
-      // A verdict on the current item means it was on screen when the dialog
-      // opened — in `at-end` mode the cursor always sits on a fresh item.
-      const showing = session.items[session.cursor]?.verdict != null;
-      return { ...session, phase: showing ? "answered" : "active" };
-    }
-
-    case "CONFIRM_LEAVE": {
-      if (session.phase !== "confirm-leave") return session;
-      return { ...session, phase: "paused" };
-    }
-
-    case "RESUME": {
-      if (session.phase !== "paused" && session.phase !== "home") return session;
-      return resumeFrom(session, event.detail, event.stored);
-    }
-
-    case "SUBMITTED": {
-      if (session.phase !== "submitting") return session;
-      return { ...session, phase: "results", result: event.result, xp: event.xp, error: null };
-    }
-
-    case "SUBMIT_FAILED": {
-      if (session.phase !== "submitting") return session;
-      return { ...session, phase: "error", error: event.error };
-    }
-
-    case "PRACTISE_MISSED": {
-      if (session.phase !== "results") return session;
-      // A new attempt on the same concept (R-5), naming the attempt just
-      // finished as its source: G5 re-serves the items that were actually
-      // missed rather than writing new ones (backend #537 G5). What comes
-      // back may still be regenerated in part or in whole — the results
-      // eyebrow reads `reserved` and says which happened.
-      return generatingFrom(session, {
-        intent: "review",
-        scope: {
-          kind: "missed",
-          conceptId: session.conceptId,
-          missedCount: event.missedCount,
-        },
-        config: { ...session.config, count: event.numQuestions },
-        sourceAttemptId: session.attemptId,
-      });
-    }
-
-    case "NEXT_IN_QUEUE": {
-      if (session.phase !== "results") return session;
-      const queue = queueOf(session.scope);
-      const next = session.queueIndex + 1;
-      if (next >= queue.length) return session;
-      return generatingFrom(session, {
-        queueIndex: next,
-        conceptId: queue[next],
-        // A `course` queue stays inside its course. A `due` queue spans them,
-        // and the reducer has no node list to look the new one up in — so the
-        // honest answer is "unknown" rather than the previous concept's course.
-        // Nothing on screen reads this: the screens resolve the course (and the
-        // accent) from the graph by concept id.
-        courseId: session.scope.kind === "course" ? session.courseId : null,
-      });
-    }
-
-    case "EXIT": {
-      if (!canExit(session)) return session;
-      // A genuinely clean home session. `source` survives (invariant 2) and so
-      // do the student's config choices; the TARGET does not. "Done" stays on
-      // /quiz, so a session still pointing at the concept just finished would
-      // keep the accent — and anything else that prefers the session over the
-      // proposal — pinned to a quiz that is over.
-      //
-      // Callers must therefore read the exit destination from the session
-      // BEFORE dispatching this (`returnToSource` needs `conceptId`).
-      return {
-        ...session,
-        phase: "home",
-        scope: { kind: "concept", conceptId: "" },
-        conceptId: "",
-        courseId: null,
-        attemptId: null,
-        items: [],
-        cursor: 0,
-        queueIndex: 0,
-        error: null,
-        result: null,
-        xp: null,
-        deliveredShort: false,
-        sourceAttemptId: null,
-        reserved: null,
-      };
-    }
-
-    case "CANCEL": {
-      if (session.phase === "generating") {
-        // Back to the same concept on home, minus any practice framing: the
-        // student asked to stop, not to keep "the ones you missed" queued.
-        return { ...session, phase: "home", error: null, sourceAttemptId: null, reserved: null };
-      }
-      if (session.phase === "submitting") {
-        return { ...session, phase: settledPhase(session), error: null };
-      }
-      return session;
-    }
-
-    case "FLAG": {
-      const item = session.items[session.cursor];
-      if (!item) return session;
-      return withItem(session, session.cursor, { flagged: !item.flagged });
-    }
-
-    case "DISMISS_ERROR": {
-      if (session.phase !== "error") return session;
-      return { ...session, phase: errorReturnPhase(session), error: null };
-    }
-
-    case "FAILED": {
-      // Never over a live attempt — an in-flight quiz has ANSWER_FAILED /
-      // SUBMIT_FAILED, which keep the items so DISMISS_ERROR can go back to them.
-      // Nor over a request's own phase: a stale resume failing mid-generate must
-      // not replace the generation the student is waiting on.
-      if (!canExit(session) || awaitingRequest(session)) return session;
-      if (session.phase === "error") return session;
-      return { ...session, phase: "error", error: event.error };
-    }
-
-    case "SET_CONFIG": {
-      if (session.phase !== "home" && session.phase !== "configuring" && session.phase !== "results") {
-        return session;
-      }
-      return { ...session, config: event.config };
-    }
-
-    default:
-      return session;
+function onGenerated(session: QuizSession, event: EventOf<"GENERATED">): QuizSession {
+  if (session.phase !== "generating") return session;
+  const { result } = event;
+  if (result.questions.length === 0) {
+    // The route 502s rather than serving an empty quiz (R1 §C), so this is
+    // belt and braces — but a blank, control-less panel is exactly the #184
+    // bug, and it is cheap to make impossible.
+    return {
+      ...session,
+      phase: "error",
+      error: {
+        code: "QUIZ_GENERATION_FAILED",
+        message: QUIZ_ERROR_COPY.QUIZ_GENERATION_FAILED,
+        retryable: true,
+      },
+    };
   }
+  return {
+    ...session,
+    phase: "active",
+    attemptId: result.quiz_id,
+    items: itemsFor(result.questions),
+    cursor: 0,
+    error: null,
+    deliveredShort: result.delivered_count < result.requested_count,
+    // G5: absent whenever the request didn't name a source attempt, which
+    // is the same thing as "there is nothing to claim about re-serving".
+    reserved: result.source
+      ? {
+        reservedCount: result.source.reserved_count,
+        regeneratedCount: result.source.regenerated_count,
+      }
+      : null,
+  };
+}
+
+function onGenerateFailed(session: QuizSession, event: EventOf<"GENERATE_FAILED">): QuizSession {
+  if (session.phase !== "generating") return session;
+  return { ...session, phase: "error", error: event.error };
+}
+
+function onWrite(session: QuizSession, event: EventOf<"WRITE">): QuizSession {
+  if (session.phase !== "active") return session;
+  const item = session.items[session.cursor];
+  if (!item || item.verdict || !isWrittenType(item.question.type)) return session;
+  return withItem(session, session.cursor, { answerText: event.text.slice(0, 2000) });
+}
+
+function onSelect(session: QuizSession, event: EventOf<"SELECT">): QuizSession {
+  if (session.phase !== "active") return session;
+  if (!session.items[session.cursor]) return session;
+  return withItem(session, session.cursor, { selectedIndex: event.index });
+}
+
+function onSubmitAnswer(session: QuizSession): QuizSession {
+  // State-neutral by design: the network call is the hook's job and the
+  // "pending" look is local to the footer button. `canSubmitAnswer` is the
+  // predicate that actually gates it, in the hook and on the button alike.
+  return session;
+}
+
+function onAnswerRecorded(session: QuizSession, event: EventOf<"ANSWER_RECORDED">): QuizSession {
+  if (session.phase !== "active") return session;
+  const index = event.result.question_index;
+  const target = session.items[index];
+  if (!target) return session;
+  // A response for an item already left behind can only be a duplicate or a
+  // late arrival. `advanceAfterAnswer` positions the cursor from the
+  // RESPONDED index, so honouring one would drag the quiz backwards under
+  // the student — re-revealing an old verdict in as-you-go, or re-asking a
+  // question in at-end. `/answer` is idempotent server-side, so there is
+  // nothing to reconcile: drop it.
+  if (index < session.cursor || target.verdict !== null) return session;
+  // `recorded: false` is an idempotent replay or a lost race — the answer
+  // still stands, so it advances exactly like a fresh record (invariant 6).
+  const scored = withItem(session, index, {
+    ...(event.result.answer_text !== undefined ? { answerText: event.result.answer_text } : {}),
+    verdict: {
+      isCorrect: event.result.is_correct,
+      correctIndex: event.result.correct_index,
+      correctAnswer: event.result.correct_answer,
+      explanation: event.result.explanation,
+    },
+  });
+  return advanceAfterAnswer(scored, index);
+}
+
+function onAnswerFailed(session: QuizSession, event: EventOf<"ANSWER_FAILED">): QuizSession {
+  if (session.phase !== "active") return session;
+  return { ...session, phase: "error", error: event.error };
+}
+
+function onNext(session: QuizSession): QuizSession {
+  if (session.phase !== "answered") return session;
+  // On to the next question still unanswered (skipped ones included);
+  // results once there are none.
+  const next = nextUnansweredIndex(session.items, session.cursor);
+  return next < 0
+    ? { ...session, phase: "submitting" }
+    : { ...session, phase: "active", cursor: next };
+}
+
+function onGoTo(session: QuizSession, event: EventOf<"GO_TO">): QuizSession {
+  // Moving between questions, either way. Never mid-request or mid-dialog:
+  // only from a question that is on screen and waiting.
+  if (!inPhase(session, "active", "answered")) return session;
+  const target = session.items[event.index];
+  if (!target || event.index === session.cursor) return session;
+  // An unsubmitted multiple-choice pick is dropped on the way out: a
+  // selection with no verdict reads as RECORDED (see isUnanswered), and a
+  // draft must never be mistaken for an answer the server has. A written
+  // draft is kept — its text never counts as recorded.
+  const current = session.items[session.cursor];
+  const left = current && !current.verdict && !isWrittenType(current.question.type) && session.phase === "active"
+    ? withItem(session, session.cursor, { selectedIndex: null })
+    : session;
+  return { ...left, cursor: event.index, phase: isUnanswered(target) ? "active" : "answered" };
+}
+
+function onFinish(session: QuizSession): QuizSession {
+  if (!inPhase(session, "active", "answered")) return session;
+  if (session.items.length === 0) return session;
+  if (session.items.some(i => i.selectedIndex === null && !i.verdict)) return session;
+  return { ...session, phase: "submitting" };
+}
+
+function onRequestLeave(session: QuizSession): QuizSession {
+  if (!inPhase(session, "active", "answered")) return session;
+  return { ...session, phase: "confirm-leave" };
+}
+
+function onCancelLeave(session: QuizSession): QuizSession {
+  if (session.phase !== "confirm-leave") return session;
+  // A verdict on the current item means it was on screen when the dialog
+  // opened — in `at-end` mode the cursor always sits on a fresh item.
+  const showing = session.items[session.cursor]?.verdict != null;
+  return { ...session, phase: showing ? "answered" : "active" };
+}
+
+function onConfirmLeave(session: QuizSession): QuizSession {
+  if (session.phase !== "confirm-leave") return session;
+  return { ...session, phase: "paused" };
+}
+
+function onResume(session: QuizSession, event: EventOf<"RESUME">): QuizSession {
+  if (!inPhase(session, "paused", "home")) return session;
+  return resumeFrom(session, event.detail, event.stored);
+}
+
+function onSubmitted(session: QuizSession, event: EventOf<"SUBMITTED">): QuizSession {
+  if (session.phase !== "submitting") return session;
+  return { ...session, phase: "results", result: event.result, xp: event.xp, error: null };
+}
+
+function onSubmitFailed(session: QuizSession, event: EventOf<"SUBMIT_FAILED">): QuizSession {
+  if (session.phase !== "submitting") return session;
+  return { ...session, phase: "error", error: event.error };
+}
+
+function onPractiseMissed(session: QuizSession, event: EventOf<"PRACTISE_MISSED">): QuizSession {
+  if (session.phase !== "results") return session;
+  // A new attempt on the same concept (R-5), naming the attempt just
+  // finished as its source: G5 re-serves the items that were actually
+  // missed rather than writing new ones (backend #537 G5). What comes
+  // back may still be regenerated in part or in whole — the results
+  // eyebrow reads `reserved` and says which happened.
+  return generatingFrom(session, {
+    intent: "review",
+    scope: {
+      kind: "missed",
+      conceptId: session.conceptId,
+      missedCount: event.missedCount,
+    },
+    config: { ...session.config, count: event.numQuestions },
+    sourceAttemptId: session.attemptId,
+  });
+}
+
+function onNextInQueue(session: QuizSession): QuizSession {
+  if (session.phase !== "results") return session;
+  const queue = queueOf(session.scope);
+  const next = session.queueIndex + 1;
+  if (next >= queue.length) return session;
+  return generatingFrom(session, {
+    queueIndex: next,
+    conceptId: queue[next],
+    // A `course` queue stays inside its course. A `due` queue spans them,
+    // and the reducer has no node list to look the new one up in — so the
+    // honest answer is "unknown" rather than the previous concept's course.
+    // Nothing on screen reads this: the screens resolve the course (and the
+    // accent) from the graph by concept id.
+    courseId: session.scope.kind === "course" ? session.courseId : null,
+  });
+}
+
+function onExit(session: QuizSession): QuizSession {
+  if (!canExit(session)) return session;
+  // A genuinely clean home session. `source` survives (invariant 2) and so
+  // do the student's config choices; the TARGET does not. "Done" stays on
+  // /quiz, so a session still pointing at the concept just finished would
+  // keep the accent — and anything else that prefers the session over the
+  // proposal — pinned to a quiz that is over.
+  //
+  // Callers must therefore read the exit destination from the session
+  // BEFORE dispatching this (`returnToSource` needs `conceptId`).
+  return {
+    ...session,
+    phase: "home",
+    scope: { kind: "concept", conceptId: "" },
+    conceptId: "",
+    courseId: null,
+    attemptId: null,
+    items: [],
+    cursor: 0,
+    queueIndex: 0,
+    error: null,
+    result: null,
+    xp: null,
+    deliveredShort: false,
+    sourceAttemptId: null,
+    reserved: null,
+  };
+}
+
+function onCancel(session: QuizSession): QuizSession {
+  if (session.phase === "generating") {
+    // Back to the same concept on home, minus any practice framing: the
+    // student asked to stop, not to keep "the ones you missed" queued.
+    return { ...session, phase: "home", error: null, sourceAttemptId: null, reserved: null };
+  }
+  if (session.phase === "submitting") {
+    return { ...session, phase: settledPhase(session), error: null };
+  }
+  return session;
+}
+
+function onFlag(session: QuizSession): QuizSession {
+  const item = session.items[session.cursor];
+  if (!item) return session;
+  return withItem(session, session.cursor, { flagged: !item.flagged });
+}
+
+function onDismissError(session: QuizSession): QuizSession {
+  if (session.phase !== "error") return session;
+  return { ...session, phase: errorReturnPhase(session), error: null };
+}
+
+function onFailed(session: QuizSession, event: EventOf<"FAILED">): QuizSession {
+  // Never over a live attempt — an in-flight quiz has ANSWER_FAILED /
+  // SUBMIT_FAILED, which keep the items so DISMISS_ERROR can go back to them.
+  // Nor over a request's own phase: a stale resume failing mid-generate must
+  // not replace the generation the student is waiting on.
+  if (!canExit(session) || awaitingRequest(session)) return session;
+  if (session.phase === "error") return session;
+  return { ...session, phase: "error", error: event.error };
+}
+
+function onSetConfig(session: QuizSession, event: EventOf<"SET_CONFIG">): QuizSession {
+  if (!inPhase(session, "home", "configuring", "results")) return session;
+  return { ...session, config: event.config };
+}
+
+/** One handler per event type. The `satisfies` makes a missing (or misspelt)
+ *  event type a compile error rather than a silently ignored event. */
+const HANDLERS = {
+  CONFIGURE: onConfigure,
+  START: onStart,
+  GENERATED: onGenerated,
+  GENERATE_FAILED: onGenerateFailed,
+  WRITE: onWrite,
+  SELECT: onSelect,
+  SUBMIT_ANSWER: onSubmitAnswer,
+  ANSWER_RECORDED: onAnswerRecorded,
+  ANSWER_FAILED: onAnswerFailed,
+  NEXT: onNext,
+  GO_TO: onGoTo,
+  FINISH: onFinish,
+  REQUEST_LEAVE: onRequestLeave,
+  CANCEL_LEAVE: onCancelLeave,
+  CONFIRM_LEAVE: onConfirmLeave,
+  RESUME: onResume,
+  SUBMITTED: onSubmitted,
+  SUBMIT_FAILED: onSubmitFailed,
+  PRACTISE_MISSED: onPractiseMissed,
+  NEXT_IN_QUEUE: onNextInQueue,
+  EXIT: onExit,
+  CANCEL: onCancel,
+  FLAG: onFlag,
+  DISMISS_ERROR: onDismissError,
+  FAILED: onFailed,
+  SET_CONFIG: onSetConfig,
+} satisfies { [T in QuizEventType]: Handler<T> };
+
+export function reduce(session: QuizSession, event: QuizEvent): QuizSession {
+  // An event type with no handler (only reachable through a cast) is
+  // unhandled like any other: the same object back.
+  if (!Object.prototype.hasOwnProperty.call(HANDLERS, event.type)) return session;
+  const handler = HANDLERS[event.type] as (s: QuizSession, e: QuizEvent) => QuizSession;
+  return handler(session, event);
+}
+
+// ── Resume ─────────────────────────────────────────────────────────────────
+
+type WireResponse = AttemptDetail["responses"][number];
+
+/** A written answer's verdict as the resume payload alone can state it: it
+ *  carries `is_correct` but no correct index and no explanation. */
+function wireVerdict(question: WireQuestion, response: WireResponse | undefined): QuizItem["verdict"] {
+  return isWrittenType(question.type) && response
+    ? { isCorrect: response.is_correct, correctIndex: -1, explanation: "" }
+    : null;
+}
+
+function resumedItem(
+  question: WireQuestion,
+  index: number,
+  previous: QuizItem | undefined,
+  response: WireResponse | undefined,
+): QuizItem {
+  const selected = response?.selected_index;
+  return {
+    index,
+    question,
+    selectedIndex: selected ?? previous?.selectedIndex ?? null,
+    answerText: response?.answer_text ?? previous?.answerText,
+    verdict: selected === undefined ? null : previous?.verdict ?? wireVerdict(question, response),
+    flagged: previous?.flagged ?? false,
+  };
+}
+
+function resumedItems(detail: AttemptDetail, matching: QuizSession | null): QuizItem[] {
+  const storedById = new Map((matching?.items ?? []).map(i => [i.question.id, i]));
+  const responsesByIndex = new Map((detail.responses ?? []).map(r => [r.question_index, r]));
+  return (detail.questions ?? []).map((question, index) =>
+    resumedItem(question, index, storedById.get(question.id), responsesByIndex.get(index)));
+}
+
+function resumedPosition(items: QuizItem[]): { cursor: number; phase: Phase } {
+  const unanswered = firstUnansweredIndex(items);
+  if (unanswered >= 0) return { cursor: unanswered, phase: "active" };
+  // Every question already answered but the attempt never submitted (the last
+  // `/answer` landed and then the tab went away). Park on the final verdict so
+  // "See results" is one press away, rather than deadlocking on an empty cursor.
+  const cursor = Math.max(items.length - 1, 0);
+  return { cursor, phase: items[cursor]?.verdict != null ? "answered" : "active" };
+}
+
+function resumedConfig(
+  session: QuizSession,
+  detail: AttemptDetail,
+  matching: QuizSession | null,
+): SessionConfig {
+  return matching
+    ? matching.config
+    : { ...session.config, difficulty: detail.difficulty || session.config.difficulty };
+}
+
+/** The framing only the stored session knows, falling back to the session's
+ *  own (or the wire's concept) when nothing for this attempt was stored. */
+function resumedFraming(
+  session: QuizSession,
+  detail: AttemptDetail,
+  matching: QuizSession | null,
+): Pick<QuizSession, "intent" | "scope" | "source" | "conceptId" | "courseId" | "queueIndex"> {
+  return {
+    intent: matching?.intent ?? session.intent,
+    scope: matching?.scope ?? { kind: "concept", conceptId: detail.concept_node_id },
+    source: matching?.source ?? session.source,
+    conceptId: detail.concept_node_id || matching?.conceptId || session.conceptId,
+    courseId: matching?.courseId ?? session.courseId,
+    queueIndex: matching?.queueIndex ?? 0,
+  };
+}
+
+/** G5: only the stored session knows this attempt was a practice run and what
+ *  it re-served — the resume payload has no idea. Without the carry a resumed
+ *  practice quiz would lose its eyebrow. */
+function resumedPractice(
+  matching: QuizSession | null,
+): Pick<QuizSession, "deliveredShort" | "sourceAttemptId" | "reserved"> {
+  return {
+    deliveredShort: matching?.deliveredShort ?? false,
+    sourceAttemptId: matching?.sourceAttemptId ?? null,
+    reserved: matching?.reserved ?? null,
+  };
 }
 
 /**
@@ -627,59 +749,17 @@ function resumeFrom(
   stored: QuizSession | null,
 ): QuizSession {
   const matching = stored && stored.attemptId === detail.quiz_id ? stored : null;
-  const storedById = new Map((matching?.items ?? []).map(i => [i.question.id, i]));
-  const selectedByIndex = new Map(
-    (detail.responses ?? []).map(r => [r.question_index, r.selected_index]),
-  );
-  const responsesByIndex = new Map((detail.responses ?? []).map(r => [r.question_index, r]));
-
-  const items: QuizItem[] = (detail.questions ?? []).map((question, index) => {
-    const previous = storedById.get(question.id);
-    const selected = selectedByIndex.get(index);
-    return {
-      index,
-      question,
-      selectedIndex: selected ?? previous?.selectedIndex ?? null,
-      answerText: responsesByIndex.get(index)?.answer_text ?? previous?.answerText,
-      verdict: selected === undefined ? null : previous?.verdict ?? (
-        isWrittenType(question.type) && responsesByIndex.has(index)
-          ? { isCorrect: responsesByIndex.get(index)!.is_correct, correctIndex: -1, explanation: "" }
-          : null),
-      flagged: previous?.flagged ?? false,
-    };
-  });
-
-  const unanswered = firstUnansweredIndex(items);
-  // Every question already answered but the attempt never submitted (the last
-  // `/answer` landed and then the tab went away). Park on the final verdict so
-  // "See results" is one press away, rather than deadlocking on an empty cursor.
-  const cursor = unanswered >= 0 ? unanswered : Math.max(items.length - 1, 0);
-  const phase: Phase =
-    unanswered >= 0 ? "active" : items[cursor]?.verdict != null ? "answered" : "active";
-
+  const items = resumedItems(detail, matching);
   return {
     ...session,
-    intent: matching?.intent ?? session.intent,
-    scope: matching?.scope ?? { kind: "concept", conceptId: detail.concept_node_id },
-    source: matching?.source ?? session.source,
-    config: matching
-      ? matching.config
-      : { ...session.config, difficulty: detail.difficulty || session.config.difficulty },
-    conceptId: detail.concept_node_id || matching?.conceptId || session.conceptId,
-    courseId: matching?.courseId ?? session.courseId,
-    queueIndex: matching?.queueIndex ?? 0,
+    ...resumedFraming(session, detail, matching),
+    config: resumedConfig(session, detail, matching),
     attemptId: detail.quiz_id,
     items,
-    cursor,
-    phase,
+    ...resumedPosition(items),
     error: null,
     result: null,
     xp: null,
-    deliveredShort: matching?.deliveredShort ?? false,
-    // G5: only the stored session knows this attempt was a practice run and
-    // what it re-served — the resume payload has no idea. Without the carry
-    // a resumed practice quiz would lose its eyebrow.
-    sourceAttemptId: matching?.sourceAttemptId ?? null,
-    reserved: matching?.reserved ?? null,
+    ...resumedPractice(matching),
   };
 }

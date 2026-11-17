@@ -1,10 +1,10 @@
-# Local Supabase (Podman)
+# Local Supabase (Docker or Podman)
 
 Run the whole app — frontend → backend → database — against a **local** Supabase
 stack in containers, instead of testing against the live staging database.
 
-The stack (Postgres, PostgREST, Storage, Auth, Studio) runs under **rootless
-Podman** via the Supabase CLI. The backend and frontend run on the host so you
+The stack (Postgres, PostgREST, Storage, Auth, Studio) runs under Docker Desktop
+on Windows or rootless Podman on Linux via the Supabase CLI. The backend and frontend run on the host so you
 keep hot-reload.
 
 ## Prerequisites (one-time, host)
@@ -22,6 +22,47 @@ paru -S supabase-bin      # or: yay -S supabase-bin
 ```
 
 Verify: `supabase --version && podman ps`.
+
+### Windows (Docker Desktop)
+
+Install Docker Desktop with its WSL 2 backend. If WSL is missing, run
+`wsl --install --no-distribution` in an administrator PowerShell, then restart
+Windows when requested. Start Docker Desktop and wait for its engine to be ready.
+Node.js 20+ lets you run the Supabase CLI through `npx` without a global install.
+
+First, from PowerShell at the repository root (after creating the backend venv
+as described below), copy both local env examples. They keep both apps on the
+local database with matching `SESSION_SECRET` values:
+
+```powershell
+Copy-Item backend/.env.local.example backend/.env
+Copy-Item frontend/.env.local.example frontend/.env.local
+```
+
+Copy only during first-time setup; preserve existing Google OAuth credentials
+when updating an existing env file. Fill in those credentials and `GEMINI_API_KEY`.
+
+Then start the stack, migrate and seed:
+
+```powershell
+npx --yes supabase start
+$env:SUPABASE_DB_URL = 'postgresql://postgres:postgres@127.0.0.1:54322/postgres'
+Push-Location backend
+.\venv\Scripts\python.exe -m db.migrate
+Pop-Location
+docker exec supabase_db_sapling psql -U postgres -d postgres -c "NOTIFY pgrst, 'reload schema';"
+Push-Location backend
+.\venv\Scripts\python.exe -m db.seed_staging
+Pop-Location
+```
+
+The backend needs the database stack running, even when `ANTHROPIC_API_KEY` is
+blank. A backend health response alone does not confirm database connectivity.
+If database requests return `401`, run `npx --yes supabase status -o env` and
+copy that local stack's `SERVICE_ROLE_KEY` into backend `SUPABASE_SERVICE_KEY`,
+and `ANON_KEY` into frontend `NEXT_PUBLIC_SUPABASE_ANON_KEY`. Both Supabase URLs
+must point to the local API. Keep those values in the ignored env files.
+Restart both the backend and frontend after changing env files.
 
 The dev scripts (`scripts/local-up.sh`, `scripts/local-db-reset.sh`) run
 `db.migrate` / `db.seed_staging` through `backend/venv/bin/python`, so create the
@@ -81,19 +122,20 @@ redirect at `http://localhost:5000/api/auth/google/callback`. **One-time setup:*
 add that URI (and `http://localhost:5000/api/calendar/callback` for calendar) to
 the OAuth client's authorized redirect URIs in the Google Cloud console.
 
-Two local-only conveniences make it "just work", both strictly `IS_LOCAL`-gated so
+Two local-only conveniences make it "just work", both gated on `APP_ENV=local` so
 staging/prod are unaffected:
 
-- `ALLOWED_EMAIL_DOMAINS=` is empty locally, so **any** Google account can sign in
-  (prod restricts to the configured domains).
-- `routes/auth.py` **auto-approves new users when `IS_LOCAL`**, so a first sign-in
+- Any Google account can sign in (there is no email-domain restriction on any
+  environment); locally `APP_ENV=local` also auto-approves it, so it skips the
+  waitlist (docs/design/open-access-gate.md).
+- `routes/auth.py` **auto-approves new users when `APP_ENV=local`**, so a first sign-in
   skips the `/pending` approval wall (prod keeps the real approval gate).
 
 The backend `SESSION_SECRET` **must equal** `frontend/.env.local`'s. Signing in with
 Google creates *your* user (`user_<google-id>`), not the seeded `seed-user-demo`;
-on a local backend that account is filled with the rich sample dataset (below).
+on a local backend that account is filled with the sample data (below).
 
-### Your own account gets the rich sample dataset automatically (#684, #715)
+### Your own account gets the sample data automatically (#684, #715)
 
 On a local backend, signing in with a **new** Google account is enough. It
 lands on a **"Setting up your sample data…"** screen (`/setting-up`) instead
@@ -101,6 +143,18 @@ of `/onboarding`, and moves on to the dashboard once the data is in (a few
 seconds). If seeding fails, the screen shows the error and a **Continue
 anyway** link to `/onboarding`, and keeps waiting: the backend retries, and if
 a retry succeeds the screen still moves on to the dashboard.
+
+A new account gets two datasets, in this order, before it is let in:
+
+1. **The rich copy**: the active rich user's five classes with a little of
+   everything (below).
+2. **The study dataset**: a term of study guides, quizzes, flashcards,
+   documents and exams dated around today, in three of those classes
+   ([what it writes](#the-study-dataset-seed_local_study)).
+
+The second one adds little to the wait. It is about 760 rows, but in 16 bulk
+writes and a few dozen lookups (building and encrypting the rows takes under
+0.1 s), where the rich copy before it is a few hundred single-row round trips.
 
 How it works: `services/local_seed_watcher.py` is a backend lifespan task that
 runs only on a local backend. It seeds, one at a time, every account that is a
@@ -112,6 +166,15 @@ never redone, a seed that stopped midway is finished on a later pass, and an
 account you already onboarded — one with your own data in it — is left alone.
 For that account, run the [manual command](#manual-fallback) instead.
 
+The same column is what makes the study dataset a once-only write. Unlike the
+rich copy, the study seed rewrites its rows (new dates, answers cleared), so
+`seed_owner` runs it only while the account is not onboarded and completes
+onboarding straight after. No later sign-in, watcher pass, restart or
+`seed_local_rich --owner-…` run touches those rows again; only
+`python -m db.seed_local_study` does, when you ask. If the study seed fails,
+the account is not held back: the backend logs one warning naming the command
+to retry with, and the account is ready with the rich copy alone.
+
 The watcher idles on a 30-second poll (`LOCAL_SEED_WATCH_INTERVAL_SECONDS`; a
 value that is not a positive number falls back to 30 with a warning), but a
 sign-in does not wait for it: the post-sign-in routing and the hold screen ask
@@ -122,7 +185,7 @@ onboarded. A failed account is retried with a backoff (10 s, doubling, capped
 at 5 minutes); its error stays in the backend log and on the hold screen until
 a retry succeeds or you finish onboarding by hand.
 
-The seed adds the active rich user's five enrollments, graph and mastery
+The rich copy adds the active rich user's five enrollments, graph and mastery
 history, documents and private chunks, notes, quizzes, gradebook, study guides,
 chat sessions, flashcards, and rooms. It completes local onboarding; your
 Google identity, profile, approval, settings, and existing study data remain
@@ -132,11 +195,12 @@ submissions you made).
 
 Use **All semesters**, or choose Fall 2025, Spring 2026, or Fall 2026, to
 inspect the fixture's term-specific courses. Re-seeding inserts nothing and
-preserves edits to the sample data. Each developer gets independent sample
-records; the normal `rich-user-*` E2E fixtures keep their original IDs and
-ownership. Once seeded, the data is yours: drop a sample course and it stays
-dropped, because the watcher never re-runs a finished seed. (Re-running the
-manual command does re-add missing sample rows.)
+preserves edits to the sample data, the study dataset's included. Each
+developer gets independent sample records; the normal `rich-user-*` E2E
+fixtures keep their original IDs and ownership. Once seeded, the data is
+yours: drop a sample course and it stays dropped, because the watcher never
+re-runs a finished seed. (Re-running the manual command does re-add missing
+sample rows.)
 
 Known limits, by decision: when your account already has a row the seed would
 create under the same natural key (say, your own enrollment in a sample
@@ -161,6 +225,11 @@ virtual environment (after signing in once):
 python -m db.seed_local_rich --owner-email you@gmail.com
 ```
 
+On an account that is not onboarded yet it does exactly what the watcher does:
+both datasets, then onboarding. On an onboarded account it adds missing rich
+rows and nothing else; the study dataset there is its own command (next
+section).
+
 The command finds your existing account by decrypting local user emails.
 `--owner-user-id` also accepts your account ID (shown by `GET /api/auth/me` in
 your signed-in browser), as an alternative to email. Unknown or ambiguous
@@ -169,6 +238,106 @@ accounts fail before any data is written.
 The chunks use encrypted text and deterministic synthetic 768-dimensional
 embeddings: the fixtures exercise storage and retrieval without calling a
 model, and are not a semantic-search relevance benchmark.
+
+#### The study dataset: `seed_local_study`
+
+The rich dataset is fixed and small. The E2E journeys, the oracles and the
+integration suite assert on its `rich-*` accounts row for row, so its dates
+never move and it cannot grow: one study guide, six flashcards, three quizzes,
+every exam in the past. On its own the Study Guides home shows one card and
+the Study page shows zero minutes and no upcoming exam.
+
+So a developer's own account gets a second dataset on top: a term of study
+data dated relative to the day it is written. A new account gets it by itself
+at its first sign-in (above). Run the command from `backend/` when you want it
+again: on an account that signed in before this was automatic, after a failed
+first attempt, or to bring a stale account's dates back to today (the owner
+flag is required; it never defaults to a fixture account):
+
+```bash
+python -m db.seed_local_study --owner-email you@gmail.com   # or --owner-user-id
+```
+
+It writes into three of the sample classes, CS101, MATH210 and BIO110, about
+760 rows in all: 51 concepts (the rich copy's 13 among them, updated in place)
+and 59 prerequisites, 35 documents, 26 assignments, 41 quiz attempts with 193
+answers, 196 flashcards and 9 saved sets, 13 tutor sessions with 54 messages,
+13 study guides and 3 course outlines. Per class:
+
+- **Concept tree**: 16 to 18 concepts with prerequisites, spread over all four
+  mastery tiers, with a mastery event for every quiz and tutor session.
+- **Documents**: 11 or 12 lectures, slides, a reading, an assignment and a
+  syllabus, uploaded over the last eleven weeks, each with a summary, concept
+  notes and a few paragraphs of text.
+- **Coursework**: an exam already sat, one inside two weeks and a final inside
+  thirty days, with homework, quizzes and a project around them.
+- **Quiz**: 11 to 15 finished quizzes over the last month (38 in all), one
+  waiting to be resumed and two abandoned, with their per-answer responses
+  and a quiz digest (common mistakes, weak areas) per concept.
+- **Flashcards**: a deck per concept (196 cards in all), from never reviewed to
+  well worn, and three saved sets, some tied to an exam.
+- **Tutor**: four or five sessions. The Study page's daily minutes come from
+  these, the quizzes and the card reviews.
+- **Study guides**: four or five guides (thirteen in all). Between them they
+  cover every scope, goal and depth, three to eight sections, every block
+  type, saved and unsaved, read marks, answered checks and feedback. At least
+  two say "2 new lectures", one is still generating, one has a section that
+  failed and one is in the pre-redesign format. Each section is written at
+  the length its guide's depth asks the section writer for (90 to 160 words
+  of prose for a cram sheet, 280 to 450 for standard, 500 to 800 for a deep
+  review, and about half for a mastered concept), with a one or two sentence
+  Skim summary per passage. No two blocks stand back to back, in Read or in
+  Skim: each block follows a passage that explains it, and the check closes
+  the section after a passage that sums it up. CS101's "Pointers, recursion
+  and Big-O" (Midterm 2, standard) is the one to open to see the usual
+  output: it is seeded as just written, with every block type between its
+  passages.
+- **Course outline**: four units (the roadmap's columns), stored under the
+  outline's real evidence hash so the Study page does not regenerate it with
+  the model. Every exam and quiz is linked to concepts of its own: a quiz to
+  the two or three it names, a midterm to its units, the final to everything,
+  and a quiz or midterm the rich copy left on the same enrollment to its
+  concepts too. On the Study page the readiness band follows an exam's tab
+  only while the exam is ahead (today to thirty days out, where the outline
+  is served); the tab of an exam already sat reads as the whole class.
+
+The content lives in `backend/db/local_study_data/`, one module per class
+(`cs101.py`), with its concept tree and its study guides beside it
+(`cs101_concepts.py`, `cs101_guides.py`). A section is drafted once per
+concept, in layers: an opening every length has, the passages a standard
+guide adds and the ones a deep guide adds, so one draft serves guides of
+different depths. Blocks are layered the same way (a cram section keeps one
+block and its check). A
+guide is built the way a generation run leaves it: the server's own check
+decides whether each chart is plotted from data (two are, from numbers in
+the lecture they cite) and stamps the evidence line on a quiz mistake.
+
+Every row has a deterministic `study-…` id and every write is an upsert, so
+the command is safe to re-run: on a later day it moves the same rows back to
+"now", and it puts them back as seeded (a check you answered, a guide you
+regenerated). That reset is why only the command, never a sign-in, repeats
+it. A concept or prerequisite your account already has is updated
+under the id it has. Rows that are not the seed's are left alone, apart from
+the quiz digest and the course outline of the concepts and classes it fills.
+A sample class you dropped is skipped.
+
+Things worth knowing:
+
+- The guide left generating holds a fresh generation claim. Open it within
+  fifteen minutes to see the outline waiting; after that the reader resumes
+  it with the real model, as it does for any guide left that way.
+- Flashcards carry no due date: the app stores none
+  (`services/flashcards/cards.py`), so "review state" is the review count,
+  the last rating and when.
+- Lecture counts on your own account also include lectures the seed did not
+  write (the rich seed's `linear-algebra-notes.pdf`, your uploads).
+
+Local only, like the rich seed: it calls no model and nothing outside the
+local stack, and every encrypted column is written under the local
+`ENCRYPTION_KEY`. It is NOT part of the default `python -m db.seed_local_rich`
+dataset, `scripts/local-up.sh`, a reset or the E2E baseline: the `rich-*`
+accounts keep the fixed dataset. The one E2E journey that signs in a new
+Google account (`frontend/e2e/local-seed.spec.ts`) gets both, as you do.
 
 `scripts/local-db-reset.sh` still resets and seeds the standard demo dataset;
 `SEED_RICH=1` additionally seeds the normal rich accounts. A reset removes your
@@ -187,9 +356,11 @@ curl -si -X POST http://localhost:5000/api/auth/test-login \
   -d '{"user_id": "seed-user-demo"}'
 ```
 
-It sets the `sapling_session` cookie (same flags as the real session) **and**
-returns the token in the JSON body, so a Playwright `globalSetup` can inject it
-with `context.addCookies([{ name: 'sapling_session', value: token, url: … }])`
+It sets the session cookie (same flags as the real session; `sapling_session`
+on this http stack, `__Host-sapling_session` on an https one — the body's
+`cookie_name` says which) **and** returns the token in the JSON body, so a
+Playwright `globalSetup` can inject it with
+`context.addCookies([{ name: body.cookie_name, value: token, url: … }])`
 and pytest can just keep the `TestClient` cookie jar. Optional `ttl` (seconds,
 clamped to `[30, 86400]`) overrides the 1-hour default.
 
@@ -291,7 +462,7 @@ npm run build:test && npm run start:test      # Next production server on :3000
 What the profile bakes in (build-time, inlined by `next build`):
 
 - `NEXT_PUBLIC_API_URL=` **empty** — every client fetch is same-origin `/api/...`,
-  so the `sapling_session` cookie always rides along (a cross-origin value drops
+  so the session cookie always rides along (a cross-origin value drops
   it → 401). Explicitly empty matters: some callers fall back to
   `http://localhost:5000` when the var is *unset*.
 - `BACKEND_URL=http://localhost:5000` — the `/api/:path*` rewrite proxies to the
@@ -330,10 +501,11 @@ Everything above in one command. From the repo root:
 ```bash
 make e2e         # a whole cycle in a FREE slot: up → Playwright + oracles → down
 scripts/e2e-cycle.sh -- bash -c 'cd frontend && npx playwright test e2e/quiz*.spec.ts'
-make e2e-up      # just boot slot E2E_SLOT (default 1): supabase start → migrate →
-                 # buckets → NOTIFY pgrst → seed (demo + rich) → uvicorn →
-                 # `npm run build:test && npm run start:test`
-make e2e-down    # stop uvicorn + next (tracked PIDs), then the slot's Supabase
+make e2e-up      # hold a stack: a background cycle in a free slot (E2E_SLOT picks
+                 # one) runs supabase start → migrate → buckets → NOTIFY pgrst →
+                 # seed (demo + rich) → uvicorn → `npm run build:test && npm run start:test`
+make e2e-down    # stop this checkout's held cycle; it stops uvicorn + next, then
+                 # the slot's Supabase, and drops the slot's database
 ```
 
 ### E2E slots — never the dev app's ports
@@ -353,24 +525,39 @@ numbered **slot** (`scripts/lib/e2e-slot.sh`):
 - A slot is its own Supabase project (a generated copy of `supabase/config.toml`
   under `.e2e/supabase-slot-N/`, every port shifted by +100·N) with its own
   containers and a **throwaway database**: `e2e-down` drops it, so every run
-  migrates and seeds from empty (`E2E_KEEP_DB=1` keeps it for a quick re-run).
+  migrates and seeds from empty.
   It skips the containers tests never use (Studio, mail, logging, edge
   functions, pooler; override with `E2E_SUPABASE_EXCLUDE`).
 - `scripts/e2e-cycle.sh` claims the first free slot's lock
   (`/tmp/claude-<uid>/sapling-e2e-slot-N.lock`) for the whole cycle, so up to
-  three runs go side by side; when all are busy it waits. `--slot N` asks for one.
-- After a bare `make e2e-up`, `.e2e/stack.json` tells the Playwright harness
-  which slot to hit, and `source .e2e/env.sh` sets up a shell for the oracles.
-  A bare `e2e-up` is refused on a slot a cycle holds.
+  three runs go side by side; when all are busy it waits. `--slot N` (or
+  `E2E_SLOT=N`) asks for one.
+- **A cycle owns every stack.** `make e2e-up` is a cycle held in the
+  background (`scripts/e2e-cycle.sh --background`; log `.e2e/cycle.log`), and
+  `make e2e-down` stops it (`--stop`), so the stack is torn down by the process
+  that holds its slot — never by a command that guessed which slot was its.
+  While it is up, `.e2e/stack.json` tells the Playwright harness which slot to
+  hit, and `source .e2e/env.sh` sets up a shell for the oracles.
+  `scripts/e2e-up.sh` / `e2e-down.sh` refuse to run outside a cycle (or CI).
+  If a held cycle is killed without its teardown (SIGKILL, OOM), `make e2e-down`
+  (or that checkout's next cycle) stops the stack it left behind
+  (`.e2e/booted` names the slot); until then, cycles from other worktrees skip
+  that slot, whose lock is free but whose ports are still taken.
+- A foreground cycle's command keeps your terminal: `scripts/e2e-cycle.sh -- bash`
+  gives you a shell inside a slot, torn down when you exit it.
 - Slot 0 is refused unless `CI=true`; `e2e.yml` runs it on pushes to main only
   (CI cost) — a PR's browser lane runs locally in a slot before merge.
 - **One cycle per checkout.** `.e2e/` (PIDs, logs, manifest) and
   `frontend/.next` belong to the checkout, so a second cycle in the same one is
   refused (`.e2e/cycle.lock`). Parallel runs come from separate worktrees.
-- **Looking at a branch by hand:** `E2E_FRONTEND=dev scripts/e2e-cycle.sh --slot 3 -- sleep infinity`
+- **Looking at a branch by hand:** `E2E_FRONTEND=dev E2E_SLOT=3 make e2e-up`
   boots it with `next dev` (animations on — the test-profile build turns them
   off) on :3103; sign in through `POST /api/auth/test-login` (see above) with a
-  seeded `rich-*` user. Stop the command to tear it down.
+  seeded `rich-*` user, and `make e2e-down` when done. **Open it at
+  `http://127.0.0.1:3103`, not `localhost`:** cookies ignore the port, so a
+  slot's `sapling_session` on `localhost` overwrites your dev app's sign-in on
+  `localhost:3000` (and the other way round). `127.0.0.1` is a separate host,
+  so the two sessions never touch.
 
 `e2e-up` health-checks all four services (Postgres, PostgREST, backend
 `/api/health`, frontend `/`) and fails loudly if one doesn't come up — with a

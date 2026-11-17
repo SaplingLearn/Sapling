@@ -5,10 +5,13 @@ Storage service for avatar and cosmetic asset uploads via Supabase Storage.
 import logging
 import re
 import struct
+import uuid
 
 from fastapi import HTTPException
 from config import SUPABASE_URL, SUPABASE_SERVICE_KEY, STORAGE_BUCKET, MAX_AVATAR_SIZE
 import httpx
+
+from services.upload_validation import IMAGE_EXTENSION, sniff_image
 
 logger = logging.getLogger(__name__)
 
@@ -115,15 +118,84 @@ def _is_duplicate_bucket(resp: httpx.Response) -> bool:
     return str(body.get("statusCode")) == "409" or body.get("error") == "Duplicate"
 
 
-def _validate_upload(file_bytes: bytes, content_type: str):
+_UNSUPPORTED_IMAGE = "Unsupported image type. Allowed: jpeg, png, webp, gif"
+
+
+def _validate_upload(file_bytes: bytes, content_type: str) -> str:
+    """415 / 413 on an upload the avatar and cosmetic buckets refuse; else the
+    image type the bytes' signature names.
+
+    The client's ``content_type`` must be an allowed image AND the bytes must
+    be one: a declared type is free text, so an HTML or SVG file labelled
+    image/png (served back from a public bucket under that label) is refused.
+    The returned type, not the declared one, is what gets stored."""
     if content_type not in ALLOWED_CONTENT_TYPES:
-        raise HTTPException(status_code=415, detail="Unsupported image type. Allowed: jpeg, png, webp, gif")
+        raise HTTPException(status_code=415, detail=_UNSUPPORTED_IMAGE)
     if len(file_bytes) > MAX_AVATAR_SIZE:
         raise HTTPException(status_code=413, detail="File too large. Maximum size is 5 MB")
+    sniffed = sniff_image(file_bytes)
+    if sniffed not in ALLOWED_CONTENT_TYPES:
+        raise HTTPException(status_code=415, detail=_UNSUPPORTED_IMAGE)
+    return sniffed
+
+
+# #231: issue-report screenshots. Private bucket, service-role write, and the
+# caller stores the returned PATH (never a public URL).
+ISSUE_BUCKET = "issues-media-files"
+SCREENSHOT_UPLOAD_FAILED_DETAIL = "Couldn't upload the screenshot. Please try again."
+
+
+async def upload_issue_screenshot(user_id: str, file_bytes: bytes, content_type: str) -> str:
+    """Upload one issue-report screenshot and return its storage path.
+
+    Async on purpose: the route is an ``async def`` handler, and the old inline
+    ``httpx.put`` blocked the event loop (every other request on the worker) for
+    the whole upload. The caller validates type and size first. The extension
+    comes from the validated content type, never from the client's filename.
+    """
+    # Imported here, not at module top, so the db layer's env read stays where
+    # it was for the existing sync helpers above.
+    from db.connection import SUPABASE_KEY, SUPABASE_URL as DB_SUPABASE_URL
+
+    path = f"{user_id}/{uuid.uuid4()}.{IMAGE_EXTENSION[content_type]}"
+    url = f"{DB_SUPABASE_URL}/storage/v1/object/{ISSUE_BUCKET}/{path}"
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.put(
+                url,
+                content=file_bytes,
+                headers={
+                    "apikey": SUPABASE_KEY,
+                    "Authorization": f"Bearer {SUPABASE_KEY}",
+                    "Content-Type": content_type,
+                },
+            )
+    except httpx.HTTPError as exc:
+        # A timeout or connect failure is an upstream failure, not a bug in
+        # the request: the same 502 as a rejected upload, never a raw 500.
+        logger.warning(
+            "upload_issue_screenshot: Supabase storage unreachable user=%s error=%s",
+            user_id, type(exc).__name__,
+        )
+        raise HTTPException(status_code=502, detail=SCREENSHOT_UPLOAD_FAILED_DETAIL) from None
+    if resp.status_code not in (200, 201):
+        # The upstream status and body go to the log only; the client gets
+        # generic text (never the URL, headers or Supabase's error body).
+        body_text = (resp.text or "").strip()[:500]
+        logger.warning(
+            "upload_issue_screenshot: Supabase storage rejected upload "
+            "user=%s status=%d body=%s",
+            user_id, resp.status_code, body_text,
+        )
+        raise HTTPException(
+            status_code=502,
+            detail=SCREENSHOT_UPLOAD_FAILED_DETAIL,
+        )
+    return path
 
 
 def upload_avatar(user_id: str, file_bytes: bytes, content_type: str) -> str:
-    _validate_upload(file_bytes, content_type)
+    content_type = _validate_upload(file_bytes, content_type)
     ext = _EXT_MAP.get(content_type, "png")
     path = f"avatars/{user_id}/avatar.{ext}"
     url = f"{_storage_base}/{STORAGE_BUCKET}/{path}"
@@ -156,7 +228,7 @@ def upload_avatar(user_id: str, file_bytes: bytes, content_type: str) -> str:
 
 
 def upload_cosmetic_asset(cosmetic_id: str, file_bytes: bytes, content_type: str) -> str:
-    _validate_upload(file_bytes, content_type)
+    content_type = _validate_upload(file_bytes, content_type)
     ext = _EXT_MAP.get(content_type, "png")
     path = f"cosmetics/{cosmetic_id}.{ext}"
     url = f"{_storage_base}/{STORAGE_BUCKET}/{path}"
@@ -187,6 +259,29 @@ def upload_cosmetic_asset(cosmetic_id: str, file_bytes: bytes, content_type: str
 def delete_asset(path: str) -> None:
     url = f"{_storage_base}/{STORAGE_BUCKET}/{path}"
     httpx.delete(url, headers=_headers)
+
+
+def avatar_paths(user_id: str) -> list[str]:
+    """Every path `upload_avatar` can have written for `user_id` (one per
+    accepted image type; re-uploading in another type leaves the old one)."""
+    return [f"avatars/{user_id}/avatar.{ext}" for ext in dict.fromkeys(_EXT_MAP.values())]
+
+
+def delete_objects(bucket: str, paths: list[str]) -> None:
+    """Delete `paths` from `bucket` in one call (Storage's bulk delete).
+
+    A path that does not exist is not an error (the call is idempotent).
+    Raises RuntimeError on any non-2xx answer, so a caller that must not
+    forget an object (the account purge) can retry later. The message names
+    the status only: never the URL or the headers (the service-role key)."""
+    if not paths:
+        return
+    resp = httpx.request(
+        "DELETE", f"{_storage_base}/{bucket}",
+        json={"prefixes": list(paths)}, headers=_headers, timeout=30.0,
+    )
+    if resp.status_code not in (200, 204):
+        raise RuntimeError(f"storage delete in {bucket} failed (status {resp.status_code})")
 
 
 # ── Achievement icons ────────────────────────────────────────────────────────

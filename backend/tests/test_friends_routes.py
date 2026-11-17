@@ -12,6 +12,7 @@ that a rejection from it actually propagates rather than being swallowed.
 """
 from unittest.mock import MagicMock, patch
 
+import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
@@ -23,6 +24,17 @@ client = TestClient(app)
 
 def _tables(handles):
     return lambda name: handles[name]
+
+
+@pytest.fixture(autouse=True)
+def _every_recipient_is_live():
+    """send_friend_request first checks the recipient names a live account
+    (services/profiles.live_user_ids, its own `users` read); these tests are
+    about the request rows, so every id is live. A dead or unknown recipient
+    is tests/test_id_bounds_and_friend_fk.py's. Tests that patch
+    live_user_ids themselves override this."""
+    with patch_social("live_user_ids", side_effect=lambda ids: set(ids)):
+        yield
 
 
 class TestSendRequest:

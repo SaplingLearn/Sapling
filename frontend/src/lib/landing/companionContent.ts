@@ -320,9 +320,9 @@ export const WIKI_CLASS_TERMS = [
 ] as const;
 
 export const WIKI_ONBOARDING_SPECS = [
-  { label:'Sign-in', value:'Google, domain-gated', note:'Gated to a school email domain, bu.edu by default.' },
-  { label:'Asked once', value:'Year, majors, learning style', note:'Learning style is stored, but it does not shape the tutor much yet.' },
-  { label:'Courses', value:'From the catalog', note:'Searched by name or code, then enrolled into the current term.' },
+  { label:'Sign-in', value:'Google', note:'Any Google account. New accounts join a waitlist until they are let in. You sign in first; setup comes after.' },
+  { label:'Asked once', value:'Name, birthday, year', note:'Your birthday checks that you are 13 or older and stays in your browser. Only whether you are under 18 is sent, so your profile can start private with class sharing off.' },
+  { label:'Courses', value:'From the catalog', note:'Searched by name or code, then enrolled into this term. If yours are not listed, you can add them later.' },
 ] as const;
 
 export const WIKI_ACHIEVEMENT_TERMS = [
@@ -343,8 +343,8 @@ export const WIKI_DATA_FACTS = [
     detail:'Text is decrypted server-side, in flight, only to build the prompt for a study action you asked for.' },
   { fact:'Deleting a document removes it from your library, but the concepts it planted stay on your tree.',
     detail:'That is on purpose: they are yours now, and you may have studied them since. Remove one from the tree itself, where a node can be deleted directly.' },
-  { fact:'You can export everything Sapling holds on you, or delete your account outright.',
-    detail:'Both live in your profile settings.' },
+  { fact:'You can export everything Sapling holds on you, or delete your account.',
+    detail:'Both live in Settings → Data. A deleted account is hidden at once and its personal data is erased 30 days later.' },
 ] as const;
 
 /**

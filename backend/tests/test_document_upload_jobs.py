@@ -26,11 +26,16 @@ from services import document_indexing as di
 from services import document_jobs as dj
 from services import jobs
 from services.agent_events import SaplingEvent
-from services.encryption import decrypt_bytes, decrypt_json, encrypt_bytes, encrypt_json
+from services.encryption import bind, decrypt_bytes, decrypt_json, encrypt_bytes, encrypt_json
 from tests.split_patches import patch_documents
 
 
 # ── helpers ─────────────────────────────────────────────────────────────────
+
+
+def _result(row: dict, upload_id: str = "up-1"):
+    """The upload's stored outcome, opened in its own cell (AAD, finding M13)."""
+    return decrypt_json(row["result"], bind=bind("document_uploads", "result", upload_id))
 
 
 def _run(coro):
@@ -176,15 +181,19 @@ _STAGE_KW = dict(user_id="u1", offering_id="off-1", course_id="c-1", request_id=
 def test_stage_upload_inserts_an_encrypted_row_keyed_on_the_request():
     t = MagicMock()
     t.return_value.select.return_value = []
-    t.return_value.insert.return_value = [{"id": "up-1"}]
+    t.return_value.insert.side_effect = lambda row: [{"id": row["id"]}]
     with patch.object(dj, "table", t):
         staged = dj.stage_upload(**_STAGE_KW)
-    assert staged == dj.Staged(id="up-1", fresh=True)
     t.assert_any_call("document_uploads")
     row = t.return_value.insert.call_args.args[0]
+    # The id is minted before the insert: file_data is sealed for that row.
+    assert staged == dj.Staged(id=row["id"], fresh=True)
     assert row["user_id"] == "u1" and row["request_id"] == "rid-1"
     assert row["stage"] == "queued" and row["file_size"] == len(b"%PDF-1.4 x")
-    assert decrypt_bytes(row["file_data"]) == b"%PDF-1.4 x"
+    assert decrypt_bytes(row["file_data"],
+                         bind=bind("document_uploads", "file_data", row["id"])) == b"%PDF-1.4 x"
+    with pytest.raises(Exception):  # another upload's row cannot open it
+        decrypt_bytes(row["file_data"], bind=bind("document_uploads", "file_data", "up-other"))
     assert row["offering_id"] == "off-1" and row["course_id"] == "c-1"
 
 
@@ -460,8 +469,7 @@ def _process(row, *, extract=None, persist=None, existing=None, agents=None, job
     persist = persist or MagicMock(return_value=("doc-1", {"id": "doc-1"}))
     patches = list(agents if agents is not None else _agent_patches())
     post = {name: MagicMock() for name in (
-        "_invalidate_study_guide_cache", "_refresh_course_context",
-        "_check_upload_achievements")}
+        "_refresh_course_context", "_check_upload_achievements")}
     sched = MagicMock()
     with patch.object(dj, "table", uploads), \
          patch_documents("extract_text_from_file", extract), \
@@ -470,7 +478,6 @@ def _process(row, *, extract=None, persist=None, existing=None, agents=None, job
                (lambda *a: None)), \
          patch_documents("_save_orchestrator_syllabus"), \
          patch_documents("_graph_backstop"), \
-         patch_documents("_invalidate_study_guide_cache", post["_invalidate_study_guide_cache"]), \
          patch_documents("_refresh_course_context", post["_refresh_course_context"]), \
          patch_documents("_check_upload_achievements", post["_check_upload_achievements"]), \
          patch("services.document_indexing.schedule_document_index", sched):
@@ -504,7 +511,7 @@ def test_process_job_runs_the_pipeline_and_records_every_stage():
     assert kw["extracted_text"] == _text() and kw["course_id"] == "c-1"
     final = out.uploads.row
     assert final["document_id"] == "doc-1" and final["file_data"] is None
-    stored = decrypt_json(final["result"])
+    stored = _result(final)
     assert stored["result"]["classification"]["category"] == "lecture_notes"
     assert stored["categories"] == []
     owner = final["progress"].pop("owner")
@@ -516,7 +523,6 @@ def test_process_job_runs_the_pipeline_and_records_every_stage():
         assert filters["progress->>owner"] == f"eq.{owner}"
         assert filters["stage"].startswith("eq.") and filters["stage"] != "eq.done"
     # The streaming route's post-roll, uploader threaded through.
-    out.post["_invalidate_study_guide_cache"].assert_called_once_with("u1", "off-1")
     out.post["_refresh_course_context"].assert_called_once_with("off-1", "u1")
     out.post["_check_upload_achievements"].assert_called_once_with("u1")
     out.sched.assert_called_once_with("doc-1", "u1")
@@ -657,7 +663,6 @@ def test_flag_off_sync_is_unchanged_and_never_touches_the_queue():
          patch_documents("process_document", AsyncMock(return_value=result)), \
          patch_documents("_persist_document", return_value=("doc-1", {"id": "doc-1"})), \
          patch_documents("refresh_course_context"), \
-         patch_documents("_invalidate_study_guide_cache"), \
          patch_documents("_check_upload_achievements"), \
          patch_documents("schedule_document_index") as sched:
         r = _client().post(
@@ -802,7 +807,6 @@ def test_flag_on_sync_runs_inline_when_the_queue_cannot_take_it():
                AsyncMock(return_value=_make_orchestrator_result())), \
          patch_documents("_persist_document", return_value=("doc-1", {"id": "doc-1"})), \
          patch_documents("refresh_course_context"), \
-         patch_documents("_invalidate_study_guide_cache"), \
          patch_documents("_check_upload_achievements"), \
          patch_documents("schedule_document_index"):
         r = _sync_post(_client())
@@ -1170,7 +1174,6 @@ def test_flag_on_sync_records_the_inline_success():
                AsyncMock(return_value=_make_orchestrator_result())), \
          patch_documents("_persist_document", return_value=("doc-1", {"id": "doc-1"})), \
          patch_documents("refresh_course_context"), \
-         patch_documents("_invalidate_study_guide_cache"), \
          patch_documents("_check_upload_achievements"), \
          patch_documents("schedule_document_index"):
         r = _sync_post(_client())
@@ -1327,12 +1330,13 @@ def test_rerun_adoption_restores_the_stored_result_categories_and_quiet_progress
               "categories": cats}
     saved = {"id": "doc-old", "category": "syllabus", "summary": "s",
              "concept_notes": [{"name": "A"}, {"name": "B"}]}
-    row = _staged_row(stage="saving", result=encrypt_json(stored),
+    row = _staged_row(stage="saving", result=encrypt_json(
+                          stored, bind=bind("document_uploads", "result", "up-1")),
                       progress={"owner": "w1#1"}, updated_at=_ago(dj._LEASE_SECONDS + 5))
     out = _process(row, existing=lambda *a: saved)
     final = out.uploads.row
     assert final["stage"] == "done" and final["document_id"] == "doc-old"
-    assert decrypt_json(final["result"]) == stored
+    assert _result(final) == stored
     progress = {k: v for k, v in final["progress"].items() if k != "owner"}
     assert progress == {"adopted": True, "category": "syllabus", "concept_count": 2}
     out.extract.assert_not_called()
@@ -1353,7 +1357,7 @@ def test_rerun_adoption_without_a_stored_outcome_replays_the_saved_row():
     saved = {"id": "doc-old", "category": "other", "summary": "s", "concept_notes": []}
     row = _staged_row(stage="saving", updated_at=_ago(dj._LEASE_SECONDS + 5))
     out = _process(row, existing=lambda *a: saved)
-    stored = decrypt_json(out.uploads.row["result"])
+    stored = _result(out.uploads.row)
     assert stored["categories"] == [] and stored["result"]["id"] == "doc-old"
     assert stored["result"]["replayed"] is True
 
@@ -1376,7 +1380,6 @@ def test_the_pipeline_stores_its_outcome_before_the_insert():
          patch_documents("_save_orchestrator_syllabus"), \
          patch_documents("_graph_backstop"), \
          patch("services.document_indexing.schedule_document_index"), \
-         patch_documents("_invalidate_study_guide_cache"), \
          patch_documents("_refresh_course_context"), \
          patch_documents("_check_upload_achievements"):
         for p in patches:
@@ -1387,7 +1390,7 @@ def test_the_pipeline_stores_its_outcome_before_the_insert():
             for p in patches:
                 p.stop()
     assert seen["row"]["stage"] == "saving"
-    assert decrypt_json(seen["row"]["result"])["categories"] == []
+    assert _result(seen["row"])["categories"] == []
 
 
 # ── #116 review: dead-letter detection without the recorded job id ─────────
@@ -1431,7 +1434,7 @@ def test_decrypt_document_row_is_shared_by_the_replay_and_the_queue():
            "extracted_text": "secret"}
     out = decrypt_document_row(row)
     assert out == {"id": "d", "summary": "plain", "concept_notes": [{"name": "A"}]}
-    assert decrypt_document_row({"concept_notes": "garbage!"})["concept_notes"] == []
+    assert decrypt_document_row({"id": "d", "concept_notes": "garbage!"})["concept_notes"] == []
     with patch_documents("table") as t:
         t.return_value.select.return_value = [row]
         from routes.documents import _existing_doc_by_request_id

@@ -13,7 +13,7 @@ class TestPaginateUsers:
              patch("services.users_search.get_display_names",
                    return_value={"u1": "Decrypted Name"}), \
              patch("services.users_search.decrypt_if_present",
-                   side_effect=lambda v: f"d:{v}" if v else v):
+                   side_effect=lambda v, **_: f"d:{v}" if v else v):
             users_tbl = MagicMock()
             users_tbl.select_with_count.return_value = (users_rows, 137)
             roles_tbl = MagicMock()
@@ -48,7 +48,7 @@ class TestPaginateUsers:
         with patch("services.users_search.table") as t, \
              patch("services.users_search.get_display_names", return_value=name_map), \
              patch("services.users_search.decrypt_if_present",
-                   side_effect=lambda v: email_map.get(v, v)):
+                   side_effect=lambda v, **_: email_map.get(v, v)):
             users_tbl = MagicMock()
             users_tbl.select.return_value = rows
             roles_tbl = MagicMock()
@@ -83,16 +83,17 @@ class TestPaginateUsers:
         # PostgREST returns an embedded `roles` value that is None when the join
         # target was deleted but the user_roles row remained.
         join_rows = [
-            {"roles": {"id": "r1", "name": "Admin", "slug": "admin", "color": "#f00",
+            {"user_id": "u1",
+             "roles": {"id": "r1", "name": "Admin", "slug": "admin", "color": "#f00",
                        "icon": None, "description": None, "is_staff_assigned": True,
                        "is_earnable": False, "display_priority": 100}},
-            {"roles": None},
+            {"user_id": "u1", "roles": None},
             {},
         ]
 
         with patch("services.users_search.table") as t, \
              patch("services.users_search.get_display_names", return_value={"u1": "Admin User"}), \
-             patch("services.users_search.decrypt_if_present", side_effect=lambda v: v):
+             patch("services.users_search.decrypt_if_present", side_effect=lambda v, **_: v):
             users_tbl = MagicMock()
             users_tbl.select_with_count.return_value = (rows, 1)
             user_roles_tbl = MagicMock()
@@ -111,6 +112,46 @@ class TestPaginateUsers:
             "icon": None, "description": None, "is_staff_assigned": True,
             "is_earnable": False, "display_priority": 100,
         }]
+
+
+class TestRolesAreReadInOneQueryPerPage:
+    """`_attach_roles` used to be `for user in users: select(... eq.id)` — one
+    PostgREST round-trip per row, in series, with page_size up to 200."""
+
+    def _run(self, n_users: int):
+        rows = [{"id": f"u{i}", "email": "E", "is_approved": True,
+                 "created_at": "x", "last_sign_in_at": None} for i in range(n_users)]
+        with patch("services.users_search.table") as t,              patch("services.users_search.get_display_names",
+                   return_value={r["id"]: "N" for r in rows}),              patch("services.users_search.decrypt_if_present", side_effect=lambda v, **_: v):
+            users_tbl = MagicMock()
+            users_tbl.select_with_count.return_value = (rows, n_users)
+            user_roles_tbl = MagicMock()
+            user_roles_tbl.select.return_value = [
+                {"user_id": "u0", "roles": {"id": "r1", "slug": "admin"}},
+            ]
+            t.side_effect = lambda name: users_tbl if name == "users" else user_roles_tbl
+            result = paginate_users(q=None, page=1, page_size=200)
+        return result, user_roles_tbl
+
+    def test_one_query_for_a_whole_page(self):
+        result, roles_tbl = self._run(40)
+        assert roles_tbl.select.call_count == 1, "should batch, not query per user"
+        # The batched row still lands on the right user, and only that one.
+        assert result["users"][0]["roles"] == [{"id": "r1", "slug": "admin"}]
+        assert all(u["roles"] == [] for u in result["users"][1:])
+
+    def test_chunks_rather_than_one_huge_in_filter(self):
+        """A 200-row page must not build one 200-id query string."""
+        _, roles_tbl = self._run(200)
+        assert roles_tbl.select.call_count == 4  # 200 / _IN_CHUNK(50)
+        for call in roles_tbl.select.call_args_list:
+            ids = call.kwargs["filters"]["user_id"]
+            assert ids.startswith("in.(")
+            assert len(ids.split(",")) <= 50
+
+    def test_no_users_means_no_query_at_all(self):
+        _, roles_tbl = self._run(0)
+        assert roles_tbl.select.call_count == 0
 
 
 def _foreign_ciphertext(plaintext: str) -> str:

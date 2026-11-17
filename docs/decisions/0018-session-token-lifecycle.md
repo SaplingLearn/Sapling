@@ -128,3 +128,19 @@ No backend session-lifetime bug to fix. Changes made under #168:
 - Sliding refresh: the 30-day token is fixed-window, not sliding. If a sliding
   session is desired, the BFF should re-mint on activity. Frontend scope.
 - Fix `page.tsx:619` (#339) to route onboarding through `lib/api.ts` `fetchJSON`.
+
+## Update (2026-11-16, sec2 auth/session hardening)
+
+Parts of the flow above changed; SECURITY.md §1.1–1.6 is current:
+
+- The session cookie is host-only `__Host-sapling_session` over https (no
+  `COOKIE_DOMAIN`), plain `sapling_session` only over http (local, E2E). A
+  pre-change session in the legacy `Domain=.saplinglearn.com` cookie is read
+  until it expires (at most 7 days), only if it lacks the new `cookie: "host"`
+  claim.
+- The OAuth handoff carries a `jti` and a browser binding `bh`; the BFF
+  exchanges it through `POST /api/auth/handoff/exchange`, once, and only with
+  the sign-in nonce cookie `/auth/start` set in the same browser. Untyped
+  "legacy" handoffs are no longer exchanged.
+- The backend refuses a cookie-carrying unsafe request whose `Origin` is not
+  on the allowlist (`services/csrf_origin.py`).

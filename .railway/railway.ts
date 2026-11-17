@@ -75,6 +75,13 @@ const BOOT_VARIABLES = [
 ];
 
 const HANDLER_VARIABLES = [
+  // services/encryption.py (finding M13): the worker seals and opens
+  // document_uploads / documents / course_chunks, so it must write and refuse
+  // the same envelope as the API. Unset = off / allow; until the API sets them
+  // (the AAD rollout), list them in NOT_ON_API.
+  "ENCRYPTION_WRITE_V2",
+  "ENCRYPTION_LEGACY_READS",
+  "ENCRYPTION_STRICT_TABLES",
   // services/extraction_service.py + extraction_backends/ (document.process)
   "OCR_ENGINE",
   "GEMINI_VISION_OCR_ENABLED",
@@ -121,6 +128,9 @@ const FLAG_KILL_SWITCHES = [
   "llm_fallback",
   "jobs_queue",
   "db_user_scope",
+  // Kept only while realtime_rls stays registered for old frontend bundles
+  // (backend/services/feature_flags.py); never set it to off. Deleted with
+  // the flag in the follow-up.
   "realtime_rls",
   "llm_budget",
   "llm_outage_drill",
@@ -128,6 +138,20 @@ const FLAG_KILL_SWITCHES = [
   "stateless_rate_limit",
   "stateless_locks",
   "stateless_tutor_sessions",
+  // services/spend_alerts.py: the API's hourly admin alert emails. No job
+  // reads it; shared so the switch reads the same on every service.
+  "spend_alerts",
+  "account_purge",
+  // services/account_purge_sweeper.py: the daily leftover-credential sweep.
+  // No job reads it; shared so the switch reads the same on every service.
+  "credential_sweep",
+  // docs/safety/crisis-support.md: the crisis-support screen on student AI
+  // routes. No job reads it; shared so the switch reads the same everywhere.
+  "crisis_support",
+  // docs/design/open-access-gate.md: the waitlist requirement at sign-in and
+  // in the auth guard. No job reads it; shared so the switch reads the same
+  // everywhere.
+  "open_access",
 ].map((key) => `SAPLING_FLAG_${key.toUpperCase()}`);
 
 /** Per-slot model overrides (agents/_providers.py: `SAPLING_MODEL_<TASK>`,

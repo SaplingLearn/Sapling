@@ -41,6 +41,12 @@ on:
       - "backend/db/migrations/**"
   workflow_dispatch:
 
+# The GITHUB_TOKEN is read-only. The privilege that matters here is the
+# staging DB URL (full DDL rights on staging), which is why the job runs in
+# the `staging` environment below.
+permissions:
+  contents: read
+
 concurrency:
   # Never let two runs apply DDL to the same database at once.
   group: migrate-staging
@@ -58,10 +64,16 @@ jobs:
     # signal to catch it. That is exactly the immutability rule CLAUDE.md
     # states — migrations are immutable once applied.
     if: github.ref == 'refs/heads/main'
+    # STAGING_SUPABASE_DB_URL is an ENVIRONMENT secret of `staging`, whose
+    # deployment-branch rule admits `main` only. As a repository secret it was
+    # readable by any workflow on any branch, so one pushed branch with a
+    # modified workflow could dump it. The `if:` above protects this workflow;
+    # the environment protects the secret from every other one.
+    environment: staging
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
 
@@ -76,7 +88,7 @@ jobs:
           SUPABASE_DB_URL: ${{ secrets.STAGING_SUPABASE_DB_URL }}
         run: |
           if [ -z "${SUPABASE_DB_URL}" ]; then
-            echo "::notice::STAGING_SUPABASE_DB_URL is not set — skipping. Add the secret to enable: the SESSION-mode pooler URI on port 5432, user postgres.<ref>. Take the host from the dashboard's Connect panel — projects are assigned to NUMBERED pooler clusters (aws-0-, aws-1-, ...) and the number is not derivable from the region, so do not assume aws-0. 'python scripts/pooler_url.py .env.staging <cluster-prefix> --raw' builds the URI from the env file. Not the direct db.<ref>.supabase.co string — that is IPv6-only and unreachable from GitHub runners — and not port 6543, which is transaction mode."
+            echo "::notice::STAGING_SUPABASE_DB_URL is not set in the 'staging' environment (Settings → Environments → staging → Environment secrets) — skipping. Add the secret to enable: the SESSION-mode pooler URI on port 5432, user postgres.<ref>. Take the host from the dashboard's Connect panel — projects are assigned to NUMBERED pooler clusters (aws-0-, aws-1-, ...) and the number is not derivable from the region, so do not assume aws-0. 'python scripts/pooler_url.py .env.staging <cluster-prefix> --raw' builds the URI from the env file. Not the direct db.<ref>.supabase.co string — that is IPv6-only and unreachable from GitHub runners — and not port 6543, which is transaction mode."
             echo "skip=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi

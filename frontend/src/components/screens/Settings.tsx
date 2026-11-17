@@ -35,6 +35,13 @@ import {
   subscribeAnalytics,
   type AnalyticsState,
 } from "@/lib/analytics";
+import {
+  usernameBorderColor,
+  usernameMessageColor,
+  usernameMessageText,
+  type UsernameState,
+} from "./settingsUsername";
+import { humanizeError } from "@/lib/errorMessage";
 
 type Tab = "profile" | "cosmetics" | "preferences" | "notifications" | "data";
 
@@ -97,17 +104,9 @@ function Toggle({
   );
 }
 
-// `checked` = the exact (normalised) draft this verdict is about (#769), so
-// save-on-blur can refuse a verdict that belongs to an earlier draft.
-type UsernameState = {
-  status: "idle" | "checking" | "available" | "taken" | "invalid";
-  message?: string;
-  checked?: string;
-};
-
 export function Settings() {
   const toast = useToast();
-  const { userId, userName, avatarUrl, userReady, signOut, refreshProfile, setAvatarUrl } = useUser();
+  const { userId, userName, avatarUrl, userReady, signOut, setAvatarUrl } = useUser();
   const [tab, setTab] = React.useState<Tab>("profile");
   const [settings, setSettings] = React.useState<UserSettings | null>(null);
   const [layoutPref, setLayoutPref] = useLayoutPref();
@@ -276,7 +275,7 @@ export function Settings() {
       // Revert to whatever the user had before so the optimistic
       // paint doesn't leave a ghost of a file that never landed.
       setAvatarUrl(previousAvatar);
-      toast.error(`Upload failed: ${String(err)}`);
+      toast.error(humanizeError(err, "Couldn't upload that image. Try again."));
     } finally {
       // Always free the blob URL — whether we swapped to the
       // server URL or reverted, the blob is no longer referenced.
@@ -295,7 +294,7 @@ export function Settings() {
       setSettings(prev => prev ? { ...prev, ...updates } : prev);
       Object.assign(confirmedRef.current, updates);
     } catch (err) {
-      toast.error(`Couldn't save: ${String(err)}`);
+      toast.error(humanizeError(err, "Couldn't save your settings. Try again."));
     } finally {
       trackSaving(keys, -1);
     }
@@ -337,20 +336,24 @@ export function Settings() {
       setPreview(p);
       setPreviewOpen(true);
     } catch (err) {
-      toast.error(`Couldn't load preview: ${String(err)}`);
+      toast.error(humanizeError(err, "Couldn't load that preview."));
     }
   };
 
   const handleDelete = async () => {
     if (!userId) return;
-    const conf = window.prompt('Type "DELETE" to confirm account deletion.');
+    const conf = window.prompt(
+      'Type "DELETE" to delete your account. It is hidden now and its personal data is erased in 30 days.',
+    );
     if (conf !== "DELETE") return;
     try {
       await deleteAccount(userId, conf);
       await signOut();
       window.location.href = "/";
     } catch (err) {
-      alert(String(err));
+      // Was a bare `alert(String(err))`: a browser dialog showing the raw
+      // response body. This screen has a toaster like every other one.
+      toast.error(humanizeError(err, "Couldn't delete your account. Try again."));
     }
   };
 
@@ -425,7 +428,7 @@ export function Settings() {
                       style={{
                         padding: "8px 12px 8px 26px",
                         background: "var(--bg-input)",
-                        border: `1px solid ${usernameState.status === "taken" || usernameState.status === "invalid" ? "var(--err)" : "var(--border)"}`,
+                        border: `1px solid ${usernameBorderColor(usernameState.status)}`,
                         borderRadius: "var(--r-sm)",
                         fontSize: 13,
                         width: "100%",
@@ -436,10 +439,9 @@ export function Settings() {
                     <div style={{
                       fontSize: 11,
                       marginTop: 4,
-                      color: usernameState.status === "available" ? "var(--accent)"
-                        : (usernameState.status === "checking" ? "var(--text-muted)" : "var(--err)"),
+                      color: usernameMessageColor(usernameState.status),
                     }}>
-                      {usernameState.status === "checking" ? "Checking…" : usernameState.message}
+                      {usernameMessageText(usernameState)}
                     </div>
                   )}
                 </div>
@@ -695,7 +697,7 @@ export function Settings() {
                       URL.revokeObjectURL(url);
                       toast.success("Data exported.");
                     } catch (err) {
-                      toast.error(`Export failed: ${String(err)}`);
+                      toast.error(humanizeError(err, "Couldn't export your data. Try again."));
                     }
                   }}
                 >
@@ -723,7 +725,14 @@ export function Settings() {
               <div className="card" style={{ padding: "var(--pad-lg)", borderColor: "var(--err)" }}>
                 <div style={{ fontWeight: 600, marginBottom: 4 }}>Delete account</div>
                 <div style={{ fontSize: 12, color: "var(--text-dim)", marginBottom: 12 }}>
-                  Permanently delete your account and all data. This cannot be undone.
+                  Your account is hidden and you are signed out right away, and your Google and
+                  Gradescope connections are removed. Your personal data is permanently erased
+                  30 days later. Records without your content (AI usage and cost, usage
+                  telemetry) are kept; see section 5 of the{" "}
+                  <Link href="/privacy" style={{ color: "var(--accent)" }}>
+                    Privacy Policy
+                  </Link>
+                  .
                 </div>
                 <button className="btn btn--sm btn--danger" onClick={handleDelete}>Delete my account</button>
               </div>
@@ -952,7 +961,7 @@ function CosmeticsManager({ userId }: { userId: string }) {
       await refreshProfile();
       toast.success(cosmeticId ? "Equipped" : "Unequipped");
     } catch (err) {
-      toast.error(`Couldn't update: ${String(err)}`);
+      toast.error(humanizeError(err, "Couldn't update that. Try again."));
     } finally {
       setBusy(false);
     }

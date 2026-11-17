@@ -48,9 +48,11 @@ prod)**, from the admin dashboard, for a chosen existing account:
   graph nodes (+edges, mastery events, note_concepts), xp_events,
   user_achievements; counters `total_xp/level/streak_count/longest_streak` reset.
   **Kept**: the account itself, profile, settings, roles, OAuth tokens,
-  gradescope credentials, cosmetics, social (rooms, friendships — they involve
-  other people), feedback/issue reports, telemetry (`events`, `llm_usage`),
-  admin audit log. Class-wide aggregates (`offering_concept_stats`) untouched.
+  legal acceptances (`legal_acceptances`, added 2026-11-12; never copied
+  either, since consent is given per environment), gradescope credentials,
+  cosmetics, social (rooms, friendships — they involve other people),
+  feedback/issue reports, telemetry (`events`, `llm_usage`), admin audit log.
+  Class-wide aggregates (`offering_concept_stats`) untouched.
 - **Seed also** sets `user_profiles.majors = [<major label>]` and
   `users.onboarding_completed = true`, and gives XP/streak/level so gamified
   surfaces render.

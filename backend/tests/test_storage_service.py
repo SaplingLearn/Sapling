@@ -14,6 +14,8 @@ import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
 from fastapi import HTTPException
 
+from tests.upload_fixtures import GIF_BYTES, JPEG_BYTES, PNG_BYTES, WEBP_BYTES
+
 
 class TestValidateUpload:
     def test_rejects_unsupported_type(self):
@@ -31,12 +33,27 @@ class TestValidateUpload:
 
     def test_accepts_valid_upload(self):
         from services.storage_service import _validate_upload
-        _validate_upload(b"valid", "image/png")
+        _validate_upload(PNG_BYTES, "image/png")
 
     def test_accepts_all_allowed_types(self):
         from services.storage_service import _validate_upload
-        for ct in ["image/jpeg", "image/png", "image/webp", "image/gif"]:
-            _validate_upload(b"data", ct)
+        for ct, data in [("image/jpeg", JPEG_BYTES), ("image/png", PNG_BYTES),
+                         ("image/webp", WEBP_BYTES), ("image/gif", GIF_BYTES)]:
+            assert _validate_upload(data, ct) == ct
+
+    def test_rejects_bytes_that_are_not_the_declared_image(self):
+        """The declared Content-Type is free text: HTML labelled image/png
+        is refused (415), not stored in a public bucket as a PNG."""
+        from services.storage_service import _validate_upload
+        for data in (b"<html><script>alert(1)</script></html>", b"<svg xmlns='x'/>", b"data"):
+            with pytest.raises(HTTPException) as exc:
+                _validate_upload(data, "image/png")
+            assert exc.value.status_code == 415
+
+    def test_stores_the_type_the_bytes_name(self):
+        """A real JPEG declared as image/png is stored as what it is."""
+        from services.storage_service import _validate_upload
+        assert _validate_upload(JPEG_BYTES, "image/png") == "image/jpeg"
 
 
 class TestUploadAvatar:
@@ -46,7 +63,7 @@ class TestUploadAvatar:
 
         with patch("services.storage_service.httpx.put", return_value=mock_resp):
             from services.storage_service import upload_avatar
-            url = upload_avatar("u1", b"pixels", "image/png")
+            url = upload_avatar("u1", PNG_BYTES, "image/png")
 
         assert "avatars/u1/avatar.png" in url
         assert "/public/" in url
@@ -59,7 +76,7 @@ class TestUploadAvatar:
         with patch("services.storage_service.httpx.put", return_value=mock_resp):
             from services.storage_service import upload_avatar
             with pytest.raises(HTTPException) as exc:
-                upload_avatar("u1", b"pixels", "image/png")
+                upload_avatar("u1", PNG_BYTES, "image/png")
             assert exc.value.status_code == 502
 
     def test_surfaces_supabase_body_on_failure(self):
@@ -73,7 +90,7 @@ class TestUploadAvatar:
         with patch("services.storage_service.httpx.put", return_value=mock_resp):
             from services.storage_service import upload_avatar
             with pytest.raises(HTTPException) as exc:
-                upload_avatar("u1", b"pixels", "image/png")
+                upload_avatar("u1", PNG_BYTES, "image/png")
 
         detail = exc.value.detail
         assert "Supabase 404" in detail
@@ -92,7 +109,7 @@ class TestUploadAvatar:
         with patch("services.storage_service.httpx.put", return_value=mock_resp):
             from services.storage_service import upload_avatar
             with pytest.raises(HTTPException) as exc:
-                upload_avatar("u1", b"pixels", "image/png")
+                upload_avatar("u1", PNG_BYTES, "image/png")
 
         assert "no body" in exc.value.detail
 
@@ -102,7 +119,7 @@ class TestUploadAvatar:
 
         with patch("services.storage_service.httpx.put", return_value=mock_resp):
             from services.storage_service import upload_avatar
-            url = upload_avatar("u1", b"pixels", "image/jpeg")
+            url = upload_avatar("u1", JPEG_BYTES, "image/jpeg")
 
         assert "avatar.jpg" in url
 
@@ -114,7 +131,7 @@ class TestUploadCosmeticAsset:
 
         with patch("services.storage_service.httpx.put", return_value=mock_resp):
             from services.storage_service import upload_cosmetic_asset
-            url = upload_cosmetic_asset("cos_1", b"pixels", "image/webp")
+            url = upload_cosmetic_asset("cos_1", WEBP_BYTES, "image/webp")
 
         assert "cosmetics/cos_1.webp" in url
 
@@ -129,7 +146,7 @@ class TestUploadCosmeticAsset:
         with patch("services.storage_service.httpx.put", return_value=mock_resp):
             from services.storage_service import upload_cosmetic_asset
             with pytest.raises(HTTPException) as exc:
-                upload_cosmetic_asset("cos_1", b"pixels", "image/png")
+                upload_cosmetic_asset("cos_1", PNG_BYTES, "image/png")
 
         detail = exc.value.detail
         assert "Supabase 403" in detail

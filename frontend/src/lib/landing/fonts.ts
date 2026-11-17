@@ -2,7 +2,10 @@
  * The landing's four font stacks, in one place (display and serif are both
  * Aleo today; they stay separate names so a section can split them).
  *
- * Every family is loaded by `next/font/local` (see `app/layout.tsx`), which
+ * Every family but Gummi is loaded by `next/font/local` (see `app/layout.tsx`;
+ * Gummi is licensed and switched on per host by `lib/licensedFonts.ts`, so
+ * its stack never names it — the bare family name could fetch it on a host the
+ * licence doesn't cover), which
  * assigns each one a generated family name and publishes it as a CSS variable.
  * That generated name is NOT the human name: a `const aleo` becomes
  * the family `aleo`, so a stack written as `'Aleo', serif` matches nothing
@@ -15,7 +18,7 @@
  * name in a style; use these.
  */
 
-export const FONT_DISPLAY = "var(--font-gummi), 'Gummi', Georgia, serif";
+export const FONT_DISPLAY = "var(--font-gummi), Georgia, serif";
 export const FONT_SERIF = "var(--font-aleo), 'Aleo', Georgia, serif";
 export const FONT_SANS = "var(--font-suse), 'SUSE', system-ui, sans-serif";
 export const FONT_MONO = "var(--font-plex-mono), 'IBM Plex Mono', ui-monospace, monospace";
@@ -30,7 +33,7 @@ const CSS_VAR: Record<FontKind, string> = {
 };
 
 const BARE: Record<FontKind, string> = {
-  display: "'Gummi', Georgia, serif",
+  display: 'Georgia, serif',
   serif: "'Aleo', Georgia, serif",
   sans: "'SUSE', system-ui, sans-serif",
   mono: "'IBM Plex Mono', ui-monospace, monospace",

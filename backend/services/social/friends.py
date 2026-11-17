@@ -69,6 +69,15 @@ def _resolve_pending(request_id: str, status: str) -> list:
 def send_friend_request(body: FriendRequestBody):
     if body.from_user_id == body.to_user_id:
         raise InvalidRequest("You can't friend yourself")
+    # The recipient must be a live account. `friend_requests.to_user_id` is a
+    # FOREIGN KEY to users(id), so without this an id that names nobody — a
+    # typo, a stale directory entry, a deleted classmate, or anything a caller
+    # cares to type — reached the insert, violated the constraint, and came
+    # back as a 500. The same read also keeps a soft-deleted account
+    # unfriendable, which is what every other cross-user list already does
+    # (#115: live_user_ids).
+    if body.to_user_id not in live_user_ids([body.to_user_id]):
+        raise NotFound("User not found")
     if _are_friends(body.from_user_id, body.to_user_id):
         raise Conflict("Already friends")
     # Deliberately only the exact (from, to) pair — a pending REVERSE request

@@ -8,16 +8,17 @@ import re
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, UploadFile, File, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Query
+from fastapi.responses import StreamingResponse
 
 from services.chunk_visibility import resync_user_chunk_visibility
 from services.course_context_service import refresh_course_context
 from pydantic import BaseModel, Field
 
 from config import MAX_AVATAR_SIZE
-from db.connection import table
-from db.scope import service_route, service_scope
-from services.encryption import encrypt_if_present
+from db.connection import like_literal, table
+from db.scope import service_route
+from services.encryption import bind, encrypt_if_present
 from models import (
     UpdateProfileBody,
     UpdateSettingsBody,
@@ -26,12 +27,14 @@ from models import (
     SetFeaturedAchievementsBody,
     DeleteAccountBody,
 )
+from services import abuse_limits
 from services.analytics_consent import clear_analytics_consent_cache
-from services.auth_guard import clear_account_state_cache, require_self, get_session_user_id
+from services.auth_guard import require_self, get_session_user_id
 from services.http_cache import cached_json, conditional, make_etag
-from services.posthog_client import delete_person as delete_posthog_person
+from services.request_limits import enforce_abuse_limit
 from services.storage_service import upload_avatar
 from services.profile import (
+    DeletionNotConfirmed,
     UserNotFound,
     achievements_view,
     cosmetics_catalog,
@@ -40,7 +43,9 @@ from services.profile import (
     public_profile,
     replace_featured_achievements,
 )
+from services.profile import delete_account as _delete_account
 from services.profile import users as _users
+from services.profile.full_export import stream_export
 from services.profile.achievements import _get_featured_achievements  # noqa: F401  (re-export, #118)
 from services.profile.cosmetics import _get_equipped_cosmetics
 from services.profile.users import (  # noqa: F401  (re-export, #118)
@@ -97,17 +102,65 @@ def _optional_viewer(request: Request) -> Optional[str]:
 _USERNAME_RE = re.compile(r"^[a-z0-9_]{3,24}$")
 
 
-# #115: unauthenticated, and answers about OTHER users' usernames -> service role.
+def _username_holders(name: str) -> set[str]:
+    """The user_ids whose stored username is `name`, ignoring letter case.
+
+    Writes are lowercased now, but a handle stored before that keeps its case
+    ("Alice"), and a case-sensitive `eq.alice` would not see it — so both the
+    availability check and the write's uniqueness check read case-insensitively.
+    `ilike` with the value LIKE-escaped (`_` is a wildcard), then re-checked in
+    Python for exact equality, as `services/auth/waitlist.py` does: an escaped
+    value with no `%` already matches only itself, and the re-check keeps that
+    true even past PostgREST's `*` rewrite, which no escape reaches. More than
+    one row can hold the name when legacy rows differ only by case.
+    """
+    rows = table("user_profiles").select(
+        "user_id,username", filters={"username": f"ilike.{like_literal(name)}"},
+    )
+    return {
+        r["user_id"] for r in rows or []
+        if (r.get("username") or "").lower() == name
+    }
+
+
+# #115: answers about OTHER users' usernames -> service role. The viewer must
+# be signed in (get_session_user_id below), and is charged USERNAME_CHECK.
 @router.get("/username/check", dependencies=[Depends(service_route)])
-def check_username(username: str = Query(...), user_id: Optional[str] = Query(None)):
+def check_username(
+    request: Request,
+    username: str = Query(...),
+    user_id: Optional[str] = Query(None),
+):
+    """Is `username` free for the SIGNED-IN viewer?
+
+    Two things changed here (testathon hardening), both about what this
+    endpoint told an ANONYMOUS caller:
+
+    1. It required no session at all, and ran as the service role, so anyone
+       on the internet could ask "does this username exist?" as often as they
+       liked — an unauthenticated oracle over the whole username space, and a
+       free way to harvest the handles of a closed @bu.edu beta.
+
+    2. Worse, the `user_id` QUERY PARAM was trusted: passing
+       `?username=X&user_id=Y` answered `reason: "self"` exactly when user Y
+       owned username X. That is an unauthenticated CONFIRMATION of the
+       user_id -> username mapping, for any id an attacker could observe.
+
+    The viewer is now the session, never the query. `user_id` is still
+    accepted so existing clients (and the cross-user matrix) keep their
+    request shape, but it is IGNORED: "self" is decided by who is calling.
+    """
+    viewer_id = get_session_user_id(request)
+    enforce_abuse_limit(abuse_limits.USERNAME_CHECK, viewer_id)
+
     name = (username or "").strip().lower()
     if not _USERNAME_RE.match(name):
         return {"available": False, "reason": "invalid"}
-    # username now lives on user_profiles (keyed by user_id).
-    existing = table("user_profiles").select("user_id", filters={"username": f"eq.{name}"})
-    if not existing:
+    holders = _username_holders(name)
+    if not holders:
         return {"available": True}
-    if user_id and existing[0]["user_id"] == user_id:
+    # The SESSION decides "self" — not the caller-supplied user_id (see above).
+    if holders == {viewer_id}:
         return {"available": True, "reason": "self"}
     return {"available": False, "reason": "taken"}
 
@@ -138,18 +191,35 @@ def update_profile(user_id: str, body: UpdateProfileBody, request: Request):
     updates_profile = {}
 
     if body.username is not None:
-        # Check uniqueness against user_profiles.
-        existing = table("user_profiles").select(
-            "user_id", filters={"username": f"eq.{body.username}"}
-        )
-        if existing and existing[0]["user_id"] != user_id:
+        # FORMAT, on the write path. `_USERNAME_RE` used to be applied only by
+        # the availability check above, so this endpoint — the one that
+        # actually stores the handle — accepted anything: a 500-character
+        # username was saved happily, and 10,000 characters answered 500 when
+        # the uniqueness lookup below built a PostgREST query string too long
+        # to send. Validating where the value is PERSISTED is what makes the
+        # rule true; the check endpoint is only a convenience for the UI.
+        candidate = body.username.strip().lower()
+        if not _USERNAME_RE.match(candidate):
+            raise HTTPException(
+                status_code=422,
+                detail="Username must be 3-24 characters, using lowercase letters, numbers or underscores.",
+            )
+        # Normalised to lowercase to match the availability check, which
+        # lowercases before comparing. Storing the raw value let "Alice" be
+        # saved while the check reported "alice" as free — two users could
+        # hold the same handle in different cases. The lookup is
+        # case-insensitive for the same reason: a handle stored before this
+        # normalisation keeps its case.
+        if _username_holders(candidate) - {user_id}:
             raise HTTPException(status_code=409, detail="Username already taken")
-        updates_profile["username"] = body.username
+        updates_profile["username"] = candidate
 
     if body.bio is not None:
-        updates_profile["bio"] = encrypt_if_present(body.bio)
+        updates_profile["bio"] = encrypt_if_present(
+            body.bio, bind=bind("user_profiles", "bio", user_id))
     if body.location is not None:
-        updates_profile["location"] = encrypt_if_present(body.location)
+        updates_profile["location"] = encrypt_if_present(
+            body.location, bind=bind("user_profiles", "location", user_id))
     if body.website is not None:
         updates_profile["website"] = body.website
 
@@ -251,6 +321,7 @@ def update_settings(
     request: Request,
 ):
     require_self(user_id, request)
+    enforce_abuse_limit(abuse_limits.SETTINGS_WRITE, user_id)
     _get_or_create_settings(user_id)
 
     # Whitelist: only these fields may be patched via this endpoint.
@@ -455,38 +526,32 @@ def delete_account(
 ):
     # #756: a removed (unapproved) student may still erase their account.
     require_self(user_id, request, allow_unapproved=True)
-
-    if body.confirmation != "DELETE":
-        raise HTTPException(status_code=400, detail="Confirmation must be 'DELETE'")
-
-    # #115: the soft delete is account state (`users` is SELECT-only for the
-    # student's token) -> service role.
-    with service_scope():
-        table("users").update(
-            {"deleted_at": datetime.now(timezone.utc).isoformat()},
-            filters={"id": f"eq.{user_id}"},
+    try:
+        return _delete_account(
+            user_id, body.confirmation, after_response=background_tasks.add_task,
         )
-    # ADR 0028: from here on the PostHog worker's consent check reads
-    # deleted_at, so nothing — not even items already queued — names this user
-    # (which would re-create the person the delete below removes). Drop the
-    # cached "allowed" answer now.
-    clear_analytics_consent_cache(user_id)
-    # #756: the auth guard refuses a deleted account; drop its cached "active"
-    # answer so this process stops honouring the session now, not at the TTL.
-    clear_account_state_cache(user_id)
-    # Best-effort PostHog person + event delete, AFTER the response so it adds
-    # no latency and cannot fail the deletion (it never raises; unconfigured
-    # -> WARN + skip). It drains our queue and the SDK's first, and repeats
-    # after the consent TTL. Only reached once the soft delete landed.
-    background_tasks.add_task(delete_posthog_person, user_id)
-    return {"deleted": True}
+    except DeletionNotConfirmed as exc:
+        raise HTTPException(status_code=400, detail="Confirmation must be 'DELETE'") from exc
 
 
 # ── Data Export ──────────────────────────────────────────────────────────────
 
 @router.post("/{user_id}/export")
 def export_data(user_id: str, request: Request):
+    """The student's full data export, decrypted, streamed as one JSON
+    document (services/profile/full_export.py has what is in it and why)."""
     # #756: a removed (unapproved) student may still export their data.
     require_self(user_id, request, allow_unapproved=True)
 
-    return _export_account_data(user_id)
+    # The legacy keys first, BEFORE the response starts: a missing or deleted
+    # account is a 404, not a broken stream.
+    head = _export_account_data(user_id)
+    return StreamingResponse(
+        stream_export(user_id, head),
+        media_type="application/json",
+        headers={
+            "Content-Disposition": 'attachment; filename="sapling-export.json"',
+            # Decrypted personal data: never stored by a browser or proxy.
+            "Cache-Control": "no-store",
+        },
+    )

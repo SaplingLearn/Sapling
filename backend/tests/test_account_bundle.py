@@ -37,9 +37,16 @@ def enc_json(aes: AESGCM, value) -> str:
     return enc(aes, json.dumps(value, separators=(",", ":")))
 
 
-def dec(aes: AESGCM, value: str) -> str:
+def dec(aes: AESGCM, value: str, table: str | None = None, column: str | None = None,
+        row: dict | None = None) -> str:
+    """Open a v1 value, or a v2 value with the binding of (table, column, row)."""
+    aad = None
+    if value.startswith(encryption.V2_PREFIX):
+        assert table and column and row is not None, "a v2 value needs its cell"
+        aad = encryption.bind(table, column, row).aad()
+        value = value.split(":", 2)[2]
     raw = base64.b64decode(value)
-    return aes.decrypt(raw[:12], raw[12:], None).decode()
+    return aes.decrypt(raw[:12], raw[12:], aad).decode()
 
 
 # ── A tiny PostgREST stand-in ───────────────────────────────────────────────
@@ -308,6 +315,17 @@ def source_db() -> FakeDB:
             "id": "fc-1", "user_id": UID, "offering_id": None, "topic": "CS",
             "front": enc(A, "What is recursion?"), "back": enc(A, "A self call"),
         }],
+        # Plaintext labels (no 🔒 column). `course_id` is a catalog UUID;
+        # `exam_id` is an assignment id, which keeps its value across the copy.
+        "flashcard_sets": [
+            {"id": "fset-1", "user_id": UID, "course_id": SRC_CS, "name": "Midterm 1",
+             "concepts": ["Recursion", "Base cases"],
+             "options": {"only_due": True, "shuffle": False}, "exam_id": "asg-1",
+             "created_at": "2026-11-01T00:00:00Z", "updated_at": "2026-11-02T00:00:00Z"},
+            {"id": "fset-2", "user_id": UID, "course_id": SRC_BIO, "name": "Cells",
+             "concepts": ["Cells"], "options": {}, "exam_id": None,
+             "created_at": "2026-11-03T00:00:00Z", "updated_at": "2026-11-03T00:00:00Z"},
+        ],
         "sessions": [{
             "id": "sess-1", "user_id": UID, "offering_id": SRC_OFF_BIO, "mode": "socratic",
             "topic": "Cells", "summary_json": enc_json(A, {"bullets": ["mitochondria"]}),
@@ -319,6 +337,11 @@ def source_db() -> FakeDB:
         "study_guides": [{
             "id": "sg-1", "user_id": UID, "offering_id": SRC_OFF_CS, "exam_id": "asg-1",
             "content": enc_json(A, {"exam": "Midterm"}),
+            "previous_content": enc_json(A, {"exam": "Midterm, before the update"}),
+            "answers": enc_json(A, {"s1-i2": {"option_id": "b", "correct": True}}),
+            "scope_kind": "exam", "status": "ready", "format": 1,
+            "material_ids": ["doc-1"], "read_sections": ["s1"],
+            "saved_at": "2026-11-04T00:00:00Z", "generating_at": "2026-11-05T00:00:00Z",
         }],
         "quiz_attempts": [{
             "id": "qa-1", "user_id": UID, "concept_node_id": "node-1", "score": 3, "total": 4,
@@ -403,6 +426,10 @@ def test_export_is_plaintext_with_natural_key_catalog(use):
     assert t["messages"][1]["content"] == "Hello"
     assert t["quiz_responses"][0]["answer_text"] == {"text": "a base case"}
     assert t["topic_checklists"][0]["content"] == {"topics": [{"name": "Recursion"}]}
+    guide = t["study_guides"][0]
+    assert guide["content"] == {"exam": "Midterm"}
+    assert guide["previous_content"] == {"exam": "Midterm, before the update"}
+    assert guide["answers"] == {"s1-i2": {"option_id": "b", "correct": True}}
     assert bundle["profile"]["name"] == "Ada Student"
     assert "avatar_url" not in bundle["profile"]
     assert "equipped_banner_id" not in bundle["settings"]
@@ -436,7 +463,7 @@ def test_soft_decrypt_would_have_shipped_the_ciphertext():
     ct = enc(KEY_C, "secret")
     assert encryption.decrypt_if_present(ct) == ct
     with pytest.raises(BundleError):
-        account_bundle._decrypt_text(ct, "t.c")
+        account_bundle._decrypt_text(ct, "t.c", encryption.bind("notes", "body", "n-1"))
 
 
 def test_legacy_plaintext_in_an_encrypted_column_travels_as_is(use):
@@ -455,6 +482,63 @@ def test_unlisted_encrypted_column_fails_the_export(use):
 
     with pytest.raises(BundleError, match=r"sessions\.close_json.*not in account_bundle\.ENCRYPTED"):
         account_bundle.export_account(UID)
+
+
+def _seal_v2(aes: AESGCM, value: str, table: str, column: str, row) -> str:
+    nonce = os.urandom(12)
+    aad = encryption.bind(table, column, row).aad()
+    body = base64.b64encode(nonce + aes.encrypt(nonce, value.encode(), aad)).decode()
+    return f"{encryption.V2_PREFIX}{encryption.ACTIVE_KID}:{body}"
+
+
+def test_export_opens_a_v2_value_in_its_own_cell(use):
+    db = source_db()
+    db.data["notes"][0]["body"] = _seal_v2(KEY_A, "bound body", "notes", "body", "note-1")
+    use(db, KEY_A, "staging")
+
+    assert account_bundle.export_account(UID)["tables"]["notes"][0]["body"] == "bound body"
+
+
+def test_a_v2_value_moved_from_another_row_fails_the_export(use):
+    """Finding M13: a ciphertext copied into this row from another one."""
+    db = source_db()
+    db.data["notes"][0]["body"] = _seal_v2(KEY_A, "someone else's", "notes", "body", "note-9")
+    use(db, KEY_A, "staging")
+
+    with pytest.raises(BundleError, match=r"notes\.body.*does not decrypt"):
+        account_bundle.export_account(UID)
+
+
+def test_unlisted_v2_column_fails_the_export_without_opening_it(use):
+    db = source_db()
+    db.data["sessions"][0]["close_json"] = f"{encryption.V2_PREFIX}0:AAAA"
+    use(db, KEY_A, "staging")
+
+    with pytest.raises(BundleError, match=r"sessions\.close_json.*not in account_bundle\.ENCRYPTED"):
+        account_bundle.export_account(UID)
+
+
+def test_legacy_plaintext_is_refused_once_legacy_reads_are_off(use, monkeypatch):
+    db = source_db()
+    db.data["notes"][0]["title"] = "injected plaintext"
+    use(db, KEY_A, "staging")
+    monkeypatch.setenv("ENCRYPTION_STRICT_TABLES", "notes")
+
+    with pytest.raises(BundleError, match=r"notes\.title.*legacy plaintext refused"):
+        account_bundle.export_account(UID)
+
+
+def test_encrypted_map_is_the_registry_for_every_bundled_table():
+    """account_bundle.ENCRYPTED is derived from encryption.ENCRYPTED_COLUMNS:
+    a bundled table's 🔒 columns are exactly the registry's."""
+    bundled = {s.name for s in account_bundle.SPECS} | {"user_profiles"}
+    registry_tables = {s.table for s in encryption.ENCRYPTED_COLUMNS}
+    assert set(account_bundle.ENCRYPTED) == bundled & registry_tables
+    for name, cols in account_bundle.ENCRYPTED.items():
+        assert cols == {
+            s.column: (account_bundle.JSON if s.kind == encryption.JSON else account_bundle.TEXT)
+            for s in encryption.ENCRYPTED_COLUMNS if s.table == name
+        }
 
 
 def test_export_unknown_or_deleted_account(use):
@@ -479,11 +563,16 @@ def test_round_trip_reencrypts_under_the_target_key_and_remaps_catalog(use, wipe
     assert wipes == [UID]
     d = dst.data
     doc = d["documents"][0]
-    # Re-encrypted under B: readable with B, not with A.
-    assert dec(KEY_B, doc["summary"]) == "Weekly homework."
-    assert json.loads(dec(KEY_B, doc["concept_notes"]))[0]["name"] == "Recursion"
+    # Re-encrypted under B, in the v2 envelope bound to the target cell:
+    # readable with B in its own cell, not with A, not in another column.
+    assert doc["summary"].startswith(encryption.V2_PREFIX)
+    assert dec(KEY_B, doc["summary"], "documents", "summary", doc) == "Weekly homework."
+    assert json.loads(dec(KEY_B, doc["concept_notes"], "documents", "concept_notes", doc)
+                      )[0]["name"] == "Recursion"
     with pytest.raises(Exception):
-        dec(KEY_A, doc["summary"])
+        dec(KEY_A, doc["summary"], "documents", "summary", doc)
+    with pytest.raises(Exception):
+        dec(KEY_B, doc["summary"], "documents", "extracted_text", doc)
     # Documents re-index on the target; shareability travels.
     assert doc["index_status"] == "pending"
     assert doc["index_attempts"] == 0 and doc["index_chunk_count"] is None
@@ -500,18 +589,49 @@ def test_round_trip_reencrypts_under_the_target_key_and_remaps_catalog(use, wipe
     assert created["section"] == ""
     assert d["sessions"][0]["offering_id"] == bio_off
     assert d["flashcards"][0]["offering_id"] is None
+    # Saved sets: the course is remapped by course_code, the labels travel as
+    # the plaintext they are, and exam_id still names the (id-preserved) assignment.
+    sets = {s["id"]: s for s in d["flashcard_sets"]}
+    assert sets["fset-1"] == {
+        "id": "fset-1", "user_id": UID, "course_id": DST_CS, "name": "Midterm 1",
+        "concepts": ["Recursion", "Base cases"],
+        "options": {"only_due": True, "shuffle": False}, "exam_id": "asg-1",
+        "created_at": "2026-11-01T00:00:00Z", "updated_at": "2026-11-02T00:00:00Z",
+    }
+    assert sets["fset-1"]["exam_id"] == d["assignments"][0]["id"]
+    assert (sets["fset-2"]["course_id"], sets["fset-2"]["exam_id"]) == (DST_BIO, None)
+    assert counts["flashcard_sets"] == 2
     # Graph course ids remapped by course_code; row ids preserved.
     nodes = {n["id"]: n["course_id"] for n in d["graph_nodes"]}
     assert nodes == {"node-1": DST_CS, "node-2": DST_BIO}
     assert d["graph_edges"][0]["source_node_id"] == "node-1"
     # Encrypted values everywhere read back under B.
     a = d["assignments"][0]
-    assert dec(KEY_B, a["points_earned"]) == "88" and dec(KEY_B, a["notes"]) == "remember the base case"
-    assert [dec(KEY_B, m["content"]) for m in d["messages"]] == ["Hi", "Hello"]
-    assert json.loads(dec(KEY_B, d["quiz_responses"][0]["answer_text"])) == {"text": "a base case"}
-    assert json.loads(dec(KEY_B, d["study_guides"][0]["content"])) == {"exam": "Midterm"}
+    assert dec(KEY_B, a["points_earned"], "assignments", "points_earned", a) == "88"
+    assert dec(KEY_B, a["notes"], "assignments", "notes", a) == "remember the base case"
+    assert [dec(KEY_B, m["content"], "messages", "content", m)
+            for m in d["messages"]] == ["Hi", "Hello"]
+    resp = d["quiz_responses"][0]
+    assert json.loads(dec(KEY_B, resp["answer_text"], "quiz_responses", "answer_text", resp)
+                      ) == {"text": "a base case"}
+    guide = d["study_guides"][0]
+    assert json.loads(dec(KEY_B, guide["content"], "study_guides", "content", guide)
+                      ) == {"exam": "Midterm"}
+    assert json.loads(dec(KEY_B, guide["previous_content"], "study_guides", "previous_content",
+                          guide)) == {"exam": "Midterm, before the update"}
+    assert json.loads(dec(KEY_B, guide["answers"], "study_guides", "answers", guide)) == {
+        "s1-i2": {"option_id": "b", "correct": True}}
+    # The guide's plaintext state travels; its materials and exam keep their
+    # ids (row ids are preserved), and the source's generation claim does not.
+    assert guide["material_ids"] == [d["documents"][0]["id"]] == ["doc-1"]
+    assert guide["exam_id"] == d["assignments"][0]["id"]
+    assert (guide["scope_kind"], guide["status"], guide["format"]) == ("exam", "ready", 1)
+    assert (guide["read_sections"], guide["saved_at"]) == (["s1"], "2026-11-04T00:00:00Z")
+    assert guide["generating_at"] is None
     assert d["quiz_attempts"][0]["answers_json"] is None
-    assert json.loads(dec(KEY_B, d["topic_checklists"][0]["content"]))["topics"][0]["name"] == "Recursion"
+    chk = d["topic_checklists"][0]
+    assert json.loads(dec(KEY_B, chk["content"], "topic_checklists", "content", chk)
+                      )["topics"][0]["name"] == "Recursion"
     # Achievements by slug; one the target lacks is skipped and counted.
     assert d["user_achievements"] == [{
         "user_id": UID, "achievement_id": DST_ACH_FIRST,
@@ -520,7 +640,7 @@ def test_round_trip_reencrypts_under_the_target_key_and_remaps_catalog(use, wipe
     assert counts["user_achievements"] == 1 and counts["user_achievements_skipped"] == 1
     # Profile: re-encrypted, username kept (someone else holds it here), avatar untouched.
     prof = next(p for p in d["user_profiles"] if p["user_id"] == UID)
-    assert dec(KEY_B, prof["name"]) == "Ada Student"
+    assert dec(KEY_B, prof["name"], "user_profiles", "name", prof) == "Ada Student"
     assert prof["username"] == "ada-target"
     assert prof["avatar_url"] == "https://dst/avatar.png"
     assert prof["majors"] == ["Computer Science"]
@@ -789,5 +909,41 @@ def test_malformed_achievement_catalog_is_refused_before_the_wipe(use, wipes, ba
     bundle["catalog"]["achievements"] = bad
     use(target_db(), KEY_B, "production")
     with pytest.raises(BundleError, match="achievements"):
+        account_bundle.import_account(UID, bundle)
+    assert wipes == []
+
+
+# ── Saved flashcard sets: course-keyed, no offering ─────────────────────────
+
+
+def test_flashcard_set_course_reaches_the_catalog_without_an_offering(use, wipes, consent_clears):
+    """A set keys on the abstract course alone, so its course must reach the
+    bundle's catalog even when no exported row names an offering of it."""
+    src = source_db()
+    src.data["courses"].append({"id": "src-course-ma", "course_code": "CAS MA 123",
+                                "course_name": "Calculus", "school_id": SRC_SCHOOL})
+    src.data["flashcard_sets"].append({
+        "id": "fset-3", "user_id": UID, "course_id": "src-course-ma", "name": "Limits",
+        "concepts": ["Limits"], "options": {}, "exam_id": None,
+    })
+    use(src, KEY_A, "staging")
+    bundle = json.loads(json.dumps(account_bundle.export_account(UID)))
+    assert bundle["catalog"]["courses"]["src-course-ma"]["course_code"] == "CAS MA 123"
+
+    dst = target_db()
+    dst.data["courses"].append({"id": "dst-course-ma", "course_code": "CAS MA 123",
+                                "school_id": DST_SCHOOL})
+    use(dst, KEY_B, "production")
+    account_bundle.import_account(UID, bundle)
+
+    moved = {s["id"]: s["course_id"] for s in dst.data["flashcard_sets"]}
+    assert moved["fset-3"] == "dst-course-ma"
+
+
+def test_flashcard_set_course_outside_the_catalog_is_refused_before_the_wipe(use, wipes):
+    bundle = export_from_source(use)
+    bundle["tables"]["flashcard_sets"][0]["course_id"] = "src-course-unknown"
+    use(target_db(), KEY_B, "production")
+    with pytest.raises(BundleError, match="flashcard_sets: course src-course-unknown"):
         account_bundle.import_account(UID, bundle)
     assert wipes == []

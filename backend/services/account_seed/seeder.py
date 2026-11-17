@@ -35,13 +35,15 @@ from typing import TYPE_CHECKING
 
 from config import get_mastery_tier
 from db.connection import table
+from models.study_guide import GUIDE_FORMAT
 from services.academics import clear_academics_caches, current_term, resolve_offering
 from services.account_bundle import account_exists
 from services.account_wipe import wipe_account_data
 from services.auth_guard import clear_account_state_cache
-from services.encryption import encrypt_if_present, encrypt_json
+from services.encryption import bind, encrypt_if_present, encrypt_json
 from services.growth import level_for_xp
 from services.quiz.identity import question_hash
+from services.study_guides import content_from_topics
 
 if TYPE_CHECKING:
     from services.account_seed.schema import Course, MajorPack
@@ -217,9 +219,11 @@ def _course_rows(
             "offering_id": rc.offering_id,
             "file_name": doc.file_name,
             "category": doc.category,
-            "summary": encrypt_if_present(doc.summary),
-            "concept_notes": encrypt_json([n.model_dump() for n in doc.concept_notes]),
-            "extracted_text": encrypt_if_present(doc.extracted_text),
+            "summary": encrypt_if_present(doc.summary, bind=bind("documents", "summary", doc_id)),
+            "concept_notes": encrypt_json([n.model_dump() for n in doc.concept_notes],
+                                          bind=bind("documents", "concept_notes", doc_id)),
+            "extracted_text": encrypt_if_present(
+                doc.extracted_text, bind=bind("documents", "extracted_text", doc_id)),
             # The sweeper indexes these PRIVATELY: personal_notes at full
             # confidence can never enter a class pool (chunk_visibility).
             "index_status": "pending",
@@ -267,8 +271,11 @@ def _course_rows(
             "due_date": due.isoformat(),
             "assignment_type": a.type,
             "source": "syllabus",
-            "points_possible": encrypt_if_present(_points(a.points_possible)),
-            "points_earned": encrypt_if_present(_points(a.points_earned)) if graded else None,
+            "points_possible": encrypt_if_present(
+                _points(a.points_possible), bind=bind("assignments", "points_possible", asg_id)),
+            "points_earned": encrypt_if_present(
+                _points(a.points_earned), bind=bind("assignments", "points_earned", asg_id),
+            ) if graded else None,
         })
         if a.is_midterm:
             midterm = (asg_id, a.title, due)
@@ -318,8 +325,8 @@ def _course_rows(
             "id": note_id,
             "user_id": user_id,
             "offering_id": rc.offering_id,
-            "title": encrypt_if_present(note.title),
-            "body": encrypt_if_present(note.body),
+            "title": encrypt_if_present(note.title, bind=bind("notes", "title", note_id)),
+            "body": encrypt_if_present(note.body, bind=bind("notes", "body", note_id)),
             "tags": list(note.tags),
             "created_at": _at(day, 20),
             "updated_at": _at(day, 20, 30),
@@ -333,34 +340,42 @@ def _course_rows(
 
     # Flashcards.
     for i, card in enumerate(course.flashcards):
+        card_id = _new_id()
         rows["flashcards"].append({
-            "id": _new_id(),
+            "id": card_id,
             "user_id": user_id,
             "offering_id": rc.offering_id,
             "topic": rc.name,
-            "front": encrypt_if_present(card.front),
-            "back": encrypt_if_present(card.back),
+            "front": encrypt_if_present(card.front, bind=bind("flashcards", "front", card_id)),
+            "back": encrypt_if_present(card.back, bind=bind("flashcards", "back", card_id)),
             "created_at": _at(in_term(6 + i), 21),
         })
 
-    # The cached study guide targets the midterm (exam_id = its assignment).
+    # The study guide targets the midterm (exam_id = its assignment). The pack
+    # holds an overview and topics; they are stored as a format-2 guide.
     if midterm is not None:
         exam_id, exam_title, exam_due = midterm
         # A few days before the exam, never before the term nor in the future.
         generated = min(today, max(term_start, min(today - timedelta(days=1),
                                                    exam_due - timedelta(days=3))))
+        content = content_from_topics({
+            "exam": exam_title,
+            "overview": course.study_guide.overview,
+            "topics": [t.model_dump() for t in course.study_guide.topics],
+        })
+        guide_id = _new_id()
         rows["study_guides"].append({
-            "id": _new_id(),
+            "id": guide_id,
             "user_id": user_id,
             "offering_id": rc.offering_id,
             "exam_id": exam_id,
+            "scope_kind": "exam",
+            "status": "ready",
+            "format": GUIDE_FORMAT,
             "generated_at": _at(generated, 17),
-            "content": encrypt_json({
-                "exam": exam_title,
-                "due_date": exam_due.isoformat(),
-                "overview": course.study_guide.overview,
-                "topics": [t.model_dump() for t in course.study_guide.topics],
-            }),
+            "created_at": _at(generated, 17),
+            "content": encrypt_json(content.model_dump(mode="json"),
+                                    bind=bind("study_guides", "content", guide_id)),
         })
 
     # Completed quiz attempts, in the wire shape routes/quiz.py stores.
@@ -409,8 +424,10 @@ def _course_rows(
             "user_id": user_id,
             "concept_node_id": node_ids[quiz.concept],
             "difficulty": quiz.difficulty,
-            "questions_json": encrypt_json(wire),
-            "answers_json": encrypt_json(answers),
+            "questions_json": encrypt_json(
+                wire, bind=bind("quiz_attempts", "questions_json", attempt_id)),
+            "answers_json": encrypt_json(
+                answers, bind=bind("quiz_attempts", "answers_json", attempt_id)),
             "score": score,
             "total": total,
             "mastery_before": round(before, 4),
@@ -442,7 +459,7 @@ def _course_rows(
             "time_spent_minutes": minutes,
             "recommended_next": [],
             "bullets": list(s.summary_bullets),
-        }),
+        }, bind=bind("sessions", "summary_json", session_id)),
         "started_at": started.isoformat(),
         "ended_at": (started + timedelta(minutes=minutes)).isoformat(),
     })
@@ -451,7 +468,8 @@ def _course_rows(
             "id": _new_id(),
             "session_id": session_id,
             "role": msg.role,
-            "content": encrypt_if_present(msg.content),
+            "content": encrypt_if_present(
+                msg.content, bind=bind("messages", "content", session_id)),
             "created_at": (started + timedelta(minutes=4 * i)).isoformat(),
         })
     activity.append(("session_completed", "session", session_id, session_day))

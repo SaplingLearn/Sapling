@@ -1,17 +1,20 @@
 """
 backend/routes/auth.py
 
-Google OAuth sign-in with unified calendar access.
-Restricts sign-in to @bu.edu email accounts only.
+Google OAuth sign-in. Identity only (openid, email, profile): calendar access
+has its own consent flow (routes/calendar_connect.py), and a student who granted it
+before keeps it (services/auth/signin.py). Restricts sign-in to the configured
+email domains (default @bu.edu).
 """
 
 import asyncio
 import hmac as _hmac
 import logging
+import re
 import secrets
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field, ValidationError
 
@@ -28,6 +31,7 @@ from config import (
     SECURE_COOKIES,
     APP_ENV,
 )
+from db.scope import service_route
 from services import events_service
 from services.auth import (
     AccountDeleted,
@@ -36,10 +40,12 @@ from services.auth import (
     fetch_google_userinfo,
     join_waitlist,
     record_google_sign_in,
+    revoke_sessions,
     welcome_and_achievements_after_sign_in,
 )
 from services.auth_guard import clear_account_state_cache, get_session_user_id, guard_off_loop
-from services.session_tokens import SESSION_COOKIE_NAME, TOKEN_TYPE_HANDOFF, mint_session
+from services.auth.handoff import clean_binding, mint_handoff, mint_test_handoff, signin_cookie_name
+from services.session_tokens import mint_session, session_cookie_name
 # Re-exports (#118): moved names routes/calendar.py, routes/admin.py, scripts
 # and tests still import from here.
 from services.auth.accounts import _mark_welcomed, _stamp_last_sign_in_for_test, _welcome_due  # noqa: F401
@@ -51,11 +57,12 @@ from services.auth.oauth_state import (  # noqa: F401
     _clamp_redirect_ttl, _clean_popup_id, _clean_return_to, _consume_oauth_nonce,
     _decode_oauth_cookie, _decode_state, _encode_oauth_cookie, _encode_state,
     _generate_pkce_pair, _google_client_config, _parse_redirect_ttl, clear_consumed_oauth_nonces,
+    clear_oauth_cookie,
 )
 from services.auth.pending import (  # noqa: F401
     _PENDING_TOKEN_TTL_SECONDS, _mint_pending_token, _pending_token_claims, _pending_token_email,
 )
-from services.auth.signin import _email_domain_allowed  # noqa: F401
+from services.auth.signin import _email_verified  # noqa: F401
 from services.auth.waitlist import (  # noqa: F401
     _mark_waitlist_joined, _pending_standing, _waitlist_entries, _waitlist_entry,
 )
@@ -71,6 +78,11 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# #115: user-scoped except `_SVC` endpoints (pre-session OAuth, /pending/*,
+# /test-login; /logout writes users, SELECT-only for students). /me,
+# /local-seed and /realtime-token read only the caller's rows + catalog.
+_SVC = [Depends(service_route)]
 
 # Local-dev auto-approve fires ONLY for real local dev, NOT APP_ENV=test (which must
 # keep the #285 approval gate). So gate on APP_ENV=="local", not the broader IS_LOCAL.
@@ -91,9 +103,30 @@ def get_me(request: Request):
         raise HTTPException(status_code=401, detail="Not authenticated")
 
 
-@router.get("/google")
-def google_login(popup_id: str = Query(None), return_to: str = Query(None)):
-    """Redirect to Google consent screen with identity + calendar scopes."""
+@router.post("/logout", dependencies=_SVC)
+def logout(request: Request):
+    """Sign out everywhere: revoke every session issued up to now
+    (`users.sessions_valid_after`), so a copied cookie stops working at once.
+    Authenticated by the session it revokes (unapproved accounts too); the
+    session BFF (DELETE /api/auth/session) calls it before clearing the
+    cookie. 401 when the session is already invalid."""
+    user_id = get_session_user_id(request, allow_unapproved=True)
+    try:
+        revoke_sessions(user_id)
+    except Exception:
+        logger.exception("logout: could not revoke sessions for %r", user_id)
+        raise HTTPException(status_code=503, detail="Could not sign you out. Please try again.") from None
+    clear_account_state_cache(user_id)
+    return JSONResponse({"ok": True}, headers={"Cache-Control": "no-store"})
+
+
+@router.get("/google", dependencies=_SVC)
+def google_login(popup_id: str = Query(None), return_to: str = Query(None), binding: str = Query(None)):
+    """Redirect to Google's consent screen for the identity scopes.
+
+    ``include_granted_scopes`` makes the grant (and its tokens) also cover the
+    scopes the student granted us before, so a student who connected the
+    calendar keeps calendar-capable tokens across sign-ins."""
     if not GOOGLE_AVAILABLE or not GOOGLE_CLIENT_ID:
         raise HTTPException(status_code=400, detail="Google OAuth not configured")
 
@@ -103,12 +136,14 @@ def google_login(popup_id: str = Query(None), return_to: str = Query(None)):
     # Kept in the signed state cookie, never re-read from the callback query: the
     # callback trusts only what /google validated and signed.
     clean_return_to = _clean_return_to(return_to)
+    clean_bind = clean_binding(binding)  # sec2 M2: sha256 of /auth/start's nonce cookie
 
     flow = Flow.from_client_config(_google_client_config(), scopes=AUTH_SCOPES)
     flow.redirect_uri = GOOGLE_AUTH_REDIRECT_URI
     auth_url, _ = flow.authorization_url(
         prompt="consent",
         access_type="offline",
+        include_granted_scopes="true",
         state=_encode_state({"action": "signin", "n": nonce}),
         code_challenge=code_challenge,
         code_challenge_method="S256",
@@ -119,6 +154,7 @@ def google_login(popup_id: str = Query(None), return_to: str = Query(None)):
         "cv": code_verifier,
         "popup_id": clean_popup,
         **({"rt": clean_return_to} if clean_return_to else {}),
+        **({"bh": clean_bind} if clean_bind else {}),
     })
     response = RedirectResponse(auth_url)
     response.set_cookie(
@@ -133,18 +169,31 @@ def google_login(popup_id: str = Query(None), return_to: str = Query(None)):
     return response
 
 
-@router.get("/google/callback")
+#: The sign-in error code for a student who backed out of Google's screen.
+SIGNIN_CANCELLED = "cancelled"
+
+_GOOGLE_ERROR_RE = re.compile(r"^[a-z_]{1,64}$")
+
+
+@router.get("/google/callback", dependencies=_SVC)
 def google_callback(
     request: Request,
     background_tasks: BackgroundTasks,
-    code: str = Query(...),
+    code: str = Query(None),
     state: str = Query(None),
+    error: str = Query(None),
 ):
-    """Exchange auth code for tokens, validate @bu.edu, upsert user."""
+    """Exchange auth code for tokens, validate @bu.edu, upsert user.
+
+    Google comes back with ``error=access_denied`` and no ``code`` when the
+    student cancels on its screen. That is a cancelled sign-in, not a bad
+    request: it goes back through the sign-in error path as ``cancelled``
+    (popup and same-tab alike), with nothing exchanged or written."""
     cookie_payload = _decode_oauth_cookie(request.cookies.get(OAUTH_STATE_COOKIE))
     code_verifier = cookie_payload.get("cv") if cookie_payload else None
     popup_id = _clean_popup_id(cookie_payload.get("popup_id")) if cookie_payload else None
     cookie_nonce = cookie_payload.get("n") if cookie_payload else None
+    signin_binding = clean_binding(cookie_payload.get("bh")) if cookie_payload else None
     # Re-checked here as well as at /google, so the token only ever leaves for an
     # origin the CURRENT config allows; anything else lands on FRONTEND_URL.
     frontend_url = (
@@ -164,16 +213,7 @@ def google_callback(
             resp = RedirectResponse(f"{frontend_url}/auth/callback?{params}")
         else:
             resp = RedirectResponse(f"{frontend_url}{fallback_path}?error={error_code}")
-        resp.set_cookie(
-            key=OAUTH_STATE_COOKIE,
-            value="",
-            max_age=0,
-            httponly=True,
-            secure=SECURE_COOKIES,
-            samesite="lax",
-            path="/",
-        )
-        return resp
+        return clear_oauth_cookie(resp, secure=SECURE_COOKIES)
 
     def _not_approved(signin_email: str, signin_first_name: str) -> RedirectResponse:
         pending_token = _mint_pending_token(signin_email, signin_first_name)
@@ -183,30 +223,43 @@ def google_callback(
             )
         query = f"?{urlencode({'t': pending_token})}" if pending_token else ""
         resp = RedirectResponse(f"{frontend_url}/pending{query}")
-        resp.set_cookie(
-            key=OAUTH_STATE_COOKIE,
-            value="",
-            max_age=0,
-            httponly=True,
-            secure=SECURE_COOKIES,
-            samesite="lax",
-            path="/",
+        return clear_oauth_cookie(resp, secure=SECURE_COOKIES)
+
+    # Whether this request is Google's answer to THE pending sign-in: the
+    # state's nonce matches the one sealed in the signed cookie.
+    state_nonce = ((_decode_state(state) or {}) if state else {}).get("n")
+    state_ok = bool(
+        cookie_payload and cookie_nonce and state_nonce
+        and _hmac.compare_digest(str(state_nonce), str(cookie_nonce))
+    )
+
+    if error or not code:
+        logger.info(
+            "google sign-in cancelled (%s)",
+            error if error and _GOOGLE_ERROR_RE.match(error) else "no code",
         )
-        return resp
+        if state_ok:
+            return _fail_redirect(SIGNIN_CANCELLED)
+        # Not this sign-in's answer (a stray tab, a crafted link): same
+        # message, but the pending sign-in keeps its cookie and its popup, so
+        # Google's real callback still completes it.
+        return RedirectResponse(f"{frontend_url}/?error={SIGNIN_CANCELLED}")
 
     if not GOOGLE_AVAILABLE:
         return _fail_redirect("google_not_configured")
 
-    state_data = _decode_state(state) if state else {}
-    state_nonce = state_data.get("n")
-    if not cookie_payload or not cookie_nonce or not state_nonce or not _hmac.compare_digest(str(state_nonce), str(cookie_nonce)):
+    if not state_ok:
         return _fail_redirect("invalid_state")
     # #756: one callback per state. Consumed before the code exchange, so a
     # replay is refused whatever the rest of this callback would have done.
     if not _consume_oauth_nonce(str(cookie_nonce)):
         return _fail_redirect("invalid_state")
 
-    flow = Flow.from_client_config(_google_client_config(), scopes=AUTH_SCOPES)
+    # No scopes on the exchange Flow: Google answers with the scopes granted,
+    # which under include_granted_scopes is more than AUTH_SCOPES, and oauthlib
+    # raises on any difference. record_google_sign_in reads the granted set
+    # (oauth_state.granted_scopes) instead.
+    flow = Flow.from_client_config(_google_client_config(), scopes=None)
     flow.redirect_uri = GOOGLE_AUTH_REDIRECT_URI
     try:
         flow.fetch_token(code=code, code_verifier=code_verifier)
@@ -218,6 +271,10 @@ def google_callback(
     if user_info is None:
         return _fail_redirect("userinfo_fetch_failed")
 
+    # Every decision below keys on the email: refuse one Google has not verified.
+    if not _email_verified(user_info):
+        return _fail_redirect("email_not_verified")
+
     email = user_info.get("email", "")
     google_id = user_info.get("id", "")
     name = user_info.get("name", "")
@@ -227,10 +284,6 @@ def google_callback(
     name_parts = name.split(None, 1)
     first_name = name_parts[0] if name_parts else ""
     last_name = name_parts[1] if len(name_parts) > 1 else ""
-
-    # Restrict sign-in to the configured email-domain allowlist (default @bu.edu)
-    if not _email_domain_allowed(email):
-        return _fail_redirect("invalid_domain")
 
     signin = record_google_sign_in(
         email=email, google_id=google_id, name=name, first_name=first_name,
@@ -260,16 +313,16 @@ def google_callback(
     #
     # Uses the shared minter (#381) with `typ=handoff` (#756): the API refuses a
     # handoff token as a credential, and the BFF exchanges nothing else, so a
-    # live session can no longer be re-minted into a fresh one. The `if
-    # SESSION_SECRET` guard is kept (and the secret passed explicitly) so this
-    # path still degrades to "no auth_token in the redirect" rather than raising.
+    # live session can no longer be re-minted into a fresh one. sec2 M2: plus a
+    # single-use `jti` and the browser binding `bh` (routes/auth_handoff.py).
+    # The `if SESSION_SECRET` guard keeps a missing secret a missing token.
     auth_token = ""
     if SESSION_SECRET:
-        auth_token = mint_session(
+        auth_token = mint_handoff(
             user_id,
             ttl=_REDIRECT_TOKEN_TTL_SECONDS,
             secret=SESSION_SECRET,
-            typ=TOKEN_TYPE_HANDOFF,
+            binding=signin_binding,
         )
 
     # #117: auth.login fires at the two real session-mint sites (here and
@@ -291,16 +344,7 @@ def google_callback(
         **({"popup_id": popup_id} if popup_id else {}),
     })
     resp = RedirectResponse(f"{frontend_url}/auth/callback?{params}")
-    resp.set_cookie(
-        key=OAUTH_STATE_COOKIE,
-        value="",
-        max_age=0,
-        httponly=True,
-        secure=SECURE_COOKIES,
-        samesite="lax",
-        path="/",
-    )
-    return resp
+    return clear_oauth_cookie(resp, secure=SECURE_COOKIES)
 
 
 # ── POST /api/auth/test-login ─────────────────────────────────────────────────
@@ -318,14 +362,14 @@ def _pending_claims(token: str) -> dict:
     return claims
 
 
-@router.post("/pending/status")
+@router.post("/pending/status", dependencies=_SVC)
 def pending_status(body: PendingTokenBody):
     """Where an unapproved sign-in's email stands on the waitlist (/pending)."""
     email = _pending_claims(body.token)["email"]
     return _pending_standing(email, _waitlist_entry(email))
 
 
-@router.post("/pending/join")
+@router.post("/pending/join", dependencies=_SVC)
 def pending_join(body: PendingTokenBody):
     """Put an unapproved sign-in's email on the waitlist. Idempotent."""
     claims = _pending_claims(body.token)
@@ -351,7 +395,7 @@ class MintTestSessionBody(BaseModel):
     )
 
 
-@router.post("/test-login", include_in_schema=False)
+@router.post("/test-login", include_in_schema=False, dependencies=_SVC)
 async def mint_test_session(request: Request):
     """Mint a `sapling_session` cookie for a seeded user. LOCAL/TEST ONLY (#381).
 
@@ -380,7 +424,8 @@ async def mint_test_session(request: Request):
     global-setup step can inject it with `context.addCookies()` instead of
     replaying the response. `handoff_token` is the same user's OAuth-redirect
     token (`typ=handoff`, #756), for a journey that drives /auth/callback the
-    way a real sign-in does: the session BFF exchanges only that type.
+    way a real sign-in does (sec2 M2: its browser holds `signin_nonce` as the
+    `signin_cookie_name` cookie). `cookie_name`: `__Host-` iff SECURE_COOKIES.
     """
     # The gate runs FIRST, before the body is even looked at. The body is parsed
     # and validated by hand rather than declared as a `MintTestSessionBody`
@@ -413,8 +458,8 @@ async def mint_test_session(request: Request):
     if not user_id:
         raise HTTPException(status_code=422, detail="user_id must not be blank")
 
-    secret = (getattr(config, "SESSION_SECRET", "") or "").strip()
-    if not secret:
+    secret = getattr(config, "SESSION_SECRET", "") or ""  # raw: verifiers use it unstripped
+    if not secret.strip():
         # config.validate_config() relaxes the SESSION_SECRET requirement for
         # IS_LOCAL, so local dev can legitimately have none. Fail loudly instead
         # of handing back a token _decode_session would reject anyway.
@@ -426,9 +471,8 @@ async def mint_test_session(request: Request):
     requested = TEST_LOGIN_DEFAULT_TTL_SECONDS if body.ttl is None else body.ttl
     ttl = max(30, min(int(requested), TEST_LOGIN_MAX_TTL_SECONDS))
     token = mint_session(user_id, ttl=ttl, secret=secret)
-    handoff_token = mint_session(
-        user_id, ttl=_REDIRECT_TOKEN_TTL_SECONDS, secret=secret, typ=TOKEN_TYPE_HANDOFF
-    )
+    handoff_token, signin_nonce = mint_test_handoff(user_id, ttl=_REDIRECT_TOKEN_TTL_SECONDS, secret=secret)
+    secure = bool(getattr(config, "SECURE_COOKIES", False))
 
     logger.warning("test-login: minted a session for %r (APP_ENV=%s)", user_id, config.APP_ENV)
 
@@ -444,19 +488,21 @@ async def mint_test_session(request: Request):
     response = JSONResponse({
         "ok": True,
         "user_id": user_id,
-        "cookie_name": SESSION_COOKIE_NAME,
+        "cookie_name": session_cookie_name(secure),
         "token": token,
         "handoff_token": handoff_token,
+        "signin_nonce": signin_nonce,
+        "signin_cookie_name": signin_cookie_name(secure),
         "expires_in": ttl,
     })
     # Same attributes the real session cookie carries (frontend BFF
     # /api/auth/session and the OAuth-state cookie above).
     response.set_cookie(
-        key=SESSION_COOKIE_NAME,
+        key=session_cookie_name(secure),
         value=token,
         max_age=ttl,
         httponly=True,
-        secure=bool(getattr(config, "SECURE_COOKIES", False)),
+        secure=secure,
         samesite="lax",
         path="/",
     )
@@ -500,15 +546,20 @@ async def local_seed_status(request: Request):
 
 # ── GET /api/auth/realtime-token (RLS step 2e) ────────────────────────────────
 
-#: Feature flag that turns the Realtime JWT bridge on for a student (#115).
-REALTIME_RLS_FLAG = "realtime_rls"
-
+#: ``detail.code`` of the ONE 503 the browser treats as "no live chat for this
+#: page session" (frontend/src/lib/realtimeAuth.ts): the signing key is unset
+#: or unusable, which no retry can fix. Every other 5xx on this route (the
+#: session guard's account-state read, a restart, a cold start) carries no
+#: such code, and the client retries it with backoff.
+REALTIME_UNCONFIGURED = "realtime_unconfigured"
 
 @router.get("/realtime-token")
 def realtime_token(request: Request):
     """A short-lived JWT the browser's Supabase Realtime client authenticates
-    with (``supabase.realtime.setAuth``), so live study-room chat survives RLS
-    on ``room_messages`` (docs/security/realtime-jwt-bridge-design.md).
+    with (``supabase.realtime.setAuth``), the only way to receive live
+    study-room chat: ``room_messages`` has RLS on and no anon SELECT
+    (20261109073255_room_messages_rls_enable.sql;
+    docs/security/realtime-jwt-bridge-design.md).
 
     One general token per student, not per room: the room_messages SELECT
     policy (``app_auth.is_room_member_realtime``) does the scoping, and
@@ -516,23 +567,29 @@ def realtime_token(request: Request):
     which no other policy trusts. Answers ``{token, expires_at}`` (unix
     seconds); the client re-fetches before ``expires_at``.
 
-    401/403 without a live, approved session; 404 while the ``realtime_rls``
-    flag is off for the student (the client then keeps the anon Realtime
-    path); 503 when SUPABASE_JWT_SIGNING_KEY is unset or unusable (fail
-    closed: never a service-role or anon fallback). ``no-store``: it is a
-    credential.
+    401/403 without a live, approved session; 503 with
+    ``detail.code == "realtime_unconfigured"`` when SUPABASE_JWT_SIGNING_KEY
+    is unset or unusable (fail closed: never a service-role or anon fallback;
+    the room then works over REST only). Any other 503 (e.g. the guard could
+    not read the account) is transient and has no such code. ``no-store``: it
+    is a credential. No feature flag: the endpoint stopped reading
+    ``realtime_rls`` with the anon path's removal (the flag stays registered
+    one release for old bundles only; see services/feature_flags.py).
     """
     from db import user_jwt
-    from services import feature_flags
 
     user_id = get_session_user_id(request)
-    if not feature_flags.flag_on(REALTIME_RLS_FLAG, user_id):
-        raise HTTPException(status_code=404, detail="Not Found")
     try:
         token, expires_at = user_jwt.mint_realtime(user_id)
     except user_jwt.SigningKeyError as exc:
         logger.warning("realtime-token: cannot mint (%s)", exc)
-        raise HTTPException(status_code=503, detail="Realtime authorization is not configured")
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": REALTIME_UNCONFIGURED,
+                "message": "Realtime authorization is not configured",
+            },
+        )
     return JSONResponse(
         {"token": token, "expires_at": expires_at},
         headers={"Cache-Control": "private, no-store"},

@@ -39,6 +39,9 @@ _PUBLIC = {
     "generate_quiz": "generation",
     "get_attempt": "history",
     "list_attempts": "history",
+    # The mastery rule, for the other writer of mastery from one graded
+    # answer: a study guide's check question (services/study_guides/answers.py).
+    "mastery_after": "config",
     "quiz_config_payload": "config",
     "submit_quiz": "submission",
 }

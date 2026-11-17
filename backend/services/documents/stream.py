@@ -27,7 +27,6 @@ from services.documents.persistence import (
 )
 from services.documents.post_roll import (
     _check_upload_achievements,
-    _invalidate_study_guide_cache,
     _refresh_course_context,
     _spawn_post_roll,
 )
@@ -315,7 +314,6 @@ async def upload_event_stream(
     if not adopted:
         try:
             _spawn_post_roll(
-                ("invalidate_study_guide_cache", _invalidate_study_guide_cache, user_id, offering_id),
                 # update_course_context aggregates an OFFERING (#759).
                 ("update_course_context", _refresh_course_context, offering_id, user_id),
                 ("check_upload_achievements", _check_upload_achievements, user_id),

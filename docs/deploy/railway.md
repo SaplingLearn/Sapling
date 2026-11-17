@@ -184,7 +184,7 @@ today is not the case:
    and the other three callers must either move to jobs too or accept
    text-layer-only extraction.
 2. **Chromium.** Gradescope's BU SSO (`POST /api/gradescope/...` →
-   `gradescope_service.login_via_bu_sso`) launches Chromium on the request
+   `services/gradescope/client.py::login_via_bu_sso`) launches Chromium on the request
    path. On the `api` image the launch fails and the route answers 500 "BU
    sign-in is unavailable. Please retry or connect using session cookies."
    (the other Gradescope sign-in modes keep working). It has to become a
@@ -222,7 +222,7 @@ replica running, watch it for a day, then the next.
 | # | Flag | Migration it needs | What it moves out of process memory |
 | --- | --- | --- | --- |
 | 1 | `stateless_rate_limit` | `20261108220438_stateless_rate_limit_and_flag_version.sql` | the per-key rate-limit windows (`services/request_limits.py`) into `rate_limit_hits` + `claim_rate_limit()`, so two replicas share one budget instead of each granting the full one |
-| 2 | `stateless_locks` | `20261109022852_app_leases.sql` | the study-guide single-flight, the admin account-operation slot and the consumed OAuth nonces become `app_leases` rows (`services/pg_lease.py`), so they exclude across replicas |
+| 2 | `stateless_locks` | `20261109022852_app_leases.sql` | the admin account-operation slot and the consumed OAuth nonces become `app_leases` rows (`services/pg_lease.py`), so they exclude across replicas |
 | 3 | `stateless_tutor_sessions` | `20261109024225_tutor_pending_sessions.sql` | pending tutor sessions (between start-session and the first turn) and their end/delete tombstones into `tutor_pending_sessions`, so a session started on one replica can be continued, ended or deleted on the other |
 | 4 | `async_db_client` (optional) | none | not replica state: the async handlers' PostgREST calls on a native async client instead of a threadpool hop. Independent of the replica count; turn it on when the load test says so |
 
@@ -251,13 +251,13 @@ request (swept 2026-11-09):
 | State | Where | On two replicas |
 | --- | --- | --- |
 | rate-limit windows | `services/request_limits.py` `_rate_state` | **made safe**: `stateless_rate_limit` (flag 1) |
-| study-guide single-flight | `routes/study_guide.py` key locks | **made safe**: `stateless_locks` (flag 2), a lease per guide key |
+| study-guide generation claim | `study_guides.generating_at` (`services/study_guides/store.py`) | **safe by construction**: the claim is a conditional UPDATE on the guide's own row, so it already holds across replicas; no flag |
 | admin account-operation slot | `services/account_ops_lock.py` `_running` | **made safe**: `stateless_locks` (flag 2) |
-| consumed OAuth nonces | `routes/auth.py` `_CONSUMED_OAUTH_NONCES` | **made safe**: `stateless_locks` (flag 2), a never-released lease on the nonce's hash |
+| consumed OAuth nonces | `services/auth/oauth_state.py` `_CONSUMED_OAUTH_NONCES` | **made safe**: `stateless_locks` (flag 2), a never-released lease on the nonce's hash |
 | pending tutor sessions + tombstones | `services/tutor_sessions.py` `PENDING_SESSIONS`, `_DISCARDED`, `_MATERIALIZATION_LOCKS` | **made safe**: `stateless_tutor_sessions` (flag 3); first-turn materialisation is one SQL transaction |
 | flag snapshot | `services/feature_flags.py` | **safe**: version check (`feature_flags_version`) |
 | encryption key canary first seed | `services/encryption_canary.py` | **safe**: two boots at once both insert with DO NOTHING, both re-read the one stored canary; same key passes, a different key refuses to boot (`tests/test_encryption_canary.py` runs the race) |
-| queued uploads / Gradescope syncs | `services/document_jobs.py`, `services/gradescope_jobs.py` (`services/staged_jobs.py`) | **safe**: rows in Postgres, every write a CAS on stage + owner token; a watcher on either replica sees the same row |
+| queued uploads / Gradescope syncs | `services/document_jobs.py`, `services/gradescope/jobs.py` (`services/staged_jobs.py`) | **safe**: rows in Postgres, every write a CAS on stage + owner token; a watcher on either replica sees the same row |
 | index sweeper | `services/index_sweeper.py` (one per replica) | **safe**: rows are claimed by `claim_documents_for_indexing` with a per-row lease, so two sweepers split the work |
 | account-state cache | `services/auth_guard.py` (30 s TTL) | acceptable: a removed/deleted account is refused on the other replica within 30 s |
 | roles cache | `services/feature_flags.py` `_roles` (60 s TTL) | acceptable: a role change reaches both within 60 s |
@@ -267,13 +267,13 @@ request (swept 2026-11-09):
 | email notification opt-outs | `services/email_service.py` `_opt_out_cache` (60 s) | acceptable: the send dedupe (`email_sends`) and suppressions are in Postgres |
 | Resend request spacing | `services/email_service.py` `_next_slot` | per replica: two replicas sending at once can exceed Resend's 2 req/s; a 429 is retried once after its Retry-After. Broadcasts are admin-initiated and run on one replica |
 | immutable lookups | `services/academics.py` (`offering_course_id`, `term_for_offering`), `services/growth.py` (`growth_stages`) | harmless: reference data that does not change at runtime |
-| in-flight background tasks | `routes/documents.py` `_POST_ROLL_TASKS`, `services/tutor_router.py` `_inflight` | harmless: per-process work, drained at shutdown; a lost post-roll index is re-driven by the sweeper |
+| in-flight background tasks | `services/documents/post_roll.py` `_POST_ROLL_TASKS`, `services/tutor_router.py` `_inflight` | harmless: per-process work, drained at shutdown; a lost post-roll index is re-driven by the sweeper |
 | event / PostHog queues | `services/events_service.py`, `services/posthog_client.py` | harmless: per-process buffers drained by their worker thread and at shutdown |
 | circuit breakers, outage drill log | `agents/_resilience.py` | harmless: each replica learns a provider outage on its own |
 | HTTP clients, minted user JWTs, Redis client, OCR models | `db/async_connection.py`, `services/typesafe_client.py`, `db/user_jwt.py`, `services/cache.py`, extraction backends | harmless: connection/compute caches, no shared truth |
 | db_user_scope tally | `db/scope_report.py` | harmless: the admin report reads the `events` table (`db_scope_divergences()`); the in-memory tally is this process's view only |
 | log-dedupe sets | `services/decisions.py`, `services/llm_pricing.py`, `db/scope.py`, `agents/_providers.py` | harmless |
-| OAuth fallback state store | `routes/auth.py` `_OAUTH_FALLBACK_STORE` | unused when `SESSION_SECRET` is set (the state is a signed cookie, valid on any replica with the same secret); outside local dev `validate_config` refuses to boot without one |
+| OAuth fallback state store | `services/auth/oauth_state.py` `_OAUTH_FALLBACK_STORE` | unused when `SESSION_SECRET` is set (the state is a signed cookie, valid on any replica with the same secret); outside local dev `validate_config` refuses to boot without one |
 
 ### Verification (staging, after the flags and before production)
 
@@ -320,7 +320,7 @@ excluded with a reason.
 | `MODEL_SLOT_VARIABLES` | `SAPLING_MODEL_<TASK>` + `SAPLING_MODEL_FALLBACK_<TASK>` for classifier, summary, concepts, syllabus, ocr_vision, course_summary | a slot rolled back on the API must not keep running the default in the worker |
 
 Not shared, on purpose: HTTP-only settings (`PORT`, `FRONTEND_URL`,
-`SECURE_COOKIES`, Google OAuth, `ALLOWED_EMAIL_DOMAINS`), email (`RESEND_API_KEY`,
+`SECURE_COOKIES`, Google OAuth), email (`RESEND_API_KEY`,
 `EMAIL_*`: no job sends mail), `CANOPY_METRICS_TOKEN`, `ACCOUNT_SYNC_*`,
 `OCR_ASYNC_ENABLED` and `UPLOAD_JOB_PICKUP_GRACE_SECONDS` (the API's side of an
 upload), `DB_USER_SCOPE_SHADOW_SAMPLE_RATE` (per request; the worker runs as
@@ -364,3 +364,9 @@ lost. A longer lease only delays how soon THAT worker's claims pick up a job
 whose heartbeat stopped (a crash, or a hung handler past
 `JOBS_MAX_HEARTBEAT_SECONDS`). Changing `MIN_LEASE_SECONDS` itself needs every
 worker on the new image (stop the old ones first).
+
+## Real client addresses behind Railway's proxy
+
+The public, unauthenticated routes (`POST /api/careers/apply`, `POST /api/newsletter/subscribe`) are rate-limited per client address (`services/request_limits.py::public_route_limit`). Uvicorn only takes the caller's address from `X-Forwarded-For` when the hop that sent it is trusted, and by default it trusts only `127.0.0.1`. Behind Railway's edge the backend therefore sees the proxy's private address for every caller, and those routes fall back to one shared, looser ceiling (`*_SHARED` in `services/abuse_limits.py`) rather than the strict per-address budget.
+
+To give each caller their own budget, set `FORWARDED_ALLOW_IPS` on the API service to the address range Railway's proxy connects from (uvicorn reads this variable directly). Only do this when the service is reachable solely through Railway's edge: a trusted hop's `X-Forwarded-For` is believed as sent.

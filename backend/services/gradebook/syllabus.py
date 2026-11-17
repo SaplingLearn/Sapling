@@ -12,7 +12,7 @@ from __future__ import annotations
 import uuid
 
 from db.connection import table
-from services.encryption import encrypt_if_present
+from services.encryption import bind, encrypt_if_present
 from services.gradebook.errors import DocumentNotOwned, InvalidCategoryWeights
 
 
@@ -63,13 +63,14 @@ def apply_syllabus_to_enrollment(enr: dict, body) -> None:
         if (title, due) in seen:
             continue
         seen.add((title, due))
+        new_id = str(uuid.uuid4())
         new_assigns.append({
-            "id": str(uuid.uuid4()),
+            "id": new_id,
             "enrollment_id": enr["id"],
             "title": title,
             "due_date": a.get("due_date"),
             "assignment_type": a.get("assignment_type"),
-            "notes": encrypt_if_present(a.get("notes")),
+            "notes": encrypt_if_present(a.get("notes"), bind=bind("assignments", "notes", new_id)),
             "category_id": None,
             "points_possible": None,
             "points_earned": None,

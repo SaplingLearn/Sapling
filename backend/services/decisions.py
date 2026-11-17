@@ -497,7 +497,20 @@ def _agent_prompt(state: Any, questions: Sequence[Question]) -> str:
                 "levels": {k: d for k, d in q.levels},
             }
         specs.append(spec)
-    return json.dumps({"state": state, "questions": specs}, ensure_ascii=False, default=str)
+    # sec2 M10 audit: the questions are code-built (trusted); the state
+    # carries a student's chat turn, so it goes inside the untrusted envelope
+    # (still JSON inside it, so the agent reads the same structure).
+    from services.prompt_safety import wrap_untrusted
+
+    state_json = json.dumps(state, ensure_ascii=False, default=str)
+    return (
+        "QUESTIONS:\n" + json.dumps({"questions": specs}, ensure_ascii=False, default=str)
+        + "\n\nSTATE:\n" + (wrap_untrusted(state_json, source=DECISION_STATE_SOURCE) or state_json)
+    )
+
+
+#: Envelope label on the decision agent's state. A trusted literal.
+DECISION_STATE_SOURCE = "the state to judge"
 
 
 async def _run_agent(
@@ -640,7 +653,7 @@ def _fit_state(state: Any, truncatable: Sequence[str], question_tokens: int) -> 
     # The document with every trimmable list emptied, plus each list's items.
     sizes = {key: [len(dumps(item)) for item in items] for key, items in lists.items()}
     total = len(dumps({**state, **{key: [] for key in lists}}))
-    for key, item_sizes in sizes.items():
+    for item_sizes in sizes.values():
         total += sum(item_sizes) + 2 * (len(item_sizes) - 1)
     if fits(total):
         return state

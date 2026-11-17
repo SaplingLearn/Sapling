@@ -92,12 +92,12 @@ describe('#715 popup sign-in routing', () => {
     expect(replace).toHaveBeenCalledTimes(1);
   });
 
-  it('starts sign-in with this origin as return_to so a PR preview gets the user back', () => {
+  it('starts sign-in at /auth/start on this origin (the nonce cookie; it adds return_to)', () => {
     render(<SignInModal open onClose={vi.fn()} />);
     fireEvent.click(screen.getByTestId('signin-google-button'));
     const url = new URL(vi.mocked(window.open).mock.calls[0][0] as string, window.location.href);
-    expect(url.pathname).toBe('/api/auth/google');
-    expect(url.searchParams.get('return_to')).toBe(window.location.origin);
+    expect(url.origin).toBe(window.location.origin);
+    expect(url.pathname).toBe('/auth/start');
     expect(url.searchParams.get('popup_id')).toBe(channels[0].name.replace('sapling_signin:', ''));
   });
 
@@ -187,5 +187,80 @@ describe('#756 sign-in error copy', () => {
     expect(screen.queryByTestId('signin-error')).not.toBeNull();
     fireEvent.click(screen.getByTestId('signin-google-button'));
     expect(screen.queryByTestId('signin-error')).toBeNull();
+  });
+});
+
+describe('Get started and Welcome back', () => {
+  afterEach(cleanup);
+
+  it('says "Welcome back." for Sign In', () => {
+    render(<SignInModal open onClose={() => {}} />);
+    expect(screen.getByTestId('signin-title').textContent).toBe('Welcome back.');
+    expect(screen.getByRole('dialog').getAttribute('aria-labelledby')).toBe('signin-modal-title');
+  });
+
+  it('says "Get started." for Get Started', () => {
+    render(<SignInModal open onClose={() => {}} variant="start" />);
+    expect(screen.getByTestId('signin-title').textContent).toBe('Get started.');
+    expect(screen.getByTestId('signin-modal').textContent).not.toContain('Welcome back');
+  });
+});
+
+describe('a cancelled Google sign-in', () => {
+  beforeEach(() => {
+    channels.length = 0;
+    vi.stubGlobal('BroadcastChannel', FakeChannel);
+    vi.spyOn(window, 'open').mockImplementation(
+      () => ({ closed: false, focus() {}, close() {} }) as unknown as Window,
+    );
+  });
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('says so after a same-tab sign-in (the landing passes ?error=cancelled)', () => {
+    render(<SignInModal open onClose={() => {}} errorCode="cancelled" />);
+    expect(screen.getByTestId('signin-error').textContent).toBe('Sign-in was cancelled.');
+  });
+
+  it('says so after a popup sign-in', () => {
+    render(<SignInModal open onClose={() => {}} />);
+    fireEvent.click(screen.getByTestId('signin-google-button'));
+    act(() => {
+      channels[0].onmessage?.({
+        data: { type: 'sapling_signin', success: false, error: 'cancelled' },
+      } as MessageEvent);
+    });
+    expect(screen.getByTestId('signin-error').textContent).toBe('Sign-in was cancelled.');
+    // The button is back, ready to try again.
+    expect((screen.getByTestId('signin-google-button') as HTMLButtonElement).disabled).toBe(false);
+  });
+});
+
+describe('Esc in the sign-in box', () => {
+  afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
+  });
+
+  it('closes the box and nothing else: a page listening for Esc never sees it', () => {
+    vi.useFakeTimers();
+    // A page's own Esc-for-back, registered before the box opened (as
+    // onboarding's was): it must not also act on the press.
+    const pageEsc = vi.fn();
+    const onPageKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !e.defaultPrevented) pageEsc(); };
+    window.addEventListener('keydown', onPageKey);
+    try {
+      const onClose = vi.fn();
+      render(<SignInModal open onClose={onClose} />);
+      fireEvent.keyDown(screen.getByTestId('signin-google-button'), { key: 'Escape' });
+      act(() => { vi.advanceTimersByTime(250); });
+      expect(onClose).toHaveBeenCalled();
+      expect(pageEsc).not.toHaveBeenCalled();
+    } finally {
+      window.removeEventListener('keydown', onPageKey);
+    }
   });
 });

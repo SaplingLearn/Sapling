@@ -3,6 +3,9 @@
 import React, { useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { Icon } from "../Icon";
+import { CHAT_MESSAGE_MAX } from "@/lib/inputLimits";
+import { CrisisSupportCard } from "../safety/CrisisSupportCard";
+import type { CrisisSupport } from "@/lib/crisisSupport";
 
 // MarkdownChat statically imports mermaid, katex, highlight.js, and the
 // remark/rehype stack. Static-importing it from a client component still
@@ -52,6 +55,10 @@ export interface ChatMsg {
   interrupted?: boolean;
   /** The user text that produced this (interrupted) turn — what Retry re-sends. */
   retryText?: string;
+  /** docs/safety/crisis-support.md: the backend answered this turn with the
+   *  crisis-support card instead of a tutor reply. Rendered as the calm card,
+   *  never as a tutor bubble; `content` keeps the same copy as text. */
+  crisisSupport?: CrisisSupport;
 }
 
 interface ChatPanelProps {
@@ -234,6 +241,7 @@ const ChatInputBar = React.memo(function ChatInputBar({
       >
         <textarea
           data-testid="tutor-input"
+          maxLength={CHAT_MESSAGE_MAX}
           aria-label="Message"
           value={text}
           onChange={e => setText(e.target.value)}
@@ -291,6 +299,14 @@ const Message = React.memo(function Message({
   onRetry?: (m: ChatMsg) => void;
 }) {
   const isUser = m.role === "user";
+  if (m.crisisSupport && !isUser) {
+    // Sapling speaking, not the tutor: no tutor avatar, no serif bubble.
+    return (
+      <div className="fade-in" style={{ alignSelf: "stretch", maxWidth: 640, width: "100%" }}>
+        <CrisisSupportCard support={m.crisisSupport} />
+      </div>
+    );
+  }
   return (
     <div
       className="fade-in"

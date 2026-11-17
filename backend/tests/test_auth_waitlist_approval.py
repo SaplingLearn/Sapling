@@ -73,7 +73,7 @@ def callback(monkeypatch):
         userinfo.raise_for_status.return_value = None
         userinfo.json.return_value = {
             "id": "112233", "email": email,
-            "name": "Ada Lovelace", "picture": "https://example.com/a.png",
+            "name": "Ada Lovelace", "picture": "https://example.com/a.png", "verified_email": True,
         }
         monkeypatch.setattr(httpx, "get", lambda *a, **k: userinfo)
 
@@ -403,13 +403,14 @@ def test_pending_token_carries_the_first_name(callback, monkeypatch):
 
 
 def test_pending_join_stores_the_first_name_encrypted(pending, monkeypatch):
-    from services.encryption import decrypt_if_present
+    from services.encryption import bind, decrypt_if_present
 
     tables, client, _ = pending(waitlist_rows=[])
     token = auth_module._mint_pending_token(EMAIL, "Ada")
     assert client.post("/api/auth/pending/join", json={"token": token}).status_code == 200
     row = tables["newsletter_emails"].upsert.call_args.args[0]
-    assert row["first_name"] != "Ada" and decrypt_if_present(row["first_name"]) == "Ada"
+    assert row["first_name"] != "Ada" and decrypt_if_present(
+        row["first_name"], bind=bind("newsletter_emails", "first_name", row)) == "Ada"
 
 
 def test_pending_join_fills_a_missing_name_on_an_existing_entry(pending):

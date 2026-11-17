@@ -52,11 +52,11 @@ export const USER_SECOND = "rich-user-second";
  * onboarding_completed=False, is_approved=True) — the state a real student is
  * in the first time they reach the funnel.
  *
- * Note /onboarding is NOT in middleware.ts's PROTECTED list or its matcher,
- * and Onboarding.tsx only redirects when unauthenticated — so the route
- * renders for any signed-in user regardless of approval or onboarding state.
- * This user is chosen because it is the realistic one, not because the route
- * gates on it. */
+ * Onboarding is enforced (2026-11-12): middleware.ts gates /onboarding like
+ * the shell and, off the same GET /api/auth/me read, sends this user from any
+ * app page to /onboarding (and an onboarded one from /onboarding to
+ * /dashboard). So this user sees the funnel and nothing of the app until it
+ * is finished. */
 export const USER_NEW = "rich-user-new";
 
 async function isUp(url: string): Promise<boolean> {

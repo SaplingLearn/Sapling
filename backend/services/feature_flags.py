@@ -153,18 +153,25 @@ REGISTRY: dict[str, FlagDef] = {f.key: f for f in (
             "Run each request's database calls as the student (RLS) instead of "
             "the service role. shadow compares a sample of reads; enforce "
             "applies RLS and fails closed.", False),
-    # #115 RLS step 2e (docs/security/realtime-jwt-bridge-design.md): the
-    # study-room live chat authenticates Supabase Realtime with a
-    # backend-minted token (GET /api/auth/realtime-token, iss
-    # sapling-realtime) instead of the public anon key, so it keeps working
-    # once RLS is on for room_messages. Client-visible: Social.tsx reads it.
-    # Off = today's anon subscription. Turn on only where
-    # SUPABASE_JWT_SIGNING_KEY is set and trusted by that project's Realtime
-    # (else the endpoint 503s and the room falls back to REST-only).
+    # #115 RLS step 2e: RETIRED IN CODE, kept registered for ONE release.
+    # Nothing in this release reads it: GET /api/auth/realtime-token and
+    # Social.tsx always use the backend-minted Realtime token, the only path
+    # 20261109073255_room_messages_rls_enable.sql leaves. It stays registered
+    # and client-visible only so a browser still running the PREVIOUS bundle
+    # (which reads `realtime_rls` from GET /api/flags and, when it is not
+    # "on", subscribes with the anon key that RLS now blocks) keeps live
+    # chat until it reloads. Staging and prod carry a stored default of "on";
+    # variants[0] stays "off" per ADR 0029, so a fresh local/CI database
+    # resolves it "off", which is harmless there: those stacks build the
+    # frontend from the same commit, so no old bundle exists to read it. Do
+    # NOT set SAPLING_FLAG_REALTIME_RLS=off: it would only push old bundles
+    # onto the dead anon path. Delete this entry, its kill switch in
+    # .railway/railway.ts and its stored feature_flags/feature_flag_targets
+    # rows together in the follow-up, once every client is on the new bundle.
     FlagDef("realtime_rls", ("off", "on"),
-            "Study-room live chat authenticates Supabase Realtime with a "
-            "backend-minted, member-scoped token instead of the anon key "
-            "(RLS step 2e). Needs SUPABASE_JWT_SIGNING_KEY.", True),
+            "RETIRED: read only by frontend bundles older than the RLS step 2e "
+            "graduation. Keep it on until it is deleted; new code ignores it.",
+            True),
     # #117 (docs/design/async-db-client.md §3): whether the `a*` twins of
     # table()'s verbs use the native httpx.AsyncClient ("on") or run the sync
     # verb on a worker thread ("off": today's client and limiter, reached from
@@ -182,8 +189,8 @@ REGISTRY: dict[str, FlagDef] = {f.key: f for f in (
     FlagDef("stateless_rate_limit", ("off", "on"),
             "Keep rate-limit counters in Postgres so every replica shares one "
             "budget. Global: per-user rules and rollouts do not apply.", False),
-    # #117 wave 3: the per-process locks (study-guide single-flight, admin
-    # account operations, consumed OAuth nonces) also take a Postgres lease
+    # #117 wave 3: the per-process locks (admin account operations,
+    # consumed OAuth nonces) also take a Postgres lease
     # (`claim_lease()`, services/pg_lease.py), so they hold across replicas.
     # Resolved GLOBALLY. Off = today's in-process locks only; on keeps them as
     # the first layer, and a failing DB falls back to them. Server-only.
@@ -202,6 +209,70 @@ REGISTRY: dict[str, FlagDef] = {f.key: f for f in (
             "Keep not-yet-started tutor sessions in Postgres so every replica "
             "can continue, end or delete them. Global: per-user rules and "
             "rollouts do not apply.", False),
+    # Hourly ops alert emails to admins (services/spend_alerts.py): today's AI
+    # spend over budget, per-student spend outliers, and spikes in
+    # auth.permission_denied / error.5xx. Resolved GLOBALLY (user_id=None).
+    # Seeded "on" by 20261114192656_spend_alerts_flag.sql; switching it off
+    # (or SAPLING_FLAG_SPEND_ALERTS=off) is the kill switch. Server-only.
+    FlagDef("spend_alerts", ("off", "on"),
+            "Email admins (at most once a day per alert) when today's AI spend "
+            "or one student's spend passes its threshold, or permission-denied "
+            "/ 5xx events spike. Global: per-user rules and rollouts do not "
+            "apply.", False),
+    # Owner decision 2026-11-14: the daily job that hard-deletes the personal
+    # data of an account its student deleted more than 30 days ago
+    # (services/account_purge_sweeper.py -> services/account_purge.py).
+    # Resolved GLOBALLY (user_id=None) at the start of every pass, so turning
+    # it off stops the next pass without a restart. Off = deleted accounts
+    # stay hidden soft deletes (credentials are still removed at the delete
+    # itself, and the daily pass still removes any a failed delete left).
+    # Server-only. Kill switch: SAPLING_FLAG_ACCOUNT_PURGE=off.
+    FlagDef("account_purge", ("off", "on"),
+            "Daily job: permanently erase the personal data of accounts their "
+            "student deleted more than 30 days ago. Irreversible. Global: "
+            "per-user rules and rollouts do not apply.", False),
+    # The daily pass's leftover-credential sweep
+    # (services/account_purge_sweeper.py::sweep_leftover_credentials): deletes
+    # the OAuth / Gradescope credential rows a soft-deleted account still
+    # holds and revokes its Google tokens. Independent of account_purge (the
+    # credentials were due at the delete itself). Resolved GLOBALLY at the
+    # start of every sweep. Seeded "on" by
+    # 20261115005314_credential_sweep_flag.sql; switching it off (or
+    # SAPLING_FLAG_CREDENTIAL_SWEEP=off) is the kill switch. Server-only.
+    FlagDef("credential_sweep", ("off", "on"),
+            "Daily job: remove (and revoke at Google) the credentials a deleted "
+            "account still holds after its delete could not remove them. "
+            "Global: per-user rules and rollouts do not apply.", False),
+    # docs/design/open-access-gate.md: the waitlist requirement. On = it is
+    # lifted: anyone who signs in (any email domain) gets in, stamped
+    # `users.open_access_at` and linked on the waitlist UNAPPROVED, so closing
+    # the gate again puts them back on the waitlist; nobody's approval is
+    # touched either way (access is computed, services/open_access.py).
+    # Accounts an admin removed stay out. "off" (the fail-closed answer) is the
+    # gated side. Resolved GLOBALLY (user_id=None): a new person has no id at
+    # sign-in, so per-user rules and rollouts do not apply. Client-visible:
+    # the landing page offers "Sign up" instead of "Join the waitlist" while
+    # it is on. Kill switch: SAPLING_FLAG_OPEN_ACCESS=off.
+    FlagDef("open_access", ("off", "on"),
+            "Open access: lift the waitlist requirement, so anyone who signs in "
+            "gets in. They are added to the waitlist unapproved and go back to "
+            "waiting when this is turned off; approvals are untouched and "
+            "removed accounts stay out. Global: per-user rules and rollouts do "
+            "not apply.", True),
+    # docs/safety/crisis-support.md: the crisis-support path. On: a student
+    # message that states suicidal ideation, self-harm or acute danger gets
+    # the fixed resources card INSTEAD of a model turn, on every surface
+    # services/crisis_support.py lists. Server-only: the client renders the
+    # card whenever a response carries one. SHIPS OFF until the owner has
+    # reviewed the copy (services/crisis_support_copy.py).
+    FlagDef("crisis_support", ("off", "on"),
+            "Crisis-support path: a student message stating suicidal ideation, "
+            "self-harm or acute danger gets a fixed card with crisis resources "
+            "(988, Crisis Text Line, campus counseling, 911) instead of a model "
+            "turn, on every tutor, notes and flashcard AI surface. Keep OFF "
+            "until the owner has reviewed the copy in "
+            "services/crisis_support_copy.py (checklist: "
+            "docs/safety/crisis-support.md).", False),
 )}
 
 STEPS = ("env_override", "fail_closed", "user", "role", "rollout", "default")
@@ -642,6 +713,15 @@ def explain(key: str, user_id: str | None, *, fresh: bool = False,
         return Resolution(off, "fail_closed", f"resolution error: {type(exc).__name__}")
 
 
+def env_override(key: str) -> str | None:
+    """The variant `SAPLING_FLAG_<KEY>` forces right now, or None. It wins
+    over every stored setting (:func:`explain`), so an admin surface that
+    shows the stored default must show this beside it."""
+    fd = REGISTRY.get(key)
+    env = (os.getenv(f"SAPLING_FLAG_{key.upper()}") or "").strip().lower()
+    return env if fd is not None and env in fd.variants else None
+
+
 def cached_explain(key: str, user_id: str | None) -> Resolution | None:
     """:func:`explain` without any I/O, or None when answering would need a
     store read (a cold snapshot, or a role lookup this user has no fresh
@@ -703,6 +783,38 @@ def flag_on(key: str, user_id: str | None) -> bool:
     return fd is not None and flag_variant(key, user_id) != fd.variants[0]
 
 
+def last_known_flag_on(key: str, user_id: str | None) -> bool:
+    """:func:`flag_on`, except while the flag store is UNREADABLE: then the
+    answer comes from the last snapshot this process read (however old)
+    instead of the fail-closed default.
+
+    For a flag whose "on" must survive an outage (sec2 M11: `crisis_support`,
+    where failing closed would silently stop showing crisis resources the
+    owner switched on). It never turns a flag on that the last good read had
+    off, and a process that has never read the store still answers off, so
+    the default is unchanged. Role targets are read from the per-user cache
+    only (no read during an outage); an uncached user resolves as holding no
+    role. Every other failure (an unregistered flag, an invalid stored
+    variant, a resolution error) still fails closed.
+    """
+    fd = REGISTRY.get(key)
+    if fd is None:
+        return False
+    resolution = explain(key, user_id)
+    if not (resolution.step == "fail_closed" and resolution.detail == STORE_UNREADABLE):
+        return resolution.variant != fd.variants[0]
+    with _lock:
+        stale = _snapshot
+    if stale is None:
+        return False
+    roles = _roles_peek(user_id) if user_id else None
+    last = explain(key, user_id, _snapshot=stale[1], _roles_known=roles if roles is not None else ())
+    if last.variant != fd.variants[0]:
+        _warn_once(f"last_known:{key}", "feature flag store unreadable; %r answers from the "
+                   "last snapshot read (%s)", key, last.step)
+    return last.variant != fd.variants[0]
+
+
 def resolved_client_flags(user_id: str | None) -> dict[str, str]:
     """Every client-visible flag from ONE snapshot read. Resolving them one by
     one would retry the store per flag during an outage — 11 timeouts in a
@@ -747,13 +859,24 @@ def require_flag(key: str):
 #: on the API (``NAV_FEATURES_NOT_ENFORCED`` says why).
 NAV_FEATURE_API: dict[str, dict[str, tuple[tuple[str, str], ...]]] = {
     "hide_quiz": {
-        # Tree shows the student's recent attempts.
+        # Tree and the Study hub show the student's recent attempts.
         "/api/quiz": (("GET", r"/attempts"),),
     },
-    "hide_study": {"/api/flashcards": (), "/api/study-guide": ()},
+    # /api/study is the Study hub's own (daily goal + minutes).
+    "hide_study": {"/api/flashcards": (), "/api/study-guide": (), "/api/study": ()},
     "hide_calendar": {
-        # The dashboard's upcoming-deadlines card.
-        "/api/calendar": (("GET", r"/upcoming/[^/]+"),),
+        "/api/calendar": (
+            # The dashboard's upcoming-deadlines card.
+            ("GET", r"/upcoming/[^/]+"),
+            # The Study hub's exam tabs and deadlines, and the Flashcards
+            # page's exam tags.
+            ("GET", r"/all/[^/]+"),
+            # The Study hub's "+ Add Exam or Deadline".
+            ("POST", r"/save"),
+            # The Study hub's Exams and Deadlines editor (edit, remove).
+            ("PATCH", r"/assignments/[^/]+"),
+            ("DELETE", r"/assignments/[^/]+"),
+        ),
     },
     "hide_social": {
         # Friends are on every profile page (ProfileView), not just Social.

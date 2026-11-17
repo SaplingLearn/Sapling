@@ -259,13 +259,14 @@ class TestHelper:
 # ── the routes ───────────────────────────────────────────────────────────────
 
 
-def _upload(path: str, *, filename="notes.txt", content_type="text/plain", headers=None):
+def _upload(path: str, *, filename="notes.txt", content_type="text/plain", headers=None,
+            content=b"hello"):
     # An unsupported file type: a caller who passes the enrollment gate gets
     # the NEXT check's 400, which proves the gate ran first and let them by
     # without needing the OCR/agent pipeline.
     return client.post(
         path,
-        files={"file": (filename, io.BytesIO(b"hello"), content_type)},
+        files={"file": (filename, io.BytesIO(content), content_type)},
         data={"course_id": "c-target", "user_id": "u1"},
         headers=headers or {},
     )
@@ -304,7 +305,8 @@ class TestUploadGate:
              patch_documents("_existing_doc_by_request_id", return_value=stored), \
              patch_documents("extract_text_from_file") as ocr:
             r = _upload(path, filename="notes.pdf", content_type="application/pdf",
-                        headers={"X-Request-ID": "retry-1"})
+                        headers={"X-Request-ID": "retry-1"},
+                        content=b"%PDF-1.4 the same file again")
         assert r.status_code == 200, r.text
         assert "doc-stored" in r.text
         gate.assert_not_called()

@@ -39,8 +39,8 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
         "#119 llm_budgets / llm_usage are service-only",
     ("main.py", "/api/admin/flags admin_flags_router", "admin_service_route"): "feature_flags is service-only",
     ("main.py", "gemini_test", "admin_service_route"): "admin LLM probe (records usage)",
-    ("main.py", "/api/auth auth.router", "service_route"):
-        "OAuth callback / test-login / pending: run before a session exists; users is account state",
+    ("main.py", "/api/auth auth_handoff_router", "service_route"):
+        "sec2 M2 handoff exchange: before a session exists; auth_handoff_consumptions is service-only",
     ("main.py", "/api/careers careers.router", "service_route"): "public; job_applications is service-only",
     ("main.py", "/api/email email_router", "service_route"): "public unsubscribe; email_suppressions is service-only",
     ("main.py", "/api/internal internal_metrics_router", "service_route"):
@@ -52,8 +52,19 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
         "until step 2e: room_messages has no policies; invite join/owner transfer/teardown/"
         "friendships are cross-user (plan §6.3: social last)",
     # ── Endpoints ──
+    ("routes/auth.py", "google_login", "service_route"): "OAuth redirect: no session yet",
+    ("routes/auth.py", "google_callback", "service_route"):
+        "OAuth callback: no session yet; upserts users/oauth_tokens/newsletter_emails (account state)",
+    ("routes/auth.py", "pending_status", "service_route"):
+        "unapproved sign-in (pending token, no session): reads the waitlist (newsletter_emails)",
+    ("routes/auth.py", "pending_join", "service_route"):
+        "unapproved sign-in (pending token, no session): writes the waitlist (newsletter_emails)",
+    ("routes/auth.py", "mint_test_session", "service_route"):
+        "local/test-only session minter: runs before a session exists",
+    ("routes/auth.py", "logout", "service_route"):
+        "writes users.sessions_valid_after; users is SELECT-only for students",
     ("routes/academics.py", "get_semesters", "service_route"): "public catalog read, no session",
-    ("routes/calendar.py", "calendar_callback", "service_route"):
+    ("routes/calendar_connect.py", "calendar_callback", "service_route"):
         "Google redirect: no session, user from the signed state cookie",
     ("routes/gamification.py", "get_leaderboard", "service_route"):
         "cross-user projection (everyone's weekly XP); scope + privacy applied in code",
@@ -65,11 +76,12 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
         "cross-user projection (anonymous too); creates the target's missing rows; visibility in code",
     ("routes/profile.py", "get_roles", "service_route"):
         "roles of any live user; needs a session (anonymous is a 401)",
-    ("routes/profile.py", "delete_account", "service_scope"): "users.deleted_at: account state",
     ("services/quiz/limits.py", "_daily_spend_exceeded", "runs_as_service"): "llm_usage is service-only (bucket E)",
     # ── Services ──
     ("services/academics.py", "resolve_offering", "service_scope"): "on-demand course_offerings insert (catalog)",
     ("services/academics.py", "school_peer_user_ids", "runs_as_service"): "reads other students' enrollments",
+    ("services/account_credentials.py", "_retry_delete", "runs_as_service"):
+        "after the account delete's response: oauth_tokens/gradescope_credentials of a now-deleted account",
     ("services/achievement_service.py", "check_achievements", "runs_as_service"): "awards are server decisions",
     ("services/achievement_service.py", "get_user_stat", "runs_as_service"): "achievement counters",
     ("services/achievement_service.py", "grant_linked_cosmetics", "runs_as_service"): "cosmetic awards",
@@ -108,11 +120,12 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
         "#116 document_uploads: record an inline run's outcome",
     ("services/documents_read.py", "saved_document", "runs_as_service"):
         "#116 reads back the uploader's own row the worker saved (select * incl. index columns)",
-    ("services/email_service.py", "is_suppressed", "runs_as_service"): "email_suppressions",
+    ("services/email_service.py", "is_suppressed", "runs_as_service"): "email_suppressions/email_alert_suppressions",
     ("services/email_service.py", "notification_opt_out_hashes", "runs_as_service"): "every user's opt-out",
-    ("services/email_service.py", "send_email", "runs_as_service"): "email_sends/email_suppressions",
-    ("services/email_service.py", "suppress", "runs_as_service"): "email_suppressions",
-    ("services/email_service.py", "unsuppress", "runs_as_service"): "email_suppressions",
+    ("services/email_service.py", "send_email", "runs_as_service"): "email_sends + the suppression tables",
+    ("services/email_service.py", "suppress", "runs_as_service"): "email_suppressions/email_alert_suppressions",
+    ("services/email_service.py", "suppressions_for", "runs_as_service"): "a batch's read of the suppression tables",
+    ("services/email_service.py", "unsuppress", "runs_as_service"): "email_suppressions/email_alert_suppressions",
     ("services/events_service.py", "_flush_batch", "runs_as_service"): "events/llm_usage are service-only",
     ("services/events_service.py", "_flush_rows_individually", "runs_as_service"): "events/llm_usage",
     ("services/events_service.py", "_insert_late", "runs_as_service"): "events/llm_usage",
@@ -136,8 +149,11 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
         "#116 gradescope_syncs: an inline run records its outcome",
     ("services/gradescope/jobs.py", "latest_sync", "runs_as_service"):
         "#116 gradescope_syncs: the status route's read (filtered to the caller)",
+    ("services/legal.py", "record_acceptances", "service_scope"):
+        "legal_acceptances is service-only (bucket E): the Terms/Privacy versions accepted at onboarding",
     ("services/llm_budget.py", "read_status", "runs_as_service"):
         "#119 llm_budgets / llm_usage are service-only (bucket E)",
+    ("services/profile/deletion.py", "delete_account", "service_scope"): "users.deleted_at: account state",
     ("services/profiles.py", "get_display_name", "runs_as_service"): "other users' names",
     ("services/profiles.py", "get_display_names", "runs_as_service"): "other users' names",
     ("services/profiles.py", "live_user_ids", "runs_as_service"):
@@ -152,6 +168,8 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
         "#117 stateless_locks: app_leases + claim_lease() are service-only",
     ("services/pg_lease.py", "_renew_db", "service_scope"):
         "#117 stateless_locks: renew_lease() extends the caller's own lease",
+    ("services/auth/handoff.py", "_consume_jti", "service_scope"):
+        "sec2 M2: auth_handoff_consumptions + consume_auth_handoff() are service-only",
     ("services/pg_lease.py", "_release_db", "service_scope"):
         "#117 stateless_locks: release_lease() drops the caller's own lease",
     ("services/tutor_sessions.py", "_store_row", "runs_as_service"):
@@ -171,6 +189,8 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
         "own sessions row + greeting from the service-only pending row",
     ("services/rag_service.py", "index_document_chunks", "runs_as_service"): "shared content-addressed chunks",
     ("services/rag_service.py", "index_document_chunks_detailed", "runs_as_service"): "shared chunks",
+    ("services/rag_service.py", "_uploaders_of", "runs_as_service"):
+        "M6 per-uploader cap: uploader ids of rows already retrieved for this reader, never text",
     ("services/social_cache_service.py", "get_cached_summary", "runs_as_service"): "room_summaries cache",
     ("services/social_cache_service.py", "invalidate", "runs_as_service"): "room_summaries cache",
     ("services/social_cache_service.py", "save_summary", "runs_as_service"): "room_summaries cache",

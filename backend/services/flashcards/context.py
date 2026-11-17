@@ -14,7 +14,7 @@ from services.academics import (
     term_id_for_label,
     user_enrolled_course_ids,
 )
-from services.encryption import decrypt_if_present, decrypt_json
+from services.encryption import EncryptionError, bind, decrypt_if_present, decrypt_json
 
 logger = logging.getLogger(__name__)
 
@@ -22,14 +22,16 @@ logger = logging.getLogger(__name__)
 def _get_session_summary(session_id: str) -> str:
     try:
         rows = table("sessions").select(
-            "summary_json", filters={"id": f"eq.{session_id}"}, limit=1
+            "id,summary_json", filters={"id": f"eq.{session_id}"}, limit=1
         )
         if not rows or not rows[0].get("summary_json"):
             return ""
         raw = rows[0]["summary_json"]
         if isinstance(raw, str):
             try:
-                return json.dumps(decrypt_json(raw))
+                return json.dumps(decrypt_json(raw, bind=bind("sessions", "summary_json", session_id)))
+            except EncryptionError:
+                return ""  # refused (moved/tampered): never the raw value
             except Exception:
                 return raw
         return json.dumps(raw)
@@ -40,7 +42,8 @@ def _get_session_summary(session_id: str) -> str:
 # Grounding reads at most this many of the course's documents, newest first:
 # the prompt inlines every summary + concept list it is handed.
 _COURSE_DOC_LIMIT = 50
-_COURSE_DOC_COLS = "file_name,category,summary,concept_notes"
+#: `id` is the 🔒 columns' binding (M13).
+_COURSE_DOC_COLS = "id,file_name,category,summary,concept_notes"
 
 
 def _enrolled_course_by_name(user_id: str, course_name: str) -> str | None:
@@ -131,10 +134,10 @@ def _get_course_documents(
             limit=_COURSE_DOC_LIMIT,
         ) or []
         for d in docs:
-            d["summary"] = decrypt_if_present(d.get("summary"))
+            d["summary"] = decrypt_if_present(d.get("summary"), bind=bind("documents", "summary", d))
             notes_raw = d.get("concept_notes")
             if isinstance(notes_raw, str):
-                d["concept_notes"] = decrypt_json(notes_raw)
+                d["concept_notes"] = decrypt_json(notes_raw, bind=bind("documents", "concept_notes", d))
         return docs
     except Exception:
         logger.warning(
@@ -144,10 +147,56 @@ def _get_course_documents(
         return []
 
 
-def _get_weak_concepts(user_id: str, course_name: str) -> list[str]:
+_WEAK_CONCEPT_COLS = "concept_name,mastery_score"
+
+
+def _normalized(name: str | None) -> str:
+    return " ".join((name or "").split()).casefold()
+
+
+def _weak_concept_candidates(user_id: str, course_name: str, course_id: str | None) -> list[dict]:
+    """The student's concepts the weak ones are picked from.
+
+    With a ``course_id``: that course's concepts and nothing else. There is no
+    fallback, so a course with no tracked concepts yet offers none rather than
+    another course's.
+
+    Without one (a free-text topic): the nodes whose ``subject`` is the topic,
+    else every node the student has. ``graph_nodes.subject`` is only ever
+    written by seeds (the app's graph writes leave it NULL and
+    ``graph_service`` stamps the course name on at read time), so for a real
+    account this branch is "every concept" — which is why a request that names
+    its course must not come through here.
+    """
+    nodes = table("graph_nodes")
+    if course_id:
+        return nodes.select(
+            _WEAK_CONCEPT_COLS,
+            filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"},
+        ) or []
+    rows = nodes.select(
+        _WEAK_CONCEPT_COLS,
+        filters={"user_id": f"eq.{user_id}", "subject": f"eq.{course_name}"},
+    )
+    if not rows:
+        rows = nodes.select(_WEAK_CONCEPT_COLS, filters={"user_id": f"eq.{user_id}"})
+    return rows or []
+
+
+def _get_weak_concepts(
+    user_id: str, course_name: str, course_id: str | None = None
+) -> list[str]:
     """
     Return concept names the student is weak on — below the "learning" floor
-    in `config.get_mastery_tier`, i.e. "struggling" or "unexplored".
+    in `config.get_mastery_tier`, i.e. "struggling" or "unexplored" — for the
+    prompt to prioritise. ``course_name`` is the request's topic; ``course_id``
+    (when the client sent one) keeps the answer inside that course
+    (:func:`_weak_concept_candidates`).
+
+    When the topic is ITSELF one of those concepts (the Flashcards page
+    generates one concept per call, ``topic="Recursion"``), there is nothing
+    else to prioritise: the deck is about that concept, and naming the
+    student's other weak concepts would pull the cards off it. Returns [].
 
     Was a local `< 0.4` (#557), which is not any tier boundary: concepts in
     [0.4, 0.45) read as "struggling" on the Tree but were never offered for
@@ -155,18 +204,12 @@ def _get_weak_concepts(user_id: str, course_name: str) -> list[str]:
     silently skipped a slice of them.
     """
     try:
-        rows = table("graph_nodes").select(
-            "concept_name,mastery_score",
-            filters={"user_id": f"eq.{user_id}", "subject": f"eq.{course_name}"},
-        )
-        if not rows:
-            # Try without subject filter — return all low-mastery concepts
-            rows = table("graph_nodes").select(
-                "concept_name,mastery_score",
-                filters={"user_id": f"eq.{user_id}"},
-            )
+        rows = _weak_concept_candidates(user_id, course_name, course_id)
+        topic = _normalized(course_name)
+        if topic and any(_normalized(r.get("concept_name")) == topic for r in rows):
+            return []
         weak = sorted(
-            (r for r in (rows or []) if is_weak(r.get("mastery_score") or 0)),
+            (r for r in rows if is_weak(r.get("mastery_score") or 0)),
             key=lambda r: r.get("mastery_score") or 0,
         )
         # Weakest first, THEN cap. The cap used to truncate in PostgREST row

@@ -86,6 +86,11 @@ def matrix_world(_reset_between_tests, db_conn, seeded_user):
         "user_name": "Rich Active", "text": encrypt_if_present(m.PRIVATE_ROOM_MESSAGE_TEXT),
     })
     table("friend_requests").insert({"from_user_id": m.USER_A, "to_user_id": user_c})
+    # A saved flashcard set of A's (the seed has none): what `set_id` probes.
+    table("flashcard_sets").insert({
+        "id": m.FLASHCARD_SET_ID, "user_id": m.USER_A, "course_id": m.COURSE_SHARED,
+        "name": m.FLASHCARD_SET_NAME, "concepts": ["Recursion"], "options": {},
+    })
 
     codes = {cid: code for cid, code, *_ in seed._COURSES}
     table("course_chunks").insert({
@@ -128,6 +133,7 @@ _A_ROWS: dict[str, str] = {
     "quiz_attempts": _OWN.format(table="quiz_attempts", col="user_id"),
     "quiz_context": _OWN.format(table="quiz_context", col="user_id"),
     "flashcards": _OWN.format(table="flashcards", col="user_id"),
+    "flashcard_sets": _OWN.format(table="flashcard_sets", col="user_id"),
     "study_guides": _OWN.format(table="study_guides", col="user_id"),
     "graph_nodes": _OWN.format(table="graph_nodes", col="user_id"),
     "graph_edges": _OWN.format(table="graph_edges", col="user_id"),
@@ -445,6 +451,30 @@ def test_note_move_refuses_a_course_the_caller_is_not_enrolled_in(mode, matrix_w
         "SELECT offering_id FROM notes WHERE id = %(n)s", {"n": B_NOTE},
     ).fetchone()
     assert after["offering_id"] == before["offering_id"], "B's note was moved into A's course"
+
+
+@pytest.mark.parametrize("mode", m.MODES)
+def test_graph_node_refuses_a_course_the_caller_is_not_enrolled_in(mode, matrix_world, db_conn, b_client):
+    """#115: POST /api/graph/{user_id}/nodes is a course-keyed write, so it
+    passes the same enrollment gate as notes and documents. The matrix's own
+    case for this route probes anchor_node_id (in B's own course, a 200); this
+    probe isolates the gate: B's own user id, A's A-only course -> 404, and no
+    graph node is written for B in that course."""
+    course = matrix_world["course_id"]
+    concept = "matrix-probe-not-enrolled"
+    probe = m.Case(
+        "probe", "POST", "/api/graph/{user_id}/nodes", f"/api/graph/{m.USER_B}/nodes",
+        json={"concept_name": concept, "course_id": course},
+        has_json=True, expect=(404,), probed=("course_id",),
+        note="B wrote a graph node into A's course",
+    )
+    _report(_run(b_client, db_conn, [probe], mode), f"graph-node probe [{mode}]")
+    row = db_conn.execute(
+        "SELECT count(*) AS n FROM graph_nodes WHERE user_id = %(u)s AND course_id = %(c)s "
+        "AND concept_name = %(n)s",
+        {"u": m.USER_B, "c": course, "n": concept},
+    ).fetchone()
+    assert row["n"] == 0, "a graph node was written for B in a course B is not enrolled in"
 
 
 @pytest.mark.parametrize("mode", m.MODES)

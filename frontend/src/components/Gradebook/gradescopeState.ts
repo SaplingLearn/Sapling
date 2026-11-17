@@ -10,7 +10,7 @@
  * Kept out of `lib/api.ts` on purpose: component tests mock that module whole,
  * and these are pure helpers that must keep working under those mocks.
  */
-import type { GradescopeConnectionState, GradescopeStatus } from "@/lib/api";
+import type { GradescopeConnectedVia, GradescopeConnectionState, GradescopeStatus } from "@/lib/api";
 
 export const GRADESCOPE_AUTH_FAILED = "gradescope_auth_failed";
 export const GRADESCOPE_REAUTH_REQUIRED = "gradescope_reauth_required";
@@ -41,4 +41,38 @@ export function gradescopeConnectionState(status: GradescopeStatus): GradescopeC
   if (status.state) return status.state;
   if (!status.has_credentials) return "disconnected";
   return status.needs_reauth ? "needs_reauth" : "connected";
+}
+
+/** How the stored session was obtained; derived from `auth_mode` for a
+ *  backend that predates `connected_via`. Null when nothing is stored. */
+export function gradescopeConnectedVia(status: GradescopeStatus): GradescopeConnectedVia | null {
+  if (status.connected_via) return status.connected_via;
+  if (!status.auth_mode) return null;
+  return status.auth_mode === "password" ? "password" : "cookies";
+}
+
+/** Short label for how Gradescope is connected (Settings → Connections). */
+export function gradescopeModeLabel(status: GradescopeStatus): string {
+  const via = gradescopeConnectedVia(status);
+  if (via === "password") return "password";
+  if (via === "bu_sso") return "BU SSO";
+  return "session cookies (SSO)";
+}
+
+/** What an expired session asks the student to do. Sapling never keeps a
+ *  Gradescope or BU password, so a password user enters it again. */
+export function gradescopeReauthMessage(status: GradescopeStatus): string {
+  const via = gradescopeConnectedVia(status);
+  if (via === "password") {
+    return "Your Gradescope session expired. Enter your Gradescope password again to keep syncing; Sapling doesn't keep it.";
+  }
+  if (via === "bu_sso") return "Your Gradescope session expired. Sign in with BU again to keep syncing.";
+  return "Gradescope rejected your saved session. Reconnect to keep syncing.";
+}
+
+/** The one-line status for an expired session (Settings → Connections). */
+export function gradescopeReauthShort(status: GradescopeStatus): string {
+  return gradescopeConnectedVia(status) === "password"
+    ? "Session expired · enter your password again"
+    : "Sign-in expired · reconnect needed";
 }

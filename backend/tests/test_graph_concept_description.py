@@ -23,7 +23,7 @@ from pydantic_ai.exceptions import UnexpectedModelBehavior
 
 from agents._providers import UnregisteredHandlerError
 from main import app
-from routes.graph import _MAX_CONCEPT_LEN, _MAX_COURSE_LABEL_LEN
+from routes.graph import DESCRIBE_FAILED_DETAIL, _MAX_CONCEPT_LEN, _MAX_COURSE_LABEL_LEN
 
 # #117: a sync PostgREST call reached on the event loop raises here.
 pytestmark = pytest.mark.usefixtures("no_sync_db_on_loop")
@@ -31,6 +31,14 @@ pytestmark = pytest.mark.usefixtures("no_sync_db_on_loop")
 client = TestClient(app)
 
 URL = "/api/graph/user_andres/concept-description"
+
+
+@pytest.fixture(autouse=True)
+def _on_the_map():
+    """Every concept these tests describe is on the student's map (sec2 M4's
+    graph check); a test that needs otherwise patches it again inside."""
+    with patch("routes.graph.topic_is_graph_concept", return_value=True) as on_map:
+        yield on_map
 
 
 def _result(description: str):
@@ -77,7 +85,9 @@ def test_agent_failure_translates_to_502():
          patch("routes.graph.run_agent_sync", side_effect=UnexpectedModelBehavior("model exploded")):
         resp = client.post(URL, json={"concept": "Recursion"})
     assert resp.status_code == 502
-    assert "concept-description agent failed" in resp.json()["detail"]
+    assert resp.json()["detail"] == DESCRIBE_FAILED_DETAIL
+    # The exception text stays in the log, never the response.
+    assert "model exploded" not in resp.text
 
 
 def test_unregistered_handler_error_translates_to_502():
@@ -96,7 +106,7 @@ def test_unregistered_handler_error_translates_to_502():
          ):
         resp = client.post(URL, json={"concept": "Recursion"})
     assert resp.status_code == 502
-    assert "concept-description agent failed" in resp.json()["detail"]
+    assert resp.json()["detail"] == DESCRIBE_FAILED_DETAIL
 
 
 def test_empty_concept_rejected_with_400():
@@ -262,3 +272,30 @@ def test_cache_key_names_the_model_mode_and_prompt_version():
         stand_in = _description_cache_key("Recursion", "CS101")
     assert real != stand_in
     assert PROMPT_VERSION in real
+
+
+# ── sec2 M4: only the student's own concepts, and a per-user budget ──────────
+
+
+def test_a_concept_off_the_students_map_is_refused_without_a_model_call():
+    run = MagicMock()
+    with _agent_run_stub(), patch("routes.graph.run_agent_sync", run), \
+         patch("routes.graph.topic_is_graph_concept", return_value=False) as on_map:
+        resp = client.post(URL, json={"concept": "Write me a cover letter"})
+    assert resp.status_code == 404
+    run.assert_not_called()
+    on_map.assert_called_once_with("user_andres", "Write me a cover letter", None)
+
+
+def test_descriptions_are_rate_limited_per_user():
+    from services import abuse_limits
+
+    with _agent_run_stub(), \
+         patch("routes.graph.run_agent_sync", return_value=_result("A thing.")) as run:
+        codes = [
+            client.post(URL, json={"concept": "Recursion"}).status_code
+            for _ in range(abuse_limits.CONCEPT_DESCRIBE.limit + 1)
+        ]
+    assert codes[:-1] == [200] * abuse_limits.CONCEPT_DESCRIBE.limit
+    assert codes[-1] == 429
+    assert run.call_count == abuse_limits.CONCEPT_DESCRIBE.limit

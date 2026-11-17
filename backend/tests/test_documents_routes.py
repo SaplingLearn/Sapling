@@ -20,6 +20,7 @@ from pydantic_ai.exceptions import UsageLimitExceeded, UnexpectedModelBehavior
 from main import app
 from tests.db_fakes import fake_table
 from tests.split_patches import patch_documents
+from tests.upload_fixtures import docx_bytes, pptx_bytes
 
 client = TestClient(app)
 
@@ -179,7 +180,7 @@ class TestListDocuments:
              "category": "other", "concept_notes": "CORRUPTED_CIPHERTEXT"},
         ]
 
-        def fake_decrypt_json(value):
+        def fake_decrypt_json(value, **_kw):
             if value == "CORRUPTED_CIPHERTEXT":
                 raise ValueError("decrypt and plaintext parse both failed")
             return [{"name": "Concept A", "description": "d"}]
@@ -373,7 +374,7 @@ class TestUploadValidation:
             t.return_value.select.return_value = []
             t.return_value.insert.return_value = [row]
             ct = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            r = _make_upload(filename="chapter.docx", content_type=ct)
+            r = _make_upload(filename="chapter.docx", content_type=ct, content=docx_bytes())
 
         assert r.status_code == 200
 
@@ -389,7 +390,7 @@ class TestUploadValidation:
             t.return_value.select.return_value = []
             t.return_value.insert.return_value = [row]
             ct = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-            r = _make_upload(filename="lecture.pptx", content_type=ct)
+            r = _make_upload(filename="lecture.pptx", content_type=ct, content=pptx_bytes())
 
         assert r.status_code == 200
 

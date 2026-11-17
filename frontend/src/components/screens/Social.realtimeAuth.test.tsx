@@ -1,16 +1,18 @@
 // @vitest-environment jsdom
 /**
  * RLS step 2e (#115): the Social screen, not the per-room RoomChat, owns the
- * Realtime token lifecycle.
- *   - flags still loading: the lifecycle is not held (no token request, and
- *     the channels wait instead of joining with the anon key);
- *   - flag off: never held;
- *   - flag on: held ONCE for the screen; switching rooms or tabs neither
- *     releases it (a revert to anon) nor re-acquires it (a re-mint).
+ * Realtime token lifecycle: held ONCE for the screen, with no feature flag in
+ * the way (realtime_rls is no longer read); switching rooms or tabs neither
+ * releases it (dropping the token) nor re-acquires it (a re-mint), and it is
+ * asked for only with the signed-in user's id. While the room is not live it
+ * polls the latest page (visible tab only) and, after a grace, says "Live
+ * updates paused". Which modes let the channels join is planRoomRealtime's
+ * (Social.realtime.test.ts); the channel wiring itself is covered by
+ * frontend/e2e/study-room.spec.ts.
  */
 import React from "react";
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { render, screen, cleanup, fireEvent, waitFor } from "@testing-library/react";
+import { act, render, screen, cleanup, fireEvent, waitFor } from "@testing-library/react";
 
 vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(),
@@ -27,26 +29,21 @@ vi.mock("../ToastProvider", () => ({
 vi.mock("../Icon", () => ({ Icon: () => <span /> }));
 vi.mock("../Avatar", () => ({ Avatar: () => <span /> }));
 
-const flagState = vi.hoisted(() => ({ flags: {} as Record<string, string>, ready: true }));
-vi.mock("@/context/FlagsContext", () => ({
-  useFlagMap: () => flagState,
-  useFlag: (key: string) => flagState.flags[key] ?? "off",
+const lifecycle = vi.hoisted(() => ({
+  acquires: 0, releases: 0, mode: "token" as string, userIds: [] as unknown[],
 }));
-
-const lifecycle = vi.hoisted(() => ({ acquires: 0, releases: 0, enabledCalls: [] as boolean[] }));
 vi.mock("@/lib/realtimeAuth", async () => {
   const { useEffect } = await import("react");
   return {
     recoverRealtimeAuth: vi.fn(async () => {}),
     superviseChannel: vi.fn(() => () => {}),
-    useRealtimeAuth: (enabled: boolean) => {
-      lifecycle.enabledCalls.push(enabled);
+    useRealtimeAuth: (_getRealtime: unknown, userId: unknown) => {
+      lifecycle.userIds.push(userId);
       useEffect(() => {
-        if (!enabled) return;
         lifecycle.acquires += 1;
         return () => { lifecycle.releases += 1; };
-      }, [enabled]);
-      return { mode: enabled ? "token" : "off", epoch: enabled ? 1 : 0 };
+      }, []);
+      return { mode: lifecycle.mode, epoch: lifecycle.mode === "token" ? 1 : 0 };
     },
   };
 });
@@ -76,7 +73,7 @@ vi.mock("@/lib/api", () => ({
   removeFriend: vi.fn(),
 }));
 
-import { Social } from "./Social";
+import { PAUSED_NOTICE_DELAY_MS, REST_POLL_MS, Social } from "./Social";
 import * as api from "@/lib/api";
 
 const m = vi.mocked(api);
@@ -88,11 +85,10 @@ const room = (id: string, name: string) => ({
 
 beforeEach(() => {
   Element.prototype.scrollTo = () => {};
-  flagState.flags = {};
-  flagState.ready = true;
   lifecycle.acquires = 0;
   lifecycle.releases = 0;
-  lifecycle.enabledCalls = [];
+  lifecycle.mode = "token";
+  lifecycle.userIds = [];
   m.listPublicRooms.mockResolvedValue({ rooms: [] } as never);
   m.fetchFriends.mockResolvedValue({ friends: [] });
   m.fetchFriendRequests.mockResolvedValue({ incoming: [], outgoing: [] });
@@ -104,12 +100,18 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.resetAllMocks();
+  Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "visible" });
 });
 
+function setVisibility(state: "visible" | "hidden") {
+  Object.defineProperty(document, "visibilityState", { configurable: true, get: () => state });
+  document.dispatchEvent(new Event("visibilitychange"));
+}
+
 describe("Social realtime token lifecycle (RLS step 2e)", () => {
-  it("flag on: held once for the screen across room and tab switches", async () => {
-    flagState.flags = { realtime_rls: "on" };
+  it("held once for the screen across room and tab switches", async () => {
     render(<Social />);
     await waitFor(() => expect(screen.getByTestId("social-room-name")).toHaveTextContent("Algebra"));
     expect(lifecycle.acquires).toBe(1);
@@ -122,21 +124,53 @@ describe("Social realtime token lifecycle (RLS step 2e)", () => {
 
     expect(lifecycle.acquires).toBe(1);
     expect(lifecycle.releases).toBe(0);
+    expect(new Set(lifecycle.userIds)).toEqual(new Set(["u1"]));
   });
 
-  it("flags loading: the lifecycle is not held until they are ready", async () => {
-    flagState.flags = { realtime_rls: "on" };
-    flagState.ready = false;
+  it("live: no REST poll and no paused notice", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
     render(<Social />);
     await waitFor(() => expect(screen.getByTestId("social-room-name")).toHaveTextContent("Algebra"));
-    expect(lifecycle.acquires).toBe(0);
-    expect(lifecycle.enabledCalls.every((e) => e === false)).toBe(true);
+    await waitFor(() => expect(m.getRoomMessages).toHaveBeenCalled());
+    const before = m.getRoomMessages.mock.calls.length;
+    await act(async () => { await vi.advanceTimersByTimeAsync(3 * REST_POLL_MS); });
+    expect(m.getRoomMessages.mock.calls.length).toBe(before);
+    expect(screen.queryByTestId("social-chat-live-paused")).toBeNull();
   });
 
-  it("flag off: never held", async () => {
-    render(<Social />);
-    await waitFor(() => expect(screen.getByTestId("social-room-name")).toHaveTextContent("Algebra"));
-    expect(lifecycle.acquires).toBe(0);
-    expect(lifecycle.enabledCalls.every((e) => e === false)).toBe(true);
-  });
+  it.each(["pending", "unavailable"])(
+    "%s: polls the latest page while visible and says live updates are paused",
+    async (mode) => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      lifecycle.mode = mode;
+      render(<Social />);
+      await waitFor(() => expect(screen.getByTestId("social-room-name")).toHaveTextContent("Algebra"));
+      await waitFor(() => expect(m.getRoomMessages).toHaveBeenCalled());
+      expect(screen.queryByTestId("social-chat-live-paused")).toBeNull();
+      await act(async () => { await vi.advanceTimersByTimeAsync(PAUSED_NOTICE_DELAY_MS); });
+      expect(screen.getByTestId("social-chat-live-paused")).toHaveTextContent("Live updates paused");
+
+      const before = m.getRoomMessages.mock.calls.length;
+      await act(async () => { await vi.advanceTimersByTimeAsync(REST_POLL_MS); });
+      expect(m.getRoomMessages.mock.calls.length).toBe(before + 1);
+
+      // Hidden tab: no polling; back to visible: caught up at once.
+      act(() => setVisibility("hidden"));
+      await act(async () => { await vi.advanceTimersByTimeAsync(3 * REST_POLL_MS); });
+      expect(m.getRoomMessages.mock.calls.length).toBe(before + 1);
+      act(() => setVisibility("visible"));
+      await waitFor(() => expect(m.getRoomMessages.mock.calls.length).toBe(before + 2));
+    },
+  );
+
+  it.each(["pending", "unavailable"])(
+    "%s: still held once, and the room still loads over REST",
+    async (mode) => {
+      lifecycle.mode = mode;
+      render(<Social />);
+      await waitFor(() => expect(screen.getByTestId("social-room-name")).toHaveTextContent("Algebra"));
+      await waitFor(() => expect(m.getRoomMessages).toHaveBeenCalled());
+      expect(lifecycle.acquires).toBe(1);
+    },
+  );
 });

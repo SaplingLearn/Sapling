@@ -13,9 +13,8 @@ Postgres in tests/integration/test_app_leases_db.py). Pinned here:
 * a DB failure (or a pre-migration 404) grants the lease (fail open to the
   in-process layer), marks the store down for DB_DOWN_S, warns once per
   outage; the next answer re-arms the warning;
-* consume_once never releases, and the callers (account ops, OAuth nonce,
-  study-guide single-flight) use it the way their docstrings say: a raw nonce
-  never reaches the DB.
+* consume_once never releases, and the callers (account ops, OAuth nonce) use
+  it the way their docstrings say: a raw nonce never reaches the DB.
 """
 from __future__ import annotations
 
@@ -342,16 +341,3 @@ def test_oauth_nonce_flag_off_is_the_in_process_set(fake):
     assert auth._consume_oauth_nonce("n1") is True
     assert auth._consume_oauth_nonce("n1") is False
     assert fake.calls == []
-
-
-def test_study_guide_single_flight_waits_for_another_replica(fake, on, monkeypatch):
-    from routes import study_guide as sg
-
-    key = pg_lease.hashed_key("study_guide", "u1", "off-1", "ex-1")
-    fake.rows[key] = ("replica-b", time.monotonic() + 60)
-    clock = _fake_clock(monkeypatch, lambda n: fake.rows.pop(key, None))
-    with sg._single_flight("u1", "off-1", "ex-1"):
-        assert fake.rows[key][0] != "replica-b"
-    assert clock["sleeps"] == [sg.GUIDE_LEASE_POLL_S]
-    assert [c[1]["p_key"] for c in fake.calls if c[0] == "claim_lease"][:2] == [key, key]
-    assert key not in fake.rows

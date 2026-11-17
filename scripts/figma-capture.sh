@@ -57,13 +57,8 @@ die() { echo "✗ $*" >&2; exit 1; }
 
 [ -x "$VENV_PY" ] || die "no backend venv at $VENV_PY"
 
-# Inside the cycle (it boots and tears down). Undo the overlay on the way out,
-# for a slot kept with E2E_KEEP_DB=1; a throwaway slot database is dropped anyway.
-restore_baseline() {
-  echo "▶ Restoring the rich-seed baseline (undo the showcase overlay)…"
-  ( cd frontend && node --no-warnings e2e/figma/reset-db.ts ) || echo "⚠ DB reset failed"
-}
-trap restore_baseline EXIT
+# Inside the cycle (it boots and tears down). The showcase overlay needs no
+# undo: the cycle drops the slot's throwaway database when it ends.
 
 echo "▶ Applying the showcase overlay…"
 ( cd backend && "$VENV_PY" -m db.seed_showcase ) || die "seed_showcase failed"

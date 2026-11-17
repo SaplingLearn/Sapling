@@ -17,7 +17,9 @@ from models import EndSessionBody, ModeSwitchBody, RenameSessionBody
 from services import events_service
 from services.academics import offering_course_id
 from services.auth_guard import get_session_user_id, guard_off_loop, require_self
-from services.encryption import decrypt_if_present, decrypt_json_column, encrypt_json
+from services import abuse_limits
+from services.request_limits import aenforce_abuse_limit
+from services.encryption import bind, decrypt_if_present, decrypt_json_column, encrypt_json
 from services.streak_service import touch_streak_safe
 from services.tutor.errors import HTTPException
 from services.tutor.messages import save_message
@@ -93,7 +95,9 @@ def _stored_session_summary(session_id: str) -> dict:
     stored = row.get("summary_json")
     if stored:
         try:
-            summary = decrypt_json_column(stored)
+            summary = decrypt_json_column(
+                stored, bind=bind("sessions", "summary_json", session_id),
+            )
             if isinstance(summary, dict):
                 return summary
         except Exception:
@@ -190,7 +194,9 @@ def end_session(body: EndSessionBody, request: Request):
     )
 
     table("sessions").update(
-        {"summary_json": encrypt_json(summary)},
+        {"summary_json": encrypt_json(
+            summary, bind=bind("sessions", "summary_json", body.session_id),
+        )},
         filters={"id": f"eq.{body.session_id}"},
     )
 
@@ -213,7 +219,7 @@ def end_session(body: EndSessionBody, request: Request):
         # award above may well be what tipped today over the line.
         newly_earned += check_achievements(body.user_id, "goal_streak", {})
     except Exception:
-        pass
+        logger.warning("session-end achievement checks failed", exc_info=True)
 
     return {"summary": summary, "achievements_earned": newly_earned}
 
@@ -353,17 +359,18 @@ async def resume_session(session_id: str, request: Request):
     return {
         "session": session,
         "messages": [
-            {**m, "content": decrypt_if_present(m["content"])} for m in msgs
+            {**m, "content": decrypt_if_present(
+                m["content"], bind=bind("messages", "content", session_id),
+            )} for m in msgs
         ],
     }
 
 
 async def mode_switch(body: ModeSwitchBody, request: Request):
     await guard_off_loop(require_self, body.user_id, request)
-    if body.new_mode not in MODE_DISPLAY_NAMES:
-        # sessions.mode is CHECK-constrained to these three; refuse before
-        # the write rather than surface the constraint as a 500.
-        raise HTTPException(status_code=422, detail="Unknown tutor mode")
+    await aenforce_abuse_limit(abuse_limits.TUTOR_TURN, body.user_id)
+    # `new_mode` is a TutorMode Literal, so the body validation has already
+    # refused anything sessions.mode's CHECK constraint would (422).
     await _open_turn_session(body.session_id, body.user_id)
     # #761: the switch is a session state change, not just a message — the
     # stored mode is what the session list and resume report.

@@ -3,7 +3,8 @@
 import { useEffect, useState, type CSSProperties } from 'react';
 import { useRouter } from 'next/navigation';
 import { useUser } from '@/context/UserContext';
-import { API_URL, getPendingStatus, joinWaitlistFromPending } from '@/lib/api';
+import { getPendingStatus, joinWaitlistFromPending } from '@/lib/api';
+import { signInStartPath } from '@/lib/signinStart';
 import { statusOf } from '@/lib/errorMessage';
 import { clearPendingToken, readPendingToken, stashPendingToken } from '@/lib/pendingToken';
 
@@ -133,8 +134,7 @@ export default function PendingPage() {
     // Same-tab Google sign-in, as SignInModal's fallback does; the token
     // has done its job.
     clearPendingToken();
-    const returnTo = encodeURIComponent(window.location.origin);
-    window.location.assign(`${API_URL}/api/auth/google?return_to=${returnTo}`);
+    window.location.assign(signInStartPath());
   }
 
   async function handleSignOut() {

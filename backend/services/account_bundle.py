@@ -42,9 +42,13 @@ Never copied: OAuth tokens, roles, social (rooms/friendships), telemetry
 (events/llm_usage), feedback/issue reports, gradescope links (credentials do not
 move), cosmetics (`equipped_*`/`featured_*` ids), `avatar_url` (storage buckets
 differ), `course_chunks`, in-flight staging (`document_uploads`, `gradescope_syncs`,
-`tutor_pending_sessions`: wiped, never bundled), and every privacy/consent/notification choice in
+`tutor_pending_sessions`: wiped, never bundled), `legal_acceptances` (kept by the
+wipe and never bundled: a consent record belongs to the account in the
+environment where it was given, never to another environment's account), and
+every privacy/consent/notification choice in
 `user_settings` (see `_SETTINGS_COPIED`): consent is the person's, given on
-each environment, and is never carried from one to the other. The imported
+each environment, and is never carried from one to the other — the Terms and
+Privacy Policy accepted on one environment included. The imported
 documents therefore index under the TARGET's stored `share_class_context`.
 `users.total_xp`/`level` are not copied either: they are recomputed from the
 imported XP ledger, which is what `xp_service` treats them as (a cache of it).
@@ -92,28 +96,29 @@ class AccountNotFound(LookupError):
 
 # ── Encrypted-column map ─────────────────────────────────────────────────────
 #
-# Kept in step with CLAUDE.md's encrypted-columns list (Gotchas). TEXT columns
-# are written with `encrypt_if_present` (assignments' points are numbers kept
-# as their string form); JSON columns with `encrypt_json`.
+# Derived from `encryption.ENCRYPTED_COLUMNS` (the one 🔒 inventory) for every
+# table this bundle moves, so a column added there travels without a second
+# list to keep in step. TEXT columns are written with `encrypt_if_present`
+# (assignments' points are numbers kept as their string form); JSON columns
+# with `encrypt_json`. Every value is opened with its SOURCE row's binding and
+# re-sealed with its TARGET row's binding (row ids are preserved; user ids are
+# remapped first), so the AAD always names the cell the value lands in.
 
 TEXT = "text"
 JSON = "json"
 
+#: The bundled tables that hold 🔒 columns (each must be in ENCRYPTED_COLUMNS).
+_ENCRYPTED_TABLES = (
+    "user_profiles", "assignments", "topic_checklists", "documents", "notes", "flashcards",
+    "sessions", "messages", "study_guides", "quiz_attempts", "quiz_responses", "quiz_context",
+)
+
 ENCRYPTED: dict[str, dict[str, str]] = {
-    "user_profiles": {
-        "name": TEXT, "first_name": TEXT, "last_name": TEXT, "bio": TEXT, "location": TEXT,
-    },
-    "assignments": {"notes": TEXT, "points_possible": TEXT, "points_earned": TEXT},
-    "topic_checklists": {"content": JSON},
-    "documents": {"summary": TEXT, "concept_notes": JSON, "extracted_text": TEXT},
-    "notes": {"title": TEXT, "body": TEXT, "last_summary": TEXT},
-    "flashcards": {"front": TEXT, "back": TEXT},
-    "sessions": {"summary_json": JSON},
-    "messages": {"content": TEXT},
-    "study_guides": {"content": JSON},
-    "quiz_attempts": {"questions_json": JSON, "answers_json": JSON},
-    "quiz_responses": {"answer_text": JSON},
-    "quiz_context": {"context_json": JSON},
+    name: {
+        spec.column: (JSON if spec.kind == encryption.JSON else TEXT)
+        for spec in encryption.ENCRYPTED_COLUMNS if spec.table == name
+    }
+    for name in _ENCRYPTED_TABLES
 }
 
 # base64(nonce || ciphertext || tag): 12-byte nonce + 16-byte GCM tag at least.
@@ -121,6 +126,8 @@ _MIN_CIPHERTEXT_BYTES = 12 + 16
 
 
 def _looks_like_ciphertext(value: str) -> bool:
+    if encryption.is_v2(value):
+        return True
     try:
         raw = base64.b64decode(value, validate=True)
     except (binascii.Error, ValueError):
@@ -128,18 +135,32 @@ def _looks_like_ciphertext(value: str) -> bool:
     return len(raw) >= _MIN_CIPHERTEXT_BYTES
 
 
-def _strict_decrypt(value: str, where: str) -> str:
-    """Decrypt under THIS environment's key, or raise. Never returns its input."""
+def _binding(table_name: str, column: str, row: dict, where: str) -> encryption.Binding:
     try:
-        return encryption.decrypt(value)
-    except Exception as exc:  # InvalidTag, bad padding, bad utf-8
+        return encryption.bind(table_name, column, row)
+    except (encryption.UnknownColumn, encryption.MissingRowKey) as exc:
+        raise BundleError(f"{where}: {exc}") from exc
+
+
+def _strict_decrypt(value: str, where: str, binding: encryption.Binding) -> str:
+    """Decrypt under THIS environment's key in THIS cell, or raise. Never
+    returns its input."""
+    try:
+        return encryption.decrypt(value, bind=binding)
+    except Exception as exc:  # InvalidTag, bad padding, bad utf-8, a moved v2 value
         raise BundleError(
             f"{where}: ciphertext does not decrypt under this environment's "
             "ENCRYPTION_KEY; refusing to export it"
         ) from exc
 
 
-def _decrypt_text(value: Any, where: str) -> Any:
+def _refuse_legacy(where: str, binding: encryption.Binding) -> None:
+    """Legacy plaintext is exported only while the app itself still reads it."""
+    if not encryption.legacy_reads_allowed(binding.table):
+        raise BundleError(f"{where}: legacy plaintext refused (legacy reads are off)")
+
+
+def _decrypt_text(value: Any, where: str, binding: encryption.Binding) -> Any:
     """Strict read of a TEXT 🔒 column.
 
     A value that has the SHAPE of ciphertext must decrypt, or the export
@@ -149,26 +170,32 @@ def _decrypt_text(value: Any, where: str) -> Any:
     shape test is fail-closed: a legacy plaintext that happens to be valid
     base64 of 28+ bytes is refused rather than guessed at.
     """
-    if value is None or not isinstance(value, str):
+    if value is None:
         return value
-    if not _looks_like_ciphertext(value):
-        logger.warning("account bundle: legacy plaintext in %s", where)
+    if not isinstance(value, str) or not _looks_like_ciphertext(value):
+        _refuse_legacy(where, binding)
+        if isinstance(value, str):
+            logger.warning("account bundle: legacy plaintext in %s", where)
         return value
-    return _strict_decrypt(value, where)
+    return _strict_decrypt(value, where, binding)
 
 
-def _decrypt_json(value: Any, where: str) -> Any:
+def _decrypt_json(value: Any, where: str, binding: encryption.Binding) -> Any:
     """Strict read of a JSON 🔒 column (`encrypt_json` on write).
 
     A dict/list is a legacy plaintext JSONB row (the same case
     `decrypt_json_column` lets through). A string is ciphertext — decrypted
     strictly — or legacy JSON text, which must parse.
     """
-    if value is None or not isinstance(value, str):
+    if value is None:
+        return value
+    if not isinstance(value, str):
+        _refuse_legacy(where, binding)
         return value
     if _looks_like_ciphertext(value):
-        text = _strict_decrypt(value, where)
+        text = _strict_decrypt(value, where, binding)
     else:
+        _refuse_legacy(where, binding)
         logger.warning("account bundle: legacy plaintext JSON in %s", where)
         text = value
     try:
@@ -177,12 +204,12 @@ def _decrypt_json(value: Any, where: str) -> Any:
         raise BundleError(f"{where}: encrypted JSON column does not hold JSON") from exc
 
 
-def _encrypt(kind: str, value: Any) -> Any:
+def _encrypt(kind: str, value: Any, binding: encryption.Binding) -> Any:
     if value is None:
         return None
     if kind == JSON:
-        return encryption.encrypt_json(value)
-    return encryption.encrypt_if_present(value)
+        return encryption.encrypt_json(value, bind=binding)
+    return encryption.encrypt_if_present(value, bind=binding)
 
 
 def _assert_no_unlisted_ciphertext(table_name: str, row: dict, listed: Iterable[str]) -> None:
@@ -190,16 +217,20 @@ def _assert_no_unlisted_ciphertext(table_name: str, row: dict, listed: Iterable[
 
     AES-GCM authenticates, so a successful decrypt is proof the value is our
     ciphertext — this has no false positives. It is what keeps `select=*` safe
-    when a new 🔒 column lands without an `ENCRYPTED` entry.
+    when a new 🔒 column lands without an `ENCRYPTED` entry. A v2 value
+    (`enc2:` envelope) is ciphertext by its prefix alone: opening it would need
+    the binding of a column nobody listed, so it is not attempted.
     """
     skip = set(listed)
     for column, value in row.items():
         if column in skip or not isinstance(value, str) or not _looks_like_ciphertext(value):
             continue
-        try:
-            encryption.decrypt(value)
-        except Exception:
-            continue
+        if not encryption.is_v2(value):
+            try:
+                # The legacy v1 shape: unbound, so the v1 path (no AAD).
+                encryption.decrypt(value)
+            except Exception:
+                continue
         raise BundleError(
             f"{table_name}.{column} holds ciphertext but is not in account_bundle.ENCRYPTED; "
             "add it there before copying accounts"
@@ -239,8 +270,15 @@ SPECS: tuple[_Spec, ...] = (
     _Spec("notes"),
     _Spec("note_concepts", key="note_id", parent="notes", order="note_id,concept_node_id"),
     _Spec("flashcards"),
+    # No 🔒 column (name/concepts are plaintext labels). `course_id` is remapped
+    # (_COURSE_TABLES); `exam_id` names an assignment and travels unchanged,
+    # like study_guides.exam_id, because row ids are preserved.
+    _Spec("flashcard_sets"),
     _Spec("sessions"),
     _Spec("messages", key="session_id", parent="sessions"),
+    # `exam_id` (an assignment), `material_ids` (documents) and the
+    # `document:<id>` source ids inside the content travel unchanged, because
+    # row ids are preserved.
     _Spec("study_guides"),
     _Spec("quiz_attempts"),
     _Spec("quiz_responses", key="attempt_id", parent="quiz_attempts"),
@@ -251,6 +289,9 @@ SPECS: tuple[_Spec, ...] = (
 
 # Tables whose rows carry an `offering_id` to remap.
 _OFFERING_TABLES = ("documents", "enrollments", "notes", "flashcards", "sessions", "study_guides")
+
+# Tables whose rows carry an abstract `course_id` to remap (by course_code).
+_COURSE_TABLES = ("graph_nodes", "flashcard_sets")
 
 USER_COUNTERS = (
     "total_xp", "level", "streak_count", "longest_streak", "onboarding_completed",
@@ -287,6 +328,9 @@ _ACH_XP_SOURCE = "achievement"
 _DOCUMENT_INDEX_RESET = {
     "index_attempts": 0, "index_leased_at": None, "index_chunk_count": None, "index_error": None,
 }
+
+# A generation run holding a guide on the source holds nothing here.
+_GUIDE_CLAIM_RESET = {"generating_at": None}
 
 _IN_CHUNK = 50  # ids per `in.(…)` filter — keeps the query string bounded
 _INSERT_CHUNK = 200
@@ -359,7 +403,9 @@ def _plain(table_name: str, row: dict) -> dict:
     for column, kind in cols.items():
         if column in out:
             where = f"{table_name}.{column} (row {rid})"
-            out[column] = (_decrypt_json if kind == JSON else _decrypt_text)(out[column], where)
+            binding = _binding(table_name, column, row, where)
+            out[column] = (_decrypt_json if kind == JSON else _decrypt_text)(
+                out[column], where, binding)
     return out
 
 
@@ -376,7 +422,7 @@ def _export_catalog(exported: dict[str, list[dict]]) -> dict:
         raise BundleError(f"offerings referenced but not found: {sorted(missing)}")
 
     course_ids = {o["course_id"] for o in offerings} | (
-        {r.get("course_id") for r in exported.get("graph_nodes", [])} - {None}
+        {r.get("course_id") for t in _COURSE_TABLES for r in exported.get(t, [])} - {None}
     )
     courses = _select_in("courses", "id", course_ids, "id,course_code,course_name,school_id")
     missing = course_ids - {c["id"] for c in courses}
@@ -648,19 +694,23 @@ def _target_row(name: str, row: dict, user_id: str, offering_map: dict, course_m
         if src not in offering_map:
             raise BundleError(f"{name}: offering {src} is not in the bundle's catalog")
         out["offering_id"] = offering_map[src]
-    if name == "graph_nodes" and out.get("course_id") is not None:
+    if name in _COURSE_TABLES and out.get("course_id") is not None:
         src = out["course_id"]
         if src not in course_map:
-            raise BundleError(f"graph_nodes: course {src} is not in the bundle's catalog")
+            raise BundleError(f"{name}: course {src} is not in the bundle's catalog")
         out["course_id"] = course_map[src]
     if name == "documents":
         out.update(_DOCUMENT_INDEX_RESET)
         # A soft-deleted document is never claimed by the sweeper anyway;
         # 'skipped' keeps it out of the admin unindexed list too.
         out["index_status"] = "skipped" if out.get("deleted_at") else "pending"
+    if name == "study_guides" and out.get("generating_at") is not None:
+        out.update(_GUIDE_CLAIM_RESET)
     for column, kind in ENCRYPTED.get(name, {}).items():
         if column in out:
-            out[column] = _encrypt(kind, out[column])
+            # Sealed AFTER the remaps: the binding names the target cell.
+            where = f"{name}.{column} (row {out.get('id') or '?'})"
+            out[column] = _encrypt(kind, out[column], _binding(name, column, out, where))
     return out
 
 
@@ -823,7 +873,8 @@ def import_account(user_id: str, bundle: dict) -> dict[str, int]:
             ) or []
             if taken:
                 profile.pop("username")
-        profile = {"user_id": user_id, **_target_row("user_profiles", profile, user_id, {}, {})}
+        # user_id first: the profile's 🔒 columns bind to it.
+        profile = _target_row("user_profiles", {"user_id": user_id, **profile}, user_id, {}, {})
     settings = None
     copied = {k: v for k, v in (bundle.get("settings") or {}).items() if k in _SETTINGS_COPIED}
     if copied:

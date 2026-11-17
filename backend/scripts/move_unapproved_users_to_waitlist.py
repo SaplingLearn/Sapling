@@ -37,7 +37,8 @@ sys.path.insert(0, str(BASE))
 
 from db.connection import REST_URL, table  # noqa: E402
 from services.auth.waitlist import _waitlist_entry  # noqa: E402
-from services.encryption import decrypt_if_present  # noqa: E402
+from services.encryption import bind, decrypt_if_present  # noqa: E402
+from services.encryption_canary import abort_unless_key_verified  # noqa: E402
 
 #: Rows a never-approved account can hold. Deleted before the account itself;
 #: anything else referencing it makes the delete fail, and the account is kept.
@@ -45,9 +46,14 @@ _OWNED = ("oauth_tokens", "user_profiles", "user_settings", "user_roles")
 
 
 def _unapproved() -> list[dict]:
+    # `open_access_at IS NULL`: an open-access entrant (services/open_access.py)
+    # is unapproved by design and may not have onboarded yet. It is not a
+    # leftover pending row, and while the gate is open it HAS access; deleting
+    # it would wipe a live student's account.
     return table("users").select(
         "id,email,onboarding_completed",
-        filters={"is_approved": "eq.false", "deleted_at": "is.null"},
+        filters={"is_approved": "eq.false", "deleted_at": "is.null",
+                 "open_access_at": "is.null"},
     ) or []
 
 
@@ -57,11 +63,15 @@ def main(argv: list[str] | None = None) -> dict:
     parser.add_argument("--apply", dest="dry_run", action="store_false")
     args = parser.parse_args(argv)
 
+    if not args.dry_run:
+        # Emails are DECRYPTED to build the waitlist; under the wrong key every
+        # one is unreadable and accounts would be deleted unlisted.
+        abort_unless_key_verified("scripts.move_unapproved_users_to_waitlist")
     print(f"Project: {urlparse(REST_URL).hostname}")
     summary = {"listed": 0, "already_listed": 0, "deleted": 0, "kept": 0, "no_email": 0, "failed": 0}
     for row in _unapproved():
         uid = row["id"]
-        email = (decrypt_if_present(row.get("email")) or "").strip()
+        email = (decrypt_if_present(row.get("email"), bind=bind("users", "email", uid)) or "").strip()
         if "@" not in email:
             summary["no_email"] += 1
             print(f"  {uid}: no readable email, left alone")

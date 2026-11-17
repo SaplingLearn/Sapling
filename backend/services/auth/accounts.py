@@ -1,10 +1,12 @@
 """Account reads and stamps behind the auth routes (#118, moved from
 ``routes/auth.py``): the ``/me`` overview and the welcome / sign-in stamps."""
 import logging
+from datetime import datetime, timezone
 
 from db.connection import table
 from services.auth.errors import AccountDeleted, AccountNotFound
-from services.encryption import decrypt_if_present
+from services.encryption import bind, decrypt_if_present
+from services.open_access import ACCESS_NONE, access_kind, gate_open
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +57,8 @@ def account_overview(user_id: str) -> dict:
     for ``GET /api/auth/me``. Raises :class:`AccountNotFound` (no row) or
     :class:`AccountDeleted` (soft-deleted)."""
     user = table("users").select(
-        "id,is_approved,onboarding_completed,deleted_at", filters={"id": f"eq.{user_id}"}
+        "id,is_approved,open_access_at,onboarding_completed,deleted_at",
+        filters={"id": f"eq.{user_id}"},
     )
     if not user:
         raise AccountNotFound()
@@ -111,14 +114,37 @@ def account_overview(user_id: str) -> dict:
             if fr_rows:
                 equipped_cosmetics["featured_role"] = fr_rows[0]
 
+    # `is_approved` is the COMPUTED access the frontend middleware routes on
+    # (approved, or in through the open gate while it is open);
+    # `access` says which (docs/design/open-access-gate.md).
+    access = access_kind(
+        user[0], open_now=bool(user[0].get("open_access_at")) and gate_open(),
+    )
     return {
         "user_id": user_id,
-        "is_approved": bool(user[0]["is_approved"]),
+        "is_approved": access != ACCESS_NONE,
+        "access": access,
         "onboarding_completed": bool(user[0].get("onboarding_completed", False)),
         "username": profile.get("username"),
-        "name": decrypt_if_present(profile.get("name")) or "",
+        "name": decrypt_if_present(
+            profile.get("name"), bind=bind("user_profiles", "name", user_id)) or "",
         "avatar_url": profile.get("avatar_url") or "",
         "roles": roles,
         "equipped_cosmetics": equipped_cosmetics,
         "is_admin": is_admin,
     }
+
+
+def revoke_sessions(user_id: str) -> None:
+    """Revoke every session issued to `user_id` up to now (sign-out).
+
+    Sets `users.sessions_valid_after` to the current time; the auth guard
+    refuses any session whose `iat` is earlier (services/auth_guard.py). The
+    caller clears the guard's account cache so this process honours it at
+    once; other processes do within the cache's TTL. Raises if the write
+    fails: a sign-out that could not revoke must not report success."""
+    table("users").update(
+        {"sessions_valid_after": datetime.now(timezone.utc).isoformat()},
+        filters={"id": f"eq.{user_id}"},
+        prefer_return_minimal=True,
+    )

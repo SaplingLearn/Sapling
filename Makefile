@@ -26,11 +26,13 @@
 e2e:
 	scripts/e2e-cycle.sh
 
+# Locally: hold a stack in a free slot (a background cycle owns it) / stop it.
+# CI (slot 0, CI=true) boots and tears down directly.
 e2e-up:
-	scripts/e2e-up.sh
+	@if [ "$$CI" = "true" ]; then scripts/e2e-up.sh; else scripts/e2e-cycle.sh --background; fi
 
 e2e-down:
-	scripts/e2e-down.sh
+	@if [ "$$CI" = "true" ]; then scripts/e2e-down.sh; else scripts/e2e-cycle.sh --stop; fi
 
 # Capture the /gallery product screenshots (local only; runs in a free E2E slot).
 gallery-shots:

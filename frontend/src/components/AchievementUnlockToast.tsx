@@ -45,7 +45,6 @@ export function AchievementUnlockToast({ achievement }: Props) {
       >
         {achievement.icon ? (
           achievement.icon.startsWith("http") || achievement.icon.startsWith("/") ? (
-            // eslint-disable-next-line @next/next/no-img-element
             <img src={achievement.icon} alt="" style={{ width: 20, height: 20 }} />
           ) : (
             <span>{achievement.icon}</span>

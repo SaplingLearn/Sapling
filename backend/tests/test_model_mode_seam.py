@@ -403,20 +403,21 @@ def test_function_mode_streams_text_from_the_same_handler(monkeypatch):
         deltas: list[str] = []
         final: str | None = None
         with note_chat_agent.override(model=model_for("note_chat")):
-            async for event in note_chat_agent.run_stream_events(
+            async with note_chat_agent.run_stream_events(
                 "hello", deps=_deps()
-            ):
-                cls_name = type(event).__name__
-                if cls_name == "PartStartEvent":
-                    part = getattr(event, "part", None)
-                    if getattr(part, "part_kind", None) == "text" and part.content:
-                        deltas.append(part.content)
-                elif cls_name == "PartDeltaEvent":
-                    delta = getattr(event, "delta", None)
-                    if getattr(delta, "part_delta_kind", None) == "text":
-                        deltas.append(delta.content_delta)
-                elif cls_name == "AgentRunResultEvent":
-                    final = event.result.output
+            ) as stream:
+                async for event in stream:
+                    cls_name = type(event).__name__
+                    if cls_name == "PartStartEvent":
+                        part = getattr(event, "part", None)
+                        if getattr(part, "part_kind", None) == "text" and part.content:
+                            deltas.append(part.content)
+                    elif cls_name == "PartDeltaEvent":
+                        delta = getattr(event, "delta", None)
+                        if getattr(delta, "part_delta_kind", None) == "text":
+                            deltas.append(delta.content_delta)
+                    elif cls_name == "AgentRunResultEvent":
+                        final = event.result.output
         return deltas, final
 
     deltas, final = asyncio.run(collect())
@@ -463,14 +464,15 @@ def test_function_mode_streams_scripted_tool_calls(monkeypatch):
         final: str | None = None
         tool_events: list[str] = []
         with note_chat_agent.override(model=model_for("note_chat")):
-            async for event in note_chat_agent.run_stream_events(
+            async with note_chat_agent.run_stream_events(
                 "find eigenvalues", deps=_deps()
-            ):
-                cls_name = type(event).__name__
-                if cls_name == "FunctionToolCallEvent":
-                    tool_events.append(cls_name)
-                elif cls_name == "AgentRunResultEvent":
-                    final = event.result.output
+            ) as stream:
+                async for event in stream:
+                    cls_name = type(event).__name__
+                    if cls_name == "FunctionToolCallEvent":
+                        tool_events.append(cls_name)
+                    elif cls_name == "AgentRunResultEvent":
+                        final = event.result.output
         return final, tool_events
 
     final, tool_events = asyncio.run(run())
@@ -499,18 +501,19 @@ async def _collect_stream_deltas(agent, task, prompt) -> tuple[list[str], str | 
     deltas: list[str] = []
     final: str | None = None
     with agent.override(model=model_for(task)):
-        async for event in agent.run_stream_events(prompt, deps=_deps()):
-            cls_name = type(event).__name__
-            if cls_name == "PartStartEvent":
-                part = getattr(event, "part", None)
-                if getattr(part, "part_kind", None) == "text" and part.content:
-                    deltas.append(part.content)
-            elif cls_name == "PartDeltaEvent":
-                delta = getattr(event, "delta", None)
-                if getattr(delta, "part_delta_kind", None) == "text":
-                    deltas.append(delta.content_delta)
-            elif cls_name == "AgentRunResultEvent":
-                final = event.result.output
+        async with agent.run_stream_events(prompt, deps=_deps()) as stream:
+            async for event in stream:
+                cls_name = type(event).__name__
+                if cls_name == "PartStartEvent":
+                    part = getattr(event, "part", None)
+                    if getattr(part, "part_kind", None) == "text" and part.content:
+                        deltas.append(part.content)
+                elif cls_name == "PartDeltaEvent":
+                    delta = getattr(event, "delta", None)
+                    if getattr(delta, "part_delta_kind", None) == "text":
+                        deltas.append(delta.content_delta)
+                elif cls_name == "AgentRunResultEvent":
+                    final = event.result.output
     return deltas, final
 
 

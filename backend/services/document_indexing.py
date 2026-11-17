@@ -37,10 +37,11 @@ from services.chunk_visibility import (
 )
 from services.chunker import chunk_for_category
 from services import jobs
-from services.encryption import decrypt, decrypt_if_present
+from services.encryption import bind, decrypt, decrypt_if_present
 from services.events_service import log_event
 from services.feature_flags import flag_on
 from services.rag_service import course_relevance, index_document_chunks_detailed
+from services.share_screen import screen_from_stored
 
 logger = logging.getLogger(__name__)
 
@@ -360,7 +361,7 @@ def _run(row: dict) -> IndexOutcome:
         # ciphertext and index it as course material. extracted_text has been
         # encrypted since the column was added (0030); there is no legacy
         # plaintext to tolerate.
-        text = decrypt(stored)
+        text = decrypt(stored, bind=bind("documents", "extracted_text", doc_id))
     except Exception:
         logger.warning(
             "[RAG] extracted_text for doc %s does not decrypt under this "
@@ -387,10 +388,16 @@ def _run(row: dict) -> IndexOutcome:
     # answer. It is never invented as 1.0: `shareability` holds the
     # classifier's raw label, not a gated one, so assuming confidence would
     # publish a document the live upload path kept private.
+    #
+    # The share screen likewise: the reason stored at upload, OR a fresh
+    # screen of the text being indexed (services/share_screen.py). Either
+    # one holding the document keeps it private, so neither a loosened rule
+    # nor a row from before the column existed can publish it.
     visibility = decide_visibility(
         user_id,
         shareability=row.get("shareability"),
         confidence=row.get("shareability_confidence"),
+        screen=screen_from_stored(row.get("share_block_reason"), text),
     )
 
     # The best try, not the last: chunk ids are content-addressed, so whatever
@@ -444,7 +451,8 @@ def _run(row: dict) -> IndexOutcome:
     if landed:
         _observe_course_relevance(
             doc_id, course_code, user_id, category,
-            decrypt_if_present(row.get("summary")) or "", chunks[0],
+            decrypt_if_present(row.get("summary"), bind=bind("documents", "summary", doc_id)) or "",
+            chunks[0],
         )
     if best is not None and error is None and landed >= best.total:
         return IndexOutcome(INDEXED, landed)

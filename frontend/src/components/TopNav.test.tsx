@@ -15,7 +15,7 @@
 
 import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, cleanup, fireEvent, within } from "@testing-library/react";
+import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 // Hoisted module mocks. usePathname is the only one the tests need to
@@ -104,6 +104,16 @@ describe("TopNav — desktop group labels", () => {
     expect(learn.getAttribute("style") || "").toMatch(/font-weight:\s*500/);
   });
 
+  it.each(["/flashcards", "/study/guide", "/quiz"])(
+    "highlights the Learn group on %s, a Study tool page",
+    (path) => {
+      mockedUsePathname.mockReturnValue(path);
+      render(<TopNav />);
+      const learn = screen.getByRole("button", { name: /^Learn/ });
+      expect(learn.getAttribute("style") || "").toMatch(/font-weight:\s*700/);
+    },
+  );
+
   it("highlights the Tools group when on /gradebook", () => {
     mockedUsePathname.mockReturnValue("/gradebook");
     render(<TopNav />);
@@ -120,7 +130,6 @@ describe("TopNav — dropdown behavior", () => {
   // is identical regardless of trigger.
 
   it("opens a panel with the group's items on click", async () => {
-    const user = userEvent.setup();
     render(<TopNav />);
     const learn = screen.getByRole("button", { name: /^Learn/ });
 
@@ -154,7 +163,6 @@ describe("TopNav — dropdown behavior", () => {
   });
 
   it("opens different panels for different groups (no leak)", async () => {
-    const user = userEvent.setup();
     render(<TopNav />);
     const community = screen.getByRole("button", { name: /^Community/ });
 
@@ -235,7 +243,6 @@ describe("TopNav — dropdown behavior", () => {
   });
 
   it("renders the right items inside each group", async () => {
-    const user = userEvent.setup();
     render(<TopNav />);
 
     // Tools group has 3 items.

@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import SignInModal from '@/components/marketing/SignInModal';
-import { useSignInErrorParam } from '@/components/marketing/useSignInErrorParam';
+import { useCallback, useEffect, useState } from 'react';
+import SignInModal, { type SignInVariant } from '@/components/marketing/SignInModal';
+import { useSignInErrorParam, useSignInRequestParam } from '@/components/marketing/useSignInErrorParam';
+import { useGetStarted } from '@/components/marketing/useGetStarted';
 import { ActGraph, RiseBand } from '@/components/landing-v5/ActGraph';
 import { ActIngest } from '@/components/landing-v5/ActIngest';
 import { BetaModal } from '@/components/landing-v5/BetaModal';
@@ -17,6 +18,7 @@ import { IntroOverlay } from '@/components/landing-v5/IntroOverlay';
 import { Navbar } from '@/components/landing-v5/Navbar';
 import { NAV_LIGHT } from '@/components/landing-v5/navTheme';
 import { useLanding, type ScrambleStep } from '@/components/landing/useLanding';
+import { useOpenAccess } from '@/lib/openAccess';
 
 const HERO_CASCADE: ScrambleStep[] = [
   { slot: 2, text: 'Grow Your Knowledge', durationMs: 1200, delayMs: 200 },
@@ -32,12 +34,31 @@ export default function LandingPage() {
   // Carried over from the page this replaced: the nav's Sign In still opens
   // the real OAuth modal rather than scrolling somewhere.
   const [signInOpen, setSignInOpen] = useState(false);
+  const [signInVariant, setSignInVariant] = useState<SignInVariant>('signin');
   // #756: a failed sign-in lands here as `/?error=<code>`; open the modal
   // with that error's copy (e.g. account_deleted) instead of saying nothing.
   const [signInError, clearSignInError] = useSignInErrorParam();
+  // `/?signin=1`: the companion pages' Sign In, or onboarding with no one
+  // signed in, asks for the box.
+  const [signInAsked, clearSignInAsked] = useSignInRequestParam();
   // Added by request. The design scrolls both beta CTAs down to the
   // newsletter section instead; they open this dialog now.
   const [betaOpen, setBetaOpen] = useState(false);
+
+  const openSignIn = useCallback((variant: SignInVariant) => {
+    setSignInVariant(variant);
+    setSignInOpen(true);
+  }, []);
+  // Sign in first (owner decision, 2026-11-12): Get Started opens the sign-in
+  // box ("Get started."), and onboarding follows sign-in. A signed-in visitor
+  // goes straight to /onboarding or /dashboard.
+  const getStarted = useGetStarted(useCallback(() => openSignIn('start'), [openSignIn]));
+  // Open access (docs/design/open-access-gate.md): with the waitlist lifted,
+  // the beta CTAs say "Sign up" and go straight to sign-in, which lets anyone
+  // in. Otherwise they open the waitlist dialog.
+  const openAccess = useOpenAccess();
+  const betaCta = openAccess ? () => void getStarted() : () => setBetaOpen(true);
+  const betaLabel = openAccess ? 'Sign up' : 'Sign up for Beta Testing';
 
   // The document scrollbar is hidden while the landing is mounted: the page
   // is a guided scroll cinema and the bar reads as stray chrome against the
@@ -86,17 +107,19 @@ export default function LandingPage() {
         exploring={state.exploring}
         theme={navTheme}
         onLogoClick={actions.scrollTop}
-        onSignIn={() => setSignInOpen(true)}
-        onGetStarted={() => actions.scrollToId('cta')}
+        onSignIn={() => openSignIn('signin')}
+        onGetStarted={() => void getStarted()}
       />
 
       <SignInModal
-        open={signInOpen || signInError !== null}
+        open={signInOpen || signInError !== null || signInAsked}
         onClose={() => {
           setSignInOpen(false);
           clearSignInError();
+          clearSignInAsked();
         }}
         errorCode={signInError}
+        variant={signInVariant}
       />
 
       <BetaModal
@@ -113,7 +136,8 @@ export default function LandingPage() {
       <Hero
         heroMounted={state.heroMounted}
         heroText2={state.heroText2}
-        onBeta={() => setBetaOpen(true)}
+        onBeta={betaCta}
+        ctaLabel={betaLabel}
       />
 
       {/* ═══ Descent band ═══
@@ -162,7 +186,7 @@ export default function LandingPage() {
         onSubscribe={actions.subscribe}
       />
 
-      <FinalCta onGetStarted={() => setBetaOpen(true)} />
+      <FinalCta onGetStarted={betaCta} ctaLabel={betaLabel} />
 
       <SiteFooter />
 

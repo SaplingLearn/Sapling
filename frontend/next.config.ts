@@ -5,6 +5,7 @@ import type { NextConfig } from "next";
 import { initOpenNextCloudflareForDev } from "@opennextjs/cloudflare";
 import { checkFrontendDeployEnv, resolveFrontendEnv } from "./src/lib/deployGuard";
 import { TRAILING_SLASH_REDIRECT } from "./src/lib/trailingSlashRedirect";
+import { securityHeaders } from "./src/lib/securityHeaders";
 
 // Cross-check BEFORE deriving: checkFrontendDeployEnv's "explicit lock"
 // branch exists to fail the build when DEPLOY_ENV disagrees with explicit
@@ -36,7 +37,8 @@ const RESOLVED = resolveFrontendEnv(process.env);
 if (RESOLVED.derived) {
   process.env.BACKEND_URL = RESOLVED.apiUrl;
   process.env.NEXT_PUBLIC_API_URL = RESOLVED.apiUrl;
-  if (RESOLVED.cookieDomain) process.env.COOKIE_DOMAIN = RESOLVED.cookieDomain;
+  // COOKIE_DOMAIN is not set here any more: the session cookie is host-only
+  // (sec2 M1); the legacy domain is derived where it is cleared.
 }
 
 // .trim() defends against a stray leading/trailing space in the build
@@ -116,18 +118,12 @@ const nextConfig: NextConfig = {
       TRAILING_SLASH_REDIRECT,
     ];
   },
+  // HSTS, nosniff, referrer, framing, permissions and the CSP (enforced +
+  // report-only) — the set and the reasoning behind each value live in
+  // src/lib/securityHeaders.ts, pinned by its test. Evaluated at build time,
+  // so the CSP names the build's NEXT_PUBLIC_SUPABASE_URL project.
   async headers() {
-    return [
-      {
-        source: "/(.*)",
-        headers: [
-          {
-            key: "Cross-Origin-Opener-Policy",
-            value: "same-origin-allow-popups",
-          },
-        ],
-      },
-    ];
+    return [{ source: "/(.*)", headers: securityHeaders(process.env) }];
   },
 };
 

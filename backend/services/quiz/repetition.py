@@ -33,7 +33,7 @@ import logging
 from typing import NamedTuple
 
 from db.connection import table
-from services.encryption import decrypt_json_column
+from services.encryption import bind, decrypt_json_column
 from services.quiz.identity import normalize_text, wire_question_hash
 
 logger = logging.getLogger(__name__)
@@ -104,7 +104,8 @@ def recent_question_identities(
         if len(out) >= limit:
             break
         try:
-            questions = decrypt_json_column(row.get("questions_json"))
+            questions = decrypt_json_column(
+                row.get("questions_json"), bind=bind("quiz_attempts", "questions_json", row))
         except Exception:
             # One unreadable blob (a key rotation, an out-of-band edit) must
             # not cost us the other attempts' history.

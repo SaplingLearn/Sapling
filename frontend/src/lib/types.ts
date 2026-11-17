@@ -5,6 +5,8 @@ export interface GraphNode {
   mastery_tier: 'mastered' | 'learning' | 'struggling' | 'unexplored' | 'subject_root';
   times_studied: number;
   last_studied_at: string | null;
+  /** Summed mastery-event deltas over the last 7 days (0..1 units, 0 when none); absent on older payloads. */
+  week_delta?: number;
   subject: string;
   description?: string | null;
   course_id?: string | null;
@@ -390,6 +392,12 @@ export interface AllowlistEmail {
   joined_user_id: string | null;
   /** Delivery state of the "you're in" email to this address; null = never sent. */
   invite_status: InviteStatus | null;
+  /** The linked account came in through the open gate and is unapproved: in
+   *  while `open_access` is on, waiting while it is off
+   *  (docs/design/open-access-gate.md). */
+  open_access?: boolean;
+  /** A school (BU) address. False = the "Non-BU" label; a label, never a decision. */
+  school_email?: boolean;
 }
 
 /** "skipped" = Resend not configured; "suppressed" = the address unsubscribed. */
@@ -509,6 +517,10 @@ export interface AdminUserListItem {
   /** The row's email/name are sealed under a different ENCRYPTION_KEY. */
   undecryptable?: boolean;
   is_approved: boolean;
+  /** Set when the account came in through the open gate (`open_access`)
+   *  without an admin's approval: it is listed only while the gate is open,
+   *  and goes back to the waitlist when it closes. */
+  open_access_at?: string | null;
   is_admin?: boolean;
   last_sign_in_at: string | null;
   created_at: string;

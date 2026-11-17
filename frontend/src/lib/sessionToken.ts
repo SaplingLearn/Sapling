@@ -1,10 +1,39 @@
 /**
- * The HttpOnly session cookie this module's tokens travel in — the frontend
- * twin of backend services/session_tokens.py `SESSION_COOKIE_NAME`.
+ * The session cookie's NAME depends on the request (`__Host-sapling_session`
+ * over https, `sapling_session` over http): lib/sessionCookie.ts decides it.
  */
-export const SESSION_COOKIE_NAME = 'sapling_session';
 
-export const SESSION_MAX_AGE = 2592000; // 30 days
+/**
+ * The claim every session minted here carries (sec2 M1): it was minted for
+ * the host-only `__Host-` cookie. The legacy domain-wide cookie is honoured
+ * only for a token WITHOUT it (minted before the host-only cookie), so a
+ * sibling subdomain cannot plant a current session under the old name.
+ * Twin of backend services/session_tokens.py `HOST_COOKIE_CLAIM`.
+ */
+export const HOST_COOKIE_CLAIM = 'cookie';
+export const HOST_COOKIE_CLAIM_VALUE = 'host';
+
+/**
+ * A session's lifetime from issue (`iat`), in seconds: 7 days. Twin of backend
+ * config.py `SESSION_MAX_AGE_SECONDS`, which refuses an older session whatever
+ * its `exp` says. Sign-out revokes a session sooner, server-side
+ * (`users.sessions_valid_after`, via the session BFF's DELETE).
+ */
+export const SESSION_MAX_AGE = 604800;
+
+/** What the BFF minted before `iat` existed: such a session is dated
+ * `exp - LEGACY_SESSION_LIFETIME` (backend auth_guard.session_issued_at). */
+const LEGACY_SESSION_LIFETIME = 2592000; // 30 days
+
+/** Tolerance for an `iat` slightly in the future (separate clocks). */
+const IAT_CLOCK_SKEW = 300;
+
+/** When a verified session payload was issued (unix seconds). */
+export function issuedAt(payload: { iat?: unknown; exp?: unknown }): number | null {
+  if (typeof payload.iat === 'number') return Math.floor(payload.iat);
+  if (typeof payload.exp === 'number') return Math.floor(payload.exp) - LEGACY_SESSION_LIFETIME;
+  return null;
+}
 
 /**
  * The token's `typ` claim (#756) — twin of backend services/session_tokens.py.
@@ -45,10 +74,25 @@ async function importKey(): Promise<CryptoKey> {
 }
 
 export async function signSession(userId: string): Promise<string> {
+  // Unix seconds TRUNCATED to the millisecond (a JWT NumericDate may be
+  // fractional): never rounded up, which could date a session after a
+  // sign-out it preceded. Date.now() is already whole milliseconds; the floor
+  // keeps that true whatever it returns.
+  const now = Math.floor(Date.now()) / 1000;
+  // `iat` is what server-side revocation (sign-out) and the admin step-up
+  // window compare against (backend services/auth_guard.py). Its milliseconds
+  // keep a session minted earlier in a sign-out's own second older than the
+  // sign-out (auth_guard.issued_before); `exp` stays whole seconds.
+  // `iat_precision: 'ms'` says so: JSON.stringify writes an iat on a whole
+  // second as an integer, which without it would read as a legacy
+  // whole-second iat (twin of backend session_tokens.IAT_PRECISION_CLAIM).
   const payload = JSON.stringify({
     user_id: userId,
-    exp: Math.floor(Date.now() / 1000) + SESSION_MAX_AGE,
+    exp: Math.floor(now) + SESSION_MAX_AGE,
     typ: 'session',
+    iat: now,
+    iat_precision: 'ms',
+    [HOST_COOKIE_CLAIM]: HOST_COOKIE_CLAIM_VALUE,
   });
   const payloadB64 = toBase64Url(new TextEncoder().encode(payload));
   const key = await importKey();
@@ -63,10 +107,15 @@ export function tokenTypeOf(payload: { typ?: unknown }): TokenType | null {
   return typ === 'session' || typ === 'handoff' ? typ : null;
 }
 
-/** Verify a `sapling_session` cookie value: signature, expiry, and that it is a
- * SESSION token — a `handoff` token is not a session (#756). */
+/** Verify a session cookie value: signature, expiry, age (at most
+ * SESSION_MAX_AGE since `iat`), and that it is a SESSION token — a `handoff`
+ * token is not a session (#756). `legacyCookie`: the token came from the
+ * legacy plain-named cookie on an https host, honoured only for a session
+ * minted before the host-only cookie (no HOST_COOKIE_CLAIM). Revocation is
+ * the backend's to decide. */
 export async function verifySession(
   token: string,
+  opts?: { legacyCookie?: boolean },
 ): Promise<{ userId: string } | null> {
   const dot = token.lastIndexOf('.');
   if (dot < 0) return null;
@@ -82,9 +131,13 @@ export async function verifySession(
     );
     if (!valid) return null;
     const payload = JSON.parse(new TextDecoder().decode(fromBase64Url(payloadB64)));
-    if (typeof payload.exp !== 'number' || payload.exp < Math.floor(Date.now() / 1000)) return null;
+    const now = Math.floor(Date.now() / 1000);
+    if (typeof payload.exp !== 'number' || payload.exp < now) return null;
+    const iat = issuedAt(payload);
+    if (iat === null || iat > now + IAT_CLOCK_SKEW || now - iat > SESSION_MAX_AGE) return null;
     if (typeof payload.user_id !== 'string') return null;
     if (tokenTypeOf(payload) !== 'session') return null;
+    if (opts?.legacyCookie && payload[HOST_COOKIE_CLAIM] === HOST_COOKIE_CLAIM_VALUE) return null;
     return { userId: payload.user_id };
   } catch {
     return null;

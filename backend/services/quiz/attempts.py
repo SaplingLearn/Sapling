@@ -18,7 +18,7 @@ from models import AnswerQuestionBody
 from services.auth_guard import require_self, guard_off_loop
 from services.quiz.config import QUIZ_ATTEMPT_ABANDON_TTL_HOURS
 from services.quiz.errors import QuizAPIError, QuizErrorCode
-from services.encryption import encrypt_json, decrypt_json_column
+from services.encryption import bind, encrypt_json, decrypt_json_column
 from services.quiz.grading import WRITTEN_TYPES, grade_written
 from services.timestamps import parse_ts
 from services.quiz.wire import _strip_answer_key, _written_response_text
@@ -274,7 +274,9 @@ async def answer_question(attempt_id: str, body: AnswerQuestionBody, request: Re
     _refuse_if_completed(attempt)
     _refuse_if_abandoned(attempt)
 
-    questions = decrypt_json_column(attempt["questions_json"]) or []
+    questions = decrypt_json_column(
+        attempt["questions_json"], bind=bind("quiz_attempts", "questions_json", attempt_id),
+    ) or []
     if body.question_index >= len(questions):
         raise QuizAPIError(
             status_code=400,
@@ -335,7 +337,10 @@ async def answer_question(attempt_id: str, body: AnswerQuestionBody, request: Re
             "confidence": body.confidence,
         }
         if written:
-            row["answer_text"] = encrypt_json({"text": body.answer_text})
+            row["answer_text"] = encrypt_json(
+                {"text": body.answer_text},
+                bind=bind("quiz_responses", "answer_text", row),
+            )
         # ACCEPTED RISK (#597, #537 G4): this is the one quiz write path still
         # guarded by a PRE-READ alone. Submit and abandon both arbitrate with a
         # conditional claim on `quiz_attempts`; an INSERT into `quiz_responses`

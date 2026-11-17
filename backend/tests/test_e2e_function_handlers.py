@@ -14,6 +14,7 @@ ALWAYS sends a pref). In any non-real mode it must return None.
 
 from __future__ import annotations
 
+import json
 import sys
 
 import pytest
@@ -426,6 +427,106 @@ def test_env_module_registers_concept_scan_handler_on_dispatch(monkeypatch):
     assert "concept_scan" in providers._FUNCTION_HANDLERS
 
 
+# ── Flashcards ────────────────────────────────────────────────────────────
+#
+# One agent (task "flashcard", output `Flashcards`) serves /generate and the
+# import flow's generate / cleanup / cloze / photo. None had a handler, so in
+# function mode each answered 502 (UnregisteredHandlerError) — and the
+# Flashcards page now generates on arriving with `start=1`.
+
+
+def _function_mode(monkeypatch, module="agents.function_handlers_e2e"):
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", module)
+
+
+def test_env_module_registers_flashcard_handler_on_dispatch(monkeypatch):
+    """Function mode + the env-named module give a real flashcard_agent run
+    the module's fixed cards, through the REAL `Flashcards` output tool."""
+    from agents.flashcard import flashcard_agent
+
+    _function_mode(monkeypatch)
+    with flashcard_agent.override(model=model_for("flashcard")):
+        result = flashcard_agent.run_sync("Generate exactly 5 flashcards about recursion.")
+
+    from agents.function_handlers_e2e import E2E_FLASHCARDS
+
+    assert [c.model_dump() for c in result.output.cards] == E2E_FLASHCARDS
+    assert len(E2E_FLASHCARDS) == 3
+    assert all(c["front"].startswith("[e2e-function-model] ") and c["back"] for c in E2E_FLASHCARDS)
+    assert "flashcard" in providers._FUNCTION_HANDLERS
+
+
+def test_every_flashcard_model_call_is_served_by_the_one_handler(monkeypatch):
+    """Generate, import-generate, cleanup, cloze and the photo split all run
+    the same agent with the same output model, so the one constant must come
+    back from each of the functions the routes call."""
+    from agents.flashcard import flashcard_agent
+    from services.flashcards import importing
+
+    _function_mode(monkeypatch)
+    monkeypatch.setattr(importing.extraction_service, "extract_text_from_file",
+                        lambda *_a, **_k: "Q: what is recursion? A: a function calling itself")
+    with flashcard_agent.override(model=model_for("flashcard")):
+        answers = {
+            "generate": importing.generate_flashcards(topic="Recursion", count=5),
+            "import_generate": importing.gemini_generate_cards("notes", count=5, difficulty="recall"),
+            "cleanup": importing.gemini_cleanup_cards([{"front": "q", "back": "a"}]),
+            "cloze": importing.gemini_cloze("Every recursive function needs a base case."),
+            "ocr": importing.extract_cards_from_image(b"png-bytes", filename="page.png"),
+        }
+
+    from agents.function_handlers_e2e import E2E_FLASHCARDS
+
+    assert answers == {name: E2E_FLASHCARDS for name in answers}
+
+
+def test_generate_route_stores_the_scripted_cards_in_function_mode(monkeypatch):
+    """`POST /api/flashcards/generate` end to end on the seam: 200 with the
+    scripted cards (it was a 502), filed and returned as the route does."""
+    from fastapi.testclient import TestClient
+
+    from agents.flashcard import flashcard_agent
+    from agents.function_handlers_e2e import E2E_FLASHCARDS
+    from main import app
+    from tests.split_patches import patch_flashcards
+
+    _function_mode(monkeypatch)
+    sys.modules.pop("agents.function_handlers_e2e", None)  # the import above registered early
+    clear_function_handlers()
+    with flashcard_agent.override(model=model_for("flashcard")), \
+         patch_flashcards("_get_course_documents", return_value=[]), \
+         patch_flashcards("_get_weak_concepts", return_value=[]), \
+         patch_flashcards("table") as table, \
+         patch_flashcards("check_achievements"):
+        r = TestClient(app).post("/api/flashcards/generate", json={
+            "user_id": "e2e-user", "topic": "Recursion", "count": 5,
+        })
+
+    assert r.status_code == 200, r.text
+    cards = r.json()["flashcards"]
+    assert [{"front": c["front"], "back": c["back"]} for c in cards] == E2E_FLASHCARDS
+    assert {c["topic"] for c in cards} == {"Recursion"}
+    assert table.return_value.insert.call_count == len(E2E_FLASHCARDS)
+
+
+def test_showcase_module_registers_a_flashcard_handler_too(monkeypatch):
+    """The gallery lane runs function mode with its own handlers module (the
+    #484 lesson: the second module is the one that gets missed)."""
+    from agents.flashcard import flashcard_agent
+
+    _function_mode(monkeypatch, "agents.function_handlers_showcase")
+    sys.modules.pop("agents.function_handlers_showcase", None)
+    try:
+        with flashcard_agent.override(model=model_for("flashcard")):
+            result = flashcard_agent.run_sync("Generate exactly 5 flashcards about recursion.")
+        showcase = sys.modules["agents.function_handlers_showcase"]
+    finally:
+        sys.modules.pop("agents.function_handlers_showcase", None)
+
+    assert [c.model_dump() for c in result.output.cards] == showcase.SHOWCASE_FLASHCARDS
+
+
 # ── Notetaker agent actions (F5a) ─────────────────────────────────────────
 #
 # routes/notes.py's summarize / extract-concepts / chat run note_summary,
@@ -632,6 +733,39 @@ def test_env_module_decision_handler_answers_every_router_key(monkeypatch):
     assert result.value("needs_retrieval") is True
 
 
+def test_flashcard_set_suggest_runs_on_the_decision_handler_in_function_mode(monkeypatch):
+    """Describe-a-set (services/flashcards/suggest.py) asks the same seam about
+    its own keys (c0, c1, ...), which the scripted answers do not cover: each
+    falls to its safe default (not included). So the lane gets the concepts
+    the description NAMES, from the `function` backend, and never an error or
+    a live model."""
+    import asyncio
+
+    from agents.decision import decision_agent
+    from services.flashcards import suggest
+
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
+
+    class _Graph:
+        async def aselect(self, *_a, **_k):
+            return [{"concept_name": "Recursion", "course_id": "c1"},
+                    {"concept_name": "Pointers and Memory", "course_id": "c1"}]
+
+    async def allow(*_a, **_k):
+        return None
+
+    monkeypatch.setattr(suggest, "table", lambda name: _Graph())
+    monkeypatch.setattr(suggest, "acheck_rate_limit", allow)
+    with decision_agent.override(model=model_for("decision")):
+        out = asyncio.run(suggest.suggest_flashcard_set("u1", "recursion for the midterm"))
+
+    assert out["backend"] == "function" and out["considered"] == 2
+    assert out["concepts"] == [
+        {"name": "Recursion", "course_id": "c1", "source": "named", "confidence": 1.0},
+    ]
+
+
 def test_showcase_module_decision_handler_answers_every_router_key(monkeypatch):
     """The gallery lane runs function mode too, so its handlers module needs
     the same registration (the #484 lesson: a second handlers module is the
@@ -715,3 +849,187 @@ def test_topic_checklist_handler_cites_request_evidence(monkeypatch):
     assert [t.source_ids for t in topics] == [["concept:n1"], ["concept:n2"]]
     validate_evidence(result.output, payload)
     assert "topic_checklist" in providers._FUNCTION_HANDLERS
+
+
+# ── Study guide (redesign) ────────────────────────────────────────────────
+#
+# services/study_guides runs three agents on the one `study_guide` task: the
+# structured outline, the text section writer and the text block rewriter. One
+# handler answers all three, and frontend/e2e's study-guide journey reads the
+# result, so the constants must stay valid against the real outline schema and
+# the real markup parser.
+
+
+def _study_guide_env(monkeypatch):
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
+
+
+def test_study_guide_outline_agent_gets_the_scripted_outline(monkeypatch):
+    from agents.study_guide import study_guide_outline_agent
+
+    _study_guide_env(monkeypatch)
+
+    with study_guide_outline_agent.override(model=model_for("study_guide")):
+        result = study_guide_outline_agent.run_sync("SCOPE: Midterm Exam", deps=_deps())
+
+    from agents.function_handlers_e2e import E2E_STUDY_GUIDE_OUTLINE
+
+    # Through the REAL output tool, so GuideOutline validated the constant.
+    assert result.output.model_dump() == E2E_STUDY_GUIDE_OUTLINE
+    assert len(result.output.sections) == 3
+    assert len(result.output.takeaways) == 3
+    assert "study_guide" in providers._FUNCTION_HANDLERS
+
+
+def test_study_guide_outline_concepts_are_the_rich_seeds_cs101_nodes():
+    """Each section's concept must be a graph node the rich seed gives
+    rich-user-active in CS101, or the server finds no mastery for it and
+    clears it (services/study_guides/verify.py)."""
+    from agents.function_handlers_e2e import E2E_STUDY_GUIDE_OUTLINE
+    from db import seed_local_rich as seed
+
+    seeded = {name for _, name, _ in seed._GRAPH_NODES[seed.COURSE_CS]}
+    concepts = [section["concept"] for section in E2E_STUDY_GUIDE_OUTLINE["sections"]]
+
+    assert concepts == ["Recursion", "Control Flow", "Variables and Types"]
+    assert set(concepts) <= seeded
+
+
+def test_study_guide_section_agent_gets_the_scripted_section(monkeypatch):
+    from agents.study_guide import study_guide_section_agent
+
+    _study_guide_env(monkeypatch)
+
+    with study_guide_section_agent.override(model=model_for("study_guide")):
+        result = study_guide_section_agent.run_sync("SECTION: Recursion", deps=_deps())
+
+    from agents.function_handlers_e2e import E2E_STUDY_GUIDE_SECTION_TEXT
+
+    assert result.output == E2E_STUDY_GUIDE_SECTION_TEXT
+
+
+def _rewrite(monkeypatch, block_text: str) -> str:
+    """The block agent's reply, through the seam, to the message
+    services/study_guides/prompts.py writes for `block_text`."""
+    from agents.study_guide import study_guide_block_agent
+    from models.study_guide import GuideContent, Section
+    from services.study_guides import prompts
+
+    _study_guide_env(monkeypatch)
+    section = Section(id="s1", title="Recursion", one_line="A function calls itself.")
+    brief = prompts.Brief(
+        scope_kind="course", scope_label="Whole course", goal="review", depth="standard",
+        sources=[], concepts=[], tiers={}, mistakes=[],
+    )
+    message = prompts.block_message(
+        brief, GuideContent(title="Recursion", sections=[section]), section,
+        block_text=block_text, why=prompts.REWRITE_ASKED,
+    )
+    with study_guide_block_agent.override(model=model_for("study_guide")):
+        return study_guide_block_agent.run_sync(message, deps=_deps()).output
+
+
+def test_study_guide_block_agent_gets_the_scripted_block(monkeypatch):
+    """Both text agents share the task; only the block agent's message carries
+    BLOCK_REWRITE_MARKER, and that is what picks the reply."""
+    from agents.function_handlers_e2e import (
+        _E2E_STUDY_GUIDE_BLOCKS,
+        E2E_STUDY_GUIDE_BLOCK_TEXT,
+    )
+    from services.study_guides.markup import parse_block
+
+    output = _rewrite(monkeypatch, json.dumps(_E2E_STUDY_GUIDE_BLOCKS["key_terms"]))
+
+    # Byte for byte: the journey asserts this title and these terms.
+    assert output == E2E_STUDY_GUIDE_BLOCK_TEXT
+    block = parse_block(output, block_id="s1-i6", sources={})
+    assert block is not None and block.type == "key_terms"
+    assert block.title == "Key terms, rewritten"
+    # A regenerate has to be visible: not the section body's own key terms.
+    assert block.title != _E2E_STUDY_GUIDE_BLOCKS["key_terms"]["title"]
+
+
+@pytest.mark.parametrize("kind", ["formula", "worked_example", "comparison", "concept_map"])
+def test_study_guide_block_rewrite_answers_with_the_type_it_was_asked_for(monkeypatch, kind):
+    """The route refuses a rewrite of another type (502), so regenerating any
+    block of the E2E section has to get its own type back, visibly changed."""
+    from agents.function_handlers_e2e import _E2E_STUDY_GUIDE_BLOCKS
+    from services.study_guides.markup import parse_block
+
+    written = _E2E_STUDY_GUIDE_BLOCKS[kind]
+    name = "name" if kind == "formula" else "title"
+
+    output = _rewrite(monkeypatch, json.dumps(written))
+
+    block = parse_block(output, block_id="s1-i2", sources={"S1": "document:d1"})
+    assert block is not None and block.type == kind
+    assert getattr(block, name) == f"{written[name]}, rewritten"
+    again = parse_block(json.dumps(written), block_id="s1-i2", sources={"S1": "document:d1"})
+    assert block.model_dump(exclude={name}) == again.model_dump(exclude={name})
+
+
+@pytest.mark.parametrize(
+    "block_text",
+    [
+        '{"type": "chart", "title": "A chart the section body never has"}',
+        '{"type": "mistakes", "title": "Nor this"}',
+        '{"type": "check", "question": "Never regenerated"}',
+        "{}",
+    ],
+)
+def test_study_guide_block_rewrite_falls_back_to_key_terms(monkeypatch, block_text):
+    from agents.function_handlers_e2e import E2E_STUDY_GUIDE_BLOCK_TEXT
+
+    assert _rewrite(monkeypatch, block_text) == E2E_STUDY_GUIDE_BLOCK_TEXT
+
+
+def test_study_guide_block_rewrite_reads_the_type_of_a_block_that_is_not_json(monkeypatch):
+    """A rejected block reaches the rewriter as the model wrote it."""
+    output = _rewrite(monkeypatch, '{"type": "formula", "name": "Cut off')
+
+    assert '"type": "formula"' in output and ", rewritten" in output
+
+
+def test_study_guide_section_constant_parses_into_the_journeys_blocks():
+    """The body the Playwright journey reads: two passages and six blocks, no
+    reject (so generation never needs the block agent), the first passage
+    summarised and cited, and a check the journey can answer."""
+    from agents.function_handlers_e2e import (
+        E2E_STUDY_GUIDE_OUTLINE,
+        E2E_STUDY_GUIDE_SECTION_TEXT,
+    )
+    from services.study_guides.markup import parse_section
+
+    parsed = parse_section(
+        E2E_STUDY_GUIDE_SECTION_TEXT, section_id="s2", sources={"S1": "document:d1"}
+    )
+
+    assert parsed.rejected == []
+    assert [item.type for item in parsed.items] == [
+        "prose",
+        "formula",
+        "worked_example",
+        "prose",
+        "comparison",
+        "key_terms",
+        "concept_map",
+        "check",
+    ]
+    assert [item.id for item in parsed.items] == [f"s2-i{n}" for n in range(1, 9)]
+
+    first, formula, _, second, _, _, concept_map, check = parsed.items
+    assert first.summary and second.summary is None
+    # The reader draws a summary as plain text: no marks, no math.
+    assert "**" not in first.summary and "$" not in first.summary
+    assert first.paragraphs[0].citations == ["document:d1"]
+    assert "[S1]" not in first.paragraphs[0].text
+    assert "**base case**" in first.paragraphs[0].text
+    assert formula.source_id == "document:d1"
+
+    concepts = {section["concept"] for section in E2E_STUDY_GUIDE_OUTLINE["sections"]}
+    assert {node.concept for node in concept_map.nodes} <= concepts
+    assert check.concept in concepts
+    assert [option.id for option in check.options] == ["a", "b", "c"]
+    assert check.correct_id == "b"
+    assert check.explain_correct and check.explain_incorrect

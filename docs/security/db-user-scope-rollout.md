@@ -148,12 +148,19 @@ An empty `top` means none of the CHECKS fired. It does not mean enforce is safe:
 
 So the gate before ANY enforce step (admins included) is not the report alone:
 
-1. The cross-user matrix (`tests/integration/test_cross_user_matrix_db.py`,
-   parametrized over `off` and `enforce`) green in the CI **integration lane**,
-   with no new `KNOWN_LEAKS` entry and every write route of `unverified_writes`
-   covered by a matrix case or an explicit integration test under enforce.
-2. The Chapter 1 E2E lane green.
-3. Then the report clean as described in §5.
+1. The CI **integration lane** green on the commit you deploy. It runs the
+   cross-user matrix (`tests/integration/test_cross_user_matrix_db.py`,
+   parametrized over `off` and `enforce`) and then the whole lane a second time
+   with `SAPLING_FLAG_DB_USER_SCOPE=enforce` (step "Run integration tests under
+   db_user_scope=enforce" in `.github/workflows/integration.yml`;
+   `test_db_user_scope_lane_db.py` fails that step if the override stops
+   reaching the app; that step runs on pushes to `main` and on a manual
+   dispatch, not on every PR push, so for a PR touching routes, policies or
+   grants dispatch the workflow on its branch). No new `KNOWN_LEAKS` entry, and every write route of
+   `unverified_writes` covered by a matrix case or an integration test.
+2. The Chapter 1 E2E lane green **under enforce** as well as by default (§10
+   has the command and the last verified result).
+3. Then the report clean as described in §6.
 
 ### What each kind usually means, and the fix
 
@@ -220,7 +227,7 @@ revoked.
    is unaffected.
 
 6. **Prod**: the same 1–5 with a **new** key, after staging has completed the
-   ladder in §5.
+   ladder in §6 (through step 6).
 
 The realtime bridge (step 2e, `iss: sapling-realtime`) signs with this same key.
 2d is a prerequisite for 2e too.
@@ -285,111 +292,190 @@ anywhere.
 
 ---
 
-## 5. The ladder on staging
+## 5. How to change the flag (the three controls)
 
-Flag changes go through `/admin/flags` (or `PATCH /api/admin/flags/db_user_scope`,
-`PUT /api/admin/flags/db_user_scope/targets`). Each worker picks up a change within
-its 30 s flag snapshot.
+Every step below is one of these, in the admin portal at **`/admin/flags`**
+(open the `db_user_scope` row; a change is applied when you confirm it) or the
+equivalent admin API call. Each worker picks a change up within its 30 s flag
+snapshot. Never change the registry default in code: `variants[0]` stays `off`
+(ADR 0029).
 
-**Precedence matters** (release doc §7): env override → user rule → role rule →
-rollout → stored default. Requests **without** a session subject only ever see
-the env override or the stored default, because rules and rollouts need a user
-id. So:
+| What | Admin UI (`/admin/flags` → `db_user_scope`) | API (admin session) |
+|---|---|---|
+| Stored default | **Everyone** → pick `shadow` / `enforce` / `off` → confirm | `PATCH /api/admin/flags/db_user_scope` `{"default_variant": "shadow"}` |
+| Rollout | **Gradual rollout** → *Serve* `<variant>` *to* `N%` *of students* (presets or the slider) → confirm | `PATCH /api/admin/flags/db_user_scope` `{"rollout_variant": "enforce", "rollout_percent": 10}` |
+| Role / user rule | **Overrides** → pick the role (or search the student) → *Set to* `enforce` → add | `PUT /api/admin/flags/db_user_scope/targets` `{"target_type": "role", "target_id": "<roles.id>", "variant": "enforce"}`; remove with `DELETE /api/admin/flags/db_user_scope/targets/role/<roles.id>` |
+| Check one student | **Check a student** → search → shows variant and which step decided it | `GET /api/admin/flags/db_user_scope/explain?user_id=<users.id>` |
 
-1. **Shadow for everyone.** Set the stored **default** to `shadow`, not a
-   rollout, so anonymous/public requests are covered too and `no_subject` can
-   show up. Staging: `DB_USER_SCOPE_SHADOW_SAMPLE_RATE=1`.
-   - Exercise the app: sign in as a student and an admin, walk every main-nav
-     page, upload a document, run the tutor and a quiz, take notes, use
-     flashcards and the calendar. Run the staging HTTP harness
-     (`dotenv -f .env.staging run -- python -m db.e2e_staging_http`).
-   - Read the report (§1) daily. **Stop at any `status=401`.** Fix every other
-     kind (table in §1), redeploy, read again.
-   - Exit criteria: the gate in §1 "What an empty report does not prove" (the
-     cross-user matrix under enforce green in the integration lane, every
-     `unverified_writes` route covered); `top` empty for 24 h of real traffic,
-     apart from understood `more_rows` noise; `shadow_reads.compared` in the
-     hundreds; p95 latency unchanged (the comparison runs off the request
-     thread, at most 4 in flight per process). An empty `top` on its own is
-     never the exit criterion.
-2. **Enforce for admins and test accounts.** Add a **role** rule: `target_type:
-   role`, `target_id` = the admin role's `roles.id` (`SELECT id FROM roles WHERE
-   slug = 'admin'`), `variant: enforce`. Add user rules for test accounts. The
-   default stays `shadow`, so everyone else keeps feeding the report.
-   - Admin routers stay service role even under enforce (`admin_service_route`
-     re-checks admin), so this exercises the admins' student-facing pages.
-   - Watch `db.rls_denied`, 404s, 503s and 500s by route (`/api/admin/analytics/errors`
-     and the report). Re-run the cross-user matrix against staging data under
-     `SAPLING_FLAG_DB_USER_SCOPE=enforce`.
-   - Walk every surface as an admin, including the writes in `unverified_writes`.
-3. **Rollout.** `rollout_variant: enforce`, `rollout_percent` 10 → 50 → 100, with
-   the default still `shadow`. Rollout buckets are stable per user, so the same
-   10% stay enforced as the percentage grows. Hold each step at least a day of
-   real-mode traffic. Watch `rag.index_failed` and tutor retrieval counts:
-   indexing and embedding run only in real mode, and only here.
-4. **100%.** Set the default to `enforce` and the rollout back to 0. Now `no_subject`
-   is a 500, so step 1 must have cleared it.
+The API is easiest from the browser console of a tab signed in as an admin on
+that environment (same origin, so the session cookie goes along):
 
-## 6. Prod
+```js
+await fetch("/api/admin/flags/db_user_scope", {method: "PATCH",
+  headers: {"Content-Type": "application/json"},
+  body: JSON.stringify({default_variant: "shadow"})}).then(r => r.json())
+```
 
-Do the same ladder, only after staging has run enforce at 100% for at least a day:
+The admin role's id, for the role rule (SQL editor, read-only):
 
-1. §2 for prod with a new key, then §3, then §4 (`--allow-production` this once).
-2. Default `shadow`, sample rate at its default. Read the report for at least a
-   day of real traffic.
-3. Role rule `enforce` for admins.
-4. Rollout 10% → 50% → 100% enforce, a day each.
-5. Default `enforce`.
+```sql
+SELECT id FROM roles WHERE slug = 'admin';
+```
 
-Keep the kill switch (§7) ready at every step. A flag-store outage resolves to
-`off` (ADR 0029). That is the less secure side for this flag, and it is accepted
-until graduation (§9).
+**Precedence** (release doc §7): env override `SAPLING_FLAG_DB_USER_SCOPE` →
+user rule → role rule → rollout → stored default. Requests **without** a
+session subject only ever see the env override or the stored default, because
+rules and rollouts need a user id. So `no_subject` (a public route not marked
+service) only shows up once the stored **default** is `shadow`.
+
+**A flag-store outage resolves to `off`** (ADR 0029: `variants[0]`) for every
+request the env override does not cover. For this flag `off` is the LESS
+secure side, so steps 1–6 of the ladder accept it, and step 7 removes it.
+
+## 6. The ladder (staging first, then prod)
+
+Run it on **staging** end to end, then repeat it on **prod** only after
+staging has held step 6 for at least a day. Before step 1 on an environment,
+§0 and §2–§4 are done there (its own key, `--show-key`/curl verified).
+
+| # | Set | Hold | Go on when | If it goes wrong |
+|---|---|---|---|---|
+| 1 | Rollout: *Serve* `shadow` to **N%** (staging 100%, prod 25%). `DB_USER_SCOPE_SHADOW_SAMPLE_RATE`: staging `1`, prod unset (0.1). | 1 day of real traffic | §1 report: no `status=401` ever; `shadow_reads.compared` in the hundreds; every `fewer_rows` / `different_ids` / `error` / `write_other_user` group understood and fixed (§1 table); p95 latency unchanged | Rollout to 0 (§7.2). A `status=401` means the key is not trusted: back to §2–§4. |
+| 2 | Default: **Everyone** = `shadow`; rollout back to 0. | 1 day (prod: 2) | As step 1, plus no `db.unscoped_query` (`no_subject`) group left: each one is a public route that needs `Depends(service_route)` + an allowlist entry, and would be a 500 under enforce. | Default back to `off`. |
+| 3 | **Overrides** → role `admin` (and test accounts by user) = `enforce`. Default stays `shadow`. | 1 day | Admins walk every main-nav page and the writes in `unverified_writes` (upload, tutor, quiz, notes, flashcards, study guide, calendar, gradebook, rooms/friends, profile/settings). `db.rls_denied` empty; no new 404/503/500 by route (`/api/admin/analytics/errors`). | Delete the role rule. |
+| 4 | Rollout: *Serve* `enforce` to **10%** → **50%** → **100%** (default still `shadow`, so the 100% step leaves only anonymous requests on shadow). | ≥1 day each | `db.rls_denied`, `db.unscoped_query` and 503s flat; `rag.index_failed` and tutor retrieval counts unchanged (indexing and embeddings run only in real mode, so only here). Buckets are stable per user, so the same students stay enforced as the percentage grows. | Rollout to 0 (§7.2). |
+| 5 | Default: **Everyone** = `enforce`; rollout back to 0; delete the step-3 overrides. | 1 day | Under enforce `db.rls_denied` / `db.unscoped_query` are real refusals, not a heuristic: the §1 SQL over 24 h must return no rows for them. | Default back to `shadow` (§7.2). |
+| 6 | Hold step 5. | prod: one full release | Report still empty. | §7. |
+| 7 | **Pin it** (removes the outage → `off` fallback): **[Andres]** Railway → backend (API) service → Variables → `SAPLING_FLAG_DB_USER_SCOPE` = `enforce` → deploy. The worker reads the same variable through its `${{backend.…}}` reference (`.railway/railway.ts`), and runs as service anyway. | – | `GET /api/admin/flags/db_user_scope/explain?user_id=<any>` answers `{"variant": "enforce", "step": "env_override"}`. From now a flag-store outage, a deleted `feature_flags` row or a bad stored value cannot drop anyone to the service role. | Set the variable to `off` (that is now the kill switch, §7.1). Never just delete it while the stored default is not `enforce`. |
+| 8 | Graduation (§9): the code PR that makes enforce unconditional. | – | – | Revert the PR; the step-7 pin keeps enforce meanwhile. |
+
+Re-run the cross-user matrix against the environment's own data whenever you
+like (`dotenv -f .env.staging run -- python -m db.e2e_staging_http` exercises
+the HTTP surface; the matrix itself runs in CI on every PR, §1).
 
 ## 7. Kill switch and rollback
 
 1. **Everyone off, guaranteed:** set `SAPLING_FLAG_DB_USER_SCOPE=off` on the Railway
    backend service. The env override beats every rule, the rollout and the
-   default. A variable change redeploys, so allow a few minutes.
-2. **Off without a deploy:** in `/admin/flags`, delete the flag's **user and role
-   targets**, set the **rollout to 0**, **and** set the **default to `off`**.
-   Setting only the default leaves every user a rule or the rollout covers still
-   on the old variant. Each worker picks it up within 30 s.
+   default. A variable change redeploys, so allow a few minutes. After step 7
+   of the ladder this is the same variable, changed from `enforce` to `off`.
+2. **Off without a deploy** (steps 1–6 only; after step 7 the env pin wins):
+   in `/admin/flags`, delete the flag's **user and role overrides**, set the
+   **rollout to 0**, **and** set **Everyone** to `off`. Setting only the
+   default leaves every user a rule or the rollout covers still on the old
+   variant. Each worker picks it up within 30 s.
 3. **Key trouble** (401s under enforce = 503s for students): kill switch first,
    then fix the key. Never revoke our imported key while any user is on
    `enforce` or `shadow`: every scoped call would 401. Revoke it only after the
    flag is off everywhere.
-4. **Code:** this report has no migration. Reverting it restores the previous
-   shadow logging. Reverting #818 needs the flag off first.
-5. **Policies/grants** (2a–2c) are inert while the flag is off, so leave them in
+4. **Clock skew:** a minted token's `iat` is the API host's clock and PostgREST
+   rejects one issued too far in its future, so an API host whose clock runs
+   ahead of the database's by more than PostgREST's leeway gets 401s, i.e.
+   503s for students, until the clocks agree (seen once locally, §10). On
+   Railway and Supabase both clocks are NTP-synced; if a 401 burst appears
+   with a correct key, compare the two clocks before anything else.
+5. **Code:** reverting a release that only changed policies or code paths is
+   safe at any step; reverting the flag code itself (#818) needs the flag off
+   first.
+6. **Policies/grants** (2a–2c) are inert while the flag is off, so leave them in
    place. Their reverse SQL is in the release doc §3.
 
-## 8. Later: step 2e, Realtime (`realtime_rls`)
+## 8. Step 2e, Realtime: done
 
-Live room chat moves off the anon key to a bridge token (`iss: sapling-realtime`,
-`docs/security/realtime-jwt-bridge-design.md`), behind its own flag
-`realtime_rls` (built separately). Until then `/api/social` is service-marked
-and `room_messages` is exempt, so shadow never reports on social.
+Live room chat runs on a bridge token (`iss: sapling-realtime`,
+`docs/security/realtime-jwt-bridge-design.md`), not the anon key. It shipped
+behind its own flag, `realtime_rls`, which went to default `on` on staging
+and prod with live chat confirmed working through the bridge. `/api/social`
+stays service-marked, so shadow still never reports on social.
 
-Once `realtime_rls` is fully on (default `on`, 100%) on an environment and live
-chat is confirmed working through the bridge, there is one manual hardening
-step for that environment:
+The hardening step this section used to leave to Andres is now a reviewed
+migration, `20261109073255_room_messages_rls_enable.sql`: RLS on for
+`room_messages`, anon's privileges revoked (`REVOKE ALL`, so the
+TRUNCATE/REFERENCES/TRIGGER the June lockdown left go too; step 2a had
+already taken them), authenticated exactly SELECT, gated by the member
+policy. It is a no-op on prod (RLS on since June, anon already revoked) and
+changes staging when it migrates. The same change removed the client's anon
+subscription path and stopped reading the `realtime_rls` flag; the flag
+stays registered (stored default `on`) for one release so frontend bundles
+older than the change keep live chat, and a follow-up deletes it with its
+stored rows. Nothing is left to do by hand. Rollback: revert that change, then (staging only, never prod) `GRANT
+SELECT ON public.room_messages TO anon; ALTER TABLE public.room_messages
+DISABLE ROW LEVEL SECURITY;`.
 
-- **[Andres]** `ALTER TABLE room_messages ENABLE ROW LEVEL SECURITY;` (prod
-  already has it on with zero policies; check staging) and revoke `anon`'s
-  `SELECT` on `room_messages` (and the stray TRUNCATE/REFERENCES/TRIGGER the
-  June lockdown left, which step 2a revokes). Then confirm a student still gets
-  live messages and an anon-key client gets none. Do this through a reviewed
-  migration if the 2e workstream provides one. Never use the dashboard SQL
-  editor for DDL.
-
-Do this only after `realtime_rls` is fully on. Before that, it cuts live chat
-for everyone still on the anon-key path.
+To check an environment after it migrates: a student in a room still gets
+live messages, and an anon-key client gets none (PostgREST
+`/rest/v1/room_messages` with the anon key answers 401).
 
 ## 9. Graduation
 
-Once prod has run `enforce` at 100% for a full release with an empty report
-(under enforce, `db.rls_denied` and `db.unscoped_query` are real refusals, not a
-heuristic, so an empty report there IS meaningful):
-delete the flag and make enforce unconditional, keeping only the env kill switch
-(plan §4.4). Remove the shadow machinery with it (`db/scope_report.py`, the
-shadow pool in `db/connection.py`).
+Step 7 of the ladder already makes enforce outage-proof without a code change.
+Graduation removes the flag itself, once prod has run step 5 for a full
+release with an empty report. It is one reviewed PR:
+
+1. `db/scope.py::_resolve_mode`: answer `enforce` unconditionally, except an
+   explicit `SAPLING_FLAG_DB_USER_SCOPE=off` (the kill switch, read straight
+   from the environment). No flag-store read, so no outage path to `off`.
+2. Delete the `db_user_scope` `FlagDef` from `services/feature_flags.py`, its
+   stored rows (`DELETE FROM feature_flag_targets WHERE flag_key =
+   'db_user_scope'; DELETE FROM feature_flags WHERE key = 'db_user_scope';` in a
+   timestamped migration), and the shadow machinery: `db/scope_report.py`, the
+   shadow pool and `shadow_headers` / `note_shadow_write` hooks in
+   `db/connection.py` + `db/scope.py`, `DB_USER_SCOPE_SHADOW_SAMPLE_RATE`, and the
+   `/api/admin/analytics/db-scope` report (keep `db.rls_denied` /
+   `db.unscoped_query`: under enforce they are the real refusals).
+3. The cross-user matrix keeps `MODES = ["off", "enforce"]` while the kill
+   switch exists. With enforce the default, integration.yml's two runs are
+   the same run: drop its enforce step.
+4. Keep the Railway variable from step 7 until the PR is deployed, then leave
+   it (it is now simply the kill switch's `enforce` side) or delete it.
+
+## 10. Verified locally (what the gate above was last run against)
+
+Run 2026-11-16 on branch `sec2/rls-enforce`, local slot stack (Supabase CLI
+2.116.0, PG15, migrations replayed from empty, function-mode agents), the HS256
+local key from `backend/.env.local.example`:
+
+| Lane | default (`off`) | `SAPLING_FLAG_DB_USER_SCOPE=enforce` |
+|---|---|---|
+| Playwright Chapter 1 (`frontend/e2e`) | 112 passed, 1 failed, 14 skipped | 112 passed, 1 failed, 14 skipped |
+| `python -m e2e_oracles` | 0 findings | 0 findings |
+| Integration lane (`-m integration`, whole lane) | not rerun here (CI step 1; the matrix inside it covers both modes) | 385 passed |
+| PostgREST 401/403/42501, `db.rls_denied`, `db.unscoped_query` in the backend log | – | none |
+
+The one failure is the same test in both modes and on `main` without this
+branch (`study-guide.spec.ts:337`, the second check answer keeps the first
+answer's text): not a scope problem. Under enforce every request in the lane
+ran as the student: no policy, grant or unmarked service path was missing.
+
+To repeat it (one flock'd cycle; `--slot` as free; see `scripts/e2e-cycle.sh`):
+
+```bash
+export SAPLING_FLAG_DB_USER_SCOPE=enforce   # e2e-up passes the shell env to uvicorn
+E2E_FRESH_DB=1 flock -w 14400 "$STACK_LOCK" scripts/e2e-cycle.sh --slot 2
+grep -cE 'rls_denied|unscoped_query|42501|ScopeUnavailable' .e2e/backend.log   # expect 0
+```
+
+An earlier run on a heavily loaded machine showed one burst of 401s ("PostgREST
+rejected the user-scoped token") inside five seconds, then none: the host had
+stalled for about a minute and the Supabase VM's clock came back 54 s behind
+it, so tokens minted on the host were "issued in the future" for PostgREST
+(Kong's access log and the backend log disagree by exactly that). That is §7.4,
+not a key or policy problem. It did surface one real bug, fixed on this
+branch: `GET /api/flashcards/user/{id}` answered a refusal as a 500 carrying
+the refusal's text, because the service wraps every failure in
+`StorageError`; `routes/_errors.py::domain_status` now re-raises a wrapped
+`db.scope` refusal so main.py answers 503/404/500 as everywhere else.
+
+### What stays service role under enforce, and why
+
+Each opt-out is listed with its reason in `tests/test_service_scope_allowlist.py`.
+The router-level ones, reviewed for this rollout:
+
+| Router / endpoint | Could it be user-scoped now? |
+|---|---|
+| `/api/auth` | **Moved** (this branch): `GET /me`, `/local-seed` and `/realtime-token` now run as the student (own rows + catalog only); the OAuth redirect/callback, `/pending/*` and `/test-login` run before a session exists and `/logout` writes `users.sessions_valid_after` (users is SELECT-only for students), so those five keep an endpoint-level service mark. |
+| `/api/social` | No, not as a mount. Invite-code join reads and joins a PRIVATE room the student is not in (`rooms_select_visible` hides it, `room_members_insert_self` refuses it); leaving hands ownership to another member and the last leave deletes the room (no student UPDATE of another's `owner_id`, no `rooms` DELETE policy); `_touch_room` updates a room the caller does not own; matching, room overview and activity read other members' mastery. Moving it means service-scoping most of `services/social/` piece by piece, which buys RLS on little more than the message and friend-request reads. Do it as its own change, with the social E2E specs and the matrix's social cases under enforce as the gate. |
+| `GET /api/profile/{user_id}` | No. It serves anonymous viewers (no subject: a 500 under enforce), reads another user's rows and creates their missing settings/profile rows; visibility is applied in code. `/{user_id}/roles` (another user's `user_roles`) and `/username/check` (other users' usernames) likewise. |
+| `/api/careers`, `/api/newsletter`, `/api/email` | No: public, no session, and their tables (`job_applications`, `newsletter_emails`, `email_*`) are service-only. |
+| `/api/internal/*` | No: server-to-server bearer tokens, no session; `canopy_metrics()` and the account copy are service-role only. |
+| `/api/admin/*` | No: cross-user by design. `admin_service_route` re-checks admin before marking, so a handler that forgot `require_admin` never runs service-scoped for a student. |

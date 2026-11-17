@@ -34,12 +34,22 @@ def _scan_user_message(
     doc_concept_notes: list[dict] | None = None,
 ) -> str:
     """Build the concept_scan agent's user message: course label + existing
-    concepts + (optional) document context."""
+    concepts + (optional) document context.
+
+    M10 audit: the existing concepts are the student's graph text and the
+    document's title, summary and notes come from an upload, so both blocks
+    reach the model inside the untrusted envelope; the course label (a short
+    scalar) gets delimiter neutralization.
+    """
+    from services.prompt_safety import neutralize_delimiters, wrap_untrusted
+
     existing_block = (
-        "\n".join(f"- {c}" for c in existing_concepts) if existing_concepts else "(none yet)"
+        wrap_untrusted("\n".join(f"- {c}" for c in existing_concepts),
+                       source="the student's existing graph concepts")
+        if existing_concepts else "(none yet)"
     )
     lines = [
-        f'Course: "{course_label}"',
+        f'Course: "{neutralize_delimiters(course_label)}"',
         "Concepts already in the graph:",
         existing_block,
     ]
@@ -51,13 +61,16 @@ def _scan_user_message(
             )
             or "  (none)"
         )
-        lines += [
-            "",
-            "New document being scanned:",
+        doc_block = "\n".join([
             f"  Title: {doc_filename or '(untitled)'}",
             f"  Summary: {doc_summary or '(none)'}",
             "  Concepts already extracted from this document:",
             notes_block,
+        ])
+        lines += [
+            "",
+            "New document being scanned:",
+            wrap_untrusted(doc_block, source="uploaded document"),
         ]
     return "\n".join(lines)
 

@@ -8,12 +8,16 @@ imports it through ``services.tutor``).
 """
 from __future__ import annotations
 
+import logging
+
 from starlette.concurrency import run_in_threadpool
 
 from db.connection import table
 from models import StartSessionBody
 from services.academics import offering_course_id, require_course_enrollment, resolve_offering
-from services.encryption import decrypt_if_present
+from services.encryption import bind, decrypt_if_present
+
+logger = logging.getLogger(__name__)
 
 
 async def _get_course_id_for_topic(topic: str, user_id: str) -> str:
@@ -58,7 +62,11 @@ async def _get_course_id_for_topic(topic: str, user_id: str) -> str:
             if label and topic_trim == label:
                 return abstract_course_id
     except Exception as e:
-        print(f"Failed to resolve course_id for topic={topic_trim!r} user_id={user_id!r}: {e}")
+        # Never the topic itself: it is the student's typed text.
+        logger.warning(
+            "Failed to resolve course_id for topic (%d chars) user_id=%r: %s",
+            len(topic_trim), user_id, type(e).__name__,
+        )
     
     # Fallback: find via graph_nodes - look for nodes matching topic
     # that have a course_id
@@ -124,7 +132,7 @@ def _get_course_info(course_id: str) -> dict:
                 "course_name": rows[0].get("course_name", ""),
             }
     except Exception as e:
-        print(f"Failed to load course info for course_id={course_id!r}: {e}")
+        logger.warning("Failed to load course info for course_id=%r: %s", course_id, e)
     return {"course_code": "", "course_name": ""}
 
 
@@ -139,7 +147,7 @@ def _get_catalog_chunk(course_code: str) -> str:
         return ""
     try:
         rows = table("course_chunks").select(
-            "chunk_text",
+            "id,chunk_text",
             filters={"course_id": f"eq.{course_code}", "category": "eq.catalog"},
             limit=5,
         )
@@ -147,7 +155,9 @@ def _get_catalog_chunk(course_code: str) -> str:
         # below (#484): both read the text, and against ciphertext the first
         # would never match and the second would compare base64 lengths.
         for row in rows or []:
-            row["chunk_text"] = decrypt_if_present(row.get("chunk_text"))
+            row["chunk_text"] = decrypt_if_present(
+                row.get("chunk_text"), bind=bind("course_chunks", "chunk_text", row),
+            ) or ""
         if rows:
             # Prefer a chunk that has an explicit Prerequisites line; fall back
             # to the longest chunk. Handles courses scraped from two listing
@@ -156,7 +166,7 @@ def _get_catalog_chunk(course_code: str) -> str:
             candidates = with_prereq if with_prereq else rows
             return max(candidates, key=lambda r: len(r.get("chunk_text", "")))["chunk_text"]
     except Exception as e:
-        print(f"[RAG] Failed to load catalog chunk for {course_code!r}: {e}")
+        logger.warning("[RAG] Failed to load catalog chunk for %r: %s", course_code, e)
     return ""
 
 

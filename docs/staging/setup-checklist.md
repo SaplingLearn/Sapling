@@ -33,7 +33,7 @@ variables, Cloudflare worker secrets, or a local gitignored `backend/.env.stagin
 - [ ] Authorized **JavaScript origin**: `https://staging.saplinglearn.com`
 - [ ] Copy client id/secret → `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`.
 - [ ] If the consent screen is in "testing", add your testers as test users.
-- [ ] Decide sign-in domains: keep `ALLOWED_EMAIL_DOMAINS=bu.edu`, widen (`bu.edu,saplinglearn.com`), or leave empty to allow any account (safe — Access gates it).
+- [ ] Decide whether staging needs the waitlist: any Google account can sign in, and only approved addresses get in unless the `open_access` flag is on (Admin → Allowlist). Access gates who reaches staging at all.
 
 ### Step 3 — Railway (the backend service)
 - [ ] In the existing Railway project: **Environments → create `staging`** (duplicate of production).
@@ -74,7 +74,7 @@ variables, Cloudflare worker secrets, or a local gitignored `backend/.env.stagin
 | `SESSION_SECRET` | ✅ | ✅ (`wrangler secret put --env staging`, **same value as Railway**) | optional | ❌ |
 | `GOOGLE_CLIENT_ID` / `_SECRET` | ✅ | ❌ | ✅ | ❌ |
 | `CF_ACCESS_CLIENT_ID` / `_SECRET` | ❌ | ✅ (`wrangler secret put`) | ❌ | ❌ |
-| `BACKEND_URL` / `COOKIE_DOMAIN` (non-secret) | ❌ | ✅ (`wrangler.toml` vars) | ❌ | ✅ (config, not secret) |
+| `BACKEND_URL` (non-secret) | ❌ | ✅ (`wrangler.toml` vars) | ❌ | ✅ (config, not secret) |
 
 ## URLs — create now vs. later
 
@@ -88,7 +88,7 @@ Don't create bare DNS records before their targets exist — they'd point at not
 
 ## Security must-dos
 - Fresh `ENCRYPTION_KEY` + `SESSION_SECRET` — never prod's.
-- `COOKIE_DOMAIN=.staging.saplinglearn.com` — **not** `.saplinglearn.com` (that would share cookies with prod).
+- No `COOKIE_DOMAIN`: the session cookie is host-only (`__Host-sapling_session`, SECURITY.md §1.3), so no environment's cookie reaches another's hosts.
 - `SUPABASE_SERVICE_KEY` lives only in Railway / local `.env.staging` — never in the frontend or git.
 - Fake data only in staging.
 - Both hostnames behind Cloudflare Access; `noindex` on staging (Phase 6).

@@ -1,14 +1,16 @@
 import logging
 import uuid
 
-import httpx
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 
-from db.connection import SUPABASE_KEY, SUPABASE_URL, table
+from db.connection import table
 from models import SubmitFeedbackBody, SubmitIssueReportBody
 from services.auth_guard import get_session_user_id, guard_off_loop
-from services.encryption import encrypt_if_present
-from services.request_limits import read_within_limit
+from services import storage_service
+from services.encryption import bind, encrypt_if_present
+from services import abuse_limits
+from services.request_limits import aenforce_abuse_limit, enforce_abuse_limit, read_within_limit
+from services.upload_validation import sniff_image
 from services.tutor_sessions import session_owned_by
 
 logger = logging.getLogger(__name__)
@@ -18,9 +20,9 @@ router = APIRouter()
 # #231: issue-report screenshots upload here. They used to be written by the
 # frontend with the public anon key; this endpoint moves the write server-side
 # (service role) so the bucket can be made private.
-ISSUE_BUCKET = "issues-media-files"
 MAX_SCREENSHOT_BYTES = 5 * 1024 * 1024  # 5 MB
 ALLOWED_SCREENSHOT_TYPES = {"image/png", "image/jpeg", "image/webp", "image/gif"}
+UNSUPPORTED_SCREENSHOT_DETAIL = "Unsupported image type. Allowed: PNG, JPEG, WEBP, GIF."
 
 
 @router.post("/feedback")
@@ -30,6 +32,7 @@ def submit_feedback(body: SubmitFeedbackBody, request: Request):
     # trusted; an unauthenticated caller gets a 401 instead of writing rows
     # under an arbitrary user_id.
     user_id = get_session_user_id(request)  # 401 if unauthenticated
+    enforce_abuse_limit(abuse_limits.FEEDBACK_SUBMIT, user_id)
     # 0026_ops: feedback.id is now a TEXT PK (was SERIAL). Follow the repo
     # convention (services/academics.py, graph_service.py) and hand-build it
     # rather than relying on the DB default. user_id/session_id now carry real
@@ -50,15 +53,16 @@ def submit_feedback(body: SubmitFeedbackBody, request: Request):
             owned = False
         if not owned:
             session_id = None
+    feedback_id = str(uuid.uuid4())
     table("feedback").insert({
-        "id": str(uuid.uuid4()),
+        "id": feedback_id,
         "user_id": user_id,
         "type": body.type,
         "rating": body.rating,
         "selected_options": body.selected_options,
-        "comment": encrypt_if_present(body.comment),
+        "comment": encrypt_if_present(body.comment, bind=bind("feedback", "comment", feedback_id)),
         "session_id": session_id,
-        "topic": encrypt_if_present(body.topic),
+        "topic": encrypt_if_present(body.topic, bind=bind("feedback", "topic", feedback_id)),
     })
     return {"ok": True}
 
@@ -68,13 +72,17 @@ def submit_issue_report(body: SubmitIssueReportBody, request: Request):
     # #134: same contract as submit_feedback — the session, not the body,
     # decides who the report is attributed to.
     user_id = get_session_user_id(request)  # 401 if unauthenticated
+    enforce_abuse_limit(abuse_limits.ISSUE_REPORT_SUBMIT, user_id)
     # 0026_ops: issue_reports.id is now a TEXT PK (was SERIAL); user_id now has
     # a real FK to users(id). Hand-build the text PK per repo convention.
+    report_id = str(uuid.uuid4())
     table("issue_reports").insert({
-        "id": str(uuid.uuid4()),
+        "id": report_id,
         "user_id": user_id,
-        "topic": encrypt_if_present(body.topic),
-        "description": encrypt_if_present(body.description),
+        "topic": encrypt_if_present(body.topic, bind=bind("issue_reports", "topic", report_id)),
+        "description": encrypt_if_present(
+            body.description, bind=bind("issue_reports", "description", report_id),
+        ),
         "screenshot_urls": body.screenshot_urls,
     })
     return {"ok": True}
@@ -91,44 +99,20 @@ async def upload_issue_screenshot(request: Request, file: UploadFile = File(...)
     via the dashboard / a signed URL.
     """
     user_id = await guard_off_loop(get_session_user_id, request)  # 401 if unauthenticated
+    await aenforce_abuse_limit(abuse_limits.ISSUE_SCREENSHOT_UPLOAD, user_id)
     if (file.content_type or "") not in ALLOWED_SCREENSHOT_TYPES:
         raise HTTPException(
             status_code=415,
-            detail="Unsupported image type. Allowed: PNG, JPEG, WEBP, GIF.",
+            detail=UNSUPPORTED_SCREENSHOT_DETAIL,
         )
     content = await read_within_limit(file, MAX_SCREENSHOT_BYTES)  # 413 if oversize
     if not content:
         raise HTTPException(status_code=400, detail="Empty file.")
-    ext = (
-        file.filename.rsplit(".", 1)[-1]
-        if file.filename and "." in file.filename
-        else "png"
-    )
-    path = f"{user_id}/{uuid.uuid4()}.{ext}"
-    url = f"{SUPABASE_URL}/storage/v1/object/{ISSUE_BUCKET}/{path}"
-    r = httpx.put(
-        url,
-        content=content,
-        headers={
-            "apikey": SUPABASE_KEY,
-            "Authorization": f"Bearer {SUPABASE_KEY}",
-            "Content-Type": file.content_type or "application/octet-stream",
-        },
-        timeout=30.0,
-    )
-    if r.status_code not in (200, 201):
-        # Surface the real Supabase response so the failure is debuggable
-        # without server access (mirrors storage_service.upload_avatar). We
-        # only show the truncated upstream body — never the URL or headers
-        # (the latter contains the service-role key).
-        body_text = (r.text or "").strip()[:500]
-        logger.warning(
-            "upload_issue_screenshot: Supabase storage rejected upload "
-            "user=%s status=%d body=%s",
-            user_id, r.status_code, body_text,
-        )
-        raise HTTPException(
-            status_code=502,
-            detail=f"Screenshot upload failed (Supabase {r.status_code}): {body_text or 'no body'}",
-        )
+    # The bytes decide what is stored, not the client's Content-Type or file
+    # name: an HTML or SVG file labelled image/png is refused, and the stored
+    # object's type and extension are the ones its signature names.
+    content_type = sniff_image(content)
+    if content_type not in ALLOWED_SCREENSHOT_TYPES:
+        raise HTTPException(status_code=415, detail=UNSUPPORTED_SCREENSHOT_DETAIL)
+    path = await storage_service.upload_issue_screenshot(user_id, content, content_type)
     return {"path": path}

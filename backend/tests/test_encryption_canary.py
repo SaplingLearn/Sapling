@@ -15,6 +15,10 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from services import encryption_canary
 from services.encryption import encrypt
 
+# The write-mode script guard is bypassed in the hermetic suite (conftest);
+# this module tests it.
+pytestmark = pytest.mark.real_script_key_guard
+
 
 def _foreign(plaintext: str) -> str:
     nonce = os.urandom(12)
@@ -63,6 +67,23 @@ def test_empty_table_seeds_then_verifies():
     with patch("services.encryption_canary.table", return_value=t):
         assert encryption_canary.verify_encryption_key() == "seeded"
     assert seeded["id"] == 1
+
+
+def test_read_only_check_never_seeds_an_empty_table():
+    """seed=False is for ops scripts: one holding the wrong key must not write
+    a canary that then locks the real backend out."""
+    t = _tbl([])
+    with patch("services.encryption_canary.table", return_value=t):
+        assert encryption_canary.verify_encryption_key(seed=False) == "absent"
+    t.upsert.assert_not_called()
+
+
+def test_read_only_check_still_refuses_a_foreign_key():
+    t = _tbl([{"canary": _foreign(encryption_canary.CANARY_PLAINTEXT)}])
+    with patch("services.encryption_canary.table", return_value=t):
+        with pytest.raises(encryption_canary.EncryptionKeyMismatch):
+            encryption_canary.verify_encryption_key(seed=False)
+    t.upsert.assert_not_called()
 
 
 def test_lost_seed_race_to_another_key_refuses_to_boot():
@@ -144,3 +165,143 @@ def test_lifespan_runs_the_check():
         with TestClient(app):
             pass
     v.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Write-mode scripts (require_key_for_write): only a positive check passes.
+# ---------------------------------------------------------------------------
+
+
+def _status_error(code: int) -> httpx.HTTPStatusError:
+    req = httpx.Request("GET", "http://x/rest/v1/encryption_key_check")
+    return httpx.HTTPStatusError(str(code), request=req, response=httpx.Response(code, request=req))
+
+
+def test_script_guard_passes_a_matching_key():
+    t = _tbl([{"canary": encrypt(encryption_canary.CANARY_PLAINTEXT)}])
+    with patch("services.encryption_canary.table", return_value=t):
+        assert encryption_canary.require_key_for_write("backfill") == "ok"
+
+
+def test_script_guard_refuses_a_foreign_key():
+    t = _tbl([{"canary": _foreign(encryption_canary.CANARY_PLAINTEXT)}])
+    with patch("services.encryption_canary.table", return_value=t):
+        with pytest.raises(encryption_canary.EncryptionKeyMismatch):
+            encryption_canary.require_key_for_write("backfill")
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [_status_error(404), httpx.ConnectError("refused"), RuntimeError("SUPABASE_URL unset")],
+    ids=["missing-table", "unreachable", "other"],
+)
+def test_script_guard_refuses_when_it_cannot_check(failure):
+    """The server only warns here; a write-mode script must not proceed."""
+    t = MagicMock()
+    t.select.side_effect = failure
+    with patch("services.encryption_canary.table", return_value=t):
+        with pytest.raises(encryption_canary.EncryptionKeyUnverified):
+            encryption_canary.require_key_for_write("backfill")
+        with pytest.raises(encryption_canary.EncryptionKeyUnverified):
+            encryption_canary.require_key_for_write("seed", allow_seed=True)
+
+
+def test_script_guard_never_seeds_an_empty_canary_by_default():
+    """A backfill over existing rows must not plant its own key's canary."""
+    t = _tbl([])
+    with patch("services.encryption_canary.table", return_value=t):
+        with pytest.raises(encryption_canary.EncryptionKeyUnverified, match="no canary"):
+            encryption_canary.require_key_for_write("backfill")
+    t.upsert.assert_not_called()
+
+
+def test_fresh_database_seeder_may_seed_the_canary():
+    seeded: dict = {}
+    t = MagicMock()
+    t.upsert.side_effect = lambda data, **kw: seeded.update(data) or [data]
+    t.select.side_effect = lambda *a, **k: [{"canary": seeded["canary"]}] if seeded else []
+    with patch("services.encryption_canary.table", return_value=t):
+        assert encryption_canary.require_key_for_write("seed", allow_seed=True) == "seeded"
+
+
+def test_cli_form_exits_2_before_any_write(capsys):
+    t = _tbl([{"canary": _foreign(encryption_canary.CANARY_PLAINTEXT)}])
+    with patch("services.encryption_canary.table", return_value=t):
+        with pytest.raises(SystemExit) as exc:
+            encryption_canary.abort_unless_key_verified("backfill")
+    assert exc.value.code == 2
+    assert "ABORT" in capsys.readouterr().err
+
+
+def test_backfill_encryption_apply_aborts_on_a_foreign_key(monkeypatch):
+    """The 2026-10-21 failure, scripted: --apply under the wrong key must stop
+    before reading, let alone re-encrypting, a single row."""
+    from db import backfill_encryption
+
+    runner = MagicMock()
+    monkeypatch.setattr(backfill_encryption, "RUNNERS", {"users": runner})
+    monkeypatch.setattr("sys.argv", ["backfill_encryption", "--apply"])
+    t = _tbl([{"canary": _foreign(encryption_canary.CANARY_PLAINTEXT)}])
+    with patch("services.encryption_canary.table", return_value=t):
+        with pytest.raises(SystemExit) as exc:
+            backfill_encryption.main()
+    assert exc.value.code == 2
+    runner.assert_not_called()
+
+
+def test_backfill_encryption_dry_run_needs_no_check(monkeypatch):
+    from db import backfill_encryption
+
+    runner = MagicMock(return_value={"scanned": 0})
+    monkeypatch.setattr(backfill_encryption, "RUNNERS", {"users": runner})
+    monkeypatch.setattr("sys.argv", ["backfill_encryption"])
+    with patch("services.encryption_canary.require_key_for_write") as guard:
+        assert backfill_encryption.main() == 0
+    guard.assert_not_called()
+    runner.assert_called_once_with(apply=False)
+
+
+# Every script that writes encrypted columns (or writes values it derived by
+# decrypting them) calls the guard in its write mode.
+WRITE_SCRIPTS = [
+    "db/backfill_encryption.py",
+    "db/seed_staging.py",
+    "db/seed_showcase.py",
+    "db/seed_local_rich.py",
+    "db/seed_local_study.py",
+    "db/e2e_staging_http.py",
+    "scripts/backfill_encrypt_chunk_text.py",
+    "scripts/ingest_catalog.py",
+    "scripts/backfill_document_chunks.py",
+    "scripts/backfill_course_chunk_sources.py",
+    "scripts/backfill_document_shareability.py",
+    "scripts/dedupe_course_chunks.py",
+    "scripts/move_unapproved_users_to_waitlist.py",
+    "scripts/retire_gradescope_passwords.py",
+]
+
+
+@pytest.mark.parametrize("path", WRITE_SCRIPTS)
+def test_every_write_script_calls_the_guard(path):
+    from pathlib import Path
+
+    src = (Path(__file__).resolve().parents[1] / path).read_text()
+    assert "abort_unless_key_verified(" in src, f"{path} writes encrypted data without the key check"
+
+
+def test_no_unguarded_encrypting_script():
+    """A new script under db/ or scripts/ that encrypts must join WRITE_SCRIPTS."""
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    pattern = re.compile(r"\bencrypt(_if_present|_json|_numeric)?\(")
+    found = set()
+    for sub in ("db", "scripts"):
+        for f in (root / sub).rglob("*.py"):
+            rel = f.relative_to(root).as_posix()
+            if rel.startswith("db/archive/") or "__pycache__" in rel:
+                continue
+            if "if __name__" in f.read_text() and pattern.search(f.read_text()):
+                found.add(rel)
+    assert found <= set(WRITE_SCRIPTS), sorted(found - set(WRITE_SCRIPTS))

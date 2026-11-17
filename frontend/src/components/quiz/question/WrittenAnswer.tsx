@@ -103,6 +103,152 @@ export interface WrittenAnswerProps {
   labelledBy?: string;
 }
 
+
+/** Each format's symbol row, and what sits behind its "123" toggle. */
+const KEYS: Record<WrittenType, Key[]> = { short_answer: [], numeric: NUMERIC_KEYS, symbolic: SYMBOLIC_KEYS };
+const MORE_KEYS: Record<WrittenType, Key[]> = { short_answer: [], numeric: [], symbolic: SYMBOLIC_MORE };
+
+// Algebra and numbers are typeset IN the field: the session holds the
+// ASCII the grader reads, the input shows it the way it will be read
+// (x^2 → x², 3e8 → 3×10⁸). A short answer is shown exactly as typed.
+const asTyped = (text: string) => text;
+const TO_SHOWN: Record<WrittenType, (plain: string) => string> = {
+  short_answer: asTyped,
+  numeric: plain => prettyNumber(plain),
+  symbolic: plain => prettyExpression(plain),
+};
+const TO_PLAIN: Record<WrittenType, (shown: string) => string> = {
+  short_answer: asTyped,
+  numeric: shown => asciiNumber(shown),
+  symbolic: shown => asciiExpression(shown),
+};
+
+/** A format's entry in one of the tables above. A type outside them
+ *  (QuizQuestion casts the wire's type) is plain text with no keys. */
+function formatEntry<T>(table: Record<WrittenType, T>, type: WrittenType, plain: T): T {
+  return Object.prototype.hasOwnProperty.call(table, type) ? table[type] : plain;
+}
+
+/** What the grader will make of the answer, when there is something to say. */
+interface Reading {
+  ok: boolean;
+  node: React.ReactNode;
+}
+
+function numericReading(value: string, shown: string): Reading | null {
+  const n = numericValue(value);
+  if (n === null) return { ok: false, node: "Not a number the grader can read yet." };
+  // Read back in the field's own notation (6.02×10²³, not 6.02e+23), and
+  // only when it says something the field doesn't: "15" reads as 15.
+  const read = prettyNumber(formatNumber(n).replace("e+", "e"));
+  if (read === shown.trim()) return null;
+  return { ok: true, node: <>Reads as <span className="quiz-written__value">{read}</span></> };
+}
+
+function symbolicReading(value: string): Reading | null {
+  const problem = symbolicProblem(value);
+  return problem ? { ok: false, node: problem } : null;
+}
+
+// What the grader will make of it. A good number is read back INSIDE the
+// field (its right end); a problem gets the line under the field. A good
+// expression needs neither — the field already shows it typeset.
+function readingFor(type: WrittenType, value: string, shown: string): Reading | null {
+  if (!value.trim()) return null;
+  if (type === "numeric") return numericReading(value, shown);
+  if (type === "symbolic") return symbolicReading(value);
+  return null;
+}
+
+function readBack(reading: Reading) {
+  return (
+    <span
+      id="quiz-written-readback"
+      className={reading.ok ? "quiz-written__reading" : "quiz-written__readback"}
+      data-testid="quiz-written-readback"
+      data-ok={reading.ok ? "true" : "false"}
+      aria-live="polite"
+    >
+      {reading.node}
+    </span>
+  );
+}
+
+/** Once marked, the result takes the reading's place at the right end.
+ *  Decorative: the verdict's live region announces it. */
+function fieldEnd(verdict: "correct" | "incorrect" | null, reading: Reading | null): React.ReactNode {
+  if (verdict) {
+    return (
+      <span className="quiz-written__status" aria-hidden="true">
+        {verdict === "correct" ? "Correct" : "Incorrect"}
+        <span className="quiz-written__mark">
+          {verdict === "correct" ? <Check size={12} strokeWidth={3} /> : <X size={12} strokeWidth={3} />}
+        </span>
+      </span>
+    );
+  }
+  return reading?.ok && readBack(reading);
+}
+
+/** A problem with what's typed goes UNDER the keys, so it appearing never
+ *  pushes them out from under the cursor. */
+function problemLine(verdict: "correct" | "incorrect" | null, reading: Reading | null): React.ReactNode {
+  return !verdict && reading && !reading.ok && <p className="quiz-written__problem">{readBack(reading)}</p>;
+}
+
+function KeyRows({ type, disabled, onInsert }: { type: WrittenType; disabled: boolean; onInsert: (key: Key) => void }) {
+  const keys = formatEntry(KEYS, type, []);
+  const more = formatEntry(MORE_KEYS, type, []);
+  const [moreOpen, setMoreOpen] = React.useState(false);
+
+  const keyButton = (key: Key) => (
+    <button
+      key={key.id}
+      type="button"
+      className="quiz-written__key"
+      data-testid={`quiz-key-${key.id}`}
+      aria-label={key.ariaLabel}
+      disabled={disabled}
+      // Keep focus (and the cursor) in the input.
+      onMouseDown={event => event.preventDefault()}
+      onClick={() => onInsert(key)}
+    >
+      {key.label}
+    </button>
+  );
+
+  return (
+    <>
+      {keys.length > 0 && (
+        <div className="quiz-written__keys" role="group" aria-label="Insert a symbol">
+          {keys.map(key => keyButton(key))}
+          {more.length > 0 && (
+            <button
+              type="button"
+              className="quiz-written__key quiz-written__key--toggle"
+              data-testid="quiz-key-more"
+              aria-expanded={moreOpen}
+              aria-controls="quiz-written-more"
+              aria-label={moreOpen ? "Hide number keys" : "Show number keys"}
+              disabled={disabled}
+              onMouseDown={event => event.preventDefault()}
+              onClick={() => setMoreOpen(open => !open)}
+            >
+              123
+            </button>
+          )}
+        </div>
+      )}
+
+      {more.length > 0 && moreOpen && (
+        <div className="quiz-written__keys" id="quiz-written-more" role="group" aria-label="Insert a number">
+          {more.map(key => keyButton(key))}
+        </div>
+      )}
+    </>
+  );
+}
+
 export function WrittenAnswer({
   type,
   value,
@@ -114,17 +260,8 @@ export function WrittenAnswer({
   labelledBy,
 }: WrittenAnswerProps) {
   const inputRef = React.useRef<HTMLInputElement>(null);
-  const keys = type === "numeric" ? NUMERIC_KEYS : type === "symbolic" ? SYMBOLIC_KEYS : [];
-  const more = type === "symbolic" ? SYMBOLIC_MORE : [];
-  const [moreOpen, setMoreOpen] = React.useState(false);
-
-  // Algebra and numbers are typeset IN the field: the session holds the
-  // ASCII the grader reads, the input shows it the way it will be read
-  // (x^2 → x², 3e8 → 3×10⁸). A short answer is shown exactly as typed.
-  const toShown = (plain: string) =>
-    type === "symbolic" ? prettyExpression(plain) : type === "numeric" ? prettyNumber(plain) : plain;
-  const toPlain = (shown: string) =>
-    type === "symbolic" ? asciiExpression(shown) : type === "numeric" ? asciiNumber(shown) : shown;
+  const toShown = formatEntry(TO_SHOWN, type, asTyped);
+  const toPlain = formatEntry(TO_PLAIN, type, asTyped);
   const shown = toShown(value);
 
   // Typesetting changes the text's length (^2 is two characters, ² is one),
@@ -168,54 +305,9 @@ export function WrittenAnswer({
     commit(shown.slice(0, start) + key.insert + shown.slice(end), start + (key.caret ?? key.insert.length));
   };
 
-  // What the grader will make of it. A good number is read back INSIDE the
-  // field (its right end); a problem gets the line under the field. A good
-  // expression needs neither — the field already shows it typeset.
-  const reading = (() => {
-    if (!value.trim()) return null;
-    if (type === "numeric") {
-      const n = numericValue(value);
-      if (n === null) return { ok: false, node: "Not a number the grader can read yet." };
-      // Read back in the field's own notation (6.02×10²³, not 6.02e+23), and
-      // only when it says something the field doesn't: "15" reads as 15.
-      const read = prettyNumber(formatNumber(n).replace("e+", "e"));
-      if (read === shown.trim()) return null;
-      return { ok: true, node: <>Reads as <span className="quiz-written__value">{read}</span></> };
-    }
-    if (type === "symbolic") {
-      const problem = symbolicProblem(value);
-      return problem ? { ok: false, node: problem } : null;
-    }
-    return null;
-  })();
-
-  const readBack = reading && (
-    <span
-      id="quiz-written-readback"
-      className={reading.ok ? "quiz-written__reading" : "quiz-written__readback"}
-      data-testid="quiz-written-readback"
-      data-ok={reading.ok ? "true" : "false"}
-      aria-live="polite"
-    >
-      {reading.node}
-    </span>
-  );
-
-  const keyButton = (key: Key) => (
-    <button
-      key={key.id}
-      type="button"
-      className="quiz-written__key"
-      data-testid={`quiz-key-${key.id}`}
-      aria-label={key.ariaLabel}
-      disabled={disabled}
-      // Keep focus (and the cursor) in the input.
-      onMouseDown={event => event.preventDefault()}
-      onClick={() => insert(key)}
-    >
-      {key.label}
-    </button>
-  );
+  const reading = readingFor(type, value, shown);
+  // The reading describes the field only while it is the field's to give.
+  const showsReading = Boolean(reading) && !verdict;
 
   return (
     <div className="quiz-written" data-format={type} data-verdict={verdict ?? undefined}>
@@ -227,8 +319,8 @@ export function WrittenAnswer({
           type="text"
           className={`field quiz-question__written-input quiz-written__input--${type}`}
           aria-labelledby={labelledBy}
-          aria-describedby={reading && !verdict ? `${describedBy} quiz-written-readback` : describedBy}
-          aria-invalid={reading && !reading.ok ? true : undefined}
+          aria-describedby={showsReading ? `${describedBy} quiz-written-readback` : describedBy}
+          aria-invalid={reading?.ok === false ? true : undefined}
           inputMode={type === "numeric" ? "decimal" : "text"}
           placeholder={PLACEHOLDER[type]}
           maxLength={2000}
@@ -248,48 +340,12 @@ export function WrittenAnswer({
           autoCapitalize="off"
           spellCheck={type === "short_answer"}
         />
-        {/* Once marked, the result takes the reading's place at the right end.
-            Decorative: the verdict's live region announces it. */}
-        {verdict ? (
-          <span className="quiz-written__status" aria-hidden="true">
-            {verdict === "correct" ? "Correct" : "Incorrect"}
-            <span className="quiz-written__mark">
-              {verdict === "correct" ? <Check size={12} strokeWidth={3} /> : <X size={12} strokeWidth={3} />}
-            </span>
-          </span>
-        ) : reading?.ok && readBack}
+        {fieldEnd(verdict, reading)}
       </div>
 
-      {keys.length > 0 && (
-        <div className="quiz-written__keys" role="group" aria-label="Insert a symbol">
-          {keys.map(key => keyButton(key))}
-          {more.length > 0 && (
-            <button
-              type="button"
-              className="quiz-written__key quiz-written__key--toggle"
-              data-testid="quiz-key-more"
-              aria-expanded={moreOpen}
-              aria-controls="quiz-written-more"
-              aria-label={moreOpen ? "Hide number keys" : "Show number keys"}
-              disabled={disabled}
-              onMouseDown={event => event.preventDefault()}
-              onClick={() => setMoreOpen(open => !open)}
-            >
-              123
-            </button>
-          )}
-        </div>
-      )}
+      <KeyRows type={type} disabled={disabled} onInsert={insert} />
 
-      {more.length > 0 && moreOpen && (
-        <div className="quiz-written__keys" id="quiz-written-more" role="group" aria-label="Insert a number">
-          {more.map(key => keyButton(key))}
-        </div>
-      )}
-
-      {/* A problem with what's typed goes UNDER the keys, so it appearing
-          never pushes them out from under the cursor. */}
-      {!verdict && reading && !reading.ok && <p className="quiz-written__problem">{readBack}</p>}
+      {problemLine(verdict, reading)}
     </div>
   );
 }

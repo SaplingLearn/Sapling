@@ -13,7 +13,7 @@ class TestGetDisplayName:
     def test_decrypts_present_row(self):
         with patch("services.profiles.table") as t, patch(
             "services.profiles.decrypt_if_present",
-            side_effect=lambda v: f"d:{v}" if v else v,
+            side_effect=lambda v, **_: f"d:{v}" if v else v,
         ):
             t.return_value.select.return_value = [{"name": "ENC"}]
             assert profiles.get_display_name("u1") == "d:ENC"
@@ -25,14 +25,14 @@ class TestGetDisplayName:
 
     def test_returns_empty_when_name_is_none(self):
         with patch("services.profiles.table") as t, patch(
-            "services.profiles.decrypt_if_present", side_effect=lambda v: v
+            "services.profiles.decrypt_if_present", side_effect=lambda v, **_: v
         ):
             t.return_value.select.return_value = [{"name": None}]
             assert profiles.get_display_name("u1") == ""
 
     def test_filters_by_user_id(self):
         with patch("services.profiles.table") as t, patch(
-            "services.profiles.decrypt_if_present", side_effect=lambda v: v
+            "services.profiles.decrypt_if_present", side_effect=lambda v, **_: v
         ):
             t.return_value.select.return_value = [{"name": "X"}]
             profiles.get_display_name("u42")
@@ -46,7 +46,7 @@ class TestGetDisplayNames:
         decrypt_map = {"AENC": "Alice", "BENC": "Bob"}
         with patch("services.profiles.table") as t, patch(
             "services.profiles.decrypt_if_present",
-            side_effect=lambda v: decrypt_map.get(v, v),
+            side_effect=lambda v, **_: decrypt_map.get(v, v),
         ):
             t.return_value.select.return_value = rows
             out = profiles.get_display_names(["u1", "u2"])
@@ -55,7 +55,7 @@ class TestGetDisplayNames:
     def test_missing_rows_omitted(self):
         rows = [{"user_id": "u1", "name": "AENC"}]
         with patch("services.profiles.table") as t, patch(
-            "services.profiles.decrypt_if_present", side_effect=lambda v: v
+            "services.profiles.decrypt_if_present", side_effect=lambda v, **_: v
         ):
             t.return_value.select.return_value = rows
             out = profiles.get_display_names(["u1", "u2"])
@@ -70,7 +70,7 @@ class TestGetDisplayNames:
 
     def test_dedups_ids_in_query(self):
         with patch("services.profiles.table") as t, patch(
-            "services.profiles.decrypt_if_present", side_effect=lambda v: v
+            "services.profiles.decrypt_if_present", side_effect=lambda v, **_: v
         ):
             t.return_value.select.return_value = []
             profiles.get_display_names(["u1", "u1", "u2"])

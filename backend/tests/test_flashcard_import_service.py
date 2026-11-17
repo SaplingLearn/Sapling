@@ -17,7 +17,7 @@ from services.flashcards import importing as svc
 
 class TestDedup:
     def _existing_rows(self, fronts):
-        return [{"front": f} for f in fronts]
+        return [{"id": f"card-{i}", "front": f} for i, f in enumerate(fronts)]
 
     def test_skips_exact_match(self):
         with patch("services.flashcards.importing.table") as t:
@@ -62,10 +62,11 @@ class TestDedup:
 
     def test_dedup_matches_against_encrypted_existing_cards(self):
         # #518: dedupe must be decrypt-aware — existing rows are ciphertext.
-        from services.encryption import encrypt
+        from services.encryption import bind, encrypt
         with patch("services.flashcards.importing.table") as t:
             t.return_value.select.return_value = [
-                {"front": encrypt("What is a variable?")}
+                {"id": "card-1",
+                 "front": encrypt("What is a variable?", bind=bind("flashcards", "front", "card-1"))}
             ]
             new = [{"front": "What is a variable?", "back": "A named storage location."}]
             keep, skipped = svc.dedup_against_existing("u1", "c1", new)
@@ -76,7 +77,7 @@ class TestDedup:
         # Pre-backfill rows are still plaintext — decrypt_if_present falls
         # back to the raw value, so dedupe keeps working unchanged.
         with patch("services.flashcards.importing.table") as t:
-            t.return_value.select.return_value = [{"front": "What is a variable?"}]
+            t.return_value.select.return_value = [{"id": "card-1", "front": "What is a variable?"}]
             new = [{"front": "What is a variable?", "back": "A named storage location."}]
             keep, skipped = svc.dedup_against_existing("u1", "c1", new)
         assert keep == []

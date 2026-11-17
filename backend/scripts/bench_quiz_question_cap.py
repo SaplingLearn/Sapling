@@ -45,6 +45,8 @@ load_dotenv()
 from pydantic import BaseModel, Field  # noqa: E402
 from pydantic_ai import Agent  # noqa: E402
 
+from agents.usage import _run_usage  # noqa: E402  (method or property, either pydantic-ai side)
+
 
 class BenchQuizQuestion(BaseModel):
     """Structural copy of agents/quiz.py::QuizQuestion (kept in sync by hand;
@@ -101,7 +103,7 @@ async def bench_cap(cap: int) -> int:
             print(f"cap={cap} run={run + 1}: FAILED — {type(e).__name__}: {e}")
             continue
         dt = time.perf_counter() - t0
-        usage = result.usage()
+        usage = _run_usage(result)
         latencies.append(dt)
         in_tokens.append(usage.input_tokens or 0)
         out_tokens.append(usage.output_tokens or 0)

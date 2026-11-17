@@ -37,7 +37,9 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SecretStr
+
+from models import Id, ShortText
 
 from db.connection import table
 from routes._errors import domain_status
@@ -58,8 +60,9 @@ from services.gradescope.credentials import (  # noqa: F401  (re-export, #118)
     AuthMode,
     StoredCreds,
     connection_status,
+    reauth_message,
+    reveal,
     save_cookie_creds,
-    save_password_creds,
     _establish_connection,
     _load_creds,
     _now_iso,
@@ -85,16 +88,20 @@ router = APIRouter()
 
 class CredentialsBody(BaseModel):
     """Either {auth_mode: 'password', email, password} OR
-    {auth_mode: 'cookies', gradescope_session, signed_token?}."""
+    {auth_mode: 'cookies', gradescope_session, signed_token?}.
 
-    user_id: str
+    The secrets are SecretStr (a repr or log of the body shows ``**********``)
+    and are unwrapped only where they are sent to Gradescope. The password is
+    used for one login and never stored: the session it produces is."""
+
+    user_id: Id
     auth_mode: AuthMode = "password"
     # password mode
-    email: str | None = None
-    password: str | None = None
-    # cookies mode
-    gradescope_session: str | None = None
-    signed_token: str | None = None
+    email: str | None = Field(default=None, max_length=320)
+    password: SecretStr | None = Field(default=None, max_length=1024)
+    # cookies mode (a session cookie is a few hundred bytes)
+    gradescope_session: SecretStr | None = Field(default=None, max_length=8192)
+    signed_token: SecretStr | None = Field(default=None, max_length=8192)
 
 
 class BuSsoBody(BaseModel):
@@ -102,9 +109,9 @@ class BuSsoBody(BaseModel):
     we never persist them. The resulting session cookies are persisted as
     if the user had pasted them themselves (auth_mode='cookies')."""
 
-    user_id: str
-    bu_username: str = Field(min_length=1)
-    bu_password: str = Field(min_length=1)
+    user_id: Id
+    bu_username: str = Field(min_length=1, max_length=320)
+    bu_password: SecretStr = Field(min_length=1, max_length=1024)
     # Caps the time the headless browser spends parked on the Duo iframe
     # waiting for the user's tap. Frontend should match this on its
     # request-timeout side.
@@ -112,10 +119,10 @@ class BuSsoBody(BaseModel):
 
 
 class LinkBody(BaseModel):
-    user_id: str
-    sapling_course_id: str
-    gradescope_course_id: str
-    semester: str | None = None
+    user_id: Id
+    sapling_course_id: Id
+    gradescope_course_id: Id
+    semester: ShortText | None = None
 
 
 class SyncResult(BaseModel):
@@ -159,6 +166,17 @@ def _reauth_required(user_id: str, creds: StoredCreds, message: str, **outcome: 
     return _gs_error(409, GS_REAUTH_REQUIRED, message or "Gradescope rejected the saved credentials. Reconnect Gradescope.")
 
 
+#: The 502 a failed Gradescope fetch answers with. Never the exception text:
+#: some carry a scraper's internals (`Failed to list courses: <lib error>`).
+GS_UPSTREAM_DETAIL = "Couldn't reach Gradescope. Please retry shortly."
+
+
+def _upstream_error(e: Exception) -> HTTPException:
+    """Log a Gradescope fetch failure under the request id; a generic 502."""
+    logger.warning("Gradescope fetch failed [request_id=%s]: %s", current_request_id(), e)
+    return HTTPException(status_code=502, detail=GS_UPSTREAM_DETAIL)
+
+
 def _not_connected() -> JSONResponse:
     return _gs_error(404, GS_NOT_CONNECTED, "No Gradescope credentials saved")
 
@@ -193,8 +211,11 @@ def save_credentials(body: CredentialsBody, request: Request):
     that don't authenticate — the user sees a clean error instead.
 
     Two modes:
-      - 'password': test login(email, password). For accounts with a
-        Gradescope-side password.
+      - 'password': log in once with (email, password) and store the SESSION
+        that login produced (auth_mode='cookies', via='password'); the
+        password itself is never stored. For accounts with a
+        Gradescope-side password. When that session expires the student
+        enters the password again (409 gradescope_reauth_required).
       - 'cookies':  test login_with_cookies(signed_token, _gradescope_session).
         For SSO-only accounts (BU/Shibboleth/Duo), where the user pastes
         their browser session cookies.
@@ -209,13 +230,17 @@ def save_credentials(body: CredentialsBody, request: Request):
                 status_code=400, detail="email and password are required for password mode"
             )
         try:
-            connection = gradescope_service.login(body.email, body.password)
-            connection.session.close()
+            cookies = gradescope_service.login_for_session_cookies(
+                body.email, body.password.get_secret_value(),
+            )
         except gradescope_service.GradescopeAuthError as e:
             return _gs_error(422, GS_AUTH_FAILED, str(e) or "Gradescope rejected those credentials.")
         except gradescope_service.GradescopeFetchError as e:
-            raise HTTPException(status_code=502, detail=str(e))
-        save_password_creds(body.user_id, body.email, body.password)
+            raise _upstream_error(e)
+        save_cookie_creds(
+            body.user_id, cookies.get("_gradescope_session"), cookies.get("signed_token"),
+            via="password",
+        )
     else:  # cookies
         if not body.gradescope_session:
             raise HTTPException(
@@ -224,15 +249,17 @@ def save_credentials(body: CredentialsBody, request: Request):
             )
         try:
             connection = gradescope_service.login_with_cookies(
-                signed_token=body.signed_token,
-                gradescope_session=body.gradescope_session,
+                signed_token=reveal(body.signed_token),
+                gradescope_session=reveal(body.gradescope_session),
             )
             connection.session.close()
         except gradescope_service.GradescopeAuthError as e:
             return _gs_error(422, GS_AUTH_FAILED, str(e) or "Gradescope rejected those cookies.")
         except gradescope_service.GradescopeFetchError as e:
-            raise HTTPException(status_code=502, detail=str(e))
-        save_cookie_creds(body.user_id, body.gradescope_session, body.signed_token)
+            raise _upstream_error(e)
+        save_cookie_creds(
+            body.user_id, reveal(body.gradescope_session), reveal(body.signed_token), via="cookies",
+        )
     return {"ok": True}
 
 
@@ -264,7 +291,7 @@ async def save_credentials_via_bu_sso(body: BuSsoBody, request: Request):
         cookies = await asyncio.to_thread(
             gradescope_service.login_via_bu_sso,
             body.bu_username,
-            body.bu_password,
+            body.bu_password.get_secret_value(),
             body.duo_timeout_seconds,
         )
     except gradescope_service.GradescopeDuoTimeout as e:
@@ -290,11 +317,11 @@ async def save_credentials_via_bu_sso(body: BuSsoBody, request: Request):
     except gradescope_service.GradescopeAuthError as e:
         return _gs_error(422, GS_AUTH_FAILED, str(e) or "Gradescope auth failed.")
     except gradescope_service.GradescopeFetchError as e:
-        raise HTTPException(status_code=502, detail=str(e))
+        raise _upstream_error(e)
 
     await run_in_threadpool(  # #117: an async handler; keep the write off the loop
         save_cookie_creds, body.user_id,
-        cookies.get("_gradescope_session"), cookies.get("signed_token"),
+        cookies.get("_gradescope_session"), cookies.get("signed_token"), via="bu_sso",
     )
     return {"ok": True}
 
@@ -348,14 +375,15 @@ def list_gradescope_courses(user_id: str, request: Request):
         return _not_connected()
     conn = None
     try:
-        conn = _establish_connection(creds)
+        # user_id: a legacy password row is converted to its session here.
+        conn = _establish_connection(creds, user_id=user_id)
         courses = gradescope_service.list_student_courses(conn)
     except GradescopeCredsError as e:
         raise HTTPException(status_code=500, detail=e.detail)
     except gradescope_service.GradescopeAuthError as e:
-        return _reauth_required(user_id, creds, str(e))
+        return _reauth_required(user_id, creds, reauth_message(creds, e))
     except gradescope_service.GradescopeFetchError as e:
-        raise HTTPException(status_code=502, detail=str(e))
+        raise _upstream_error(e)
     finally:
         if conn is not None:
             conn.session.close()

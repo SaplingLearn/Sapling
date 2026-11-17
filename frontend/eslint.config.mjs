@@ -1,5 +1,40 @@
+import fs from "node:fs";
 import nextCoreWebVitals from "eslint-config-next/core-web-vitals";
 import nextTypescript from "eslint-config-next/typescript";
+
+// Files that still hold a function over the complexity limit, read from the
+// ratchet's baseline (complexity-baseline.json, keys `<file>::<function>`).
+const complexityBaselinedFiles = [
+  ...new Set(
+    Object.keys(
+      JSON.parse(fs.readFileSync(new URL("./complexity-baseline.json", import.meta.url), "utf8"))
+        .complexity,
+    ).map((key) => key.split("::", 1)[0]),
+  ),
+].sort();
+
+// The file-size limit, and the files already over it with the line count each
+// may not pass (max-lines-baseline.json, see scripts/max_lines_ratchet.mjs).
+const MAX_LINES = { max: 800, skipBlankLines: true, skipComments: true };
+const maxLinesBaseline = JSON.parse(
+  fs.readFileSync(new URL("./max-lines-baseline.json", import.meta.url), "utf8"),
+)["max-lines"];
+
+// Bulk suppressions can only baseline a rule that is an ERROR, and CI runs
+// with --max-warnings=0, so a rule left at "warn" has no baseline: the day a
+// dependency bump adds one (eslint-config-next does, in minor releases), its
+// hits in files already on main turn CI red with no way to hold them. Every
+// "warn" is therefore promoted to "error" below, where the whole config is
+// exported. To take on such a rule: `npx eslint . --suppress-rule <rule>`.
+const isWarn = (severity) => severity === "warn" || severity === 1;
+function promoteWarnings(block) {
+  if (!block.rules) return block;
+  const rules = Object.entries(block.rules).map(([id, setting]) => {
+    if (Array.isArray(setting)) return [id, isWarn(setting[0]) ? ["error", ...setting.slice(1)] : setting];
+    return [id, isWarn(setting) ? "error" : setting];
+  });
+  return { ...block, rules: Object.fromEntries(rules) };
+}
 
 // Next 16 removed `next lint`, so linting runs through the ESLint CLI (eslint 9
 // flat config). eslint-config-next 16 ships native flat-config arrays, spread
@@ -28,14 +63,87 @@ const eslintConfig = [
   ...nextTypescript,
   {
     rules: {
-      // exhaustive-deps is warn-by-default in eslint-config-next; promote it to
-      // error so a NEW missing dependency fails CI (the existing ones are
-      // baselined). It's the rule most likely to fire on an intentional pattern
-      // — if that starts forcing eslint-disable comments on legitimate cases,
-      // downgrade THIS single rule back to "warn" (don't relax the others).
+      // exhaustive-deps is warn-by-default in eslint-config-next; an error
+      // here so a NEW missing dependency fails CI (the existing ones are
+      // baselined). It's the rule most likely to fire on an intentional
+      // pattern: if that starts forcing eslint-disable comments on legitimate
+      // cases, turn THIS single rule off (a "warn" would be promoted back to
+      // an error, see promoteWarnings).
       "react-hooks/exhaustive-deps": "error",
+      // Architecture-hardening Phase 4 (Trov #118): no function above
+      // cyclomatic complexity 25. Today's offenders are held per function by
+      // the ratchet (scripts/complexity_ratchet.mjs, two blocks down), not by
+      // eslint-suppressions.json.
+      complexity: ["error", 25],
+      // File size: the big screens (Learn, notetaker, Social, ...) passed 1,500
+      // to 2,700 lines with nothing stopping them. A NEW file over the limit
+      // fails here. The files already over it are held to their own line
+      // count by the generated blocks below (max-lines/ratchet-baselined), not
+      // by eslint-suppressions.json: the rule reports once per file, so a
+      // suppressed file could keep growing. Tests are exempt (below): long
+      // table-driven suites are fine.
+      "max-lines": ["error", MAX_LINES],
+      // The codebase's convention for an intentionally unused binding is a
+      // leading underscore (`predictedPercent: _predictedPercent`).
+      "@typescript-eslint/no-unused-vars": [
+        "error",
+        {
+          argsIgnorePattern: "^_",
+          varsIgnorePattern: "^_",
+          caughtErrorsIgnorePattern: "^_",
+          destructuredArrayIgnorePattern: "^_",
+        },
+      ],
+      // Every <img> here is a user upload, a blob: preview or a markdown image
+      // with an unknown size, and the Workers deploy (OpenNext) has no image
+      // optimizer configured, so next/image would not help and could break
+      // them. Off rather than left as permanent warning noise.
+      "@next/next/no-img-element": "off",
     },
   },
+  {
+    name: "max-lines/tests-exempt",
+    files: ["**/*.test.ts", "**/*.test.tsx", "e2e/**", "scripts/**"],
+    rules: { "max-lines": "off" },
+  },
+  // Generated from max-lines-baseline.json at load: each file already over the
+  // limit gets its own ceiling, its line count when it was baselined, so it
+  // cannot grow. `npm run max-lines:shrink` lowers a ceiling after a split and
+  // deletes the entry once the file is back under the limit; the ratchet
+  // (scripts/max_lines_ratchet.test.ts in `npm test`) checks the same numbers
+  // with inline eslint-disable comments ignored. Do not edit this list; edit
+  // the baseline.
+  ...Object.entries(maxLinesBaseline).map(([file, ceiling]) => ({
+    name: `max-lines/ratchet-baselined/${file}`,
+    files: [file],
+    rules: { "max-lines": ["error", { ...MAX_LINES, max: ceiling }] },
+  })),
+  // The landing-page animation engine is exempt from the complexity limit by
+  // decision of its owner (Trov #118 phase 4): it is frame-loop and physics
+  // code for the marketing hero, where one long tick function is clearer than
+  // a split. The ratchet skips the same glob (EXEMPT_GLOB).
+  {
+    name: "complexity/landing-engine-exempt",
+    files: ["src/lib/landing/engine/**"],
+    rules: { complexity: "off" },
+  },
+  // Generated from complexity-baseline.json at load: `complexity` is off for
+  // every file that still holds a baselined function, because ESLint can only
+  // switch a rule off per file. The ratchet (`npm run complexity`, enforced by
+  // scripts/complexity_ratchet.test.ts in `npm test`) holds each of those
+  // functions to its own ceiling instead, and any NEW function over 25 in
+  // them. This block shrinks to nothing as entries are deleted: once a file's
+  // last entry goes (`npm run complexity:shrink`), plain `eslint .` enforces
+  // the limit on it again. Do not edit this list; edit the baseline.
+  ...(complexityBaselinedFiles.length
+    ? [
+        {
+          name: "complexity/ratchet-baselined",
+          files: complexityBaselinedFiles,
+          rules: { complexity: "off" },
+        },
+      ]
+    : []),
   // ── data-testid convention on the core E2E surfaces (#382) ───────────────
   //
   // The browser suite (#385) drives six surfaces: sign-in, the approval gate,
@@ -56,15 +164,24 @@ const eslintConfig = [
       "src/app/pending/page.tsx",
       "src/app/setting-up/page.tsx",
       "src/components/screens/Onboarding.tsx",
+      // Onboarding's screens and chrome, split out of Onboarding.tsx.
+      "src/components/onboarding/screens.tsx",
+      "src/components/onboarding/CourseStep.tsx",
+      "src/components/onboarding/LegalStep.tsx",
+      "src/components/onboarding/ConsentSheet.tsx",
+      "src/components/onboarding/chrome.tsx",
       "src/components/DocumentUploadModal.tsx",
       "src/components/TopicChecklistPanel.tsx",
       "src/components/chat/ChatPanel.tsx",
+      // The crisis-support card (docs/safety/crisis-support.md). New file, no backlog.
+      "src/components/safety/CrisisSupportCard.tsx",
       // Quiz redesign (#537). The three screens carry every answer/submit/exit
       // control the Playwright journeys drive; the three `ui/` primitives are
       // listed because those controls render INSIDE them, so a testid-less
       // <button> there would silently un-anchor the whole surface.
       "src/components/quiz/QuizScreen.tsx",
       "src/components/quiz/home/QuizHome.tsx",
+      "src/components/quiz/home/TopicsColumn.tsx",
       "src/components/quiz/home/AdjustDialog.tsx",
       "src/components/quiz/home/TopicList.tsx",
       "src/components/quiz/home/QuizSettings.tsx",
@@ -117,9 +234,31 @@ const eslintConfig = [
       // New files, no baselined backlog.
       "src/components/screens/admin/AllowlistTab.tsx",
       "src/components/screens/admin/EmailBroadcasts.tsx",
+      // Study hub + Flashcards (#870): the two files whose one <button> a
+      // journey clicks by testid (a roadmap tile's "..." menu, the tool
+      // headers' way back). No baselined backlog. The surfaces' other files
+      // are not enrolled: see docs/frontend-testids.md "Enforcement".
+      "src/components/study/RoadmapTile.tsx",
+      "src/components/BackLink.tsx",
       // Admin "Account tools" dialog (seed / wipe / copy an account). New file,
       // no baselined backlog.
       "src/components/screens/admin/AccountToolsDialog.tsx",
+      // Study guides (the reader, the home, the New study guide dialog): every
+      // file under components/studyGuide/ that renders an intrinsic control.
+      // New files, no baselined backlog.
+      "src/components/studyGuide/home/GuidesToolbar.tsx",
+      "src/components/studyGuide/home/MaterialTiles.tsx",
+      "src/components/studyGuide/home/NewGuideModal.tsx",
+      "src/components/studyGuide/home/SortMenu.tsx",
+      "src/components/studyGuide/reader/FeedbackRow.tsx",
+      "src/components/studyGuide/reader/GuideMenu.tsx",
+      "src/components/studyGuide/reader/SectionView.tsx",
+      "src/components/studyGuide/reader/blocks/BlockFrame.tsx",
+      "src/components/studyGuide/reader/blocks/ConceptMapBlockView.tsx",
+      "src/components/studyGuide/reader/blocks/WorkedExampleBlockView.tsx",
+      "src/components/studyGuide/reader/rail/AskBox.tsx",
+      "src/components/studyGuide/reader/rail/Outline.tsx",
+      "src/components/studyGuide/reader/rail/StaleBanner.tsx",
       // Settings (#675 Data tab): NOT a no-backlog file — its pre-existing
       // controls are baselined in eslint-suppressions.json, so the rule
       // covers new elements only. Shrink that baseline as testids are added.
@@ -139,4 +278,4 @@ const eslintConfig = [
   },
 ];
 
-export default eslintConfig;
+export default eslintConfig.map(promoteWarnings);

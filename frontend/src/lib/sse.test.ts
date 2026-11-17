@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { streamSSE, type SSEEvent } from './sse';
+import { ApiError } from './apiError';
+import { crisisSupportInError } from './crisisSupport';
+import crisisFixture from '@/test-utils/crisisSupport.json';
 
 /**
  * Build a Response that streams the given chunks via a ReadableStream,
@@ -202,6 +205,31 @@ describe('streamSSE', () => {
     expect((caught as { code?: string }).code).toBe('SESSION_ENDED');
   });
 
+  it('throws the same ApiError fetchJSON does, its parsed body carrying a crisis card', async () => {
+    // docs/safety/crisis-support.md: an error answer (a 429 from the
+    // tutor's note-title start) can carry the card in its JSON body.
+    mockFetchResponse(
+      makeStreamingResponse(
+        [JSON.stringify({ detail: 'Slow down.', request_id: 'r1', crisis_support: crisisFixture })],
+        { status: 429, headers: { 'Content-Type': 'application/json', 'Retry-After': '12' } },
+      ),
+    );
+
+    let caught: unknown;
+    try {
+      await collect(streamSSE('/x', { method: 'POST' }));
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(ApiError);
+    const err = caught as ApiError;
+    expect(err.status).toBe(429);
+    expect(err.retryAfterSec).toBe(12);
+    expect(err.requestId).toBe('r1');
+    expect(err.message).toContain('Slow down.'); // still the raw body
+    expect(crisisSupportInError(err)?.title).toBe(crisisFixture.title);
+  });
+
   it('correctly splits events separated by \\r\\n\\r\\n with no junk leaking between blocks', async () => {
     const payload =
       'event: a\r\ndata: {"i":1}\r\n\r\n' +
@@ -224,7 +252,6 @@ describe('streamSSE', () => {
     );
 
     const iterate = async () => {
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
       for await (const _e of streamSSE('/x', {}, { idleTimeoutMs: 20 })) { /* drain */ }
     };
     await expect(iterate()).rejects.toThrow(/stalled/i);

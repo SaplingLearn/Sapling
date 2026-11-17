@@ -24,17 +24,40 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BookOpen, ChevronLeft, ChevronRight, Hash, Library, ListChecks, PenLine, Sigma, Sparkles } from "lucide-react";
-import { AnswerOption, Badge, Button, ProgressDots, type AnswerState } from "@/components/ui";
+import { AnswerOption, Badge, Button, ProgressDots } from "@/components/ui";
 import { ConceptNode } from "@/components/graph/ConceptNode";
 import { useToast } from "@/components/ToastProvider";
 import type { QuizActions } from "@/lib/quiz/useQuizSession";
-import type { QuizConfig, QuizSession } from "@/lib/quiz/types";
-import { isWrittenType } from "@/lib/quiz/types";
+import type { Phase, QuestionType, QuizConfig, QuizItem, QuizSession } from "@/lib/quiz/types";
 import { isUnanswered } from "@/lib/quiz/machine";
 import { expressionParts, superscriptParts, type ExpressionPart } from "@/lib/quiz/answerFormats";
 import { WrittenAnswer, type WrittenType } from "./WrittenAnswer";
-import { AskPanel, type AskSeed } from "./AskPanel";
+import { AskPanel } from "./AskPanel";
 import { LeaveDialog } from "./LeaveDialog";
+import {
+  arrowStep,
+  askSeedFor,
+  canGoTo,
+  canNavigate,
+  conceptLabel,
+  correctOption,
+  difficultyLabel,
+  everyAnswered,
+  formatHint,
+  generatingDetail,
+  itemView,
+  missLine,
+  nextOptionIndex,
+  optionState,
+  optionStatus,
+  outcomeOf,
+  primaryButton,
+  verdictShown,
+  type ItemView,
+  type PrimaryAction,
+  type PrimaryButton,
+  type Verdict,
+} from "./questionView";
 import "./question.css";
 
 export interface QuizConceptSummary {
@@ -115,74 +138,20 @@ function renderParts(parts: ExpressionPart[]): React.ReactNode {
   );
 }
 
-/** The key as the end of a sentence: one full stop, unless it already ends in
- *  terminal punctuation ("Why?" stays "Why?", never "Why?." or "respiration. ."). */
-function withFullStop(answer: string): string {
-  const key = answer.trim();
-  return /[.!?]$/.test(key) ? key : `${key}.`;
-}
+type ToastApi = ReturnType<typeof useToast>;
 
-export function QuizQuestion({
-  session,
-  actions,
-  concept,
-  userId,
-  courseId,
-  pending = false,
-}: QuizQuestionProps) {
-  const toast = useToast();
+/** The footer button with its press bound to the session. */
+type Primary = PrimaryButton & { activate: () => void };
 
+// ── Hooks ──────────────────────────────────────────────────────────────
+
+/**
+ * Where focus goes as the screen changes. Returns the two elements it moves
+ * focus onto: the screen root and the verdict line.
+ */
+function useQuestionFocus(phase: Phase, cursor: number, written: boolean, showVerdict: boolean) {
   const rootRef = useRef<HTMLDivElement>(null);
-  const optionsRef = useRef<HTMLDivElement>(null);
   const feedbackRef = useRef<HTMLDivElement>(null);
-  const askRef = useRef<HTMLButtonElement>(null);
-  const shortToastRef = useRef<string | null>(null);
-
-  /**
-   * The tutor sheet, remembered per QUESTION rather than as a bare boolean: a
-   * new item derives it closed, because the panel is seeded from one verdict
-   * and carrying it across would be answering the wrong question.
-   */
-  const [askForCursor, setAskForCursor] = useState<number | null>(null);
-
-  const { phase, cursor, items } = session;
-  const item = items[cursor];
-  const total = items.length;
-  const options = item?.question.options ?? [];
-  const selectedIndex = item?.selectedIndex ?? null;
-  const written = isWrittenType(item?.question.type);
-  // A type this client doesn't know is answered by choosing, exactly as the
-  // backend treats it, so it wears the multiple-choice tag too.
-  const format = written ? (item?.question.type as string) : "multiple_choice";
-  const formatTag = FORMAT_TAG[format] ?? FORMAT_TAG.multiple_choice;
-  const hasAnswer = written ? Boolean(item?.answerText?.trim()) : selectedIndex !== null;
-  const answeredCount = items.filter(i => i.verdict !== null).length;
-  const isLast = cursor >= total - 1;
-  // R-2: every answer is recorded server-side either way; the feedback mode
-  // only decides whether the verdict is ever shown.
-  const showVerdict = item?.verdict != null && (session.config.feedback === "as-you-go"
-    || (phase === "answered" && isLast && items.every(i => i.verdict !== null)));
-
-  /**
-   * A quiz call is in flight. Straight off the hook (`useQuizSession`'s
-   * `pending`, on the props since A2's fix round 4): the phase can't say it,
-   * because it stays `active` for the whole `/answer` round trip — and the
-   * hook is the only thing that knows about the calls it refuses (a missing
-   * `attemptId`, a duplicate press), so a screen-local latch would stay stuck
-   * on exactly those.
-   */
-  const busy = pending;
-  // Derived, so a new question is the only thing that closes the sheet.
-  const askOpen = askForCursor === cursor;
-  const selectable = phase === "active" && !busy;
-
-  // A blank accent would reach `shadeFor` as an unparseable colour and pass
-  // straight through; the CSS variable degrades to the app accent instead.
-  const accent = concept.color || "var(--quiz-accent, var(--accent))";
-  const difficulty = (item?.question.difficulty ?? session.config.difficulty ?? "").toUpperCase();
-  const quizLength = total || session.config.count;
-
-  // ── Effects ──────────────────────────────────────────────────────────
 
   // The keyboard map is attached to the screen root, so the root has to hold
   // focus for it to hear anything before the student clicks. Moving focus onto
@@ -202,7 +171,12 @@ export function QuizQuestion({
     feedbackRef.current?.focus();
   }, [showVerdict, cursor]);
 
-  // One toast per attempt, on arrival (§5 B2).
+  return { rootRef, feedbackRef };
+}
+
+/** One toast per attempt, on arrival (§5 B2). */
+function useShortQuizToast(session: QuizSession, total: number, toast: ToastApi) {
+  const shortToastRef = useRef<string | null>(null);
   useEffect(() => {
     const attemptId = session.attemptId;
     if (!session.deliveredShort || !attemptId || total === 0) return;
@@ -210,168 +184,109 @@ export function QuizQuestion({
     shortToastRef.current = attemptId;
     toast.show(`Only ${total} questions were ready for this concept.`);
   }, [session.deliveredShort, session.attemptId, total, toast]);
+}
 
-  // ── Actions ──────────────────────────────────────────────────────────
-
+/** The single footer button: one element, three jobs. */
+function usePrimary({
+  actions,
+  busy,
+  items,
+  phase,
+  hasAnswer,
+  showVerdict,
+}: {
+  actions: QuizActions;
+  busy: boolean;
+  items: QuizItem[];
+  phase: Phase;
+  hasAnswer: boolean;
+  showVerdict: boolean;
+}): Primary {
   const submit = useCallback(() => {
     if (phase !== "active" || busy || !hasAnswer) return;
     actions.submitAnswer();
   }, [actions, busy, phase, hasAnswer]);
 
-  const flag = () => {
-    const wasFlagged = item?.flagged ?? false;
-    actions.flag();
-    // Un-flagging is a correction, not a report — thanking for it reads as a
-    // bug. Only raising the flag says anything.
-    if (!wasFlagged) toast.show("Noted — thanks.");
-  };
-
-  const focusOption = (index: number) => {
-    optionsRef.current?.querySelectorAll<HTMLElement>('[role="radio"]')[index]?.focus();
-  };
-
-  /** The single footer button: one element, three jobs. */
-  const primary = useMemo(() => {
-    if (phase === "submitting") {
-      return {
-        label: "Scoring…",
-        // The element keeps the identity of the press that started the
-        // scoring: Next/See results in as-you-go, Submit on the last at-end item.
-        testid: showVerdict ? "quiz-next" : "quiz-submit-answer",
-        enabled: false,
-        activate: () => {},
-      };
-    }
-    // "See results" once nothing is left to answer — not merely on the last
-    // question, since questions can now be answered out of order.
-    const allAnswered = items.every(i => !isUnanswered(i));
-    if (showVerdict || phase === "answered") {
-      // `answered` without a shown verdict is an at-end question the student
-      // came back to: its answer is recorded and locked, so the way on is Next.
-      return {
-        label: allAnswered ? "See results" : "Next",
-        testid: "quiz-next",
-        enabled: phase === "answered",
-        activate: () => actions.next(),
-      };
-    }
-    return {
-      label: "Submit",
-      testid: "quiz-submit-answer",
-      enabled: phase === "active" && !busy && hasAnswer,
-      activate: submit,
+  return useMemo(() => {
+    const button = primaryButton({ phase, showVerdict, allAnswered: everyAnswered(items), busy, hasAnswer });
+    const presses: Record<PrimaryAction, () => void> = {
+      none: () => {},
+      next: () => actions.next(),
+      submit,
     };
+    return { ...button, activate: presses[button.action] };
   }, [actions, busy, items, phase, hasAnswer, showVerdict, submit]);
+}
 
-  // ── Keyboard (§5 B2) ─────────────────────────────────────────────────
+// ── Keyboard (§5 B2) ───────────────────────────────────────────────────
 
-  const onRootKeyDown = (e: React.KeyboardEvent) => {
-    // The sheet and the dialog own the keyboard while they are open — and both
-    // are portals, whose events still bubble through the React tree to here.
-    if (askOpen || phase === "confirm-leave") return;
-    if (e.metaKey || e.ctrlKey || e.altKey) return;
-    if (isTypingTarget(e.target)) return;
+interface RootKeyContext {
+  askOpen: boolean;
+  phase: Phase;
+  primary: Primary;
+  selectable: boolean;
+  optionCount: number;
+  actions: QuizActions;
+}
 
-    if (e.key === "Escape") {
-      if (phase !== "active" && phase !== "answered") return;
-      e.preventDefault();
-      actions.requestLeave();
-      return;
-    }
+/** The sheet and the dialog own the keyboard while they are open — and both
+ *  are portals, whose events still bubble through the React tree to here. */
+function keyboardIsElsewhere(e: React.KeyboardEvent, { askOpen, phase }: RootKeyContext): boolean {
+  if (askOpen || phase === "confirm-leave") return true;
+  if (e.metaKey || e.ctrlKey || e.altKey) return true;
+  return isTypingTarget(e.target);
+}
 
-    if (e.key === "Enter") {
-      // Enter is the footer's action everywhere on this screen, including on
-      // an answer row — `AnswerOption` is a <button>, so its own Enter-to-select
-      // is deliberately pre-empted here. Choosing is A–F / 1–6, the arrow keys,
-      // Space, or a click.
-      if (!primary.enabled) return;
-      e.preventDefault();
-      primary.activate();
-      return;
-    }
+function leaveOnEscape(e: React.KeyboardEvent, { phase, actions }: RootKeyContext) {
+  if (phase !== "active" && phase !== "answered") return;
+  e.preventDefault();
+  actions.requestLeave();
+}
 
-    if (!selectable) return;
-    const index = shortcutIndex(e.key);
-    if (index === null || index >= options.length) return;
-    e.preventDefault();
-    // Focus deliberately stays on the root: a shortcut is a hands-on-keyboard
-    // gesture, and the very next key is usually Enter.
-    actions.select(index);
-  };
+/** Enter is the footer's action everywhere on this screen, including on an
+ *  answer row — `AnswerOption` is a <button>, so its own Enter-to-select is
+ *  deliberately pre-empted here. Choosing is A–F / 1–6, the arrow keys,
+ *  Space, or a click. */
+function activateOnEnter(e: React.KeyboardEvent, { primary }: RootKeyContext) {
+  if (!primary.enabled) return;
+  e.preventDefault();
+  primary.activate();
+}
 
-  const onOptionsKeyDown = (e: React.KeyboardEvent) => {
-    if (!selectable || options.length === 0) return;
-    const step =
-      e.key === "ArrowDown" || e.key === "ArrowRight"
-        ? 1
-        : e.key === "ArrowUp" || e.key === "ArrowLeft"
-          ? -1
-          : 0;
-    if (step === 0) return;
-    e.preventDefault();
-    e.stopPropagation();
-    const from = selectedIndex ?? (step > 0 ? -1 : 0);
-    const next = (from + step + options.length) % options.length;
-    actions.select(next);
-    focusOption(next);
-  };
+function selectByShortcut(e: React.KeyboardEvent, { optionCount, actions }: RootKeyContext) {
+  const index = shortcutIndex(e.key);
+  if (index === null || index >= optionCount) return;
+  e.preventDefault();
+  // Focus deliberately stays on the root: a shortcut is a hands-on-keyboard
+  // gesture, and the very next key is usually Enter.
+  actions.select(index);
+}
 
-  // ── Pieces shared by the generating and the live render ──────────────
+function handleRootKey(e: React.KeyboardEvent, ctx: RootKeyContext) {
+  if (keyboardIsElsewhere(e, ctx)) return;
+  if (e.key === "Escape") leaveOnEscape(e, ctx);
+  else if (e.key === "Enter") activateOnEnter(e, ctx);
+  else if (ctx.selectable) selectByShortcut(e, ctx);
+}
 
-  // Where the student is in the quiz, and the way round it: a numbered button
-  // per question (green / red once marked, in as-you-go mode) between back and
-  // forward arrows, beside the footer's primary button. Any question can be
-  // opened — one already answered shows what was recorded (answers lock once
-  // the server has them), one ahead can be answered out of order.
-  const position = Math.min(cursor + 1, quizLength);
-  const canNavigate = (phase === "active" || phase === "answered") && !busy && total > 0;
-  const goTo = (index: number) => {
-    if (canNavigate && index !== cursor && index >= 0 && index < total) actions.goTo?.(index);
-  };
-  const progress = (
-    <nav className="quiz-question__progress" aria-label="Questions">
-      <button
-        type="button"
-        className="quiz-question__step"
-        data-testid="quiz-prev-question"
-        aria-label="Previous question"
-        disabled={!canNavigate || cursor <= 0}
-        onClick={() => goTo(cursor - 1)}
-      >
-        <ChevronLeft size={16} aria-hidden="true" />
-      </button>
-      <ProgressDots
-        total={quizLength}
-        // Nothing is "here" yet while the quiz is still being written.
-        current={total === 0 ? -1 : cursor}
-        answered={total === 0 ? 0 : answeredCount}
-        // Out of order once questions can be skipped: answered isn't a prefix.
-        done={items.map(i => !isUnanswered(i))}
-        // As-you-go shows each verdict, so the pager keeps the tally too.
-        // At-end holds every verdict back, and the pager must not leak them.
-        outcomes={session.config.feedback === "as-you-go"
-          ? items.map(i => (i.verdict ? i.verdict.isCorrect : null))
-          : undefined}
-        orientation="row"
-        onSelect={goTo}
-        disabled={!canNavigate}
-        ariaLabel={`Question ${position} of ${quizLength}`}
-        testid="quiz-progress"
-      />
-      <button
-        type="button"
-        className="quiz-question__step"
-        data-testid="quiz-next-question"
-        aria-label="Next question"
-        disabled={!canNavigate || cursor >= total - 1}
-        onClick={() => goTo(cursor + 1)}
-      >
-        <ChevronRight size={16} aria-hidden="true" />
-      </button>
-    </nav>
-  );
+// ── Pieces shared by the generating and the live render ────────────────
 
-  const header = (
+function QuestionHeader({
+  concept,
+  format,
+  showFormat,
+  difficulty,
+}: {
+  concept: QuizConceptSummary;
+  format: QuestionType;
+  showFormat: boolean;
+  difficulty: string;
+}) {
+  const formatTag = FORMAT_TAG[format] ?? FORMAT_TAG.multiple_choice;
+  // A blank accent would reach `shadeFor` as an unparseable colour and pass
+  // straight through; the CSS variable degrades to the app accent instead.
+  const accent = concept.color || "var(--quiz-accent, var(--accent))";
+  return (
     <div className="quiz-question__header">
       <ConceptNode
         size={HEADER_DOT}
@@ -381,10 +296,10 @@ export function QuizQuestion({
         nodeId={concept.id || concept.name}
       />
       <span className="quiz-question__concept">
-        {concept.courseCode ? `${concept.name} · ${concept.courseCode}` : concept.name}
+        {conceptLabel(concept)}
       </span>
       <span className="quiz-question__header-gap" />
-      {phase !== "generating" && item && (
+      {showFormat && (
         <span className="quiz-question__format" data-testid="quiz-format-tag" data-format={format}>
           <formatTag.Icon size={13} strokeWidth={2} aria-hidden="true" />
           {formatTag.label}
@@ -393,37 +308,429 @@ export function QuizQuestion({
       {difficulty && <Badge bg="var(--bg-soft)">{difficulty}</Badge>}
     </div>
   );
+}
 
-  // ── generating ───────────────────────────────────────────────────────
+/**
+ * Where the student is in the quiz, and the way round it: a numbered button
+ * per question (green / red once marked, in as-you-go mode) between back and
+ * forward arrows, beside the footer's primary button. Any question can be
+ * opened — one already answered shows what was recorded (answers lock once
+ * the server has them), one ahead can be answered out of order.
+ */
+function QuestionPager({
+  session,
+  actions,
+  busy,
+  quizLength,
+}: {
+  session: QuizSession;
+  actions: QuizActions;
+  busy: boolean;
+  quizLength: number;
+}) {
+  const { phase, cursor, items } = session;
+  const total = items.length;
+  const position = Math.min(cursor + 1, quizLength);
+  const navigable = canNavigate(phase, busy, total);
+  const goTo = (index: number) => {
+    if (canGoTo(index, cursor, total, navigable)) actions.goTo?.(index);
+  };
+  return (
+    <nav className="quiz-question__progress" aria-label="Questions">
+      <button
+        type="button"
+        className="quiz-question__step"
+        data-testid="quiz-prev-question"
+        aria-label="Previous question"
+        disabled={!navigable || cursor <= 0}
+        onClick={() => goTo(cursor - 1)}
+      >
+        <ChevronLeft size={16} aria-hidden="true" />
+      </button>
+      <ProgressDots
+        total={quizLength}
+        // Nothing is "here" yet while the quiz is still being written.
+        current={total === 0 ? -1 : cursor}
+        answered={total === 0 ? 0 : items.filter(i => i.verdict !== null).length}
+        // Out of order once questions can be skipped: answered isn't a prefix.
+        done={items.map(i => !isUnanswered(i))}
+        // As-you-go shows each verdict, so the pager keeps the tally too.
+        // At-end holds every verdict back, and the pager must not leak them.
+        outcomes={session.config.feedback === "as-you-go"
+          ? items.map(i => (i.verdict ? i.verdict.isCorrect : null))
+          : undefined}
+        orientation="row"
+        onSelect={goTo}
+        disabled={!navigable}
+        ariaLabel={`Question ${position} of ${quizLength}`}
+        testid="quiz-progress"
+      />
+      <button
+        type="button"
+        className="quiz-question__step"
+        data-testid="quiz-next-question"
+        aria-label="Next question"
+        disabled={!navigable || cursor >= total - 1}
+        onClick={() => goTo(cursor + 1)}
+      >
+        <ChevronRight size={16} aria-hidden="true" />
+      </button>
+    </nav>
+  );
+}
+
+/** The way off the screen, per phase: Cancel while generating (#760: a
+ *  generation that never answers must not be a dead end) and while scoring
+ *  (#760: Leave is refused mid-score, since the attempt is live, so this is
+ *  the way off "Scoring…" — back onto the final verdict, from where See
+ *  results and Leave both work again); Leave everywhere else. */
+function exitButtonFor(phase: Phase): { testid: string; label: string; leaves: boolean } {
+  if (phase === "generating") return { testid: "quiz-cancel-generate", label: "Cancel", leaves: false };
+  if (phase === "submitting") return { testid: "quiz-cancel-submit", label: "Cancel", leaves: false };
+  return { testid: "quiz-leave", label: "Leave", leaves: true };
+}
+
+function QuestionFooter({
+  phase,
+  actions,
+  pager,
+  primary,
+}: {
+  phase: Phase;
+  actions: QuizActions;
+  pager: React.ReactNode;
+  primary?: Primary;
+}) {
+  const exit = exitButtonFor(phase);
+  return (
+    <div className="quiz-question__footer">
+      <Button data-testid={exit.testid} onClick={() => (exit.leaves ? actions.requestLeave() : actions.cancel())}>
+        {exit.label}
+      </Button>
+      {pager}
+      {primary && (
+        <Button
+          variant="primary"
+          data-testid={primary.testid}
+          aria-disabled={!primary.enabled}
+          disabled={!primary.enabled}
+          onClick={primary.activate}
+        >
+          {primary.label}
+        </Button>
+      )}
+    </div>
+  );
+}
+
+// ── generating ─────────────────────────────────────────────────────────
+
+/** A status, not a skeleton: the questions don't exist yet, so a ghost of
+ *  their layout promised a shape that the real quiz then replaced. The bar is
+ *  paced to a typical generation (one model call, ~5–10 s) and never claims to
+ *  be done until the quiz is — /generate answers in one piece, so there is no
+ *  finer signal. */
+function GeneratingStatus({ quizLength, conceptName, difficulty }: { quizLength: number; conceptName: string; difficulty: string }) {
+  return (
+    <div className="quiz-generating" role="status">
+      <p className="quiz-generating__title h-serif">Writing your quiz</p>
+      <p className="quiz-generating__detail">
+        {generatingDetail(quizLength, conceptName, difficulty)}
+      </p>
+      <div className="quiz-generating__bar" aria-hidden="true">
+        <span className="quiz-generating__fill" />
+      </div>
+      <p className="quiz-generating__slow">Still writing. Longer quizzes take a little more time.</p>
+    </div>
+  );
+}
+
+// ── The question ───────────────────────────────────────────────────────
+
+function QuestionPrompt({ item, format }: { item: QuizItem | undefined; format: QuestionType }) {
+  const stem = item?.question.question ?? "";
+  const kind = item?.question.material_context;
+  const context = kind ? MATERIAL_CONTEXT[kind] : null;
+  return (
+    <div className="quiz-question__prompt">
+      <h2 className="quiz-question__stem h-serif" id="quiz-question-stem">
+        {/* An algebra stem carries its maths as typed (`(x + 1)^2`); raise
+            the exponents so the question reads the way it would be printed. */}
+        {format === "symbolic" ? renderParts(superscriptParts(stem)) : stem}
+      </h2>
+      {context && (
+        <p className="quiz-question__context" data-testid="quiz-material-context">
+          <context.Icon size={13} strokeWidth={2} aria-hidden="true" />
+          {context.text}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** What every answer format is handed. `shown` is the verdict once it may be
+ *  shown (always null before then, and throughout an at-end quiz). */
+interface AnswerFieldProps {
+  view: ItemView;
+  shown: Verdict | null;
+  selectable: boolean;
+  actions: QuizActions;
+  primary: Primary;
+}
+
+/** Multiple choice (and any type this client doesn't know): a radiogroup of
+ *  answer rows, chosen by click, A–F / 1–6 on the screen, or the arrows. */
+function ChoiceAnswer({ view, shown, selectable, actions }: AnswerFieldProps) {
+  const optionsRef = useRef<HTMLDivElement>(null);
+  const { options, selectedIndex } = view;
+
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (!selectable || options.length === 0) return;
+    const step = arrowStep(e.key);
+    if (step === 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const next = nextOptionIndex(selectedIndex, step, options.length);
+    actions.select(next);
+    optionsRef.current?.querySelectorAll<HTMLElement>('[role="radio"]')[next]?.focus();
+  };
+
+  return (
+    <>
+      <p className="quiz-question__hint" id="quiz-keyboard-hint">
+        Keyboard: press A to F, or 1 to 6, to choose an answer. Enter submits your answer and
+        moves to the next question. Escape leaves the quiz.
+      </p>
+      <div
+        ref={optionsRef}
+        className="quiz-question__options"
+        role="radiogroup"
+        aria-label="Answer choices"
+        aria-describedby="quiz-keyboard-hint"
+        data-testid="quiz-answer-options"
+        onKeyDown={onKeyDown}
+      >
+        {options.map((option, index) => (
+          <AnswerOption
+            key={option.label}
+            letter={option.label}
+            text={option.text}
+            state={optionState(index, selectedIndex, shown)}
+            status={optionStatus(index, selectedIndex, shown)}
+            disabled={!selectable}
+            onSelect={() => actions.select(index)}
+            // The group owns one tab stop: the chosen row, or the first row
+            // while nothing is chosen.
+            tabIndex={index === (selectedIndex ?? 0) ? 0 : -1}
+            testid={`quiz-answer-option-${option.label}`}
+          />
+        ))}
+      </div>
+    </>
+  );
+}
+
+/** Short answer, numeric and algebra: one input shaped to its format, with
+ *  the grader's rules for it underneath. */
+function WrittenField({ view, shown, selectable, actions, primary }: AnswerFieldProps) {
+  const type = view.item?.question.type;
+  return (
+    <div
+      className={`quiz-question__written quiz-question__written--${view.format}`}
+      data-marked={shown ? "true" : undefined}
+    >
+      {/* The accessible name ("Your answer, <stem>"); on screen the format
+          tag and the field's own shape already say what goes here. */}
+      <label htmlFor="quiz-written-answer" className="quiz-question__sr" id="quiz-written-label">Your answer</label>
+      <WrittenAnswer
+        type={(type ?? "short_answer") as WrittenType}
+        value={view.item?.answerText ?? ""}
+        disabled={!selectable}
+        verdict={outcomeOf(shown) ?? null}
+        onChange={text => actions.write?.(text)}
+        onSubmit={() => {
+          if (primary.enabled) primary.activate();
+        }}
+        describedBy="quiz-format-hint"
+        labelledBy="quiz-written-label quiz-question-stem"
+      />
+      {/* Visible, unlike the keyboard hint: these are the rules the
+          grader applies, so a sighted student needs them as much as a
+          screen-reader user does. */}
+      <p className="quiz-question__format-hint" id="quiz-format-hint" data-testid="quiz-format-hint">
+        {formatHint(type)}
+      </p>
+    </div>
+  );
+}
+
+/** One answer field per format. */
+const ANSWER_FIELDS: Record<QuestionType, (props: AnswerFieldProps) => React.JSX.Element> = {
+  multiple_choice: ChoiceAnswer,
+  short_answer: WrittenField,
+  numeric: WrittenField,
+  symbolic: WrittenField,
+};
+
+function VerdictLine({ verdict, format, correctLabel }: { verdict: Verdict; format: QuestionType; correctLabel: string | undefined }) {
+  return (
+    <p className="quiz-question__verdict-line h-sans">
+      {verdict.correctAnswer && format === "symbolic"
+        ? <>Not quite — the expected answer is{" "}
+            <span className="quiz-question__verdict-expr">{renderParts(expressionParts(verdict.correctAnswer.trim().replace(/[.]$/, "")))}</span>.</>
+        : missLine(verdict.correctAnswer, correctLabel)}
+    </p>
+  );
+}
+
+function VerdictReading({ verdict, format, correctLabel }: { verdict: Verdict; format: QuestionType; correctLabel: string | undefined }) {
+  return (
+    <>
+      {/* On screen the outcome sits on the answer itself (the chosen
+          tile, or the written field); this is the line the live
+          region announces. */}
+      <p className="quiz-question__sr" data-testid="quiz-verdict-outcome">
+        {verdict.isCorrect ? "Correct." : "Incorrect."}
+      </p>
+      {/* The card is the reading: what the answer was, and why. */}
+      {(!verdict.isCorrect || verdict.explanation) && (
+        <div className="card quiz-question__verdict-card">
+          {!verdict.isCorrect && <VerdictLine verdict={verdict} format={format} correctLabel={correctLabel} />}
+          {verdict.explanation && (
+            <p className="quiz-question__explanation body-serif">{verdict.explanation}</p>
+          )}
+        </div>
+      )}
+    </>
+  );
+}
+
+function VerdictFeedback({
+  feedbackRef,
+  shown,
+  format,
+  correctLabel,
+}: {
+  feedbackRef: React.RefObject<HTMLDivElement | null>;
+  shown: Verdict | null;
+  format: QuestionType;
+  correctLabel: string | undefined;
+}) {
+  return (
+    <div
+      ref={feedbackRef}
+      className="quiz-question__feedback"
+      data-testid="quiz-review-verdict"
+      data-outcome={outcomeOf(shown)}
+      aria-live="polite"
+      tabIndex={-1}
+    >
+      {shown && <VerdictReading verdict={shown} format={format} correctLabel={correctLabel} />}
+    </div>
+  );
+}
+
+function QuestionAside({
+  flagged,
+  onFlag,
+  canAsk,
+  askRef,
+  onAsk,
+}: {
+  flagged: boolean;
+  onFlag: () => void;
+  canAsk: boolean;
+  askRef: React.RefObject<HTMLButtonElement | null>;
+  onAsk: () => void;
+}) {
+  return (
+    <div className="quiz-question__aside">
+      <Button
+        variant="link"
+        className="quiz-question__flag"
+        aria-pressed={flagged}
+        data-testid="quiz-flag"
+        onClick={onFlag}
+      >
+        This question is confusing
+      </Button>
+      {canAsk && (
+        <Button
+          ref={askRef}
+          size="sm"
+          data-testid="quiz-ask"
+          onClick={onAsk}
+        >
+          Ask about this
+        </Button>
+      )}
+    </div>
+  );
+}
+
+function flagItem(item: QuizItem | undefined, actions: QuizActions, toast: ToastApi) {
+  const wasFlagged = item?.flagged ?? false;
+  actions.flag();
+  // Un-flagging is a correction, not a report — thanking for it reads as a
+  // bug. Only raising the flag says anything.
+  if (!wasFlagged) toast.show("Noted — thanks.");
+}
+
+export function QuizQuestion({
+  session,
+  actions,
+  concept,
+  userId,
+  courseId,
+  pending = false,
+}: QuizQuestionProps) {
+  const toast = useToast();
+  const askRef = useRef<HTMLButtonElement>(null);
+
+  /**
+   * The tutor sheet, remembered per QUESTION rather than as a bare boolean: a
+   * new item derives it closed, because the panel is seeded from one verdict
+   * and carrying it across would be answering the wrong question.
+   */
+  const [askForCursor, setAskForCursor] = useState<number | null>(null);
+
+  const { phase, cursor, items } = session;
+  const view = itemView(items[cursor]);
+  const total = items.length;
+  const showVerdict = verdictShown(session, view.item);
+
+  /**
+   * A quiz call is in flight. Straight off the hook (`useQuizSession`'s
+   * `pending`, on the props since A2's fix round 4): the phase can't say it,
+   * because it stays `active` for the whole `/answer` round trip — and the
+   * hook is the only thing that knows about the calls it refuses (a missing
+   * `attemptId`, a duplicate press), so a screen-local latch would stay stuck
+   * on exactly those.
+   */
+  const busy = pending;
+  // Derived, so a new question is the only thing that closes the sheet.
+  const askOpen = askForCursor === cursor;
+  const selectable = phase === "active" && !busy;
+  const difficulty = difficultyLabel(view.item, session);
+  const quizLength = total || session.config.count;
+
+  const { rootRef, feedbackRef } = useQuestionFocus(phase, cursor, view.written, showVerdict);
+  useShortQuizToast(session, total, toast);
+  const primary = usePrimary({ actions, busy, items, phase, hasAnswer: view.hasAnswer, showVerdict });
+
+  const header = (
+    <QuestionHeader concept={concept} format={view.format} showFormat={phase !== "generating" && Boolean(view.item)} difficulty={difficulty} />
+  );
+  const pager = <QuestionPager session={session} actions={actions} busy={busy} quizLength={quizLength} />;
 
   if (phase === "generating") {
     return (
       <div className="quiz-question" data-testid="quiz-generating">
         <div className="quiz-question__col">
           {header}
-          {/* A status, not a skeleton: the questions don't exist yet, so a
-              ghost of their layout promised a shape that the real quiz then
-              replaced. The bar is paced to a typical generation (one model
-              call, ~5–10 s) and never claims to be done until the quiz is —
-              /generate answers in one piece, so there is no finer signal. */}
-          <div className="quiz-generating" role="status">
-            <p className="quiz-generating__title h-serif">Writing your quiz</p>
-            <p className="quiz-generating__detail">
-              {`${quizLength} questions on ${concept.name}${difficulty ? ` · ${difficulty.toLowerCase()}` : ""}`}
-            </p>
-            <div className="quiz-generating__bar" aria-hidden="true">
-              <span className="quiz-generating__fill" />
-            </div>
-            <p className="quiz-generating__slow">Still writing. Longer quizzes take a little more time.</p>
-          </div>
+          <GeneratingStatus quizLength={quizLength} conceptName={concept.name} difficulty={difficulty} />
           <div className="quiz-question__grow" />
-          {/* #760: a generation that never answers must not be a dead end. */}
-          <div className="quiz-question__footer">
-            <Button data-testid="quiz-cancel-generate" onClick={() => actions.cancel()}>
-              Cancel
-            </Button>
-            {progress}
-          </div>
+          <QuestionFooter phase={phase} actions={actions} pager={pager} />
         </div>
       </div>
     );
@@ -431,31 +738,10 @@ export function QuizQuestion({
 
   // ── active | answered | confirm-leave | submitting ───────────────────
 
-  const verdict = item?.verdict ?? null;
-  // `correct_index` is -1 for a malformed item with no correct option, so the
-  // letter is optional and the copy has to survive without it.
-  const correctLabel =
-    verdict && verdict.correctIndex >= 0 ? options[verdict.correctIndex]?.label : undefined;
-
-  const context = item?.question.material_context ? MATERIAL_CONTEXT[item.question.material_context] : null;
-
-  const optionState = (index: number): AnswerState => {
-    if (!showVerdict || !verdict) return selectedIndex === index ? "selected" : "default";
-    if (index === verdict.correctIndex) return "correct";
-    if (index === selectedIndex) return "chosen-wrong";
-    return "muted";
-  };
-
-  const askSeed: AskSeed = {
-    stem: item?.question.question ?? "",
-    chosenLabel: (selectedIndex !== null ? options[selectedIndex]?.label : undefined) ?? "—",
-    chosenText: written ? item?.answerText ?? "nothing" : (selectedIndex !== null ? options[selectedIndex]?.text : undefined) ?? "nothing",
-    correctLabel: correctLabel ?? "—",
-    correctText:
-      verdict?.correctAnswer ?? (verdict && verdict.correctIndex >= 0 ? options[verdict.correctIndex]?.text : undefined) ?? "",
-    explanation: verdict?.explanation ?? "",
-    written,
-  };
+  const shown = showVerdict ? view.verdict : null;
+  const AnswerField = ANSWER_FIELDS[view.format];
+  const onRootKeyDown = (e: React.KeyboardEvent) =>
+    handleRootKey(e, { askOpen, phase, primary, selectable, optionCount: view.options.length, actions });
 
   return (
     <div
@@ -471,179 +757,27 @@ export function QuizQuestion({
 
         {/* Keyed on the question, so each one arrives with the same short
             entrance — from the generating panel, from Next, from the pager. */}
-        <div className="quiz-question__body" key={item?.question.id ?? cursor}>
-        <div className="quiz-question__prompt">
-        <h2 className="quiz-question__stem h-serif" id="quiz-question-stem">
-          {/* An algebra stem carries its maths as typed (`(x + 1)^2`); raise
-              the exponents so the question reads the way it would be printed. */}
-          {format === "symbolic"
-            ? renderParts(superscriptParts(item?.question.question ?? ""))
-            : item?.question.question ?? ""}
-        </h2>
-        {context && (
-          <p className="quiz-question__context" data-testid="quiz-material-context">
-            <context.Icon size={13} strokeWidth={2} aria-hidden="true" />
-            {context.text}
-          </p>
-        )}
-        </div>
-
-        {!written && (
-          <p className="quiz-question__hint" id="quiz-keyboard-hint">
-            Keyboard: press A to F, or 1 to 6, to choose an answer. Enter submits your answer and
-            moves to the next question. Escape leaves the quiz.
-          </p>
-        )}
-
-        {written ? (
-          <div
-            className={`quiz-question__written quiz-question__written--${format}`}
-            data-marked={showVerdict && verdict ? "true" : undefined}
-          >
-            {/* The accessible name ("Your answer, <stem>"); on screen the format
-                tag and the field's own shape already say what goes here. */}
-            <label htmlFor="quiz-written-answer" className="quiz-question__sr" id="quiz-written-label">Your answer</label>
-            <WrittenAnswer
-              type={(item?.question.type ?? "short_answer") as WrittenType}
-              value={item?.answerText ?? ""}
-              disabled={!selectable}
-              verdict={showVerdict && verdict ? (verdict.isCorrect ? "correct" : "incorrect") : null}
-              onChange={text => actions.write?.(text)}
-              onSubmit={() => {
-                if (primary.enabled) primary.activate();
-              }}
-              describedBy="quiz-format-hint"
-              labelledBy="quiz-written-label quiz-question-stem"
-            />
-            {/* Visible, unlike the keyboard hint: these are the rules the
-                grader applies, so a sighted student needs them as much as a
-                screen-reader user does. */}
-            <p className="quiz-question__format-hint" id="quiz-format-hint" data-testid="quiz-format-hint">
-              {item?.question.type === "symbolic"
-                ? "Enter an expression using single-letter variables, + − * / ^ and parentheses, with whole-number powers from −8 to 8. For example, 2(x + 1) and 2x + 2 are equivalent wherever both are defined. Functions and equations are not supported."
-                : item?.question.type === "numeric"
-                  ? "Enter only the number, without units. Equivalent fractions, decimals, percentages, and scientific notation are accepted. Follow the rounding requested in the question."
-                  : "Write a brief answer. Capitalization and extra spacing do not affect your score."}
-            </p>
-          </div>
-        ) : <div
-          ref={optionsRef}
-          className="quiz-question__options"
-          role="radiogroup"
-          aria-label="Answer choices"
-          aria-describedby="quiz-keyboard-hint"
-          data-testid="quiz-answer-options"
-          onKeyDown={onOptionsKeyDown}
-        >
-          {options.map((option, index) => (
-            <AnswerOption
-              key={option.label}
-              letter={option.label}
-              text={option.text}
-              state={optionState(index)}
-              status={showVerdict && verdict && index === selectedIndex
-                ? (verdict.isCorrect ? "Correct" : "Incorrect")
-                : undefined}
-              disabled={!selectable}
-              onSelect={() => actions.select(index)}
-              // The group owns one tab stop: the chosen row, or the first row
-              // while nothing is chosen.
-              tabIndex={index === (selectedIndex ?? 0) ? 0 : -1}
-              testid={`quiz-answer-option-${option.label}`}
-            />
-          ))}
-        </div>}
-
-        <div
-          ref={feedbackRef}
-          className="quiz-question__feedback"
-          data-testid="quiz-review-verdict"
-          data-outcome={showVerdict && verdict ? (verdict.isCorrect ? "correct" : "incorrect") : undefined}
-          aria-live="polite"
-          tabIndex={-1}
-        >
-          {showVerdict && verdict && (
-            <>
-              {/* On screen the outcome sits on the answer itself (the chosen
-                  tile, or the written field); this is the line the live
-                  region announces. */}
-              <p className="quiz-question__sr" data-testid="quiz-verdict-outcome">
-                {verdict.isCorrect ? "Correct." : "Incorrect."}
-              </p>
-              {/* The card is the reading: what the answer was, and why. */}
-              {(!verdict.isCorrect || verdict.explanation) && (
-              <div className="card quiz-question__verdict-card">
-              {!verdict.isCorrect && (
-                <p className="quiz-question__verdict-line h-sans">
-                  {verdict.correctAnswer && format === "symbolic"
-                      ? <>Not quite — the expected answer is{" "}
-                          <span className="quiz-question__verdict-expr">{renderParts(expressionParts(verdict.correctAnswer.trim().replace(/[.]$/, "")))}</span>.</>
-                    : verdict.correctAnswer
-                      ? `Not quite — the expected answer is ${withFullStop(verdict.correctAnswer)}`
-                    : correctLabel
-                      ? `Not quite — the answer is ${correctLabel}.`
-                      : "Not quite."}
-                </p>
-              )}
-              {verdict.explanation && (
-                <p className="quiz-question__explanation body-serif">{verdict.explanation}</p>
-              )}
-              </div>
-              )}
-            </>
-          )}
-        </div>
-
-        <div className="quiz-question__aside">
-          <Button
-            variant="link"
-            className="quiz-question__flag"
-            aria-pressed={item?.flagged ?? false}
-            data-testid="quiz-flag"
-            onClick={flag}
-          >
-            This question is confusing
-          </Button>
-          {phase === "answered" && (
-            <Button
-              ref={askRef}
-              size="sm"
-              data-testid="quiz-ask"
-              onClick={() => setAskForCursor(cursor)}
-            >
-              Ask about this
-            </Button>
-          )}
-        </div>
-
+        <div className="quiz-question__body" key={view.item?.question.id ?? cursor}>
+          <QuestionPrompt item={view.item} format={view.format} />
+          <AnswerField view={view} shown={shown} selectable={selectable} actions={actions} primary={primary} />
+          <VerdictFeedback
+            feedbackRef={feedbackRef}
+            shown={shown}
+            format={view.format}
+            correctLabel={correctOption(view.verdict, view.options)?.label}
+          />
+          <QuestionAside
+            flagged={view.item?.flagged ?? false}
+            onFlag={() => flagItem(view.item, actions, toast)}
+            canAsk={phase === "answered"}
+            askRef={askRef}
+            onAsk={() => setAskForCursor(cursor)}
+          />
         </div>
 
         <div className="quiz-question__grow" />
 
-        <div className="quiz-question__footer">
-          {phase === "submitting" ? (
-            // #760: Leave is refused mid-score (the attempt is live), so this is
-            // the way off "Scoring…" — back onto the final verdict, from where
-            // See results and Leave both work again.
-            <Button data-testid="quiz-cancel-submit" onClick={() => actions.cancel()}>
-              Cancel
-            </Button>
-          ) : (
-            <Button data-testid="quiz-leave" onClick={() => actions.requestLeave()}>
-              Leave
-            </Button>
-          )}
-          {progress}
-          <Button
-            variant="primary"
-            data-testid={primary.testid}
-            aria-disabled={!primary.enabled}
-            disabled={!primary.enabled}
-            onClick={primary.activate}
-          >
-            {primary.label}
-          </Button>
-        </div>
+        <QuestionFooter phase={phase} actions={actions} pager={pager} primary={primary} />
       </div>
 
       <LeaveDialog
@@ -659,7 +793,7 @@ export function QuizQuestion({
         conceptName={concept.name}
         courseId={courseId}
         courseLabel={concept.courseCode || undefined}
-        seed={askSeed}
+        seed={askSeedFor(view)}
         returnFocusTo={askRef}
       />
     </div>

@@ -168,7 +168,7 @@ function Card({ i, ghost }: { i: number; ghost: boolean }) {
         </div>
         <div style={{ padding: '15px 12px 0', display: 'flex', flexDirection: 'column' }}>
           <span style={{ ...MONO, fontSize: 9.5, letterSpacing: '0.28em', color: '#445D22' }}>{c.kicker}</span>
-          <h3 style={{ margin: '10px 0 0', fontFamily: "var(--font-gummi), 'Gummi', Georgia, serif", fontSize: 22, fontWeight: 600, lineHeight: 1.2, letterSpacing: '-0.015em', color: '#191F13' }}>
+          <h3 style={{ margin: '10px 0 0', fontFamily: "var(--font-gummi), Georgia, serif", fontSize: 22, fontWeight: 600, lineHeight: 1.2, letterSpacing: '-0.015em', color: '#191F13' }}>
             {c.title}
           </h3>
           <p style={{ margin: '9px 0 0', fontSize: 12.5, lineHeight: 1.6, color: '#697062', maxWidth: '40ch', textWrap: 'pretty' }}>
@@ -334,7 +334,7 @@ export function Gallery({
 
       <div style={{ position: 'relative', zIndex: 1, maxWidth: 1220, margin: '0 auto', padding: '0 24px', display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 24, flexWrap: 'wrap' }}>
         <FadeIn>
-          <h2 style={{ margin: 0, fontFamily: "var(--font-gummi), 'Gummi', Georgia, serif", fontSize: 'clamp(2.2rem,4.4vw,3.6rem)', fontWeight: 600, lineHeight: 1.04, letterSpacing: '-0.02em', color: '#191F13' }}>
+          <h2 style={{ margin: 0, fontFamily: "var(--font-gummi), Georgia, serif", fontSize: 'clamp(2.2rem,4.4vw,3.6rem)', fontWeight: 600, lineHeight: 1.04, letterSpacing: '-0.02em', color: '#191F13' }}>
             The rest of the <em style={{ color: '#445D22' }}>grove.</em>
           </h2>
           <p style={{ margin: '14px 0 0', color: '#697062', fontSize: 14, lineHeight: 1.65, maxWidth: '62ch' }}>

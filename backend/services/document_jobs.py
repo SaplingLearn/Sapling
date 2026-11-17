@@ -81,7 +81,7 @@ from db.scope import runs_as_service
 from services import jobs, llm_budget, staged_jobs
 from services.agent_events import SaplingEvent
 from services.documents_read import saved_document
-from services.encryption import decrypt_bytes, decrypt_json, encrypt_bytes, encrypt_json
+from services.encryption import bind, decrypt_bytes, decrypt_json, encrypt_bytes, encrypt_json
 from services.feature_flags import flag_on
 from services.llm_budget import budget_error_in
 
@@ -268,7 +268,6 @@ def stage_upload(
         "file_name": filename,
         "content_type": content_type or None,
         "file_size": len(file_bytes),
-        "file_data": encrypt_bytes(file_bytes),
         "stage": QUEUED,
         "progress": {},
         "error_code": None,
@@ -276,11 +275,21 @@ def stage_upload(
         "result": None,
         "job_id": None,
     }
+
+    def sealed(upload_id: str) -> dict:
+        # file_data is bound to its row id (AAD, finding M13), so the id is
+        # known before sealing: minted here for a new row, the existing one
+        # for a re-stage.
+        return {**staged_file, "file_data": encrypt_bytes(
+            file_bytes, bind=bind("document_uploads", "file_data", upload_id))}
+
     existing = _select_by_request(user_id, request_id)
     if existing is None:
+        new_id = str(uuid.uuid4())
         try:
             rows = table("document_uploads").insert(
-                {"user_id": user_id, "request_id": request_id, **staged_file}
+                {"id": new_id, "user_id": user_id, "request_id": request_id,
+                 **sealed(new_id)}
             )
             return Staged(id=str(rows[0]["id"]), fresh=True)
         except Exception:
@@ -293,7 +302,7 @@ def stage_upload(
         filters = {"id": f"eq.{existing['id']}", "stage": f"eq.{stage}"}
         if stage == QUEUED:
             filters["updated_at"] = f"eq.{existing['updated_at']}"
-        if table("document_uploads").update(staged_file, filters=filters):
+        if table("document_uploads").update(sealed(str(existing["id"])), filters=filters):
             logger.info("upload %s: re-staged an earlier %s attempt of the request",
                         existing["id"], stage)
             return Staged(id=str(existing["id"]), fresh=True)
@@ -331,7 +340,7 @@ def read_result(upload_id: str) -> dict:
     raw = rows[0].get("result") if isinstance(rows, list) and rows else None
     if not raw:
         return {}
-    out = decrypt_json(raw)
+    out = decrypt_json(raw, bind=bind("document_uploads", "result", upload_id))
     return out if isinstance(out, dict) else {}
 
 
@@ -863,7 +872,7 @@ def _stored_outcome(row: dict) -> dict:
     if not raw:
         return {}
     try:
-        out = decrypt_json(raw)
+        out = decrypt_json(raw, bind=bind("document_uploads", "result", row))
     except Exception:
         return {}
     return out if isinstance(out, dict) else {}
@@ -894,7 +903,8 @@ def _process(row: dict, run: _Run) -> None:
         return
     filename = row.get("file_name") or ""
     try:
-        file_bytes = decrypt_bytes(row["file_data"])
+        file_bytes = decrypt_bytes(
+            row["file_data"], bind=bind("document_uploads", "file_data", upload_id))
         text = docs.extract_text_from_file(file_bytes, filename, row.get("content_type") or "")
     except Exception as exc:
         if budget_error_in(exc) is not None:
@@ -930,7 +940,8 @@ def _process(row: dict, run: _Run) -> None:
               "categories": docs._grading_categories_from(result)}
     # Stored before the insert, so a re-run that adopts the saved row can
     # still answer with the full result and the syllabus categories.
-    run.advance(SAVING, {"result": encrypt_json(stored)}, merged_count=merged)
+    run.advance(SAVING, {"result": encrypt_json(
+        stored, bind=bind("document_uploads", "result", upload_id))}, merged_count=merged)
 
     course_id = row["course_id"]
     offering_id = row["offering_id"]
@@ -970,7 +981,8 @@ def _process(row: dict, run: _Run) -> None:
 
 def _done(run: _Run, doc_id: str, stored: dict, **progress: Any) -> None:
     run.advance(DONE, {
-        "document_id": doc_id, "result": encrypt_json(stored),
+        "document_id": doc_id,
+        "result": encrypt_json(stored, bind=bind("document_uploads", "result", run.upload_id)),
         "file_data": None, "error_code": None,
     }, **progress)
 
@@ -1007,7 +1019,6 @@ def _post_roll(docs, *, user_id: str, offering_id: str, doc_id: str) -> None:
     from services.document_indexing import schedule_document_index
 
     steps = (
-        ("invalidate_study_guide_cache", docs._invalidate_study_guide_cache, (user_id, offering_id)),
         ("update_course_context", docs._refresh_course_context, (offering_id, user_id)),
         ("check_upload_achievements", docs._check_upload_achievements, (user_id,)),
         ("index_document", schedule_document_index, (doc_id, user_id)),

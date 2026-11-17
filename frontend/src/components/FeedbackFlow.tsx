@@ -7,6 +7,7 @@ import { useUser } from "@/context/UserContext";
 import { useScrollLock } from "@/lib/useScrollLock";
 import { releaseFeedbackSlot, tryClaimFeedbackSlot } from "@/lib/feedbackSlot";
 import { useToast } from "./ToastProvider";
+import { LONG_TEXT_MAX } from "@/lib/inputLimits";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** How long a page is open before the pulse asks. */
@@ -223,6 +224,7 @@ export function FeedbackFlow({ passive = true, open: openProp, onClose }: Feedba
         <div className="label-micro" style={{ marginBottom: 6 }}>Anything else? (optional)</div>
         <textarea
           value={comment}
+          maxLength={LONG_TEXT_MAX}
           onChange={e => setComment(e.target.value)}
           placeholder="Share a thought…"
           rows={3}

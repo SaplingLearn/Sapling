@@ -68,7 +68,9 @@ class _JsonFormatter(logging.Formatter):
             "msg": record.getMessage(),
         }
         if record.exc_info:
-            out["exc"] = self.formatException(record.exc_info)
+            # exc_text first: services/log_privacy.py pre-renders a redacted
+            # traceback there for exceptions that carry model output.
+            out["exc"] = record.exc_text or self.formatException(record.exc_info)
         return json.dumps(out, default=str)
 
 
@@ -82,6 +84,11 @@ def _configure_logging(fmt: str) -> None:
     root = logging.getLogger()
     root.handlers[:] = [handler]
     root.setLevel(logging.INFO)
+    # Outbound URLs and model output in tracebacks stay out of the log: same
+    # rule as the API (services/log_privacy.py).
+    from services import log_privacy
+
+    log_privacy.install()
 
 
 def _env_float(name: str, default: float) -> float:
@@ -135,12 +142,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def boot() -> None:
     """The API lifespan's pre-serve checks. Raises on any failure."""
-    from agents._providers import freeze_model_mode
+    from agents._providers import freeze_model_mode, warn_if_anthropic_key_missing
     from config import validate_config
     from services.encryption_canary import verify_encryption_key
 
     mode = freeze_model_mode()
     validate_config()
+    warn_if_anthropic_key_missing()
     verify_encryption_key()
     logger.info("worker.boot model_mode=%s", mode)
 

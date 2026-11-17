@@ -2,37 +2,19 @@
 backend/services/documents/post_roll.py
 
 An upload's best-effort side effects after the document is saved (#118,
-moved from routes/documents.py): study-guide cache invalidation, the
-course-context refresh, the achievement check, and the SSE route's
-fire-and-forget post-roll tasks with their shutdown drain.
+moved from routes/documents.py): the course-context refresh, the
+achievement check, and the SSE route's fire-and-forget post-roll tasks with
+their shutdown drain.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
 
-from db.connection import table
 from services.achievement_service import check_achievements
 from services.course_context_service import refresh_course_context
 
 logger = logging.getLogger(__name__)
-
-
-def _invalidate_study_guide_cache(user_id: str, offering_id: str) -> None:
-    """Background task: delete cached study guides so they regenerate fresh.
-
-    Study guides key on the offering (0025), matching the documents that
-    feed them.
-    """
-    try:
-        table("study_guides").delete(
-            filters={"user_id": f"eq.{user_id}", "offering_id": f"eq.{offering_id}"}
-        )
-    except Exception:
-        logger.exception(
-            "Failed to invalidate study guides cache for user=%s offering=%s",
-            user_id, offering_id,
-        )
 
 
 def _refresh_course_context(offering_id: str, user_id: str) -> None:
@@ -46,7 +28,7 @@ def _check_upload_achievements(user_id: str) -> None:
     try:
         check_achievements(user_id, "documents_uploaded", {})
     except Exception:
-        pass
+        logger.warning("documents_uploaded achievement check failed", exc_info=True)
 
 
 #: In-flight post-roll tasks (#759). The event loop holds only a WEAK

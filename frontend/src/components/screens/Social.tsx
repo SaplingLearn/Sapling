@@ -11,7 +11,6 @@ import { SocialRoomsSkeleton } from "../Skeleton";
 import { useToast } from "../ToastProvider";
 import { useConfirm } from "@/lib/useConfirm";
 import { useUser } from "@/context/UserContext";
-import { useFlagMap } from "@/context/FlagsContext";
 import {
   recoverRealtimeAuth,
   superviseChannel,
@@ -45,6 +44,7 @@ import {
   type StudentRow,
 } from "@/lib/api";
 import type { PublicRoom, RoomMessageRow, RoomOverviewData, Friend } from "@/lib/types";
+import { ROOM_MESSAGE_MAX } from "@/lib/inputLimits";
 
 type IncomingFriendRequest = { id: string; from_user_id: string; name: string; created_at: string };
 type OutgoingFriendRequest = { id: string; to_user_id: string; name: string; created_at: string };
@@ -97,28 +97,30 @@ function realtimeClient() {
 }
 
 /**
- * RLS step 2e (#115): how the study-room channels (room_messages + presence)
- * may join right now.
- *   - `wait`: join nothing yet. Flags still loading (so a flagged student
- *     never first joins with the anon key), or flag on with no applied token
- *     (first fetch, or the last token expired): REST-only until one lands.
- *   - `anon`: today's subscription with the anon key, unchanged. Flag off,
- *     or flag on but the token is permanently unavailable (404/503).
+ * RLS step 2e (#115): whether the study-room `room:<id>` channel (room_messages
+ * changes) may join right now. It only ever joins on the minted token:
+ * room_messages has RLS on and no anon SELECT, so the anon key would
+ * subscribe to nothing. (The presence/typing channel has its own rule: see
+ * RoomChat.)
  *   - `token`: the minted token is applied; join, and re-join on loss.
+ *   - `wait`: join nothing. No token yet (first fetch, a transient failure,
+ *     or the last one expired), or none to be had (`unavailable`: the
+ *     endpoint refused, logged by realtimeAuth). The room works over REST
+ *     meanwhile: history on open, own sends, and a poll of the latest page
+ *     every REST_POLL_MS while the tab is visible.
  */
-export type RoomRealtimePlan = "wait" | "anon" | "token";
+export type RoomRealtimePlan = "wait" | "token";
 
-export function planRoomRealtime(
-  flagsReady: boolean,
-  realtimeRls: boolean,
-  authMode: RealtimeAuthMode,
-): RoomRealtimePlan {
-  if (!flagsReady) return "wait";
-  if (!realtimeRls) return "anon";
-  if (authMode === "token") return "token";
-  if (authMode === "anon") return "anon";
-  return "wait";
+export function planRoomRealtime(authMode: RealtimeAuthMode): RoomRealtimePlan {
+  return authMode === "token" ? "token" : "wait";
 }
+
+/** While the room is not live, re-fetch the latest page this often (only
+ * while the tab is visible), so classmates' messages still arrive. */
+export const REST_POLL_MS = 12_000;
+/** Show "Live updates paused" only once the room has been off the live
+ * channel this long: the first token fetch must not flash it. */
+export const PAUSED_NOTICE_DELAY_MS = 5_000;
 
 export function planMessageRealtimeAction(
   event: "INSERT" | "UPDATE",
@@ -198,7 +200,9 @@ function CreateJoinBar({ onDone }: { onDone: () => void }) {
       reset();
       onDone();
     } catch (err) {
-      toast.error(String(err));
+      toast.error(humanizeError(
+        err, mode === "create" ? "Couldn't create that room." : "Couldn't join that room.",
+      ));
     }
   };
 
@@ -278,7 +282,7 @@ function PublicRoomsList({ excludeIds, onJoined }: { excludeIds: string[]; onJoi
       // Never swallow: an empty list has to mean "no public rooms", not
       // "the fetch broke" (#463/#185 convention). This is a secondary
       // surface, so it toasts rather than taking over with a banner.
-      toast.error(`Couldn't load public rooms. ${String(err)}`);
+      toast.error(humanizeError(err, "Couldn't load public rooms."));
     }
   }, [userId, toast]);
 
@@ -298,7 +302,7 @@ function PublicRoomsList({ excludeIds, onJoined }: { excludeIds: string[]; onJoi
       // it too or the joined room lingers as "discoverable" (#485 review).
       await refresh();
     } catch (err) {
-      toast.error(String(err));
+      toast.error(humanizeError(err, "Couldn't join that room."));
     } finally {
       setJoining(null);
     }
@@ -608,10 +612,30 @@ function RoomChat({ roomId, members, realtimePlan, realtimeEpoch }: {
     }
   }, [roomId]);
 
+  // Not live (no token yet, a transient failure, or none to be had): poll the
+  // latest page so classmates' messages still arrive, paused while the tab is
+  // hidden and caught up at once when it comes back. The merge dedups.
+  const [pausedLong, setPausedLong] = React.useState(false);
+  React.useEffect(() => {
+    if (realtimePlan === "token") return;
+    const visible = () => document.visibilityState === "visible";
+    const notice = setTimeout(() => setPausedLong(true), PAUSED_NOTICE_DELAY_MS);
+    const poll = setInterval(() => { if (visible()) void refreshLatest(); }, REST_POLL_MS);
+    const onVisibility = () => { if (visible()) void refreshLatest(); };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      clearTimeout(notice);
+      clearInterval(poll);
+      document.removeEventListener("visibilitychange", onVisibility);
+      setPausedLong(false);
+    };
+  }, [realtimePlan, refreshLatest]);
+  const livePaused = realtimePlan !== "token" && pausedLong;
+
   // Realtime subscriptions. RLS step 2e (#115): `realtimePlan` (Social owns
-  // the token lifecycle) decides how: `anon` is exactly the subscription from
-  // before the flag existed; `token` joins on the minted token and re-joins
-  // whenever Realtime drops the channel (it closes it once the token expires).
+  // the token lifecycle) decides when: they join on the minted token only, and
+  // re-join whenever Realtime drops the channel (it closes it once the token
+  // expires).
   React.useEffect(() => {
     if (realtimePlan === "wait") return;
     const supa = supabaseClient();
@@ -651,10 +675,6 @@ function RoomChat({ roomId, members, realtimePlan, realtimeEpoch }: {
       // with a membership-scoped policy (see
       // docs/security/realtime-jwt-bridge-design.md).
 
-    if (realtimePlan === "anon") {
-      const channel = build().subscribe();
-      return () => { supa.removeChannel(channel); };
-    }
     return superviseChannel({
       topic: `room:${roomId}`,
       create: build,
@@ -666,10 +686,17 @@ function RoomChat({ roomId, members, realtimePlan, realtimeEpoch }: {
     });
   }, [roomId, refreshLatest, userId, realtimePlan, realtimeEpoch]);
 
-  // Presence / typing channel. Same plan: `setAuth` is global, so under the
-  // flag this channel carries the minted token too and is dropped with it.
+  // Presence / typing channel. NOT gated on the minted token, on purpose:
+  // `presence:<id>` is a PUBLIC Realtime channel, which Realtime never checks
+  // against RLS (that needs a private channel and a realtime.messages
+  // policy). It reads no table, and anyone holding the public anon key can
+  // join it whether or not this client waits for a token, so waiting would
+  // protect nothing and only cost typing indicators whenever the token is
+  // missing. It therefore joins on whatever key the client holds (the anon
+  // key, or the minted token once `setAuth` applies it, which realtime-js
+  // pushes to joined channels); when Realtime closes it on that token's
+  // expiry, superviseChannel re-joins after a refresh.
   React.useEffect(() => {
-    if (realtimePlan === "wait") return;
     const supa = supabaseClient();
     if (!supa || !userId) return;
     const build = () => {
@@ -689,20 +716,6 @@ function RoomChat({ roomId, members, realtimePlan, realtimeEpoch }: {
     const track = (ch: ReturnType<typeof build>) =>
       ch.track({ name: userName || "Anonymous", typing: false, last: Date.now() });
 
-    if (realtimePlan === "anon") {
-      const ch = build();
-      ch
-        .subscribe(async (status: string) => {
-          if (status === "SUBSCRIBED") {
-            await track(ch);
-          }
-        });
-      typingChannelRef.current = ch;
-      return () => {
-        ch.unsubscribe();
-        typingChannelRef.current = null;
-      };
-    }
     const stop = superviseChannel({
       topic: `presence:${roomId}`,
       create: build,
@@ -720,7 +733,7 @@ function RoomChat({ roomId, members, realtimePlan, realtimeEpoch }: {
       stop();
       typingChannelRef.current = null;
     };
-  }, [roomId, userId, userName, realtimePlan, realtimeEpoch]);
+  }, [roomId, userId, userName]);
 
   React.useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
@@ -803,7 +816,7 @@ function RoomChat({ roomId, members, realtimePlan, realtimeEpoch }: {
       }
     } catch (err) {
       setMessages(prev => prev.filter(m => m.id !== tmpId));
-      toast.error(`Send failed: ${String(err)}`);
+      toast.error(humanizeError(err, "Couldn't send that message. Try again."));
     }
   };
 
@@ -817,7 +830,7 @@ function RoomChat({ roomId, members, realtimePlan, realtimeEpoch }: {
       setEditing(null);
       setEditValue("");
     } catch (err) {
-      toast.error(`Edit failed: ${String(err)}`);
+      toast.error(humanizeError(err, "Couldn't edit that message."));
     }
   };
 
@@ -827,7 +840,7 @@ function RoomChat({ roomId, members, realtimePlan, realtimeEpoch }: {
       await deleteRoomMessage(roomId, m.id, userId);
       setMessages(prev => prev.map(x => x.id === m.id ? { ...x, is_deleted: true, text: null } : x));
     } catch (err) {
-      toast.error(`Delete failed: ${String(err)}`);
+      toast.error(humanizeError(err, "Couldn't delete that message."));
     }
   };
 
@@ -851,7 +864,7 @@ function RoomChat({ roomId, members, realtimePlan, realtimeEpoch }: {
         return { ...m, reactions };
       }));
     } catch (err) {
-      toast.error(`Reaction failed: ${String(err)}`);
+      toast.error(humanizeError(err, "Couldn't add that reaction."));
     }
     setPicker(null);
   };
@@ -883,7 +896,7 @@ function RoomChat({ roomId, members, realtimePlan, realtimeEpoch }: {
       }
       toast.success("Image sent");
     } catch (err) {
-      toast.error(`Upload failed: ${String(err)}`);
+      toast.error(humanizeError(err, "Couldn't upload that image."));
     }
   };
 
@@ -903,7 +916,7 @@ function RoomChat({ roomId, members, realtimePlan, realtimeEpoch }: {
         if (scrollEl) scrollEl.scrollTop = scrollEl.scrollHeight - prevHeight;
       });
     } catch (err) {
-      toast.error(`Couldn't load earlier messages: ${String(err)}`);
+      toast.error(humanizeError(err, "Couldn't load earlier messages."));
     } finally {
       setLoadingEarlier(false);
     }
@@ -923,8 +936,17 @@ function RoomChat({ roomId, members, realtimePlan, realtimeEpoch }: {
 
   return (
     <>
-      <div style={{ padding: "6px 20px 0", fontSize: 11, color: "var(--text-muted)", minHeight: 18 }}>
-        {typingUsers.size > 0 && `${Array.from(typingUsers).join(", ")} typing…`}
+      <div style={{ padding: "6px 20px 0", fontSize: 11, color: "var(--text-muted)", minHeight: 18, display: "flex", justifyContent: "space-between", gap: 12 }}>
+        <span>{typingUsers.size > 0 && `${Array.from(typingUsers).join(", ")} typing…`}</span>
+        {livePaused && (
+          <span
+            data-testid="social-chat-live-paused"
+            role="status"
+            title="New messages are checked every few seconds until the live connection is back."
+          >
+            Live updates paused
+          </span>
+        )}
       </div>
       <div
         ref={scrollRef}
@@ -1116,6 +1138,7 @@ function RoomChat({ roomId, members, realtimePlan, realtimeEpoch }: {
           <textarea
             ref={inputRef}
             data-testid="social-chat-input"
+            maxLength={ROOM_MESSAGE_MAX}
             value={input}
             rows={1}
             onChange={(e) => onInputChange(e.target.value)}
@@ -1218,7 +1241,7 @@ function RoomOverview({ roomId, onChange }: { roomId: string; onChange: () => vo
       toast.success("Left the room");
       onChange();
     } catch (err) {
-      toast.error(`Leave failed: ${String(err)}`);
+      toast.error(humanizeError(err, "Couldn't leave that room."));
     }
   });
 
@@ -1277,7 +1300,7 @@ function RoomOverview({ roomId, onChange }: { roomId: string; onChange: () => vo
                 toast.success(`Removed ${m.name}`);
                 refresh();
               } catch (err) {
-                toast.error(`Kick failed: ${String(err)}`);
+                toast.error(humanizeError(err, "Couldn't remove that member."));
               }
             }}
             last={i === data.members.length - 1}
@@ -1367,7 +1390,7 @@ function StudyMatch({ roomId }: { roomId: string }) {
         toast.success(`Best match: ${top.partner?.name} at ${Math.round((top.compatibility_score || 0) * 100)}%`);
       }
     } catch (err) {
-      toast.error(`Matching failed: ${String(err)}`);
+      toast.error(humanizeError(err, "Couldn't find a study match right now."));
     } finally {
       setLoading(false);
     }
@@ -1543,12 +1566,11 @@ export function Social() {
   const search = useSearchParams();
   const { userId, userReady } = useUser();
   // RLS step 2e (#115): the Realtime token lifecycle lives here, not in the
-  // per-room RoomChat, so a room or tab switch neither reverts to the anon
-  // key nor re-mints. Flag off: no token request at all.
-  const { flags, ready: flagsReady } = useFlagMap();
-  const realtimeRls = flags.realtime_rls === "on";
-  const realtimeAuth = useRealtimeAuth(flagsReady && realtimeRls, realtimeClient);
-  const realtimePlan = planRoomRealtime(flagsReady, realtimeRls, realtimeAuth.mode);
+  // per-room RoomChat, so a room or tab switch neither drops the token nor
+  // re-mints. Only once the session is known (no request before it, and a
+  // sign-in as someone else starts a fresh lifecycle).
+  const realtimeAuth = useRealtimeAuth(realtimeClient, userReady ? userId : null);
+  const realtimePlan = planRoomRealtime(realtimeAuth.mode);
   const realtimeEpoch = realtimePlan === "token" ? realtimeAuth.epoch : 0;
   const [rooms, setRooms] = React.useState<Room[]>([]);
   const [activeId, setActiveId] = React.useState<string | null>(null);

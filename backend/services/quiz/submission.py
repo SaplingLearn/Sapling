@@ -27,7 +27,8 @@ from services import llm_budget
 from services.quiz.config import mastery_after
 from services.quiz.errors import QuizAPIError, QuizErrorCode
 from services.profiles import get_display_name
-from services.encryption import encrypt_json, decrypt_json_column
+from services.prompt_safety import neutralize_delimiters, wrap_untrusted
+from services.encryption import bind, encrypt_json, decrypt_json_column
 from services.quiz.grading import WRITTEN_TYPES, grade_written
 from services.graph_service import apply_graph_update
 from services.quiz.context import get_quiz_context, save_quiz_context
@@ -136,7 +137,8 @@ def _grade_submission(
     # to close). Questions never answered through C1 fall back to the
     # submitted payload, so the current all-at-the-end client keeps working.
     recorded_rows = table("quiz_responses").select(
-        "question_index,selected_index,answer_text",
+        # attempt_id + question_index are answer_text's binding (M13).
+        "attempt_id,question_index,selected_index,answer_text",
         filters={"attempt_id": f"eq.{body.quiz_id}"},
     ) or []
     recorded_by_index = {r["question_index"]: r for r in recorded_rows}
@@ -229,7 +231,8 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
     user_id = attempt["user_id"]
 
     # #521: ciphertext str for new rows, plaintext JSONB for pre-backfill rows.
-    questions = decrypt_json_column(attempt["questions_json"])
+    questions = decrypt_json_column(
+        attempt["questions_json"], bind=bind("quiz_attempts", "questions_json", body.quiz_id))
 
     # #129: completed_at is written on the first successful submit. A re-POST
     # of the same quiz_id must not re-run apply_graph_update (double mastery
@@ -330,7 +333,8 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
                 # The reconciled set (recorded responses winning over payload),
                 # not the raw request — the attempt's stored answers must agree
                 # with the score computed from them.
-                "answers_json": encrypt_json(graded_answers),
+                "answers_json": encrypt_json(
+                    graded_answers, bind=bind("quiz_attempts", "answers_json", body.quiz_id)),
                 # completed_at was already stamped by the atomic claim above.
             },
             filters={"id": f"eq.{body.quiz_id}"},
@@ -451,14 +455,27 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
     student_name = get_display_name(user_id) or "Student"
 
     existing_ctx = get_quiz_context(user_id, concept_node_id)
+    # M8: the student's own answers (written answers are free text, and the
+    # chosen distractors' wording rides along) and the previous notes the
+    # model wrote from earlier answers are UNTRUSTED: each block goes in the
+    # envelope, and the short scalars get delimiter neutralization. These
+    # notes feed `common_mistakes`, which (aggregated across at least three
+    # students) reaches classmates' quiz agents.
     ctx_prompt = (
         _load_prompt("quiz_context_update.txt")
-        .replace("{concept_name}", concept_name)
-        .replace("{student_name}", student_name)
-        .replace("{existing_quiz_context_json}", json.dumps(existing_ctx) if existing_ctx else "{}")
+        .replace("{concept_name}", neutralize_delimiters(concept_name))
+        .replace("{student_name}", neutralize_delimiters(student_name))
+        .replace(
+            "{existing_quiz_context_json}",
+            wrap_untrusted(json.dumps(existing_ctx), source="previous learning notes")
+            if existing_ctx else "{}",
+        )
         .replace("{score}", str(score))
         .replace("{total}", str(total))
-        .replace("{quiz_results_json}", json.dumps(results, indent=2))
+        .replace(
+            "{quiz_results_json}",
+            wrap_untrusted(json.dumps(results, indent=2), source="the student's quiz answers"),
+        )
         # H2/#554: the wrong answers in WORDS. `results` carries labels only
         # ("picked B, answer was C"), which is not something a model can turn
         # into a misconception — it can only guess one. The option text lives
@@ -466,7 +483,10 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
         # answers_json existed.
         .replace(
             "{distractor_profile_json}",
-            json.dumps(build_distractor_profile(questions, results), indent=2),
+            wrap_untrusted(
+                json.dumps(build_distractor_profile(questions, results), indent=2),
+                source="the student's wrong answers",
+            ),
         )
     )
 
@@ -532,7 +552,7 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
         from services.achievement_service import check_achievements
         check_achievements(user_id, "quizzes_completed", {})
     except Exception:
-        pass
+        logger.warning("quizzes_completed achievement check failed", exc_info=True)
 
     # G8: read AFTER the achievement pass — a badge earned by this submit pays
     # its own XP and moves earned_count, so a snapshot taken before it would

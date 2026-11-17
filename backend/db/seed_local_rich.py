@@ -13,19 +13,50 @@ Pass --owner-email or --owner-user-id after signing in to populate your own
 account. Owner mode inserts missing sample rows without resetting existing data.
 A local backend does this by itself on sign-in (services/local_seed_watcher.py,
 which calls seed_owner); the flags are the manual fallback.
+
+An account's FIRST owner seed also gets the study dataset
+(db/seed_local_study.py: a term of guides, quizzes, flashcards, documents and
+exams dated around today). Only the first: see seed_owner. The default dataset
+(no owner flag) never does; the `rich-*` accounts are the fixed baseline the
+E2E journeys, the oracles and the integration suite assert on.
 """
 from __future__ import annotations
 
 import os
 import sys
 import argparse
+import logging
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config import get_mastery_tier            # noqa: E402
 from db import seed_helpers as h               # noqa: E402
+from db import seed_local_study                # noqa: E402
 from db.connection import table                # noqa: E402
-from services.encryption import encrypt_if_present, encrypt_json  # noqa: E402
+from services.encryption_canary import abort_unless_key_verified  # noqa: E402
+from models.study_guide import (               # noqa: E402
+    GUIDE_FORMAT,
+    CheckBlock,
+    CheckOption,
+    ComparisonBlock,
+    ComparisonRow,
+    ConceptMapBlock,
+    ConceptMapNode,
+    FormulaBlock,
+    GuideContent,
+    KeyTerm,
+    KeyTermsBlock,
+    Paragraph,
+    ProseItem,
+    Section,
+    Source,
+    WorkedExampleBlock,
+    WorkedStep,
+)
+from services.encryption import bind, encrypt_if_present, encrypt_json  # noqa: E402
+
+logger = logging.getLogger(__name__)
+_MAX_REASON_CHARS = 300
 
 
 def _guard_local() -> None:
@@ -207,7 +238,7 @@ def seed_users(writer=h) -> None:
             "users",
             {
                 "id": uid,
-                "email": encrypt_if_present(email),
+                "email": encrypt_if_present(email, bind=bind("users", "email", uid)),
                 "onboarding_completed": onboarding_completed,
                 "streak_count": streak_count,
                 "is_approved": is_approved,
@@ -219,7 +250,8 @@ def seed_users(writer=h) -> None:
             row = {"user_id": uid}
             for key in _PROFILE_ENCRYPTED_FIELDS:
                 if key in profile:
-                    row[key] = encrypt_if_present(profile[key])
+                    row[key] = encrypt_if_present(profile[key],
+                                                  bind=bind("user_profiles", key, uid))
             for key in _PROFILE_PLAIN_FIELDS:
                 if key in profile:
                     row[key] = profile[key]
@@ -436,8 +468,11 @@ def seed_gradebook(writer=h) -> None:
                 "source": source,
                 # 🔒 points (numeric semantics; decrypt_numeric at read). None (ungraded)
                 # stays None — encrypt_if_present(None) is a no-op.
-                "points_possible": encrypt_if_present(str(possible)),
-                "points_earned": encrypt_if_present(str(earned)) if earned is not None else None,
+                "points_possible": encrypt_if_present(
+                    str(possible), bind=bind("assignments", "points_possible", asg_id)),
+                "points_earned": encrypt_if_present(
+                    str(earned), bind=bind("assignments", "points_earned", asg_id),
+                ) if earned is not None else None,
             },
         )
 
@@ -504,7 +539,7 @@ def seed_rooms(writer=h) -> None:
                 "user_id": user_id,
                 "user_name": user_name,
                 # 🔒 text
-                "text": encrypt_if_present(text),
+                "text": encrypt_if_present(text, bind=bind("room_messages", "text", msg_id)),
             },
         )
 
@@ -549,8 +584,8 @@ def seed_notes_documents(writer=h) -> None:
                 "user_id": user_id,
                 "offering_id": off_id,
                 # 🔒 title / body
-                "title": encrypt_if_present(title),
-                "body": encrypt_if_present(body),
+                "title": encrypt_if_present(title, bind=bind("notes", "title", note_id)),
+                "body": encrypt_if_present(body, bind=bind("notes", "body", note_id)),
                 "tags": tags,
             },
         )
@@ -565,10 +600,76 @@ def seed_notes_documents(writer=h) -> None:
                 "file_name": file_name,
                 "category": category,
                 # 🔒 summary / concept_notes / extracted_text
-                "summary": encrypt_if_present(summary),
-                "concept_notes": encrypt_json([{"name": c_name, "description": c_desc}]),
-                "extracted_text": encrypt_if_present(extracted),
+                "summary": encrypt_if_present(summary, bind=bind("documents", "summary", doc_id)),
+                "concept_notes": encrypt_json([{"name": c_name, "description": c_desc}],
+                                              bind=bind("documents", "concept_notes", doc_id)),
+                "extracted_text": encrypt_if_present(
+                    extracted, bind=bind("documents", "extracted_text", doc_id)),
             },
+        )
+
+
+# Topic checklists (🔒 content). The Study hub reads these for its roadmap
+# column names: a concept's category is the root ancestor of the checklist
+# topic whose name matches it, so the parent topics below ARE the columns the
+# roadmap draws. Without one, Study falls back to prerequisite layers
+# ("Foundations", "Core Methods", …) — which is what every course here without
+# an entry exercises. Child names must match _GRAPH_NODES exactly; the service
+# joins them by normalized name.
+#
+# (checklist_key, enrollment_id, source_doc_id, [(parent, [child, …]), …])
+_CHECKLISTS = [
+    ("cs-f25", ENR_ACTIVE_CS_F25, "rich-doc-cs-syllabus", [
+        ("Language Foundations", ["Variables and Types", "Control Flow"]),
+        ("Program Structure", ["Recursion", "Algorithms"]),
+        ("Memory Model", ["Pointers and Memory"]),
+    ]),
+    ("cs-s26", ENR_ACTIVE_CS_S26, "rich-doc-cs-syllabus", [
+        ("Language Foundations", ["Variables and Types", "Control Flow"]),
+        ("Program Structure", ["Recursion", "Algorithms"]),
+        ("Memory Model", ["Pointers and Memory"]),
+    ]),
+    ("math-s26", ENR_ACTIVE_MATH_S26, "rich-doc-math-notes", [
+        ("Vector Spaces", ["Vectors", "Matrices"]),
+        ("Matrix Analysis", ["Determinants", "Eigenvalues"]),
+    ]),
+    # Bio is deliberately left out so one course still shows the fallback.
+]
+
+
+def _checklist_topics(groups: list, source_id: str) -> list[dict]:
+    """A TopicOutline payload: one parent topic per roadmap column, each child
+    naming a tracked concept. Importance is curricular weight, not mastery."""
+    topics = []
+    for parent, children in groups:
+        topics.append({
+            "name": parent, "description": f"{parent} for this course.", "parent": "",
+            "prerequisites": [], "source_ids": [source_id], "assessment_ids": [],
+            "importance": 0.9,
+        })
+        topics.extend({
+            "name": child, "description": f"{child}, covered under {parent}.",
+            "parent": parent, "prerequisites": [], "source_ids": [source_id],
+            "assessment_ids": [], "importance": 0.7,
+        } for child in children)
+    return topics
+
+
+def seed_topic_checklists(writer=h) -> None:
+    for key, enrollment_id, source_id, groups in _CHECKLISTS:
+        writer.insert_by_keys(
+            "topic_checklists",
+            {
+                "enrollment_id": enrollment_id,
+                # Never the real snapshot hash: the checklist reads as stale, so
+                # a refresh regenerates it from live evidence instead of this
+                # fixture silently standing in for a generated outline.
+                "input_hash": f"rich-seed-{key}",
+                # 🔒 content
+                "content": encrypt_json({"topics": _checklist_topics(groups, source_id)},
+                                        bind=bind("topic_checklists", "content", enrollment_id)),
+            },
+            "enrollment_id",
         )
 
 
@@ -599,56 +700,213 @@ def seed_flashcards(writer=h) -> None:
                 "offering_id": off_id,
                 "topic": topic,
                 # 🔒 front / back (#518)
-                "front": encrypt_if_present(front),
-                "back": encrypt_if_present(back),
+                "front": encrypt_if_present(front, bind=bind("flashcards", "front", fc_id)),
+                "back": encrypt_if_present(back, bind=bind("flashcards", "back", fc_id)),
             },
         )
 
 
-# (guide_id, user_id, offering_id, exam_id, generated_at, content)
-#
-# A CACHED guide, so /study's "Recent guides" rail has an entry to open without
-# any generation: the guide GET returns a cache hit on (user, offering, exam)
-# before it ever reaches the study_guide agent, which has no function-mode
-# handler. `exam_id` points at the real fall-2025 CS101 exam assignment so the
-# exam picker can resolve the same row the rail entry opens.
-_STUDY_GUIDES = [
-    ("rich-guide-cs-f25-mid", USER_ACTIVE, OFF_CS_F25, "rich-asg-cs-f25-mid",
-     "2026-03-01T12:00:00Z",
-     {
-         "exam": "Midterm Exam",
-         "due_date": "2025-10-15",
-         "overview": "Covers variables, control flow, and functions.",
-         "topics": [
-             {
-                 "name": "Variables",
-                 "importance": "Every later topic builds on binding names to values.",
-                 "concepts": ["Assignment", "Scope"],
-             },
-             {
-                 "name": "Recursion",
-                 "importance": "The midterm's hardest questions are recursive traces.",
-                 "concepts": ["Base case", "Call stack"],
-             },
-         ],
-     }),
-]
+# One finished guide for the active user, so the Study Guides home has a card
+# to open and the reader has every kind of content to draw without a
+# generation. It is for the real fall-2025 CS101 midterm assignment, made from
+# that user's CS101 documents, and its sections teach concepts the seed puts
+# in their graph (_GRAPH_NODES), so mastery joins by name. Not saved to the
+# Library; no section read; no check answered.
+GUIDE_CS_MIDTERM = "rich-guide-cs-f25-mid"
+_GUIDE_EXAM = "rich-asg-cs-f25-mid"
+_GUIDE_MADE_AT = "2026-03-01T12:00:00Z"
+
+
+def _written_id(writer, source_id: str) -> str:
+    """The id a seeded row was written under: the owner writer remaps `rich-*`
+    ids, and only at the top level of a row, not inside a list or ciphertext."""
+    return getattr(writer, "ids", {}).get(source_id, source_id)
+
+
+def _guide_sources(writer, user_id: str, offering_id: str) -> list[Source]:
+    """The user's seeded documents in the offering, as the guide's sources."""
+    return [
+        Source(
+            id=f"document:{_written_id(writer, doc_id)}",
+            name=file_name,
+            kind=file_name.rpartition(".")[2].upper(),
+        )
+        for doc_id, uid, off_id, file_name, *_ in _DOCUMENTS
+        if uid == user_id and off_id == offering_id
+    ]
+
+
+def _cs_midterm_guide(sources: list[Source]) -> GuideContent:
+    tiers = {name: get_mastery_tier(score) for _, name, score in _GRAPH_NODES[COURSE_CS]}
+    cited = [sources[0].id] if sources else []
+    variables = Section(
+        id="s1", title="Variables and types", concept="Variables and Types",
+        tier=tiers["Variables and Types"], weight=11, status="written",
+        one_line="A variable binds a name to a value, and the value's type decides what you can do with it.",
+        items=[
+            ProseItem(
+                id="s1-i1",
+                paragraphs=[
+                    Paragraph(
+                        text="A **variable** binds a name to a value. Assigning again rebinds "
+                             "the name; it does not change the old value.",
+                        citations=cited,
+                    ),
+                    Paragraph(
+                        text="Every value has a **type**: an integer, a float, a string or a "
+                             "boolean. The type decides which operations are allowed.",
+                    ),
+                ],
+                summary="A variable is a name bound to a value. The value's type decides what works on it.",
+            ),
+            KeyTermsBlock(
+                id="s1-i2", title="Key terms",
+                terms=[
+                    KeyTerm(term="Variable", definition="A name bound to a value."),
+                    KeyTerm(term="Assignment", definition="The statement that binds a name to a value."),
+                    KeyTerm(term="Type", definition="The kind of a value, which decides what can be done with it."),
+                ],
+            ),
+            ComparisonBlock(
+                id="s1-i3", title="Assignment and comparison", columns=["=", "=="],
+                rows=[
+                    ComparisonRow(label="What it does",
+                                  cells=["Binds a name to a value", "Tests whether two values are equal"]),
+                    ComparisonRow(label="What you get back",
+                                  cells=["Nothing: it is a statement", "True or False"], emphasis=True),
+                ],
+            ),
+        ],
+    )
+    control_flow = Section(
+        id="s2", title="Control flow", concept="Control Flow",
+        tier=tiers["Control Flow"], weight=33, status="written",
+        one_line="Branches choose which code runs; loops repeat it until a condition turns false.",
+        items=[
+            ProseItem(
+                id="s2-i1",
+                paragraphs=[
+                    Paragraph(
+                        text="**Control flow** is the order statements run in. An if statement "
+                             "picks a branch. A loop repeats a block until its condition turns false.",
+                        citations=cited,
+                    ),
+                    Paragraph(
+                        text="Midterm questions on this rarely ask what a loop is. They ask how "
+                             "many times its body runs and what it prints.",
+                    ),
+                ],
+                summary="Branches choose, loops repeat. Trace a loop by listing the values its variable takes.",
+            ),
+            FormulaBlock(
+                id="s2-i2", name="Passes of a counting loop",
+                latex=r"\text{passes} = \left\lceil \frac{\text{stop} - \text{start}}{\text{step}} \right\rceil",
+                spoken="Passes equal stop minus start, divided by step, rounded up.",
+            ),
+            WorkedExampleBlock(
+                id="s2-i3", title="Count the passes",
+                problem="A loop starts i at 1 and adds 4 while i is below 14. How many times does the body run?",
+                steps=[
+                    WorkedStep(title="List the values", math="1, 5, 9, 13",
+                               why="17 is not below 14, so the loop stops before it."),
+                    WorkedStep(title="Count them", math="4 passes",
+                               why="One pass for each value listed."),
+                ],
+            ),
+            CheckBlock(
+                id="s2-i4",
+                question="A loop starts i at 0 and adds 3 while i is below 10. How many times does the body run?",
+                options=[CheckOption(id="a", text="3"), CheckOption(id="b", text="4"),
+                         CheckOption(id="c", text="10")],
+                correct_id="b",
+                explain_correct="i takes the values 0, 3, 6 and 9, so the body runs four times.",
+                explain_incorrect="List every value i takes while the condition holds, then count them.",
+                concept="Control Flow",
+            ),
+        ],
+    )
+    recursion = Section(
+        id="s3", title="Functions and recursion", concept="Recursion",
+        tier=tiers["Recursion"], weight=56, status="written",
+        one_line="A recursive function calls itself on a smaller input until it reaches a base case.",
+        items=[
+            ProseItem(
+                id="s3-i1",
+                paragraphs=[
+                    Paragraph(
+                        text="A **function** names a block of code so it can be called with "
+                             "different inputs. A **recursive** function calls itself on a "
+                             "smaller input until it reaches a **base case**.",
+                        citations=cited,
+                    ),
+                    Paragraph(
+                        text="The midterm's hardest questions are recursive traces. Write one "
+                             "line per call, then fill in the return values from the bottom up.",
+                    ),
+                ],
+                summary="A recursive function calls itself on a smaller input and stops at a base case.",
+            ),
+            ConceptMapBlock(
+                id="s3-i2", title="What this section builds on",
+                nodes=[
+                    ConceptMapNode(concept="Variables and Types", step="Foundations"),
+                    ConceptMapNode(concept="Control Flow", step="Before this"),
+                    ConceptMapNode(concept="Recursion", step="This section"),
+                    ConceptMapNode(concept="Algorithms", step="Up next"),
+                ],
+            ),
+            CheckBlock(
+                id="s3-i3",
+                question="factorial(n) returns 1 when n is 0, and n times factorial(n - 1) "
+                         "otherwise. What does factorial(3) return?",
+                options=[CheckOption(id="a", text="3"), CheckOption(id="b", text="6"),
+                         CheckOption(id="c", text="9")],
+                correct_id="b",
+                explain_correct="3 times 2 times 1 times 1 is 6: each call multiplies n by the call below it.",
+                explain_incorrect="Write out the four calls, from factorial(3) down to factorial(0), "
+                                  "then multiply on the way back up.",
+                concept="Recursion",
+            ),
+        ],
+    )
+    return GuideContent(
+        title="Variables, control flow and functions",
+        deck="What the midterm covers, with the most room for recursion, your weakest topic here.",
+        takeaways=[
+            "A variable is a name bound to a value: = binds, == compares.",
+            "Trace a loop by listing the values its variable takes.",
+            "Every recursive function needs a base case it is certain to reach.",
+        ],
+        # Shares follow mastery (mastered 1, learning 3, struggling 5 of 9).
+        sections=[variables, control_flow, recursion],
+        sources=sources,
+        scope_label="Midterm Exam",
+    )
 
 
 def seed_study_guides(writer=h) -> None:
-    for guide_id, user_id, off_id, exam_id, generated_at, content in _STUDY_GUIDES:
-        writer.insert_if_absent(
-            "study_guides",
-            guide_id,
-            {
-                "user_id": user_id,
-                "offering_id": off_id,
-                "exam_id": exam_id,
-                "generated_at": generated_at,
-                # 🔒 content (#518)
-                "content": encrypt_json(content),
-            },
-        )
+    sources = _guide_sources(writer, USER_ACTIVE, OFF_CS_F25)
+    writer.insert_if_absent(
+        "study_guides",
+        GUIDE_CS_MIDTERM,
+        {
+            "user_id": USER_ACTIVE,
+            "offering_id": OFF_CS_F25,
+            "exam_id": _GUIDE_EXAM,
+            "scope_kind": "exam",
+            "goal": "exam_prep",
+            "depth": "standard",
+            "use_history": True,
+            "status": "ready",
+            "format": GUIDE_FORMAT,
+            "material_ids": [source.id.removeprefix("document:") for source in sources],
+            "generated_at": _GUIDE_MADE_AT,
+            "created_at": _GUIDE_MADE_AT,
+            # 🔒 content (#518)
+            "content": encrypt_json(_cs_midterm_guide(sources).model_dump(mode="json"),
+                                    bind=bind("study_guides", "content", GUIDE_CS_MIDTERM)),
+        },
+    )
 
 
 def seed_room_summaries(writer=h) -> None:
@@ -656,7 +914,8 @@ def seed_room_summaries(writer=h) -> None:
     # can't go through insert_if_absent.
     writer.insert_by_keys("room_summaries", {
         "room_id": ROOM_STUDY,
-        "summary": encrypt_if_present("The group is reviewing recursion before the midterm."),
+        "summary": encrypt_if_present("The group is reviewing recursion before the midterm.",
+                                      bind=bind("room_summaries", "summary", ROOM_STUDY)),
         "member_hash": "rich-member-hash-v1",
     }, "room_id")
 
@@ -731,6 +990,9 @@ def seed_offering_concept_stats(writer=h) -> None:
                 "pct_struggling": 0.5,
                 "pct_unexplored": 0.25,
                 "common_misconceptions": misconceptions,
+                # M8: stamped as aggregated under the distinct-student floor,
+                # which is the only kind of row the quiz's reader serves.
+                "min_mistake_contributors": 3,
                 # No `effective_explanations` key — #572, see
                 # services/course_context_service.py::_parse_quiz_context_to_arrays.
                 "prerequisite_gaps": [],
@@ -750,8 +1012,11 @@ def seed_quiz(writer=h) -> None:
                 "total": total,
                 "difficulty": difficulty,
                 # 🔒 questions_json / answers_json
-                "questions_json": encrypt_json(questions),
-                "answers_json": encrypt_json(answers) if answers is not None else None,
+                "questions_json": encrypt_json(
+                    questions, bind=bind("quiz_attempts", "questions_json", qa_id)),
+                "answers_json": encrypt_json(
+                    answers, bind=bind("quiz_attempts", "answers_json", qa_id),
+                ) if answers is not None else None,
                 "completed_at": completed_at,
             },
         )
@@ -764,7 +1029,9 @@ def seed_quiz(writer=h) -> None:
             "user_id": USER_ACTIVE,
             "concept_node_id": "rich-node-cs-variables",
             "context_json": encrypt_json(
-                {"misconceptions": ["confuses = with =="], "asked": 2}
+                {"misconceptions": ["confuses = with =="], "asked": 2},
+                bind=bind("quiz_context", "context_json",
+                          (USER_ACTIVE, "rich-node-cs-variables")),
             ),
         },
     )
@@ -781,8 +1048,9 @@ def seed_feedback(writer=h) -> None:
             "type": "global",
             "rating": 4,
             "selected_options": ["tutor"],
-            "comment": encrypt_if_present("The tutor cited the wrong lecture."),
-            "topic": encrypt_if_present("chat"),
+            "comment": encrypt_if_present("The tutor cited the wrong lecture.",
+                                          bind=bind("feedback", "comment", "rich-fb-1")),
+            "topic": encrypt_if_present("chat", bind=bind("feedback", "topic", "rich-fb-1")),
         },
     )
     writer.insert_if_absent(
@@ -790,8 +1058,11 @@ def seed_feedback(writer=h) -> None:
         "rich-issue-1",
         {
             "user_id": USER_ACTIVE,
-            "topic": encrypt_if_present("Upload stuck"),
-            "description": encrypt_if_present("Syllabus upload spins forever."),
+            "topic": encrypt_if_present("Upload stuck",
+                                        bind=bind("issue_reports", "topic", "rich-issue-1")),
+            "description": encrypt_if_present(
+                "Syllabus upload spins forever.",
+                bind=bind("issue_reports", "description", "rich-issue-1")),
             "screenshot_urls": [],
         },
     )
@@ -837,7 +1108,8 @@ def seed_sessions(writer=h) -> None:
                 "topic": topic,
                 "name": name,
                 # 🔒 summary_json
-                "summary_json": encrypt_json(summary),
+                "summary_json": encrypt_json(summary,
+                                             bind=bind("sessions", "summary_json", sess_id)),
             },
         )
 
@@ -849,7 +1121,8 @@ def seed_sessions(writer=h) -> None:
                 "session_id": sess_id,
                 "role": role,
                 # 🔒 content
-                "content": encrypt_if_present(content),
+                "content": encrypt_if_present(content,
+                                              bind=bind("messages", "content", sess_id)),
             },
         )
 
@@ -859,7 +1132,8 @@ _SUMMARY_ORDER = [
     "enrollments", "graph_nodes", "graph_edges", "node_mastery_events",
     "gradebook_categories", "assignments", "rooms", "room_members", "room_messages",
     "room_summaries",
-    "notes", "documents", "course_chunks", "flashcards", "study_guides", "quiz_attempts", "quiz_context",
+    "notes", "documents", "course_chunks", "topic_checklists",
+    "flashcards", "study_guides", "quiz_attempts", "quiz_context",
     "sessions", "messages", "feedback", "issue_reports",
     "offering_concept_stats",
 ]
@@ -869,6 +1143,7 @@ def _seed_dataset(writer=h) -> None:
     for step in (
         seed_school, seed_courses, seed_offerings, seed_users, seed_enrollments,
         seed_graph, seed_gradebook, seed_rooms, seed_notes_documents,
+        seed_topic_checklists,
         seed_flashcards, seed_study_guides, seed_room_summaries, seed_quiz,
         seed_offering_concept_stats, seed_feedback, seed_sessions,
     ):
@@ -889,7 +1164,8 @@ def _seed_owner_chunks(writer) -> None:
             "doc_id": doc_id,
             "uploader_id": USER_ACTIVE,
             "chunk_index": 0,
-            "chunk_text": encrypt_if_present(extracted),
+            "chunk_text": encrypt_if_present(
+                extracted, bind=bind("course_chunks", "chunk_text", f"{doc_id}-chunk-0")),
             "embedding": embedding,
             "category": category,
             "visibility": "private",
@@ -897,14 +1173,44 @@ def _seed_owner_chunks(writer) -> None:
         })
 
 
+def _seed_owner_study(owner_id: str, *, report: bool) -> None:
+    """Add the study dataset to an account's first seed. Never raises.
+
+    A new account must not sit on /setting-up for data it can do without, so
+    a failure is one warning line and the account goes on with the rich copy
+    alone. No traceback: the E2E logscan oracle reads one as a crash.
+    """
+    try:
+        written = seed_local_study.apply(owner_id, report=report)
+    except Exception as exc:
+        reason = " ".join(f"{type(exc).__name__}: {exc}".split())[:_MAX_REASON_CHARS]
+        logger.warning(
+            "[local-seed] the study dataset was not written onto %s (%s); the account keeps "
+            "the rich sample data. To retry: python -m db.seed_local_study --owner-user-id %s",
+            owner_id, reason, owner_id,
+        )
+        return
+    logger.info(
+        "[local-seed] study dataset written onto %s (%d rows)", owner_id, sum(written.values()),
+    )
+
+
 def seed_owner(owner: dict, *, report: bool = True) -> int:
-    """Copy the rich dataset onto an existing account; returns rows created.
+    """Copy the rich dataset onto an existing account; returns the rich rows created.
 
     `owner` is a users row with at least `id` (and `onboarding_completed`).
     The CLI prints the per-table summary (`report=True`); the backend's
     local-seed watcher passes report=False and logs the count instead.
     Raises — never exits — when the backend is not local, so a watcher thread
     gets an ordinary exception. Not re-entrant: h.counts is process-global.
+
+    An account that is not onboarded yet is on its first seed: it also gets
+    the study dataset, and then onboarding is completed, as the last write.
+    That one column is the whole "once" rule. The study seed rewrites its rows
+    (new dates, answers cleared), so it must never run on an account the
+    developer has been let into: a later run here finds the account onboarded
+    and adds missing rich rows only. A first seed that stopped before the last
+    write is the one case that repeats it, on an account nobody has used yet.
     """
     if not h.is_local_backend():
         raise RuntimeError("REFUSING: the owner seed only writes to a local stack.")
@@ -918,6 +1224,7 @@ def seed_owner(owner: dict, *, report: bool = True) -> int:
     # onboarding only after seeding succeeds lets a fresh sign-in see the dashboard
     # (and is what tells the watcher a seed finished rather than stopped midway).
     if not owner.get("onboarding_completed"):
+        _seed_owner_study(owner["id"], report=report)
         table("users").update({"onboarding_completed": True}, filters={"id": f"eq.{owner['id']}"})
     if report:
         return h.print_summary(_SUMMARY_ORDER, f"Seed summary (owner {owner['id']}):")
@@ -932,6 +1239,11 @@ def main(argv: list[str] | None = None) -> None:
     # Programmatic callers (integration/reset fixtures) retain the no-flag seed.
     args = parser.parse_args(argv if argv is not None else [])
     _guard_local()
+    # Abort unless ENCRYPTION_KEY opens this database's key canary
+    # (services/encryption_canary.py): a wrong key writes unreadable rows.
+    # A fresh local database is seeded before any backend boots, so an empty
+    # canary is seeded here, as the first boot would.
+    abort_unless_key_verified("db.seed_local_rich", allow_seed=True)
     h.reset_counts()
     if args.owner_email is None and args.owner_user_id is None:
         _seed_dataset()

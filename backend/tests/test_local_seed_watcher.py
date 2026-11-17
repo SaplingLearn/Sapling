@@ -2,7 +2,8 @@
 
 On a developer's local stack, a Google account that signs in gets the rich
 sample dataset copied onto it automatically — the same owner seed
-`python -m db.seed_local_rich --owner-user-id` runs by hand. Fixture accounts
+`python -m db.seed_local_rich --owner-user-id` runs by hand — and, that first
+time only, the study dataset (`db/seed_local_study.py`). Fixture accounts
 (rich-*/seed-*/it-*) are never touched, and nothing here exists outside local.
 """
 import asyncio
@@ -12,11 +13,12 @@ import pytest
 from fastapi.testclient import TestClient
 
 import db.seed_local_rich as rich
+import db.seed_local_study as study
 from db import seed_helpers as h, seed_local_owner as owner_seed
 from services import local_seed_watcher as watcher
 from services import profiles
 from services.encryption import encrypt
-from tests.seed_memory_db import MemoryDatabase
+from tests.seed_memory_db import MemoryDatabase, use_study_seed
 
 GOOGLE = "user_1001"
 GOOGLE_2 = "user_1002"
@@ -46,6 +48,7 @@ def db(local_env, monkeypatch):
     database = MemoryDatabase()
     for module in (rich, h, owner_seed, profiles, watcher):
         monkeypatch.setattr(module, "table", database.table)
+    use_study_seed(monkeypatch, database)  # a first seed writes the study dataset too
     database.rows["roles"] = [{"id": "11111111-2222-4333-8444-555555555555", "slug": "admin"}]
     database.rows["users"] = [
         _account(GOOGLE, email=encrypt("me@bu.edu"), is_approved=True),
@@ -81,6 +84,12 @@ def _enrolled(database, user_id):
     return [row for row in database.rows["enrollments"] if row["user_id"] == user_id]
 
 
+def _study_guides(database, user_id):
+    """The guides the study seed wrote (the rich copy has one of its own)."""
+    return [row for row in database.rows["study_guides"]
+            if row["user_id"] == user_id and row["id"].startswith("study-")]
+
+
 # ── the predicate ───────────────────────────────────────────────────────────
 
 
@@ -110,6 +119,40 @@ def test_a_new_google_account_gets_the_sample_dataset(db):
     assert watcher.status_for(GOOGLE) == {"state": "ready"}
 
 
+def test_a_new_google_account_gets_the_study_dataset_before_it_is_ready(db, monkeypatch):
+    """/setting-up waits on `ready`, so the study data must be in by then."""
+    real = study.apply
+    onboarded_when_applied = []
+
+    def spy(owner_id, **kwargs):
+        onboarded_when_applied.append(db.rows["users"][0]["onboarding_completed"])
+        assert watcher.status_for(owner_id) == {"state": "seeding"}
+        return real(owner_id, **kwargs)
+
+    monkeypatch.setattr(study, "apply", spy)
+    assert watcher.scan_once() == 1
+    assert onboarded_when_applied == [False]
+    assert len(_study_guides(db, GOOGLE)) > 1
+    assert watcher.status_for(GOOGLE) == {"state": "ready"}
+
+
+def test_a_failing_study_seed_does_not_hold_the_account_back(db, monkeypatch, caplog):
+    """The account is ready with the rich copy alone: one warning, no
+    traceback (the E2E logscan oracle reads one as a crash), no retry."""
+    def refused(owner_id, **_):
+        raise RuntimeError("upsert refused")
+
+    monkeypatch.setattr(study, "apply", refused)
+    with caplog.at_level("WARNING"):
+        assert watcher.scan_once() == 1
+    assert watcher.status_for(GOOGLE) == {"state": "ready"}
+    assert watcher._failures == {}
+    assert len(_enrolled(db, GOOGLE)) == 5 and _study_guides(db, GOOGLE) == []
+    [warning] = caplog.records
+    assert warning.exc_info is None and "upsert refused" in warning.getMessage()
+    assert watcher.scan_once() == 0
+
+
 def test_fixture_accounts_are_never_touched(db, seeds):
     db.rows["users"] = [u for u in db.rows["users"] if u["id"] != GOOGLE]
     assert watcher.scan_once() == 0
@@ -125,6 +168,7 @@ def test_fixture_accounts_keep_their_rows_when_a_google_account_is_seeded(db):
 
 def test_an_already_seeded_account_is_left_alone_after_a_restart(db, monkeypatch):
     watcher.scan_once()
+    assert _study_guides(db, GOOGLE)  # the study data too: it is never re-dated or reset
     watcher._reset()  # a backend restart forgets everything in-process
     db.writes.clear()
     calls = []
@@ -187,7 +231,9 @@ def test_a_seed_interrupted_before_onboarding_completed_is_finished(db, monkeypa
     watcher._reset()  # a restart, so no backoff stands in the way
 
     assert watcher.scan_once() == 1
-    assert len(db.rows["documents"]) == 3
+    rich_documents = [row for row in db.rows["documents"] if not row["id"].startswith("study-")]
+    assert len(rich_documents) == 3
+    assert _study_guides(db, GOOGLE)  # the pass that finishes the copy adds the study data
     assert db.rows["users"][0]["onboarding_completed"] is True
 
 

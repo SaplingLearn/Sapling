@@ -54,6 +54,6 @@ Consolidate the **selector / sort / filter / view-toggle / tab** controls across
 - Stale `.next/types/validator.ts` typecheck errors appear after route moves — harmless, regenerate on build; grep them out of typecheck output.
 - `frontend/eslint-suppressions.json` keys on file **paths**. If you move/rename a file that has grandfathered (suppressed) lint errors, re-home its suppression entry to the new path or CI's eslint step fails (this exact thing bit us in Phase 1).
 - Shell is **fish** — quote grep globs: `grep -r 'x' --include='*.tsx'`.
-- Reference docs on the branch: `docs/frontend-component-consistency-audit.md`, `docs/superpowers/specs/2026-06-30-component-system-phase2-design.md`, `docs/changes-tour.html` (guided tour of changes), `docs/button-shape-comparison.html`.
+- Reference docs on the branch: `docs/audits/frontend-component-consistency-audit.md`, `docs/superpowers/specs/2026-06-30-component-system-phase2-design.md`, `docs/audits/changes-tour.html` (guided tour of changes), `docs/audits/button-shape-comparison.html`.
 
 Start by reading `components/ui/Toggle.tsx` and 2–3 of the inventory files to ground yourself, then ask the user the 4 forks above before editing.

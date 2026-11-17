@@ -27,8 +27,9 @@ from services.gradescope.credentials import (
     _now_iso,
     _write_connection_state,
     connection_status,
+    retire_stored_password,
+    reveal,
     save_cookie_creds,
-    save_password_creds,
 )
 from services.gradescope.errors import (
     AmbiguousEnrollment,
@@ -72,6 +73,7 @@ __all__ = [
     "jobs",
     "link_course",
     "linked_course",
+    "retire_stored_password",
+    "reveal",
     "save_cookie_creds",
-    "save_password_creds",
 ]

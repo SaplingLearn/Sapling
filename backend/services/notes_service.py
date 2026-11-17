@@ -24,6 +24,7 @@ import httpx
 
 from db.connection import table
 from services.encryption import (
+    bind,
     decrypt_if_present,
     encrypt_if_present,
 )
@@ -41,9 +42,10 @@ def _now_iso() -> str:
 
 def _decrypt_row(row: dict) -> dict:
     out = dict(row)
-    out["title"] = decrypt_if_present(out.get("title")) or ""
-    out["body"] = decrypt_if_present(out.get("body")) or ""
-    out["last_summary"] = decrypt_if_present(out.get("last_summary"))
+    out["title"] = decrypt_if_present(out.get("title"), bind=bind("notes", "title", row)) or ""
+    out["body"] = decrypt_if_present(out.get("body"), bind=bind("notes", "body", row)) or ""
+    out["last_summary"] = decrypt_if_present(
+        out.get("last_summary"), bind=bind("notes", "last_summary", row))
     out["tags"] = list(out.get("tags") or [])
     return out
 
@@ -61,8 +63,8 @@ async def create_note(
         "id": note_id,
         "user_id": user_id,
         "offering_id": offering_id,
-        "title": encrypt_if_present(title) if title else None,
-        "body": encrypt_if_present(body) if body else None,
+        "title": encrypt_if_present(title, bind=bind("notes", "title", note_id)) if title else None,
+        "body": encrypt_if_present(body, bind=bind("notes", "body", note_id)) if body else None,
         "tags": list(tags or []),
         "created_at": now,
         "updated_at": now,
@@ -91,6 +93,15 @@ async def get_note(note_id: str, user_id: str) -> dict | None:
     if not rows:
         return None
     return _decrypt_row(rows[0])
+
+
+def tutor_topic(note: dict) -> str:
+    """The topic Send to tutor opens the tutor on: the first line of the
+    note's title, at most 80 characters ("Untitled note" without one). A tutor
+    start re-derives it to tell the note's title from a typed topic
+    (services/tutor/note_topic.py), so both sides read it here."""
+    title = (note.get("title") or "").strip() or "Untitled note"
+    return title.splitlines()[0][:80].strip()
 
 
 async def list_notes(
@@ -123,9 +134,11 @@ async def update_note(
 ) -> dict | None:
     update: dict[str, Any] = {"updated_at": _now_iso()}
     if "title" in patch:
-        update["title"] = encrypt_if_present(patch["title"]) if patch["title"] else None
+        update["title"] = (encrypt_if_present(patch["title"], bind=bind("notes", "title", note_id))
+                           if patch["title"] else None)
     if "body" in patch:
-        update["body"] = encrypt_if_present(patch["body"]) if patch["body"] else None
+        update["body"] = (encrypt_if_present(patch["body"], bind=bind("notes", "body", note_id))
+                          if patch["body"] else None)
     if "tags" in patch:
         update["tags"] = list(patch["tags"] or [])
     if "offering_id" in patch:
@@ -163,7 +176,8 @@ async def save_summary(
 ) -> dict | None:
     """Persist the latest `/summarize` agent output on the note row."""
     update = {
-        "last_summary": encrypt_if_present(summary) if summary else None,
+        "last_summary": (encrypt_if_present(summary, bind=bind("notes", "last_summary", note_id))
+                         if summary else None),
         "last_summary_at": _now_iso(),
         "updated_at": _now_iso(),
     }
