@@ -62,13 +62,16 @@ def _count(db_conn, table, column, sid) -> int:
 
 def test_a_loop_session_started_on_one_worker_is_answered_on_another(authed_client, db_conn):
     from services import tutor_sessions as ts
-    from services.encryption import decrypt_if_present
+    from services.encryption import bind, decrypt_if_present
 
     sid, greeting = _start(authed_client)
     assert ts.PENDING_SESSIONS == {}, "flag on: nothing pending in this worker's memory"
     row = _pending_row(db_conn, sid)
     assert row["state"] == "pending" and row["loop_state"] == {}, "a loop session, empty document"
-    assert row["assistant_reply"] != greeting and decrypt_if_present(row["assistant_reply"]) == greeting
+    # M13: sealed for the messages row the materialisation copies it into.
+    cell = bind("messages", "content", sid)
+    assert row["assistant_reply"] != greeting
+    assert decrypt_if_present(row["assistant_reply"], bind=cell) == greeting
     assert _count(db_conn, "sessions", "id", sid) == 0, "still lazy"
 
     _other_worker()
@@ -90,7 +93,8 @@ def test_a_loop_session_started_on_one_worker_is_answered_on_another(authed_clie
     msgs = db_conn.execute(
         "SELECT role, content FROM messages WHERE session_id = %s ORDER BY created_at", (sid,)
     ).fetchall()
-    assert [(m["role"], decrypt_if_present(m["content"])) for m in msgs] == [("assistant", greeting)]
+    assert [(m["role"], decrypt_if_present(m["content"], bind=cell)) for m in msgs] == [
+        ("assistant", greeting)]
     assert _pending_row(db_conn, sid) is None, "materialised: the pending row is gone"
 
     _other_worker()

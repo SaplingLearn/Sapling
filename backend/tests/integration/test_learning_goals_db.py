@@ -127,7 +127,13 @@ def test_goal_http_write_encrypts_prose_and_roundtrips_from_persisted_json(authe
     persisted = row["loop_state"]
     assert secret not in json.dumps(persisted, ensure_ascii=False)
     assert "text" not in persisted["goal"]
-    assert decrypt_if_present(persisted["goal"]["text_encrypted"]) == secret
+    from services.encryption import nested_bind
+
+    # M13: sealed for this session's loop_state, and opens nowhere else.
+    goal_cell = nested_bind("sessions", "loop_state", "goal.text_encrypted", session_id)
+    assert decrypt_if_present(persisted["goal"]["text_encrypted"], bind=goal_cell) == secret
+    other_cell = nested_bind("sessions", "loop_state", "goal.text_encrypted", "another-session")
+    assert decrypt_if_present(persisted["goal"]["text_encrypted"], bind=other_cell) is None
     assert persisted["goal"]["target_node_ids"] == [target]
     assert row["loop_state_rev"] == 1 and persisted["goal_version"] == 1
     assert public_goal(load_loop_state(session_id).state.to_json()) == response.json()["goal"]
@@ -303,7 +309,7 @@ def test_concurrent_http_goal_edits_reapply_against_real_compare_and_set(monkeyp
     winner = next(r for r in responses if r["goal_version"] == 2)
     from learning.goals import public_goal
 
-    assert public_goal(raw["loop_state"]) == winner["goal"]
+    assert public_goal(raw["loop_state"], session_id) == winner["goal"]
 
 
 def test_selected_goal_reads_more_than_1000_learner_states_without_prior_fallback(db_conn):

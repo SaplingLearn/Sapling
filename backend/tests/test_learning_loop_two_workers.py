@@ -21,7 +21,7 @@ import pytest
 from learning import turn_activity
 from learning.ladder import Rung
 from services import tutor_sessions as ts
-from services.encryption import decrypt_if_present
+from services.encryption import bind, decrypt_if_present
 from services.tutor import pending as tutor_pending
 from tests import test_learn_loop_routes as routes
 from tests.split_patches import patch_tutor
@@ -144,7 +144,9 @@ def test_a_quiz_ask_session_started_on_one_worker_continues_on_the_other(gate_on
     doc = {**quiz_ask_state("node-1"), "open_question": True}
     row = db.store(sid)
     assert row["state"] == "pending" and row["loop_state"] == doc
-    assert row["assistant_reply"] != greeting and decrypt_if_present(row["assistant_reply"]) == greeting
+    cell = bind("messages", "content", sid)  # M13: sealed for the row it is copied into
+    assert row["assistant_reply"] != greeting
+    assert decrypt_if_present(row["assistant_reply"], bind=cell) == greeting
     assert db.rows["sessions"] == [], "still lazy: no sessions row before the first loop write"
 
     with b.serving():
@@ -169,7 +171,7 @@ def test_a_quiz_ask_session_started_on_one_worker_continues_on_the_other(gate_on
     assert [s["id"] for s in db.rows["sessions"]] == [sid]
     assert db.rows["sessions"][0]["loop_state"] == doc, "the row keeps the session's document"
     assert db.rows["sessions"][0]["offering_id"] == row["offering_id"]
-    assert [(m["role"], decrypt_if_present(m["content"])) for m in db.rows["messages"]] == [
+    assert [(m["role"], decrypt_if_present(m["content"], bind=cell)) for m in db.rows["messages"]] == [
         ("assistant", greeting)
     ]
     assert db.store(sid) is None, "materialised: the pending row is gone"
@@ -204,7 +206,8 @@ def test_a_goal_session_keeps_its_encrypted_goal_across_workers(db):
     from learning.goals import encode_goal
     from models import LoopGoal
 
-    goal = encode_goal(LoopGoal(text="Prepare for my private internship", target_node_ids=["B"]))
+    goal = encode_goal(
+        LoopGoal(text="Prepare for my private internship", target_node_ids=["B"]), "s-goal")
     state = {"goal": goal, "goal_version": 1}
     a, b = Worker(), Worker()
     with a.serving():

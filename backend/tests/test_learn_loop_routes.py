@@ -44,7 +44,7 @@ from services.agent_events import SaplingEvent
 from tests.agent_run_fakes import FakeRunResult
 from tests.split_patches import patch_tutor, setattr_tutor
 from tests.db_fakes import with_async_twins
-from tests.split_patches import patch_loop
+from tests.split_patches import patch_loop, setattr_loop
 import agents.loop_tutor
 import services.loop.guard
 
@@ -937,10 +937,8 @@ def test_status_lists_the_approved_plan_for_the_session_panel(gate_on, seams, mo
     """The Tutor's session panel lists the approved plan after a reload: GET
     /status carries it (names from one graph read, kinds as proposed, the
     cursor) once a plan is approved, and nothing before — and writes nothing."""
-    import routes.learn_loop as loop
-
     seen = []
-    monkeypatch.setattr(loop, "_plan_node_names", lambda uid, ids: seen.append((uid, list(ids))) or {"n1": "Recursion", "n2": "Call stack"})
+    setattr_loop(monkeypatch, "_plan_node_names", lambda uid, ids: seen.append((uid, list(ids))) or {"n1": "Recursion", "n2": "Call stack"})
     seams.store["doc"] = {"phase": "teach", "plan": {"approved": ["n1", "n2"], "cursor": 1, "proposed_kinds": {"n1": "review"}}}
     body = client.get("/api/learn/loop/status?user_id=u1&session_id=s1").json()
     assert body["approved_plan"] == {

@@ -106,7 +106,7 @@ def _refused(db_conn, sql: str, params: tuple) -> None:
 def test_a_varied_draft_stores_its_representation_plain_and_its_context_encrypted(db_conn):
     from learning.surface import Surface, SurfacedCheckItemDraft
     from services.check_item_service import concept_surfaces
-    from services.encryption import decrypt_if_present
+    from services.encryption import bind, decrypt_if_present
 
     key = f"it varied {uuid.uuid4().hex[:8]}"
     tag = uuid.uuid4().hex[:8]
@@ -123,7 +123,8 @@ def test_a_varied_draft_stores_its_representation_plain_and_its_context_encrypte
     ).fetchone()
     assert row["surface_representation"] == "numeric"
     assert row["surface_context"] != "Phone contacts"  # ciphertext at rest
-    assert decrypt_if_present(row["surface_context"]) == "Phone contacts"
+    assert decrypt_if_present(
+        row["surface_context"], bind=bind("check_items", "surface_context", rid)) == "Phone contacts"
     assert row["apex_key"] is None and row["component_keys"] is None
     assert concept_surfaces(COURSE, key) == {row["question_hash"]: Surface("numeric", "phone contacts")}
 

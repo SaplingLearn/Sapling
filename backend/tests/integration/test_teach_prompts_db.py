@@ -85,7 +85,7 @@ def _item(fmt="mc_reason", difficulty=1):
 
 def test_a_guess_round_trips_encrypted_once_and_no_idea_stores_none(db_conn):
     from learning import prequestion_store as store
-    from services.encryption import decrypt_json
+    from services.encryption import bind, decrypt_json
 
     session = f"it-session-{uuid.uuid4().hex[:8]}"
     posed = datetime.now(timezone.utc) - timedelta(minutes=1)
@@ -105,7 +105,8 @@ def test_a_guess_round_trips_encrypted_once_and_no_idea_stores_none(db_conn):
         ("it-node-2", True, "free", 2),
     ]
     assert "it chains" not in rows[0]["guess_json"]
-    assert decrypt_json(rows[0]["guess_json"]) == {"option": "A", "reason": "it chains"}
+    cell = bind("learning_prequestions", "guess_json", (USER, session, "it-node-1"))  # M13
+    assert decrypt_json(rows[0]["guess_json"], bind=cell) == {"option": "A", "reason": "it chains"}
     assert rows[1]["guess_json"] is None
     got = store.releases(USER, "it-node-1", since=posed - timedelta(hours=1))
     assert [r["shape"] for r in got] == [("mc_reason", 1)]
@@ -136,7 +137,7 @@ def test_a_prompt_closes_with_its_reply_encrypted_and_its_length(db_conn):
     import psycopg
 
     from learning import self_explain_store as store
-    from services.encryption import decrypt_if_present
+    from services.encryption import bind, decrypt_if_present
 
     pid = uuid.uuid4().hex
     prompt = {"id": pid, "node_id": "it-node-1", "juncture": "worked_example", "question_hash": "it-q",
@@ -159,7 +160,9 @@ def test_a_prompt_closes_with_its_reply_encrypted_and_its_length(db_conn):
     ).fetchone()
     assert row["status"] == "replied" and row["reply_chars"] == len("Each step halves it.")
     assert row["juncture"] == "worked_example" and row["rung"] == 4
-    assert "halves" not in row["reply_text"] and decrypt_if_present(row["reply_text"]) == "Each step halves it."
+    cell = bind("learning_self_explanations", "reply_text", pid)  # M13
+    assert "halves" not in row["reply_text"]
+    assert decrypt_if_present(row["reply_text"], bind=cell) == "Each step halves it."
     # a prompt whose serve-time row was never written is inserted closed
     missing = {**prompt, "id": uuid.uuid4().hex}
     assert store.close_prompt(missing, user_id=USER, session_id="it-session", course_id=None,
