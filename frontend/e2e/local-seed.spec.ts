@@ -15,7 +15,9 @@
  * the OAuth redirect would leave a first sign-in: a fresh users row
  * (support/db.ts::insertGoogleAccount) and the handoff token test-login mints
  * alongside the session (#756: the only kind the session BFF exchanges),
- * handed to the same-tab /auth/callback as `auth_token`.
+ * handed to the same-tab /auth/callback as `auth_token`. The handoff is bound
+ * to a sign-in nonce (sec2 M2), so the browser gets that nonce's cookie first,
+ * as /auth/start would have set it.
  *
  * Timing-robust by design: the watcher idles on a 30s poll but every
  * `pending` status answer nudges it awake, so it can finish the seed before
@@ -48,10 +50,13 @@ test("a new local Google account is seeded with the sample data and lands on the
   const googleId = `e2e${randomUUID().replace(/-/g, "")}`;
   const userId = `user_${googleId}`;
   await insertGoogleAccount(userId, googleId);
-  const { handoffToken } = await mintSessionToken(userId);
+  const { handoffToken, signinNonce, signinCookieName } = await mintSessionToken(userId);
 
   // A clean browser: not the USER_ACTIVE storageState every spec starts from.
   const context = await browser.newContext({ storageState: { cookies: [], origins: [] } });
+  await context.addCookies([
+    { name: signinCookieName, value: signinNonce, url: FRONTEND_URL, httpOnly: true, sameSite: "Lax" },
+  ]);
   const page = await context.newPage();
   const visited: string[] = [];
   page.on("framenavigated", (frame) => {
@@ -60,7 +65,6 @@ test("a new local Google account is seeded with the sample data and lands on the
 
   try {
     const callback = new URL("/auth/callback", FRONTEND_URL);
-    callback.searchParams.set("user_id", userId);
     callback.searchParams.set("is_approved", "true");
     callback.searchParams.set("auth_token", handoffToken);
     await page.goto(callback.toString());
@@ -150,18 +154,28 @@ test("a new local Google account is seeded with the sample data and lands on the
     // And under THIS stack's key: the backend's own helper decrypts a study
     // row's text columns to something else. It hands an undecryptable value
     // back unchanged, so "differs from what is stored" is the whole proof.
-    const [stored] = await queryRaw(
-      `SELECT
-         (SELECT front FROM flashcards
-           WHERE user_id = $1 AND id LIKE 'study-%' ORDER BY id LIMIT 1) AS flashcard,
-         (SELECT summary FROM documents
-           WHERE user_id = $1 AND id LIKE 'study-%' ORDER BY id LIMIT 1) AS summary,
-         (SELECT m.content FROM messages m JOIN sessions s ON s.id = m.session_id
-           WHERE s.user_id = $1 AND m.id LIKE 'study-%' ORDER BY m.id LIMIT 1) AS message`,
+    const [row] = await queryRaw(
+      `SELECT f.id AS flashcard_id, f.front AS flashcard,
+              d.id AS document_id, d.summary AS summary,
+              m.session_id AS message_session, m.content AS message
+         FROM (SELECT id, front FROM flashcards
+                WHERE user_id = $1 AND id LIKE 'study-%' ORDER BY id LIMIT 1) f,
+              (SELECT id, summary FROM documents
+                WHERE user_id = $1 AND id LIKE 'study-%' ORDER BY id LIMIT 1) d,
+              (SELECT m.session_id, m.content FROM messages m JOIN sessions s ON s.id = m.session_id
+                WHERE s.user_id = $1 AND m.id LIKE 'study-%' ORDER BY m.id LIMIT 1) m`,
       [userId],
     );
-    const atRest = [stored.flashcard, stored.summary, stored.message] as string[];
-    const decrypted = await decryptTexts(atRest);
+    const stored = row as Record<
+      "flashcard_id" | "flashcard" | "document_id" | "summary" | "message_session" | "message",
+      string
+    >;
+    const atRest = [stored.flashcard, stored.summary, stored.message];
+    const decrypted = await decryptTexts([
+      { value: stored.flashcard, table: "flashcards", column: "front", row: stored.flashcard_id },
+      { value: stored.summary, table: "documents", column: "summary", row: stored.document_id },
+      { value: stored.message, table: "messages", column: "content", row: stored.message_session },
+    ]);
     for (const [index, plain] of decrypted.entries()) {
       expect(plain, "a study row's text decrypts with the stack's key").toBeTruthy();
       expect(plain).not.toBe(atRest[index]);

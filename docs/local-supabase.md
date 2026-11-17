@@ -1,10 +1,10 @@
-# Local Supabase (Podman)
+# Local Supabase (Docker or Podman)
 
 Run the whole app — frontend → backend → database — against a **local** Supabase
 stack in containers, instead of testing against the live staging database.
 
-The stack (Postgres, PostgREST, Storage, Auth, Studio) runs under **rootless
-Podman** via the Supabase CLI. The backend and frontend run on the host so you
+The stack (Postgres, PostgREST, Storage, Auth, Studio) runs under Docker Desktop
+on Windows or rootless Podman on Linux via the Supabase CLI. The backend and frontend run on the host so you
 keep hot-reload.
 
 ## Prerequisites (one-time, host)
@@ -22,6 +22,47 @@ paru -S supabase-bin      # or: yay -S supabase-bin
 ```
 
 Verify: `supabase --version && podman ps`.
+
+### Windows (Docker Desktop)
+
+Install Docker Desktop with its WSL 2 backend. If WSL is missing, run
+`wsl --install --no-distribution` in an administrator PowerShell, then restart
+Windows when requested. Start Docker Desktop and wait for its engine to be ready.
+Node.js 20+ lets you run the Supabase CLI through `npx` without a global install.
+
+First, from PowerShell at the repository root (after creating the backend venv
+as described below), copy both local env examples. They keep both apps on the
+local database with matching `SESSION_SECRET` values:
+
+```powershell
+Copy-Item backend/.env.local.example backend/.env
+Copy-Item frontend/.env.local.example frontend/.env.local
+```
+
+Copy only during first-time setup; preserve existing Google OAuth credentials
+when updating an existing env file. Fill in those credentials and `GEMINI_API_KEY`.
+
+Then start the stack, migrate and seed:
+
+```powershell
+npx --yes supabase start
+$env:SUPABASE_DB_URL = 'postgresql://postgres:postgres@127.0.0.1:54322/postgres'
+Push-Location backend
+.\venv\Scripts\python.exe -m db.migrate
+Pop-Location
+docker exec supabase_db_sapling psql -U postgres -d postgres -c "NOTIFY pgrst, 'reload schema';"
+Push-Location backend
+.\venv\Scripts\python.exe -m db.seed_staging
+Pop-Location
+```
+
+The backend needs the database stack running, even when `ANTHROPIC_API_KEY` is
+blank. A backend health response alone does not confirm database connectivity.
+If database requests return `401`, run `npx --yes supabase status -o env` and
+copy that local stack's `SERVICE_ROLE_KEY` into backend `SUPABASE_SERVICE_KEY`,
+and `ANON_KEY` into frontend `NEXT_PUBLIC_SUPABASE_ANON_KEY`. Both Supabase URLs
+must point to the local API. Keep those values in the ignored env files.
+Restart both the backend and frontend after changing env files.
 
 The dev scripts (`scripts/local-up.sh`, `scripts/local-db-reset.sh`) run
 `db.migrate` / `db.seed_staging` through `backend/venv/bin/python`, so create the
@@ -81,12 +122,13 @@ redirect at `http://localhost:5000/api/auth/google/callback`. **One-time setup:*
 add that URI (and `http://localhost:5000/api/calendar/callback` for calendar) to
 the OAuth client's authorized redirect URIs in the Google Cloud console.
 
-Two local-only conveniences make it "just work", both strictly `IS_LOCAL`-gated so
+Two local-only conveniences make it "just work", both gated on `APP_ENV=local` so
 staging/prod are unaffected:
 
-- `ALLOWED_EMAIL_DOMAINS=` is empty locally, so **any** Google account can sign in
-  (prod restricts to the configured domains).
-- `routes/auth.py` **auto-approves new users when `IS_LOCAL`**, so a first sign-in
+- Any Google account can sign in (there is no email-domain restriction on any
+  environment); locally `APP_ENV=local` also auto-approves it, so it skips the
+  waitlist (docs/design/open-access-gate.md).
+- `routes/auth.py` **auto-approves new users when `APP_ENV=local`**, so a first sign-in
   skips the `/pending` approval wall (prod keeps the real approval gate).
 
 The backend `SESSION_SECRET` **must equal** `frontend/.env.local`'s. Signing in with
@@ -314,9 +356,11 @@ curl -si -X POST http://localhost:5000/api/auth/test-login \
   -d '{"user_id": "seed-user-demo"}'
 ```
 
-It sets the `sapling_session` cookie (same flags as the real session) **and**
-returns the token in the JSON body, so a Playwright `globalSetup` can inject it
-with `context.addCookies([{ name: 'sapling_session', value: token, url: … }])`
+It sets the session cookie (same flags as the real session; `sapling_session`
+on this http stack, `__Host-sapling_session` on an https one — the body's
+`cookie_name` says which) **and** returns the token in the JSON body, so a
+Playwright `globalSetup` can inject it with
+`context.addCookies([{ name: body.cookie_name, value: token, url: … }])`
 and pytest can just keep the `TestClient` cookie jar. Optional `ttl` (seconds,
 clamped to `[30, 86400]`) overrides the 1-hour default.
 
@@ -418,7 +462,7 @@ npm run build:test && npm run start:test      # Next production server on :3000
 What the profile bakes in (build-time, inlined by `next build`):
 
 - `NEXT_PUBLIC_API_URL=` **empty** — every client fetch is same-origin `/api/...`,
-  so the `sapling_session` cookie always rides along (a cross-origin value drops
+  so the session cookie always rides along (a cross-origin value drops
   it → 401). Explicitly empty matters: some callers fall back to
   `http://localhost:5000` when the var is *unset*.
 - `BACKEND_URL=http://localhost:5000` — the `/api/:path*` rewrite proxies to the

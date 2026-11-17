@@ -1,34 +1,48 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { signSession, tokenTypeOf, SESSION_COOKIE_NAME, SESSION_MAX_AGE } from '@/lib/sessionToken';
-import { sanitizeCookieDomain } from '@/lib/cookieDomain';
+import { signSession, tokenTypeOf, SESSION_MAX_AGE } from '@/lib/sessionToken';
 import { resolveFrontendEnv } from '@/lib/deployGuard';
+import {
+  HOST_SESSION_COOKIE_NAME,
+  PLAIN_SESSION_COOKIE_NAME,
+  backendSessionCookieHeader,
+  hostOnlyCookieOptions,
+  legacySessionCookieClears,
+  readSessionCookie,
+  sessionCookieName,
+  usesHostCookies,
+} from '@/lib/sessionCookie';
+import { signinCookieName } from '@/lib/signinNonce';
 
 const SESSION_SECRET = process.env.SESSION_SECRET;
-// #190: validate COOKIE_DOMAIN instead of trusting env verbatim — an
-// overly-broad value would scope the session cookie across unrelated
-// subdomains. An invalid value degrades to a host-only cookie.
-//
-// The domain is derived from DEPLOY_ENV (single source of truth) so the cookie
-// is always scoped to the deployed environment — a staging build can't mint a
-// `.saplinglearn.com` cookie that leaks into prod. Falls back to the explicit
-// COOKIE_DOMAIN env when DEPLOY_ENV is unset (docker/local).
-const RESOLVED_ENV = resolveFrontendEnv(process.env as Record<string, string | undefined>);
-const COOKIE_DOMAIN = sanitizeCookieDomain(RESOLVED_ENV.cookieDomain);
 // The backend origin as seen from this server (the middleware's choice too):
-// sign-out revokes the session there before the cookie is cleared.
+// the handoff is consumed there before a session is minted, and sign-out
+// revokes the session there before the cookie is cleared.
+const RESOLVED_ENV = resolveFrontendEnv(process.env as Record<string, string | undefined>);
 const BACKEND_ORIGIN = RESOLVED_ENV.apiUrl.replace(/\/+$/, '');
-const REVOKE_TIMEOUT_MS = 5000;
+const BACKEND_TIMEOUT_MS = 5000;
 
-/**
- * The session cookie is `Secure` in a production build AND on any request
- * that arrived over https (a staging or preview worker, a local https proxy),
- * so it never rides a plain-http request from a page served over TLS.
- */
-function isSecureRequest(request: NextRequest): boolean {
-  if (process.env.NODE_ENV === 'production') return true;
-  if (request.nextUrl.protocol === 'https:') return true;
-  const forwarded = request.headers.get('x-forwarded-proto') ?? '';
-  return forwarded.split(',')[0].trim().toLowerCase() === 'https';
+// sec2 M1: the session cookie is host-only — `__Host-sapling_session` (no
+// Domain, Secure, Path=/) over https, the plain name over http (local dev,
+// E2E). lib/sessionCookie.ts owns the name and the attributes; this route only
+// sets, clears and reads through it. It used to carry
+// `Domain=.saplinglearn.com`, which sent it to (and let it be overwritten by)
+// every subdomain; signing in or out now also deletes that legacy cookie.
+
+async function backendFetch(path: string, init: RequestInit): Promise<Response | null> {
+  if (!BACKEND_ORIGIN) return null;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), BACKEND_TIMEOUT_MS);
+  try {
+    return await fetch(`${BACKEND_ORIGIN}${path}`, {
+      ...init,
+      signal: controller.signal,
+      cache: 'no-store',
+    });
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 /**
@@ -37,42 +51,42 @@ function isSecureRequest(request: NextRequest): boolean {
  * the token stops working now instead of at its `exp`. Best effort: the
  * cookie is cleared whatever happens here — a user who asked to sign out is
  * signed out of this browser either way. True when the backend confirmed.
+ * A server-side call (no Origin, no Sec-Fetch-*): the backend's CSRF origin
+ * check treats it as a non-browser client.
  */
 async function revokeOnBackend(token: string): Promise<boolean> {
-  if (!BACKEND_ORIGIN) return false;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REVOKE_TIMEOUT_MS);
-  try {
-    const res = await fetch(`${BACKEND_ORIGIN}/api/auth/logout`, {
-      method: 'POST',
-      headers: { Cookie: `${SESSION_COOKIE_NAME}=${token}` },
-      signal: controller.signal,
-      cache: 'no-store',
-    });
-    return res.ok;
-  } catch {
-    return false;
-  } finally {
-    clearTimeout(timeout);
-  }
+  const res = await backendFetch('/api/auth/logout', {
+    method: 'POST',
+    headers: { Cookie: backendSessionCookieHeader(token) },
+  });
+  return !!res?.ok;
 }
 
 /**
- * A PR preview (`*-frontend-staging.saplinglearn.workers.dev`) runs with
- * DEPLOY_ENV=staging, but the browser drops a `.staging.saplinglearn.com`
- * cookie set from that host. Scope to COOKIE_DOMAIN only when this host is
- * inside it; anywhere else the cookie is host-only.
+ * sec2 M2: consume the OAuth handoff on the backend
+ * (POST /api/auth/handoff/exchange), which checks that it is genuine, bound
+ * to THIS browser's sign-in nonce, and never exchanged before (single use
+ * across replicas). The user id it signs in, or null when refused; 'unavailable'
+ * when the backend could not answer.
  */
-function cookieDomainFor(request: NextRequest): string | undefined {
-  if (!COOKIE_DOMAIN) return undefined;
-  const host = request.nextUrl.hostname.toLowerCase();
-  const bare = COOKIE_DOMAIN.replace(/^\./, '');
-  return host === bare || host.endsWith(`.${bare}`) ? COOKIE_DOMAIN : undefined;
-}
-
-function domainAttr(request: NextRequest): { domain?: string } {
-  const domain = cookieDomainFor(request);
-  return domain ? { domain } : {};
+async function exchangeOnBackend(
+  authToken: string,
+  nonce: string | undefined,
+): Promise<string | null | 'unavailable'> {
+  const res = await backendFetch('/api/auth/handoff/exchange', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token: authToken, nonce: nonce ?? null }),
+  });
+  if (!res) return 'unavailable';
+  if (res.status >= 500) return 'unavailable';
+  if (!res.ok) return null;
+  try {
+    const body = (await res.json()) as { user_id?: unknown };
+    return typeof body.user_id === 'string' && body.user_id ? body.user_id : null;
+  } catch {
+    return 'unavailable';
+  }
 }
 
 /**
@@ -93,24 +107,23 @@ function isCrossOrigin(request: NextRequest): boolean {
   }
 }
 
-/**
- * Deploy-order transition (#756 review): a backend that predates the `typ`
- * claim mints its OAuth handoff token untyped, so a frontend deployed first
- * would refuse every sign-in. An untyped token is therefore still exchanged
- * when it is SHORT-LIVED — remaining lifetime no more than the backend's
- * handoff ceiling (`_clamp_redirect_ttl`: 600 s) plus clock skew. A 30-day
- * session can't pass, so a live session still can't be re-minted. Safe to
- * delete once every backend mints `typ` (and pre-#756 cookies have expired).
- */
-// Not exported: a route module may only export its handlers (next build).
-const LEGACY_HANDOFF_MAX_REMAINING_S = 600 + 60;
+function b64urlToBytes(s: string): Uint8Array<ArrayBuffer> {
+  const padded = s.replace(/-/g, '+').replace(/_/g, '/');
+  const pad = '='.repeat((4 - (padded.length % 4)) % 4);
+  const binary = atob(padded + pad);
+  const buf = new ArrayBuffer(binary.length);
+  const bytes = new Uint8Array(buf);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
 
 /**
- * The user id of a valid OAuth HANDOFF token (the backend's 300 s redirect
- * token, `typ=handoff`), or null. #756: a session token — typed, or an
- * untyped one with more than LEGACY_HANDOFF_MAX_REMAINING_S left — is
- * refused, so a session can never be re-minted into a fresh 30-day one and
- * extended forever; only a real sign-in mints a session.
+ * The user id of a validly signed, unexpired OAuth HANDOFF token (the backend's
+ * redirect token, `typ=handoff`), or null — a cheap local pre-check before the
+ * backend exchange, so garbage never costs a round trip. #756: a session token
+ * is refused, so a session can never be re-minted into a fresh one. sec2 M2:
+ * an untyped token is no longer exchanged (a handoff must carry `jti` and `bh`,
+ * which only a current backend mints); the backend decides the rest.
  */
 async function verifyAuthToken(token: string): Promise<string | null> {
   if (!SESSION_SECRET) return null;
@@ -119,16 +132,6 @@ async function verifyAuthToken(token: string): Promise<string | null> {
   const payloadB64 = token.slice(0, dot);
   const sigB64 = token.slice(dot + 1);
   try {
-    function b64urlToBytes(s: string): Uint8Array<ArrayBuffer> {
-      const padded = s.replace(/-/g, '+').replace(/_/g, '/');
-      const pad = '='.repeat((4 - (padded.length % 4)) % 4);
-      const binary = atob(padded + pad);
-      const buf = new ArrayBuffer(binary.length);
-      const bytes = new Uint8Array(buf);
-      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-      return bytes;
-    }
-
     const key = await crypto.subtle.importKey(
       'raw',
       new TextEncoder().encode(SESSION_SECRET),
@@ -148,14 +151,23 @@ async function verifyAuthToken(token: string): Promise<string | null> {
     const now = Math.floor(Date.now() / 1000);
     if (typeof payload.exp !== 'number' || payload.exp < now) return null;
     if (typeof payload.user_id !== 'string') return null;
-    if (payload.typ === undefined) {
-      // A pre-#756 backend's handoff (see LEGACY_HANDOFF_MAX_REMAINING_S).
-      return payload.exp - now <= LEGACY_HANDOFF_MAX_REMAINING_S ? payload.user_id : null;
-    }
-    if (tokenTypeOf(payload) !== 'handoff') return null;
+    if (payload.typ === undefined || tokenTypeOf(payload) !== 'handoff') return null;
     return payload.user_id;
   } catch {
     return null;
+  }
+}
+
+/** Delete the sign-in nonce cookie (it has done its job, or must not linger). */
+function clearSigninNonce(response: NextResponse, request: NextRequest): void {
+  response.cookies.set(signinCookieName(request), '', hostOnlyCookieOptions(request, 0));
+}
+
+/** Append the legacy domain-wide session cookie's deletions. Called LAST:
+ * `response.cookies.set` rewrites every Set-Cookie header from its own map. */
+function appendLegacyClears(response: NextResponse, request: NextRequest): void {
+  for (const header of legacySessionCookieClears(request)) {
+    response.headers.append('Set-Cookie', header);
   }
 }
 
@@ -198,17 +210,31 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  // sec2 M2: single use, and only in the browser that started this sign-in
+  // (its HttpOnly nonce cookie, set by /auth/start). Whatever the answer, the
+  // nonce is spent.
+  const nonce = request.cookies.get(signinCookieName(request))?.value;
+  const exchanged = await exchangeOnBackend(authToken, nonce);
+  if (exchanged === 'unavailable') {
+    const res = NextResponse.json({ error: 'Could not complete sign-in' }, { status: 503 });
+    clearSigninNonce(res, request);
+    return res;
+  }
+  if (exchanged === null || exchanged !== verifiedUserId) {
+    const res = NextResponse.json(
+      { error: 'This sign-in link is invalid, was already used, or was started in another browser' },
+      { status: 401 },
+    );
+    clearSigninNonce(res, request);
+    return res;
+  }
+
   try {
-    const token = await signSession(verifiedUserId);
+    const token = await signSession(exchanged);
     const response = NextResponse.json({ ok: true });
-    response.cookies.set(SESSION_COOKIE_NAME, token, {
-      httpOnly: true,
-      sameSite: 'lax',
-      secure: isSecureRequest(request),
-      path: '/',
-      maxAge: SESSION_MAX_AGE,
-      ...domainAttr(request),
-    });
+    response.cookies.set(sessionCookieName(request), token, hostOnlyCookieOptions(request, SESSION_MAX_AGE));
+    clearSigninNonce(response, request);
+    appendLegacyClears(response, request);
     return response;
   } catch {
     return NextResponse.json({ error: 'Session signing failed — SESSION_SECRET may not be configured' }, { status: 500 });
@@ -225,18 +251,18 @@ export async function DELETE(request: NextRequest) {
   // `?scope=local` only drops this browser's cookie — for the sign-in
   // callback discarding a half-made session, which must not sign the student
   // out of their other devices.
-  const token = request.cookies.get(SESSION_COOKIE_NAME)?.value;
+  const token = readSessionCookie(request)?.token;
   const localOnly = request.nextUrl.searchParams.get('scope') === 'local';
   const revoked = token && !localOnly ? await revokeOnBackend(token) : false;
 
   const response = NextResponse.json({ ok: true, revoked });
-  response.cookies.set(SESSION_COOKIE_NAME, '', {
-    httpOnly: true,
-    sameSite: 'lax',
-    secure: isSecureRequest(request),
-    path: '/',
-    maxAge: 0,
-    ...domainAttr(request),
-  });
+  // Over https: the `__Host-` cookie, then (below) every legacy plain one.
+  // Over http the plain cookie IS the session cookie.
+  response.cookies.set(
+    usesHostCookies(request) ? HOST_SESSION_COOKIE_NAME : PLAIN_SESSION_COOKIE_NAME,
+    '',
+    hostOnlyCookieOptions(request, 0),
+  );
+  appendLegacyClears(response, request);
   return response;
 }

@@ -50,6 +50,15 @@ Per-table only (useful for staged rollouts):
 
 Run from the `backend/` directory with the venv active so config + the
 encryption module + the supabase client all resolve correctly.
+
+Superseded for new work by ``db/backfill_encryption_aad.py`` (finding M13),
+which seals legacy plaintext AND re-seals v1 ciphertext in the AAD-bound v2
+envelope. This script predates the row bindings: it seals plaintext as v1
+(unbound — some of its columns, e.g. ``users.name``, no longer exist and are
+not in ``encryption.ENCRYPTED_COLUMNS``), and the AAD backfill upgrades those
+values afterwards. A v2 (``enc2:``) value is already encrypted by its prefix
+alone and is never touched: opening it unbound would fail, which this script
+would otherwise read as "plaintext" and encrypt a second time.
 """
 from __future__ import annotations
 
@@ -63,13 +72,18 @@ from collections.abc import Iterator
 from typing import Any, Callable
 
 from db.connection import page_all, table
+from services.encryption_canary import (
+    EncryptionKeyMismatch,
+    abort_unless_key_verified,
+    verify_encryption_key,
+)
 from services.encryption import (
     decrypt,
     encrypt,
     encrypt_if_present,
     encrypt_json,
+    is_v2,
 )
-from services.encryption_canary import EncryptionKeyMismatch, verify_encryption_key
 
 
 # ── Detection ─────────────────────────────────────────────────────────────────
@@ -77,9 +91,12 @@ from services.encryption_canary import EncryptionKeyMismatch, verify_encryption_
 def _is_already_encrypted(value: Any) -> bool:
     """True if `value` is a valid base64 AES-GCM ciphertext under the
     current ENCRYPTION_KEY. False for None, non-strings, plaintext,
-    or ciphertext under a different key."""
+    or ciphertext under a different key. A v2 value is ciphertext by its
+    prefix (it opens only with its row's binding)."""
     if value is None or not isinstance(value, str):
         return False
+    if is_v2(value):
+        return True
     try:
         decrypt(value)
         return True
@@ -101,6 +118,8 @@ def _looks_like_ciphertext(value: Any) -> bool:
     punctuation, short values) never does."""
     if not isinstance(value, str):
         return False
+    if is_v2(value):
+        return True
     try:
         raw = base64.b64decode(value, validate=True)
     except (binascii.Error, ValueError):
@@ -417,24 +436,24 @@ def main() -> int:
     print(f"Backfill mode: {mode}")
     print(f"Tables: {', '.join(targets)}")
     print()
+    if args.apply:
+        # Every value this key cannot decrypt is treated as plaintext and
+        # encrypted: under the wrong key that double-encrypts the whole
+        # environment beyond recovery. services/encryption_canary.py.
+        abort_unless_key_verified("db.backfill_encryption")
 
     # With the wrong key every cell fails to decrypt, which is exactly what
-    # legacy plaintext looks like. seed=False: this script must never write the
-    # canary itself (a wrong key would then lock the real backend out).
+    # legacy plaintext looks like. --apply was gated above (a positive match or
+    # exit 2). A dry run only reads, so it may go on unconfirmed, but says so.
+    # seed=False: this script must never write the canary itself (a wrong key
+    # would then lock the real backend out).
     try:
         key_check = verify_encryption_key(seed=False)
     except EncryptionKeyMismatch as e:
         print(f"REFUSING to run: {e}")
         return 2
-    if key_check == "skipped":
-        # "skipped" is no canary OR a canary read that failed, never a confirmed
-        # match. A dry run only reads, so it may go on; --apply with an
-        # unconfirmed key could encrypt every plaintext cell under the wrong one.
-        if args.apply:
-            print("REFUSING to --apply: the key canary could not be read, so ENCRYPTION_KEY is not")
-            print("confirmed for this database. Retry once it reads; a database no backend has")
-            print("booted against has no canary yet (boot the backend once to seed it).")
-            return 2
+    if key_check in ("skipped", "absent"):
+        # "absent" = no canary yet; "skipped" = the canary read failed.
         print("WARNING: this database has no readable key canary, so the key could not be")
         print("         confirmed. Check SUPABASE_URL and ENCRYPTION_KEY are the same environment's.")
         print()

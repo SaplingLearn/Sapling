@@ -14,17 +14,23 @@ from typing import Optional
 
 from db.connection import table
 from db.scope import runs_as_service
-from services.encryption import decrypt_if_present
+from services.encryption import bind, decrypt_if_present
+from services.open_access import access_filter, gate_open
 from services.profiles import get_display_names
 
 _DEFAULT_PAGE_SIZE = 50
 _MAX_PAGE_SIZE = 200
 
 # After migration 0024 the display `name` lives on user_profiles, not users.
-_USERS_COLS = "id,email,is_approved,created_at,last_sign_in_at"
-# Admin → Users lists the people who have access. Everyone waiting on approval
-# lives in Admin → Allowlist (the waitlist), so the two pages never overlap.
-_APPROVED = {"is_approved": "eq.true"}
+_USERS_COLS = "id,email,is_approved,open_access_at,created_at,last_sign_in_at"
+
+
+def _with_access() -> dict[str, str]:
+    """Admin → Users lists the people who have access: approved, or in through
+    the open gate while it is open (services/open_access.py; their rows carry
+    `open_access_at`, which the page shows as an "open access" chip).
+    Everyone waiting on approval lives in Admin → Allowlist (the waitlist)."""
+    return access_filter(open_now=gate_open())
 
 # base64(12-byte nonce || ciphertext || 16-byte GCM tag): the shortest blob
 # services/encryption.py can write. A decrypted email/name never looks like one.
@@ -96,11 +102,22 @@ def _still_encrypted(value: Optional[str]) -> bool:
     return len(raw) >= _MIN_CIPHERTEXT_BYTES
 
 
+def _decrypt_emails(users: list[dict]) -> None:
+    """Decrypt each row's email in place. A stored value the seam refused (a
+    v2 email that does not open in this row) reads as None; it is flagged so
+    the list still says "unreadable" rather than showing a blank."""
+    for user in users:
+        stored = user.get("email")
+        user["email"] = decrypt_if_present(stored, bind=bind("users", "email", user))
+        if stored and user["email"] is None:
+            user["_email_refused"] = True
+
+
 def _mark_undecryptable(users: list[dict]) -> None:
     """Blank ciphertext this key can't open and flag the row, so the admin list
     shows "unreadable" instead of rendering the blob as a name/email."""
     for user in users:
-        bad_email = _still_encrypted(user.get("email"))
+        bad_email = user.pop("_email_refused", False) or _still_encrypted(user.get("email"))
         bad_name = _still_encrypted(user.get("name"))
         if bad_email:
             user["email"] = None
@@ -129,13 +146,12 @@ def paginate_users(
     if not q:
         rows, total = table("users").select_with_count(
             columns=_USERS_COLS,
-            filters=_APPROVED,
+            filters=_with_access(),
             order="created_at.desc",
             limit=page_size,
             offset=offset,
         )
-        for u in rows:
-            u["email"] = decrypt_if_present(u.get("email"))
+        _decrypt_emails(rows)
         _attach_names(rows)
         _mark_undecryptable(rows)
         _attach_roles(rows)
@@ -144,9 +160,8 @@ def paginate_users(
     # Search path: name moved to user_profiles, so PostgREST can't filter it
     # (AEAD nonces aren't searchable anyway). Decrypt emails + resolve every
     # name, then filter and paginate in Python. Admin-scale, behind require_admin.
-    all_rows = table("users").select(columns=_USERS_COLS, filters=_APPROVED, order="created_at.desc")
-    for u in all_rows:
-        u["email"] = decrypt_if_present(u.get("email"))
+    all_rows = table("users").select(columns=_USERS_COLS, filters=_with_access(), order="created_at.desc")
+    _decrypt_emails(all_rows)
     _attach_names(all_rows)
     _mark_undecryptable(all_rows)
     needle = q.lower()

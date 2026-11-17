@@ -14,7 +14,7 @@ from starlette.concurrency import run_in_threadpool
 from db.connection import table
 from models import GenerateQuizBody
 from services.quiz.errors import QuizAPIError, QuizErrorCode
-from services.encryption import decrypt_json_column
+from services.encryption import bind, decrypt_json_column
 from services.quiz.reserve import (
     MissedQuestions,
     missed_question_hashes,
@@ -160,7 +160,10 @@ async def _reserved_misses(body: GenerateQuizBody) -> ReservedMisses | None:
         )
 
     try:
-        stored = decrypt_json_column(attempt.get("questions_json")) or []
+        stored = decrypt_json_column(
+            attempt.get("questions_json"),
+            bind=bind("quiz_attempts", "questions_json", body.source_attempt_id),
+        ) or []
     except Exception:
         logger.warning(
             "quiz: source attempt %s did not decrypt; generating instead of "

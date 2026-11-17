@@ -40,7 +40,7 @@ import httpx
 
 from db.connection import table
 from db.scope import runs_as_service
-from services.encryption import decrypt
+from services.encryption import Binding, bind, decrypt
 
 logger = logging.getLogger(__name__)
 
@@ -57,13 +57,13 @@ LEFTOVER_SCAN_LIMIT = 500
 _sleep = asyncio.sleep  # seam: tests do not wait out the backoff
 
 
-def _plain(value) -> str | None:
+def _plain(value, binding: Binding) -> str | None:
     """A stored token decrypted, or None when absent or unreadable (an
     undecryptable value is never sent anywhere)."""
     if not isinstance(value, str) or not value:
         return None
     try:
-        return decrypt(value) or None
+        return decrypt(value, bind=binding) or None
     except Exception:  # noqa: BLE001 — an unreadable token is never sent anywhere
         return None
 
@@ -76,7 +76,10 @@ def google_tokens(user_id: str) -> list[str]:
         "access_token,refresh_token", filters={"user_id": f"eq.{user_id}"},
     )
     row = rows[0] if isinstance(rows, list) and rows and isinstance(rows[0], dict) else {}
-    tokens = [t for t in (_plain(row.get("refresh_token")), _plain(row.get("access_token"))) if t]
+    tokens = [t for t in (
+        _plain(row.get("refresh_token"), bind("oauth_tokens", "refresh_token", user_id)),
+        _plain(row.get("access_token"), bind("oauth_tokens", "access_token", user_id)),
+    ) if t]
     return list(dict.fromkeys(tokens))
 
 

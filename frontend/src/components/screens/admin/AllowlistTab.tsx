@@ -16,19 +16,24 @@ import type { AllowlistEmail, EmailStatus, InviteStatus } from "@/lib/types";
 
 import { fieldStyle, tdStyle, thStyle } from "./adminStyles";
 import { EmailNotConfiguredBanner } from "./EmailNotConfiguredBanner";
+import { OpenAccessBanner } from "./OpenAccessBanner";
 
 /**
  * Admin "Allowlist" tab: the waitlist, filterable by status, with per-row and
  * bulk approval. Approving sends the "you're in" email server-side; the
- * Invite column shows that email's delivery state.
+ * Invite column shows that email's delivery state. The banner on top is the
+ * waitlist gate (`open_access`, docs/design/open-access-gate.md); a row whose
+ * account came in through it is "open": in while the gate is open, waiting
+ * while it is closed, and approvable either way. "Non-BU" is a label only.
  */
 
-type RowStatus = "signup" | "approved" | "joined";
+type RowStatus = "signup" | "open" | "approved" | "joined";
 type Filter = "all" | RowStatus;
 
 const FILTERS: { key: Filter; label: string }[] = [
   { key: "all", label: "All" },
   { key: "signup", label: "Signups" },
+  { key: "open", label: "Open access" },
   { key: "approved", label: "Approved" },
   { key: "joined", label: "Joined" },
 ];
@@ -39,7 +44,26 @@ const BULK_LIMIT = 500;
 export function rowStatus(row: AllowlistEmail): RowStatus {
   if (row.joined_at) return "joined";
   if (row.approved_at) return "approved";
+  if (row.open_access) return "open";
   return "signup";
+}
+
+/** Not approved yet: a signup, or someone in (or waiting) through open access. */
+const approvable = (row: AllowlistEmail) => !row.approved_at;
+
+/** The status chip's text and style. An open-access row reads as "in" only
+ *  while the gate is open, and "waiting" only while it is known to be closed:
+ *  with the gate's state unread (null) it claims neither. */
+function statusChip(st: RowStatus, gateOpen: boolean | null): { label: string; cls: string; title?: string } {
+  if (st === "open") {
+    if (gateOpen === null) {
+      return { label: "open access", cls: "chip", title: "Joined through open access. Whether open access is on right now could not be read." };
+    }
+    return gateOpen
+      ? { label: "open access", cls: "chip--info", title: "Using Sapling through open access. Approve to keep them in when you require the waitlist again." }
+      : { label: "waiting", cls: "chip--warn", title: "Joined during open access; back on the waitlist now that it is required." };
+  }
+  return { label: st, cls: st === "signup" ? "chip--warn" : "chip--accent" };
 }
 
 const INVITE_CHIP: Record<InviteStatus, { cls: string; title: string }> = {
@@ -98,6 +122,9 @@ export function AllowlistTab() {
   const [emails, setEmails] = React.useState<AllowlistEmail[]>([]);
   const [query, setQuery] = React.useState("");
   const [filter, setFilter] = React.useState<Filter>("all");
+  const [nonBuOnly, setNonBuOnly] = React.useState(false);
+  // null until the banner has read the gate (and if that read fails).
+  const [gateOpen, setGateOpen] = React.useState<boolean | null>(null);
   const [selected, setSelected] = React.useState<Set<string>>(() => new Set());
   const [newEmail, setNewEmail] = React.useState("");
   const [busy, setBusy] = React.useState(false);
@@ -126,20 +153,23 @@ export function AllowlistTab() {
   }, []);
 
   const counts = React.useMemo(() => {
-    const c: Record<Filter, number> = { all: emails.length, signup: 0, approved: 0, joined: 0 };
+    const c: Record<Filter, number> = { all: emails.length, signup: 0, open: 0, approved: 0, joined: 0 };
     for (const e of emails) c[rowStatus(e)] += 1;
     return c;
   }, [emails]);
 
   const q = query.trim().toLowerCase();
+  const nonBuCount = emails.filter((e) => e.school_email === false).length;
   const filtered = emails.filter(
-    (e) => (filter === "all" || rowStatus(e) === filter) && (!q || e.email.toLowerCase().includes(q)),
+    (e) => (filter === "all" || rowStatus(e) === filter)
+      && (!nonBuOnly || e.school_email === false)
+      && (!q || e.email.toLowerCase().includes(q)),
   );
 
   // Selection only ever holds unapproved rows; derive it from the live list so
   // a row approved elsewhere (or by a reload) silently drops out.
-  const selectedRows = emails.filter((e) => rowStatus(e) === "signup" && selected.has(e.email));
-  const selectableVisible = filtered.filter((e) => rowStatus(e) === "signup");
+  const selectedRows = emails.filter((e) => approvable(e) && selected.has(e.email));
+  const selectableVisible = filtered.filter(approvable);
   const visibleSelectedCount = selectableVisible.filter((e) => selected.has(e.email)).length;
   const allVisibleSelected = selectableVisible.length > 0 && visibleSelectedCount === selectableVisible.length;
   const someVisibleSelected = visibleSelectedCount > 0 && !allVisibleSelected;
@@ -232,11 +262,13 @@ export function AllowlistTab() {
 
   return (
     <>
+      <OpenAccessBanner onChanged={setGateOpen} />
       {notConfigured && <EmailNotConfiguredBanner />}
       <div className="body-serif" style={{ fontSize: 15, marginBottom: 22, color: "var(--text-dim)", maxWidth: 680 }}>
         <span style={{ color: "var(--text)" }}>{emails.length}</span> address{emails.length === 1 ? "" : "es"} · {" "}
         <span style={{ color: "var(--accent)" }}>{emails.filter((e) => e.approved_at).length} approved</span> · {counts.joined} joined
         {counts.signup > 0 && <> · <span style={{ color: "var(--warn)" }}>{counts.signup} unapproved signups</span></>}
+        {counts.open > 0 && <> · {counts.open} {gateOpen === null ? "joined through open access" : gateOpen ? "in through open access" : "waiting after open access"}</>}
       </div>
       <div className="card" style={{ padding: 0 }}>
         <div style={{ display: "flex", flexWrap: "wrap", padding: "12px 16px", borderBottom: "1px solid var(--border)", alignItems: "center", gap: 12 }}>
@@ -258,7 +290,7 @@ export function AllowlistTab() {
           </div>
           <input
             data-testid="allowlist-add-input"
-            placeholder="someone@bu.edu"
+            placeholder="someone@example.com"
             value={newEmail}
             onChange={(e) => setNewEmail(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") void add(); }}
@@ -288,6 +320,16 @@ export function AllowlistTab() {
               {f.label} ({counts[f.key]})
             </button>
           ))}
+          <button
+            type="button"
+            data-testid="allowlist-filter-non-bu"
+            aria-pressed={nonBuOnly}
+            className={`chip ${nonBuOnly ? "chip--accent" : ""}`}
+            onClick={() => setNonBuOnly((v) => !v)}
+            style={{ cursor: "pointer", border: nonBuOnly ? undefined : "1px dashed var(--border)" }}
+          >
+            Non-BU ({nonBuCount})
+          </button>
           <div style={{ flex: 1 }} />
           <button
             type="button"
@@ -307,7 +349,7 @@ export function AllowlistTab() {
                   ref={headerBoxRef}
                   type="checkbox"
                   data-testid="allowlist-select-all"
-                  aria-label="Select all unapproved signups shown"
+                  aria-label="Select all unapproved addresses shown"
                   checked={allVisibleSelected}
                   disabled={selectableVisible.length === 0}
                   onChange={toggleAllVisible}
@@ -328,10 +370,11 @@ export function AllowlistTab() {
             )}
             {filtered.map((row) => {
               const st = rowStatus(row);
+              const chip = statusChip(st, gateOpen);
               return (
                 <tr key={row.id} data-testid={`allowlist-row-${row.email}`} style={{ borderTop: "1px solid var(--border)" }}>
                   <td style={{ ...tdStyle, paddingRight: 0 }}>
-                    {st === "signup" && (
+                    {approvable(row) && (
                       <input
                         type="checkbox"
                         data-testid={`allowlist-select-${row.email}`}
@@ -341,9 +384,27 @@ export function AllowlistTab() {
                       />
                     )}
                   </td>
-                  <td style={{ ...tdStyle, fontWeight: 500 }}>{row.email}</td>
+                  <td style={{ ...tdStyle, fontWeight: 500 }}>
+                    {row.email}
+                    {row.school_email === false && (
+                      <span
+                        className="chip"
+                        data-testid={`allowlist-non-bu-${row.email}`}
+                        title="Not a BU address. A label only: it decides nothing."
+                        style={{ marginLeft: 8 }}
+                      >
+                        Non-BU
+                      </span>
+                    )}
+                  </td>
                   <td style={tdStyle}>
-                    <span className={`chip ${st === "signup" ? "chip--warn" : "chip--accent"}`}>{st}</span>
+                    <span
+                      className={`chip ${chip.cls}`}
+                      title={chip.title}
+                      data-testid={`allowlist-status-${row.email}`}
+                    >
+                      {chip.label}
+                    </span>
                   </td>
                   <td style={tdStyle}>
                     <InviteChip status={row.invite_status} email={row.email} />
@@ -377,7 +438,11 @@ export function AllowlistTab() {
         <p className="flags__confirm-text" style={{ marginBottom: 12 }} data-testid="allowlist-bulk-confirm-text">
           {notConfigured
             ? "The approvals will be saved, but no emails go out until Resend is configured."
-            : `Each gets a “you’re in” email.`}
+            : gateOpen !== false && selectedRows.some((e) => e.open_access)
+              ? gateOpen
+                ? "Each gets a “you’re in” email, except anyone who joined through open access: they already use Sapling."
+                : "Each gets a “you’re in” email, except anyone who joined through open access while it is on."
+              : `Each gets a “you’re in” email.`}
         </p>
         <ul
           style={{

@@ -243,6 +243,22 @@ REGISTRY: dict[str, FlagDef] = {f.key: f for f in (
             "Daily job: remove (and revoke at Google) the credentials a deleted "
             "account still holds after its delete could not remove them. "
             "Global: per-user rules and rollouts do not apply.", False),
+    # docs/design/open-access-gate.md: the waitlist requirement. On = it is
+    # lifted: anyone who signs in (any email domain) gets in, stamped
+    # `users.open_access_at` and linked on the waitlist UNAPPROVED, so closing
+    # the gate again puts them back on the waitlist; nobody's approval is
+    # touched either way (access is computed, services/open_access.py).
+    # Accounts an admin removed stay out. "off" (the fail-closed answer) is the
+    # gated side. Resolved GLOBALLY (user_id=None): a new person has no id at
+    # sign-in, so per-user rules and rollouts do not apply. Client-visible:
+    # the landing page offers "Sign up" instead of "Join the waitlist" while
+    # it is on. Kill switch: SAPLING_FLAG_OPEN_ACCESS=off.
+    FlagDef("open_access", ("off", "on"),
+            "Open access: lift the waitlist requirement, so anyone who signs in "
+            "gets in. They are added to the waitlist unapproved and go back to "
+            "waiting when this is turned off; approvals are untouched and "
+            "removed accounts stay out. Global: per-user rules and rollouts do "
+            "not apply.", True),
     # docs/safety/crisis-support.md: the crisis-support path. On: a student
     # message that states suicidal ideation, self-harm or acute danger gets
     # the fixed resources card INSTEAD of a model turn, on every surface
@@ -697,6 +713,15 @@ def explain(key: str, user_id: str | None, *, fresh: bool = False,
         return Resolution(off, "fail_closed", f"resolution error: {type(exc).__name__}")
 
 
+def env_override(key: str) -> str | None:
+    """The variant `SAPLING_FLAG_<KEY>` forces right now, or None. It wins
+    over every stored setting (:func:`explain`), so an admin surface that
+    shows the stored default must show this beside it."""
+    fd = REGISTRY.get(key)
+    env = (os.getenv(f"SAPLING_FLAG_{key.upper()}") or "").strip().lower()
+    return env if fd is not None and env in fd.variants else None
+
+
 def cached_explain(key: str, user_id: str | None) -> Resolution | None:
     """:func:`explain` without any I/O, or None when answering would need a
     store read (a cold snapshot, or a role lookup this user has no fresh
@@ -756,6 +781,38 @@ def flag_variant(key: str, user_id: str | None) -> str:
 def flag_on(key: str, user_id: str | None) -> bool:
     fd = REGISTRY.get(key)
     return fd is not None and flag_variant(key, user_id) != fd.variants[0]
+
+
+def last_known_flag_on(key: str, user_id: str | None) -> bool:
+    """:func:`flag_on`, except while the flag store is UNREADABLE: then the
+    answer comes from the last snapshot this process read (however old)
+    instead of the fail-closed default.
+
+    For a flag whose "on" must survive an outage (sec2 M11: `crisis_support`,
+    where failing closed would silently stop showing crisis resources the
+    owner switched on). It never turns a flag on that the last good read had
+    off, and a process that has never read the store still answers off, so
+    the default is unchanged. Role targets are read from the per-user cache
+    only (no read during an outage); an uncached user resolves as holding no
+    role. Every other failure (an unregistered flag, an invalid stored
+    variant, a resolution error) still fails closed.
+    """
+    fd = REGISTRY.get(key)
+    if fd is None:
+        return False
+    resolution = explain(key, user_id)
+    if not (resolution.step == "fail_closed" and resolution.detail == STORE_UNREADABLE):
+        return resolution.variant != fd.variants[0]
+    with _lock:
+        stale = _snapshot
+    if stale is None:
+        return False
+    roles = _roles_peek(user_id) if user_id else None
+    last = explain(key, user_id, _snapshot=stale[1], _roles_known=roles if roles is not None else ())
+    if last.variant != fd.variants[0]:
+        _warn_once(f"last_known:{key}", "feature flag store unreadable; %r answers from the "
+                   "last snapshot read (%s)", key, last.step)
+    return last.variant != fd.variants[0]
 
 
 def resolved_client_flags(user_id: str | None) -> dict[str, str]:

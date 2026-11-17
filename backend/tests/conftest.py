@@ -21,10 +21,27 @@ from unittest.mock import MagicMock
 import pytest
 
 os.environ.setdefault("ENCRYPTION_KEY", "0" * 64)  # 32-byte all-zero key for deterministic tests
+# The suite writes the v2 (AAD-bound) envelope, so a writer and a reader that
+# disagree on a binding fail here rather than in production (finding M13,
+# services/encryption.py). Legacy v1 reads stay allowed, as in production
+# until the backfill has run.
+os.environ.setdefault("ENCRYPTION_WRITE_V2", "on")
 # Tests run as local mode so validate_config() (invoked by the one test that
 # enters the FastAPI lifespan) doesn't reject the short dummy SESSION_SECRET the
 # CI env supplies. Production defaults APP_ENV=production (strict). #174.
 os.environ.setdefault("APP_ENV", "test")
+# Mirrors CI's dummy. The local .env example leaves ANTHROPIC_API_KEY blank,
+# and a blank key fails Claude requests before they reach the transport, so
+# without this a local run would never exercise the hermetic egress guard.
+# Only when backend/.env has no key either: config's load_dotenv() never
+# overrides a set variable, so a dummy here would hide a real .env key from
+# the opt-in live_llm lanes.
+if not os.environ.get("ANTHROPIC_API_KEY"):
+    from dotenv import dotenv_values
+
+    _dotenv_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
+    if not (dotenv_values(_dotenv_path).get("ANTHROPIC_API_KEY") or "").strip():
+        os.environ["ANTHROPIC_API_KEY"] = "dummy-not-used-in-tests"
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -50,6 +67,29 @@ def pytest_configure(config):
         "real_course_enrollment: run the REAL course-enrollment check on course-keyed "
         "writes (#115) instead of the hermetic bypass (_bypass_course_enrollment).",
     )
+    config.addinivalue_line(
+        "markers",
+        "real_script_key_guard: run the REAL write-mode ENCRYPTION_KEY check "
+        "(encryption_canary.require_key_for_write) instead of the hermetic pass.",
+    )
+
+
+@pytest.fixture(autouse=True)
+def _bypass_script_key_guard(request, monkeypatch):
+    """Write-mode scripts (backfills, seeders) refuse to write unless the
+    database's key canary opens (services/encryption_canary.py). The hermetic
+    suite drives their main() against mocked tables, where the canary read
+    would go to the network; pass the check there. The integration and staging
+    lanes run it for real, as does any test marked `real_script_key_guard`."""
+    node = request.node
+    if (node.get_closest_marker("real_script_key_guard")
+            or node.get_closest_marker("integration")
+            or node.get_closest_marker("e2e_staging")):
+        return
+    from services import encryption_canary
+
+    monkeypatch.setattr(encryption_canary, "require_key_for_write",
+                        lambda script, *, allow_seed=False: "ok")
 
 
 @pytest.fixture(autouse=True)

@@ -37,7 +37,8 @@ from agents._run import run_agent_sync
 from agents.flashcard import flashcard_agent
 from agents.usage import record_agent_usage
 from services import extraction_service, request_limits
-from services.encryption import decrypt_if_present
+from services.archive_limits import check_zip_bounds
+from services.encryption import bind, decrypt_if_present
 from services.llm_budget import LLMBudgetExceeded
 
 logger = logging.getLogger(__name__)
@@ -81,9 +82,10 @@ def dedup_against_existing(
     elif topic:
         filters["topic"] = f"eq.{topic}"
 
-    existing = table("flashcards").select("front", filters=filters) or []
+    existing = table("flashcards").select("id,front", filters=filters) or []
     existing_norm = [
-        _normalize(decrypt_if_present(r.get("front", "")) or "") for r in existing
+        _normalize(decrypt_if_present(r.get("front", ""), bind=bind("flashcards", "front", r)) or "")
+        for r in existing
     ]
 
     keep: list[Card] = []
@@ -119,10 +121,29 @@ def clear_rate_state() -> None:
         state.pop(key, None)
 
 
+#: Most cards one parsed file may yield (the commit route's own cap,
+#: ``routes/flashcards.py::IMPORT_CARDS_MAX``): a bigger deck could never be
+#: saved anyway, so it is refused here before any per-card work.
+MAX_IMPORT_CARDS = 10_000
+#: Uncompressed ceiling for an import archive (.apkg / .xlsx): a 5 MB upload
+#: may not name more than this (services/archive_limits.py).
+MAX_IMPORT_UNCOMPRESSED = 100 * 1024 * 1024
+#: Longest single field handed to the HTML parser; a card side is a
+#: ``LongText`` (10 000 chars) at commit, so anything past this is cut.
+MAX_FIELD_CHARS = 20_000
+#: Total HTML one file may hand the parser across all its fields.
+MAX_HTML_CHARS = 8 * 1024 * 1024
+#: Wall-clock bound on the SQLite read of one .apkg.
+ANKI_QUERY_SECONDS = 5.0
+#: Largest string/blob SQLite may build while reading the collection.
+_SQLITE_MAX_VALUE = 1024 * 1024
+
+
 def parse_xlsx(file_bytes: bytes) -> list[Card]:
     """Read a .xlsx workbook, treating col A as front and col B as back."""
     from openpyxl import load_workbook
 
+    check_zip_bounds(file_bytes, max_uncompressed=MAX_IMPORT_UNCOMPRESSED)
     wb = load_workbook(io.BytesIO(file_bytes), read_only=True, data_only=True)
     ws = wb.active
     cards: list[Card] = []
@@ -132,13 +153,56 @@ def parse_xlsx(file_bytes: bytes) -> list[Card]:
         front = (str(row[0]) if len(row) > 0 and row[0] is not None else "").strip()
         back = (str(row[1]) if len(row) > 1 and row[1] is not None else "").strip()
         if front and back:
+            if len(cards) >= MAX_IMPORT_CARDS:
+                raise ValueError(f"The sheet has more than {MAX_IMPORT_CARDS} cards.")
             cards.append({"front": front, "back": back})
     return cards
 
 
 def _strip_html(text: str) -> str:
-    soup = BeautifulSoup(text or "", "html.parser")
-    return re.sub(r"\s+", " ", soup.get_text(" ")).strip()
+    text = (text or "")[:MAX_FIELD_CHARS]
+    if "<" in text or "&" in text:
+        text = BeautifulSoup(text, "html.parser").get_text(" ")
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _read_collection(z: zipfile.ZipFile) -> bytes:
+    if "collection.anki2" not in z.namelist():
+        raise ValueError("Anki package is missing collection.anki2")
+    check_zip_bounds(z, max_uncompressed=MAX_IMPORT_UNCOMPRESSED)
+    return z.read("collection.anki2")
+
+
+def _anki_notes(path: str) -> list:
+    """``flds`` of at most MAX_IMPORT_CARDS + 1 notes, read from an
+    attacker-supplied SQLite file as safely as SQLite allows: read-only,
+    schema code untrusted, values capped, the query bounded in time, and
+    ``notes`` refused unless it is a plain table with a plain ``flds`` column
+    (a VIEW over a recursive CTE yields millions of rows from 4 KB)."""
+    conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    try:
+        conn.execute("PRAGMA trusted_schema=OFF")
+        conn.execute("PRAGMA query_only=ON")
+        conn.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, _SQLITE_MAX_VALUE)
+        deadline = time.monotonic() + ANKI_QUERY_SECONDS
+        # Non-zero aborts the running statement (sqlite3.OperationalError).
+        conn.set_progress_handler(lambda: int(time.monotonic() > deadline), 10_000)
+        kind = conn.execute(
+            "SELECT type FROM sqlite_master WHERE name = 'notes'"
+        ).fetchall()
+        if kind != [("table",)]:
+            raise ValueError("Anki file is not a valid .apkg: no notes table")
+        # hidden != 0: a generated (computed) or virtual-table column.
+        cols = {r[1]: r[6] for r in conn.execute("PRAGMA table_xinfo(notes)")}
+        if cols.get("flds") != 0:
+            raise ValueError("Anki file is not a valid .apkg: unexpected notes table")
+        return conn.execute(
+            "SELECT flds FROM notes LIMIT ?", (MAX_IMPORT_CARDS + 1,)
+        ).fetchall()
+    except sqlite3.Error as e:
+        raise ValueError(f"Anki file is not a valid .apkg: {e}") from e
+    finally:
+        conn.close()
 
 
 def parse_anki_apkg(file_bytes: bytes) -> list[Card]:
@@ -147,31 +211,31 @@ def parse_anki_apkg(file_bytes: bytes) -> list[Card]:
 
     try:
         with zipfile.ZipFile(io.BytesIO(file_bytes)) as z:
-            names = z.namelist()
-            if "collection.anki2" not in names:
-                raise ValueError("Anki package is missing collection.anki2")
-            db_bytes = z.read("collection.anki2")
+            db_bytes = _read_collection(z)
     except zipfile.BadZipFile as e:
         raise ValueError(f"Anki file is not a valid .apkg: {e}")
 
     with tempfile.NamedTemporaryFile(suffix=".anki2", delete=False) as tmp:
         tmp.write(db_bytes)
         path = tmp.name
-
     try:
-        conn = sqlite3.connect(path)
-        rows = conn.execute("SELECT flds FROM notes").fetchall()
-        conn.close()
+        rows = _anki_notes(path)
     finally:
         os.unlink(path)
+    if len(rows) > MAX_IMPORT_CARDS:
+        raise ValueError(f"The deck has more than {MAX_IMPORT_CARDS} notes.")
 
     cards: list[Card] = []
+    budget = MAX_HTML_CHARS
     for (flds,) in rows:
-        if not flds:
+        if not flds or not isinstance(flds, str):
             continue
-        parts = flds.split("\x1f")
+        parts = flds.split("\x1f", 2)
         if len(parts) < 2:
             continue
+        budget -= min(len(parts[0]), MAX_FIELD_CHARS) + min(len(parts[1]), MAX_FIELD_CHARS)
+        if budget < 0:
+            raise ValueError("The deck's text is too large to import.")
         front = _strip_html(parts[0])
         back = _strip_html(parts[1])
         if front and back:
@@ -403,6 +467,34 @@ def _validate_quizlet_url(
     return parsed
 
 
+#: Largest Quizlet page read. A set page is a few hundred KB; past this the
+#: fetch stops reading instead of buffering whatever the far end sends.
+_QUIZLET_MAX_BYTES = 8 * 1024 * 1024
+
+
+class _CappedResponse:
+    """What the scrape reads off one hop: status, headers and (for a 200)
+    the body text, read within _QUIZLET_MAX_BYTES."""
+
+    def __init__(self, status_code: int, headers: httpx.Headers, body_text: str) -> None:
+        self.status_code = status_code
+        self.headers = headers
+        self.body_text = body_text
+
+
+def _get_capped(client: httpx.Client, url: httpx.URL) -> _CappedResponse:
+    with client.stream("GET", url) as resp:
+        text = ""
+        if resp.status_code == 200:
+            body = bytearray()
+            for chunk in resp.iter_bytes():
+                body += chunk
+                if len(body) > _QUIZLET_MAX_BYTES:
+                    raise QuizletBlocked("The Quizlet page was too large to import.")
+            text = body.decode(resp.encoding or "utf-8", errors="replace")
+        return _CappedResponse(resp.status_code, resp.headers, text)
+
+
 def scrape_quizlet_url(url: str) -> list[Card]:
     """Best-effort fetch of a public Quizlet set. Raises QuizletBlocked on
     bot wall, login redirect, unparseable payload, or a redirect that leaves
@@ -419,7 +511,7 @@ def scrape_quizlet_url(url: str) -> list[Card]:
     with _quizlet_client(resolver) as client:
         for _ in range(_QUIZLET_MAX_REDIRECTS + 1):
             try:
-                resp = client.get(current)
+                resp = _get_capped(client, current)
             except httpx.HTTPError as e:
                 raise QuizletBlocked(f"Could not reach Quizlet: {e}")
             if resp.status_code not in _REDIRECT_STATUSES:
@@ -440,7 +532,7 @@ def scrape_quizlet_url(url: str) -> list[Card]:
     if resp.status_code != 200:
         raise QuizletBlocked(f"Quizlet returned status {resp.status_code}")
 
-    match = _QUIZLET_PAYLOAD_RE.search(resp.text)
+    match = _QUIZLET_PAYLOAD_RE.search(resp.body_text)
     if not match:
         raise QuizletBlocked(
             "Couldn't extract cards from this URL. Quizlet may be blocking "
@@ -556,30 +648,55 @@ def extract_cards_from_image(file_bytes: bytes, filename: str = "image.png") -> 
     markdown = extraction_service.extract_text_from_file(file_bytes, filename, content_type) or ""
     if not markdown.strip():
         return []
-    prompt = _load_prompt("flashcard_ocr_split.txt").replace("{markdown}", markdown)
+    prompt = _load_prompt("flashcard_ocr_split.txt").replace(
+        "{markdown}", _untrusted_material(markdown, "OCR text of the student's notes image"),
+    )
     return _run_flashcard_agent(prompt)
+
+
+# M10: every flashcard prompt is a fixed TASK (the prompts/flashcard_*.txt
+# template, or the code-built header in `generate_flashcards`) followed by the
+# material inside the untrusted envelope. Imported text (a URL's page, an Anki
+# deck, an OCR'd photo, pasted notes) is whatever its author wrote; it never
+# reaches the agent outside the envelope, so it cannot pose as the task. The
+# agent's system prompt says only the TASK is instructions.
+def _untrusted_material(text: str, source: str) -> str:
+    from services.prompt_safety import wrap_untrusted
+
+    return wrap_untrusted(text, source=source) or "(empty)"
+
+
+#: The only difficulty words the generation template is ever handed (the
+#: route's Literal); anything else becomes the default, never prompt text.
+_GENERATION_DIFFICULTIES = ("recall", "application", "conceptual")
 
 
 def gemini_generate_cards(source_text: str, count: int, difficulty: str) -> list[Card]:
     prompt = (
         _load_prompt("flashcard_generation.txt")
-        .replace("{count}", str(count))
-        .replace("{difficulty}", difficulty)
-        .replace("{source}", source_text)
+        .replace("{count}", str(int(count)))
+        .replace(
+            "{difficulty}",
+            difficulty if difficulty in _GENERATION_DIFFICULTIES else _GENERATION_DIFFICULTIES[0],
+        )
+        .replace("{source}", _untrusted_material(source_text, "study material the student imported"))
     )
     return _run_flashcard_agent(prompt)
 
 
 def gemini_cleanup_cards(cards: list[Card]) -> list[Card]:
     prompt = _load_prompt("flashcard_cleanup.txt").replace(
-        "{cards_json}", json.dumps(cards, ensure_ascii=False)
+        "{cards_json}",
+        _untrusted_material(json.dumps(cards, ensure_ascii=False), "flashcards the student imported"),
     )
     out = _run_flashcard_agent(prompt)
     return out if out else cards
 
 
 def gemini_cloze(paragraph: str) -> list[Card]:
-    prompt = _load_prompt("flashcard_cloze.txt").replace("{paragraph}", paragraph)
+    prompt = _load_prompt("flashcard_cloze.txt").replace(
+        "{paragraph}", _untrusted_material(paragraph, "paragraph the student pasted"),
+    )
     return _run_flashcard_agent(prompt)
 
 
@@ -601,6 +718,9 @@ def generate_flashcards(
         weak_concepts:  Concept names the student has low mastery on, weighted higher.
     """
     # ── Build document context block ──────────────────────────────────────────
+    # M10: the topic, the documents' names, summaries and concept notes, the
+    # weak concepts and the free-text context are all student-derived; they
+    # go into ONE untrusted envelope after a task header built here in code.
     doc_blocks = []
     if documents:
         for doc in documents:
@@ -622,36 +742,33 @@ def generate_flashcards(
                     parts.append("Key concepts:\n" + "\n".join(concept_lines))
             doc_blocks.append("\n".join(parts))
 
-    doc_context = ""
+    material = [f'Course/Topic: "{topic}"']
     if doc_blocks:
-        doc_context = (
-            "\n\nCOURSE MATERIAL (use this as the primary source for flashcard content):\n"
+        material.append(
+            "COURSE MATERIAL (use this as the primary source for flashcard content):\n"
             + "\n\n---\n\n".join(doc_blocks)
         )
-
-    # ── Weak concept focus block ──────────────────────────────────────────────
-    weak_block = ""
     if weak_concepts:
-        weak_block = (
-            "\n\nThe student has LOW MASTERY on these concepts — prioritize them: "
+        material.append(
+            "The student has LOW MASTERY on these concepts — prioritize them: "
             + ", ".join(weak_concepts)
         )
+    if context:
+        material.append(f"Additional context:\n{context}")
 
-    # ── Free-text context (e.g. session summary) ──────────────────────────────
-    extra_block = f"\n\nAdditional context:\n{context}" if context else ""
-
-    prompt = f"""You are an expert tutor creating study flashcards for a student.
-
-Course/Topic: "{topic}"{doc_context}{weak_block}{extra_block}
-
-Generate exactly {count} flashcards.
+    wrapped = _untrusted_material("\n\n".join(material), "the student's course material and topic")
+    prompt = f"""TASK: You are an expert tutor creating study flashcards for a student.
+Generate exactly {int(count)} flashcards from the material below.
 
 Rules:
-- Base card content on the course material provided above, not generic knowledge.
+- Base card content on the course material provided below, not generic knowledge.
 - Each card must have a clear FRONT (question or term) and a BACK (answer or definition).
 - Vary difficulty: include recall, conceptual, and application questions.
-- Prioritize concepts the student has low mastery on if listed above.
+- Prioritize concepts the student has low mastery on if the material lists them.
 - Be specific — avoid vague or trivially obvious cards.
-- Do NOT repeat questions already listed in the existing Q&A pairs above."""
+- Do NOT repeat questions already listed in any existing Q&A pairs in the material.
+
+MATERIAL:
+{wrapped}"""
 
     return _run_flashcard_agent(prompt)

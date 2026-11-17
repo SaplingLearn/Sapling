@@ -12,7 +12,7 @@ import pytest
 
 import db.seed_staging as seed
 from db import seed_helpers
-from services.encryption import decrypt
+from services.encryption import bind, decrypt
 
 # CHECK-enum sets read off migrations 0019–0027 (the seed must stay within these).
 MASTERY_TIERS = {"unexplored", "struggling", "learning", "mastered", "subject_root"}
@@ -264,20 +264,20 @@ def test_sensitive_columns_encrypted_at_rest(store):
     _run(store)
     profile = next(iter(store.tables["user_profiles"].values()))
     assert profile["name"] != "Demo Student"
-    assert decrypt(profile["name"]) == "Demo Student"
-    assert decrypt(profile["first_name"]) == "Demo"
+    assert decrypt(profile["name"], bind=bind("user_profiles", "name", profile)) == "Demo Student"
+    assert decrypt(profile["first_name"], bind=bind("user_profiles", "first_name", profile)) == "Demo"
 
     note = next(iter(store.tables["notes"].values()))
     assert note["title"] != "Week 1 — Variables"
-    assert decrypt(note["title"]) == "Week 1 — Variables"
+    assert decrypt(note["title"], bind=bind("notes", "title", note)) == "Week 1 — Variables"
 
     doc = next(iter(store.tables["documents"].values()))
-    assert decrypt(doc["summary"]).startswith("CS101 syllabus")
+    assert decrypt(doc["summary"], bind=bind("documents", "summary", doc)).startswith("CS101 syllabus")
 
     asg = store.tables["assignments"]["seed-asg-cs-fall-hw1"]
     assert asg["points_possible"] != "100"
-    assert decrypt(asg["points_possible"]) == "100"
-    assert decrypt(asg["points_earned"]) == "92"
+    assert decrypt(asg["points_possible"], bind=bind("assignments", "points_possible", asg)) == "100"
+    assert decrypt(asg["points_earned"], bind=bind("assignments", "points_earned", asg)) == "92"
 
     # None points stay None (encrypt_if_present is a no-op on None).
     unsubmitted = store.tables["assignments"]["seed-asg-cs-spring-hw1"]
@@ -286,7 +286,7 @@ def test_sensitive_columns_encrypted_at_rest(store):
     # users.email is encrypted too.
     user = next(iter(store.tables["users"].values()))
     assert user["email"] != "demo.student@staging.saplinglearn.com"
-    assert decrypt(user["email"]) == "demo.student@staging.saplinglearn.com"
+    assert decrypt(user["email"], bind=bind("users", "email", user)) == "demo.student@staging.saplinglearn.com"
 
 
 # ─── Idempotency ─────────────────────────────────────────────────────────────

@@ -63,6 +63,7 @@ BUCKETS: dict[str, frozenset[str]] = {
         "tutor_pending_sessions",  # #117 stateless_tutor_sessions
         "legal_acceptances",  # onboarding: Terms / Privacy versions accepted
         "email_alert_suppressions",  # #890 ops-alert unsubscribes
+        "auth_handoff_consumptions",  # sec2 M2: single-use OAuth handoffs
     }),
 }
 

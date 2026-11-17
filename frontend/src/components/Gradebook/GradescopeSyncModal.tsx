@@ -19,6 +19,7 @@ import {
   GRADESCOPE_AUTH_FAILED,
   gradescopeConnectionState,
   gradescopeErrorCode,
+  gradescopeReauthMessage,
   needsGradescopeSignIn,
 } from "./gradescopeState";
 import {
@@ -223,7 +224,7 @@ function useGradescopeSyncFlow({
       if (state === "needs_reauth") {
         // Gradescope already rejected the saved sign-in; a sync would only
         // fail the same way, so go straight to reconnecting.
-        setError("Gradescope rejected your saved sign-in. Reconnect to keep syncing.");
+        setError(gradescopeReauthMessage(status));
         setStage("choose-mode");
         return;
       }
@@ -720,9 +721,9 @@ function CredentialsStep({
           margin: "0 0 18px",
         }}
       >
-        Sapling will log into Gradescope on your behalf to pull your
-        grades. Your password is encrypted at rest with AES-GCM and is
-        never shown again after this form.
+        Sapling uses your password once, to sign in to Gradescope, and
+        keeps only the session that sign-in creates, never the password.
+        When that session expires, you&apos;ll enter your password again.
       </p>
       <label
         htmlFor={`${fieldId}-email`}
@@ -1208,7 +1209,7 @@ function ChooseModeStep({
       <div style={{ height: 12 }} />
       <ModeCard
         title="Email + password"
-        body="If you set a Gradescope-side password (no SSO). We log in on your behalf each sync; password is encrypted at rest."
+        body="If you set a Gradescope-side password (no SSO). We sign in once and keep only the Gradescope session, never your password; enter it again when the session expires."
         onClick={onPickPassword}
       />
       <div style={{ height: 12 }} />

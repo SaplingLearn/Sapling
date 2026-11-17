@@ -161,6 +161,10 @@ def test_event_taxonomy_is_pinned():
         # coverage (and the no-content / no-PostHog pins) lives in
         # test_crisis_support_routes.py.
         "safety.crisis_support_shown",
+        # Finding M13: a 🔒 value refused at read. Emit coverage lives in
+        # test_encryption_aad.py.
+        "encryption.binding_mismatch",
+        "encryption.legacy_refused",
     })
 
 

@@ -16,7 +16,7 @@ from db.connection import table
 from services import events_service
 from services.calendar_service import save_assignments_to_db
 from services.documents_read import decrypt_document_row
-from services.encryption import encrypt_if_present, encrypt_json
+from services.encryption import bind, encrypt_if_present, encrypt_json
 from services.graph_service import apply_graph_update
 from services.share_screen import screen_for_sharing
 from services.xp_service import award_xp_safe
@@ -181,8 +181,10 @@ def _persist_document(
         for c in result.concepts.concepts
     ]
     summary = result.summary.abstract or None
+    # Minted here (not by Postgres) so the 🔒 columns can be bound to it.
+    doc_id = str(uuid.uuid4())
     row = {
-        "id": str(uuid.uuid4()),
+        "id": doc_id,
         "user_id": user_id,
         "offering_id": offering_id,
         "file_name": filename,
@@ -208,11 +210,15 @@ def _persist_document(
             screen_for_sharing(extracted_text).reason
             if extracted_text is not None else None
         ),
-        "extracted_text": encrypt_if_present(extracted_text),
+        "extracted_text": encrypt_if_present(
+            extracted_text, bind=bind("documents", "extracted_text", doc_id)),
         "index_status": "pending",
         "index_attempts": 0,
-        "summary": encrypt_if_present(summary),
-        "concept_notes": encrypt_json(concept_notes) if concept_notes is not None else None,
+        "summary": encrypt_if_present(summary, bind=bind("documents", "summary", doc_id)),
+        "concept_notes": (
+            encrypt_json(concept_notes, bind=bind("documents", "concept_notes", doc_id))
+            if concept_notes is not None else None
+        ),
         "created_at": now,
         "processed_at": now,
     }

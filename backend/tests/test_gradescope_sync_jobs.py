@@ -524,7 +524,7 @@ def test_two_requests_on_one_sync_run_it_once_and_answer_alike():
     syncs = FakeTable(unique_active=True)
     logins = []
 
-    def _slow_login(_creds):
+    def _slow_login(_creds, **_kw):
         logins.append(1)
         time.sleep(0.3)  # long enough for the other request to see `inline`
         return MagicMock()

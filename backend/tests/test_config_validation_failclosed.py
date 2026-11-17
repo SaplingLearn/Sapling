@@ -33,6 +33,7 @@ def _set_required(monkeypatch, **overrides):
     monkeypatch.setenv("ENCRYPTION_KEY", base.pop("ENCRYPTION_KEY", "ab" * 32))
     for name in config._PLATFORM_MARKERS:
         monkeypatch.delenv(name, raising=False)
+    monkeypatch.delenv("SAPLING_MODEL_MODE", raising=False)
     for k, v in base.items():
         monkeypatch.setattr(config, k, v)
 
@@ -70,6 +71,15 @@ class TestValidateConfig:
     def test_session_secret_relaxed_in_local(self, monkeypatch):
         _set_required(monkeypatch, SESSION_SECRET="", IS_LOCAL=True)
         config.validate_config()  # no raise — relaxed for local dev
+
+    def test_anthropic_key_optional_in_local(self, monkeypatch):
+        _set_required(monkeypatch, ANTHROPIC_API_KEY="", IS_LOCAL=True)
+        config.validate_config()
+
+    def test_anthropic_key_required_outside_local(self, monkeypatch):
+        _set_required(monkeypatch, ANTHROPIC_API_KEY="", IS_LOCAL=False)
+        with pytest.raises(RuntimeError, match="ANTHROPIC_API_KEY"):
+            config.validate_config()
 
     def test_weak_session_secret_rejected_outside_local(self, monkeypatch):
         # Present-but-weak must NOT pass: whitespace-only and a too-short secret
@@ -132,6 +142,41 @@ class TestLocalModeOnARealDeployment:
         _set_required(monkeypatch, FRONTEND_URL="https://saplinglearn.com",
                       SECURE_COOKIES_EXPLICIT=True)
         monkeypatch.setenv("RAILWAY_ENVIRONMENT_NAME", "production")
+        config.validate_config()
+
+
+class TestTestModelModeOnARealDeployment:
+    """SAPLING_MODEL_MODE=function (or any non-real mode) serves fixed E2E
+    answers; a process that looks deployed refuses it in every APP_ENV."""
+
+    @pytest.mark.parametrize("mode", ["function", "cassette", "FUNCTION "])
+    def test_deployed_host_refuses_a_test_mode(self, monkeypatch, mode):
+        _set_required(monkeypatch, FRONTEND_URL="https://saplinglearn.com")
+        monkeypatch.setenv("SAPLING_MODEL_MODE", mode)
+        with pytest.raises(RuntimeError, match="SAPLING_MODEL_MODE") as exc:
+            config.validate_config()
+        assert "FRONTEND_URL" in str(exc.value)
+
+    def test_platform_marker_alone_refuses(self, monkeypatch):
+        _set_required(monkeypatch)
+        monkeypatch.setenv("RAILWAY_ENVIRONMENT_NAME", "staging")
+        monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+        with pytest.raises(RuntimeError, match="RAILWAY_ENVIRONMENT_NAME"):
+            config.validate_config()
+
+    @pytest.mark.parametrize("mode", [None, "", "real", " Real "])
+    def test_real_mode_boots_on_a_deployed_host(self, monkeypatch, mode):
+        _set_required(monkeypatch, FRONTEND_URL="https://saplinglearn.com")
+        monkeypatch.setenv("RAILWAY_ENVIRONMENT_NAME", "production")
+        if mode is not None:
+            monkeypatch.setenv("SAPLING_MODEL_MODE", mode)
+        config.validate_config()
+
+    @pytest.mark.parametrize("app_env", ["local", "test"])
+    def test_function_mode_boots_on_the_local_stack(self, monkeypatch, app_env):
+        _set_required(monkeypatch, APP_ENV=app_env, IS_LOCAL=True,
+                      FRONTEND_URL="http://127.0.0.1:3101")
+        monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
         config.validate_config()
 
 

@@ -59,13 +59,13 @@ describe('#191 callback persistence gate', () => {
   });
 
   it('persists identity when /me confirms the session', async () => {
-    search = 'user_id=u1&is_approved=true';
+    search = 'user_id=u1&auth_token=h&is_approved=true';
     vi.stubGlobal(
       'fetch',
       stubFetch(() => ({
         ok: true,
         status: 200,
-        json: async () => ({ onboarding_completed: true, name: 'Nina', avatar_url: 'av' }),
+        json: async () => ({ user_id: 'u1', onboarding_completed: true, name: 'Nina', avatar_url: 'av' }),
       })),
     );
     render(<CallbackPage />);
@@ -73,8 +73,25 @@ describe('#191 callback persistence gate', () => {
     expect(setActiveUser).toHaveBeenCalledWith('u1', 'Nina', 'av', { persist: true });
   });
 
+  it('sec2 M2: exchanges the single-use handoff once under StrictMode', async () => {
+    search = 'auth_token=h&is_approved=true';
+    const fetchMock = stubFetch(() => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ user_id: 'u1', onboarding_completed: true, name: 'Nina' }),
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<React.StrictMode><CallbackPage /></React.StrictMode>);
+    await waitFor(() => expect(replace).toHaveBeenCalledWith('/dashboard'));
+    const posts = fetchMock.mock.calls.filter(
+      ([u, init]) => String(u).includes('/api/auth/session') && init?.method === 'POST',
+    );
+    expect(posts).toHaveLength(1);
+    expect(replace).not.toHaveBeenCalledWith(expect.stringContaining('error='));
+  });
+
   it('#757: retries a transient /me failure instead of guessing', async () => {
-    search = 'user_id=u1&is_approved=true&avatar=g-av';
+    search = 'user_id=u1&auth_token=h&is_approved=true&avatar=g-av';
     let calls = 0;
     vi.stubGlobal(
       'fetch',
@@ -82,7 +99,7 @@ describe('#191 callback persistence gate', () => {
         calls += 1;
         return calls === 1
           ? { ok: false, status: 503, json: async () => ({}) }
-          : { ok: true, status: 200, json: async () => ({ onboarding_completed: false, name: 'Nina' }) };
+          : { ok: true, status: 200, json: async () => ({ user_id: 'u1', onboarding_completed: false, name: 'Nina' }) };
       }),
     );
     render(<CallbackPage />);
@@ -92,7 +109,7 @@ describe('#191 callback persistence gate', () => {
   });
 
   it('#757: a /me that never answers fails the sign-in, never skips onboarding', async () => {
-    search = 'user_id=u1&is_approved=true&avatar=g-av';
+    search = 'user_id=u1&auth_token=h&is_approved=true&avatar=g-av';
     const fetchMock = stubFetch(() => ({ ok: false, status: 500, json: async () => ({}) }));
     vi.stubGlobal('fetch', fetchMock);
     render(<CallbackPage />);
@@ -108,7 +125,7 @@ describe('#191 callback persistence gate', () => {
   });
 
   it('#757: a dead account (404) is not retried', async () => {
-    search = 'user_id=u1&is_approved=true';
+    search = 'user_id=u1&auth_token=h&is_approved=true';
     const fetchMock = stubFetch(() => ({ ok: false, status: 404, json: async () => ({}) }));
     vi.stubGlobal('fetch', fetchMock);
     render(<CallbackPage />);
@@ -117,7 +134,7 @@ describe('#191 callback persistence gate', () => {
   });
 
   it('still fails cleanly when the session mint itself fails', async () => {
-    search = 'user_id=u1&is_approved=true';
+    search = 'user_id=u1&auth_token=h&is_approved=true';
     vi.stubGlobal(
       'fetch',
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -139,7 +156,7 @@ describe('#715 a new local account waits for its sample data', () => {
   const newAccount = () => ({
     ok: true,
     status: 200,
-    json: async () => ({ onboarding_completed: false, name: 'Nina', avatar_url: '' }),
+    json: async () => ({ user_id: 'user_1', onboarding_completed: false, name: 'Nina', avatar_url: '' }),
   });
   const seed = (status: number, body: unknown) => () => ({
     ok: status === 200,
@@ -151,7 +168,7 @@ describe('#715 a new local account waits for its sample data', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.clear();
-    search = 'user_id=user_1&is_approved=true';
+    search = 'user_id=user_1&auth_token=h&is_approved=true';
   });
   afterEach(() => {
     cleanup();
@@ -180,7 +197,7 @@ describe('#715 a new local account waits for its sample data', () => {
   });
 
   it('leaves the routing to the opener in popup mode', async () => {
-    search = 'user_id=user_1&is_approved=true&popup_id=p1';
+    search = 'user_id=user_1&auth_token=h&is_approved=true&popup_id=p1';
     const posted: unknown[] = [];
     class FakeChannel {
       constructor(public name: string) {}
@@ -288,9 +305,68 @@ describe('a cancelled Google sign-in says so (popup and same-tab)', () => {
   });
 
   it('a sign-in in progress still says "Signing you in…"', () => {
-    search = 'user_id=u1&is_approved=true';
+    search = 'user_id=u1&auth_token=h&is_approved=true';
     vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})));
     render(<CallbackPage />);
     expect(screen.getByTestId('auth-callback-status').textContent).toBe('Signing you in…');
+  });
+});
+
+describe('sec2 M2: the account comes from the verified session, never the URL', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+  });
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  it('ignores a user_id in the URL and persists the one /me names', async () => {
+    search = 'user_id=someone_else&auth_token=h&is_approved=true';
+    const fetchMock = stubFetch(() => ({
+      ok: true, status: 200,
+      json: async () => ({ user_id: 'u1', onboarding_completed: true, name: 'Nina', avatar_url: 'av' }),
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<CallbackPage />);
+    await waitFor(() => expect(replace).toHaveBeenCalledWith('/dashboard'));
+    expect(setActiveUser).toHaveBeenCalledWith('u1', 'Nina', 'av', { persist: true });
+    const [, init] = fetchMock.mock.calls.find(
+      ([u, i]) => String(u).includes('/api/auth/session') && i?.method === 'POST',
+    )!;
+    // Only the handoff goes to the BFF — no client-supplied user id.
+    expect(JSON.parse(String(init?.body))).toEqual({ authToken: 'h' });
+  });
+
+  it('works with no user_id in the URL at all', async () => {
+    search = 'auth_token=h&is_approved=true';
+    vi.stubGlobal('fetch', stubFetch(() => ({
+      ok: true, status: 200,
+      json: async () => ({ user_id: 'u1', onboarding_completed: true, name: 'Nina', avatar_url: '' }),
+    })));
+    render(<CallbackPage />);
+    await waitFor(() => expect(replace).toHaveBeenCalledWith('/dashboard'));
+    expect(setActiveUser).toHaveBeenCalledWith('u1', 'Nina', '', { persist: true });
+  });
+
+  it('fails without a handoff token', async () => {
+    search = 'user_id=u1&is_approved=true';
+    const fetchMock = stubFetch(() => ({ ok: true, status: 200, json: async () => ({ user_id: 'u1' }) }));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<CallbackPage />);
+    await waitFor(() => expect(replace).toHaveBeenCalledWith('/?error=signin_failed'));
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(setActiveUser).not.toHaveBeenCalled();
+  });
+
+  it('fails when /me does not name the account', async () => {
+    search = 'auth_token=h&is_approved=true';
+    vi.stubGlobal('fetch', stubFetch(() => ({
+      ok: true, status: 200, json: async () => ({ onboarding_completed: true, name: 'Nina' }),
+    })));
+    render(<CallbackPage />);
+    await waitFor(() => expect(replace).toHaveBeenCalledWith('/?error=signin_failed'));
+    expect(setActiveUser).not.toHaveBeenCalled();
   });
 });

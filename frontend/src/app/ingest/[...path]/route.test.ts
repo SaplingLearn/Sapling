@@ -2,7 +2,7 @@
  * The /ingest route handler: forwards the (capped, checked) batch upstream,
  * never forwards the student's cookie or IP, refuses traversal, marks
  * versioned SDK bundles immutable — and is not an open relay: only the
- * SDK's own endpoints, only with a `sapling_session` that verifies, only
+ * SDK's own endpoints, only with a session cookie that verifies, only
  * un-encoded bodies capped at 1 MiB, and only events for this deployment's
  * project key.
  */
@@ -30,7 +30,8 @@ const EVENT = JSON.stringify({ event: "$pageview", properties: { token: KEY, dis
 
 beforeAll(async () => {
   vi.stubEnv("SESSION_SECRET", SECRET);
-  SESSION = { cookie: `theme=dark; sapling_session=${await signSession("u-1")}` };
+  // https URLs below: the session cookie is `__Host-sapling_session` (sec2 M1).
+  SESSION = { cookie: `theme=dark; __Host-sapling_session=${await signSession("u-1")}` };
   vi.unstubAllEnvs();
 });
 beforeEach(() => {
@@ -100,15 +101,17 @@ describe("not an open relay", () => {
     vi.stubEnv("SESSION_SECRET", "a-different-secret-that-is-also-32-bytes-long");
     const forgedElsewhere = await signSession("u-1"); // signed with the wrong secret
     vi.stubEnv("SESSION_SECRET", SECRET);
-    const [payload] = SESSION.cookie.split("sapling_session=")[1].split(".");
+    const [payload] = SESSION.cookie.split("__Host-sapling_session=")[1].split(".");
     for (const cookie of [
       undefined,
       "theme=dark",
-      "sapling_session=",
+      "__Host-sapling_session=",
       "not_sapling_session=x",
-      "sapling_session=secret.token", // merely present
-      `sapling_session=${forgedElsewhere}`,
-      `sapling_session=${payload}.AAAA`, // real payload, bad signature
+      "__Host-sapling_session=secret.token", // merely present
+      `__Host-sapling_session=${forgedElsewhere}`,
+      `__Host-sapling_session=${payload}.AAAA`, // real payload, bad signature
+      // A CURRENT session under the legacy domain-wide name (cookie tossing).
+      SESSION.cookie.replace("__Host-sapling_session=", "sapling_session="),
     ]) {
       const res = await POST(
         new Request("https://saplinglearn.com/ingest/e/", {
@@ -244,17 +247,17 @@ describe("not an open relay", () => {
 
   it("reads the session cookie by exact name among others (request.cookies)", async () => {
     const calls = stubUpstream(() => new Response("ok"));
-    const token = SESSION.cookie.split("sapling_session=")[1];
+    const token = SESSION.cookie.split("__Host-sapling_session=")[1];
     for (const cookie of [
-      `a=1; sapling_session=${token}; b=2`,
-      `xsapling_session=junk; sapling_session=${token}`,
+      `a=1; __Host-sapling_session=${token}; b=2`,
+      `x__Host-sapling_session=junk; __Host-sapling_session=${token}`,
     ]) {
       const res = await POST(
         new Request("https://saplinglearn.com/ingest/e/", { method: "POST", body: EVENT, headers: { cookie } }),
       );
       expect(res.status, cookie).toBe(200);
     }
-    for (const cookie of [`xsapling_session=${token}`, `sapling_session_old=${token}`]) {
+    for (const cookie of [`x__Host-sapling_session=${token}`, `__Host-sapling_session_old=${token}`]) {
       const res = await POST(
         new Request("https://saplinglearn.com/ingest/e/", { method: "POST", body: EVENT, headers: { cookie } }),
       );

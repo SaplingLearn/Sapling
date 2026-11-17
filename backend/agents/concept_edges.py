@@ -30,6 +30,7 @@ from pydantic_ai import Agent
 from agents._bounded import clip_list
 from agents._providers import model_for
 from agents.deps import SaplingDeps
+from services.prompt_safety import INJECTION_GUARD_PROMPT
 
 MAX_EDGES = 400
 
@@ -91,7 +92,9 @@ _SYSTEM_PROMPT = (
     "- A concept that is unrelated to the rest (an administrative item, a "
     "stray label) gets no edges.\n"
     "- strength: 0.9 for an essential, direct dependency; 0.5 for a useful but "
-    "looser one."
+    "looser one.\n\n"
+    # sec2 M10 audit: the concept names are student graph text, enveloped.
+    + INJECTION_GUARD_PROMPT
 )
 _PROMPT_HASH = hashlib.sha256(_SYSTEM_PROMPT.encode("utf-8")).hexdigest()[:12]
 

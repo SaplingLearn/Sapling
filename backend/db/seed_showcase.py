@@ -50,7 +50,8 @@ from db.seed_local_rich import (                                   # noqa: E402
     USER_PENDING,
     USER_SECOND,
 )
-from services.encryption import encrypt_if_present                 # noqa: E402
+from services.encryption import bind, encrypt_if_present           # noqa: E402
+from services.encryption_canary import abort_unless_key_verified  # noqa: E402
 
 
 def _guard_local() -> None:
@@ -128,15 +129,16 @@ def overlay_people() -> None:
     for uid, first, last, email in _PEOPLE:
         table("user_profiles").update(
             {
-                "name": encrypt_if_present(f"{first} {last}"),
-                "first_name": encrypt_if_present(first),
-                "last_name": encrypt_if_present(last),
+                "name": encrypt_if_present(f"{first} {last}",
+                                           bind=bind("user_profiles", "name", uid)),
+                "first_name": encrypt_if_present(first, bind=bind("user_profiles", "first_name", uid)),
+                "last_name": encrypt_if_present(last, bind=bind("user_profiles", "last_name", uid)),
             },
             filters={"user_id": f"eq.{uid}"},
         )
         _bump("user_profiles")
         table("users").update(
-            {"email": encrypt_if_present(email)},
+            {"email": encrypt_if_present(email, bind=bind("users", "email", uid))},
             filters={"id": f"eq.{uid}"},
         )
         _bump("users")
@@ -168,7 +170,7 @@ def overlay_room_messages() -> None:
     for msg_id, text in _MESSAGE_REWRITES:
         # 🔒 text
         table("room_messages").update(
-            {"text": encrypt_if_present(text)},
+            {"text": encrypt_if_present(text, bind=bind("room_messages", "text", msg_id))},
             filters={"id": f"eq.{msg_id}"},
         )
         _bump("room_messages.text")
@@ -185,13 +187,16 @@ def overlay_room_messages() -> None:
             "user_id": user_id,
             "user_name": _NAME_BY_ID[user_id],
             # 🔒 text
-            "text": encrypt_if_present(text),
+            "text": encrypt_if_present(text, bind=bind("room_messages", "text", msg_id)),
         })
         _bump("room_messages.added")
 
 
 def main() -> None:
     _guard_local()
+    # Abort unless ENCRYPTION_KEY opens this database's key canary
+    # (services/encryption_canary.py): a wrong key writes unreadable rows.
+    abort_unless_key_verified("db.seed_showcase", allow_seed=True)
     overlay_people()
     overlay_rooms()
     overlay_room_messages()

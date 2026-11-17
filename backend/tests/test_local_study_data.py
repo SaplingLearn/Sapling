@@ -31,7 +31,7 @@ from models.study_guide import (
     GuideContent,
     MaterialOption,
 )
-from services.encryption import encrypt_if_present, encrypt_json
+from services.encryption import bind, encrypt_if_present, encrypt_json
 from services.exam_proximity import is_exam
 from services.quiz.distractors import DIGEST_SCHEMA_VERSION
 from services.quiz.wire import _is_wire_question, _strip_answer_key
@@ -854,7 +854,13 @@ def _served(place, rows, monkeypatch) -> dict:
         "payload": {"sources": [{"id": "course-description", "label": "BU course description"}], "assessments": exams},
         "nodes": [n for n in rows["graph_nodes"] if n["course_id"] == place.data.course_id],
     }
-    cache = {"content": encrypt_json({"topics": outline.topics(place)}), "generated_at": NOW.isoformat()}
+    enrollment_id = place.enrolled.enrollment_id
+    cache = {
+        "enrollment_id": enrollment_id,
+        "content": encrypt_json({"topics": outline.topics(place)},
+                                bind=bind("topic_checklists", "content", enrollment_id)),
+        "generated_at": NOW.isoformat(),
+    }
     scope = {"course": {"id": place.data.course_id}, "enrollment_id": place.enrolled.enrollment_id, "semester": ""}
     return checklist_service.present(scope, snapshot, cache, NOW)
 

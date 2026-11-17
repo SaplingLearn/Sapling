@@ -556,7 +556,7 @@ describe("Onboarding: screens", () => {
 
       fireEvent.click(continueBtn());
       await screen.findByRole("heading", { level: 1, name: "Privacy Policy" });
-      expect(screen.getByTestId("onboarding-legal-updated").textContent).toBe("Last updated: November 3, 2026");
+      expect(screen.getByTestId("onboarding-legal-updated").textContent).toBe("Last updated: November 16, 2026");
       expect(within(screen.getByTestId("onboarding-legal-body")).getByText(PRIVACY.sections[5].bodyAfter!)).toBeTruthy();
     } finally {
       // jsdom keeps both on Element.prototype, so there is usually nothing here
@@ -692,7 +692,7 @@ describe("Onboarding: Finish", () => {
       { signal: expect.any(AbortSignal) },
     );
     expect(TERMS_VERSION).toBe("2026-10-22");
-    expect(PRIVACY_VERSION).toBe("2026-11-03");
+    expect(PRIVACY_VERSION).toBe("2026-11-16");
     expect(updateSettings).not.toHaveBeenCalled();
     expect(refreshProfile).toHaveBeenCalled();
     // Marked onboarded before leaving, so the shell doesn't send them back.

@@ -35,7 +35,7 @@ from models.study_guide import (
     Source,
 )
 from services import academics, events_service, request_limits
-from services.encryption import decrypt_json, encrypt_json
+from services.encryption import bind, decrypt_json, encrypt_json
 from services.llm_budget import LLMBudgetExceeded
 from services.study_guides import cards, generation, limits, materials, signals, store, writer
 from services.study_guides.errors import (
@@ -59,6 +59,11 @@ COURSE = "course-cs"
 GUIDE = "g1"
 MADE_AT = "2026-11-01T00:00:00+00:00"
 CONCEPTS = ["Recursion", "Control Flow", "Variables and Types"]
+
+def _opened(row: dict, column: str):
+    """A stored study_guides column opened in its own cell (M13 binding)."""
+    return decrypt_json(row[column], bind=bind("study_guides", column, row))
+
 
 
 def run(coro):
@@ -136,7 +141,7 @@ class World:
 
     def content(self, guide_id: str = GUIDE) -> GuideContent:
         row = self.stored(guide_id)
-        stored = decrypt_json(row["content"])
+        stored = _opened(row, "content")
         if row["format"] == 1:
             return content_from_topics(stored)
         return GuideContent.model_validate(stored)
@@ -405,7 +410,7 @@ def test_regenerate_keeps_the_previous_version_and_clears_read_state_and_answers
     events, rows = run(_follow(world, "regenerate"))
 
     row = world.stored()
-    assert GuideContent.model_validate(decrypt_json(row["previous_content"])) == old
+    assert GuideContent.model_validate(_opened(row, "previous_content")) == old
     assert row["read_sections"] == [] and row["answers"] is None
     assert row["status"] == "ready" and row["generated_at"] != MADE_AT
     content = world.content()
@@ -442,7 +447,7 @@ def test_a_guide_from_before_the_redesign_is_regenerated_from_the_classs_materia
 
     row = world.stored()
     assert (row["format"], row["status"], row["material_ids"]) == (2, "ready", ["doc-1"])
-    previous = GuideContent.model_validate(decrypt_json(row["previous_content"]))
+    previous = GuideContent.model_validate(_opened(row, "previous_content"))
     assert [s.title for s in previous.sections] == ["Loops"]
     assert len(world.content().sections) == 3
 
@@ -754,7 +759,7 @@ def test_a_regenerate_that_fails_after_a_section_can_be_resumed(world, monkeypat
     row = world.stored()
     assert events[-1].type == "error" and row["status"] == "failed"
     assert [s.status for s in world.content().sections] == ["written", "queued"]
-    assert GuideContent.model_validate(decrypt_json(row["previous_content"])) == old
+    assert GuideContent.model_validate(_opened(row, "previous_content")) == old
     # Not made yet: the date is still the old guide's.
     assert row["generated_at"] == MADE_AT
     read_at = world.content().materials_read_at
@@ -919,7 +924,7 @@ def test_a_failed_first_section_is_not_saved_until_a_later_one_is_written(world,
     assert [s.status for s in saved["content"].sections] == ["failed", "written"]
     row = world.stored()
     assert row["status"] == "ready" and events[-1].type == "done"
-    assert GuideContent.model_validate(decrypt_json(row["previous_content"])) == old
+    assert GuideContent.model_validate(_opened(row, "previous_content")) == old
 
 
 def test_the_previous_version_is_never_a_half_written_guide(world, monkeypatch):
@@ -936,7 +941,7 @@ def test_the_previous_version_is_never_a_half_written_guide(world, monkeypatch):
 
     row = world.stored()
     assert events[-1].type == "done" and row["status"] == "ready"
-    assert GuideContent.model_validate(decrypt_json(row["previous_content"])) == old
+    assert GuideContent.model_validate(_opened(row, "previous_content")) == old
 
 
 def test_a_guide_with_nothing_written_has_no_previous_version_to_keep(world, monkeypatch):
@@ -1040,8 +1045,8 @@ def test_update_keeps_the_sections_the_outline_keeps_with_their_state(world, mon
     assert [s.id for s in content.sources] == ["document:doc-1", "document:doc-2"]
     assert row["material_ids"] == ["doc-1", "doc-2"]
     assert row["read_sections"] == ["s1"]
-    assert decrypt_json(row["answers"]) == {"s1-i2": {"option_id": "b", "correct": True}}
-    assert GuideContent.model_validate(decrypt_json(row["previous_content"])) == old
+    assert _opened(row, "answers") == {"s1-i2": {"option_id": "b", "correct": True}}
+    assert GuideContent.model_validate(_opened(row, "previous_content")) == old
     assert row["status"] == "ready" and row["generated_at"] != MADE_AT
     assert script.written == ["Types", "Control flow, again"]
     assert [e.message for e in events if e.type == "status"] == [
@@ -1125,7 +1130,7 @@ def test_an_answer_given_while_the_outline_was_planned_survives_the_update(world
 
     row = world.stored()
     assert row["read_sections"] == ["s1"]
-    assert decrypt_json(row["answers"]) == {"s1-i2": {"option_id": "b", "correct": True}}
+    assert _opened(row, "answers") == {"s1-i2": {"option_id": "b", "correct": True}}
 
 
 def test_a_keep_id_is_honoured_once_and_only_for_a_written_section(world, monkeypatch):
@@ -1516,7 +1521,7 @@ def test_a_second_regenerate_fired_with_the_first_keeps_the_real_previous_versio
 
     assert won[-1].type == "done" and _shape(late) == [("done", "done")]
     assert len(script.outline_calls) == 1
-    assert GuideContent.model_validate(decrypt_json(world.stored()["previous_content"])) == old
+    assert GuideContent.model_validate(_opened(world.stored(), "previous_content")) == old
 
 
 def test_a_run_writes_from_the_row_as_it_is_under_the_claim(world, monkeypatch):

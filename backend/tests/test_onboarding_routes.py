@@ -318,12 +318,12 @@ class TestSaveOnboardingProfile:
         assert res.status_code == 200, res.text
         assert res.json() == {"ok": True, "user_id": "user_123", "courses_linked": 2}
 
-        from services.encryption import decrypt
+        from services.encryption import bind, decrypt
         [profile] = db.rows["user_profiles"]
         assert profile["user_id"] == "user_123"
-        assert decrypt(profile["first_name"]) == "Jose"
-        assert decrypt(profile["last_name"]) == "Cruz"
-        assert decrypt(profile["name"]) == "Jose Cruz"
+        assert decrypt(profile["first_name"], bind=bind("user_profiles", "first_name", "user_123")) == "Jose"
+        assert decrypt(profile["last_name"], bind=bind("user_profiles", "last_name", "user_123")) == "Cruz"
+        assert decrypt(profile["name"], bind=bind("user_profiles", "name", "user_123")) == "Jose Cruz"
         assert profile["year"] == "junior"
         assert profile["majors"] == ["Computer Science"]
         assert profile["minors"] == ["Mathematics"]
@@ -367,17 +367,17 @@ class TestSaveOnboardingProfile:
     def test_names_are_trimmed(self, db):
         res = _post(first_name="  Ada ", last_name=" Lovelace  ")
         assert res.status_code == 200, res.text
-        from services.encryption import decrypt
+        from services.encryption import bind, decrypt
         [profile] = db.rows["user_profiles"]
-        assert decrypt(profile["first_name"]) == "Ada"
-        assert decrypt(profile["last_name"]) == "Lovelace"
-        assert decrypt(profile["name"]) == "Ada Lovelace"
+        assert decrypt(profile["first_name"], bind=bind("user_profiles", "first_name", "user_123")) == "Ada"
+        assert decrypt(profile["last_name"], bind=bind("user_profiles", "last_name", "user_123")) == "Lovelace"
+        assert decrypt(profile["name"], bind=bind("user_profiles", "name", "user_123")) == "Ada Lovelace"
 
     def test_an_empty_last_name_is_allowed(self, db):
         res = _post(last_name="")
         assert res.status_code == 200, res.text
-        from services.encryption import decrypt
-        assert decrypt(db.rows["user_profiles"][0]["name"]) == "Jose"
+        from services.encryption import bind, decrypt
+        assert decrypt(db.rows["user_profiles"][0]["name"], bind=bind("user_profiles", "name", "user_123")) == "Jose"
 
     def test_courses_are_resolved_in_one_quoted_read(self, db):
         """The ids are the client's: one `in.(…)` read with each id quoted, so

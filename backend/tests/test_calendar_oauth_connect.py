@@ -152,7 +152,7 @@ class TestCalendarCallback:
             lambda *a, **k: upserts.append((a, k))
         )
         monkeypatch.setattr(cal, "table", fake_table)
-        monkeypatch.setattr(cal, "encrypt", lambda v: f"ENC({v})")
+        monkeypatch.setattr(cal, "encrypt", lambda v, **_: f"ENC({v})")
 
         client = TestClient(_app)
         state = self._initiate(client)
@@ -179,7 +179,7 @@ class TestCalendarCallback:
         fake_table = MagicMock()
         fake_table.return_value.upsert.side_effect = lambda *a, **k: upserts.append((a, k))
         monkeypatch.setattr(cal, "table", fake_table)
-        monkeypatch.setattr(cal, "encrypt", lambda v: f"ENC({v})")
+        monkeypatch.setattr(cal, "encrypt", lambda v, **_: f"ENC({v})")
         return upserts
 
     def test_success_lands_on_next(self, monkeypatch):
@@ -324,7 +324,7 @@ class TestCalendarCallback:
         fake_table = MagicMock()
         fake_table.return_value.select.return_value = stored
         monkeypatch.setattr(cal, "table", fake_table)
-        monkeypatch.setattr(cal, "encrypt", lambda v: f"ENC({v})")
+        monkeypatch.setattr(cal, "encrypt", lambda v, **_: f"ENC({v})")
         client = TestClient(_app)
         state = self._initiate(client, "&next=/dashboard")
         r = client.get(f"/api/calendar/callback?code=xyz&state={state}", follow_redirects=False)
@@ -395,7 +395,7 @@ class TestStoredRefreshToken:
             return c
 
         monkeypatch.setattr(calendar_routes, "Credentials", _creds, raising=False)
-        monkeypatch.setattr(calendar_routes, "decrypt", lambda v: f"DEC({v})")
+        monkeypatch.setattr(calendar_routes, "decrypt", lambda v, **_: f"DEC({v})")
         fake_table = MagicMock()
         monkeypatch.setattr(calendar_routes, "table", fake_table)
         calendar_routes._get_refreshed_credentials({
@@ -418,8 +418,8 @@ class TestRefreshExpiresAt:
             lambda *a, **k: updates.append((a, k))
         )
         monkeypatch.setattr(calendar_routes, "table", fake_table)
-        monkeypatch.setattr(calendar_routes, "encrypt", lambda v: f"ENC({v})")
-        monkeypatch.setattr(calendar_routes, "decrypt", lambda v: v)
+        monkeypatch.setattr(calendar_routes, "encrypt", lambda v, **_: f"ENC({v})")
+        monkeypatch.setattr(calendar_routes, "decrypt", lambda v, **_: v)
 
         creds = MagicMock()
         creds.refresh_token = "ref"

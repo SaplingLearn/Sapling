@@ -17,7 +17,7 @@ from db import seed_helpers as h, seed_local_owner as owner_seed
 from e2e_oracles import judges
 from e2e_oracles.gather import _CIPHERTEXT_MANIFEST
 from models.study_guide import GUIDE_FORMAT, GuideContent
-from services.encryption import decrypt, decrypt_json, encrypt
+from services.encryption import V2_PREFIX, bind, decrypt, decrypt_json, encrypt
 from tests.seed_memory_db import MemoryDatabase
 
 NOW = datetime(2026, 11, 12, 15, 30, tzinfo=timezone(timedelta(hours=-5)))
@@ -50,6 +50,15 @@ def local_database(monkeypatch):
     return db
 
 
+def _open(table_name: str, column: str, row: dict) -> str:
+    """A stored 🔒 value, opened in its own cell (finding M13)."""
+    return decrypt(row[column], bind=bind(table_name, column, row))
+
+
+def _open_json(table_name: str, column: str, row: dict):
+    return decrypt_json(row[column], bind=bind(table_name, column, row))
+
+
 def _readable(db: MemoryDatabase) -> dict:
     """Every row with its encrypted columns decrypted (a nonce makes two
     encryptions of one value differ), less the one clock the seed reads."""
@@ -59,11 +68,12 @@ def _readable(db: MemoryDatabase) -> dict:
         for row in rows:
             plain = dict(row)
             for column in seed._ENCRYPTED_TEXT.get(table_name, ()):
-                plain[column] = None if plain[column] is None else decrypt(plain[column])
+                plain[column] = None if plain[column] is None else _open(table_name, column, row)
             for column in seed._ENCRYPTED_JSON.get(table_name, ()):
-                plain[column] = None if plain[column] is None else decrypt_json(plain[column])
+                plain[column] = (None if plain[column] is None
+                                 else _open_json(table_name, column, row))
             if table_name == "topic_checklists":
-                plain["content"] = decrypt_json(plain["content"])
+                plain["content"] = _open_json(table_name, "content", row)
                 plain.pop("generated_at")
             out[table_name].append(plain)
     return out
@@ -83,9 +93,19 @@ def test_every_encrypted_column_is_ciphertext_at_rest(local_database):
     seed.apply(OWNER, NOW)
     checked = set()
     for table_name, pk, column in _CIPHERTEXT_MANIFEST:
-        pairs = [(row.get(pk), row[column]) for row in local_database.rows.get(table_name, [])
-                 if row.get(column) is not None]
-        assert judges.ciphertext_findings(table_name, column, pairs, decrypt) == []
+        rows = [row for row in local_database.rows.get(table_name, [])
+                if row.get(column) is not None]
+        pairs = [(row.get(pk), row[column]) for row in rows]
+        # Every value the seed sealed is v2, bound to its own row: open each
+        # with its row's binding (the users row is the fixture's v1 email).
+        cell = {row[column]: row for row in rows}
+
+        def opened(value, table_name=table_name, column=column, cell=cell):
+            return decrypt(value, bind=bind(table_name, column, cell[value]))
+
+        if table_name != "users":
+            assert all(v.startswith(V2_PREFIX) for _, v in pairs), table_name
+        assert judges.ciphertext_findings(table_name, column, pairs, opened) == []
         if pairs and table_name != "users":
             checked.add((table_name, column))
     # Every column the seed says it encrypts was really checked above, and
@@ -134,7 +154,7 @@ def test_the_outline_is_stored_under_the_real_evidence_hash(local_database):
     assert len(outlines) == len(data.CLASSES)
     for row in outlines:
         assert row["input_hash"] == f"hash-of-{row['enrollment_id']}"
-        assert decrypt_json(row["content"])["topics"]
+        assert _open_json("topic_checklists", "content", row)["topics"]
 
 
 def test_rows_the_account_already_has_are_updated_in_place(local_database):
@@ -171,7 +191,7 @@ def test_rows_the_account_already_has_are_updated_in_place(local_database):
     assert [e["id"] for e in pair] == ["rich-edge"]
     digests = [d for d in local_database.rows["quiz_context"] if d["concept_node_id"] == "rich-controlflow"]
     assert [d["id"] for d in digests] == ["rich-digest"]
-    assert decrypt_json(digests[0]["context_json"])["common_mistakes"]
+    assert _open_json("quiz_context", "context_json", digests[0])["common_mistakes"]
     answers = [r for r in local_database.rows["quiz_responses"]
                if (r["attempt_id"], r["question_index"]) == (waiting["id"], 0)]
     assert [r["id"] for r in answers] == ["from-the-app"] and "is_correct" in answers[0]
@@ -190,13 +210,14 @@ def test_an_exam_the_account_already_has_is_linked_from_the_outline(local_databa
 
     stored = next(r for r in local_database.rows["topic_checklists"] if r["enrollment_id"] == "enr-cs101")
     linking = {
-        topic["name"] for topic in decrypt_json(stored["content"])["topics"]
+        topic["name"] for topic in _open_json("topic_checklists", "content", stored)["topics"]
         if "rich-pop-quiz" in topic["assessment_ids"]
     }
     assert linking == {"Functions", "Recursion"}
     exams = {a["id"] for a in local_database.rows["assignments"] if a["enrollment_id"] == "enr-cs101"}
     for row in local_database.rows["topic_checklists"]:
-        linked = {a for topic in decrypt_json(row["content"])["topics"] for a in topic["assessment_ids"]}
+        linked = {a for topic in _open_json("topic_checklists", "content", row)["topics"]
+                  for a in topic["assessment_ids"]}
         assert "rich-earlier-term" not in linked
         assert row["enrollment_id"] != "enr-cs101" or linked <= exams
 

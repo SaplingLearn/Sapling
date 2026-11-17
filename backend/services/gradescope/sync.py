@@ -14,7 +14,7 @@ import uuid
 from typing import Any, Callable
 
 from db.connection import page_all, table
-from services.encryption import encrypt_if_present
+from services.encryption import bind, encrypt_if_present
 from services.gradescope import client as gradescope_service
 from services.gradescope import jobs as gradescope_jobs
 from services.gradescope.credentials import (
@@ -22,6 +22,7 @@ from services.gradescope.credentials import (
     _load_creds,
     _now_iso,
     _write_connection_state,
+    reauth_message,
 )
 from services.gradescope.errors import GradescopeCredsError
 
@@ -63,7 +64,8 @@ def _run_linked_sync(
 
     conn = None
     try:
-        conn = _establish_connection(creds)
+        # user_id: a legacy password row is converted to its session here.
+        conn = _establish_connection(creds, user_id=user_id)
         gs_assignments = gradescope_service.list_assignments(conn, gs_course_id)
     except gradescope_service.GradescopeAuthError as e:
         # Stored credentials rejected: mark them stale (as _reauth_required does).
@@ -71,7 +73,7 @@ def _run_linked_sync(
             user_id, {"needs_reauth": True, "last_sync_error": "auth_failed", "last_attempt_at": _now_iso()},
             only_version=creds.updated_at,
         )
-        return Outcome.failed(gradescope_jobs.ERR_AUTH, str(e))
+        return Outcome.failed(gradescope_jobs.ERR_AUTH, reauth_message(creds, e))
     except gradescope_service.GradescopeFetchError as e:
         # An outage says nothing about the credentials: needs_reauth untouched.
         _write_connection_state(user_id, {"last_sync_error": "fetch_failed", "last_attempt_at": _now_iso()})
@@ -136,6 +138,10 @@ def _run_linked_sync(
         points_earned = a.get("points_earned")
         points_possible = a.get("points_possible")
 
+        # The row id is known before sealing: the existing row's, or one
+        # minted here for the insert (the points are bound to it, M13).
+        existing_id = by_gs_id.get(gs_id)
+        assignment_id = existing_id or str(uuid.uuid4())
         record_write: dict[str, Any] = {
             "title": title,
             "due_date": due_date,
@@ -145,18 +151,19 @@ def _run_linked_sync(
         # Only include grade fields when Gradescope returned a value —
         # absent grades (None) must not overwrite previously synced data.
         if points_earned is not None:
-            record_write["points_earned"] = encrypt_if_present(points_earned)
+            record_write["points_earned"] = encrypt_if_present(
+                points_earned, bind=bind("assignments", "points_earned", assignment_id))
         if points_possible is not None:
-            record_write["points_possible"] = encrypt_if_present(points_possible)
+            record_write["points_possible"] = encrypt_if_present(
+                points_possible, bind=bind("assignments", "points_possible", assignment_id))
         try:
-            if gs_id in by_gs_id:
+            if existing_id:
                 table("assignments").update(
                     record_write,
-                    filters={"id": f"eq.{by_gs_id[gs_id]}"},
+                    filters={"id": f"eq.{existing_id}"},
                 )
                 updated += 1
             else:
-                assignment_id = str(uuid.uuid4())
                 table("assignments").insert({
                     "id": assignment_id,
                     "enrollment_id": enrollment_id,

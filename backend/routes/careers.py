@@ -8,6 +8,7 @@ from typing import Optional
 
 from db.connection import SUPABASE_URL, SUPABASE_KEY, table
 from services import abuse_limits
+from services.email_shape import is_email_shape
 from services.request_limits import enforce_abuse_limit, public_route_limit, read_within_limit_sync
 from services.upload_validation import DOCX, PDF, sniff_type
 
@@ -27,7 +28,6 @@ ALLOWED_RESUME_TYPES = {
 }
 #: Legacy Word (.doc) files are OLE2 compound documents.
 _OLE2_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
-_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 # Storage object keys are built from the uploaded filename's extension. Bound
 # it: the raw value is attacker-controlled and ends up in a URL path.
@@ -137,7 +137,7 @@ def apply(
         raise HTTPException(status_code=422, detail="A valid position is required.")
     if not full_name or len(full_name) > 200:
         raise HTTPException(status_code=422, detail="Full name is required.")
-    if not _EMAIL_RE.match(email) or len(email) > 320:
+    if not is_email_shape(email):  # length before the (linear) pattern
         raise HTTPException(status_code=422, detail="A valid email is required.")
     if not linkedin_url or len(linkedin_url) > 500:
         raise HTTPException(status_code=422, detail="A LinkedIn URL is required.")

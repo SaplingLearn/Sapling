@@ -1,4 +1,10 @@
+# Every env file (real secrets: .env, .env.staging, .env.production, ...)
+# except the committed examples.
 .env
+.env*
+!.env.example
+!.env.local.example
+!.env.staging.example
 __pycache__
 *.pyc
 *.pyo

@@ -11,7 +11,8 @@ from services.extraction_service import (
 )
 from services.extraction_backends.docling_backend import docling_available
 from services.extraction_backends.got_ocr_backend import got_ocr_available
-from services.extraction_backends.tesseract_backend import tesseract_available
+from services.extraction_backends.tesseract_backend import tesseract_available, validate_lang
+from services.image_safety import ImageTooLarge
 from services.auth_guard import get_session_user_id
 from services.request_limits import check_rate_limit, read_within_limit
 from services.request_context import current_request_id
@@ -44,6 +45,20 @@ def _enforce_ocr_limits(request: Request) -> str:
             headers={"Retry-After": str(retry)},
         )
     return user_id
+
+
+def _checked_lang(lang: str) -> str:
+    """The OCR language, allowlisted to what this Tesseract has installed:
+    the value names a traineddata file, so it is never passed on unchecked."""
+    try:
+        return validate_lang(lang)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Unsupported OCR language.") from None
+
+
+#: Past the pixel ceiling (services/image_safety.py): a decompression bomb, or
+#: a page too large to render.
+IMAGE_TOO_LARGE_DETAIL = "This file is too large to scan. Try a smaller image or page."
 
 
 #: What a client reads when OCR is not installed or a run fails. Never the
@@ -91,6 +106,7 @@ async def extract_pdf(
     # #182: 401 unauthenticated, 429 rate-limited. Off the loop (#117): the
     # session check can read the account and the limiter can be a DB call.
     await run_in_threadpool(_enforce_ocr_limits, request)
+    lang = _checked_lang(lang)
     if file.content_type not in ALLOWED_PDF_TYPES:
         raise HTTPException(status_code=400, detail="Only PDF files are supported")
     pdf_bytes = await read_within_limit(file, MAX_OCR_BYTES)  # 413 if oversize (#182)
@@ -120,6 +136,8 @@ async def extract_pdf(
             method = "pdf_ocr"
             if not force_ocr and text:
                 warnings.append("Native text was short; OCR fallback used")
+        except ImageTooLarge:
+            raise HTTPException(status_code=413, detail=IMAGE_TOO_LARGE_DETAIL) from None
         except RuntimeError as e:
             raise _ocr_unavailable_error(str(e))
         except Exception as e:
@@ -148,6 +166,7 @@ async def extract_image(
     # #182: 401 unauthenticated, 429 rate-limited. Off the loop (#117): the
     # session check can read the account and the limiter can be a DB call.
     await run_in_threadpool(_enforce_ocr_limits, request)
+    lang = _checked_lang(lang)
     if file.content_type not in ALLOWED_IMAGE_TYPES:
         raise HTTPException(status_code=400, detail="Only PNG/JPG/WEBP images are supported")
     image_bytes = await read_within_limit(file, MAX_OCR_BYTES)  # 413 if oversize (#182)
@@ -165,6 +184,8 @@ async def extract_image(
             "warnings": [] if text else ["No text found in image"],
             "metadata": {"filename": file.filename},
         }
+    except ImageTooLarge:
+        raise HTTPException(status_code=413, detail=IMAGE_TOO_LARGE_DETAIL) from None
     except RuntimeError as e:
         raise _ocr_unavailable_error(str(e))
     except Exception as e:

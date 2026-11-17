@@ -497,7 +497,20 @@ def _agent_prompt(state: Any, questions: Sequence[Question]) -> str:
                 "levels": {k: d for k, d in q.levels},
             }
         specs.append(spec)
-    return json.dumps({"state": state, "questions": specs}, ensure_ascii=False, default=str)
+    # sec2 M10 audit: the questions are code-built (trusted); the state
+    # carries a student's chat turn, so it goes inside the untrusted envelope
+    # (still JSON inside it, so the agent reads the same structure).
+    from services.prompt_safety import wrap_untrusted
+
+    state_json = json.dumps(state, ensure_ascii=False, default=str)
+    return (
+        "QUESTIONS:\n" + json.dumps({"questions": specs}, ensure_ascii=False, default=str)
+        + "\n\nSTATE:\n" + (wrap_untrusted(state_json, source=DECISION_STATE_SOURCE) or state_json)
+    )
+
+
+#: Envelope label on the decision agent's state. A trusted literal.
+DECISION_STATE_SOURCE = "the state to judge"
 
 
 async def _run_agent(

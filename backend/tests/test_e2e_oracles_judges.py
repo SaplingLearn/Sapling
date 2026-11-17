@@ -69,6 +69,28 @@ def test_ciphertext_judge_flags_plaintext_and_passes_real_ciphertext():
     assert all(len(str(f.evidence.get("value_prefix", ""))) <= 32 for f in fs)
 
 
+def test_ciphertext_judge_opens_v2_under_each_rows_own_binding():
+    """Finding M13: a v2 value passes in its own row, fails when moved, and
+    with require_v2 a legacy v1 value is a finding."""
+    from services.encryption import bind, decrypt, encrypt
+
+    def _open(value, row):
+        return decrypt(value, bind=bind("notes", "body", row))
+
+    own = {"id": "row1"}
+    moved_from = {"id": "elsewhere"}
+    rows = [
+        ("row1", encrypt("hello", bind=bind("notes", "body", own)), own),
+        ("row2", encrypt("stolen", bind=bind("notes", "body", moved_from)), {"id": "row2"}),
+        ("row3", encrypt("legacy", v2=False), {"id": "row3"}),
+    ]
+    fs = ciphertext_findings("notes", "body", rows, _open)
+    assert {f.evidence["pk"] for f in fs} == {"row2"}
+    fs = ciphertext_findings("notes", "body", rows, _open, require_v2=True)
+    assert {f.evidence["pk"] for f in fs} == {"row2", "row3"}
+    assert all(len(f.evidence["value_prefix"]) <= 32 for f in fs)
+
+
 def test_count_judge():
     assert count_findings("documents", 3, 3) == []
     (f,) = count_findings("documents", 4, 3)

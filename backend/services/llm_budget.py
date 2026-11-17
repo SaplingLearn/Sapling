@@ -56,8 +56,22 @@ Caching (CLAUDE.md, #98): a per-process, per-user TTL cache of the status —
 failed read so a DB brownout costs one bounded wait per user per window, not
 one per run. Invalidation: the admin budget writes call
 :func:`clear_llm_budget_cache`; other workers converge within the TTL. Usage
-rows themselves land through events_service's async queue, so the budget is
-approximate by a few seconds plus the TTL either way.
+rows themselves land through events_service's async queue, so the database
+alone is behind by a few seconds plus the TTL.
+
+Race safety (sec2 M4): that lag let N parallel first requests all read the
+same "under budget" status and all start. :func:`_admit` makes the decision
+check-and-reserve under one lock: each admitted run reserves
+``RESERVE_TOKENS_PER_RUN`` in process memory, and later decisions add every
+reservation not yet visible in the status they read. A run whose usage row
+has been queued (``note_usage_recorded``, called by ``log_llm_usage``) is
+settled: it stops counting once a status read is ``SETTLE_LAG_S`` past the
+queueing, since its real usage is in ``used`` by then. A run still in flight
+counts until it settles, or for at most ``LAND_LAG_S`` if it never reports.
+With R tokens left, a burst admits about
+R / RESERVE_TOKENS_PER_RUN runs, not N. A failed read falls back to the
+user's last good status of the day (plus reservations) instead of failing
+fully open; only a user never read today fails open.
 """
 from __future__ import annotations
 
@@ -68,7 +82,7 @@ import logging
 import math
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -81,8 +95,20 @@ logger = logging.getLogger("sapling.llm_budget")
 FLAG_KEY = "llm_budget"
 ERROR_CODE = "LLM_BUDGET_EXCEEDED"
 
-#: How long a user's status is trusted before it is read again.
-STATUS_TTL_S = 30.0
+#: How long a user's status is trusted before it is read again. Short: the
+#: in-process reservations below cover the gap between reads, and one indexed
+#: RPC per active user per 10 s is cheap while the flag is on.
+STATUS_TTL_S = 10.0
+#: Tokens one admitted run is assumed to spend until its usage row lands (a
+#: Sonnet tutor turn with RAG and a tool loop is ~10-40K, a quiz ~20-30K).
+RESERVE_TOKENS_PER_RUN = 20_000
+#: How long after a status read a run's own usage may still be missing from
+#: it: the run's length plus events_service's async usage queue. A
+#: reservation older than (read time - this) is taken to be in `used`.
+LAND_LAG_S = 120.0
+#: How long after a run's usage row is QUEUED it may still be missing from a
+#: status read (events_service flushes about once a second; the rest is slack).
+SETTLE_LAG_S = 15.0
 #: How long a FAILED status read is remembered (the run fails open meanwhile).
 FAILURE_TTL_S = 10.0
 #: Bound on one status read (the RPC's per-call HTTP timeout); past it the
@@ -196,6 +222,9 @@ class BudgetStatus:
     used: int
     source: str
     reset_at: datetime
+    #: time.time() of the read this came from (0: unknown, so every live
+    #: reservation counts on top of it).
+    read_at: float = field(default=0.0, compare=False)
 
     @property
     def exceeded(self) -> bool:
@@ -236,16 +265,26 @@ def read_status(user_id: str, *, timeout: float | None = None) -> BudgetStatus:
 
 _cache: dict[str, tuple[float, BudgetStatus | None]] = {}
 _cache_lock = threading.Lock()
+#: The last status each user's read RETURNED (until its reset): what a failed
+#: read falls back to instead of failing fully open.
+_last_good: dict[str, BudgetStatus] = {}
+#: Each run admitted per user and not yet known to be in a read, as
+#: [admitted_at, settled_at | None] (settled = its usage row was queued).
+_reservations: dict[str, list[list[float | None]]] = {}
 
 
 def clear_llm_budget_cache(user_id: str | None = None) -> None:
-    """Drop cached statuses (one user's, or all). The admin budget writes call
-    this; the autouse test fixture too."""
+    """Drop cached statuses, last good reads and reservations (one user's, or
+    all). The admin budget writes call this; the autouse test fixture too."""
     with _cache_lock:
         if user_id is None:
             _cache.clear()
+            _last_good.clear()
+            _reservations.clear()
         else:
             _cache.pop(user_id, None)
+            _last_good.pop(user_id, None)
+            _reservations.pop(user_id, None)
 
 
 def _cached(user_id: str) -> tuple[bool, BudgetStatus | None]:
@@ -260,10 +299,11 @@ def _cached(user_id: str) -> tuple[bool, BudgetStatus | None]:
         return True, status
 
 
-def _remember(user_id: str, status: BudgetStatus | None) -> None:
+def _remember(user_id: str, status: BudgetStatus | None, *, failed: bool = False) -> None:
     now = time.time()
-    if status is None:
-        expires = now + FAILURE_TTL_S
+    if status is None or failed:
+        expires = min(now + FAILURE_TTL_S,
+                      status.reset_at.timestamp() if status is not None else math.inf)
     else:
         expires = min(now + STATUS_TTL_S, status.reset_at.timestamp())
     with _cache_lock:
@@ -284,13 +324,80 @@ async def status_for(user_id: str) -> BudgetStatus | None:
         # its HTTP call) running past it, one leaked thread per slow read.
         status = await asyncio.to_thread(read_status, user_id, timeout=STATUS_TIMEOUT_S)
     except Exception as exc:
+        # Not fully open when this user has been read today: the last good
+        # status plus every reservation since still bounds a burst.
+        status = _last_good_for(user_id)
         logger.warning(
-            "llm budget status unreadable for user=%s (%s); allowing the run",
+            "llm budget status unreadable for user=%s (%s); %s",
             user_id, type(exc).__name__,
+            "allowing the run" if status is None else "using the last good read",
         )
-        status = None
+        _remember(user_id, status, failed=True)
+        return status
+    status = replace(status, read_at=time.time())
+    with _cache_lock:
+        _last_good[user_id] = status
+        if len(_last_good) > _CACHE_MAX:
+            _last_good.pop(next(iter(_last_good)), None)
     _remember(user_id, status)
     return status
+
+
+def _last_good_for(user_id: str) -> BudgetStatus | None:
+    with _cache_lock:
+        status = _last_good.get(user_id)
+    if status is None or time.time() >= status.reset_at.timestamp():
+        return None
+    return status
+
+
+def _admit(user_id: str, status: BudgetStatus) -> BudgetStatus | None:
+    """Check-and-reserve, atomically: None when the run may start (and one
+    reservation is recorded), else the status to refuse with (``used``
+    including the reservations). One lock around both, so N parallel first
+    requests cannot all read "under budget" off the same cached status:
+    each sees the reservations of the ones admitted before it.
+
+    Per process: two replicas each admit their own share between status
+    reads, but every read brings in the other's landed usage."""
+    if status.limit is None:
+        return None
+    now = time.time()
+    read_at = status.read_at or now
+    with _cache_lock:
+        live = [r for r in _reservations.get(user_id, ()) if _pending(r, now=now, read_at=read_at)]
+        used = status.used + len(live) * RESERVE_TOKENS_PER_RUN
+        if used >= status.limit:
+            _reservations[user_id] = live
+            return replace(status, used=used)
+        live.append([now, None])
+        _reservations[user_id] = live
+    return None
+
+
+def _pending(reservation: list[float | None], *, now: float, read_at: float) -> bool:
+    """Is this reservation's usage still missing from a status read at
+    ``read_at``? In flight: yes, up to LAND_LAG_S (a run that never reports
+    its usage stops counting then). Settled: only while its row may not
+    have landed before the read."""
+    admitted_at, settled_at = reservation
+    if settled_at is None:
+        return admitted_at > now - LAND_LAG_S
+    return settled_at > read_at - SETTLE_LAG_S
+
+
+def note_usage_recorded(user_id: str | None) -> None:
+    """A foreground run for ``user_id`` just queued its usage row: settle its
+    reservation (the oldest unsettled one), so a status read past
+    SETTLE_LAG_S stops counting it on top of the real usage. Never raises."""
+    if not user_id or _BACKGROUND.get():
+        return
+    now = time.time()
+    with _cache_lock:
+        for reservation in _reservations.get(user_id, ()):
+            if reservation[1] is None:
+                reservation[1] = now
+                return
 
 
 # ── the gate ────────────────────────────────────────────────────────────────
@@ -379,8 +486,8 @@ async def check_before_request(messages: Any) -> None:
     refused: BudgetStatus | None = None
     if await _flag_on(user_id):
         status = await status_for(user_id)
-        if status is not None and status.exceeded:
-            refused = status
+        if status is not None:
+            refused = _admit(user_id, status)
     if state is not None:
         state[_DECISION_KEY] = (user_id, refused)
     if refused is None:

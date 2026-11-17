@@ -320,7 +320,7 @@ excluded with a reason.
 | `MODEL_SLOT_VARIABLES` | `SAPLING_MODEL_<TASK>` + `SAPLING_MODEL_FALLBACK_<TASK>` for classifier, summary, concepts, syllabus, ocr_vision, course_summary | a slot rolled back on the API must not keep running the default in the worker |
 
 Not shared, on purpose: HTTP-only settings (`PORT`, `FRONTEND_URL`,
-`SECURE_COOKIES`, Google OAuth, `ALLOWED_EMAIL_DOMAINS`), email (`RESEND_API_KEY`,
+`SECURE_COOKIES`, Google OAuth), email (`RESEND_API_KEY`,
 `EMAIL_*`: no job sends mail), `CANOPY_METRICS_TOKEN`, `ACCOUNT_SYNC_*`,
 `OCR_ASYNC_ENABLED` and `UPLOAD_JOB_PICKUP_GRACE_SECONDS` (the API's side of an
 upload), `DB_USER_SCOPE_SHADOW_SAMPLE_RATE` (per request; the worker runs as

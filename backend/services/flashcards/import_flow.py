@@ -40,6 +40,7 @@ from services.flashcards.importing import (
     scrape_quizlet_url,
 )
 from services.llm_budget import reraise_budget_refusal
+from services.upload_validation import GIF, JPEG, PDF, PNG, WEBP, sniff_type
 
 logger = logging.getLogger(__name__)
 
@@ -101,14 +102,30 @@ def _decode_upload(payload: str) -> bytes:
     return file_bytes
 
 
-def _parse_file(source: str, file_bytes: bytes, options: dict | None) -> list[dict]:
+#: What the OCR source accepts, by the file's BYTES (the PhotoTab picker
+#: offers images and PDFs). The client's `options.filename` is never used:
+#: the extraction router picks its parser from the name, so a lying name
+#: would route a file to a parser it was not checked for.
+_OCR_TYPES = {PNG: "png", JPEG: "jpg", GIF: "gif", WEBP: "webp", PDF: "pdf"}
+
+
+def _ocr_filename(file_bytes: bytes) -> str:
+    """A name whose extension is the type the bytes ARE, or Unprocessable."""
+    ext = _OCR_TYPES.get(sniff_type(file_bytes))
+    if ext is None:
+        raise Unprocessable("Upload a photo (PNG, JPG, GIF or WebP) or a PDF.")
+    return f"import.{ext}"
+
+
+def _parse_file(source: str, file_bytes: bytes) -> list[dict]:
+    # Before the try: its refusal is the student's file, not a parser error.
+    ocr_name = _ocr_filename(file_bytes) if source == "ocr" else ""
     try:
         if source == "xlsx":
             return parse_xlsx(file_bytes)
         if source == "anki":
             return parse_anki_apkg(file_bytes)
-        filename = (options or {}).get("filename", "image.png")
-        return extract_cards_from_image(file_bytes, filename=filename)
+        return extract_cards_from_image(file_bytes, filename=ocr_name)
     except ValueError as e:
         raise Unprocessable(str(e)) from e
     except Exception as e:
@@ -127,11 +144,14 @@ def _scrape(url: str) -> list[dict]:
         raise Unprocessable(str(e)) from e
 
 
-def import_parse(source: str, payload: str, options: dict | None = None) -> dict:
+def import_parse(user_id: str, source: str, payload: str, options: dict | None = None) -> dict:
     """Cards read out of an upload (``anki`` / ``xlsx`` / ``ocr``: base64 file
-    bytes) or a Quizlet page (``url``). Nothing is saved."""
+    bytes) or a Quizlet page (``url``). Nothing is saved. Charged to the
+    import limiter like its siblings: every source parses an attacker-shaped
+    file or fetches a page, and ``ocr`` runs OCR and the flashcard agent."""
+    _claim_rate_slot(user_id)
     if source in ("anki", "xlsx", "ocr"):
-        cards = _parse_file(source, _decode_upload(payload), options)
+        cards = _parse_file(source, _decode_upload(payload))
     elif source == "url":
         cards = _scrape(payload)
     else:

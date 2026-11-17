@@ -19,7 +19,7 @@ from services.academics import offering_course_id
 from services.auth_guard import get_session_user_id, guard_off_loop, require_self
 from services import abuse_limits
 from services.request_limits import aenforce_abuse_limit
-from services.encryption import decrypt_if_present, decrypt_json_column, encrypt_json
+from services.encryption import bind, decrypt_if_present, decrypt_json_column, encrypt_json
 from services.streak_service import touch_streak_safe
 from services.tutor.errors import HTTPException
 from services.tutor.messages import save_message
@@ -95,7 +95,9 @@ def _stored_session_summary(session_id: str) -> dict:
     stored = row.get("summary_json")
     if stored:
         try:
-            summary = decrypt_json_column(stored)
+            summary = decrypt_json_column(
+                stored, bind=bind("sessions", "summary_json", session_id),
+            )
             if isinstance(summary, dict):
                 return summary
         except Exception:
@@ -192,7 +194,9 @@ def end_session(body: EndSessionBody, request: Request):
     )
 
     table("sessions").update(
-        {"summary_json": encrypt_json(summary)},
+        {"summary_json": encrypt_json(
+            summary, bind=bind("sessions", "summary_json", body.session_id),
+        )},
         filters={"id": f"eq.{body.session_id}"},
     )
 
@@ -355,7 +359,9 @@ async def resume_session(session_id: str, request: Request):
     return {
         "session": session,
         "messages": [
-            {**m, "content": decrypt_if_present(m["content"])} for m in msgs
+            {**m, "content": decrypt_if_present(
+                m["content"], bind=bind("messages", "content", session_id),
+            )} for m in msgs
         ],
     }
 

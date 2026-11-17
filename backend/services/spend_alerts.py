@@ -200,7 +200,7 @@ def admin_recipients() -> list[str]:
     configured = config.spend_alert_recipients()
     if configured:
         return sorted(set(configured))
-    from services.encryption import decrypt_if_present
+    from services.encryption import bind, decrypt_if_present
 
     roles = table("user_roles").select(
         "user_id,roles!inner(slug)", filters={"roles.slug": "eq.admin"},
@@ -213,7 +213,7 @@ def admin_recipients() -> list[str]:
     ) or []
     out = set()
     for u in users:
-        address = (decrypt_if_present(u.get("email")) or "").strip()
+        address = (decrypt_if_present(u.get("email"), bind=bind("users", "email", u)) or "").strip()
         if "@" in address:
             out.add(address)
     return sorted(out)

@@ -12,15 +12,25 @@ same prefixes so the tests do not depend on that wiring.
 """
 from __future__ import annotations
 
+import json
+import time
+
 import httpx
 import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
+from starlette.requests import Request
 
 import routes.admin_account_sync as admin_sync
 import routes.internal_account_sync as internal_sync
 from services import account_bundle, account_summary, account_sync_client
 from services.account_bundle import AccountNotFound, BundleError
+from services.account_sync_client import (
+    SIGNATURE_HEADER,
+    TIMESTAMP_HEADER,
+    sign_request,
+    verify_signature,
+)
 from services.account_ops_lock import account_op
 from services.account_wipe import AccountWipeIncomplete
 
@@ -51,10 +61,40 @@ def events(monkeypatch):
 @pytest.fixture
 def inbound(monkeypatch):
     monkeypatch.setenv("ACCOUNT_SYNC_INBOUND_TOKEN", TOKEN)
+    # The receiving side of a push is staging (production refuses imports).
+    monkeypatch.setattr(internal_sync.config, "APP_ENV", "staging")
 
 
 def _auth(token: str = TOKEN) -> dict:
     return {"Authorization": f"Bearer {token}"}
+
+
+def _url(route: str, params: dict | None = None) -> httpx.URL:
+    return httpx.URL(f"http://testserver{INTERNAL}{route}", params=params)
+
+
+def _signed(method: str, target: httpx.URL, body: bytes = b"", *, token: str = TOKEN,
+            ts: int | None = None) -> dict:
+    """Bearer + a valid signature over exactly this method, target and body."""
+    ts = int(time.time()) if ts is None else ts
+    return {
+        **_auth(token),
+        TIMESTAMP_HEADER: str(ts),
+        SIGNATURE_HEADER: sign_request(token, method, target.raw_path, body, ts),
+    }
+
+
+def _iget(client, route: str, params: dict | None = None, **sign_kw):
+    target = _url(route, params)
+    return client.get(str(target), headers=_signed("GET", target, **sign_kw))
+
+
+def _ipost(client, route: str, bundle, params: dict | None = None, *,
+           raw: bytes | None = None, **sign_kw):
+    target = _url(route, params)
+    body = json.dumps(bundle).encode() if raw is None else raw
+    headers = {**_signed("POST", target, body, **sign_kw), "Content-Type": "application/json"}
+    return client.post(str(target), content=body, headers=headers)
 
 
 # ── internal: the token gate ────────────────────────────────────────────────
@@ -97,7 +137,7 @@ def test_unauthenticated_import_is_401_not_a_body_error(client, inbound):
 
 def test_ping_reports_env(client, inbound, monkeypatch):
     monkeypatch.setattr(internal_sync.config, "APP_ENV", "staging")
-    resp = client.get(f"{INTERNAL}/ping", headers=_auth())
+    resp = _iget(client, "/ping")
     assert resp.status_code == 200 and resp.json() == {"env": "staging"}
 
 
@@ -112,7 +152,7 @@ def test_export_returns_bundle_and_audits(client, inbound, monkeypatch, events):
     bundle = {"version": 1, "user_id": UID, "tables": {"notes": [{"id": "n"}]}}
     monkeypatch.setattr(account_bundle, "export_account", lambda uid: bundle)
 
-    resp = client.get(f"{INTERNAL}/export", params={"user_id": UID}, headers=_auth())
+    resp = _iget(client, "/export", {"user_id": UID})
 
     assert resp.status_code == 200 and resp.json() == bundle
     # Never attributed to the student (that would count them active in
@@ -128,14 +168,14 @@ def test_export_unknown_account(client, inbound, monkeypatch, events):
         raise AccountNotFound(uid)
     monkeypatch.setattr(account_bundle, "export_account", missing)
 
-    resp = client.get(f"{INTERNAL}/export", params={"user_id": UID}, headers=_auth())
+    resp = _iget(client, "/export", {"user_id": UID})
     assert resp.status_code == 404
     assert resp.json()["detail"] == account_sync_client.ACCOUNT_NOT_FOUND
     assert events == []
 
 
 def test_export_requires_user_id(client, inbound):
-    assert client.get(f"{INTERNAL}/export", headers=_auth()).status_code == 400
+    assert _iget(client, "/export").status_code == 400
 
 
 def test_import_applies_bundle_and_audits(client, inbound, monkeypatch, events):
@@ -147,7 +187,7 @@ def test_import_applies_bundle_and_audits(client, inbound, monkeypatch, events):
     monkeypatch.setattr(account_bundle, "import_account", fake_import)
     bundle = {"version": 1, "user_id": UID, "source_env": "staging", "tables": {}}
 
-    resp = client.post(f"{INTERNAL}/import", params={"user_id": UID}, json=bundle, headers=_auth())
+    resp = _ipost(client, "/import", bundle, {"user_id": UID})
 
     assert resp.status_code == 200 and resp.json() == {"counts": {"notes": 2}}
     assert got == {"uid": UID, "bundle": bundle}
@@ -165,19 +205,19 @@ def test_import_error_mapping(client, inbound, monkeypatch, exc, status):
     def boom(uid, bundle):
         raise exc
     monkeypatch.setattr(account_bundle, "import_account", boom)
-    resp = client.post(f"{INTERNAL}/import", params={"user_id": UID}, json={}, headers=_auth())
+    resp = _ipost(client, "/import", {}, {"user_id": UID})
     assert resp.status_code == status
 
 
 def test_import_busy_is_409(client, inbound, monkeypatch):
     monkeypatch.setattr(account_bundle, "import_account", lambda uid, b: pytest.fail("ran"))
     with account_op(UID):
-        resp = client.post(f"{INTERNAL}/import", params={"user_id": UID}, json={}, headers=_auth())
+        resp = _ipost(client, "/import", {}, {"user_id": UID})
     assert resp.status_code == 409
 
 
 def test_import_rejects_non_object_body(client, inbound):
-    resp = client.post(f"{INTERNAL}/import", params={"user_id": UID}, json=[1], headers=_auth())
+    resp = _ipost(client, "/import", [1], {"user_id": UID})
     assert resp.status_code == 400
 
 
@@ -201,11 +241,24 @@ def audits(monkeypatch):
     return seen
 
 
+@pytest.fixture
+def from_prod(configured, monkeypatch):
+    """This side is production (pushes go prod -> staging; production never
+    accepts an import, so a push is only ever started there)."""
+    monkeypatch.setattr(account_sync_client.config, "APP_ENV", "production")
+
+
 class Peer:
-    """Stand-in for the other deploy, at httpx's module-level get/post."""
+    """Stand-in for the other deploy, at httpx's module-level get/post.
+
+    `calls` holds (method, url without query, headers, query params); `signed`
+    whether each request's signature verifies under PEER_TOKEN, as the real
+    peer would check it."""
 
     def __init__(self, monkeypatch, *, env="production", get=None, post=None):
         self.calls: list[tuple] = []
+        self.signed: list[bool] = []
+        self.bodies: list[bytes] = []
         self.env, self._get, self._post = env, get, post
         monkeypatch.setattr(account_sync_client.httpx, "get", self.get)
         monkeypatch.setattr(account_sync_client.httpx, "post", self.post)
@@ -213,16 +266,26 @@ class Peer:
     def _resp(self, method, url, status, body):
         return httpx.Response(status, json=body, request=httpx.Request(method, url))
 
-    def get(self, url, *, headers=None, params=None, timeout=None):
-        self.calls.append(("GET", url, headers, params))
-        if url.endswith("/ping"):
+    def _record(self, method, url, headers, body=b""):
+        url = httpx.URL(url)
+        self.calls.append((method, str(url.copy_with(query=None)), headers, dict(url.params)))
+        self.signed.append(verify_signature(
+            PEER_TOKEN, method, url.raw_path, body,
+            headers.get(TIMESTAMP_HEADER), headers.get(SIGNATURE_HEADER),
+        ))
+        self.bodies.append(body)
+        return url
+
+    def get(self, url, *, headers=None, timeout=None):
+        url = self._record("GET", url, headers)
+        if url.path.endswith("/ping"):
             if isinstance(self.env, Exception):
                 raise self.env
             return self._resp("GET", url, 200, {"env": self.env})
         return self._resp("GET", url, *self._get)
 
-    def post(self, url, *, params=None, json=None, headers=None, timeout=None):
-        self.calls.append(("POST", url, headers, params))
+    def post(self, url, *, content=None, headers=None, timeout=None):
+        url = self._record("POST", url, headers, content)
         return self._resp("POST", url, *self._post)
 
 
@@ -277,54 +340,96 @@ def test_unreachable_peer_502(client, configured, monkeypatch):
     assert _copy(client).status_code == 502
 
 
-def test_push_success(client, configured, monkeypatch, audits, events):
-    peer = Peer(monkeypatch, post=(200, {"counts": {"notes": 3}}))
+def test_push_success(client, from_prod, monkeypatch, audits, events):
+    peer = Peer(monkeypatch, env="staging", post=(200, {"counts": {"notes": 3}}))
     monkeypatch.setattr(account_bundle, "export_account", lambda uid: {"user_id": uid})
 
     resp = _copy(client, "push")
 
     assert resp.status_code == 200
-    assert resp.json() == {"direction": "push", "peer_env": "production", "counts": {"notes": 3}}
+    assert resp.json() == {"direction": "push", "peer_env": "staging", "counts": {"notes": 3}}
     method, url, headers, params = peer.calls[-1]
     assert (method, url) == ("POST", f"{PEER}/api/internal/account-sync/import")
-    assert headers == {"Authorization": f"Bearer {PEER_TOKEN}"} and params == {"user_id": UID}
+    assert headers["Authorization"] == f"Bearer {PEER_TOKEN}" and params == {"user_id": UID}
+    assert headers["Content-Type"] == "application/json"
+    assert json.loads(peer.bodies[-1]) == {"user_id": UID}
+    assert peer.signed == [True, True]  # the ping and the import
     assert audits == [("admin_1", "account.copy_push", "user", UID,
-                       {"outcome": "ok", "peer_env": "production", "counts": {"notes": 3}})]
+                       {"outcome": "ok", "peer_env": "staging", "counts": {"notes": 3}})]
     assert events[0][0] == "account.copy_push" and events[0][1]["category"] == "audit"
 
 
-def test_push_peer_unknown_account_maps_to_404(client, configured, monkeypatch, audits):
-    Peer(monkeypatch, post=(404, {"detail": account_sync_client.ACCOUNT_NOT_FOUND}))
+def test_push_to_production_peer_refused_before_export(client, configured, monkeypatch, audits):
+    # Staging's "copy to production": production never accepts an import.
+    peer = Peer(monkeypatch, env="production", post=(200, {"counts": {}}))
+    monkeypatch.setattr(account_bundle, "export_account", lambda uid: pytest.fail("exported"))
+
+    resp = _copy(client, "push")
+
+    assert resp.status_code == 403
+    assert "does not accept inbound account imports" in resp.json()["detail"]
+    assert [c[0] for c in peer.calls] == ["GET"]  # only the ping; no data sent
+    assert audits[0][4] == {"outcome": "failed", "status": 403}
+
+
+def test_push_client_refuses_production_peer_directly(configured, monkeypatch):
+    Peer(monkeypatch, env="production")
+    monkeypatch.setattr(account_bundle, "export_account", lambda uid: pytest.fail("exported"))
+    with pytest.raises(account_sync_client.PeerError) as exc:
+        account_sync_client.push(UID)
+    assert exc.value.status == 403
+
+
+def test_peer_import_403_surfaces_as_403(client, from_prod, monkeypatch):
+    # The peer's own word for the rule (e.g. its APP_ENV changed after the ping).
+    Peer(monkeypatch, env="staging",
+         post=(403, {"detail": account_sync_client.PRODUCTION_REFUSES_IMPORT}))
+    monkeypatch.setattr(account_bundle, "export_account", lambda uid: {})
+    resp = _copy(client, "push")
+    assert resp.status_code == 403 and resp.json()["detail"].startswith("staging: ")
+
+
+def test_pull_from_staging_on_production_still_works(client, from_prod, monkeypatch):
+    # Production's own pull imports locally, never through the import route.
+    Peer(monkeypatch, env="staging", get=(200, {"version": 1}))
+    monkeypatch.setattr(account_bundle, "import_account", lambda uid, b: {"notes": 1})
+    resp = _copy(client, "pull")
+    assert resp.status_code == 200 and resp.json()["peer_env"] == "staging"
+
+
+def test_push_peer_unknown_account_maps_to_404(client, from_prod, monkeypatch, audits):
+    Peer(monkeypatch, env="staging",
+         post=(404, {"detail": account_sync_client.ACCOUNT_NOT_FOUND}))
     monkeypatch.setattr(account_bundle, "export_account", lambda uid: {})
     resp = _copy(client, "push")
     assert resp.status_code == 404
-    assert resp.json()["detail"] == "account must sign in on production first"
+    assert resp.json()["detail"] == "account must sign in on staging first"
     assert audits[0][1] == "account.copy_push" and audits[0][4]["outcome"] == "failed"
 
 
-def test_bare_peer_404_is_a_peer_error_not_unknown_account(client, configured, monkeypatch):
+def test_bare_peer_404_is_a_peer_error_not_unknown_account(client, from_prod, monkeypatch):
     # A peer with its inbound token unset (or an old deploy) 404s every path.
-    Peer(monkeypatch, post=(404, {"detail": "Not Found"}))
+    Peer(monkeypatch, env="staging", post=(404, {"detail": "Not Found"}))
     monkeypatch.setattr(account_bundle, "export_account", lambda uid: {})
     assert _copy(client, "push").status_code == 502
 
 
-def test_peer_500_is_502(client, configured, monkeypatch):
-    Peer(monkeypatch, post=(500, {"detail": "boom"}))
+def test_peer_500_is_502(client, from_prod, monkeypatch):
+    Peer(monkeypatch, env="staging", post=(500, {"detail": "boom"}))
     monkeypatch.setattr(account_bundle, "export_account", lambda uid: {})
     assert _copy(client, "push").status_code == 502
 
 
-def test_peer_bundle_error_400_surfaces_as_400_with_detail(client, configured, monkeypatch,
+def test_peer_bundle_error_400_surfaces_as_400_with_detail(client, from_prod, monkeypatch,
                                                            audits):
     # The peer's BundleError, e.g. its schema lacks a column ("migrate it first").
-    detail = "production's notes table cannot take this bundle's columns (migrate it first): x"
-    Peer(monkeypatch, post=(400, {"detail": detail}))
+    detail = "staging's notes table cannot take this bundle's columns (migrate it first): x"
+    Peer(monkeypatch, env="staging", post=(400, {"detail": detail}))
     monkeypatch.setattr(account_bundle, "export_account", lambda uid: {})
     resp = _copy(client, "push")
     assert resp.status_code == 400
     assert "migrate it first" in resp.json()["detail"]
-    assert resp.json()["detail"].startswith("production: ")
+    assert resp.json()["detail"].startswith("staging: ")
     assert audits[0][4] == {"outcome": "failed", "status": 400}
 
 
@@ -353,8 +458,8 @@ def test_copy_unexpected_error_is_audited_and_reraised(client, configured, monke
     assert not is_busy(UID)
 
 
-def test_peer_busy_is_409(client, configured, monkeypatch):
-    Peer(monkeypatch, post=(409, {"detail": "operation already running for this account"}))
+def test_peer_busy_is_409(client, from_prod, monkeypatch):
+    Peer(monkeypatch, env="staging", post=(409, {"detail": "operation already running for this account"}))
     monkeypatch.setattr(account_bundle, "export_account", lambda uid: {})
     assert _copy(client, "push").status_code == 409
 
@@ -455,7 +560,7 @@ SUMMARY = {
 
 def test_internal_summary_returns_counts_without_audit(client, inbound, monkeypatch, events):
     monkeypatch.setattr(internal_sync, "summarize_account", lambda uid: dict(SUMMARY))
-    resp = client.get(f"{INTERNAL}/summary", params={"user_id": UID}, headers=_auth())
+    resp = _iget(client, "/summary", {"user_id": UID})
     assert resp.status_code == 200 and resp.json() == SUMMARY
     assert events == []  # a read-only count is not an audited event
 
@@ -463,19 +568,19 @@ def test_internal_summary_returns_counts_without_audit(client, inbound, monkeypa
 def test_internal_summary_unknown_account_is_account_not_found(client, inbound, monkeypatch):
     monkeypatch.setattr(internal_sync, "summarize_account",
                         lambda uid: account_summary.empty_summary())
-    resp = client.get(f"{INTERNAL}/summary", params={"user_id": UID}, headers=_auth())
+    resp = _iget(client, "/summary", {"user_id": UID})
     assert resp.status_code == 404
     assert resp.json()["detail"] == account_sync_client.ACCOUNT_NOT_FOUND
 
 
 def test_internal_summary_requires_user_id(client, inbound):
-    assert client.get(f"{INTERNAL}/summary", headers=_auth()).status_code == 400
+    assert _iget(client, "/summary").status_code == 400
 
 
 def test_internal_summary_is_not_refused_while_busy(client, inbound, monkeypatch):
     monkeypatch.setattr(internal_sync, "summarize_account", lambda uid: dict(SUMMARY))
     with account_op(UID):
-        resp = client.get(f"{INTERNAL}/summary", params={"user_id": UID}, headers=_auth())
+        resp = _iget(client, "/summary", {"user_id": UID})
     assert resp.status_code == 200
 
 
@@ -484,7 +589,8 @@ def test_peer_summary_success(configured, monkeypatch):
     assert account_sync_client.peer_summary(UID) == {"env": "production", "summary": SUMMARY}
     method, url, headers, params = peer.calls[-1]
     assert url == f"{PEER}/api/internal/account-sync/summary"
-    assert headers == {"Authorization": f"Bearer {PEER_TOKEN}"} and params == {"user_id": UID}
+    assert headers["Authorization"] == f"Bearer {PEER_TOKEN}" and params == {"user_id": UID}
+    assert peer.signed == [True, True]  # the ping and the summary
 
 
 def test_peer_summary_unknown_account_is_an_answer_not_an_error(configured, monkeypatch):
@@ -602,3 +708,284 @@ def test_copy_preview_peer_errors(client, configured, local_summary, monkeypatch
                                   status):
     Peer(monkeypatch, **peer_kw)
     assert _preview(client).status_code == status
+
+
+# ── internal: production refuses inbound imports ────────────────────────────
+
+
+@pytest.fixture
+def on_production(inbound, monkeypatch):
+    monkeypatch.setattr(internal_sync.config, "APP_ENV", "production")
+
+
+def test_production_import_is_403_and_the_body_is_never_read(client, on_production,
+                                                              monkeypatch, events):
+    async def never(self):
+        pytest.fail("the body was read")
+    monkeypatch.setattr(Request, "body", never)
+    monkeypatch.setattr(account_bundle, "import_account", lambda uid, b: pytest.fail("imported"))
+
+    resp = _ipost(client, "/import", {"version": 1}, {"user_id": UID})
+
+    assert resp.status_code == 403
+    assert resp.json()["detail"] == account_sync_client.PRODUCTION_REFUSES_IMPORT
+    assert "pull from production" in resp.json()["detail"]
+    assert events == []
+
+
+def test_production_import_checks_the_bearer_first(client, on_production):
+    assert client.post(f"{INTERNAL}/import", params={"user_id": UID}, json={}).status_code == 401
+    assert client.post(f"{INTERNAL}/import", params={"user_id": UID}, json={},
+                       headers=_auth("wrong")).status_code == 401
+
+
+def test_production_import_404_when_inbound_unset(client, on_production, monkeypatch):
+    monkeypatch.delenv("ACCOUNT_SYNC_INBOUND_TOKEN")
+    assert _ipost(client, "/import", {}, {"user_id": UID}).status_code == 404
+
+
+def test_production_still_serves_ping_export_summary(client, on_production, monkeypatch):
+    monkeypatch.setattr(account_bundle, "export_account",
+                        lambda uid: {"version": 1, "user_id": uid, "tables": {}})
+    monkeypatch.setattr(internal_sync, "summarize_account", lambda uid: dict(SUMMARY))
+    assert _iget(client, "/ping").json() == {"env": "production"}
+    assert _iget(client, "/export", {"user_id": UID}).status_code == 200
+    assert _iget(client, "/summary", {"user_id": UID}).status_code == 200
+
+
+@pytest.mark.parametrize("env", ["staging", "local", "test"])
+def test_non_production_import_still_works(client, inbound, monkeypatch, env):
+    monkeypatch.setattr(internal_sync.config, "APP_ENV", env)
+    monkeypatch.setattr(account_bundle, "import_account", lambda uid, b: {"notes": 1})
+    resp = _ipost(client, "/import", {"version": 1}, {"user_id": UID})
+    assert resp.status_code == 200 and resp.json() == {"counts": {"notes": 1}}
+
+
+@pytest.mark.parametrize("env,refused", [
+    ("production", True), (" Production ", True), ("staging", False), ("", False), (None, False),
+])
+def test_refuses_inbound_import(env, refused):
+    assert account_sync_client.refuses_inbound_import(env) is refused
+
+
+# ── internal: request signatures ────────────────────────────────────────────
+
+ROUTES = [
+    ("GET", "/ping", None),
+    ("GET", "/export", {"user_id": UID}),
+    ("GET", "/summary", {"user_id": UID}),
+    ("POST", "/import", {"user_id": UID}),
+]
+
+
+@pytest.fixture
+def happy(inbound, monkeypatch):
+    """Every route would succeed with a valid signature."""
+    monkeypatch.setattr(account_bundle, "export_account",
+                        lambda uid: {"version": 1, "user_id": uid, "tables": {}})
+    monkeypatch.setattr(account_bundle, "import_account", lambda uid, b: {"notes": 1})
+    monkeypatch.setattr(internal_sync, "summarize_account", lambda uid: dict(SUMMARY))
+
+
+def _send(client, method, route, params, headers, body=b"{}"):
+    target = _url(route, params)
+    if method == "GET":
+        return client.get(str(target), headers=headers)
+    return client.post(str(target), content=body, headers={**headers,
+                                                      "Content-Type": "application/json"})
+
+
+def _body_for(method):
+    return b"{}" if method == "POST" else b""
+
+
+@pytest.mark.parametrize("method,route,params", ROUTES)
+def test_valid_signature_passes(client, happy, method, route, params):
+    headers = _signed(method, _url(route, params), _body_for(method))
+    assert _send(client, method, route, params, headers).status_code == 200
+
+
+@pytest.mark.parametrize("method,route,params", ROUTES)
+@pytest.mark.parametrize("case", [
+    "missing_both", "missing_signature", "missing_timestamp", "wrong_key", "garbage",
+    "stale", "future", "non_integer_ts", "wrong_method",
+])
+def test_bad_signature_is_the_generic_401(client, happy, monkeypatch, method, route, params,
+                                          case):
+    monkeypatch.setattr(account_bundle, "import_account", lambda uid, b: pytest.fail("imported"))
+    target, body = _url(route, params), _body_for(method)
+    now = int(time.time())
+    headers = _signed(method, target, body)
+    if case == "missing_both":
+        headers = _auth()
+    elif case == "missing_signature":
+        del headers[SIGNATURE_HEADER]
+    elif case == "missing_timestamp":
+        del headers[TIMESTAMP_HEADER]
+    elif case == "wrong_key":
+        headers[SIGNATURE_HEADER] = sign_request("x" * 40, method, target.raw_path, body, now)
+    elif case == "garbage":
+        headers[SIGNATURE_HEADER] = "not-a-signature"
+    elif case == "stale":
+        headers = _signed(method, target, body, ts=now - 301)
+    elif case == "future":
+        headers = _signed(method, target, body, ts=now + 301)
+    elif case == "non_integer_ts":
+        headers[TIMESTAMP_HEADER] = f"{now}.5"
+    elif case == "wrong_method":
+        other = "POST" if method == "GET" else "GET"
+        headers[SIGNATURE_HEADER] = sign_request(TOKEN, other, target.raw_path, body,
+                                                 int(headers[TIMESTAMP_HEADER]))
+
+    resp = _send(client, method, route, params, headers)
+
+    assert resp.status_code == 401
+    assert resp.json()["detail"] == "Unauthorized"
+
+
+@pytest.mark.parametrize("method,route", [("GET", "/export"), ("GET", "/summary"),
+                                          ("POST", "/import")])
+def test_tampered_user_id_is_401(client, happy, monkeypatch, method, route):
+    # Signed for one account, sent for another: a captured request cannot be
+    # re-aimed.
+    monkeypatch.setattr(account_bundle, "export_account", lambda uid: pytest.fail("exported"))
+    monkeypatch.setattr(account_bundle, "import_account", lambda uid, b: pytest.fail("imported"))
+    body = _body_for(method)
+    headers = _signed(method, _url(route, {"user_id": UID}), body)
+    resp = _send(client, method, route, {"user_id": "user_other"}, headers, body)
+    assert resp.status_code == 401
+
+
+def test_tampered_import_body_is_401(client, happy, monkeypatch):
+    monkeypatch.setattr(account_bundle, "import_account", lambda uid, b: pytest.fail("imported"))
+    target = _url("/import", {"user_id": UID})
+    headers = {**_signed("POST", target, b'{"version": 1}'), "Content-Type": "application/json"}
+    resp = client.post(str(target), content=b'{"version": 1, "tables": {"notes": []}}',
+                       headers=headers)
+    assert resp.status_code == 401
+
+
+def test_signed_non_json_import_body_is_400(client, happy):
+    resp = _ipost(client, "/import", None, {"user_id": UID}, raw=b"not json at all")
+    assert resp.status_code == 400 and resp.json()["detail"] == "body is not JSON"
+
+
+def test_signature_window_is_300_seconds():
+    raw, body = b"/api/internal/account-sync/ping", b""
+    sig = sign_request(TOKEN, "GET", raw, body, 1_000_000)
+    for now, ok in [(1_000_000, True), (1_000_300, True), (999_700, True),
+                    (1_000_301, False), (999_699, False)]:
+        assert verify_signature(TOKEN, "GET", raw, body, "1000000", sig, now=now) is ok
+
+
+def test_signature_canonical_string_is_pinned():
+    # METHOD \n raw path + query \n ts \n sha256_hex(body), HMAC-SHA256 keyed
+    # with the token. Pinned so both ends (and any future port) agree.
+    import hashlib
+    import hmac as _hmac
+    raw, body, ts = "/api/internal/account-sync/import?user_id=u%201", b'{"a": 1}', 1_700_000_000
+    canonical = f"POST\n{raw}\n{ts}\n{hashlib.sha256(body).hexdigest()}".encode()
+    expected = _hmac.new(TOKEN.encode(), canonical, hashlib.sha256).hexdigest()
+    assert sign_request(TOKEN, "post", raw, body, ts) == expected
+    assert sign_request(TOKEN, "POST", raw.encode(), body, ts) == expected
+
+
+# ── end to end: the real client against the real routes ─────────────────────
+
+
+class Bridge:
+    """Routes the client's httpx.get/post into a TestClient of the internal
+    router, so the client's signatures meet the server's verification unaltered.
+    One process plays both deploys, so `config.APP_ENV` is swapped to the
+    peer's env for the duration of each request."""
+
+    def __init__(self, monkeypatch, client, *, local_env, peer_env):
+        self.client, self.local_env, self.peer_env = client, local_env, peer_env
+        self.requests: list[httpx.Request] = []
+        monkeypatch.setattr(account_sync_client.config, "APP_ENV", local_env)
+        monkeypatch.setattr(account_sync_client.httpx, "get", self.get)
+        monkeypatch.setattr(account_sync_client.httpx, "post", self.post)
+
+    def _as_peer(self, send):
+        import config
+        config.APP_ENV = self.peer_env
+        try:
+            resp = send()
+        finally:
+            config.APP_ENV = self.local_env
+        self.requests.append(resp.request)
+        return resp
+
+    def get(self, url, *, headers=None, timeout=None):
+        return self._as_peer(lambda: self.client.get(str(url), headers=headers))
+
+    def post(self, url, *, content=None, headers=None, timeout=None):
+        return self._as_peer(lambda: self.client.post(str(url), content=content, headers=headers))
+
+
+@pytest.fixture
+def e2e(monkeypatch):
+    """Peer URL points at the TestClient; both ends share one token."""
+    monkeypatch.setenv("ACCOUNT_SYNC_PEER_URL", "http://testserver")
+    monkeypatch.setenv("ACCOUNT_SYNC_PEER_TOKEN", TOKEN)
+    monkeypatch.setenv("ACCOUNT_SYNC_INBOUND_TOKEN", TOKEN)
+    monkeypatch.setattr(internal_sync, "log_event", lambda *a, **kw: None)
+
+
+ODD_UID = "user_ä 1+2&x=y/%"
+
+
+@pytest.mark.parametrize("uid", [UID, ODD_UID])
+def test_e2e_push_prod_to_staging(client, e2e, monkeypatch, uid):
+    Bridge(monkeypatch, client, local_env="production", peer_env="staging")
+    bundle = {"version": 1, "user_id": uid, "source_env": "production",
+              "tables": {"notes": [{"id": "n", "body": "é ✓"}]}}
+    monkeypatch.setattr(account_bundle, "export_account", lambda u: bundle)
+    got = {}
+    monkeypatch.setattr(account_bundle, "import_account",
+                        lambda u, b: got.update(uid=u, bundle=b) or {"notes": 1})
+
+    out = account_sync_client.push(uid)
+
+    assert out == {"peer_env": "staging", "counts": {"notes": 1}}
+    assert got == {"uid": uid.strip(), "bundle": bundle}
+
+
+@pytest.mark.parametrize("uid", [UID, ODD_UID])
+def test_e2e_pull_and_summary(client, e2e, monkeypatch, uid):
+    bridge = Bridge(monkeypatch, client, local_env="production", peer_env="staging")
+    remote = {"version": 1, "user_id": uid, "tables": {}}
+    seen = []
+    monkeypatch.setattr(account_bundle, "export_account", lambda u: seen.append(u) or remote)
+    monkeypatch.setattr(account_bundle, "import_account", lambda u, b: {"notes": 0})
+    monkeypatch.setattr(internal_sync, "summarize_account", lambda u: dict(SUMMARY))
+
+    assert account_sync_client.pull(uid) == {"peer_env": "staging", "counts": {"notes": 0}}
+    assert seen == [uid.strip()]
+    assert account_sync_client.peer_summary(uid) == {"env": "staging", "summary": SUMMARY}
+    assert account_sync_client.peer_status() == {"configured": True, "peer_env": "staging"}
+    assert all(r.headers.get(SIGNATURE_HEADER) for r in bridge.requests)
+
+
+def test_e2e_staging_cannot_push_into_production(client, e2e, monkeypatch):
+    bridge = Bridge(monkeypatch, client, local_env="staging", peer_env="production")
+    monkeypatch.setattr(account_bundle, "export_account", lambda u: pytest.fail("exported"))
+    monkeypatch.setattr(account_bundle, "import_account", lambda u, b: pytest.fail("imported"))
+    with pytest.raises(account_sync_client.PeerError) as exc:
+        account_sync_client.push(UID)
+    assert exc.value.status == 403
+    assert [r.url.path.rsplit("/", 1)[-1] for r in bridge.requests] == ["ping"]
+
+
+def test_e2e_staging_pull_from_production_export_works(client, e2e, monkeypatch):
+    Bridge(monkeypatch, client, local_env="staging", peer_env="production")
+    monkeypatch.setattr(account_bundle, "export_account",
+                        lambda u: {"version": 1, "user_id": u, "tables": {}})
+    monkeypatch.setattr(account_bundle, "import_account", lambda u, b: {"notes": 2})
+    assert account_sync_client.pull(UID) == {"peer_env": "production", "counts": {"notes": 2}}
+
+
+def test_e2e_wrong_peer_token_is_refused(client, e2e, monkeypatch):
+    monkeypatch.setenv("ACCOUNT_SYNC_PEER_TOKEN", "y" * 64)
+    Bridge(monkeypatch, client, local_env="production", peer_env="staging")
+    assert account_sync_client.peer_status() == {"configured": True, "peer_env": None}

@@ -1,39 +1,33 @@
 """The account side of a Google sign-in (#118, moved from ``routes/auth.py``):
-the email-domain policy and the users / profile / OAuth-token / waitlist
-writes the OAuth callback makes once Google has vouched for the student."""
+the users / profile / OAuth-token / waitlist writes the OAuth callback makes
+once Google has vouched for the student, and the access decision (the
+waitlist gate and the `open_access` flag, services/open_access.py). There is
+no email-domain restriction (docs/design/open-access-gate.md)."""
 import logging
 from dataclasses import dataclass
 
-from config import ALLOWED_EMAIL_DOMAINS, AUTH_SCOPES, STORAGE_BUCKET
+from config import AUTH_SCOPES, STORAGE_BUCKET
 from db.connection import table
 from services import email_service
 from services.auth.accounts import _mark_welcomed, _welcome_due
 from services.auth.oauth_state import covers_calendar, granted_scopes
-from services.auth.waitlist import _mark_waitlist_joined, _waitlist_entry
-from services.encryption import decrypt_if_present, encrypt, encrypt_if_present
+from services.auth.waitlist import (
+    _link_open_access_entry,
+    _mark_waitlist_joined,
+    _waitlist_entry,
+)
+from services.encryption import bind, decrypt_if_present, encrypt, encrypt_if_present
+from services.open_access import gate_open
 
 logger = logging.getLogger(__name__)
-
-
-def _email_domain_allowed(email: str) -> bool:
-    """Whether `email`'s domain is permitted to sign in.
-
-    Controlled by config.ALLOWED_EMAIL_DOMAINS (default ["bu.edu"]). An empty
-    allowlist permits any domain — used on staging, which is already gated by
-    Cloudflare Access.
-    """
-    if not ALLOWED_EMAIL_DOMAINS:
-        return True
-    domain = email.strip().lower().rsplit("@", 1)[-1]
-    return domain in ALLOWED_EMAIL_DOMAINS
 
 
 def _email_verified(user_info: dict) -> bool:
     """Whether Google vouches that the account owns its email address.
 
-    The domain allowlist, the waitlist and the account lookup all key on the
-    email, so an unverified one (a Google account created with an address its
-    owner never proved) must not sign in. Only an explicit JSON `true` counts:
+    The waitlist and the account lookup key on the email, so an unverified
+    one (a Google account created with an address its owner never proved)
+    must not sign in. Only an explicit JSON `true` counts:
     a missing or non-boolean `verified_email` is refused."""
     return user_info.get("verified_email") is True
 
@@ -81,7 +75,8 @@ class SignInResult:
 
     ``outcome``: ``account_deleted`` (refused, nothing written),
     ``not_approved`` (no session; ``user_id`` is None when no account exists
-    or was created) or ``approved``.
+    or was created) or ``approved`` (gets a session: an admin's approval, or
+    the open gate, docs/design/open-access-gate.md).
     """
 
     outcome: str
@@ -94,9 +89,12 @@ _NAME_COLS = ("name", "first_name", "last_name")
 _UPLOADED_AVATAR_MARK = f"/storage/v1/object/public/{STORAGE_BUCKET}/"
 
 
-def _has_name(row: dict) -> bool:
+def _has_name(row: dict, user_id: str) -> bool:
     # Decrypted, because an empty name is still a ciphertext (of "").
-    return any((decrypt_if_present(row.get(c)) or "").strip() for c in _NAME_COLS)
+    return any(
+        (decrypt_if_present(row.get(c), bind=bind("user_profiles", c, user_id)) or "").strip()
+        for c in _NAME_COLS
+    )
 
 
 def _refresh_profile(
@@ -113,9 +111,8 @@ def _refresh_profile(
     the student uploaded themselves, and never to a blank.
     """
     google_name = {
-        "name": encrypt_if_present(name),
-        "first_name": encrypt_if_present(first_name),
-        "last_name": encrypt_if_present(last_name),
+        c: encrypt_if_present(v, bind=bind("user_profiles", c, user_id))
+        for c, v in (("name", name), ("first_name", first_name), ("last_name", last_name))
     }
     cols = "name,first_name,last_name,avatar_url"
     by_user = {"user_id": f"eq.{user_id}"}
@@ -139,7 +136,7 @@ def _refresh_profile(
     if avatar_url and _UPLOADED_AVATAR_MARK not in (current.get("avatar_url") or ""):
         patch["avatar_url"] = avatar_url
     filters = dict(by_user)
-    if not _has_name(current):
+    if not _has_name(current, user_id):
         patch.update(google_name)
         # Compare-and-set on the stored name: one written since the read
         # above is the student's, and this update then matches no row.
@@ -164,13 +161,14 @@ def _store_calendar_tokens(user_id: str, creds) -> None:
     later grants, so creating one here would connect them again unasked.
     A grant without a refresh token keeps the stored one."""
     row = {
-        "access_token": encrypt(creds.token),
+        "access_token": encrypt(creds.token, bind=bind("oauth_tokens", "access_token", user_id)),
         # expires_at is TIMESTAMPTZ after migration 0024 — None (not "") when
         # there is no expiry, since "" is not a valid timestamptz.
         "expires_at": creds.expiry.isoformat() if creds.expiry else None,
     }
     if creds.refresh_token:
-        row["refresh_token"] = encrypt(creds.refresh_token)
+        row["refresh_token"] = encrypt(
+            creds.refresh_token, bind=bind("oauth_tokens", "refresh_token", user_id))
     table("oauth_tokens").update(row, filters={"user_id": f"eq.{user_id}"})
 
 
@@ -196,7 +194,7 @@ def record_google_sign_in(
 
     # Determine user_id: check if this Google ID already exists
     existing = table("users").select(
-        "id,is_approved,deleted_at", filters={"google_id": f"eq.{google_id}"}
+        "id,is_approved,open_access_at,deleted_at", filters={"google_id": f"eq.{google_id}"}
     )
     # #756: a deleted account stays deleted. Refused before anything is written
     # (sign-in time, profile, OAuth tokens, waitlist) — there is no silent
@@ -212,19 +210,26 @@ def record_google_sign_in(
     # The waitlist decides whether someone new gets an account at all: an admin
     # approving their email under Admin → Allowlist is the yes. Without it
     # nothing is stored for them (no users row, profile or OAuth tokens), and
-    # /pending offers to put them on the waitlist instead.
+    # /pending offers to put them on the waitlist instead — unless the gate is
+    # open (`open_access`, docs/design/open-access-gate.md): then anyone gets
+    # an account, stamped `open_access_at` and NOT approved, so closing the
+    # gate puts them back on the waitlist. Fails closed: an unreadable flag
+    # store reads as a closed gate.
     waitlist = _waitlist_entry(email)
     waitlist_approved = bool(waitlist and waitlist.get("approved_at"))
-    if not existing and not (local_auto_approve or waitlist_approved):
+    open_now = gate_open()
+    if not existing and not (local_auto_approve or waitlist_approved or open_now):
         return SignInResult("not_approved")
+    open_access_at = None
     if existing:
         user_id = existing[0]["id"]
         is_approved = existing[0]["is_approved"]
+        open_access_at = existing[0].get("open_access_at")
         # Update auth fields on users; refresh profile fields on user_profiles.
         from datetime import datetime as _dt, timezone as _tz
         table("users").update(
             {
-                "email": encrypt_if_present(email),
+                "email": encrypt_if_present(email, bind=bind("users", "email", user_id)),
                 "last_sign_in_at": _dt.now(_tz.utc).isoformat(),
             },
             filters={"id": f"eq.{user_id}"},
@@ -235,8 +240,12 @@ def record_google_sign_in(
         # with random nonces; equality lookups by plaintext email cannot match.
         # New sign-ins for users without a google_id always create a fresh row.
         user_id = f"user_{google_id}"
-        is_approved = True  # local dev, or approved on the waitlist (checked above)
+        # Local dev, or approved on the waitlist — or neither, and in only
+        # through the open gate (checked above): then not approved, marked.
+        is_approved = bool(local_auto_approve or waitlist_approved)
         from datetime import datetime as _dt, timezone as _tz
+        if not is_approved:
+            open_access_at = _dt.now(_tz.utc).isoformat()
         # Upsert, not insert (#285). `user_id` is deterministic, so a *stub* row
         # can already occupy this id: `graph_service.ensure_user_exists` inserts
         # {id, streak_count} with a NULL google_id for any authenticated request,
@@ -252,10 +261,12 @@ def record_google_sign_in(
         # stub's NULL auth columns in, promoting it to a real user.
         table("users").upsert({
             "id": user_id,
-            "email": encrypt_if_present(email),
+            "email": encrypt_if_present(email, bind=bind("users", "email", user_id)),
             "google_id": google_id,
             "auth_provider": "google",
             "is_approved": is_approved,
+            # Always written, so a reopened purge stub never keeps an old mark.
+            "open_access_at": open_access_at,
             "last_sign_in_at": _dt.now(_tz.utc).isoformat(),
             **_reopen_purged_stub(user_id),
         }, on_conflict="id")
@@ -294,10 +305,18 @@ def record_google_sign_in(
     # hand) is the only place the two can be matched.
     if is_approved and waitlist and not waitlist.get("joined_at"):
         _mark_waitlist_joined(waitlist["id"], user_id)
+    if is_approved:
+        return SignInResult("approved", user_id)
 
-    if not is_approved:
-        return SignInResult("not_approved", user_id)
-    return SignInResult("approved", user_id)
+    # Not approved. The open gate lets in only an account that came in
+    # through it (`open_access_at`, stamped above for a new one). An existing
+    # account without the mark is one an admin removed — Remove access and an
+    # Allowlist revoke clear it, and unapproved sign-ins never create an
+    # account otherwise — and a deliberate removal holds while the gate is open.
+    if open_now and open_access_at:
+        _link_open_access_entry(email, first_name, waitlist, user_id)
+        return SignInResult("approved", user_id)
+    return SignInResult("not_approved", user_id)
 
 
 def welcome_and_achievements_after_sign_in(

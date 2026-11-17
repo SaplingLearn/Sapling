@@ -7,7 +7,7 @@ from db.connection import table
 from models import SubmitFeedbackBody, SubmitIssueReportBody
 from services.auth_guard import get_session_user_id, guard_off_loop
 from services import storage_service
-from services.encryption import encrypt_if_present
+from services.encryption import bind, encrypt_if_present
 from services import abuse_limits
 from services.request_limits import aenforce_abuse_limit, enforce_abuse_limit, read_within_limit
 from services.upload_validation import sniff_image
@@ -53,15 +53,16 @@ def submit_feedback(body: SubmitFeedbackBody, request: Request):
             owned = False
         if not owned:
             session_id = None
+    feedback_id = str(uuid.uuid4())
     table("feedback").insert({
-        "id": str(uuid.uuid4()),
+        "id": feedback_id,
         "user_id": user_id,
         "type": body.type,
         "rating": body.rating,
         "selected_options": body.selected_options,
-        "comment": encrypt_if_present(body.comment),
+        "comment": encrypt_if_present(body.comment, bind=bind("feedback", "comment", feedback_id)),
         "session_id": session_id,
-        "topic": encrypt_if_present(body.topic),
+        "topic": encrypt_if_present(body.topic, bind=bind("feedback", "topic", feedback_id)),
     })
     return {"ok": True}
 
@@ -74,11 +75,14 @@ def submit_issue_report(body: SubmitIssueReportBody, request: Request):
     enforce_abuse_limit(abuse_limits.ISSUE_REPORT_SUBMIT, user_id)
     # 0026_ops: issue_reports.id is now a TEXT PK (was SERIAL); user_id now has
     # a real FK to users(id). Hand-build the text PK per repo convention.
+    report_id = str(uuid.uuid4())
     table("issue_reports").insert({
-        "id": str(uuid.uuid4()),
+        "id": report_id,
         "user_id": user_id,
-        "topic": encrypt_if_present(body.topic),
-        "description": encrypt_if_present(body.description),
+        "topic": encrypt_if_present(body.topic, bind=bind("issue_reports", "topic", report_id)),
+        "description": encrypt_if_present(
+            body.description, bind=bind("issue_reports", "description", report_id),
+        ),
         "screenshot_urls": body.screenshot_urls,
     })
     return {"ok": True}

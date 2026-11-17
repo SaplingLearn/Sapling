@@ -21,7 +21,7 @@ from services.academics import (
     user_enrollment_ids,
     user_offering_ids_for_course,
 )
-from services.encryption import decrypt_if_present, decrypt_json, encrypt_json
+from services.encryption import bind, decrypt_if_present, decrypt_json, encrypt_json
 from services.exam_proximity import is_assessment
 from services.request_limits import check_rate_limit
 
@@ -175,7 +175,8 @@ def build_snapshot(user_id: str, scope: dict, today: date | None = None, *, evid
         "course_id": f"eq.{course['course_code']}", "category": "eq.catalog",
     }, order="created_at.desc,id", limit=5)
     for row in catalogs:
-        add_source(f"catalog:{row['id']}", "BU catalog", decrypt_if_present(row.get("chunk_text")) if evidence else None)
+        add_source(f"catalog:{row['id']}", "BU catalog", decrypt_if_present(
+            row.get("chunk_text"), bind=bind("course_chunks", "chunk_text", row)) if evidence else None)
 
     docs, doc_count = table("documents").select_with_count(
         "id,file_name,summary,extracted_text,concept_notes" if evidence else "id,file_name", filters={
@@ -186,9 +187,9 @@ def build_snapshot(user_id: str, scope: dict, today: date | None = None, *, evid
     for row in docs:
         # Include concept notes even on older uploads without stored full text.
         text = "\n".join(filter(None, [
-            decrypt_if_present(row.get("summary")),
-            decrypt_if_present(row.get("concept_notes")),
-            decrypt_if_present(row.get("extracted_text")),
+            decrypt_if_present(row.get("summary"), bind=bind("documents", "summary", row)),
+            decrypt_if_present(row.get("concept_notes"), bind=bind("documents", "concept_notes", row)),
+            decrypt_if_present(row.get("extracted_text"), bind=bind("documents", "extracted_text", row)),
         ])) if evidence else None
         add_source(f"document:{row['id']}", row["file_name"], text)
 
@@ -199,7 +200,8 @@ def build_snapshot(user_id: str, scope: dict, today: date | None = None, *, evid
         if len(row["title"]) > 256:
             truncated = True
             row["title"] = row["title"][:256]
-        notes = (decrypt_if_present(row.pop("notes", None)) or "") if evidence else ""
+        notes = (decrypt_if_present(row.pop("notes", None), bind=bind("assignments", "notes", row))
+                 or "") if evidence else ""
         add_source(f"assessment:{row['id']}", row["title"], f"{row['title']}\n{notes}")
 
     # Tracked graph concepts are evidence for material already processed; scores
@@ -219,6 +221,12 @@ def build_snapshot(user_id: str, scope: dict, today: date | None = None, *, evid
     digest = hashlib.sha256(json.dumps({"version": PROMPT_VERSION, **payload}, sort_keys=True).encode()).hexdigest()
     return {"payload": payload, "hash": digest, "nodes": nodes,
             "truncated": truncated or doc_count > MAX_DOCUMENTS or assessments_left_out}
+
+
+def _outline_json(cache: dict):
+    """The cached outline's JSON, opened in its own cell (keyed on the
+    enrollment, AAD finding M13)."""
+    return decrypt_json(cache["content"], bind=bind("topic_checklists", "content", cache))
 
 
 def _cache(scope: dict) -> dict | None:
@@ -254,7 +262,7 @@ def present(scope: dict, snapshot: dict, cache: dict | None, now: datetime) -> d
     """The checklist as served. Freshness (``needs_refresh``/``warnings``) is
     reported only for a full evidence snapshot; a live snapshot (a checkmark)
     leaves those to the client's last GET/refresh."""
-    outline = TopicOutline.model_validate(decrypt_json(cache["content"])) if cache and snapshot["payload"]["sources"] else None
+    outline = TopicOutline.model_validate(_outline_json(cache)) if cache and snapshot["payload"]["sources"] else None
     progress = list(page_all(table("topic_checklist_progress"), "topic_key,reviewed_at", filters={
         "enrollment_id": f"eq.{scope['enrollment_id']}",
     }, order="topic_key")) if cache else []
@@ -349,7 +357,7 @@ def refresh_checklist(user_id: str, course_id: str, semester: str | None = None)
     if retry is not None:
         raise HTTPException(429, "Please wait before generating another checklist.", headers={"Retry-After": str(retry)})
     try:
-        prior = TopicOutline.model_validate(decrypt_json(cache["content"])) if cache else None
+        prior = TopicOutline.model_validate(_outline_json(cache)) if cache else None
         outline = run_agent_sync(_generate({**snapshot["payload"],
             "existing_topic_names": [t.name for t in prior.topics] if prior else [],
         }, user_id))
@@ -359,7 +367,9 @@ def refresh_checklist(user_id: str, course_id: str, semester: str | None = None)
         raise HTTPException(503, "Topic generation is temporarily unavailable. Please try again.") from None
     cache = {
         "enrollment_id": scope["enrollment_id"], "input_hash": snapshot["hash"],
-        "content": encrypt_json(outline.model_dump()), "generated_at": now.isoformat(),
+        "content": encrypt_json(outline.model_dump(), bind=bind(
+            "topic_checklists", "content", scope["enrollment_id"])),
+        "generated_at": now.isoformat(),
     }
     table("topic_checklists").upsert(cache, on_conflict="enrollment_id")
     return present(scope, snapshot, cache, now)
@@ -369,7 +379,7 @@ def set_reviewed(user_id: str, course_id: str, key: str, checked: bool, semester
     now = datetime.now(timezone.utc)
     scope = resolve_scope(user_id, course_id, semester)
     cache = _cache(scope)
-    if not cache or key not in {topic_key(t.name) for t in TopicOutline.model_validate(decrypt_json(cache["content"])).topics}:
+    if not cache or key not in {topic_key(t.name) for t in TopicOutline.model_validate(_outline_json(cache)).topics}:
         raise HTTPException(404, "Topic not found in this checklist.")
     filters = {"enrollment_id": f"eq.{scope['enrollment_id']}", "topic_key": f"eq.{key}"}
     if checked:

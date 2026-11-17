@@ -19,24 +19,46 @@ whether the database is up is not this check's question.
 
 Rotating ENCRYPTION_KEY: re-encrypt every 🔒 column, then delete the row so the
 new key re-seeds it on the next boot.
+
+Scripts that WRITE encrypted data (backfills, seeders, catalog ingest) are
+stricter than the server: ``require_key_for_write`` aborts them unless the
+canary positively opens. A missing table, an unreachable database or an empty
+canary all abort too, because ``db/backfill_encryption.py --apply`` treats
+every value it cannot decrypt as plaintext and encrypts it, so one run under
+the wrong key double-encrypts a whole environment beyond recovery. Only the
+seeders that build a FRESH database (``allow_seed=True``) may seed an empty
+canary, exactly as the first server boot would.
 """
 
 import logging
+import sys
 from urllib.parse import urlparse
 
 import httpx
 
 from config import SUPABASE_URL
 from db.connection import table
-from services.encryption import decrypt, encrypt
+from services.encryption import bind, decrypt, encrypt
 
 logger = logging.getLogger(__name__)
 
 CANARY_PLAINTEXT = "sapling-encryption-key-check:v1"
 
+#: The canary's AES-GCM binding (docs/security/encryption-aad-plan.md). A seed
+#: is ALWAYS v1, whatever ENCRYPTION_WRITE_V2 says, and a read always accepts
+#: the legacy v1 canary, whatever ENCRYPTION_LEGACY_READS says: it is a key
+#: check, not data, and the AAD backfill never rewrites it. A v2 canary would
+#: make a rollback to pre-v2 code (which cannot parse ``enc2:``) refuse to
+#: boot. A v2 canary seeded by an older build still verifies.
+CANARY_BINDING = bind("encryption_key_check", "canary", 1)
+
 
 class EncryptionKeyMismatch(RuntimeError):
     """ENCRYPTION_KEY cannot open the canary this database was seeded with."""
+
+
+class EncryptionKeyUnverified(RuntimeError):
+    """A write-mode script could not positively verify ENCRYPTION_KEY."""
 
 
 def _read_canary() -> str | None:
@@ -46,7 +68,7 @@ def _read_canary() -> str | None:
 
 def _check(canary: str) -> None:
     try:
-        ok = decrypt(canary) == CANARY_PLAINTEXT
+        ok = decrypt(canary, bind=CANARY_BINDING, allow_legacy=True) == CANARY_PLAINTEXT
     except Exception:
         ok = False
     if not ok:
@@ -62,24 +84,19 @@ def _check(canary: str) -> None:
 
 
 def verify_encryption_key(*, seed: bool = True) -> str:
-    """Return "ok" | "seeded" | "skipped"; raise EncryptionKeyMismatch on a
-    definite mismatch.
-
-    ``seed=False`` only ever reads: with no canary there it returns "skipped"
-    instead of writing one. For anything that is not the backend's own boot
-    (an ops script), because a canary seeded by a process holding the wrong
-    key would lock the real backend out.
-    """
+    """Return "ok" | "seeded" | "skipped" (| "absent" when ``seed`` is False
+    and the table holds no canary); raise EncryptionKeyMismatch on a definite
+    mismatch."""
     try:
         canary = _read_canary()
         if canary is None and not seed:
-            return "skipped"
+            return "absent"
         if canary is None:
             # DO NOTHING on conflict: never overwrite a canary another key wrote.
             # Re-read either way, so losing a seed race to a different key is
             # caught here rather than on the next boot.
             table("encryption_key_check").upsert(
-                {"id": 1, "canary": encrypt(CANARY_PLAINTEXT)},
+                {"id": 1, "canary": encrypt(CANARY_PLAINTEXT, bind=CANARY_BINDING, v2=False)},
                 on_conflict="id",
                 ignore_duplicates=True,
             )
@@ -95,3 +112,49 @@ def verify_encryption_key(*, seed: bool = True) -> str:
         return "skipped"
     _check(canary)
     return "ok"
+
+
+def require_key_for_write(script: str, *, allow_seed: bool = False) -> str:
+    """Abort a write-mode script unless ENCRYPTION_KEY provably matches the
+    database; return the canary status ("ok", or "seeded" under
+    ``allow_seed``).
+
+    Raises EncryptionKeyMismatch on a mismatch and EncryptionKeyUnverified
+    on anything short of a positive check (no table, database unreachable,
+    no canary). ``allow_seed`` is for seeders that build a fresh database:
+    an empty canary is then seeded with this key, as the first server boot
+    would. A backfill over existing rows never passes it.
+    """
+    host = urlparse(SUPABASE_URL or "").hostname or "<unset>"
+    try:
+        status = verify_encryption_key(seed=allow_seed)
+    except EncryptionKeyMismatch:
+        logger.error("%s: ENCRYPTION_KEY does not match the database at %s; aborting", script, host)
+        raise
+    except Exception as e:  # missing table, auth, config: anything but a pass
+        raise EncryptionKeyUnverified(
+            f"{script}: could not verify ENCRYPTION_KEY against {host} "
+            f"({type(e).__name__}); refusing to write. Run against a reachable "
+            "database whose encryption_key_check canary this key opens."
+        ) from e
+    allowed = ("ok", "seeded") if allow_seed else ("ok",)
+    if status not in allowed:
+        reason = {
+            "skipped": "the database or its encryption_key_check table was unreachable",
+            "absent": "encryption_key_check holds no canary (boot a backend on this "
+                      "environment's key first, so it seeds one)",
+        }.get(status, status)
+        raise EncryptionKeyUnverified(
+            f"{script}: ENCRYPTION_KEY is unverified against {host}: {reason}; refusing to write."
+        )
+    logger.info("%s: ENCRYPTION_KEY verified against %s (%s)", script, host, status)
+    return status
+
+
+def abort_unless_key_verified(script: str, *, allow_seed: bool = False) -> None:
+    """CLI form of ``require_key_for_write``: print why and exit 2."""
+    try:
+        require_key_for_write(script, allow_seed=allow_seed)
+    except (EncryptionKeyMismatch, EncryptionKeyUnverified) as e:
+        print(f"ABORT: {e}", file=sys.stderr)
+        raise SystemExit(2) from e

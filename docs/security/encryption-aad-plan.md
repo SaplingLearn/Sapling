@@ -1,6 +1,9 @@
 # Binding encrypted columns to their row (AES-GCM associated data)
 
-Status: design, not started. No data is migrated by this document.
+Status: implemented on branch `sec2/encryption-aad` (2026-11-16): phases 0-3 in
+code, inert until `ENCRYPTION_WRITE_V2` is turned on; phase 4 is a setting.
+No data is migrated by this document. Where the build differs from the design
+below, "As built" at the end says how and why.
 Owner of the code it describes: `backend/services/encryption.py`.
 
 ## Where we are
@@ -206,3 +209,122 @@ envelope makes it online:
 * The backfill: dry run writes nothing; the canary guard aborts on a wrong
   key; the old-value filter leaves a concurrently updated row alone; a second
   run is a no-op.
+
+## As built (2026-11-16)
+
+The design above held. These are the places the build departs from it, or
+where it was stale against the code.
+
+1. **One branch, readers first by configuration.** Readers and bound writers
+   ship together. The writer flip is the process-wide setting
+   `ENCRYPTION_WRITE_V2` (default **off**) instead of a per-table `V2_TABLES`
+   code allowlist: the deploy lands v2-capable readers everywhere with every
+   write still v1, and the owner turns writes on per environment once every
+   instance runs them (rollback = turn it off; readers keep opening v2). Still
+   not a feature flag: the format must not vary per student, and `decrypt` has
+   no student to target.
+2. **Strict reads are a setting too.** `ENCRYPTION_LEGACY_READS=allow|refuse`
+   (any other value reads as refuse) plus `ENCRYPTION_STRICT_TABLES` (a comma
+   list, for one table at a time). They apply to BOUND reads: a value without
+   the `enc2:` prefix (v1, plaintext, a legacy JSONB dict, a bare number) is
+   refused like a mismatch and logs `encryption.legacy_refused`. Unbound reads
+   are left on the v1 path; `tests/test_encryption_aad_inventory.py` keeps the
+   unbound sites to a reviewed allowlist (offline tools only).
+3. **Call sites never build a `Binding` by hand.** `encryption.bind(table,
+   column, row)` reads the row key off the row (or takes the key value / a
+   tuple) using the registry `encryption.ENCRYPTED_COLUMNS`, which is the
+   phase-0 inventory in code. A writer and a reader cannot disagree on which
+   columns make the key, `bind` refuses an unlisted pair (`UnknownColumn`) and
+   a partial key (`MissingRowKey`), and the backfill and the `ciphertext`
+   oracle derive the same binding from the same registry.
+4. **Row keys that are not the primary key**, each for a named reason:
+   `messages.content` binds to `session_id` (`materialize_tutor_session` copies
+   the pending greeting into `messages` by SQL, so the row id is unknown at
+   seal time; the pending `tutor_pending_sessions.assistant_reply` is sealed
+   for `messages.content` of its session). This stops cross-user and
+   cross-session moves, not reordering inside one session. `quiz_context`
+   binds to `(user_id, concept_node_id)` (it is upserted on that key and never
+   sends its id), `quiz_responses` to `(attempt_id, question_index)`, and
+   `newsletter_emails.first_name` to the plaintext `email` (upserted on it).
+   Every other table binds to its PK; inserts that let Postgres mint the id now
+   mint it in Python (`room_messages`, `document_uploads`, `assignments`,
+   `flashcards`, `feedback`/`issue_reports`, `quiz_attempts`, ...).
+5. **No keyring yet.** The envelope carries `kid` and `0` is `ENCRYPTION_KEY`;
+   an unknown kid is a hard failure. `ENCRYPTION_KEYS`/`ENCRYPTION_ACTIVE_KID`
+   and the per-kid canary are not built.
+6. **The backfill** is `backend/db/backfill_encryption_aad.py` (not
+   `scripts/backfill_encryption_v2.py`). Its compare-and-swap is the SQL
+   function `encryption_aad_swap` (migration `20261116162200`), conditional on
+   an md5 of the value read, instead of a `column=eq.<old>` PostgREST filter:
+   that filter cannot carry a multi-megabyte `documents.extracted_text` (URL
+   limits) or a JSONB column that holds a JSON string (`quiz_attempts.*`,
+   `quiz_context`, `study_guides.*`). Legacy plaintext is reported by primary
+   key, not sealed (`python -m db.backfill_encryption --apply` seals it, then a
+   second AAD run binds it). There is no separate `--count`: the dry run is
+   read-only, also opens every v2 value under its binding (`v2_bad` is a moved
+   or tampered value), and exits 0 only when nothing but v2-in-place remains,
+   which is the gate for phase 4.
+7. **The key canary** is bound (`encryption_key_check|canary|1`) and seeded as
+   v2 when writes are on, but always READ with legacy allowed and never
+   backfilled: a v2 canary would make a rollback to pre-v2 code refuse to boot,
+   and it carries a fixed public plaintext.
+8. **Not a column, still bound:** the pending sign-up token's claims
+   (`services/auth/pending.py`) are sealed under the pseudo-table
+   `auth_pending_token`, so the email claim cannot be swapped with the name
+   claim.
+9. **Security signal:** every refusal is counted in process
+   (`encryption.security_counts()`) and logged as a `category="system"` event
+   with table, column, reason and version only (no user id, no value, no row
+   key), plus a WARNING that names the row key for forensics.
+10. **Stale numbers above:** the scan found 240 unbound seal/open sites in 75
+    modules (helpers passed as values and wrapper functions included), not
+    "44 writers / 190 readers".
+
+### Rollout (as built)
+
+1. Deploy this code everywhere (`make promote`; the migration adds only the
+   swap function). Writes are still v1; nothing changes for users.
+2. Staging: set `ENCRYPTION_WRITE_V2=on` on every staging service (API and
+   worker) and restart. New writes are v2.
+3. `dotenv -f .env.staging run -- python -m db.backfill_encryption_aad` (dry
+   run), then `--apply`, then the dry run again: it must exit 0. Investigate
+   anything listed as `v2_bad`, `undecryptable`, `non_string` or `no_key`.
+4. Verify: `ENCRYPTION_STRICT_TABLES=<one table>` on staging, watch for
+   `encryption.legacy_refused`/`binding_mismatch` events, widen, then
+   `ENCRYPTION_LEGACY_READS=refuse`.
+5. Production: steps 2-4 under `.env`/production env, after a manual
+   `pg_dump -Fc` (backend/promotion/README.md, "Backups") right before
+   `--apply`.
+
+## Appendix: inventory (phase 0)
+
+The registry in `services/encryption.py` is authoritative; this is a copy.
+
+| Table | 🔒 columns (kind) | Row key in the AAD | Why |
+|---|---|---|---|
+| `users` | `email` | `id` | PK |
+| `user_profiles` | `name`, `first_name`, `last_name`, `bio`, `location` | `user_id` | PK |
+| `oauth_tokens` | `access_token`, `refresh_token` | `user_id` | PK |
+| `gradescope_credentials` | `email_encrypted`, `password_encrypted`, `cookies_encrypted` | `user_id` | PK |
+| `newsletter_emails` | `first_name` | `email` | upserted on the plaintext email (ADR 0026) |
+| `messages` | `content` | `session_id` | owner fallback: SQL copies the pending greeting into messages |
+| `tutor_pending_sessions` | `assistant_reply` | `session_id` | sealed as `messages.content` |
+| `room_messages` | `text` | `id` | PK (minted in Python) |
+| `sessions` | `summary_json` (json) | `id` | PK |
+| `documents` | `summary`, `concept_notes` (json), `extracted_text` | `id` | PK (already app-minted) |
+| `notes` | `title`, `body`, `last_summary` | `id` | PK |
+| `document_uploads` | `file_data` (bytes), `result` (json) | `id` | PK (minted in Python) |
+| `course_chunks` | `chunk_text` | `id` | content hash of the plaintext: known before sealing, stable across the shared dedupe upsert |
+| `topic_checklists` | `content` (json) | `enrollment_id` | PK |
+| `assignments` | `notes`, `points_possible` (numeric), `points_earned` (numeric) | `id` | PK (minted in Python) |
+| `feedback` | `comment`, `topic` | `id` | PK |
+| `issue_reports` | `topic`, `description` | `id` | PK |
+| `quiz_attempts` | `questions_json` (json), `answers_json` (json) | `id` | PK |
+| `quiz_context` | `context_json` (json) | `user_id`, `concept_node_id` | upserted on that key; its id is never sent |
+| `quiz_responses` | `answer_text` (json) | `attempt_id`, `question_index` | one row per question of an attempt |
+| `flashcards` | `front`, `back` | `id` | PK (minted in Python) |
+| `study_guides` | `content`, `previous_content`, `answers` (json) | `id` | PK |
+| `room_summaries` | `summary` | `room_id` | PK |
+| `encryption_key_check` | `canary` | `id` | PK; never backfilled |
+
+`newsletter_emails.email` stays plaintext (ADR 0026).

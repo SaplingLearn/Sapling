@@ -40,12 +40,15 @@ export function Hero({
   heroMounted,
   heroText2,
   onBeta,
+  ctaLabel = 'Sign up for Beta Testing',
 }: {
   /** True once the intro overlay has cleared and the hero may rise. */
   heroMounted: boolean;
   /** The tagline under it, likewise. */
   heroText2: string;
   onBeta: () => void;
+  /** "Sign up" while open access is on (docs/design/open-access-gate.md). */
+  ctaLabel?: string;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const heroContentRef = useRef<HTMLDivElement>(null);
@@ -414,7 +417,7 @@ export function Hero({
         }} className="flex flex-col items-center gap-4 mt-10 md:mt-[52px]">
           <div style={{ position: 'relative', display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
             <Button variant="primary" size="xl" onClick={onBeta}>
-              Sign up for Beta Testing
+              {ctaLabel}
             </Button>
           </div>
         </div>

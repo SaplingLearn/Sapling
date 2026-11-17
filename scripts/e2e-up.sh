@@ -23,7 +23,7 @@
 # skip-if-done migrations/seeds. LOCAL ONLY — never touches staging/prod.
 #
 # First-time setup on a new machine (same as scripts/local-up.sh):
-#   cp backend/.env.local.example backend/.env       # then fill in ANTHROPIC_API_KEY + GEMINI_API_KEY
+#   cp backend/.env.local.example backend/.env       # then fill in GEMINI_API_KEY (+ ANTHROPIC_API_KEY for real-model mode)
 #   python -m venv backend/venv && backend/venv/bin/pip install -r backend/requirements.txt
 #   cd frontend && npm ci
 #
@@ -169,7 +169,7 @@ echo "▶ Preflight…"
 command -v supabase >/dev/null 2>&1 \
   || { echo "✗ supabase CLI not found. Install it first (Arch: paru -S supabase-bin) — see docs/local-supabase.md"; exit 1; }
 [ -f backend/.env ] \
-  || { echo "✗ backend/.env not found. Create it first: cp backend/.env.local.example backend/.env  (then fill in ANTHROPIC_API_KEY + GEMINI_API_KEY)"; exit 1; }
+  || { echo "✗ backend/.env not found. Create it first: cp backend/.env.local.example backend/.env  (then fill in GEMINI_API_KEY (+ ANTHROPIC_API_KEY for real-model mode))"; exit 1; }
 # $VENV_PY is resolved in local-common.sh and accepts both the POSIX
 # (venv/bin/python) and Windows (venv/Scripts/python.exe) venv layouts.
 [ -n "${VENV_PY:-}" ] \
@@ -326,6 +326,13 @@ echo "  ℹ FEATURE_FLAGS_SNAPSHOT_TTL_S=0, FEATURE_FLAGS_ROLES_TTL_S=0 for this
 export POSTHOG_PROJECT_TOKEN=
 export POSTHOG_PERSONAL_API_KEY=
 echo "  ℹ POSTHOG_PROJECT_TOKEN and POSTHOG_PERSONAL_API_KEY blank for this stack (ADR 0028)"
+# Finding M13 (docs/security/encryption-aad-plan.md): the lane seeds a fresh
+# database, so it writes the row-bound v2 envelope everywhere. The
+# `ciphertext` oracle opens each value under its own row's binding, and run
+# with ENCRYPTION_WRITE_V2=on it also refuses legacy v1. Production turns
+# this on only after its readers ship.
+export ENCRYPTION_WRITE_V2="${ENCRYPTION_WRITE_V2:-on}"
+echo "  ℹ ENCRYPTION_WRITE_V2=$ENCRYPTION_WRITE_V2 for this stack (production: off until the AAD rollout)"
 # The servers never inherit the cycle's locks (fds 8/9, scripts/e2e-cycle.sh):
 # a server that outlived its teardown would otherwise hold the slot's lock
 # forever and the slot would silently drop out of rotation. Without them, a

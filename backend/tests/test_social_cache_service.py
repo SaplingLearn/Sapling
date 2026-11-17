@@ -1,7 +1,7 @@
 """#518: room_summaries.summary is ciphertext at rest; cache keys on member_hash."""
 from unittest.mock import patch
 
-from services.encryption import decrypt, encrypt
+from services.encryption import bind, decrypt, encrypt
 from services.social_cache_service import get_cached_summary, save_summary, _compute_hash
 
 
@@ -24,7 +24,8 @@ def test_save_summary_encrypts():
         save_summary("room1", ["s1", "s2"], "Everyone is stuck on recursion")
     row = fake.upserted[0]
     assert row["summary"] != "Everyone is stuck on recursion"
-    assert decrypt(row["summary"]) == "Everyone is stuck on recursion"
+    assert decrypt(row["summary"], bind=bind("room_summaries", "summary", "room1")) \
+        == "Everyone is stuck on recursion"
     assert row["member_hash"] == _compute_hash(["s1", "s2"])  # hash stays comparable
 
 

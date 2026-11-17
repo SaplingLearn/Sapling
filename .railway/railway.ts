@@ -75,6 +75,13 @@ const BOOT_VARIABLES = [
 ];
 
 const HANDLER_VARIABLES = [
+  // services/encryption.py (finding M13): the worker seals and opens
+  // document_uploads / documents / course_chunks, so it must write and refuse
+  // the same envelope as the API. Unset = off / allow; until the API sets them
+  // (the AAD rollout), list them in NOT_ON_API.
+  "ENCRYPTION_WRITE_V2",
+  "ENCRYPTION_LEGACY_READS",
+  "ENCRYPTION_STRICT_TABLES",
   // services/extraction_service.py + extraction_backends/ (document.process)
   "OCR_ENGINE",
   "GEMINI_VISION_OCR_ENABLED",
@@ -141,6 +148,10 @@ const FLAG_KILL_SWITCHES = [
   // docs/safety/crisis-support.md: the crisis-support screen on student AI
   // routes. No job reads it; shared so the switch reads the same everywhere.
   "crisis_support",
+  // docs/design/open-access-gate.md: the waitlist requirement at sign-in and
+  // in the auth guard. No job reads it; shared so the switch reads the same
+  // everywhere.
+  "open_access",
 ].map((key) => `SAPLING_FLAG_${key.toUpperCase()}`);
 
 /** Per-slot model overrides (agents/_providers.py: `SAPLING_MODEL_<TASK>`,
