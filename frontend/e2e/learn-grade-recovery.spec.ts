@@ -48,9 +48,11 @@ from learning import grade_checkpoint
 from learning.checks import question_hash
 from learning.evidence import PlanningPersistenceUnavailable
 from main import app
-from routes import learn_loop
-from services.check_item_service import concept_key
-from services.encryption import decrypt_if_present, encrypt_if_present
+from services.check_item_service import concept_key, reseal_row_for_id
+from services.encryption import bind, decrypt_if_present, encrypt_if_present
+from services.loop import checkpoint as loop_checkpoint
+from services.loop import grading as loop_grading
+from services.loop import probe_grading as loop_probe_grading
 from services.session_tokens import mint_session
 payload = json.load(sys.stdin)
 kind, token = payload['kind'], payload['token']
@@ -62,10 +64,15 @@ template = table('check_items').select('*', filters={'id': 'eq.rich-check-binary
 synthetic_ids = set()
 for variant in range(6):
     item = {key: value for key, value in template.items() if key != 'created_at'}
-    prompt = decrypt_if_present(template['prompt']) + ' [checkpoint fixture ' + token + ':' + str(variant) + ']'
+    stem = decrypt_if_present(template['prompt'], bind=bind('check_items', 'prompt', template))
+    prompt = stem + ' [checkpoint fixture ' + token + ':' + str(variant) + ']'
     item_id = 'e2e-checkpoint-' + token + '-' + str(variant)
     synthetic_ids.add(item_id)
-    item.update(id=item_id, concept_key=concept_key(name), prompt=encrypt_if_present(prompt),
+    # Every value is bound to its row's id (M13): open the template's in its
+    # cell and seal it again for the clone's.
+    reseal_row_for_id(item, template['id'], item_id)
+    item.update(id=item_id, concept_key=concept_key(name),
+                prompt=encrypt_if_present(prompt, bind=bind('check_items', 'prompt', item_id)),
                 question_hash=question_hash(prompt), graded=False)
     table('check_items').insert(item)
 state = ({'phase': 'teach', 'plan': {'approved': [node], 'cursor': 0}, 'concept': node,
@@ -91,8 +98,12 @@ if posed_item not in synthetic_ids:
     raise RuntimeError('Checkpoint fixture must pose its own synthetic asset')
 def interrupted(*args, **kwargs):
     raise PlanningPersistenceUnavailable('Synthetic interruption before evidence commit')
-grade = AsyncMock(wraps=learn_loop.grade_answer)
-with patch.object(learn_loop, 'grade_answer', grade), patch.object(learn_loop, 'flush_pending', interrupted):
+# The grade runs in services/loop (#118 split): the check path in grading, the
+# probe path in probe_grading; both commit through checkpoint.flush_pending.
+grading_module = loop_grading if kind == 'check' else loop_probe_grading
+grade = AsyncMock(wraps=grading_module.grade_answer)
+with patch.object(grading_module, 'grade_answer', grade), \
+        patch.object(loop_checkpoint, 'flush_pending', interrupted):
     response = client.post('/api/learn/loop/' + ('check/answer' if kind == 'check' else 'probe/answer'),
         json={**base, 'question_hash': qh, 'idk': True, 'answer': payload['original_answer']})
 require(response, 503, 'interrupted grade')
