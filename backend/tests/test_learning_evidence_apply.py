@@ -1561,7 +1561,9 @@ def test_gated_evidence_call_detector(source, expected):
 SANCTIONED_EVIDENCE_PERSISTERS = frozenset(
     {
         ("learning/evidence.py", "flush_pending"),
-        ("learning/review.py", "grade_review"),
+        # #117: grade_review hops its one write off the event loop into this
+        # helper (spec §13 A3); still the review's only evidence persister
+        ("learning/review.py", "_write_check_evidence"),
         # PKG-14b: ungated after the cutover (spec §11.2), one mc evidence per
         # question — was a SANCTIONED_EVIDENCE_CALLERS (gated) entry. #118 moved
         # the submit's body into the quiz package (spec §13 A149).

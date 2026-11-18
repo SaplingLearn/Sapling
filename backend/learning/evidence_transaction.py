@@ -17,7 +17,7 @@ import math
 from typing import Callable
 import uuid
 
-from db.connection import rpc
+from db.connection import rpc, table
 from db.scope import runs_as_service
 from learning.evidence import Evidence, PlanningObservation, PlanningPersistenceUnavailable
 from learning.learner_state import LearnerState, _from_row
@@ -149,6 +149,58 @@ def read_receipt(user_id: str, op_id: str, *, input_fingerprint: str | None = No
         raise
     except Exception as exc:
         raise PlanningPersistenceUnavailable("Evidence transaction receipt unavailable") from exc
+
+
+#: The journal columns a committed outcome is read back from (the commit wrote
+#: them; never a learner answer).
+_JOURNAL_COLUMNS = "id,node_id,question_hash,channel,correct,max_rung,reason,graph_nodes!inner(user_id)"
+
+
+def operation_identity(namespace: str, *parts: object) -> str:
+    """A deterministic evidence operation id (a canonical UUID) for one graded
+    answer whose route may submit it more than once — a review serving, a
+    post-test pose. The same parts give the same id, so a resubmission after
+    an ambiguous acknowledgment can never journal a second observation: the
+    commit replays the first, or refuses a different input under it
+    (`committed_outcome` then reads what was committed)."""
+    name = ":".join(["sapling", namespace, *(str(part) for part in parts)])
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, name))
+
+
+def committed_outcome(user_id: str, op_id: str) -> list[dict] | None:
+    """What a COMMITTED operation journaled, one dict per evidence row it wrote,
+    in commit order: {node_id, question_hash, channel, correct, idk,
+    max_rung}. For a route whose retry under the same operation id was refused
+    (EvidenceTransactionConflict: an earlier attempt did commit, with another
+    grade): that earlier outcome is the record, never the retry's. None when
+    the operation is not committed. Its rows are found by the ids the commit
+    gave them (`EvidencePlan.event_id`), owner-scoped through the node.
+    Raises PlanningPersistenceUnavailable when it cannot be read whole."""
+    receipt = read_receipt(user_id, op_id)
+    if receipt is None:
+        return None
+    ids = [str(uuid.uuid5(uuid.UUID(op_id), str(seq))) for seq in range(len(receipt["changes"]))]
+    if not ids:
+        return []
+    try:
+        rows = table("node_mastery_events").select(
+            _JOURNAL_COLUMNS,
+            filters={"id": f"in.({','.join(ids)})", "graph_nodes.user_id": f"eq.{user_id}"},
+        ) or []
+        by_id = {row["id"]: row for row in rows if isinstance(row, dict)}
+        return [
+            {
+                "node_id": by_id[i]["node_id"],
+                "question_hash": by_id[i].get("question_hash"),
+                "channel": by_id[i]["channel"],
+                "correct": bool(by_id[i]["correct"]),
+                "idk": str(by_id[i].get("reason") or "").endswith(":idk"),
+                "max_rung": int(by_id[i].get("max_rung") or 0),
+            }
+            for i in ids
+        ]
+    except Exception as exc:
+        raise PlanningPersistenceUnavailable("Committed evidence unavailable") from exc
 
 
 @dataclass

@@ -15,7 +15,10 @@ model is a stub that refuses, so no turn reaches a provider.
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock
+from contextlib import ExitStack, contextmanager
+from datetime import datetime, timezone
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -40,6 +43,54 @@ _SESSION = {
     "loop_state_rev": 0,
     "close_json": None,
 }
+
+#: /review/answer's day and served item: the review session id is derived from
+#: the day, and the item must be the one the session served for its key, so
+#: the handler gets past its 404/409 checks and really grades and writes.
+_REVIEW_NOW = datetime(2026, 11, 18, 12, 0, tzinfo=timezone.utc)
+_REVIEW_ITEM = SimpleNamespace(
+    id="i1", course_id="c1", question_hash="qh-r", format="free", difficulty=2,
+    reference_answer="The base case.", common_wrong=[],
+)
+
+
+@contextmanager
+def _review_graded(wire):
+    """/review/answer reaching the grader and the one evidence write. The
+    grader and the evidence write are stubbed (no model, no evidence RPCs);
+    the stub write makes one sync read through the REAL table, so the wire
+    records where it ran. Everything else — the review session, the claim,
+    the learner_state read, the record — is the real code on the wire."""
+    from learning import review
+
+    sid = review.review_session_id(USER, None, _REVIEW_NOW)
+    wire.rows[("GET", "sessions")] = [{
+        "id": sid, "user_id": USER, "mode": "review", "loop_state_rev": 0,
+        "loop_state": {"open": {"n1": {"item_id": "i1", "served_at": _REVIEW_NOW.timestamp()}},
+                       "review": {"retention": 0.9}},
+    }]
+    wire.rows[("PATCH", "sessions")] = [{"id": sid}]
+    outcome = SimpleNamespace(
+        refused=None, unavailable=False, correct=True, feedback_hint="Right.", matched_wrong_key=None,
+        evidence={"node_id": "n1", "channel": "free_response", "correct": True, "idk": False},
+    )
+    writes: list[bool] = []
+
+    def write(user_id, update, **kw):
+        from db.connection import table
+
+        writes.append(asyncio._get_running_loop() is not None)
+        table("graph_nodes").select("id", filters={"id": "eq.n1"})
+        return []
+
+    with ExitStack() as stack:
+        stack.enter_context(patch_loop("_review_now", return_value=_REVIEW_NOW))
+        stack.enter_context(patch_loop("get_check_item", return_value=_REVIEW_ITEM))
+        stack.enter_context(patch_loop("_node_for_item", return_value="n1"))
+        grade = stack.enter_context(patch.object(review, "grade_answer", AsyncMock(return_value=outcome)))
+        stack.enter_context(patch.object(review, "apply_graph_update", side_effect=write))
+        yield SimpleNamespace(sid=sid, grade=grade, writes=writes)
+
 
 #: (path, body): every async handler of routes/learn_loop.py.
 ROUTES = [
@@ -96,12 +147,18 @@ def test_the_loop_handler_reads_and_writes_off_the_event_loop(wire, blocked, pat
     wire.rows[("GET", "users")] = [{"id": USER, "deleted_at": None, "is_approved": True}]
     agent = MagicMock()
     agent.run = AsyncMock(side_effect=RuntimeError("no model in this test"))
-    with (
-        patch_loop("learning_loop_for_request", return_value=True),
-        patch_loop("loop_tutor_agent", agent),
-    ):
+    with ExitStack() as stack:
+        stack.enter_context(patch_loop("learning_loop_for_request", return_value=True))
+        stack.enter_context(patch_loop("loop_tutor_agent", agent))
+        review = stack.enter_context(_review_graded(wire)) if path == "/review/answer" else None
+        if review is not None:
+            body = {**body, "session_id": review.sid}
         r = client.post(LOOP + path, json=body)
         r.read()
+    if review is not None:  # spec §13 A3: it graded and wrote, all of it off the loop
+        assert r.status_code == 200, r.text
+        review.grade.assert_awaited_once()
+        assert review.writes == [False], "the evidence write ran on the event loop"
     # the answer is whatever the handler gives a minimal session; what is
     # pinned is that it reached the database, and never from the loop (the
     # `wire` fixture asserts that on teardown)
