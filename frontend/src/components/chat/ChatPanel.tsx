@@ -111,6 +111,10 @@ interface ChatPanelProps {
    *  check card and its next-step actions sit under the latest turn. */
   footer?: React.ReactNode;
   attachHref?: string;
+  /** How a tutor turn is drawn: in a bubble beside its avatar (default), or
+   *  on the page under the tutor's mark (`PageTurn`; the Tutor V2 layout).
+   *  The student's own messages are bubbles on the right either way. */
+  turnStyle?: "bubble" | "page";
 }
 
 export function ChatPanel({
@@ -129,7 +133,9 @@ export function ChatPanel({
   composerRef,
   attachHref,
   footer,
+  turnStyle = "bubble",
 }: ChatPanelProps) {
+  const onPage = turnStyle === "page";
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const isStreaming = streamingText !== null && streamingText !== undefined;
 
@@ -185,7 +191,7 @@ export function ChatPanel({
           gap: 16,
         }}
       >
-        {messages.map(m => <Message key={m.id} m={m} onRetry={onRetry} />)}
+        {messages.map(m => <Message key={m.id} m={m} onRetry={onRetry} onPage={onPage} />)}
         {streamingText !== null && streamingText !== undefined && (
           // Reuse Message/MarkdownChat exactly as settled assistant messages
           // do, so a streaming reply never styles differently from a
@@ -198,6 +204,7 @@ export function ChatPanel({
           // aria-live region on the bubble itself.
           <Message
             key="streaming"
+            onPage={onPage}
             m={{
               id: "streaming",
               role: "assistant",
@@ -451,12 +458,37 @@ function AssistantBody({ content }: { content: string }) {
   );
 }
 
+/**
+ * A tutor turn on the page (Tutor V2, wireframe T6: "tutor messages sit on the
+ * page — no bubble, like Claude; your messages are bubbles on the right"): the
+ * tutor's mark and name, then its text at a readable measure. `plain` keeps a
+ * plain-text turn's own line breaks; a markdown turn lays out its own.
+ */
+export function PageTurn({ children, testId, plain = false }: { children: React.ReactNode; testId?: string; plain?: boolean }) {
+  return (
+    <div className={styles.pageTurn}>
+      <div className={styles.turnMark}>
+        <span className={styles.turnAvatar} aria-hidden>
+          <Icon name="sparkle" size={12} />
+        </span>
+        Tutor<span style={VISUALLY_HIDDEN}>:</span>
+      </div>
+      <div className={plain ? `${styles.turnText} ${styles.turnPlain}` : styles.turnText} data-testid={testId}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
 const Message = React.memo(function Message({
   m,
   onRetry,
+  onPage,
 }: {
   m: ChatMsg;
   onRetry?: (m: ChatMsg) => void;
+  /** A tutor turn sits on the page (`PageTurn`) rather than in a bubble. */
+  onPage?: boolean;
 }) {
   const isUser = m.role === "user";
   if (m.crisisSupport && !isUser) {
@@ -467,16 +499,74 @@ const Message = React.memo(function Message({
       </div>
     );
   }
+  const body = (
+    <>
+      {m.loading ? (
+        <span style={{ opacity: 0.6, fontFamily: "var(--font-sans)" }}>{m.loadingLabel || "Thinking…"}</span>
+      ) : isUser ? (
+        <div style={{ whiteSpace: "pre-wrap" }}>{m.content}</div>
+      ) : (
+        // The tutor speaks in Spectral; the per-session DisclaimerModal
+        // covers AI disclosure once up front so each message stays clean
+        // (no "AI-Powered" pill — that anti-pattern is off the table).
+        // ADR 0020: an interrupted turn keeps its partial text visible,
+        // just dimmed — never blanked.
+        <div style={m.interrupted ? { opacity: 0.7 } : undefined}>
+          {m.content ? <AssistantBody content={m.content} /> : null}
+        </div>
+      )}
+      {m.interrupted && !isUser && (
+        <div
+          data-testid="tutor-interrupted"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            marginTop: m.content ? 8 : 0,
+            fontFamily: "var(--font-sans)",
+            fontSize: 12,
+            color: "var(--text-muted)",
+          }}
+        >
+          <span style={{ fontStyle: "italic" }}>Interrupted</span>
+          {onRetry && m.retryText && (
+            <button
+              data-testid="tutor-retry"
+              className="btn btn--sm"
+              onClick={() => onRetry(m)}
+              aria-label="Retry this turn"
+            >
+              Retry
+            </button>
+          )}
+        </div>
+      )}
+    </>
+  );
+  // In the log but not painted (`visuallyHidden`): the row's own attributes.
+  const hidden = m.visuallyHidden ? { attr: "true", style: VISUALLY_HIDDEN } : { attr: undefined, style: null };
+  if (onPage && !isUser) {
+    return (
+      <div
+        className="fade-in"
+        data-testid="tutor-turn"
+        data-visually-hidden={hidden.attr}
+        style={{ alignSelf: "stretch", minWidth: 0, ...hidden.style }}
+      >
+        <PageTurn>{body}</PageTurn>
+      </div>
+    );
+  }
   return (
     <div
       className="fade-in"
-      data-visually-hidden={m.visuallyHidden ? "true" : undefined}
+      data-visually-hidden={hidden.attr}
       style={{
         display: "flex",
         gap: 12,
         maxWidth: isUser ? "70%" : "85%",
         alignSelf: isUser ? "flex-end" : "flex-start",
-        ...(m.visuallyHidden ? VISUALLY_HIDDEN : null),
+        ...hidden.style,
       }}
     >
       {!isUser && (
@@ -513,46 +603,7 @@ const Message = React.memo(function Message({
           position: "relative",
         }}
       >
-        {m.loading ? (
-          <span style={{ opacity: 0.6, fontFamily: "var(--font-sans)" }}>{m.loadingLabel || "Thinking…"}</span>
-        ) : isUser ? (
-          <div style={{ whiteSpace: "pre-wrap" }}>{m.content}</div>
-        ) : (
-          // The tutor speaks in Spectral; the per-session DisclaimerModal
-          // covers AI disclosure once up front so each message stays clean
-          // (no "AI-Powered" pill — that anti-pattern is off the table).
-          // ADR 0020: an interrupted turn keeps its partial text visible,
-          // just dimmed — never blanked.
-          <div style={m.interrupted ? { opacity: 0.7 } : undefined}>
-            {m.content ? <AssistantBody content={m.content} /> : null}
-          </div>
-        )}
-        {m.interrupted && !isUser && (
-          <div
-            data-testid="tutor-interrupted"
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 10,
-              marginTop: m.content ? 8 : 0,
-              fontFamily: "var(--font-sans)",
-              fontSize: 12,
-              color: "var(--text-muted)",
-            }}
-          >
-            <span style={{ fontStyle: "italic" }}>Interrupted</span>
-            {onRetry && m.retryText && (
-              <button
-                data-testid="tutor-retry"
-                className="btn btn--sm"
-                onClick={() => onRetry(m)}
-                aria-label="Retry this turn"
-              >
-                Retry
-              </button>
-            )}
-          </div>
-        )}
+        {body}
       </div>
     </div>
   );

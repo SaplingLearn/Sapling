@@ -718,35 +718,6 @@
   gap: 16px;
 }
 
-.turn {
-  display: flex;
-  gap: 12px;
-  align-items: flex-start;
-  max-width: min(85%, 860px);
-}
-
-.avatar {
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  background: var(--accent-soft);
-  color: var(--accent);
-  display: grid;
-  place-items: center;
-  flex-shrink: 0;
-}
-
-.turnBody {
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: var(--r-lg);
-  padding: 12px 16px;
-  font: 400 14px/1.6 var(--font-serif);
-  min-width: 0;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
 /* The actions under the latest turn (Continue, Check me, Start with …): 36px,
    the sidebar's control height. */
 .chatActions {

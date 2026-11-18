@@ -19,7 +19,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { FullHeightScreen } from "../FullHeightScreen";
 import { DisclaimerModal } from "../DisclaimerModal";
 import { AIDisclaimerChip } from "../chat/AIDisclaimerChip";
-import { ChatPanel, type ChatMsg } from "../chat/ChatPanel";
+import { ChatPanel, PageTurn, type ChatMsg } from "../chat/ChatPanel";
 import { KnowledgeGraph } from "../graph/KnowledgeGraph";
 import { useToast } from "../ToastProvider";
 import { useUser } from "@/context/UserContext";
@@ -2045,7 +2045,7 @@ export function LoopLearn() {
   );
 
   const renderChatHeader = (firstConcept: LoopPlanConcept | undefined) => (
-    <div style={{ display: "flex", flexDirection: "column", gap: 10, paddingLeft: anyOf(!!item, !!prequestion, !!selfExplain) ? 0 : TURN_INDENT }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       {askRating && askRating === sessionId && <RatingPrompt onRate={rate} />}
       {item ? (
         <CheckCard
@@ -2142,6 +2142,7 @@ export function LoopLearn() {
                 : "Ask your AI tutor anything…"
           }
           attachHref="/library"
+          turnStyle="page"
           draftSeed={chatDraft.text}
           draftSeedKey={chatDraft.key}
         />
@@ -2565,9 +2566,6 @@ function CenteredCard({ testId, children }: { testId: string; children: React.Re
   );
 }
 
-/** Actions under a tutor turn line up with its bubble (avatar 32 + gap 12). */
-const TURN_INDENT = 44;
-
 const VERDICT_COPY: Record<string, { title: string; note: string }> = {
   correct: { title: "Correct", note: "That answer counts toward this concept." },
   not_yet: { title: "Not yet", note: "The tutor's reply above shows what to fix. Try another one on the same idea." },
@@ -2587,18 +2585,10 @@ function VerdictBanner({ verdict, concept }: { verdict: string; concept: string 
   );
 }
 
-/** One tutor turn outside the chat log (the check-in opener, the plan's intro):
- *  the avatar and serif bubble the conversation uses. */
+/** One tutor turn outside the chat log (the check-in opener, the plan's intro),
+ *  on the page as the conversation's turns are (`PageTurn`). */
 function TutorTurn({ children, testId }: { children: React.ReactNode; testId?: string }) {
-  return (
-    <div className={tutorStyles.turn}>
-      <span className={tutorStyles.avatar} aria-hidden><Icon name="sparkle" size={14} /></span>
-      <div className={tutorStyles.turnBody} data-testid={testId}>
-        <span className={tutorStyles.sr}>Tutor: </span>
-        {children}
-      </div>
-    </div>
-  );
+  return <PageTurn plain testId={testId}>{children}</PageTurn>;
 }
 
 /** The knowledge-map rail: `KnowledgeGraph` fed as Learn.tsx's

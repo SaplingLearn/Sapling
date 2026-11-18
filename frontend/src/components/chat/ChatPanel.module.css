@@ -21,3 +21,44 @@
 .composer textarea:focus-visible {
   outline: none;
 }
+
+/* A tutor turn on the page (Tutor V2, wireframe T6: no bubble, like Claude):
+   the tutor's mark (24px) and name over its text. The text keeps a readable
+   measure however wide the conversation is. */
+.pageTurn {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.turnMark {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font: 600 13px/24px var(--font-sans);
+  color: var(--text);
+}
+
+.turnAvatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent);
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+
+.turnText {
+  max-width: 72ch;
+  min-width: 0;
+  font: 400 14px/1.6 var(--font-serif);
+  color: var(--text);
+  overflow-wrap: break-word;
+}
+
+.turnPlain {
+  white-space: pre-wrap;
+}
