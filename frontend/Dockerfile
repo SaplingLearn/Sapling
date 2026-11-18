@@ -4,7 +4,7 @@
 # server instead of the full node_modules tree.
 #
 # Referenced by docker-compose.yml's `frontend` service. node 22 matches CI
-# (.github/workflows/ci.yml) and Cloudflare Workers Builds; npm is pinned to the
+# (.github/workflows/frontend.yml) and Cloudflare Workers Builds; npm is pinned to the
 # engines-required range (>=10.9.0 <11) before any install.
 #
 # -slim (Debian/glibc), NOT -alpine (musl): next.config.ts calls

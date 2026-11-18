@@ -23,7 +23,7 @@
 # (-P only for the packages the PR bumps; everything else keeps its pin.)
 #
 # FRONTEND (npm): frontend/.npmrc pins npm 10.9.x because Cloudflare's
-# builder runs `npm ci` on it. ci.yml runs `npm ci` on npm 10.9.2 too, so a
+# builder runs `npm ci` on it. frontend.yml runs `npm ci` on npm 10.9.2 too, so a
 # Dependabot package-lock.json that npm 10.9 rejects fails CI; regenerate it
 # on the PR branch with npm 10.9.2 (`npm install -g npm@10.9.2`), never newer.
 

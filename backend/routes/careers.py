@@ -106,7 +106,7 @@ def _upload_resume(file: UploadFile, content: bytes) -> str:
         raise HTTPException(
             status_code=502,
             detail="Could not store the uploaded resume. Please try again later.",
-        )
+        ) from None
     return path
 
 
@@ -169,5 +169,5 @@ def apply(
         raise HTTPException(
             status_code=500,
             detail="Could not submit your application. Please try again later.",
-        )
+        ) from None
     return {"ok": True, "id": row[0]["id"] if row else None}

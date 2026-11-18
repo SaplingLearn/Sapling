@@ -98,7 +98,7 @@ def purge_once(stop: threading.Event | None = None) -> int:
     try:
         if not flag_on(FLAG_KEY, None):
             return 0
-    except Exception:
+    except Exception:  # noqa: BLE001 — never raises; the pass is skipped
         logger.warning("[account-purge] could not read the %s flag; pass skipped", FLAG_KEY)
         return 0
     purged = 0
@@ -107,7 +107,7 @@ def purge_once(stop: threading.Event | None = None) -> int:
             break
         try:
             user_id = _claim_one()
-        except Exception:
+        except Exception:  # noqa: BLE001 — never raises; logged with the traceback
             logger.warning("[account-purge] could not claim an account", exc_info=True)
             break
         if user_id is None:
@@ -115,7 +115,7 @@ def purge_once(stop: threading.Event | None = None) -> int:
         try:
             account_purge.purge_account(user_id)
             purged += 1
-        except Exception as exc:  # PurgeRefused, AccountPurgeIncomplete, anything
+        except Exception as exc:  # noqa: BLE001 — PurgeRefused, AccountPurgeIncomplete, anything
             _failed(exc)
     if purged:
         logger.info("[account-purge] pass purged %d account(s)", purged)
@@ -140,7 +140,7 @@ def sweep_leftover_credentials(stop: threading.Event | None = None) -> int:
     try:
         if not flag_on(CREDENTIAL_SWEEP_FLAG, None):
             return 0
-    except Exception:
+    except Exception:  # noqa: BLE001 — never raises; the sweep is skipped
         logger.warning("[account-purge] could not read the %s flag; sweep skipped", CREDENTIAL_SWEEP_FLAG)
         return 0
     try:
@@ -149,7 +149,7 @@ def sweep_leftover_credentials(stop: threading.Event | None = None) -> int:
                 logger.info("[account-purge] another replica is sweeping leftover credentials; skipped")
                 return 0
             return _sweep_leftover_credentials(stop)
-    except Exception:  # the lease's own release is best effort; belt and braces
+    except Exception:  # noqa: BLE001 — the lease's own release is best effort; belt and braces
         logger.warning("[account-purge] the leftover-credential sweep stopped", exc_info=True)
         return 0
 
@@ -157,7 +157,7 @@ def sweep_leftover_credentials(stop: threading.Event | None = None) -> int:
 def _sweep_leftover_credentials(stop: threading.Event | None) -> int:
     try:
         owners = account_credentials.deleted_accounts_with_credentials()
-    except Exception:
+    except Exception:  # noqa: BLE001 — never raises; logged with the traceback
         logger.warning("[account-purge] could not look for leftover credentials", exc_info=True)
         return 0
     cleaned = 0
@@ -167,7 +167,7 @@ def _sweep_leftover_credentials(stop: threading.Event | None) -> int:
         try:
             account_credentials.revoke_google_tokens(account_credentials.remove_credentials(user_id))
             cleaned += 1
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — one account's failure must not stop the sweep
             logger.error("[account-purge] could not remove the leftover credentials of deleted"
                          " account %s (%s); retried on the next pass", user_id, type(exc).__name__)
     if cleaned:

@@ -115,7 +115,7 @@ def logout(request: Request):
         revoke_sessions(user_id)
     except Exception:
         logger.exception("logout: could not revoke sessions for %r", user_id)
-        raise HTTPException(status_code=503, detail="Could not sign you out. Please try again.")
+        raise HTTPException(status_code=503, detail="Could not sign you out. Please try again.") from None
     clear_account_state_cache(user_id)
     return JSONResponse({"ok": True}, headers={"Cache-Control": "no-store"})
 

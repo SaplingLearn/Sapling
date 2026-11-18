@@ -351,7 +351,7 @@ staging has held step 6 for at least a day. Before step 1 on an environment,
 
 Re-run the cross-user matrix against the environment's own data whenever you
 like (`dotenv -f .env.staging run -- python -m db.e2e_staging_http` exercises
-the HTTP surface; the matrix itself runs in CI on every PR, §1).
+the HTTP surface; the matrix itself runs in CI on every PR that touches `backend/`, `supabase/` or `scripts/` and on every push to `main`, §1).
 
 ## 7. Kill switch and rollback
 

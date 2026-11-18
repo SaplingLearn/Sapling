@@ -34,7 +34,7 @@ schema dies in review, not against Gemini's 400s.
 
 Validation-retry policy (#153): idempotent structured-output generation
 agents run with an output-retry budget of 2 (`retries=2` on tool-less
-workers; `output_retries=2` on quiz, whose tool retries stay at the
+workers; `retries={"output": 2}` on quiz, whose tool retries stay at the
 default) so a transiently malformed output re-rolls instead of failing
 the request. Free-text agents (chat_tutor, note_chat, health,
 ocr_vision) have no output validation to retry — and the streaming
