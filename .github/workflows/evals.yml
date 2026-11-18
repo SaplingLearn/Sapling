@@ -116,6 +116,13 @@ jobs:
         run: |
           cd backend
           pip install --require-hashes -r requirements.lock
+      # Spec section 13 A40 06(s): every floor is the minimum of its recorded
+      # runs (a routing block, or the newest committed run log); fails before
+      # the replay on a floor someone set from one run or by hand.
+      - name: Check the floors against their recorded runs
+        run: |
+          cd backend
+          python tests/evals/floors.py --check
       - name: Run evals against cassettes
         env:
           SAPLING_EVAL_MODE: replay
