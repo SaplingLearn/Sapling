@@ -288,8 +288,8 @@ where"; frontend/wrangler.toml; .github/workflows]**:
 - Local ops files: `backend/.env`, `backend/.env.staging`,
   `backend/.env.production` (gitignored; used by `make promote`,
   `make backup-db`) **[code: Makefile]**. Anyone holding one must update it.
-- GitHub Actions secrets: `STAGING_SUPABASE_DB_URL`, `LOADTEST_SESSION_TOKEN`,
-  `CLAUDE_CODE_OAUTH_TOKEN` **[code: .github/workflows]**.
+- GitHub Actions secrets: `STAGING_SUPABASE_DB_URL`, `LOADTEST_SESSION_TOKEN`
+  **[code: .github/workflows]**.
 
 Every row below: rotate **staging and production separately**; each
 environment has its own value. Env var names are exact
@@ -316,7 +316,6 @@ environment has its own value. Env var names are exact
 | `RECOST_API_KEY` | Railway `backend` (optional) | Write cost telemetry to our Recost project. | Rotate in Recost. **[code: backend/main.py]** |
 | `REDIS_URL` (may embed a password) | Railway (only if Redis is used) | Read/poison the OCR/extraction cache (document text). | Rotate the Redis password. **[code: backend/services/cache.py; guidance]** |
 | `LOADTEST_SESSION_TOKEN` | GitHub Actions secret | A real session token: as powerful as that user until it expires or `SESSION_SECRET` rotates. | Re-mint after any `SESSION_SECRET` rotation; delete if unused. **[code: .github/workflows/loadtest.yml]** |
-| `CLAUDE_CODE_OAUTH_TOKEN` | GitHub Actions secret | Runs the Claude Code review workflows on our account. | Re-issue and replace. **[guidance]** |
 
 ### 4.1 Rotating `ENCRYPTION_KEY`
 

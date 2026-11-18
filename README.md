@@ -3,7 +3,7 @@
 An AI study companion that builds a live knowledge graph of what you know as you learn.
 
 [![CI](https://github.com/SaplingLearn/Sapling/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/SaplingLearn/Sapling/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![License: Proprietary](https://img.shields.io/badge/License-Proprietary-red.svg)](LICENSE)
 ![Python](https://img.shields.io/badge/-Python-3776AB?style=flat-square&logo=python&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=fff)
 ![Next.js](https://img.shields.io/badge/Next.js-000000?logo=nextdotjs&logoColor=white)
@@ -268,16 +268,16 @@ python tests/evals/run_all.py
 
 | Workflow | Runs | What it checks |
 | --- | --- | --- |
-| `CI` | Every PR and push to `main` | Backend pytest + ruff (from the hash-pinned `requirements.lock`, including a code-size ratchet test), frontend eslint + typecheck + vitest |
+| `CI` | Every PR and push to `main` | Backend pytest + ruff + lint/type/import ratchets (from the hash-pinned `requirements.lock`, including a code-size ratchet test) |
+| `Frontend` | PRs touching `frontend/` or `backend/tests/fixtures/`; pushes to `main` | eslint + typecheck + vitest |
 | `PR hygiene` | Every PR | A type (Conventional Commits title or `type/` branch) and filled-in acceptance criteria; warns on a `feat`/`fix` PR with no user story; adds a type label |
-| `integration (local supabase)` | PRs and pushes to `main` | Backend against a real local Supabase stack |
+| `integration (local supabase)` | PRs touching `backend/`, `supabase/` or `scripts/`; pushes to `main` | Backend against a real local Supabase stack (plus a `db_user_scope=enforce` pass on `main`) |
 | `e2e (browser lane)` | Pushes to `main`, manual | Playwright end-to-end tests against the full stack |
 | `Evals` | PRs touching agents | Offline agent eval harness |
 | `Migrate (staging)` | Pushes to `main` that add migrations | Applies new migrations to staging |
-| `CodeQL` (GitHub code scanning) | PRs and pushes to `main` | Static security analysis of the Python and JavaScript/TypeScript code |
+| CodeQL Code Quality (GitHub-managed, a repo setting) | PRs and pushes to `main` | GitHub's maintainability and reliability findings; not a gate. (CodeQL *security* scanning is not configured.) |
 | `loadtest` | Manual, and nightly when `LOADTEST_TARGET_URL` is set | Locust load test against a deployed backend, gated on p95 latency |
-| `Vulnerability scan` | PRs, pushes to `main`, weekly | `pip-audit` over `backend/requirements.lock`; `npm audit --omit=dev --audit-level=high` in `frontend/` |
-| `Secret scan` | PRs and pushes to `main` | gitleaks over the full git history (allowlist in `.gitleaks.toml`) |
+| `Security` | PRs, pushes to `main`, weekly | One job: gitleaks over the full git history (allowlist in `.gitleaks.toml`); `pip-audit` over `backend/requirements.lock`; `npm audit --omit=dev --audit-level=high` in `frontend/` |
 
 Every action is pinned to a commit SHA (`# vX.Y.Z` comment alongside) and every workflow's token defaults to `contents: read`. Dependabot (`.github/dependabot.yml`) proposes monthly pip, npm, Actions and Docker updates (minor+patch grouped, majors grouped); a pip PR must be re-locked with uv before merge (the command is in that file).
 
@@ -361,6 +361,8 @@ Built in Boston University's XC 475 Spark! Innovation Program (Fall 2026).
 
 ## License
 
-[MIT](LICENSE) © 2026 Andres Lopez, Jack He, Luke Cooper, and Jose Gael Cruz-Lopez
+Copyright © 2026 SaplingLabs Inc. All rights reserved.
 
-The MIT license covers the code in this repository. The Gummi heading font is a commercially licensed third-party font and is not in this repository: it is served from `fonts.saplinglearn.com` to licensed hosts only, and every other host renders headings in Aleo. See [`docs/licensed-fonts.md`](docs/licensed-fonts.md).
+This software and its source code are proprietary and confidential. No license is granted to use, copy, modify, or distribute it, in whole or in part, without prior written permission from SaplingLabs Inc. See [LICENSE](LICENSE).
+
+Third-party dependencies keep their own licenses, and their terms still apply. The Gummi heading font is a commercially licensed third-party font and is not in this repository: it is served from `fonts.saplinglearn.com` to licensed hosts only, and every other host renders headings in Aleo. See [`docs/licensed-fonts.md`](docs/licensed-fonts.md).
