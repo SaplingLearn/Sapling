@@ -8,7 +8,7 @@ import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 
-const nav = vi.hoisted(() => ({ due: false, mobile: false }));
+const nav = vi.hoisted(() => ({ due: false, mobile: false, flags: {} as Record<string, string> }));
 vi.mock("next/navigation", () => ({ usePathname: () => "/dashboard" }));
 vi.mock("@/context/UserContext", () => ({
   useUser: () => ({ userName: "Andres", avatarUrl: null, isAdmin: false, isAuthenticated: true }),
@@ -22,7 +22,7 @@ vi.mock("./Avatar", () => ({ Avatar: () => null }));
 vi.mock("./Icon", () => ({ Icon: () => null }));
 vi.mock("./ShellActions", () => ({ ShellActions: () => null }));
 vi.mock("@/lib/useIsMobile", () => ({ useIsMobile: () => nav.mobile }));
-vi.mock("@/context/FlagsContext", () => ({ useFlagMap: () => ({ flags: {}, ready: true }) }));
+vi.mock("@/context/FlagsContext", () => ({ useFlagMap: () => ({ flags: nav.flags, ready: true }) }));
 vi.mock("@/context/RetentionDueContext", () => ({
   useRetentionDue: () => ({ due: nav.due, courseIds: nav.due ? ["c1"] : [], refresh: () => {} }),
 }));
@@ -31,7 +31,7 @@ import { SideNav } from "./SideNav";
 import { TopNav } from "./TopNav";
 
 describe("the retention-due mark", () => {
-  beforeEach(() => { nav.due = false; nav.mobile = false; });
+  beforeEach(() => { nav.due = false; nav.mobile = false; nav.flags = {}; });
   afterEach(() => cleanup());
 
   it("marks the side rail's Study entry only while a check is due", () => {
@@ -64,6 +64,26 @@ describe("the retention-due mark", () => {
     fireEvent.click(menu);
     expect(screen.getByTestId("topnav-mobile-retention-due")).toBeTruthy();
     expect(screen.queryByTestId("topnav-menu-retention-due")).toBeNull();
+  });
+
+  it("marks no closed mobile menu while hide_study hides Study, the page the dot points at", () => {
+    nav.due = true;
+    nav.mobile = true;
+    nav.flags = { hide_study: "on" };
+    act(() => { render(<TopNav />); });
+    expect(screen.queryByTestId("topnav-menu-retention-due")).toBeNull();
+    const menu = screen.getByRole("button", { name: "Navigation menu" });
+    fireEvent.click(menu);
+    expect(screen.queryByTestId("topnav-mobile-retention-due")).toBeNull();
+    expect(screen.queryByRole("link", { name: /Study/ })).toBeNull();
+    expect(screen.getByRole("link", { name: /Dashboard/ })).toBeTruthy();
+  });
+
+  it("marks nothing in the desktop top nav while hide_study hides Study", () => {
+    nav.due = true;
+    nav.flags = { hide_study: "on" };
+    act(() => { render(<TopNav />); });
+    expect(screen.queryByTestId("topnav-group-retention-due")).toBeNull();
   });
 
   it("shows nothing in the top nav while nothing is due", () => {
