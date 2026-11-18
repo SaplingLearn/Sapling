@@ -1241,6 +1241,36 @@ describe("QuizHome — characterization: behaviour", () => {
     }
   });
 
+  it("scrolls when the laid-out grid is one column, whatever the viewport says", () => {
+    // the columns stack by the page column's width (a container query), so a
+    // wide window with the side nav open can still be stacked
+    const scroll = vi.fn();
+    Element.prototype.scrollIntoView = scroll;
+    try {
+      mount();
+      (document.querySelector(".quiz-home__grid") as HTMLElement).style.gridTemplateColumns = "846px";
+      fireEvent.click(screen.getByTestId("quiz-pick-determinants"));
+      expect(scroll).toHaveBeenCalledTimes(1);
+    } finally {
+      delete (Element.prototype as Partial<Element>).scrollIntoView;
+    }
+  });
+
+  it("does not scroll when the laid-out grid has its two columns, whatever the viewport says", () => {
+    const restore = withMatchMedia(q => q.includes("max-width"));
+    const scroll = vi.fn();
+    Element.prototype.scrollIntoView = scroll;
+    try {
+      mount();
+      (document.querySelector(".quiz-home__grid") as HTMLElement).style.gridTemplateColumns = "500px 1px 340px";
+      fireEvent.click(screen.getByTestId("quiz-pick-determinants"));
+      expect(scroll).not.toHaveBeenCalled();
+    } finally {
+      restore();
+      delete (Element.prototype as Partial<Element>).scrollIntoView;
+    }
+  });
+
   it("does not scroll on a wide screen", () => {
     const scroll = vi.fn();
     Element.prototype.scrollIntoView = scroll;
@@ -1473,6 +1503,39 @@ describe("QuizHome with the learner model's plan (quiz_concept_plan)", () => {
     expect(screen.getByTestId("quiz-plan-reason")).toHaveTextContent(
       "Due for review — bring it back before it fades. Skill meter: 91%.",
     );
+  });
+
+  it("states one measure on the card: the plan's skill meter, never the graph's score beside it", () => {
+    mount({ home: planned() });
+    const meta = document.querySelector(".quiz-home__meta");
+    // the plan line says "Skill meter: 91%"; the meta keeps the band, no second number
+    expect(meta?.textContent).toMatch(/^proficient · last studied /);
+    expect(meta?.textContent).not.toMatch(/%/);
+    expect(screen.getByTestId("quiz-proposal").textContent).not.toMatch(/44%|struggling/);
+  });
+
+  it("a picked concept the plan proposes reads its skill meter, the same number as its row", () => {
+    mount({ home: planned() });
+    const row = screen.getByTestId("quiz-pick-base-cases");
+    expect(row.textContent).toMatch(/47% · developing · last studied /);
+    fireEvent.click(row);
+    expect(screen.queryByTestId("quiz-plan-reason")).toBeNull();
+    expect(document.querySelector(".quiz-home__meta")?.textContent).toMatch(/^47% · developing · last studied /);
+  });
+
+  it("a concept the plan does not propose keeps the graph's score and tier", () => {
+    mount({ home: planned() });
+    expect(screen.getByTestId("quiz-pick-recursion").textContent).toMatch(/29% · struggling · last studied /);
+  });
+
+  it("orders a course's rows by the measure they show", () => {
+    mount({ home: planned() });
+    const rows = [...screen.getByTestId("quiz-pick-list").querySelectorAll("[data-testid^='quiz-pick-']")]
+      .map(el => el.getAttribute("data-testid"));
+    // c-cs: tail 12%, recursion 29%, stack 30%, base-cases skill 47% (graph 52%)
+    expect(rows.indexOf("quiz-pick-base-cases")).toBeGreaterThan(rows.indexOf("quiz-pick-stack-frames"));
+    // c-math: matrices is the card (hidden); eigenvalues 31% after determinants 5%
+    expect(rows.indexOf("quiz-pick-eigenvalues")).toBeGreaterThan(rows.indexOf("quiz-pick-determinants"));
   });
 
   it("calls the due queue's order the most overdue", () => {

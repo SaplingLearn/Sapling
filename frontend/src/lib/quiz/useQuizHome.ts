@@ -28,6 +28,7 @@ import { cachedDescription, loadDescription } from "./conceptDescriptions";
 import { describeQuizError, type QuizError } from "./errors";
 import {
   alternativesOf,
+  BAND_WORDS,
   dueFromPlan,
   dueSet,
   entrySelection,
@@ -124,12 +125,14 @@ export interface QuizHome {
 }
 
 /** The fallback definition when `concept-description` is slow or fails (R-8),
- *  the same shape Learn's focus card falls back to. */
+ *  the same shape Learn's focus card falls back to. A concept the plan
+ *  proposes states its band, as the card's other lines do (`metaLine`). */
 export function fallbackDefinition(candidate: Candidate | null, connected: number): string {
   if (!candidate) return "";
   const course = candidate.course?.course_code ?? candidate.node.subject ?? "Your tree";
   const plural = connected === 1 ? "concept" : "concepts";
-  return `${course} · ${candidate.node.mastery_tier} · ${connected} connected ${plural}`;
+  const state = candidate.plan ? BAND_WORDS[candidate.plan.band] : candidate.node.mastery_tier;
+  return `${course} · ${state} · ${connected} connected ${plural}`;
 }
 
 /**

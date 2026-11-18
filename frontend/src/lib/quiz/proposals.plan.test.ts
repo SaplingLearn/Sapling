@@ -9,9 +9,12 @@ import type { GraphNode } from "@/lib/types";
 import {
   courseQueueFromPlan,
   dueFromPlan,
+  metaLine,
   planReasonCopy,
+  planStateLine,
   plannedCourseQueue,
   rankFromPlan,
+  shownMastery,
   skillPercent,
 } from "./proposals";
 import type { QuizPlan } from "./types";
@@ -58,7 +61,7 @@ describe("rankFromPlan", () => {
       "skill 40% · mixed up before",
       "skill 35% · ready to learn",
     ]);
-    expect(ranked[2].plan).toEqual({ reason: "misconception", pKnown: 0.4 });
+    expect(ranked[2].plan).toEqual({ reason: "misconception", pKnown: 0.4, band: "develop" });
     expect(ranked[0].course?.course_code).toBe("CS 111");
   });
 });
@@ -101,6 +104,28 @@ describe("plannedCourseQueue", () => {
 describe("dueFromPlan", () => {
   it("is the plan's due reviews in its order, counted across courses", () => {
     expect(dueFromPlan(PLAN, NODES)).toEqual({ conceptIds: ["due1", "due2"], count: 2, courseCount: 2 });
+  });
+});
+
+describe("one measure per concept (metaLine)", () => {
+  const NOW = new Date("2026-11-08T12:00:00Z");
+  const fresh = node("fresh", "cs1", { mastery_score: 0.15, mastery_tier: "struggling", times_studied: 0 });
+  const plan = { reason: "ready" as const, pKnown: 0.35, band: "develop" as const };
+
+  it("reads the plan's skill meter and band for a concept the plan proposes", () => {
+    expect(metaLine(fresh, NOW, plan)).toBe("35% · developing · not studied yet");
+    expect(planStateLine(fresh, plan, NOW)).toBe("developing · not studied yet");
+    expect(shownMastery(fresh, plan)).toBe(0.35);
+  });
+
+  it("keeps the graph's score and tier without one", () => {
+    expect(metaLine(fresh, NOW)).toBe("15% · struggling · not studied yet");
+    expect(shownMastery(fresh)).toBe(0.15);
+  });
+
+  it("says each band as the quiz results do", () => {
+    expect(metaLine(fresh, NOW, { ...plan, band: "novice" })).toBe("35% · just starting · not studied yet");
+    expect(metaLine(fresh, NOW, { ...plan, band: "profic", pKnown: 0.91 })).toBe("91% · proficient · not studied yet");
   });
 });
 

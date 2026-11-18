@@ -14,6 +14,7 @@ import {
   latestCompletedAttempt,
   metaLine,
   planReasonCopy,
+  planStateLine,
   plannedCourseQueue,
   queueFor,
   rationaleFor,
@@ -144,19 +145,27 @@ export function cardTitle(mode: CardMode, courseCode: string, conceptName: strin
   return conceptName;
 }
 
+/**
+ * The line under the card's title. A concept card states ONE measure
+ * (`metaLine`): the plan's skill meter for a concept the plan proposes, else
+ * the graph's mastery. `planLineShown`: the plan's reason line below already
+ * says the skill meter, so this line keeps the band and drops the number.
+ */
 export function cardMeta(
   mode: CardMode,
   courseQueueLength: number,
   due: QuizHomeData["due"],
   card: Candidate | null,
   planned = false,
+  planLineShown = false,
 ): string {
   if (mode === "course") return `${courseQueueLength} concepts ${planned ? "to practise" : "due"}`;
   if (mode === "due") {
     const order = planned ? "most overdue" : "weakest";
     return `${due.count} concepts across ${due.courseCount} courses · starting with the ${Math.min(due.count, QUEUE_MAX)} ${order}`;
   }
-  return card ? metaLine(card.node) : "";
+  if (!card) return "";
+  return card.plan && planLineShown ? planStateLine(card.node, card.plan) : metaLine(card.node, undefined, card.plan);
 }
 
 /** Only a deep link explains itself on the card: it is the one arrival whose

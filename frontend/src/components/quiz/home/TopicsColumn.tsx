@@ -86,6 +86,7 @@ export interface TopicsColumnProps extends CoursePillsProps, TopicSearchProps {
   onPick: TopicListProps["onPick"];
   onIntent: TopicListProps["onIntent"];
   returnedId: string | null;
+  planOf?: TopicListProps["planOf"];
 }
 
 export function TopicsColumn({
@@ -99,6 +100,7 @@ export function TopicsColumn({
   onPick,
   onIntent,
   returnedId,
+  planOf,
 }: TopicsColumnProps) {
   return (
     <section className="quiz-home__topics-col" aria-label="Choose a topic">
@@ -119,6 +121,7 @@ export function TopicsColumn({
             onPick={onPick}
             onIntent={onIntent}
             returnedId={returnedId}
+            planOf={planOf}
           />
         ) : (
           <p className="quiz-home__topics-empty" data-testid="quiz-topic-search-empty">
