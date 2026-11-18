@@ -501,14 +501,16 @@ async def _refuse_ended_session(session_id: str) -> None:
 
 async def _loop_turn_entry(session_id: str, user_id: str, turn_id: str | None) -> dict | None:
     """A learning-loop turn's checks before the hand-off (spec §7), in #761's
-    order: not discarded and owned (404); the stored reply of a turn that
-    already persisted, which the caller returns instead of handing off (the
-    client's JSON fallback re-sends its stream's `turn_id`, so a lost `done`
-    never runs a turn twice); the ended-session 409; and only then the loop's
-    rate-limit read (A20, after the ownership check, A93 review), so a resend
-    at the cap gets its saved reply, not a 429. None: hand the turn off.
+    order: not discarded and owned (404); the stored reply of a turn already
+    persisted under this `turn_id` (the client's JSON fallback re-sends its
+    stream's), which the caller returns instead of handing the turn off again;
+    the ended-session 409; and only then the loop's rate-limit read (A20,
+    after the ownership check, A93 review), so a resend at the cap gets its
+    saved reply, not a 429. None: hand the turn off.
 
-    The loop handler materialises the session and checks its phase itself."""
+    The replay finds the rows `_turn_message_id` names: a turn the loop wrote
+    under random ids is not found and runs again. The loop handler
+    materialises the session and checks its phase itself."""
     await _require_turn_session(session_id, user_id)
     replay = await _persisted_turn(session_id, turn_id)
     if replay is not None:
