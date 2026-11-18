@@ -136,7 +136,8 @@ def _draft_document(doc_id: str, user_id: str, course_id: str) -> None:
     body, and the in-process fallback's: the loop gate re-read NOW (off: index
     only, and the `pending` mark taken back), then the concept names, then
     the chain under the uploader's attribution, never refused by the budget.
-    Only an unreadable document row raises; every step logs its own failure."""
+    Only an unreadable document row, or (loop off) a failed indexing, raises;
+    every step of the chain logs its own failure."""
     from services import documents  # lazy: its post-roll imports this module
     from services import llm_budget
     from services.check_item_service import clear_drafting
