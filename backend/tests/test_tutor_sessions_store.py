@@ -567,6 +567,26 @@ def test_the_table_claim_is_one_locked_call_and_a_racing_turn_reads_it_as_ended(
     assert db.store("s-tab") is None
 
 
+def test_a_table_claim_at_the_ttl_edge_trusts_the_databases_clock(db, monkeypatch):
+    """The RPC decided liveness on the DATABASE clock, under its lock, and has
+    already tombstoned the row. The app must not re-check `stashed_at` with
+    its own clock: a few seconds of skew at the TTL's edge would read the row
+    it just claimed as expired, and the close of a real session would 404
+    (C7)."""
+    ts.stash_pending("s-edge", {
+        "user_id": "u1", "mode": "socratic", "topic": "Recursion", "course_id": "",
+        "offering_id": "", "use_shared_context": True, "assistant_reply": GREETING,
+        "graph_update": {},
+    })
+    _replica_hop()
+    # The database still calls the row live; this process's clock is past the TTL.
+    monkeypatch.setattr(ts, "_within", lambda _ts, _seconds: False)
+    claimed = ts.claim_pending("s-edge", "u1")
+    assert claimed is not None and claimed["topic"] == "Recursion"
+    assert claimed["assistant_reply"] == GREETING
+    assert db.store("s-edge")["state"] == "ended"
+
+
 def test_a_table_claim_of_another_students_session_is_404_and_changes_nothing(db):
     from fastapi import HTTPException
 

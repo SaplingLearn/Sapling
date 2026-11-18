@@ -152,34 +152,41 @@ def _view(row: dict | None, user_id: str | None = None) -> tuple[dict | None, st
     if row.get("state") == "pending":
         if not _within(row.get("stashed_at"), PENDING_TTL_SECONDS):
             return None, None
-        payload = {
-            "user_id": row.get("user_id"),
-            "mode": row.get("mode"),
-            "topic": row.get("topic"),
-            "course_id": row.get("course_id"),
-            "offering_id": row.get("offering_id"),
-            "use_shared_context": row.get("use_shared_context"),
-            # Sealed for messages.content (the materialisation copies it there).
-            "assistant_reply": decrypt_if_present(
-                row.get("assistant_reply"),
-                bind=bind("tutor_pending_sessions", "assistant_reply", row),
-            ),
-        }
-        # A learning-loop session (stored with a document, `{}` when it starts
-        # empty) reads back as the memory payload it was stashed from. Its
-        # ciphertexts (a goal's text) are bound to the session id, which the
-        # materialised `sessions` row keeps (encryption.nested_bind).
-        loop_state = row.get("loop_state")
-        if loop_state is not None:
-            payload["loop"] = True
-            if loop_state:
-                payload["loop_state"] = loop_state
-        return payload, None
+        return _payload(row), None
     if not _within(row.get("discarded_at"), DISCARD_TOMBSTONE_TTL_SECONDS):
         return None, None
     if user_id is not None and row.get("user_id") != user_id:
         return None, None
     return None, row.get("state")
+
+
+def _payload(row: dict) -> dict:
+    """The memory-shaped payload of a pending store row (no liveness check:
+    `_view` decides that from the app clock; `_store_claim` takes the RPC's
+    word, decided on the database clock)."""
+    payload = {
+        "user_id": row.get("user_id"),
+        "mode": row.get("mode"),
+        "topic": row.get("topic"),
+        "course_id": row.get("course_id"),
+        "offering_id": row.get("offering_id"),
+        "use_shared_context": row.get("use_shared_context"),
+        # Sealed for messages.content (the materialisation copies it there).
+        "assistant_reply": decrypt_if_present(
+            row.get("assistant_reply"),
+            bind=bind("tutor_pending_sessions", "assistant_reply", row),
+        ),
+    }
+    # A learning-loop session (stored with a document, `{}` when it starts
+    # empty) reads back as the memory payload it was stashed from. Its
+    # ciphertexts (a goal's text) are bound to the session id, which the
+    # materialised `sessions` row keeps (encryption.nested_bind).
+    loop_state = row.get("loop_state")
+    if loop_state is not None:
+        payload["loop"] = True
+        if loop_state:
+            payload["loop_state"] = loop_state
+    return payload
 
 
 @runs_as_service  # tutor_pending_sessions is service-only (RLS bucket E)
@@ -404,7 +411,12 @@ def _store_claim(session_id: str, user_id: str) -> dict | None:
         "p_ttl_seconds": PENDING_TTL_SECONDS,
     })
     rows = out if isinstance(out, list) else ([out] if out else [])
-    return _view(rows[0])[0] if rows else None
+    # The RPC returned the row only because, under its lock and on the
+    # DATABASE clock, it was this caller's live pending row, and it has
+    # already tombstoned it: trust that. Re-checking `stashed_at` against this
+    # process's clock (`_view`) could call a just-claimed row expired at the
+    # TTL's edge and 404 the close of a real session.
+    return _payload(rows[0]) if rows else None
 
 
 @runs_as_service
