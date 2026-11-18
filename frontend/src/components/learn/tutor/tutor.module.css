@@ -718,6 +718,75 @@
   gap: 16px;
 }
 
+/* The phase stepper (wireframe D): Check-in · Plan · Learn · Wrap-up across
+   the top of the conversation, aligned with its text. Each step after the
+   first is drawn behind a rule that takes the free width. 22px marks. */
+.stepper {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  padding: 16px clamp(16px, 4vw, 56px) 0;
+  list-style: none;
+  min-width: 0;
+}
+
+.step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 22px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.step + .step {
+  flex: 1 1 0;
+}
+
+.step + .step::before {
+  content: "";
+  flex: 1 1 auto;
+  min-width: 12px;
+  height: 1px;
+  margin-right: 2px;
+  background: var(--border-strong);
+}
+
+.stepMark {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1.5px solid var(--border-strong);
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  font: 600 11px/1 var(--font-mono);
+}
+
+.step[data-state="done"] {
+  color: var(--text-dim);
+}
+
+.step[data-state="done"] .stepMark {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.step[data-state="current"] {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.step[data-state="current"] .stepMark {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-fg);
+}
+
 /* The actions under the latest turn (Continue, Check me, Start with …): 36px,
    the sidebar's control height. */
 .chatActions {
@@ -879,6 +948,17 @@
   .page,
   .col {
     padding: 16px;
+  }
+
+  /* Only the current step keeps its name on screen; the others keep theirs
+     for a screen reader. Four names do not fit across a phone. */
+  .step:not([data-state="current"]) .stepLabel {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
   }
 }
 

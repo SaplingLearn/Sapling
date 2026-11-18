@@ -101,6 +101,7 @@ import { Icon } from "../Icon";
 import { TutorSidebar } from "./tutor/TutorSidebar";
 import { TutorAllSessions, TutorCourse, TutorHome, type SessionFilter } from "./tutor/TutorPages";
 import { SessionPanel, type PanelConcept } from "./tutor/SessionPanel";
+import { PhaseStepper } from "./tutor/PhaseStepper";
 import { SidebarGlyph } from "./tutor/TutorIcons";
 import { mergeSessions, sessionTitle, type TutorSessionRow } from "./tutor/sessions";
 import tutorStyles from "./tutor/tutor.module.css";
@@ -2413,6 +2414,7 @@ export function LoopLearn() {
       <>
         {live && state.phase !== "close" && renderScopeSummary()}
         {goalProgress && goal && renderGoalProgress(goalProgress)}
+        {live && <PhaseStepper phase={state.phase} />}
         {notices}
         {allOf(!showPanel, live, !!learner) && (
           <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px clamp(16px, 4vw, 56px) 0" }}>

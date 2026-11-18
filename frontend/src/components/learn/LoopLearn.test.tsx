@@ -496,8 +496,12 @@ describe("LoopLearn — probe and plan", () => {
     expect(screen.queryByTestId("loop-plan-reason-n2")).toBeNull();
     expect(api.nextLoopProbe).toHaveBeenCalledTimes(1);
     expect(screen.getByTestId("loop-phase").getAttribute("data-phase")).toBe("plan");
+    // the stepper follows the loop's phase (PR #866 U7b)
+    const step = () => screen.getByTestId("tutor-phase-stepper").querySelector('[aria-current="step"]')?.textContent;
+    expect(step()).toBe("2Plan");
     fireEvent.click(screen.getByTestId("loop-plan-approve"));
     await waitFor(() => expect(screen.getByTestId("loop-phase").getAttribute("data-phase")).toBe("teach"));
+    expect(step()).toBe("3Learn");
     expect(api.approveLoopPlan).toHaveBeenCalledWith("s2", "u1", ["n2", "n1"]);
   });
 });
