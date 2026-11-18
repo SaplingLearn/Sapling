@@ -178,6 +178,7 @@ def _concept_states(user_id: str, nodes: Sequence[_Node], now: datetime) -> list
                 fsrs_last_review_at=st.fsrs_last_review_at if st else None,
                 fsrs_due_at=st.fsrs_due_at if st else None,
                 open_misconceptions=counts.get(node.id, 0),
+                course_id=node.course_id,  # the plan's cap is per course
             )
         )
     return out

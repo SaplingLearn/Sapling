@@ -133,6 +133,53 @@ def test_the_plan_is_capped():
     assert len(quiz_plan.rank_concepts(states, [], NOW)) == params.QUIZ_PLAN_MAX_CONCEPTS
 
 
+def test_the_cap_is_per_course_so_no_course_is_crowded_out():
+    """Several courses together past the cap: each keeps its own concepts (its
+    first QUIZ_PLAN_MAX_CONCEPTS, in plan order). A global cap kept only the
+    first 50 overall, and a course whose concepts sorted later came back empty."""
+    cap = params.QUIZ_PLAN_MAX_CONCEPTS
+    # "a" fills the cap on its own and sorts first (higher p: earlier in the
+    # fringe); "b" and "c" each have a few, all after every "a" concept
+    states = (
+        [ConceptState(f"a{i:03d}", 0.70, course_id="a") for i in range(cap + 10)]
+        + [ConceptState(f"b{i}", 0.40, course_id="b") for i in range(3)]
+        + [ConceptState(f"c{i}", 0.30, course_id="c") for i in range(2)]
+    )
+    plan = quiz_plan.rank_concepts(states, [], NOW)
+    by_course = {}
+    for c in plan:
+        by_course.setdefault(c.node_id[0], []).append(c.node_id)
+    assert len(by_course["a"]) == cap
+    assert by_course["b"] == ["b0", "b1", "b2"] and by_course["c"] == ["c0", "c1"]
+    assert len(plan) == cap + 5
+    # the order is still the plan's: a course's concepts are not regrouped
+    order = [c.node_id for c in plan]
+    assert order.index("b0") > order.index("a000") and order.index("c0") > order.index("b2")
+
+
+def test_the_per_course_cap_keeps_each_courses_due_reviews_first():
+    cap = params.QUIZ_PLAN_MAX_CONCEPTS
+    overdue = dict(due=NOW - timedelta(days=3), s=2.0, last=NOW - timedelta(days=4))
+    states = [
+        *(ConceptState(f"a{i:03d}", 0.70, course_id="a") for i in range(cap + 3)),
+        ConceptState("b_due", 0.90, fsrs_s=overdue["s"], fsrs_last_review_at=overdue["last"], fsrs_due_at=overdue["due"], course_id="b"),
+        ConceptState("b_ready", 0.40, course_id="b"),
+    ]
+    plan = quiz_plan.rank_concepts(states, [], NOW)
+    assert (plan[0].node_id, plan[0].reason) == ("b_due", "due")
+    assert "b_ready" in [c.node_id for c in plan]
+    assert sum(1 for c in plan if c.node_id.startswith("a")) == cap
+
+
+def test_states_without_a_course_share_one_bucket():
+    """A caller that names no course keeps the single cap (one bucket)."""
+    states = [_state(f"n{i:03d}", 0.4) for i in range(params.QUIZ_PLAN_MAX_CONCEPTS + 5)]
+    states.append(ConceptState("x", 0.4, course_id="x"))
+    plan = quiz_plan.rank_concepts(states, [], NOW)
+    assert sum(1 for c in plan if c.node_id.startswith("n")) == params.QUIZ_PLAN_MAX_CONCEPTS
+    assert "x" in [c.node_id for c in plan]
+
+
 # ── quiz_plan: the results (A147) ───────────────────────────────────────────
 
 

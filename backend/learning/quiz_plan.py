@@ -17,6 +17,9 @@ Three choices live here, each behind its own flag:
   proficient), in the planner's own order. A concept whose prerequisites are
   not proficient is not proposed (its weakest prerequisite is, in the
   fringe), and a proficient concept that is not due is left until it is.
+  The response bound (QUIZ_PLAN_MAX_CONCEPTS) applies per course, so a plan
+  over every course never drops one course's concepts because the others
+  filled the list.
 - **What each question asks for** (A144, flag `quiz_planned_questions`):
   `question_specs` gives every question its difficulty and at most one
   misconception to target. An explicit difficulty the student asked for is
@@ -181,6 +184,7 @@ class ConceptState:
     fsrs_last_review_at: datetime | None = None
     fsrs_due_at: datetime | None = None
     open_misconceptions: int = 0
+    course_id: str | None = None  # the cap's bucket (None: one shared bucket)
 
 
 @dataclass(frozen=True)
@@ -204,7 +208,8 @@ def rank_concepts(
 ) -> list[PlannedConcept]:
     """The concepts the quiz proposes, in order (see the module docstring).
     `prereq_edges` are (prerequisite, dependent) pairs among the states'
-    nodes. At most QUIZ_PLAN_MAX_CONCEPTS."""
+    nodes. At most QUIZ_PLAN_MAX_CONCEPTS per course (`ConceptState.course_id`;
+    states without one share one bucket), each course's own first ones."""
     by_id = {s.node_id: s for s in states}
     due_rows = [
         {
@@ -234,8 +239,22 @@ def rank_concepts(
             due_at=by_id[node].fsrs_due_at,
             open_misconceptions=by_id[node].open_misconceptions,
         )
-        for node, reason in order[:QUIZ_PLAN_MAX_CONCEPTS]
+        for node, reason in _capped_per_course(order, by_id)
     ]
+
+
+def _capped_per_course(
+    order: list[tuple[str, str]], by_id: Mapping[str, ConceptState]
+) -> list[tuple[str, str]]:
+    """`order` with at most QUIZ_PLAN_MAX_CONCEPTS of each course, in order."""
+    kept: dict[str | None, int] = {}
+    out = []
+    for node, reason in order:
+        course = by_id[node].course_id
+        if kept.get(course, 0) < QUIZ_PLAN_MAX_CONCEPTS:
+            kept[course] = kept.get(course, 0) + 1
+            out.append((node, reason))
+    return out
 
 
 # ── A147: what the results say ─────────────────────────────────────────────

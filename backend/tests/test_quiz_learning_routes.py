@@ -105,6 +105,30 @@ def test_concept_plan_assembles_states_misconceptions_and_edges():
     assert plan[0]["due_at"].startswith("2026-11-07")
 
 
+def test_concept_plan_caps_each_course_on_its_own():
+    """With no course named, the plan spans every course and the cap is per
+    course: a course whose concepts rank after another's full list keeps them."""
+    cap = params.QUIZ_PLAN_MAX_CONCEPTS
+    nodes = [ql._Node(f"a{i:03d}", f"A{i}", "c1") for i in range(cap + 5)] + [
+        ql._Node("b1", "B1", "c2"),
+        ql._Node("b2", "B2", "c2"),
+    ]
+    # every c1 concept at 0.7 ranks before the c2 ones at 0.4 (the fringe is p-descending)
+    states = {n.id: MagicMock(p_known=0.7 if n.course_id == "c1" else 0.4, fsrs_s=None,
+                              fsrs_last_review_at=None, fsrs_due_at=None) for n in nodes}
+    with (
+        patch.object(ql, "_nodes", return_value=nodes) as read_nodes,
+        patch.object(ql, "read_states", return_value=states),
+        patch.object(ql, "_open_misconceptions", return_value=[]),
+        patch.object(ql, "_prereq_edges", return_value=[]),
+    ):
+        plan = ql.concept_plan("u", None, now=NOW)
+    read_nodes.assert_called_once_with("u", None)
+    courses = [c["course_id"] for c in plan]
+    assert courses.count("c1") == cap
+    assert [c["node_id"] for c in plan if c["course_id"] == "c2"] == ["b1", "b2"]
+
+
 # ── A144: planned questions ─────────────────────────────────────────────────
 
 
