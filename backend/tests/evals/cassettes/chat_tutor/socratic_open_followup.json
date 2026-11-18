@@ -4,7 +4,7 @@
     "tool_calls": []
   },
   "recorded_under": {
-    "input_sha256": "872569508a6244fe7e61a1b5b1705b562d07f61f20305e709c9d419d7cfd5553",
+    "input_sha256": "5e9a9103949aa3bc2e0a9a1c8df2aba430692da49e276a0457e7f0665283b987",
     "model": "claude-sonnet-5-5",
     "prompt_hash": "3962b95f3e62",
     "schema_hash": "38a346cadbd3"

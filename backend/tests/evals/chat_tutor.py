@@ -24,6 +24,7 @@ any file outside `backend/tests/evals/chat_tutor.py`.
 
 from __future__ import annotations
 
+import json
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -53,7 +54,7 @@ from _replay import (
     schema_hash,
     text_sha256,
 )
-from _retrieval_fixture import FIXTURE_PATH, FixtureRetrieval, load_fixture
+from _retrieval_fixture import FixtureRetrieval, load_fixture
 
 
 # Input tuple: (mode, user_message). Output is the agent's string reply
@@ -495,7 +496,8 @@ def identity(case_input: ChatInput) -> dict:
     course every tool call reads (its replies are part of what the model saw)."""
     mode, user_message = case_input
     agent = agent_for_mode(mode)
-    fixture = text_sha256(FIXTURE_PATH.read_text(encoding="utf-8"))
+    # the parsed course, canonically: a CRLF checkout of the same file is the same course
+    fixture = text_sha256(json.dumps(load_fixture(), sort_keys=True, ensure_ascii=False))
     return recorded_under(
         prompt_hash=prompt_identity(_PROMPT_HASHES[mode], agent),
         schema_hash=schema_hash(str),

@@ -12,7 +12,7 @@
     ]
   },
   "recorded_under": {
-    "input_sha256": "31cefa5edee10615ea77381968ae808130e49e181c527206535598d4a1c8bc3a",
+    "input_sha256": "cd3f58bc462d0ed5d8e5286feb8651e00cec187023bd5082ac0c81983779bdfb",
     "model": "claude-sonnet-5-5",
     "prompt_hash": "17f9783cb987",
     "schema_hash": "38a346cadbd3"
