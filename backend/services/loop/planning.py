@@ -259,7 +259,7 @@ def _plan_started(user_id: str, course_id: str) -> frozenset[str]:
     The planner labels such a concept `started`, never `new`. One paged
     `graph_nodes` read."""
     rows = page_all(
-        _PlanNodesRead(), "id",
+        table("graph_nodes"), "id",
         filters={
             "user_id": f"eq.{user_id}",
             "course_id": f"eq.{course_id}",
