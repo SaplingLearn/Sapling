@@ -151,6 +151,18 @@ def test_flag_off_every_scenario_is_byte_identical_to_f9eca612(name, gate_on, se
     captured = _scenario(name, seams)
     assert captured["status"] == 200, captured["body"]
     assert (captured["message"] is not None) == (name in _MODEL_RUNS), "the request is digested"
+    if name == "status":
+        # 2c607ca0 (Tutor V2) added `approved_plan` to /status so the session
+        # panel lists the plan after a reload. It does not depend on either
+        # flag, so it is checked here and left out of the f9eca612 digest,
+        # which stays the one captured from that commit.
+        assert captured["body"].pop("approved_plan") == {
+            "concepts": [
+                {"node_id": "node-1", "concept_name": "", "kind": "new"},
+                {"node_id": "node-2", "concept_name": "", "kind": "new"},
+            ],
+            "cursor": 0,
+        }
     digest = _digest(captured)
     if os.environ.get("TEACH_PROMPTS_CAPTURE"):
         print(f"\nCAPTURE {name} {digest}")
