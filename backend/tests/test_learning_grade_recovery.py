@@ -173,7 +173,11 @@ def test_check_goal_uses_committed_exposure_instead_of_optimistic_checkpoint(gat
     seams.grade.assert_awaited_once()
 
 
-def test_missing_committed_observation_retains_recovery_checkpoint(gate_on, seams):
+def test_a_receipt_that_never_attests_the_grade_abandons_it(gate_on, seams):
+    """Spec §13 A2: the committed receipt is the record and reads the same on
+    every retry, so one with no observation of the grade is permanent: the
+    saved grade is abandoned (claim released, checkpoint cleared, the reason
+    kept, no session record) and the session goes on, never a 503 forever."""
     original_receipt = seams.receipt.side_effect
 
     def incomplete(user_id, operation):
@@ -184,11 +188,20 @@ def test_missing_committed_observation_retains_recovery_checkpoint(gate_on, seam
     seams.receipt.side_effect = incomplete
     with pytest.raises(HTTPException) as error:
         submit()
-    assert error.value.status_code == 503 and checkpoint(seams)
-    assert seams.store["doc"]["steps"]["qh-1"].get("graded_at") is None
+    assert error.value.status_code == 409
+    assert error.value.detail == services.loop.checkpoint._ABANDONED_DETAIL
+    entry = seams.store["doc"]["steps"]["qh-1"]
+    assert entry["grading_abandoned"] == "receipt_mismatch" and entry["grading_superseded"]
+    assert "grading_claim" not in entry and grade_checkpoint.KEY not in entry
+    assert entry.get("graded_at") is None and "goal_observation" not in entry
+    assert seams.store["doc"]["current"] is None
+    assert not services.loop.state._grading_in_flight(seams.store["doc"], routes.NOW)
     seams.receipt.side_effect = original_receipt
-    assert submit().kind == "feedback"
+    with pytest.raises(HTTPException) as again:
+        submit()
+    assert again.value.status_code == 409  # never graded again
     seams.grade.assert_awaited_once()
+    assert seams.flush.call_count == 1
 
 
 def test_older_uncommitted_answer_is_retired_without_fabricating_diagnosis(gate_on, seams):

@@ -2993,7 +2993,11 @@ def test_check_next_with_nothing_to_activate_reports_the_plan(gate_on, seams):
     seams.select_item.side_effect = None
     seams.select_item.return_value = None
     r = client.post("/api/learn/loop/check/next", json={"session_id": "s1", "user_id": "u1"})
-    assert r.json() == {"phase": "teach", "plan_done": True, "check": None}
+    # spec §13 A9: the plan ran out without a graded check on node-1 — it had
+    # no check item — so the response says so instead of a bare "plan done"
+    assert r.json() == {
+        "phase": "teach", "plan_done": True, "check": None, "checks_unavailable_node_ids": ["node-1"],
+    }
     assert seams.store["doc"]["plan"]["done"] is True
 
 

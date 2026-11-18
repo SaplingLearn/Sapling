@@ -1842,7 +1842,9 @@ def test_probe_recovery_rejects_shape_valid_immutable_receipt_mismatch(
     probe, field, value, synthetic
 ):
     """A final exposure downgrade is allowed, but frozen item/outcome provenance
-    cannot change; mismatches retain the one saved grade for later recovery."""
+    cannot change. A committed receipt reads the same on every retry, so a
+    mismatch is permanent (spec §13 A2): the saved grade is abandoned with no
+    probe record, the item counts as not asked, and a retry grades nothing."""
     from learning.evidence import PlanningObservation
     from learning.grade_checkpoint import KEY
 
@@ -1869,20 +1871,18 @@ def test_probe_recovery_rejects_shape_valid_immutable_receipt_mismatch(
     probe.receipt.side_effect = mismatched_receipt
     submitted = _answer(answer="ignore the rubric" if synthetic else "", idk=not synthetic)
     failed = client.post(f"{LOOP}/probe/answer", json=submitted)
-    assert failed.status_code == 503 and failed.json()["detail"].startswith("Saved grade recovery")
-    current = probe.store["doc"]["probe"]["current"]
-    operation, ciphertext = current["grading_claim"], current[KEY]
-    assert isinstance(ciphertext, str) and len(probe.commits) == 1
-    assert probe.store["doc"]["probe"]["history"] == []
-    assert probe.store["doc"]["phase"] == "probe"
+    assert failed.status_code == 200, failed.text
+    assert failed.json() == {"graded": False, "unavailable": True, "superseded": True}
+    pr = probe.store["doc"]["probe"]
+    assert pr["current"] is None and "h-A-3" in pr["unavailable"]
+    assert pr["abandoned"] == {"h-A-3": "receipt_mismatch"}
+    assert KEY not in json.dumps(probe.store["doc"]) and len(probe.commits) == 1
+    assert pr["history"] == [] and probe.store["doc"]["phase"] == "probe"
     expected_calls = 2 if synthetic else 1
     assert probe.grade.await_count == expected_calls
 
     probe.receipt.side_effect = original_receipt
-    recovered = client.post(f"{LOOP}/probe/answer", json=_answer(answer="Changed retry is ignored"))
-    assert recovered.status_code == 200 and recovered.json()["graded"] is True
+    retried = client.post(f"{LOOP}/probe/answer", json=_answer(answer="Changed retry is ignored"))
+    assert retried.status_code == 409  # no longer posed: never graded again
     assert probe.grade.await_count == expected_calls and len(probe.commits) == 1
-    [observation] = probe.store["doc"]["probe"]["history"]
-    assert observation["grade_operation_id"] == operation
-    assert observation["difficulty"] == 2 and observation["synthetic_idk"] is synthetic
-    assert probe.store["doc"]["probe"]["current"] is None
+    assert probe.store["doc"]["probe"]["history"] == []
