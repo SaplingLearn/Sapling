@@ -85,17 +85,38 @@ def test_foreign_session_cannot_read_or_change_goal(probe):
     [
         {"phase": "teach"},
         {"phase": "close"},
-        {"phase": "probe", "probe": {"current": {"grading_claim": "active"}}},
+        {"phase": "probe", "probe": {"current": {"grading_claim": "active", "grading_claim_at": 0.0}}},
+        {"phase": "probe", "probe": {"current": {"grading_claim": "saved", "grade_checkpoint": "CIPHER"}}},
         {"phase": "plan", "close_claim": "active", "close_claim_at": services.loop.state._now_s()},
     ],
 )
 def test_goal_edits_cannot_race_grading_closing_or_teaching(probe, doc):
     if "close_claim_at" in doc:
         doc["close_claim_at"] = 1_790_000_000.0
+    if "grading_claim_at" in (doc.get("probe") or {}).get("current", {}):
+        doc["probe"]["current"]["grading_claim_at"] = 1_790_000_000.0  # live at the route clock
     probe.store["doc"] = doc
     before = repr(doc)
     assert set_goal().status_code == 409
     assert repr(probe.store["doc"]) == before
+
+
+def test_a_stale_probe_claim_does_not_hold_the_goal_for_good(probe):
+    """Spec §13 A7: /goal waits only for a LIVE probe claim (or a saved grade),
+    as /probe/next and /close do. A claim left stale by a grader that died is
+    no grade in flight: the goal changes and the posed item counts as not
+    asked (its late grade, if any, then fails the goal-version fence)."""
+    from learning.params import LOOP_GRADING_CLAIM_STALE_S
+
+    stale = 1_790_000_000.0 - LOOP_GRADING_CLAIM_STALE_S - 1
+    probe.store["doc"] = {
+        "phase": "probe",
+        "probe": {"current": {"question_hash": "h-A-3", "grading_claim": "dead", "grading_claim_at": stale}},
+    }
+    assert set_goal().status_code == 200
+    pr = probe.store["doc"]["probe"]
+    assert pr["current"] is None and "h-A-3" in pr["unavailable"]
+    assert probe.store["doc"]["goal_version"] == 1
 
 
 def test_edit_preserves_fatigue_and_evidence_but_discards_old_proposal(probe):

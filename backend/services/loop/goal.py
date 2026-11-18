@@ -19,6 +19,7 @@ from services.loop.state import (
     _update_loop_state,
 )
 from services.loop.planning import (
+    _claim_live,
     _learning_scope_payload,
     _plan_states,
     _probe_doc,
@@ -57,7 +58,7 @@ def set_goal(body: LoopGoalBody, request: Request) -> dict:
             raise HTTPException(status_code=409, detail="Start a new session to change a teaching goal")
         pr = _probe_doc(doc)
         current = pr.get("current") or {}
-        if current.get("grading_claim"):
+        if _claim_live(current, now):  # a saved grade, or a claim not yet stale
             raise HTTPException(status_code=409, detail="Wait for the current answer to finish grading")
         if current.get("question_hash") and current["question_hash"] not in pr["unavailable"]:
             pr["unavailable"].append(current["question_hash"])
