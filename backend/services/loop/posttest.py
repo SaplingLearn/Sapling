@@ -10,6 +10,7 @@ import threading
 import time
 import uuid
 from datetime import datetime
+from types import SimpleNamespace
 from services.loop.errors import HTTPException
 from starlette.requests import Request
 import config
@@ -18,8 +19,14 @@ from agents.tools.check import CHANNEL_FOR_FORMAT, CheckAnswer, grade_answer
 from db.connection import table
 from learning import arms, policy, zpd_events
 from learning.checks import posttest_skip_reason
-from learning.evidence import flush_pending
-from learning.evidence_transaction import EvidenceItemRetired
+from learning.claim_deadline import GradeDeadlineExceeded, within_grade_deadline
+from learning.evidence import PlanningPersistenceUnavailable, flush_pending
+from learning.evidence_transaction import (
+    EvidenceItemRetired,
+    EvidenceTransactionConflict,
+    committed_outcome,
+    operation_identity,
+)
 from learning.ladder import Rung
 from learning.learning_gain import answer_latency_s, clamp_visibility
 from learning.posttest_store import posttest_anchors
@@ -255,20 +262,19 @@ async def posttest_answer(body: PosttestAnswerBody, request: Request):
         recheck = await asyncio.to_thread(
             recheck_after_release, body.user_id, body.node_id, None, now=now, item=item
         )
-        outcome = await grade_answer(
-            _item_like(item),
-            answer,
-            deps=deps,
-            node_id=body.node_id,
-            max_rung=int(floor),
-            same_session_recheck=recheck,
-        )
+        async with within_grade_deadline():  # the claim goes stale after LOOP_GRADING_CLAIM_STALE_S
+            outcome = await grade_answer(
+                _item_like(item),
+                answer,
+                deps=deps,
+                node_id=body.node_id,
+                max_rung=int(floor),
+                same_session_recheck=recheck,
+            )
         if outcome.refused:  # A33: checked first — a refused outcome is also unavailable
             return {"graded": False, "refused": True}
         if outcome.unavailable:
             raise HTTPException(status_code=503, detail="grader unavailable")
-        # m1/m2: the claim is re-validated and the pose CLOSED before the flush —
-        # a taken-over claim writes nothing; a failed flush never reopens the pose
         # A93: the help floor re-read inside the claim, right before the write
         floor = Rung(await asyncio.to_thread(
             _refloor, deps.pending_evidence, body.user_id, item, _ts(pose.get("posed_at")), int(floor)
@@ -283,6 +289,30 @@ async def posttest_answer(body: PosttestAnswerBody, request: Request):
             body.hidden_s,
             (answered_at - shown_from).total_seconds() if shown_from else None,
         )
+        # A5: the evidence FIRST, under the claim and the pose's own identity
+        # (`_pose_operation`): a failed write leaves the pose open (released
+        # below) for the same answer to be sent again, never an answered pose
+        # whose evidence BKT never saw; a retry replays the first commit, or
+        # the earlier committed grade stands (`_earlier_pose_commit`)
+        operation = _pose_operation(body.user_id, body.node_id, pose, claim)
+        for ev in deps.pending_evidence:
+            ev["operation_id"] = operation
+        retired, earlier = False, None
+        try:
+            # ONE call: the post-test's only evidence write
+            changes = await asyncio.to_thread(flush_pending, deps, course_id)
+        except EvidenceItemRetired:
+            retired, changes = True, []  # A123: the grade is void; nothing was written
+        except EvidenceTransactionConflict:
+            earlier = await asyncio.to_thread(_earlier_pose_commit, body.user_id, body.node_id, operation)
+            if earlier is None:
+                raise
+            changes, floor = [], Rung(earlier["max_rung"])
+            outcome = SimpleNamespace(
+                correct=earlier["correct"], confidence=None, grader_backend=None,
+                evidence={"channel": earlier["channel"]},
+            )
+        # then the pose's close, re-validating the claim; it records the outcome
         answered = await asyncio.to_thread(  # #117: off the event loop
             _answer_pose,
             body.user_id,
@@ -295,17 +325,19 @@ async def posttest_answer(body: PosttestAnswerBody, request: Request):
             hidden_count=hidden_count,
             hidden_s=hidden_s,
         )
-        if not answered:
+        if not answered:  # another request took the claim over; it closes the pose
             raise HTTPException(status_code=409, detail=_NOT_A_POSTTEST_ITEM)
-        try:
-            # ONE call: the post-test's only evidence write
-            changes = await asyncio.to_thread(flush_pending, deps, course_id)
-        except EvidenceItemRetired:
+        if retired:
             # A123: staff retired the item while it was graded — nothing was
-            # written (the grade is void); the pose stays answered, and its
+            # written (the grade is void); the pose is answered, and its
             # outcome is left out of the learning gain by the void rule
-            raise HTTPException(status_code=409, detail=_RETIRED_DETAIL) from None
+            raise HTTPException(status_code=409, detail=_RETIRED_DETAIL)
         await asyncio.to_thread(_ledger, mark_graded, body.user_id, item.question_hash)
+    except (PlanningPersistenceUnavailable, GradeDeadlineExceeded):
+        # A5: nothing is answered, so the pose is released below and the same
+        # answer may be sent again — under the pose's evidence identity, so an
+        # ambiguous write is never journaled twice (`_pose_operation`)
+        raise HTTPException(status_code=503, detail=_POSTTEST_UNAVAILABLE) from None
     finally:
         if not answered:
             try:
@@ -317,6 +349,33 @@ async def posttest_answer(body: PosttestAnswerBody, request: Request):
         _emit_posttest_step, body, request, item, outcome, band, p_before, changes, floor
     )
     return {"correct": bool(outcome.correct), "confidence": outcome.confidence}
+
+
+_POSTTEST_UNAVAILABLE = "Post-test evidence unavailable; retry the same answer"
+
+
+def _pose_operation(user_id: str, node_id: str, pose: dict, claim: str) -> str:
+    """Spec §13 A5: the evidence operation id of one pose — the same for every
+    answer to it (a pose is one row per student, node and window; a renewal
+    re-poses with a new posed_at), so a retry after an ambiguous write can
+    never journal a second observation. A row read without its posed_at falls
+    back to the claim (this answer only)."""
+    if pose.get("window_days") is None or not pose.get("posed_at"):
+        return operation_identity("posttest-claim", claim)
+    return operation_identity("posttest", user_id, node_id, pose["window_days"], pose["posed_at"])
+
+
+def _earlier_pose_commit(user_id: str, node_id: str, operation: str) -> dict | None:
+    """Spec §13 A5: the pose's operation id was refused (another grade under it)
+    because an earlier attempt of this pose committed while its acknowledgment
+    was lost. That committed outcome ({channel, correct, idk, max_rung}) is the
+    record the pose is closed with; None when no committed observation of the
+    node is found (the refusal is real, and propagates)."""
+    rows = [row for row in committed_outcome(user_id, operation) or [] if row["node_id"] == node_id]
+    if len(rows) != 1:
+        return None
+    logger.warning("post-test: an earlier attempt of this pose committed; its grade stands")
+    return rows[0]
 
 
 def _posttest_light_limit(user_id: str) -> None:
