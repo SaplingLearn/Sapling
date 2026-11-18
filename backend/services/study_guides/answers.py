@@ -10,6 +10,13 @@ evidence is the only mastery write): one ``mc`` Evidence on the concept's
 node through ``graph_service.apply_graph_update``, built the way
 ``services/quiz/submission.py::_quiz_evidence`` builds one, and the graph runs
 BKT on it. Never a flat delta.
+
+It obeys the quiz's evidence rules too (spec §13 A8), applied by the quiz's
+own code (``services/question_evidence.py``): a question counts at most once
+per student per rolling 24 h, quiz and guide alike (A94/A100's claim), and
+carries the help ledger's floor (A99). A guide's Regenerate clears its stored
+answers, so the claim is what keeps a regenerated question from counting
+again at full weight.
 """
 from __future__ import annotations
 
@@ -21,6 +28,7 @@ from starlette.concurrency import run_in_threadpool
 from learning.bkt import tier_for, tier_for_stored
 from models.study_guide import AnswerResult, CheckAnswer, CheckBlock, MasteryChange
 from services import academics, events_service, graph_service
+from services.question_evidence import guard_question_evidence
 from services.quiz import question_hash
 from services.study_guides import signals, store
 from services.study_guides.errors import GuideInvalid, GuideNotFound
@@ -61,6 +69,12 @@ def _evidence(node_id: str, block: CheckBlock, correct: bool) -> dict:
     }
 
 
+def _claimant(guide: GuideRow, block: CheckBlock) -> str:
+    """Who claims a question's evidence window (`quiz_evidence_claims.attempt_id`,
+    as a quiz names its attempt): this guide's block."""
+    return f"study_guide:{guide.id}:{block.id}"
+
+
 def _write_evidence(user_id: str, evidence: dict, course_id: str, defer: Defer | None) -> list:
     """The one graph write: the graded evidence, through the single writer
     (sanctioned in tests/test_learning_evidence_apply.py)."""
@@ -80,9 +94,14 @@ async def _amove_mastery(
     node = await signals.aconcept_node(guide.user_id, course_id, block.concept)
     if node is None:
         return None
-    changes = await run_in_threadpool(
-        _write_evidence, guide.user_id, _evidence(node["id"], block, correct), course_id, defer,
+    # A8: the quiz's rules first — the 24 h per-question claim, then the help floor
+    kept = await run_in_threadpool(
+        guard_question_evidence, guide.user_id, _claimant(guide, block),
+        [_evidence(node["id"], block, correct)],
     )
+    if not kept:  # counted within the window already (a quiz, another guide, a Regenerate)
+        return None
+    changes = await run_in_threadpool(_write_evidence, guide.user_id, kept[0], course_id, defer)
     if not changes:
         return None
     change = changes[0]
