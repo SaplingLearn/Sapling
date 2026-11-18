@@ -10,3 +10,22 @@
 export const killSwitchLane = ["false", "0", "off", "no"].includes(
   (process.env.LEARNING_LOOP_ENABLED ?? "").trim().toLowerCase(),
 );
+
+/**
+ * The flag-off lane: the kill switch NOT thrown, but every student's
+ * `learning_loop` flag forced off through its env override
+ * (SAPLING_FLAG_LEARNING_LOOP=off, parsed as services/feature_flags.py
+ * ::env_override does: trimmed, any case). That is production's default — the
+ * flag ships off — and the loop is off for each student exactly as under the
+ * kill switch (learning/gate.py). scripts/e2e-up.sh forces the flag on unless
+ * the caller exported a value.
+ */
+export const flagOffLane = (process.env.SAPLING_FLAG_LEARNING_LOOP ?? "").trim().toLowerCase() === "off";
+
+/**
+ * The loop is off for every seeded student: the kill-switch lane OR the
+ * flag-off lane. Every "loop path" guard uses this; `killSwitchLane` stays for
+ * what only the kill switch itself does (the kill-switch-only legacy-screen
+ * test).
+ */
+export const loopOffLane = killSwitchLane || flagOffLane;

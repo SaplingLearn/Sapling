@@ -321,17 +321,20 @@ export ABUSE_RATE_LIMIT_MULTIPLIER="${ABUSE_RATE_LIMIT_MULTIPLIER:-100}"
 echo "  ℹ ABUSE_RATE_LIMIT_MULTIPLIER=$ABUSE_RATE_LIMIT_MULTIPLIER for this stack (production: 1)"
 # Learning loop (PKG-14b, spec §7 / §11.4): the loop is on for a student only
 # when the LEARNING_LOOP_ENABLED kill switch is not thrown AND their
-# `learning_loop` feature flag is on; the flag ships off. The lanes test the
-# loop, so the flag is switched on for every student here through its generic
-# env override (a value the caller exported wins), in BOTH lanes: the default
-# lane then runs the loop, and the kill-switch lane stays the kill switch's
+# `learning_loop` feature flag is on; the flag ships off. The default lane tests
+# the loop, so unless the caller exported a value the flag is switched on for
+# every student here through its generic env override: the default lane then
+# runs the loop, and the kill-switch lane stays the kill switch's
 # (`LEARNING_LOOP_ENABLED=false make e2e-up`: the legacy Learn screen, tutor
-# and Study UI; /api/learn/loop/* 404s) whatever the flag says. The seeded loop
-# users are ordinary students. frontend/e2e/support/fixtures.ts::killSwitchLane
-# is the one lane parse Playwright uses; global-setup.ts asserts the stack agrees.
+# and Study UI; /api/learn/loop/* 404s) whatever the flag says. An exported
+# value wins: `SAPLING_FLAG_LEARNING_LOOP=off make e2e-up` is the flag-off lane,
+# production's default (the switch unset, every student's flag off). The seeded
+# loop users are ordinary students. frontend/e2e/support/lane.ts is the one lane
+# parse Playwright uses (killSwitchLane, loopOffLane), so export the value in the
+# shell that runs both; global-setup.ts asserts the stack agrees.
 # (backend/.env must not name the variable — the preflight fails fast on it.)
 export SAPLING_FLAG_LEARNING_LOOP="${SAPLING_FLAG_LEARNING_LOOP:-on}"
-echo "  ℹ SAPLING_FLAG_LEARNING_LOOP=$SAPLING_FLAG_LEARNING_LOOP for this stack (the learning_loop flag ships off)"
+echo "  ℹ SAPLING_FLAG_LEARNING_LOOP=$SAPLING_FLAG_LEARNING_LOOP for this stack (the learning_loop flag ships off; export =off for the flag-off lane)"
 if [ -n "${LEARNING_LOOP_ENABLED+x}" ]; then
   echo "  ℹ LEARNING_LOOP_ENABLED=$LEARNING_LOOP_ENABLED from the shell (spec §7 parse: false/0/off/no = the kill-switch lane)"
 else

@@ -47,6 +47,7 @@ import type { Browser, Page, Route } from "@playwright/test";
 import { expectAccessible } from "./support/a11y";
 import { seedTeachPromptItems, setUserFlag } from "./support/db";
 import { expect, killSwitchLane, test } from "./support/fixtures";
+import { loopOffLane } from "./support/lane";
 import { learningParams } from "./support/params";
 import { showsAnotherItem } from "./support/probe";
 import { expectAskReply, STREAM_TIMEOUT } from "./support/quiz";
@@ -170,7 +171,7 @@ async function scanStudyHub(page: Page) {
   await page.goto("/study");
   await expect(page.getByTestId("readiness-pct")).toHaveText(/^\d+%$/, { timeout: 30_000 });
   await expect(page.getByRole("region", { name: "Roadmap" }).getByTestId(`tile-${QUIZ_NODE}`)).toBeVisible();
-  if (!killSwitchLane) await expect(page.getByTestId("review-due-panel")).toBeVisible();
+  if (!loopOffLane) await expect(page.getByTestId("review-due-panel")).toBeVisible();
   await expectAccessible(page, "study: hub with due reviews");
 
   // The course field (study/CoursePicker.tsx, the page's only listbox
@@ -401,6 +402,8 @@ test("quiz: a written answer", async ({ page }) => {
 });
 
 test("quiz, learning system on: home with the plan's reason, results with the learning block", async ({ page }) => {
+  // #884: the quiz learning flags need the learning loop, which is off in these lanes
+  test.skip(loopOffLane, "the quiz learning flags need the learning loop: default lane only");
   test.setTimeout(QUIZ_TIMEOUT_MS);
   for (const key of ["quiz_concept_plan", "quiz_planned_questions", "quiz_item_gates", "quiz_results_routing"]) {
     await setUserFlag(key, USER_ACTIVE, "on");
@@ -499,7 +502,7 @@ async function walkCheckInAndPlan(page: Page, cap: number, { approve = true }: {
 }
 
 test("learning loop: check-in, plan, teaching, a check with hints, feedback, a multiple-choice check and the wrap-up", async ({ browser }) => {
-  test.skip(killSwitchLane, "loop path: default lane only");
+  test.skip(loopOffLane, "loop path: default lane only");
   test.setTimeout(LOOP_TIMEOUT_MS);
   const P = await learningParams(["PROBE_SESSION_CAP"]);
   const { context, page } = await signIn(browser, USER_LOOP, "Lou Loop");
@@ -568,7 +571,7 @@ test("learning loop: check-in, plan, teaching, a check with hints, feedback, a m
 });
 
 test("learning loop: a segment's ungraded guess and a self-explanation prompt (A138, A139 on)", async ({ browser }) => {
-  test.skip(killSwitchLane, "loop path: default lane only");
+  test.skip(loopOffLane, "loop path: default lane only");
   test.setTimeout(LOOP_TIMEOUT_MS);
   // Both flags on for this student only (feature_flag_targets; the reset wipes them).
   await setUserFlag("segment_prequestion", USER_LOOP, "on");
@@ -601,7 +604,7 @@ test("learning loop: a segment's ungraded guess and a self-explanation prompt (A
 });
 
 test("learning loop: the budget pause and the degraded-mode notes", async ({ browser }) => {
-  test.skip(killSwitchLane, "loop path: default lane only");
+  test.skip(loopOffLane, "loop path: default lane only");
   const { context, page } = await signIn(browser, USER_CAPPED, "Casey Cap");
   try {
     // spec §13 A128's notes, from the server's own answers with the flags set.
@@ -622,7 +625,7 @@ test("learning loop: the budget pause and the degraded-mode notes", async ({ bro
 });
 
 test("review queue: a flashcard, its answer, the rated result and a multiple-choice check", async ({ browser }) => {
-  test.skip(killSwitchLane, "loop path: default lane only");
+  test.skip(loopOffLane, "loop path: default lane only");
   const { context, page } = await signIn(browser, USER_CAPPED, "Casey Cap");
   try {
     await page.goto("/study");
@@ -663,7 +666,7 @@ test("review queue: a flashcard, its answer, the rated result and a multiple-cho
 });
 
 test("retention check: opened with nothing eligible yet", async ({ browser }) => {
-  test.skip(killSwitchLane, "loop path: default lane only");
+  test.skip(loopOffLane, "loop path: default lane only");
   const { context, page } = await signIn(browser, USER_LOOP, "Lou Loop");
   try {
     await page.goto("/study");

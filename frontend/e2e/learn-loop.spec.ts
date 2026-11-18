@@ -9,10 +9,12 @@
  *  4. every student gets the loop by default (default lane), and the kill switch
  *     restores the legacy Learn screen (kill-switch lane) — PKG-14b, spec §11.4.
  *
- * Lanes (support/fixtures.ts::killSwitchLane, spec §11.4): journeys 1–3 and
- * "every student gets the loop by default" run in the default lane only (no
- * LEARNING_LOOP_ENABLED at all — the code default); "kill switch restores the
- * legacy Learn screen" runs under LEARNING_LOOP_ENABLED=false only.
+ * Lanes (support/lane.ts, spec §11.4): journeys 1–3 and "every student gets
+ * the loop by default" run in the default lane only (no LEARNING_LOOP_ENABLED
+ * at all — the code default — and the learning_loop flag on), skipped by
+ * `loopOffLane` in the kill-switch and flag-off lanes; "kill switch restores
+ * the legacy Learn screen" runs under LEARNING_LOOP_ENABLED=false only
+ * (`killSwitchLane`).
  *
  * Determinism: function mode (SAPLING_MODEL_MODE=function,
  * SAPLING_FUNCTION_HANDLERS=agents.function_handlers_e2e) plus
@@ -33,6 +35,7 @@
 import type { Browser, Page, Response } from "@playwright/test";
 
 import { expect, killSwitchLane, test } from "./support/fixtures";
+import { loopOffLane } from "./support/lane";
 import { queryRaw, seedGoalContinuationItems, seedTeachPromptItems, setUserFlag } from "./support/db";
 import { decryptText, decryptTexts } from "./support/decrypt";
 import { learningParams } from "./support/params";
@@ -223,7 +226,7 @@ async function firstTeachTurn(page: Page) {
 }
 
 test("loop user completes probe → plan → check (explicit submission) with a gated hint → close, and the loop writes land", async ({ browser }) => {
-  test.skip(killSwitchLane, "loop path: default lane only");
+  test.skip(loopOffLane, "loop path: default lane only");
   test.setTimeout(LOOP_JOURNEY_TIMEOUT_MS);
   const P = await learningParams([
     "PROBE_ITEMS_PER_SKILL_MIN",
@@ -552,7 +555,7 @@ test("loop user completes probe → plan → check (explicit submission) with a 
 });
 
 test("a reload mid-session resumes the same loop session and calls no probe route", async ({ browser }) => {
-  test.skip(killSwitchLane, "loop path: default lane only");
+  test.skip(loopOffLane, "loop path: default lane only");
   test.setTimeout(LOOP_JOURNEY_TIMEOUT_MS);
   const P = await learningParams(["PROBE_SESSION_CAP"]);
   const { context, page } = await signIn(browser, USER_LOOP, "Lou Loop");
@@ -605,7 +608,7 @@ test("a reload mid-session resumes the same loop session and calls no probe rout
 for (const width of [1440, 390]) {
   for (const resumedPhase of ["probe", "plan"] as const) {
     test(`rapid New session waits for the resumed ${resumedPhase} at ${width}px`, async ({ browser }) => {
-      test.skip(killSwitchLane, "loop path: default lane only");
+      test.skip(loopOffLane, "loop path: default lane only");
       test.setTimeout(LOOP_JOURNEY_TIMEOUT_MS);
       const P = await learningParams(["PROBE_SESSION_CAP"]);
       const { context, page } = await signIn(browser, USER_LOOP, "Lou Loop");
@@ -722,7 +725,7 @@ for (const width of [1440, 390]) {
 for (const recovery of [{ width: 390, pending: false }, { width: 1440, pending: true }, { width: 390, pending: true }]) {
 for (const action of ["retry", "end"] as const) {
   test(`pending feedback can ${action} at ${recovery.width}px with ${recovery.pending ? "durable interrupted-worker" : "legacy"} state`, async ({ browser }) => {
-    test.skip(killSwitchLane, "loop path: default lane only");
+    test.skip(loopOffLane, "loop path: default lane only");
     test.setTimeout(LOOP_JOURNEY_TIMEOUT_MS);
     // Explicitly synthetic, already-graded-but-undelivered starting state.
     // Installed BEFORE browser activity: no learner outcome/evidence is forged
@@ -890,7 +893,7 @@ async function walkToTheCheckPosingTurn(page: Page, reply: string, served: strin
 }
 
 test("spec §13 A121 (flag off, the default): the check-in opens without teaching, and the turn that poses a check asks no question of its own", async ({ browser }) => {
-  test.skip(killSwitchLane, "loop path: default lane only");
+  test.skip(loopOffLane, "loop path: default lane only");
   test.setTimeout(LOOP_JOURNEY_TIMEOUT_MS);
   const { context, page } = await signIn(browser, USER_LOOP, "Lou Loop");
   try {
@@ -907,7 +910,7 @@ test("spec §13 A121 (flag off, the default): the check-in opens without teachin
 });
 
 test("spec §13 A121 (loop_tutor_v2 on): the reply to the tutor's question gets its verdict first, from the turn that poses the check", async ({ browser }) => {
-  test.skip(killSwitchLane, "loop path: default lane only");
+  test.skip(loopOffLane, "loop path: default lane only");
   test.setTimeout(LOOP_JOURNEY_TIMEOUT_MS);
   // The flag on for this student only, through the API the /admin flags tab uses
   // (the per-test reset wipes the rule; the stack's flag cache TTL is 0).
@@ -947,7 +950,7 @@ async function evidenceCount(userId: string): Promise<number> {
 }
 
 test("spec §13 A138 (segment_prequestion on): a new segment opens on an ungraded guess, its answer follows at once, and nothing is graded", async ({ browser }) => {
-  test.skip(killSwitchLane, "loop path: default lane only");
+  test.skip(loopOffLane, "loop path: default lane only");
   test.setTimeout(LOOP_JOURNEY_TIMEOUT_MS);
   // The flag on for this student only (feature_flag_targets; the per-test reset wipes it).
   await setUserFlag("segment_prequestion", USER_LOOP, "on");
@@ -1049,7 +1052,7 @@ test("spec §13 A138 (segment_prequestion on): a new segment opens on an ungrade
 });
 
 test("spec §13 A139 (self_explanation_prompts on): the worked example asks why its steps follow; the reply is stored and never graded", async ({ browser }) => {
-  test.skip(killSwitchLane, "loop path: default lane only");
+  test.skip(loopOffLane, "loop path: default lane only");
   test.setTimeout(LOOP_JOURNEY_TIMEOUT_MS);
   await setUserFlag("self_explanation_prompts", USER_LOOP, "on");
   const P = await learningParams(["PROBE_SESSION_CAP"]);
@@ -1117,7 +1120,7 @@ test("spec §13 A139 (self_explanation_prompts on): the worked example asks why 
 });
 
 test("budget cap: tutor chat pauses on /learn; review still serves and grades on /study", async ({ browser }) => {
-  test.skip(killSwitchLane, "loop path: default lane only");
+  test.skip(loopOffLane, "loop path: default lane only");
   test.setTimeout(LOOP_JOURNEY_TIMEOUT_MS);
   const { context, page } = await signIn(browser, USER_CAPPED, "Casey Cap");
 
@@ -1169,7 +1172,7 @@ test("budget cap: tutor chat pauses on /learn; review still serves and grades on
 // build-phase "legacy user" split is gone (no journey depends on the retired
 // staff/QA toggle; test_inv_13b).
 test("every student gets the loop by default", async ({ page }) => {
-  test.skip(killSwitchLane, "loop path: default lane only");
+  test.skip(loopOffLane, "loop path: default lane only");
   await page.addInitScript(() => {
     localStorage.setItem("sapling_disclaimer_ack", "true");
   });
@@ -1214,7 +1217,7 @@ test("kill switch restores the legacy Learn screen", async ({ page }) => {
 // and grading text. This exercises navigation/forms at a real phone width,
 // rather than inferring mobile usability from the component's desktop tests.
 test("phone learner can check in, answer a check and reach wrap-up without horizontal overflow", async ({ browser }) => {
-  test.skip(killSwitchLane, "loop path: default lane only");
+  test.skip(loopOffLane, "loop path: default lane only");
   test.setTimeout(LOOP_JOURNEY_TIMEOUT_MS);
   const P = await learningParams(["PROBE_SESSION_CAP"]);
   const { context, page } = await signIn(browser, USER_LOOP, "Lou Loop");
@@ -1248,7 +1251,7 @@ test("phone learner can check in, answer a check and reach wrap-up without horiz
 });
 
 test("a failed daily-review status read offers recovery without removing the Study hub", async ({ browser }) => {
-  test.skip(killSwitchLane, "loop path: default lane only");
+  test.skip(loopOffLane, "loop path: default lane only");
   const { context, page } = await signIn(browser, USER_CAPPED, "Casey Cap");
   let first = true;
   await page.route("**/api/learn/loop/review/active?*", async (route) => {
@@ -1268,7 +1271,7 @@ test("a failed daily-review status read offers recovery without removing the Stu
 });
 
 test("switching sessions cancels a pending tutor stream and retains the chosen session", async ({ browser }) => {
-  test.skip(killSwitchLane, "loop path: default lane only");
+  test.skip(loopOffLane, "loop path: default lane only");
   test.setTimeout(LOOP_JOURNEY_TIMEOUT_MS);
   const P = await learningParams(["PROBE_SESSION_CAP"]);
   const { context, page } = await signIn(browser, USER_LOOP, "Lou Loop");
@@ -1320,7 +1323,7 @@ test("switching sessions cancels a pending tutor stream and retains the chosen s
 });
 
 test("a phone learner confirms a goal, sees prerequisite planning and retains it after reload", async ({ browser }) => {
-  test.skip(killSwitchLane, "loop path: default lane only");
+  test.skip(loopOffLane, "loop path: default lane only");
   test.setTimeout(LOOP_JOURNEY_TIMEOUT_MS);
   const P = await learningParams(["PROBE_SESSION_CAP"]);
   const { context, page } = await signIn(browser, USER_LOOP, "Lou Loop");
@@ -1379,7 +1382,7 @@ test("a phone learner confirms a goal, sees prerequisite planning and retains it
 });
 
 test("an earned hint arriving late cannot reopen a graded check in the same session", async ({ browser }) => {
-  test.skip(killSwitchLane, "loop path: default lane only");
+  test.skip(loopOffLane, "loop path: default lane only");
   test.setTimeout(LOOP_JOURNEY_TIMEOUT_MS);
   const P = await learningParams(["PROBE_SESSION_CAP", "GATE_INDEPENDENT_MIN_S_NOVICE"]);
   const { context, page } = await signIn(browser, USER_LOOP, "Lou Loop");
@@ -1428,7 +1431,7 @@ test("an earned hint arriving late cannot reopen a graded check in the same sess
 });
 
 test("phone retention entry creates no pose until requested and respects real delayed eligibility", async ({ browser }) => {
-  test.skip(killSwitchLane, "loop path: default lane only");
+  test.skip(loopOffLane, "loop path: default lane only");
   const { context, page } = await signIn(browser, USER_LOOP, "Lou Loop");
   await page.setViewportSize({ width: 320, height: 844 });
   let opens = 0;
@@ -1451,7 +1454,7 @@ test("phone retention entry creates no pose until requested and respects real de
 });
 
 test("phone explicit goal warns before teaching when only protected practice remains and offers source review", async ({ browser }) => {
-  test.skip(killSwitchLane, "loop path: default lane only");
+  test.skip(loopOffLane, "loop path: default lane only");
   // Synthetic asset-only starting state, installed BEFORE browser activity.
   // Retain the actual protected post-test items; do not reset exposure, seed
   // mastery or fabricate an attempt to make an exhausted goal look complete.
@@ -1579,7 +1582,7 @@ test("phone explicit goal warns before teaching when only protected practice rem
 });
 
 test("independent prerequisite recovery unlocks a fresh goal plan requiring approval in the same session", async ({ browser }) => {
-  test.skip(killSwitchLane, "loop path: default lane only");
+  test.skip(loopOffLane, "loop path: default lane only");
   test.setTimeout(LOOP_JOURNEY_TIMEOUT_MS);
   await seedGoalContinuationItems("diagnostic");
   const P = await learningParams(["PROBE_SESSION_CAP", "LOOP_CHECKS_PER_CONCEPT"]);
@@ -1683,7 +1686,7 @@ test("independent prerequisite recovery unlocks a fresh goal plan requiring appr
 });
 
 test("a new goal session respects an earlier helped prerequisite miss even when its check-in omits that prerequisite", async ({ browser }) => {
-  test.skip(killSwitchLane, "loop path: default lane only");
+  test.skip(loopOffLane, "loop path: default lane only");
   test.setTimeout(LOOP_JOURNEY_TIMEOUT_MS);
   // Entirely synthetic inputs, installed before activity. Every subsequent
   // attempt, hint, grade, posterior and session transition uses real app routes.

@@ -44,23 +44,30 @@ jobs:
     runs-on: ubuntu-latest
     # Acceptance bar (#389): total wall clock under 15 minutes — enforced.
     timeout-minutes: 15
-    # PKG-14b (spec §11.4): two lanes. `default` sets no LEARNING_LOOP_ENABLED
+    # PKG-14b (spec §11.4): three lanes. `default` sets no LEARNING_LOOP_ENABLED
     # (the switch's code default) and runs the loop: the per-student
-    # learning_loop flag ships off, so both lanes turn it on below
-    # (SAPLING_FLAG_LEARNING_LOOP, as scripts/e2e-up.sh does); `kill-switch`
+    # learning_loop flag ships off, so it is turned on for every student
+    # (SAPLING_FLAG_LEARNING_LOOP=on, as scripts/e2e-up.sh does); `kill-switch`
     # sets "false" (the legacy Learn/tutor/Study path; /api/learn/loop/* 404)
-    # whatever the flag says.
+    # whatever the flag says; `flag-off` is production's default — the switch
+    # unset and every student's flag off (SAPLING_FLAG_LEARNING_LOOP=off), the
+    # pre-loop app for each student (frontend/e2e/support/lane.ts::loopOffLane).
     strategy:
       fail-fast: false
       matrix:
-        lane: [default, kill-switch]
+        lane: [default, kill-switch, flag-off]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       # One step before the stack starts, so the stack AND Playwright see the
-      # same value (frontend/e2e/support/fixtures.ts::killSwitchLane).
+      # same values (frontend/e2e/support/lane.ts: killSwitchLane, loopOffLane).
       - name: Select the lane
         run: |
           if [ "${{ matrix.lane }}" = "kill-switch" ]; then echo "LEARNING_LOOP_ENABLED=false" >> "$GITHUB_ENV"; fi
+          if [ "${{ matrix.lane }}" = "flag-off" ]; then
+            echo "SAPLING_FLAG_LEARNING_LOOP=off" >> "$GITHUB_ENV"
+          else
+            echo "SAPLING_FLAG_LEARNING_LOOP=on" >> "$GITHUB_ENV"
+          fi
       # This lane reaches `supabase start` through `make e2e-up` ->
       # scripts/e2e-up.sh, so it has the SAME exposure integration.yml does:
       # Supabase's ports sit inside Linux's ephemeral source-port range, and an
@@ -139,11 +146,9 @@ jobs:
           # last 429. e2e-up.sh sets the same value; kept here so what the
           # lane actually runs under is visible beside the rest of the seam.
           QUIZ_GENERATE_RATE_LIMIT: "1000"
-          # LEARNING_LOOP_ENABLED comes from the lane step above (unset in the
-          # default lane — PKG-14b, spec §11.4). The learning_loop flag ships
-          # off; the lanes test the loop, so it is on for every student (the
-          # kill-switch lane stays the kill switch's whatever it says).
-          SAPLING_FLAG_LEARNING_LOOP: "on"
+          # LEARNING_LOOP_ENABLED and SAPLING_FLAG_LEARNING_LOOP come from the
+          # lane step above (PKG-14b, spec §11.4): never set here, where a step
+          # value would override the lane's for the stack but not for Playwright.
           # spec §13 A5: the E2E env scales the ZPD gate seconds (e2e-up.sh sets the same)
           LEARNING_GATE_TIME_SCALE: "0.01"
           # Scripted grading/tutor/router calls run a whole session in seconds;

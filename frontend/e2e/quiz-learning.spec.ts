@@ -39,7 +39,13 @@ import {
 } from "./support/quiz";
 import { PREFS_KEY } from "@/lib/quiz/session";
 import { mintStorageState } from "./support/session";
+import { loopOffLane } from "./support/lane";
 import { USER_ACTIVE, USER_LOOP } from "./support/stack";
+
+// #884: every quiz learning flag needs the learning loop too
+// (services/quiz_learning.py::quiz_flags), and the loop is off in the
+// kill-switch and flag-off lanes, so these journeys run in the default lane.
+test.skip(loopOffLane, "the quiz learning flags need the learning loop: default lane only");
 
 const QUIZ_FLAGS = [
   "quiz_concept_plan",
