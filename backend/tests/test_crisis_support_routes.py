@@ -1411,6 +1411,138 @@ def test_the_handoff_key_holds_no_content_or_id(flag, sink, note_start):
     assert keys and not any(word in keys for word in CRISIS_WORDS + ("n1", "u1"))
 
 
+# ── The same hand-over on the learning loop's start routes (C4) ─────────────
+#
+# With the loop on, LoopLearn starts on /api/learn/loop/start-session[/stream]
+# directly; Send to tutor names its note there too. The topic is the note's
+# title, so it is stored material: the loop session opens with the card
+# beside it, exactly as on the legacy route, instead of the card twice and no
+# session.
+
+LOOP_START = "/api/learn/loop/start-session"
+LOOP_START_STREAM = "/api/learn/loop/start-session/stream"
+
+
+@pytest.fixture
+def loop_note_start():
+    """The loop's two start bodies stood in (a greeting); the student's note
+    is CRISIS_NOTE. Yields the mocks."""
+    mocks = {
+        "start": AsyncMock(return_value=dict(GREETING)),
+        "stream": AsyncMock(side_effect=_greeting_stream),
+        "get_note": AsyncMock(return_value=dict(CRISIS_NOTE)),
+    }
+    with (
+        patch("services.loop.start_session", mocks["start"]),
+        patch("services.loop.start_session_stream", mocks["stream"]),
+        patch("services.tutor.note_topic.get_note", mocks["get_note"]),
+    ):
+        yield mocks
+
+
+def test_a_note_titled_loop_start_opens_the_session_with_the_card_beside_it(flag, sink, loop_note_start):
+    flag("on")
+    r = client.post(LOOP_START, json=_note_start())
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert {k: body[k] for k in GREETING} == GREETING  # the session started
+    assert body["crisis_support"] == crisis_support.client_payload(crisis_copy.DEFAULT_CAMPUS_COUNSELING)
+    assert body["crisis_support_alongside"] is True
+    loop_note_start["start"].assert_awaited_once()
+    loop_note_start["get_note"].assert_awaited_once_with(note_id="n1", user_id="u1")
+    assert len(_crisis_rows(sink)) == 1  # one card shown, one event
+
+
+def test_a_note_titled_loop_start_streams_the_greeting_with_the_card_in_done(flag, sink, loop_note_start):
+    flag("on")
+    r = client.post(LOOP_START_STREAM, json=_note_start())
+    assert r.status_code == 200, r.text
+    events = _sse_events(r.text)
+    assert [name for name, _ in events] == ["token", "done"]
+    done = events[-1][1]["data"]
+    assert {k: done[k] for k in DONE_DATA} == DONE_DATA
+    assert done["crisis_support_alongside"] is True
+    assert "crisis_support" not in events[0][1]["data"]
+
+
+@pytest.mark.parametrize("path", [LOOP_START, LOOP_START_STREAM])
+def test_the_loop_start_send_to_tutor_hands_over_records_no_second_card(path, flag, sink, loop_note_start):
+    flag("on")
+    note = {**CRISIS_NOTE, "updated_at": "2026-11-14T10:00:00Z"}
+    loop_note_start["get_note"].return_value = dict(note)
+    _send_to_tutor(note)
+    r = client.post(path, json=_note_start())
+    assert r.status_code == 200, r.text
+    assert "crisis_support" in r.text  # the card rides beside the session
+    assert _surfaces(sink) == ["note_send_to_tutor"]
+
+
+def test_a_rate_limited_note_titled_loop_start_still_carries_the_card(
+    flag, sink, loop_note_start, live_accounts, real_limiters,
+):
+    """The loop's rate limit is a route dependency, after the screen: its 429
+    goes back with the card on it, and the session is not started."""
+    flag("on")
+    real_limiters["limited"] = True
+    r = client.post(LOOP_START, json=_note_start())
+    assert r.status_code == 429, r.text
+    assert r.json()["crisis_support"] == crisis_support.client_payload(crisis_copy.DEFAULT_CAMPUS_COUNSELING)
+    loop_note_start["start"].assert_not_called()
+
+
+@pytest.mark.parametrize("why, body, note", [
+    ("no note named", {"from_note_id": None}, CRISIS_NOTE),
+    ("not the student's note (or gone)", {}, None),
+    ("the student edited the topic", {"topic": f"{CRISIS} please"}, CRISIS_NOTE),
+], ids=lambda v: v if isinstance(v, str) else "")
+@pytest.mark.parametrize("path", [LOOP_START, LOOP_START_STREAM])
+def test_a_loop_topic_that_is_not_the_notes_title_blocks_as_typed(why, body, note, path, flag, sink, loop_note_start):
+    flag("on")
+    loop_note_start["get_note"].return_value = note
+    r = client.post(path, json=_note_start(**body))
+    assert r.status_code == 200, r.text
+    card = _sse_events(r.text)[-1][1]["data"] if path.endswith("/stream") else r.json()
+    assert card["session_id"] is None and "crisis_support" in card  # the card INSTEAD of a session
+    assert "crisis_support_alongside" not in card
+    loop_note_start["start"].assert_not_called()
+    loop_note_start["stream"].assert_not_called()
+
+
+def test_a_typed_crisis_goal_still_blocks_a_note_titled_loop_start(flag, sink, loop_note_start):
+    flag("on")
+    goal = {"text": CRISIS, "target_node_ids": ["n1"]}
+    r = client.post(LOOP_START, json=_note_start(topic="Week 3", goal=goal))
+    assert r.status_code == 200, r.text
+    assert r.json()["session_id"] is None and "crisis_support" in r.json()
+    loop_note_start["start"].assert_not_called()
+    assert _surfaces(sink) == ["loop_start"]
+
+
+def test_a_calm_note_titled_loop_start_starts_as_usual_without_reading_the_note(flag, sink, loop_note_start):
+    flag("on")
+    r = client.post(LOOP_START, json=_note_start(topic="Week 3"))
+    assert r.status_code == 200, r.text
+    assert r.json() == GREETING
+    assert _crisis_rows(sink) == []
+    loop_note_start["get_note"].assert_not_called()
+
+
+def test_a_stranger_naming_a_note_on_the_loop_is_refused_before_it_is_read(flag, sink, loop_note_start, monkeypatch):
+    from services import auth_guard
+
+    flag("on")
+
+    def require_self(user_id, request, **_kwargs):
+        if user_id != "u1":
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+    monkeypatch.setattr(auth_guard, "require_self", require_self)
+    r = client.post(LOOP_START, json=_note_start(user_id="u2"))
+    assert r.status_code == 403
+    loop_note_start["get_note"].assert_not_called()
+    assert _crisis_rows(sink) == []
+
+
 # ── Screening precedes every rate limit, budget and quota ───────────────────
 #
 # A student in crisis must never be answered with a 429 instead of the card.

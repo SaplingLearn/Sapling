@@ -43,11 +43,14 @@ from models import (
     SelfExplainBody,
     StartSessionBody,
 )
+from pydantic import ValidationError
+
 from services import crisis_support
 from services.ai_budget import enforce_rate_limit
 import services.loop as loop_service
 from routes._docs import same_doc
 from services.loop import _NOT_ENABLED
+from services.tutor import note_title_version
 
 
 def _loop_gate_for_session(request: Request) -> bool | None:
@@ -115,6 +118,72 @@ def _screened(surface: str, *fields: str, respond) -> list:
         crisis_support.screened(surface, *fields, respond=respond),
         Depends(enforce_rate_limit),
     ]
+
+
+#: Where a start's topic screen leaves the card of a note-titled topic, for the
+#: handler to attach beside the session (`_beside_note_card`).
+_NOTE_CARD = "loop_start_note_card"
+
+
+async def _note_handoff(request: Request) -> StartSessionBody | None:
+    """The start body when it names a note (`from_note_id`) and its student,
+    validated; None otherwise (no JSON object, no note named, no student
+    named, or a body the handler will refuse anyway). Only then can the topic
+    be the note's title, Send to tutor's hand-over."""
+    try:
+        raw = await request.json()
+    except Exception:  # noqa: BLE001 — no JSON object: nothing to hand over
+        return None
+    if not isinstance(raw, dict) or not raw.get("from_note_id") or not raw.get("user_id"):
+        return None
+    try:
+        return StartSessionBody.model_validate(raw)
+    except ValidationError:
+        return None
+
+
+def _start_screened(respond) -> list:
+    """`_screened` for the two session starts (docs/safety/crisis-support.md).
+    The goal is typed text and blocks, as on every loop route; so does the
+    topic, unless the body names the student's own note (`from_note_id`) and
+    the topic is exactly what Send to tutor derives from that note's title
+    (services/tutor/note_topic.py, the legacy start route's rule, through
+    `crisis_support.screen_tutor_start_async`). That topic is stored material:
+    the session starts with the card beside it — on its answer, and on any
+    error answer, the rate limit's 429 included — and the start Send to tutor
+    hands over records no second card that day. Without a named note every
+    field is screened as before."""
+    typed = crisis_support.screened("loop_start", "topic", "goal.text", respond=respond).dependency
+    goal = crisis_support.screened("loop_start", "goal.text", respond=respond).dependency
+
+    async def crisis_screen(request: Request) -> None:
+        start = await _note_handoff(request)
+        if start is None:
+            await typed(request)
+            return
+        await goal(request)
+        screened = await crisis_support.screen_tutor_start_async(
+            request, start.user_id, start.topic, note_version=lambda: note_title_version(start),
+        )
+        if isinstance(screened, crisis_support.ContentScreen):
+            if screened.support is not None:
+                # an error answer before the handler (the limiter's 429) carries it too
+                setattr(request.state, crisis_support.ERROR_CARD_STATE, screened.support.payload)
+            setattr(request.state, _NOTE_CARD, screened)
+        elif screened is not None:
+            raise crisis_support.CrisisAnswered(respond(screened, request))
+
+    crisis_screen.surface = "loop_start"  # type: ignore[attr-defined]  # read by the ordering tests
+    return [Depends(_kill_switch_first), Depends(crisis_screen), Depends(enforce_rate_limit)]
+
+
+async def _beside_note_card(request: Request, action):
+    """`action` (the start's own work), with the card a note-titled topic's
+    screen found attached beside its answer (`crisis_support.alongside`)."""
+    screen = getattr(request.state, _NOTE_CARD, None)
+    if screen is None:
+        return await action
+    return await crisis_support.alongside(screen, action)
 
 
 # ── Endpoints ──────────────────────────────────────────────────────────────
@@ -237,23 +306,19 @@ async def action(body: ActionBody, request: Request):
 
 
 # crisis support: a crisis topic or goal opens no session (nothing is stashed or
-# written). The legacy /api/learn routes that delegate here screen first themselves.
-@router.post(
-    "/start-session",
-    dependencies=_screened("loop_start", "topic", "goal.text", respond=crisis_support.start_response),
-)
+# written), except a topic that is the student's own note title (Send to tutor):
+# the session opens with the card beside it. The legacy /api/learn routes that
+# delegate here screen first themselves.
+@router.post("/start-session", dependencies=_start_screened(crisis_support.start_response))
 @same_doc(loop_service.start_session)
 async def start_session(body: StartSessionBody, request: Request):
-    return await loop_service.start_session(body, request)
+    return await _beside_note_card(request, loop_service.start_session(body, request))
 
 
-@router.post(
-    "/start-session/stream",
-    dependencies=_screened("loop_start", "topic", "goal.text", respond=crisis_support.start_stream),
-)
+@router.post("/start-session/stream", dependencies=_start_screened(crisis_support.start_stream))
 @same_doc(loop_service.start_session_stream)
 async def start_session_stream(body: StartSessionBody, request: Request):
-    return await loop_service.start_session_stream(body, request)
+    return await _beside_note_card(request, loop_service.start_session_stream(body, request))
 
 
 @router.post("/check/next")
