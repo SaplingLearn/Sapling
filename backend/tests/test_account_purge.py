@@ -14,6 +14,7 @@ import pytest
 from services import account_credentials as ac
 from services import account_purge as ap
 from services import account_wipe as aw
+from services import check_item_service as cis
 from services import chunk_visibility as cv
 from services import events_service, storage_service
 from services import social_cache_service
@@ -50,7 +51,7 @@ class PurgeDB(FakeDB):
 @pytest.fixture
 def db(monkeypatch):
     fake = PurgeDB()
-    for module in (aw, cv, ap, ac, social_rooms, social_cache_service):
+    for module in (aw, cv, cis, ap, ac, social_rooms, social_cache_service):
         monkeypatch.setattr(module, "table", fake.table)
     monkeypatch.setattr(aw, "rpc", fake.rpc)  # the wipe's learning_account_erase
     return fake
@@ -169,6 +170,14 @@ def test_purges_the_account_and_leaves_another_users_data(db, storage, revoked, 
     for name in ap.KEPT_AFTER_PURGE:
         assert db.of(name, user_id=U), name
     assert counts["user_profiles"] == 1 and counts["newsletter_emails"] == 1
+    # Owner decision (#879): the reports and the tutor-call counts are erased,
+    # and A23: no check item drafted from the student's uploads stays in the
+    # class pool; a classmate's does.
+    for name in ("check_item_reports", "ai_tutor_daily_calls"):
+        assert db.of(name, user_id=U) == [] and db.of(name, user_id=OTHER), name
+    assert counts["check_item_reports"] == 1 and counts["ai_tutor_daily_calls"] == 1
+    assert counts["check_items"] == 1
+    assert [r["id"] for r in db.rows["check_items"]] == [f"{OTHER}-ci0"]
 
 
 def test_the_purge_drops_the_cached_analytics_consent(db, storage, revoked, events, monkeypatch):

@@ -7,9 +7,11 @@ and removes its Google tokens and Gradescope login at once
 services/account_purge_sweeper.py claims the account and runs
 :func:`purge_account`, which:
 
-1. runs the admin wipe (`account_wipe.wipe_account_data`: every study table,
-   documents with their chunks withdrawn the #629/#630 way — a shared chunk a
-   classmate still holds survives for them);
+1. runs the admin wipe (`account_wipe.wipe_account_data`: every study table
+   and learning-loop row, the student's check-item reports and tutor-call
+   counts included (#879), documents with their chunks withdrawn the
+   #629/#630 way — a shared chunk a classmate still holds survives for them —
+   and every check item drafted from them retired, A23);
 2. removes the credentials again (and revokes the Google grant, best effort);
 3. TOMBSTONES the student's room messages instead of deleting them: text,
    image and author name are cleared (`is_deleted`, `user_name` =
@@ -83,10 +85,6 @@ PURGE_DELETES: tuple[tuple[str, str], ...] = (
     ("friend_requests", "from_user_id"),
     ("friend_requests", "to_user_id"),
     ("feedback", "user_id"),
-    # A report on a check item is feedback the student sent; the item's hold
-    # is recorded in check_item_reviews and the item's lint_flags, so deleting the report does
-    # not lift it.
-    ("check_item_reports", "user_id"),
     ("issue_reports", "user_id"),
     ("user_cosmetics", "user_id"),
     ("user_roles", "user_id"),
@@ -129,7 +127,6 @@ KEPT_AFTER_PURGE: dict[str, str] = {
         "AI budget: the spend account and its over-budget trip; amounts only, never content"
     ),
     "checklist_budget_reservations": "AI budget: spend reserved against the account; amounts only",
-    "ai_tutor_daily_calls": "AI budget: per-day tutor-call counts, never content",
 }
 
 

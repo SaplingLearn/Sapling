@@ -9,7 +9,10 @@ Deleted (directly, or through the FK cascades noted):
 * enrollments → gradebook_categories, assignments, gradescope_course_links,
   topic_checklists (→ topic_checklist_progress), gradescope_syncs
 * documents — chunks withdrawn FIRST via `chunk_visibility.withdraw_document_chunks`,
-  then any private `course_chunks` still carrying `uploader_id = user`
+  and the check items drafted from them retired
+  (`check_item_service.retire_items_for_documents`, A23: a classmate is never
+  served an item drafted from a withdrawn upload), then any private
+  `course_chunks` still carrying `uploader_id = user`
 * notes → note_concepts
 * flashcards
 * flashcard_sets (saved selections; they own no cards)
@@ -22,8 +25,8 @@ Deleted (directly, or through the FK cascades noted):
 * document_uploads, tutor_pending_sessions (in-flight work, never bundled)
 * the learning loop, every row the student owns (owner decision: erase):
   learner_state, misconceptions (→ misconception_attempts), posttest_poses,
-  posttest_skips, quiz_evidence_claims, learning_reveals,
-  learning_evidence_operations, and, through the
+  posttest_skips, quiz_evidence_claims, learning_reveals, check_item_reports,
+  learning_evidence_operations, ai_tutor_daily_calls, and, through the
   `learning_account_erase` RPC (service_role holds no DELETE on these two
   append-only records), learning_prequestions and learning_self_explanations.
   learning_evidence_voids goes by cascade from node_mastery_events.
@@ -37,8 +40,8 @@ account bundle never copies it to another environment), gradescope_credentials,
 user_cosmetics, social (rooms, friendships, …), feedback, issue_reports,
 events, llm_usage, admin_audit_log, the checklist budget ledger
 (checklist_budget_accounts/_reservations: spend records, see `KEPT_PER_USER`),
-and class-wide or course-shared rows (offering_concept_stats; check_items and
-their review/audit/draft records). `KEPT_PER_USER` names every kept table that
+and class-wide or course-shared rows (offering_concept_stats; check_items
+drafted from other students' uploads, and the review/audit/draft records). `KEPT_PER_USER` names every kept table that
 has a `user_id` column, with its reason (tests/test_account_wipe.py fails on a
 `user_id` table in neither list); the 30-day purge of a self-deleted account
 (services/account_purge.py) runs this wipe first and then removes most of them.
@@ -59,7 +62,7 @@ import logging
 from datetime import datetime, timezone
 
 from db.connection import page_all, pg_quote_value, rpc, table
-from services import chunk_visibility
+from services import check_item_service, chunk_visibility
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +98,13 @@ _USER_TABLES: tuple[tuple[str, str], ...] = (
     ("posttest_skips", "node_id"),
     ("quiz_evidence_claims", "question_hash"),
     ("learning_reveals", "id"),
+    # The student's reports on course items (owner decision, #879: erase). A
+    # quarantine the reports already reached is recorded in check_item_reviews
+    # and holds without them; an unfinished count simply loses this reporter.
+    ("check_item_reports", "question_hash"),
     ("learning_evidence_operations", "operation_id"),
+    # Today's (and past days') tutor-call counts (owner decision, #879: erase).
+    ("ai_tutor_daily_calls", "day"),
     ("graph_nodes", "id"),
     ("xp_events", "id"),
     ("user_achievements", "achievement_id"),
@@ -180,11 +189,6 @@ KEPT_PER_USER: dict[str, str] = {
         "AI budget: spend holds against checklist_budget_accounts; an unsettled "
         "one is a possibly billed call that no timer or wipe refunds"
     ),
-    "ai_tutor_daily_calls": "AI budget: today's tutor-call count the daily cap reads (counts only)",
-    "check_item_reports": (
-        "product feedback on a course's check item (like `feedback`); the report "
-        "count holds the item's quarantine for every student"
-    ),
     "llm_usage": "telemetry and the billing record of model spend",
     "course_chunk_contributors": (
         "removed per document by chunk_visibility.withdraw_document_chunks; a "
@@ -259,6 +263,19 @@ def _erase_loop_records(user_id: str) -> dict[str, int]:
     return {name: int(out[name] or 0) for name in _ERASED_BY_RPC}
 
 
+def _retire_items(user_id: str, doc_ids: list[str]) -> int:
+    """The course check items drafted from these documents (A23). Run after
+    the chunk withdrawal and before the hard delete: a failure keeps the
+    soft-deleted documents, whose ids are what a re-run retires by."""
+    try:
+        return check_item_service.retire_items_for_documents(doc_ids)
+    except Exception as exc:
+        raise AccountWipeIncomplete(
+            f"check item retirement failed for {len(doc_ids)} document(s) of {user_id} "
+            f"({type(exc).__name__}); they are soft-deleted and kept so a re-run can finish"
+        ) from exc
+
+
 def _wipe_documents(user_id: str) -> dict[str, int]:
     """Withdraw every document's chunks, then delete the documents.
 
@@ -270,12 +287,17 @@ def _wipe_documents(user_id: str) -> dict[str, int]:
     soft-deleted documents are withdrawn again too (idempotent) — their
     original withdrawal may have failed.
 
-    A failed withdrawal stops the wipe before any document is hard-deleted:
-    the source ledger names the document, and keeping the (soft-deleted) row
-    is what lets a re-run finish the job.
+    Then every check item drafted from any of them is retired (A23), so the
+    class pool serves none of this account's uploads.
+
+    A failed withdrawal or retirement stops the wipe before any document is
+    hard-deleted: the source ledger and the items' `source_document_ids` name
+    the document, and keeping the (soft-deleted) row is what lets a re-run
+    finish the job.
     """
     doc_ids = _owned_keys("documents", user_id)
-    counts = {"documents": 0, "course_chunks": 0, "course_chunk_contributors": 0}
+    counts = {"documents": 0, "course_chunks": 0, "course_chunk_contributors": 0,
+              "check_items": 0}
     if doc_ids:
         table("documents").update(
             {"deleted_at": datetime.now(timezone.utc).isoformat()},
@@ -295,6 +317,7 @@ def _wipe_documents(user_id: str) -> dict[str, int]:
                 f"chunk withdrawal failed for {len(failed)} document(s) of {user_id}; "
                 "they are soft-deleted and kept so a re-run can finish"
             )
+        counts["check_items"] = _retire_items(user_id, doc_ids)
         counts["documents"] = _delete_keys("documents", doc_ids, owner=user_id)
 
     # Private rows that still name this uploader: written before the source
