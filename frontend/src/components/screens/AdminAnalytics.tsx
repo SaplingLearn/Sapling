@@ -18,6 +18,7 @@ import Link from "next/link";
 import { TopBar } from "../TopBar";
 import { useToast } from "../ToastProvider";
 import { HelpAbusePanel } from "./admin/HelpAbusePanel";
+import { HintTrendPanel } from "./admin/HintTrendPanel";
 import { SelfExplanationPanel } from "./admin/SelfExplanationPanel";
 import { MultiConceptPanel } from "./admin/MultiConceptPanel";
 import { LoopCostPanel } from "./AdminLoopCost";
@@ -69,9 +70,7 @@ const th: React.CSSProperties = {
   textAlign: "left", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em",
   color: "var(--text-muted)", padding: "4px 8px",
 };
-const td: React.CSSProperties = {
-  fontSize: 13, padding: "6px 8px", borderTop: "1px solid var(--border)",
-};
+const td: React.CSSProperties = { fontSize: 13, padding: "6px 8px", borderTop: "1px solid var(--border)" };
 const tdNum: React.CSSProperties = { ...td, textAlign: "right", fontVariantNumeric: "tabular-nums" };
 // Panel tables keep a minWidth so columns stay readable; this wrapper lets
 // narrow viewports scroll the table instead of overflowing the page.
@@ -591,6 +590,7 @@ export function LearningLoopPanelBody({ d }: { d: LearningLoopKpisData }) {
         <Stat label="Ceiling compliance" value={fmtRate(d.ceiling_compliance.rate)} />
         <Stat label="Served reveals" value={d.served_reveals} />
       </div>
+      <HintTrendPanel trend={d.htc_k_trend} />
       <h3 className="h-serif" style={{ fontSize: 15, margin: "8px 0" }}>Are the mastery estimates right?</h3>
       <p style={{ color: "var(--text-muted)", fontSize: 13, margin: "0 0 12px" }}>
         BKT&apos;s predicted chance of a correct unaided answer, against what students actually did.
