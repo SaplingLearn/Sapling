@@ -1562,7 +1562,7 @@ SANCTIONED_EVIDENCE_PERSISTERS = frozenset(
     {
         ("learning/evidence.py", "flush_pending"),
         # #117: grade_review hops its one write off the event loop into this
-        # helper (spec §13 A3); still the review's only evidence persister
+        # helper (#866 review A3); still the review's only evidence persister
         ("learning/review.py", "_write_check_evidence"),
         # PKG-14b: ungated after the cutover (spec §11.2), one mc evidence per
         # question — was a SANCTIONED_EVIDENCE_CALLERS (gated) entry. #118 moved

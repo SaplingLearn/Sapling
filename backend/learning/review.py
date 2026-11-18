@@ -1003,11 +1003,12 @@ def _open_item(doc: dict, item: ReviewItem, now_s: float) -> None:
     opened[sr_key(item)] = {"item_id": item.id, "served_at": now_s}
 
 
-#: The open entry's key holding the evidence operation id of its serving (spec
-#: §13 A4): minted from the serving's FIRST answer claim and kept when a claim
-#: is released, so a check answered again after an ambiguous acknowledgment
-#: journals at most one observation (the commit replays or refuses the same
-#: identity). A new serving opens a fresh entry, so it gets its own.
+#: The open entry's key holding the evidence operation id of its serving
+#: (#866 review A4): minted from the serving's FIRST answer claim and kept when
+#: a claim is released, so a check answered again after an ambiguous
+#: acknowledgment journals at most one observation (the commit replays or
+#: refuses the same identity). A new serving opens a fresh entry, so it gets
+#: its own.
 _OPERATION_KEY = "operation_id"
 
 
@@ -1279,7 +1280,7 @@ def _final_outcome(evidence: dict) -> dict:
 
 
 def _earlier_commit(user_id: str, item: ReviewItem, evidence: dict) -> dict | None:
-    """Spec §13 A4: the serving's operation id was refused because an earlier
+    """#866 review A4: the serving's operation id was refused because an earlier
     attempt of this serving committed with another grade (its acknowledgment
     was lost). That committed outcome stands — the journal holds it — so it is
     what the record and the answer use; never a second observation. None when
@@ -1297,7 +1298,7 @@ def _write_check_evidence(
     with the review's retention target. Returns (the outcome that stands, as
     `_final_outcome`; whether it is THIS grade's). A refusal of the serving's
     operation id after an earlier attempt of this serving committed returns
-    that committed outcome (`_earlier_commit`, A4); any other refusal
+    that committed outcome (`_earlier_commit`, #866 review A4); any other refusal
     propagates."""
     try:
         apply_graph_update(user_id, {"evidence": [evidence]}, course_id=item.course_id, retention=retention)
@@ -1410,10 +1411,10 @@ async def grade_review(
     write only the record closes it. The grade runs inside the claim's
     deadline (learning.claim_deadline): one that outlives it writes nothing.
 
-    `operation_id` (spec §13 A4; `claim_item`'s answer, else derived from
+    `operation_id` (#866 review A4; `claim_item`'s answer, else derived from
     `claim`): the evidence's identity, the same for every answer to one
     serving, so a resubmission after an ambiguous acknowledgment journals at
-    most one observation. The returned `rating` is the journaled one (A6: the
+    most one observation. The returned `rating` is the journaled one (#866 review A6: the
     help floor's rung, never rung 0's).
 
     #117: every database read and write runs off the event loop (one
@@ -1480,9 +1481,9 @@ async def grade_review(
                 resolve = {"evidence": evidence, "matched_wrong_key": outcome.matched_wrong_key}
                 if not correct:  # spec §3.3: corrective feedback WITH the answer
                     hint = f"{outcome.feedback_hint}\n\nAnswer: {check_item.reference_answer}"
-            else:  # A4: an earlier attempt's grade stands; this answer's feedback does not
+            else:  # #866 review A4: an earlier attempt's grade stands; this answer's feedback does not
                 hint = None if correct else f"Answer: {check_item.reference_answer}"
-            # A6: the rating the journal scheduled — the help floor's rung, never rung 0's
+            # #866 review A6: the rating the journal scheduled — the help floor's rung, never rung 0's
             rating_out = fsrs.rating_for(
                 final["channel"], correct, final["max_rung"], idk=final["idk"]
             )

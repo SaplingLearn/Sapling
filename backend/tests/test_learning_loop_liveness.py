@@ -1,7 +1,7 @@
 """Loop liveness: a grade that cannot be finished never holds the session.
 
-Spec §13 A1 (a slow grade plus "Check me"), A2 (a permanent evidence refusal)
-and A9 ("Check me" over concepts with no check question), on the same
+#866 review A1 (a slow grade plus "Check me"), A2 (a permanent evidence refusal)
+and #866 review A9 ("Check me" over concepts with no check question), on the same
 route seams as tests/test_learning_grade_recovery.py: the real compare-and-set
 store over an in-memory document, the real checkpoint seal, no DB, no model.
 """
@@ -56,7 +56,7 @@ def _abandoned(entry: dict, reason: str) -> None:
     assert grade_checkpoint.KEY not in entry and entry.get("graded_at") is None
 
 
-# ── A1: a slow grade plus "Check me" ─────────────────────────────────────────
+# ── #866 review A1: a slow grade plus "Check me" ──────────────────────────────
 
 
 def test_a_late_grade_after_check_me_moved_on_cannot_wedge_the_session(gate_on, seams):
@@ -167,7 +167,7 @@ def test_a_grade_runs_only_inside_its_claim():
         asyncio.run(run(0, own_timeout))
 
 
-# ── A2: a permanent evidence refusal ──────────────────────────────────────────
+# ── #866 review A2: a permanent evidence refusal ──────────────────────────────
 
 
 def _abandoned_session(seams, reason: str) -> None:
@@ -247,7 +247,7 @@ def test_a_missing_receipt_right_after_the_flush_is_retried(gate_on, seams):
     seams.grade.assert_awaited_once()
 
 
-# ── A9: "Check me" over concepts with no check question ──────────────────────
+# ── #866 review A9: "Check me" over concepts with no check question ───────────
 
 
 def test_check_me_names_the_concepts_it_could_not_check(gate_on, seams):

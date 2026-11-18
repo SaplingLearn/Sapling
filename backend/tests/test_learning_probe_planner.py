@@ -1843,7 +1843,7 @@ def test_probe_recovery_rejects_shape_valid_immutable_receipt_mismatch(
 ):
     """A final exposure downgrade is allowed, but frozen item/outcome provenance
     cannot change. A committed receipt reads the same on every retry, so a
-    mismatch is permanent (spec §13 A2): the saved grade is abandoned with no
+    mismatch is permanent (#866 review A2): the saved grade is abandoned with no
     probe record, the item counts as not asked, and a retry grades nothing."""
     from learning.evidence import PlanningObservation
     from learning.grade_checkpoint import KEY

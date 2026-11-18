@@ -174,7 +174,7 @@ def test_check_goal_uses_committed_exposure_instead_of_optimistic_checkpoint(gat
 
 
 def test_a_receipt_that_never_attests_the_grade_abandons_it(gate_on, seams):
-    """Spec §13 A2: the committed receipt is the record and reads the same on
+    """#866 review A2: the committed receipt is the record and reads the same on
     every retry, so one with no observation of the grade is permanent: the
     saved grade is abandoned (claim released, checkpoint cleared, the reason
     kept, no session record) and the session goes on, never a 503 forever."""

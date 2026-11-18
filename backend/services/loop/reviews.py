@@ -234,7 +234,7 @@ async def review_answer(body: ReviewAnswerBody, request: Request) -> dict:
             confidence=body.confidence,  # spec §13 A127 (a check's; a flashcard body has none)
             deps=deps,
             claim=claim,
-            # spec §13 A4: the serving's evidence identity, kept across a released claim
+            # #866 review A4: the serving's evidence identity, kept across a released claim
             operation_id=operation_id,
             # spec §13 A140: the interleave's anchor records the graded difficulty
             **({"varied": True} if await asyncio.to_thread(varied_practice.varied_on, body.user_id) else {}),
@@ -265,7 +265,7 @@ async def review_answer(body: ReviewAnswerBody, request: Request) -> dict:
         # the evidence store did not answer (or the grade outlived its claim):
         # nothing is recorded as graded and the claim was released, so the
         # same answer may be sent again — under the serving's operation id
-        # (A4), so an ambiguous earlier write is never journaled twice
+        # (#866 review A4), so an ambiguous earlier write is never journaled twice
         raise HTTPException(status_code=503, detail=_REVIEW_UNAVAILABLE) from None
     except LoopStateConflict:
         raise _StateConflict() from None

@@ -82,7 +82,7 @@ def _guide() -> GuideRow:
 def world(monkeypatch, sink):
     """One guide, a tree with "Loops" at 0.5, and a graph that applies the
     evidence it is given. `graph` holds every `apply_graph_update` call. The
-    quiz's evidence rules run for real (spec §13 A8) over an in-memory
+    quiz's evidence rules run for real (#866 review A8) over an in-memory
     `quiz_evidence_claims` (`claims`) and help ledger (`help`: hash → rung)."""
     box = {"answered": {}, "graph": [], "scores": {"Loops": 0.5, "Recursion": 0.1},
            "graph_error": None, "events": sink, "claims": _Claims(), "help": {}}
@@ -311,7 +311,7 @@ def test_each_answer_emits_ids_and_outcome_only(world):
     }
 
 
-# ── The quiz's evidence rules (spec §13 A8) ─────────────────────────────────────
+# ── The quiz's evidence rules (#866 review A8) ────────────────────────────────
 
 QH = question_hash("How many passes?", ["3", "4", "5"])
 

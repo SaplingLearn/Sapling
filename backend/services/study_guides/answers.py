@@ -11,7 +11,7 @@ node through ``graph_service.apply_graph_update``, built the way
 ``services/quiz/submission.py::_quiz_evidence`` builds one, and the graph runs
 BKT on it. Never a flat delta.
 
-It obeys the quiz's evidence rules too (spec §13 A8), applied by the quiz's
+It obeys the quiz's evidence rules too (#866 review A8), applied by the quiz's
 own code (``services/question_evidence.py``): a question counts at most once
 per student per rolling 24 h, quiz and guide alike (A94/A100's claim), and
 carries the help ledger's floor (A99). A guide's Regenerate clears its stored
@@ -94,7 +94,7 @@ async def _amove_mastery(
     node = await signals.aconcept_node(guide.user_id, course_id, block.concept)
     if node is None:
         return None
-    # A8: the quiz's rules first — the 24 h per-question claim, then the help floor
+    # #866 review A8: the quiz's rules first — the 24 h per-question claim, then the help floor
     kept = await run_in_threadpool(
         guard_question_evidence, guide.user_id, _claimant(guide, block),
         [_evidence(node["id"], block, correct)],

@@ -289,7 +289,7 @@ async def posttest_answer(body: PosttestAnswerBody, request: Request):
             body.hidden_s,
             (answered_at - shown_from).total_seconds() if shown_from else None,
         )
-        # A5: the evidence FIRST, under the claim and the pose's own identity
+        # #866 review A5: the evidence FIRST, under the claim and the pose's own identity
         # (`_pose_operation`): a failed write leaves the pose open (released
         # below) for the same answer to be sent again, never an answered pose
         # whose evidence BKT never saw; a retry replays the first commit, or
@@ -334,7 +334,7 @@ async def posttest_answer(body: PosttestAnswerBody, request: Request):
             raise HTTPException(status_code=409, detail=_RETIRED_DETAIL)
         await asyncio.to_thread(_ledger, mark_graded, body.user_id, item.question_hash)
     except (PlanningPersistenceUnavailable, GradeDeadlineExceeded):
-        # A5: nothing is answered, so the pose is released below and the same
+        # #866 review A5: nothing is answered, so the pose is released below and the same
         # answer may be sent again — under the pose's evidence identity, so an
         # ambiguous write is never journaled twice (`_pose_operation`)
         raise HTTPException(status_code=503, detail=_POSTTEST_UNAVAILABLE) from None
@@ -355,7 +355,7 @@ _POSTTEST_UNAVAILABLE = "Post-test evidence unavailable; retry the same answer"
 
 
 def _pose_operation(user_id: str, node_id: str, pose: dict, claim: str) -> str:
-    """Spec §13 A5: the evidence operation id of one pose — the same for every
+    """#866 review A5: the evidence operation id of one pose — the same for every
     answer to it (a pose is one row per student, node and window; a renewal
     re-poses with a new posed_at), so a retry after an ambiguous write can
     never journal a second observation. A row read without its posed_at falls
@@ -366,7 +366,7 @@ def _pose_operation(user_id: str, node_id: str, pose: dict, claim: str) -> str:
 
 
 def _earlier_pose_commit(user_id: str, node_id: str, operation: str) -> dict | None:
-    """Spec §13 A5: the pose's operation id was refused (another grade under it)
+    """#866 review A5: the pose's operation id was refused (another grade under it)
     because an earlier attempt of this pose committed while its acknowledgment
     was lost. That committed outcome ({channel, correct, idk, max_rung}) is the
     record the pose is closed with; None when no committed observation of the

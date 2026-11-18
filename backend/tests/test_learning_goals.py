@@ -102,7 +102,7 @@ def test_goal_edits_cannot_race_grading_closing_or_teaching(probe, doc):
 
 
 def test_a_stale_probe_claim_does_not_hold_the_goal_for_good(probe):
-    """Spec §13 A7: /goal waits only for a LIVE probe claim (or a saved grade),
+    """#866 review A7: /goal waits only for a LIVE probe claim (or a saved grade),
     as /probe/next and /close do. A claim left stale by a grader that died is
     no grade in flight: the goal changes and the posed item counts as not
     asked (its late grade, if any, then fails the goal-version fence)."""

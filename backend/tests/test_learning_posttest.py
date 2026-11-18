@@ -928,7 +928,7 @@ def _pose_operation_id(tables) -> str:
 
 
 def test_a_taken_over_claim_writes_under_the_poses_one_identity(gate_on, one_item, grader_says, applied):
-    """Spec §13 A5 (m1/m2 since): the evidence goes first, then the pose's close
+    """#866 review A5 (m1/m2 since): the evidence goes first, then the pose's close
     re-validates the claim. A claim taken over mid-grade (stale takeover) is a
     409; what this request wrote carries the POSE's operation id, so the
     request that took over writes the same identity — one observation."""
@@ -942,7 +942,7 @@ def test_a_taken_over_claim_writes_under_the_poses_one_identity(gate_on, one_ite
 
 
 def test_a_failed_flush_leaves_the_pose_open_for_the_same_answer(gate_on, one_item, grader_says, applied):
-    """Spec §13 A5: the pose used to be closed before the flush, so a failed
+    """#866 review A5: the pose used to be closed before the flush, so a failed
     flush lost the answer for good (500, then 409: BKT never saw it). The
     evidence now goes first: a failed write is a 503 with the pose open and
     released, and the retry records it once, under the same identity."""
@@ -963,7 +963,7 @@ def test_a_failed_flush_leaves_the_pose_open_for_the_same_answer(gate_on, one_it
 
 
 def test_an_earlier_commit_of_the_pose_stands_on_the_retry(gate_on, one_item, grader_says):
-    """Spec §13 A5: the first write landed but its acknowledgment was lost; the
+    """#866 review A5: the first write landed but its acknowledgment was lost; the
     retry is graded WRONG and its write is refused under the pose's identity
     (EvidenceTransactionConflict). The committed (correct) grade stands: the
     pose is closed with it and the answer says so — one observation."""

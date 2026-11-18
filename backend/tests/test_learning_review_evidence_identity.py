@@ -1,10 +1,10 @@
-"""The daily review's evidence identity and rating (spec §13 A3, A4, A6).
+"""The daily review's evidence identity and rating (#866 review A3, A4, A6).
 
-A4: a review answer's evidence carries its SERVING's operation id — minted
+#866 review A4: a review answer's evidence carries its SERVING's operation id — minted
 from the serving's first answer claim and kept when a claim is released — so
 an answer sent again after an ambiguous acknowledgment journals at most one
 observation: the commit replays the first, or refuses another grade under the
-same identity, and then the committed outcome stands. A6: the rating returned
+same identity, and then the committed outcome stands. #866 review A6: the rating returned
 is the one the journal scheduled (after the help floor). The route maps a
 persistence failure to 503 (it was an unmapped 500).
 
@@ -174,7 +174,7 @@ def test_a_real_refusal_is_not_taken_for_an_earlier_commit(monkeypatch, store):
 
 @pytest.mark.parametrize("floor,rating", [(0, 3), (1, 2), (params.RUNG_NO_CREDIT_MIN, 1)])
 def test_the_rating_is_the_one_the_journal_scheduled(monkeypatch, store, floor, rating):
-    """Spec §13 A6: the help floor raises the evidence's rung before the write;
+    """#866 review A6: the help floor raises the evidence's rung before the write;
     the answer's rating is the journaled one (Good / Hard / Again), never rung 0's."""
     calls, applied = _checked(monkeypatch)
 

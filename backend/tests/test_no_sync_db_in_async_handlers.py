@@ -62,7 +62,7 @@ DOMAIN_PACKAGES = tuple(
     )
 )
 
-#: The learning loop's own layer (spec §13 A3): its stores are sync PostgREST
+#: The learning loop's own layer (#866 review A3): its stores are sync PostgREST
 #: callers, and the loop's async handlers await its async functions
 #: (``learning/review.py::grade_review``), so one inline store call there
 #: blocks the event loop exactly as a handler's would.
@@ -422,7 +422,7 @@ def test_every_domain_package_is_scanned():
 
 
 def test_the_learning_layer_is_scanned():
-    """Spec §13 A3: an `async def` under learning/ that a loop handler awaits
+    """#866 review A3: an `async def` under learning/ that a loop handler awaits
     is checked like the handler itself (grade_review graded and wrote on the
     loop before), and the walk follows its helpers into the stores."""
     scanned = {p.relative_to(BACKEND).as_posix() for p in _scanned_paths()}

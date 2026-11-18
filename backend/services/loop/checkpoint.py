@@ -76,7 +76,7 @@ def _open_grade_checkpoint(entry, body, course_id, *, kind):
 _MOVED_ON = "This check was closed while your answer was graded. Select another check to continue."
 
 
-#: The 409 for a saved grade the evidence store refused for good (A2): the
+#: The 409 for a saved grade the evidence store refused for good (#866 review A2): the
 #: answer is discarded with nothing written, and the session goes on.
 _ABANDONED_DETAIL = "This answer could not be recorded. Select another check to continue."
 
@@ -118,7 +118,7 @@ def _save_grade_checkpoint(checkpoint):
 
 
 def _abandon_grade_checkpoint(checkpoint, reason: str) -> None:
-    """Spec §13 A2's terminal path for a saved grade the evidence store refuses
+    """#866 review A2's terminal path for a saved grade the evidence store refuses
     for good (`reason`: its node is gone or outside the course, the
     operation's input or owner changed, or its committed receipt disagrees
     with the grade). Retrying the same answer can never succeed, so the claim
@@ -156,7 +156,7 @@ def _abandon_grade_checkpoint(checkpoint, reason: str) -> None:
 #: grade because staff retired its item meanwhile (EvidenceItemRetired)
 _ITEM_RETIRED = object()
 
-#: A2: _flush_grade_checkpoint's answer for a check grade abandoned because the
+#: #866 review A2: _flush_grade_checkpoint's answer for a check grade abandoned because the
 #: store refused it for good (`_abandon_grade_checkpoint`); a probe's is False,
 #: the answer its caller already gives as "not asked".
 _GRADE_ABANDONED = object()
@@ -185,7 +185,7 @@ def _flush_grade_checkpoint(checkpoint, request, *, loop_on, deps=None):
             # A grade saved on a step that is no longer current (left by a
             # build before _save_grade_checkpoint refused that) can never be
             # flushed: closed here for good, in this write, so it stops
-            # holding the session (A1)
+            # holding the session (#866 review A1)
             _abandon_claimed(entry, ABANDON_MOVED_PAST)
             orphan["moved"] = True
 
@@ -222,7 +222,7 @@ def _flush_grade_checkpoint(checkpoint, request, *, loop_on, deps=None):
         _update_loop_state(checkpoint.session_id, supersede, require_open=True, require_existing=True)
         return _ITEM_RETIRED if isinstance(exc, EvidenceItemRetired) else False
     except EvidenceTransactionConflict:
-        # A2: a permanent refusal (the node is gone or outside the course, the
+        # #866 review A2: a permanent refusal (the node is gone or outside the course, the
         # operation's input or owner changed): the same answer can never be
         # written, so it is abandoned instead of a 503 "retry" forever
         _abandon_grade_checkpoint(checkpoint, ABANDON_EVIDENCE_REFUSED)
@@ -245,7 +245,7 @@ def _flush_grade_checkpoint(checkpoint, request, *, loop_on, deps=None):
     try:
         _attested_observation(checkpoint, receipt, _graded_node(checkpoint))
     except _UNATTESTED:
-        # A2: the committed receipt does not attest this grade, and it reads
+        # #866 review A2: the committed receipt does not attest this grade, and it reads
         # the same on every retry: abandon the session record (the journal
         # keeps what it committed) instead of a 503 "retry" forever
         _abandon_grade_checkpoint(checkpoint, ABANDON_RECEIPT_MISMATCH)
@@ -268,7 +268,7 @@ def _committed_grade_observation(checkpoint, receipt, node_id):
 
     A receipt that does not attest the grade (no single observation for it, or
     one that disagrees with or weakens it) is the committed record and reads
-    the same on every retry, so it is permanent (A2): `_flush_grade_checkpoint`
+    the same on every retry, so it is permanent (#866 review A2): `_flush_grade_checkpoint`
     has already abandoned such a grade before this runs; should one reach here
     it is abandoned the same way (no session record) and the answer is a 409
     that lets the session go on — never a 503 "retry" forever.

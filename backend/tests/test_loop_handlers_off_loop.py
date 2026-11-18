@@ -155,7 +155,7 @@ def test_the_loop_handler_reads_and_writes_off_the_event_loop(wire, blocked, pat
             body = {**body, "session_id": review.sid}
         r = client.post(LOOP + path, json=body)
         r.read()
-    if review is not None:  # spec §13 A3: it graded and wrote, all of it off the loop
+    if review is not None:  # #866 review A3: it graded and wrote, all of it off the loop
         assert r.status_code == 200, r.text
         review.grade.assert_awaited_once()
         assert review.writes == [False], "the evidence write ran on the event loop"
