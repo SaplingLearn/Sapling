@@ -76,6 +76,7 @@ from datetime import UTC, datetime, timedelta
 from typing import NamedTuple
 
 import config
+import httpx
 from agents._run import run_agent_sync
 from agents.check_items import CheckItemsUnavailable, draft_items
 from agents.check_items_key_match import MatchItem, match_keys, matches
@@ -723,8 +724,10 @@ def _with_live_sources(rows) -> list[dict]:
     this read is the serving side of the same rule, so an item a missed or
     failed retirement left behind is never served either. One `in.(…)`
     documents read per _DOC_ID_BATCH cited ids; a row that cites none (no
-    source recorded) is kept. Raises on a failed read, like the item read it
-    filters (the caller's own error handling applies)."""
+    source recorded) is kept. An item it withholds is retired on the spot
+    (retire_items_for_documents), so a missed retirement heals on the first
+    read that meets it. Raises on a failed documents read, like the item read
+    it filters (the caller's own error handling applies)."""
     rows = list(rows or [])
     cited = sorted({d for r in rows for d in (r.get("source_document_ids") or []) if d})
     if not cited:
@@ -742,10 +745,19 @@ def _with_live_sources(rows) -> list[dict]:
         live.update(r["id"] for r in found or [] if r.get("id"))
     kept = [r for r in rows if set(r.get("source_document_ids") or []) <= live]
     if len(kept) < len(rows):
+        gone = sorted(set(cited) - live)
         logger.warning(
-            "check items: %d item(s) cite a withdrawn document and were not served (A23)",
+            "check items: %d item(s) cite %d withdrawn document(s); not served, retiring (A23)",
             len(rows) - len(kept),
+            len(gone),
         )
+        # Self-healing: the retirement a past withdrawal missed (an account
+        # wiped before the wipe retired items) happens now, once. A failure is
+        # only logged: the read already withholds them.
+        try:
+            retire_items_for_documents(gone)
+        except (httpx.HTTPError, RuntimeError, ValueError) as exc:
+            logger.warning("check items: withdrawn-source retirement failed (%s)", type(exc).__name__)
     return kept
 
 

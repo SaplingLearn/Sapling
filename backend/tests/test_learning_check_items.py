@@ -2926,6 +2926,20 @@ class TestReadItems:
         doc_filters = mocks["documents"].select.call_args.kwargs["filters"]
         assert doc_filters["deleted_at"] == "is.null"
         assert doc_filters["id"] == 'in.("doc-1","doc-gone")'
+        # the missed retirement heals: items citing the gone document are deleted
+        retired = mocks["check_items"].delete.call_args.kwargs["filters"]
+        assert retired["source_document_ids"] == 'ov.{"doc-gone"}'
+
+    def test_a_failed_healing_retirement_never_fails_the_read(self):
+        from services import check_item_service as svc
+
+        gone = dict(self._stored_row(), id="i-gone", source_document_ids=["doc-gone"])
+        factory, mocks = _cached_tables({"check_items": [self._stored_row(), gone],
+                                         "documents": _LIVE_SOURCES})
+        mocks_tbl = factory("check_items")
+        mocks_tbl.delete.side_effect = RuntimeError("PostgREST down")
+        with patch("services.check_item_service.table", side_effect=factory):
+            assert [i.id for i in svc.list_items("course-1", "recursion")] == ["i1"]
 
     def test_items_citing_no_document_read_no_documents(self):
         from services import check_item_service as svc
