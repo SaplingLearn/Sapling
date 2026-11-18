@@ -413,7 +413,7 @@ def test_a_continuation_in_the_same_request_is_not_rechecked(budget):
         first = asyncio.run(agent.run("hi"))
         budget.value = _over()  # spent by the first run
         llm_budget.clear_llm_budget_cache()
-        text = asyncio.run(_continuation_text(agent, first, {}))
+        text = asyncio.run(_continuation_text(agent, first, {}, usage_session_id=None))
     assert text == "rescued" and calls["n"] == 2
     assert budget.calls == [USER]  # one read for the whole request
 

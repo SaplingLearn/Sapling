@@ -89,15 +89,17 @@ async def _get_course_id_for_topic(topic: str, user_id: str) -> str:
     if not topic_trim:
         return ""
     for read in _topic_reads(topic_trim, user_id):
-        if read.best_effort:
-            try:
-                rows = await table(read.table).aselect(read.columns, **_select_kwargs(read))
-            except Exception as exc:
-                _read_failed(read, topic_trim, user_id, exc)
-                continue
-        else:
+        # The read AND its matching are guarded together: an enrollment row of
+        # an unexpected shape is a failed best-effort read (logged, the graph
+        # fallbacks still run), as it was before #866.
+        try:
             rows = await table(read.table).aselect(read.columns, **_select_kwargs(read))
-        found, course_id = read.match(rows or [], topic_trim)
+            found, course_id = read.match(rows or [], topic_trim)
+        except Exception as exc:
+            if not read.best_effort:
+                raise
+            _read_failed(read, topic_trim, user_id, exc)
+            continue
         if found:
             return course_id
     return ""
@@ -137,15 +139,17 @@ def _get_course_id_for_topic_sync(topic: str, user_id: str) -> str:
     if not topic_trim:
         return ""
     for read in _topic_reads(topic_trim, user_id):
-        if read.best_effort:
-            try:
-                rows = table(read.table).select(read.columns, **_select_kwargs(read))
-            except Exception as exc:
-                _read_failed(read, topic_trim, user_id, exc)
-                continue
-        else:
+        # The read AND its matching are guarded together: an enrollment row of
+        # an unexpected shape is a failed best-effort read (logged, the graph
+        # fallbacks still run), as it was before #866.
+        try:
             rows = table(read.table).select(read.columns, **_select_kwargs(read))
-        found, course_id = read.match(rows or [], topic_trim)
+            found, course_id = read.match(rows or [], topic_trim)
+        except Exception as exc:
+            if not read.best_effort:
+                raise
+            _read_failed(read, topic_trim, user_id, exc)
+            continue
         if found:
             return course_id
     return ""

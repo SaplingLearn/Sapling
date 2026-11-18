@@ -48,6 +48,7 @@ from agents.usage import record_agent_usage
 from services import jobs
 from services.encryption import bind, decrypt_json_column
 from services.feature_flags import flag_on
+from learning.bkt import stored_score
 
 logger = logging.getLogger(__name__)
 
@@ -269,7 +270,7 @@ def _concept_metrics(node_rows: list) -> tuple[dict, list, dict]:
         name = n["concept_name"]
         if name not in concept_data:
             concept_data[name] = {"scores": [], "tiers": [], "node_ids": []}
-        concept_data[name]["scores"].append(float(n["mastery_score"] or 0.0))
+        concept_data[name]["scores"].append(stored_score(n["mastery_score"]))
         concept_data[name]["tiers"].append(n["mastery_tier"] or "unexplored")
         concept_data[name]["node_ids"].append(n["id"])
         node_owner[n["id"]] = n.get("user_id")

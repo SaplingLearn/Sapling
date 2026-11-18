@@ -145,3 +145,24 @@ class TestReadMisconceptionsForCourse:
         t.assert_called_with("offering_concept_stats")
         select_kwargs = t.return_value.select.call_args
         assert "course_cs101" in str(select_kwargs)
+
+
+def test_a_drifted_or_nan_stored_score_reads_in_range_not_a_validation_error():
+    """graph_nodes.mastery_score has no CHECK, and PostgREST sends a float NaN
+    as "NaN". ConceptMastery.mastery is bounded [0, 1], so one such row used to
+    fail the whole tool; the stored-score rule clamps it (NaN reads as 0.0)."""
+    import asyncio
+    from unittest.mock import MagicMock, patch
+
+    from agents.tools import graph_read
+
+    rows = [
+        {"concept_name": "Heaps", "mastery_score": 1.4, "last_studied_at": None},
+        {"concept_name": "Graphs", "mastery_score": "NaN", "last_studied_at": None},
+        {"concept_name": "Tries", "mastery_score": -0.2, "last_studied_at": None},
+    ]
+    tbl = MagicMock()
+    tbl.select.return_value = rows
+    with patch.object(graph_read, "table", return_value=tbl):
+        got = asyncio.run(graph_read.read_concepts_for_user("u1", "c1"))
+    assert [(c.concept_name, c.mastery) for c in got] == [("Heaps", 1.0), ("Graphs", 0.0), ("Tries", 0.0)]

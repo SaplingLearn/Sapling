@@ -168,6 +168,19 @@ class _FakeDB:
         return [{"outcome": "materialized", "session_mode": r["mode"],
                  "session_topic": r["topic"], "session_offering_id": r["offering_id"]}]
 
+    def claim_tutor_session(self, p):
+        """claim_tutor_session: the caller's own live pending row, returned as
+        it was and turned into an "ended" tombstone, in one step."""
+        r, now = self.store(p["p_session_id"]), _now()
+        if not (r and r["user_id"] == p["p_user_id"] and r["state"] == "pending"
+                and datetime.fromisoformat(r["stashed_at"]) >= now - timedelta(seconds=p["p_ttl_seconds"])):
+            return []
+        claimed = dict(r)
+        r.update(state="ended", discarded_at=now.isoformat(), mode=None, topic=None,
+                 course_id=None, offering_id=None, assistant_reply=None,
+                 graph_update=None, loop_state=None)
+        return [claimed]
+
     def discard_tutor_session(self, p):
         r, now = self.store(p["p_session_id"]), _now()
         was = bool(r and r["state"] == "pending" and datetime.fromisoformat(r["stashed_at"])
@@ -474,11 +487,46 @@ def test_a_close_waits_for_a_materialising_first_turn_and_finds_nothing_pending(
     assert ts.discarded_reason("s-race", "u1") is None, "nothing was ended: the turn won"
 
 
-def test_a_close_that_wins_leaves_a_tombstone_the_racing_turn_reads_as_ended(monkeypatch):
-    """Close first: it takes the payload AND leaves the "ended" tombstone, so a
-    first turn already past its ownership check refuses with 409 at its
-    materialisation instead of writing into (or 404ing on) the closed session."""
+def test_a_close_that_wins_makes_a_waiting_first_turn_answer_409_at_materialisation(monkeypatch):
+    """Close first, memory mode: a first turn already past its ownership check
+    and waiting on the materialisation lock re-checks under it, finds the entry
+    gone and the claim's "ended" tombstone, and refuses with 409 — it never
+    writes into (or 404s on) the session being closed."""
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
     from fastapi import HTTPException
+
+    from services.tutor import pending as tutor_pending
+
+    monkeypatch.setattr(ts, "stored", lambda: False)
+    monkeypatch.setitem(ts.PENDING_SESSIONS, "s-won", {"user_id": "u1", "topic": "T"})
+    turn_started = threading.Event()
+    real_lock = ts.materialization_lock
+
+    def lock_announcing_the_turn(session_id):
+        turn_started.set()
+        return real_lock(session_id)
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with real_lock("s-won"):  # the close holds the lock first...
+            monkeypatch.setattr(tutor_pending, "materialization_lock", lock_announcing_the_turn)
+            turn = pool.submit(tutor_pending._consume_pending, "s-won", "u1")
+            assert turn_started.wait(5), "the turn reached its locked re-check"
+            # ...and claims under it, exactly as claim_pending does.
+            assert ts.discard_pending("s-won", user_id="u1", reason="ended") == {"user_id": "u1", "topic": "T"}
+        with pytest.raises(HTTPException) as exc:
+            turn.result(timeout=5)
+    assert exc.value.status_code == 409
+
+
+def test_a_close_that_wins_leaves_a_tombstone_until_its_row_is_stored(monkeypatch):
+    """Close first: the claim takes the payload and leaves the "ended"
+    tombstone; a later first turn answers 409. Once the close has stored the
+    row, release_claim_tombstone drops it — the row's close is the guard."""
+    from fastapi import HTTPException
+
+    from services.tutor import pending as tutor_pending
 
     monkeypatch.setattr(ts, "stored", lambda: False)
     monkeypatch.setitem(ts.PENDING_SESSIONS, "s-won", {"user_id": "u1", "topic": "T"})
@@ -487,9 +535,51 @@ def test_a_close_that_wins_leaves_a_tombstone_the_racing_turn_reads_as_ended(mon
     assert "s-won" not in ts.PENDING_SESSIONS
     assert ts.discarded_reason("s-won", "u1") == "ended"
     with pytest.raises(HTTPException) as exc:
-        ts.raise_if_discarded_here("s-won", "u1")
+        tutor_pending._consume_pending("s-won", "u1")
     assert exc.value.status_code == 409
     assert ts.claim_pending("s-won", "u1") is None, "a second close finds nothing pending"
+
+    ts.release_claim_tombstone("s-won", "u1")
+    assert ts.discarded_reason("s-won", "u1") is None
+
+
+def test_the_table_claim_is_one_locked_call_and_a_racing_turn_reads_it_as_ended(db):
+    """Table mode: claim_tutor_session returns the payload and leaves the
+    tombstone in one call (no separate read, no snapshot to go stale); the
+    racing turn's materialisation answers 409."""
+    from fastapi import HTTPException
+
+    ts.stash_pending("s-tab", {
+        "user_id": "u1", "mode": "socratic", "topic": "Recursion", "course_id": "",
+        "offering_id": "", "use_shared_context": True, "assistant_reply": GREETING,
+        "graph_update": {},
+    })
+    _replica_hop()
+    db.rpcs.clear()
+    claimed = ts.claim_pending("s-tab", "u1")
+    assert claimed["topic"] == "Recursion" and db.rpcs == ["claim_tutor_session"]
+    assert db.store("s-tab")["state"] == "ended" and db.store("s-tab")["topic"] is None
+    with pytest.raises(HTTPException) as exc:
+        ts.materialize_stored("s-tab", "u1")
+    assert exc.value.status_code == 409
+
+    ts.release_claim_tombstone("s-tab", "u1")
+    assert db.store("s-tab") is None
+
+
+def test_a_table_claim_of_another_students_session_is_404_and_changes_nothing(db):
+    from fastapi import HTTPException
+
+    ts.stash_pending("s-foreign", {
+        "user_id": "u2", "mode": "socratic", "topic": "T", "course_id": "",
+        "offering_id": "", "use_shared_context": True, "assistant_reply": GREETING,
+        "graph_update": {},
+    })
+    _replica_hop()
+    with pytest.raises(HTTPException) as exc:
+        ts.claim_pending("s-foreign", "u1")
+    assert exc.value.status_code == 404
+    assert db.store("s-foreign")["state"] == "pending"
 
 
 def test_claim_pending_refuses_another_students_session(monkeypatch):

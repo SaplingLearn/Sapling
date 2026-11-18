@@ -7,7 +7,6 @@ observe-only router hook (#640).
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 
 from pydantic_ai.messages import ModelResponse, TextPart
@@ -274,13 +273,9 @@ _CONTINUATION_INSTRUCTIONS = (
 _CONTINUATION_RUN_KEYS = ("deps", "model", "model_settings")
 
 
-#: `_continuation_text`'s "the caller did not resolve the usage session".
-_UNRESOLVED = object()
-
-
 async def _continuation_text(
     agent, run_result, run_kwargs: dict, *, request_id: str | None = None,
-    usage_session_id=_UNRESOLVED,
+    usage_session_id: str | None,
 ) -> str | None:
     """Finish a turn the model abandoned after its tools ran (#646).
 
@@ -289,6 +284,11 @@ async def _continuation_text(
     pre-#646 degrade for those turns was a visible "interrupted" error whose
     only offered recovery — a manual retry — re-runs the turn, re-executes
     the tools, and can apply the same append-only mastery event twice.
+
+    ``usage_session_id`` is REQUIRED: the llm_usage session id the turn's own
+    run recorded (A92) — the owner-checked id a chat/action turn resolved, or
+    the server-minted id of a session opener — so the continuation's cost
+    lands on the same session without a second ownership read.
 
     This is NOT a re-run. `run_result.all_messages()` already contains every
     tool call AND its result, so the model composes the reply from them.
@@ -323,12 +323,6 @@ async def _continuation_text(
     """
     carried = {k: run_kwargs[k] for k in _CONTINUATION_RUN_KEYS if k in run_kwargs}
     deps = carried.get("deps")
-    if usage_session_id is _UNRESOLVED:
-        # The caller did not pass the turn's resolved id: read it here (A92),
-        # off the event loop (#117: a thread of its own, #756).
-        usage_session_id = await asyncio.to_thread(
-            _usage_session_id, getattr(deps, "session_id", None), getattr(deps, "user_id", None) or "",
-        )
     with agent.override(tools=[], toolsets=[]):
         result = record_agent_usage(
             await agent.run(

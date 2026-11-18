@@ -393,19 +393,46 @@ def rename_pending(session_id: str, topic: str) -> bool:
     return stored() and _store_rename(session_id, topic)
 
 
+@runs_as_service
+def _store_claim(session_id: str, user_id: str) -> dict | None:
+    """The caller's own live pending row's payload, the row turned into an
+    "ended" tombstone in the same locked statement (claim_tutor_session); None
+    when there is none to claim."""
+    out = rpc("claim_tutor_session", {
+        "p_session_id": session_id,
+        "p_user_id": user_id,
+        "p_ttl_seconds": PENDING_TTL_SECONDS,
+    })
+    rows = out if isinstance(out, list) else ([out] if out else [])
+    return _view(rows[0])[0] if rows else None
+
+
+@runs_as_service
+def _store_release(session_id: str, user_id: str) -> None:
+    table(STORE_TABLE).delete({
+        "session_id": f"eq.{session_id}",
+        "user_id": f"eq.{user_id}",
+        "state": "eq.ended",
+    })
+
+
 def claim_pending(session_id: str, user_id: str) -> dict | None:
     """Take ``session_id``'s pending payload away for good, without
     materialising it (the learning loop's close of a session nobody answered
     in: its row is written by the close itself). None when the session is not
     pending; 404 when it is another student's.
 
-    The claim leaves an ``"ended"`` tombstone, exactly as an end-session
-    discard does, so either order of a close racing the session's first turn
-    is safe: a turn that materialises first holds the materialisation lock
-    (memory) or wins the row (table), and the close then finds nothing
-    pending and acts on the row; a close that wins leaves the tombstone, and
-    the turn — even one already past its ownership check — answers 409
-    (ended) instead of writing into, or 404ing on, a session being closed."""
+    The claim leaves an ``"ended"`` tombstone, as an end-session discard does,
+    covering the window until the close has written the row
+    (:func:`release_claim_tombstone`, after which the stored close is the
+    durable guard: the loop refuses every turn on a closed session). So either
+    order of a close racing the session's first turn is safe: a turn that
+    materialises first holds the materialisation lock (memory) or wins the row
+    (table), and the close then finds nothing pending and acts on the row; a
+    close that wins tombstones it, and the turn — even one already past its
+    ownership check — answers 409 (ended) instead of writing into, or 404ing
+    on, a session whose row does not exist yet. The table path takes the
+    payload and leaves the tombstone in one locked statement."""
     if session_id in PENDING_SESSIONS:
         with materialization_lock(session_id):
             pending = PENDING_SESSIONS.get(session_id)
@@ -416,16 +443,24 @@ def claim_pending(session_id: str, user_id: str) -> dict | None:
             return discard_pending(session_id, user_id=user_id, reason="ended")
     if not stored():
         return None
-    payload = _view(_store_row(session_id))[0]
-    if payload is None:
-        return None
-    if payload.get("user_id") != user_id:
-        raise HTTPException(status_code=404, detail=SESSION_NOT_FOUND)
-    # One locked statement turns the pending row into the tombstone; it says
-    # whether the row was still pending, i.e. whether this close won it.
-    if _store_discard(session_id, user_id, "ended", only_if_pending=True):
-        return payload
-    return None
+    claimed = _store_claim(session_id, user_id)
+    if claimed is None and (other := _view(_store_row(session_id))[0]) is not None:
+        if other.get("user_id") != user_id:
+            raise HTTPException(status_code=404, detail=SESSION_NOT_FOUND)
+    return claimed
+
+
+def release_claim_tombstone(session_id: str, user_id: str) -> None:
+    """Drop the tombstone :func:`claim_pending` left, once the close has
+    stored the session's row (its close, phase ``close``): from then on the
+    row is the guard, not a 10-minute tombstone that would refuse, then later
+    allow, the same turns depending on the clock."""
+    with _STATE_GUARD:
+        t = _DISCARDED.get(session_id)
+        if t is not None and t[0] == user_id and t[1] == "ended":
+            del _DISCARDED[session_id]
+    if stored():
+        _store_release(session_id, user_id)
 
 
 def stash_pending(session_id: str, payload: dict) -> None:

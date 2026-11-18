@@ -661,7 +661,7 @@ def test_the_screen_stays_linear_at_the_longest_answer(unit):
     [
         ("r1", " "),
         ("r1", "\n"),
-        ("r1", "　"),  # ideographic space: NFKD folds it to a space
+        ("r1", "\u3000"),  # ideographic space: NFKD folds it to a space
         ("The base case stops it, see r1", " "),
         ('{"r2":', " "),
     ],

@@ -6,6 +6,7 @@ turn and the hint/confused/skip action turn. `start_session`, `chat` and
 from __future__ import annotations
 
 import asyncio
+from typing import cast
 import logging
 import uuid
 
@@ -180,7 +181,10 @@ async def _start_session_agent(
             # opener's tool results are in its messages just like a chat
             # turn's.
             try:
-                rescued = await _continuation_text(agent, result, run_kwargs, request_id=request_id)
+                rescued = await _continuation_text(
+                    agent, result, run_kwargs, request_id=request_id,
+                    usage_session_id=session_id,  # the opener's server-minted id
+                )
             except Exception:
                 logger.warning(
                     "Continuation after a textless session greeting failed",
@@ -258,6 +262,11 @@ async def start_session(body: StartSessionBody, request: Request, loop_handler=N
     }
 
 
+#: "Resolve the llm_usage session here" (the caller did not pass one it
+#: already resolved); None is a real value (no owned session).
+_RESOLVE = object()
+
+
 async def _chat_via_agent(
     *,
     user_id: str,
@@ -269,8 +278,13 @@ async def _chat_via_agent(
     use_shared_context: bool,
     request_id: str,
     model_pref: str | None = None,
+    usage_session_id: str | None | object = _RESOLVE,
 ) -> tuple[dict, tuple[str, str | None]]:
     """Run chat_tutor_agent and return the wire response shape.
+
+    ``usage_session_id``: the llm_usage session the streamed route already
+    resolved for this turn (its Rung-1 fallback runs here), so the turn makes
+    ONE ownership read; resolved here when not passed (the JSON /chat route).
 
     Returns ``({"reply": str, "graph_update": dict, "mastery_changes": list},
     (model_tier, tutor_model))`` — the wire dict, and what the run actually
@@ -304,7 +318,11 @@ async def _chat_via_agent(
 
     # A92: the llm_usage session id, resolved ONCE for the turn (the run and a
     # continuation both record against it). #117: off the event loop.
-    usage_session_id = await asyncio.to_thread(_usage_session_id, session_id, deps.user_id)
+    usage_session_id = (
+        await asyncio.to_thread(_usage_session_id, session_id, deps.user_id)
+        if usage_session_id is _RESOLVE
+        else cast("str | None", usage_session_id)
+    )
     try:
         run = await agent.run(user_message, **run_kwargs)
         result = record_agent_usage(
@@ -394,6 +412,7 @@ async def _chat_turn_json(
     request: Request,
     *,
     model_pref: str | None = None,
+    usage_session_id: str | None | object = _RESOLVE,
 ) -> dict:
     """One full non-streaming chat turn: agent run, persistence, and the
     #117 `chat.message_sent` emission — the SINGLE emission site for
@@ -432,6 +451,7 @@ async def _chat_turn_json(
     )
 
     response, ran_on = await _chat_via_agent(
+        usage_session_id=usage_session_id,
         user_id=body.user_id,
         session_id=body.session_id,
         course_id=course_id,

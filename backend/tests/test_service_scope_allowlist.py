@@ -251,6 +251,10 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
         "own sessions row + greeting from the service-only pending row",
     ("services/tutor_sessions.py", "materialize_stored", "runs_as_service"):
         "#117 stateless_tutor_sessions: the sync twin of amaterialize_stored (learning-loop routes)",
+    ("services/tutor_sessions.py", "_store_claim", "runs_as_service"):
+        "#117 stateless_tutor_sessions: claims and tombstones the caller's own pending row (loop close)",
+    ("services/tutor_sessions.py", "_store_release", "runs_as_service"):
+        "#117 stateless_tutor_sessions: drops the caller's claim tombstone once the close stored the row",
     ("services/rag_service.py", "index_document_chunks", "runs_as_service"): "shared content-addressed chunks",
     ("services/rag_service.py", "index_document_chunks_detailed", "runs_as_service"): "shared chunks",
     ("services/rag_service.py", "_uploaders_of", "runs_as_service"):

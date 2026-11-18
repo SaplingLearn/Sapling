@@ -26,6 +26,7 @@ import logging
 
 from db.connection import table
 from services.token_overlap import tokenize
+from learning.bkt import stored_score
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +53,7 @@ def _select_concepts(
 
     def _mastery(n: dict) -> float:
         try:
-            return float(n.get("mastery_score") or 0.0)
+            return stored_score(n.get("mastery_score"))
         except (TypeError, ValueError):
             return 0.0
 
@@ -79,7 +80,7 @@ def _render(selected: list[dict], edges_by_source: dict[str, list[tuple[str, str
     lines: list[str] = []
     for n in selected:
         try:
-            mastery = float(n.get("mastery_score") or 0.0)
+            mastery = stored_score(n.get("mastery_score"))
         except (TypeError, ValueError):
             mastery = 0.0
         tier = n.get("mastery_tier") or "unexplored"

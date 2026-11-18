@@ -754,6 +754,8 @@ def test_insert_ignore_duplicates_reports_itself_as_an_insert(wire, monkeypatch)
     monkeypatch.setattr(dbconn, "_scope_headers", scope)
     monkeypatch.setattr(dbconn, "_raise_for_status", raise_for)
     table("notes").insert_ignore_duplicates({"id": "n1"})
+    table("notes").upsert({"id": "n1"}, ignore_duplicates=True)  # the same DO NOTHING
     table("notes").upsert({"id": "n1"})
     assert seen == [("scope", "notes", "insert"), ("raise", "notes", "insert"),
+                    ("scope", "notes", "insert"), ("raise", "notes", "insert"),
                     ("scope", "notes", "upsert"), ("raise", "notes", "upsert")]

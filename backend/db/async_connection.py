@@ -405,10 +405,11 @@ class AsyncTableMixin:
         params = {"on_conflict": on_conflict}
         if columns:
             params["select"] = columns
-        scoped = _headers(self.name, "upsert", data=data)
+        op = _conn().conflict_op(ignore_duplicates)  # DO NOTHING is an "insert"
+        scoped = _headers(self.name, op, data=data)
         r = await _async_client().post(self.url, headers=_identity(headers, scoped),
                                        params=params, json=data)
-        _conn()._raise_for_status(r, scoped, self.name, "upsert")
+        _conn()._raise_for_status(r, scoped, self.name, op)
         return r.json()
 
     async def adelete(self, filters: dict) -> list:

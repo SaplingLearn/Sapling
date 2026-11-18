@@ -408,3 +408,25 @@ def test_a_sync_handler_never_trips_it(wire, real_guard, no_sync_db_on_loop):
         return {}
 
     assert _app(handler).get("/probe", cookies=_cookie("u1")).status_code == 200
+
+
+def test_the_native_do_nothing_upsert_reports_the_same_op_as_the_sync_client(wire, real_guard, monkeypatch):
+    """aupsert(ignore_duplicates=True) (save_message's messages write) names its
+    op "insert" to the scope seam and the refusal mapping, like the sync
+    client: a DO NOTHING conflict needs only the INSERT grant/policy."""
+    monkeypatch.setenv(ASYNC_ENV, "on")
+    seen = []
+    real_headers, real_raise = adb._headers, dbconn._raise_for_status
+    monkeypatch.setattr(adb, "_headers", lambda name, op, **kw: seen.append(op) or real_headers(name, op, **kw))
+    monkeypatch.setattr(dbconn, "_raise_for_status",
+                        lambda r, scoped, name, op: seen.append(op) or real_raise(r, scoped, name, op))
+
+    async def handler():
+        t = table("notes")
+        await t.aupsert({"a": 3}, on_conflict="a", ignore_duplicates=True)
+        await t.aupsert({"a": 3}, on_conflict="a")
+        return {}
+
+    _app(handler).get("/probe", cookies=_cookie("u1"))
+    # (the request's own scope resolution may read flags first: only the writes count)
+    assert [op for op in seen if op != "select"] == ["insert", "insert", "upsert", "upsert"]

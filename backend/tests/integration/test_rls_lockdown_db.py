@@ -399,6 +399,7 @@ BACKEND_RPCS = frozenset({
     "consume_auth_handoff",          # routes/auth_handoff.py (sec2 M2, 20261116155242)
     "db_scope_divergences",          # routes/admin_analytics.py (#115, 20261109023455)
     "discard_tutor_session",         # services/tutor_sessions.py (#117, stateless_tutor_sessions)
+    "claim_tutor_session",  # services/tutor_sessions.py (loop close of a pending session), 20261118052843
     "encryption_aad_swap",           # db/backfill_encryption_aad.py (sec2 M13, 20261116162200)
     "enqueue_job",                   # services/jobs.py (#116)
     "fail_job",                      # services/jobs.py (#116)

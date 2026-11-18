@@ -65,7 +65,7 @@ CLEAN = ShareScreen()
 # Characters that render as nothing (or as a hyphen at a line end) and can be
 # threaded through a phrase to dodge a pattern while reading identically.
 _INVISIBLE_RE = re.compile("[\u00ad\u200b\u200c\u200d\u2060\ufeff]")
-_HSPACE_RE = re.compile(r"[ \t\f\v ]+")
+_HSPACE_RE = re.compile(r"[ \t\f\v\u00a0]+")
 
 # Whom a document would address when it is talking to the model rather than
 # to a student. Deliberately excludes "tutor", "grader" and "model" where a

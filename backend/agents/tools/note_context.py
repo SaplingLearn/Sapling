@@ -13,6 +13,7 @@ from pydantic_ai import RunContext
 
 from agents.deps import SaplingDeps
 from services.notes_service import get_note, list_linked_concepts
+from learning.bkt import stored_score
 
 
 class LinkedConcept(BaseModel):
@@ -43,7 +44,7 @@ async def read_active_note(note_id: str, user_id: str, *, note: dict | None = No
             id=c.get("id") or "",
             concept_name=c.get("concept_name") or "",
             mastery_tier=c.get("mastery_tier") or "unexplored",
-            mastery_score=float(c.get("mastery_score") or 0.0),
+            mastery_score=stored_score(c.get("mastery_score")),
         )
         for c in concepts_raw
     ]

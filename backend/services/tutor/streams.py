@@ -159,7 +159,9 @@ async def chat_stream(body: ChatBody, request: Request, loop_handler=None):
         # chat.message_sent, so _persist must not also run —
         # stream_agent_turn enforces that exclusivity. model_pref="fast"
         # (D2): the second chance runs on the fast tier.
-        return await _chat_turn_json(body, request, model_pref="fast")
+        return await _chat_turn_json(
+            body, request, model_pref="fast", usage_session_id=usage_session_id,
+        )
 
     def _usage(run_result) -> None:
         # #118: streaming turns report usage via the final AgentRunResultEvent,
@@ -315,7 +317,10 @@ async def start_session_stream(body: StartSessionBody, request: Request, loop_ha
             nonstream_fallback=_fallback,
             on_usage=_usage,
             request_id=request_id,
-            continuation=lambda rr: _continuation_text(agent, rr, run_kwargs, request_id=request_id),
+            continuation=lambda rr: _continuation_text(
+                agent, rr, run_kwargs, request_id=request_id,
+                usage_session_id=session_id,  # the opener's server-minted id
+            ),
         ):
             yield sapling_event_to_sse(ev)
 

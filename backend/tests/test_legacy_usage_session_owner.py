@@ -75,13 +75,82 @@ def test_every_body_sourced_legacy_usage_site_goes_through_the_owner_check():
     # continuation against it; a continuation without a resolved id reads it.
     src = "".join(inspect.getsource(m) for m in (run, streams, turns))
     assert src.count("session_id=_usage_session_id(") == 0
-    assert src.count("usage_session_id = await asyncio.to_thread(_usage_session_id,") == 3
+    # Every binding of a turn's usage_session_id goes through the owner check
+    # (/chat JSON, /action, /chat/stream: three resolution sites).
+    import ast
+
+    bound = [
+        ast.unparse(node.value)
+        for node in ast.walk(ast.parse(src))
+        if isinstance(node, ast.Assign)
+        and any(getattr(t, "id", None) == "usage_session_id" for t in node.targets)
+    ]
+    assert len(bound) == 3 and all("_usage_session_id" in b for b in bound), bound
     assert inspect.getsource(streams).count(
         "usage_session_id = await asyncio.to_thread(_usage_session_id, body.session_id, body.user_id)"
     ) == 1
-    assert inspect.getsource(run._continuation_text).count(
-        "usage_session_id = await asyncio.to_thread(\n            _usage_session_id,"
-    ) == 1
+    # The continuation never reads ownership itself: its caller hands it the
+    # turn's resolved id (pinned per call site below).
+    assert "_usage_session_id" not in inspect.getsource(run._continuation_text)
+
+
+#: Every `_continuation_text` call site -> the `usage_session_id=` it passes.
+#: "usage_session_id" must be bound in that function from
+#: `_usage_session_id(...)` (the A92 owner check); "session_id" is allowed only
+#: for the openers, whose id the server just minted.
+CONTINUATION_SITES = {
+    ("services/tutor/turns.py", "_start_session_agent"): "session_id",
+    ("services/tutor/turns.py", "_chat_via_agent"): "usage_session_id",
+    ("services/tutor/turns.py", "_action_turn"): "usage_session_id",
+    ("services/tutor/streams.py", "chat_stream"): "usage_session_id",
+    ("services/tutor/streams.py", "start_session_stream"): "session_id",
+}
+
+
+def _continuation_calls():
+    """(file, enclosing top-level function) -> [usage_session_id expr, ...]."""
+    import ast
+    from pathlib import Path
+
+    backend = Path(__file__).resolve().parents[1]
+    found: dict[tuple[str, str], list[str | None]] = {}
+    for rel in ("services/tutor/turns.py", "services/tutor/streams.py", "services/tutor/run.py"):
+        tree = ast.parse((backend / rel).read_text())
+        for fn in tree.body:
+            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for node in ast.walk(fn):
+                if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "_continuation_text":
+                    kw = {k.arg: ast.unparse(k.value) for k in node.keywords}
+                    found.setdefault((rel, fn.name), []).append(kw.get("usage_session_id"))
+    return found
+
+
+def test_every_continuation_records_against_an_owner_checked_or_minted_session():
+    """A92: a continuation's llm_usage.session_id is never a body-supplied id
+    that skipped the owner check — one student could otherwise move cost onto
+    another's session in the per-session report."""
+    import ast
+    import inspect
+
+    from services.tutor import streams, turns
+
+    calls = _continuation_calls()
+    assert {site: set(exprs) for site, exprs in calls.items()} == {
+        site: {expr} for site, expr in CONTINUATION_SITES.items()
+    }
+    modules = {"services/tutor/turns.py": turns, "services/tutor/streams.py": streams}
+    for (rel, fn_name), expr in CONTINUATION_SITES.items():
+        if expr != "usage_session_id":
+            continue
+        fn = ast.parse(inspect.getsource(getattr(modules[rel], fn_name)))
+        bound = [
+            ast.unparse(node.value)
+            for node in ast.walk(fn)
+            if isinstance(node, ast.Assign)
+            and any(getattr(t, "id", None) == "usage_session_id" for t in node.targets)
+        ]
+        assert bound and all("_usage_session_id" in b for b in bound), (rel, fn_name, bound)
 
 
 def test_a_continuation_records_against_the_turns_resolved_session_without_a_second_read(monkeypatch):

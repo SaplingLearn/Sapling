@@ -27,7 +27,7 @@ from learning.session_close import (
     store_close,
 )
 from models import CloseBody, EndSessionBody
-from services.tutor_sessions import PENDING_SESSIONS, claim_pending
+from services.tutor_sessions import PENDING_SESSIONS, claim_pending, release_claim_tombstone
 from services import ai_budget, events_service
 from services.ai_budget import AIBudgetExceeded
 from services.auth_guard import get_session_user_id, guard_off_loop
@@ -416,6 +416,10 @@ async def close_session(
         logger.warning("session close not stored (%s)", type(exc).__name__)
         raise HTTPException(status_code=502, detail=_CLOSE_STORE_FAILED) from None
     await asyncio.to_thread(_finish_close, session_id, claim, closed=True)  # a pending session's phase too
+    if pending is not None:
+        # The row now carries the close: it, not the claim's tombstone, refuses
+        # later turns (services/tutor_sessions.py::release_claim_tombstone).
+        await asyncio.to_thread(release_claim_tombstone, session_id, user_id)
     if not stored:  # another close's write landed first: serve it, emit nothing
         return await asyncio.to_thread(_reread_close, session_id)
     events_service.log_event(

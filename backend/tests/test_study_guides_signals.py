@@ -255,3 +255,10 @@ def test_concepts_the_tree_does_not_have_read_no_digests(db):
     assert run(signals.amistakes(ME, COURSE, [])) == []
     assert "quiz_context" not in db.reads
     assert db.reports == []
+
+
+def test_the_read_surfaces_classify_a_drifted_score():
+    from services.study_guides import plan, signals
+
+    assert signals.tiers({"Heaps": 1.4, "Graphs": -0.2}) == {"Heaps": "mastered", "Graphs": "unexplored"}
+    assert plan._tier(7.0) == "mastered"

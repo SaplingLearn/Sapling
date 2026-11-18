@@ -772,28 +772,3 @@ def test_tier_for_stays_strict_and_the_stored_twin_classifies_drift():
         bkt.tier_for(1.2)
     assert bkt.tier_for_stored(1.2) == "mastered"
     assert bkt.tier_for_stored(-0.3) == "unexplored"
-
-
-def test_the_read_surfaces_classify_a_drifted_score():
-    from services.study_guides import plan, signals
-
-    assert signals.tiers({"Heaps": 1.4, "Graphs": -0.2}) == {"Heaps": "mastered", "Graphs": "unexplored"}
-    assert plan._tier(7.0) == "mastered"
-
-
-def test_a_nan_score_neither_breaks_nor_hides_the_weak_concept_list(monkeypatch):
-    """PostgREST sends a float8 NaN as the string "NaN". The filter and the sort
-    read it through one rule (stored_score): the row is a weak concept at 0.0,
-    sorted first, and the other weak concepts are still listed. Before, the
-    filter classified it and the sort compared "NaN" with floats, which raised
-    and the caller's guard returned [] for the whole course."""
-    from services.flashcards import context
-
-    rows = [
-        {"concept_name": "Heaps", "mastery_score": 0.2},
-        {"concept_name": "Graphs", "mastery_score": "NaN"},
-        {"concept_name": "Trees", "mastery_score": 0.9},
-        {"concept_name": "Tries", "mastery_score": 0.1},
-    ]
-    monkeypatch.setattr(context, "_weak_concept_candidates", lambda *a, **k: rows)
-    assert context._get_weak_concepts("u1", "CS101") == ["Graphs", "Tries", "Heaps"]

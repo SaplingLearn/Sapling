@@ -273,9 +273,10 @@ def test_a_never_answered_loop_session_closes_on_the_other_worker(monkeypatch, d
     assert foreign.status_code == 404
     assert r.status_code == 200, r.text
     assert r.json()["close_phase"] == "close"
-    # Claimed: the pending row is now an "ended" tombstone, so a first turn
-    # racing the close answers 409 rather than writing into the closed session.
-    assert db.store("s-close")["state"] == "ended", "claimed: the pending row is a tombstone"
+    # Claimed (the pending row became an "ended" tombstone for the race
+    # window), then released once the close stored the row: from here the
+    # row's close is the guard, not a clock-bound tombstone.
+    assert db.store("s-close") is None, "the close released its claim tombstone"
     assert tables.writes("insert", "sessions")[0][2] == {
         "id": "s-close",
         "user_id": UID,

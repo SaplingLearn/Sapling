@@ -45,6 +45,7 @@ from services.notes_service import (
 from services.http_cache import cached_json, conditional, make_etag
 from services.request_context import current_request_id
 from services.xp_service import award_xp_safe
+from learning.bkt import stored_score
 
 logger = logging.getLogger(__name__)
 
@@ -592,7 +593,7 @@ async def generate_quiz_from_note(
             detail="Link at least one concept before generating a quiz.",
         )
     # Lowest mastery wins so the quiz targets the weakest spot.
-    chosen = min(linked, key=lambda c: float(c.get("mastery_score") or 0.0))
+    chosen = min(linked, key=lambda c: stored_score(c.get("mastery_score")))
     return {
         "concept_node_id": chosen.get("id"),
         "concept_name": chosen.get("concept_name"),

@@ -60,6 +60,14 @@ def _merge(headers: Optional[dict], scoped: Optional[dict]) -> Optional[dict]:
     return {**(headers or {}), **scoped}
 
 
+def conflict_op(ignore_duplicates: bool) -> str:
+    """What an INSERT ... ON CONFLICT is reported as to the scope seam and a
+    refusal (db/scope.py::note_shadow_write, report_denied): DO NOTHING needs
+    only the INSERT grant/policy, so it is an "insert"; DO UPDATE an "upsert".
+    A denial must never send an operator looking for the wrong grant."""
+    return "insert" if ignore_duplicates else "upsert"
+
+
 def _raise_for_status(r, scoped: Optional[dict], target: str, op: str) -> None:
     """`raise_for_status()`, plus the enforce-only mapping of PostgREST's two
     user-scope refusals: 401 (the minted token was rejected: key/kid mismatch)
@@ -308,10 +316,8 @@ class SupabaseTable(_aconn.AsyncTableMixin):
         """INSERT … ON CONFLICT (on_conflict) DO NOTHING (PostgREST
         `resolution=ignore-duplicates`): never overwrites an existing row, unlike
         `upsert`. Returns the rows actually inserted ([] when one existed).
-        Scoped and refusal-mapped like every verb, and reported as an
-        "insert": a DO NOTHING conflict needs only the INSERT grant/policy, so
-        a denial must not read as a missing UPDATE one."""
-        return self._post_on_conflict(data, on_conflict, "ignore-duplicates", None, "insert")
+        The same request as `upsert(..., ignore_duplicates=True)`."""
+        return self.upsert(data, on_conflict, ignore_duplicates=True)
 
     def update(self, data: dict, filters: dict, *, prefer_return_minimal: bool = False) -> list:
         """PATCH matching rows; returns the updated rows.
@@ -347,14 +353,7 @@ class SupabaseTable(_aconn.AsyncTableMixin):
         `columns` projects the returned representation (PostgREST `select=`),
         the same column list a select() takes; omitted, every column comes back."""
         resolution = "ignore-duplicates" if ignore_duplicates else "merge-duplicates"
-        return self._post_on_conflict(data, on_conflict, resolution, columns, "upsert")
-
-    def _post_on_conflict(
-        self, data, on_conflict: str, resolution: str, columns: Optional[str], op: str,
-    ) -> list:
-        """The INSERT ... ON CONFLICT request behind `upsert` and
-        `insert_ignore_duplicates`; `op` is what the scope seam and a refusal
-        report it as (db/scope.py::note_shadow_write, report_denied)."""
+        op = conflict_op(ignore_duplicates)
         headers = {"Prefer": f"return=representation,resolution={resolution}"}
         params = {"on_conflict": on_conflict}
         if columns:
