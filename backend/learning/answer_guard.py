@@ -1574,7 +1574,7 @@ def support_span(
     if any(of_item[1:]):
         of_item[0] = True  # the item's text in quotation marks: the rest is framing
     start, n = 0, 0
-    for (said, at, run), items_own in zip(found, of_item):
+    for (said, at, run), items_own in zip(found, of_item, strict=True):
         if not items_own and run and run >= min_share * len(said) and run > n:
             start, n = at, run
     if not n:
@@ -1656,7 +1656,7 @@ def _words(text: str) -> list[str]:
 def _disowns(words: list[str]) -> bool:
     if _DISOWN_WORDS.intersection(words):
         return True
-    return any(a == "not" and b in _NOT_TRUE for a, b in zip(words, words[1:]))
+    return any(a == "not" and b in _NOT_TRUE for a, b in zip(words, words[1:], strict=False))
 
 
 def _resets(text: str, words: list[str]) -> bool:
@@ -1665,7 +1665,8 @@ def _resets(text: str, words: list[str]) -> bool:
 
 
 def _global(words: list[str]) -> bool:
-    return any(a in _GLOBAL_WORDS and b in _GLOBAL_TARGETS for a, b in zip(words, words[1:])) or (
+    pairs = zip(words, words[1:], strict=False)
+    return any(a in _GLOBAL_WORDS and b in _GLOBAL_TARGETS for a, b in pairs) or (
         "rest" in words and "below" in words
     )
 
@@ -1677,16 +1678,20 @@ def _forward_frame(text: str, words: list[str]) -> bool:
     sentence (at most two words after it), so "The claim below is false because
     energy is conserved." — a reason, not a label — is not a frame."""
     heading = text.rstrip().endswith(":")
-    avoid = any(a == "to" and b == "avoid" for a, b in zip(words, words[1:]))
+    avoid = any(a == "to" and b == "avoid" for a, b in zip(words, words[1:], strict=False))
     used_to = any(a == "used" and b == "to" and c in {"believe", "think"}
-                  for a, b, c in zip(words, words[1:], words[2:]))
+                  for a, b, c in zip(words, words[1:], words[2:], strict=False))
     if heading:
         return _disowns(words) or avoid or used_to
     pointing = bool(_POINTERS.intersection(words)) or _global(words)
     if not pointing:
         return False
     hits = [k for k, w in enumerate(words) if w in _DISOWN_WORDS]
-    nots = [k + 1 for k, (a, b) in enumerate(zip(words, words[1:])) if a == "not" and b in _NOT_TRUE]
+    nots = [
+        k + 1
+        for k, (a, b) in enumerate(zip(words, words[1:], strict=False))
+        if a == "not" and b in _NOT_TRUE
+    ]
     last = max(hits + nots, default=-1)
     return last >= 0 and len(words) - 1 - last <= 2
 

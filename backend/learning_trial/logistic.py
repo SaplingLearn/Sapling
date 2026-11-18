@@ -55,7 +55,7 @@ class LogitFit:
     mu: dict[tuple, float] = field(repr=False)  # fitted probability per design pattern
 
     def predict(self, x: Sequence[float]) -> float:
-        return expit(sum(b * v for b, v in zip(self.beta, x)))
+        return expit(sum(b * v for b, v in zip(self.beta, x, strict=True)))
 
 
 def fit_logit(
@@ -72,7 +72,7 @@ def fit_logit(
         raise FitError("need equal, non-zero numbers of rows and outcomes")
     p = len(x_rows[0])
     cells: dict[tuple, list[int]] = {}
-    for x, yi in zip(x_rows, y):
+    for x, yi in zip(x_rows, y, strict=True):
         cell = cells.get(x)
         if cell is None:
             cells[x] = [1, 1 if yi else 0]
@@ -88,16 +88,16 @@ def fit_logit(
 
     def loglik(beta: list[float]) -> float:
         out = 0.0
-        for k, nk, n1 in zip(keys, counts, successes):
-            eta = sum(b * v for b, v in zip(beta, k))
+        for k, nk, n1 in zip(keys, counts, successes, strict=True):
+            eta = sum(b * v for b, v in zip(beta, k, strict=True))
             out += n1 * eta - nk * _log1pexp(eta)
         return out
 
     def score_and_info(beta: list[float]) -> tuple[list[float], list[list[float]]]:
         g = [0.0] * p
         h = [[0.0] * p for _ in range(p)]
-        for k, nk, n1 in zip(keys, counts, successes):
-            mu = expit(sum(b * v for b, v in zip(beta, k)))
+        for k, nk, n1 in zip(keys, counts, successes, strict=True):
+            mu = expit(sum(b * v for b, v in zip(beta, k, strict=True)))
             resid = n1 - nk * mu
             w = nk * mu * (1.0 - mu)
             for a in range(p):
@@ -121,10 +121,10 @@ def fit_logit(
             h_inv = mat_inv(h)
         except SingularMatrixError as exc:
             raise FitError(f"singular information matrix: {exc}") from None
-        step = [sum(hij * gj for hij, gj in zip(row, g)) for row in h_inv]
+        step = [sum(hij * gj for hij, gj in zip(row, g, strict=True)) for row in h_inv]
         scale = 1.0
         while True:
-            trial = [b + scale * s for b, s in zip(beta, step)]
+            trial = [b + scale * s for b, s in zip(beta, step, strict=True)]
             new_ll = loglik(trial)
             if new_ll >= ll - 1e-12 or scale < 1e-8:
                 break
@@ -141,7 +141,7 @@ def fit_logit(
         bread_inv = mat_inv(h)
     except SingularMatrixError as exc:
         raise FitError(f"singular information matrix: {exc}") from None
-    mu = {k: expit(sum(b * v for b, v in zip(beta, k))) for k in keys}
+    mu = {k: expit(sum(b * v for b, v in zip(beta, k, strict=True))) for k in keys}
     return LogitFit(
         beta=tuple(beta),
         bread_inv=bread_inv,
@@ -162,9 +162,12 @@ def _meat(
 ) -> tuple[list[list[float]], int]:
     """Sum over clusters of (sum_i x_i r_i)(sum_i x_i r_i)'; and the cluster count."""
     sums: dict[Hashable, list[float]] = {}
-    for x, r, g in zip(x_rows, resid, ids):
+    for x, r, g in zip(x_rows, resid, ids, strict=True):
         s = sums.get(g)
-        sums[g] = [v * r for v in x] if s is None else [a + v * r for a, v in zip(s, x)]
+        if s is None:
+            sums[g] = [v * r for v in x]
+        else:
+            sums[g] = [a + v * r for a, v in zip(s, x, strict=True)]
     meat = [[0.0] * p for _ in range(p)]
     for s in sums.values():
         for a in range(p):
@@ -200,12 +203,15 @@ def multiway_vcov(
     if not dims:
         raise ValueError("at least one clustering dimension")
     n, p = fit.n, fit.p
-    resid = [(1.0 if yi else 0.0) - fit.mu[x] for x, yi in zip(x_rows, y)]
+    resid = [(1.0 if yi else 0.0) - fit.mu[x] for x, yi in zip(x_rows, y, strict=True)]
     small = (n - 1) / (n - p) if n > p else 1.0
     terms: dict[tuple[int, ...], tuple[list[list[float]], int]] = {}
     for size in range(1, len(dims) + 1):
         for subset in combinations(range(len(dims)), size):
-            ids = dims[subset[0]] if size == 1 else list(zip(*(dims[i] for i in subset)))
+            if size == 1:
+                ids = dims[subset[0]]
+            else:
+                ids = list(zip(*(dims[i] for i in subset), strict=True))
             terms[subset] = _meat(x_rows, resid, ids, p)
     total = [[0.0] * p for _ in range(p)]
     for subset, (meat, groups) in terms.items():

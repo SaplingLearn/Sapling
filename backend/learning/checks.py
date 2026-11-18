@@ -777,7 +777,10 @@ def common_wrong(draft: CheckItemDraft) -> list[WrongReason]:
             for o in draft.options
             if not o.is_correct
         ]
-    return [WrongReason(key=k, text=t) for k, t in zip(draft.wrong_keys, draft.wrong_texts)]
+    # Not strict: validate_draft lints the wrong texts of a draft whose two
+    # lists differ in length too (it reports the mismatch itself).
+    pairs = zip(draft.wrong_keys, draft.wrong_texts, strict=False)
+    return [WrongReason(key=k, text=t) for k, t in pairs]
 
 
 #: The A37 option rules, by the word each reason of `_option_reasons` leads with.
@@ -1036,7 +1039,7 @@ def _keys_from_texts(keys: list[str | None], texts: list[str | None]) -> dict[in
     held = [wrong_key_form(k) for k in keys]
     taken = {form for form in held if form and held.count(form) == 1}
     derived: dict[int, str] = {}
-    for i, (form, text) in enumerate(zip(held, texts)):
+    for i, (form, text) in enumerate(zip(held, texts, strict=True)):
         if form and held.count(form) == 1:
             continue
         slug = misconception_slug(text)
@@ -1086,7 +1089,7 @@ def _repair_wrong_keys(draft: CheckItemDraft) -> list[str]:
     keys, texts = draft.wrong_keys, draft.wrong_texts
     forms = [wrong_key_form(k) for k in keys]
     lines = []
-    for i, (key, form) in enumerate(zip(keys, forms)):
+    for i, (key, form) in enumerate(zip(keys, forms, strict=True)):
         if form and form != key and forms.count(form) == 1:
             keys[i] = form
             lines.append(
@@ -1309,7 +1312,7 @@ def lettered_options(draft: CheckItemDraft, *, slot_key: bytes) -> tuple[list[Op
     ordered = distractors[:slot] + correct + distractors[slot:]
     options = [
         Option(letter=letter, text=o.text, wrong_key=None if o.is_correct else o.misconception_key)
-        for letter, o in zip(string.ascii_uppercase, ordered)
+        for letter, o in zip(string.ascii_uppercase, ordered, strict=False)
     ]
     return options, options[slot].letter
 
@@ -1426,7 +1429,7 @@ def _in_a_spelling(concept: tuple[str, ...], run: tuple[str, ...]) -> bool:
     return bool(run) and any(
         all(
             c == r or (i + j == last and _number_forms(c, r))
-            for j, (c, r) in enumerate(zip(concept[i : i + k], run))
+            for j, (c, r) in enumerate(zip(concept[i : i + k], run, strict=True))
         )
         for i in range(len(concept) - k + 1)
     )
@@ -1508,7 +1511,7 @@ def _wrong_list_reasons(draft: CheckItemDraft) -> list[str]:
         reasons.append("duplicate wrong keys")
     if any(_blank(k) for k in draft.wrong_keys):
         reasons.append("blank wrong key")
-    for key, form in zip(draft.wrong_keys, forms):
+    for key, form in zip(draft.wrong_keys, forms, strict=True):
         if not form and not _blank(key):
             reasons.append(f"wrong_keys: key {_shown(key)} has no Latin letter or digit")
         elif form and key != form:
