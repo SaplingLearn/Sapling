@@ -26,7 +26,10 @@ def _node(db_conn) -> str:
         (USER,),
     ).fetchone()
     if row is None:
-        pytest.skip("rich seed has no graph node for the active user")
+        # Fail, never skip (integration.yml: a skip reports green having run
+        # nothing). The autouse reseed restores the rich baseline before every
+        # test, and it gives the active user graph nodes; none means it broke.
+        pytest.fail(f"the rich baseline has no graph node for {USER}: the reseed is broken")
     return row["id"]
 
 
