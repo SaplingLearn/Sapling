@@ -21,7 +21,8 @@ def client(monkeypatch, live_accounts):
     monkeypatch.setattr(auth_guard, "SESSION_SECRET", "checklist-test-secret")
     monkeypatch.setattr(auth_guard, "_log_permission_denied", lambda *args: None)
     monkeypatch.setattr(routes, "get_checklist", lambda *args: {"args": args})
-    monkeypatch.setattr(routes, "refresh_checklist", lambda *args: {"args": args})
+    # **kwargs: the refresh also takes the route-entry learning-loop gate's answer
+    monkeypatch.setattr(routes, "refresh_checklist", lambda *args, **kwargs: {"args": args})
     monkeypatch.setattr(routes, "set_reviewed", lambda *args: {"args": args})
     app = FastAPI()
     app.include_router(routes.router, prefix="/api/topic-checklist")
