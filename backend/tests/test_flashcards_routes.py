@@ -635,11 +635,29 @@ class TestRateAndDeleteAreTheOwnersOnly:
 
 
 class TestListErrors:
+    @staticmethod
+    def _postgrest_error(status: int, body: dict) -> Exception:
+        import httpx
+
+        request = httpx.Request("GET", "http://db/rest/v1/flashcards")
+        response = httpx.Response(status, json=body, request=request)
+        return httpx.HTTPStatusError(f"{status} error", request=request, response=response)
+
     def test_a_database_without_the_table_lists_no_cards(self):
-        with patch("services.flashcards.cards.table",
-                   side_effect=RuntimeError('relation "flashcards" does not exist')):
+        missing = self._postgrest_error(
+            404, {"code": "PGRST205", "message": "Could not find the table 'public.flashcards'"})
+        with patch("services.flashcards.cards.table", side_effect=missing):
             r = client.get(f"/api/flashcards/user/{USER_ID}")
         assert r.status_code == 200 and r.json() == {"flashcards": [], "due_count": 0}
+
+    def test_a_not_found_that_is_not_the_missing_table_is_a_500(self):
+        """Matched on PostgREST's error code, not its text: a 404 from a proxy or
+        a missing column says "not found" too, and must not read as no deck."""
+        other = self._postgrest_error(
+            400, {"code": "42703", "message": "column flashcards.due_at not found"})
+        with patch("services.flashcards.cards.table", side_effect=other):
+            r = client.get(f"/api/flashcards/user/{USER_ID}")
+        assert r.status_code == 500
 
     def test_any_other_failure_is_a_500_with_the_error(self):
         with patch("services.flashcards.cards.table", side_effect=RuntimeError("connection reset")):

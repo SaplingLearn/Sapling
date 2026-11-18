@@ -44,7 +44,7 @@ from pydantic import BaseModel, Field
 from pydantic_ai import RunContext
 
 from agents.deps import SaplingDeps
-from learning.bkt import in_mastered_tier, is_weak
+from learning.bkt import in_mastered_tier, is_weak, stored_score
 from db.connection import table
 from services.academics import course_offering_ids
 from services.encryption import bind, decrypt_if_present, decrypt_json
@@ -559,12 +559,9 @@ async def read_user_progress(
     total = 0
     mastery_sum = 0.0
     for r in rows:
-        try:
-            m = float(r.get("mastery_score") or 0.0)
-        except (TypeError, ValueError):
-            continue
-        # Defensive clamp — old rows occasionally drift outside [0, 1].
-        m = max(0.0, min(1.0, m))
+        # The one stored-score rule (learning.bkt.stored_score): drifted rows
+        # clamp into [0, 1] and NaN reads as 0.0, as on every other surface.
+        m = stored_score(r.get("mastery_score"))
         total += 1
         mastery_sum += m
         if in_mastered_tier(m):

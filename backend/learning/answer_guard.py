@@ -1388,7 +1388,7 @@ def _hidden_text(text: str) -> bool:
     for i, ch in enumerate(text or ""):
         if ch in _BIDI_CONTROLS or _TAG_BLOCK[0] <= ord(ch) <= _TAG_BLOCK[1]:
             return True
-        if ch in _HIDDEN_INVISIBLE and not (i == 0 and ch == "﻿"):
+        if ch in _HIDDEN_INVISIBLE and not (i == 0 and ch == "\ufeff"):
             return True
     if any(
         sum(c.isalpha() for c in run.group()) >= _SPACED_MIN_LETTERS

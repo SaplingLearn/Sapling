@@ -308,9 +308,10 @@ class SupabaseTable(_aconn.AsyncTableMixin):
         """INSERT … ON CONFLICT (on_conflict) DO NOTHING (PostgREST
         `resolution=ignore-duplicates`): never overwrites an existing row, unlike
         `upsert`. Returns the rows actually inserted ([] when one existed).
-        The same request as `upsert(..., ignore_duplicates=True)`, so it runs
-        under the request's scope and maps its refusals like every other verb."""
-        return self.upsert(data, on_conflict, ignore_duplicates=True)
+        Scoped and refusal-mapped like every verb, and reported as an
+        "insert": a DO NOTHING conflict needs only the INSERT grant/policy, so
+        a denial must not read as a missing UPDATE one."""
+        return self._post_on_conflict(data, on_conflict, "ignore-duplicates", None, "insert")
 
     def update(self, data: dict, filters: dict, *, prefer_return_minimal: bool = False) -> list:
         """PATCH matching rows; returns the updated rows.
@@ -346,13 +347,21 @@ class SupabaseTable(_aconn.AsyncTableMixin):
         `columns` projects the returned representation (PostgREST `select=`),
         the same column list a select() takes; omitted, every column comes back."""
         resolution = "ignore-duplicates" if ignore_duplicates else "merge-duplicates"
+        return self._post_on_conflict(data, on_conflict, resolution, columns, "upsert")
+
+    def _post_on_conflict(
+        self, data, on_conflict: str, resolution: str, columns: Optional[str], op: str,
+    ) -> list:
+        """The INSERT ... ON CONFLICT request behind `upsert` and
+        `insert_ignore_duplicates`; `op` is what the scope seam and a refusal
+        report it as (db/scope.py::note_shadow_write, report_denied)."""
         headers = {"Prefer": f"return=representation,resolution={resolution}"}
         params = {"on_conflict": on_conflict}
         if columns:
             params["select"] = columns
-        scoped = _scope_headers(self.name, "upsert", data=data)
+        scoped = _scope_headers(self.name, op, data=data)
         r = _client.post(self.url, headers=_merge(headers, scoped), params=params, json=data)
-        _raise_for_status(r, scoped, self.name, "upsert")
+        _raise_for_status(r, scoped, self.name, op)
         return r.json()
 
     def delete(self, filters: dict) -> list:

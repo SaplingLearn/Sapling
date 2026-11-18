@@ -9,8 +9,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import threading
-from collections import OrderedDict
 
 from pydantic_ai.messages import ModelResponse, TextPart
 
@@ -24,7 +22,6 @@ from services import ai_budget
 from services.chat_stream import join_text_parts
 from services.tutor.course import _get_catalog_chunk, _get_course_info
 from services.tutor_router import observe_tutor_turn
-from services.request_context import current_request_key
 from services.tutor_sessions import PENDING_SESSIONS
 
 # Log records keep the name they had in routes/learn.py before the #118 split:
@@ -73,13 +70,6 @@ def _kill_switch_budget(user_id: str) -> None:
     ai_budget.count_tutor_call(user_id)
 
 
-#: (request key, session id, user id) -> the recorded id, so one turn's main
-#: run and its continuation share ONE ownership read (bounded; per request).
-_USAGE_OWNER_MEMO: OrderedDict[tuple, str | None] = OrderedDict()
-_USAGE_OWNER_MEMO_MAX = 512
-_USAGE_OWNER_LOCK = threading.Lock()
-
-
 def _usage_session_id(session_id: str | None, user_id: str) -> str | None:
     """The `llm_usage.session_id` to record for a legacy turn (A92): the caller's own
     session only. A body-supplied id that belongs to someone else (or to nobody) is
@@ -92,24 +82,12 @@ def _usage_session_id(session_id: str | None, user_id: str) -> str | None:
     pending = PENDING_SESSIONS.get(session_id)
     if pending is not None:
         return session_id if pending.get("user_id") == user_id else None
-    request_key = current_request_key()
-    memo_key = (request_key, session_id, user_id) if request_key else None
-    if memo_key is not None:
-        with _USAGE_OWNER_LOCK:
-            if memo_key in _USAGE_OWNER_MEMO:
-                return _USAGE_OWNER_MEMO[memo_key]
     try:
         rows = table("sessions").select("user_id", filters={"id": f"eq.{session_id}"}, limit=1)
     except Exception:  # noqa: BLE001 — best-effort; never fail a turn over usage
         logger.warning("llm_usage session ownership read failed; recording NULL", exc_info=True)
-        return None  # not memoised: the next record of this turn may read again
-    recorded = session_id if rows and rows[0].get("user_id") == user_id else None
-    if memo_key is not None:
-        with _USAGE_OWNER_LOCK:
-            _USAGE_OWNER_MEMO[memo_key] = recorded
-            while len(_USAGE_OWNER_MEMO) > _USAGE_OWNER_MEMO_MAX:
-                _USAGE_OWNER_MEMO.popitem(last=False)
-    return recorded
+        return None
+    return session_id if rows and rows[0].get("user_id") == user_id else None
 
 
 def _resolve_model_pref(model_pref: str | None):
@@ -296,8 +274,13 @@ _CONTINUATION_INSTRUCTIONS = (
 _CONTINUATION_RUN_KEYS = ("deps", "model", "model_settings")
 
 
+#: `_continuation_text`'s "the caller did not resolve the usage session".
+_UNRESOLVED = object()
+
+
 async def _continuation_text(
     agent, run_result, run_kwargs: dict, *, request_id: str | None = None,
+    usage_session_id=_UNRESOLVED,
 ) -> str | None:
     """Finish a turn the model abandoned after its tools ran (#646).
 
@@ -339,6 +322,13 @@ async def _continuation_text(
     inventing a new `AgentTask` slot (the run IS a chat_tutor run).
     """
     carried = {k: run_kwargs[k] for k in _CONTINUATION_RUN_KEYS if k in run_kwargs}
+    deps = carried.get("deps")
+    if usage_session_id is _UNRESOLVED:
+        # The caller did not pass the turn's resolved id: read it here (A92),
+        # off the event loop (#117: a thread of its own, #756).
+        usage_session_id = await asyncio.to_thread(
+            _usage_session_id, getattr(deps, "session_id", None), getattr(deps, "user_id", None) or "",
+        )
     with agent.override(tools=[], toolsets=[]):
         result = record_agent_usage(
             await agent.run(
@@ -350,14 +340,8 @@ async def _continuation_text(
             ),
             feature="chat_tutor_continuation",
             task="chat_tutor",
-            user_id=getattr(carried.get("deps"), "user_id", None),
-            # #117: the session-owner read hops off the event loop (a thread of its
-        # own: a ready session's turn takes no request-threadpool token, #756)
-            session_id=await asyncio.to_thread(
-                _usage_session_id,
-                getattr(carried.get("deps"), "session_id", None),
-                getattr(carried.get("deps"), "user_id", None),
-            ),
+            user_id=getattr(deps, "user_id", None),
+            session_id=usage_session_id,
             # Explicit, so the turn's rows can't depend on ambient state (the
             # contextvar does survive into the SSE generator —
             # tests/test_sse_request_context.py — but nothing else should

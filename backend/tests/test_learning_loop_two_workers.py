@@ -273,7 +273,9 @@ def test_a_never_answered_loop_session_closes_on_the_other_worker(monkeypatch, d
     assert foreign.status_code == 404
     assert r.status_code == 200, r.text
     assert r.json()["close_phase"] == "close"
-    assert db.store("s-close") is None, "claimed: the pending row is gone"
+    # Claimed: the pending row is now an "ended" tombstone, so a first turn
+    # racing the close answers 409 rather than writing into the closed session.
+    assert db.store("s-close")["state"] == "ended", "claimed: the pending row is a tombstone"
     assert tables.writes("insert", "sessions")[0][2] == {
         "id": "s-close",
         "user_id": UID,
@@ -301,7 +303,7 @@ def test_a_claim_has_one_winner():
         assert fake.rpc("materialize_tutor_session", {
             "p_session_id": "s-claim", "p_user_id": UID, "p_ttl_seconds": ts.PENDING_TTL_SECONDS,
             "p_tombstone_ttl_seconds": ts.DISCARD_TOMBSTONE_TTL_SECONDS, "p_created_at": None,
-        }) == [{"outcome": "none"}], "a claimed session is never materialised after"
+        }) == [{"outcome": "ended"}], "a claimed session is never materialised after: it reads as ended"
     assert "s-claim" not in ts.PENDING_SESSIONS
 
 

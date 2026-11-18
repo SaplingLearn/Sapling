@@ -9,7 +9,7 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
-from db.connection import table
+from db.connection import is_missing_relation, table
 from learning.flashcard_fsrs import flashcard_fsrs_update
 from learning.fsrs import order_due
 from learning.params import FLASHCARD_RATING_TO_FSRS
@@ -29,9 +29,6 @@ from services.timestamps import parse_ts
 logger = logging.getLogger(__name__)
 
 CARD_NOT_FOUND_DETAIL = "Flashcard not found"
-
-#: What a failed read says when the database has no ``flashcards`` table yet.
-_MISSING_TABLE_MARKERS = ("not found", "does not exist", "42p01")
 
 #: The stored columns a listed card carries (the list adds the derived
 #: `course_id`): the card, then its FSRS state (PKG-11, migration
@@ -158,7 +155,9 @@ def get_flashcards(
             list_flashcards(user_id, topic, semester), datetime.now(timezone.utc),
         )
     except Exception as e:
-        if any(marker in str(e).lower() for marker in _MISSING_TABLE_MARKERS):
+        # Only the exactly-known "no such table" (PostgREST's error code, not
+        # the message text, which any 404 or missing-column error can share).
+        if is_missing_relation(e):
             return {"flashcards": [], "due_count": 0}  # one shape on every path
         raise StorageError(str(e)) from e
     return {"flashcards": due if due_only else rows, "due_count": len(due)}

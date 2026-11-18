@@ -241,21 +241,18 @@ SESSION_SITES = {
     ("services/loop/continuation.py", "_loop_continuation_text"): {"turn.session_id"},
     # #117 (main's async ratchet): the owner read hops off the event loop.
     # #118 (spec §13 A149): the tutor's run sites live in services/tutor/.
-    ("services/tutor/run.py", "_continuation_text"): {
-        "await asyncio.to_thread(_usage_session_id, getattr(carried.get('deps'), 'session_id', None), getattr(carried.get('deps'), 'user_id', None))"
-    },
+    # The turn resolves the owner-checked id ONCE (off the event loop) and its
+    # run and continuation record against it; tests/test_legacy_usage_session_owner.py
+    # pins where each `usage_session_id` is resolved.
+    ("services/tutor/run.py", "_continuation_text"): {"usage_session_id"},
     ("services/tutor/turns.py", "_start_session_agent"): {"session_id"},
-    ("services/tutor/turns.py", "_chat_via_agent"): {
-        "await asyncio.to_thread(_usage_session_id, session_id, deps.user_id)"
-    },
+    ("services/tutor/turns.py", "_chat_via_agent"): {"usage_session_id"},
     ("services/tutor/streams.py", "_usage"): {
         # /chat/stream (owner-checked; resolved off the loop before the stream)
         "usage_session_id",
         "session_id",  # the opener stream: a server-minted id
     },
-    ("services/tutor/turns.py", "_action_turn"): {
-        "await asyncio.to_thread(_usage_session_id, body.session_id, body.user_id)"
-    },
+    ("services/tutor/turns.py", "_action_turn"): {"usage_session_id"},
 }
 
 

@@ -302,14 +302,15 @@ async def _chat_via_agent(
         model_pref=model_pref,
     )
 
+    # A92: the llm_usage session id, resolved ONCE for the turn (the run and a
+    # continuation both record against it). #117: off the event loop.
+    usage_session_id = await asyncio.to_thread(_usage_session_id, session_id, deps.user_id)
     try:
         run = await agent.run(user_message, **run_kwargs)
         result = record_agent_usage(
             run,
             feature="chat_tutor", task="chat_tutor", user_id=deps.user_id,
-            # #117: the session-owner read hops off the event loop (a thread of its
-        # own: a ready session's turn takes no request-threadpool token, #756)
-            session_id=await asyncio.to_thread(_usage_session_id, session_id, deps.user_id),
+            session_id=usage_session_id,
             request_id=request_id,
         )
         # `.output` alone is a HISTORY read on this path: `_prepare_chat_run`
@@ -339,7 +340,10 @@ async def _chat_via_agent(
             # have already run. Fire regardless of whether writes landed:
             # nothing else will re-run, so there is no better answer waiting.
             try:
-                rescued = await _continuation_text(agent, result, run_kwargs, request_id=request_id)
+                rescued = await _continuation_text(
+                    agent, result, run_kwargs, request_id=request_id,
+                    usage_session_id=usage_session_id,
+                )
             except Exception:
                 # Second model call; a failure here must degrade to the
                 # pre-#646 behaviour, never surface as its own error.
@@ -529,13 +533,13 @@ async def _action_turn(body: ActionBody, request: Request) -> dict:
         model_pref=body.model_pref,
     )
 
+    # A92: resolved once for the turn and its continuation; #117: off the loop.
+    usage_session_id = await asyncio.to_thread(_usage_session_id, body.session_id, body.user_id)
     run = await agent.run(assembled, **run_kwargs)
     result = record_agent_usage(
         run,
         feature="chat_tutor", task="chat_tutor", user_id=body.user_id,
-        # #117: the session-owner read hops off the event loop (a thread of its
-        # own: a ready session's turn takes no request-threadpool token, #756)
-        session_id=await asyncio.to_thread(_usage_session_id, body.session_id, body.user_id),
+        session_id=usage_session_id,
         request_id=request_id,
     )
     # History-bearing run (`_load_message_history` above), so `.output` alone
@@ -550,7 +554,10 @@ async def _action_turn(body: ActionBody, request: Request) -> dict:
         # (#646) — an action turn has no fallback rung at all, so the
         # alternative is failing work the tools already did.
         try:
-            rescued = await _continuation_text(agent, result, run_kwargs, request_id=request_id)
+            rescued = await _continuation_text(
+                agent, result, run_kwargs, request_id=request_id,
+                usage_session_id=usage_session_id,
+            )
         except Exception:
             logger.warning(
                 "Continuation after a textless action turn failed", exc_info=True

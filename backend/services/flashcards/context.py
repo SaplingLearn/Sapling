@@ -147,11 +147,6 @@ def _get_course_documents(
         return []
 
 
-def _unit(score) -> float:
-    """A stored mastery score clamped to [0, 1] (`learning.bkt.stored_score`)."""
-    return stored_score(score)
-
-
 _WEAK_CONCEPT_COLS = "concept_name,mastery_score"
 
 
@@ -214,9 +209,12 @@ def _get_weak_concepts(
         topic = _normalized(course_name)
         if topic and any(_normalized(r.get("concept_name")) == topic for r in rows):
             return []
+        # One reading of the stored score for both the filter and the order: a
+        # drifted or NaN row (PostgREST sends float NaN as "NaN") classified by
+        # one and compared raw by the other would make the sort raise.
         weak = sorted(
-            (r for r in rows if is_weak(_unit(r.get("mastery_score")))),
-            key=lambda r: r.get("mastery_score") or 0,
+            (r for r in rows if is_weak(stored_score(r.get("mastery_score")))),
+            key=lambda r: stored_score(r.get("mastery_score")),
         )
         # Weakest first, THEN cap. The cap used to truncate in PostgREST row
         # order, which was survivable while the floor was 0.4 and is not now

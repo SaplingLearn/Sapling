@@ -70,38 +70,45 @@ def test_every_body_sourced_legacy_usage_site_goes_through_the_owner_check():
     from services.tutor import run, streams, turns
 
     # #118 (spec §13 A149): the run sites live in services/tutor/. /chat (JSON
-    # via _chat_via_agent), /chat/stream, /action and the continuation run;
-    # #117: every owner read hops off the event loop
+    # via _chat_via_agent), /chat/stream and /action resolve the owner check
+    # ONCE per turn (off the event loop, #117) and record both the run and a
+    # continuation against it; a continuation without a resolved id reads it.
     src = "".join(inspect.getsource(m) for m in (run, streams, turns))
     assert src.count("session_id=_usage_session_id(") == 0
-    assert src.count("session_id=await asyncio.to_thread(_usage_session_id,") == 2
-    assert src.count("session_id=await asyncio.to_thread(\n                _usage_session_id,") == 1
-    # /chat/stream resolves it before the stream starts (its usage hook runs on the loop)
+    assert src.count("usage_session_id = await asyncio.to_thread(_usage_session_id,") == 3
     assert inspect.getsource(streams).count(
         "usage_session_id = await asyncio.to_thread(_usage_session_id, body.session_id, body.user_id)"
     ) == 1
+    assert inspect.getsource(run._continuation_text).count(
+        "usage_session_id = await asyncio.to_thread(\n            _usage_session_id,"
+    ) == 1
 
 
-def test_one_request_reads_ownership_once_and_another_request_reads_again():
-    """A turn's main run and its continuation both record usage: within one
-    request the ownership read is made once; a new request reads again (the
-    session may have changed hands in between, never within a request)."""
-    from services import request_context
+def test_a_continuation_records_against_the_turns_resolved_session_without_a_second_read(monkeypatch):
+    """A textless turn's continuation reuses the id the turn already resolved:
+    no second ownership read, and the same llm_usage.session_id."""
+    import asyncio
+    from contextlib import nullcontext
+    from unittest.mock import AsyncMock
+
     from services.tutor import run
 
-    run._USAGE_OWNER_MEMO.clear()
-    tbl = _sessions([{"user_id": "u-a"}])
-    with patch_tutor("table", tbl):
-        token = request_context._REQUEST_KEY_CTX.set("req-1")
-        try:
-            assert learn._usage_session_id("s-1", "u-a") == "s-1"
-            assert learn._usage_session_id("s-1", "u-a") == "s-1"
-        finally:
-            request_context._REQUEST_KEY_CTX.reset(token)
-        assert tbl.call_count == 1
-        token = request_context._REQUEST_KEY_CTX.set("req-2")
-        try:
-            assert learn._usage_session_id("s-1", "u-a") == "s-1"
-        finally:
-            request_context._REQUEST_KEY_CTX.reset(token)
-        assert tbl.call_count == 2
+    def no_read(*_a, **_k):
+        raise AssertionError("the continuation re-read session ownership")
+
+    recorded = {}
+    monkeypatch.setattr(run, "_usage_session_id", no_read)
+    monkeypatch.setattr(run, "record_agent_usage", lambda result, **kw: recorded.update(kw) or result)
+    monkeypatch.setattr(run, "_new_run_text", lambda result: "rescued")
+    agent = MagicMock()
+    agent.override.return_value = nullcontext()
+    agent.run = AsyncMock(return_value=MagicMock())
+    first = MagicMock()
+    first.all_messages.return_value = []
+    deps = MagicMock(session_id="s-1", user_id="u-a")
+
+    out = asyncio.run(run._continuation_text(
+        agent, first, {"deps": deps}, request_id="r-1", usage_session_id="s-1",
+    ))
+    assert out == "rescued"
+    assert recorded["session_id"] == "s-1" and recorded["request_id"] == "r-1"

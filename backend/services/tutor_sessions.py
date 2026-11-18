@@ -393,47 +393,39 @@ def rename_pending(session_id: str, topic: str) -> bool:
     return stored() and _store_rename(session_id, topic)
 
 
-@runs_as_service
-def _store_claim(session_id: str, user_id: str) -> dict | None:
-    cutoff = datetime.now(timezone.utc) - timedelta(seconds=PENDING_TTL_SECONDS)
-    # One DELETE ... RETURNING: of two concurrent claimers (or a claim racing
-    # the first turn's materialisation, which deletes the row too) one wins.
-    rows = table(STORE_TABLE).delete({
-        "session_id": f"eq.{session_id}",
-        "user_id": f"eq.{user_id}",
-        "state": "eq.pending",
-        "stashed_at": f"gte.{cutoff.isoformat()}",
-    })
-    return _view(rows[0])[0] if rows else None
-
-
 def claim_pending(session_id: str, user_id: str) -> dict | None:
     """Take ``session_id``'s pending payload away for good, without
     materialising it (the learning loop's close of a session nobody answered
     in: its row is written by the close itself). None when the session is not
-    pending; 404 when it is another student's. The memory entry is popped; a
-    table-held one (flag on) is deleted in one atomic call, so a session
-    started on another replica closes here too."""
+    pending; 404 when it is another student's.
+
+    The claim leaves an ``"ended"`` tombstone, exactly as an end-session
+    discard does, so either order of a close racing the session's first turn
+    is safe: a turn that materialises first holds the materialisation lock
+    (memory) or wins the row (table), and the close then finds nothing
+    pending and acts on the row; a close that wins leaves the tombstone, and
+    the turn — even one already past its ownership check — answers 409
+    (ended) instead of writing into, or 404ing on, a session being closed."""
     if session_id in PENDING_SESSIONS:
-        # Under the materialisation lock, like discard_if_pending: a first turn
-        # materialising this session concurrently holds it while it writes the
-        # row and the greeting, so the entry is either still pending here (and
-        # the close takes it) or already materialised (and the close acts on
-        # the row, like any answered session) — never both.
         with materialization_lock(session_id):
             pending = PENDING_SESSIONS.get(session_id)
             if pending is None:
                 return None
             if pending.get("user_id") != user_id:
                 raise HTTPException(status_code=404, detail=SESSION_NOT_FOUND)
-            return PENDING_SESSIONS.pop(session_id, None)
+            return discard_pending(session_id, user_id=user_id, reason="ended")
     if not stored():
         return None
-    claimed = _store_claim(session_id, user_id)
-    if claimed is None and (other := _view(_store_row(session_id))[0]) is not None:
-        if other.get("user_id") != user_id:
-            raise HTTPException(status_code=404, detail=SESSION_NOT_FOUND)
-    return claimed
+    payload = _view(_store_row(session_id))[0]
+    if payload is None:
+        return None
+    if payload.get("user_id") != user_id:
+        raise HTTPException(status_code=404, detail=SESSION_NOT_FOUND)
+    # One locked statement turns the pending row into the tombstone; it says
+    # whether the row was still pending, i.e. whether this close won it.
+    if _store_discard(session_id, user_id, "ended", only_if_pending=True):
+        return payload
+    return None
 
 
 def stash_pending(session_id: str, payload: dict) -> None:

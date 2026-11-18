@@ -183,7 +183,9 @@ async def chat_stream(body: ChatBody, request: Request, loop_handler=None):
             nonstream_fallback=_fallback,
             on_usage=_usage,
             request_id=request_id,
-            continuation=lambda rr: _continuation_text(agent, rr, run_kwargs, request_id=request_id),
+            continuation=lambda rr: _continuation_text(
+                agent, rr, run_kwargs, request_id=request_id, usage_session_id=usage_session_id,
+            ),
         ):
             yield sapling_event_to_sse(ev)
 

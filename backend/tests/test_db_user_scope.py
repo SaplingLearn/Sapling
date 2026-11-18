@@ -734,3 +734,26 @@ def test_enforce_scopes_insert_ignore_duplicates(wire, real_guard, keys, monkeyp
     assert kwargs["headers"]["Authorization"].startswith("Bearer ey")
     assert kwargs["headers"]["Prefer"] == "return=representation,resolution=ignore-duplicates"
     assert kwargs["params"]["on_conflict"] == "id"
+
+
+def test_insert_ignore_duplicates_reports_itself_as_an_insert(wire, monkeypatch):
+    """A refusal of the DO-NOTHING insert names the INSERT grant/policy it
+    needs, never a missing UPDATE one: the scope seam and the refusal mapping
+    see op "insert", while upsert keeps "upsert"."""
+    seen = []
+    real_scope, real_raise = dbconn._scope_headers, dbconn._raise_for_status
+
+    def scope(target=None, write_op=None, **kw):
+        seen.append(("scope", target, write_op))
+        return real_scope(target, write_op, **kw)
+
+    def raise_for(r, scoped, target, op):
+        seen.append(("raise", target, op))
+        return real_raise(r, scoped, target, op)
+
+    monkeypatch.setattr(dbconn, "_scope_headers", scope)
+    monkeypatch.setattr(dbconn, "_raise_for_status", raise_for)
+    table("notes").insert_ignore_duplicates({"id": "n1"})
+    table("notes").upsert({"id": "n1"})
+    assert seen == [("scope", "notes", "insert"), ("raise", "notes", "insert"),
+                    ("scope", "notes", "upsert"), ("raise", "notes", "upsert")]

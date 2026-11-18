@@ -441,15 +441,16 @@ def test_the_stash_carries_the_bounds():
 
 
 def test_a_close_waits_for_a_materialising_first_turn_and_finds_nothing_pending(monkeypatch):
-    """The first turn holds the materialisation lock while it writes the row and
-    only then drops the pending entry. A close's claim_pending must wait for it
-    and then see the session as materialised (None), never take the payload of
-    a session that is getting its row at that moment."""
+    """Turn first: it holds the materialisation lock while it writes the row and
+    only then drops the pending entry. The close's claim_pending waits for it
+    and then sees the session as materialised (None)."""
     import threading
+    from concurrent.futures import ThreadPoolExecutor
+    from concurrent.futures import TimeoutError as FutureTimeout
 
     monkeypatch.setattr(ts, "stored", lambda: False)
     monkeypatch.setitem(ts.PENDING_SESSIONS, "s-race", {"user_id": "u1", "stashed_at": "now"})
-    inside, release, out = threading.Event(), threading.Event(), {}
+    inside, release = threading.Event(), threading.Event()
 
     def first_turn():
         with ts.materialization_lock("s-race"):
@@ -457,21 +458,46 @@ def test_a_close_waits_for_a_materialising_first_turn_and_finds_nothing_pending(
             release.wait(5)
             ts.PENDING_SESSIONS.pop("s-race", None)  # the row is written: no longer pending
 
-    turn = threading.Thread(target=first_turn)
-    turn.start()
-    assert inside.wait(5)
-    close = threading.Thread(target=lambda: out.setdefault("claimed", ts.claim_pending("s-race", "u1")))
-    close.start()
-    close.join(0.2)
-    assert close.is_alive(), "the close waits for the materialising turn"
-    release.set()
-    turn.join(5)
-    close.join(5)
-    assert out == {"claimed": None}
+    # Futures re-raise a thread's exception at .result(), so a failing
+    # claim_pending surfaces as itself; release is set whatever happens.
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        turn = pool.submit(first_turn)
+        try:
+            assert inside.wait(5)
+            close = pool.submit(ts.claim_pending, "s-race", "u1")
+            with pytest.raises(FutureTimeout):
+                close.result(timeout=0.2)  # still waiting for the turn's lock
+        finally:
+            release.set()
+        turn.result(timeout=5)
+        assert close.result(timeout=5) is None
+    assert ts.discarded_reason("s-race", "u1") is None, "nothing was ended: the turn won"
 
 
-def test_claim_pending_still_takes_an_untouched_pending_session(monkeypatch):
+def test_a_close_that_wins_leaves_a_tombstone_the_racing_turn_reads_as_ended(monkeypatch):
+    """Close first: it takes the payload AND leaves the "ended" tombstone, so a
+    first turn already past its ownership check refuses with 409 at its
+    materialisation instead of writing into (or 404ing on) the closed session."""
+    from fastapi import HTTPException
+
     monkeypatch.setattr(ts, "stored", lambda: False)
-    monkeypatch.setitem(ts.PENDING_SESSIONS, "s-idle", {"user_id": "u1"})
-    assert ts.claim_pending("s-idle", "u1") == {"user_id": "u1"}
-    assert "s-idle" not in ts.PENDING_SESSIONS
+    monkeypatch.setitem(ts.PENDING_SESSIONS, "s-won", {"user_id": "u1", "topic": "T"})
+
+    assert ts.claim_pending("s-won", "u1") == {"user_id": "u1", "topic": "T"}
+    assert "s-won" not in ts.PENDING_SESSIONS
+    assert ts.discarded_reason("s-won", "u1") == "ended"
+    with pytest.raises(HTTPException) as exc:
+        ts.raise_if_discarded_here("s-won", "u1")
+    assert exc.value.status_code == 409
+    assert ts.claim_pending("s-won", "u1") is None, "a second close finds nothing pending"
+
+
+def test_claim_pending_refuses_another_students_session(monkeypatch):
+    from fastapi import HTTPException
+
+    monkeypatch.setattr(ts, "stored", lambda: False)
+    monkeypatch.setitem(ts.PENDING_SESSIONS, "s-other", {"user_id": "u2"})
+    with pytest.raises(HTTPException) as exc:
+        ts.claim_pending("s-other", "u1")
+    assert exc.value.status_code == 404
+    assert "s-other" in ts.PENDING_SESSIONS and ts.discarded_reason("s-other") is None
