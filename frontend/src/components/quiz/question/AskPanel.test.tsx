@@ -19,6 +19,8 @@ const api = vi.hoisted(() => ({
   sendChat: vi.fn(),
   endSession: vi.fn(),
   shouldFallBackToJson: vi.fn(() => true),
+  // the learning loop's budget pause (lib/api.ts): none unless a case says so
+  budgetPauseOf: vi.fn((_err: unknown): { resetAt: string | null; sessionCapped: boolean } | null => null),
   newTurnId: vi.fn(() => `turn-${Math.random().toString(36).slice(2, 14)}`),
 }));
 vi.mock("@/lib/api", () => api);

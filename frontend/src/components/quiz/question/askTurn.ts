@@ -6,11 +6,13 @@
  */
 
 import {
+  budgetPauseOf,
   sendChat,
   shouldFallBackToJson,
   startSession,
   startSessionStream,
   streamChat,
+  type LoopBudgetPause,
   type QuizAskOrigin,
   type StreamChatHandlers,
 } from "@/lib/api";
@@ -37,12 +39,37 @@ function crisisAnswer(response: unknown): CrisisAnswer | null {
   return crisis ? { crisis } : null;
 }
 
+/**
+ * The learning loop paused the tutor for the student's AI budget (spec §3.5,
+ * §13 A20/A39): the stream sent its `budget` event and ended without a reply.
+ * Thrown, so a caller that treats every failure alike still does; a caller
+ * that can show the pause reads it with `turnPauseOf`.
+ */
+export class BudgetPausedError extends Error {
+  readonly paused: LoopBudgetPause;
+
+  constructor(paused: LoopBudgetPause) {
+    super("Tutor chat paused.");
+    this.name = "BudgetPausedError";
+    this.paused = paused;
+  }
+}
+
+/** The budget pause behind a failed turn — the stream's, or a 429 "ai budget
+ *  reached" from any leg — or null when the failure was something else. A
+ *  state of the student's day, not an error: nothing of the turn was answered. */
+export function turnPauseOf(err: unknown): LoopBudgetPause | null {
+  return err instanceof BudgetPausedError ? err.paused : budgetPauseOf(err);
+}
+
 /** What the turn has streamed so far — shared with the panel's token handler. */
 export interface TurnProgress {
   /** A non-blank token arrived, so the JSON rung must not re-run the turn. */
   sawToken: boolean;
   /** The partial reply so far (ADR 0020 keeps it if the turn fails). */
   partial: string;
+  /** The stream's `budget` notice, when it sent one (the panel records it). */
+  budget?: LoopBudgetPause;
 }
 
 /** The quiz question the panel asks about, as the `quiz_ask` origin the
@@ -113,10 +140,16 @@ export interface ChatLeg {
  * repeat (#151a). Tokens already on screen are surfaced as an error instead —
  * the partial survives via the caller's catch. `beforeFallback` runs right
  * before the JSON call (the panel clears its streaming text and status there).
+ *
+ * With the learning loop on, `/chat/stream` hands the turn to the loop, whose
+ * stream also sends `retract` (A46: drop every token shown so far; the whole
+ * text follows) and `budget` (the student's AI budget paused the tutor). A
+ * paused turn sends its `budget` and ends without a reply: that throws
+ * `BudgetPausedError`, never a JSON retry the budget would refuse again.
  */
 export async function chatWithFallback(
   { sid, userId, message, turnId, signal, progress }: ChatLeg,
-  { onToken, onProgress }: Pick<StreamChatHandlers, "onToken" | "onProgress">,
+  { onToken, onProgress, onRetract, onBudget }: Pick<StreamChatHandlers, "onToken" | "onProgress" | "onRetract" | "onBudget">,
   beforeFallback: () => void,
 ): Promise<string | typeof ABORTED | CrisisAnswer> {
   try {
@@ -126,11 +159,18 @@ export async function chatWithFallback(
     const res = await streamChat(sid, userId, message, TUTOR_MODE, true, undefined, {
       onToken,
       onProgress,
+      onRetract,
+      onBudget: notice => {
+        progress.budget = { resetAt: notice.reset_at, sessionCapped: notice.session_capped };
+        onBudget?.(notice);
+      },
       signal,
     }, turnId);
     return crisisAnswer(res) ?? (res.reply || "");
   } catch (err) {
     if (signal.aborted) return ABORTED;
+    // the paused stream's end (no reply, no token): the pause, not a JSON retry
+    if (progress.budget && !progress.sawToken && !budgetPauseOf(err)) throw new BudgetPausedError(progress.budget);
     if (progress.sawToken || !shouldFallBackToJson(err)) throw err;
     beforeFallback();
     const res = await sendChat(sid, userId, message, TUTOR_MODE, true, undefined, turnId);
