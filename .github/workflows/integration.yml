@@ -1,14 +1,27 @@
 name: integration (local supabase)
 
-# `pull_request` is deliberate and deliberately unfiltered. Until #574 this lane
-# ran only after a merge, so the one gate built to catch route/schema drift was
-# structurally incapable of failing a PR: #574 added a test file demanding env
-# this workflow did not set, merged green, and left main red for three pushes.
-# A paths filter would buy back ~5 minutes on frontend-only PRs at the cost of a
-# narrower version of the same blind spot, so the whole lane runs on every PR.
+# `pull_request` is deliberate. Until #574 this lane ran only after a merge, so
+# the one gate built to catch route/schema drift was structurally incapable of
+# failing a PR: #574 added a test file demanding env this workflow did not set,
+# merged green, and left main red for three pushes.
+#
+# The PR trigger IS path-filtered, to everything this lane reads: the suite
+# lives in backend/tests/integration and reads only backend/ (migrations,
+# .env.local.example, the app itself), supabase/config.toml (the stack), and
+# scripts/preflight-ports.sh. A PR outside those paths (frontend, docs) cannot
+# change its result, and skipping it saves a ~9-minute billed run on about a
+# fifth of PRs. #574 changed a file under backend/, so it is still caught. The
+# push to main stays unfiltered, so a filter that ever proves too narrow shows
+# up there. (GitHub evaluates a PR's paths over its first 300 changed files
+# only; that same unfiltered push covers a larger PR.)
 on:
   workflow_dispatch:
   pull_request:
+    paths:
+      - "backend/**"
+      - "supabase/**"
+      - "scripts/**"
+      - ".github/workflows/integration.yml"
   push:
     branches: [main]
 

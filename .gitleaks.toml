@@ -1,4 +1,4 @@
-# gitleaks configuration (.github/workflows/secret-scan.yml).
+# gitleaks configuration (.github/workflows/security.yml, the secret-scan step).
 #
 # The default ruleset, plus a narrow allowlist of values that are public or
 # fake by construction. Every entry matches a specific VALUE (never a whole

@@ -268,16 +268,14 @@ python tests/evals/run_all.py
 
 | Workflow | Runs | What it checks |
 | --- | --- | --- |
-| `CI` | Every PR and push to `main` | Backend pytest + ruff (from the hash-pinned `requirements.lock`, including a code-size ratchet test), frontend eslint + typecheck + vitest |
+| `CI` | Every PR and push to `main` | Backend pytest + ruff + lint/type/import ratchets (from the hash-pinned `requirements.lock`, including a code-size ratchet test); frontend eslint + typecheck + vitest, skipped on a PR that changes nothing the frontend checks read |
 | `PR hygiene` | Every PR | A type (Conventional Commits title or `type/` branch) and filled-in acceptance criteria; warns on a `feat`/`fix` PR with no user story; adds a type label |
-| `integration (local supabase)` | PRs and pushes to `main` | Backend against a real local Supabase stack |
+| `integration (local supabase)` | PRs touching `backend/`, `supabase/` or `scripts/`; pushes to `main` | Backend against a real local Supabase stack (plus a `db_user_scope=enforce` pass on `main`) |
 | `e2e (browser lane)` | Pushes to `main`, manual | Playwright end-to-end tests against the full stack |
 | `Evals` | PRs touching agents | Offline agent eval harness |
 | `Migrate (staging)` | Pushes to `main` that add migrations | Applies new migrations to staging |
-| `CodeQL` (GitHub code scanning) | PRs and pushes to `main` | Static security analysis of the Python and JavaScript/TypeScript code |
 | `loadtest` | Manual, and nightly when `LOADTEST_TARGET_URL` is set | Locust load test against a deployed backend, gated on p95 latency |
-| `Vulnerability scan` | PRs, pushes to `main`, weekly | `pip-audit` over `backend/requirements.lock`; `npm audit --omit=dev --audit-level=high` in `frontend/` |
-| `Secret scan` | PRs and pushes to `main` | gitleaks over the full git history (allowlist in `.gitleaks.toml`) |
+| `Security` | PRs, pushes to `main`, weekly | One job: gitleaks over the full git history (allowlist in `.gitleaks.toml`); `pip-audit` over `backend/requirements.lock`; `npm audit --omit=dev --audit-level=high` in `frontend/` |
 
 Every action is pinned to a commit SHA (`# vX.Y.Z` comment alongside) and every workflow's token defaults to `contents: read`. Dependabot (`.github/dependabot.yml`) proposes monthly pip, npm, Actions and Docker updates (minor+patch grouped, majors grouped); a pip PR must be re-locked with uv before merge (the command is in that file).
 
