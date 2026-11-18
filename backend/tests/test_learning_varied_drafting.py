@@ -32,17 +32,22 @@ PASSAGES = [
 # agent in function mode on the inputs below. sha256 of json.dumps(the system
 # prompt parts) / of json.dumps(the user prompt parts) / of the output tool's
 # JSON schema (sort_keys). Change these only with a recorded eval behind it.
+# The two drafters' "user" pins moved once since: the C5 review fix (PR #866)
+# put each passage's text in the prompt_safety untrusted envelope after its
+# marker, so a passage cannot forge one. Their system prompts, schemas and
+# prompt versions are unchanged; flag off still sends exactly the plain
+# drafters' requests.
 _TOOL = ("final_result", "The final response which ends this conversation")
 PRE_A140 = {
     "check_items": {
         "system": "9668310f405f86c28a1a8ad6591a740d72070d11b97733f50f9f6832c76d19a4",
-        "user": "828c7358638b7e890087874a94b5ccf342b18b42478a49c6eba8fa65cac828af",
+        "user": "1171a8c5ee44302476443151dad7aa9fa510d0cfbba61216652acd7aaa33d47c",
         "schema": "168ef05c76b2138ce56f6ebab644b613d47afc8468a44c8ba6781ccc55e415e5",
         "prompt_version": "4710781c2f16",
     },
     "check_items_topup": {
         "system": "42547b3f8c933e62bea5574c2c170aece95cd30024ff0d7d85a8a2ba1696eb6e",
-        "user": "c3384efdae8741475aa89ce1db8177ee0688eb4177cbb4bc243b74edff078542",
+        "user": "95bbad19f9c28b4fbf03552fa502e326891c304a9c56ad38584f06719dad7b89",
         "schema": "168ef05c76b2138ce56f6ebab644b613d47afc8468a44c8ba6781ccc55e415e5",
         "prompt_version": "8c4d6fdcc602",
     },
