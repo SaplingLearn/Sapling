@@ -8,6 +8,8 @@
  *   4. A flashcard: flip, then a 1/2/3 self-rating
  *   5. A refused answer (A33) asks for the student's own words and stays answerable
  *   6. A 409 (already graded / new day) re-polls the queue
+ *   7. A 404 (the item is gone: withdrawn, held or deleted) skips it with a note
+ *   8. A queue that failed to load says why and offers Retry
  */
 
 import React from "react";
@@ -51,6 +53,8 @@ const next = (item: unknown, remaining = 600, due = item ? 1 : 0) => ({
 });
 const conflict = (detail: string) =>
   Object.assign(new Error(JSON.stringify({ detail })), { status: 409, body: { detail } });
+const notFound = (detail: string) =>
+  Object.assign(new Error(JSON.stringify({ detail })), { status: 404, body: { detail } });
 const FREE = {
   kind: "check", id: "ci-1", node_id: "n1", concept_name: "Recursion", format: "free",
   difficulty: 3, cost_s: 45, sr: SR, prompt: "What stops factorial(0)?",
@@ -587,5 +591,120 @@ describe("DueQueue — keyboard and screen reader (spec §13 A135)", () => {
     await userEvent.click(screen.getByTestId("review-report-reason-unclear"));
     expect(region).toContainElement(await screen.findByTestId("review-reported"));
     await waitFor(() => expect(screen.getByTestId("review-option-A")).toHaveFocus());
+  });
+});
+
+describe("DueQueue — an item that is gone (404) is skipped, never a dead end", () => {
+  it("an answer 404 ('review item not found') moves to the next item with a note, announced and focused", async () => {
+    mockNext.mockResolvedValueOnce(next(FREE)).mockResolvedValueOnce(next(MC));
+    mockAnswer.mockRejectedValue(notFound("review item not found"));
+    render(<DueQueue userId="u1" courseId="c1" />);
+    await screen.findByTestId("review-item");
+    const region = screen.getByTestId("review-due-panel").querySelector('[aria-live="polite"]');
+    expect(region).toBeEmptyDOMElement();
+    await userEvent.type(screen.getByTestId("review-answer-input"), "the base case");
+    await userEvent.click(screen.getByTestId("review-submit"));
+    const note = await screen.findByTestId("review-skipped");
+    expect(note.textContent).toContain("no longer available");
+    expect(region).toContainElement(note);
+    expect(await screen.findByText("Which one?")).toBeTruthy();
+    expect(mockNext).toHaveBeenCalledTimes(2);
+    expect(screen.queryByText(/Couldn't send that answer/)).toBeNull();
+    await waitFor(() => expect(screen.getByTestId("review-option-A")).toHaveFocus());
+  });
+
+  it("a flashcard's 404 skips it too", async () => {
+    mockNext.mockResolvedValueOnce(next(CARD)).mockResolvedValueOnce(next(null));
+    mockAnswer.mockRejectedValue(notFound("review item not found"));
+    render(<DueQueue userId="u1" courseId="c1" />);
+    await userEvent.click(await screen.findByTestId("review-flip"));
+    await userEvent.click(screen.getByTestId("review-rate-2"));
+    expect(await screen.findByTestId("review-skipped")).toBeTruthy();
+    expect(await screen.findByTestId("review-empty")).toBeTruthy();
+    await waitFor(() => expect(screen.getByTestId("review-empty")).toHaveFocus());
+  });
+
+  it("the note goes with the next item: moving on again clears it", async () => {
+    mockNext.mockResolvedValueOnce(next(FREE)).mockResolvedValueOnce(next(CARD)).mockResolvedValueOnce(next(null));
+    mockAnswer.mockRejectedValueOnce(notFound("review item not found")).mockResolvedValue(graded({ hint: null }));
+    render(<DueQueue userId="u1" courseId="c1" />);
+    await userEvent.type(await screen.findByTestId("review-answer-input"), "x");
+    await userEvent.click(screen.getByTestId("review-submit"));
+    await screen.findByTestId("review-skipped");
+    await userEvent.click(await screen.findByTestId("review-flip"));
+    await userEvent.click(screen.getByTestId("review-rate-3"));
+    await userEvent.click(await screen.findByTestId("review-next"));
+    await screen.findByTestId("review-empty");
+    expect(screen.queryByTestId("review-skipped")).toBeNull();
+  });
+
+  it("a report 404 ('review item not served') moves on with the note, not an error", async () => {
+    flags.item_reports = "on";
+    mockNext.mockResolvedValueOnce(next(FREE)).mockResolvedValueOnce(next(MC));
+    mockReport.mockRejectedValue(notFound("review item not served"));
+    render(<DueQueue userId="u1" courseId="c1" />);
+    await screen.findByTestId("review-item");
+    await userEvent.click(screen.getByTestId("review-report"));
+    await userEvent.click(screen.getByTestId("review-report-reason-unclear"));
+    expect(await screen.findByTestId("review-skipped")).toBeTruthy();
+    expect(await screen.findByText("Which one?")).toBeTruthy();
+    expect(screen.queryByText("Couldn't report that question.")).toBeNull();
+    expect(screen.queryByTestId("review-reported")).toBeNull();
+    await waitFor(() => expect(screen.getByTestId("review-option-A")).toHaveFocus());
+  });
+});
+
+describe("DueQueue — a queue that failed to load can be retried", () => {
+  it("shows why with a Retry that loads the queue again", async () => {
+    mockNext.mockRejectedValueOnce(new Error("down")).mockResolvedValueOnce(next(FREE));
+    render(<DueQueue userId="u1" courseId="c1" />);
+    const error = await screen.findByTestId("review-load-error");
+    expect(error.getAttribute("role")).toBe("alert");
+    expect(error.textContent).toContain("Couldn't load your review queue");
+    await userEvent.click(screen.getByTestId("review-load-retry"));
+    expect(await screen.findByTestId("review-item")).toBeTruthy();
+    expect(screen.queryByTestId("review-load-error")).toBeNull();
+    expect(screen.queryByTestId("review-load-retry")).toBeNull();
+    expect(mockNext).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(screen.getByTestId("review-answer-input")).toHaveFocus());
+  });
+
+  it("a Retry that fails again keeps the Retry and focuses the error", async () => {
+    mockNext.mockRejectedValue(new Error("down"));
+    render(<DueQueue userId="u1" courseId="c1" />);
+    await userEvent.click(await screen.findByTestId("review-load-retry"));
+    await waitFor(() => expect(mockNext).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByTestId("review-load-error")).toHaveFocus());
+    expect(screen.getByTestId("review-load-retry")).toBeTruthy();
+  });
+
+  it("a 429 'ai budget reached' at load says the queue did not load — never 'review keeps working'", async () => {
+    mockNext
+      .mockRejectedValueOnce(
+        new ApiError("ai budget reached", 429, { body: { detail: "ai budget reached", reset_at: null } }),
+      )
+      .mockResolvedValueOnce(next(null, 600, 0));
+    render(<DueQueue userId="u1" courseId="c1" />);
+    const error = await screen.findByTestId("review-load-error");
+    expect(error.textContent).toContain("Couldn't load your review queue: your AI budget is paused for now.");
+    expect(screen.queryByTestId("review-budget-paused")).toBeNull();
+    expect(screen.getByTestId("review-due-panel").textContent).not.toMatch(/keep working/);
+    await userEvent.click(screen.getByTestId("review-load-retry"));
+    expect(await screen.findByTestId("review-empty")).toBeTruthy();
+  });
+
+  it("another 429 at load asks the student to wait a moment", async () => {
+    mockNext.mockRejectedValueOnce(new ApiError("rate limited", 429, { body: { detail: "Too many requests" } }));
+    render(<DueQueue userId="u1" courseId="c1" />);
+    expect((await screen.findByTestId("review-load-error")).textContent).toContain("too many requests just now");
+  });
+
+  it("hides the paused-concepts banner while the queue failed to load", async () => {
+    mockNext.mockRejectedValueOnce(new Error("down"));
+    mockSummary.mockResolvedValue(summary({ paused: 2 }));
+    render(<DueQueue userId="u1" courseId="c1" />);
+    await screen.findByTestId("review-load-error");
+    await waitFor(() => expect(mockSummary).toHaveBeenCalled());
+    expect(screen.queryByTestId("review-budget-paused")).toBeNull();
   });
 });

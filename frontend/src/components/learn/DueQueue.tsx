@@ -16,6 +16,12 @@
 // a check item — answered or not — can be reported with a reason from a short list;
 // the server stops serving it to this student and the panel moves to the next item.
 //
+// An item that is gone (a 404 on answer or report: withdrawn, held or deleted since
+// it was served, or no longer this session's) is skipped with a short note, never
+// left on screen to fail every resend. A queue that failed to load says why and
+// offers Retry; it never shows the "review keeps working" pause banner, because
+// review is exactly what did not load.
+//
 // "How sure are you?" (spec §13 A127): an optional Guessing / Fairly sure / Sure
 // on a check (never a flashcard — its forgot / hard / easy rating already says how
 // it went). Sent with the answer only when chosen; it never holds up "Check".
@@ -80,8 +86,9 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
   const reportsOn = useFlag("item_reports") === "on";
   // docs/safety/crisis-support.md: an answer the crisis screen answered
   const crisis = useCrisisSupport();
-  // the last item was reported: say so above the next one
-  const [reported, setReported] = React.useState(false);
+  // Why the panel moved past the last item, said above the next one: it was
+  // reported, or it is gone (a 404: withdrawn, held or deleted since served).
+  const [notice, setNotice] = React.useState<Notice | null>(null);
   const [next, setNext] = React.useState<ReviewNextResponse | null>(null);
   const [answer, setAnswer] = React.useState("");
   const [choice, setChoice] = React.useState("");
@@ -93,6 +100,8 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
   const [alreadyGraded, setAlreadyGraded] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  // The queue itself failed to load: `error` says why and Retry loads again.
+  const [loadFailed, setLoadFailed] = React.useState(false);
   // The budget pause from a review call's 429; cleared by the next graded answer.
   const [pause, setPause] = React.useState<LoopBudgetPause | null>(null);
   const [summary, setSummary] = React.useState<ReviewSummaryResponse | null>(null);
@@ -121,12 +130,15 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
     }
   }, [userId, courseId]);
 
-  const load = React.useCallback(async () => {
+  /** Read the next item. `moved` says why the panel moved on, shown once the
+   *  next item is in. */
+  const load = React.useCallback(async (moved: Notice | null = null) => {
     if (!userId) return;
     const mine = ++seq.current;
     setBusy(true);
     setError(null);
-    setReported(false);
+    setLoadFailed(false);
+    setNotice(null);
     void refreshSummary(mine);
     try {
       const r = await getReviewNext(userId, courseId);
@@ -139,13 +151,14 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
       setFlipped(false);
       setResult(null);
       setAlreadyGraded(false);
+      setNotice(moved);
     } catch (err) {
       if (mine !== seq.current) return;
-      const paused = budgetPauseOf(err);
-      if (paused) setPause(paused);
-      else console.error("review next failed", err);
+      if (!budgetPauseOf(err)) console.error("review next failed", err);
       setNext(null); // never leave a stale item on screen
-      setError("Couldn't load your review queue.");
+      setError(loadFailureMessage(err));
+      setLoadFailed(true);
+      setNotice(moved); // a report that went through still did
     } finally {
       if (mine === seq.current) setBusy(false);
     }
@@ -229,6 +242,12 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
         // not served or a new day began — the queue moved on
         await load();
         return;
+      } else if (status === 404) {
+        // gone since it was served (withdrawn, held or deleted): every resend
+        // would 404 too, so skip it and say so
+        focusNext.current = "item";
+        await load("gone");
+        return;
       } else {
         console.error("review answer failed", err);
         setError("Couldn't send that answer.");
@@ -253,9 +272,12 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
       });
     } catch (err) {
       if (mine !== seq.current) return false;
-      if (extractErrorDetail(err).status === 409) {
-        // a new day began, or the item was withdrawn meanwhile: the queue moved on
-        await load();
+      const { status } = extractErrorDetail(err);
+      if (status === 409 || status === 404) {
+        // 409: a new day began, or the item was withdrawn meanwhile — the queue
+        // moved on. 404: it is no longer one this session served — skip it.
+        focusNext.current = "item";
+        await load(status === 404 ? "gone" : null);
         return true;
       }
       console.error("review report failed", err);
@@ -264,8 +286,7 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
     }
     if (mine !== seq.current) return true;
     focusNext.current = "item";
-    await load();
-    setReported(true);
+    await load("reported");
     return true;
   };
 
@@ -293,17 +314,26 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
         )}
       </div>
 
-      {renderPauseBanner(pause, pausedConcepts)}
+      {/* Its "review keeps working" would contradict a queue that did not load. */}
+      {!loadFailed && renderPauseBanner(pause, pausedConcepts)}
 
-      {error && <div ref={errorRef} tabIndex={-1} role="alert" style={{ fontSize: 13, color: "var(--text-muted)" }}>{error}</div>}
-      {/* Always in the DOM, so the confirmation is announced when it appears. */}
-      <div aria-live="polite">
-        {reported && (
-          <div data-testid="review-reported" role="status" style={{ fontSize: 13, color: "var(--text-muted)" }}>
-            Thanks — that question is reported and won&apos;t be shown to you again.
-          </div>
-        )}
-      </div>
+      {error && <div ref={errorRef} tabIndex={-1} role="alert" data-testid={loadFailed ? "review-load-error" : undefined} style={{ fontSize: 13, color: "var(--text-muted)" }}>{error}</div>}
+      {loadFailed && (
+        <button
+          data-testid="review-load-retry"
+          className="btn btn--sm"
+          style={{ alignSelf: "flex-start" }}
+          disabled={busy}
+          onClick={() => {
+            focusNext.current = "item";
+            void load();
+          }}
+        >
+          Try again
+        </button>
+      )}
+      {/* Always in the DOM, so the note is announced when it appears. */}
+      <div aria-live="polite">{renderNotice(notice)}</div>
 
       {renderNothingServed(next, item, statusRef)}
 
@@ -358,6 +388,39 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
 
 // ── The panel's parts: plain render calls, not components, so React sees the
 // same element tree the inline JSX produced (nothing remounts). ──────────────
+
+/** Why the panel moved past the last item (see the header). */
+type Notice = "reported" | "gone";
+
+const NOTICE_TEXT: Record<Notice, string> = {
+  reported: "Thanks — that question is reported and won't be shown to you again.",
+  gone: "That question is no longer available, so it was skipped.",
+};
+
+function renderNotice(notice: Notice | null) {
+  if (!notice) return null;
+  return (
+    <div data-testid={`review-${notice === "gone" ? "skipped" : "reported"}`} role="status" style={{ fontSize: 13, color: "var(--text-muted)" }}>
+      {NOTICE_TEXT[notice]}
+    </div>
+  );
+}
+
+/** Why the queue did not load, in words that match what still works: a budget
+ *  pause on this read means review did NOT keep working, so the pause banner's
+ *  "review keeps working" is never shown for it. */
+function loadFailureMessage(err: unknown): string {
+  const paused = budgetPauseOf(err);
+  if (paused) {
+    return paused.resetAt
+      ? `Couldn't load your review queue: your AI budget is paused until ${formatResetAt(paused.resetAt)}. Try again then.`
+      : "Couldn't load your review queue: your AI budget is paused for now. Try again later.";
+  }
+  if (extractErrorDetail(err).status === 429) {
+    return "Couldn't load your review queue: too many requests just now. Wait a moment, then try again.";
+  }
+  return "Couldn't load your review queue. Check your connection, then try again.";
+}
 
 type ReviewItem = NonNullable<ReviewNextResponse["item"]>;
 
