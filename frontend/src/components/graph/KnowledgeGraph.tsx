@@ -11,7 +11,10 @@
  *                 blend between their endpoints; a small legend explains it.
  * The choice persists in localStorage and is synced across mounted graphs
  * (the `storage` event for other tabs plus a same-tab custom event), so
- * flipping it on one graph flips every graph.
+ * flipping it on one graph flips every graph. A host that fixes the mode
+ * (`colorMode`: the Tutor's session panel, which draws its own key under the
+ * map) gets neither the toggle nor the in-graph key, and the stored choice
+ * does not apply to it.
  *
  * (A 3D WebGL/three.js mode used to live behind a 2D⇄3D toggle in this same
  * corner; it was dropped. A stale `sapling.kg.mode` value is simply ignored.)
@@ -96,6 +99,13 @@ type Props = {
   focusCourseId?: string | null;
   onHoverCourse?: (courseId: string | null) => void;
   zoomRequest?: { courseId: string | null; seq: number } | null;
+  /** Fix the colour mode: no toggle and no in-graph key (the host shows the
+   *  key), and the stored choice does not apply. Omitted: the shared toggle. */
+  colorMode?: GraphColorMode;
+  /** Keep every node and its caption in the window (see KnowledgeGraph2D). */
+  fit?: boolean;
+  /** Draw the zoom stack (default). */
+  zoomControls?: boolean;
 };
 
 const TIERS: MasteryTier[] = ["mastered", "learning", "struggling", "unexplored"];
@@ -166,39 +176,43 @@ function GraphCrashFallback({ error, reset }: { error: Error; reset: () => void 
 
 export function KnowledgeGraph(props: Props) {
   const { width = 800, height = 480 } = props;
-  const [colorMode, setColorMode] = useGraphColorMode();
+  const [storedMode, setColorMode] = useGraphColorMode();
+  const fixed = props.colorMode !== undefined;
+  const colorMode = props.colorMode ?? storedMode;
   const mastery = colorMode === "mastery";
   return (
     <div data-testid="graph-container" style={{ position: "relative", width, height }}>
       <ErrorBoundary fallback={(error, reset) => <GraphCrashFallback error={error} reset={reset} />}>
         <KnowledgeGraph2D {...props} colorMode={colorMode} />
       </ErrorBoundary>
-      <button
-        type="button"
-        data-testid="graph-color-toggle"
-        className="btn btn--ghost btn--sm"
-        // Constant name + aria-pressed: the label says what the switch
-        // turns on, the pressed state says whether it is on.
-        aria-pressed={mastery}
-        title={mastery ? "Back to course colors" : "Color nodes by mastery"}
-        onClick={() => setColorMode(mastery ? "course" : "mastery")}
-        style={{
-          ...PANEL,
-          top: 12,
-          display: "flex",
-          alignItems: "center",
-          gap: 6,
-          padding: "3px 8px",
-          fontSize: 11,
-          ...(mastery
-            ? { borderColor: MASTERY_PALETTE.hub, color: MASTERY_PALETTE.hub, fontWeight: 600 }
-            : null),
-        }}
-      >
-        <PaletteGlyph />
-        <span>Mastery colors</span>
-      </button>
-      {(mastery || props.legible) && (
+      {!fixed && (
+        <button
+          type="button"
+          data-testid="graph-color-toggle"
+          className="btn btn--ghost btn--sm"
+          // Constant name + aria-pressed: the label says what the switch
+          // turns on, the pressed state says whether it is on.
+          aria-pressed={mastery}
+          title={mastery ? "Back to course colors" : "Color nodes by mastery"}
+          onClick={() => setColorMode(mastery ? "course" : "mastery")}
+          style={{
+            ...PANEL,
+            top: 12,
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            padding: "3px 8px",
+            fontSize: 11,
+            ...(mastery
+              ? { borderColor: MASTERY_PALETTE.hub, color: MASTERY_PALETTE.hub, fontWeight: 600 }
+              : null),
+          }}
+        >
+          <PaletteGlyph />
+          <span>Mastery colors</span>
+        </button>
+      )}
+      {!fixed && (mastery || props.legible) && (
         // Mastery colors: one colour per tier. Course colors (legible graphs
         // only): the course's colour, with the tier carried by how solid the
         // node is, so the key shows the same dot at each tier's opacity.

@@ -103,6 +103,31 @@ describe("KnowledgeGraph", () => {
     }
   });
 
+  it("a host that fixes the mode gets it whatever is stored, with no toggle and no in-graph key", () => {
+    // The Tutor's session panel draws its own key under the map (PR #866 U4).
+    window.localStorage.setItem(GRAPH_COLOR_STORAGE_KEY, "course");
+    const { getAllByTestId, queryByTestId } = render(
+      <>
+        <KnowledgeGraph nodes={[]} edges={[]} colorMode="mastery" />
+        <KnowledgeGraph nodes={[]} edges={[]} />
+      </>,
+    );
+    const [fixed, shared] = getAllByTestId("mock-2d");
+    expect(fixed.getAttribute("data-color-mode")).toBe("mastery");
+    expect(shared.getAttribute("data-color-mode")).toBe("course");
+    // only the shared graph has the toggle; flipping it leaves the fixed one alone
+    const toggles = getAllByTestId("graph-color-toggle");
+    expect(toggles).toHaveLength(1);
+    fireEvent.click(toggles[0]);
+    expect(fixed.getAttribute("data-color-mode")).toBe("mastery");
+    expect(getAllByTestId("mock-2d")[1].getAttribute("data-color-mode")).toBe("mastery");
+    // the shared graph's key is its own; the fixed graph draws none
+    expect(getAllByTestId("graph-color-legend")).toHaveLength(1);
+    fireEvent.click(toggles[0]);
+    expect(queryByTestId("graph-color-legend")).toBeNull();
+    expect(fixed.getAttribute("data-color-mode")).toBe("mastery");
+  });
+
   it("contains a renderer crash behind a placeholder with a working retry", async () => {
     mockState.throw2d = true;
     // React logs boundary-caught errors (and the fallback logs the crash).

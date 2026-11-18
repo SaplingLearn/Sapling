@@ -20,7 +20,6 @@ import { FullHeightScreen } from "../FullHeightScreen";
 import { DisclaimerModal } from "../DisclaimerModal";
 import { AIDisclaimerChip } from "../chat/AIDisclaimerChip";
 import { ChatPanel, PageTurn, type ChatMsg } from "../chat/ChatPanel";
-import { KnowledgeGraph } from "../graph/KnowledgeGraph";
 import { useToast } from "../ToastProvider";
 import { useUser } from "@/context/UserContext";
 import { useIsMobile } from "@/lib/useIsMobile";
@@ -101,6 +100,7 @@ import { Icon } from "../Icon";
 import { TutorSidebar } from "./tutor/TutorSidebar";
 import { TutorAllSessions, TutorCourse, TutorHome, type SessionFilter } from "./tutor/TutorPages";
 import { SessionPanel, type PanelConcept } from "./tutor/SessionPanel";
+import { SessionMap } from "./tutor/SessionMap";
 import { PhaseStepper } from "./tutor/PhaseStepper";
 import { SidebarGlyph } from "./tutor/TutorIcons";
 import { mergeSessions, sessionTitle, type TutorSessionRow } from "./tutor/sessions";
@@ -159,7 +159,6 @@ const MAX_TIMER_MS = 2_147_483_647;
 
 const BAND_LABEL: Record<string, string> = { novice: "Getting started", develop: "Developing", profic: "Proficient" };
 const TEACHING: readonly LoopPhase[] = ["teach", "check", "feedback"];
-const RAIL_GRAPH_HEIGHT = 240;
 
 const FIELD_STYLE: React.CSSProperties = {
   width: "100%",
@@ -2353,7 +2352,7 @@ export function LoopLearn() {
       showTreeLink={!isMobile}
       onHide={() => setPanelOpen(false)}
       map={railGraph.nodes.length > 0 ? (
-        <RailGraph nodes={railGraph.nodes} edges={railGraph.edges} highlightId={focusNodeId ?? undefined} />
+        <SessionMap nodes={railGraph.nodes} edges={railGraph.edges} highlightId={focusNodeId ?? undefined} />
       ) : (
         <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Concepts appear here as you learn.</div>
       )}
@@ -2591,27 +2590,6 @@ function VerdictBanner({ verdict, concept }: { verdict: string; concept: string 
  *  on the page as the conversation's turns are (`PageTurn`). */
 function TutorTurn({ children, testId }: { children: React.ReactNode; testId?: string }) {
   return <PageTurn plain testId={testId}>{children}</PageTurn>;
-}
-
-/** The knowledge-map rail: `KnowledgeGraph` fed as Learn.tsx's
- *  SidebarKnowledgeGraph feeds it (measured width, fixed height). */
-function RailGraph({ nodes, edges, highlightId }: { nodes: GraphNode[]; edges: GraphEdge[]; highlightId?: string }) {
-  const [width, setWidth] = useState(0);
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const el = ref.current;
-    if (!el || typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver((entries) => setWidth(entries[0].contentRect.width));
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-  return (
-    <div ref={ref} style={{ width: "100%" }}>
-      {width > 0 && (
-        <KnowledgeGraph nodes={nodes} edges={edges} width={width} height={RAIL_GRAPH_HEIGHT} highlightId={highlightId} />
-      )}
-    </div>
-  );
 }
 
 function ProbePanel({
