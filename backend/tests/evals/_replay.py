@@ -222,14 +222,36 @@ BASELINE_TOLERANCE = 1e-6
 
 
 def _aggregate_scores(report) -> dict[str, float]:
-    """Mean of each evaluator's score across all (non-errored) cases."""
+    """Mean of each evaluator's score across all (non-errored) cases. An
+    evaluator that RAISED on a case scores 0.0 there: pydantic-evals files the
+    crash under `case.evaluator_failures` and leaves the score out, so an
+    evaluator that crashed on 9 of 10 cases used to average 1.000 over the one
+    it finished (D3). `_evaluator_failures` also fails the run."""
     sums: dict[str, float] = {}
     counts: dict[str, int] = {}
     for case in report.cases:
         for ev_name, result in case.scores.items():
             sums[ev_name] = sums.get(ev_name, 0.0) + float(result.value)
             counts[ev_name] = counts.get(ev_name, 0) + 1
+        for failure in getattr(case, "evaluator_failures", None) or []:
+            sums[failure.name] = sums.get(failure.name, 0.0)
+            counts[failure.name] = counts.get(failure.name, 0) + 1
     return {ev: sums[ev] / counts[ev] for ev in sums if counts[ev]}
+
+
+def _evaluator_failures(report) -> list[str]:
+    """Every evaluator crash in `report`, one line each: per case, then the
+    report-level evaluators'. A crash is a failed run, like a case that raised."""
+    lines = [
+        f"{case.name}: {failure.name}: {failure.error_message}"
+        for case in report.cases
+        for failure in getattr(case, "evaluator_failures", None) or []
+    ]
+    lines += [
+        f"(report) {failure.name}: {failure.error_message}"
+        for failure in getattr(report, "report_evaluator_failures", None) or []
+    ]
+    return lines
 
 
 def _load_baselines() -> dict[str, dict[str, float]]:
@@ -284,7 +306,8 @@ def ensure_utf8_output() -> None:
 def evaluate_dataset(make_dataset, run_fn, *, update: bool, print_report: bool = True) -> bool:
     """Evaluate one dataset, print an accuracy summary, and return ``ok``.
 
-    ``ok`` is False when a case raised (e.g. a missing cassette in replay mode),
+    ``ok`` is False when a case raised (e.g. a missing cassette in replay mode)
+    or an evaluator raised on a case,
     a task's aggregate evaluator score regressed below its committed baseline
     in ``baselines.json``, or the dataset/an evaluator has NO committed baseline
     (fail closed — an ungated dataset must not read as PASS in CI). Sub-1.0
@@ -313,12 +336,22 @@ def evaluate_dataset(make_dataset, run_fn, *, update: bool, print_report: bool =
     ok = True
     if report.failures:
         print(
-            f"\n{len(report.failures)} case(s) raised during evaluation.",
+            f"\n{len(report.failures)} case(s) raised during evaluation:",
             file=sys.stderr,
         )
+        for failure in report.failures:
+            print(f"  - {failure.name}: {failure.error_message}", file=sys.stderr)
+        ok = False
+    crashed = _evaluator_failures(report)
+    if crashed:
+        # D3: an evaluator that raised scored nothing on that case; the run is
+        # a failed run (never a baseline, never a passing routing run).
+        print(f"\n{len(crashed)} evaluator failure(s):", file=sys.stderr)
+        for line in crashed:
+            print(f"  - {line}", file=sys.stderr)
         ok = False
 
-    _log_run(name, scores, raised=bool(report.failures))
+    _log_run(name, scores, raised=bool(report.failures or crashed))
 
     all_baselines = _load_baselines()
 
@@ -327,7 +360,7 @@ def evaluate_dataset(make_dataset, run_fn, *, update: bool, print_report: bool =
         # a crash's degraded scores in as the new "expected".
         if not ok:
             print(
-                f"\nRefusing to update {name} baselines: run had case failures.",
+                f"\nRefusing to update {name} baselines: a case or an evaluator raised.",
                 file=sys.stderr,
             )
             return False
