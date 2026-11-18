@@ -693,6 +693,17 @@ def input_sha256(slot: str, case_input: LoopInput, v2: bool = V2) -> str:
     return hashlib.sha256(body.encode("utf-8")).hexdigest()
 
 
+def routing_identity(slot: str, v2: bool = V2) -> dict:
+    """What one slot's recordings are made under, as a routing block names it
+    (baselines.json `<routing>.recorded_under`, D6): the slot's model and the
+    variant's prompt and schema hashes."""
+    return {
+        "model": model_name_for(slot),
+        "prompt_hash": prompt_hash_for(v2),
+        "schema_hash": schema_hash_for(v2),
+    }
+
+
 def check_fresh(
     rec: LoopRecording, slot: str, case_input: LoopInput, v2: bool = V2
 ) -> None:
@@ -901,6 +912,7 @@ def _run_for(slot: str, v2: bool = V2):
             tool_calls=rec.tool_calls,
         )
 
+    _run.recorded_under = partial(routing_identity, slot, v2)  # the run log's (D6)
     return _run
 
 

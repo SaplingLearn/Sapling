@@ -1256,13 +1256,48 @@ def test_confront_tiers_match_the_eval_baselines():
         assert set(baselines[mod.dataset_name(slot)]) == set(mod.SERVED_GATES) | set(
             mod.DIAGNOSTICS
         )
-        runs = routing.get(slot) or []
+        # keyed by the dataset's baselines name, as floors.py writes it (D6)
+        runs = routing.get(mod.dataset_name(slot)) or []
         assert len(runs) == routing["runs"], slot
         if all(not run["_raised"] and all(run[g] >= 1.0 for g in mod.SERVED_GATES) for run in runs):
             passing.add(tier)
     assert passing, "no tier confronts on every served gate"
     assert set(CONFRONT_TIERS) == passing
     assert set(CONFRONT_TIERS) <= set(LOOP_ROUTABLE_TIERS)
+
+
+def test_confront_routing_runs_were_recorded_under_the_current_prompt_and_model():
+    """D6: the routing block names what its runs were recorded under, and that
+    is the CURRENT loop prompt hash, schema hash and slot model. Fails until
+    the confront datasets are re-recorded, like the cassette pins."""
+    import json
+
+    from agents._providers import model_name_for
+    from agents.loop_tutor import _PROMPT_HASH
+
+    mod = _confront_eval()
+    baselines = json.loads((BACKEND / "tests" / "evals" / "baselines.json").read_text())
+    recorded = baselines["misconception_confront_routing"]["recorded_under"]
+    for slot in mod.CONFRONT_SLOTS:
+        got = recorded[mod.dataset_name(slot)]
+        assert got == mod.routing_identity(slot), slot
+        assert got["prompt_hash"] == _PROMPT_HASH, f"{slot}: stale prompt"
+        assert got["model"] == model_name_for(slot), f"{slot}: other model"
+
+
+def test_a_confront_tier_floors_at_one_on_every_served_gate():
+    """D6: CONFRONT_TIERS reads the routing runs; each such tier's own floor
+    (their minimum, tests/evals/floors.py --check) is 1.0 on every served gate."""
+    import json
+
+    from agents.loop_tutor import LOOP_TIER_SLOTS
+    from services.loop.guard import CONFRONT_TIERS
+
+    mod = _confront_eval()
+    baselines = json.loads((BACKEND / "tests" / "evals" / "baselines.json").read_text())
+    for tier in CONFRONT_TIERS:
+        floor = baselines[mod.dataset_name(LOOP_TIER_SLOTS[tier])]
+        assert {g: floor[g] for g in mod.SERVED_GATES} == dict.fromkeys(mod.SERVED_GATES, 1.0), tier
 
 
 def test_the_eval_assembles_the_route_s_confronting_message():

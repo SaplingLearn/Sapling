@@ -94,6 +94,7 @@ from loop_tutor import (  # noqa: E402
     _released,
     _responses,
     prompt_hash_for,
+    routing_identity,
     schema_hash_for,
     served_texts,
     v2_focus,
@@ -476,6 +477,7 @@ def _run_for(slot: str, v2: bool = V2):
             tool_calls=rec.tool_calls,
         )
 
+    _run.recorded_under = partial(routing_identity, slot, v2)  # the run log's (D6)
     return _run
 
 

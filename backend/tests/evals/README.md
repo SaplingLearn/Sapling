@@ -22,7 +22,22 @@ Because replay is deterministic (the model output is frozen in the cassette), a
 task's aggregate score only moves when an **evaluator**, an **expected output**,
 or a **cassette** changes. CI gates on *regression below a committed baseline*
 (`baselines.json`), not on "< 1.0" — the harness measures accuracy, it does not
-assume perfection.
+assume perfection. A case that raises, or an evaluator that raises on a case
+(scored 0.0 there), fails the run.
+
+A cassette replays only under what it was recorded with. The loop datasets
+(`loop_tutor`, `misconception_confront`), `session_close`, `grader` (per run of
+`grade()`), `decisions`, `check_items` and `chat_tutor` store the agent's prompt
+hash (extended by the tool definitions it sends), the output schema's hash, the
+slot's model and the hash of the exact message plus the model and run
+settings; replay raises `StaleRecordingError` on any difference, so a prompt
+swapped for an injection can never replay the old answer. A cassette written
+before its dataset stored these fails closed until it is re-recorded (today:
+`grader`, `decisions` and `check_items`, whose re-record waits on Gemini
+billing). The rung and confront judge cassettes store the sha of the served
+text they judged; `tests/test_eval_served_cassettes.py` re-derives every served
+text from the committed recordings with the current production code and fails
+when a judgement, or a `session_close` recording, no longer matches it.
 
 ## Running
 
@@ -50,44 +65,86 @@ cost_usd as `llm_usage` would cost it. A re-record therefore measures what
 ## Refreshing after a prompt/model change
 
 Recording hits each agent's live model — Claude since ADR 0030 — so it needs
-`ANTHROPIC_API_KEY` set (in `.env`; `GEMINI_API_KEY` too if a slot is pointed
-back at a `gemini-*` model). Transient 429/503/529s are retried automatically.
-The cassettes and `baselines.json` were re-recorded on Claude on 2026-10-22;
-the Gemini-era recordings are in git history at the commit before that.
-
-```bash
-cd backend
-# 1. Re-record cassettes from the new prompt/model:
-SAPLING_EVAL_MODE=record python tests/evals/run_all.py
-# 2. Eyeball the score deltas the run prints. If the new numbers are the
-#    intended new baseline, commit them:
-SAPLING_EVAL_UPDATE_BASELINES=1 python tests/evals/run_all.py
-# 3. Commit cassettes/ and baselines.json together:
-git add tests/evals/cassettes tests/evals/baselines.json
-git commit -m "evals: refresh cassettes + baselines for <change>"
-```
+`ANTHROPIC_API_KEY` set (in `.env`; `GEMINI_API_KEY` for every slot still on a
+`gemini-*` model: the loop tutor tiers, the grader, check_items, session_close
+and the eval judges). Transient 429/503/529s are retried automatically. The
+Claude datasets were re-recorded on 2026-10-22 (`chat_tutor` again, three runs,
+on 2026-11-18); the Gemini-era recordings are in git history. Follow the
+three-run procedure below for every re-record.
 
 Never hand-edit an existing case to make it pass; add a new case when
 production surfaces a miss (see each dataset's module docstring).
 
-### Floors from three recordings (spec §13 A40 06(s), PKG-14)
+### The re-record procedure: floors from three recordings (spec §13 A40 06(s), PKG-14)
 
-A floor set from ONE recording is not accepted. Record the dataset three
-times with a run log, then let `floors.py` write the minimum per evaluator
-(and, for a routed dataset, the per-run routing block the tier pins read):
+A floor set from ONE recording is not accepted. Every re-record is:
 
-```bash
-cd backend
-for i in 1 2 3; do
-  SAPLING_EVAL_MODE=record SAPLING_EVAL_RUNS_LOG=/tmp/runs.jsonl python tests/evals/loop_tutor.py
-done
-python tests/evals/floors.py --log /tmp/runs.jsonl --runs 3 \
-    --datasets loop_tutor_lite,loop_tutor,loop_tutor_deep --routing loop_tutor_routing
-```
+1. **Record three times** with a run log. Each record run rewrites the
+   dataset's cassettes, so the committed cassettes are the **last run's** and
+   replay scores sit at or above the floor:
 
-The committed cassettes are the last run's, so replay scores are always at or
-above the floor. `floors.py --dry-run` prints every run and the floor without
-writing; it refuses fewer than three runs.
+   ```bash
+   cd backend
+   for i in 1 2 3; do
+     SAPLING_EVAL_MODE=record SAPLING_EVAL_RUNS_LOG=/tmp/runs.jsonl python tests/evals/<dataset>.py
+   done
+   ```
+
+2. **Floors = the minimum of the three runs**, per evaluator, written by
+   `floors.py` (never by hand, never from one run). For a routed dataset the
+   same call rewrites its **routing block**: the three per-run score blocks
+   (`_raised` set for a run in which a case or an evaluator raised) and
+   `recorded_under`, the model, prompt hash and schema hash every run was
+   recorded under (runs of different prompts or models are refused):
+
+   ```bash
+   # the loop tutor tiers (agents/loop_tutor.LOOP_ROUTABLE_TIERS reads the block)
+   python tests/evals/floors.py --log /tmp/runs.jsonl --runs 3 \
+       --datasets loop_tutor_lite,loop_tutor,loop_tutor_deep --routing loop_tutor_routing
+   # the confronting turn (services/loop/guard.CONFRONT_TIERS reads the block)
+   python tests/evals/floors.py --log /tmp/runs.jsonl --runs 3 \
+       --datasets misconception_confront__loop_tutor_deep,misconception_confront__loop_tutor \
+       --routing misconception_confront_routing
+   # a dataset that routes nothing
+   python tests/evals/floors.py --log /tmp/runs.jsonl --runs 3 --datasets chat_tutor
+   ```
+
+   `SAPLING_EVAL_UPDATE_BASELINES=1` does the same for a routed dataset: with
+   `SAPLING_EVAL_RUNS_LOG` naming a log of its three recorded runs it rewrites
+   the floor and the routing block together, and with fewer it refuses. For a
+   dataset that routes nothing it still writes one run's scores, which
+   `floors.py --check` then rejects wherever a run log exists.
+
+3. **Commit the run log** of a dataset that routes nothing as
+   `tests/evals/runs/<dataset>_<YYYY-MM-DD>.jsonl` (a routed dataset's runs
+   live in its routing block), with the cassettes and `baselines.json`:
+
+   ```bash
+   cp /tmp/runs.jsonl tests/evals/runs/<dataset>_$(date -u +%Y-%m-%d).jsonl
+   git add tests/evals/cassettes tests/evals/baselines.json tests/evals/runs
+   git commit -m "evals: re-record <dataset> for <change>"
+   ```
+
+`python tests/evals/floors.py --check` (also run by `tests/test_eval_floors.py`)
+fails when a floor is not the minimum of its recorded runs: a routed dataset's
+routing block (written at up to three decimals before floors.py wrote them), or
+the newest committed run log of any other dataset. A floor with neither must be
+named in `floors.SINGLE_RECORDING_FLOORS`: the datasets recorded once before
+this rule, each until its next re-record. `floors.py --dry-run` prints every run
+and the floor without writing; it refuses fewer than three runs.
+
+One committed dataset breaks "the cassettes are the last run's" until its next
+re-record: `misconception_confront__loop_tutor`'s cassettes are a fourth
+recording, not one of its three routing runs (they replay Confronts 0.429,
+FeedbackNeverEndsInAnswer 1.0, RetriesUsed 0.857; no run scored that), and its
+floors were once that recording's scores. Its floors (and the deep slot's
+RetriesUsed) are now the minimum of the three routing runs, as the rule says:
+FeedbackNeverEndsInAnswer 0.857, RetriesUsed 0.571. The loop and confront
+cassettes and routing runs were recorded under prompt hash `10676b7d004e`; the
+current loop prompt hashes differently, so those datasets, and the routing
+pins in `tests/test_loop_tutor_agent.py` and `tests/test_learning_misconceptions.py`
+that compare `recorded_under` with the current prompt and slot model, fail
+until the Gemini re-record.
 
 ## Coverage
 
@@ -120,8 +177,8 @@ Supabase. Its cassettes also freeze the model's *tool calls*, which the
 graph-grounding evaluators (GraphToolUsed / MasteryUpdateEmitted /
 GroundedConcept) score in replay.
 
-`loop_tutor` (PKG-07) runs the same 8 cases once per tier slot (`loop_tutor_lite`, `loop_tutor`, `loop_tutor_deep`), each with its own cassettes and baselines block, on the SERVED path (Task 9): a cassette is a `LoopRecording` — the raw `LoopTurnOut`, every raw attempt, request/retry counts, tool calls, and the `prompt_hash` / `schema_hash` / `model` / `input_sha256` it was recorded under (replay raises `StaleRecordingError` on any mismatch, and `tests/test_loop_tutor_agent.py` pins every cassette to the current hashes) — and replay recomputes the served text with production code (`turn_shape.render_turn`, then `routes.learn_loop.served_model_text` at `loop_leak_rung`), which the rung judge reads (`ajudge_rung`, `cassettes/loop_tutor_rung_judge/<slot>__<case>.json`). Served gates: ServedAnswerLeak, ServedNoReveal, CeilingCompliance, MaxSentences, OneQuestion, FeedbackNeverEndsInAnswer, SycophancyResists, NoControlTags, PlainMathBelowH6; diagnostics (baselined, never routing): RawAnswerLeak, RetriesUsed (1.0 = first attempt served). `agents/loop_tutor.LOOP_ROUTABLE_TIERS` is exactly the slots at 1.0 on every served gate (pinned by `test_loop_routable_tiers_match_baselines`); in the 2026-09-29 recording that is `loop_tutor` alone (HANDOFF-07).
+`loop_tutor` (PKG-07) runs the same 8 cases once per tier slot (`loop_tutor_lite`, `loop_tutor`, `loop_tutor_deep`), each with its own cassettes and baselines block, on the SERVED path (Task 9): a cassette is a `LoopRecording` — the raw `LoopTurnOut`, every raw attempt, request/retry counts, tool calls, and the `prompt_hash` / `schema_hash` / `model` / `input_sha256` it was recorded under (replay raises `StaleRecordingError` on any mismatch, and `tests/test_loop_tutor_agent.py` pins every cassette to the current hashes) — and replay recomputes the served text with production code (`turn_shape.render_turn`, then `routes.learn_loop.served_model_text` at `loop_leak_rung`), which the rung judge reads (`ajudge_rung`, `cassettes/loop_tutor_rung_judge/<slot>__<case>.json`). Served gates: ServedAnswerLeak, ServedNoReveal, CeilingCompliance, MaxSentences, OneQuestion, FeedbackNeverEndsInAnswer, SycophancyResists, NoControlTags, PlainMathBelowH6; diagnostics (baselined, never routing): RawAnswerLeak, RetriesUsed (1.0 = first attempt served). `agents/loop_tutor.LOOP_ROUTABLE_TIERS` is exactly the tiers whose three routing runs (`baselines.json` `loop_tutor_routing`) all score 1.0 on every served gate with no case raised (pinned by `test_loop_routable_tiers_match_baselines`; a routable tier's own floors are 1.0 on every served gate, `test_a_routable_tier_floors_at_one_on_every_served_gate`); in the 2026-09-29 runs that is standard and deep (lite raised a case in one run and scored CeilingCompliance 0.75 in another).
 
 `loop_rung_judge` (PKG-07 Task 9, 8 cassettes under `cassettes/loop_tutor_rung_judge/`) calibrates the eval-side rung judge `_rung_judge.py`, which replaces `loop_tutor._infer_rung` (a marker classifier that scores any unmarked reply as H3, so no reply to an H1/H2-ceiling case can pass). The judge is an eval-only pydantic-ai agent (`RUNG_JUDGE_MODEL`, default `gemini-2.5-pro`, env-overridable; no production slot, no function-mode handler) prompted with `learning.ladder.RUNG_INTENT` verbatim, and returns `RungJudgement{rung 0..6, reveals_final_answer, evidence}`. `judge_rung(case_id, slot, served_text, item)` (and `await ajudge_rung(...)`) records to `cassettes/loop_tutor_rung_judge/<slot>__<case>.json` = `{served_sha256, judge_model, judge_prompt_hash, output}`; replay RAISES when the served text, the judge prompt (instructions, item block or output schema) or the judge model changed, so a stale judgement never scores. The calibration's eight hand-written replies span H0..H6 (two are plain H1/H2 text `_infer_rung` misreads; one is an unmarked full solution it under-counts); `RungJudgeAgreement` and `RevealAgreement` are gated at 1.0. On a miss fix the judge prompt, never the gold, and re-record.
 
-`misconception_confront` (PKG-10, spec §13 A75) scores the confronting turn — the loop tutor plus the route's confrontation line (`routes.learn_loop.confront_line_for` / `with_confrontation`, used by the eval so it scores what the route sends) — on the SERVED path, one dataset per slot a confronting turn can land on (`misconception_confront__loop_tutor_deep`, `misconception_confront__loop_tutor`; 7 cases each: five feedback turns incl. an instruction smuggled into the item-drafted misconception text, a hint at H4 on an unreleased isomorph, a novice teach turn). Recording format, stale checks and served text are `loop_tutor.py`'s (cassettes `cassettes/misconception_confront/<slot>/`). Served gates: the loop tutor's (ServedAnswerLeak, ServedNoReveal, CeilingCompliance via the rung judge, MaxSentences, OneQuestion, FeedbackNeverEndsInAnswer — the final answer matched as a token — NoControlTags, PlainMathBelowH6) plus Confronts and NoAffirmation (the eval-only confront judge `_confront_judge.py`, gemini-2.5-pro, cassettes `cassettes/misconception_confront_judge/`, reading the model's part of the turn), VerdictHeld and NoInstructionEcho; diagnostics RawAnswerLeak, RetriesUsed. `baselines.json` `misconception_confront_routing` holds three fresh recordings per slot; `routes.learn_loop.CONFRONT_TIERS` is exactly the tiers whose three runs all score 1.0 on every served gate (pinned by `tests/test_learning_misconceptions.py`): deep only in the 2026-09-29 recordings (standard: Confronts 0.43/0.50/0.43).
+`misconception_confront` (PKG-10, spec §13 A75) scores the confronting turn — the loop tutor plus the route's confrontation line (`routes.learn_loop.confront_line_for` / `with_confrontation`, used by the eval so it scores what the route sends) — on the SERVED path, one dataset per slot a confronting turn can land on (`misconception_confront__loop_tutor_deep`, `misconception_confront__loop_tutor`; 7 cases each: five feedback turns incl. an instruction smuggled into the item-drafted misconception text, a hint at H4 on an unreleased isomorph, a novice teach turn). Recording format, stale checks and served text are `loop_tutor.py`'s (cassettes `cassettes/misconception_confront/<slot>/`). Served gates: the loop tutor's (ServedAnswerLeak, ServedNoReveal, CeilingCompliance via the rung judge, MaxSentences, OneQuestion, FeedbackNeverEndsInAnswer — the final answer matched as a token — NoControlTags, PlainMathBelowH6) plus Confronts and NoAffirmation (the eval-only confront judge `_confront_judge.py`, gemini-2.5-pro, cassettes `cassettes/misconception_confront_judge/`, reading the model's part of the turn), VerdictHeld and NoInstructionEcho; diagnostics RawAnswerLeak, RetriesUsed. `baselines.json` `misconception_confront_routing` holds three fresh recordings per slot, keyed by the dataset name (`misconception_confront__<slot>`) as floors.py writes it; `services.loop.guard.CONFRONT_TIERS` is exactly the tiers whose three runs all score 1.0 on every served gate (pinned by `tests/test_learning_misconceptions.py`): deep only in the 2026-09-29 recordings (standard: Confronts 0.43/0.50/0.43).

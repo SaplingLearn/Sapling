@@ -592,6 +592,43 @@ def test_loop_routable_tiers_match_baselines():
     assert set(LOOP_ROUTABLE_TIERS) == passing
 
 
+def test_loop_routing_runs_were_recorded_under_the_current_prompt_and_model():
+    """D6: the routing block names what its runs were recorded under (floors.py
+    writes it from the run log), and that is the CURRENT prompt hash, schema
+    hash and slot model — evidence from another prompt or model never routes.
+    Fails until the loop datasets are re-recorded, like the cassette pins."""
+    import json
+    from pathlib import Path
+
+    from agents._providers import model_name_for
+    from agents.loop_tutor import _PROMPT_HASH, LOOP_TIER_SLOTS
+
+    mod = _loop_eval_module()
+    baselines = json.loads((Path(__file__).parent / "evals" / "baselines.json").read_text())
+    recorded = baselines["loop_tutor_routing"]["recorded_under"]
+    for slot in LOOP_TIER_SLOTS.values():
+        assert recorded[slot] == mod.routing_identity(slot), slot
+        assert recorded[slot]["prompt_hash"] == _PROMPT_HASH, f"{slot}: stale prompt"
+        assert recorded[slot]["model"] == model_name_for(slot), f"{slot}: other model"
+
+
+def test_a_routable_tier_floors_at_one_on_every_served_gate():
+    """D6: LOOP_ROUTABLE_TIERS reads the routing runs; the tier's own floor
+    (the minimum of those runs, tests/evals/floors.py --check) must say the
+    same — 1.0 on every served gate — so the floor and the routing evidence
+    cannot drift apart."""
+    import json
+    from pathlib import Path
+
+    from agents.loop_tutor import LOOP_ROUTABLE_TIERS, LOOP_TIER_SLOTS
+
+    mod = _loop_eval_module()
+    baselines = json.loads((Path(__file__).parent / "evals" / "baselines.json").read_text())
+    for tier in LOOP_ROUTABLE_TIERS:
+        floor = baselines[LOOP_TIER_SLOTS[tier]]
+        assert {g: floor[g] for g in mod.SERVED_GATES} == dict.fromkeys(mod.SERVED_GATES, 1.0), tier
+
+
 # ── PKG-07 unblock S1: the structured turn ──────────────────────────────────
 
 

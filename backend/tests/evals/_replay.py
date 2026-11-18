@@ -400,12 +400,16 @@ def _write_baselines(all_baselines: dict[str, dict[str, float]]) -> None:
 #: A40 06(s) (PKG-14): an eval floor is the MINIMUM of LOOP-style repeated
 #: recordings, never one. With SAPLING_EVAL_RUNS_LOG=<path>, every evaluated
 #: dataset appends one JSON line {"dataset", "mode", "scores", "raised"} to
-#: <path>; tests/evals/floors.py turns N such runs into the floors (and a
+#: <path> — plus "recorded_under" (model, prompt and schema hash) for a dataset
+#: whose run function names it (`run_fn.recorded_under`, the routed loop
+#: datasets); tests/evals/floors.py turns N such runs into the floors (and a
 #: routing block). Unset, nothing is written.
 RUNS_LOG_ENV = "SAPLING_EVAL_RUNS_LOG"
 
 
-def _log_run(name: str, scores: dict[str, float], *, raised: bool) -> None:
+def _log_run(
+    name: str, scores: dict[str, float], *, raised: bool, recorded_under: dict | None = None
+) -> None:
     path = os.getenv(RUNS_LOG_ENV)
     if not path:
         return
@@ -415,8 +419,59 @@ def _log_run(name: str, scores: dict[str, float], *, raised: bool) -> None:
         "scores": {ev: round(v, 6) for ev, v in sorted(scores.items())},
         "raised": raised,
     }
+    if recorded_under is not None:
+        line["recorded_under"] = recorded_under
     with open(path, "a", encoding="utf-8") as fh:
         fh.write(json.dumps(line, sort_keys=True) + "\n")
+
+
+def _recorded_under_of(run_fn) -> dict | None:
+    """What a run function's recordings are made under, when it says
+    (`run_fn.recorded_under()`: the routed loop datasets)."""
+    fn = getattr(run_fn, "recorded_under", None)
+    return dict(fn()) if callable(fn) else None
+
+
+def _routing_block_of(all_baselines: dict, name: str) -> str | None:
+    """The `*_routing` block holding `name`'s routing runs, if any."""
+    for key, block in all_baselines.items():
+        if key.endswith("_routing") and isinstance(block, dict) and isinstance(block.get(name), list):
+            return key
+    return None
+
+
+def _update_routed(all_baselines: dict, name: str, routing: str) -> bool:
+    """SAPLING_EVAL_UPDATE_BASELINES for a ROUTED dataset (D6): its floor is the
+    minimum of the block's N recordings and the block says what they were
+    recorded under, so one run never rewrites either. The floor, the runs and
+    `recorded_under` are rewritten together from SAPLING_EVAL_RUNS_LOG's last N
+    recorded runs (floors.apply_floors); with fewer, the update is refused."""
+    import sys
+
+    here = str(Path(__file__).parent)
+    if here not in sys.path:
+        sys.path.insert(0, here)
+    from floors import apply_floors
+
+    n = int(all_baselines[routing].get("runs") or 0)
+    path = os.getenv(RUNS_LOG_ENV)
+    lines = []
+    if path and Path(path).exists():
+        lines = [json.loads(ln) for ln in Path(path).read_text().splitlines() if ln.strip()]
+    try:
+        updated = apply_floors(all_baselines, lines, [name], n=n, routing=routing)
+    except ValueError as exc:
+        print(
+            f"\nRefusing to update {name}: it routes ({routing}), so its floor is the "
+            f"minimum of {n} recordings and {routing} names what they were recorded under. "
+            f"Record it {n} times with {RUNS_LOG_ENV}=<log> (SAPLING_EVAL_MODE=record), "
+            f"then update with the same {RUNS_LOG_ENV}. ({exc})",
+            file=sys.stderr,
+        )
+        return False
+    _write_baselines(updated)
+    print(f"\nUpdated {name}'s floor and {routing} from {n} recorded runs in {path}.")
+    return True
 
 
 def ensure_utf8_output() -> None:
@@ -484,7 +539,12 @@ def evaluate_dataset(make_dataset, run_fn, *, update: bool, print_report: bool =
             print(f"  - {line}", file=sys.stderr)
         ok = False
 
-    _log_run(name, scores, raised=bool(report.failures or crashed))
+    _log_run(
+        name,
+        scores,
+        raised=bool(report.failures or crashed),
+        recorded_under=_recorded_under_of(run_fn),
+    )
 
     all_baselines = _load_baselines()
 
@@ -497,6 +557,9 @@ def evaluate_dataset(make_dataset, run_fn, *, update: bool, print_report: bool =
                 file=sys.stderr,
             )
             return False
+        routing = _routing_block_of(all_baselines, name)
+        if routing is not None:
+            return _update_routed(all_baselines, name, routing)
         all_baselines[name] = {ev: round(scores[ev], 6) for ev in scores}
         _write_baselines(all_baselines)
         print(f"\nUpdated baselines for {name} in {BASELINES_PATH.name}.")
