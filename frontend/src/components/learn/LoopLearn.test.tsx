@@ -489,8 +489,11 @@ describe("LoopLearn — probe and plan", () => {
     render(<LoopLearn />);
     fireEvent.change(await screen.findByTestId("loop-probe-input"), { target: { value: "x" } });
     fireEvent.click(screen.getByTestId("loop-probe-submit"));
-    const row = await screen.findByTestId("loop-plan-concept-n2");
-    expect(row.textContent).toContain("Review");
+    await screen.findByTestId("loop-plan-concept-n2");
+    // one label per concept, its kind (PR #866 U3): no reason line beside it
+    expect(screen.getByTestId("loop-plan-kind-n2").textContent).toBe("Due for review");
+    expect(screen.getByTestId("loop-plan-kind-n1").textContent).toBe("New");
+    expect(screen.queryByTestId("loop-plan-reason-n2")).toBeNull();
     expect(api.nextLoopProbe).toHaveBeenCalledTimes(1);
     expect(screen.getByTestId("loop-phase").getAttribute("data-phase")).toBe("plan");
     fireEvent.click(screen.getByTestId("loop-plan-approve"));

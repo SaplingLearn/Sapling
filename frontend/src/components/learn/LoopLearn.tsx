@@ -88,6 +88,7 @@ import { initialLoopState, reduceLoopEvent } from "./loopState";
 import { readResumeParam } from "./resumeParam";
 import styles from "./LoopLearn.module.css";
 import { DiagnosisSummary, GoalEditor } from "./LearningScope";
+import { planGoalReason, planKind } from "./planLabels";
 import { ReportQuestion } from "./ReportQuestion";
 import { CrisisSupportCard, useCrisisSupport } from "../safety/CrisisSupportCard";
 import { crisisSupportIn, type CrisisSupport } from "@/lib/crisisSupport";
@@ -156,11 +157,6 @@ const ALREADY_GRADED_DETAIL = "already graded";
 const MAX_TIMER_MS = 2_147_483_647;
 
 const BAND_LABEL: Record<string, string> = { novice: "Getting started", develop: "Developing", profic: "Proficient" };
-const KIND_LABEL: Record<string, { label: string; chip: string }> = {
-  review: { label: "Review", chip: "chip chip--warn" },
-  new: { label: "New", chip: "chip chip--accent" },
-  sibling: { label: "Related", chip: "chip chip--info" },
-};
 const TEACHING: readonly LoopPhase[] = ["teach", "check", "feedback"];
 const RAIL_GRAPH_HEIGHT = 240;
 
@@ -2852,7 +2848,8 @@ function PlanPanel({
         {plan && plan.length > 0 && (
           <ol aria-label="Concepts in today's plan" style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 6 }}>
             {plan.map((c, i) => {
-              const kind = KIND_LABEL[c.kind];
+              const kind = planKind(c.kind);
+              const why = planGoalReason(c.reason);
               return (
                 <li
                   key={c.node_id}
@@ -2861,12 +2858,10 @@ function PlanPanel({
                 >
                   <span className={tutorStyles.planBox} aria-hidden>{i + 1}</span>
                   <span style={{ flex: "1 1 100px", minWidth: 0, overflowWrap: "anywhere", fontSize: 14, fontWeight: 500 }}>{c.concept_name || "Concept"}
-                    {c.reason && <span data-testid={`loop-plan-reason-${c.node_id}`} className={tutorStyles.ps} style={{ display: "block", marginTop: 2, fontWeight: 400 }}>
-                      {c.reason === "prerequisite" ? "Prerequisite for your goal" : c.reason === "goal" ? "Your selected goal" : c.reason === "review" ? "Due for review" : "Related practice"}
-                    </span>}
+                    {why && <span data-testid={`loop-plan-reason-${c.node_id}`} className={tutorStyles.ps} style={{ display: "block", marginTop: 2, fontWeight: 400 }}>{why}</span>}
                   </span>
                   {c.band && <span className="chip">{BAND_LABEL[c.band] ?? c.band}</span>}
-                  {kind && <span className={kind.chip}>{kind.label}</span>}
+                  {kind && <span data-testid={`loop-plan-kind-${c.node_id}`} className={kind.chip}>{kind.label}</span>}
                 </li>
               );
             })}

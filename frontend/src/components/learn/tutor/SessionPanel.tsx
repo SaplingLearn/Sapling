@@ -2,17 +2,10 @@
 import React from "react";
 import Link from "next/link";
 import type { LoopPanelConcept } from "@/lib/api";
+import { planKind } from "../planLabels";
 import { SidebarGlyph } from "./TutorIcons";
 import { Meter } from "./TutorPages";
 import styles from "./tutor.module.css";
-
-const REASON_LABEL: Record<string, string> = {
-  prerequisite: "Prerequisite for your goal",
-  goal: "Your selected goal",
-  review: "Due for review",
-  related: "Related practice",
-};
-const KIND_LABEL: Record<string, string> = { review: "Due for review", new: "New", sibling: "Related practice" };
 
 export type PanelConcept = { nodeId: string; name: string; score: number | null };
 
@@ -80,7 +73,7 @@ export function SessionPanel({
                     <span className={styles.planBox} aria-hidden>{i + 1}</span>
                     <span className={styles.grow}>
                       <div className={styles.pn}>{c.concept_name || "Concept"}</div>
-                      <div className={styles.ps}>{(c.reason && REASON_LABEL[c.reason]) || KIND_LABEL[c.kind] || ""}</div>
+                      <div className={styles.ps}>{planKind(c.kind)?.label ?? ""}</div>
                     </span>
                   </li>
                 );
