@@ -52,6 +52,13 @@ function retiredModeHref(mode: string, course: string | null, retentionCourse: s
   return null;
 }
 
+/** `scoped`, plus the deep-linked course from `all` when the scope left it out. */
+function withLinkedCourse(scoped: EnrolledCourse[], all: EnrolledCourse[], linked: string | null): EnrolledCourse[] {
+  if (!linked || scoped.some(c => c.course_id === linked)) return scoped;
+  const course = all.find(c => c.course_id === linked);
+  return course ? [...scoped, course] : scoped;
+}
+
 export function Study() {
   const isMobile = useIsMobile();
   const router = useRouter();
@@ -87,6 +94,13 @@ export function Study() {
     () => (activeSemester ? courses.filter(c => courseInTerm(c, activeSemester)) : courses),
     [courses, activeSemester],
   );
+  // The retention check offers the same courses, plus the one a deep link names
+  // when it is the student's but outside the active semester: the link is
+  // about that course, so the check must not quietly switch to another.
+  const retentionCourses = React.useMemo(
+    () => withLinkedCourse(scopedCourses, courses, retentionCourse),
+    [scopedCourses, courses, retentionCourse],
+  );
 
   // Render nothing for the one frame a retired `?mode=` is being replaced:
   // flashing the hub first reads as the navigation having failed.
@@ -94,7 +108,7 @@ export function Study() {
 
   return (
     <>
-      <LoopReviews courses={scopedCourses} retentionCourse={retentionCourse ?? ""} />
+      <LoopReviews courses={retentionCourses} retentionCourse={retentionCourse ?? ""} />
       <StudyHub
         courses={scopedCourses}
         coursesReady={coursesReady}
