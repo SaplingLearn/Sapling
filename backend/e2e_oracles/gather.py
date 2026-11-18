@@ -517,10 +517,12 @@ def run_learn_loop(args: argparse.Namespace) -> tuple[list[Finding], int]:
     return findings, 0
 
 
-def _readable(row, decrypt_if_present, bind) -> dict:
+def _readable(row) -> dict:
     """One assistant row's plaintext, or `undecryptable` (D7): decrypt fails
     SOFT (None on a bad key or a binding mismatch), and an unreadable row read
     as "" would pass the leak check unread."""
+    from services.encryption import bind, decrypt_if_present
+
     stored = row.get("content")
     try:
         text = decrypt_if_present(stored, bind=bind("messages", "content", row))
@@ -539,7 +541,6 @@ def _learn_loop_activity(conn, step_rows, args, learn_loop) -> list[Finding]:
     The sentinel is E2E_LOOP_FINAL_ANSWER, read from the handler module's
     source (db.e2e_handler_constants) — never a second literal."""
     from db.e2e_handler_constants import read_constants
-    from services.encryption import bind, decrypt_if_present
 
     sessions = conn.execute(
         "SELECT /* learn_loop:sessions */ id, user_id, loop_state FROM sessions "
@@ -563,7 +564,7 @@ def _learn_loop_activity(conn, step_rows, args, learn_loop) -> list[Finding]:
         {
             "session_id": r["session_id"],
             "at": None if r.get("at") is None else float(r["at"]),
-            **_readable(r, decrypt_if_present, bind),
+            **_readable(r),
         }
         for r in conn.execute(
             "SELECT /* learn_loop:messages */ m.session_id AS session_id, "
