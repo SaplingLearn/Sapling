@@ -15,7 +15,13 @@ entry per run of each kind grade()
 asked for, in order; `[]` when it asked for none, as when it refused the answer
 before any run). Replay fails a case whose grade() asks for more or fewer runs
 of either kind than were recorded, so a weakened screen, or a credited item
-that skipped its span check, cannot pass silently.
+that skipped its span check, cannot pass silently. Beside each kind the
+cassette stores what every run was recorded under (`run_keys`, `span_keys`,
+`context_keys`: the grader's prompt and tools, the run's output schema, the
+slot's model, the exact message and run settings — `run_identity`), and replay
+raises StaleRecordingError when grade() now sends run N anything else (D4: a
+case whose message was swapped for an injection used to replay the old runs
+and score 1.000).
 grade() labels the rubric items afresh for every call (spec §13 A33); inside a
 case the harness draws those labels from a generator seeded by the case name,
 so a recording and its replays show the grader the same labels (production
@@ -107,13 +113,22 @@ from pydantic_evals.evaluators import Evaluator, EvaluatorContext  # noqa: E402
 import agents.grader as grader  # noqa: E402
 from _replay import (  # noqa: E402  (sibling, sys.path-injected)
     MODE,
+    StaleRecordingError,
     _is_transient,
+    check_recorded_under,
     cli_main,
+    input_identity,
     load_cassette,
     make_deps,
+    prompt_identity,
+    recorded_under,
+    run_settings,
     save_cassette,
+    schema_hash,
 )
+from agents._providers import model_name_for  # noqa: E402
 from agents.grader import GraderOutput, SpanVerdicts, Withdrawals  # noqa: E402
+from learning.params import GRADER_SECOND_OPINION_SLOT  # noqa: E402
 from learning.checks import RubricItem, WrongReason  # noqa: E402
 from learning.params import LEAK_NGRAM  # noqa: E402
 
@@ -646,7 +661,9 @@ def _item(name: str, case_input: GradeCase) -> SimpleNamespace:
 
 @dataclass
 class _CaseRuns:
-    """One case's model runs: served from the cassette (replay) or recorded live."""
+    """One case's model runs: served from the cassette (replay) or recorded live.
+    `*_keys` are what each run was (or must have been) recorded under, one per
+    run in order (`run_identity`)."""
 
     name: str
     cassette: list[GraderOutput] | None  # None = record/live
@@ -656,6 +673,34 @@ class _CaseRuns:
     context_cassette: list[Withdrawals] | None = None  # None = record/live
     context_made: list[Withdrawals] = field(default_factory=list)
     errors: list[BaseException] = field(default_factory=list)
+    keys: dict[str, list[dict]] | None = None  # recorded (replay); None = record/live
+    keys_made: dict[str, list[dict]] = field(
+        default_factory=lambda: {k: [] for k in _KEY_FIELDS.values()}
+    )
+
+
+#: The cassette field holding each kind's per-run keys.
+_KEY_FIELDS = {"model run": "run_keys", "span check": "span_keys", "context check": "context_keys"}
+
+
+def run_identity(message: str, *, second_opinion: bool, output_type=None) -> dict:
+    """What one grade() model run is recorded under (D4): the grader's prompt,
+    the run's output schema (GraderOutput, or the span/context check's), the
+    model of the slot it runs on (the second opinion's own), and the exact
+    message plus the run's settings. grade() asks for runs in a fixed order, so
+    replay checks run N against the key recorded for run N."""
+    slot = GRADER_SECOND_OPINION_SLOT if second_opinion else "grader"
+    settings = run_settings(
+        grader.grader_agent,
+        model=grader.model_for(slot) if second_opinion else None,
+        extra=grader._second_opinion_settings() if second_opinion else None,
+    )
+    return recorded_under(
+        prompt_hash=prompt_identity(grader._PROMPT_HASH, grader.grader_agent),
+        schema_hash=schema_hash(output_type or GraderOutput),
+        model=model_name_for(slot),
+        input_sha256=input_identity(message, settings),
+    )
 
 
 # Task-local (pydantic-evals runs cases concurrently): _run sets it, the
@@ -698,12 +743,23 @@ async def _cassette_run_once(message: str, deps, *, second_opinion: bool = False
         SpanVerdicts: (case.span_cassette, case.span_made, "span check"),
         Withdrawals: (case.context_cassette, case.context_made, "context check"),
     }.get(output_type, (case.cassette, case.made, "model run"))
+    key = run_identity(message, second_opinion=second_opinion, output_type=output_type)
     if served is not None:
         if len(made) >= len(served):
             raise RuntimeError(
                 f"{DATASET}/{case.name}: grade() asked for {kind} {len(made) + 1}; "
                 f"the cassette has {len(served)}. Re-record with SAPLING_EVAL_MODE=record."
             )
+        recorded = (case.keys or {}).get(_KEY_FIELDS[kind]) or []
+        try:
+            check_recorded_under(
+                f"{DATASET}/{case.name} {kind} {len(made) + 1}",
+                recorded[len(made)] if len(made) < len(recorded) else None,
+                key,
+            )
+        except StaleRecordingError as exc:
+            case.errors.append(exc)  # grade() degrades it to `unavailable`; the case fails
+            raise
         out = served[len(made)]
     else:
         try:
@@ -712,6 +768,7 @@ async def _cassette_run_once(message: str, deps, *, second_opinion: bool = False
             case.errors.append(exc)  # grade() degrades it to `unavailable`; the case fails
             raise
     made.append(out)
+    case.keys_made[_KEY_FIELDS[kind]].append(key)
     return out
 
 
@@ -724,17 +781,28 @@ def _install() -> None:
         grader.rubric_labels = _seeded_labels
 
 
-def _load_runs(name: str) -> tuple[list[GraderOutput], list[SpanVerdicts], list[Withdrawals]]:
+def _load_runs(
+    name: str,
+) -> tuple[list[GraderOutput], list[SpanVerdicts], list[Withdrawals], dict[str, list[dict]]]:
     body = load_cassette(DATASET, name)
     if body is None or not {"runs", "span_checks", "context_checks"} <= set(body):
         raise RuntimeError(
             f"No grade() cassette for {DATASET}/{name}. "
             "Run with SAPLING_EVAL_MODE=record to capture it."
         )
+    if not set(_KEY_FIELDS.values()) <= set(body):
+        # D4: a cassette keyed by case name alone replays its runs whatever
+        # message grade() now builds; it fails closed until re-recorded.
+        raise StaleRecordingError(
+            f"Stale recording {DATASET}/{name}: recorded before grade() cassettes stored "
+            "the prompt, schema, model and message of each run. Re-record with "
+            "SAPLING_EVAL_MODE=record."
+        )
     return (
         [GraderOutput.model_validate(run) for run in body["runs"]],
         [SpanVerdicts.model_validate(check) for check in body["span_checks"]],
         [Withdrawals.model_validate(check) for check in body["context_checks"]],
+        {k: list(body[k]) for k in _KEY_FIELDS.values()},
     )
 
 
@@ -743,7 +811,7 @@ async def _run(case_input: GradeCase) -> GradeEvalOutput:
     name = next(c.name for c in CASES if c.inputs == case_input)
     runs = _CaseRuns(name=name, cassette=None)
     if MODE == "replay":
-        runs.cassette, runs.span_cassette, runs.context_cassette = _load_runs(name)
+        runs.cassette, runs.span_cassette, runs.context_cassette, runs.keys = _load_runs(name)
     token = _CASE.set(runs)
     try:
         result = await grader.grade(
@@ -754,6 +822,9 @@ async def _run(case_input: GradeCase) -> GradeEvalOutput:
         )
     finally:
         _CASE.reset(token)
+    stale = next((e for e in runs.errors if isinstance(e, StaleRecordingError)), None)
+    if stale is not None:
+        raise stale
     if runs.errors:
         raise RuntimeError(f"{DATASET}/{name}: a live grader run failed") from runs.errors[0]
     for kind, made, served in (
@@ -774,6 +845,7 @@ async def _run(case_input: GradeCase) -> GradeEvalOutput:
                 "runs": [r.model_dump(mode="json") for r in runs.made],
                 "span_checks": [c.model_dump(mode="json") for c in runs.span_made],
                 "context_checks": [c.model_dump(mode="json") for c in runs.context_made],
+                **runs.keys_made,
             },
         )
     return GradeEvalOutput(

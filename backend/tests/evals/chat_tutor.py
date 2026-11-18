@@ -8,7 +8,11 @@ Run via tests.evals._replay (record/replay/live):
 Each case input is a (mode, user_message) tuple. The adapter dispatches to
 the right mode-specific agent via `agent_for_mode(mode)`. Cassette key is
 the case name (NOT the input), so cassettes capture per-mode behavior even
-when two modes happen to share the same user message.
+when two modes happen to share the same user message. Each cassette also
+stores what it was recorded under (`identity`: the mode's prompt and the tool
+definitions it is sent, the reply type, the slot's model, and the assembled
+message plus the fixture course the tools read), and replay raises
+StaleRecordingError on any difference (D4).
 
 Why ChatReply wraps the str output: the shared `run_with_cassette` helper
 calls `output_model.model_validate(body)` on replayed JSON. `str` has no
@@ -33,11 +37,23 @@ from pydantic_ai.messages import ModelResponse, TextPart
 from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import Evaluator, EvaluatorContext
 
-from agents.chat_tutor import agent_for_mode
+from agents._providers import model_name_for
+from agents.chat_tutor import _PROMPT_HASHES, agent_for_mode
 from agents.deps import SaplingDeps
 from services.chat_stream import join_text_parts
-from _replay import MODE, cli_main, load_cassette, save_cassette
-from _retrieval_fixture import FixtureRetrieval, load_fixture
+from _replay import (
+    MODE,
+    cli_main,
+    input_identity,
+    load_recording,
+    prompt_identity,
+    recorded_under,
+    run_settings,
+    save_recording,
+    schema_hash,
+    text_sha256,
+)
+from _retrieval_fixture import FIXTURE_PATH, FixtureRetrieval, load_fixture
 
 
 # Input tuple: (mode, user_message). Output is the agent's string reply
@@ -472,6 +488,24 @@ def graph_block(user_message: str) -> str:
     return assembled[: -len(tail)] if assembled.endswith(tail) else ""
 
 
+def identity(case_input: ChatInput) -> dict:
+    """What a chat_tutor cassette must have been recorded under (D4): the
+    mode's prompt and the tool definitions its agent sends, the reply type,
+    the `chat_tutor` slot's model, and the assembled message plus the fixture
+    course every tool call reads (its replies are part of what the model saw)."""
+    mode, user_message = case_input
+    agent = agent_for_mode(mode)
+    fixture = text_sha256(FIXTURE_PATH.read_text(encoding="utf-8"))
+    return recorded_under(
+        prompt_hash=prompt_identity(_PROMPT_HASHES[mode], agent),
+        schema_hash=schema_hash(str),
+        model=model_name_for("chat_tutor"),
+        input_sha256=input_identity(
+            _assemble_message(user_message) + "\x00fixture:" + fixture, run_settings(agent)
+        ),
+    )
+
+
 async def _run(case_input: ChatInput) -> ChatReply:
     """Local adapter that mirrors `_replay.run_with_cassette` but wraps
     the agent's plain-text reply in `ChatReply` so cassettes round-trip
@@ -484,18 +518,9 @@ async def _run(case_input: ChatInput) -> ChatReply:
     dataset = "chat_tutor"
 
     if MODE == "replay":
-        body = load_cassette(dataset, case_name)
-        if body is None:
-            raise RuntimeError(
-                f"No cassette for {dataset}/{case_name}. "
-                f"Run with SAPLING_EVAL_MODE=record to capture it."
-            )
-        # Cassettes recorded as plain strings (legacy) or as the
-        # ChatReply dict (new, with or without tool_calls) all
-        # round-trip cleanly.
-        if isinstance(body, str):
-            return ChatReply(text=body)
-        return ChatReply.model_validate(body)
+        return ChatReply.model_validate(
+            load_recording(dataset, case_name, identity(case_input))
+        )
 
     deps = _make_deps()
     agent = agent_for_mode(mode)
@@ -512,7 +537,7 @@ async def _run(case_input: ChatInput) -> ChatReply:
     output = ChatReply(text=reply_text, tool_calls=_extract_tool_calls(result))
 
     if MODE == "record":
-        save_cassette(dataset, case_name, output)
+        save_recording(dataset, case_name, output, identity(case_input))
 
     return output
 

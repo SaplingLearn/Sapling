@@ -1,21 +1,19 @@
 {
-  "text": "Of course. Let's break down how plants create energy for themselves at the cellular level.\n\n### Overview\n\nAt the cellular level, photosynthesis happens inside a specialized organelle called the **chloroplast**. The overall process converts light energy, water, and carbon dioxide into chemical energy in the form of glucose (sugar).\n\nThe overall chemical equation for photosynthesis is:\n$6CO_2 + 6H_2O + \\text{Light Energy} \\rightarrow C_6H_{12}O_6 + 6O_2$\n\nThe process is split into two main stages: the light-dependent reactions and the Calvin cycle.\n\n```mermaid\ngraph TD\n    A[Chloroplast] --> B{Thylakoids};\n    A --> C{Stroma};\n\n    subgraph Light-Dependent Reactions\n        B\n    end\n\n    subgraph Calvin Cycle\n        C\n    end\n\n    D[Sunlight] --> B;\n    E[H\u2082O] --> B;\n    B -- ATP & NADPH --> C;\n    B -- O\u2082 --> F[Oxygen Released];\n    G[CO\u2082] --> C;\n    C -- Glucose --> H[Sugar Produced];\n```\n\n### 1. Light-Dependent Reactions\n\nThis stage happens in the **thylakoid membranes** within the chloroplast.\n\n*   **Goal**: To convert light energy into chemical energy.\n*   **Process**: Chlorophyll and other pigments in the thylakoid membranes absorb energy from sunlight. This energy is used to split water molecules ($H_2O$), which releases oxygen ($O_2$) as a byproduct.\n*   **Products**: The captured energy is stored in two temporary energy-carrier molecules: **ATP** and **NADPH**.\n\nThink of this stage as charging the plant's batteries (ATP and NADPH).\n\n### 2. The Calvin Cycle (Light-Independent Reactions)\n\nThis stage takes place in the **stroma**, the fluid-filled space surrounding the thylakoids inside the chloroplast.\n\n*   **Goal**: To use the chemical energy from the light reactions to build sugar.\n*   **Process**: This cycle doesn't directly need light. Instead, it uses the energy from the ATP and NADPH molecules (created during the light reactions) to convert carbon dioxide ($CO_2$) from the atmosphere into glucose ($C_6H_{12}O_6$).\n*   **Products**: Glucose, which the plant can use for energy or to build other molecules like cellulose.\n\nThis stage is like the factory's assembly line, using the charged batteries to build the final product (sugar).",
-  "tool_calls": [
-    {
-      "args": {
-        "query": "photosynthesis at the cellular level"
-      },
-      "tool_name": "search_course_materials"
-    },
-    {
-      "args": {
-        "concepts": [
-          "Chloroplasts",
-          "Light-Dependent Reactions",
-          "Calvin Cycle"
-        ]
-      },
-      "tool_name": "apply_graph_update_tool"
-    }
-  ]
+  "output": {
+    "text": "# Photosynthesis at the cellular level\n\nYour course notes describe photosynthesis as converting light energy to chemical energy in chloroplasts, through the light-dependent reactions and the Calvin cycle. Here is how that works inside the cell.\n\n## Overview\n\nPhotosynthesis happens in **chloroplasts**. The overall equation is:\n\n$$6\\,CO_2 + 6\\,H_2O + \\text{light} \\rightarrow C_6H_{12}O_6 + 6\\,O_2$$\n\nThe process has two linked stages. The light-dependent reactions capture energy as ATP and NADPH. The Calvin cycle then uses that ATP and NADPH to build sugar from CO\u2082.\n\n## Chloroplast structure\n\n- **Outer and inner membranes** enclose the organelle.\n- **Thylakoids** are flattened sacs whose membranes hold the pigments and electron carriers. Stacks of them are called **grana**.\n- **Thylakoid lumen** is the space inside a thylakoid.\n- **Stroma** is the fluid surrounding the grana, and it is where the Calvin cycle runs.\n\n## Stage 1: Light-dependent reactions (thylakoid membrane)\n\n1. **Photosystem II (PSII)** absorbs light using chlorophyll. The energy excites electrons.\n2. **Water splitting** replaces those electrons: $2H_2O \\rightarrow 4H^+ + 4e^- + O_2$. This is the source of the O\u2082 released.\n3. The excited electrons move down an **electron transport chain** (plastoquinone \u2192 cytochrome b\u2086f \u2192 plastocyanin). Their energy is used to pump H\u207a into the lumen.\n4. **Photosystem I (PSI)** re-excites the electrons with a second photon of light. They are passed to **ferredoxin**, and **NADP\u207a reductase** uses them to make **NADPH**.\n5. **Chemiosmosis:** The H\u207a gradient (high in the lumen, low in the stroma) drives H\u207a through **ATP synthase**. This phosphorylates ADP to make **ATP**. The process is called photophosphorylation.\n\n**Outputs:** ATP, NADPH, and O\u2082.\n\n## Stage 2: Calvin cycle (stroma)\n\n1. **Carbon fixation:** The enzyme **RuBisCO** attaches CO\u2082 to **RuBP**, a 5-carbon sugar. The product splits into two molecules of **3-PGA**.\n2. **Reduction:** ATP and NADPH convert 3-PGA into **G3P**, a 3-carbon sugar.\n3. **Regeneration:** Most G3P is recycled, using more ATP, to remake RuBP. Some G3P leaves the cycle to become glucose and other carbohydrates.\n\nFor each net G3P produced, the cycle fixes 3 CO\u2082 and uses 9 ATP and 6 NADPH.\n\n## Quick summary\n\n| | Light reactions | Calvin cycle |\n|---|---|---|\n| Location | Thylakoid membrane | Stroma |\n| Inputs | H\u2082O, light, ADP, NADP\u207a | CO\u2082, ATP, NADPH |\n| Outputs | O\u2082, ATP, NADPH | G3P (sugar), ADP, NADP\u207a |\n\nThe two stages depend on each other. The Calvin cycle returns ADP and NADP\u207a to the light reactions, and the light reactions supply the ATP and NADPH the Calvin cycle needs.\n\n## Worked example: following one carbon atom\n\nTake one CO\u2082 molecule that enters a leaf and diffuses into the stroma:\n1. RuBisCO attaches it to RuBP, giving a 6-carbon intermediate that immediately splits into two 3-PGA.\n2. ATP and NADPH, made moments earlier on the thylakoid membrane, reduce the 3-PGA to G3P.\n3. After three turns of the cycle, one G3P exits. Two G3P can combine to form one glucose.\n\nThe energy in that glucose came from photons absorbed at PSII and PSI. The electrons came from water, and the O\u2082 you breathe is the leftover from splitting that water.\n\nI can also go into RuBisCO's photorespiration problem, or into C4 and CAM adaptations, if you'd like.",
+    "tool_calls": [
+      {
+        "args": {
+          "query": "photosynthesis cellular level chloroplast light reactions Calvin cycle"
+        },
+        "tool_name": "search_course_materials"
+      }
+    ]
+  },
+  "recorded_under": {
+    "input_sha256": "3e54d46ffb70815abaf2017b400010392402ac8572cafc8ab999d808af41513d",
+    "model": "claude-sonnet-5-5",
+    "prompt_hash": "7011ea8770e5",
+    "schema_hash": "38a346cadbd3"
+  }
 }

@@ -1,4 +1,12 @@
 {
-  "text": "That's a great high-level summary! You've correctly identified the main event and the final outcome.\n\nYou mentioned the DNA gets duplicated and then the cell splits. What happens to the duplicated chromosomes in between those two events? How do they get organized so each daughter cell gets a perfect copy?",
-  "tool_calls": []
+  "output": {
+    "text": "Nice start. You have the core outcome right: mitosis produces two genetically identical daughter cells, and each one keeps the same chromosome number as the parent.\n\n**What's correct**\n- DNA is duplicated before the cell divides. This happens in S phase of interphase.\n- The result is two daughter cells that are genetically identical.\n- Chromosome number is preserved. A diploid cell makes diploid daughters.\n\n**What's missing**\n- **The stages.** Mitosis is the division of the nucleus, and it runs through prophase, metaphase, anaphase, and telophase. Cytokinesis, the splitting of the cytoplasm, usually overlaps with the end of telophase. Your phrase \"splits into two\" blends these together.\n- **The mechanism.** After replication, each chromosome is made of two sister chromatids joined at the centromere. Spindle fibers line them up at the middle of the cell. Then they pull the sister chromatids apart, so each daughter gets one full set.\n- **Purpose.** Mitosis supports growth, tissue repair, and asexual reproduction. It's also worth contrasting it with meiosis, which produces non-identical cells with half the chromosomes.\n\n**A small precision point:** \"duplicates its DNA\" happens before mitosis proper, in interphase. Strictly speaking, replication isn't part of mitosis itself.\n\nHere is the question that probes the weakest spot. During anaphase, what exactly is being pulled apart, and why does that guarantee each daughter cell ends up with the same chromosomes as the original?",
+    "tool_calls": []
+  },
+  "recorded_under": {
+    "input_sha256": "5039ac7d50d676f4732b51cf748c657adc0d91a3a443a00d3623113da11d6b26",
+    "model": "claude-sonnet-5-5",
+    "prompt_hash": "17f9783cb987",
+    "schema_hash": "38a346cadbd3"
+  }
 }

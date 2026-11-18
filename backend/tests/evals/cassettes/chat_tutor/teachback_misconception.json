@@ -1,4 +1,12 @@
 {
-  "text": "You're on the right track! You've correctly captured the main idea: an object in motion tends to stay in motion.\n\nYour statement \"Force makes things keep moving\" is a really common misconception. Newton's insight was that you don't need a force to *keep* something moving. An object will happily coast forever at a constant velocity.\n\nA force is only needed to *change* an object's motion \u2014 to make it speed up, slow down, or change direction.\n\nConsider this: if you push a book across a table, it quickly stops. If you slide a hockey puck across the ice, it goes much farther. Why the difference?",
-  "tool_calls": []
+  "output": {
+    "text": "You've got the core of it: an object in motion stays in motion unless something acts on it. Two things need fixing, though.\n\n**What's correct:**\n- Objects keep their motion unless acted on. That is the heart of inertia.\n\n**What needs refining:**\n1. **It's not only about objects in motion.** The law also says an object *at rest* stays at rest. Both cases are the same idea: velocity doesn't change by itself.\n2. **\"Unless you push them\" is incomplete.** The precise condition is that the *net* (total) force is zero. If several forces act and they cancel, the object still keeps its velocity.\n3. **Your last sentence contradicts the law.** \"Force makes things keep moving\" is the classic misconception, and it's the opposite of what the law says. Motion at constant velocity needs *no* force. Force is what *changes* velocity, meaning it speeds the object up, slows it down, or turns it. That is the idea behind $\\vec{F}_{net} = m\\vec{a}$ in the second law.\n\n**An example:** a hockey puck slides across ice and slowly stops. It's tempting to think it ran out of \"push.\" In fact friction is a force acting on it. In deep space with no friction, the puck would glide forever with no force at all.\n\nWould you try this one: a book slides at constant velocity across a table, so what can you say about the net force on it, and what does that tell you about friction and whatever is pushing it?",
+    "tool_calls": []
+  },
+  "recorded_under": {
+    "input_sha256": "98ae51eb88459798926878f63a47d131815e06af77b21419d46f920ee338011d",
+    "model": "claude-sonnet-5-5",
+    "prompt_hash": "17f9783cb987",
+    "schema_hash": "38a346cadbd3"
+  }
 }

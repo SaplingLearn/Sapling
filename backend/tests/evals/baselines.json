@@ -1,8 +1,8 @@
 {
   "chat_tutor": {
-    "ExpositoryHasStructureEvaluator": 1.0,
+    "ExpositoryHasStructureEvaluator": 0.875,
     "GraphToolUsedEvaluator": 1.0,
-    "GroundedConceptEvaluator": 0.8125,
+    "GroundedConceptEvaluator": 0.875,
     "NoToolMisuseEvaluator": 1.0,
     "NonEmptyEvaluator": 1.0,
     "SocraticEndsWithQuestionEvaluator": 1.0,

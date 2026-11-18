@@ -15,6 +15,7 @@ enqueued (`usage_log`; SAPLING_EVAL_USAGE_LOG writes it to a file).
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import os
 import re
@@ -22,6 +23,8 @@ from collections import Counter
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
+
+from pydantic import TypeAdapter
 
 from agents.deps import SaplingDeps
 
@@ -199,6 +202,136 @@ def save_cassette(dataset: str, case_name: str, output: Any) -> None:
     else:
         body = output
     p.write_text(json.dumps(body, indent=2, sort_keys=True))
+
+
+# ── What a recording was made under (D4) ──────────────────────────────────────
+#
+# A cassette keyed by case name alone replays whatever the model said for that
+# name, so a case whose prompt was swapped (for an injection, say) still scored
+# the old answer. A recording therefore stores what it was recorded under —
+# the agent's prompt hash (its fixed prompt and the tools it is sent), the
+# output schema's hash, the slot's model and the hash of the exact message
+# (plus the run's settings) — and replay raises StaleRecordingError on any
+# difference, as the loop datasets have since PKG-07. A cassette written before
+# a dataset stored these fails closed until it is re-recorded.
+
+
+class StaleRecordingError(RuntimeError):
+    """A cassette recorded under another prompt, schema, model or input."""
+
+
+def text_sha256(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def schema_hash(output_type: Any) -> str:
+    """The JSON schema the model is sent for `output_type` (field descriptions
+    included), hashed."""
+    schema = TypeAdapter(output_type).json_schema()
+    return hashlib.sha256(json.dumps(schema, sort_keys=True).encode("utf-8")).hexdigest()[:12]
+
+
+def tool_defs(agent: Any) -> list[dict]:
+    """The function tools `agent` sends the model: name, description and
+    parameter schema, in registration order."""
+    toolset = getattr(agent, "_function_toolset", None)
+    tools = getattr(toolset, "tools", None) or {}
+    out = []
+    for tool in tools.values():
+        d = tool.tool_def
+        out.append(
+            {
+                "name": d.name,
+                "description": d.description,
+                "parameters": d.parameters_json_schema,
+            }
+        )
+    return out
+
+
+def prompt_identity(prompt_hash: str, agent: Any = None) -> str:
+    """The agent's own prompt hash, extended by the tool definitions it sends
+    (a tool's description or parameters are prompt too). An agent with no tools
+    keeps its own hash."""
+    tools = tool_defs(agent) if agent is not None else []
+    if not tools:
+        return prompt_hash
+    body = prompt_hash + "\x00" + json.dumps(tools, sort_keys=True, default=str)
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()[:12]
+
+
+def run_settings(agent: Any, *, model: Any = None, extra: Any = None) -> dict:
+    """The model settings a run is sent with: the model's own (a Claude slot's
+    effort and max_tokens), the agent's, then the run's `extra`, later keys
+    winning as in pydantic-ai. `model` overrides the agent's model (a run on
+    another slot)."""
+    m = model if model is not None else getattr(agent, "model", None)
+    return {
+        **dict(getattr(m, "settings", None) or {}),
+        **dict(getattr(agent, "model_settings", None) or {}),
+        **dict(extra or {}),
+    }
+
+
+def input_identity(message: str, settings: Any = None) -> str:
+    """The message the model is sent plus the run's model settings."""
+    body = message
+    if settings:
+        body += "\x00" + json.dumps(dict(settings), sort_keys=True, default=str)
+    return text_sha256(body)
+
+
+def recorded_under(*, prompt_hash: str, schema_hash: str, model: str, input_sha256: str) -> dict:
+    return {
+        "prompt_hash": prompt_hash,
+        "schema_hash": schema_hash,
+        "model": model,
+        "input_sha256": input_sha256,
+    }
+
+
+def check_recorded_under(where: str, got: Any, expected: dict) -> None:
+    """Raise StaleRecordingError unless `got` (a cassette's `recorded_under`)
+    is `expected` exactly."""
+    if not isinstance(got, dict):
+        raise StaleRecordingError(
+            f"Stale recording {where}: recorded before cassettes stored the prompt, "
+            "schema, model and input they were recorded under. Re-record with "
+            "SAPLING_EVAL_MODE=record."
+        )
+    names = {"prompt_hash": "prompt", "schema_hash": "output schema",
+             "model": "model", "input_sha256": "message or run settings"}
+    problems = [
+        f"{names.get(k, k)} changed ({got.get(k)!r} -> {v!r})"
+        for k, v in expected.items()
+        if got.get(k) != v
+    ]
+    problems += [f"unexpected {k!r}" for k in sorted(set(got) - set(expected))]
+    if problems:
+        raise StaleRecordingError(
+            f"Stale recording {where}: {'; '.join(problems)}. "
+            "Re-record with SAPLING_EVAL_MODE=record."
+        )
+
+
+def save_recording(dataset: str, case_name: str, output: Any, identity: dict) -> None:
+    """A cassette with what it was recorded under: {"output", "recorded_under"}."""
+    body = output.model_dump(mode="json") if hasattr(output, "model_dump") else output
+    save_cassette(dataset, case_name, {"output": body, "recorded_under": identity})
+
+
+def load_recording(dataset: str, case_name: str, identity: dict) -> Any:
+    """The recorded output of a case, after checking it was recorded under
+    `identity`; a missing cassette raises like run_with_cassette."""
+    body = load_cassette(dataset, case_name)
+    if body is None:
+        raise RuntimeError(
+            f"No cassette for {dataset}/{case_name}. "
+            "Run with SAPLING_EVAL_MODE=record to capture it."
+        )
+    got = body.get("recorded_under") if isinstance(body, dict) else None
+    check_recorded_under(f"{dataset}/{case_name}", got, identity)
+    return body["output"]
 
 
 def make_deps() -> SaplingDeps:
@@ -427,14 +560,18 @@ async def run_with_cassette(
     agent,
     case_input: str,
     output_model,
+    identity: dict | None = None,
 ):
     """Drive an agent through record/replay/live modes.
 
     `agent` is a Pydantic AI Agent; `output_model` is its `output_type` so we
     can hydrate replayed JSON back into the typed object that evaluators
-    expect.
+    expect. With `identity` (`recorded_under(...)`) the cassette stores what it
+    was recorded under and replay raises StaleRecordingError on a difference.
     """
     if MODE == "replay":
+        if identity is not None:
+            return output_model.model_validate(load_recording(dataset, case_name, identity))
         body = load_cassette(dataset, case_name)
         if body is None:
             raise RuntimeError(
@@ -448,7 +585,10 @@ async def run_with_cassette(
     output = result.output
 
     if MODE == "record":
-        save_cassette(dataset, case_name, output)
+        if identity is not None:
+            save_recording(dataset, case_name, output, identity)
+        else:
+            save_cassette(dataset, case_name, output)
 
     return output
 

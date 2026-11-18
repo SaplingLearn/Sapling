@@ -1,4 +1,12 @@
 {
-  "text": "You've got the main idea! A recursive function does call itself.\n\nBut what happens if the function *never* stops calling itself?",
-  "tool_calls": []
+  "output": {
+    "text": "You're right that a recursive function calls itself. That's the core idea, and it's a good place to start.\n\n**What's missing:**\n- **A base case.** If a function only calls itself, it never stops. Recursion needs a condition where the function returns a result directly, without another call. Your graph shows Base Case as one of your weaker spots, so it's worth practicing.\n- **Progress toward the base case.** Each call has to work on a smaller or simpler version of the problem. Otherwise it never reaches the stopping point.\n\nHere's a small example:\n\n```python\ndef countdown(n):\n    if n == 0:        # base case\n        return\n    print(n)\n    countdown(n - 1)  # smaller problem\n```\n\nWithout the `if n == 0` check, this would run until the program crashed with a stack overflow.\n\nYour definition is accurate but incomplete, and nothing in it is wrong. Try adding the missing pieces in your own words.\n\nSuppose a recursive function has no base case, or its recursive call doesn't move toward the base case. What do you think happens when you run it?",
+    "tool_calls": []
+  },
+  "recorded_under": {
+    "input_sha256": "a1e5c57a23551a5e083a7fce5e9c800f953fb6247c64664b389a3ac5065118d6",
+    "model": "claude-sonnet-5-5",
+    "prompt_hash": "17f9783cb987",
+    "schema_hash": "38a346cadbd3"
+  }
 }

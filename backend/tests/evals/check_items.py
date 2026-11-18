@@ -51,7 +51,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from pydantic_evals import Case, Dataset  # noqa: E402
 from pydantic_evals.evaluators import Evaluator, EvaluatorContext  # noqa: E402
 
-from agents.check_items import CheckItemsOutput, build_prompt, check_items_agent  # noqa: E402
+from agents._providers import model_name_for  # noqa: E402
+from agents.check_items import (  # noqa: E402
+    _PROMPT_HASH,
+    CheckItemsOutput,
+    build_prompt,
+    check_items_agent,
+)
 from learning.checks import (  # noqa: E402
     MC_OPTION_RULES,
     answer_in,
@@ -65,9 +71,14 @@ from _replay import (  # noqa: E402  (sibling, sys.path-injected)
     MODE,
     _run_with_retry,
     cli_main,
-    load_cassette,
+    input_identity,
+    load_recording,
     make_deps,
-    save_cassette,
+    prompt_identity,
+    recorded_under,
+    run_settings,
+    save_recording,
+    schema_hash,
 )
 
 # (concept_name, ((chunk_id, chunk_text), ...)) — hashable so _INPUT_TO_NAME works.
@@ -260,22 +271,32 @@ class FinalAnswerValidEvaluator(Evaluator[CheckItemsInput, CheckItemsOutput]):
         return 1.0 if accepted and ok else 0.0
 
 
-async def _run(case_input: CheckItemsInput) -> CheckItemsOutput:
+def _message(case_input: CheckItemsInput) -> str:
     concept, chunks = case_input
+    return build_prompt([concept], [{"id": cid, "text": text} for cid, text in chunks])
+
+
+def identity(case_input: CheckItemsInput) -> dict:
+    """What a check_items cassette must have been recorded under (D4): the
+    agent's prompt (and tools), its output schema, the slot's model and the
+    exact drafting message, so a changed prompt or passage never replays an
+    old draft."""
+    return recorded_under(
+        prompt_hash=prompt_identity(_PROMPT_HASH, check_items_agent),
+        schema_hash=schema_hash(CheckItemsOutput),
+        model=model_name_for("check_items"),
+        input_sha256=input_identity(_message(case_input), run_settings(check_items_agent)),
+    )
+
+
+async def _run(case_input: CheckItemsInput) -> CheckItemsOutput:
     case_name = _INPUT_TO_NAME.get(case_input, "unknown")
     if MODE == "replay":
-        body = load_cassette("check_items", case_name)
-        if body is None:
-            raise RuntimeError(
-                f"No cassette for check_items/{case_name}. Run with SAPLING_EVAL_MODE=record."
-            )
+        body = load_recording("check_items", case_name, identity(case_input))
         return CheckItemsOutput.model_validate(body)
-    passages = [{"id": cid, "text": text} for cid, text in chunks]
-    result = await _run_with_retry(
-        check_items_agent, build_prompt([concept], passages), make_deps()
-    )
+    result = await _run_with_retry(check_items_agent, _message(case_input), make_deps())
     if MODE == "record":
-        save_cassette("check_items", case_name, result.output)
+        save_recording("check_items", case_name, result.output, identity(case_input))
     return result.output
 
 

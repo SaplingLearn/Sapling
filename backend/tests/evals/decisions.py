@@ -76,12 +76,20 @@ from _replay import (  # noqa: E402  (sibling, sys.path-injected)
     MODE,
     _is_transient,
     cli_main,
-    load_cassette,
+    input_identity,
+    load_recording,
     make_deps,
+    prompt_identity,
+    recorded_under,
+    run_settings,
     run_with_cassette,
-    save_cassette,
+    save_recording,
+    schema_hash,
 )
+from agents._providers import model_name_for  # noqa: E402
+from agents.learning_decision import _PROMPT_HASH as _DECISION_PROMPT_HASH  # noqa: E402
 from agents.learning_decision import DecisionPickOutput, learning_decision_agent  # noqa: E402
+from agents.grader import _PROMPT_HASH as _GRADER_PROMPT_HASH  # noqa: E402
 from agents.grader import (  # noqa: E402
     GraderOutput,
     build_grader_message,
@@ -162,16 +170,34 @@ def all_cases() -> list[Case]:
 CASES = all_cases()
 
 
+def grading_identity(message: str) -> dict:
+    """What a grading-channel cassette (one raw grader_agent run) must have been
+    recorded under (D4): the grader's prompt, its GraderOutput schema, the
+    `grader` slot's model and the exact message."""
+    return recorded_under(
+        prompt_hash=prompt_identity(_GRADER_PROMPT_HASH, grader_agent),
+        schema_hash=schema_hash(GraderOutput),
+        model=model_name_for("grader"),
+        input_sha256=input_identity(message, run_settings(grader_agent)),
+    )
+
+
+def decision_identity(message: str, output_type: type[BaseModel]) -> dict:
+    """What a decision-agent cassette must have been recorded under (D4): the
+    decision prompt, the run's output schema, the slot's model and the message."""
+    return recorded_under(
+        prompt_hash=prompt_identity(_DECISION_PROMPT_HASH, learning_decision_agent),
+        schema_hash=schema_hash(output_type),
+        model=model_name_for("learning_decision"),
+        input_sha256=input_identity(message, run_settings(learning_decision_agent)),
+    )
+
+
 async def _decision_cassette(case_name: str, message: str, output_type: type[BaseModel]):
     """run_with_cassette for the decision agent, whose output type is chosen per run."""
+    identity = decision_identity(message, output_type)
     if MODE == "replay":
-        body = load_cassette(DATASET, case_name)
-        if body is None:
-            raise RuntimeError(
-                f"No cassette for {DATASET}/{case_name}. "
-                "Run with SAPLING_EVAL_MODE=record to capture it."
-            )
-        return output_type.model_validate(body)
+        return output_type.model_validate(load_recording(DATASET, case_name, identity))
     for attempt in range(_RECORD_RETRIES + 1):
         try:
             result = await learning_decision_agent.run(message, deps=make_deps(), output_type=output_type)
@@ -181,7 +207,7 @@ async def _decision_cassette(case_name: str, message: str, output_type: type[Bas
                 raise
             await asyncio.sleep(_RECORD_BACKOFF_S * (attempt + 1))
     if MODE == "record":
-        save_cassette(DATASET, case_name, result.output)
+        save_recording(DATASET, case_name, result.output, identity)
     return result.output
 
 
@@ -207,6 +233,7 @@ async def _run(case: DecisionCase) -> DecisionEvalOutput:
             agent=grader_agent,
             case_input=message,
             output_model=_RecordedGraderOutput,
+            identity=grading_identity(message),
         )
         got = parse_labelled(out.item_results, labels)
         answers = (

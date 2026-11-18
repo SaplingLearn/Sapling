@@ -1,11 +1,19 @@
 {
-  "text": "Of course. The relationship between supply, demand, and price is a fundamental concept in economics.\n\n### Overview\n\nIn a market economy, the price of a good is determined by the interaction of two key forces: **supply** (how much of a good is available) and **demand** (how much of that good buyers want). The point where these two forces meet is called the **equilibrium price**.\n\n### The Law of Demand\n\nThe law of demand states that, all else being equal, as the price of a good **increases**, the quantity that buyers are willing to purchase **decreases**. Conversely, as the price **decreases**, the quantity demanded **increases**.\n\nThink about your own shopping habits: if your favorite coffee suddenly doubled in price, you might buy it less often. If it went on sale, you might stock up. This inverse relationship creates a downward-sloping demand curve.\n\n### The Law of Supply\n\nThe law of supply states that as the price of a good **increases**, the quantity that producers are willing to sell **increases**. When prices are high, it's more profitable for businesses to produce and sell more of that good. This direct relationship creates an upward-sloping supply curve.\n\n### Finding Equilibrium\n\nThe market reaches an **equilibrium price** where the quantity demanded by consumers equals the quantity supplied by producers. At this price, there is no surplus (too much supply) and no shortage (not enough supply).\n\nWe can visualize this with a simple graph:\n\n```mermaid\nxychart-beta\n  title \"Supply and Demand\"\n  x-axis \"Quantity\"\n  y-axis \"Price\"\n  line [\n    { x: 0, y: 10 },\n    { x: 1, y: 8 },\n    { x: 2, y: 6 },\n    { x: 3, y: 4 },\n    { x: 4, y: 2 }\n  ]\n  line [\n    { x: 0, y: 0 },\n    { x: 1, y: 2 },\n    { x: 2, y: 4 },\n    { x: 3, y: 6 },\n    { x: 4, y: 8 }\n  ]\n  annotation \"Demand\" (1, 8.5)\n  annotation \"Supply\" (3.5, 7)\n  annotation \"Equilibrium\" (2.2, 3)\n```\n\n### Example: The Market for Coffee Mugs\n\nLet's say the price of a coffee mug is **$10**. At this high price, the mug company is willing to produce 1,000 mugs, but only 200 people are willing to buy one. This creates a **surplus** of 800 mugs. To sell them, the company must lower the price.\n\nNow, imagine the price is only **$2**. At this low price, 1,200 people want to buy a mug, but the company is only willing to produce 400. This creates a **shortage** of 800 mugs. The high demand will allow the company to raise the price.\n\nFinally, let's say the price settles at **$5**. At this price, the company produces 800 mugs, and exactly 800 people want to buy one. This is the **equilibrium price**. The market is stable because the quantity supplied equals the quantity demanded.",
-  "tool_calls": [
-    {
-      "args": {
-        "query": "supply and demand price equilibrium"
-      },
-      "tool_name": "search_course_materials"
-    }
-  ]
+  "output": {
+    "text": "Your uploaded materials don't cover supply and demand in detail. The syllabus only says economics is part of the course. So this explanation is general, not tied to your course's notation.\n\n## Overview\nPrice settles where the quantity buyers want equals the quantity sellers offer. That point is the **equilibrium**.\n\n## Explanation\n**Demand** is how much buyers want at each price. As price rises, quantity demanded falls, so the curve slopes downward:\n$$Q_d = a - bP$$\n\n**Supply** is how much sellers will offer at each price. As price rises, quantity supplied rises, so the curve slopes upward:\n$$Q_s = c + dP$$\n\n**Equilibrium** is where the two curves cross: $Q_d = Q_s$. This gives the equilibrium price $P^*$ and quantity $Q^*$.\n\nMarkets move toward that point on their own:\n- **Price above $P^*$ gives a surplus.** Sellers have unsold goods, so they cut prices.\n- **Price below $P^*$ gives a shortage.** Buyers compete for limited goods, so prices rise.\n\n**Shifts in the curves** change the equilibrium:\n- A rise in demand, for example from higher income or a trend, shifts the demand curve right. Both $P^*$ and $Q^*$ rise.\n- A rise in supply, for example from cheaper inputs or better technology, shifts the supply curve right. $P^*$ falls and $Q^*$ rises.\n- A fall in either one does the opposite.\n\nMovement along a curve is caused by a price change. A shift of the curve is caused by something other than price.\n\n## Worked example\nLet $Q_d = 100 - 2P$ and $Q_s = 20 + 3P$.\n\nSet them equal:\n$$100 - 2P = 20 + 3P \\Rightarrow 80 = 5P \\Rightarrow P^* = 16$$\n\nThen $Q^* = 100 - 2(16) = 68$.\n\nCheck a price of $P = 20$:\n- $Q_d = 60$ and $Q_s = 80$, so there is a surplus of 20.\n- Sellers cut prices until they reach 16.\n\nNow suppose demand rises to $Q_d = 130 - 2P$. Then $130 - 2P = 20 + 3P$, so $P^* = 22$ and $Q^* = 86$. Higher demand raises both price and quantity.\n\nYou could also connect this to your calculus: the slopes $-b$ and $d$ are derivatives, which measure how sensitive quantity is to price.\n\nI can add Supply And Demand to your graph as a tracked concept if you'd like.",
+    "tool_calls": [
+      {
+        "args": {
+          "query": "supply and demand determine price equilibrium"
+        },
+        "tool_name": "search_course_materials"
+      }
+    ]
+  },
+  "recorded_under": {
+    "input_sha256": "278c3bd451b2c6d66698c1632cd69505d1c04e911f19c6659f59aa372e21c564",
+    "model": "claude-sonnet-5-5",
+    "prompt_hash": "7011ea8770e5",
+    "schema_hash": "38a346cadbd3"
+  }
 }

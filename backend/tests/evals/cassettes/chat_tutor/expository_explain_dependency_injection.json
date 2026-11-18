@@ -1,19 +1,27 @@
 {
-  "text": "Dependency Injection (DI) is a design pattern where an object receives other objects that it depends on, rather than creating them itself. This makes your code more flexible, testable, and easier to maintain.\n\n### Detailed Explanation\n\nThink of it like building a car. A car needs an engine to work.\n\n*   **Without DI:** The `Car` class would be responsible for building its own `Engine`. This \"hard-codes\" the `Car` to one specific type of engine. If you want to use a different engine (say, an electric one instead of gas), you have to change the `Car` class itself.\n*   **With DI:** The `Car` class isn't responsible for building the engine. Instead, the `Engine` is built somewhere else and is \"injected\" (passed in) when the `Car` is created. Now, the `Car` class only needs to know that it has an engine that can `start()`. It doesn't care what kind of engine it is.\n\nThis principle is called **Inversion of Control (IoC)**. The control of creating the dependency (`Engine`) is inverted \u2014 it's no longer the `Car`'s responsibility, but rather the responsibility of whatever code is creating the `Car`.\n\n### Code Example\n\nHere's how that looks in code.\n\n**Before Dependency Injection:**\nThe `CoffeeMaker` class creates its own `Heater` instance. It's tightly coupled.\n```python\nclass Heater:\n    def heat(self):\n        print(\"Heating...\")\n\nclass CoffeeMaker:\n    def __init__(self):\n        # The CoffeeMaker is responsible for creating the Heater\n        self.heater = Heater()\n\n    def brew(self):\n        self.heater.heat()\n        print(\"Brewing coffee!\")\n\n# Usage\ncoffee_maker = CoffeeMaker()\ncoffee_maker.brew()\n```\n\n**After Dependency Injection:**\nThe `CoffeeMaker` receives a `heater` object in its constructor. It is now decoupled.\n```python\nclass Heater:\n    def heat(self):\n        print(\"Heating...\")\n\nclass CoffeeMaker:\n    # The dependency (heater) is passed in\n    def __init__(self, heater):\n        self.heater = heater\n\n    def brew(self):\n        self.heater.heat()\n        print(\"Brewing coffee!\")\n\n# Usage\n# The dependency is created outside and \"injected\"\nheater = Heater()\ncoffee_maker = CoffeeMaker(heater)\ncoffee_maker.brew()\n```\nThis change makes it easy to swap in different kinds of heaters or use a \"mock\" heater for testing without changing the `CoffeeMaker` class at all.",
-  "tool_calls": [
-    {
-      "args": {
-        "concepts": [
-          "Dependency Injection"
-        ]
+  "output": {
+    "text": "Your uploaded course materials don't cover dependency injection, so this explanation is general and doesn't come from your notes. I've added it to your knowledge graph.\n\n## Overview\n**Dependency injection (DI)** means an object receives the things it depends on from the outside. It doesn't create them itself. A \"dependency\" is any collaborator the code needs, such as a database connection, a clock, or an API client.\n\n## Explanation\nWithout DI, a class builds its own dependencies. That hard-wires it to one concrete implementation:\n\n```python\nclass ReportService:\n    def __init__(self):\n        self.db = PostgresDatabase()   # tightly coupled\n```\n\nWith DI, the caller passes the dependency in:\n\n```python\nclass ReportService:\n    def __init__(self, db):\n        self.db = db                   # injected\n```\n\nThis helps in three ways:\n- **Testability:** you can pass in a fake database in tests, so you don't need a real one.\n- **Flexibility:** you can swap implementations (Postgres, SQLite, in-memory) without editing `ReportService`.\n- **Clear dependencies:** the constructor signature shows what the class needs.\n\nThe three common forms are:\n1. **Constructor injection:** dependencies are passed to `__init__`. This is the most common form.\n2. **Setter injection:** dependencies are set after the object is created.\n3. **Parameter injection:** dependencies are passed into a single function call.\n\nA **DI container or framework** (Spring, FastAPI's `Depends`) can automate the wiring. The idea itself works fine with plain constructors.\n\n## Worked example\n```python\nclass FakeDB:\n    def fetch_sales(self):\n        return [10, 20, 30]\n\nclass ReportService:\n    def __init__(self, db):\n        self.db = db\n    def total(self):\n        return sum(self.db.fetch_sales())\n\n# Test: no real database needed\nassert ReportService(FakeDB()).total() == 60\n\n# Production: same class, real dependency\nservice = ReportService(PostgresDatabase())\n```\n\n`ReportService` never knows which database it has. It only needs an object with `fetch_sales()`. This is the main point of DI: the class depends on an interface, and the caller chooses the implementation.\n\n**Link to your coursework:** it's similar to how a function in your recursion lab takes its input as a parameter instead of making it up inside. DI applies that idea to whole objects.",
+    "tool_calls": [
+      {
+        "args": {
+          "query": "dependency injection"
+        },
+        "tool_name": "search_course_materials"
       },
-      "tool_name": "apply_graph_update_tool"
-    },
-    {
-      "args": {
-        "query": "dependency injection"
-      },
-      "tool_name": "search_course_materials"
-    }
-  ]
+      {
+        "args": {
+          "concepts": [
+            "Dependency Injection"
+          ]
+        },
+        "tool_name": "apply_graph_update_tool"
+      }
+    ]
+  },
+  "recorded_under": {
+    "input_sha256": "3afa760a1b03fd69c39e46ddc3d2085bb81023375a76858f7b8eafd1606cca41",
+    "model": "claude-sonnet-5-5",
+    "prompt_hash": "7011ea8770e5",
+    "schema_hash": "38a346cadbd3"
+  }
 }

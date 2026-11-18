@@ -1,4 +1,20 @@
 {
-  "text": "You're on the right track! A closure is a function that involves variables.\n\nWhat's special, though, is that a closure *remembers* the variables from the environment where it was created, even after that environment is gone.\n\nSo, a quick question for you: what's the difference between a variable defined *inside* that function versus a variable it \"remembers\" from the *outside*?",
-  "tool_calls": []
+  "output": {
+    "text": "Nothing in your materials covers closures directly, so I'm going from general knowledge here.\n\n**What's right:** a closure does involve a function and variables, and the function can use those variables.\n\n**What's missing:** every function has its own local variables, so that alone doesn't make something a closure. The key idea is that the function uses variables from the enclosing scope where it was defined, and it keeps access to them even after that outer function has finished running. Your description doesn't yet say where the variables come from or how long they last.\n\nHere's a small example to show the difference:\n\n```python\ndef make_counter():\n    count = 0\n    def inc():\n        nonlocal count\n        count += 1\n        return count\n    return inc\n\nc = make_counter()\nc(); c()  # 1, then 2\n```\n\n`make_counter` has already returned, but `inc` still remembers `count`.\n\nYour idea is a good start. Let's sharpen it with an example. In the code above, `count` isn't defined inside `inc`, and `make_counter` has already finished. Why is it still possible for `c()` to see and update `count`?",
+    "tool_calls": [
+      {
+        "args": {
+          "limit": 3,
+          "query": "closures"
+        },
+        "tool_name": "search_course_materials"
+      }
+    ]
+  },
+  "recorded_under": {
+    "input_sha256": "31cefa5edee10615ea77381968ae808130e49e181c527206535598d4a1c8bc3a",
+    "model": "claude-sonnet-5-5",
+    "prompt_hash": "17f9783cb987",
+    "schema_hash": "38a346cadbd3"
+  }
 }
