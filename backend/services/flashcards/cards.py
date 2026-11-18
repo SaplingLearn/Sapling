@@ -152,14 +152,14 @@ def get_flashcards(
     cards when ``due_only``. No user, or a database with no ``flashcards``
     table yet, is no cards; any other failure is a ``StorageError``."""
     if not user_id:
-        return {"flashcards": []}
+        return {"flashcards": [], "due_count": 0}
     try:
         rows, due = _loop_order(
             list_flashcards(user_id, topic, semester), datetime.now(timezone.utc),
         )
     except Exception as e:
         if any(marker in str(e).lower() for marker in _MISSING_TABLE_MARKERS):
-            return {"flashcards": []}
+            return {"flashcards": [], "due_count": 0}  # one shape on every path
         raise StorageError(str(e)) from e
     return {"flashcards": due if due_only else rows, "due_count": len(due)}
 

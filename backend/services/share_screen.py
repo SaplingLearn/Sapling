@@ -64,7 +64,7 @@ CLEAN = ShareScreen()
 
 # Characters that render as nothing (or as a hyphen at a line end) and can be
 # threaded through a phrase to dodge a pattern while reading identically.
-_INVISIBLE_RE = re.compile("[­​‌‍⁠﻿]")
+_INVISIBLE_RE = re.compile("[­\u200b‌‍⁠﻿]")
 _HSPACE_RE = re.compile(r"[ \t\f\v ]+")
 
 # Whom a document would address when it is talking to the model rather than

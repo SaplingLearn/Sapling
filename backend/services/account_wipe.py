@@ -142,42 +142,6 @@ WIPED_BY_CASCADE: dict[str, str] = {
     "learning_evidence_voids": "node_mastery_events",
 }
 
-#: Per-user tables (a `user_id` column) the wipe deliberately keeps, each with
-#: its reason. Every `user_id` table in the migrations is either wiped
-#: (`wiped_tables()`) or listed here; tests/test_account_wipe.py enforces it.
-KEPT_PER_USER: dict[str, str] = {
-    "user_profiles": "the account's identity, not study data",
-    "user_settings": "the account's preferences and consent choices",
-    "user_roles": "access control, managed by admins",
-    "oauth_tokens": "sign-in credentials",
-    "gradescope_credentials": "credentials, managed by the student",
-    "user_cosmetics": "purchased/unlocked cosmetics belong to the account",
-    "friendships": "social graph, shared with another student",
-    "room_members": "social: study-room membership",
-    "room_messages": "social: messages other members read",
-    "room_reactions": "social: reactions on shared messages",
-    "room_activity": "social: study-room activity feed",
-    "room_bans": "moderation record, kept by design",
-    "feedback": "product feedback the student sent us",
-    "issue_reports": "bug reports the student sent us",
-    "events": "telemetry",
-    "llm_usage": "telemetry and the billing record of model spend",
-    "course_chunk_contributors": (
-        "removed per document by chunk_visibility.withdraw_document_chunks; a "
-        "row stays only while a chunk is still produced by another live document"
-    ),
-    "checklist_budget_accounts": (
-        "spend control, not study data: its own migration gives it no cascade so "
-        "removing a user cannot erase a possible bill, and `blocked` is the trip "
-        "an over-budget bill sets, which a wipe must not quietly reset"
-    ),
-    "checklist_budget_reservations": (
-        "spend holds against checklist_budget_accounts; an unsettled one is a "
-        "possibly billed call that no timer or wipe refunds"
-    ),
-}
-
-
 #: Every table with a `user_id` column that the wipe deliberately keeps, with
 #: the reason. tests/test_account_wipe.py fails on a `user_id` table (replayed
 #: from the migrations) that is neither wiped nor named here. The 30-day
@@ -207,8 +171,15 @@ KEPT_PER_USER: dict[str, str] = {
     "events": "telemetry",
     # AI budget state (owner decision 2026-11-11): deleting a student's data
     # must not erase a possible bill or reset a cap they have already hit.
-    "checklist_budget_accounts": "AI budget: the spend account and its over-budget trip",
-    "checklist_budget_reservations": "AI budget: spend reserved against the account",
+    "checklist_budget_accounts": (
+        "AI budget: spend control, not study data. Its own migration gives it no "
+        "cascade so removing a user cannot erase a possible bill, and `blocked` is "
+        "the trip an over-budget bill sets, which a wipe must not quietly reset"
+    ),
+    "checklist_budget_reservations": (
+        "AI budget: spend holds against checklist_budget_accounts; an unsettled "
+        "one is a possibly billed call that no timer or wipe refunds"
+    ),
     "ai_tutor_daily_calls": "AI budget: today's tutor-call count the daily cap reads (counts only)",
     "check_item_reports": (
         "product feedback on a course's check item (like `feedback`); the report "

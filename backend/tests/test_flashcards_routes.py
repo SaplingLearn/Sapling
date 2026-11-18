@@ -639,7 +639,7 @@ class TestListErrors:
         with patch("services.flashcards.cards.table",
                    side_effect=RuntimeError('relation "flashcards" does not exist')):
             r = client.get(f"/api/flashcards/user/{USER_ID}")
-        assert r.status_code == 200 and r.json() == {"flashcards": []}
+        assert r.status_code == 200 and r.json() == {"flashcards": [], "due_count": 0}
 
     def test_any_other_failure_is_a_500_with_the_error(self):
         with patch("services.flashcards.cards.table", side_effect=RuntimeError("connection reset")):

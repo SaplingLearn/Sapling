@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
+from collections import OrderedDict
 
 from pydantic_ai.messages import ModelResponse, TextPart
 
@@ -22,6 +24,7 @@ from services import ai_budget
 from services.chat_stream import join_text_parts
 from services.tutor.course import _get_catalog_chunk, _get_course_info
 from services.tutor_router import observe_tutor_turn
+from services.request_context import current_request_key
 from services.tutor_sessions import PENDING_SESSIONS
 
 # Log records keep the name they had in routes/learn.py before the #118 split:
@@ -70,6 +73,13 @@ def _kill_switch_budget(user_id: str) -> None:
     ai_budget.count_tutor_call(user_id)
 
 
+#: (request key, session id, user id) -> the recorded id, so one turn's main
+#: run and its continuation share ONE ownership read (bounded; per request).
+_USAGE_OWNER_MEMO: OrderedDict[tuple, str | None] = OrderedDict()
+_USAGE_OWNER_MEMO_MAX = 512
+_USAGE_OWNER_LOCK = threading.Lock()
+
+
 def _usage_session_id(session_id: str | None, user_id: str) -> str | None:
     """The `llm_usage.session_id` to record for a legacy turn (A92): the caller's own
     session only. A body-supplied id that belongs to someone else (or to nobody) is
@@ -82,12 +92,24 @@ def _usage_session_id(session_id: str | None, user_id: str) -> str | None:
     pending = PENDING_SESSIONS.get(session_id)
     if pending is not None:
         return session_id if pending.get("user_id") == user_id else None
+    request_key = current_request_key()
+    memo_key = (request_key, session_id, user_id) if request_key else None
+    if memo_key is not None:
+        with _USAGE_OWNER_LOCK:
+            if memo_key in _USAGE_OWNER_MEMO:
+                return _USAGE_OWNER_MEMO[memo_key]
     try:
         rows = table("sessions").select("user_id", filters={"id": f"eq.{session_id}"}, limit=1)
     except Exception:  # noqa: BLE001 — best-effort; never fail a turn over usage
         logger.warning("llm_usage session ownership read failed; recording NULL", exc_info=True)
-        return None
-    return session_id if rows and rows[0].get("user_id") == user_id else None
+        return None  # not memoised: the next record of this turn may read again
+    recorded = session_id if rows and rows[0].get("user_id") == user_id else None
+    if memo_key is not None:
+        with _USAGE_OWNER_LOCK:
+            _USAGE_OWNER_MEMO[memo_key] = recorded
+            while len(_USAGE_OWNER_MEMO) > _USAGE_OWNER_MEMO_MAX:
+                _USAGE_OWNER_MEMO.popitem(last=False)
+    return recorded
 
 
 def _resolve_model_pref(model_pref: str | None):

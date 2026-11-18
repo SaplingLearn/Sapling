@@ -176,6 +176,26 @@ def tier_for(p: float) -> Tier:
     return "mastered"
 
 
+def stored_score(value) -> float:
+    """A STORED mastery score (`graph_nodes.mastery_score`, a column with no
+    CHECK) as a belief `tier_for` accepts: clamped to [0, 1], and None, NaN or
+    anything non-numeric read as 0.0. Old rows occasionally drift outside the
+    range, and a read surface must classify them rather than 500; a belief
+    this module computes is still checked strictly."""
+    try:
+        p = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    if p != p:  # NaN
+        return 0.0
+    return _clamp01(p)
+
+
+def tier_for_stored(value) -> Tier:
+    """`tier_for` over a stored score (see `stored_score`)."""
+    return tier_for(stored_score(value))
+
+
 def in_mastered_tier(p: float) -> bool:
     """The top TIER — the one the Tree labels "mastered" (PKG-14b, replacing the
     legacy config.is_mastered). Belief only; `is_mastered` below is the stricter

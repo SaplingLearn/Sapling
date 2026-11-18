@@ -26,17 +26,16 @@ from services.tutor.errors import HTTPException
 from services.tutor.messages import save_message
 from services.tutor.pending import _open_turn_session, get_user_name
 from services.tutor_sessions import (
-    PENDING_SESSIONS,
     SESSION_NOT_FOUND as _SESSION_NOT_FOUND,
     aget_pending,
     arequire_session_owner,
     discard_if_pending,
     discarded_reason,
     elapsed_minutes as _elapsed_minutes,
+    get_pending,
     rename_pending,
     require_session_owner,
     row_may_exist as _session_row_may_exist,
-    session_owned_by,
 )
 from services.xp_service import award_xp_safe
 
@@ -310,15 +309,21 @@ def delete_session(session_id: str, request: Request, user_id: str | None = None
     # A known OWNED daily-review row is explicitly refused. Missing and
     # foreign ids still share #709's idempotent success below. Never delete
     # the daily queue through the tutor endpoint (that would reset its budget).
-    if session_id not in PENDING_SESSIONS:
+    # One read decides both: the owned row (if any) and its mode. A pending
+    # session (memory or table) has no row yet and is judged by its payload.
+    pending = get_pending(session_id)
+    if pending is not None:
+        owned = pending.get("user_id") == user_id and pending.get("mode") != REVIEW_MODE
+    else:
         owner_rows = table("sessions").select(
             "user_id,mode",
             filters={"id": f"eq.{session_id}", "user_id": f"eq.{user_id}"},
             limit=1,
         )
-        if owner_rows and owner_rows[0].get("user_id") == user_id and owner_rows[0].get("mode") == REVIEW_MODE:
+        owned = bool(owner_rows) and owner_rows[0].get("user_id") == user_id
+        if owned and owner_rows[0].get("mode") == REVIEW_MODE:
             raise HTTPException(status_code=404, detail=_SESSION_NOT_FOUND)
-    if not session_owned_by(session_id, user_id):
+    if not owned:
         return {"deleted": True}
     # Every delete leaves a "deleted" tombstone (#761): a turn already past
     # its ownership check answers 404 at its next write instead of an FK

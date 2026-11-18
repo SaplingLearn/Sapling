@@ -129,7 +129,7 @@ def test_a_pasted_stem_is_quoted_however_it_is_wrapped_or_punctuated():
 def test_look_alike_letters_zero_width_and_letter_spacing_do_not_hide_a_paste():
     """answer_guard's detection fold: Cyrillic а/о, a zero-width space, a
     letter-spaced word — the stem still reads as pasted."""
-    disguised = "Whаt stоps fact​orial(0) from recursing?"
+    disguised = "Whаt stоps fact\u200borial(0) from recursing?"
     assert StemSet.build([ITEM]).quoted(disguised) == ["qh-1"]
     assert StemSet.build([ITEM]).quoted("W h a t   stops factorial(0) from recursing") == ["qh-1"]
 

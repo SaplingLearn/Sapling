@@ -18,7 +18,7 @@ from agents.topic_checklist import (
     CHECKLIST_LIMITS, PROMPT_VERSION, TopicOutline, normalized_name, topic_checklist_agent,
 )
 from db.connection import page_all, table
-from learning.bkt import in_mastered_tier, is_weak
+from learning.bkt import in_mastered_tier, is_weak, stored_score
 from services.academics import (
     current_term,
     term_for_offering,
@@ -322,7 +322,7 @@ def present(scope: dict, snapshot: dict, cache: dict | None, now: datetime) -> d
     for topic in outline.topics if outline else []:
         key = topic_key(topic.name)
         node = nodes.get(normalized_name(topic.name))
-        score = float(node["mastery_score"]) if node else None
+        score = stored_score(node["mastery_score"]) if node else None
         studied = key in reviewed or bool(node and node["times_studied"] > 0)
         timestamps = [_parse_timestamp(reviewed.get(key)), _parse_timestamp(node.get("last_studied_at")) if node else None]
         last = max((t for t in timestamps if t), default=None)
@@ -340,7 +340,7 @@ def present(scope: dict, snapshot: dict, cache: dict | None, now: datetime) -> d
         # unknown, not a gap.
         prereq_gaps = [p for p in topic.prerequisites if (
             topic_key(p) not in reviewed and normalized_name(p) in nodes
-            and is_weak(float(nodes[normalized_name(p)]["mastery_score"]))
+            and is_weak(stored_score(nodes[normalized_name(p)]["mastery_score"]))
         )]
         topics.append({
             **topic.model_dump(exclude={"source_ids", "assessment_ids", "parent", "prerequisites"}),

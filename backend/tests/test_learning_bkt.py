@@ -755,3 +755,27 @@ def test_import_guard_accepts_the_shipped_shapes():
     )
     assert _disallowed_imports(src, "learning", {"learning.params"}) == set()
     assert _disallowed_imports(src, "learning", set()) == {"learning.params"}
+
+
+# ── stored scores: a drifted graph_nodes row is classified, never a 500 ─────
+
+
+@pytest.mark.parametrize("raw,want", [
+    (1.2, 1.0), (-0.1, 0.0), (None, 0.0), ("0.5", 0.5), ("junk", 0.0), (float("nan"), 0.0), (0.7, 0.7),
+])
+def test_stored_score_clamps_what_the_column_may_hold(raw, want):
+    assert bkt.stored_score(raw) == want
+
+
+def test_tier_for_stays_strict_and_the_stored_twin_classifies_drift():
+    with pytest.raises(ValueError):
+        bkt.tier_for(1.2)
+    assert bkt.tier_for_stored(1.2) == "mastered"
+    assert bkt.tier_for_stored(-0.3) == "unexplored"
+
+
+def test_the_read_surfaces_classify_a_drifted_score():
+    from services.study_guides import plan, signals
+
+    assert signals.tiers({"Heaps": 1.4, "Graphs": -0.2}) == {"Heaps": "mastered", "Graphs": "unexplored"}
+    assert plan._tier(7.0) == "mastered"

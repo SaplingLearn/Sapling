@@ -60,7 +60,7 @@ DEFAULT_LEAKS = [p for p in OWNER_PHRASINGS if p != "Ｃ"] + [
     "`C`",
     "'C'",
     "“C”",
-    "The key: ​C",  # a zero-width space hides nothing
+    "The key: \u200bC",  # a zero-width space hides nothing
     "option С",  # Cyrillic Es reads as C
     "the answer is (c).",
     "Pick c",
@@ -263,7 +263,7 @@ def test_random_texts_cut_clean_on_the_served_stream_in_both_modes():
         "I", "because", "here", "is", "over", "base case", "It's", "go with", "fits",
         "pick", "is right", "was the answer", "→", "=>", "->", "—", "–", ":", "-",
         "(", ")", "[", "]", "**", "*", "_", "`", "'", '"', "“", "”",
-        "A", "a", "B", "c", "C", "Ｃ", "С", "D", "​", "́", "part", "see",
+        "A", "a", "B", "c", "C", "Ｃ", "С", "D", "\u200b", "́", "part", "see",
         "vitamin", "grade", "a derivative", "[withheld]", "\n", " ", " ", " ",
         "the calls pile up", "7", "seven", "1/2",
     ]  # fmt: skip

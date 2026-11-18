@@ -435,3 +435,43 @@ def test_the_stash_carries_the_bounds():
                               bind=bind("messages", "content", "s1")) == GREETING
     assert decrypt_if_present(params["p_assistant_reply"],
                               bind=bind("messages", "content", "s2")) is None
+
+
+# ── a close racing the first turn (claim_pending under the lock) ────────────
+
+
+def test_a_close_waits_for_a_materialising_first_turn_and_finds_nothing_pending(monkeypatch):
+    """The first turn holds the materialisation lock while it writes the row and
+    only then drops the pending entry. A close's claim_pending must wait for it
+    and then see the session as materialised (None), never take the payload of
+    a session that is getting its row at that moment."""
+    import threading
+
+    monkeypatch.setattr(ts, "stored", lambda: False)
+    monkeypatch.setitem(ts.PENDING_SESSIONS, "s-race", {"user_id": "u1", "stashed_at": "now"})
+    inside, release, out = threading.Event(), threading.Event(), {}
+
+    def first_turn():
+        with ts.materialization_lock("s-race"):
+            inside.set()
+            release.wait(5)
+            ts.PENDING_SESSIONS.pop("s-race", None)  # the row is written: no longer pending
+
+    turn = threading.Thread(target=first_turn)
+    turn.start()
+    assert inside.wait(5)
+    close = threading.Thread(target=lambda: out.setdefault("claimed", ts.claim_pending("s-race", "u1")))
+    close.start()
+    close.join(0.2)
+    assert close.is_alive(), "the close waits for the materialising turn"
+    release.set()
+    turn.join(5)
+    close.join(5)
+    assert out == {"claimed": None}
+
+
+def test_claim_pending_still_takes_an_untouched_pending_session(monkeypatch):
+    monkeypatch.setattr(ts, "stored", lambda: False)
+    monkeypatch.setitem(ts.PENDING_SESSIONS, "s-idle", {"user_id": "u1"})
+    assert ts.claim_pending("s-idle", "u1") == {"user_id": "u1"}
+    assert "s-idle" not in ts.PENDING_SESSIONS

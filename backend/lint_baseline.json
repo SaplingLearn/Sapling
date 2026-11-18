@@ -229,7 +229,7 @@
   "services/tool_signals.py::BLE001": 3,
   "services/topic_checklist_service.py::B904": 1,
   "services/topic_checklist_service.py::BLE001": 3,
-  "services/tutor/course.py::BLE001": 4,
+  "services/tutor/course.py::BLE001": 2,
   "services/tutor/run.py::BLE001": 2,
   "services/tutor/sessions.py::B905": 1,
   "services/tutor/sessions.py::BLE001": 3,

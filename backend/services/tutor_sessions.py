@@ -414,11 +414,19 @@ def claim_pending(session_id: str, user_id: str) -> dict | None:
     pending; 404 when it is another student's. The memory entry is popped; a
     table-held one (flag on) is deleted in one atomic call, so a session
     started on another replica closes here too."""
-    pending = PENDING_SESSIONS.get(session_id)
-    if pending is not None:
-        if pending.get("user_id") != user_id:
-            raise HTTPException(status_code=404, detail=SESSION_NOT_FOUND)
-        return PENDING_SESSIONS.pop(session_id, None)
+    if session_id in PENDING_SESSIONS:
+        # Under the materialisation lock, like discard_if_pending: a first turn
+        # materialising this session concurrently holds it while it writes the
+        # row and the greeting, so the entry is either still pending here (and
+        # the close takes it) or already materialised (and the close acts on
+        # the row, like any answered session) — never both.
+        with materialization_lock(session_id):
+            pending = PENDING_SESSIONS.get(session_id)
+            if pending is None:
+                return None
+            if pending.get("user_id") != user_id:
+                raise HTTPException(status_code=404, detail=SESSION_NOT_FOUND)
+            return PENDING_SESSIONS.pop(session_id, None)
     if not stored():
         return None
     claimed = _store_claim(session_id, user_id)

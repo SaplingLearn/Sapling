@@ -11,7 +11,7 @@ import logging
 from dataclasses import dataclass
 
 from db.connection import pg_quote_value, table
-from learning.bkt import tier_for
+from learning.bkt import tier_for_stored
 from models.study_guide import Tier
 from services.concept_edges import normalize as concept_key
 from services.encryption import bind, decrypt_json_column
@@ -78,7 +78,7 @@ async def aconcept_node(user_id: str, course_id: str, concept: str) -> dict | No
 
 def tiers(scores: dict[str, float]) -> dict[str, Tier]:
     """Mastery tier per concept name."""
-    return {name: tier_for(score) for name, score in scores.items()}
+    return {name: tier_for_stored(score) for name, score in scores.items()}
 
 
 def _digest_mistakes(row: dict) -> list[str]:

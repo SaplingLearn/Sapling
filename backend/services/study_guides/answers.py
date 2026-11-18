@@ -18,7 +18,7 @@ from typing import Callable
 
 from starlette.concurrency import run_in_threadpool
 
-from learning.bkt import tier_for
+from learning.bkt import tier_for_stored
 from models.study_guide import AnswerResult, CheckAnswer, CheckBlock, MasteryChange
 from services import academics, events_service, graph_service
 from services.quiz import question_hash
@@ -93,8 +93,10 @@ async def _amove_mastery(
     shown = node.get("mastery_score")
     return MasteryChange(
         concept=change["concept"],
-        before=tier_for(change["before"] if shown is None else float(shown)),
-        after=tier_for(change["after"]),
+        # Stored scores (the evidence is already committed here): a drifted
+        # old row is classified, never a 500 after the write.
+        before=tier_for_stored(change["before"] if shown is None else shown),
+        after=tier_for_stored(change["after"]),
     )
 
 

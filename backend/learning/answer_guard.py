@@ -1359,9 +1359,9 @@ def _language_switch(text: str, context: str) -> bool:
 # Indic, Persian and emoji text need, nor a leading byte-order mark), a
 # letter-spaced run the detection copy glued back together, and a base64 run
 # that decodes to text.
-_BIDI_CONTROLS = frozenset("‪‫‬‭‮⁦⁧⁨⁩")
+_BIDI_CONTROLS = frozenset("\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069")
 _TAG_BLOCK = (ord("\U000e0000"), ord("\U000e007f"))
-_HIDDEN_INVISIBLE = _INVISIBLE - {"‌", "‍"}
+_HIDDEN_INVISIBLE = _INVISIBLE - {"\u200c", "\u200d"}  # ZWNJ, ZWJ
 # Letters spaced out by whitespace or dots only ("i g n o r e", "S.Y.S.T.E.M", one
 # per line) — never math on single-letter variables (`p=T,q=T`, `a+b+c+d`).
 _LETTER_SPACED = re.compile(rf"{_SINGLE_LETTER}(?:(?:[ \t\n.]|[ \t]{{2,}}+){_SINGLE_LETTER})+")

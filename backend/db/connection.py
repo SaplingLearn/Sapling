@@ -307,11 +307,10 @@ class SupabaseTable(_aconn.AsyncTableMixin):
     def insert_ignore_duplicates(self, data, on_conflict: str = "id") -> list:
         """INSERT … ON CONFLICT (on_conflict) DO NOTHING (PostgREST
         `resolution=ignore-duplicates`): never overwrites an existing row, unlike
-        `upsert`. Returns the rows actually inserted ([] when one existed)."""
-        headers = {"Prefer": "return=representation,resolution=ignore-duplicates"}
-        r = _client.post(self.url, headers=headers, params={"on_conflict": on_conflict}, json=data)
-        r.raise_for_status()
-        return r.json()
+        `upsert`. Returns the rows actually inserted ([] when one existed).
+        The same request as `upsert(..., ignore_duplicates=True)`, so it runs
+        under the request's scope and maps its refusals like every other verb."""
+        return self.upsert(data, on_conflict, ignore_duplicates=True)
 
     def update(self, data: dict, filters: dict, *, prefer_return_minimal: bool = False) -> list:
         """PATCH matching rows; returns the updated rows.

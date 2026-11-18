@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 import logging
 
-from learning.bkt import is_weak
+from learning.bkt import is_weak, stored_score
 from db.connection import table
 from services.academics import (
     course_offering_ids,
@@ -148,12 +148,8 @@ def _get_course_documents(
 
 
 def _unit(score) -> float:
-    """A stored mastery score clamped to [0, 1] (tier_for rejects anything
-    outside it; old rows occasionally drift)."""
-    try:
-        return max(0.0, min(1.0, float(score or 0.0)))
-    except (TypeError, ValueError):
-        return 0.0
+    """A stored mastery score clamped to [0, 1] (`learning.bkt.stored_score`)."""
+    return stored_score(score)
 
 
 _WEAK_CONCEPT_COLS = "concept_name,mastery_score"

@@ -80,3 +80,28 @@ def test_every_body_sourced_legacy_usage_site_goes_through_the_owner_check():
     assert inspect.getsource(streams).count(
         "usage_session_id = await asyncio.to_thread(_usage_session_id, body.session_id, body.user_id)"
     ) == 1
+
+
+def test_one_request_reads_ownership_once_and_another_request_reads_again():
+    """A turn's main run and its continuation both record usage: within one
+    request the ownership read is made once; a new request reads again (the
+    session may have changed hands in between, never within a request)."""
+    from services import request_context
+    from services.tutor import run
+
+    run._USAGE_OWNER_MEMO.clear()
+    tbl = _sessions([{"user_id": "u-a"}])
+    with patch_tutor("table", tbl):
+        token = request_context._REQUEST_KEY_CTX.set("req-1")
+        try:
+            assert learn._usage_session_id("s-1", "u-a") == "s-1"
+            assert learn._usage_session_id("s-1", "u-a") == "s-1"
+        finally:
+            request_context._REQUEST_KEY_CTX.reset(token)
+        assert tbl.call_count == 1
+        token = request_context._REQUEST_KEY_CTX.set("req-2")
+        try:
+            assert learn._usage_session_id("s-1", "u-a") == "s-1"
+        finally:
+            request_context._REQUEST_KEY_CTX.reset(token)
+        assert tbl.call_count == 2

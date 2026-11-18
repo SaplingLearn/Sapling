@@ -716,3 +716,21 @@ def test_boot_warns_when_the_flag_could_not_leave_off(monkeypatch, caplog):
     with caplog.at_level(logging.ERROR, logger="sapling.config"):
         config._warn_db_user_scope_config()
     assert "SUPABASE_JWT_SIGNING_KEY is not set" in caplog.text
+
+
+def test_enforce_scopes_insert_ignore_duplicates(wire, real_guard, keys, monkeypatch):
+    """The DO-NOTHING insert (the loop's prequestion / self-explanation /
+    session-row stores) runs as the student like every other verb: it was the
+    one verb that posted as the service role, outside the RLS seam."""
+    monkeypatch.setenv(FLAG_ENV, "enforce")
+
+    def handler():
+        table("notes").insert_ignore_duplicates({"id": "n1"}, on_conflict="id")
+        return {}
+
+    _app(handler).get("/probe", cookies=_cookie("u1"))
+    (verb, args, kwargs), = wire.for_table("notes")
+    assert kwargs["headers"]["apikey"] == ANON
+    assert kwargs["headers"]["Authorization"].startswith("Bearer ey")
+    assert kwargs["headers"]["Prefer"] == "return=representation,resolution=ignore-duplicates"
+    assert kwargs["params"]["on_conflict"] == "id"
