@@ -278,16 +278,19 @@ def validate_references(ctx: RunContext[dict], outline: TopicOutline) -> TopicOu
     return outline
 
 
-def checklist_model_names() -> tuple[str, ...]:
-    """The models a checklist run can be billed under, for its spend hold
-    (services/checklist_budget.py): the model the slot resolved to, then the
-    other-provider model its resilience retries on while the `llm_fallback`
-    flag is on (agents/_providers.py; the flag is read per request, so a run
-    admitted with it off can still be served by the fallback). Under the
-    function-mode seam, which never bills, the names the slot's real model
-    would have, so the seam's run is admitted and released as a real one is.
+def checklist_model_names(model: Model | None = None) -> tuple[str, ...]:
+    """The models a checklist run on `model` (default: the agent's) can be
+    billed under, for its spend hold (services/checklist_budget.py): the model
+    the slot resolved to, then the other-provider model its resilience retries
+    on while the `llm_fallback` flag is on (agents/_providers.py; the flag is
+    read per request, so a run admitted with it off can still be served by the
+    fallback). Under the function-mode seam, which never bills, the names the
+    slot's real model would have, so the seam's run is admitted and released as
+    a real one is.
     """
-    base = _base_model(cast(Model, topic_checklist_agent.model))
+    base = _base_model(model if model is not None else cast(Model, topic_checklist_agent.model))
     primary = model_name_for("topic_checklist") if isinstance(base, FunctionModel) else base.model_name
     fallback = fallback_model_name_for("topic_checklist", primary)
-    return (primary,) if not fallback or fallback == primary else (primary, fallback)
+    # Bare names, as provider_model builds them (an override may say `anthropic:…`).
+    names = [name.rsplit(":", 1)[-1].strip() for name in (primary, fallback) if name]
+    return tuple(dict.fromkeys(names))
