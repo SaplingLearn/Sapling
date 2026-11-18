@@ -401,6 +401,7 @@ BACKEND_RPCS = frozenset({
     "discard_tutor_session",         # services/tutor_sessions.py (#117, stateless_tutor_sessions)
     "claim_tutor_session",  # services/tutor_sessions.py (loop close of a pending session), 20261118052843
     "encryption_aad_swap",           # db/backfill_encryption_aad.py (sec2 M13, 20261116162200)
+    "encryption_aad_swap_nested",    # db/backfill_encryption_aad.py (PR #866 C6, 20261118195701)
     "enqueue_job",                   # services/jobs.py (#116)
     "fail_job",                      # services/jobs.py (#116)
     "heartbeat_job",                 # services/jobs.py (#116, 20261108213623)
