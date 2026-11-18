@@ -107,11 +107,20 @@ def learn_loop_findings(
 # (e) every check step a session GRADED has an evidence row for its hash
 #     (the loop's only evidence path, A16; one flush per grade);
 # (f) every step whose feedback turn RAN has a zpd.step event (spec §6);
-# (g) no assistant message of a loop session states the seeded final answer
-#     (`sentinel`, E2E_LOOP_FINAL_ANSWER, case-insensitive) before the session
-#     released an answer — a graded step whose verdict is not `correct` (the
-#     feedback reply then opens with it, A16/A51) or a logged H6 worked answer.
-#     A release in one session never opens another. The text is never echoed;
+# (g) no assistant message of a loop session states a check item's final
+#     answer before THAT item was released (D7: per item, never per session) —
+#     a graded step whose verdict is not `correct` (the feedback reply then
+#     opens with it, A16/A51) or a logged H6 worked answer. A seeded check
+#     item's key is the sentinel (`sentinel`, E2E_LOOP_FINAL_ANSWER,
+#     case-insensitive) plus "<slug>-<format>-d<difficulty>", read back off the
+#     step's check_item_id (`rich-check-<slug>-<format>-d<difficulty>`); a key
+#     no step of the session carries fails closed. A BARE sentinel is the
+#     answer every seeded item shares, so it states the answer of every item
+#     open when it is said: it passes only once some item of the session was
+#     released AND no item shown by then is still open (ungraded, no H6). A
+#     release in one session never opens another. An assistant row that cannot
+#     be decrypted is a finding of its own (never read as empty text). The
+#     text is never echoed;
 # (g') likewise for the segment prequestion's OWN sentinel (spec §13 A138,
 #     `prequestion_sentinel`, E2E_LOOP_PREQUESTION_ANSWER — the seeded
 #     prequestion items' key, never a check's), PER ITEM (second review): each
@@ -162,19 +171,81 @@ def _prequestion_cutoffs(prequestions: dict) -> dict[str, float | None]:
     return out
 
 
-def _release_at(steps: dict) -> float | None:
-    """The first moment the session released a CHECK's answer, or None (never)."""
-    times: list[float] = []
-    for step in steps.values():
-        graded = _number(step.get("graded_at"))
-        if graded is not None and step.get("last_verdict") != "correct":
-            times.append(graded)
-        for r in step.get("rungs") or []:
-            at = _number(r.get("at")) if isinstance(r, dict) else None
-            rung = _number(r.get("rung")) if isinstance(r, dict) else None
-            if at is not None and rung is not None and rung >= _RELEASE_RUNG:
-                times.append(at)
+def _worked_at(step: dict) -> float | None:
+    """When the step's H6 worked answer was logged, or None."""
+    times = []
+    for r in step.get("rungs") or []:
+        at = _number(r.get("at")) if isinstance(r, dict) else None
+        rung = _number(r.get("rung")) if isinstance(r, dict) else None
+        if at is not None and rung is not None and rung >= _RELEASE_RUNG:
+            times.append(at)
     return min(times) if times else None
+
+
+def _step_release(step: dict) -> float | None:
+    """When THIS item's answer was released — graded other than `correct`, or
+    an H6 worked answer — or None (never)."""
+    graded = _number(step.get("graded_at"))
+    times = [graded] if graded is not None and step.get("last_verdict") != "correct" else []
+    worked = _worked_at(step)
+    if worked is not None:
+        times.append(worked)
+    return min(times) if times else None
+
+
+def _step_closed(step: dict) -> float | None:
+    """When the item stopped being open: graded (any verdict — a correct
+    answer is the student's own) or worked (H6); None while open."""
+    graded, worked = _number(step.get("graded_at")), _worked_at(step)
+    times = [t for t in (graded, worked) if t is not None]
+    return min(times) if times else None
+
+
+#: A seeded check item (db/seed_local_rich.py::loop_item_id) → its key's token.
+_SEEDED_CHECK = re.compile(r"^rich-check-(?P<slug>.+)-(?P<fmt>[a-z_]+)-d(?P<d>\d+)$")
+
+
+def _check_cutoffs(steps: dict) -> dict[str, float | None]:
+    """Each seeded check item's token (`<slug>-<format>-d<difficulty>`, read
+    off the step's check_item_id) → when the session released THAT item."""
+    out: dict[str, float | None] = {}
+    for step in steps.values():
+        m = _SEEDED_CHECK.match(str(step.get("check_item_id") or ""))
+        if m is not None:
+            out[f"{m['slug']}-{m['fmt']}-d{m['d']}"] = _step_release(step)
+    return out
+
+
+def _bare_mention_released(steps: dict, at: float | None) -> bool:
+    """A bare sentinel at `at` states the shared answer of every item open
+    then: it passes only when some item was released by `at` and every item
+    shown by `at` (no first_shown_at: shown from the start) was closed by it."""
+    if at is None:
+        return False
+    if not any((r := _step_release(s)) is not None and r <= at for s in steps.values()):
+        return False
+    for step in steps.values():
+        shown = _number(step.get("first_shown_at"))
+        if shown is not None and shown > at:
+            continue
+        closed = _step_closed(step)
+        if closed is None or closed > at:
+            return False
+    return True
+
+
+def _states_unreleased_check(text: str, needle: str, token_re, steps: dict, at) -> bool:
+    """Whether `text` (casefolded) states a check item's answer that was not
+    released at `at`: each keyed mention by its own item, a bare one by
+    `_bare_mention_released`; an unknown key, or an unknown time, fails closed."""
+    tokens = token_re.findall(text)
+    cutoffs = _check_cutoffs(steps)
+    for token in tokens:
+        cutoff = cutoffs.get(token)
+        if cutoff is None or at is None or at < cutoff:
+            return True
+    bare = text.count(needle) > len(tokens)
+    return bare and not _bare_mention_released(steps, at)
 
 
 def learn_loop_activity_findings(
@@ -192,11 +263,11 @@ def learn_loop_activity_findings(
     content (PLAINTEXT)} — the assistant rows of those sessions."""
     findings: list[Finding] = []
     no_evidence, no_step, graded_any = [], [], False
-    release: dict[str, float | None] = {}
+    session_steps: dict[str, dict] = {}
     pq_release: dict[str, dict[str, float | None]] = {}
     for s in sessions:
         steps = _steps_of(s)
-        release[s["id"]] = _release_at(steps)
+        session_steps[s["id"]] = steps
         pq_release[s["id"]] = _prequestion_cutoffs(_prequestions_of(s))
         for qh, step in sorted(steps.items()):
             if step.get("graded_at") is None:
@@ -226,16 +297,21 @@ def learn_loop_activity_findings(
             )
         )
     needle = sentinel.casefold()
+    check_token = re.compile(re.escape(needle) + r" ([a-z0-9_-]+-d\d+)")
     pq_token = re.compile(re.escape(prequestion_sentinel.casefold()) + r" ([a-z0-9-]+-pq\d+)") if (
         prequestion_sentinel
     ) else None
     leaked: dict[str, list[str]] = {"the seeded final answer": [], "a seeded prequestion's answer": []}
+    unreadable: list[str] = []
     for m in messages:
         sid = m.get("session_id")
+        if m.get("undecryptable"):
+            # D7: a row the oracle cannot read is never judged as empty text
+            unreadable.append(sid)
+            continue
         text, at = str(m.get("content") or "").casefold(), _number(m.get("at"))
-        if sid in release and needle in text:
-            cutoff = release[sid]
-            if cutoff is None or at is None or at < cutoff:  # unknown time: fail closed
+        if sid in session_steps and needle in text:
+            if _states_unreleased_check(text, needle, check_token, session_steps[sid], at):
                 leaked["the seeded final answer"].append(sid)
         if pq_token is not None and sid in pq_release and prequestion_sentinel.casefold() in text:
             # each item's key by its OWN record; a bare or unknown one fails closed
@@ -245,6 +321,17 @@ def learn_loop_activity_findings(
                 if cutoff is None or at is None or at < cutoff:
                     leaked["a seeded prequestion's answer"].append(sid)
                     break
+    if unreadable:
+        findings.append(
+            Finding(
+                oracle="learn_loop",
+                summary=(
+                    f"{len(unreadable)} assistant message(s) of loop sessions could not be "
+                    "decrypted — the final-answer leak check cannot read them"
+                ),
+                evidence={"sessions": sorted({str(s) for s in unreadable})[:_SAMPLE]},
+            )
+        )
     for what, sids in leaked.items():
         if sids:
             findings.append(

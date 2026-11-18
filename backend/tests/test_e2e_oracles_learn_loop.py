@@ -410,3 +410,104 @@ def test_run_learn_loop_gathers_activity_and_decrypts_messages(monkeypatch):
     summaries = " | ".join(f.summary for f in findings)
     assert "evidence" in summaries and "final answer" in summaries
     assert "zpd.step" not in summaries  # the step event is there
+
+
+# ── D7: the leak check is per ITEM, and an unreadable row is a finding ───────
+
+
+def _item(slug, fmt="free", d=1):
+    return f"rich-check-{slug}-{fmt}-d{d}"
+
+
+def _ckey(slug, fmt="free", d=1):
+    return f"{SENTINEL} {slug}-{fmt}-d{d}"
+
+
+def test_a_released_item_opens_only_its_own_key():
+    """Item A released at 100; item B still open. B's key at 120 is a leak;
+    A's key at 120 is A's release."""
+    steps = {
+        "qa": _step(check_item_id=_item("loop-a"), last_verdict="not_yet", graded_at=100.0,
+                    first_shown_at=10.0),
+        "qb": _step(check_item_id=_item("loop-b"), graded_at=None, feedback_given=False,
+                    first_shown_at=110.0),
+    }
+    kw = _activity(
+        sessions=[_session(steps)],
+        evidence_hashes={("u", "qa")},
+        step_event_hashes={("u", "qa")},
+        messages=[{"session_id": "s1", "at": 120.0, "content": f"It is {_ckey('loop-a')}."}],
+    )
+    assert learn_loop_activity_findings(**kw) == []
+    kw["messages"] = [{"session_id": "s1", "at": 120.0, "content": f"It is {_ckey('loop-b')}."}]
+    f = learn_loop_activity_findings(**kw)
+    assert len(f) == 1 and "final answer" in f[0].summary
+    kw["messages"] = [{"session_id": "s1", "at": 120.0, "content": _ckey("loop-z")}]  # no such step
+    assert len(learn_loop_activity_findings(**kw)) == 1
+
+
+def test_a_bare_sentinel_after_one_release_still_leaks_an_open_item():
+    """The old per-session rule passed any mention after the FIRST release; a
+    bare sentinel is every seeded item's answer, so with B shown and open it
+    states B's answer."""
+    steps = {
+        "qa": _step(check_item_id=_item("loop-a"), last_verdict="idk", graded_at=100.0,
+                    first_shown_at=10.0),
+        "qb": _step(check_item_id=_item("loop-b"), graded_at=None, feedback_given=False,
+                    first_shown_at=110.0),
+    }
+    kw = _activity(
+        sessions=[_session(steps)],
+        evidence_hashes={("u", "qa")},
+        step_event_hashes={("u", "qa")},
+        messages=[{"session_id": "s1", "at": 120.0, "content": SENTINEL}],
+    )
+    f = learn_loop_activity_findings(**kw)
+    assert len(f) == 1 and "final answer" in f[0].summary
+    # before B was shown, the same bare mention is A's release
+    kw["messages"] = [{"session_id": "s1", "at": 105.0, "content": SENTINEL}]
+    assert learn_loop_activity_findings(**kw) == []
+    # once B is closed too (answered correctly: the student's own answer), it passes
+    steps["qb"].update(graded_at=115.0, last_verdict="correct", feedback_given=True)
+    kw.update(evidence_hashes={("u", "qa"), ("u", "qb")}, step_event_hashes={("u", "qa"), ("u", "qb")},
+              messages=[{"session_id": "s1", "at": 120.0, "content": SENTINEL}])
+    assert learn_loop_activity_findings(**kw) == []
+
+
+def test_an_undecryptable_assistant_row_is_a_finding_not_empty_text():
+    kw = _activity(messages=[{"session_id": "s1", "at": 50.0, "content": "", "undecryptable": True}])
+    f = learn_loop_activity_findings(**kw)
+    assert len(f) == 1 and "could not be decrypted" in f[0].summary
+    assert f[0].evidence == {"sessions": ["s1"]}
+
+
+def test_run_learn_loop_marks_a_row_it_cannot_decrypt(monkeypatch):
+    import services.encryption as enc
+
+    conn = _Conn(
+        {
+            **_answers(steps=[]),
+            "learn_loop:sessions": [_session({"qh": _step()})],
+            "learn_loop:evidence_hashes": [{"user_id": "u", "question_hash": "qh"}],
+            "learn_loop:messages": [
+                {"session_id": "s1", "at": 150.0, "content": "enc2:0:bad"},
+                {"session_id": "s1", "at": 151.0, "content": "boom"},
+            ],
+            "learn_loop:loop_users": [{"n": 2}],
+            "event_type = 'zpd.step'": [
+                {"user_id": "u", "payload": {"p_known_before": 0.3, "p_known_after": 0.5,
+                                             "question_hash": "qh"}}
+            ],
+        }
+    )
+
+    def decrypt(v, **_):
+        if v == "boom":
+            raise ValueError("bad key")
+        return None  # decrypt_if_present fails soft on a binding mismatch
+
+    monkeypatch.setattr(gather, "_db_conn", lambda: conn)
+    monkeypatch.setattr(enc, "decrypt_if_present", decrypt)
+    findings, _ = gather.run_learn_loop(SimpleNamespace(user="x", expect_loop_activity=True))
+    [unreadable] = [f for f in findings if "decrypted" in f.summary]
+    assert unreadable.summary.startswith("2 assistant message(s)")

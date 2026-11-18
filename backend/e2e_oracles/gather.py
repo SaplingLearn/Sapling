@@ -517,6 +517,20 @@ def run_learn_loop(args: argparse.Namespace) -> tuple[list[Finding], int]:
     return findings, 0
 
 
+def _readable(row, decrypt_if_present, bind) -> dict:
+    """One assistant row's plaintext, or `undecryptable` (D7): decrypt fails
+    SOFT (None on a bad key or a binding mismatch), and an unreadable row read
+    as "" would pass the leak check unread."""
+    stored = row.get("content")
+    try:
+        text = decrypt_if_present(stored, bind=bind("messages", "content", row))
+    except Exception:  # noqa: BLE001 - any decrypt failure is an unreadable row
+        text = None
+    if stored not in (None, "") and text is None:
+        return {"content": "", "undecryptable": True}
+    return {"content": text}
+
+
 def _learn_loop_activity(conn, step_rows, args, learn_loop) -> list[Finding]:
     """The rows behind `learn_loop_activity_findings` (e)–(h): every loop session
     (non-empty loop_state, not a review session) with its document, the
@@ -549,7 +563,7 @@ def _learn_loop_activity(conn, step_rows, args, learn_loop) -> list[Finding]:
         {
             "session_id": r["session_id"],
             "at": None if r.get("at") is None else float(r["at"]),
-            "content": decrypt_if_present(r.get("content"), bind=bind("messages", "content", r)),
+            **_readable(r, decrypt_if_present, bind),
         }
         for r in conn.execute(
             "SELECT /* learn_loop:messages */ m.session_id AS session_id, "
