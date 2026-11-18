@@ -75,7 +75,19 @@ _NESTED_NAV_DESCRIPTIONS: dict[str, str] = {
     "quiz": "Hide Quiz (a tab under Study); its pages redirect to /dashboard.",
 }
 
-REGISTRY: dict[str, FlagDef] = {f.key: f for f in (
+def _registry(*defs: FlagDef) -> dict[str, FlagDef]:
+    """The registry, keyed by flag key. A key declared twice raises: a dict
+    comprehension would keep the LAST copy silently, so an edit to the first
+    (its description, its variants) would never take effect."""
+    out: dict[str, FlagDef] = {}
+    for flag in defs:
+        if flag.key in out:
+            raise ValueError(f"feature flag {flag.key!r} is declared twice in REGISTRY")
+        out[flag.key] = flag
+    return out
+
+
+REGISTRY: dict[str, FlagDef] = _registry(
     *(FlagDef(f"hide_{slug}", ("off", "on"),
               _NESTED_NAV_DESCRIPTIONS.get(
                   slug, f"Hide {label} from the nav; its pages redirect to /dashboard."),
@@ -334,8 +346,8 @@ REGISTRY: dict[str, FlagDef] = {f.key: f for f in (
             "Crisis-support path: a student message stating suicidal ideation, "
             "self-harm or acute danger gets a fixed card with crisis resources "
             "(988, Crisis Text Line, campus counseling, 911) instead of a model "
-            "turn, on every tutor, learning-loop and notes AI surface. Keep OFF "
-            "until the owner has reviewed the copy in "
+            "turn, on every tutor, learning-loop, notes and flashcard AI surface. "
+            "Keep OFF until the owner has reviewed the copy in "
             "services/crisis_support_copy.py (checklist: "
             "docs/safety/crisis-support.md).", False),
     # #119: cross-provider LLM fallback (agents/_providers.py). Resolved
@@ -504,21 +516,7 @@ REGISTRY: dict[str, FlagDef] = {f.key: f for f in (
             "waiting when this is turned off; approvals are untouched and "
             "removed accounts stay out. Global: per-user rules and rollouts do "
             "not apply.", True),
-    # docs/safety/crisis-support.md: the crisis-support path. On: a student
-    # message that states suicidal ideation, self-harm or acute danger gets
-    # the fixed resources card INSTEAD of a model turn, on every surface
-    # services/crisis_support.py lists. Server-only: the client renders the
-    # card whenever a response carries one. SHIPS OFF until the owner has
-    # reviewed the copy (services/crisis_support_copy.py).
-    FlagDef("crisis_support", ("off", "on"),
-            "Crisis-support path: a student message stating suicidal ideation, "
-            "self-harm or acute danger gets a fixed card with crisis resources "
-            "(988, Crisis Text Line, campus counseling, 911) instead of a model "
-            "turn, on every tutor, notes and flashcard AI surface. Keep OFF "
-            "until the owner has reviewed the copy in "
-            "services/crisis_support_copy.py (checklist: "
-            "docs/safety/crisis-support.md).", False),
-)}
+)
 
 STEPS = ("env_override", "fail_closed", "user", "role", "rollout", "default")
 
