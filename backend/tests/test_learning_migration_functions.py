@@ -303,6 +303,12 @@ def _registry(defs) -> dict[tuple[str, int], dict[str, Change]]:
         "20261108033310_checklist_budget_no_course_soft_delete.sql": Change(
             forbids=("c.deleted_at IS NULL",)
         ),
+        # PR #866 B1: a bill from one of the reservation's own models, priced
+        # by the backend; no fixed model, provider or rate
+        "20261118194745_checklist_budget_any_model.sql": Change(
+            requires=("= ANY(r.models)", "bill.cost_usd > r.held_usd"),
+            forbids=("'gemini-2.5-flash'", "'gemini'", ".0025"),
+        ),
     }
     return reg
 

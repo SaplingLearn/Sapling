@@ -1,16 +1,22 @@
 """Durable, checklist-participant capacity holds through backend-only RPCs.
 
-This is not a global spend cap: other features do not take the mutex. The fixed
-price envelope uses the native counter's estimate, not an invoice guarantee.
-Unknown started bills keep their hold in their original UTC dispatch windows.
-A new refresh after the two-minute grace can reserve *additional* capacity; it
-never restarts an old operation. No timer refunds a possible bill.
+This is not a global spend cap: other features do not take the mutex. The hold
+is the worst-case price, from services/llm_pricing, of one policy run
+(`CHECKLIST_LIMITS`: 50,000 counted input tokens, three 8,192-token outputs) on
+any model that can serve it: the `topic_checklist` slot's model and its
+llm_fallback model (`agents.topic_checklist.checklist_model_names`). The
+reservation records those models, and settlement accepts a bill from one of
+them only. The fixed envelope uses the native counter's estimate, not an
+invoice guarantee. Unknown started bills keep their hold in their original UTC
+dispatch windows. A new refresh after the two-minute grace can reserve
+*additional* capacity; it never restarts an old operation. No timer refunds a
+possible bill.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_CEILING, Decimal, InvalidOperation
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 import config
@@ -21,28 +27,81 @@ from db.scope import runs_as_service
 from services import llm_pricing
 from services.usage_receipts import PreparedUsageReceipt
 
-POLICY = "flash-50k-3x8192-v1"
-MODEL = "gemini-2.5-flash"
-HOLD_USD = Decimal("0.0764400000")
-HOLD_TOKENS = 74_576
+POLICY = "checklist-50k-3x8192-v2"
+#: The run the hold prices (agents/topic_checklist.py CHECKLIST_LIMITS): the
+#: cumulative counted input, and every attempt's full completion budget.
+INPUT_TOKENS = 50_000
+REQUESTS = 3
+OUTPUT_TOKENS_PER_REQUEST = 8192
+HOLD_TOKENS = INPUT_TOKENS + REQUESTS * OUTPUT_TOKENS_PER_REQUEST
+#: llm_usage / checklist_budget_reservations money scale: NUMERIC(18,10).
+_USD_QUANTUM = Decimal(1).scaleb(-llm_pricing.COST_SCALE)
+#: The providers a checklist bill can come from (llm_pricing.usage_provider).
+_BILLABLE_PROVIDERS = frozenset({"anthropic", "gemini"})
 
 
-def verify_price_profile() -> None:
-    # A price/config/model change must not silently run against a stale DB hold.
+def billing_label(model_name: str) -> str:
+    """`provider:model`: how a reservation names a model it may be billed under,
+    and how settlement matches a bill's llm_usage provider and model to it."""
+    return f"{llm_pricing.usage_provider(model_name)}:{model_name}"
+
+
+@dataclass(frozen=True)
+class Hold:
+    """What one admission reserves: the models priced, the USD and the tokens."""
+
+    models: tuple[str, ...]
+    usd: Decimal
+    tokens: int
+
+
+def _policy_error() -> HTTPException:
+    return HTTPException(503, "Checklist price policy needs an update. Please try again later.")
+
+
+def _positive_price(value) -> Decimal:
+    price = Decimal(str(value)) if value is not None else None
+    if price is None or not price.is_finite() or price <= 0:
+        raise ValueError("Unpriced checklist model")
+    return price
+
+
+def price_hold(model_names: tuple[str, ...]) -> Hold:
+    """The hold for one checklist run on any of `model_names`. Each component
+    is priced at its worst case over the models, since one run's attempts can
+    be served by either (the fallback is per request): the counted input at
+    full price or, on a provider whose cache writes cost more, all written to
+    the prompt cache; every attempt's completion at its output price. An
+    unpriced model, a provider that cannot bill a checklist or bounds other
+    than the policy's are refused before any database call (503)."""
     from agents.topic_checklist import CHECKLIST_LIMITS, CHECKLIST_MAX_OUTPUT_TOKENS
 
+    if not (
+        CHECKLIST_LIMITS.input_tokens_limit == INPUT_TOKENS
+        and CHECKLIST_LIMITS.request_limit == REQUESTS
+        and CHECKLIST_MAX_OUTPUT_TOKENS == OUTPUT_TOKENS_PER_REQUEST
+        and CHECKLIST_LIMITS.count_tokens_before_request
+    ):
+        raise _policy_error()
+    output = REQUESTS * OUTPUT_TOKENS_PER_REQUEST
     try:
-        matches = (
-            Decimal(str(llm_pricing.cost_usd(MODEL, 50_000, 3 * 8192))) == HOLD_USD
-            and Decimal(str(llm_pricing.cost_usd(MODEL, 1000, 0))) == Decimal(".0003")
-            and Decimal(str(llm_pricing.cost_usd(MODEL, 0, 1000))) == Decimal(".0025")
-            and Decimal(str(llm_pricing.cost_usd(MODEL, 1000, 0, cached_tokens=1000))) == Decimal(".00003")
+        names = tuple(dict.fromkeys(model_names))
+        labels = tuple(billing_label(name) for name in names)
+        if not names or any(label.split(":", 1)[0] not in _BILLABLE_PROVIDERS for label in labels):
+            raise ValueError("No billable checklist model")
+        input_usd = max(
+            max(
+                _positive_price(llm_pricing.cost_usd(name, INPUT_TOKENS, 0)),
+                _positive_price(llm_pricing.cost_usd(
+                    name, INPUT_TOKENS, 0, cache_write_tokens=INPUT_TOKENS)),
+            )
+            for name in names
         )
+        output_usd = max(_positive_price(llm_pricing.cost_usd(name, 0, output)) for name in names)
     except (InvalidOperation, TypeError, ValueError):
-        matches = False
-    matches = matches and CHECKLIST_LIMITS.input_tokens_limit == 50_000 and CHECKLIST_LIMITS.request_limit == 3 and CHECKLIST_MAX_OUTPUT_TOKENS == 8192 and CHECKLIST_LIMITS.count_tokens_before_request
-    if not matches:
-        raise HTTPException(503, "Checklist price policy needs an update. Please try again later.")
+        raise _policy_error() from None
+    usd = (input_usd + output_usd).quantize(_USD_QUANTUM, rounding=ROUND_CEILING)
+    return Hold(labels, usd, HOLD_TOKENS)
 
 
 def _cap(value) -> str:
@@ -84,6 +143,9 @@ class Reservation:
     input_hash: str
     fence: int
     dispatch_at: datetime | None = None
+    #: The `billing_label`s the hold was priced for; a run may dispatch to and
+    #: be billed under these only. Empty: nothing billable may dispatch.
+    models: tuple[str, ...] = ()
 
     @classmethod
     def from_row(cls, row: dict) -> Reservation:
@@ -93,10 +155,14 @@ class Reservation:
             for key in ("user_id", "enrollment_id", "input_hash"):
                 if not isinstance(row[key], str) or not row[key]:
                     raise ValueError("Invalid identity")
+            models = row["models"]
+            if not isinstance(models, list) or not models or not all(isinstance(m, str) and m for m in models):
+                raise ValueError("Invalid reserved models")
             dispatched_at = datetime.fromisoformat(row["dispatch_at"].replace("Z", "+00:00")) if row.get("dispatch_at") else None
             if dispatched_at is not None and dispatched_at.utcoffset() is None:
                 raise ValueError("Invalid dispatch clock")
-            return cls(UUID(row["operation_id"]), row["user_id"], row["enrollment_id"], row["input_hash"], row["fence"], dispatched_at)
+            return cls(UUID(row["operation_id"]), row["user_id"], row["enrollment_id"], row["input_hash"], row["fence"],
+                       dispatched_at, tuple(models))
         except (KeyError, TypeError, ValueError, AttributeError):
             raise _unavailable() from None
 
@@ -104,15 +170,26 @@ class Reservation:
         return {"p_user_id": self.user_id, "p_operation_id": str(self.operation_id), "p_fence": self.fence}
 
 
-def admit(user_id: str, enrollment_id: str, input_hash: str) -> Reservation | None:
-    verify_price_profile()
+def _holds(row: dict, hold: Hold) -> bool:
+    """The reservation row records exactly this hold."""
+    try:
+        return (row.get("models") == list(hold.models) and row.get("held_tokens") == hold.tokens
+                and Decimal(str(row.get("held_usd"))) == hold.usd)
+    except (InvalidOperation, TypeError, ValueError):
+        return False
+
+
+def admit(user_id: str, enrollment_id: str, input_hash: str, model_names: tuple[str, ...]) -> Reservation | None:
+    """Admit one paid refresh, holding `price_hold(model_names)`."""
+    hold = price_hold(model_names)
     operation_id = uuid4()
     params = {"p_user_id": user_id, "p_enrollment_id": enrollment_id, "p_input_hash": input_hash,
               "p_operation_id": str(operation_id), "p_receipt_id": str(uuid5(NAMESPACE_URL, f"sapling:checklist-receipt:{operation_id}")),
               "p_policy": POLICY,
               "p_daily_usd": _cap(config.STUDENT_DAILY_BUDGET_USD),
               "p_monthly_usd": _cap(config.STUDENT_MONTHLY_BUDGET_USD),
-              "p_daily_tokens": _token_cap(config.STUDENT_DAILY_TOKENS)}
+              "p_daily_tokens": _token_cap(config.STUDENT_DAILY_TOKENS),
+              "p_held_usd": str(hold.usd), "p_held_tokens": hold.tokens, "p_models": list(hold.models)}
     # Only admission is retried, with exactly the same operation identity. An
     # ambiguous admission cannot create a second hold or authorize generation.
     try:
@@ -124,7 +201,8 @@ def admit(user_id: str, enrollment_id: str, input_hash: str) -> Reservation | No
         return None
     if status in {"admitted", "replay"}:
         row = result.get("reservation", {})
-        if row.get("state") == "prepared" and row.get("operation_id") == str(operation_id) and row.get("user_id") == user_id and row.get("input_hash") == input_hash and row.get("enrollment_id") == enrollment_id:
+        if (row.get("state") == "prepared" and row.get("operation_id") == str(operation_id) and row.get("user_id") == user_id
+                and row.get("input_hash") == input_hash and row.get("enrollment_id") == enrollment_id and _holds(row, hold)):
             return Reservation.from_row(row)
         raise _unavailable()
     if status == "ownership":
@@ -156,7 +234,7 @@ def start(reservation: Reservation) -> Reservation:
     if (row.get("state") != "started" or row.get("operation_id") != str(reservation.operation_id)
         or row.get("fence") != reservation.fence or not row.get("dispatch_at")
         or row.get("user_id") != reservation.user_id or row.get("enrollment_id") != reservation.enrollment_id
-        or row.get("input_hash") != reservation.input_hash):
+        or row.get("input_hash") != reservation.input_hash or row.get("models") != list(reservation.models)):
         raise _unavailable()
     return Reservation.from_row(row)
 

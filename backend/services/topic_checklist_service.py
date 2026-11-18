@@ -13,10 +13,13 @@ from datetime import date, datetime, timedelta, timezone
 from fastapi import HTTPException
 from pydantic_ai.usage import RunUsage
 
+from agents import WORKER_LIMITS
 from agents._run import run_agent_sync
 from agents.topic_checklist import (
-    CHECKLIST_LIMITS, PROMPT_VERSION, TopicOutline, normalized_name, topic_checklist_agent,
+    CHECKLIST_LIMITS, PROMPT_VERSION, TopicOutline, checklist_model_names, normalized_name,
+    topic_checklist_agent,
 )
+from agents.usage import record_agent_usage
 from db.connection import page_all, table
 from learning.bkt import in_mastered_tier, is_weak, stored_score
 from services.academics import (
@@ -31,8 +34,9 @@ from services.exam_proximity import is_assessment
 from services.request_limits import check_rate_limit
 from services import ai_budget, checklist_budget
 from services.checklist_budget_run import ChecklistDispatches
+from services.checklist_receipt import prepare_checklist_receipt
 from services.request_context import current_request_id
-from services.usage_receipts import UsageReceiptUnavailable, prepare_checklist_usage_receipt
+from services.usage_receipts import UsageReceiptUnavailable
 
 logger = logging.getLogger(__name__)
 REVIEW_AFTER_DAYS = 7
@@ -46,7 +50,7 @@ GENERATION_WAIT_SECONDS = 5.0
 # is cooperative and does not prove that remote provider work stopped billing.
 GENERATION_TIMEOUT_SECONDS = 60.0
 
-# Serialize only paid cache misses for one student within this process, across
+# Serialize a learning-loop student's paid cache misses within this process, across
 # enrollments too. Reference counts retain a lock for waiters and release idle
 # entries, so the registry does not grow with every student who ever refreshes.
 _generation_guard = threading.Lock()
@@ -419,14 +423,14 @@ def _finish_generation(generation: ChecklistGeneration, payload: dict) -> None:
     no_dispatch = tracker.dispatched == 0 or tracker.nonbillable_test
     if not no_dispatch:
         try:
-            receipt = prepare_checklist_usage_receipt(
-                operation_id=tracker.reservation.operation_id,
-                user_id=tracker.reservation.user_id, approved_model=checklist_budget.MODEL,
+            # Billed under the reserved model that served it (Claude, or the
+            # Gemini fallback), priced by llm_pricing.
+            receipt = prepare_checklist_receipt(
+                reservation=tracker.reservation,
                 responses=tuple(tracker.responses), dispatched_requests=tracker.dispatched,
                 usage=generation.usage,
                 # A semantic/validation failure does not erase complete bills.
                 completed=tracker.dispatched == len(tracker.responses),
-                dispatched_at=tracker.reservation.dispatch_at,
                 request_id=current_request_id(),
             )
         except UsageReceiptUnavailable:
@@ -456,10 +460,59 @@ def _needs_generation(snapshot: dict, cache: dict | None) -> bool:
     return bool(snapshot["payload"]["sources"]) and (cache is None or cache["input_hash"] != snapshot["hash"])
 
 
-def refresh_checklist(user_id: str, course_id: str, semester: str | None = None) -> dict:
+async def _generate_unbudgeted(payload: dict, user_id: str) -> TopicOutline:
+    result = await asyncio.wait_for(topic_checklist_agent.run(
+        json.dumps(payload), deps=payload, usage_limits=WORKER_LIMITS,
+    ), timeout=GENERATION_TIMEOUT_SECONDS)
+    # Attribute the usage row to the student explicitly: the per-user cost
+    # rollups and the $ai_generation mirror both key on it.
+    return record_agent_usage(
+        result, feature="topic_checklist", task="topic_checklist", user_id=user_id,
+    ).output
+
+
+def _refresh_unbudgeted(user_id: str, now: datetime, scope: dict, snapshot: dict, cache: dict | None) -> dict:
+    """A loop-off student's paid refresh, as before the learning loop: the
+    per-student rate limit, the run, its usage row, the cache write. No AI
+    budget and no spend hold (owner decision 2026-11-18)."""
+    retry = check_rate_limit(f"topic-checklist:{user_id}", limit=6, window_sec=60)
+    if retry is not None:
+        raise HTTPException(429, "Please wait before generating another checklist.", headers={"Retry-After": str(retry)})
+    try:
+        prior = TopicOutline.model_validate(_outline_json(cache)) if cache else None
+        outline = run_agent_sync(_generate_unbudgeted({**snapshot["payload"],
+            "existing_topic_names": [t.name for t in prior.topics] if prior else [],
+        }, user_id))
+        validate_evidence(outline, snapshot["payload"])
+    except Exception:
+        logger.exception("Topic checklist generation failed")
+        raise HTTPException(503, "Topic generation is temporarily unavailable. Please try again.") from None
+    cache = {
+        "enrollment_id": scope["enrollment_id"], "input_hash": snapshot["hash"],
+        "content": encrypt_json(outline.model_dump(), bind=bind(
+            "topic_checklists", "content", scope["enrollment_id"])),
+        "generated_at": now.isoformat(),
+    }
+    table("topic_checklists").upsert(cache, on_conflict="enrollment_id")
+    return present(scope, snapshot, cache, now)
+
+
+def refresh_checklist(
+    user_id: str, course_id: str, semester: str | None = None, *, learning_loop: bool = False,
+) -> dict:
+    """Regenerate the checklist when its evidence changed (a cache hit is free).
+
+    `learning_loop` is the route-entry gate's answer for this student
+    (learning/gate.py, owner decision 00: the route evaluates it once). Only a
+    learning-loop student's paid refresh reads the AI budget and takes a
+    durable spend hold (owner decision 2026-11-18: caps only when the loop is
+    on); with the loop off it is the refresh as it was before the loop.
+    """
     now, scope, snapshot, cache = _current_checklist(user_id, course_id, semester)
     if not _needs_generation(snapshot, cache):
         return present(scope, snapshot, cache, now)
+    if not learning_loop:
+        return _refresh_unbudgeted(user_id, now, scope, snapshot, cache)
     with _generation_slot(user_id):
         # Another request may have filled this cache or changed the evidence
         # while we waited. Recheck owned scope, material and cache before any
@@ -470,7 +523,8 @@ def refresh_checklist(user_id: str, course_id: str, semester: str | None = None)
         # SQL coalesces an already-committed same-hash cache before its atomic
         # capacity check. Do not deny a now-free cross-worker hit via a stale
         # Python budget preflight first.
-        reservation = checklist_budget.admit(user_id, scope["enrollment_id"], snapshot["hash"])
+        reservation = checklist_budget.admit(
+            user_id, scope["enrollment_id"], snapshot["hash"], checklist_model_names())
         if reservation is None:
             return present(scope, snapshot, _cache(scope), now)
         try:

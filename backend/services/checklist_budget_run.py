@@ -7,11 +7,25 @@ from dataclasses import dataclass, field
 import config
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelResponse
+from pydantic_ai.models import Model
+from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.models.wrapper import WrapperModel
 
 from services import checklist_budget
+
+
+def _reserved(model: Model, reservation: checklist_budget.Reservation) -> bool:
+    """A real model on a provider a checklist bill can come from (Gemini's
+    Developer API or Anthropic's first-party API), named in the reservation."""
+    if isinstance(model, GoogleModel):
+        native = model.system in {"google", "google-gla"}
+    elif isinstance(model, AnthropicModel):
+        native = model.system == "anthropic"
+    else:
+        return False
+    return native and checklist_budget.billing_label(model.model_name) in reservation.models
 
 
 @dataclass
@@ -30,7 +44,7 @@ class ChecklistDispatches(AbstractCapability[dict]):
             # Explicit local FunctionModel seam. Never infer "free" from a zero
             # counter, a provider error or absent metadata on a real response.
             pass
-        elif not isinstance(model, GoogleModel) or model.system not in {"google", "google-gla"} or model.model_name != checklist_budget.MODEL:
+        elif not _reserved(model, self.reservation):
             raise ValueError("Checklist model is outside the reserved price policy")
         if self.dispatched and nonbillable != self.nonbillable_test:
             raise ValueError("Checklist run cannot mix billable and test model requests")
