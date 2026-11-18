@@ -1,8 +1,12 @@
 name: CI
 
 # Closes the #162 gap: nothing ran the test suites / typecheck / lint on PRs.
-# This gates every PR and push to main on the backend pytest suite and the
-# frontend tsc + vitest + eslint checks.
+# This gates every PR and push to main on the backend lint, type and import
+# ratchets and the pytest suite. The frontend gate is frontend.yml.
+#
+# No `paths` filter, unlike frontend.yml: the backend tests also read files
+# outside backend/ (frontend sources they keep in step with, docs, CLAUDE.md,
+# this workflow), so a PR that touches nothing in backend/ can still fail them.
 on:
   push:
     branches: [main]
@@ -111,86 +115,3 @@ jobs:
             --ignore=tests/test_docling_integration.py \
             --ignore=tests/test_ocr_pipeline.py \
             --ignore=tests/test_extraction_backends.py
-
-  frontend:
-    name: Frontend (lint + tsc + vitest)
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    # pull-requests: read lets the scope step list the PR's files.
-    permissions:
-      contents: read
-      pull-requests: read
-    defaults:
-      run:
-        working-directory: ./frontend
-    steps:
-      # Skip the frontend checks on a PR that cannot affect them: every changed
-      # file is backend code (not backend/tests/fixtures/, which
-      # studyGuide/reader/readerFixture.ts reads), docs, supabase/, loadtest/
-      # or Markdown. Most PRs here never touch frontend/, and this job is the
-      # costliest of the gates. The rule lists what is SAFE to skip, so a path
-      # nobody thought of (a root config file, a new directory) still runs the
-      # job. Pushes to main always run everything, and any doubt runs it too:
-      # an API failure, or a file list shorter than the PR's changed_files
-      # (the files API stops at 3,000).
-      #
-      # The backend job gets no such scope on purpose: its tests pin frontend
-      # files (navFeatures.ts, sessionToken.ts, legal/versions.ts, the crisis
-      # fixture, e2e/support/db.ts), docs, CLAUDE.md and this workflow, so a
-      # frontend-only PR can still fail it.
-      #
-      # Skipped steps leave the job green: nothing here is a required check.
-      - name: Scope (does this PR touch anything the frontend checks read?)
-        id: scope
-        working-directory: .
-        env:
-          GH_TOKEN: ${{ github.token }}
-          EVENT: ${{ github.event_name }}
-          PR: ${{ github.event.pull_request.number }}
-          CHANGED: ${{ github.event.pull_request.changed_files }}
-        run: |
-          set -uo pipefail
-          run=true
-          if [ "$EVENT" = "pull_request" ] \
-             && files=$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" --jq '.[].filename') \
-             && [ "$(printf '%s\n' "$files" | grep -c .)" -eq "$CHANGED" ] \
-             && ! printf '%s\n' "$files" | grep -qvP '^(backend/(?!tests/fixtures/)|docs/|supabase/|loadtest/)|\.md$'; then
-            run=false
-            echo "::notice::Frontend checks skipped: this PR changes no file they read."
-          fi
-          echo "run=$run" >> "$GITHUB_OUTPUT"
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        if: steps.scope.outputs.run == 'true'
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        if: steps.scope.outputs.run == 'true'
-        with:
-          # node 22, not 20: a transitive dep (@cloudflare/kv-asset-handler) requires
-          # node >=22, and .npmrc engine-strict=true enforces it during `npm ci`.
-          # (Cloudflare Workers Builds also builds the app on node 22.)
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-      # The bundled npm can be <10.9, but package.json engines requires
-      # npm >=10.9.0 <11, so pin it before `npm ci`.
-      - name: Pin npm to the engines-required version
-        if: steps.scope.outputs.run == 'true'
-        run: npm install -g npm@10.9.2 --engine-strict=false
-      - name: Install (npm ci)
-        if: steps.scope.outputs.run == 'true'
-        run: npm ci
-      - name: Lint (eslint flat config — replaces the removed `next lint`)
-        if: steps.scope.outputs.run == 'true'
-        # Zero warnings, as a backstop: eslint.config.mjs promotes every "warn"
-        # rule to an error (promoteWarnings), because only errors can be held
-        # in eslint-suppressions.json. So a rule a dependency bump adds fails
-        # as errors that `npx eslint . --suppress-rule <rule>` can baseline,
-        # and nothing is left to arrive as a warning with no baseline. Keep the
-        # '=' form: a bare `--max-warnings 0` is fine, but a negative value
-        # without '=' is parsed as an option and eslint exits 2.
-        run: npx eslint . --max-warnings=0
-      - name: Typecheck
-        if: steps.scope.outputs.run == 'true'
-        run: npx tsc --noEmit
-      - name: Test
-        if: steps.scope.outputs.run == 'true'
-        run: npm test

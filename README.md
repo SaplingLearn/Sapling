@@ -268,12 +268,14 @@ python tests/evals/run_all.py
 
 | Workflow | Runs | What it checks |
 | --- | --- | --- |
-| `CI` | Every PR and push to `main` | Backend pytest + ruff + lint/type/import ratchets (from the hash-pinned `requirements.lock`, including a code-size ratchet test); frontend eslint + typecheck + vitest, skipped on a PR that changes nothing the frontend checks read |
+| `CI` | Every PR and push to `main` | Backend pytest + ruff + lint/type/import ratchets (from the hash-pinned `requirements.lock`, including a code-size ratchet test) |
+| `Frontend` | PRs touching `frontend/` or `backend/tests/fixtures/`; pushes to `main` | eslint + typecheck + vitest |
 | `PR hygiene` | Every PR | A type (Conventional Commits title or `type/` branch) and filled-in acceptance criteria; warns on a `feat`/`fix` PR with no user story; adds a type label |
 | `integration (local supabase)` | PRs touching `backend/`, `supabase/` or `scripts/`; pushes to `main` | Backend against a real local Supabase stack (plus a `db_user_scope=enforce` pass on `main`) |
 | `e2e (browser lane)` | Pushes to `main`, manual | Playwright end-to-end tests against the full stack |
 | `Evals` | PRs touching agents | Offline agent eval harness |
 | `Migrate (staging)` | Pushes to `main` that add migrations | Applies new migrations to staging |
+| CodeQL Code Quality (GitHub-managed, a repo setting) | PRs and pushes to `main` | GitHub's maintainability and reliability findings; not a gate. (CodeQL *security* scanning is not configured.) |
 | `loadtest` | Manual, and nightly when `LOADTEST_TARGET_URL` is set | Locust load test against a deployed backend, gated on p95 latency |
 | `Security` | PRs, pushes to `main`, weekly | One job: gitleaks over the full git history (allowlist in `.gitleaks.toml`); `pip-audit` over `backend/requirements.lock`; `npm audit --omit=dev --audit-level=high` in `frontend/` |
 

@@ -5,15 +5,12 @@ name: integration (local supabase)
 # failing a PR: #574 added a test file demanding env this workflow did not set,
 # merged green, and left main red for three pushes.
 #
-# The PR trigger IS path-filtered, to everything this lane reads: the suite
-# lives in backend/tests/integration and reads only backend/ (migrations,
-# .env.local.example, the app itself), supabase/config.toml (the stack), and
-# scripts/preflight-ports.sh. A PR outside those paths (frontend, docs) cannot
-# change its result, and skipping it saves a ~9-minute billed run on about a
-# fifth of PRs. #574 changed a file under backend/, so it is still caught. The
-# push to main stays unfiltered, so a filter that ever proves too narrow shows
-# up there. (GitHub evaluates a PR's paths over its first 300 changed files
-# only; that same unfiltered push covers a larger PR.)
+# The PR trigger is filtered to the paths this lane reads: backend/ (the app,
+# its migrations and the suite), supabase/ (the stack's config) and scripts/
+# (preflight-ports.sh). A PR outside them cannot change the result, so it does
+# not pay for the lane's minutes. #574's file was under backend/ and would still
+# be caught. Pushes to main run unfiltered, the backstop for what a PR filter
+# can miss (GitHub only looks at a PR's first 300 changed files).
 on:
   workflow_dispatch:
   pull_request:

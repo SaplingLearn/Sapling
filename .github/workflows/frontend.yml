@@ -1,0 +1,67 @@
+name: Frontend
+
+# The frontend gate: eslint, tsc and vitest. A workflow of its own, not a job
+# in ci.yml, so that a `paths` filter can skip it on PRs that cannot affect
+# it: a skipped workflow bills nothing, a skipped job still starts a runner.
+#
+# The PR paths are everything these checks read: frontend/, plus
+# backend/tests/fixtures/ (studyGuide/reader/readerFixture.ts reads the study
+# guide contract fixture). A new read from outside frontend/ belongs here too.
+#
+# Pushes to main run unfiltered. That is the backstop for what a PR filter can
+# miss: GitHub only looks at a PR's first 300 changed files, and does not
+# document whether a rename is matched by its old path as well as its new one.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - "frontend/**"
+      - "backend/tests/fixtures/**"
+      - ".github/workflows/frontend.yml"
+
+# Least privilege: the GITHUB_TOKEN is read-only unless a job
+# grants itself more.
+permissions:
+  contents: read
+
+concurrency:
+  group: frontend-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    name: Frontend (lint + tsc + vitest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: ./frontend
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          # node 22, not 20: a transitive dep (@cloudflare/kv-asset-handler) requires
+          # node >=22, and .npmrc engine-strict=true enforces it during `npm ci`.
+          # (Cloudflare Workers Builds also builds the app on node 22.)
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      # The bundled npm can be <10.9, but package.json engines requires
+      # npm >=10.9.0 <11, so pin it before `npm ci`.
+      - name: Pin npm to the engines-required version
+        run: npm install -g npm@10.9.2 --engine-strict=false
+      - run: npm ci
+      - name: Lint (eslint flat config — replaces the removed `next lint`)
+        # Zero warnings, as a backstop: eslint.config.mjs promotes every "warn"
+        # rule to an error (promoteWarnings), because only errors can be held
+        # in eslint-suppressions.json. So a rule a dependency bump adds fails
+        # as errors that `npx eslint . --suppress-rule <rule>` can baseline,
+        # and nothing is left to arrive as a warning with no baseline. Keep the
+        # '=' form: a bare `--max-warnings 0` is fine, but a negative value
+        # without '=' is parsed as an option and eslint exits 2.
+        run: npx eslint . --max-warnings=0
+      - name: Typecheck
+        run: npx tsc --noEmit
+      - name: Test
+        run: npm test
