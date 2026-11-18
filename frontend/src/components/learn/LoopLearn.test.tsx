@@ -44,6 +44,7 @@ const api = vi.hoisted(() => ({
   postLoopAttempt: vi.fn(), requestLoopHint: vi.fn(), requestLoopHintTurn: vi.fn(), closeLoopSession: vi.fn(),
   getGraph: vi.fn(), nextLoopCheck: vi.fn(), submitLoopRating: vi.fn(), reportCheckItem: vi.fn(),
   streamLoopPrequestionAnswer: vi.fn(), postLoopSelfExplain: vi.fn(), getSessions: vi.fn(), getDocuments: vi.fn(),
+  getReviewSummary: vi.fn(), submitFeedback: vi.fn(),
 }));
 vi.mock("@/lib/api", async (orig) => ({ ...(await orig<typeof import("@/lib/api")>()), ...api }));
 // Every flag "off" (the provider's default) unless a test turns one on.
@@ -57,6 +58,8 @@ import {
   ENDED_SESSION_KEY,
   feedbackHeld,
   FIRST_SEEN_KEY,
+  LAST_PROMPT_KEY,
+  PROMPTED_SESSIONS_KEY,
 } from "@/lib/feedbackPacing";
 import { FeedbackFlow, PULSE_DELAY_MS } from "../FeedbackFlow";
 import { LoopLearn } from "./LoopLearn";
@@ -72,6 +75,8 @@ const closeRecord = {
 };
 const turn = (over: object = {}) => ({ reply: "ok", graph_update: {}, mastery_changes: [], leak_redacted: false, ...over });
 
+/** The check card's answer box: named by its visible label (WCAG 2.5.3). */
+const ANSWER_NAME = "Your answer — this is what gets checked";
 /** GET /sessions's list (+ the ?resume= lookup), as listLoopSessionsFor resolves it. */
 const listed = (sessions: object[], resume: object | null = null) => ({ sessions, resume });
 /** Elements showing `text` on screen: the log keeps a row the check card also
@@ -114,6 +119,8 @@ beforeEach(() => {
   api.getGraph.mockResolvedValue({ nodes: [], edges: [], stats: {} });
   api.getSessions.mockResolvedValue({ sessions: [] });
   api.getDocuments.mockResolvedValue({ documents: [] });
+  api.getReviewSummary.mockResolvedValue({ due: { flashcard: 0, check: 0 }, in_budget: 0, unservable: 0, paused: 0, budget_min: 20, remaining_budget_s: 1200, retention_target: 0.9 });
+  api.submitFeedback.mockResolvedValue({ ok: true });
   api.resumeSession.mockResolvedValue({ session: { id: "s2" }, messages: [{ id: "m1", role: "assistant", content: "welcome back", created_at: "" }] });
 });
 afterEach(cleanup);
@@ -1244,7 +1251,7 @@ describe("LoopLearn — PKG-13 fix round", () => {
     api.startLoopSession.mockResolvedValue({ session_id: "s9", initial_message: "" });
     api.nextLoopProbe.mockResolvedValue(probeItem);
     render(<LoopLearn />);
-    await waitFor(() => expect(api.startLoopSession).toHaveBeenCalledWith("u1", "c2", "Linked lists", "expository"));
+    await waitFor(() => expect(api.startLoopSession).toHaveBeenCalledWith("u1", "c2", "Linked lists", "expository", undefined, null));
     expect(api.listLoopSessionsFor).toHaveBeenCalledWith("u1", "c2", null);
   });
 
@@ -1605,7 +1612,7 @@ describe("LoopLearn — session isolation and learning evidence", () => {
     });
     api.getLoopSessionStatus.mockResolvedValue(status({ phase: "check", check: pose }));
     await withCheckItem();
-    fireEvent.change(screen.getByRole("textbox", { name: "Your answer" }), { target: { value: "a base case" } });
+    fireEvent.change(screen.getByRole("textbox", { name: ANSWER_NAME }), { target: { value: "a base case" } });
     fireEvent.click(screen.getByTestId("loop-attempt-submit"));
     fireEvent.click(await screen.findByTestId("tutor-stop"));
     await act(async () => {
@@ -1663,7 +1670,7 @@ describe("LoopLearn — session isolation and learning evidence", () => {
     api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "check", "2026-09-21T10:00:00Z"), open("s1", "teach", "2026-09-20T10:00:00Z")]));
     api.getLoopSessionStatus.mockResolvedValue(status({ phase: "check", check: pose }));
     render(<LoopLearn />);
-    fireEvent.change(await screen.findByRole("textbox", { name: "Your answer" }), { target: { value: "try zero" } });
+    fireEvent.change(await screen.findByRole("textbox", { name: ANSWER_NAME }), { target: { value: "try zero" } });
     fireEvent.click(screen.getByTestId("loop-hint-button"));
     await waitFor(() => expect(api.postLoopAttempt).toHaveBeenCalled());
     fireEvent.click(screen.getByTestId("loop-session-s1"));
@@ -1747,7 +1754,7 @@ it("a status snapshot requested before wrap-up cannot reopen the closed session"
   api.streamLoopCheckAnswer.mockRejectedValue(new Error("feedback stream interrupted"));
   api.closeLoopSession.mockResolvedValue({ close: closeRecord, model_written: false, close_phase: "feedback" });
   await withCheckItem();
-  fireEvent.change(screen.getByRole("textbox", { name: "Your answer" }), { target: { value: "the base case" } });
+  fireEvent.change(screen.getByRole("textbox", { name: ANSWER_NAME }), { target: { value: "the base case" } });
   fireEvent.click(screen.getByTestId("loop-attempt-submit"));
   await waitFor(() => expect(api.getLoopSessionStatus).toHaveBeenCalled());
   fireEvent.click(screen.getByTestId("loop-close-button"));
@@ -2225,7 +2232,8 @@ describe("LoopLearn — Report this question (spec §13 A113)", () => {
 // check-in, right after the first diagnostic answer. LoopLearn's half of the
 // pacing contract (lib/feedbackPacing.ts; the shell's half is
 // components/feedbackFlows.test.tsx): an open session holds every feedback
-// prompt until its wrap-up, which releases them and remembers the ended session.
+// prompt until its wrap-up, which releases them and — paced — asks "How was
+// that session?" itself (U9), so nothing is left to ask after the student leaves.
 describe("LoopLearn — no feedback survey mid-learning", () => {
   const PULSE = "What's clicking?";
   const endedSession = () => JSON.parse(sessionStorage.getItem(ENDED_SESSION_KEY) ?? "null");
@@ -2263,7 +2271,8 @@ describe("LoopLearn — no feedback survey mid-learning", () => {
     expect(feedbackHeld()).toBe(true);
   });
 
-  it("the wrap-up releases them and remembers the ended session; the next session holds again and forgets it", async () => {
+  it("the wrap-up releases them and asks how the session was on the wrap-up itself; the next session holds again", async () => {
+    sessionStorage.setItem(ENDED_SESSION_KEY, JSON.stringify({ sessionId: "old" })); // a legacy session's leftover
     api.closeLoopSession.mockResolvedValue({ close: closeRecord, model_written: false, close_phase: "teach" });
     await resumedTeach();
     expect(feedbackHeld()).toBe(true);
@@ -2271,7 +2280,17 @@ describe("LoopLearn — no feedback survey mid-learning", () => {
     await screen.findByTestId("loop-close-done");
     await effectsFlushed();
     expect(feedbackHeld()).toBe(false);
-    expect(endedSession()).toEqual({ sessionId: "s2", topic: "t s2" });
+    // U9: asked here, recorded as asked; nothing is left for the shell to ask over another page
+    const rating = screen.getByTestId("loop-close-rating");
+    expect(within(rating).getByText("1 = Frustrating")).toBeTruthy();
+    expect(within(rating).getByText("4 = Great session")).toBeTruthy();
+    expect(JSON.parse(localStorage.getItem(PROMPTED_SESSIONS_KEY) ?? "[]")).toEqual(["s2"]);
+    expect(endedSession()).toBeNull();
+    fireEvent.click(within(rating).getByRole("button", { name: "4 – Great session" }));
+    expect(await screen.findByTestId("loop-close-rating-sent")).toBeTruthy();
+    expect(api.submitFeedback).toHaveBeenCalledWith({
+      user_id: "u1", type: "session", rating: 4, selected_options: [], session_id: "s2", topic: "t s2",
+    });
 
     api.startLoopSession.mockResolvedValue({ session_id: "s9", initial_message: "" });
     api.nextLoopProbe.mockResolvedValue(probeItem);
@@ -2283,11 +2302,15 @@ describe("LoopLearn — no feedback survey mid-learning", () => {
     expect(endedSession()).toBeNull();
   });
 
-  it("with the shell's pulse: it never opens over an open check, and opens once the session wraps up", async () => {
+  it.each([
+    ["asks its own question, and the pulse stays closed", false],
+    ["does not ask (the session prompt's cooldown), and the pulse opens", true],
+  ])("with the shell's pulse: it never opens over an open check; the wrap-up %s", async (_, cooling) => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"], shouldAdvanceTime: true });
     api.closeLoopSession.mockResolvedValue({ close: closeRecord, model_written: false, close_phase: "check" });
     // A settled student: past the pulse's new-student grace (#849).
     localStorage.setItem(FIRST_SEEN_KEY, String(Date.now() - 30 * 24 * 60 * 60 * 1000));
+    if (cooling) localStorage.setItem(LAST_PROMPT_KEY.session, String(Date.now() - 3 * 24 * 60 * 60 * 1000));
     render(<FeedbackFlow />);
     await withCheckItem();
     act(() => { vi.advanceTimersByTime(PULSE_DELAY_MS); });
@@ -2296,7 +2319,14 @@ describe("LoopLearn — no feedback survey mid-learning", () => {
 
     fireEvent.click(screen.getByTestId("loop-close-button"));
     await screen.findByTestId("loop-close-done");
-    expect(await screen.findByText(PULSE)).toBeTruthy();
+    await effectsFlushed();
+    if (cooling) {
+      expect(await screen.findByText(PULSE)).toBeTruthy();
+      expect(screen.queryByTestId("loop-close-rating")).toBeNull();
+    } else {
+      expect(screen.getByTestId("loop-close-rating")).toBeTruthy(); // one ask at a time
+      expect(screen.queryByText(PULSE)).toBeNull();
+    }
   });
 });
 
@@ -2520,7 +2550,7 @@ describe("LoopLearn — keyboard and screen reader (spec §13 A135)", () => {
 
   it("a posed check takes focus: its answer box, inside a region named for the check and described by the question", async () => {
     await withCheckItem();
-    const answer = screen.getByRole("textbox", { name: "Your answer" });
+    const answer = screen.getByRole("textbox", { name: ANSWER_NAME });
     await waitFor(() => expect(answer).toHaveFocus());
     expect(answer).toHaveAccessibleDescription("Why does it stop?");
     expect(screen.getByRole("region", { name: "Check your understanding" })).toContainElement(answer);
@@ -2534,7 +2564,7 @@ describe("LoopLearn — keyboard and screen reader (spec §13 A135)", () => {
     fireEvent.change(composer, { target: { value: "go on" } });
     fireEvent.keyDown(composer, { key: "Enter" });
     await screen.findByTestId("loop-check-prompt");
-    await waitFor(() => expect(screen.getByRole("textbox", { name: "Your answer" })).toHaveFocus());
+    await waitFor(() => expect(screen.getByRole("textbox", { name: ANSWER_NAME })).toHaveFocus());
   });
 
   it("a teach turn with no check gives focus back to the composer", async () => {
@@ -2911,7 +2941,7 @@ describe("LoopLearn — self-explanation prompts (spec §13 A139)", () => {
     expect(card.getAttribute("data-juncture")).toBe("worked_example");
     expect(screen.getByTestId("loop-self-explain-prompt").textContent).toBe(prompt.prompt);
     // the posed check took focus (its answer box); the prompt does not steal it
-    await waitFor(() => expect(screen.getByRole("textbox", { name: "Your answer" })).toHaveFocus());
+    await waitFor(() => expect(screen.getByRole("textbox", { name: ANSWER_NAME })).toHaveFocus());
   });
 
   it("Send posts the reply; the log shows it, the saved note is announced and focus returns to the answer", async () => {
@@ -2927,7 +2957,7 @@ describe("LoopLearn — self-explanation prompts (spec §13 A139)", () => {
     const note = await screen.findByTestId("loop-self-explain-saved");
     expect(note.textContent).toBe("Saved — thanks.");
     expect(note.closest('[aria-live="polite"]')).not.toBeNull();
-    await waitFor(() => expect(screen.getByRole("textbox", { name: "Your answer" })).toHaveFocus());
+    await waitFor(() => expect(screen.getByRole("textbox", { name: ANSWER_NAME })).toHaveFocus());
     expect(screen.getByTestId("loop-check-prompt")).toBeTruthy(); // the check is still open: nothing was graded
   });
 

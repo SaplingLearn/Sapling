@@ -189,6 +189,11 @@ async function walkProbeAndPlan(page: Page, P: Params, approve = true): Promise<
   if (approve) {
     await page.getByTestId("loop-plan-approve").click();
     await expect(phase).toHaveAttribute("data-phase", "teach");
+    // PR #866 review U2: the history stays true — the approved plan stands in
+    // the opener's row, which no longer promises a check-in that is done.
+    const log = page.getByTestId("tutor-messages");
+    await expect(log).toContainText("Here's today's plan.");
+    await expect(log).not.toContainText(LOOP_PROBE_OPENER);
   }
   return answered;
 }
@@ -424,6 +429,13 @@ test("loop user completes probe → plan → check (explicit submission) with a 
   // A60: the self-evaluation is a reflection prompt — no input implies it is saved.
   await expect(page.getByTestId("loop-close-self-eval").locator("textarea, input")).toHaveCount(0);
   await expect(page.getByTestId("loop-close-done")).toBeVisible();
+  // PR #866 review U9: "How was that session?" is asked on the wrap-up itself,
+  // its scale's ends labelled — never later, over the page the student went to.
+  const rating = page.getByTestId("loop-close-rating");
+  await expect(rating).toContainText("1 = Frustrating");
+  await expect(rating).toContainText("4 = Great session");
+  await rating.getByRole("button", { name: "4 – Great session" }).click();
+  await expect(page.getByTestId("loop-close-rating-sent")).toBeVisible();
 
   // ── Database: the loop's writes, through apply_graph_update ──────────────
   const states = (await queryRaw(`SELECT node_id, p_known FROM learner_state WHERE user_id = $1`, [
@@ -1236,7 +1248,7 @@ test("phone learner can check in, answer a check and reach wrap-up without horiz
     await expect(page.getByTestId("loop-hint-reply")).toBeVisible();
     await expect(page.getByTestId("loop-hint-button")).toBeEnabled();
   }
-  await page.getByRole("textbox", { name: "Your answer", exact: true }).fill(`working: ${GRADER_CORRECT_TOKEN}`);
+  await page.getByRole("textbox", { name: "Your answer — this is what gets checked", exact: true }).fill(`working: ${GRADER_CORRECT_TOKEN}`);
   await page.getByTestId("loop-attempt-submit").click();
   await expect(phase).toHaveAttribute("data-phase", "feedback");
   await expect(page.getByTestId("loop-messages")).toContainText(LOOP_FEEDBACK_BODY);

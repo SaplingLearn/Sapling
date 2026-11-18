@@ -16,6 +16,13 @@ const KIND_LABEL: Record<string, string> = { review: "Due for review", new: "New
 
 export type PanelConcept = { nodeId: string; name: string; score: number | null };
 
+/** The due line: the review queue's own count, else what it holds. */
+export function dueCountText(count: number | null): string {
+  if (count === null) return "Flashcards and retention checks";
+  if (count === 0) return "Nothing due right now";
+  return `${count} ${count === 1 ? "review" : "reviews"} due`;
+}
+
 const LEGEND: [string, string][] = [
   ["var(--state-mastery)", "Mastered"],
   ["var(--state-progress)", "In progress"],
@@ -44,8 +51,10 @@ export function SessionPanel({
   plan: LoopPanelConcept[] | null;
   currentNodeId: string | null;
   skills: PanelConcept[];
-  dueCount: number;
-  dueHref: string;
+  /** Reviews due now in every course (the review queue's count); null: unknown. */
+  dueCount: number | null;
+  /** Where "Review what's due" goes; null while `hide_study` hides Study. */
+  dueHref: string | null;
   learnerChip: React.ReactNode;
   /** The chip has a concept to show (else it keeps its place off screen). */
   hasLearner: boolean;
@@ -94,17 +103,19 @@ export function SessionPanel({
             {skills.map((s) => <Meter key={s.nodeId} label={s.name} score={s.score} />)}
           </section>
         )}
-        <section className={styles.panelSec} aria-labelledby="tutor-panel-due">
-          <span id="tutor-panel-due" className="label-micro">Due for review</span>
-          <div className={styles.reviewBox}>
-            <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
-              {dueCount > 0 ? `${dueCount} ${dueCount === 1 ? "course has" : "courses have"} a retention check due` : "Flashcards and retention checks"}
-            </span>
-            <Link href={dueHref} className="btn btn--sm" style={{ alignSelf: "flex-start" }} data-testid="tutor-panel-review">
-              Review what&apos;s due
-            </Link>
-          </div>
-        </section>
+        {dueHref && (
+          <section className={styles.panelSec} aria-labelledby="tutor-panel-due">
+            <span id="tutor-panel-due" className="label-micro">Due for review</span>
+            <div className={styles.reviewBox}>
+              <span data-testid="tutor-panel-due-count" style={{ fontSize: 12, color: "var(--text-muted)" }}>
+                {dueCountText(dueCount)}
+              </span>
+              <Link href={dueHref} className="btn btn--sm" style={{ alignSelf: "flex-start" }} data-testid="tutor-panel-review">
+                Review what&apos;s due
+              </Link>
+            </div>
+          </section>
+        )}
         <section className={styles.panelSec} aria-labelledby="tutor-panel-map">
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
             <span id="tutor-panel-map" className="label-micro">Knowledge map</span>
