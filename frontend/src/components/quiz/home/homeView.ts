@@ -11,10 +11,10 @@ import type { EnrolledCourse } from "@/lib/api";
 import type { SessionConfig, StartRequest } from "@/lib/quiz/machine";
 import {
   colorFor,
-  courseQueueFromPlan,
   latestCompletedAttempt,
   metaLine,
   planReasonCopy,
+  plannedCourseQueue,
   queueFor,
   rationaleFor,
   skillPercent,
@@ -78,15 +78,18 @@ export function cardModeFor(pickedId: string | null, arrival: Arrival): CardMode
 /**
  * A `?course=` arrival's queue: the tier ranking's, or with
  * `quiz_concept_plan` the learner model's order for that course (spec §13
- * A143). The due queue needs no such choice here: the hook decides it, so the
- * card and the queue agree.
+ * A143), falling back to the tier ranking when the plan proposes none of the
+ * course's concepts (`plannedCourseQueue`). The due queue needs no such choice
+ * here: the hook decides it, so the card and the queue agree.
  */
 export function courseQueueFor(
-  home: Pick<QuizHomeData, "planned" | "candidates" | "nodes">,
+  home: Pick<QuizHomeData, "planned" | "candidates" | "nodes" | "courseCandidates">,
   course: string | undefined,
 ): string[] {
   if (!course) return [];
-  return home.planned ? courseQueueFromPlan(home.candidates, course) : queueFor("course", home.nodes, course);
+  return home.planned
+    ? plannedCourseQueue(home.candidates, home.courseCandidates, home.nodes, course)
+    : queueFor("course", home.nodes, course);
 }
 
 /**

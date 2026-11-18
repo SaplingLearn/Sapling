@@ -28,11 +28,11 @@ import { cachedDescription, loadDescription } from "./conceptDescriptions";
 import { describeQuizError, type QuizError } from "./errors";
 import {
   alternativesOf,
-  courseQueueFromPlan,
   dueFromPlan,
   dueSet,
   entrySelection,
   groupByCourse,
+  plannedCourseQueue,
   primaryOf,
   queueFor,
   rankCandidates,
@@ -74,6 +74,13 @@ export interface QuizHome {
    * `GET /api/quiz/plan` answered). False: the graph-tier ranking above.
    */
   planned: boolean;
+  /**
+   * A `?course=` arrival on a planned home: the learner model's plan for that
+   * course alone (`GET /api/quiz/plan?course_id=`), as candidates. `null`
+   * without a course, without the plan, or when that read failed — the
+   * all-courses plan's concepts of the course stand in.
+   */
+  courseCandidates?: Candidate[] | null;
   byCourse: ReturnType<typeof groupByCourse>;
   resumable: ResumableQuiz | null;
   /**
@@ -173,6 +180,8 @@ interface Loaded {
   attempts: AttemptSummary[];
   /** Spec §13 A143: the learner model's plan, or null (flag off, or it failed). */
   plan: QuizPlan | null;
+  /** The plan for the `?course=` the student arrived on, or null. */
+  coursePlan: QuizPlan | null;
   error: QuizError | null;
 }
 
@@ -182,6 +191,7 @@ const EMPTY_LOAD = {
   courses: [] as EnrolledCourse[],
   attempts: [] as AttemptSummary[],
   plan: null as QuizPlan | null,
+  coursePlan: null as QuizPlan | null,
 };
 
 /** `quiz_concept_plan` for this student. Like every quiz learning flag it needs
@@ -191,6 +201,12 @@ function useQuizPlanFlag(): boolean {
   const planFlag = useFlag("quiz_concept_plan");
   const loopFlag = useFlag(LEARNING_LOOP_FLAG);
   return planFlag === "on" && loopFlag === "on";
+}
+
+/** The course whose own plan a planned `?course=` arrival also reads, or "".
+ *  The load's key carries it, so only a planned home re-reads on a new course. */
+function planCourseFor(planOn: boolean, entry: EntryRequest | undefined): string {
+  return planOn ? entry?.course ?? "" : "";
 }
 
 /**
@@ -269,9 +285,10 @@ export function useQuizHome(
   // NUL-delimited so no id or term label can forge a collision. Written as an
   // ESCAPE, never a literal byte: a raw NUL makes git treat the whole file as
   // binary, and this one hid the resume-discovery hook from every diff.
+  const planCourse = planCourseFor(planOn, entry);
   const key = semester === null || !userId
     ? ""
-    : `${nonce}\u0000${userId}\u0000${semester}\u0000${planOn ? "plan" : ""}`;
+    : `${nonce}\u0000${userId}\u0000${semester}\u0000${planOn ? "plan" : ""}\u0000${planCourse}`;
   const current = loaded?.key === key ? loaded : null;
   const status: QuizHome["status"] = !key || !current
     ? "loading"
@@ -287,7 +304,7 @@ export function useQuizHome(
       try {
         // The three reads are independent; a failing history must not cost the
         // student their whole home screen, so only the graph pair is fatal.
-        const [courseRes, graphRes, attemptRes, plan] = await Promise.all([
+        const [courseRes, graphRes, attemptRes, plan, coursePlan] = await Promise.all([
           getCourses(userId),
           getGraph(userId, semester || undefined),
           listAttempts(userId, { limit: HISTORY_LIMIT }).catch(
@@ -295,6 +312,8 @@ export function useQuizHome(
           ),
           // A failed plan costs nothing but the plan: the tier ranking stands in.
           planOn ? getQuizPlan(userId).catch(() => null) : Promise.resolve(null),
+          // The arrival's course on its own; a failure leaves the plan above.
+          planCourse ? getQuizPlan(userId, planCourse).catch(() => null) : Promise.resolve(null),
         ]);
         if (cancelled) return;
 
@@ -306,6 +325,7 @@ export function useQuizHome(
           edges: (graphRes.edges ?? []) as GraphEdge[],
           attempts,
           plan,
+          coursePlan: plan ? coursePlan : null,
           error: null,
         });
 
@@ -321,9 +341,9 @@ export function useQuizHome(
     return () => {
       cancelled = true;
     };
-  }, [key, userId, semester, planOn]);
+  }, [key, userId, semester, planOn, planCourse]);
 
-  const { nodes, edges, courses, attempts, plan } = current ?? EMPTY_LOAD;
+  const { nodes, edges, courses, attempts, plan, coursePlan } = current ?? EMPTY_LOAD;
   const error = current?.error ?? null;
 
   // The graph fetch is already scoped server-side; this mirrors the Tree/Learn
@@ -343,6 +363,10 @@ export function useQuizHome(
       ? rankFromPlan(plan, scopedNodes, scopedCourses, attempts)
       : rankCandidates(scopedNodes, scopedCourses, attempts)),
     [plan, scopedNodes, scopedCourses, attempts],
+  );
+  const courseCandidates = useMemo(
+    () => (coursePlan ? rankFromPlan(coursePlan, scopedNodes, scopedCourses, attempts) : null),
+    [coursePlan, scopedNodes, scopedCourses, attempts],
   );
   // The plan's first concept IS the learner model's choice: no studied-first
   // tie-break on top of it (R-7's rule answers the tier ranking's blind spot).
@@ -386,7 +410,7 @@ export function useQuizHome(
       if (resolved) return { conceptId: resolved, describable: true };
     } else if (entry?.course) {
       const first = (plan
-        ? courseQueueFromPlan(candidates, entry.course)
+        ? plannedCourseQueue(candidates, courseCandidates, scopedNodes, entry.course)
         : queueFor("course", scopedNodes, entry.course))[0];
       if (first) return { conceptId: first, describable: false };
     } else if (entry?.scope === "due") {
@@ -396,7 +420,7 @@ export function useQuizHome(
     // An entry that resolved to nothing lands here too, so an unusable
     // `?course=` degrades to an ordinary primary card — description and all.
     return { conceptId: primary?.node.id ?? null, describable: true };
-  }, [entry, scopedNodes, scopedCourses, primary, picked, dueQueue, plan, candidates]);
+  }, [entry, scopedNodes, scopedCourses, primary, picked, dueQueue, plan, candidates, courseCandidates]);
   const cardConceptId = card.conceptId;
   const describable = card.describable;
 
@@ -481,6 +505,7 @@ export function useQuizHome(
     due,
     dueQueue,
     planned: plan !== null,
+    courseCandidates,
     byCourse,
     resumable: resumable?.key === key ? resumable.value : null,
     cardConceptId,

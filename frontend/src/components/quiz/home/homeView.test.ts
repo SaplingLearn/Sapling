@@ -18,6 +18,7 @@ import {
   configLineFor,
   connectedCount,
   courseFilterFor,
+  courseQueueFor,
   effectiveConfigFor,
   emptyTopicsCopy,
   entryKeyFor,
@@ -75,6 +76,27 @@ function arrival(over: Partial<Arrival> = {}): Arrival {
 }
 
 const CFG = { count: 4, difficulty: "gentle", feedback: "at-end" as const };
+
+describe("courseQueueFor (a ?course= arrival's queue)", () => {
+  const planned = (n: GraphNode): Candidate => ({ ...candidate(n), plan: { reason: "ready", pKnown: 0.4 } });
+
+  it("is the tier ranking without the plan, and nothing without a course", () => {
+    const home = { planned: false, candidates: [], nodes: [REC, DET] };
+    expect(courseQueueFor(home, "c-cs")).toEqual(["rec"]);
+    expect(courseQueueFor(home, undefined)).toEqual([]);
+  });
+
+  it("is the course's own plan on a planned home", () => {
+    const own = node("own", "Own");
+    const home = { planned: true, candidates: [planned(REC)], nodes: [REC, own], courseCandidates: [planned(own)] };
+    expect(courseQueueFor(home, "c-cs")).toEqual(["own"]);
+  });
+
+  it("falls back to the tier ranking when the plan proposes none of the course's concepts", () => {
+    const home = { planned: true, candidates: [planned(REC)], nodes: [REC, DET], courseCandidates: null };
+    expect(courseQueueFor(home, "c-math")).toEqual(["det"]);
+  });
+});
 
 describe("entryKeyFor / pickedIdFor", () => {
   it("keys an entry on its four arrival fields", () => {

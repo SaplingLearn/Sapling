@@ -370,6 +370,24 @@ export function courseQueueFromPlan(candidates: Candidate[], courseId: string): 
     .map(c => c.node.id);
 }
 
+/**
+ * "Practice this course" on a planned home. The course's own plan (read with
+ * its `course_id`) when there is one, else the all-courses plan's concepts of
+ * that course. When the learner model proposes none of them (each is
+ * proficient and not yet due, or waits on a prerequisite), the tier ranking's
+ * queue for the course stands in: the student asked to practise THIS course,
+ * and an empty queue would quietly swap the card for an unrelated concept.
+ */
+export function plannedCourseQueue(
+  candidates: Candidate[],
+  courseCandidates: Candidate[] | null | undefined,
+  nodes: GraphNode[],
+  courseId: string,
+): string[] {
+  const planned = courseQueueFromPlan(courseCandidates ?? candidates, courseId);
+  return planned.length > 0 ? planned : queueFor("course", nodes, courseId);
+}
+
 /** "Review everything due" from the plan: the concepts whose FSRS review is
  *  due, in the plan's (overdue-first) order, over the scoped graph. */
 export function dueFromPlan(

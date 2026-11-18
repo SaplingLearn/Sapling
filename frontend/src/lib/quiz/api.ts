@@ -175,10 +175,15 @@ export const listAttempts = (
  * misconceptions, then concepts ready to learn), each with its reason and skill
  * meter. 404 while the `quiz_concept_plan` flag is off, so call it only when
  * `useFlag("quiz_concept_plan")` is on; any failure leaves the home on its own
- * ranking.
+ * ranking. `courseId` scopes the plan to one course (the home's `?course=`
+ * queue); without it the plan spans every course, at most
+ * QUIZ_PLAN_MAX_CONCEPTS of each.
  */
-export const getQuizPlan = (userId: string): Promise<QuizPlan> =>
-  fetchJSON<QuizPlan>(`/api/quiz/plan?${new URLSearchParams({ user_id: userId }).toString()}`);
+export const getQuizPlan = (userId: string, courseId?: string): Promise<QuizPlan> => {
+  const params = new URLSearchParams({ user_id: userId });
+  if (courseId) params.set("course_id", courseId);
+  return fetchJSON<QuizPlan>(`/api/quiz/plan?${params.toString()}`);
+};
 
 /** `GET /api/quiz/attempts/{id}` — resume. A completed or abandoned attempt
  *  answers 200 with `resumable: false` and `questions: []`, so this is not a

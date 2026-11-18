@@ -71,8 +71,11 @@ function useArrival(home: QuizHomeData, entry: EntryRequest) {
   }, [home.status, selection.unresolved, toast]);
 
   const courseQueue = React.useMemo(
-    () => courseQueueFor({ planned: home.planned, candidates: home.candidates, nodes: home.nodes }, entry.course),
-    [entry.course, home.nodes, home.planned, home.candidates],
+    () => courseQueueFor(
+      { planned: home.planned, candidates: home.candidates, nodes: home.nodes, courseCandidates: home.courseCandidates },
+      entry.course,
+    ),
+    [entry.course, home.nodes, home.planned, home.candidates, home.courseCandidates],
   );
   // The tier ranking's due queue, or with `quiz_concept_plan` the learner
   // model's (spec §13 A143): the hook decides, so the card and the queue agree.

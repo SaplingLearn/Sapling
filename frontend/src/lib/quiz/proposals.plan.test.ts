@@ -6,7 +6,14 @@
 import { describe, expect, it } from "vitest";
 import type { EnrolledCourse } from "@/lib/api";
 import type { GraphNode } from "@/lib/types";
-import { courseQueueFromPlan, dueFromPlan, planReasonCopy, rankFromPlan, skillPercent } from "./proposals";
+import {
+  courseQueueFromPlan,
+  dueFromPlan,
+  planReasonCopy,
+  plannedCourseQueue,
+  rankFromPlan,
+  skillPercent,
+} from "./proposals";
 import type { QuizPlan } from "./types";
 
 function node(id: string, course: string | null, over: Partial<GraphNode> = {}): GraphNode {
@@ -62,6 +69,32 @@ describe("courseQueueFromPlan", () => {
     expect(courseQueueFromPlan(ranked, "cs1")).toEqual(["due1", "mix", "ready"]);
     expect(courseQueueFromPlan(ranked, "ma1")).toEqual(["due2"]);
     expect(courseQueueFromPlan(ranked, "none")).toEqual([]);
+  });
+});
+
+describe("plannedCourseQueue", () => {
+  const ranked = rankFromPlan(PLAN, NODES, COURSES, []);
+
+  it("prefers the course's own plan, in its order", () => {
+    const own = rankFromPlan({ concepts: [PLAN.concepts[4], PLAN.concepts[0]] }, NODES, COURSES, []);
+    expect(plannedCourseQueue(ranked, own, NODES, "cs1")).toEqual(["ready", "due1"]);
+  });
+
+  it("uses the all-courses plan's concepts of the course when its own plan is missing", () => {
+    expect(plannedCourseQueue(ranked, null, NODES, "cs1")).toEqual(["due1", "mix", "ready"]);
+    expect(plannedCourseQueue(ranked, undefined, NODES, "ma1")).toEqual(["due2"]);
+  });
+
+  it("falls back to the tier ranking when the plan proposes none of the course's concepts", () => {
+    const nodes = [...NODES, node("ph_weak", "ph1", { mastery_score: 0.1, mastery_tier: "struggling" }), node("ph_ok", "ph1", { mastery_score: 0.4 })];
+    expect(plannedCourseQueue(ranked, null, nodes, "ph1")).toEqual(["ph_weak", "ph_ok"]);
+    // the course's own plan came back empty: still the tier ranking, never an empty queue
+    expect(plannedCourseQueue(ranked, [], nodes, "ph1")).toEqual(["ph_weak", "ph_ok"]);
+  });
+
+  it("is empty only when the course has nothing to practise at all", () => {
+    const nodes = [node("ph_done", "ph1", { mastery_score: 0.95, mastery_tier: "mastered" })];
+    expect(plannedCourseQueue(ranked, null, nodes, "ph1")).toEqual([]);
   });
 });
 

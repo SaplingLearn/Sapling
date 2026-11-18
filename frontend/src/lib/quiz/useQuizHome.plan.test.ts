@@ -100,6 +100,64 @@ describe("useQuizHome with the learner model's plan", () => {
     expect(result.current.primary?.node.id).toBe("weakest");
   });
 
+  it("a ?course= arrival also reads that course's own plan and queues from it", async () => {
+    coreApi.getGraph.mockResolvedValue({
+      nodes: [node("due-b"), node("ready"), node("b1", { course_id: "course-b" }), node("b2", { course_id: "course-b" })],
+      edges: [],
+      stats: {},
+    });
+    quizApi.getQuizPlan.mockImplementation(async (_user: string, course?: string) => ({
+      concepts: course === "course-b"
+        ? [
+            { node_id: "b2", concept_name: "b2", course_id: "course-b", reason: "ready", p_known: 0.5, band: "develop", due_at: null, open_misconceptions: 0 },
+            { node_id: "b1", concept_name: "b1", course_id: "course-b", reason: "ready", p_known: 0.4, band: "develop", due_at: null, open_misconceptions: 0 },
+          ]
+        // the all-courses plan names none of course-b's concepts
+        : [{ node_id: "due-b", concept_name: "due-b", course_id: "course-a", reason: "due", p_known: 0.9, band: "profic", due_at: null, open_misconceptions: 0 }],
+    }));
+    const { result } = renderHook(() => useQuizHome("user_andres", "", { course: "course-b", source: { kind: "link" } }));
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    expect(quizApi.getQuizPlan).toHaveBeenCalledWith("user_andres");
+    expect(quizApi.getQuizPlan).toHaveBeenCalledWith("user_andres", "course-b");
+    expect(result.current.courseCandidates?.map(c => c.node.id)).toEqual(["b2", "b1"]);
+    expect(result.current.cardConceptId).toBe("b2");
+    // the due queue still spans every course
+    expect(result.current.dueQueue).toEqual(["due-b"]);
+  });
+
+  it("a failed course plan leaves the all-courses plan's order for the course", async () => {
+    quizApi.getQuizPlan.mockImplementation(async (_user: string, course?: string) => {
+      if (course) throw new Error("503");
+      return {
+        concepts: [
+          { node_id: "ready", concept_name: "ready", course_id: "course-a", reason: "ready", p_known: 0.4, band: "develop", due_at: null, open_misconceptions: 0 },
+          { node_id: "due-a", concept_name: "due-a", course_id: "course-a", reason: "due", p_known: 0.92, band: "profic", due_at: null, open_misconceptions: 0 },
+        ],
+      };
+    });
+    const { result } = renderHook(() => useQuizHome("user_andres", "", { course: "course-a", source: { kind: "link" } }));
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    expect(result.current.planned).toBe(true);
+    expect(result.current.courseCandidates).toBeNull();
+    expect(result.current.cardConceptId).toBe("ready");
+  });
+
+  it("a course the plan proposes nothing in falls back to the tier ranking", async () => {
+    quizApi.getQuizPlan.mockResolvedValue({ concepts: [] });
+    const { result } = renderHook(() => useQuizHome("user_andres", "", { course: "course-a", source: { kind: "link" } }));
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    expect(result.current.planned).toBe(true);
+    // the tier ranking's weakest concept of the course, not an unrelated card
+    expect(result.current.cardConceptId).toBe("weakest");
+  });
+
+  it("reads no course plan without a ?course= arrival", async () => {
+    const { result } = renderHook(() => useQuizHome("user_andres", ""));
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    expect(quizApi.getQuizPlan).toHaveBeenCalledTimes(1);
+    expect(result.current.courseCandidates).toBeNull();
+  });
+
   it("never asks for the plan while the flag is off", async () => {
     flags.plan = "off";
     const { result } = renderHook(() => useQuizHome("user_andres", ""));
