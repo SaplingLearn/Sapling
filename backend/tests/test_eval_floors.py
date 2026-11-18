@@ -210,3 +210,17 @@ def test_update_flow_refuses_a_routed_floor_from_one_run(tmp_path, monkeypatch):
     assert json.loads(path.read_text()) == old
     assert replay._routing_block_of(old, "d") == "d_routing"
     assert replay._routing_block_of(old, "other") is None
+
+
+def test_update_flow_refuses_runs_recorded_under_another_prompt(tmp_path, monkeypatch):
+    """Three runs of an OLD prompt never become the floor of what the dataset
+    records under today."""
+    old = {"d": {"A": 1.0}, "d_routing": _block([{"A": 1.0, "_raised": False}] * 3)}
+    replay, path = _replay_with(tmp_path, monkeypatch, old)
+    log = tmp_path / "runs.jsonl"
+    log.write_text("\n".join(json.dumps(_run("d", A=0.5)) for _ in range(3)))  # under _ID
+    monkeypatch.setenv(replay.RUNS_LOG_ENV, str(log))
+    now = {**_ID, "prompt_hash": "p-today"}
+    assert replay._update_routed(json.loads(path.read_text()), "d", "d_routing", now) is False
+    assert json.loads(path.read_text()) == old
+    assert replay._update_routed(json.loads(path.read_text()), "d", "d_routing", dict(_ID)) is True

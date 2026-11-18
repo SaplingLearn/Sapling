@@ -440,12 +440,16 @@ def _routing_block_of(all_baselines: dict, name: str) -> str | None:
     return None
 
 
-def _update_routed(all_baselines: dict, name: str, routing: str) -> bool:
+def _update_routed(
+    all_baselines: dict, name: str, routing: str, current: dict | None = None
+) -> bool:
     """SAPLING_EVAL_UPDATE_BASELINES for a ROUTED dataset (D6): its floor is the
     minimum of the block's N recordings and the block says what they were
     recorded under, so one run never rewrites either. The floor, the runs and
     `recorded_under` are rewritten together from SAPLING_EVAL_RUNS_LOG's last N
-    recorded runs (floors.apply_floors); with fewer, the update is refused."""
+    recorded runs (floors.apply_floors); with fewer, or with runs recorded
+    under anything but `current` (what the dataset records under today), the
+    update is refused."""
     import sys
 
     here = str(Path(__file__).parent)
@@ -460,6 +464,9 @@ def _update_routed(all_baselines: dict, name: str, routing: str) -> bool:
         lines = [json.loads(ln) for ln in Path(path).read_text().splitlines() if ln.strip()]
     try:
         updated = apply_floors(all_baselines, lines, [name], n=n, routing=routing)
+        recorded = updated[routing]["recorded_under"][name]
+        if current is not None and recorded != current:
+            raise ValueError(f"the runs were recorded under {recorded}, the dataset now records under {current}")
     except ValueError as exc:
         print(
             f"\nRefusing to update {name}: it routes ({routing}), so its floor is the "
@@ -559,7 +566,7 @@ def evaluate_dataset(make_dataset, run_fn, *, update: bool, print_report: bool =
             return False
         routing = _routing_block_of(all_baselines, name)
         if routing is not None:
-            return _update_routed(all_baselines, name, routing)
+            return _update_routed(all_baselines, name, routing, _recorded_under_of(run_fn))
         all_baselines[name] = {ev: round(scores[ev], 6) for ev in scores}
         _write_baselines(all_baselines)
         print(f"\nUpdated baselines for {name} in {BASELINES_PATH.name}.")
