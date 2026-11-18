@@ -89,7 +89,12 @@ def test_the_wipe_erases_every_loop_row_of_the_student_and_no_one_elses(db_conn,
 
     counts = wipe_account_data(me)
 
-    assert set(_counts(db_conn, me).values()) == {0}
+    # The wipe keeps the AI budget record and the item reports (owner
+    # decision; account_wipe.KEPT_PER_USER says why): everything else goes.
+    kept = {"ai_tutor_daily_calls", "check_item_reports"}
+    after = _counts(db_conn, me)
+    assert {t: n for t, n in after.items() if t not in kept} == dict.fromkeys(set(after) - kept, 0)
+    assert all(after[t] for t in kept), after
     assert _counts(db_conn, other) == full
     assert counts["learning_prequestions"] == 1 and counts["learning_self_explanations"] == 1
     assert counts["posttest_poses"] == 2  # two windows, one node: counted as rows

@@ -39,6 +39,9 @@ _PUBLIC = {
     "answer_question": "attempts",
     "generate_quiz": "generation",
     "get_attempt": "history",
+    # A quiz item's cross-attempt identity (E5), read by the study guide's
+    # check answers (spec §13 A143's evidence key).
+    "question_hash": "identity",
     "list_attempts": "history",
     "quiz_plan": "plan",
     "quiz_config_payload": "config",

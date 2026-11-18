@@ -136,7 +136,7 @@ def test_goal_http_write_encrypts_prose_and_roundtrips_from_persisted_json(authe
     assert decrypt_if_present(persisted["goal"]["text_encrypted"], bind=other_cell) is None
     assert persisted["goal"]["target_node_ids"] == [target]
     assert row["loop_state_rev"] == 1 and persisted["goal_version"] == 1
-    assert public_goal(load_loop_state(session_id).state.to_json()) == response.json()["goal"]
+    assert public_goal(load_loop_state(session_id).state.to_json(), session_id) == response.json()["goal"]
     events = db_conn.execute(
         "SELECT payload FROM events WHERE user_id = %s", (USER_ACTIVE,)
     ).fetchall()

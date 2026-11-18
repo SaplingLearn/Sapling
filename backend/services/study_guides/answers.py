@@ -21,7 +21,7 @@ from starlette.concurrency import run_in_threadpool
 from learning.bkt import tier_for
 from models.study_guide import AnswerResult, CheckAnswer, CheckBlock, MasteryChange
 from services import academics, events_service, graph_service
-from services.quiz.identity import question_hash
+from services.quiz import question_hash
 from services.study_guides import signals, store
 from services.study_guides.errors import GuideInvalid, GuideNotFound
 from services.study_guides.store import GuideRow
