@@ -104,7 +104,8 @@ class TestRewritesKeepTheCodes:
 
 class TestStudentReads:
     def _tables(self, *items):
-        return _cached_tables({"check_items": [_row(i) for i in items]})
+        # the rows' one source document, live (A23: a gone one withdraws them)
+        return _cached_tables({"check_items": [_row(i) for i in items], "documents": [{"id": "doc-1"}]})
 
     def test_every_student_read_drops_a_quarantined_item_even_with_a_confirmed_key(self):
         from services import check_item_service as svc

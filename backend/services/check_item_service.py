@@ -715,6 +715,40 @@ def _to_items(rows) -> list[CheckItem]:
     return items
 
 
+@runs_as_service  # an item's source documents are its uploaders', never the reader's (A23)
+def _with_live_sources(rows) -> list[dict]:
+    """A23: the rows whose every source document still exists — not deleted,
+    not soft-deleted. Withdrawal retires an item (retire_items_for_documents)
+    when its document goes, its uploader opts out, or their account is wiped;
+    this read is the serving side of the same rule, so an item a missed or
+    failed retirement left behind is never served either. One `in.(…)`
+    documents read per _DOC_ID_BATCH cited ids; a row that cites none (no
+    source recorded) is kept. Raises on a failed read, like the item read it
+    filters (the caller's own error handling applies)."""
+    rows = list(rows or [])
+    cited = sorted({d for r in rows for d in (r.get("source_document_ids") or []) if d})
+    if not cited:
+        return rows
+    live: set[str] = set()
+    for start in range(0, len(cited), _DOC_ID_BATCH):
+        batch = cited[start : start + _DOC_ID_BATCH]
+        found = table("documents").select(
+            "id",
+            filters={
+                "id": "in.(" + ",".join(pg_quote_value(d) for d in batch) + ")",
+                "deleted_at": "is.null",
+            },
+        )
+        live.update(r["id"] for r in found or [] if r.get("id"))
+    kept = [r for r in rows if set(r.get("source_document_ids") or []) <= live]
+    if len(kept) < len(rows):
+        logger.warning(
+            "check items: %d item(s) cite a withdrawn document and were not served (A23)",
+            len(rows) - len(kept),
+        )
+    return kept
+
+
 def _unheld(items: Iterable[CheckItem]) -> list[CheckItem]:
     """A124: the items no hold withdraws — no key hold, and (A123) no staff
     hold: neither quarantined by reporters nor retired by staff. The student
@@ -733,14 +767,15 @@ def list_items(
     difficulty: int | None = None,
 ) -> list[CheckItem]:
     """Every item for one course concept a student may be served (A124: no
-    held one), filtered on plaintext columns only."""
+    held one; A23: none whose source document is gone), filtered on plaintext
+    columns only."""
     filters = {"course_id": f"eq.{course_id}", "concept_key": f"eq.{concept_key}"}
     if format is not None:
         filters["format"] = f"eq.{format}"
     if difficulty is not None:
         filters["difficulty"] = f"eq.{difficulty}"
     rows = table(_TABLE).select(_COLUMNS, filters=filters, order="created_at,id")
-    return _unheld(_to_items(rows))
+    return _unheld(_to_items(_with_live_sources(rows)))
 
 
 def get_check_item(item_id: str, *, include_held: bool = False) -> CheckItem | None:
@@ -760,9 +795,10 @@ def get_check_item(item_id: str, *, include_held: bool = False) -> CheckItem | N
 
 
 def items_for_concepts(course_id: str, concept_keys: Iterable[str]) -> dict[str, list[CheckItem]]:
-    """Every item a student may be served (A124: no held one) for the given
-    keys, in ONE `in.(...)` select, grouped by key (every requested key
-    present, [] when it has none)."""
+    """Every item a student may be served (A124: no held one; A23: none whose
+    source document is gone, `_with_live_sources`) for the given keys, in ONE
+    `in.(...)` select, grouped by key (every requested key present, [] when it
+    has none)."""
     keys = list(dict.fromkeys(k for k in concept_keys if k))
     if not keys:
         return {}
@@ -775,7 +811,7 @@ def items_for_concepts(course_id: str, concept_keys: Iterable[str]) -> dict[str,
         order="created_at,id",
     )
     grouped: dict[str, list[CheckItem]] = {k: [] for k in keys}
-    for item in _unheld(_to_items(rows)):
+    for item in _unheld(_to_items(_with_live_sources(rows))):
         grouped.setdefault(item.concept_key, []).append(item)
     return grouped
 
@@ -882,7 +918,7 @@ def multi_concept_items(course_id: str, apex_key: str) -> list[CheckItem]:
         filters={"course_id": f"eq.{course_id}", "apex_key": f"eq.{apex_key}"},
         order="created_at,id",
     )
-    return [i for i in _unheld(_to_items(rows)) if components_of(i.concept_key)]
+    return [i for i in _unheld(_to_items(_with_live_sources(rows))) if components_of(i.concept_key)]
 
 
 def count_items(course_id: str, concept_key: str) -> int:

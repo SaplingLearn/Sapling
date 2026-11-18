@@ -2538,6 +2538,11 @@ class TestRankChunks:
 # ── services/check_item_service.py ─────────────────────────────────────────
 
 
+#: The one source document `_stored_row` cites, live (A23: an item whose
+#: source document is gone is never served).
+_LIVE_SOURCES = [{"id": "doc-1"}]
+
+
 def _cached_tables(data: dict):
     mocks: dict = {}
 
@@ -2808,7 +2813,7 @@ class TestReadItems:
     def test_list_items_decrypts_and_filters_on_plaintext_columns_only(self):
         from services import check_item_service as svc
 
-        factory, mocks = _cached_tables({"check_items": [self._stored_row()]})
+        factory, mocks = _cached_tables({"check_items": [self._stored_row()], "documents": _LIVE_SOURCES})
         with patch("services.check_item_service.table", side_effect=factory):
             items = svc.list_items("course-1", "recursion", format="free", difficulty=1)
         assert items[0].prompt == "What is a base case?" and items[0].concept_key == "recursion"
@@ -2841,7 +2846,7 @@ class TestReadItems:
             canonical_answer=encrypt_if_present("3"),
             tolerance=0.5,
         )
-        factory, _ = _cached_tables({"check_items": [row]})
+        factory, _ = _cached_tables({"check_items": [row], "documents": _LIVE_SOURCES})
         with patch("services.check_item_service.table", side_effect=factory):
             (item,) = svc.list_items("course-1", "recursion")
         assert [o.letter for o in item.options] == ["A", "B"] and item.options[0].wrong_key is None
@@ -2882,7 +2887,7 @@ class TestReadItems:
         from services import check_item_service as svc
 
         row2 = dict(self._stored_row(), id="i2", concept_key="base case")
-        factory, mocks = _cached_tables({"check_items": [self._stored_row(), row2]})
+        factory, mocks = _cached_tables({"check_items": [self._stored_row(), row2], "documents": _LIVE_SOURCES})
         with patch("services.check_item_service.table", side_effect=factory):
             grouped = svc.items_for_concepts("course-1", ["recursion", "base case"])
         assert set(grouped) == {"recursion", "base case"} and grouped["base case"][0].id == "i2"
@@ -2895,11 +2900,41 @@ class TestReadItems:
         from services import check_item_service as svc
 
         row = dict(self._stored_row(), final_answer=None)
-        factory, _ = _cached_tables({"check_items": [row]})
+        factory, _ = _cached_tables({"check_items": [row], "documents": _LIVE_SOURCES})
         with patch("services.check_item_service.table", side_effect=factory):
             (item,) = svc.list_items("course-1", "recursion")
         assert item.final_answer is None and not is_servable(item)
         assert select_item([item], format="free", difficulty=1) is None
+
+    def test_an_item_whose_source_document_is_gone_is_never_served(self):
+        """A23 (C2): the serving reads skip an item citing a document that no
+        longer exists (deleted, soft-deleted, or its account wiped) — the
+        read-side twin of retire_items_for_documents, so an item a missed or
+        failed retirement left behind never reaches a classmate."""
+        from services import check_item_service as svc
+
+        gone = dict(self._stored_row(), id="i-gone", source_document_ids=["doc-gone"])
+        mixed = dict(self._stored_row(), id="i-mixed", source_document_ids=["doc-1", "doc-gone"])
+        none_cited = dict(self._stored_row(), id="i-none", source_document_ids=[])
+        rows = [self._stored_row(), gone, mixed, none_cited]
+        factory, mocks = _cached_tables({"check_items": rows, "documents": _LIVE_SOURCES})
+        with patch("services.check_item_service.table", side_effect=factory):
+            grouped = svc.items_for_concepts("course-1", ["recursion"])
+            listed = svc.list_items("course-1", "recursion")
+        assert [i.id for i in grouped["recursion"]] == ["i1", "i-none"]
+        assert [i.id for i in listed] == ["i1", "i-none"]
+        doc_filters = mocks["documents"].select.call_args.kwargs["filters"]
+        assert doc_filters["deleted_at"] == "is.null"
+        assert doc_filters["id"] == 'in.("doc-1","doc-gone")'
+
+    def test_items_citing_no_document_read_no_documents(self):
+        from services import check_item_service as svc
+
+        row = dict(self._stored_row(), source_document_ids=[])
+        factory, mocks = _cached_tables({"check_items": [row]})
+        with patch("services.check_item_service.table", side_effect=factory):
+            assert [i.id for i in svc.list_items("course-1", "recursion")] == ["i1"]
+        assert "documents" not in mocks
 
     def test_items_for_no_concepts_reads_nothing(self):
         from services import check_item_service as svc
@@ -2917,7 +2952,7 @@ class TestReadItems:
             rubric_json=encrypt_if_present("not json"),
             options_json=encrypt_if_present("{broken"),
         )
-        factory, _ = _cached_tables({"check_items": [row]})
+        factory, _ = _cached_tables({"check_items": [row], "documents": _LIVE_SOURCES})
         with (
             patch("services.check_item_service.table", side_effect=factory),
             caplog.at_level("WARNING"),

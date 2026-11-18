@@ -134,6 +134,8 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
     ("services/ai_budget.py", "_check_platform", "runs_as_service"): "llm_usage / ai_tutor_daily_calls are service-only (bucket E)",
     ("services/checklist_budget.py", "_call", "runs_as_service"): "checklist_budget_* RPCs and tables are service-only (A148)",
     ("services/check_item_service.py", "retire_items_for_documents", "runs_as_service"): "check_items is a service-only course asset (A148)",
+    ("services/check_item_service.py", "_with_live_sources", "runs_as_service"):
+        "A23: an item's source documents are its uploaders', never the reader's (live or not)",
     ("services/quiz_learning.py", "_open_misconceptions", "runs_as_service"):
         "misconceptions is service-only (A148); the quiz plan reads it (A143, A146)",
     ("services/quiz_learning.py", "_bank_keys", "runs_as_service"):
