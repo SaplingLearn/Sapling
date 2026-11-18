@@ -1331,6 +1331,9 @@ export interface LoopCheckNext extends LoopLearningScope {
   plan_done?: boolean;
   /** A128: no check yet because the student's upload is still being drafted. */
   preparing?: boolean;
+  /** With `check` null: the plan's concepts that have no check question yet
+   *  (nothing was checked on them) — "Check me" names them. */
+  checks_unavailable_node_ids?: string[];
 }
 /** POST /hint moves the rung only: `{denied}` or `{rung, intent}`; the hint TEXT
  *  is the next `[ACTION: hint]` turn (requestLoopHintTurn). */
@@ -1457,20 +1460,23 @@ export interface LoopSessionStatus extends LoopLearningScope {
 /** A concept as the Tutor's session panel lists it. */
 export interface LoopPanelConcept { node_id: string; concept_name: string; kind: string; reason?: LoopPlanConcept['reason'] }
 export const getLoopSessionStatus = (sessionId: string, userId: string) =>
-  fetchJSON<LoopSessionStatus>(
-    `/api/learn/loop/status?${new URLSearchParams({ user_id: userId, session_id: sessionId })}`,
-  );
+  fetchJSON<LoopSessionStatus>(`/api/learn/loop/status?${new URLSearchParams({ user_id: userId, session_id: sessionId })}`);
 
 /** The teaching modes StartSessionBody.mode knows (the legacy deep links' ?mode=). */
 export const LOOP_DEEP_LINK_MODES = ['socratic', 'expository', 'teachback'] as const;
 
-export const startLoopSession = (userId: string, courseId: string, topic: string, mode?: string | null, goal?: LoopGoal | null) =>
+/** `fromNoteId`: Send to tutor's note, sent only while `topic` is still that
+ *  note's title — the backend screens the note as stored material, so a crisis
+ *  match puts the card beside the session (`crisis_support_alongside`) instead
+ *  of in place of it (docs/safety/crisis-support.md). */
+export const startLoopSession = (userId: string, courseId: string, topic: string, mode?: string | null, goal?: LoopGoal | null, fromNoteId?: string | null) =>
   loopPost<LoopStartResult>('/start-session', {
     user_id: userId,
     topic,
     course_id: courseId,
     ...(mode && (LOOP_DEEP_LINK_MODES as readonly string[]).includes(mode) ? { mode } : {}),
     ...(goal !== undefined ? { goal } : {}),
+    ...(fromNoteId ? { from_note_id: fromNoteId } : {}),
   });
 
 export const setLoopGoal = (sessionId: string, userId: string, goal: LoopGoal | null) =>
@@ -1561,10 +1567,7 @@ export const requestLoopHintTurn = (sessionId: string, userId: string) =>
 /** PKG-14: the perceived-difficulty rating the loop asks for every N checks; the
  *  user is the session cookie's. Emits zpd.rating and resets the counter. */
 export const submitLoopRating = (sessionId: string, rating: LoopRating) =>
-  fetchJSON<{ ok: true }>('/api/learn/loop/rating', {
-    method: 'POST',
-    body: JSON.stringify({ session_id: sessionId, rating }),
-  });
+  fetchJSON<{ ok: true }>('/api/learn/loop/rating', { method: 'POST', body: JSON.stringify({ session_id: sessionId, rating }) });
 
 /** Ends the session with its close (idempotent; A60). 409 while a close or a grade is in flight. */
 export const closeLoopSession = (sessionId: string, userId: string) =>
