@@ -52,9 +52,13 @@ and the drafting itself always off the request thread.
 from __future__ import annotations
 
 import contextvars
+import functools
 import logging
 import threading
 import time
+from concurrent.futures import Future
+
+import httpx
 
 from db.connection import table
 from learning.gate import learning_loop_for_uploader
@@ -74,6 +78,9 @@ ENABLE_RESCAN_S = 15 * 60
 #: Draft on enable: documents claimed per scan. Each is minutes of Flex
 #: drafting; the next scan of the course (ENABLE_RESCAN_S later) claims more.
 ENABLE_MAX_DOCS = 5
+#: What a failed scan can raise: PostgREST/network errors (httpx, the
+#: db_user_scope refusals), and a malformed answer. Anything else is a bug.
+_STORE_FAILURES = (httpx.HTTPError, RuntimeError, ValueError)
 #: A memory bound on the rescan clock, not a policy.
 _SCANS_MAX = 4096
 _scans: dict[tuple[str, str], float] = {}
@@ -140,12 +147,11 @@ def _draft_document(doc_id: str, user_id: str, course_id: str) -> None:
                     "indexing only, nothing drafted", doc_id)
         from services.document_indexing import index_document
 
-        with acting_for(user_id), llm_budget.background_work():
-            try:
-                index_document(doc_id)
-            except Exception:
-                logger.exception("Indexing doc %s (loop off at run time) failed", doc_id)
         clear_drafting(doc_id)
+        # A failure raises: the queue retries the job (index_document claims
+        # the row, so a retry is safe), and the sweeper re-drives the row anyway.
+        with acting_for(user_id), llm_budget.background_work():
+            index_document(doc_id)
         return
     names = _concept_names(doc_id)
     if names is None:
@@ -158,8 +164,8 @@ def _draft_document(doc_id: str, user_id: str, course_id: str) -> None:
 @jobs.job_handler(CHECK_ITEMS_DOCUMENT_JOB)
 def _run_check_items_document_job(payload: dict) -> None:
     """Worker side of `enqueue_for_document`: the in-process chain, run for
-    the uploader (`_draft_document`). Only an unreadable document row raises
-    (the queue retries that)."""
+    the uploader (`_draft_document`). Only an unreadable document row, or
+    with the loop off a failed indexing, raises (the queue retries those)."""
     payload = payload or {}
     doc_id, user_id, course_id = (payload.get(k) for k in ("doc_id", "user_id", "course_id"))
     if not all(isinstance(v, str) and v for v in (doc_id, user_id, course_id)):
@@ -200,25 +206,30 @@ def _within_budget(user_id: str) -> bool:
     read that failed, schedules nothing: no evidence of room, no spend)."""
     try:
         return ai_budget.check(user_id, "generation").level != "hard"
-    except Exception as exc:  # AIBudgetUnavailable, a platform cap, a store failure
+    except (ai_budget.AIBudgetUnavailable, ai_budget.AIBudgetExceeded) as exc:
         logger.info("check items: no draft on enable for %s (%s)", user_id, type(exc).__name__)
         return False
 
 
-def _draft_in_process(doc_id: str, user_id: str, course_id: str) -> None:
+def _log_failure(doc_id: str, future: Future) -> None:
+    exc = None if future.cancelled() else future.exception()
+    if exc is not None:
+        logger.error("check items: draft on enable failed for doc %s", doc_id, exc_info=exc)
+
+
+def _draft_in_process(doc_id: str, user_id: str, course_id: str) -> Future:
     """The fallback when the queue does not take a document: the same chain,
     on check_item_service's bounded drafting pool (never the request's thread
-    or the event loop). A pool the app's shutdown dropped leaves the mark to
-    expire, and the next scan claims the document again."""
+    or the event loop); a failure is logged off the pool. A pool the app's
+    shutdown dropped leaves the mark to expire, and the next scan claims the
+    document again."""
     from services.check_item_service import _draft_pool
 
-    def run() -> None:
-        try:
-            _draft_document(doc_id, user_id, course_id)
-        except Exception:
-            logger.exception("check items: draft on enable failed for doc %s", doc_id)
-
-    _draft_pool().submit(contextvars.copy_context().run, run)
+    future = _draft_pool().submit(
+        contextvars.copy_context().run, _draft_document, doc_id, user_id, course_id,
+    )
+    future.add_done_callback(functools.partial(_log_failure, doc_id))
+    return future
 
 
 def draft_missing_for_course(
@@ -229,28 +240,31 @@ def draft_missing_for_course(
     `check_items.document` path. Call it where a loop session for the course
     starts or reopens, with the loop on for the student. Returns how many
     documents it scheduled. `offerings`: the course's offering ids, when the
-    caller already read them. Never raises: drafting is the course's
-    background work, and a session must open whatever it meets."""
+    caller already read them. A store failure is logged and schedules
+    nothing: drafting is the course's background work, and a session must
+    open whatever it meets."""
     if not user_id or not course_id or not _scan_due(user_id, course_id):
         return 0
-    try:
-        from services.check_item_service import claim_undrafted_documents
+    from services.check_item_service import claim_undrafted_documents
 
+    try:
         claimed = claim_undrafted_documents(
             user_id, course_id, limit=ENABLE_MAX_DOCS, offerings=offerings,
             may_draft=lambda: _within_budget(user_id),
         )
-    except Exception as exc:
+    except _STORE_FAILURES as exc:
         logger.warning("check items: draft on enable could not scan course %s for %s (%s)",
                        course_id, user_id, type(exc).__name__)
         return 0
     for doc_id in claimed:
+        # enqueue_for_document never raises (a failed enqueue answers False)
+        if enqueue_for_document(doc_id, user_id=user_id, course_id=course_id):
+            continue
         try:
-            if not enqueue_for_document(doc_id, user_id=user_id, course_id=course_id):
-                _draft_in_process(doc_id, user_id, course_id)
-        except Exception as exc:
-            logger.warning("check items: draft on enable could not schedule doc %s (%s)",
-                           doc_id, type(exc).__name__)
+            _draft_in_process(doc_id, user_id, course_id)
+        except RuntimeError as exc:  # the pool is shutting down with the app
+            logger.warning("check items: draft on enable could not queue doc %s (%s); its "
+                           "mark expires and a later scan claims it", doc_id, type(exc).__name__)
     if claimed:
         logger.info("check items: draft on enable scheduled %d document(s) of course %s",
                     len(claimed), course_id)

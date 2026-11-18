@@ -3512,18 +3512,29 @@ def mark_drafting(document_id: str, status: str) -> None:
     Never raises on a failed write (bookkeeping, see above)."""
     if status not in DRAFTING_STATUSES:
         raise ValueError(f"not a drafting status: {status!r}")
+    _write_drafting(
+        document_id,
+        {"check_items_status": status, "check_items_at": _stamp(_utcnow())},
+        {},
+        repr(status),
+    )
+
+
+def _write_drafting(document_id: str, data: dict, only_if: dict, what: str) -> None:
+    """The one drafting-bookkeeping write (mark_drafting, clear_drafting):
+    never raises."""
     try:
         table("documents").update(
-            {"check_items_status": status, "check_items_at": _stamp(_utcnow())},
-            filters={"id": f"eq.{document_id}"},
+            data,
+            filters={"id": f"eq.{document_id}", **only_if},
             prefer_return_minimal=True,
         )
     except Exception as exc:
         # The class only, no traceback: bookkeeping, and before the migration
         # runs every upload meets it (a traceback per upload is noise).
         logger.warning(
-            "check items: drafting status %r not recorded for document %s (%s)",
-            status,
+            "check items: drafting status %s not recorded for document %s (%s)",
+            what,
             document_id,
             type(exc).__name__,
         )
@@ -3568,18 +3579,12 @@ def clear_drafting(document_id: str) -> None:
     will not run after all (its uploader's loop gate turned off between the
     claim and the run). The student is then no longer told "preparing", and a
     later enable claims the document again. Never raises (bookkeeping)."""
-    try:
-        table("documents").update(
-            {"check_items_status": None, "check_items_at": None},
-            filters={"id": f"eq.{document_id}", "check_items_status": f"eq.{DRAFTING_PENDING}"},
-            prefer_return_minimal=True,
-        )
-    except Exception as exc:
-        logger.warning(
-            "check items: drafting mark of document %s not cleared (%s)",
-            document_id,
-            type(exc).__name__,
-        )
+    _write_drafting(
+        document_id,
+        {"check_items_status": None, "check_items_at": None},
+        {"check_items_status": f"eq.{DRAFTING_PENDING}"},
+        "cleared",
+    )
 
 
 def _ids(rows) -> list[str]:

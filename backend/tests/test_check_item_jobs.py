@@ -15,6 +15,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from services import ai_budget
 from services import check_item_jobs as cij
 from services import jobs
 from services.encryption import encrypt_json
@@ -201,6 +202,17 @@ def test_the_worker_loads_the_check_items_job():
 # ── the uploader's loop gate, at run time ───────────────────────────────────
 
 
+def test_with_the_loop_off_a_failed_indexing_raises_for_the_queue_to_retry():
+    from services import check_item_service, document_indexing
+
+    with patch.object(cij, "learning_loop_for_uploader", return_value=False), \
+         patch.object(document_indexing, "index_document", side_effect=RuntimeError("down")), \
+         patch.object(check_item_service, "clear_drafting") as clear:
+        with pytest.raises(RuntimeError):
+            cij._run_check_items_document_job({"doc_id": "doc-1", "user_id": "u1", "course_id": "c-1"})
+    clear.assert_called_once_with("doc-1")  # the mark is back before anything can fail
+
+
 def test_the_handler_rereads_the_loop_gate_and_drafts_nothing_when_it_is_off():
     """A kill switch thrown (or the uploader's flag turned off) after the
     enqueue: the job indexes the document — indexing is the upload's — takes
@@ -287,17 +299,13 @@ def test_enable_runs_a_document_the_queue_did_not_take_on_the_drafting_pool(scan
 def test_the_in_process_fallback_never_runs_on_the_callers_thread():
     import threading
 
-    from services import check_item_service as svc
-
     ran = {}
 
     def body(doc_id, user_id, course_id):
         ran.update(args=(doc_id, user_id, course_id), thread=threading.current_thread().name)
 
-    pool = svc._draft_pool()
     with patch.object(cij, "_draft_document", side_effect=body):
-        cij._draft_in_process("d1", "u1", "c-1")
-        pool.submit(lambda: None).result(timeout=5)  # the pool has run what was queued before it
+        cij._draft_in_process("d1", "u1", "c-1").result(timeout=5)
     assert ran["args"] == ("d1", "u1", "c-1")
     assert ran["thread"].startswith("check-items") and ran["thread"] != threading.current_thread().name
 
@@ -317,11 +325,10 @@ def test_enable_rescans_a_course_at_most_once_per_interval(scans, monkeypatch):
 
 
 @pytest.mark.parametrize("decision, ok", [
-    ("normal", True), ("soft", True), ("hard", False), (RuntimeError("usage unreadable"), False),
+    ("normal", True), ("soft", True), ("hard", False),
+    (ai_budget.AIBudgetUnavailable("usage unreadable"), False),
 ])
 def test_enable_claims_nothing_past_the_generation_budget(scans, decision, ok):
-    from services import ai_budget
-
     side = decision if isinstance(decision, Exception) else None
     ret = None if side else MagicMock(level=decision)
     with patch.object(ai_budget, "check", side_effect=side, return_value=ret) as check:
@@ -335,11 +342,27 @@ def test_a_failed_scan_or_enqueue_never_fails_the_session(scans):
     with patch.object(svc, "claim_undrafted_documents", side_effect=RuntimeError("down")):
         assert cij.draft_missing_for_course("u1", "c-1") == 0
     cij.reset_enable_scans()
+    # the drafting pool refusing work (the app shutting down) skips that one only
     with patch.object(svc, "claim_undrafted_documents", return_value=["d1", "d2"]), \
-         patch.object(cij, "enqueue_for_document", side_effect=[RuntimeError("x"), True]) as enq:
+         patch.object(cij, "enqueue_for_document", return_value=False), \
+         patch.object(cij, "_draft_in_process",
+                      side_effect=[RuntimeError("cannot schedule new futures after shutdown"), None]) as inline:
         assert cij.draft_missing_for_course("u1", "c-1") == 2
-    assert enq.call_count == 2  # one failure does not stop the rest
+    assert inline.call_count == 2
     assert cij.draft_missing_for_course("", "c-1") == 0
+
+
+def test_a_failure_on_the_drafting_pool_is_logged(caplog):
+    from concurrent.futures import Future
+
+    with patch.object(cij, "_draft_document", side_effect=RuntimeError("boom")):
+        future = cij._draft_in_process("d1", "u1", "c-1")
+        assert isinstance(future.exception(timeout=5), RuntimeError)
+    failed = Future()
+    failed.set_exception(RuntimeError("boom"))
+    with caplog.at_level("ERROR"):
+        cij._log_failure("d1", failed)
+    assert any("draft on enable failed for doc d1" in r.getMessage() for r in caplog.records)
 
 
 # ── claim_undrafted_documents, on a filter-honouring fake ───────────────────

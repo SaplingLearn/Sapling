@@ -202,7 +202,7 @@ def _pages(
         last = str(rows[-1][pk])
 
 
-def _open_v1(spec: ColumnSpec, value: str) -> bytes:
+def _open_v1(spec: Target, value: str) -> bytes:
     """The plaintext bytes of a v1 value (raises when it is not one)."""
     if spec.kind == encryption.BYTES:
         return encryption.decrypt_bytes(value)
@@ -328,13 +328,13 @@ def backfill_nested(
                 except encryption.MissingRowKey:
                     report.note("no_key", pk_value)
                     continue
-                kind, plain, binding = _classify_value(spec, value, binding)
+                kind, plain, opened_with = _classify_value(spec, value, binding)
                 report.note(kind, pk_value)
-                if kind != "v1" or not apply:
+                if kind != "v1" or plain is None or opened_with is None or not apply:
                     continue
                 if max_rows is not None and report.counts["rewritten"] >= max_rows:
                     continue
-                new = encryption._seal_v2(plain, binding)
+                new = encryption._seal_v2(plain, opened_with)
                 if swap(spec, pk_value, path, value, new):
                     report.counts["rewritten"] += 1
                 else:
