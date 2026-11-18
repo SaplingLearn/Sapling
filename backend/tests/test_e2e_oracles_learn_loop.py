@@ -446,10 +446,10 @@ def test_a_released_item_opens_only_its_own_key():
     assert len(learn_loop_activity_findings(**kw)) == 1
 
 
-def test_a_bare_sentinel_after_one_release_still_leaks_an_open_item():
+def test_a_bare_sentinel_after_one_release_still_leaks_the_next_item():
     """The old per-session rule passed any mention after the FIRST release; a
-    bare sentinel is every seeded item's answer, so with B shown and open it
-    states B's answer."""
+    bare sentinel is every seeded item's answer, read as the answer of the
+    item in front of the student — with B shown and unreleased, B's."""
     steps = {
         "qa": _step(check_item_id=_item("loop-a"), last_verdict="idk", graded_at=100.0,
                     first_shown_at=10.0),
@@ -467,11 +467,34 @@ def test_a_bare_sentinel_after_one_release_still_leaks_an_open_item():
     # before B was shown, the same bare mention is A's release
     kw["messages"] = [{"session_id": "s1", "at": 105.0, "content": SENTINEL}]
     assert learn_loop_activity_findings(**kw) == []
-    # once B is closed too (answered correctly: the student's own answer), it passes
+    # B graded correct releases nothing (the feedback never states it) ...
     steps["qb"].update(graded_at=115.0, last_verdict="correct", feedback_given=True)
     kw.update(evidence_hashes={("u", "qa"), ("u", "qb")}, step_event_hashes={("u", "qa"), ("u", "qb")},
               messages=[{"session_id": "s1", "at": 120.0, "content": SENTINEL}])
+    assert len(learn_loop_activity_findings(**kw)) == 1
+    # ... B's own release does
+    steps["qb"].update(last_verdict="not_yet")
     assert learn_loop_activity_findings(**kw) == []
+
+
+def test_an_abandoned_item_does_not_hold_back_a_later_items_release():
+    """A left unanswered (never graded, no H6), then B posed and released: a
+    bare mention after B's release is B's answer, not a leak of A."""
+    steps = {
+        "qa": _step(check_item_id=_item("loop-a"), graded_at=None, feedback_given=False,
+                    first_shown_at=10.0),
+        "qb": _step(check_item_id=_item("loop-b"), last_verdict="idk", graded_at=100.0,
+                    first_shown_at=50.0),
+    }
+    kw = _activity(
+        sessions=[_session(steps)],
+        evidence_hashes={("u", "qb")},
+        step_event_hashes={("u", "qb")},
+        messages=[{"session_id": "s1", "at": 120.0, "content": SENTINEL}],
+    )
+    assert learn_loop_activity_findings(**kw) == []
+    kw["messages"] = [{"session_id": "s1", "at": 30.0, "content": SENTINEL}]  # while A was in front
+    assert len(learn_loop_activity_findings(**kw)) == 1
 
 
 def test_an_undecryptable_assistant_row_is_a_finding_not_empty_text():

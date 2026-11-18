@@ -115,12 +115,12 @@ def learn_loop_findings(
 #     case-insensitive) plus "<slug>-<format>-d<difficulty>", read back off the
 #     step's check_item_id (`rich-check-<slug>-<format>-d<difficulty>`); a key
 #     no step of the session carries fails closed. A BARE sentinel is the
-#     answer every seeded item shares, so it states the answer of every item
-#     open when it is said: it passes only once some item of the session was
-#     released AND no item shown by then is still open (ungraded, no H6). A
-#     release in one session never opens another. An assistant row that cannot
-#     be decrypted is a finding of its own (never read as empty text). The
-#     text is never echoed;
+#     answer every seeded item shares, so it is read as the answer of the item
+#     in front of the student when it was said — the step shown most recently
+#     by then — and passes only once THAT item was released (an earlier
+#     item's release never opens a later one). A release in one session never
+#     opens another. An assistant row that cannot be decrypted is a finding of
+#     its own (never read as empty text). The text is never echoed;
 # (g') likewise for the segment prequestion's OWN sentinel (spec §13 A138,
 #     `prequestion_sentinel`, E2E_LOOP_PREQUESTION_ANSWER — the seeded
 #     prequestion items' key, never a check's), PER ITEM (second review): each
@@ -193,14 +193,6 @@ def _step_release(step: dict) -> float | None:
     return min(times) if times else None
 
 
-def _step_closed(step: dict) -> float | None:
-    """When the item stopped being open: graded (any verdict — a correct
-    answer is the student's own) or worked (H6); None while open."""
-    graded, worked = _number(step.get("graded_at")), _worked_at(step)
-    times = [t for t in (graded, worked) if t is not None]
-    return min(times) if times else None
-
-
 #: A seeded check item (db/seed_local_rich.py::loop_item_id) → its key's token.
 _SEEDED_CHECK = re.compile(r"^rich-check-(?P<slug>.+)-(?P<fmt>[a-z_]+)-d(?P<d>\d+)$")
 
@@ -217,21 +209,23 @@ def _check_cutoffs(steps: dict) -> dict[str, float | None]:
 
 
 def _bare_mention_released(steps: dict, at: float | None) -> bool:
-    """A bare sentinel at `at` states the shared answer of every item open
-    then: it passes only when some item was released by `at` and every item
-    shown by `at` (no first_shown_at: shown from the start) was closed by it."""
+    """A bare sentinel at `at` is read as the answer of the item in front of
+    the student then: the step shown most recently at or before `at` (no
+    first_shown_at: shown from the start). It passes only when that item was
+    released by `at`; with no item shown yet, nothing released it. An unknown
+    time fails closed."""
     if at is None:
         return False
-    if not any((r := _step_release(s)) is not None and r <= at for s in steps.values()):
+    shown = [(_number(s.get("first_shown_at")) or 0.0, s) for s in steps.values()]
+    shown = [(t, s) for t, s in shown if t <= at]
+    if not shown:
         return False
-    for step in steps.values():
-        shown = _number(step.get("first_shown_at"))
-        if shown is not None and shown > at:
-            continue
-        closed = _step_closed(step)
-        if closed is None or closed > at:
-            return False
-    return True
+    latest = max(t for t, _ in shown)
+    return all(
+        (released := _step_release(s)) is not None and released <= at
+        for t, s in shown
+        if t == latest
+    )
 
 
 def _states_unreleased_check(text: str, needle: str, token_re, steps: dict, at) -> bool:
