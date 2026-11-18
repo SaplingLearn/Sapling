@@ -5,6 +5,10 @@ grader_second, decision, loop_tutor* and session_close run site calls ``ai_budge
 (invariant 23) and turns ``level == "hard"`` into "no model call", never into a verdict (spec §3.5
 validity rule, invariant 28). ONE paged llm_usage read since the UTC month start, cached per
 server-minted request key — no lru_cache (CLAUDE.md #98); tests/conftest.py resets the module state around every test.
+
+Learning-loop students only (owner decision 2026-11-18: "caps only when the loop is on"). A
+student with the loop off gets the app as it was before the loop: the legacy tutor and the topic
+checklist read nothing here, under main's own limits (the abuse limits, the flagged llm_budget).
 """
 
 from __future__ import annotations
@@ -367,8 +371,8 @@ def _as_count(value: object) -> int:
 @runs_as_service  # spec §13 A148: llm_usage and ai_tutor_daily_calls are service-only; checked from /api/learn and the topic checklist
 def count_tutor_call(user_id: str) -> int:
     """Count one tutor model call for the student today (UTC) and return the new count. PKG-07
-    calls it once per tutor run, and PKG-14b's kill-switch path (routes/learn.py::
-    _kill_switch_budget) once per legacy model request; nothing else does. The store increment is one atomic statement
+    calls it once per loop tutor run; nothing else does (the legacy tutor counts nothing, owner
+    decision 2026-11-18). The store increment is one atomic statement
     (cross-worker); if it fails, the in-process counter still counts (one WARNING), so the cap
     is never blind. Never raises for a store failure; never creates or biases evidence."""
     if not user_id:

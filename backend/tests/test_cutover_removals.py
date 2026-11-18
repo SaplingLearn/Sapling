@@ -104,17 +104,48 @@ def test_kill_switch_marker_turns_the_loop_off(loop_off_via):
     assert learning_loop_active("anyone") is False
 
 
-def test_kill_switch_path_is_cost_bounded_in_source():
-    # #118 (spec §13 A149): the handler bodies live in services/tutor/, the
-    # budget check beside the run assembly in services/tutor/run.py
-    import services.tutor as tutor
-    from services.tutor import run
+#: The five legacy tutor handler bodies (#118: the same-named functions in
+#: services/tutor/; routes/learn.py wraps them).
+LEGACY_TUTOR_BODIES = ("start_session", "start_session_stream", "chat", "chat_stream", "action")
 
-    assert "ai_budget.check(" in inspect.getsource(run._kill_switch_budget)
-    for name in ("start_session", "start_session_stream", "chat", "chat_stream", "action"):
+
+def _loop_branch(body: str) -> tuple[int, int]:
+    """(start, end) of a handler body's `if loop_handler is not None:` block,
+    ending at the hand-off's `return await loop_handler(...)`."""
+    start = body.index("if loop_handler is not None:")
+    return start, body.index("return await loop_handler(body, request)", start)
+
+
+def test_only_the_loop_path_reads_the_ai_budget_in_source():
+    """Owner decision 2026-11-18 ("caps only when the loop is on"; was A20's
+    kill-switch cost bound, PKG-14b). The legacy tutor a loop-off student gets
+    reads no AI budget: every `ai_budget` read in a handler body sits inside
+    its loop branch, and none of them calls the retired `_kill_switch_budget`."""
+    import services.tutor as tutor
+
+    for name in LEGACY_TUTOR_BODIES:
         body = inspect.getsource(getattr(tutor, name))
-        assert "_kill_switch_budget" in body, name
-        assert "ai_budget.enforce_rate_limit_for" in body, name
+        start, end = _loop_branch(body)
+        assert "_kill_switch_budget" not in body, name
+        reads = [i for i in range(len(body)) if body.startswith("ai_budget.", i)]
+        reads += [i for i in range(len(body)) if body.startswith("_loop_turn_entry(", i)]
+        assert reads, name
+        assert all(start < i < end for i in reads), name
+
+
+def test_the_loop_turn_entry_replays_and_refuses_before_the_rate_limit():
+    """#761 order on the loop path (B3): ownership, the replay of a persisted
+    turn, the ended-session 409, and only then the rate-limit read."""
+    from services.tutor import turns
+
+    body = inspect.getsource(turns._loop_turn_entry)
+    order = [
+        body.index("await _require_turn_session(session_id, user_id)"),
+        body.index("await _persisted_turn(session_id, turn_id)"),
+        body.index("await _refuse_ended_session(session_id)"),
+        body.index("asyncio.to_thread(ai_budget.enforce_rate_limit_for, user_id)"),
+    ]
+    assert order == sorted(order)
 
 
 def _route(path: str):
@@ -139,15 +170,17 @@ def _route(path: str):
         "/api/learn/action",
     ],
 )
-def test_every_legacy_model_route_reads_the_rate_limit_once_after_require_self(path):
-    """A20 on the legacy routes (A93 review): ONE rate-limit read for both the loop
-    and the kill-switch path, and only AFTER the caller's identity is checked — never
-    a dependency, which FastAPI runs before the handler's require_self."""
+def test_every_delegating_route_reads_the_rate_limit_once_after_require_self(path):
+    """A20 on the delegating routes (A93 review): ONE rate-limit read on the loop
+    path (none on the legacy one, owner decision 2026-11-18), and only AFTER the
+    caller's identity is checked — never a dependency, which FastAPI runs before
+    the handler's require_self."""
     import inspect
 
     from services import ai_budget
 
     import services.tutor as tutor
+    from services.tutor import turns
 
     route = _route(path)
     deps = [d.call for d in route.dependant.dependencies]
@@ -156,6 +189,11 @@ def test_every_legacy_model_route_reads_the_rate_limit_once_after_require_self(p
     # same-named function in services/tutor/, where the read hops off the loop
     body = inspect.getsource(getattr(tutor, route.endpoint.__name__))
     read = "asyncio.to_thread(ai_budget.enforce_rate_limit_for, body.user_id)"
+    if "_loop_turn_entry(" in body:  # the turn routes: the read is the entry's last step
+        assert read not in body, path
+        read = "_loop_turn_entry("
+        entry = inspect.getsource(turns._loop_turn_entry)
+        assert entry.count("asyncio.to_thread(ai_budget.enforce_rate_limit_for, user_id)") == 1
     assert body.count(read) == 1, path
     # #756: the guard runs off the event loop (`guard_off_loop(require_self, ...)`)
     assert body.index("guard_off_loop(require_self, body.user_id, request)") < body.index(read), path
@@ -210,57 +248,112 @@ def _hard():
     return ai_budget.BudgetDecision(level="hard", tier_ceiling="none", scope="daily_usd")
 
 
-@pytest.mark.kill_switch
-@pytest.mark.parametrize("path", ["/api/learn/chat", "/api/learn/chat/stream"])
-def test_kill_switch_path_returns_429_at_the_hard_cap(monkeypatch, legacy_client, legacy_chat_body, path):
+#: Every ai_budget entry point a request could read through, and the read
+#: under them all (`_usage`: the one llm_usage read; `_tutor_calls_today`).
+_AI_BUDGET_READS = (
+    "check", "count_tutor_call", "enforce_rate_limit_for", "rate_limited",
+    "_rate_limit_decision", "_usage", "_tutor_calls_today",
+)
+
+
+@pytest.fixture
+def ai_budget_reads(monkeypatch):
+    """Records every ai_budget read a request makes, and makes none."""
     from services import ai_budget
 
-    calls = []
-    monkeypatch.setattr(ai_budget, "check", lambda *a, **k: calls.append((a, k)) or _hard())
-    r = legacy_client.post(path, json=legacy_chat_body)
-    assert r.status_code == 429 and r.json()["detail"] == "ai budget reached"
-    assert legacy_client.agent_runs == []  # checked before any agent run and before the stream opens
-    assert calls == [(("user_andres", "tutor", "develop"), {})]
+    reads = []
+    for name in _AI_BUDGET_READS:
+        monkeypatch.setattr(
+            ai_budget, name, lambda *a, _name=name, **k: reads.append((_name, a)) or _hard()
+        )
+    return reads
 
 
 @pytest.mark.kill_switch
 @pytest.mark.parametrize(
     "path,body",
     [
+        ("/api/learn/chat", None),
+        ("/api/learn/chat/stream", None),
         ("/api/learn/start-session", {"user_id": "user_andres", "topic": "Recursion", "mode": "socratic"}),
         ("/api/learn/start-session/stream", {"user_id": "user_andres", "topic": "Recursion", "mode": "socratic"}),
         ("/api/learn/action", {"session_id": "s1", "user_id": "user_andres", "action_type": "hint", "mode": "socratic"}),
     ],
 )
-def test_every_other_legacy_model_route_returns_429_at_the_hard_cap(monkeypatch, legacy_client, path, body):
-    from services import ai_budget
-
-    monkeypatch.setattr(ai_budget, "check", lambda *a, **k: _hard())
-    counted = []
-    monkeypatch.setattr(ai_budget, "count_tutor_call", lambda uid: counted.append(uid) or 1)
-    r = legacy_client.post(path, json=body)
-    assert r.status_code == 429, r.text
-    assert legacy_client.agent_runs == [] and counted == []
-
-
-@pytest.mark.kill_switch
-def test_kill_switch_path_counts_one_tutor_call_per_model_request(monkeypatch, legacy_client, legacy_chat_body):
-    """A39: the daily tutor-call cap works even when llm_usage reads nothing —
-    the kill-switch path bumps it once per model request, after the check."""
-    from services import ai_budget
-
-    ok = ai_budget.BudgetDecision(level="normal", tier_ceiling="deep")
-    order = []
-    monkeypatch.setattr(ai_budget, "check", lambda *a, **k: order.append("check") or ok)
-    monkeypatch.setattr(ai_budget, "count_tutor_call", lambda uid: order.append(("count", uid)) or 1)
-    legacy_client.post("/api/learn/chat", json=legacy_chat_body)
-    assert order[:2] == ["check", ("count", "user_andres")]
-    assert order.count("check") == 1 and len([o for o in order if o != "check"]) == 1
+def test_loop_off_tutor_routes_make_no_ai_budget_reads(
+    legacy_client, legacy_chat_body, ai_budget_reads, path, body,
+):
+    """Owner decision 2026-11-18 ("caps only when the loop is on"): with the loop
+    off (the kill switch, or the student's flag), every legacy tutor route runs as
+    it did before the loop — straight to the tutor agent, under main's own limits
+    — and makes no ai_budget read: no 429 at the loop's caps, no tutor-call count."""
+    r = legacy_client.post(path, json=body or legacy_chat_body)
+    assert r.status_code != 429, r.text
+    assert legacy_client.agent_runs, "the legacy tutor agent was never reached"
+    assert ai_budget_reads == []
 
 
-def test_default_path_delegates_before_the_legacy_budget_check(monkeypatch, legacy_client, legacy_chat_body):
-    """Default ON: the legacy handler delegates to the loop, and the loop's own
-    budget code runs — the legacy develop-band check is the kill-switch path's."""
+def _must_not_hand_off(why: str):
+    """A loop handler (resolved at route entry) that fails the test if called."""
+
+    async def _handler(body, request):
+        pytest.fail(why)
+
+    return _handler
+
+
+def test_loop_path_replays_a_persisted_turn_before_the_rate_limit(
+    monkeypatch, legacy_client, legacy_chat_body, ai_budget_reads,
+):
+    """B3/B4: a JSON fallback that re-sends a turn the stream already persisted
+    gets the stored reply, even at the cap: the replay precedes the rate-limit
+    read and the hand-off, so the loop never runs the turn twice."""
+    from routes import learn
+
+    replay = {"reply": "saved", "graph_update": {}, "mastery_changes": [], "replayed": True}
+    monkeypatch.setattr(learn, "learning_loop_for_request", lambda uid: True)
+    monkeypatch.setattr(learn, "_loop_delegate", lambda name: _must_not_hand_off("the loop ran a replayed turn"))
+    with patch_tutor("_persisted_turn", new=AsyncMock(return_value=replay)):
+        r = legacy_client.post("/api/learn/chat", json={**legacy_chat_body, "turn_id": "turn-0001"})
+        assert r.status_code == 200 and r.json() == replay
+        s = legacy_client.post("/api/learn/chat/stream", json={**legacy_chat_body, "turn_id": "turn-0001"})
+        assert s.status_code == 200 and '"saved"' in s.text
+    assert ai_budget_reads == []
+
+
+def test_loop_path_answers_the_ended_session_409_before_the_rate_limit(
+    monkeypatch, legacy_chat_body, ai_budget_reads,
+):
+    """B3: a turn on an ended session is the SESSION_ENDED 409, never the loop's
+    rate-limit 429 and never a hand-off."""
+    from main import app
+    from routes import learn
+
+    def _table(name):
+        m = MagicMock()
+        m.select.return_value = (
+            [{"user_id": "user_andres", "ended_at": "2026-11-18T00:00:00Z"}] if name == "sessions" else []
+        )
+        return m
+
+    monkeypatch.setattr(learn, "learning_loop_for_request", lambda uid: True)
+    monkeypatch.setattr(learn, "_loop_delegate", lambda name: _must_not_hand_off("an ended session was handed off"))
+    with patch_tutor("table", side_effect=with_async_twins(_table)):
+        client = TestClient(app)
+        for path in ("/api/learn/chat", "/api/learn/chat/stream", "/api/learn/action"):
+            body = legacy_chat_body if path != "/api/learn/action" else {
+                "session_id": "s1", "user_id": "user_andres", "action_type": "hint", "mode": "socratic",
+            }
+            r = client.post(path, json=body)
+            assert r.status_code == 409, (path, r.text)
+    assert ai_budget_reads == []
+
+
+def test_loop_path_delegates_after_only_the_rate_limit_read(monkeypatch, legacy_client, legacy_chat_body):
+    """Loop on for this student (the suite turns the `learning_loop` flag on; it
+    ships off): the legacy handler reads the rate limit, then delegates to the
+    loop, whose own budget code runs. The legacy handler itself never runs
+    `ai_budget.check`."""
     import config
     from routes import learn
     from services import ai_budget

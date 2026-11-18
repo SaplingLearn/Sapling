@@ -30,16 +30,15 @@ from services.tutor.messages import (
     _turn_row_ids,
 )
 from services.quiz_ask import open_quiz_ask
-from services.tutor.pending import _materialize_turn_session, _require_turn_session
+from services.tutor.pending import _open_turn_session
 from services.tutor.run import (
     _continuation_text,
-    _kill_switch_budget,
     _observe_persisted_turn,
     _prepare_chat_run,
     _ran_on,
     _usage_session_id,
 )
-from services.tutor.turns import _chat_turn_json, _start_session_agent
+from services.tutor.turns import _chat_turn_json, _loop_turn_entry, _start_session_agent
 from services.tutor_sessions import stash_pending
 
 
@@ -57,30 +56,29 @@ async def chat_stream(body: ChatBody, request: Request, loop_handler=None):
     """
     await guard_off_loop(require_self, body.user_id, request)
     await aenforce_abuse_limit(abuse_limits.TUTOR_TURN, body.user_id)
-    # #761 entry checks (not discarded, owned) before the rate-limit read (A93 review)
-    await _require_turn_session(body.session_id, body.user_id)
-    # A20: one rate-limit read for both paths, AFTER the ownership check (A93 review).
-    # #117: off the event loop (it reads llm_usage).
-    await asyncio.to_thread(ai_budget.enforce_rate_limit_for, body.user_id)
-    # Learning loop (spec §7): `loop_handler` is the loop's handler when the
-    # route-entry gate is true (the default; routes/learn.py evaluates it,
-    # owner decision 00); below is the kill-switch path (spec §11.6),
-    # cost-bounded by _kill_switch_budget (A20).
-    if loop_handler is not None:
-        request.state.learning_loop = True  # A38 00: the loop handler reads no second gate
-        return await loop_handler(body, request)
-    await asyncio.to_thread(_kill_switch_budget, body.user_id)
-    await _materialize_turn_session(body.session_id, body.user_id)
-
     request_id = (
         getattr(request.state, "request_id", None)
         or current_request_id()
         or str(uuid.uuid4())
     )
-
-    # #761: a re-sent turn that already persisted replays its stored reply
-    # over the same event vocabulary instead of running again.
-    replay = await _persisted_turn(body.session_id, body.turn_id)
+    # Learning loop (spec §7): `loop_handler` is the loop's handler when the
+    # route-entry gate is on for this student (routes/learn.py evaluates it,
+    # owner decision 00; the `learning_loop` flag defaults off). Only the loop
+    # path reads the AI budget (owner decision 2026-11-18: caps only when the
+    # loop is on), after the #761 replay and the ended-session 409
+    # (`_loop_turn_entry`); below is the legacy tutor exactly as before the
+    # loop, under main's own limits (the abuse limit above, the flagged
+    # llm_budget).
+    if loop_handler is not None:
+        replay = await _loop_turn_entry(body.session_id, body.user_id, body.turn_id)
+        if replay is None:
+            request.state.learning_loop = True  # A38 00: the loop handler reads no second gate
+            return await loop_handler(body, request)
+    else:
+        await _open_turn_session(body.session_id, body.user_id)
+        # #761: a re-sent turn that already persisted replays its stored reply
+        # over the same event vocabulary instead of running again.
+        replay = await _persisted_turn(body.session_id, body.turn_id)
     if replay is not None:
         return EventSourceResponse(
             _replay_events(replay),
@@ -219,16 +217,14 @@ async def start_session_stream(body: StartSessionBody, request: Request, loop_ha
     """
     await guard_off_loop(require_self, body.user_id, request)
     await aenforce_abuse_limit(abuse_limits.TUTOR_SESSION_START, body.user_id)
-    # A20: one rate-limit read for both paths, AFTER the ownership check (A93 review).
-    # #117: off the event loop (it reads llm_usage).
-    await asyncio.to_thread(ai_budget.enforce_rate_limit_for, body.user_id)
-    # Learning loop (spec §7): the loop's handler when the route-entry gate is
-    # true (the default); below is the kill-switch path (spec §11.6),
-    # cost-bounded by _kill_switch_budget (A20).
+    # Learning loop (spec §7): as /start-session — only the loop path reads
+    # the AI budget (owner decision 2026-11-18).
     if loop_handler is not None:
+        # A20: the loop's rate-limit read, after the ownership check (A93
+        # review). #117: off the event loop (it reads llm_usage).
+        await asyncio.to_thread(ai_budget.enforce_rate_limit_for, body.user_id)
         request.state.learning_loop = True  # A38 00: the loop handler reads no second gate
         return await loop_handler(body, request)
-    await asyncio.to_thread(_kill_switch_budget, body.user_id)
     request_id = (
         getattr(request.state, "request_id", None)
         or current_request_id()

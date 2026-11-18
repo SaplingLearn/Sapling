@@ -15,6 +15,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
 
 from agents.usage import record_agent_usage
+from db.connection import table
 from models import ActionBody, ChatBody, StartSessionBody
 from services import ai_budget, events_service
 from services.auth_guard import guard_off_loop, require_self
@@ -33,17 +34,16 @@ from services.tutor.messages import (
     save_message,
 )
 from services.quiz_ask import open_quiz_ask
-from services.tutor.pending import _materialize_turn_session, _require_turn_session
+from services.tutor.pending import _open_turn_session, _require_turn_session
 from services.tutor.run import (
     _continuation_text,
-    _kill_switch_budget,
     _new_run_text,
     _observe_persisted_turn,
     _prepare_chat_run,
     _ran_on,
     _usage_session_id,
 )
-from services.tutor_sessions import astash_pending
+from services.tutor_sessions import astash_pending, session_ended_error
 
 # Log records keep the name they had in routes/learn.py before the #118 split:
 # the move must not change what an operator (or a caplog test) filters on.
@@ -235,17 +235,18 @@ async def _start_session_agent(
 async def start_session(body: StartSessionBody, request: Request, loop_handler=None):
     await guard_off_loop(require_self, body.user_id, request)
     await aenforce_abuse_limit(abuse_limits.TUTOR_SESSION_START, body.user_id)
-    # A20: one rate-limit read for both paths, AFTER the ownership check (A93 review).
-    # #117: off the event loop (it reads llm_usage).
-    await asyncio.to_thread(ai_budget.enforce_rate_limit_for, body.user_id)
     # Learning loop (spec §7): `loop_handler` is the loop's handler when the
-    # route-entry gate is true (the default; routes/learn.py evaluates it,
-    # owner decision 00); below is the kill-switch path (spec §11.6),
-    # cost-bounded by _kill_switch_budget (A20).
+    # route-entry gate is on for this student (routes/learn.py evaluates it,
+    # owner decision 00; the `learning_loop` flag defaults off). Only the loop
+    # path reads the AI budget (owner decision 2026-11-18: caps only when the
+    # loop is on); below is the legacy tutor exactly as before the loop, under
+    # main's own limits (the abuse limit above, the flagged llm_budget).
     if loop_handler is not None:
+        # A20: the loop's rate-limit read, after the ownership check (A93
+        # review). #117: off the event loop (it reads llm_usage).
+        await asyncio.to_thread(ai_budget.enforce_rate_limit_for, body.user_id)
         request.state.learning_loop = True  # A38 00: the loop handler reads no second gate
         return await loop_handler(body, request)
-    await asyncio.to_thread(_kill_switch_budget, body.user_id)
     session_id = str(uuid.uuid4())
     # PKG-14 (spec §13 A99): a quiz-ask session's help row, before any tutor text;
     # A106 (review m2): it runs on the quiz node's course, never the client's
@@ -486,21 +487,51 @@ async def _chat_turn_json(
     return response
 
 
+async def _refuse_ended_session(session_id: str) -> None:
+    """The ended-session 409 (SESSION_ENDED) for a session that has a row.
+    A session with no row yet is still pending: it cannot have ended, since
+    ending a pending session leaves a tombstone `_require_turn_session`
+    already answered. One `sessions` read; writes nothing."""
+    rows = await table("sessions").aselect(
+        "ended_at", filters={"id": f"eq.{session_id}"}, limit=1
+    )
+    if rows and rows[0].get("ended_at"):
+        raise session_ended_error()
+
+
+async def _loop_turn_entry(session_id: str, user_id: str, turn_id: str | None) -> dict | None:
+    """A learning-loop turn's checks before the hand-off (spec §7), in #761's
+    order: not discarded and owned (404); the stored reply of a turn that
+    already persisted, which the caller returns instead of handing off (the
+    client's JSON fallback re-sends its stream's `turn_id`, so a lost `done`
+    never runs a turn twice); the ended-session 409; and only then the loop's
+    rate-limit read (A20, after the ownership check, A93 review), so a resend
+    at the cap gets its saved reply, not a 429. None: hand the turn off.
+
+    The loop handler materialises the session and checks its phase itself."""
+    await _require_turn_session(session_id, user_id)
+    replay = await _persisted_turn(session_id, turn_id)
+    if replay is not None:
+        return replay
+    await _refuse_ended_session(session_id)
+    # #117: off the event loop (it reads llm_usage).
+    await asyncio.to_thread(ai_budget.enforce_rate_limit_for, user_id)
+    return None
+
+
 async def chat(body: ChatBody, request: Request, loop_handler=None):
     await guard_off_loop(require_self, body.user_id, request)
     await aenforce_abuse_limit(abuse_limits.TUTOR_TURN, body.user_id)
-    # #761 entry checks (not discarded, owned) before the rate-limit read (A93 review)
-    await _require_turn_session(body.session_id, body.user_id)
-    # A20: one rate-limit read for both paths, AFTER the ownership check (A93 review).
-    await asyncio.to_thread(ai_budget.enforce_rate_limit_for, body.user_id)
     # Learning loop (spec §7): the loop's handler when the route-entry gate is
-    # true (the default); below is the kill-switch path (spec §11.6),
-    # cost-bounded by _kill_switch_budget (A20).
+    # on for this student; only that path reads the AI budget (owner decision
+    # 2026-11-18). Below it, the legacy tutor exactly as before the loop.
     if loop_handler is not None:
+        replay = await _loop_turn_entry(body.session_id, body.user_id, body.turn_id)
+        if replay is not None:
+            return replay
         request.state.learning_loop = True  # A38 00: the loop handler reads no second gate
         return await loop_handler(body, request)
-    await asyncio.to_thread(_kill_switch_budget, body.user_id)
-    await _materialize_turn_session(body.session_id, body.user_id)
+    await _open_turn_session(body.session_id, body.user_id)
     # #761: the client's fallback for a stream whose `done` it never saw. If
     # that turn already persisted, answer with it instead of running it again.
     replay = await _persisted_turn(body.session_id, body.turn_id)
@@ -601,18 +632,13 @@ async def _action_turn(body: ActionBody, request: Request) -> dict:
 async def action(body: ActionBody, request: Request, loop_handler=None):
     await guard_off_loop(require_self, body.user_id, request)
     await aenforce_abuse_limit(abuse_limits.TUTOR_TURN, body.user_id)
-    # #761 entry checks (not discarded, owned) before the rate-limit read (A93 review)
-    await _require_turn_session(body.session_id, body.user_id)
-    # A20: one rate-limit read for both paths, AFTER the ownership check (A93 review).
-    await asyncio.to_thread(ai_budget.enforce_rate_limit_for, body.user_id)
-    # Learning loop (spec §7): the loop's handler when the route-entry gate is
-    # true (the default); below is the kill-switch path (spec §11.6),
-    # cost-bounded by _kill_switch_budget (A20).
+    # Learning loop (spec §7): as /chat. An action carries no turn_id, so
+    # there is no stored turn to replay.
     if loop_handler is not None:
+        await _loop_turn_entry(body.session_id, body.user_id, None)
         request.state.learning_loop = True  # A38 00: the loop handler reads no second gate
         return await loop_handler(body, request)
-    await asyncio.to_thread(_kill_switch_budget, body.user_id)
-    await _materialize_turn_session(body.session_id, body.user_id)
+    await _open_turn_session(body.session_id, body.user_id)
     return await _agent_turn_or_http_error(
         _action_turn(body, request), what="action agent"
     )
