@@ -12,7 +12,8 @@ from datetime import datetime, timezone
 from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
 
-from db.connection import table
+from db.connection import rpc, table
+from db.scope import runs_as_service
 from models import EndSessionBody, ModeSwitchBody, RenameSessionBody
 from services import events_service
 from services.academics import offering_course_id
@@ -298,6 +299,22 @@ def rename_session(session_id: str, body: RenameSessionBody, request: Request):
     return {"updated": True, "session": {"id": session_id, "topic": topic}}
 
 
+#: 20261118195124_learning_session_node_erase.sql: clears one session's typed
+#: text in the loop's append-only teach-prompt records (service_role may not
+#: write them directly).
+_SESSION_TEXT_ERASE = "learning_session_text_erase"
+
+
+@runs_as_service  # the teach-prompt records and their erase function are service-only (A148)
+def _erase_session_text(user_id: str, session_id: str) -> None:
+    """PR #866 C8: the student's own words in a deleted session — a
+    prequestion guess, a self-explanation reply — are cleared. The rows stay
+    (an answered prequestion is a release A76's re-check reads across
+    sessions; a reply's length feeds the admin report), with no text. Raises
+    on a failed call."""
+    rpc(_SESSION_TEXT_ERASE, {"p_user_id": user_id, "p_session_id": session_id})
+
+
 def delete_session(session_id: str, request: Request, user_id: str | None = None):
     if user_id:
         require_self(user_id, request)
@@ -334,6 +351,9 @@ def delete_session(session_id: str, request: Request, user_id: str | None = None
         return {"deleted": True}
     # A row may exist (an attempted materialisation, one that finished while
     # we waited, or a live session): delete it. Both deletes are no-ops if not.
+    # The loop's teach-prompt text goes FIRST (C8): a failure answers 500 with
+    # the row still there, so the retry still owns the session and erases it.
+    _erase_session_text(user_id, session_id)
     table("messages").delete({"session_id": f"eq.{session_id}"})
     table("sessions").delete({"id": f"eq.{session_id}"})
     return {"deleted": True}

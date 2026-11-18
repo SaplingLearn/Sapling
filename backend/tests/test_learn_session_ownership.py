@@ -301,6 +301,46 @@ def test_owner_delete_works(harness):
     assert harness["tables"].touched("sessions", "delete")
 
 
+def test_owner_delete_clears_the_sessions_teach_prompt_text_first(harness):
+    """PR #866 C8: the student's own words in the loop's append-only
+    teach-prompt records (a prequestion guess, a self-explanation reply) are
+    cleared through the service-only erase RPC, owner- and session-scoped,
+    BEFORE the session's rows go."""
+    order = []
+    t = harness["tables"]
+    t("messages").delete.side_effect = lambda *a, **k: order.append("messages") or []
+
+    def erase(name, params):
+        order.append(name)
+        return {"learning_self_explanations": 1, "learning_prequestions": 1}
+
+    with patch_tutor("rpc", side_effect=erase) as rpc:
+        r = _delete(OWNER)
+    assert r.status_code == 200, r.text
+    rpc.assert_called_once_with(
+        "learning_session_text_erase", {"p_user_id": OWNER, "p_session_id": SESSION},
+    )
+    assert order == ["learning_session_text_erase", "messages"]
+
+
+def test_a_failed_text_erase_keeps_the_session_so_a_retry_finishes(harness):
+    t = harness["tables"]
+    with patch_tutor("rpc", side_effect=RuntimeError("PostgREST down")):
+        with pytest.raises(RuntimeError):
+            _delete(OWNER)
+    assert not t.touched("messages", "delete") and not t.touched("sessions", "delete")
+    with patch_tutor("rpc", return_value={}) as rpc:
+        assert _delete(OWNER).status_code == 200
+    rpc.assert_called_once()
+    assert t.touched("sessions", "delete")
+
+
+def test_a_strangers_delete_erases_nothing(harness):
+    with patch_tutor("rpc") as rpc:
+        assert _delete(INTRUDER).status_code == 200
+    rpc.assert_not_called()
+
+
 def test_owner_resume_works(harness):
     r = _resume(OWNER)
     assert r.status_code == 200, r.text

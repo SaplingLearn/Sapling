@@ -200,6 +200,10 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
     ("services/feature_flags.py", "_read_version", "service_scope"):
         "#117 flag store's version row (cross-replica cache bust)",
     ("services/graph_service.py", "ensure_user_exists", "runs_as_service"): "inserts a users row",
+    ("services/graph_service.py", "_erase_node_loop_rows", "runs_as_service"):
+        "PR #866 C9: a deleted node's loop rows (posttest_*, the teach-prompt erase RPC) are service-only (A148)",
+    ("services/tutor/sessions.py", "_erase_session_text", "runs_as_service"):
+        "PR #866 C8: a deleted session's teach-prompt text, through a service-only erase RPC (A148)",
     ("services/graph_service.py", "aensure_user_exists", "runs_as_service"):
         "inserts a users row (#117 async twin)",
     ("services/gradescope/jobs.py", "stage_sync", "runs_as_service"):
