@@ -116,6 +116,15 @@ describe("Study — the learning loop's reviews above the hub (PKG-12)", () => {
     expect(await screen.findByRole("heading", { name: "Study" })).toBeTruthy(); // the hub stays below
   });
 
+  it("lays both cards out together in one review grid, so they share an edge and a width", async () => {
+    vi.mocked(getLoopStatus).mockResolvedValue({ active: true });
+    renderStudy();
+    const grid = await screen.findByTestId("study-reviews");
+    expect(grid).toContainElement(screen.getByTestId("review-due-panel"));
+    expect(grid).toContainElement(screen.getByTestId("retention-panel"));
+    expect(grid.children).toHaveLength(2);
+  });
+
   it("keeps the hub alone when the loop is off", async () => {
     renderStudy();
     expect(await screen.findByRole("heading", { name: "Study" })).toBeTruthy();

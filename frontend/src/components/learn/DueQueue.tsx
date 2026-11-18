@@ -301,7 +301,7 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
       ref={panelRef}
       data-testid="review-due-panel"
       className="card"
-      style={{ margin: "14px 32px 0", padding: 16, display: "flex", flexDirection: "column", gap: 12 }}
+      style={{ minWidth: 0, padding: 16, display: "flex", flexDirection: "column", gap: 12 }}
     >
       {crisis.dialog}
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
