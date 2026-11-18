@@ -242,11 +242,14 @@ def test_the_quiz_learning_flags_need_the_loop(monkeypatch, how):
 # ── who resolves the uploader's gate ────────────────────────────────────────
 
 #: Upload-time work with no student request behind it decides by the
-#: uploader's gate, once per upload, at exactly these places.
+#: uploader's gate, once per upload, at exactly these places — and the
+#: check_items.document drafting re-reads it when it RUNS (PR #866 C3), so a
+#: kill switch thrown after the enqueue drafts nothing.
 UPLOADER_SITES = {
     ("routes/documents.py", "upload_document_sync"),
     ("services/documents/post_roll.py", "_stream_index_steps"),
     ("services/document_jobs.py", "_post_roll"),
+    ("services/check_item_jobs.py", "_draft_document"),
 }
 
 

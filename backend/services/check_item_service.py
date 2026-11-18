@@ -70,7 +70,7 @@ import json
 import logging
 import threading
 from collections import deque
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from typing import NamedTuple
@@ -3561,6 +3561,108 @@ def drafting_pending(user_id: str, course_id: str | None) -> bool:
         )
         return False
     return bool(rows)
+
+
+def clear_drafting(document_id: str) -> None:
+    """Take a `pending` mark back to NULL (never drafted): a drafting run that
+    will not run after all (its uploader's loop gate turned off between the
+    claim and the run). The student is then no longer told "preparing", and a
+    later enable claims the document again. Never raises (bookkeeping)."""
+    try:
+        table("documents").update(
+            {"check_items_status": None, "check_items_at": None},
+            filters={"id": f"eq.{document_id}", "check_items_status": f"eq.{DRAFTING_PENDING}"},
+            prefer_return_minimal=True,
+        )
+    except Exception as exc:
+        logger.warning(
+            "check items: drafting mark of document %s not cleared (%s)",
+            document_id,
+            type(exc).__name__,
+        )
+
+
+def _ids(rows) -> list[str]:
+    """The string ids of a PostgREST answer; [] for anything else."""
+    if not isinstance(rows, list):
+        return []
+    return [r["id"] for r in rows if isinstance(r, dict) and isinstance(r.get("id"), str) and r["id"]]
+
+
+def _undrafted_filter(cutoff: str) -> str:
+    """Never drafted (NULL: uploaded with the loop off, or before A128), or a
+    `pending` mark older than the TTL (its run died with a process or a
+    deploy's dropped queue)."""
+    return (
+        f"(check_items_status.is.null,and(check_items_status.eq.{DRAFTING_PENDING},"
+        f"check_items_at.lt.{cutoff}))"
+    )
+
+
+@runs_as_service  # spec §13 A148: check_items is a service-only course asset; reached from the legacy start route too
+def claim_undrafted_documents(
+    user_id: str,
+    course_id: str,
+    *,
+    limit: int,
+    may_draft: Callable[[], bool] = lambda: True,
+    offerings: list[str] | None = None,
+) -> list[str]:
+    """Draft on enable (owner decision, PR #866 C3): mark `pending`, and return,
+    up to `limit` of the student's own live course-material uploads in the
+    course that no drafting run has covered — `_undrafted_filter` — newest
+    first. A document some run already drafted items from is marked `done`
+    instead (an upload drafted before A128 recorded nothing). The mark is a
+    conditional write (only a row still undrafted moves), so two processes
+    scanning together never claim one document twice, and it is what
+    `drafting_pending` reads: the loop says "preparing" from here on.
+    `may_draft` is asked once, only when there is something to claim (the
+    caller's budget check), and False claims nothing. `offerings`: the
+    course's offering ids when the caller already read them. Raises on a
+    failed read or write (the caller schedules nothing then)."""
+    offerings = course_offering_ids(course_id) if offerings is None else offerings
+    if not offerings:
+        return []
+    cutoff = _stamp(_utcnow() - timedelta(seconds=CHECK_ITEM_DRAFT_PENDING_TTL_S))
+    owned = {
+        "user_id": f"eq.{user_id}",
+        "offering_id": f"in.({','.join(pg_quote_value(o) for o in offerings)})",
+        "deleted_at": "is.null",
+        # only course material is ever drafted from (document_is_item_source)
+        "shareability": f"eq.{COURSE_MATERIAL}",
+        "or": _undrafted_filter(cutoff),
+    }
+    ids = _ids(table("documents").select("id", filters=owned, order="created_at.desc", limit=limit))
+    if not ids:
+        return []
+    drafted = {
+        d
+        for r in table(_TABLE).select(
+            "source_document_ids",
+            filters={"source_document_ids": "ov.{" + ",".join(pg_quote_value(d) for d in ids) + "}"},
+        )
+        or []
+        for d in (r.get("source_document_ids") or [])
+    } & set(ids)
+    now = _stamp(_utcnow())
+    if drafted:
+        table("documents").update(
+            {"check_items_status": DRAFTING_DONE, "check_items_at": now},
+            filters={**owned, "id": "in.(" + ",".join(pg_quote_value(d) for d in sorted(drafted)) + ")"},
+            prefer_return_minimal=True,
+        )
+    todo = [d for d in ids if d not in drafted]
+    if not todo or not may_draft():
+        return []
+    claimed = table("documents").update(
+        {"check_items_status": DRAFTING_PENDING, "check_items_at": now},
+        filters={
+            **owned,
+            "id": "in.(" + ",".join(pg_quote_value(d) for d in todo) + ")",
+            "select": "id",  # the claimed rows come back as ids only
+        },
+    )
+    return _ids(claimed)
 
 
 # ── upload-time drafting pool ──────────────────────────────────────────────

@@ -14,6 +14,7 @@ from models import StartSessionBody
 from services.tutor import _get_course_id_for_topic_sync as _get_course_id_for_topic
 from services.tutor_sessions import stash_pending
 from services.academics import require_course_enrollment, resolve_offering
+from services.check_item_jobs import draft_missing_for_course
 from services.graph_service import get_graph
 from services.quiz_ask import QUIZ_ASK_ORIGIN, open_quiz_ask
 
@@ -112,6 +113,13 @@ class _LoopOpener(_LoopTurn):
             )
         if body.goal is not None:
             _validate_goal(body.goal, _plan_states(self.user_id, self.course_id or ""))
+        if loop_on and self.course_id:
+            # Draft on enable (PR #866 C3): the student's uploads here that the
+            # loop never drafted (made while it was off for them) are scheduled
+            # now, claimed `pending` first, so the probe says "preparing" (A128)
+            # rather than "no check items". Throttled, off this thread, never
+            # raises.
+            draft_missing_for_course(self.user_id, self.course_id)
         # routes/learn.py::_start_session_agent (:540–543)'s cue, as server text;
         # the topic is the student's and rides the envelope (review round 3, C1(a))
         self.message = body.topic or ""

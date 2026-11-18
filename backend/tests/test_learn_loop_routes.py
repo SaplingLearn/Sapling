@@ -2752,6 +2752,25 @@ def test_start_session_stashes_pending_with_loop_flag(gate_on, seams):
 
 
 @pytest.mark.parametrize("path", ["/api/learn/loop/start-session", "/api/learn/loop/start-session/stream"])
+def test_a_session_start_schedules_the_courses_undrafted_uploads(gate_on, seams, path):
+    """Draft on enable (PR #866 C3): starting a loop session for a course
+    schedules the student's uploads there that the loop never drafted
+    (check_item_jobs.draft_missing_for_course: throttled, the drafting off
+    the request's thread, never raises), so a student who gets the loop
+    after uploading is not left with nothing to be checked on."""
+    topic_p, offering_p, graph_p = _opener_patches()
+    with (
+        patch_loop("draft_missing_for_course", return_value=1) as draft,
+        topic_p,
+        offering_p,
+        graph_p,
+    ):
+        r = client.post(path, json={"user_id": "u1", "topic": "Recursion"})
+    assert r.status_code == 200
+    draft.assert_called_once_with("u1", "c1")
+
+
+@pytest.mark.parametrize("path", ["/api/learn/loop/start-session", "/api/learn/loop/start-session/stream"])
 def test_a_probe_opener_for_a_course_without_check_items_introduces_the_plan(gate_on, seams, path):
     """Spec §13 A121: a course with no check items ends its probe at once
     (`no_check_items`), so its opener names the plan, not a check-in; an
