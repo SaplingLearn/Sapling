@@ -566,3 +566,23 @@ describe("A1/A2 — an answer whose check the server closed selects another chec
     expect(toast.info).not.toHaveBeenCalled();
   });
 });
+
+describe("B4 — a replayed turn changes no state", () => {
+  it("shows the replayed reply and leaves the note, phase and check as they were", async () => {
+    api.nextLoopCheck.mockResolvedValue({ phase: "teach", check: null, plan_done: true, checks_unavailable_node_ids: [] });
+    api.streamLoopChat.mockResolvedValueOnce({ reply: "The reply you already got.", graph_update: {}, mastery_changes: [], replayed: true })
+      .mockResolvedValueOnce(turn({ reply: "A fresh turn.", phase: "teach" }));
+    await resumedTeach();
+    fireEvent.click(await screen.findByTestId("loop-check-me"));
+    expect(await screen.findByText(/every concept in today's plan/)).toBeTruthy();
+    fireEvent.change(screen.getByTestId("tutor-input"), { target: { value: "and then?" } });
+    fireEvent.click(screen.getByTestId("tutor-send"));
+    await screen.findByText("The reply you already got.");
+    expect(screen.getByText(/every concept in today's plan/)).toBeTruthy(); // a replay is not a served turn
+    expect(screen.getByTestId("loop-phase").getAttribute("data-phase")).toBe("teach");
+    fireEvent.change(screen.getByTestId("tutor-input"), { target: { value: "one more" } });
+    fireEvent.click(screen.getByTestId("tutor-send"));
+    await screen.findByText("A fresh turn.");
+    await waitFor(() => expect(screen.queryByText(/every concept in today's plan/)).toBeNull()); // a served turn clears it
+  });
+});

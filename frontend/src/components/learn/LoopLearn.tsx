@@ -1195,6 +1195,11 @@ export function LoopLearn() {
     // done.reply is always the final, leak-stripped text (A46) — never the tokens
     const text = res.reply ?? streamed;
     if (text) setMessages((prev) => [...prev, asMsg("assistant", text)]);
+    // #761 (B4): a replay re-sends a reply the server already persisted —
+    // {reply, graph_update, mastery_changes: [], replayed: true}, no phase,
+    // check or learner state. Its turn's state changes already happened, so
+    // an absent field here is not a "clear": nothing else is applied.
+    if (res.replayed) return;
     if (submission && res.graded) {
       setVerdict(res.verdict ? { verdict: res.verdict, nodeId: res.learner_state?.[0]?.node_id ?? state.focusNodeId } : null);
       setPendingGrade(null);
