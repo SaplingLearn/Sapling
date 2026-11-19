@@ -75,6 +75,7 @@ import {
   type StudentConfidence,
 } from "@/lib/api";
 import { useFlag } from "@/context/FlagsContext";
+import { useStudyNavShown } from "../useRetentionNav";
 import { forgetEndedSession, noteLearningSession, useFeedbackHold } from "@/lib/feedbackPacing";
 import { BudgetPausedBanner, tutorPauseMessage } from "./BudgetPausedBanner";
 import { initialLoopState, reduceLoopEvent } from "./loopState";
@@ -279,7 +280,9 @@ export function LoopLearn() {
   const { courseIds: dueCourseIds } = useRetentionDue();
   // A link to a page a `hide_*` flag hides would only land on the dashboard
   // (NavFeatureGate): with Study or the Library hidden, those links are not shown.
-  const studyVisible = useFlag("hide_study") !== "on";
+  // Study reads the nav's own answer (useStudyNavShown, as TopNav and the
+  // Dashboard do): no Study link until the flags are in.
+  const studyVisible = useStudyNavShown();
   const libraryVisible = useFlag("hide_library") !== "on";
   // A session picked in another course: resumed once that course's sessions list.
   const pendingResume = useRef<string | null>(null);

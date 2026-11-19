@@ -46,7 +46,10 @@ const api = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/api", async (orig) => ({ ...(await orig<typeof import("@/lib/api")>()), ...api }));
 const flags = vi.hoisted(() => ({}) as Record<string, string>);
-vi.mock("@/context/FlagsContext", () => ({ useFlag: (key: string) => flags[key] ?? "off" }));
+vi.mock("@/context/FlagsContext", () => ({
+  useFlag: (key: string) => flags[key] ?? "off",
+  useFlagMap: () => ({ flags, ready: true }),
+}));
 const retention = vi.hoisted(() => ({ courseIds: [] as string[] }));
 vi.mock("@/context/RetentionDueContext", async (orig) => ({
   ...(await orig<typeof import("@/context/RetentionDueContext")>()),

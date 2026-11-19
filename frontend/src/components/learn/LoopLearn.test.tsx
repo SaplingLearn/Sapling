@@ -49,7 +49,10 @@ const api = vi.hoisted(() => ({
 vi.mock("@/lib/api", async (orig) => ({ ...(await orig<typeof import("@/lib/api")>()), ...api }));
 // Every flag "off" (the provider's default) unless a test turns one on.
 const flags = vi.hoisted(() => ({}) as Record<string, string>);
-vi.mock("@/context/FlagsContext", () => ({ useFlag: (key: string) => flags[key] ?? "off" }));
+vi.mock("@/context/FlagsContext", () => ({
+  useFlag: (key: string) => flags[key] ?? "off",
+  useFlagMap: () => ({ flags, ready: true }),
+}));
 
 import { ApiError } from "@/lib/api";
 import {
