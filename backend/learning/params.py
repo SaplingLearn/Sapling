@@ -869,9 +869,11 @@ QUIZ_DIFFICULTY_NAMES = ("easy", "medium", "hard")
 # keys. Enough to give a ten-question quiz's multiple-choice items a target
 # each and leave keys to tag the other distractors with; bounds the prompt.
 QUIZ_MISCONCEPTION_KEYS_MAX = 8
-# † A143: the most concepts the quiz plan returns. The quiz home shows three
-# and queues QUEUE_MAX (frontend lib/quiz/session.ts); this only bounds the
-# response.
+# † A143: the most concepts the quiz plan returns PER COURSE (rank_concepts
+# caps each course separately; states with no course share one bucket), so an
+# all-courses plan can return this many times the number of courses. The quiz
+# home shows three and queues QUEUE_MAX (frontend lib/quiz/session.ts); this
+# only bounds the response.
 QUIZ_PLAN_MAX_CONCEPTS = 50
 # † A147: the smallest skill-meter change the quiz results list. The meter is
 # shown in whole percent, so a change under half a point reads unchanged.
