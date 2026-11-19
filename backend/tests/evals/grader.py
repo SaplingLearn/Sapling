@@ -790,7 +790,13 @@ def _load_runs(
             f"No grade() cassette for {DATASET}/{name}. "
             "Run with SAPLING_EVAL_MODE=record to capture it."
         )
-    if not set(_KEY_FIELDS.values()) <= set(body):
+    if not (body["runs"] or body["span_checks"] or body["context_checks"]):
+        # grade() refused in code (its own injection screen) before any model
+        # run: the cassette replays no model output, so no identity can be
+        # stale. A screen change that now asks for a run still fails, on "the
+        # cassette has 0" (#866 D4 review).
+        body = {**body, **{k: body.get(k) or [] for k in _KEY_FIELDS.values()}}
+    elif not set(_KEY_FIELDS.values()) <= set(body):
         # D4: a cassette keyed by case name alone replays its runs whatever
         # message grade() now builds; it fails closed until re-recorded.
         raise StaleRecordingError(

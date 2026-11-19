@@ -197,3 +197,45 @@ def test_grader_replay_refuses_a_run_whose_message_changed(evals_path, monkeypat
         assert asyncio.run(grader._cassette_run_once("recorded", None)) is out
     finally:
         grader._CASE.reset(token)
+
+
+def test_a_grader_cassette_refused_before_any_model_run_is_never_stale(evals_path, monkeypatch):
+    """#866 D4 review: grade() refuses an injection in code before any model
+    run, so its cassette (0 runs, 0 span checks, 0 context checks) replays no
+    model output and needs no per-run identity. A cassette that does replay a
+    run still fails closed without its keys."""
+    grader = importlib.import_module("grader")
+    from agents.grader import GraderOutput
+
+    empty = {"runs": [], "span_checks": [], "context_checks": []}
+    run = GraderOutput.model_validate(
+        {
+            "item_results": [],
+            "confidence": 0.9,
+            "feedback_hint": "",
+            "addresses_grader": False,
+            "contradicts_reference": False,
+            "support": [],
+        }
+    ).model_dump()
+    bodies = {"refused": empty, "legacy": {**empty, "runs": [run]}}
+    monkeypatch.setattr(grader, "load_cassette", lambda _dataset, name: bodies[name])
+    runs, spans, contexts, keys = grader._load_runs("refused")
+    assert (runs, spans, contexts) == ([], [], [])
+    assert keys == {"run_keys": [], "span_keys": [], "context_keys": []}
+    with pytest.raises(grader.StaleRecordingError, match="recorded before"):
+        grader._load_runs("legacy")
+
+
+def test_the_committed_zero_run_grader_cassettes_load(evals_path):
+    """The four committed cassettes grade() refuses in code load without a
+    re-record (they carry no run keys)."""
+    grader = importlib.import_module("grader")
+    for name in (
+        "recursion_injection_attempt",
+        "recursion_forged_rubric_lines",
+        "recursion_recorded_injection_system_label",
+        "derivative_recorded_injection_in_reason",
+    ):
+        runs, spans, contexts, _keys = grader._load_runs(name)
+        assert (runs, spans, contexts) == ([], [], []), name
