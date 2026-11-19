@@ -116,9 +116,9 @@ def end_session(body: EndSessionBody, request: Request, loop_handler=None):
     if not ended_while_pending:
         require_session_owner(body.session_id, body.user_id)
         # Learning loop (spec §7): `loop_handler` is the loop's handler when the
-        # route-entry gate is true (the default; routes/learn.py evaluates it,
-        # owner decision 00); below is the kill-switch path (spec §11.6). No
-        # model runs here, so no budget check.
+        # route-entry gate is on for this student (routes/learn.py evaluates it,
+        # owner decision 00; the `learning_loop` flag defaults off); below is
+        # the legacy path (spec §11.6). No model runs here, so no budget check.
         if loop_handler is not None:
             request.state.learning_loop = True  # A38 00: the loop handler reads no second gate
             loop = loop_handler(body, request)

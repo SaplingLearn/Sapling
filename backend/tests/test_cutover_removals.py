@@ -121,8 +121,14 @@ def test_only_the_loop_path_reads_the_ai_budget_in_source():
     kill-switch cost bound, PKG-14b). The legacy tutor a loop-off student gets
     reads no AI budget: every `ai_budget` read in a handler body sits inside
     its loop branch, and none of them calls the retired `_kill_switch_budget`."""
+    import routes.learn as learn_route
     import services.tutor as tutor
+    import services.tutor.run as tutor_run
 
+    for module in (tutor_run, learn_route):  # deleted, not just uncalled (#866 B2)
+        assert not hasattr(module, "_kill_switch_budget"), module.__name__
+        assert not hasattr(module, "KILL_SWITCH_BUDGET_BAND"), module.__name__
+    assert not hasattr(tutor_run, "ai_budget")
     for name in LEGACY_TUTOR_BODIES:
         body = inspect.getsource(getattr(tutor, name))
         start, end = _loop_branch(body)

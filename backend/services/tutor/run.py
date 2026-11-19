@@ -17,7 +17,6 @@ from agents.deps import SaplingDeps
 from agents.usage import record_agent_usage, served_model_name
 from db.connection import table
 from models import ChatBody
-from services import ai_budget
 from services.chat_stream import join_text_parts
 from services.tutor.course import _get_catalog_chunk, _get_course_info
 from services.tutor_router import observe_tutor_turn
@@ -47,26 +46,6 @@ _PREF_MODEL_NAMES: dict[str, str] = {
 # measurable tutor quality over `low` on Sonnet 5.5 at ~2x the cost, so
 # "smart" differs from "fast" by MODEL (Sonnet vs Haiku), not effort.
 _PRO_THINKING_BUDGET = 2048
-
-
-#: RETIRED with `_kill_switch_budget` below (owner decision 2026-11-18).
-KILL_SWITCH_BUDGET_BAND = "develop"
-
-
-def _kill_switch_budget(user_id: str) -> None:
-    """RETIRED: no handler calls it. Owner decision 2026-11-18 ("caps only when
-    the loop is on"): the legacy tutor a loop-off student gets runs exactly as
-    before the loop, under main's own limits only (the abuse limits and the
-    flagged llm_budget), and reads no AI budget. Kept only because
-    routes/learn.py re-exports the name (#118); delete it, the band above and
-    this module's `ai_budget` import together with that re-export.
-
-    It was PKG-14b's kill-switch cost bound (spec §11.2, A20): the loop's
-    `ai_budget.check(…, "tutor")` and one `count_tutor_call`."""
-    decision = ai_budget.check(user_id, "tutor", KILL_SWITCH_BUDGET_BAND)
-    if decision.level == "hard":
-        raise ai_budget.AIBudgetExceeded(decision)
-    ai_budget.count_tutor_call(user_id)
 
 
 def _usage_session_id(session_id: str | None, user_id: str) -> str | None:

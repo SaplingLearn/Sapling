@@ -55,8 +55,6 @@ from services.tutor.pending import (  # noqa: F401  (re-export, #118)
     _require_turn_session,
 )
 from services.tutor.run import (  # noqa: F401  (re-export, #118)
-    KILL_SWITCH_BUDGET_BAND,
-    _kill_switch_budget,
     _usage_session_id,
     _CONTINUATION_INSTRUCTIONS,
     _CONTINUATION_NUDGE,
