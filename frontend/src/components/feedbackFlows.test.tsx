@@ -9,9 +9,12 @@
  * that once stacked on each other, and the last-session context once outlived
  * its session.
  *
- * `Learning` stands in for LoopLearn's half of the contract, which
- * LoopLearn.test.tsx pins: it holds prompts while its session is open and, at
- * the wrap-up, releases them and remembers the ended session.
+ * `Learning` stands in for a tutor screen's half of the contract: it holds
+ * prompts while its session is open and, when the session ends, releases them
+ * and remembers the ended session — the legacy Learn screen's behaviour.
+ * LoopLearn (Tutor V2) holds and releases the same way (LoopLearn.test.tsx) but
+ * remembers nothing: its wrap-up asks inline (WrapUpRating) and it forgets any
+ * ended session left over (LoopLearn.tutorV2.test.tsx, U9).
  */
 
 import React, { useEffect } from "react";
@@ -53,7 +56,7 @@ const ENDED_KEY = "sapling_last_session_context";
 
 type Phase = "probe" | "check" | "close";
 interface ShellProps {
-  /** LoopLearn on /learn: the session on screen and its phase. */
+  /** A tutor screen on /learn: the session on screen and its phase. */
   learning?: { session: string; phase: Phase };
   /** Another surface's activity in progress (a review item, a retention check). */
   activity?: boolean;

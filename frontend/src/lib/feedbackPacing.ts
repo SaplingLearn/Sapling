@@ -3,7 +3,9 @@
  *
  * ShellFrame mounts two feedback prompts: FeedbackFlow (the "What's clicking?"
  * pulse, 2 minutes after the shell mounts) and SessionFeedbackGlobal ("How was that
- * session?", when the student leaves /learn after a session's wrap-up). A live
+ * session?", when the student leaves /learn after a legacy tutor session ended:
+ * the Tutor V2 loop asks it on its own wrap-up instead, `claimWrapUpAsk`, and
+ * leaves no ended session behind). A live
  * walkthrough found both within ~15 minutes of a first session, the pulse
  * landing on top of the check-in. Every rule that decides whether one opens
  * lives here:
@@ -124,8 +126,10 @@ export function currentLearningSession(): string | null {
 }
 
 /** The session the student last wrapped up: what "How was that session?" asks
- *  about when they leave /learn. Written at the wrap-up, dropped when they move
- *  into another session, consumed when they leave. */
+ *  about when they leave /learn. Written by the legacy tutor (Learn.tsx) when
+ *  its session ends, dropped when they move into another session, consumed
+ *  when they leave. LoopLearn never writes it: its wrap-up asks inline
+ *  (WrapUpRating), and it forgets any left over for every session it shows. */
 export const ENDED_SESSION_KEY = "sapling_last_session_context";
 
 export interface EndedSession {
