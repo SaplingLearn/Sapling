@@ -13,7 +13,9 @@ const SESSION_MAP_HEIGHT = 240;
  * `SessionPanel`) describes:
  *   - in mastery colours, fixed: no colour toggle, whatever the Tree is set to;
  *   - framed so every concept and its whole caption is inside the panel, with
- *     no zoom stack over the nodes (drag and the wheel still move it).
+ *     no zoom stack over the nodes. It follows the layout until the student
+ *     pans, drags or pinch-zooms it; a double-click re-frames it, and so does
+ *     a new set of concepts. A plain wheel scrolls the panel, never the map.
  * Width is measured (the panel's own), as Learn.tsx's sidebar graph does.
  */
 export function SessionMap({ nodes, edges, highlightId }: { nodes: GraphNode[]; edges: GraphEdge[]; highlightId?: string }) {
@@ -38,6 +40,7 @@ export function SessionMap({ nodes, edges, highlightId }: { nodes: GraphNode[]; 
           colorMode="mastery"
           fit
           zoomControls={false}
+          wheelZoom="pinch"
         />
       )}
     </div>

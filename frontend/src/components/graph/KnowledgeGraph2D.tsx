@@ -125,8 +125,13 @@ type Props = {
   /** Top offset of the zoom stack (default 12, flush with the corner). */
   zoomControlsTop?: number;
   /** Draw the zoom stack (default). A small overview that links to the full
-   *  map leaves it off, so nothing is drawn over its nodes. */
+   *  map leaves it off, so nothing is drawn over its nodes; a double-click on
+   *  it then does what the stack's reset does (re-frame, hand the view back). */
   zoomControls?: boolean;
+  /** `always` (default): the wheel zooms. `pinch`: only a pinch (a wheel with
+   *  ctrl/⌘, which is how a trackpad pinch arrives) zooms; a plain wheel
+   *  scrolls whatever holds the graph — a map inside a scrolling panel. */
+  wheelZoom?: "always" | "pinch";
   /**
    * Obsidian-style legibility (preview only for now): hovering a concept
    * fades everything but it and its neighbours, concept labels fade in with
@@ -553,6 +558,7 @@ function KnowledgeGraph2DImpl({
   colorMode = "course",
   zoomControlsTop = 12,
   zoomControls,
+  wheelZoom,
   legible = false,
   focusCourseId = null,
   onHoverCourse,
@@ -1468,6 +1474,7 @@ function KnowledgeGraph2DImpl({
 
   const onWheel = (e: React.WheelEvent) => {
     if (!svgRef.current) return;
+    if (wheelZoom === "pinch" && !e.ctrlKey && !e.metaKey) return; // the panel scrolls
     const rect = svgRef.current.getBoundingClientRect();
     const mx = e.clientX - rect.left;
     const my = e.clientY - rect.top;
@@ -1482,6 +1489,19 @@ function KnowledgeGraph2DImpl({
     viewTouchedRef.current = false;
     easeView((framed ? contentFrame() : null) ?? fittedViewRef.current ?? initialView());
   };
+  // With no zoom stack there is no reset button: a double-click is the reset.
+  const onDoubleClick = () => {
+    if (zoomControls === false) resetView();
+  };
+  // A pinch also asks the browser to zoom the page: React's wheel listener is
+  // passive, so the graph takes those events itself.
+  React.useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg || wheelZoom !== "pinch") return;
+    const keep = (e: WheelEvent) => { if (e.ctrlKey || e.metaKey) e.preventDefault(); };
+    svg.addEventListener("wheel", keep, { passive: false });
+    return () => svg.removeEventListener("wheel", keep);
+  }, [wheelZoom]);
 
   const hoveredMastery = hoverMastery(hovered, subjectAverage);
 
@@ -1783,6 +1803,7 @@ function KnowledgeGraph2DImpl({
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
         onWheel={onWheel}
+        onDoubleClick={onDoubleClick}
       >
         <defs>
           {legible && (

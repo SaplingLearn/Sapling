@@ -55,6 +55,7 @@ describe("SessionMap", () => {
       colorMode: "mastery",
       fit: true,
       zoomControls: false,
+      wheelZoom: "pinch",
     });
   });
 });

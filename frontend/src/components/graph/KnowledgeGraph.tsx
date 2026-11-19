@@ -106,6 +106,8 @@ type Props = {
   fit?: boolean;
   /** Draw the zoom stack (default). */
   zoomControls?: boolean;
+  /** `pinch`: only a pinch zooms, a plain wheel scrolls the host (see KnowledgeGraph2D). */
+  wheelZoom?: "always" | "pinch";
 };
 
 const TIERS: MasteryTier[] = ["mastered", "learning", "struggling", "unexplored"];

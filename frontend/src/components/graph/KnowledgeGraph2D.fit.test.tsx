@@ -129,6 +129,53 @@ describe("KnowledgeGraph2D — fit", () => {
   });
 });
 
+describe("KnowledgeGraph2D — the panel map's zoom and its auto-fit (PR #866 U4 review)", () => {
+  const panel = (nodes = NODES, edges = EDGES) => (
+    <KnowledgeGraph2D nodes={nodes} edges={edges} width={W} height={H} fit zoomControls={false} wheelZoom="pinch" />
+  );
+  const svg = () => screen.getByRole("img", { name: "Knowledge graph" });
+
+  it("a plain wheel (scrolling the panel) leaves the frame alone", () => {
+    const { container } = render(panel());
+    const framed = view(container);
+    fireEvent.wheel(svg(), { deltaY: 120, clientX: W / 2, clientY: H / 2 });
+    expect(view(container)).toEqual(framed);
+  });
+
+  it("a pinch zooms and the auto-fit lets it stand; a double-click re-frames", () => {
+    const { container } = render(panel());
+    const framed = view(container);
+    fireEvent.wheel(svg(), { deltaY: -120, ctrlKey: true, clientX: W / 2, clientY: H / 2 });
+    const zoomed = view(container);
+    expect(zoomed.scale).toBeGreaterThan(framed.scale);
+    fireEvent.doubleClick(svg());
+    expect(view(container)).toEqual(framed);
+  });
+
+  it("a new set of concepts is framed again after the student zoomed", () => {
+    const { container, rerender } = render(panel());
+    fireEvent.wheel(svg(), { deltaY: -120, ctrlKey: true, clientX: W / 2, clientY: H / 2 });
+    const zoomed = view(container);
+    const { nodes, edges } = course(4, true);
+    rerender(panel(nodes, edges));
+    expect(view(container)).not.toEqual(zoomed);
+    for (const b of drawn(container)) {
+      expect(b.left, b.caption).toBeGreaterThanOrEqual(0);
+      expect(b.right, b.caption).toBeLessThanOrEqual(W);
+    }
+  });
+
+  it("a graph with its zoom stack keeps the wheel and no double-click reset (the Tree)", () => {
+    const { container } = render(<KnowledgeGraph2D nodes={NODES} edges={EDGES} width={W} height={H} fit />);
+    const framed = view(container);
+    fireEvent.wheel(svg(), { deltaY: -120, clientX: W / 2, clientY: H / 2 });
+    const zoomed = view(container);
+    expect(zoomed.scale).toBeGreaterThan(framed.scale);
+    fireEvent.doubleClick(svg());
+    expect(view(container)).toEqual(zoomed);
+  });
+});
+
 describe("KnowledgeGraph2D — zoomControls", () => {
   it("draws the zoom stack unless asked not to", () => {
     const { rerender } = render(<KnowledgeGraph2D nodes={NODES} edges={EDGES} width={W} height={H} />);
