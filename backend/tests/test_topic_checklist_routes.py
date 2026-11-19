@@ -24,6 +24,7 @@ def client(monkeypatch, live_accounts):
     # **kwargs: the refresh also takes the route-entry learning-loop gate's answer
     monkeypatch.setattr(routes, "refresh_checklist", lambda *args, **kwargs: {"args": args})
     monkeypatch.setattr(routes, "set_reviewed", lambda *args: {"args": args})
+    monkeypatch.setattr(routes, "learning_loop_for_request", lambda user_id: False)
     app = FastAPI()
     app.include_router(routes.router, prefix="/api/topic-checklist")
     with TestClient(app) as http:
@@ -55,3 +56,22 @@ def test_owned_requests_preserve_scope(client, method, suffix, body, expected):
 def test_checked_requires_a_real_boolean(client, value):
     client.cookies.set("sapling_session", mint_session("u", secret="checklist-test-secret"))
     assert client.patch("/api/topic-checklist/u/courses/c/topics/key", json={"checked": value}).status_code == 422
+
+
+@pytest.mark.parametrize("gate", [True, False])
+def test_refresh_passes_the_route_entry_learning_loop_gate(client, monkeypatch, gate):
+    """#866 B2: the refresh takes the budgeted path only when the route-entry
+    gate is on for THIS student; off runs main's refresh."""
+    seen = {}
+
+    def refresh(*args, **kwargs):
+        seen.update(args=args, kwargs=kwargs)
+        return {"ok": True}
+
+    asked = []
+    monkeypatch.setattr(routes, "refresh_checklist", refresh)
+    monkeypatch.setattr(routes, "learning_loop_for_request", lambda uid: asked.append(uid) or gate)
+    client.cookies.set("sapling_session", mint_session("u", secret="checklist-test-secret"))
+    assert client.post("/api/topic-checklist/u/courses/c/refresh").status_code == 200
+    assert asked == ["u"]
+    assert seen == {"args": ("u", "c", None), "kwargs": {"learning_loop": gate}}
