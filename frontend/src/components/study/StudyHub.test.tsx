@@ -156,6 +156,23 @@ describe("StudyHub", () => {
     expect(screen.getByText("1 card")).toBeTruthy();
   });
 
+  it("draws the loop's reviews (the reviews slot) under the page header, before the exam tabs (U10)", async () => {
+    renderHub({ reviews: <div data-testid="reviews-slot">due</div> });
+    await waitFor(() => expect(screen.getByTestId("readiness-pct").textContent).toBe("47%"));
+    const slot = screen.getByTestId("reviews-slot");
+    const title = screen.getByRole("heading", { name: "Study" });
+    const firstTab = screen.getAllByRole("tab")[0];
+    expect(title.compareDocumentPosition(slot) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(slot.compareDocumentPosition(firstTab) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(slot.parentElement?.className).toContain("areaReviews");
+  });
+
+  it("keeps the reviews for a student with no course this term", async () => {
+    renderHub({ courses: [], reviews: <div data-testid="reviews-slot">due</div> });
+    expect(await screen.findByTestId("reviews-slot")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Study" })).toBeTruthy();
+  });
+
   it("offers Quiz in the Study tools unless hide_quiz hides it (#620)", async () => {
     renderHub();
     await waitFor(() => expect(screen.getByTestId("readiness-pct").textContent).toBe("47%"));

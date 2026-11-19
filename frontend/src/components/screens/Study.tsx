@@ -14,8 +14,9 @@
  * only as redirects so an open tab, a bookmark or a stale link still lands
  * somewhere real instead of on a hub that silently ignores the parameter.
  *
- * The learning loop's reviews (PKG-12; spec §11.3) sit above the hub while the
- * loop is on for the student: the "Due today" queue and the retention check.
+ * The learning loop's reviews (PKG-12; spec §11.3) sit under the hub's header
+ * (its `reviews` slot) while the loop is on for the student: the "Due today"
+ * queue and the retention check.
  * `?retention-course=<id>` (lib/RetentionDueContext's deep link, and the Study
  * nav item's retention-due dot) opens the retention check on that course, so a
  * retired `?mode=cards` link that carries one lands here, not on Flashcards.
@@ -108,25 +109,23 @@ export function Study() {
   if (redirectTo) return null;
 
   return (
-    <>
-      <LoopReviews courses={retentionCourses} retentionCourse={retentionCourse ?? ""} />
-      <StudyHub
-        courses={scopedCourses}
-        coursesReady={coursesReady}
-        semester={activeSemester}
-        semesterReady={semesterHydrated}
-        initialCourseId={searchParams.get("course")}
-        isMobile={isMobile}
-      />
-    </>
+    <StudyHub
+      courses={scopedCourses}
+      coursesReady={coursesReady}
+      semester={activeSemester}
+      semesterReady={semesterHydrated}
+      initialCourseId={searchParams.get("course")}
+      isMobile={isMobile}
+      reviews={<LoopReviews courses={retentionCourses} retentionCourse={retentionCourse ?? ""} />}
+    />
   );
 }
 
 /**
- * The learning loop's reviews above the hub: the due queue (every course) and
- * the retention check while the loop is on for the student, side by side on
- * the page's own grid (Study.module.css: the hub's side padding, so the two
- * cards share one left edge and one width). A failed status read is not an
+ * The learning loop's reviews under the hub's header: the due queue (every
+ * course) and the retention check while the loop is on for the student, side
+ * by side inside the hub's own padding (StudyHub's `reviews` slot spans both
+ * columns, so the two cards share the hub's edges). A failed status read is not an
  * inactive learning loop: the hub stays, with a retry so the student can
  * still reach due reviews.
  */

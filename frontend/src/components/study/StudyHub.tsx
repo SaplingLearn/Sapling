@@ -58,9 +58,13 @@ export interface StudyHubProps {
   isMobile: boolean;
   /** Test seam: a fixed "now". */
   today?: Date;
+  /** The learning loop's review cards (Study.tsx's LoopReviews), drawn under
+   *  the page header across both columns, so they sit below the title and the
+   *  course picker rather than above them. */
+  reviews?: React.ReactNode;
 }
 
-export function StudyHub({ courses, coursesReady = true, semester, semesterReady, initialCourseId, isMobile, today: todayProp }: StudyHubProps) {
+export function StudyHub({ courses, coursesReady = true, semester, semesterReady, initialCourseId, isMobile, today: todayProp, reviews }: StudyHubProps) {
   // hide_quiz (#620) hides Quiz everywhere it is offered:
   // shown only once the flags are in and it is not hidden.
   const { flags, ready: flagsReady } = useFlagMap();
@@ -84,23 +88,27 @@ export function StudyHub({ courses, coursesReady = true, semester, semesterReady
   // their concepts: without this it rendered the "Add a course" empty state,
   // then the chrome, then the roadmap, in three visible steps.
   if (!coursesReady || !semesterReady) return <StudyHubSkeleton isMobile={isMobile} />;
-  if (!course) return <NoCourses />;
+  if (!course) return <NoCourses reviews={reviews} />;
   if (!graph) return <StudyHubSkeleton isMobile={isMobile} />;
 
   return (
     <HubPage courses={courses} course={course} onPickCourse={pickCourse} userId={userId} today={today} isMobile={isMobile} quizShown={quizShown}
       graph={graph} cards={cards} records={records} outline={outline} outlineReady={outlineReady} reloadOutline={reloadOutline}
-      st={st} set={set} closeTileMenu={closeTileMenu} />
+      st={st} set={set} closeTileMenu={closeTileMenu} reviews={reviews} />
   );
 }
 
-/** A student with no course this term: what the hub would show once they add one. */
-function NoCourses() {
+/** A student with no course this term: what the hub would show once they add
+ *  one. Reviews due in earlier terms' courses still show, above it. */
+function NoCourses({ reviews }: { reviews?: React.ReactNode }) {
   return (
-    <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", background: "var(--bg)", fontFamily: SANS, color: "var(--text)", padding: 32 }}>
-      <div style={{ textAlign: "center", maxWidth: 420 }}>
-        <h1 className="h-serif" style={{ margin: 0, fontSize: 42, letterSpacing: "-0.02em" }}>Study</h1>
-        <p style={{ fontSize: "var(--fs-base)", color: "var(--text-dim)" }}>Add a course to get a study roadmap, readiness for each exam, and quick reviews.</p>
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", background: "var(--bg)", fontFamily: SANS, color: "var(--text)" }}>
+      {reviews && <div style={{ padding: "18px 24px 0" }}>{reviews}</div>}
+      <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: 32 }}>
+        <div style={{ textAlign: "center", maxWidth: 420 }}>
+          <h1 className="h-serif" style={{ margin: 0, fontSize: 42, letterSpacing: "-0.02em" }}>Study</h1>
+          <p style={{ fontSize: "var(--fs-base)", color: "var(--text-dim)" }}>Add a course to get a study roadmap, readiness for each exam, and quick reviews.</p>
+        </div>
       </div>
     </div>
   );
@@ -128,6 +136,7 @@ function HubPage(props: {
   st: HubState;
   set: SetHub;
   closeTileMenu: (conceptId: string) => void;
+  reviews?: React.ReactNode;
 }) {
   const { course, userId, today, isMobile, quizShown, records, st, set } = props;
   const cid = course.course_id;
@@ -165,6 +174,7 @@ function HubPage(props: {
       <div className={nav.leaving ? `${s.hub} ${s.leaving}` : s.hub} style={HUB}>
         <HubHeader courses={props.courses} courseId={cid} onPickCourse={props.onPickCourse} upcomingIn={upcomingIn}
           isMobile={isMobile} quizShown={quizShown} onTool={tool => nav.leaveTo(nav.toolHome(tool))} />
+        {props.reviews && <div className={s.areaReviews}>{props.reviews}</div>}
 
         <ExamTabs courseId={cid} courseLabel={view.label} exams={view.exams} exam={view.exam} upcoming={view.upcoming} soon={view.soon} today={today}
           bellOpen={st.menu === "bell"} onBell={open => set({ menu: open ? "bell" : null })}
