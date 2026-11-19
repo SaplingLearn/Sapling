@@ -531,3 +531,38 @@ describe("NC — Check me on concepts with no check question", () => {
     expect(await screen.findByText("Preparing practice questions from your upload…", { selector: "[role=status]" })).toBeTruthy();
   });
 });
+
+describe("A1/A2 — an answer whose check the server closed selects another check", () => {
+  const closedDetails = [
+    ["moved past", "This check was closed while your answer was graded. Select another check to continue.", /nothing was recorded/],
+    ["refused for good", "This answer could not be recorded. Select another check to continue.", /couldn't be recorded/],
+  ] as const;
+  it.each(closedDetails)("a 409 (%s) frees the box, says why and asks /check/next — no error toast", async (_why, detail, copy) => {
+    const next = { ...pose, question_hash: "qh8", prompt: "What does the stack hold?" };
+    api.nextLoopCheck.mockResolvedValueOnce({ phase: "check", check: pose }).mockResolvedValueOnce({ phase: "check", check: next });
+    api.streamLoopCheckAnswer.mockRejectedValue(new ApiError(JSON.stringify({ detail }), 409));
+    await resumedTeach();
+    fireEvent.click(await screen.findByTestId("loop-check-me"));
+    await screen.findByTestId("loop-check-prompt");
+    fireEvent.change(screen.getByTestId("loop-attempt-input"), { target: { value: "n == 0" } });
+    fireEvent.click(screen.getByTestId("loop-attempt-submit"));
+    await waitFor(() => expect(api.nextLoopCheck).toHaveBeenCalledTimes(2));
+    expect((await screen.findByTestId("loop-check-prompt")).textContent).toContain("What does the stack hold?");
+    expect(toast.info).toHaveBeenCalledWith(expect.stringMatching(copy));
+    expect(toast.error).not.toHaveBeenCalled();
+    expect(api.getLoopSessionStatus).toHaveBeenCalledTimes(1); // the resume read only: no reconcile
+  });
+
+  it("any other 409 on a submission still goes the old way", async () => {
+    api.nextLoopCheck.mockResolvedValue({ phase: "check", check: pose });
+    api.streamLoopCheckAnswer.mockRejectedValue(new ApiError(JSON.stringify({ detail: "already graded" }), 409));
+    await resumedTeach();
+    fireEvent.click(await screen.findByTestId("loop-check-me"));
+    await screen.findByTestId("loop-check-prompt");
+    fireEvent.change(screen.getByTestId("loop-attempt-input"), { target: { value: "n == 0" } });
+    fireEvent.click(screen.getByTestId("loop-attempt-submit"));
+    await waitFor(() => expect(api.getLoopSessionStatus).toHaveBeenCalledTimes(2)); // reconcile
+    expect(api.nextLoopCheck).toHaveBeenCalledTimes(1);
+    expect(toast.info).not.toHaveBeenCalled();
+  });
+});

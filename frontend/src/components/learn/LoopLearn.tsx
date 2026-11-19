@@ -155,6 +155,16 @@ const CLOSE_RETRY_COPY: Record<string, string> = {
 const SESSION_CLOSED_DETAIL = "this session is closed";
 /** routes/learn_loop.py `_ALREADY_GRADED`: the submission was graded (maybe by an earlier request). */
 const ALREADY_GRADED_DETAIL = "already graded";
+/** POST /check/answer(/stream) 409s (#866 A1/A2): the check this answer was for
+ *  is closed and nothing was recorded (a late grade found it moved past, or the
+ *  store refused the saved grade for good); the server's next step is another
+ *  check, so the client selects one (/check/next). */
+const CHECK_CLOSED_COPY: Record<string, string> = {
+  "This check was closed while your answer was graded. Select another check to continue.":
+    "That check closed while your answer was being graded, so nothing was recorded.",
+  "This answer could not be recorded. Select another check to continue.":
+    "Your answer to that check couldn't be recorded.",
+};
 /** setTimeout's ceiling (2^31 − 1 ms): a later reset time is never armed early. */
 const MAX_TIMER_MS = 2_147_483_647;
 
@@ -1216,9 +1226,11 @@ export function LoopLearn() {
   const failedTurn = useCallback((err: unknown, t: {
     submission: boolean; recover: boolean; sid: string | null; g: number; epoch: number;
     streamed: string; hardSeen: boolean; aborted: boolean; onPaused?: () => void; retryText?: string;
+    onCheckClosed?: () => void;
   }) => {
     const { status, detail } = extractErrorDetail(err);
     const closed = status === 409 && detail === SESSION_CLOSED_DETAIL; // reportError shows the close
+    const checkClosed = t.submission && status === 409 && !!detail && detail in CHECK_CLOSED_COPY;
     // ADR 0020: what streamed stays, marked interrupted; a chat message the tutor
     // never answered offers Retry (a pause gives it back through onPaused, a
     // close has nothing to retry), and after an error it is back in the composer.
@@ -1228,8 +1240,19 @@ export function LoopLearn() {
     // The grade lands BEFORE the feedback stream starts: a submission that did
     // not settle (409 already graded, a mid-stream error, Stop) re-reads the
     // session so the answer box never sticks on a graded item.
-    if (t.recover && t.sid && !closed) void reconcile(t.sid, t.g, t.epoch);
+    if (t.recover && t.sid && !closed && !checkClosed) void reconcile(t.sid, t.g, t.epoch);
     if (t.aborted) return;
+    if (checkClosed) {
+      // the item is gone server-side (current is null): free the box, say why,
+      // and let the caller select another check
+      setPendingGrade(null);
+      dispatch({ type: "check", item: null });
+      setAttempt(EMPTY_DRAFT);
+      setHint(null);
+      toast.info(CHECK_CLOSED_COPY[detail!]);
+      t.onCheckClosed?.();
+      return;
+    }
     // At the hard level the stream ends with no `done`: that is the pause, not an error.
     if (t.hardSeen) {
       t.onPaused?.();
@@ -1238,11 +1261,13 @@ export function LoopLearn() {
     if (t.submission && status === 409 && detail === ALREADY_GRADED_DETAIL) return;
     if (budgetPauseOf(err)) t.onPaused?.(); // a 429: reportError shows the pause banner
     reportError(err, "The tutor couldn't answer. Try again.");
-  }, [reconcile, reportError]);
+  }, [reconcile, reportError, toast]);
 
   const runTurn = useCallback(async (
     run: (h: StreamChatHandlers) => Promise<LoopTurnResult>,
-    { submission = false, onPaused, retryText }: { submission?: boolean; onPaused?: () => void; retryText?: string } = {},
+    { submission = false, onPaused, retryText, onCheckClosed }: {
+      submission?: boolean; onPaused?: () => void; retryText?: string; onCheckClosed?: () => void;
+    } = {},
   ): Promise<LoopTurnResult | null> => {
     // A hint may still be in flight when the learner submits: its previous
     // phase/question must never overwrite the newer turn. A chat turn waits for
@@ -1321,7 +1346,7 @@ export function LoopLearn() {
       if (!ownsTurn()) return null;
       failedTurn(err, {
         submission, recover: submission || feedbackStarted || recoveringFeedback, sid, g, epoch,
-        streamed, hardSeen, aborted: controller.signal.aborted, onPaused, retryText,
+        streamed, hardSeen, aborted: controller.signal.aborted, onPaused, retryText, onCheckClosed,
       });
       return null;
     } finally {
@@ -1385,12 +1410,14 @@ export function LoopLearn() {
         : attempt.answer;
     setMessages((prev) => [...prev, asMsg("user", shown)]);
     setAttemptBusy(true);
+    let checkClosed = false;
     const res = await runTurn(
       (h) => streamLoopCheckAnswer(sessionId, userId, item.question_hash, a, h),
-      { submission: true },
+      { submission: true, onCheckClosed: () => { checkClosed = true; } },
     );
     if (g === gen.current) setAttemptBusy(false);
     if (res?.graded) void refreshGraph();
+    if (checkClosed && g === gen.current) void checkMe({ afterClosedCheck: true });
   };
 
   /** Spec §13 A138: the guess at the segment's ungraded prequestion — or, once a
@@ -1457,13 +1484,15 @@ export function LoopLearn() {
     focusAfter.current = saved.kind === "check" ? "answered" : "probe-answer";
     if (saved.kind === "check") {
       setAttemptBusy(true);
+      let checkClosed = false;
       const result = await runTurn(
         (handlers) => streamLoopCheckAnswer(sid, userId, saved.question_hash, { idk: false }, handlers),
-        { submission: true },
+        { submission: true, onCheckClosed: () => { checkClosed = true; } },
       );
       if (g !== gen.current) return;
       setAttemptBusy(false);
       if (result?.graded) void refreshGraph();
+      if (checkClosed) void checkMe({ afterClosedCheck: true });
       return;
     }
     ++turnEpoch.current;
@@ -1585,8 +1614,11 @@ export function LoopLearn() {
     return true;
   };
 
-  const checkMe = async () => {
-    if (!sessionId || checkBusy || feedbackPending || starting || scopeLoading || pendingGrade) return;
+  /** "Check me" (/check/next). `afterClosedCheck`: the server just closed the
+   *  check an answer was for (CHECK_CLOSED_COPY), so a saved grade this render
+   *  still shows is already gone and does not hold the next check back. */
+  const checkMe = async ({ afterClosedCheck = false }: { afterClosedCheck?: boolean } = {}) => {
+    if (!sessionId || checkBusy || feedbackPending || starting || scopeLoading || (pendingGrade && !afterClosedCheck)) return;
     focusAfter.current = "check-me"; // a posed check, or a new plan, takes focus first
     const g = gen.current;
     const epoch = ++turnEpoch.current;
