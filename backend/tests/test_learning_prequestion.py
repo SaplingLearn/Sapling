@@ -425,6 +425,10 @@ def test_the_stored_answer_reads_back_owner_scoped_and_decrypted():
         assert t.select.call_args.kwargs["filters"] == {"user_id": "eq.u1", "session_id": "eq.s1", "node_id": "eq.n1"}
         t.select.return_value = [{"question_hash": "f1", "no_idea": True, "guess_json": None}]
         assert store.stored_answer("u1", "s1", "n1") == {"question_hash": "f1", "no_idea": True, "guess": None}
+        # #866 C8: a session delete erases the guess (guess_json NULL, text_erased_at
+        # set) but keeps no_idea false: read back as no guess, never a decrypt error
+        t.select.return_value = [{"question_hash": "e1", "no_idea": False, "guess_json": None}]
+        assert store.stored_answer("u1", "s1", "n1") == {"question_hash": "e1", "no_idea": False, "guess": None}
         t.select.return_value = []
         assert store.stored_answer("u1", "s1", "n1") is None
         t.select.side_effect = RuntimeError("down")
