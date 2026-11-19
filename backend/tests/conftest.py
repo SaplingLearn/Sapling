@@ -297,12 +297,16 @@ def _reset_degraded_mode_state():
     opens after a few failed embed calls — and many tests fail embed calls on
     purpose — so one test's failures would refuse the next test's calls; the
     evidence-slot guard warns once per (slot, model) per process, so a test
-    that flips a slot would silence the next test's warning."""
+    that flips a slot would silence the next test's warning. Each test starts
+    in the AFTER-BOOT state (the lifespan's check_slot_guards() has already
+    warned about the loop slots whose Claude defaults await their eval), as a
+    production request does — not with every default's first warning still
+    to come out of the test's first model_for()."""
     from agents._providers import reset_slot_guard_for_tests
     from services.rag_service import reset_embedding_breaker_for_tests
 
     reset_embedding_breaker_for_tests()
-    reset_slot_guard_for_tests()
+    reset_slot_guard_for_tests(after_boot=True)
     yield
     reset_embedding_breaker_for_tests()
     reset_slot_guard_for_tests()

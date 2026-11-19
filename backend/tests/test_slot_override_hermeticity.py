@@ -22,7 +22,7 @@ from agents._providers import LOOP_SLOTS_PENDING_CLAUDE_EVAL
 
 BACKEND = Path(__file__).resolve().parents[1]
 #: the owner's live-walkthrough shell: one override per learning-loop slot
-EXPORTED = {f"SAPLING_MODEL_{slot.upper()}": "claude-haiku-5-5" for slot in LOOP_SLOTS_PENDING_CLAUDE_EVAL}
+EXPORTED = {f"SAPLING_MODEL_{slot.upper()}": "gemini-2.5-flash-lite" for slot in LOOP_SLOTS_PENDING_CLAUDE_EVAL}
 #: each failed under the exports before the conftest clears
 PINNED = (
     # run time: asserts the grader's default provider, then sets its own override
@@ -32,7 +32,7 @@ PINNED = (
     # import time: the grader agent's generation bounds, fixed when it was built
     "tests/test_learning_grader_completeness.py::test_every_actual_model_request_keeps_generation_bounds",
     # import time: the decision agent's model and settings
-    "tests/test_learning_decisions.py::test_decision_slot_is_flash_lite_thinking_off_one_prompt",
+    "tests/test_learning_decisions.py::test_decision_slot_is_claude_haiku_one_prompt",
 )
 
 

@@ -599,10 +599,10 @@ def test_close_budget_band_is_novice_when_the_session_checked_a_novice_concept(m
     assert bands == ["novice", None]
 
 
-def test_session_close_task_registered_on_flash_lite():
+def test_session_close_task_registered_on_claude_haiku():
     from agents._providers import _DEFAULTS
 
-    assert _DEFAULTS["session_close"] == "gemini-2.5-flash-lite"
+    assert _DEFAULTS["session_close"] == "claude-haiku-5-5"
 
 
 def test_session_close_has_one_prompt_and_no_tools():

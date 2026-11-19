@@ -922,21 +922,32 @@ def slot_events(monkeypatch):
     return seen
 
 
-def test_the_defaults_are_evaluated_and_independent(slot_events):
+def test_the_defaults_are_evaluated_or_pending_and_always_independent(slot_events):
+    """Every default is either evaluated or a loop slot awaiting its Claude eval
+    (owner decision 2026-11-19: everything runs on Claude now); the boot check
+    reports exactly the pending ones, and no default breaks A22/A124."""
     from agents import _providers as p
 
     for task in p.EVIDENCE_SLOTS:
-        assert p._DEFAULTS[task] in p.EVALUATED_MODELS[task], task
         if task in p.LOOP_SLOTS_PENDING_CLAUDE_EVAL:
+            assert p._DEFAULTS[task] not in p.EVALUATED_MODELS[task], task
             assert not any(m.startswith("claude-") for m in p.EVALUATED_MODELS[task]), task
+        else:
+            assert p._DEFAULTS[task] in p.EVALUATED_MODELS[task], task
     assert set(p.EVALUATED_MODELS) == set(p.EVIDENCE_SLOTS)
-    assert p.check_slot_guards() == [] and slot_events == []
+    assert p.slot_independence_violations() == []
+    warnings = p.check_slot_guards()
+    assert {(w["kind"], w["slot"], w["reason"]) for w in warnings} == {
+        ("unevaluated", t, "pending_claude_eval") for t in p.LOOP_SLOTS_PENDING_CLAUDE_EVAL
+    }
+    # the defaults were warned about at boot (the after-boot test state): no repeat
+    assert slot_events == []
 
 
 @pytest.mark.parametrize(
     "slot,model,reason",
     [
-        ("grader", "claude-haiku-5-5", "pending_claude_eval"),  # A111: pending on claude-*
+        ("grader", "claude-sonnet-5-5", "pending_claude_eval"),  # A111: pending on claude-*
         ("loop_tutor_deep", "claude-opus-5-5", "pending_claude_eval"),
         ("grader", "gemini-2.5-pro", "not_evaluated"),  # a Gemini model it was not recorded on
         ("check_items_solve", "claude-sonnet-5-5", "not_evaluated"),
@@ -984,11 +995,12 @@ def test_resolving_a_flipped_slot_warns_with_no_boot_check(slot_events, monkeypa
 def test_the_guard_never_blocks_and_ignores_non_evidence_slots(slot_events, monkeypatch):
     from agents import _providers as p
 
-    monkeypatch.setenv("SAPLING_MODEL_GRADER", "claude-haiku-5-5")
+    monkeypatch.setenv("SAPLING_MODEL_GRADER", "gemini-2.5-pro")
     monkeypatch.setenv("SAPLING_MODEL_QUIZ", "gemini-2.5-flash")  # not an evidence slot
     assert p.model_for("grader") is not None  # the model is still built and served
     assert p.unevaluated_reason("quiz", "gemini-2.5-flash") is None
-    assert [w["slot"] for w in p.unevaluated_slots()] == ["grader"]
+    slots = {w["slot"]: w["reason"] for w in p.unevaluated_slots()}
+    assert slots["grader"] == "not_evaluated" and "quiz" not in slots
 
 
 def test_a_qualified_model_name_is_judged_by_its_bare_name(slot_events, monkeypatch):
@@ -1009,8 +1021,8 @@ def test_function_mode_has_no_slot_warnings(monkeypatch):
 @pytest.mark.parametrize(
     "env,slot,partner",
     [
-        ({"SAPLING_MODEL_GRADER_SECOND": "gemini-2.5-flash-lite"}, "grader_second", "grader"),
-        ({"SAPLING_MODEL_GRADER": "gemini-2.5-flash"}, "grader_second", "grader"),
+        ({"SAPLING_MODEL_GRADER_SECOND": "claude-haiku-5-5"}, "grader_second", "grader"),
+        ({"SAPLING_MODEL_GRADER": "claude-sonnet-5-5"}, "grader_second", "grader"),
         ({"SAPLING_MODEL_CHECK_ITEMS": "claude-haiku-5-5"}, "check_items_solve", "check_items"),
     ],
 )

@@ -281,7 +281,7 @@ def test_grade_returns_all_yes_and_records_usage(monkeypatch):
         res = asyncio.run(g.grade(_item(), format="free", student_answer="x", deps=_deps()))
     assert res.unavailable is False and res.all_yes is True
     assert res.item_results == {"r1": True, "r2": True}
-    assert res.low_confidence is False and res.backend == "gemini"
+    assert res.low_confidence is False and res.backend == "claude"
     assert calls["n"] == 1 and calls["spans"] == 1  # the credit's span check (round a33)
     # PKG-14b (A92): every grader run records its session (deps.session_id),
     # and A137 its course (deps.course_id: a post-test grade has no session).
@@ -314,7 +314,7 @@ def test_grade_flags_low_confidence(monkeypatch):
     with g.grader_agent.override(model=model):
         res = asyncio.run(g.grade(_item(), format="free", student_answer="x", deps=_deps()))
     assert res.low_confidence is True and res.all_yes is False
-    assert res.matched_wrong_key == "w_loop" and res.backend == "gemini"
+    assert res.matched_wrong_key == "w_loop" and res.backend == "claude"
 
 
 def test_grade_drops_a_wrong_key_the_item_does_not_list(monkeypatch):
@@ -344,7 +344,7 @@ def test_grade_second_opinion_then_unavailable(monkeypatch):
 
 def test_grade_second_opinion_runs_on_grader_second_slot(monkeypatch):
     """A22: the second call is the SAME agent and message on another model,
-    thinking off, with its own usage row; its verdict is marked gemini_second."""
+    with its own usage row and settings; its verdict is marked claude_second."""
     import agents.grader as g
 
     seen = []
@@ -364,10 +364,10 @@ def test_grade_second_opinion_runs_on_grader_second_slot(monkeypatch):
     (first_msg, first_kw), (second_msg, second_kw) = seen
     assert first_msg == second_msg and "model" not in first_kw
     assert second_kw["model"] == f"model:{GRADER_SECOND_OPINION_SLOT}"
-    assert second_kw["model_settings"] == g._SECOND_OPINION_SETTINGS
+    assert second_kw["model_settings"] == g._second_opinion_settings()
     assert first_kw["usage_limits"] is GRADER_LIMITS and second_kw["usage_limits"] is GRADER_LIMITS
     assert tasks == ["grader", GRADER_SECOND_OPINION_SLOT]
-    assert res.unavailable is False and res.backend == "gemini_second" and res.confidence == 0.9
+    assert res.unavailable is False and res.backend == "claude_second" and res.confidence == 0.9
 
 
 def test_second_opinion_settings_pin_thinking_off():
@@ -672,7 +672,7 @@ def test_e2e_grader_handler_all_yes_on_token(_clean_registry, monkeypatch):
         no = asyncio.run(g.grade(_item(), format="free", student_answer="a loop", deps=_deps()))
     assert yes.all_yes is True and yes.item_results == {"r1": True, "r2": True}
     assert yes.feedback_hint == E2E_GRADER_HINT and yes.low_confidence is False
-    assert yes.backend == "gemini" and yes.matched_wrong_key == ""
+    assert yes.backend == "claude" and yes.matched_wrong_key == ""
     assert no.unavailable is False and no.item_results == {"r1": False, "r2": False}
 
 

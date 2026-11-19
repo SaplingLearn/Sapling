@@ -23,8 +23,8 @@ StaleJudgementError when the served text, the judge prompt (instructions, item,
 or output schema) or the judge model differs from what was recorded, and
 MissingJudgementError when no cassette exists — a stale judgement never scores.
 
-Model: RUNG_JUDGE_MODEL (env override; default gemini-2.5-pro), low thinking
-budget. Record with SAPLING_EVAL_MODE=record and SAPLING_MODEL_MODE unset.
+Model: RUNG_JUDGE_MODEL (env override; default claude-opus-5-5, see _judge_model.py), low
+effort. Record with SAPLING_EVAL_MODE=record and SAPLING_MODEL_MODE unset.
 """
 
 from __future__ import annotations
@@ -44,6 +44,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from pydantic import BaseModel, Field  # noqa: E402
 
+from _judge_model import DEFAULT_JUDGE_MODEL, judge_model_and_settings  # noqa: E402
 from _replay import CASSETTE_DIR, _is_transient, _safe_filename  # noqa: E402
 from learning.ladder import RUNG_INTENT, Rung  # noqa: E402
 
@@ -55,7 +56,7 @@ def _model_name(raw: str) -> str:
     return raw.split(":", 1)[1] if ":" in raw else raw
 
 
-RUNG_JUDGE_MODEL = _model_name(os.getenv("RUNG_JUDGE_MODEL", "gemini-2.5-pro"))
+RUNG_JUDGE_MODEL = _model_name(os.getenv("RUNG_JUDGE_MODEL", DEFAULT_JUDGE_MODEL))
 #: Pro cannot run with thinking off; keep it small — the task is classification.
 RUNG_JUDGE_THINKING_BUDGET = 512
 RUNG_JUDGE_MAX_TOKENS = RUNG_JUDGE_THINKING_BUDGET + 512
@@ -272,15 +273,10 @@ def _judge_agent():
 
 
 async def _call_model(served_text: str, item: JudgeItem) -> RungJudgement:
-    from google.genai.types import ThinkingConfig
-    from pydantic_ai.models.google import GoogleModelSettings
-
-    from agents._providers import google_model  # the bare-name shim; no task slot
-
-    settings = GoogleModelSettings(
-        google_thinking_config=ThinkingConfig(thinking_budget=RUNG_JUDGE_THINKING_BUDGET),
+    model, settings = judge_model_and_settings(
+        RUNG_JUDGE_MODEL,
+        thinking_budget=RUNG_JUDGE_THINKING_BUDGET,
         max_tokens=RUNG_JUDGE_MAX_TOKENS,
-        temperature=0.0,
     )
     agent = _judge_agent()
     message = build_judge_message(served_text, item)
@@ -289,7 +285,7 @@ async def _call_model(served_text: str, item: JudgeItem) -> RungJudgement:
         try:
             result = await agent.run(
                 message,
-                model=google_model(RUNG_JUDGE_MODEL),
+                model=model,
                 model_settings=settings,
                 instructions=JUDGE_INSTRUCTIONS,
             )

@@ -1646,7 +1646,7 @@ def test_support_lane_parse_is_the_spec_7_post_launch_parse():
     assert 'export const killSwitchLane = ["false", "0", "off", "no"].includes(' in src
     assert '(process.env.LEARNING_LOOP_ENABLED ?? "").trim().toLowerCase()' in src
     fixtures = (pathlib.Path(__file__).resolve().parents[2] / "frontend/e2e/support/fixtures.ts").read_text()
-    assert 'export { killSwitchLane } from "./lane";' in fixtures
+    assert 'export { killSwitchLane, loopOffLane } from "./lane";' in fixtures
 
 # ── Typed decision seam / tutor router (#640, ADR 0027) ───────────────────
 #

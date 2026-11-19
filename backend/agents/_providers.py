@@ -132,23 +132,28 @@ _DEFAULTS: dict[AgentTask, str] = {
     # when Jev is unavailable.
     "decision": "claude-haiku-5-5",
     # ── Learning loop slots (spec §2/§3.5) ──────────────────────────────
-    # These stay on Gemini until the loop's own Claude eval pass: their
-    # per-run settings are Gemini-shaped (thinking budgets, the Flex tier on
-    # check_items) and their quality gates (grader agreement, served-turn
-    # ceiling compliance, no-reveal) were recorded on Gemini. ADR 0030's
-    # provider inference keeps them working unchanged; moving a slot is a
-    # default change plus an `_ANTHROPIC_EFFORT` entry once measured.
+    # On Claude by owner decision (2026-11-19, "everything runs on Claude for
+    # now"), mapped by ADR 0030's rule: former Flash-Lite slots → Haiku at
+    # `low`, former Flash → Haiku at `medium`, Pro → Sonnet at `low`. Their
+    # quality gates (grader agreement, served-turn ceiling compliance,
+    # no-reveal, check-item validity) were recorded on Gemini and are NOT yet
+    # re-recorded on Claude, so every one stays in
+    # `LOOP_SLOTS_PENDING_CLAUDE_EVAL` and the evidence-slot guard warns at
+    # boot until its A111 eval pass lands. The per-run settings already pick
+    # the Claude shape by provider (`settings_for_slot`).
     #
     # Ingest-time check-item drafting (PKG-04): single-shot structured
     # generation off the request path; SAPLING_MODEL_CHECK_ITEMS overrides.
-    "check_items": "gemini-2.5-flash-lite",
+    # On Sonnet, not Haiku: the items ARE the assessment, and the drafter must
+    # stay off the Haiku that its A119/A124 checks were accepted on.
+    "check_items": "claude-sonnet-5-5",
     # The drafted items' alignment check (spec §13 A119): per item, does the
     # question ask for each rubric criterion, and which listed concept does it
     # test. On Claude from the start, and NOT pending: the pending set guards
     # quality gates recorded on Gemini, and this slot was born after ADR 0030
     # with no gate on either provider — its baseline is recorded on Claude.
-    # A different model family from the check_items default, so the check is
-    # not the drafter grading itself.
+    # A different model from the check_items drafter (Sonnet since the
+    # 2026-11-19 Claude move), so the check is not the drafter grading itself.
     "check_items_verify": "claude-haiku-5-5",
     # The drafted items' key check (spec §13 A124): a blind independent solve
     # of each item (agents/check_items_solve.py) and, for a free-text pair code
@@ -160,8 +165,9 @@ _DEFAULTS: dict[AgentTask, str] = {
     # gemini-2.5-flash-lite drafter, or a correlated solver would agree with
     # its own family's mistakes and a wrong key would pass as "verified". A
     # Gemini default would have to join the pending set with nothing pending.
-    # When check_items moves to a claude-* model (A111's runbook), move this
-    # slot off that model too, for the same reason.
+    # When check_items moved to Claude (2026-11-19) it went to Sonnet, NOT
+    # this slot's Haiku, so the solve stays on the model it was accepted on
+    # and still comes from a different model (INDEPENDENT_SLOTS enforces it).
     "check_items_solve": "claude-haiku-5-5",
     # The quiz's item gates (spec §13 A145): the A119 concept check, the A124
     # blind solve and the key match, run by their own agents on generated quiz
@@ -176,21 +182,21 @@ _DEFAULTS: dict[AgentTask, str] = {
     # gates" section).
     "quiz_check": "claude-sonnet-5-5",
     # The rubric grader (PKG-05): short per-item binary judgments (spec §2).
-    "grader": "gemini-2.5-flash-lite",
+    "grader": "claude-haiku-5-5",
     # One second opinion on a DIFFERENT model, same agent and prompt (spec
-    # §3.5, A22); thinking is pinned off per run in agents/grader.py.
-    "grader_second": "gemini-2.5-flash",
+    # §3.5, A22): the grader is on Haiku, so the second opinion is Sonnet.
+    "grader_second": "claude-sonnet-5-5",
     # The loop's own closed judgments (ADR 0032), separate from the
     # observe-only `decision` seam above.
-    "learning_decision": "gemini-2.5-flash-lite",
+    "learning_decision": "claude-haiku-5-5",
     # Loop tutor tier slots (PKG-07, spec §3.5, A15): ONE loop_tutor_agent;
     # services/loop/ picks the slot per run from learning.policy.model_tier
     # and never reads model_pref, so these defaults ARE the routing.
-    "loop_tutor_lite": "gemini-2.5-flash-lite",
-    "loop_tutor": "gemini-2.5-flash",
-    "loop_tutor_deep": "gemini-2.5-pro",
+    "loop_tutor_lite": "claude-haiku-5-5",
+    "loop_tutor": "claude-haiku-5-5",
+    "loop_tutor_deep": "claude-sonnet-5-5",
     # Session close (PKG-09): single-shot, tool-less, structured.
-    "session_close": "gemini-2.5-flash-lite",
+    "session_close": "claude-haiku-5-5",
 }
 
 
@@ -382,10 +388,10 @@ _ANTHROPIC_EFFORT: dict[AgentTask, Literal["low", "medium", "high"]] = {
     "concept_prune": "medium",
     "ocr_vision": "medium",
     "decision": "low",
-    # Learning-loop slots. They default to Gemini until their Claude eval pass
-    # (`LOOP_SLOTS_PENDING_CLAUDE_EVAL` below); these are the levels an env flip
-    # to a claude-* model runs at, chosen by ADR 0030's mapping: the slots that
-    # ran on Flash-Lite (no thinking) → `low`, full Flash → `medium`, Pro → `high`.
+    # Learning-loop slots, on Claude since 2026-11-19 with their Claude eval
+    # pass still pending (`LOOP_SLOTS_PENDING_CLAUDE_EVAL` below); levels by
+    # ADR 0030's mapping: the slots that ran on Flash-Lite (no thinking) →
+    # `low`, full Flash → `medium`, Pro (now Sonnet) → `low`.
     # check_items authors the assessment items themselves, so it takes the
     # quality-side level despite its Flash-Lite origin.
     "check_items": "medium",
@@ -401,21 +407,26 @@ _ANTHROPIC_EFFORT: dict[AgentTask, Literal["low", "medium", "high"]] = {
     # billed at $10/MTok. Measured with the live smoke before the flag is on.
     "quiz_check": "low",
     "grader": "low",
-    "grader_second": "medium",
+    # Sonnet (independence from the Haiku grader, A22) at its lowest effort:
+    # a short binary judgment, and Sonnet's thinking bills at $10/MTok.
+    "grader_second": "low",
     "learning_decision": "low",
     "loop_tutor_lite": "low",
     "loop_tutor": "medium",
-    "loop_tutor_deep": "high",
+    # Pro → Sonnet at `low` (ADR 0030's tutor mapping).
+    "loop_tutor_deep": "low",
     "session_close": "low",
 }
 
-#: Learning-loop slots that still DEFAULT to Gemini (ADR 0030's one sanctioned
-#: exception, pinned by tests/test_anthropic_provider.py). Their quality gates —
-#: grader rubric agreement, served-turn ceiling compliance and no-reveal, check-
-#: item validity — were recorded on Gemini, and a grader verdict is learning
-#: evidence: no default moves to Claude before its eval dataset is re-recorded
-#: live against Claude and passes its baselines. Remove a slot from this set in
-#: the same change that flips its `_DEFAULTS` entry.
+#: Learning-loop slots that DEFAULT to Claude (owner decision 2026-11-19) but
+#: whose Claude eval pass (A111) has not run yet. Their quality gates — grader
+#: rubric agreement, served-turn ceiling compliance and no-reveal, check-item
+#: validity — were recorded on Gemini, and a grader verdict is learning
+#: evidence, so the evidence-slot guard reports each one as
+#: `pending_claude_eval` (a warning, never a block) until its dataset is
+#: re-recorded live against Claude and passes its baselines. Remove a slot
+#: from this set in the same change that adds its Claude model to
+#: `EVALUATED_MODELS`.
 LOOP_SLOTS_PENDING_CLAUDE_EVAL: frozenset[AgentTask] = frozenset({
     "check_items", "grader", "grader_second", "learning_decision",
     "loop_tutor_lite", "loop_tutor", "loop_tutor_deep", "session_close",
@@ -1664,11 +1675,20 @@ def check_slot_guards() -> list[dict]:
         return []
 
 
-def reset_slot_guard_for_tests() -> None:
-    """Test-only: forget which slots were already warned about."""
+def reset_slot_guard_for_tests(*, after_boot: bool = False) -> None:
+    """Test-only: forget which slots were already warned about. With
+    `after_boot`, start from the state production reaches once the lifespan's
+    `check_slot_guards()` has run: every evidence slot whose DEFAULT is
+    unevaluated (the loop slots pending their Claude eval) is already warned,
+    so only a slot a test flips to another unevaluated model warns again."""
     with _slot_guard_lock:
         _slot_warned.clear()
         _independence_warned.clear()
+        if after_boot:
+            for task in EVIDENCE_SLOTS:
+                bare = _bare_model_name(_DEFAULTS[task])
+                if unevaluated_reason(task, bare) is not None:
+                    _slot_warned.add((task, bare))
 
 
 def model_for(task: AgentTask) -> "Model":

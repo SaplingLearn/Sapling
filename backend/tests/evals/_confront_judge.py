@@ -30,6 +30,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from pydantic import BaseModel, Field  # noqa: E402
 
+from _judge_model import DEFAULT_JUDGE_MODEL, judge_model_and_settings  # noqa: E402
 from _replay import CASSETTE_DIR, _is_transient, _safe_filename  # noqa: E402
 from _rung_judge import MissingJudgementError, StaleJudgementError  # noqa: E402
 
@@ -40,7 +41,7 @@ def _model_name(raw: str) -> str:
     return raw.split(":", 1)[1] if ":" in raw else raw
 
 
-CONFRONT_JUDGE_MODEL = _model_name(os.getenv("CONFRONT_JUDGE_MODEL", "gemini-2.5-pro"))
+CONFRONT_JUDGE_MODEL = _model_name(os.getenv("CONFRONT_JUDGE_MODEL", DEFAULT_JUDGE_MODEL))
 CONFRONT_JUDGE_THINKING_BUDGET = 512
 CONFRONT_JUDGE_MAX_TOKENS = CONFRONT_JUDGE_THINKING_BUDGET + 512
 EVIDENCE_MAX_CHARS = 200
@@ -181,15 +182,10 @@ def _judge_agent():
 
 
 async def _call_model(served_text: str, case: ConfrontCase) -> ConfrontJudgement:
-    from google.genai.types import ThinkingConfig
-    from pydantic_ai.models.google import GoogleModelSettings
-
-    from agents._providers import google_model
-
-    settings = GoogleModelSettings(
-        google_thinking_config=ThinkingConfig(thinking_budget=CONFRONT_JUDGE_THINKING_BUDGET),
+    model, settings = judge_model_and_settings(
+        CONFRONT_JUDGE_MODEL,
+        thinking_budget=CONFRONT_JUDGE_THINKING_BUDGET,
         max_tokens=CONFRONT_JUDGE_MAX_TOKENS,
-        temperature=0.0,
     )
     message = build_judge_message(served_text, case)
     last_exc: Exception | None = None
@@ -197,7 +193,7 @@ async def _call_model(served_text: str, case: ConfrontCase) -> ConfrontJudgement
         try:
             result = await _judge_agent().run(
                 message,
-                model=google_model(CONFRONT_JUDGE_MODEL),
+                model=model,
                 model_settings=settings,
                 instructions=JUDGE_INSTRUCTIONS,
             )

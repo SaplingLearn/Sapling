@@ -106,7 +106,7 @@ def _made(events) -> list[tuple[str, str]]:
 @pytest.mark.parametrize(
     "grader,second,labels",
     [
-        (None, None, ("gemini", "gemini_second")),  # the defaults, pending the Claude eval (A111)
+        (None, None, ("claude", "claude_second")),  # the Claude defaults (Claude eval pending, A111)
         (GEMINI, GEMINI_2, ("gemini", "gemini_second")),
         (CLAUDE, CLAUDE_2, ("claude", "claude_second")),
         (CLAUDE, GEMINI_2, ("claude", "gemini_second")),
@@ -141,7 +141,7 @@ def test_every_provider_has_a_label():
     [
         (CLAUDE, CLAUDE_2, "claude", "claude_second"),
         (GEMINI, GEMINI_2, "gemini", "gemini_second"),
-        (None, None, "gemini", "gemini_second"),
+        (None, None, "claude", "claude_second"),
         # each verdict names the slot ITS run used, never the other one
         (CLAUDE, GEMINI_2, "claude", "gemini_second"),
         (GEMINI, CLAUDE_2, "gemini", "claude_second"),
@@ -231,7 +231,7 @@ def test_the_numeric_gate_stays_deterministic_under_a_claude_grader(monkeypatch,
     assert ("numeric_gate", "deterministic") in _made(events)
 
 
-@pytest.mark.parametrize("grader,label", [(None, "gemini"), (CLAUDE, "claude")])
+@pytest.mark.parametrize("grader,label", [(None, "claude"), (GEMINI, "gemini"), (CLAUDE, "claude")])
 def test_function_mode_records_the_slot_it_stands_in_for(monkeypatch, scripted, events, grader, label):
     """The E2E lanes (SAPLING_MODEL_MODE=function): a FunctionModel answers, so the
     seam's verdict says `function`; the evidence names the provider of the slot the
@@ -244,7 +244,7 @@ def test_function_mode_records_the_slot_it_stands_in_for(monkeypatch, scripted, 
     assert _made(events) == [("grade_rubric_items", "function"), ("match_wrong_reason", label)]
 
 
-@pytest.mark.parametrize("model,label", [(None, "gemini"), (GEMINI, "gemini"), (CLAUDE, "claude")])
+@pytest.mark.parametrize("model,label", [(None, "claude"), (GEMINI, "gemini"), (CLAUDE, "claude")])
 def test_the_decision_agents_verdicts_name_its_slots_provider(monkeypatch, scripted, events, model, label):
     """The same rule for the seam's other model answers (spec §13 A116): a
     learning_decision run names the provider its slot serves on, while the

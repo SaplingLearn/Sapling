@@ -1349,7 +1349,12 @@ class TestSlotAndAgents:
         assert _DEFAULTS["check_items_solve"] == model_name_for("check_items_solve") == "claude-haiku-5-5"
         assert "check_items_solve" not in LOOP_SLOTS_PENDING_CLAUDE_EVAL
         assert _ANTHROPIC_EFFORT["check_items_solve"] == "medium"
-        assert slot_provider("check_items_solve") != slot_provider("check_items")
+        # Everything runs on Claude (2026-11-19), so the drafter and the solve
+        # share a provider; independence is a different MODEL (Sonnet drafts,
+        # Haiku solves), the A145 quiz-gate precedent, and INDEPENDENT_SLOTS
+        # enforces it at boot.
+        assert slot_provider("check_items_solve") == slot_provider("check_items") == "anthropic"
+        assert model_name_for("check_items_solve") != model_name_for("check_items")
 
     @pytest.mark.parametrize("which", ["solve", "match"])
     def test_a_run_is_billed_to_the_slot_and_never_raises(self, monkeypatch, which):

@@ -89,13 +89,15 @@ def _function_lane(monkeypatch):
 # ── Task 2: decision agent, slot, function handler ─────────────────────────
 
 
-def test_decision_slot_is_flash_lite_thinking_off_one_prompt(monkeypatch):
+def test_decision_slot_is_claude_haiku_one_prompt(monkeypatch):
     from agents import learning_decision as d
     from agents._providers import _DEFAULTS, model_name_for
 
     monkeypatch.delenv("SAPLING_MODEL_LEARNING_DECISION", raising=False)
-    assert _DEFAULTS["learning_decision"] == model_name_for("learning_decision") == "gemini-2.5-flash-lite"
-    assert d.learning_decision_agent.model_settings["google_thinking_config"].thinking_budget == 0
+    assert _DEFAULTS["learning_decision"] == model_name_for("learning_decision") == "claude-haiku-5-5"
+    # Claude 5.x takes no thinking budget: the agent carries no Gemini knobs
+    # (the slot's `low` effort rides the model's settings, ADR 0030).
+    assert not any(str(k).startswith("google_") for k in (d.learning_decision_agent.model_settings or {}))
     src = (BACKEND / "agents" / "learning_decision.py").read_text()
     assert src.count("_SYSTEM_PROMPT = ") == 1 and len(re.findall(r"\bAgent[\[(]", src)) == 1
     text = d.build_decision_message(
@@ -464,7 +466,7 @@ def test_yes_no_decisions_map_answers(seam, answer, leak_value, answerable_value
             asyncio.run(seam.item_answerable(ok, deps=_deps())),
         ]
     for v, value in zip(verdicts, (leak_value, answerable_value)):
-        assert v.value is value and v.backend == "gemini"
+        assert v.value is value and v.backend == "claude"
         assert v.p_yes == pytest.approx(seam.P_YES_UNCLEAR if p_yes is None else p_yes)
     assert "HINT RUNG:\n> H1" in calls["prompts"][0] and "PASSAGE 1:" in calls["prompts"][1]
 
@@ -1255,7 +1257,7 @@ def test_gold_volume_gate_counts_each_decision_separately(ev):
 def test_grade_answer_through_the_seam_on_the_e2e_lane(_function_lane, events):
     """The E2E lane end to end (PKG-07's /check/answer will run exactly this): function
     mode serves the grader from the env module's handler THROUGH the seam — backend
-    `function` on the event, `gemini` on the evidence (the Gemini slot it stands in for)."""
+    `function` on the event, `claude` on the evidence (the Claude slot it stands in for)."""
     import agents.grader as g
     import agents.tools.check as c
     from agents._providers import model_for
@@ -1265,12 +1267,12 @@ def test_grade_answer_through_the_seam_on_the_e2e_lane(_function_lane, events):
     answer = _pkg05("_answer", answer_text=f"{E2E_GRADER_CORRECT_TOKEN}: it stops the calls")
     with g.grader_agent.override(model=model_for("grader")):
         out = asyncio.run(c.grade_answer(_pkg05("_item"), answer, deps=deps, node_id=NODE))
-    assert (out.unavailable, out.correct, out.grader_backend) == (False, True, "gemini")
-    assert deps.pending_evidence[-1]["grader_backend"] == "gemini"
+    assert (out.unavailable, out.correct, out.grader_backend) == (False, True, "claude")
+    assert deps.pending_evidence[-1]["grader_backend"] == "claude"
     # PKG-10: the wrong-key match rides the grader's result (`prior`): no run of its own.
     assert [(et, kw["payload"]["decision"], kw["payload"]["backend"]) for et, kw in events] == [
         ("decision.made", "grade_rubric_items", "function"),
-        ("decision.made", "match_wrong_reason", "gemini"),  # the prior's provenance
+        ("decision.made", "match_wrong_reason", "claude"),  # the prior's provenance
     ]
     assert events[1][1]["payload"]["latency_ms"] == 0
     assert (events[0][1]["payload"]["prior"], events[1][1]["payload"]["prior"]) == (False, True)

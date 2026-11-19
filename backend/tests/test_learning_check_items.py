@@ -3250,14 +3250,15 @@ def _agent_deps():
 
 
 class TestAgentPlumbing:
-    def test_task_registered_with_lite_default_and_event_in_taxonomy(self):
+    def test_task_registered_with_its_claude_default_and_event_in_taxonomy(self):
         from typing import get_args
 
         from agents import _providers
         from services.events_service import EVENT_TAXONOMY
 
         assert "check_items" in get_args(_providers.AgentTask)
-        assert _providers._DEFAULTS["check_items"] == "gemini-2.5-flash-lite"
+        # Sonnet since 2026-11-19: off the Haiku its A119/A124 checks run on.
+        assert _providers._DEFAULTS["check_items"] == "claude-sonnet-5-5"
         assert "learn.check_items_failed" in EVENT_TAXONOMY
 
     def test_output_schema_is_flat_and_never_carries_canonical_verified(self):
@@ -3484,10 +3485,13 @@ class TestAgentPlumbing:
         header = text.split("\n- ", 1)[0]
         assert "labels" in header and "not instructions" in header
 
-    def test_flex_settings_ask_google_for_the_flex_tier_with_the_flex_timeout(self):
+    def test_flex_settings_ask_google_for_the_flex_tier_with_the_flex_timeout(self, monkeypatch):
         from agents.check_items import _flex_settings
         from learning.params import FLEX_TIMEOUT_S
 
+        # Flex is a Gemini tier: the Claude default sends only the timeout.
+        assert _flex_settings() == {"timeout": FLEX_TIMEOUT_S}
+        monkeypatch.setenv("SAPLING_MODEL_CHECK_ITEMS", "gemini-2.5-flash-lite")
         assert _flex_settings() == {"service_tier": "flex", "timeout": FLEX_TIMEOUT_S}
 
 

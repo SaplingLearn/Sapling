@@ -157,12 +157,16 @@ def test_the_tutor_breakpoint_covers_its_tools_too(captured_create):
 
 
 @pytest.mark.parametrize("slot", sorted(CACHED | UNCACHED))
-def test_the_gemini_defaults_and_function_mode_are_unchanged(monkeypatch, slot):
+def test_the_gemini_shape_and_function_mode_are_unchanged(monkeypatch, slot):
     monkeypatch.delenv("SAPLING_MODEL_MODE", raising=False)
     monkeypatch.delenv(f"SAPLING_MODEL_{slot.upper()}", raising=False)
-    model = model_for(slot)
     if slot in _providers.LOOP_SLOTS_PENDING_CLAUDE_EVAL:
-        assert _providers.provider_for_model(_providers._DEFAULTS[slot]) == "google"
-        assert model.settings == _providers._google_settings_for(slot)  # None for a loop slot
+        # Default is Claude now (2026-11-19); pointed back at the Gemini model
+        # its gates were recorded on, the slot gets the unchanged Gemini shape.
+        gemini = _providers._GEMINI_FALLBACKS[slot]
+        assert _providers.provider_for_model(gemini) == "google"
+        monkeypatch.setenv(f"SAPLING_MODEL_{slot.upper()}", gemini)
+        assert model_for(slot).settings == _providers._google_settings_for(slot)  # None for a loop slot
+        monkeypatch.delenv(f"SAPLING_MODEL_{slot.upper()}")
     monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
     assert not any(str(k).startswith("anthropic_") for k in (model_for(slot).settings or {}))

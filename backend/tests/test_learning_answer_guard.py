@@ -1338,7 +1338,7 @@ def test_a_report_from_either_run_refuses_nothing_without_a_screen_flag(
 def test_an_unflagged_verdict_is_credited_as_before(monkeypatch, events):
     res, calls = _grade_with(monkeypatch, [_all_yes(0.95)], answer="It stops the calls.")
     assert calls["n"] == 1 and res.refused is None and res.all_yes is True and events == []
-    assert res.backend == "gemini"
+    assert res.backend == "claude"
 
 
 # A first verdict that credits any item is never credited on the first run alone
@@ -1423,7 +1423,7 @@ def test_an_all_yes_on_grading_talk_is_confirmed_by_the_second_opinion(monkeypat
 def test_a_confirmed_all_yes_is_credited_from_the_second_opinion(monkeypatch, events):
     res, calls = _grade_with(monkeypatch, [_all_yes(0.95), _all_yes(0.9)], answer=GRADING_TALK)
     assert calls["n"] == 2 and res.refused is None and events == []
-    assert res.all_yes is True and res.backend == "gemini_second" and res.confidence == 0.9
+    assert res.all_yes is True and res.backend == "claude_second" and res.confidence == 0.9
 
 
 @pytest.mark.parametrize("lower_run", [0, 1])
@@ -1434,7 +1434,7 @@ def test_disagreeing_runs_credit_the_lower_verdict(monkeypatch, events, lower_ru
     runs[lower_run] = {**runs[lower_run], "item_results": ["r1:yes", "r2:no"]}
     res, calls = _grade_with(monkeypatch, runs, answer=GRADING_TALK)
     assert calls["n"] == 2 and res.all_yes is False
-    assert res.item_results == {"r1": True, "r2": False} and res.backend == "gemini_second"
+    assert res.item_results == {"r1": True, "r2": False} and res.backend == "claude_second"
 
 
 def test_runs_that_credit_different_items_credit_neither(monkeypatch, events):
@@ -1483,7 +1483,7 @@ def test_the_courses_own_parts_are_no_signal(context, text):
 def test_no_confirmation_for_a_verdict_that_credits_nothing(monkeypatch, events):
     first = {**_all_yes(0.95), "item_results": ["r1:no", "r2:no"]}
     res, calls = _grade_with(monkeypatch, [first], answer=GRADING_TALK)
-    assert calls["n"] == 1 and res.all_yes is False and res.backend == "gemini"
+    assert calls["n"] == 1 and res.all_yes is False and res.backend == "claude"
 
 
 def test_no_confirmation_for_an_answer_without_a_suspicion_signal(monkeypatch, events):
@@ -1501,7 +1501,7 @@ def test_a_low_confidence_first_run_never_vetoes_the_second_opinion(monkeypatch,
     was recorded as a full-weight incorrect)."""
     first = {**_all_yes(0.2), "item_results": ["r1:no", "r2:no"]}
     res, calls = _grade_with(monkeypatch, [first, _all_yes(0.9)], answer=answer)
-    assert calls["n"] == 2 and res.all_yes is True and res.backend == "gemini_second"
+    assert calls["n"] == 2 and res.all_yes is True and res.backend == "claude_second"
     assert res.confidence == 0.9
 
 
@@ -1581,7 +1581,7 @@ def test_the_plain_wrong_reason_has_no_suspicion_signal():
 def test_an_all_yes_its_own_run_says_contradicts_the_reference_is_confirmed(monkeypatch, events):
     no = {**_all_yes(0.9), "item_results": _ALL_NO}
     res, calls = _grade_with(monkeypatch, [_conflicted(), no], answer=PLAIN_WRONG_REASON)
-    assert calls["n"] == 2 and res.all_yes is False and res.backend == "gemini_second"
+    assert calls["n"] == 2 and res.all_yes is False and res.backend == "claude_second"
     assert res.item_results == {"r1": False, "r2": False} and res.confidence == 0.9
     assert res.refused is None and events == []
 
@@ -1605,7 +1605,7 @@ def test_a_partial_verdict_with_a_wrong_reason_pays_no_second_run(monkeypatch, e
     wrong answer — is graded on the first run."""
     first = _conflicted(item_results=["r1:yes", "r2:no"], matched_wrong_key="w_loop")
     res, calls = _grade_with(monkeypatch, [first], answer=PLAIN_WRONG_REASON)
-    assert calls["n"] == 1 and res.backend == "gemini"
+    assert calls["n"] == 1 and res.backend == "claude"
     assert res.item_results == {"r1": True, "r2": False} and res.matched_wrong_key == "w_loop"
 
 
@@ -1645,7 +1645,7 @@ def test_an_unsure_first_run_that_credits_part_never_vetoes_a_confident_all_yes(
 ):
     unsure = {**_all_yes(0.2), "item_results": ["r1:yes", "r2:no"]}
     res, calls = _grade_with(monkeypatch, [unsure, _all_yes(0.9)], answer=GRADING_TALK)
-    assert calls["n"] == 2 and res.backend == "gemini_second"
+    assert calls["n"] == 2 and res.backend == "claude_second"
     assert res.all_yes is True and res.item_results == {"r1": True, "r2": True}
     assert res.confidence == 0.9
 
@@ -1661,7 +1661,7 @@ def test_an_unsure_conflicted_all_yes_confirms_no_conflicted_second_opinion(monk
 def test_an_unsure_conflicted_all_yes_lends_the_second_opinion_nothing(monkeypatch, events):
     no = {**_all_yes(0.9), "item_results": _ALL_NO}
     res, calls = _grade_with(monkeypatch, [_conflicted(0.2), no], answer=PLAIN_WRONG_REASON)
-    assert calls["n"] == 2 and res.unavailable is False and res.backend == "gemini_second"
+    assert calls["n"] == 2 and res.unavailable is False and res.backend == "claude_second"
     assert res.item_results == {"r1": False, "r2": False} and res.confidence == 0.9
 
 
@@ -1733,7 +1733,7 @@ def test_a_reason_that_contradicts_the_key_is_confirmed_whichever_option(
     with g.grader_agent.override(model=model):
         out = _grade_answer(_mc_item(), answer, deps)
     assert calls["n"] == 2 and out.refused is None and out.correct is False
-    assert out.grader_backend == "gemini_second"
+    assert out.grader_backend == "claude_second"
     assert [ev["correct"] for ev in deps.pending_evidence] == [False]
 
 
@@ -2939,7 +2939,7 @@ def test_an_honest_answer_with_a_self_summary_is_credited_on_one_grading_run(
 ):
     res, calls = _grade_with(monkeypatch, [_all_yes(0.95)], answer=f"{REC_FULL} {summary}")
     assert calls["n"] == 1 and calls["spans"] == 1 and events == []
-    assert res.refused is None and res.all_yes is True and res.backend == "gemini"
+    assert res.refused is None and res.all_yes is True and res.backend == "claude"
 
 
 # Review round 3: a score the student claims for their own answer still raised
@@ -2990,7 +2990,7 @@ def test_an_honest_answer_claiming_full_marks_is_credited_on_one_grading_run(mon
     answer = f"{REC_FULL} I deserve full marks for this."
     res, calls = _grade_with(monkeypatch, [_all_yes(0.95), reporting], answer=answer)
     assert calls["n"] == 1 and calls["spans"] == 1 and events == []
-    assert res.refused is None and res.all_yes is True and res.backend == "gemini"
+    assert res.refused is None and res.all_yes is True and res.backend == "claude"
 
 
 # Review round 4: 2246517 removed the whole "full/partial/extra/maximum credit,
@@ -3842,7 +3842,7 @@ def test_the_span_check_runs_on_the_grader_second_slot(monkeypatch, events):
         GRADER_SECOND_OPINION_SLOT,
         GRADER_SECOND_OPINION_SLOT,
     ]
-    assert res.backend == "gemini"  # the verdict's run; the checks only confirm it
+    assert res.backend == "claude"  # the verdict's run; the checks only confirm it
 
 
 def test_the_span_check_runs_on_every_credited_answer_without_any_signal(monkeypatch, events):
@@ -4383,7 +4383,7 @@ def test_a_first_run_report_sends_the_verdict_to_the_second_opinion(monkeypatch,
     when both runs credit it."""
     runs = [_reporting(0.95), {**_all_yes(0.9), "item_results": ["r1:yes", "r2:no"]}]
     res, calls = _grade_with(monkeypatch, runs, answer=f"{HONEST_FULL} I hope the grader agrees.")
-    assert calls["n"] == 2 and res.refused is None and res.backend == "gemini_second"
+    assert calls["n"] == 2 and res.refused is None and res.backend == "claude_second"
     assert res.item_results == {"r1": True, "r2": False} and res.all_yes is False
     assert events == []
 

@@ -28,6 +28,27 @@ BAD_VERDICTS = [
 ]
 
 
+
+def _grader_max_tokens(gemini_cap: int) -> int:
+    """The output bound each request must keep, on the slot's provider: the
+    Gemini hard cap (thinking + visible), or Claude's ceiling (adaptive
+    thinking counts against max_tokens, so a Gemini-sized cap would truncate)."""
+    from agents._providers import ANTHROPIC_MAX_TOKENS, slot_provider
+
+    return ANTHROPIC_MAX_TOKENS if slot_provider("grader") == "anthropic" else gemini_cap
+
+
+def _assert_second_opinion_thinking(requests) -> None:
+    """Gemini: thinking pinned off. Claude 5.x: no Gemini knob (a thinking
+    budget is a 400 there)."""
+    from agents._providers import slot_provider
+
+    for request in requests:
+        if slot_provider("grader_second") == "google":
+            assert request["google_thinking_config"].thinking_budget == 0
+        else:
+            assert not any(str(k).startswith("google_") for k in request)
+
 def _submit(model, monkeypatch, *, answer=HONEST, item_format="free"):
     monkeypatch.setattr(g, "record_agent_usage", lambda *a, **kw: None)
     monkeypatch.setattr(g, "model_for", lambda slot: model)
@@ -133,7 +154,7 @@ def test_empty_no_placeholders_preserve_second_opinion_selection(monkeypatch, re
     model, calls = grader_fakes.scripted_grader([first, second])
     outcome, evidence = _submit(model, monkeypatch)
     assert not outcome.unavailable and outcome.correct is False
-    assert outcome.grader_backend == "gemini_second"
+    assert outcome.grader_backend == "claude_second"
     assert len(evidence) == 1 and evidence[0]["correct"] is False
     assert calls["n"] == 2 and calls["spans"] == calls["contexts"] == 0
 
@@ -200,7 +221,7 @@ def test_invalid_primary_uses_one_fully_validated_replacement(monkeypatch, corre
     model, calls = grader_fakes.scripted_grader([primary, secondary])
     outcome, evidence = _submit(model, monkeypatch)
     assert not outcome.unavailable and outcome.correct is correct
-    assert outcome.grader_backend == "gemini_second" and outcome.confidence == 0.9
+    assert outcome.grader_backend == "claude_second" and outcome.confidence == 0.9
     assert outcome.matched_wrong_key is None  # invalid primary reports cannot leak into the result
     assert len(evidence) == 1 and evidence[0]["correct"] is correct
     assert calls["n"] == 2
@@ -311,9 +332,9 @@ def test_replacement_keeps_actual_run_accounting_and_generation_bounds(monkeypat
     assert not result.unavailable and result.all_yes is False
     assert tasks == ["grader", "grader_second"] and len(settings) == 2
     for request in settings:
-        assert request["max_tokens"] == GRADER_OUTPUT_MAX_TOKENS
+        assert request["max_tokens"] == _grader_max_tokens(GRADER_OUTPUT_MAX_TOKENS)
         assert request["timeout"] == GRADER_REQUEST_TIMEOUT_S
-    assert settings[1]["google_thinking_config"].thinking_budget == 0
+    _assert_second_opinion_thinking(settings[1:])
 
 
 @pytest.mark.parametrize("stage,field", [("span", "asserted"), ("span", "item_results"), ("context", "withdrawn")])
@@ -376,6 +397,6 @@ def test_every_actual_model_request_keeps_generation_bounds(monkeypatch):
     outcome, evidence = _submit(FunctionModel(handler), monkeypatch)
     assert outcome.correct and len(evidence) == 1 and len(settings) == 3
     for request in settings:
-        assert request["max_tokens"] == GRADER_OUTPUT_MAX_TOKENS
+        assert request["max_tokens"] == _grader_max_tokens(GRADER_OUTPUT_MAX_TOKENS)
         assert request["timeout"] == GRADER_REQUEST_TIMEOUT_S
-    assert all(request["google_thinking_config"].thinking_budget == 0 for request in settings[1:])
+    _assert_second_opinion_thinking(settings[1:])

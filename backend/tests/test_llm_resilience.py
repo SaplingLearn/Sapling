@@ -541,16 +541,18 @@ def test_fallback_names(monkeypatch):
 
 
 def test_the_loop_key_and_alignment_checks_never_fall_back_to_the_drafters_family():
-    # A119 / A124: a check must not come from the gemini-* drafter's family,
-    # and an unavailable check already fails closed (the item is held).
+    # A119 / A124: a check must not fall back onto the drafter's model (the
+    # drafter's own fallback is gemini-*), and an unavailable check already
+    # fails closed (the item is held).
     for task in ("check_items_verify", "check_items_solve"):
         assert _providers._GEMINI_FALLBACKS[task] is None
         assert _providers.fallback_model_name_for(task, "claude-haiku-5-5") is None
-    # A pending loop slot flipped to Claude falls back to the Gemini model its
-    # gates were recorded on; on its Gemini default it has no fallback at all.
+    # A loop slot on its Claude default falls back to the Gemini model its gates
+    # were recorded on; pointed back at Gemini, it falls back to its Claude
+    # default, like every other slot.
     assert _providers.fallback_model_name_for("grader", "claude-haiku-5-5") == "gemini-2.5-flash-lite"
     assert _providers.fallback_model_name_for("loop_tutor_deep", "claude-sonnet-5-5") == "gemini-2.5-pro"
-    assert _providers.fallback_model_name_for("grader", "gemini-2.5-flash-lite") is None
+    assert _providers.fallback_model_name_for("grader", "gemini-2.5-flash-lite") == "claude-haiku-5-5"
 
 
 def test_a_run_that_asks_for_a_longer_timeout_gets_a_longer_deadline():

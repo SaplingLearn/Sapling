@@ -158,6 +158,10 @@ def assert_native(body, *, v2=False, answer_check=False):
 
 @pytest.mark.parametrize("tier", MODEL_NAMES)
 def test_all_tiers_send_native_schema_for_disabled_tools_without_changing_caps(tier, monkeypatch):
+    # A Gemini wire test: the slots default to Claude (2026-11-19), so point
+    # the tier's slot at its Gemini model, as an operator override would.
+    slot = {"lite": "loop_tutor_lite", "standard": "loop_tutor", "deep": "loop_tutor_deep"}[tier]
+    monkeypatch.setenv(f"SAPLING_MODEL_{slot.upper()}", MODEL_NAMES[tier])
     bodies, paths = [], []
 
     def handle(request):
