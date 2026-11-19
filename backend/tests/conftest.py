@@ -261,6 +261,10 @@ def _clear_lru_caches():
     loop_posttest = sys.modules.get("services.loop.posttest")
     if loop_posttest is not None:
         loop_posttest.clear_posttest_due_cache()
+    # #866 C3: the draft-on-enable rescan clock (per process). Only if imported.
+    cij = sys.modules.get("services.check_item_jobs")
+    if cij is not None:
+        cij.reset_enable_scans()
     yield
     _unfreeze_model_mode_for_tests()
     clear_override_model_cache()
@@ -282,6 +286,9 @@ def _clear_lru_caches():
     loop_posttest = sys.modules.get("services.loop.posttest")
     if loop_posttest is not None:
         loop_posttest.clear_posttest_due_cache()
+    cij = sys.modules.get("services.check_item_jobs")
+    if cij is not None:
+        cij.reset_enable_scans()
 
 
 @pytest.fixture(autouse=True)
