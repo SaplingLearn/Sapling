@@ -21,14 +21,11 @@
 import React from "react";
 import { useLoopStatus } from "@/components/learn/useLoopStatus";
 import { useUser } from "@/context/UserContext";
-import type { QuizLearning, SkillBand } from "@/lib/quiz/types";
+import { BAND_WORDS } from "@/lib/quiz/proposals";
+import type { QuizLearning } from "@/lib/quiz/types";
 
-/** The bands as the results say them. */
-export const BAND_WORDS: Record<SkillBand, string> = {
-  novice: "just starting",
-  develop: "developing",
-  profic: "proficient",
-};
+/** The bands as the results say them: the quiz home's words. */
+export { BAND_WORDS };
 
 const pct = (value: number) => Math.round(value * 100);
 

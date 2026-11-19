@@ -145,9 +145,16 @@ const learningGain = gainOf([
   },
   emptyWindow(28),
 ]);
+const week = (week_start: string, mean_rung: number, steps: number) => ({ week_start, mean_rung, steps });
 const loopFixture = {
   range: RANGE,
   steps_total: 40, banded_steps: 20, in_band: 15, in_band_share: 0.75,
+  // spec §10 htc_k: per concept, the mean hint rung of its correct steps per week
+  htc_k_trend: [
+    { concept_id: "node-falling", weeks: [week("2026-10-12", 2.5, 4), week("2026-10-19", 1, 6)], direction: "falling" as const },
+    { concept_id: "node-new", weeks: [week("2026-10-19", 3, 2)], direction: "insufficient" as const },
+    { concept_id: "node-rising", weeks: [week("2026-10-05", 0.5, 2), week("2026-10-12", 1, 3), week("2026-10-19", 2.25, 4)], direction: "rising" as const },
+  ],
   unassisted_next_session: { sessions: 10, successes: 6, rate: 0.6, quiz_ask_excluded: 1 },
   caught_leaks: 1, served_reveals: 0, unscanned_turns: 0,
   ceiling_compliance: { steps: 40, compliant: 39, rate: 0.975 },
@@ -421,6 +428,32 @@ describe("Learning loop panel (spec §10, §13 A110)", () => {
     expect(within(all).getAllByText("50%").length).toBeGreaterThan(0); // observed in the top bin
     const post = screen.getByTestId("admin-loop-calibration-posttest");
     expect(within(post).getByText("No independent observations in this range.")).toBeTruthy();
+  });
+
+  it("shows each concept's hints-to-criterion trend, the rising ones first (spec §10 htc_k)", () => {
+    render(<LearningLoopPanelBody d={loopFixture} />);
+    const panel = screen.getByTestId("admin-loop-htc-trend");
+    expect(within(panel).getByTestId("admin-loop-htc-summary").textContent).toBe("Rising 1 · Flat 0 · Falling 1 · One week only 1");
+    const rows = within(panel).getAllByTestId(/^admin-loop-htc-row-/).map(r => r.getAttribute("data-testid"));
+    // a single week has no trend: counted, not listed
+    expect(rows).toEqual(["admin-loop-htc-row-node-rising", "admin-loop-htc-row-node-falling"]);
+    const rising = within(panel).getByTestId("admin-loop-htc-row-node-rising");
+    expect(within(rising).getByText("H0.5 (2)")).toBeTruthy(); // first week, with its n
+    expect(within(rising).getByText("H2.3 (4)")).toBeTruthy(); // last week, 2.25 to one decimal
+    expect(within(rising).getByText("9")).toBeTruthy(); // steps over the window
+    expect(within(rising).getByText("Rising")).toBeTruthy();
+  });
+
+  it("says when no correct step carries a hint level, rather than an empty table", () => {
+    render(<LearningLoopPanelBody d={{ ...loopFixture, htc_k_trend: [] }} />);
+    expect(screen.getByTestId("admin-loop-htc-empty")).toBeTruthy();
+    expect(screen.queryByTestId("admin-loop-htc-summary")).toBeNull();
+  });
+
+  it("counts concepts with one week only, without an empty table", () => {
+    render(<LearningLoopPanelBody d={{ ...loopFixture, htc_k_trend: [loopFixture.htc_k_trend[1]] }} />);
+    expect(screen.getByTestId("admin-loop-htc-summary").textContent).toContain("One week only 1");
+    expect(within(screen.getByTestId("admin-loop-htc-trend")).queryByRole("table")).toBeNull();
   });
 
   it("counts the answers to retired questions the calibration left out (spec §13 A123)", () => {

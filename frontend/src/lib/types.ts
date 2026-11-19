@@ -904,6 +904,11 @@ export interface LoopCostPerGain {
   unattributed: { cost_usd: number; rows: number };
 }
 
+/** One concept's hints-to-criterion trend (spec §10 htc_k): per ISO week
+ *  (`week_start`, a Monday, UTC), the mean `max_rung_used` over its correct
+ *  steps; `direction` compares the last week with the first. */
+export interface LoopConceptTrend { concept_id: string; weeks: { week_start: string; mean_rung: number; steps: number }[]; direction: 'falling' | 'flat' | 'rising' | 'insufficient' }
+
 /** GET /api/admin/analytics/learning-loop — spec §10 KPIs and gates. */
 export interface LearningLoopKpisData {
   range: { from: string; to: string };
@@ -911,26 +916,21 @@ export interface LearningLoopKpisData {
   banded_steps: number;
   in_band: number;
   in_band_share: number | null;
+  /** per concept, the KPI_TREND_WEEKS weeks ending at `range.to` (hints must fall) */
+  htc_k_trend: LoopConceptTrend[];
   unassisted_next_session: { sessions: number; successes: number; rate: number | null; quiz_ask_excluded: number };
   caught_leaks: number;
   served_reveals: number;
   unscanned_turns: number;
   ceiling_compliance: { steps: number; compliant: number; rate: number | null };
   earnest_revise: {
-    graded_steps: number;
-    earnest_blocked: number;
-    unmeasured_steps: number;
-    rate: number | null;
+    graded_steps: number; earnest_blocked: number; unmeasured_steps: number; rate: number | null;
     gate: 'pass' | 'fail' | 'inconclusive';
   };
   gates: { zero_leaks: boolean; ceiling_compliance_ok: boolean; earnest_revise_ok: boolean | null };
-  calibration: {
-    all: LoopCalibrationReport;
-    posttest: LoopCalibrationReport;
-    /** independent observations left out: graded against an item staff
-     *  retired, so void evidence (spec §13 A123) — the drop, visible */
-    excluded_void: number;
-  };
+  /** `excluded_void`: independent observations left out, graded against an
+   *  item staff retired, so void evidence (spec §13 A123) — the drop, visible */
+  calibration: { all: LoopCalibrationReport; posttest: LoopCalibrationReport; excluded_void: number };
   /** the students' own calibration: stated confidence vs correctness, per
    *  channel (spec §13 A127; void evidence left out, A123); only channels with
    *  a stated confidence are listed */

@@ -1,0 +1,30 @@
+/* The learning loop's reviews on Study (Study.tsx): the "Due today" queue and
+   the retention check, side by side on the page's own grid — the Study hub's
+   side padding at each of its widths (StudyHub.module.css: 32 / 24 / 20px),
+   so both cards share one left edge and one width with the hub below. Sized
+   from the container, as the hub is, so the side nav's width counts. */
+
+.shell {
+  container: studyreviews / inline-size;
+}
+
+.reviews {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 16px;
+  padding: 18px 32px 0;
+}
+
+/* Two cards need room for a question and its answer box each. */
+@container studyreviews (max-width: 900px) {
+  .reviews { grid-template-columns: minmax(0, 1fr); }
+}
+
+@container studyreviews (max-width: 1060px) {
+  .reviews { padding: 18px 24px 0; }
+}
+
+@container studyreviews (max-width: 700px) {
+  .reviews { padding: 8px 20px 0; gap: 12px; }
+}

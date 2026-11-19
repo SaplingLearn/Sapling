@@ -6,7 +6,17 @@
 import { describe, expect, it } from "vitest";
 import type { EnrolledCourse } from "@/lib/api";
 import type { GraphNode } from "@/lib/types";
-import { courseQueueFromPlan, dueFromPlan, planReasonCopy, rankFromPlan, skillPercent } from "./proposals";
+import {
+  courseQueueFromPlan,
+  dueFromPlan,
+  metaLine,
+  planReasonCopy,
+  planStateLine,
+  plannedCourseQueue,
+  rankFromPlan,
+  shownMastery,
+  skillPercent,
+} from "./proposals";
 import type { QuizPlan } from "./types";
 
 function node(id: string, course: string | null, over: Partial<GraphNode> = {}): GraphNode {
@@ -51,7 +61,7 @@ describe("rankFromPlan", () => {
       "skill 40% · mixed up before",
       "skill 35% · ready to learn",
     ]);
-    expect(ranked[2].plan).toEqual({ reason: "misconception", pKnown: 0.4 });
+    expect(ranked[2].plan).toEqual({ reason: "misconception", pKnown: 0.4, band: "develop" });
     expect(ranked[0].course?.course_code).toBe("CS 111");
   });
 });
@@ -65,9 +75,57 @@ describe("courseQueueFromPlan", () => {
   });
 });
 
+describe("plannedCourseQueue", () => {
+  const ranked = rankFromPlan(PLAN, NODES, COURSES, []);
+
+  it("prefers the course's own plan, in its order", () => {
+    const own = rankFromPlan({ concepts: [PLAN.concepts[4], PLAN.concepts[0]] }, NODES, COURSES, []);
+    expect(plannedCourseQueue(ranked, own, NODES, "cs1")).toEqual(["ready", "due1"]);
+  });
+
+  it("uses the all-courses plan's concepts of the course when its own plan is missing", () => {
+    expect(plannedCourseQueue(ranked, null, NODES, "cs1")).toEqual(["due1", "mix", "ready"]);
+    expect(plannedCourseQueue(ranked, undefined, NODES, "ma1")).toEqual(["due2"]);
+  });
+
+  it("falls back to the tier ranking when the plan proposes none of the course's concepts", () => {
+    const nodes = [...NODES, node("ph_weak", "ph1", { mastery_score: 0.1, mastery_tier: "struggling" }), node("ph_ok", "ph1", { mastery_score: 0.4 })];
+    expect(plannedCourseQueue(ranked, null, nodes, "ph1")).toEqual(["ph_weak", "ph_ok"]);
+    // the course's own plan came back empty: still the tier ranking, never an empty queue
+    expect(plannedCourseQueue(ranked, [], nodes, "ph1")).toEqual(["ph_weak", "ph_ok"]);
+  });
+
+  it("is empty only when the course has nothing to practise at all", () => {
+    const nodes = [node("ph_done", "ph1", { mastery_score: 0.95, mastery_tier: "mastered" })];
+    expect(plannedCourseQueue(ranked, null, nodes, "ph1")).toEqual([]);
+  });
+});
+
 describe("dueFromPlan", () => {
   it("is the plan's due reviews in its order, counted across courses", () => {
     expect(dueFromPlan(PLAN, NODES)).toEqual({ conceptIds: ["due1", "due2"], count: 2, courseCount: 2 });
+  });
+});
+
+describe("one measure per concept (metaLine)", () => {
+  const NOW = new Date("2026-11-08T12:00:00Z");
+  const fresh = node("fresh", "cs1", { mastery_score: 0.15, mastery_tier: "struggling", times_studied: 0 });
+  const plan = { reason: "ready" as const, pKnown: 0.35, band: "develop" as const };
+
+  it("reads the plan's skill meter and band for a concept the plan proposes", () => {
+    expect(metaLine(fresh, NOW, plan)).toBe("35% · developing · not studied yet");
+    expect(planStateLine(fresh, plan, NOW)).toBe("developing · not studied yet");
+    expect(shownMastery(fresh, plan)).toBe(0.35);
+  });
+
+  it("keeps the graph's score and tier without one", () => {
+    expect(metaLine(fresh, NOW)).toBe("15% · struggling · not studied yet");
+    expect(shownMastery(fresh)).toBe(0.15);
+  });
+
+  it("says each band as the quiz results do", () => {
+    expect(metaLine(fresh, NOW, { ...plan, band: "novice" })).toBe("35% · just starting · not studied yet");
+    expect(metaLine(fresh, NOW, { ...plan, band: "profic", pKnown: 0.91 })).toBe("91% · proficient · not studied yet");
   });
 });
 

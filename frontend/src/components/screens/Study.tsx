@@ -31,6 +31,7 @@ import { studyGuideHref } from "@/lib/toolHrefs";
 import { DueQueue } from "../learn/DueQueue";
 import { RetentionCheck } from "../learn/RetentionCheck";
 import { useLoopStatus } from "../learn/useLoopStatus";
+import s from "./Study.module.css";
 
 /** The retention check's deep-link parameter (RetentionDueContext). */
 const RETENTION_PARAM = "retention-course";
@@ -50,6 +51,13 @@ function retiredModeHref(mode: string, course: string | null, retentionCourse: s
     return p.size ? `/flashcards?${p.toString()}` : "/flashcards";
   }
   return null;
+}
+
+/** `scoped`, plus the deep-linked course from `all` when the scope left it out. */
+function withLinkedCourse(scoped: EnrolledCourse[], all: EnrolledCourse[], linked: string | null): EnrolledCourse[] {
+  if (!linked || scoped.some(c => c.course_id === linked)) return scoped;
+  const course = all.find(c => c.course_id === linked);
+  return course ? [...scoped, course] : scoped;
 }
 
 export function Study() {
@@ -87,6 +95,13 @@ export function Study() {
     () => (activeSemester ? courses.filter(c => courseInTerm(c, activeSemester)) : courses),
     [courses, activeSemester],
   );
+  // The retention check offers the same courses, plus the one a deep link names
+  // when it is the student's but outside the active semester: the link is
+  // about that course, so the check must not quietly switch to another.
+  const retentionCourses = React.useMemo(
+    () => withLinkedCourse(scopedCourses, courses, retentionCourse),
+    [scopedCourses, courses, retentionCourse],
+  );
 
   // Render nothing for the one frame a retired `?mode=` is being replaced:
   // flashing the hub first reads as the navigation having failed.
@@ -94,7 +109,7 @@ export function Study() {
 
   return (
     <>
-      <LoopReviews courses={scopedCourses} retentionCourse={retentionCourse ?? ""} />
+      <LoopReviews courses={retentionCourses} retentionCourse={retentionCourse ?? ""} />
       <StudyHub
         courses={scopedCourses}
         coursesReady={coursesReady}
@@ -109,28 +124,34 @@ export function Study() {
 
 /**
  * The learning loop's reviews above the hub: the due queue (every course) and
- * the retention check while the loop is on for the student. A failed status
- * read is not an inactive learning loop: the hub stays, with a retry so the
- * student can still reach due reviews.
+ * the retention check while the loop is on for the student, side by side on
+ * the page's own grid (Study.module.css: the hub's side padding, so the two
+ * cards share one left edge and one width). A failed status read is not an
+ * inactive learning loop: the hub stays, with a retry so the student can
+ * still reach due reviews.
  */
 function LoopReviews({ courses, retentionCourse }: { courses: EnrolledCourse[]; retentionCourse: string }) {
   const { userId, userReady } = useUser();
   const { status: loopActive, retry: retryLoopStatus } = useLoopStatus(userId, userReady);
   if (loopActive === "error") {
     return (
-      <div role="status" style={{ margin: "14px 32px 0", fontSize: 13 }}>
-        <p>Couldn&apos;t load due reviews. The rest of Study is still available.</p>
-        <button type="button" className="btn btn--sm" onClick={retryLoopStatus} data-testid="review-status-retry">
-          Retry due reviews
-        </button>
+      <div className={s.shell}>
+        <div role="status" className={s.reviews} style={{ display: "block", fontSize: 13 }}>
+          <p style={{ margin: "0 0 8px" }}>Couldn&apos;t load due reviews. The rest of Study is still available.</p>
+          <button type="button" className="btn btn--sm" onClick={retryLoopStatus} data-testid="review-status-retry">
+            Retry due reviews
+          </button>
+        </div>
       </div>
     );
   }
   if (loopActive !== true) return null;
   return (
-    <>
-      <DueQueue userId={userId} />
-      <RetentionCheck key={userId} userId={userId} courses={courses} initialCourseId={retentionCourse} />
-    </>
+    <div className={s.shell}>
+      <div className={s.reviews} data-testid="study-reviews">
+        <DueQueue userId={userId} />
+        <RetentionCheck key={userId} userId={userId} courses={courses} initialCourseId={retentionCourse} />
+      </div>
+    </div>
   );
 }

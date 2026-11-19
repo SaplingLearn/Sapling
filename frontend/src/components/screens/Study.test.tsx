@@ -43,14 +43,15 @@ vi.mock("../learn/DueQueue", () => ({
   ),
 }));
 vi.mock("../learn/RetentionCheck", () => ({
-  RetentionCheck: ({ initialCourseId }: { initialCourseId?: string }) => (
-    <div data-testid="retention-panel">{initialCourseId || "-"}</div>
+  RetentionCheck: ({ initialCourseId, courses }: { initialCourseId?: string; courses: { course_id: string }[] }) => (
+    <div data-testid="retention-panel" data-courses={courses.map(c => c.course_id).join(",")}>{initialCourseId || "-"}</div>
   ),
 }));
 
 import { Study } from "./Study";
 import { ToastProvider } from "../ToastProvider";
-import { getLoopStatus } from "@/lib/api";
+import { getCourses, getLoopStatus, type EnrolledCourse } from "@/lib/api";
+import { ACTIVE_SEMESTER_STORAGE_KEY } from "@/lib/useActiveSemester";
 
 const renderStudy = () => render(<ToastProvider><Study /></ToastProvider>);
 
@@ -59,7 +60,11 @@ beforeEach(() => {
   replace.mockReset();
   vi.mocked(getLoopStatus).mockReset().mockResolvedValue({ active: false });
 });
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  window.localStorage.clear();
+  vi.mocked(getCourses).mockResolvedValue({ courses: [] } as never);
+});
 
 describe("Study — the retired ?mode= panes", () => {
   it("sends ?mode=guide to the Study Guides home, with or without a course", async () => {
@@ -111,6 +116,15 @@ describe("Study — the learning loop's reviews above the hub (PKG-12)", () => {
     expect(await screen.findByRole("heading", { name: "Study" })).toBeTruthy(); // the hub stays below
   });
 
+  it("lays both cards out together in one review grid, so they share an edge and a width", async () => {
+    vi.mocked(getLoopStatus).mockResolvedValue({ active: true });
+    renderStudy();
+    const grid = await screen.findByTestId("study-reviews");
+    expect(grid).toContainElement(screen.getByTestId("review-due-panel"));
+    expect(grid).toContainElement(screen.getByTestId("retention-panel"));
+    expect(grid.children).toHaveLength(2);
+  });
+
   it("keeps the hub alone when the loop is off", async () => {
     renderStudy();
     expect(await screen.findByRole("heading", { name: "Study" })).toBeTruthy();
@@ -140,5 +154,31 @@ describe("Study — the learning loop's reviews above the hub (PKG-12)", () => {
     search.qs = "mode=cards&retention-course=c 1";
     renderStudy();
     await waitFor(() => expect(replace).toHaveBeenCalledWith("/study?retention-course=c+1"));
+  });
+});
+
+describe("Study — the retention deep link keeps its course (F4)", () => {
+  const course = (id: string, term: string) =>
+    ({ course_id: id, course_code: id.toUpperCase(), course_name: id, term, terms: [term] }) as unknown as EnrolledCourse;
+
+  it("adds the linked course to the retention check's list when the active semester left it out", async () => {
+    window.localStorage.setItem(ACTIVE_SEMESTER_STORAGE_KEY, "Fall 2026");
+    vi.mocked(getCourses).mockResolvedValue({ courses: [course("c1", "Fall 2026"), course("old", "Spring 2026")] } as never);
+    vi.mocked(getLoopStatus).mockResolvedValue({ active: true });
+    search.qs = "retention-course=old";
+    renderStudy();
+    const panel = await screen.findByTestId("retention-panel");
+    await waitFor(() => expect(panel.getAttribute("data-courses")).toBe("c1,old"));
+    expect(panel.textContent).toBe("old");
+  });
+
+  it("adds nothing without a link, or for a course that is not the student's", async () => {
+    window.localStorage.setItem(ACTIVE_SEMESTER_STORAGE_KEY, "Fall 2026");
+    vi.mocked(getCourses).mockResolvedValue({ courses: [course("c1", "Fall 2026"), course("old", "Spring 2026")] } as never);
+    vi.mocked(getLoopStatus).mockResolvedValue({ active: true });
+    search.qs = "retention-course=nope";
+    renderStudy();
+    const panel = await screen.findByTestId("retention-panel");
+    await waitFor(() => expect(panel.getAttribute("data-courses")).toBe("c1"));
   });
 });

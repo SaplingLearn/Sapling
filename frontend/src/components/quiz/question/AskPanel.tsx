@@ -38,13 +38,21 @@
  * make sense in a transcript: a stream that produced nothing falls back to the
  * JSON route transparently, a stream that failed AFTER tokens (or one the
  * backend marked non-retryable, or a 413) surfaces an inline error with Retry.
+ *
+ * LEARNING LOOP. For a student with the loop on, `/chat/stream` hands the turn
+ * to the loop, whose stream can `retract` what it streamed (A46: the text is
+ * withdrawn and the whole reply follows) — so withdrawn text leaves the screen
+ * and is never kept as an interrupted partial — and can pause the tutor for
+ * the student's AI budget (`budget`, or a 429 "ai budget reached"): the pause
+ * copy shows, not an error.
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { Sheet } from "@/components/ui";
-import { newTurnId, type QuizAskOrigin } from "@/lib/api";
+import { newTurnId, type LoopBudgetPause, type QuizAskOrigin } from "@/lib/api";
 import { tutorStepLabel } from "@/components/chat/ChatPanel";
+import { BudgetPausedBanner, tutorPauseMessage } from "@/components/learn/BudgetPausedBanner";
 import { CrisisSupportCard } from "@/components/safety/CrisisSupportCard";
 import type { CrisisSupport } from "@/lib/crisisSupport";
 import {
@@ -53,6 +61,7 @@ import {
   chatWithFallback,
   openTutorSession,
   quizAskOrigin,
+  turnPauseOf,
   type TurnProgress,
 } from "./askTurn";
 
@@ -152,6 +161,8 @@ export function AskPanel({
   const [status, setStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The tutor is paused for the student's AI budget (see the header).
+  const [pause, setPause] = useState<LoopBudgetPause | null>(null);
   const [draft, setDraft] = useState("");
 
   // The tutor session, held in a ref: nothing renders off it, and a follow-up
@@ -201,6 +212,7 @@ export function AskPanel({
       lastTurnIdRef.current = turnId;
       setBusy(true);
       setError(null);
+      setPause(null);
       setStreaming("");
       setStatus(null);
       partialRef.current = "";
@@ -249,6 +261,18 @@ export function AskPanel({
               const label = tutorStepLabel(step);
               if (label && runRef.current === token) setStatus(label);
             },
+            // A46: everything streamed so far is withdrawn; the whole reply
+            // follows as tokens. Nothing of it may stay on screen or be kept
+            // as the interrupted partial on Stop or an error.
+            onRetract: () => {
+              if (runRef.current !== token) return;
+              progress.partial = "";
+              partialRef.current = "";
+              setStreaming("");
+            },
+            onBudget: notice => {
+              if (runRef.current === token) setPause({ resetAt: notice.reset_at, sessionCapped: notice.session_capped });
+            },
           },
           () => {
             setStreaming(null);
@@ -266,6 +290,12 @@ export function AskPanel({
         ]);
       } catch (err) {
         if (controller.signal.aborted || runRef.current !== token || !mountedRef.current) return;
+        const paused = turnPauseOf(err);
+        if (paused) {
+          // nothing was answered: the pause copy says why — no error, no Retry
+          setPause(paused);
+          return;
+        }
         // ADR 0020, and the whole reason `partial` exists: half an answer the
         // student was already reading must not blink out and be replaced by an
         // error strip. It stays in the thread, marked unfinished. Retry drops
@@ -438,6 +468,14 @@ export function AskPanel({
                 <p className="quiz-ask__pending">{status ?? "Thinking…"}</p>
               )}
             </div>
+          )}
+          {pause && (
+            <BudgetPausedBanner
+              testId="quiz-ask-budget-paused"
+              resetAt={pause.resetAt}
+              sessionCapped={pause.sessionCapped}
+              message={tutorPauseMessage(pause.resetAt, pause.sessionCapped)}
+            />
           )}
           {error && (
             <div className="quiz-ask__error" role="alert">

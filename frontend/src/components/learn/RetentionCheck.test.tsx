@@ -223,3 +223,136 @@ it("shows the crisis-support card instead of a result; the check stays open (doc
   fireEvent.click(screen.getByTestId("retention-submit"));
   expect(await screen.findByTestId("retention-result")).toBeTruthy();
 });
+
+// ── F4: a deep link to a course that is not in the list says so ─────────────
+
+it("a deep link to a course outside the list falls back to the first course and says so until one is picked", () => {
+  render(<RetentionCheck userId="u1" courses={courses} initialCourseId="c9" />);
+  const select = screen.getByTestId("retention-course") as HTMLSelectElement;
+  expect(select.value).toBe("c1");
+  const note = screen.getByTestId("retention-course-fallback");
+  expect(note.textContent).toContain("isn't one of your courses");
+  expect(note.textContent).toContain("Computer Science");
+  expect(select).toHaveAccessibleDescription(note.textContent!);
+  fireEvent.change(select, { target: { value: "c2" } });
+  expect(screen.queryByTestId("retention-course-fallback")).toBeNull();
+});
+
+it("a deep link to a listed course, and no link at all, show no fallback note", () => {
+  const { unmount } = render(<RetentionCheck userId="u1" courses={courses} initialCourseId="c2" />);
+  expect((screen.getByTestId("retention-course") as HTMLSelectElement).value).toBe("c2");
+  expect(screen.queryByTestId("retention-course-fallback")).toBeNull();
+  unmount();
+  render(<RetentionCheck userId="u1" courses={courses} />);
+  expect(screen.queryByTestId("retention-course-fallback")).toBeNull();
+});
+
+it("says nothing while the course list is still empty (loading)", () => {
+  const { rerender } = render(<RetentionCheck userId="u1" courses={[]} initialCourseId="c2" />);
+  expect(screen.queryByTestId("retention-course-fallback")).toBeNull();
+  rerender(<RetentionCheck userId="u1" courses={courses} initialCourseId="c2" />);
+  expect((screen.getByTestId("retention-course") as HTMLSelectElement).value).toBe("c2");
+  expect(screen.queryByTestId("retention-course-fallback")).toBeNull();
+});
+
+// ── F4: a withdrawn item (404) moves on instead of failing every resend ─────
+
+it("a 404 on an answer skips to the next question with a note", async () => {
+  api.startRetentionCheck.mockResolvedValue({ items: [item, { ...item, question_hash: "next", prompt: "Second?" }] });
+  api.answerRetentionCheck.mockRejectedValueOnce(new ApiError("check item not found", 404));
+  render(<RetentionCheck userId="u1" courses={courses} />); await open();
+  fireEvent.change(screen.getByTestId("retention-answer"), { target: { value: "x" } });
+  fireEvent.click(screen.getByTestId("retention-submit"));
+  expect(await screen.findByTestId("retention-skipped")).toBeTruthy();
+  expect(screen.getByText("Second?")).toBeTruthy();
+  expect(screen.getByText("Question 2 of 2")).toBeTruthy();
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect((screen.getByTestId("retention-answer") as HTMLTextAreaElement).value).toBe("");
+  await waitFor(() => expect(screen.getByTestId("retention-answer")).toHaveFocus());
+});
+
+it("a 404 on the last question finishes the set, noting the skip", async () => {
+  api.startRetentionCheck.mockResolvedValue({ items: [item] });
+  api.answerRetentionCheck.mockRejectedValueOnce(new ApiError("check item not found", 404));
+  render(<RetentionCheck userId="u1" courses={courses} />); await open();
+  fireEvent.click(screen.getByTestId("retention-idk"));
+  expect(await screen.findByTestId("retention-finished")).toBeTruthy();
+  expect(screen.getByTestId("retention-skipped")).toBeTruthy();
+  await waitFor(() => expect(screen.getByTestId("retention-finished")).toHaveFocus());
+});
+
+// ── F8: focus moves with the action; results land in a live region ─────────
+
+it("Open moves focus to the first answer, Check answer to the result, Continue to the next answer", async () => {
+  api.startRetentionCheck.mockResolvedValue({ items: [item, { ...item, question_hash: "next" }] });
+  api.answerRetentionCheck.mockResolvedValue({ correct: true, confidence: 0.9 });
+  render(<RetentionCheck userId="u1" courses={courses} />);
+  screen.getByTestId("retention-open").focus();
+  await open();
+  await waitFor(() => expect(screen.getByTestId("retention-answer")).toHaveFocus());
+  fireEvent.change(screen.getByTestId("retention-answer"), { target: { value: "x" } });
+  fireEvent.click(screen.getByTestId("retention-submit"));
+  await waitFor(() => expect(screen.getByTestId("retention-result")).toHaveFocus());
+  fireEvent.click(screen.getByTestId("retention-next"));
+  await waitFor(() => expect(screen.getByTestId("retention-answer")).toHaveFocus());
+});
+
+it("an mc_reason question takes focus on its first option; the last Continue focuses the finished line", async () => {
+  api.startRetentionCheck.mockResolvedValue({ items: [{ ...item, format: "mc_reason", options: [{ letter: "A", text: "First" }, { letter: "B", text: "Second" }] }] });
+  api.answerRetentionCheck.mockResolvedValue({ correct: false, confidence: 0.9 });
+  render(<RetentionCheck userId="u1" courses={courses} />); await open();
+  await waitFor(() => expect(screen.getByRole("radio", { name: "A. First" })).toHaveFocus());
+  fireEvent.click(screen.getByTestId("retention-idk"));
+  await waitFor(() => expect(screen.getByTestId("retention-result")).toHaveFocus());
+  fireEvent.click(screen.getByTestId("retention-next"));
+  await waitFor(() => expect(screen.getByTestId("retention-finished")).toHaveFocus());
+});
+
+it("an empty set focuses the line that says so", async () => {
+  api.startRetentionCheck.mockResolvedValue({ items: [] });
+  render(<RetentionCheck userId="u1" courses={courses} />);
+  fireEvent.click(screen.getByTestId("retention-open"));
+  await waitFor(() => expect(screen.getByTestId("retention-empty")).toHaveFocus());
+});
+
+it("writes the result into a live region that was already on the page", async () => {
+  api.startRetentionCheck.mockResolvedValue({ items: [item] });
+  api.answerRetentionCheck.mockResolvedValue({ correct: true, confidence: 0.9 });
+  render(<RetentionCheck userId="u1" courses={courses} />); await open();
+  const region = screen.getByTestId("retention-item").querySelector('[aria-live="polite"]');
+  expect(region).toBeEmptyDOMElement();
+  fireEvent.change(screen.getByTestId("retention-answer"), { target: { value: "x" } });
+  fireEvent.click(screen.getByTestId("retention-submit"));
+  expect(region).toContainElement(await screen.findByTestId("retention-result"));
+});
+
+it("a status line (empty set) is written into a live region that was already on the page", async () => {
+  api.startRetentionCheck.mockResolvedValue({ items: [] });
+  render(<RetentionCheck userId="u1" courses={courses} />);
+  const region = screen.getByTestId("retention-open").parentElement!.querySelector('[aria-live="polite"]');
+  expect(region).toBeEmptyDOMElement();
+  fireEvent.click(screen.getByTestId("retention-open"));
+  expect(region).toContainElement(await screen.findByTestId("retention-empty"));
+});
+
+it("a failed answer focuses its error and keeps the typed answer", async () => {
+  api.startRetentionCheck.mockResolvedValue({ items: [item] });
+  api.answerRetentionCheck.mockRejectedValueOnce(new ApiError("unavailable", 503));
+  render(<RetentionCheck userId="u1" courses={courses} />); await open();
+  fireEvent.change(screen.getByTestId("retention-answer"), { target: { value: "kept" } });
+  fireEvent.click(screen.getByTestId("retention-submit"));
+  await waitFor(() => expect(screen.getByRole("alert")).toHaveFocus());
+  expect((screen.getByTestId("retention-answer") as HTMLTextAreaElement).value).toBe("kept");
+});
+
+it("the open control is a compact primary button until a set is open", async () => {
+  api.startRetentionCheck.mockResolvedValue({ items: [item] });
+  render(<RetentionCheck userId="u1" courses={courses} />);
+  const button = screen.getByTestId("retention-open");
+  expect(button.className).toContain("btn--primary");
+  // a block parent, so the card's flex column never stretches it across the card
+  expect(button.parentElement?.tagName).toBe("DIV");
+  expect(button.parentElement?.style.display).toBe("");
+  await open();
+  expect(screen.getByTestId("retention-open").className).not.toContain("btn--primary");
+});

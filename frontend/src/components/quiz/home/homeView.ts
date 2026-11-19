@@ -11,10 +11,11 @@ import type { EnrolledCourse } from "@/lib/api";
 import type { SessionConfig, StartRequest } from "@/lib/quiz/machine";
 import {
   colorFor,
-  courseQueueFromPlan,
   latestCompletedAttempt,
   metaLine,
   planReasonCopy,
+  planStateLine,
+  plannedCourseQueue,
   queueFor,
   rationaleFor,
   skillPercent,
@@ -78,15 +79,18 @@ export function cardModeFor(pickedId: string | null, arrival: Arrival): CardMode
 /**
  * A `?course=` arrival's queue: the tier ranking's, or with
  * `quiz_concept_plan` the learner model's order for that course (spec §13
- * A143). The due queue needs no such choice here: the hook decides it, so the
- * card and the queue agree.
+ * A143), falling back to the tier ranking when the plan proposes none of the
+ * course's concepts (`plannedCourseQueue`). The due queue needs no such choice
+ * here: the hook decides it, so the card and the queue agree.
  */
 export function courseQueueFor(
-  home: Pick<QuizHomeData, "planned" | "candidates" | "nodes">,
+  home: Pick<QuizHomeData, "planned" | "candidates" | "nodes" | "courseCandidates">,
   course: string | undefined,
 ): string[] {
   if (!course) return [];
-  return home.planned ? courseQueueFromPlan(home.candidates, course) : queueFor("course", home.nodes, course);
+  return home.planned
+    ? plannedCourseQueue(home.candidates, home.courseCandidates, home.nodes, course)
+    : queueFor("course", home.nodes, course);
 }
 
 /**
@@ -141,19 +145,27 @@ export function cardTitle(mode: CardMode, courseCode: string, conceptName: strin
   return conceptName;
 }
 
+/**
+ * The line under the card's title. A concept card states ONE measure
+ * (`metaLine`): the plan's skill meter for a concept the plan proposes, else
+ * the graph's mastery. `planLineShown`: the plan's reason line below already
+ * says the skill meter, so this line keeps the band and drops the number.
+ */
 export function cardMeta(
   mode: CardMode,
   courseQueueLength: number,
   due: QuizHomeData["due"],
   card: Candidate | null,
   planned = false,
+  planLineShown = false,
 ): string {
   if (mode === "course") return `${courseQueueLength} concepts ${planned ? "to practise" : "due"}`;
   if (mode === "due") {
     const order = planned ? "most overdue" : "weakest";
     return `${due.count} concepts across ${due.courseCount} courses · starting with the ${Math.min(due.count, QUEUE_MAX)} ${order}`;
   }
-  return card ? metaLine(card.node) : "";
+  if (!card) return "";
+  return card.plan && planLineShown ? planStateLine(card.node, card.plan) : metaLine(card.node, undefined, card.plan);
 }
 
 /** Only a deep link explains itself on the card: it is the one arrival whose

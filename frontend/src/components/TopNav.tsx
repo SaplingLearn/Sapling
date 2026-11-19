@@ -31,7 +31,7 @@ import { ShellActions } from "./ShellActions";
 import { SaplingWordmark } from "./SaplingWordmark";
 import { RETENTION_NAV_HREF, RetentionDueDot } from "./RetentionDueDot";
 import { useUser } from "@/context/UserContext";
-import { useRetentionDue } from "@/context/RetentionDueContext";
+import { useRetentionNavDue } from "./useRetentionNav";
 import { useIsMobile } from "@/lib/useIsMobile";
 import type { NavSection } from "@/lib/navFeatures";
 import { useVisibleNavSections } from "@/lib/useNavSections";
@@ -57,7 +57,8 @@ export function TopNav() {
   const { userName, avatarUrl, isAdmin, isAuthenticated } = useUser();
   const isMobile = useIsMobile();
   const groups = useVisibleNavSections();
-  const { due: retentionDue } = useRetentionDue();
+  // hide_study hides the check's page: the closed menu then carries no dot
+  const { due: retentionDue } = useRetentionNavDue();
   const [mobileOpen, setMobileOpen] = React.useState(false);
   const mobileRef = React.useRef<HTMLDivElement | null>(null);
 
@@ -301,7 +302,7 @@ function NavGroupTrigger({
   const active = isActiveGroup(pathname, group);
   const wrapperRef = React.useRef<HTMLDivElement | null>(null);
   // A126: the Study row hides in the panel, so its group's trigger carries the dot
-  const { due: retentionDue } = useRetentionDue();
+  const { due: retentionDue } = useRetentionNavDue();
   const groupDue = retentionDue && group.items.some((item) => item.href === RETENTION_NAV_HREF);
 
   return (
@@ -438,7 +439,7 @@ function NavGroupTrigger({
 }
 
 function MobilePanel({ pathname, groups }: { pathname: string; groups: NavGroup[] }) {
-  const { due: retentionDue } = useRetentionDue();
+  const { due: retentionDue } = useRetentionNavDue();
   return (
     <div
       style={{

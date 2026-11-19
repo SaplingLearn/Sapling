@@ -6,6 +6,7 @@ import {
   fetchQuizConfig,
   generateQuiz,
   getAttempt,
+  getQuizPlan,
   listAttempts,
   submitQuiz,
 } from "./api";
@@ -198,6 +199,18 @@ describe("listAttempts", () => {
   it("passes limit and offset through", async () => {
     await listAttempts("u 1", { limit: 20, offset: 40 });
     expect(lastCall()[0]).toBe("/api/quiz/attempts?user_id=u+1&limit=20&offset=40");
+  });
+});
+
+describe("getQuizPlan", () => {
+  it("asks for every course when no course is named", async () => {
+    await getQuizPlan("u1");
+    expect(lastCall()[0]).toBe("/api/quiz/plan?user_id=u1");
+  });
+
+  it("sends the course a queue is for", async () => {
+    await getQuizPlan("u 1", "c 1");
+    expect(lastCall()[0]).toBe("/api/quiz/plan?user_id=u+1&course_id=c+1");
   });
 });
 

@@ -35,7 +35,7 @@ import type { GraphNode } from "@/lib/types";
 import { queueOf } from "./machine";
 import { daysAgo, relativeStudied } from "./relativeTime";
 import { QUEUE_MAX } from "./session";
-import type { AttemptSummary, PlanReason, PlannedConcept, QuizPlan, QuizSession } from "./types";
+import type { AttemptSummary, PlanReason, PlannedConcept, QuizPlan, QuizSession, SkillBand } from "./types";
 
 /** The tiers `get_recommendations` considers worth suggesting. `mastered` and
  *  `subject_root` are excluded by the same filter. */
@@ -51,8 +51,14 @@ export interface Candidate {
   color: string;
   rationale: string;
   lastAttempt?: AttemptSummary;
-  /** Spec §13 A143: the learner model's proposal — why, and the skill meter. */
-  plan?: { reason: PlanReason; pKnown: number };
+  /** Spec §13 A143: the learner model's proposal — why, the skill meter and its band. */
+  plan?: CandidatePlan;
+}
+
+export interface CandidatePlan {
+  reason: PlanReason;
+  pKnown: number;
+  band: SkillBand;
 }
 
 /** The membership half of the rule: is this node one the student owes time to? */
@@ -102,11 +108,45 @@ function pct(score: number): number {
   return Math.round(score * 100);
 }
 
-/** "29% · struggling · last studied 4 days ago" (§5 B1.2). */
-export function metaLine(node: GraphNode, now: Date = new Date()): string {
+/** The skill bands in a student's words — the quiz results say them the
+ *  same way (`results/LearningBlock.tsx`). */
+export const BAND_WORDS: Record<SkillBand, string> = {
+  novice: "just starting",
+  develop: "developing",
+  profic: "proficient",
+};
+
+function studiedPhrase(node: GraphNode, now: Date): string {
   const studied = relativeStudied(node.last_studied_at, now);
-  const when = studied === "not studied yet" ? studied : `last studied ${studied}`;
+  return studied === "not studied yet" ? studied : `last studied ${studied}`;
+}
+
+/**
+ * "29% · struggling · last studied 4 days ago" (§5 B1.2).
+ *
+ * ONE measure per concept on the quiz home. A concept the learner model's plan
+ * proposes (spec §13 A143) reads its skill meter and band — the decayed BKT
+ * estimate the plan ranked it by, its reason line states and the quiz results
+ * report — never the graph's stored mastery score beside it, which is not
+ * decayed and, for a concept never studied, is not the model's prior either.
+ * A concept the plan does not propose keeps the graph's score and tier.
+ */
+export function metaLine(node: GraphNode, now: Date = new Date(), plan?: CandidatePlan): string {
+  const when = studiedPhrase(node, now);
+  if (plan) return `${skillPercent(plan.pKnown)} · ${BAND_WORDS[plan.band]} · ${when}`;
   return `${pct(node.mastery_score)}% · ${node.mastery_tier} · ${when}`;
+}
+
+/** `metaLine` without its number, for a card whose plan line already states
+ *  the skill meter: "developing · not studied yet". */
+export function planStateLine(node: GraphNode, plan: CandidatePlan, now: Date = new Date()): string {
+  return `${BAND_WORDS[plan.band]} · ${studiedPhrase(node, now)}`;
+}
+
+/** What the home ranks and shows a concept by: its skill meter when the plan
+ *  proposes it, else the graph's mastery score (see `metaLine`). */
+export function shownMastery(node: GraphNode, plan?: CandidatePlan): number {
+  return plan ? plan.pKnown : node.mastery_score;
 }
 
 /**
@@ -353,7 +393,7 @@ export function rankFromPlan(
       course,
       color: colorFor(node, course),
       rationale: planRowCopy(concept),
-      plan: { reason: concept.reason, pKnown: concept.p_known },
+      plan: { reason: concept.reason, pKnown: concept.p_known, band: concept.band },
       ...(lastAttempt ? { lastAttempt } : {}),
     });
   }
@@ -368,6 +408,24 @@ export function courseQueueFromPlan(candidates: Candidate[], courseId: string): 
     .filter(c => c.plan && c.node.course_id === courseId)
     .slice(0, QUEUE_MAX)
     .map(c => c.node.id);
+}
+
+/**
+ * "Practice this course" on a planned home. The course's own plan (read with
+ * its `course_id`) when there is one, else the all-courses plan's concepts of
+ * that course. When the learner model proposes none of them (each is
+ * proficient and not yet due, or waits on a prerequisite), the tier ranking's
+ * queue for the course stands in: the student asked to practise THIS course,
+ * and an empty queue would quietly swap the card for an unrelated concept.
+ */
+export function plannedCourseQueue(
+  candidates: Candidate[],
+  courseCandidates: Candidate[] | null | undefined,
+  nodes: GraphNode[],
+  courseId: string,
+): string[] {
+  const planned = courseQueueFromPlan(courseCandidates ?? candidates, courseId);
+  return planned.length > 0 ? planned : queueFor("course", nodes, courseId);
 }
 
 /** "Review everything due" from the plan: the concepts whose FSRS review is

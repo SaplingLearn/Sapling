@@ -42,6 +42,12 @@ vi.mock("@/context/RetentionDueContext", async (original) => ({
   ...await original<typeof import("@/context/RetentionDueContext")>(),
   useRetentionDue: () => ({ ...retention, refresh: () => {} }),
 }));
+// The nav flags (#620): none set, loaded, unless a case hides Study.
+const navFlags = vi.hoisted(() => ({ flags: {} as Record<string, string>, ready: true }));
+vi.mock("@/context/FlagsContext", async (original) => ({
+  ...await original<typeof import("@/context/FlagsContext")>(),
+  useFlagMap: () => navFlags,
+}));
 // "topnav" renders the legacy My Courses panel, the easiest surface to assert
 // on; the CoursesKey empty-state test flips this to "sidebar".
 const layoutState = vi.hoisted(() => ({ pref: "topnav" }));
@@ -95,6 +101,8 @@ beforeEach(() => {
   userState.name = "Ada";
   retention.due = false;
   retention.courseIds = [];
+  navFlags.flags = {};
+  navFlags.ready = true;
   window.localStorage.clear();
   globalThis.ResizeObserver = class {
     observe() {}
@@ -260,5 +268,24 @@ describe("Dashboard retention-check notice (spec §13 A126)", () => {
     fireEvent.click(within(notice).getByTestId("dashboard-retention-open"));
     // a nudge only: opening a check commits its pose, so the student opens it on Study
     expect(push).toHaveBeenCalledWith("/study?retention-course=c-BIO-101");
+  });
+
+  it.each(["topnav", "sidebar"])("never points at Study while hide_study hides it (%s layout)", async (pref) => {
+    layoutState.pref = pref;
+    retention.due = true;
+    retention.courseIds = ["c-BIO-101"];
+    navFlags.flags = { hide_study: "on" };
+    render(<Dashboard />);
+    await waitFor(() => expect(getGraph).toHaveBeenCalled());
+    expect(screen.queryByTestId("dashboard-retention-due")).toBeNull();
+  });
+
+  it("waits for the flags before offering it, so a hidden Study never flashes a card", async () => {
+    retention.due = true;
+    retention.courseIds = ["c-BIO-101"];
+    navFlags.ready = false;
+    render(<Dashboard />);
+    await waitFor(() => expect(getGraph).toHaveBeenCalled());
+    expect(screen.queryByTestId("dashboard-retention-due")).toBeNull();
   });
 });

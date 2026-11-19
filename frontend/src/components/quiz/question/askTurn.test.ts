@@ -3,9 +3,11 @@ import crisisFixture from "@/test-utils/crisisSupport.json";
 import {
   ABORTED,
   askErrorCopy,
+  BudgetPausedError,
   chatWithFallback,
   openTutorSession,
   quizAskOrigin,
+  turnPauseOf,
   type ChatLeg,
 } from "./askTurn";
 
@@ -15,12 +17,15 @@ const api = vi.hoisted(() => ({
   streamChat: vi.fn(),
   sendChat: vi.fn(),
   shouldFallBackToJson: vi.fn(() => true),
+  // the learning loop's budget pause (lib/api.ts): none unless a case says so
+  budgetPauseOf: vi.fn((_err: unknown): { resetAt: string | null; sessionCapped: boolean } | null => null),
 }));
 vi.mock("@/lib/api", () => api);
 
 beforeEach(() => {
   vi.clearAllMocks();
   api.shouldFallBackToJson.mockReturnValue(true);
+  api.budgetPauseOf.mockReturnValue(null);
 });
 
 describe("askErrorCopy", () => {
@@ -99,8 +104,57 @@ describe("chatWithFallback", () => {
     await expect(chatWithFallback(l, { onToken, onProgress }, vi.fn())).resolves.toBe("Because.");
     expect(api.streamChat).toHaveBeenCalledWith(
       "s1", "u", "Why?", "socratic", true, undefined,
-      { onToken, onProgress, signal: l.signal }, "turn-1",
+      { onToken, onProgress, onRetract: undefined, onBudget: expect.any(Function), signal: l.signal }, "turn-1",
     );
+  });
+
+  // ── the learning loop's stream: retract and the budget pause ──────────────
+
+  type LoopHandlers = { onRetract?: (r: string) => void; onBudget?: (n: unknown) => void };
+  const NOTICE = { level: "hard", reset_at: "2026-11-09T00:00:00Z", scope: "daily", session_capped: false };
+
+  it("passes the caller's retract handler to the stream", async () => {
+    const onRetract = vi.fn();
+    api.streamChat.mockImplementationOnce(async (...args: unknown[]) => {
+      (args[6] as LoopHandlers).onRetract?.("leak");
+      return { reply: "The whole reply." };
+    });
+    await expect(chatWithFallback(leg(), { onRetract }, vi.fn())).resolves.toBe("The whole reply.");
+    expect(onRetract).toHaveBeenCalledWith("leak");
+  });
+
+  it("a paused stream (its budget notice, then no reply) throws the pause — no JSON retry", async () => {
+    const onBudget = vi.fn();
+    api.streamChat.mockImplementationOnce(async (...args: unknown[]) => {
+      (args[6] as LoopHandlers).onBudget?.(NOTICE);
+      throw new Error("Chat stream ended without a done event.");
+    });
+    const beforeFallback = vi.fn();
+    const failure = chatWithFallback(leg(), { onBudget }, beforeFallback);
+    await expect(failure).rejects.toBeInstanceOf(BudgetPausedError);
+    await expect(failure).rejects.toMatchObject({ paused: { resetAt: "2026-11-09T00:00:00Z", sessionCapped: false } });
+    expect(onBudget).toHaveBeenCalledWith(NOTICE);
+    expect(beforeFallback).not.toHaveBeenCalled();
+    expect(api.sendChat).not.toHaveBeenCalled();
+  });
+
+  it("a budget notice before a served (template) reply resolves the reply", async () => {
+    api.streamChat.mockImplementationOnce(async (...args: unknown[]) => {
+      (args[6] as LoopHandlers).onBudget?.(NOTICE);
+      return { reply: "A worked example." };
+    });
+    await expect(chatWithFallback(leg(), {}, vi.fn())).resolves.toBe("A worked example.");
+  });
+
+  it("a failure after tokens is a failure, budget notice or not (the partial survives)", async () => {
+    const err = new Error("interrupted");
+    const l = leg();
+    api.streamChat.mockImplementationOnce(async (...args: unknown[]) => {
+      (args[6] as LoopHandlers).onBudget?.(NOTICE);
+      l.progress.sawToken = true;
+      throw err;
+    });
+    await expect(chatWithFallback(l, {}, vi.fn())).rejects.toBe(err);
   });
 
   it("maps an empty streamed reply to ''", async () => {
@@ -185,5 +239,16 @@ describe("the quiz_ask origin and the crisis card (spec §13 A99; docs/safety/cr
       vi.fn(),
     );
     expect(reply).toMatchObject({ crisis: { title: crisisFixture.title } });
+  });
+});
+
+describe("turnPauseOf", () => {
+  it("reads the stream's pause, a 429 'ai budget reached', or nothing", () => {
+    const paused = { resetAt: null, sessionCapped: true };
+    expect(turnPauseOf(new BudgetPausedError(paused))).toEqual(paused);
+    const refused = new Error("429");
+    api.budgetPauseOf.mockImplementation((e: unknown) => (e === refused ? paused : null));
+    expect(turnPauseOf(refused)).toEqual(paused);
+    expect(turnPauseOf(new Error("500"))).toBeNull();
   });
 });
