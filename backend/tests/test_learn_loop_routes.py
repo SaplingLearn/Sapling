@@ -4176,7 +4176,7 @@ def test_active_loop_chat_observes_only_after_persistence_and_router_cannot_fail
     gate_on, seams, streaming, router_fails
 ):
     order = []
-    seams.save_msg.side_effect = lambda session_id, role, *args: order.append(role)
+    seams.save_msg.side_effect = lambda session_id, role, *args, **kwargs: order.append(role)
     observed = []
 
     def observe(**kwargs):

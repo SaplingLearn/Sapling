@@ -151,6 +151,20 @@ from services.loop.practice import (
 logger = logging.getLogger("routes.learn_loop")
 
 
+def _turn_row_ids(kind, session_id: str, body) -> tuple[str | None, str | None]:
+    """(user row id, reply row id) of a student chat turn the client sent with
+    a `turn_id` (#761, #866 B4): deterministic, so a retried turn re-writes
+    the same rows (duplicates ignored) and `_loop_turn_entry` finds a
+    persisted reply to replay. Any other turn: (None, None), fresh random ids."""
+    turn_id = getattr(body, "turn_id", None)
+    if kind != "chat" or not isinstance(turn_id, str) or not turn_id:
+        return None, None
+    return (
+        _turn_message_id(session_id, turn_id, "user"),
+        _turn_message_id(session_id, turn_id, "assistant"),
+    )
+
+
 class _LoopTurn:
     """One loop turn, shared by the JSON and streamed paths.
 
@@ -499,20 +513,6 @@ class _LoopTurn:
             "arm_session": bool(self.arm),  # PKG-14 (A20): both variants of an arm alike
         }
 
-    def _turn_row_ids(self) -> tuple[str | None, str | None]:
-        """(user row id, reply row id) of a student chat turn the client sent
-        with a `turn_id` (#761, #866 B4): deterministic, so a retried turn
-        re-writes the same rows (duplicates ignored) and `_loop_turn_entry`
-        finds a persisted reply to replay. Any other turn: (None, None),
-        fresh random ids."""
-        turn_id = getattr(self.observer_body, "turn_id", None)
-        if self.kind != "chat" or not turn_id:
-            return None, None
-        return (
-            _turn_message_id(self.session_id, turn_id, "user"),
-            _turn_message_id(self.session_id, turn_id, "assistant"),
-        )
-
     def history(self) -> list:
         history = _load_loop_history(
             self.session_id,
@@ -521,7 +521,7 @@ class _LoopTurn:
             loop_state=self.state,
             # a retried turn's user row, left by an attempt that failed after
             # writing it, is this turn's message, not history (#761)
-            exclude_id=self._turn_row_ids()[0],
+            exclude_id=_turn_row_ids(self.kind, self.session_id, self.observer_body)[0],
         )
         return _with_goal_context(history, self.state, self.user_id, self.session_id)
 
@@ -1056,7 +1056,7 @@ class _LoopTurn:
             if item is not None:  # A93: posed — in the scan set until graded
                 _ledger(record_posed, self.user_id, item.question_hash, source="loop", session_id=self.session_id)
                 varied_practice.note_posed(self.user_id, self.session_id, item)  # A141
-        user_row_id, reply_row_id = self._turn_row_ids()
+        user_row_id, reply_row_id = _turn_row_ids(self.kind, self.session_id, self.observer_body)
         if self.persist_user_row:
             save_message(self.session_id, "user", self.message, message_id=user_row_id)
         save_message(self.session_id, "assistant", reply, merged or None, message_id=reply_row_id)

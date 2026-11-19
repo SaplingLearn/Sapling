@@ -1666,7 +1666,7 @@ def _wire_history(monkeypatch, *, n: int, loop_brief, row: bool = True):
         else ModelRequest(parts=[UserPromptPart(content=f"m{i}")])
         for i in range(n)
     ]
-    setattr_loop(monkeypatch, "_load_message_history", lambda session_id: list(msgs))
+    setattr_loop(monkeypatch, "_load_message_history", lambda session_id, *, exclude_id=None: list(msgs))
     sessions = MagicMock()
     sessions.select.return_value = [{"id": "s1", "loop_brief": loop_brief}] if row else []
     setattr_loop(monkeypatch, "table", lambda name: sessions)
@@ -2130,7 +2130,7 @@ def test_loop_history_reads_no_brief_off_a_review_session(monkeypatch):
 
     tables = _Tables({"sessions": [{"id": "s1", "mode": "review", "loop_brief": None}]})
     setattr_loop(monkeypatch, "table", tables)
-    setattr_loop(monkeypatch, "_load_message_history", lambda sid: [])
+    setattr_loop(monkeypatch, "_load_message_history", lambda sid, *, exclude_id=None: [])
     setattr_loop(monkeypatch, "store_brief", lambda *a, **k: pytest.fail("no brief on review"))
     assert services.loop.history._load_loop_history("s1", user_id=UID, course_id="c1", loop_state={}) == []
 
