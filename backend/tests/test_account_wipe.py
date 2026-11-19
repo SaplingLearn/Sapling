@@ -539,7 +539,7 @@ def test_wiped_but_not_bundled_tables_are_exactly_the_named_exceptions():
     exception = exception[:exception.index("\n")]
     for name in (
         "document_uploads", "gradescope_syncs", "tutor_pending_sessions",
-        "ai_tutor_daily_calls", "learning_evidence_operations",
+        "ai_tutor_daily_calls", "learning_evidence_operations", "check_item_reports",
     ):
         assert f"`{name}`" in exception, f"CLAUDE.md's wipe-not-bundle exception omits {name}"
 
