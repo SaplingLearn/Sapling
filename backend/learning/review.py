@@ -1000,7 +1000,15 @@ def _open_item(doc: dict, item: ReviewItem, now_s: float) -> None:
     current = opened.get(sr_key(item))
     if isinstance(current, dict) and _live_claim(current, now_s):
         return  # grading in flight: the served item stays the answerable one
-    opened[sr_key(item)] = {"item_id": item.id, "served_at": now_s}
+    entry = {"item_id": item.id, "served_at": now_s}
+    # #866 review (A4 follow-up): re-serving the SAME still-open item after a
+    # claim went stale keeps that serving's evidence operation id. A grade whose
+    # write lands after its claim's stale age then shares one identity with the
+    # re-answer: one commits, the other replays or reads back the earlier
+    # commit, so one serving never journals two observations.
+    if isinstance(current, dict) and current.get("item_id") == item.id and current.get(_OPERATION_KEY):
+        entry[_OPERATION_KEY] = current[_OPERATION_KEY]
+    opened[sr_key(item)] = entry
 
 
 #: The open entry's key holding the evidence operation id of its serving
