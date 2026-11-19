@@ -6,14 +6,9 @@ import { useUser } from "@/context/UserContext";
 import { useScrollLock } from "@/lib/useScrollLock";
 import { useToast } from "./ToastProvider";
 import { LONG_TEXT_MAX } from "@/lib/inputLimits";
-
-// Numeric scale — the brand's tone is "quiet library," not emoji reactions.
-const RATINGS: { value: number; label: string }[] = [
-  { value: 1, label: "Frustrating" },
-  { value: 2, label: "Just okay" },
-  { value: 3, label: "Productive" },
-  { value: 4, label: "Great session" },
-];
+// Numeric scale — the brand's tone is "quiet library," not emoji reactions —
+// with its two ends labelled under it (shared with the Tutor's wrap-up).
+import { SessionRatingScale } from "./learn/SessionRatingScale";
 
 const HELPFULNESS = [
   "Explanations clicked",
@@ -150,33 +145,7 @@ export function SessionFeedbackFlow({ open, context, onClose }: SessionFeedbackF
         {step === 0 && (
           <div>
             <div className="label-micro" style={{ marginBottom: 8 }}>How did it feel?</div>
-            <div style={{ display: "flex", gap: 8, justifyContent: "space-between" }}>
-              {RATINGS.map(r => {
-                const sel = rating === r.value;
-                return (
-                  <button
-                    key={r.value}
-                    onClick={() => setRating(r.value)}
-                    aria-label={r.label}
-                    title={r.label}
-                    className="h-serif"
-                    style={{
-                      flex: 1,
-                      padding: "14px 4px",
-                      fontSize: 20,
-                      fontWeight: 500,
-                      color: sel ? "var(--accent)" : "var(--text-dim)",
-                      borderRadius: "var(--r-md)",
-                      border: `1px solid ${sel ? "var(--accent-border)" : "var(--border)"}`,
-                      background: sel ? "var(--accent-soft)" : "var(--bg-panel)",
-                      transition: "background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease)",
-                    }}
-                  >
-                    {r.value}
-                  </button>
-                );
-              })}
-            </div>
+            <SessionRatingScale value={rating} onSelect={setRating} />
           </div>
         )}
 

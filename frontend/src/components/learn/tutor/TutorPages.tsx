@@ -66,8 +66,10 @@ export function TutorHome({
   continueRow: TutorSessionRow | null;
   /** Its name as the rest of the shell shows it (the course decides it). */
   continueTitle?: string;
-  dueCount: number;
-  dueHref: string;
+  /** Reviews due now in every course (the review queue's count); null: unknown. */
+  dueCount: number | null;
+  /** Where "Review what's due" goes; null while `hide_study` hides Study. */
+  dueHref: string | null;
   /** The weakest concept the map knows, offered as a first focus. */
   startWith: string | null;
   busy: boolean;
@@ -95,7 +97,7 @@ export function TutorHome({
             Continue: {continueTitle ?? sessionTitle(continueRow)}
           </button>
         )}
-        {dueCount > 0 && (
+        {dueHref && (dueCount ?? 0) > 0 && (
           <Link className={styles.pill} data-testid="tutor-home-due" href={dueHref}>
             Review what&apos;s due · {dueCount}
           </Link>
@@ -129,6 +131,16 @@ export function TutorHome({
 
 type Material = { id: string; file_name: string; category?: string | null };
 
+/** A list that could not be read says so, with a retry — never its empty state. */
+export function LoadFailed({ what, onRetry, testId }: { what: string; onRetry: () => void; testId?: string }) {
+  return (
+    <div role="status" data-testid={testId} className={`${styles.listRow} ${styles.listRowStatic}`} style={{ gap: 10, flexWrap: "wrap" }}>
+      <span className={styles.ls}>Couldn&apos;t load {what}.</span>
+      <button type="button" className="btn btn--sm" onClick={onRetry}>Try again</button>
+    </div>
+  );
+}
+
 /** T2 · A course, like a Claude project: its sessions, progress and material. */
 export function TutorCourse({
   course,
@@ -136,6 +148,9 @@ export function TutorCourse({
   concepts,
   materials,
   dueHref,
+  libraryHref,
+  onRetrySessions,
+  onRetryMaterials,
   onOpen,
   onAll,
 }: {
@@ -143,7 +158,14 @@ export function TutorCourse({
   sessions: TutorSessionRow[];
   concepts: GraphNode[];
   materials: Material[] | null;
-  dueHref: string;
+  /** Null while `hide_study` hides Study. */
+  dueHref: string | null;
+  /** Where material is added; null while `hide_library` hides the Library. */
+  libraryHref: string | null;
+  /** Present when the session list failed to load (never "No sessions yet"). */
+  onRetrySessions?: (() => void) | null;
+  /** Present when the material failed to load (never "No material yet"). */
+  onRetryMaterials?: (() => void) | null;
   onOpen: (row: TutorSessionRow) => void;
   onAll: () => void;
 }) {
@@ -172,9 +194,10 @@ export function TutorCourse({
               </span>
               <ChevRight />
             </button>
-          )) : (
+          )) : !onRetrySessions && (
             <div className={`${styles.listRow} ${styles.listRowStatic}`}><span className={styles.ls}>No sessions yet.</span></div>
           )}
+          {onRetrySessions && <LoadFailed testId="tutor-course-sessions-error" what="your past sessions" onRetry={onRetrySessions} />}
         </section>
         <section className="card">
           <div className={styles.cardHead}>
@@ -187,7 +210,7 @@ export function TutorCourse({
             {progress.length > 0
               ? progress.map((n) => <Meter key={n.id} label={n.name} score={n.mastery_tier === "unexplored" ? null : n.mastery_score} />)
               : <p className={styles.ls} style={{ margin: 0 }}>Concepts appear here as you learn.</p>}
-            <Link href={dueHref} className="btn btn--sm" style={{ alignSelf: "flex-start" }}>Review what&apos;s due</Link>
+            {dueHref && <Link href={dueHref} className="btn btn--sm" style={{ alignSelf: "flex-start" }}>Review what&apos;s due</Link>}
           </div>
         </section>
       </div>
@@ -196,11 +219,12 @@ export function TutorCourse({
           <div>
             <span className="label-micro">Course material</span>
             <h3 className="h-serif">
-              {materials === null ? "Loading…" : `${materials.length} ${materials.length === 1 ? "file" : "files"}`}
+              {materials !== null ? `${materials.length} ${materials.length === 1 ? "file" : "files"}` : onRetryMaterials ? "Not loaded" : "Loading…"}
             </h3>
           </div>
-          <Link href="/library" className="btn btn--sm"><Icon name="up" size={13} /> Add material</Link>
+          {libraryHref && <Link href={libraryHref} className="btn btn--sm"><Icon name="up" size={13} /> Add material</Link>}
         </div>
+        {onRetryMaterials && <LoadFailed testId="tutor-course-materials-error" what="this course's material" onRetry={onRetryMaterials} />}
         {(materials ?? []).slice(0, 6).map((m) => (
           <div key={m.id} className={`${styles.listRow} ${styles.listRowStatic}`}>
             <Icon name="doc" size={15} />
@@ -212,7 +236,9 @@ export function TutorCourse({
         ))}
         {materials !== null && materials.length === 0 && (
           <div className={`${styles.listRow} ${styles.listRowStatic}`}>
-            <span className={styles.ls}>No material yet — upload notes or slides so the tutor can quiz you on them.</span>
+            <span className={styles.ls}>
+              {libraryHref ? "No material yet — upload notes or slides so the tutor can quiz you on them." : "No material yet."}
+            </span>
           </div>
         )}
       </section>
@@ -231,6 +257,7 @@ export function TutorAllSessions({
   setQuery,
   filter,
   setFilter,
+  onRetry,
   onOpen,
 }: {
   sessions: TutorSessionRow[];
@@ -239,6 +266,8 @@ export function TutorAllSessions({
   setQuery: (q: string) => void;
   filter: Filter;
   setFilter: (f: Filter) => void;
+  /** Present when the session list failed to load: the rows may be incomplete. */
+  onRetry?: (() => void) | null;
   onOpen: (row: TutorSessionRow) => void;
 }) {
   const search = useFocusHeading<HTMLInputElement>();
@@ -279,9 +308,10 @@ export function TutorAllSessions({
             </button>
           );
         })}
-        {rows.length === 0 && (
+        {rows.length === 0 && !onRetry && (
           <div className={`${styles.listRow} ${styles.listRowStatic}`}><span className={styles.ls}>No sessions match.</span></div>
         )}
+        {onRetry && <LoadFailed testId="tutor-all-sessions-error" what="your past sessions" onRetry={onRetry} />}
       </section>
     </div>
   );

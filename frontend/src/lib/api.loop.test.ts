@@ -96,6 +96,14 @@ describe('loop JSON clients (routes/learn_loop.py shapes; no model_pref, spec §
     expect(bodyOf(1)).toEqual({ user_id: 'u', topic: 'Recursion', course_id: 'c1' });
   });
 
+  it('startLoopSession names Send to tutor\'s note (from_note_id) only when given one', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => json({ session_id: 's9', initial_message: '' }));
+    await startLoopSession('u', 'c1', 'Week 3 notes', null, undefined, 'note-1');
+    expect(bodyOf(0)).toEqual({ user_id: 'u', topic: 'Week 3 notes', course_id: 'c1', from_note_id: 'note-1' });
+    await startLoopSession('u', 'c1', 'Week 3 notes', null, undefined, null);
+    expect(bodyOf(1)).toEqual({ user_id: 'u', topic: 'Week 3 notes', course_id: 'c1' });
+  });
+
   it('startLoopSession posts user_id, topic and course_id only', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(json({ session_id: 's9', initial_message: 'hi', graph_state: {} }));
     const r = await startLoopSession('u', 'c1', 'Intro CS');

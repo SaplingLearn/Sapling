@@ -139,7 +139,7 @@ test("keyboard only: the check-in, the plan, and a check item answered wrong (ea
     await page.keyboard.press("Enter");
     const pose = (await (await posed).json()).check as { question_hash: string; worked_first?: boolean };
     const check = page.getByTestId("loop-check-prompt");
-    const answer = page.getByRole("textbox", { name: "Your answer", exact: true });
+    const answer = page.getByRole("textbox", { name: "Your answer — this is what gets checked", exact: true });
     const hintButton = page.getByTestId("loop-hint-button");
     const hintReply = page.getByTestId("loop-hint-reply");
     await expect(check).toHaveAttribute("data-question-hash", pose.question_hash);
@@ -222,7 +222,7 @@ test("keyboard only: the check-in, the plan, and a check item answered wrong (ea
       await expect(answer).toBeFocused();
       await expect(answer).toHaveAccessibleDescription(await questionOf(page, "loop-check-prompt"));
     } else {
-      const note = page.locator('[aria-live="polite"]').filter({ hasText: /every concept in today's plan|No check is ready/ });
+      const note = page.locator('[aria-live="polite"]').filter({ hasText: /every concept in today's plan|No check is ready|No check questions are ready yet/ });
       await expect(note).toBeVisible();
       await expect(page.getByTestId("loop-check-me")).toBeFocused();
     }

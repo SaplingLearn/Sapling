@@ -30,6 +30,7 @@ export function TutorSidebar({
   onOpen,
   onAll,
   onHide,
+  onRetryRecent,
 }: {
   courses: EnrolledCourse[] | null;
   courseId: string | null;
@@ -47,6 +48,8 @@ export function TutorSidebar({
   onOpen: (row: TutorSessionRow) => void;
   onAll: () => void;
   onHide: () => void;
+  /** Present when the recents failed to load: they say so, never "None yet". */
+  onRetryRecent?: (() => void) | null;
 }) {
   const byId = useMemo(() => new Map((courses ?? []).map((c, i) => [c.course_id, { c, i }])), [courses]);
   const q = query.trim().toLowerCase();
@@ -147,9 +150,15 @@ export function TutorSidebar({
                 </React.Fragment>
               );
             })}
-            {shown.length === 0 && (
+            {shown.length === 0 && !onRetryRecent && (
               <span style={{ fontSize: 12, color: "var(--text-muted)", padding: "4px 8px" }}>
                 {q ? "No sessions match." : hasOpenHere ? "" : "None yet"}
+              </span>
+            )}
+            {onRetryRecent && (
+              <span role="status" data-testid="tutor-recents-error" style={{ fontSize: 12, color: "var(--text-muted)", padding: "4px 8px" }}>
+                Couldn&apos;t load your past sessions.{" "}
+                <button type="button" className={styles.textLink} onClick={onRetryRecent}>Try again</button>
               </span>
             )}
           </div>
