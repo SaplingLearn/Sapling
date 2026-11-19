@@ -118,6 +118,7 @@ REQUIRED_COLUMNS = {
         "fingerprint": "text",
         "reason": "text",
         "cache_published": "boolean",
+        "models": "ARRAY",  # 20261118194745: the reservation's priced models
     },
     "check_items": {
         "concept_key": "text",

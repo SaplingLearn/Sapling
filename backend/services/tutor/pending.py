@@ -197,19 +197,19 @@ async def _open_turn_session(session_id: str, user_id: str) -> None:
 
 
 async def _require_turn_session(session_id: str, user_id: str) -> None:
-    """The first half of `_open_turn_session` for the turn routes that hand a
-    learning-loop session to the loop (/chat, /chat/stream, /action; spec
-    §7): not discarded, owned by the caller — before the rate-limit read and
-    the loop hand-off (A93 review). `_materialize_turn_session` opens the
-    legacy session after. This process's own tombstones first (no I/O); the
-    ownership check reads a table-held pending session too
+    """The first half of `_open_turn_session`, for the learning-loop path of
+    the turn routes (/chat, /chat/stream, /action; spec §7;
+    `turns._loop_turn_entry`): not discarded, owned by the caller — before the
+    replay, the rate-limit read and the loop hand-off (A93 review). The loop
+    handler materialises the session itself; the legacy path never comes here
+    (it opens through `_open_turn_session`). This process's own tombstones
+    first (no I/O); the ownership check reads a table-held pending session too
     (`stateless_tutor_sessions`, #117)."""
     raise_if_discarded_here(session_id, user_id)
     if session_id not in PENDING_SESSIONS and await astored() and await aowned_live_row(
         session_id, user_id
     ):
         # #117: a live session answers from its sessions row, with no store read
-        # (`_materialize_turn_session` then opens it through `aopen_stored`)
         return
     await araise_if_discarded(session_id, user_id)
     await arequire_session_owner(session_id, user_id)
@@ -217,9 +217,10 @@ async def _require_turn_session(session_id: str, user_id: str) -> None:
 
 async def _materialize_turn_session(session_id: str, user_id: str) -> None:
     """The second half of `_open_turn_session`: materialise if pending, then
-    refuse an ended session (409). The turn routes run the entry checks
-    first (`_require_turn_session`), hand a learning-loop session to the
-    loop (spec §7), and only then open the legacy session here. With
+    refuse an ended session (409). No handler calls it any more (#866 B2: the
+    legacy turn path opens through `_open_turn_session`, the loop path checks
+    through `_require_turn_session` and materialises in the loop handler); it
+    is kept only for routes/learn.py's re-export (#118). With
     `stateless_tutor_sessions` on, a session not pending in this process
     opens through `aopen_stored` (#117)."""
     if session_id not in PENDING_SESSIONS and await astored():
