@@ -175,14 +175,14 @@ def test_jev_unclear_blocks_on_judge_leak(seam, monkeypatch):
         ({"q": ("yes", 0.31, {})}, "low_confidence"),
     ],
 )
-def test_any_jev_failure_serves_gemini_with_a_fallback_event(seam, monkeypatch, events, usage, failure, reason):
+def test_any_jev_failure_serves_the_decision_agent_with_a_fallback_event(seam, monkeypatch, events, usage, failure, reason):
     monkeypatch.setenv("DECISION_BACKEND_ITEM_ANSWERABLE", "jev")
     _scripted_jev(monkeypatch, seam, failure)
     state = seam.AnswerableState(passages=["A base case ends recursion."], question=QUESTION, reference=REFERENCE)
     cm, runs = _gemini("yes", 0.8)
     with cm:
         v = _run(lambda: seam.item_answerable(state, deps=_deps()))
-    assert (v.backend, v.value, v.fallback) == ("gemini", True, True)
+    assert (v.backend, v.value, v.fallback) == ("claude", True, True)
     assert len(runs) == 1
     assert _payloads(events, "decision.fallback") == [
         {
@@ -276,7 +276,7 @@ def test_shadow_never_waits_for_jev(seam, monkeypatch, events):
 
     with cm:
         v, before = asyncio.run(main())
-    assert (v.backend, v.value, v.fallback) == ("gemini", False, False)
+    assert (v.backend, v.value, v.fallback) == ("claude", False, False)
     assert before == []
     [shadow] = _payloads(events, "decision.shadow")
     assert shadow == {
@@ -299,7 +299,7 @@ def test_a_failing_shadow_never_touches_the_served_answer(seam, monkeypatch, eve
     cm, _ = _gemini("yes", 0.7)
     with cm:
         v = _run(lambda: seam.judge_leak(_leak(seam), deps=_deps()))
-    assert (v.backend, v.value, v.fallback) == ("gemini", True, False)
+    assert (v.backend, v.value, v.fallback) == ("claude", True, False)
     [shadow] = _payloads(events, "decision.shadow")
     assert (shadow["error_code"], shadow["shadow_value"], shadow["agreement"]) == ("http_529", None, False)
     assert _payloads(events, "decision.fallback") == []  # a shadow failure is not a fallback
@@ -313,7 +313,7 @@ def test_a_shadow_that_raises_is_swallowed(seam, monkeypatch, events, caplog):
     cm, _ = _gemini("no", 0.8)
     with cm, caplog.at_level("WARNING"):
         v = _run(lambda: seam.judge_leak(_leak(seam), deps=_deps()))
-    assert v.backend == "gemini"
+    assert v.backend == "claude"
     assert any("decision shadow failed" in r.getMessage() for r in caplog.records)
 
 
@@ -405,7 +405,7 @@ def test_jev_disabled_never_calls_jev(seam, monkeypatch, events, backend):
     cm, runs = _gemini("no", 0.8)
     with cm:
         v = _run(lambda: seam.judge_leak(_leak(seam), deps=_deps()))
-    assert (v.backend, v.fallback) == ("gemini", False) and calls == [] and len(runs) == 1
+    assert (v.backend, v.fallback) == ("claude", False) and calls == [] and len(runs) == 1
     assert _payloads(events, "decision.shadow") == []
 
 
@@ -625,7 +625,7 @@ def test_a_billed_jev_fallback_counts_one_grade_not_two(seam, monkeypatch, usage
     cm, runs = _gemini("no", 0.8)
     with cm:
         v = _run(lambda: seam.judge_leak(_leak(seam), deps=_deps()))
-    assert (v.backend, v.fallback) == ("gemini", True)
+    assert (v.backend, v.fallback) == ("claude", True)
     tasks = [r["task"] for r in usage if r.get("provider") == "typesafe"] + [r["task"] for r in gemini_rows]
     assert tasks == ["decision_jev_extra", "learning_decision"]
     assert sum(t in ai_budget.GRADE_TASKS for t in tasks) == 1
@@ -692,7 +692,7 @@ def test_a_closed_privacy_gate_skips_shadows_and_falls_back_served(seam, monkeyp
         assert _payloads(events, "decision.shadow") == []
         monkeypatch.setenv("DECISION_BACKEND_JUDGE_LEAK", "jev")
         v = _run(lambda: seam.judge_leak(_leak(seam), deps=_deps()))
-    assert (v.backend, v.fallback) == ("gemini", True) and seen == []
+    assert (v.backend, v.fallback) == ("claude", True) and seen == []
     assert [p["reason"] for p in _payloads(events, "decision.fallback")] == ["privacy_gate"]
 
 

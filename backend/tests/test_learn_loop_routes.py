@@ -842,9 +842,14 @@ def test_prepare_loop_run_uses_the_tier_slot_and_loop_limits():
     ), "the student's words ride the nonce envelope (review round 3, C1(a))"
     assert run_kwargs["usage_limits"] is LOOP_LIMITS
     assert run_kwargs["model_settings"]["tool_choice"] == "none"
-    assert (
-        run_kwargs["model_settings"]["max_tokens"]
-        == LOOP_PRO_THINKING_BUDGET + LOOP_MAX_VISIBLE_TOKENS
+    # the deep tier's own bound on its slot's provider: Claude's ceiling on
+    # the Claude default, the Pro thinking + visible cap on a gemini-* override
+    from agents._providers import ANTHROPIC_MAX_TOKENS, slot_provider
+
+    assert run_kwargs["model_settings"]["max_tokens"] == (
+        ANTHROPIC_MAX_TOKENS
+        if slot_provider("loop_tutor_deep") == "anthropic"
+        else LOOP_PRO_THINKING_BUDGET + LOOP_MAX_VISIBLE_TOKENS
     )
     assert (
         deps.learning_loop is True and deps.loop_state == {"x": 1} and deps.feature == "loop_tutor"
