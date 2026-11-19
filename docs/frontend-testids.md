@@ -341,6 +341,7 @@ journeys keep anchoring: `quiz-panel`, `quiz-start`,
 | `quiz-ask-seed` | the composed first message shown at the top of the sheet |
 | `quiz-ask-retry` | "Try again" when the tutor stream failed |
 | `quiz-ask-input` / `quiz-ask-send` | the sheet's composer |
+| `quiz-ask-budget-paused` | the tutor is paused for the student's AI budget (the loop's `budget` event, or a 429 `ai budget reached`): the pause copy, no error and no Retry |
 | `quiz-results` | results root |
 | `quiz-results-graph` | the concept neighbourhood above the score (`graph/ConceptNeighbourhood`) |
 | `quiz-results-score` | the "{n} of {total} correct" line — a count, not a percentage |
@@ -981,6 +982,8 @@ loop active (`GET /api/learn/loop/review/active` 200 — a gate-only probe; the 
 | `review-report-reason-{reason}` | one reason — `wrong_answer` / `unclear` / `not_from_my_course` — posts `/api/learn/loop/report` (`surface: review`, the item's id) and loads the next item |
 | `review-report-cancel` | closes the reasons without reporting |
 | `review-reported` | "Thanks — that question is reported…" above the next item |
+| `review-skipped` | "That question is no longer available, so it was skipped." — a 404 on `/review/answer` or `/report` moved on to the next item |
+| `review-load-error` / `review-load-retry` | `/review/next` failed: why, and "Try again" |
 
 ### `loop`
 
@@ -1010,6 +1013,13 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `tutor-course-page` | a course page (T2); `data-course-id`: its sessions, progress and material; `tutor-course-start` (TopBar) goes to the home |
 | `tutor-all-sessions` | every session (T3), with a search and an All / In progress / Wrapped up filter |
 | `tutor-phase-line` | the TopBar's line under the title: Check-in / Plan · N concepts / "<concept> · concept i of n" / Wrap-up / "Wrapped up · read-only" |
+| `tutor-phase-stepper` | the first row of the conversation column (`learn/tutor/PhaseStepper.tsx`): the ordered Check-in · Plan · Learn · Wrap-up list (`<ol aria-label="Session progress">`); each `li` has `data-state` = done / current / todo and the current one has `aria-current="step"` |
+| `tutor-turn` | a `ChatPanel` tutor turn drawn on the page (`turnStyle="page"`, `PageTurn`: the tutor's mark and name over the text, no bubble); `data-visually-hidden` while unpainted |
+| `tutor-session-map` | the session panel's knowledge map (`learn/tutor/SessionMap.tsx`): fixed mastery colours, no zoom buttons; it frames its nodes until the student zooms or pans it, and re-frames on a double-click or a new node set |
+| `tutor-map-key` | the map's key under it: a list of the four mastery tiers, in the colours the map paints with |
+| `tutor-panel-due-count` | the session panel's count of reviews due (`GET /review/summary`: flashcards plus checks, all courses); absent while `hide_study` hides Study |
+| `tutor-drawer` / `tutor-drawer-scrim` | on a phone, the sidebar or session panel as a modal drawer (`learn/tutor/TutorDrawer.tsx`, `role="dialog"`, `aria-modal`) and its scrim (a click closes it) |
+| `tutor-recents-error` / `tutor-course-sessions-error` / `tutor-course-materials-error` / `tutor-all-sessions-error` | a failed sessions or materials read: "Couldn't load …" with Try again — never an empty state |
 | `tutor-crumb-course` | the TopBar's course breadcrumb (opens the course page) |
 | `tutor-panel-hide` / `tutor-panel-toggle` | hide the session panel (its head) / show it again (the TopBar, only while it is hidden) |
 | `tutor-key-idea` | the tutor turn's "Key idea:" paragraph, shown as the labelled key-idea block (`ChatPanel`'s `splitKeyIdea`) |
@@ -1049,7 +1059,9 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `loop-probe-reference` | the answer shown after a wrong answer or idk (spec §3.3) |
 | `loop-probe-retry` | the next probe item failed to load — retry (`/probe/next`, same session) |
 | `loop-probe-next` | "Next" under the reference — the next probe item, or the plan after the probe's last answer |
-| `loop-plan-concept-{nodeId}` | one planned concept (name, kind chip: Review / New / Related; a band chip only when the response carries one) |
+| `loop-plan-concept-{nodeId}` | one planned concept: its name, its one kind badge `loop-plan-kind-{nodeId}` (Due for review / New / Keep practicing / Related practice) and, in a goal session only, `loop-plan-reason-{nodeId}` (Your selected goal / Prerequisite for your goal); a band chip only when the response carries one |
+| `loop-plan-kind-{nodeId}` | that concept's kind badge (`learn/planLabels.ts::planKind`, from GET /plan `kind`: review / new / started / sibling); the session panel shows the same label under the concept's name |
+| `loop-plan-reason-{nodeId}` | why a goal session plans it (`planGoalReason`: `goal` / `prerequisite`); absent outside a goal session |
 | `loop-plan-retry` | the plan failed to load — retry (`GET /plan`) |
 | `loop-plan-approve` | approve the plan (`/plan/approve`, the proposed ids in order) |
 | `loop-messages` | the teach/check/feedback chat container (wraps `ChatPanel`) |
