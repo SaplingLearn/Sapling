@@ -90,6 +90,8 @@ LEARNING_GATE_TIME_SCALE = float(os.getenv("LEARNING_GATE_TIME_SCALE", "1.0"))
 
 # AI budget (spec §3.5, §13 A20): owner-approved caps (†), env-overridable so a deploy or a
 # paid tier can move them without a code change. services/ai_budget.py reads them at call time.
+# They bind learning-loop students only (owner decision 2026-11-18: "caps only when the loop is
+# on"): with the loop off, the legacy tutor and the topic checklist read none of them.
 STUDENT_DAILY_BUDGET_USD = float(os.getenv("STUDENT_DAILY_BUDGET_USD", "0.20"))
 BUDGET_NOVICE_MULTIPLIER = float(os.getenv("BUDGET_NOVICE_MULTIPLIER", "2.5"))
 STUDENT_SOFT_FRACTION = float(os.getenv("STUDENT_SOFT_FRACTION", "0.8"))

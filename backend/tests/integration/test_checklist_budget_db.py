@@ -22,10 +22,15 @@ import pytest
 
 pytestmark = pytest.mark.integration
 
-POLICY = "flash-50k-3x8192-v1"
+POLICY = "checklist-50k-3x8192-v2"
+#: The topic_checklist slot's Claude default and its llm_fallback, as the
+#: backend reserves them (services/checklist_budget.py::price_hold).
+MODELS = ["anthropic:claude-haiku-5-5", "gemini:gemini-2.5-flash"]
 HOLD = Decimal("0.0764400000")
 HOLD_TOKENS = 74_576
 FUNCTIONS = (
+    "checklist_budget_admit(text,text,text,uuid,text,text,numeric,numeric,bigint,numeric,bigint,text[])",
+    # the pre-B1 overload: still declared, can no longer admit (the migration says why)
     "checklist_budget_admit(text,text,text,uuid,text,text,numeric,numeric,bigint)",
     "checklist_budget_start(text,uuid,bigint)",
     "checklist_budget_read(text,uuid)",
@@ -61,7 +66,8 @@ def owner_enrollments(db_conn, seeded_user):
     return owner, enrollment_ids
 
 
-def _admit(owner, enrollment, *, daily=".20", monthly="2", tokens=400_000, params=None):
+def _admit(owner, enrollment, *, daily=".20", monthly="2", tokens=400_000, params=None,
+           held=HOLD, models=MODELS):
     from db.connection import rpc
 
     if params is None:
@@ -76,8 +82,18 @@ def _admit(owner, enrollment, *, daily=".20", monthly="2", tokens=400_000, param
             "p_daily_usd": daily,
             "p_monthly_usd": monthly,
             "p_daily_tokens": tokens,
+            "p_held_usd": str(held),
+            "p_held_tokens": HOLD_TOKENS,
+            "p_models": models,
         }
     return rpc("checklist_budget_admit", params), params
+
+
+def test_the_backend_hold_is_the_one_these_tests_reserve():
+    from services.checklist_budget import price_hold
+
+    hold = price_hold(("claude-haiku-5-5", "gemini-2.5-flash"))
+    assert (hold.usd, hold.tokens, list(hold.models)) == (HOLD, HOLD_TOKENS, MODELS)
 
 
 def _identity(row):
@@ -156,6 +172,33 @@ def _receipt(row, *, input_tokens=1000, output_tokens=100, cached_tokens=200):
         ),
         completed=True,
         dispatched_at=datetime.fromisoformat(row["dispatch_at"].replace("Z", "+00:00")),
+    )
+
+
+def _claude_receipt(row, *, model="claude-haiku-5-5", models=None):
+    """A measured Claude run's bill, prepared as the service prepares it."""
+    from pydantic_ai.messages import ModelResponse, TextPart
+    from pydantic_ai.usage import RequestUsage, RunUsage
+
+    from services.checklist_budget import Reservation
+    from services.checklist_receipt import prepare_checklist_receipt
+
+    usage = RequestUsage(
+        input_tokens=1000, output_tokens=100,
+        details={"input_tokens": 1000, "output_tokens": 100,
+                 "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0},
+    )
+    response = ModelResponse(
+        parts=[TextPart("Synthetic completed-response fixture; not learner content.")],
+        model_name=model, provider_name="anthropic", usage=usage,
+    )
+    reservation = Reservation(
+        UUID(row["operation_id"]), row["user_id"], row["enrollment_id"], row["input_hash"], row["fence"],
+        datetime.fromisoformat(row["dispatch_at"].replace("Z", "+00:00")), tuple(models or row["models"]),
+    )
+    run = RunUsage(requests=1, input_tokens=1000, output_tokens=100, details=dict(usage.details))
+    return prepare_checklist_receipt(
+        reservation=reservation, responses=(response,), dispatched_requests=1, usage=run, completed=True,
     )
 
 
@@ -681,3 +724,48 @@ def test_service_role_has_required_budget_grants_and_rls_is_enabled(db_conn):
                 ).fetchone()["allowed"]
                 is True
             )
+
+
+def test_a_claude_bill_settles_against_the_models_it_was_held_for(db_conn, owner_enrollments):
+    """PR #866 B1: the slot's Claude default settles; the stored bill is the
+    backend's (llm_pricing) price, and the reservation names its models."""
+    owner, enrollments = owner_enrollments
+    row = _start(_admitted(owner, enrollments[0]))
+    assert _db_row(db_conn, row)["models"] == MODELS
+    receipt = _claude_receipt(row)
+    settled = _reconcile(row, receipt=receipt, content=_content("claude"))
+    assert settled["status"] == "settled" and settled["reservation"]["cache_published"] is True
+    bill = db_conn.execute("SELECT * FROM llm_usage WHERE id = %s", (receipt.receipt_id,)).fetchone()
+    assert (bill["model"], bill["provider"], bill["thinking_tokens"]) == ("claude-haiku-5-5", "anthropic", None)
+    assert bill["cost_usd"] == Decimal(str(receipt.to_row()["cost_usd"]))
+    account = db_conn.execute(
+        "SELECT blocked FROM checklist_budget_accounts WHERE user_id = %s", (owner,)
+    ).fetchone()
+    assert account["blocked"] is False
+
+
+def test_a_bill_from_a_model_the_hold_was_not_priced_for_is_a_conflict(db_conn, owner_enrollments):
+    owner, enrollments = owner_enrollments
+    row = _start(_admitted(owner, enrollments[0], held=Decimal("0.0185380000"),
+                           models=["anthropic:claude-haiku-5-5"]))
+    # Prepared as if the Gemini fallback were reserved: the SQL holds the line.
+    receipt = _receipt(row)
+    assert _reconcile(row, receipt=receipt, content=_content("unreserved"))["status"] == "conflict"
+    persisted = _db_row(db_conn, row)
+    assert (persisted["state"], persisted["receipt"], persisted["held_usd"]) == (
+        "started", None, Decimal("0.0185380000"))
+
+
+@pytest.mark.parametrize(
+    "change",
+    [{"p_held_usd": "0"}, {"p_held_usd": "0.00000000001"}, {"p_held_tokens": 0},
+     {"p_models": []}, {"p_models": ["claude-haiku-5-5"]}, {"p_policy": "flash-50k-3x8192-v1"}],
+)
+def test_admission_refuses_a_malformed_hold(owner_enrollments, change):
+    owner, enrollments = owner_enrollments
+    _, params = _admit(owner, enrollments[0])
+    operation = uuid4()
+    params = {**params, **change, "p_operation_id": str(operation),
+              "p_receipt_id": str(uuid5(NAMESPACE_URL, f"sapling:checklist-receipt:{operation}"))}
+    with pytest.raises(httpx.HTTPStatusError):
+        _admit(owner, enrollments[0], params=params)

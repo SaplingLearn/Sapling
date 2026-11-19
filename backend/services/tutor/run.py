@@ -49,20 +49,20 @@ _PREF_MODEL_NAMES: dict[str, str] = {
 _PRO_THINKING_BUDGET = 2048
 
 
-#: PKG-14b (spec §11.2, A20 †): the kill-switch path has no concept band, so it
-#: takes the develop/profic allowance — the same one `check(…, "close")` uses
-#: for a session with no novice-band concept. A band NAME, never a dollar figure.
+#: RETIRED with `_kill_switch_budget` below (owner decision 2026-11-18).
 KILL_SWITCH_BUDGET_BAND = "develop"
 
 
 def _kill_switch_budget(user_id: str) -> None:
-    """The kill-switch path's cost bound (spec §11.2, A20; PKG-14b). Called by every
-    legacy model-calling handler AFTER the loop delegation and BEFORE any agent runs
-    or any stream opens: a hard decision is the §3.5 429 (`AIBudgetExceeded`, never a
-    mid-stream event); soft changes nothing (the legacy path has no tiers). A passing
-    check counts one tutor call (A39: the daily call-count cap holds even when
-    `llm_usage` cost reads wrong or EVENTS_LOGGING_ENABLED=false). It never creates or
-    biases evidence — the legacy tutor records none."""
+    """RETIRED: no handler calls it. Owner decision 2026-11-18 ("caps only when
+    the loop is on"): the legacy tutor a loop-off student gets runs exactly as
+    before the loop, under main's own limits only (the abuse limits and the
+    flagged llm_budget), and reads no AI budget. Kept only because
+    routes/learn.py re-exports the name (#118); delete it, the band above and
+    this module's `ai_budget` import together with that re-export.
+
+    It was PKG-14b's kill-switch cost bound (spec §11.2, A20): the loop's
+    `ai_budget.check(…, "tutor")` and one `count_tutor_call`."""
     decision = ai_budget.check(user_id, "tutor", KILL_SWITCH_BUDGET_BAND)
     if decision.level == "hard":
         raise ai_budget.AIBudgetExceeded(decision)

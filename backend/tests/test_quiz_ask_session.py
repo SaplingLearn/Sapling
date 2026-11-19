@@ -368,7 +368,6 @@ def test_the_kill_switch_quiz_ask_records_the_same_help_row(path):
         patch_tutor("get_graph", return_value={"nodes": [], "edges": []}),
         patch("services.quiz_ask.table", side_effect=_tables(owner="user_andres")),
         patch("services.quiz_ask.record_help") as record,
-        patch_tutor("_kill_switch_budget"),
     ):
         r = client.post(path, json={"user_id": "user_andres", "topic": "Recursion", **ASK})
     assert r.status_code == 200, r.text
@@ -387,7 +386,6 @@ def test_a_kill_switch_quiz_ask_whose_help_write_fails_runs_no_model():
         patch_tutor("agent_for_mode", return_value=agent),
         patch("services.quiz_ask.table", side_effect=_tables(owner="user_andres")),
         patch("services.quiz_ask.record_help", side_effect=RuntimeError("down")),
-        patch_tutor("_kill_switch_budget"),
     ):
         r = client.post(
             "/api/learn/start-session", json={"user_id": "user_andres", "topic": "Recursion", **ASK}
@@ -470,7 +468,6 @@ def test_the_kill_switch_quiz_ask_runs_on_the_quiz_nodes_course(path):
         patch_tutor("get_graph", return_value={"nodes": [], "edges": []}),
         patch("services.quiz_ask.table", side_effect=_tables(owner="user_andres")),
         patch("services.quiz_ask.record_help"),
-        patch_tutor("_kill_switch_budget"),
     ):
         r = client.post(
             path,

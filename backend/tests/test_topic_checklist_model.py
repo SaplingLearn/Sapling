@@ -332,3 +332,69 @@ def test_conversion_failure_stops_before_counter_or_generation(monkeypatch):
             assert error.value is original
 
     asyncio.run(run())
+
+
+# ── The checklist agent's own model: whichever provider the slot resolves to (B1) ──
+
+
+class _Generated(Exception):
+    """Raised by the stubbed messages.create: the count let generation start."""
+
+
+@pytest.mark.parametrize("returned", [1500, 0, True, None])
+def test_claude_counts_the_whole_request_natively_and_refuses_a_non_count(monkeypatch, returned):
+    from anthropic.resources.beta.messages.messages import AsyncMessages
+    from anthropic.types.beta import BetaMessageTokensCount
+
+    from agents._providers import provider_model
+    from agents.topic_checklist import checklist_model
+
+    sent = []
+
+    async def count_tokens(self, **kwargs):
+        sent.append(kwargs)
+        return BetaMessageTokensCount.model_construct(input_tokens=returned)
+
+    async def create(self, **kwargs):
+        raise _Generated()
+
+    monkeypatch.setattr(AsyncMessages, "count_tokens", count_tokens)
+    monkeypatch.setattr(AsyncMessages, "create", create)
+    # the slot's real model: the Claude 5.x profile, the resilience, the key guard
+    model = checklist_model(provider_model("claude-haiku-5-5", task="topic_checklist"))
+    assert checklist_model(model) is model
+
+    async def run():
+        return await Agent(model, output_type=Outline, system_prompt="rules").run(
+            "evidence", usage_limits=limits(request_limit=1)
+        )
+
+    if returned == 1500:
+        with pytest.raises(_Generated):
+            asyncio.run(run())
+    else:
+        with pytest.raises(UnexpectedModelBehavior, match="no valid token count"):
+            asyncio.run(run())
+    # the system prompt and the output schema are part of what Claude counted
+    assert len(sent) == 1 and sent[0]["system"]
+    assert sent[0]["output_config"]["format"]["type"] == "json_schema"
+
+
+def test_a_google_slot_keeps_the_full_envelope_counter_and_unknown_models_fail_closed():
+    from agents.topic_checklist import checklist_model
+
+    with pytest.raises(UserError, match="Gemini Developer API"):
+        asyncio.run(Agent(checklist_model(LocalTestModel())).run("evidence", usage_limits=limits()))
+
+
+def test_the_billable_models_are_the_slots_model_and_its_fallback(monkeypatch):
+    from agents import topic_checklist
+
+    assert topic_checklist.checklist_model_names() == ("claude-haiku-5-5", "gemini-2.5-flash")
+    monkeypatch.setenv("SAPLING_MODEL_FALLBACK_TOPIC_CHECKLIST", "google-gla:gemini-2.5-pro")
+    assert topic_checklist.checklist_model_names() == ("claude-haiku-5-5", "gemini-2.5-pro")
+    # the function-mode seam never bills: it is held as the slot's real models
+    monkeypatch.delenv("SAPLING_MODEL_FALLBACK_TOPIC_CHECKLIST")
+    monkeypatch.setenv("SAPLING_MODEL_TOPIC_CHECKLIST", "gemini-2.5-flash")
+    seam = topic_checklist.checklist_model(FunctionModel(lambda *_args: None))
+    assert topic_checklist.checklist_model_names(seam) == ("gemini-2.5-flash", "claude-haiku-5-5")

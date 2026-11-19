@@ -95,7 +95,7 @@ def _durable_checklist_site(py: Path, fn: ast.AST, functions: list) -> bool:
     refreshed = _named_calls(by_name.get("refresh_checklist", ast.Pass()))
     return (
         {"ChecklistDispatches", "ChecklistGeneration", "topic_checklist_agent.run"} <= generated
-        and {"prepare_checklist_usage_receipt", "checklist_budget.reconcile"} <= finished
+        and {"prepare_checklist_receipt", "checklist_budget.reconcile"} <= finished
         and {"checklist_budget.admit", "_generate", "_finish_generation"} <= refreshed
         and not _calls_record_usage(fn)
     )

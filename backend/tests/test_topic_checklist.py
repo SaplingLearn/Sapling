@@ -1,6 +1,7 @@
 """Exercise the real checklist service against persistent in-memory table state."""
 import asyncio
 import copy
+import functools
 import threading
 from concurrent.futures import ThreadPoolExecutor
 import json
@@ -22,6 +23,8 @@ from services import topic_checklist_service as svc
 from services.encryption import bind, decrypt_json, encrypt_if_present
 
 NOW = datetime(2026, 10, 12, 12, tzinfo=timezone.utc)
+# The budgeted path's real seams, before the `state` fixture stubs them.
+_REAL_ADMIT, _REAL_RECONCILE, _REAL_GENERATE = checklist_budget.admit, checklist_budget.reconcile, svc._generate
 
 
 def outline():
@@ -152,8 +155,9 @@ def state(monkeypatch):
         calls.append(payload)
         return free_generation(outline(), reservation)
 
-    def admit(user_id, enrollment_id, input_hash):
-        return checklist_budget.Reservation(uuid4(), user_id, enrollment_id, input_hash, 1)
+    def admit(user_id, enrollment_id, input_hash, model_names):
+        models = checklist_budget.price_hold(model_names).models
+        return checklist_budget.Reservation(uuid4(), user_id, enrollment_id, input_hash, 1, models=models)
 
     def reconcile(reservation, *, receipt=None, content=None, no_dispatch=False):
         assert receipt is None and no_dispatch
@@ -167,6 +171,10 @@ def state(monkeypatch):
     monkeypatch.setattr(checklist_budget, "admit", admit)
     monkeypatch.setattr(checklist_budget, "reconcile", reconcile)
     monkeypatch.setattr(svc, "_generate", generate)
+    # These tests drive a learning-loop student's refresh, the budgeted path
+    # (the route passes the gate's answer). A loop-off student's refresh, the
+    # one before the loop, has its own tests (`loop_off` below).
+    monkeypatch.setattr(svc, "refresh_checklist", functools.partial(svc.refresh_checklist, learning_loop=True))
     return db, calls
 
 
@@ -693,6 +701,9 @@ def test_actual_refresh_endpoint_preserves_budget_429(state, monkeypatch):
     db["llm_usage"] = [{"id": "spent", "user_id": "u", "task": "topic_checklist",
                         "created_at": NOW.isoformat(), "cost_usd": config.STUDENT_DAILY_BUDGET_USD}]
     monkeypatch.setattr(routes, "require_self", lambda user_id, request: user_id)
+    # The route hands the service the student's gate answer: on here (the
+    # fixture's learning-loop refresh). Without the loop there is no budget.
+    monkeypatch.setattr(routes, "refresh_checklist", svc.refresh_checklist)
     app = FastAPI()
     app.add_exception_handler(ai_budget.AIBudgetExceeded, ai_budget.budget_exceeded_handler)
     app.include_router(routes.router, prefix="/api/topic-checklist")
@@ -806,3 +817,164 @@ def test_failed_generation_preserves_original_model_failure(monkeypatch, cancell
     reservation = checklist_budget.Reservation(uuid4(), "u", "enr", "a" * 64, 1)
     result = asyncio.run(svc._generate({"sources": []}, "u", reservation))
     assert result.error is original
+
+
+# ── A loop-off student's refresh: as before the loop (owner decision 2026-11-18) ──
+
+
+@pytest.fixture
+def loop_off(state, monkeypatch):
+    """The `state` course for a student with the learning loop off. Every AI
+    budget read, spend hold and budgeted generation fails the test."""
+    db, calls = state
+
+    async def generate(payload, user_id):
+        assert user_id == "u"
+        calls.append(payload)
+        return outline()
+
+    def no_budget(*args, **kwargs):
+        pytest.fail("a loop-off refresh read the AI budget or took a spend hold")
+
+    monkeypatch.setattr(svc, "_generate_unbudgeted", generate)
+    monkeypatch.setattr(svc, "_generate", no_budget)
+    for name in ("admit", "start", "reconcile", "read"):
+        monkeypatch.setattr(checklist_budget, name, no_budget)
+    for name in ("check", "_usage", "_load_rows", "enforce_rate_limit_for"):
+        monkeypatch.setattr(ai_budget, name, no_budget)
+    return db, calls, functools.partial(svc.refresh_checklist.func, learning_loop=False)
+
+
+def test_loop_off_refresh_is_the_pre_loop_refresh_with_no_budget(loop_off):
+    """No AI budget read and no spend hold, even past the loop's daily cap: the
+    run, its cache write (sealed to the enrollment) and a free cache hit after."""
+    db, calls, refresh = loop_off
+    db["llm_usage"] = [{"id": "spent", "user_id": "u", "task": "chat_tutor", "created_at": NOW.isoformat(),
+                        "cost_usd": config.STUDENT_DAILY_BUDGET_USD * 10, "total_tokens": config.STUDENT_DAILY_TOKENS}]
+    result = refresh("u", "course")
+    assert not result["needs_refresh"] and [t["name"] for t in result["topics"]] == ["Recursion", "Functions"]
+    stored = db["topic_checklists"][0]
+    assert decrypt_json(stored["content"], bind=bind("topic_checklists", "content", stored)) == outline().model_dump()
+    assert refresh("u", "course")["topics"] == result["topics"]
+    assert len(calls) == 1 and svc._generation_locks == {}
+
+
+def test_loop_off_refresh_keeps_the_rate_limit_and_failure_answers(loop_off, monkeypatch):
+    db, calls, refresh = loop_off
+    for index in range(6):
+        db["courses"][0]["description"] += f" Topic {index}."
+        refresh("u", "course")
+    db["courses"][0]["description"] += " New topic."
+    with pytest.raises(HTTPException) as err:
+        refresh("u", "course")
+    assert err.value.status_code == 429 and "Retry-After" in err.value.headers
+    assert len(calls) == 6
+
+    async def broken(payload, user_id):
+        raise RuntimeError("provider unavailable")
+
+    monkeypatch.setattr(svc, "check_rate_limit", lambda *args, **kwargs: None)
+    monkeypatch.setattr(svc, "_generate_unbudgeted", broken)
+    stored = copy.deepcopy(db["topic_checklists"])
+    with pytest.raises(HTTPException) as err:
+        refresh("u", "course")
+    assert err.value.status_code == 503 and db["topic_checklists"] == stored
+
+
+def test_loop_off_generation_records_its_usage_row(monkeypatch):
+    """The pre-loop run: WORKER_LIMITS, and one usage row for the student."""
+    recorded = []
+
+    def handler(messages, info):
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {"topics": []})])
+
+    def record(result, **kwargs):
+        recorded.append(kwargs)
+        return result
+
+    monkeypatch.setattr(svc, "record_agent_usage", record)
+    with topic_checklist_agent.override(model=FunctionModel(handler)):
+        result = asyncio.run(svc._generate_unbudgeted({"sources": [], "assessments": []}, "u"))
+    assert result == TopicOutline(topics=[])
+    assert recorded == [{"feature": "topic_checklist", "task": "topic_checklist", "user_id": "u"}]
+
+
+# ── B1: the budget path on the slot's real model (the Claude default) ────────
+
+
+def test_a_learning_loop_refresh_runs_and_settles_on_the_real_claude_slot(state, monkeypatch):
+    """The whole budgeted refresh on the model `model_for("topic_checklist")`
+    really resolves to (claude-haiku-5-5, with gemini-2.5-flash its fallback):
+    admission holds llm_pricing's price for both, Claude counts the full request
+    before generating, the dispatch starts under that hold, and the bill settles
+    as a Claude bill at llm_pricing's price. Only the Anthropic SDK calls and the
+    budget RPCs are stubbed (no network, no database)."""
+    from anthropic.resources.beta.messages.messages import AsyncMessages
+    from anthropic.types.beta import BetaMessage, BetaMessageTokensCount, BetaTextBlock, BetaUsage
+    from pydantic_ai.models.anthropic import AnthropicModel
+
+    from services import llm_pricing
+
+    db, _ = state
+    model = topic_checklist_agent.model
+    assert isinstance(model.wrapped, AnthropicModel) and model.wrapped.model_name == "claude-haiku-5-5"
+    monkeypatch.setattr(checklist_budget, "admit", _REAL_ADMIT)
+    monkeypatch.setattr(checklist_budget, "reconcile", _REAL_RECONCILE)
+    monkeypatch.setattr(svc, "_generate", _REAL_GENERATE)
+    sdk, rpcs, reservation = [], [], {}
+
+    async def count_tokens(self, **kwargs):
+        sdk.append(("count", kwargs["model"], bool(kwargs.get("system")), "output_config" in kwargs))
+        return BetaMessageTokensCount(input_tokens=1500)
+
+    async def create(self, **kwargs):
+        sdk.append(("create", kwargs["model"], kwargs["max_tokens"]))
+        return BetaMessage(
+            id="msg_checklist", type="message", role="assistant", model=kwargs["model"],
+            content=[BetaTextBlock(type="text", text=json.dumps(outline().model_dump()))],
+            stop_reason="end_turn", stop_sequence=None,
+            usage=BetaUsage(input_tokens=1500, output_tokens=400,
+                            cache_creation_input_tokens=0, cache_read_input_tokens=0),
+        )
+
+    def rpc(name, params):
+        rpcs.append((name, params))
+        if name == "checklist_budget_admit":
+            reservation.update(
+                operation_id=params["p_operation_id"], user_id=params["p_user_id"],
+                enrollment_id=params["p_enrollment_id"], input_hash=params["p_input_hash"], fence=1,
+                state="prepared", dispatch_at=None, models=params["p_models"],
+                held_usd=float(params["p_held_usd"]), held_tokens=params["p_held_tokens"])
+        elif name == "checklist_budget_start":
+            reservation.update(state="started", dispatch_at=NOW.isoformat())
+        else:
+            assert params["p_action"] == "settle"
+            reservation.update(state="settled", receipt=params["p_receipt"], fingerprint=params["p_fingerprint"])
+            MemoryTable(db, "topic_checklists").upsert({
+                "enrollment_id": reservation["enrollment_id"], "input_hash": reservation["input_hash"],
+                "content": params["p_content"], "generated_at": NOW.isoformat(),
+            }, on_conflict="enrollment_id")
+        return {"status": {"checklist_budget_admit": "admitted"}.get(name, reservation["state"]),
+                "reservation": dict(reservation)}
+
+    monkeypatch.setattr(AsyncMessages, "count_tokens", count_tokens)
+    monkeypatch.setattr(AsyncMessages, "create", create)
+    monkeypatch.setattr(checklist_budget, "rpc", rpc)
+
+    result = svc.refresh_checklist("u", "course")
+
+    assert not result["needs_refresh"] and {t["name"] for t in result["topics"]} == {"Recursion", "Functions"}
+    assert sdk == [("count", "claude-haiku-5-5", True, True), ("create", "claude-haiku-5-5", 8192)]
+    assert [name for name, _ in rpcs] == [
+        "checklist_budget_admit", "checklist_budget_start", "checklist_budget_reconcile"]
+    admitted = rpcs[0][1]
+    hold = checklist_budget.price_hold(("claude-haiku-5-5", "gemini-2.5-flash"))
+    assert admitted["p_models"] == ["anthropic:claude-haiku-5-5", "gemini:gemini-2.5-flash"]
+    assert admitted["p_held_usd"] == str(hold.usd) and admitted["p_held_tokens"] == 74_576
+    bill = rpcs[2][1]["p_receipt"]
+    assert (bill["model"], bill["provider"], bill["prompt_tokens"], bill["completion_tokens"]) == (
+        "claude-haiku-5-5", "anthropic", 1500, 400)
+    assert bill["cost_usd"] == llm_pricing.cost_usd("claude-haiku-5-5", 1500, 400, cached_tokens=0)
+    assert bill["created_at"] == NOW.isoformat()
+    stored = db["topic_checklists"][0]
+    assert decrypt_json(stored["content"], bind=bind("topic_checklists", "content", stored)) == outline().model_dump()

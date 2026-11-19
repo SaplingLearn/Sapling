@@ -26,28 +26,40 @@ from services.usage_receipts import prepare_checklist_usage_receipt
 from tests.manual_clock import ManualClockLoop
 
 NOW = datetime(2026, 10, 19, 12, tzinfo=timezone.utc)
+#: The topic_checklist slot's models: its Claude default and its llm_fallback.
+MODEL_NAMES = ("claude-haiku-5-5", "gemini-2.5-flash")
+GEMINI = "gemini-2.5-flash"
+MODELS = ("anthropic:claude-haiku-5-5", "gemini:gemini-2.5-flash")
 
 
 @pytest.fixture
 def reservation():
-    return budget.Reservation(uuid4(), "owner", "enrollment", "a" * 64, 7)
+    return budget.Reservation(uuid4(), "owner", "enrollment", "a" * 64, 7, models=MODELS)
 
 
 def row(reservation, state="prepared"):
     return {"operation_id": str(reservation.operation_id), "user_id": reservation.user_id,
             "enrollment_id": reservation.enrollment_id, "input_hash": reservation.input_hash,
-            "fence": reservation.fence, "state": state,
+            "fence": reservation.fence, "state": state, "models": list(reservation.models),
             "dispatch_at": NOW.isoformat() if state != "prepared" else None}
 
 
+def admitted_row(params, **changes):
+    """The reservation the admit RPC records for `params`."""
+    return {"operation_id": params["p_operation_id"], "user_id": params["p_user_id"],
+            "enrollment_id": params["p_enrollment_id"], "input_hash": params["p_input_hash"],
+            "fence": 1, "state": "prepared", "models": params["p_models"],
+            "held_usd": float(params["p_held_usd"]), "held_tokens": params["p_held_tokens"], **changes}
+
+
 def response():
-    return ModelResponse(parts=[TextPart("complete")], model_name=budget.MODEL, provider_name="google-gla",
+    return ModelResponse(parts=[TextPart("complete")], model_name=GEMINI, provider_name="google-gla",
                          usage=RequestUsage(input_tokens=100, output_tokens=20))
 
 
 def receipt(reservation):
     return prepare_checklist_usage_receipt(operation_id=reservation.operation_id, user_id=reservation.user_id,
-        approved_model=budget.MODEL, responses=(response(),), dispatched_requests=1,
+        approved_model=GEMINI, responses=(response(),), dispatched_requests=1,
         usage=RunUsage(requests=1, input_tokens=100, output_tokens=20), completed=True, dispatched_at=NOW)
 
 
@@ -58,17 +70,93 @@ def test_admission_lost_ack_replays_identical_operation_and_receipt(monkeypatch)
         calls.append((name, dict(params)))
         if len(calls) == 1:
             raise TimeoutError("committed but acknowledgment lost")
-        return {"status": "replay", "reservation": {
-            "operation_id": params["p_operation_id"], "user_id": params["p_user_id"],
-            "enrollment_id": params["p_enrollment_id"], "input_hash": params["p_input_hash"],
-            "fence": 1, "state": "prepared"}}
+        return {"status": "replay", "reservation": admitted_row(params)}
 
     monkeypatch.setattr(budget, "rpc", rpc)
-    result = budget.admit("owner", "enrollment", "a" * 64)
-    assert result.user_id == "owner"
+    result = budget.admit("owner", "enrollment", "a" * 64, MODEL_NAMES)
+    assert result.user_id == "owner" and result.models == MODELS
     assert calls[0] == calls[1]
     assert calls[0][1]["p_policy"] == budget.POLICY
     assert calls[0][1]["p_daily_usd"] == str(config.STUDENT_DAILY_BUDGET_USD)
+
+
+def test_admission_holds_the_worst_case_price_of_every_model_that_can_serve():
+    """B1: the hold is llm_pricing's price of one policy run, each component at
+    its worst over the slot's model and its fallback, so a run served by either
+    (or by both, one attempt each) is covered."""
+    from decimal import Decimal
+
+    from services import llm_pricing
+
+    def price(*args, **kwargs):
+        return Decimal(str(llm_pricing.cost_usd(*args, **kwargs)))
+
+    output = budget.REQUESTS * budget.OUTPUT_TOKENS_PER_REQUEST
+    expected = {}
+    for names in (MODEL_NAMES, ("claude-haiku-5-5",), (GEMINI,)):
+        input_usd = max(max(price(n, budget.INPUT_TOKENS, 0),
+                            price(n, budget.INPUT_TOKENS, 0, cache_write_tokens=budget.INPUT_TOKENS)) for n in names)
+        expected[names] = input_usd + max(price(n, 0, output) for n in names)
+    for names, usd in expected.items():
+        hold = budget.price_hold(names)
+        assert hold.usd == usd and hold.tokens == 74_576
+        assert hold.models == tuple(budget.billing_label(n) for n in names)
+    # Claude alone holds its own (cache-write) worst case, far below flash's.
+    assert budget.price_hold(("claude-haiku-5-5",)).usd < budget.price_hold(MODEL_NAMES).usd
+
+
+def test_admission_sends_the_hold_and_its_models(monkeypatch):
+    sent = []
+
+    def rpc(name, params):
+        sent.append(params)
+        return {"status": "admitted", "reservation": admitted_row(params)}
+
+    monkeypatch.setattr(budget, "rpc", rpc)
+    hold = budget.price_hold(MODEL_NAMES)
+    result = budget.admit("owner", "enrollment", "a" * 64, MODEL_NAMES)
+    assert sent[0]["p_held_usd"] == str(hold.usd) and sent[0]["p_held_tokens"] == hold.tokens
+    assert sent[0]["p_models"] == list(MODELS) and result.models == MODELS
+
+
+@pytest.mark.parametrize("key,value", [("models", ["gemini:gemini-2.5-flash"]), ("held_usd", 0.01),
+                                       ("held_tokens", 1)])
+def test_admission_rejects_a_reservation_holding_something_else(monkeypatch, key, value):
+    monkeypatch.setattr(budget, "rpc", lambda name, params: {
+        "status": "admitted", "reservation": admitted_row(params, **{key: value})})
+    with pytest.raises(HTTPException) as error:
+        budget.admit("owner", "enrollment", "a" * 64, MODEL_NAMES)
+    assert error.value.status_code == 503
+
+
+@pytest.mark.parametrize("names", [(), ("claude-unpriced-9",), ("gemini-unpriced-9",), ("jev-1.13.0",)])
+def test_an_unpriced_or_unbillable_model_never_reaches_admission(monkeypatch, names):
+    monkeypatch.setattr(budget, "rpc", lambda *args: pytest.fail("An unpriced hold reached the DB"))
+    with pytest.raises(HTTPException) as error:
+        budget.admit("owner", "enrollment", "a" * 64, names)
+    assert error.value.status_code == 503
+
+
+@pytest.mark.parametrize("price", [0, -0.1, None, float("nan"), float("inf")])
+def test_an_invalid_price_never_reaches_admission(monkeypatch, price):
+    monkeypatch.setattr(budget.llm_pricing, "cost_usd", lambda *args, **kwargs: price)
+    monkeypatch.setattr(budget, "rpc", lambda *args: pytest.fail("An invalid hold reached the DB"))
+    with pytest.raises(HTTPException) as error:
+        budget.admit("owner", "enrollment", "a" * 64, MODEL_NAMES)
+    assert error.value.status_code == 503
+
+
+def test_changed_run_bounds_fail_before_admission(monkeypatch):
+    from pydantic_ai.usage import UsageLimits
+
+    import agents.topic_checklist as agent_module
+
+    monkeypatch.setattr(agent_module, "CHECKLIST_LIMITS", UsageLimits(
+        request_limit=4, input_tokens_limit=50_000, count_tokens_before_request=True))
+    monkeypatch.setattr(budget, "rpc", lambda *args: pytest.fail("A stale run bound reached the DB"))
+    with pytest.raises(HTTPException) as error:
+        budget.admit("owner", "enrollment", "a" * 64, MODEL_NAMES)
+    assert error.value.status_code == 503
 
 
 @pytest.mark.parametrize("status,code", [("busy", 409), ("denied", 429), ("blocked", 429),
@@ -76,27 +164,23 @@ def test_admission_lost_ack_replays_identical_operation_and_receipt(monkeypatch)
 def test_admission_failures_never_authorize_dispatch(monkeypatch, status, code):
     monkeypatch.setattr(budget, "rpc", lambda *args: {"status": status})
     with pytest.raises(HTTPException) as error:
-        budget.admit("owner", "enrollment", "a" * 64)
+        budget.admit("owner", "enrollment", "a" * 64, MODEL_NAMES)
     assert error.value.status_code == code
 
 
 def test_coalesced_cache_hit_is_free(monkeypatch):
     monkeypatch.setattr(budget, "rpc", lambda *args: {"status": "cached"})
-    assert budget.admit("owner", "enrollment", "a" * 64) is None
+    assert budget.admit("owner", "enrollment", "a" * 64, MODEL_NAMES) is None
 
 
 @pytest.mark.parametrize("key,value", [("user_id", "other"), ("enrollment_id", "other"),
     ("input_hash", "b" * 64), ("operation_id", str(uuid4())), ("state", "started")])
 def test_admission_rejects_wrong_replay(monkeypatch, key, value):
     def rpc(name, params):
-        r = {"operation_id": params["p_operation_id"], "user_id": params["p_user_id"],
-             "enrollment_id": params["p_enrollment_id"], "input_hash": params["p_input_hash"],
-             "fence": 1, "state": "prepared"}
-        r[key] = value
-        return {"status": "replay", "reservation": r}
+        return {"status": "replay", "reservation": admitted_row(params, **{key: value})}
     monkeypatch.setattr(budget, "rpc", rpc)
     with pytest.raises(HTTPException):
-        budget.admit("owner", "enrollment", "a" * 64)
+        budget.admit("owner", "enrollment", "a" * 64, MODEL_NAMES)
 
 
 @pytest.mark.parametrize("value", [0, -1, float("nan"), float("inf"), "invalid", None])
@@ -104,14 +188,7 @@ def test_bad_cap_never_reaches_rpc(monkeypatch, value):
     monkeypatch.setattr(config, "STUDENT_DAILY_BUDGET_USD", value)
     monkeypatch.setattr(budget, "rpc", lambda *args: pytest.fail("Malformed policy reached DB"))
     with pytest.raises(HTTPException):
-        budget.admit("owner", "enrollment", "a" * 64)
-
-
-def test_changed_price_fails_before_admission(monkeypatch):
-    monkeypatch.setattr(budget.llm_pricing, "cost_usd", lambda *args: 0.10)
-    monkeypatch.setattr(budget, "rpc", lambda *args: pytest.fail("Stale price profile reached DB"))
-    with pytest.raises(HTTPException):
-        budget.admit("owner", "enrollment", "a" * 64)
+        budget.admit("owner", "enrollment", "a" * 64, MODEL_NAMES)
 
 
 def test_ambiguous_start_is_never_retried(monkeypatch, reservation):
@@ -175,10 +252,17 @@ def test_changed_receipt_conflict_keeps_failure_visible(monkeypatch, reservation
         budget.reconcile(reservation, receipt=receipt(reservation))
 
 
-def google_model():
+def google_model(name=GEMINI):
     # Construct a native model only; handler below supplies the response. No
     # provider/key/environment transport is used by these hermetic tests.
-    return GoogleModel(budget.MODEL, provider=GoogleProvider(api_key="unit-test-placeholder"))
+    return GoogleModel(name, provider=GoogleProvider(api_key="unit-test-placeholder"))
+
+
+def claude_model(name="claude-haiku-5-5"):
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
+    return AnthropicModel(name, provider=AnthropicProvider(api_key="unit-test-placeholder"))
 
 
 def test_dispatch_tracker_counts_raised_unknown_request(monkeypatch, reservation):
@@ -207,6 +291,32 @@ def test_dispatch_tracker_starts_once_records_every_response(monkeypatch, reserv
             await tracker.wrap_model_request(None, request_context=SimpleNamespace(model=google_model()), handler=handler)
     asyncio.run(run())
     assert len(starts) == 1 and tracker.dispatched == len(tracker.responses) == 2
+
+
+def test_dispatch_tracker_starts_a_reserved_claude_model(monkeypatch, reservation):
+    """B1: the slot's Claude default dispatches under the reservation's hold."""
+    starts = []
+    monkeypatch.setattr(budget, "start", lambda r: starts.append(r) or replace(r, dispatch_at=NOW))
+    tracker = ChecklistDispatches(reservation=reservation)
+
+    async def handler(ctx):
+        return response()
+
+    asyncio.run(tracker.wrap_model_request(None, request_context=SimpleNamespace(model=claude_model()), handler=handler))
+    assert len(starts) == 1 and tracker.dispatched == 1 and not tracker.nonbillable_test
+
+
+@pytest.mark.parametrize("model", [lambda: claude_model("claude-sonnet-5-5"), lambda: google_model("gemini-2.5-pro")])
+def test_an_unreserved_model_never_dispatches(monkeypatch, reservation, model):
+    monkeypatch.setattr(budget, "start", lambda *args: pytest.fail("An unreserved model started a paid dispatch"))
+    tracker = ChecklistDispatches(reservation=reservation)
+
+    async def handler(ctx):
+        pytest.fail("An unreserved model was called")
+
+    with pytest.raises(ValueError, match="outside the reserved price policy"):
+        asyncio.run(tracker.wrap_model_request(None, request_context=SimpleNamespace(model=model()), handler=handler))
+    assert tracker.dispatched == 0
 
 
 def test_lost_start_ack_does_not_enter_generation(monkeypatch, reservation):
@@ -327,23 +437,6 @@ def test_real_sdk_function_run_uses_capability_and_never_paid_receipt(monkeypatc
     assert len(result.dispatches.responses) == 1
 
 
-@pytest.mark.parametrize("component", ["cached", "input", "output"])
-def test_component_price_mismatch_fails_even_if_aggregate_quote_unchanged(monkeypatch, component):
-    real = budget.llm_pricing.cost_usd
-    def price(model, prompt, completion, **kwargs):
-        if component == "cached" and kwargs.get("cached_tokens"):
-            return .00004
-        if component == "input" and prompt == 1000 and completion == 0:
-            return .0004
-        if component == "output" and prompt == 0 and completion == 1000:
-            return .0026
-        return real(model, prompt, completion, **kwargs)
-    monkeypatch.setattr(budget.llm_pricing, "cost_usd", price)
-    monkeypatch.setattr(budget, "rpc", lambda *args: pytest.fail("Changed price profile reached DB"))
-    with pytest.raises(HTTPException):
-        budget.admit("owner", "enrollment", "a" * 64)
-
-
 @pytest.mark.parametrize("cancel", [False, True])
 def test_start_wait_does_not_block_run_deadline_or_dispatch_after_cancellation(monkeypatch, reservation, cancel):
     # What this proves: the first dispatch waits for `checklist_budget.start`
@@ -416,7 +509,7 @@ def test_sql_coalesced_hit_precedes_legacy_budget_failure(monkeypatch, reservati
     monkeypatch.setattr(svc.ai_budget, "check", lambda *args: pytest.fail("Free coalesced cache hit reached budget preflight"))
     monkeypatch.setattr(svc, "_cache", lambda *args: {"input_hash": "a" * 64})
     monkeypatch.setattr(svc, "present", lambda *args: "cached")
-    assert svc.refresh_checklist("owner", "course") == "cached"
+    assert svc.refresh_checklist("owner", "course", learning_loop=True) == "cached"
 
 
 def test_pre_generation_denial_releases_only_prepared_hold(monkeypatch, reservation):
@@ -431,6 +524,6 @@ def test_pre_generation_denial_releases_only_prepared_hold(monkeypatch, reservat
     monkeypatch.setattr(svc.ai_budget, "check", unavailable)
     monkeypatch.setattr(svc, "_generate", lambda *args: pytest.fail("Denial entered generation"))
     with pytest.raises(HTTPException) as error:
-        svc.refresh_checklist("owner", "course")
+        svc.refresh_checklist("owner", "course", learning_loop=True)
     assert error.value.status_code == 503
     assert calls == [{"no_dispatch": True}]
