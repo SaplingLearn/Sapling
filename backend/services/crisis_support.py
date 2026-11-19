@@ -252,8 +252,10 @@ async def screen_content_async(
 async def screen_tutor_start_async(
     request: Request, user_id: str | None, topic: str | None,
     *, note_version: Callable[[], Awaitable[tuple[Any, ...] | None]],
+    surface: Surface = "tutor_start",
 ) -> CrisisSupport | ContentScreen | None:
-    """The `tutor_start` screen of a session start's topic: None to carry on
+    """The `surface` screen (the legacy start's `tutor_start`, or the loop's
+    `loop_start`) of a session start's topic: None to carry on
     as before, a `CrisisSupport` to answer with the card INSTEAD of a session
     (`start_json`, `sse_response`), or a `ContentScreen` to start the session
     with the card beside it (`alongside`).
@@ -265,17 +267,18 @@ async def screen_tutor_start_async(
     once a day per student and note version, sharing the key Send to tutor
     remembered (`hands_off_note`), so the start right after it records no
     second card. A typed topic (`note_version()` answers None) records
-    every match and blocks, as before."""
-    _check_surface("tutor_start")
+    every match and blocks, as before. The hand-over key ignores `surface`, so
+    a loop start after Send to tutor records no second card either."""
+    _check_surface(surface)
     match = await _match_async(request, user_id, (topic,))
     if match is None:
         return None
-    support = await asyncio.to_thread(_support, user_id, "tutor_start", match)
+    support = await asyncio.to_thread(_support, user_id, surface, match)
     if support is None:
         return None
     version = await note_version()
     once = None if version is None else _handoff_key(user_id, version)
-    await asyncio.to_thread(_record, user_id, "tutor_start", match, once_a_day_key=once)
+    await asyncio.to_thread(_record, user_id, surface, match, once_a_day_key=once)
     return support if version is None else ContentScreen(request, support)
 
 

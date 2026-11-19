@@ -1451,6 +1451,7 @@ def test_a_note_titled_loop_start_opens_the_session_with_the_card_beside_it(flag
     loop_note_start["start"].assert_awaited_once()
     loop_note_start["get_note"].assert_awaited_once_with(note_id="n1", user_id="u1")
     assert len(_crisis_rows(sink)) == 1  # one card shown, one event
+    assert _surfaces(sink) == ["loop_start"]  # recorded as the loop's start, not the legacy one
 
 
 def test_a_note_titled_loop_start_streams_the_greeting_with_the_card_in_done(flag, sink, loop_note_start):

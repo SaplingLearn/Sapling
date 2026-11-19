@@ -164,6 +164,7 @@ def _start_screened(respond) -> list:
         await goal(request)
         screened = await crisis_support.screen_tutor_start_async(
             request, start.user_id, start.topic, note_version=lambda: note_title_version(start),
+            surface="loop_start",
         )
         if isinstance(screened, crisis_support.ContentScreen):
             if screened.support is not None:
