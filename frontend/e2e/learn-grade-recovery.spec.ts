@@ -12,7 +12,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { Browser, Page } from "@playwright/test";
 
-import { expect, killSwitchLane, test } from "./support/fixtures";
+import { expect, loopOffLane, test } from "./support/fixtures";
 import { queryRaw } from "./support/db";
 import { decryptText } from "./support/decrypt";
 import { LOOP_STREAM_CAPTURE_SCRIPT, loopStreamCompleted, markLoopStream, readLoopStream } from "./support/loop-streams";
@@ -183,7 +183,7 @@ async function expectNoOverflow(page: Page) {
 for (const kind of ["check", "probe"] as const) {
   for (const width of [1440, 390]) {
     test(`${kind} saved grade survives withdrawal and reload, then commits once at ${width}px`, async ({ browser }, testInfo) => {
-      test.skip(killSwitchLane, "loop recovery: default lane only");
+      test.skip(loopOffLane, "loop recovery: default lane only");
       test.setTimeout(120_000);
       const originalAnswer = `Synthetic original saved answer ${randomUUID()}`;
       const fixture = await holdGrade(kind, originalAnswer);

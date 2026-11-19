@@ -46,7 +46,7 @@ import type { Browser, Page, Route } from "@playwright/test";
 
 import { expectAccessible } from "./support/a11y";
 import { seedTeachPromptItems, setUserFlag } from "./support/db";
-import { expect, killSwitchLane, test } from "./support/fixtures";
+import { expect, test } from "./support/fixtures";
 import { loopOffLane } from "./support/lane";
 import { learningParams } from "./support/params";
 import { showsAnotherItem } from "./support/probe";
@@ -448,8 +448,8 @@ test("admin: check-item review queue and key audit", async ({ browser }) => {
   }
 });
 
-test("legacy tutor screen (kill switch)", async ({ page }) => {
-  test.skip(!killSwitchLane, "kill-switch lane only: the loop replaces this screen by default");
+test("legacy tutor screen (loop off)", async ({ page }) => {
+  test.skip(!loopOffLane, "loop-off lanes only: the loop replaces this screen by default");
   await page.goto("/learn");
   await expect(page.getByTestId("tutor-topic-picker")).toBeVisible();
   await expectAccessible(page, "legacy tutor: start");

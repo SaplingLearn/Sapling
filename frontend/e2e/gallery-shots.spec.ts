@@ -26,7 +26,7 @@ import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 
 import { GALLERY_SHOTS } from "../src/lib/landing/companionContent";
-import { killSwitchLane } from "./support/lane";
+import { loopOffLane } from "./support/lane";
 import { FRONTEND_URL } from "./support/stack";
 
 const OUT_DIR = process.env.GALLERY_SHOTS_DIR?.trim();
@@ -230,9 +230,9 @@ for (const shot of GALLERY_SHOTS) {
   test(`gallery shot — ${shot.slot} (${shot.route})`, async ({ page }) => {
     test.skip(!OUT_DIR, "set GALLERY_SHOTS_DIR=<output dir> to capture");
     // PKG-14b (spec §11.4): the /learn recipe photographs the LEGACY tutor
-    // screen, which exists only under the kill switch. Every other recipe runs
-    // in both lanes.
-    test.skip(shot.slot === "shot-learn" && !killSwitchLane, "legacy path: kill-switch lane only");
+    // screen, which exists only while the loop is off (kill switch or flag off).
+    // Every other recipe runs in every lane.
+    test.skip(shot.slot === "shot-learn" && !loopOffLane, "legacy path: loop-off lanes only");
     test.setTimeout(120_000);
 
     // A screenshot tool drives a signed-in session through real product

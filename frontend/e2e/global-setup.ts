@@ -16,7 +16,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { killSwitchLane } from "./support/lane";
+import { killSwitchLane, loopOffLane } from "./support/lane";
 import { FRONTEND_URL, USER_ACTIVE, requireStackUp } from "./support/stack";
 
 export const STORAGE_STATE = path.join(__dirname, ".auth", "storageState.json");
@@ -104,10 +104,12 @@ export default async function globalSetup(): Promise<void> {
 
 /**
  * PKG-14b (spec §11.4): the stack and Playwright must be in the SAME lane.
- * `killSwitchLane` is Playwright's parse of LEARNING_LOOP_ENABLED; the running
- * backend answers GET /api/learn/loop/status for the default fixture user with
- * 404 under the kill switch and {active: true} by default (scripts/e2e-up.sh
- * turns the `learning_loop` flag on; a stack without it 404s too). Anything else
+ * `loopOffLane` is Playwright's parse of LEARNING_LOOP_ENABLED (the kill switch)
+ * and SAPLING_FLAG_LEARNING_LOOP=off (the flag-off lane); the running backend
+ * answers GET /api/learn/loop/status for the default fixture user with 404 in
+ * either (learning/gate.py) and {active: true} by default (scripts/e2e-up.sh
+ * turns the `learning_loop` flag on unless the caller exported a value; a stack
+ * without it 404s too). Anything else
  * means the two halves disagree (e.g. backend/.env refilled the variable) — fail
  * the whole run before a single journey reads the wrong lane.
  */
@@ -128,15 +130,18 @@ async function assertLaneMatchesStack(token: string): Promise<void> {
   }
   const stackIsKillSwitch = res.status === 404;
   const stackIsDefault = res.status === 200 && active === true;
-  const agrees = killSwitchLane ? stackIsKillSwitch : stackIsDefault;
+  const agrees = loopOffLane ? stackIsKillSwitch : stackIsDefault;
   if (!agrees) {
     throw new Error(
-      `E2E lane mismatch (spec §11.4): Playwright's killSwitchLane=${killSwitchLane} ` +
-        `(LEARNING_LOOP_ENABLED=${JSON.stringify(process.env.LEARNING_LOOP_ENABLED ?? null)}), ` +
+      `E2E lane mismatch (spec §11.4): Playwright's loopOffLane=${loopOffLane} ` +
+        `(killSwitchLane=${killSwitchLane}, ` +
+        `LEARNING_LOOP_ENABLED=${JSON.stringify(process.env.LEARNING_LOOP_ENABLED ?? null)}, ` +
+        `SAPLING_FLAG_LEARNING_LOOP=${JSON.stringify(process.env.SAPLING_FLAG_LEARNING_LOOP ?? null)}), ` +
         `but GET /api/learn/loop/status answered HTTP ${res.status} ${text.slice(0, 200)}. ` +
         "Export the same value for the stack and Playwright in ONE shell, keep " +
         "LEARNING_LOOP_ENABLED out of backend/.env, and keep the learning_loop flag on " +
-        "for the default lane (SAPLING_FLAG_LEARNING_LOOP=on, as scripts/e2e-up.sh sets).",
+        "for the default lane (SAPLING_FLAG_LEARNING_LOOP=on, as scripts/e2e-up.sh sets) " +
+        "or off for the flag-off lane (export SAPLING_FLAG_LEARNING_LOOP=off for both halves).",
     );
   }
 }

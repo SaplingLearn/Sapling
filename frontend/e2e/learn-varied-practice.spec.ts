@@ -32,7 +32,7 @@ import path from "node:path";
 
 import { queryRaw, seedVariedPractice, setUserFlag } from "./support/db";
 import { decryptTexts } from "./support/decrypt";
-import { expect, killSwitchLane, test } from "./support/fixtures";
+import { expect, loopOffLane, test } from "./support/fixtures";
 import { learningParams } from "./support/params";
 import { mintStorageState } from "./support/session";
 import { BACKEND_URL, FRONTEND_URL, USER_ACTIVE, USER_LOOP } from "./support/stack";
@@ -51,7 +51,7 @@ const GRADER_CORRECT_TOKEN = "E2E_GRADER_CORRECT";
 /** learning/multi_concept.py::SEP — the ASCII unit separator a combination's key joins with */
 const SEP = "\u001f";
 
-test.skip(killSwitchLane, "the learning loop is off in the kill-switch lane");
+test.skip(loopOffLane, "the learning loop is off in the kill-switch and flag-off lanes");
 
 async function expectFunctionMode(): Promise<void> {
   const health = (await (await fetch(`${BACKEND_URL}/api/health`)).json()) as { model_mode?: string };

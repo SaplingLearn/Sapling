@@ -19,7 +19,7 @@
 import type { Browser, Page } from "@playwright/test";
 
 import { queryRaw } from "./support/db";
-import { expect, killSwitchLane, test } from "./support/fixtures";
+import { expect, loopOffLane, test } from "./support/fixtures";
 import { learningParams } from "./support/params";
 import { showsAnotherItem } from "./support/probe";
 import { mintStorageState } from "./support/session";
@@ -73,7 +73,7 @@ async function questionOf(page: Page, card: "loop-probe-item" | "loop-check-prom
 }
 
 test("keyboard only: the check-in, the plan, and a check item answered wrong (earning a hint) then right", async ({ browser }) => {
-  test.skip(killSwitchLane, "loop path: default lane only");
+  test.skip(loopOffLane, "loop path: default lane only");
   test.setTimeout(JOURNEY_TIMEOUT_MS);
   const P = await learningParams(["PROBE_SESSION_CAP", "GATE_INDEPENDENT_MIN_S_NOVICE"]);
   const { context, page } = await signIn(browser);

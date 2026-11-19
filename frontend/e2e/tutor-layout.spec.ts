@@ -12,7 +12,7 @@
  */
 import type { Locator, Page } from "@playwright/test";
 
-import { expect, killSwitchLane, test } from "./support/fixtures";
+import { expect, loopOffLane, test } from "./support/fixtures";
 
 /** Sub-pixel slack: layout rounds fractional CSS pixels. */
 const SLACK = 1;
@@ -51,7 +51,7 @@ test.beforeEach(async ({ page }) => {
 });
 
 test("Tutor home: one 8px rhythm and every control 40px tall", async ({ page }) => {
-  test.skip(killSwitchLane, "loop path: default lane only");
+  test.skip(loopOffLane, "loop path: default lane only");
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/learn");
   const home = page.getByTestId("tutor-home");
@@ -88,7 +88,7 @@ test("Tutor home: one 8px rhythm and every control 40px tall", async ({ page }) 
 });
 
 test("the TopBar is one height on every Tutor page, and the sidebar's controls are 36px", async ({ page }) => {
-  test.skip(killSwitchLane, "loop path: default lane only");
+  test.skip(loopOffLane, "loop path: default lane only");
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/learn");
   await expect(page.getByTestId("tutor-home")).toBeVisible();
@@ -132,7 +132,7 @@ test("the TopBar is one height on every Tutor page, and the sidebar's controls a
 });
 
 test("phone: the Tutor home fits without horizontal scroll and keeps 40px controls", async ({ page }) => {
-  test.skip(killSwitchLane, "loop path: default lane only");
+  test.skip(loopOffLane, "loop path: default lane only");
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/learn");
   await expect(page.getByTestId("tutor-home")).toBeVisible();
@@ -152,7 +152,7 @@ test("phone: the Tutor home fits without horizontal scroll and keeps 40px contro
 });
 
 test("a session: the composer's controls are one 32px square and the actions under the turn are 36px", async ({ page }) => {
-  test.skip(killSwitchLane, "loop path: default lane only");
+  test.skip(loopOffLane, "loop path: default lane only");
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/learn");
   await page.getByTestId("loop-start-guided").click();
@@ -217,7 +217,7 @@ async function expectOnThePage(text: Locator) {
 }
 
 test("a session: the stepper follows the phase, one label per planned concept, turns on the page, a map that fits its key", async ({ page }) => {
-  test.skip(killSwitchLane, "loop path: default lane only");
+  test.skip(loopOffLane, "loop path: default lane only");
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/learn");
   await page.getByTestId("loop-start-guided").click();

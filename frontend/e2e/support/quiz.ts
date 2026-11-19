@@ -27,7 +27,7 @@
 import { expect, type Locator, type Page } from "@playwright/test";
 
 import { queryRaw } from "./db";
-import { killSwitchLane } from "./lane";
+import { loopOffLane } from "./lane";
 
 // ── The seeded concept every journey quizzes ──────────────────────────────
 //
@@ -108,8 +108,8 @@ export const LOOP_TUTOR_REPLY =
 
 /** The quiz "Ask about this" sheet's streamed reply in THIS lane (spec §11.4):
  *  /api/learn/start-session/stream delegates to the loop opener in the default
- *  lane, and runs the legacy chat_tutor in the kill-switch lane. */
-export const ASK_PANEL_REPLY = killSwitchLane ? TUTOR_REPLY : LOOP_TUTOR_REPLY;
+ *  lane, and runs the legacy chat_tutor in the kill-switch and flag-off lanes. */
+export const ASK_PANEL_REPLY = loopOffLane ? TUTOR_REPLY : LOOP_TUTOR_REPLY;
 
 /** Its last paragraph. The loop turn renders as separate paragraphs (split on
  *  a blank line), so a whole-reply getByText cannot match one element; the last
@@ -157,7 +157,7 @@ export async function expectQuizAskSession(userId: string, timeout = 10_000): Pr
     [rows[0].session_id, userId],
   );
   expect(session).toHaveLength(1);
-  if (killSwitchLane) {
+  if (loopOffLane) {
     expect(session[0].phase).toBeNull();
   } else {
     expect(session[0]).toEqual({ phase: "teach", origin: "quiz_ask" });

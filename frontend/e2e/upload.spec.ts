@@ -47,7 +47,7 @@ import path from "node:path";
 import type { Page } from "@playwright/test";
 
 import { queryRaw } from "./support/db";
-import { expect, killSwitchLane, test } from "./support/fixtures";
+import { expect, loopOffLane, test } from "./support/fixtures";
 import { mintStorageState } from "./support/session";
 import { BACKEND_URL, FRONTEND_URL, USER_ACTIVE } from "./support/stack";
 
@@ -249,11 +249,12 @@ test("upload → SSE → document appears in library and Postgres", async ({
   expect(doc.summary ?? "").not.toContain(SCRIPTED_ABSTRACT_SNIPPET);
   expect(doc.summary ?? "").not.toContain("gradient descent");
 
-  // PKG-14b kill-switch drill (spec §11.1 item 3b, §11.6): under the kill
-  // switch the upload hook drafts NO check items (the ingest hook is gated on
-  // LEARNING_LOOP_ENABLED). The default lane drafts them; its count is the
+  // PKG-14b kill-switch drill (spec §11.1 item 3b, §11.6): with the loop off
+  // for the uploader (the kill switch, or the learning_loop flag off) the
+  // upload hook drafts NO check items (the ingest hook reads the loop gate per
+  // uploader). The default lane drafts them; its count is the
   // check-items journeys' business, not this one's.
-  if (killSwitchLane) {
+  if (loopOffLane) {
     const drafted = (await queryRaw(
       "SELECT count(*)::int AS n FROM check_items WHERE $1 = ANY(source_document_ids)",
       [doc.id],

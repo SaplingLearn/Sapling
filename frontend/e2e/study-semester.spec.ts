@@ -42,7 +42,7 @@
  */
 import type { Page } from "@playwright/test";
 
-import { expect, killSwitchLane, test } from "./support/fixtures";
+import { expect, loopOffLane, test } from "./support/fixtures";
 
 const COURSE_CS = "rich-course-cs101";
 const COURSE_MATH = "rich-course-math210";
@@ -96,11 +96,11 @@ test("flashcards follow the semester selection; All semesters shows every term",
   page,
 }) => {
   // PKG-14b (spec §11.4), lane-aware: by default the loop's DueQueue sits
-  // above the Study hub; under the kill switch the review panel is absent
+  // above the Study hub; with the loop off (kill switch or flag) the review panel is absent
   // (the hub alone).
   await page.goto("/study");
   await expect(page.getByRole("heading", { name: "Study" }).first()).toBeVisible({ timeout: 30_000 });
-  if (killSwitchLane) {
+  if (loopOffLane) {
     await expect(page.getByTestId("review-due-panel")).toHaveCount(0);
   } else {
     await expect(page.getByTestId("review-due-panel")).toBeVisible();
