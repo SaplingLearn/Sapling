@@ -376,9 +376,16 @@ def _live(entry: dict, key: str, now: float) -> bool:
 
 
 def _grading_in_flight(doc: dict, now: float) -> bool:
-    """A check or probe item is being graded under a live claim (A52/A55c): its
-    evidence is not written yet, so a close now would miss it."""
-    entries = [e for e in (doc.get("steps") or {}).values() if isinstance(e, dict)]
+    """A check or probe item is being graded under a live claim (A52/A55c), or
+    holds a saved grade still to be flushed: its evidence is not written yet,
+    so a close now would miss it. Only the CURRENT check step counts: a grade
+    is saved and flushed only while its step is current (checkpoint.py), and
+    a session never makes a step current again once it has moved past it, so
+    a claim or a saved grade left on any other step can never write evidence
+    and must not hold the close for good."""
+    active = doc.get("current")
+    current = (doc.get("steps") or {}).get(active) if active else None
+    entries = [current] if isinstance(current, dict) else []
     probe = doc.get("probe") if isinstance(doc.get("probe"), dict) else {}
     if isinstance(probe.get("current"), dict):
         entries.append(probe["current"])

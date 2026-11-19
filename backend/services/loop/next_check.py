@@ -36,7 +36,7 @@ from services.loop.reveals import _ledger
 from services.loop.planning import _continue_goal, _preparing
 from services.loop.pose import _superseded_prequestion, _without_claim
 from services.loop.practice import _activate_next_item, _pose_payload, _worked_example_owed
-from services.loop.claims import _grading_open
+from services.loop.claims import ABANDON_MOVED_PAST, _abandon_claimed, _grading_open
 
 
 def check_next(body: LoopCheckNextBody, request: Request) -> dict:
@@ -83,7 +83,13 @@ def check_next(body: LoopCheckNextBody, request: Request) -> dict:
             raise HTTPException(status_code=409, detail=_GUESS_IN_FLIGHT)
         if cur:
             # withdrawn (A23) or held (A124, A123), graded, or left under a
-            # stale claim (C2): drop it; the entry stays
+            # stale claim (C2): drop it; the entry stays. A claim still on it
+            # (stale, or live on a withdrawn item) is given up in this same
+            # write, so the grade it guards can never be saved on an item that
+            # is no longer current (it would wedge the session)
+            if (isinstance(cur_entry, dict) and cur_entry.get("grading_claim")
+                    and cur_entry.get("graded_at") is None):
+                _abandon_claimed(cur_entry, ABANDON_MOVED_PAST)
             st["current"] = None
         out["qh"] = _activate_next_item(body.user_id, course_id, st, now=now)
         if out["qh"] is not None:
@@ -131,6 +137,7 @@ def check_next(body: LoopCheckNextBody, request: Request) -> dict:
             out["goal_progress"] = plan["goal_progress"]
         if saved.get("goal"):
             out["practice_unavailable_node_ids"] = list(plan.get("practice_unavailable_node_ids") or [])
+        out["checks_unavailable_node_ids"] = _checks_unavailable(saved)
         out.update(_preparing(body.user_id, course_id))  # A128
         return out
     item = get_check_item(saved["steps"][qh]["check_item_id"])
@@ -143,3 +150,25 @@ def check_next(body: LoopCheckNextBody, request: Request) -> dict:
         node, rec = out["pq_superseded"]
         _superseded_prequestion(body.user_id, body.session_id, _request_id(request), node, rec, at=now)
     return {"phase": "check", "check": pose}
+
+
+def _checks_unavailable(state: dict) -> list[str]:
+    """The plan concepts the cursor has passed with no graded check in this
+    session, in plan order: activation moves past a concept only when it has
+    no servable check item left (every other cursor move follows a graded
+    check on it), so these are the concepts "Check me" could not check. []
+    when every passed concept had one — the plan really finished with graded
+    checks. Read off loop state; no I/O."""
+    raw = state.get("plan")
+    plan: dict = raw if isinstance(raw, dict) else {}
+    approved = [n for n in plan.get("approved") or [] if isinstance(n, str) and n]
+    try:
+        cursor = max(0, int(plan.get("cursor") or 0))
+    except (TypeError, ValueError):
+        cursor = 0
+    graded = {
+        e.get("node_id")
+        for e in (state.get("steps") or {}).values()
+        if isinstance(e, dict) and e.get("graded_at") is not None
+    }
+    return list(dict.fromkeys(n for n in approved[:cursor] if n not in graded))

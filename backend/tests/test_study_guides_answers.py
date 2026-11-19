@@ -10,12 +10,14 @@ standing in for BKT.
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
 
+import services.quiz.submission as quiz_submission
 from learning.evidence import Evidence
-from learning.params import BKT_PROFICIENT
+from learning.params import BKT_PROFICIENT, RUNG_ASSISTED_MIN, RUNG_NO_CREDIT_MIN
 from models.study_guide import (
     CheckBlock,
     CheckOption,
@@ -30,6 +32,7 @@ from services.study_guides import answers
 from services.study_guides.signals import concept_key
 from services.study_guides.errors import GuideInvalid, GuideNotFound
 from services.study_guides.store import GuideRow
+from tests.test_quiz_evidence_only import _Claims
 
 ME = "user_answers_me"
 OFFERING = "off-cs-f26"
@@ -78,9 +81,21 @@ def _guide() -> GuideRow:
 @pytest.fixture
 def world(monkeypatch, sink):
     """One guide, a tree with "Loops" at 0.5, and a graph that applies the
-    evidence it is given. `graph` holds every `apply_graph_update` call."""
+    evidence it is given. `graph` holds every `apply_graph_update` call. The
+    quiz's evidence rules run for real (#866 review A8) over an in-memory
+    `quiz_evidence_claims` (`claims`) and help ledger (`help`: hash → rung)."""
     box = {"answered": {}, "graph": [], "scores": {"Loops": 0.5, "Recursion": 0.1},
-           "graph_error": None, "events": sink}
+           "graph_error": None, "events": sink, "claims": _Claims(), "help": {}}
+
+    def quiz_table(name):
+        assert name == "quiz_evidence_claims", name
+        return box["claims"].handle()
+
+    monkeypatch.setattr(quiz_submission, "table", quiz_table)
+    monkeypatch.setattr(
+        quiz_submission, "max_help_many",
+        lambda user_id, hashes: {h: box["help"].get(h, 0) for h in hashes},
+    )
 
     async def aload_guide(user_id, guide_id):
         if (user_id, guide_id) != (ME, "g1"):
@@ -294,3 +309,60 @@ def test_each_answer_emits_ids_and_outcome_only(world):
     assert again["payload"] == {
         "guide_id": "g1", "block_id": "s1-i2", "correct": True, "counted": False,
     }
+
+
+# ── The quiz's evidence rules (#866 review A8) ────────────────────────────────
+
+QH = question_hash("How many passes?", ["3", "4", "5"])
+
+
+def test_a_regenerated_question_answered_again_within_24h_does_not_count(world):
+    """Regenerate clears a guide's stored answers, so its first answer is stored
+    again — but the question already counted in this rolling window (the
+    quiz's claim, A94/A100), so mastery does not move a second time."""
+    first = _answer("s1-i2", "b")
+    assert first.mastery is not None and len(world["graph"]) == 1
+    world["answered"].clear()  # a Regenerate: the answers go with the content
+    again = _answer("s1-i2", "b")
+    assert (again.correct, again.counted, again.mastery) == (True, True, None)
+    assert len(world["graph"]) == 1
+    assert world["claims"].rows.keys() == {QH}
+
+
+def test_a_question_counts_again_once_its_window_has_passed(world):
+    world["claims"].rows[QH] = datetime.now(timezone.utc) - timedelta(hours=25)
+    out = _answer("s1-i2", "b")
+    assert out.mastery is not None and len(world["graph"]) == 1
+
+
+def test_a_question_a_quiz_counted_today_does_not_count_in_a_guide(world):
+    """One namespace: the guide's question_hash is the quiz's, so a quiz
+    attempt's claim within the window holds the guide's answer too."""
+    world["claims"].rows[QH] = datetime.now(timezone.utc) - timedelta(hours=2)
+    out = _answer("s1-i2", "b")
+    assert (out.counted, out.mastery) == (True, None) and world["graph"] == []
+
+
+@pytest.mark.parametrize("floor", [RUNG_ASSISTED_MIN, RUNG_NO_CREDIT_MIN])
+def test_a_question_the_student_had_help_on_carries_the_help_floor(world, floor):
+    """A99: help on this question (a quiz-ask session, any loop help on the
+    hash) means no unassisted credit: the evidence carries that rung."""
+    world["help"][QH] = floor
+    _answer("s1-i2", "b")
+    ev = _evidence(world)
+    assert (ev["max_rung"], ev["assisted"]) == (floor, True)
+    assert Evidence.model_validate(ev).weight < 1.0
+
+
+def test_an_unclaimable_question_writes_nothing(world):
+    """A failed claim counts nothing (fail closed); the answer still stands."""
+    world["claims"] = _Claims(fail=True)
+    out = _answer("s1-i2", "b")
+    assert (out.correct, out.counted, out.mastery) == (True, True, None)
+    assert world["graph"] == [] and "s1-i2" in world["answered"]
+
+
+def test_the_guide_claims_its_question_in_the_quizs_table(world):
+    _answer("s1-i2", "b")
+    insert = world["claims"].calls[0]
+    assert insert[0] == "insert" and insert[2] == [QH]

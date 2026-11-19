@@ -919,25 +919,88 @@ def test_an_open_pose_within_the_ttl_is_returned_again(gate_on, one_item):
     assert one_item["poses"][("u", "n1", W1)]["posed_at"] == posed_at  # never re-posed
 
 
-def test_a_taken_over_claim_writes_nothing(gate_on, one_item, grader_says, applied):
-    """m1/m2: the claim is re-validated (and the pose closed) BEFORE the flush;
-    a claim taken over mid-grade (stale takeover) writes no evidence."""
+def _pose_operation_id(tables) -> str:
+    """The pose row's evidence identity (student, node, window, posed_at)."""
+    from learning.evidence_transaction import operation_identity
+
+    pose = tables["poses"][("u", "n1", W1)]
+    return operation_identity("posttest", "u", "n1", W1, pose["posed_at"])
+
+
+def test_a_taken_over_claim_writes_under_the_poses_one_identity(gate_on, one_item, grader_says, applied):
+    """#866 review A5 (m1/m2 since): the evidence goes first, then the pose's close
+    re-validates the claim. A claim taken over mid-grade (stale takeover) is a
+    409; what this request wrote carries the POSE's operation id, so the
+    request that took over writes the same identity — one observation."""
     grader_says(correct=True, confidence=0.9)
     with patch_loop("_answer_pose", return_value=False):
         r = client.post(ANSWER, json=_answer(answer="its lexical scope"))
-    assert r.status_code == 409 and applied == []
+    assert r.status_code == 409
+    (call,) = applied
+    (ev,) = call["graph_update"]["evidence"]
+    assert ev["operation_id"] == _pose_operation_id(one_item)
 
 
-def test_a_failed_flush_never_reopens_the_answered_pose(gate_on, one_item, grader_says):
-    """m2: the pose is closed before the flush; a flush that raises leaves it
-    answered (fail closed: never graded twice), not released."""
+def test_a_failed_flush_leaves_the_pose_open_for_the_same_answer(gate_on, one_item, grader_says, applied):
+    """#866 review A5: the pose used to be closed before the flush, so a failed
+    flush lost the answer for good (500, then 409: BKT never saw it). The
+    evidence now goes first: a failed write is a 503 with the pose open and
+    released, and the retry records it once, under the same identity."""
+    from learning.evidence import PlanningPersistenceUnavailable
+
     grader_says(correct=True, confidence=0.9)
-    with (
-        patch_loop("flush_pending", side_effect=RuntimeError("down")),
-        pytest.raises(RuntimeError),
-    ):
-        client.post(ANSWER, json=_answer(answer="its lexical scope"))
+    with patch("services.graph_service.apply_graph_update",
+               side_effect=PlanningPersistenceUnavailable("Evidence commit acknowledgment unavailable")):
+        r = client.post(ANSWER, json=_answer(answer="its lexical scope"))
+    assert r.status_code == 503, r.text
+    pose = one_item["poses"][("u", "n1", W1)]
+    assert pose["answered_at"] is None and pose["claim"] is None
+    again = client.post(ANSWER, json=_answer(answer="its lexical scope"))
+    assert again.status_code == 200 and again.json()["correct"] is True
+    (call,) = applied
+    assert call["graph_update"]["evidence"][0]["operation_id"] == _pose_operation_id(one_item)
     assert one_item["poses"][("u", "n1", W1)]["answered_at"] is not None
+
+
+def test_an_earlier_commit_of_the_pose_stands_on_the_retry(gate_on, one_item, grader_says):
+    """#866 review A5: the first write landed but its acknowledgment was lost; the
+    retry is graded WRONG and its write is refused under the pose's identity
+    (EvidenceTransactionConflict). The committed (correct) grade stands: the
+    pose is closed with it and the answer says so — one observation."""
+    from learning.evidence import PlanningPersistenceUnavailable
+    from learning.evidence_transaction import EvidenceTransactionConflict
+
+    journal = {}
+
+    def commit(user_id, graph_update, course_id=None, **kw):
+        (ev,) = graph_update["evidence"]
+        if ev["operation_id"] in journal:
+            raise EvidenceTransactionConflict("Evidence operation input changed")
+        journal[ev["operation_id"]] = ev
+        raise PlanningPersistenceUnavailable("Evidence commit acknowledgment unavailable")
+
+    def committed(user_id, op):
+        ev = journal[op]
+        return [{"node_id": ev["node_id"], "question_hash": ev["question_hash"], "channel": ev["channel"],
+                 "correct": ev["correct"], "idk": False, "max_rung": ev["max_rung"]}]
+
+    async def wrong(item, **kw):
+        return GradeResult(all_yes=False, confidence=0.9, backend="gemini"), "gemini"
+
+    grader_says(correct=True, confidence=0.9)
+    with patch("services.graph_service.apply_graph_update", side_effect=commit):
+        assert client.post(ANSWER, json=_answer(answer="its lexical scope")).status_code == 503
+        with (
+            patch("agents.tools.check._rubric_grade", side_effect=wrong),
+            patch("agents.tools.check._reason_grade", side_effect=wrong),
+            patch_loop("committed_outcome", side_effect=committed),
+        ):
+            r = client.post(ANSWER, json=_answer(answer="something else"))
+    assert r.status_code == 200, r.text
+    assert r.json() == {"correct": True, "confidence": None}
+    pose = one_item["poses"][("u", "n1", W1)]
+    assert pose["answered_at"] is not None and pose["correct"] is True and pose["max_rung"] == 0
+    assert list(journal) == [_pose_operation_id(one_item)]
 
 
 def test_an_unreadable_evidence_journal_grades_assisted(

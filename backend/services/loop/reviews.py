@@ -10,6 +10,8 @@ from services.loop.errors import HTTPException
 from starlette.requests import Request
 from agents.deps import SaplingDeps
 from learning import review
+from learning.claim_deadline import GradeDeadlineExceeded
+from learning.evidence import PlanningPersistenceUnavailable
 from learning.evidence_transaction import EvidenceItemRetired
 from learning.loop_state_store import LoopStateConflict
 from services.loop.posed import _ts
@@ -39,6 +41,9 @@ _REVIEW_NOT_FOUND = "review item not found"
 
 
 _REVIEW_EXPIRED = "review session expired"
+
+
+_REVIEW_UNAVAILABLE = "Review evidence unavailable; retry the same answer"
 
 
 _REVIEW_CLAIM_DETAIL = {"not_served": "review item not served", "already_graded": _ALREADY_GRADED}
@@ -209,7 +214,9 @@ async def review_answer(body: ReviewAnswerBody, request: Request) -> dict:
     )
     claim = str(uuid.uuid4())
     try:
-        await asyncio.to_thread(review.claim_item, sid, review.sr_key(item), item.id, claim, now)
+        operation_id = await asyncio.to_thread(
+            review.claim_item, sid, review.sr_key(item), item.id, claim, now
+        )
         outcome = await review.grade_review(
             body.user_id,
             item,
@@ -227,6 +234,8 @@ async def review_answer(body: ReviewAnswerBody, request: Request) -> dict:
             confidence=body.confidence,  # spec §13 A127 (a check's; a flashcard body has none)
             deps=deps,
             claim=claim,
+            # #866 review A4: the serving's evidence identity, kept across a released claim
+            operation_id=operation_id,
             # spec §13 A140: the interleave's anchor records the graded difficulty
             **({"varied": True} if await asyncio.to_thread(varied_practice.varied_on, body.user_id) else {}),
             # A88/A93: an item with recorded help anywhere has no unassisted credit
@@ -252,6 +261,12 @@ async def review_answer(body: ReviewAnswerBody, request: Request) -> dict:
         # A123: staff retired the item while it was graded: nothing was written
         # (the grade is void) and the claim was released; the queue moves on
         raise HTTPException(status_code=409, detail=_WITHDRAWN_ITEM) from None
+    except (PlanningPersistenceUnavailable, GradeDeadlineExceeded):
+        # the evidence store did not answer (or the grade outlived its claim):
+        # nothing is recorded as graded and the claim was released, so the
+        # same answer may be sent again — under the serving's operation id
+        # (#866 review A4), so an ambiguous earlier write is never journaled twice
+        raise HTTPException(status_code=503, detail=_REVIEW_UNAVAILABLE) from None
     except LoopStateConflict:
         raise _StateConflict() from None
     except ValueError as exc:

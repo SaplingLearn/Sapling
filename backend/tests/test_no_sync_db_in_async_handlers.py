@@ -6,7 +6,8 @@ in the threadpool, but an `async def` handler runs ON the event loop: a sync
 SSE tutor stream) for a whole PostgREST round trip.
 
 This walks the AST of every `routes/*.py` module (and of every module of the
-#118 domain packages in ``DOMAIN_PACKAGES``) and flags, inside any
+#118 domain packages in ``DOMAIN_PACKAGES``, and of ``learning/``, whose
+``async def`` the loop's handlers await) and flags, inside any
 `async def` (handlers and the module's async helpers alike), an INLINE call to
 
 * a sync verb on a `table(...)` handle (``select``, ``insert``, ...), inline
@@ -60,6 +61,12 @@ DOMAIN_PACKAGES = tuple(
         "tutor",
     )
 )
+
+#: The learning loop's own layer (#866 review A3): its stores are sync PostgREST
+#: callers, and the loop's async handlers await its async functions
+#: (``learning/review.py::grade_review``), so one inline store call there
+#: blocks the event loop exactly as a handler's would.
+LEARNING = BACKEND / "learning"
 
 SYNC_VERBS = frozenset({"select", "select_with_count", "insert", "update", "upsert", "delete"})
 DB_FUNCS = frozenset({"rpc", "page_all"})
@@ -248,7 +255,7 @@ def _offenders_in(source: str, rel: str) -> set[tuple[str, str, str]]:
 
 def _scanned_paths() -> list[Path]:
     paths = sorted(ROUTES.glob("*.py"))
-    for package in DOMAIN_PACKAGES:
+    for package in (*DOMAIN_PACKAGES, LEARNING):
         paths += sorted(package.rglob("*.py"))
     return paths
 
@@ -412,3 +419,20 @@ def test_every_domain_package_is_scanned():
     scanned = {f"services.{p.name}" for p in DOMAIN_PACKAGES}
     assert scanned == declared
     assert all(p.is_dir() for p in DOMAIN_PACKAGES)
+
+
+def test_the_learning_layer_is_scanned():
+    """#866 review A3: an `async def` under learning/ that a loop handler awaits
+    is checked like the handler itself (grade_review graded and wrote on the
+    loop before), and the walk follows its helpers into the stores."""
+    scanned = {p.relative_to(BACKEND).as_posix() for p in _scanned_paths()}
+    assert "learning/review.py" in scanned and "learning/loop_state_store.py" in scanned
+    sources = {
+        "learning/store.py": "from db.connection import table\n\ndef read(u):\n    return table('t').select('*')\n",
+        "learning/grader.py": (
+            "from learning.store import read\n\n"
+            "async def grade(u):\n    read(u)\n\n"
+            "async def good(u):\n    await asyncio.to_thread(read, u)\n"
+        ),
+    }
+    assert _Universe(sources).offenders() == {("learning/grader.py", "grade", "read()")}

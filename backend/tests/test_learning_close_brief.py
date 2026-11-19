@@ -2530,9 +2530,13 @@ def test_a_saved_grade_checkpoint_blocks_the_close_whatever_its_age(monkeypatch)
     now = 2_000_000_000.0
     stale = now - LOOP_GRADING_CLAIM_STALE_S - 1
     claim = {"grading_claim": "g", "grading_claim_at": stale}
-    assert services.loop.state._grading_in_flight({"steps": {"qh": dict(claim)}}, now) is False
+    current = {"current": "qh"}
+    assert services.loop.state._grading_in_flight({**current, "steps": {"qh": dict(claim)}}, now) is False
     saved = {**claim, grade_checkpoint.KEY: "CIPHER"}
-    assert services.loop.state._grading_in_flight({"steps": {"qh": saved}}, now) is True
+    assert services.loop.state._grading_in_flight({**current, "steps": {"qh": saved}}, now) is True
+    # #866 review A1: one left on a step the session moved past can never be
+    # flushed, so it never holds the close
+    assert services.loop.state._grading_in_flight({"current": "q2", "steps": {"qh": saved}}, now) is False
     probe = {"probe": {"current": {"question_hash": "qp", grade_checkpoint.KEY: "CIPHER"}}}
     assert services.loop.state._grading_in_flight(probe, now) is True
 

@@ -50,6 +50,7 @@ Imported only by the loop (services/loop/reviews.py, the /review/* handlers), be
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import logging
 import math
@@ -66,7 +67,13 @@ from db.connection import pg_quote_value, table
 from learning import fsrs, loop_state_store
 from learning.bkt import band, decayed_p
 from learning.checks import is_servable, posttest_reserves, select_item
-from learning.evidence import PREREQ_RELATIONSHIP_TYPE
+from learning.claim_deadline import within_grade_deadline
+from learning.evidence import PREREQ_RELATIONSHIP_TYPE, Evidence
+from learning.evidence_transaction import (
+    EvidenceTransactionConflict,
+    committed_outcome,
+    operation_identity,
+)
 from learning.flashcard_fsrs import flashcard_fsrs_update, fsrs_rating_for  # PKG-11
 from learning.interleave import confusable_partners, serve_order  # A114
 from learning.loop_state_store import update_loop_state
@@ -996,20 +1003,40 @@ def _open_item(doc: dict, item: ReviewItem, now_s: float) -> None:
     opened[sr_key(item)] = {"item_id": item.id, "served_at": now_s}
 
 
-def claim_item(session_id: str, key: str, item_id: str, claim: str, now: datetime) -> None:
+#: The open entry's key holding the evidence operation id of its serving
+#: (#866 review A4): minted from the serving's FIRST answer claim and kept when
+#: a claim is released, so a check answered again after an ambiguous
+#: acknowledgment journals at most one observation (the commit replays or
+#: refuses the same identity). A new serving opens a fresh entry, so it gets
+#: its own.
+_OPERATION_KEY = "operation_id"
+
+
+def review_operation_id(claim: str) -> str:
+    """The evidence operation id a serving's first answer claim gives it."""
+    return operation_identity("review", claim)
+
+
+def claim_item(session_id: str, key: str, item_id: str, claim: str, now: datetime) -> str | None:
     """Take the answer claim on `key` for `item_id` (one compare-and-set write), or
-    raise ReviewClaimRefused and write nothing."""
+    raise ReviewClaimRefused and write nothing. Returns the serving's evidence
+    operation id (`_OPERATION_KEY`; minted from this claim when it is the
+    serving's first; a flashcard's entry has none) — None when no row was
+    saved."""
     now_s = now.timestamp()
 
-    def take(doc: dict) -> None:
+    def take(doc: dict) -> str | None:
         entry = (doc.get("open") or {}).get(key)
         if not isinstance(entry, dict) or entry.get("item_id") != item_id:
             raise ReviewClaimRefused(_NOT_SERVED)
         if entry.get("graded_at") is not None or entry.get("claim"):
             raise ReviewClaimRefused(_ALREADY_GRADED)
         entry["claim"], entry["claim_at"] = claim, now_s
+        if key.startswith(_FLASHCARD_KEY_PREFIX):
+            return None
+        return entry.setdefault(_OPERATION_KEY, review_operation_id(claim))
 
-    _persist_loop_state(session_id, take)
+    return _persist_loop_state(session_id, take)
 
 
 def drop_reported(session_id: str, item_id: str, now: datetime) -> bool:
@@ -1245,6 +1272,103 @@ def _write_flashcard(
     return fsrs_rating, cols
 
 
+def _final_outcome(evidence: dict) -> dict:
+    """The outcome a written evidence journals ({channel, correct, idk,
+    max_rung}, after Evidence's own normalisation: an assisted answer is H1)."""
+    ev = Evidence.model_validate(evidence)
+    return {"channel": ev.channel, "correct": ev.correct, "idk": ev.idk, "max_rung": ev.max_rung}
+
+
+def _earlier_commit(user_id: str, item: ReviewItem, evidence: dict) -> dict | None:
+    """#866 review A4: the serving's operation id was refused because an earlier
+    attempt of this serving committed with another grade (its acknowledgment
+    was lost). That committed outcome stands — the journal holds it — so it is
+    what the record and the answer use; never a second observation. None when
+    no committed observation of this item is found (the refusal is real)."""
+    op_id = evidence.get("operation_id")
+    committed = committed_outcome(user_id, op_id) if op_id else None
+    mine = [row for row in committed or [] if row["node_id"] == item.node_id]
+    return mine[0] if len(mine) == 1 else None
+
+
+def _write_check_evidence(
+    user_id: str, item: ReviewItem, evidence: dict, *, retention: float
+) -> tuple[dict, bool]:
+    """The check's ONE evidence write (off the event loop): `apply_graph_update`
+    with the review's retention target. Returns (the outcome that stands, as
+    `_final_outcome`; whether it is THIS grade's). A refusal of the serving's
+    operation id after an earlier attempt of this serving committed returns
+    that committed outcome (`_earlier_commit`, #866 review A4); any other refusal
+    propagates."""
+    try:
+        apply_graph_update(user_id, {"evidence": [evidence]}, course_id=item.course_id, retention=retention)
+    except EvidenceTransactionConflict:
+        earlier = _earlier_commit(user_id, item, evidence)
+        if earlier is None:
+            raise
+        logger.warning("review: an earlier attempt of this serving committed; its grade stands")
+        return earlier, False
+    return _final_outcome(evidence), True
+
+
+def _grade_flashcard(
+    user_id: str,
+    item: ReviewItem,
+    *,
+    rating: int | None,
+    now: datetime,
+    retention: float,
+    card_row: dict | None,
+) -> tuple[bool, int, str]:
+    """A self-rated card's write (no model): (correct, FSRS rating, next due)."""
+    fsrs_rating, cols = _write_flashcard(
+        user_id, item, rating=rating, now=now, retention=retention, card_row=card_row
+    )
+    return fsrs_rating != fsrs.Rating.AGAIN, fsrs_rating, cols["due_at"]  # legacy 1 = forgot
+
+
+def _after_record(
+    user_id: str,
+    item: ReviewItem,
+    *,
+    session_id: str,
+    request_id: str | None,
+    check_item=None,
+    resolve: dict | None = None,
+) -> None:
+    """What follows a SAVED record, off the event loop; each is a diagnosis or a
+    reward, never a gate — the graded answer stands whatever happens here.
+    A check (spec §13 A127): a correct unassisted answer closes the
+    misconceptions its item tests (`resolve`: the evidence and the key the
+    student's reason matched; None when this request did not grade it). A
+    flashcard: the achievement rate_card dispatches."""
+    if item.kind == "check" and resolve is not None:
+        try:
+            evidence = resolve["evidence"]
+            resolve_after_grade(
+                user_id,
+                item.node_id,
+                keys=resolvable_keys(
+                    check_item, correct=bool(evidence["correct"]),
+                    matched_wrong_key=resolve["matched_wrong_key"],
+                ),
+                item_id=check_item.id,
+                attempt=evidence,
+                surface="review",
+                session_id=session_id,
+                request_id=request_id,
+            )
+        except Exception:
+            logger.warning("review: misconception resolution unavailable after saved grade")
+    if item.kind == "flashcard":  # the same achievement rate_card dispatches
+        try:
+            check_achievements(user_id, "flashcards_reviewed", {})
+        except Exception:
+            logger.exception(
+                "review: achievement dispatch failed user=%s card=%s", user_id, item.id
+            )
+
+
 async def grade_review(
     user_id: str,
     item: ReviewItem,
@@ -1263,6 +1387,7 @@ async def grade_review(
     confidence: str | None = None,
     deps=None,
     claim: str | None = None,
+    operation_id: str | None = None,
     max_rung: int = 0,
     refloor=None,
     varied: bool = False,
@@ -1283,71 +1408,92 @@ async def grade_review(
 
     `claim` (the route's, from `claim_item`): every path that writes nothing —
     unavailable, refused, an error before the write — releases it; after the
-    write only the record closes it."""
+    write only the record closes it. The grade runs inside the claim's
+    deadline (learning.claim_deadline): one that outlives it writes nothing.
+
+    `operation_id` (#866 review A4; `claim_item`'s answer, else derived from
+    `claim`): the evidence's identity, the same for every answer to one
+    serving, so a resubmission after an ambiguous acknowledgment journals at
+    most one observation. The returned `rating` is the journaled one (#866 review A6: the
+    help floor's rung, never rung 0's).
+
+    #117: every database read and write runs off the event loop (one
+    threadpool hop each); only the grader is awaited on the loop."""
     written = False
     outcome = None
+    resolve = None
     try:
         if item.kind == "flashcard":
-            fsrs_rating, cols = _write_flashcard(
-                user_id, item, rating=rating, now=now, retention=retention, card_row=card_row
+            correct, rating_out, next_due = await asyncio.to_thread(
+                _grade_flashcard, user_id, item,
+                rating=rating, now=now, retention=retention, card_row=card_row,
             )
-            written = True
-            correct = fsrs_rating != fsrs.Rating.AGAIN  # legacy 1 = forgot
-            rating_out, hint, next_due = fsrs_rating, None, cols["due_at"]
+            written, hint = True, None
         else:
             if check_item is None or deps is None:
                 raise ValueError(
                     "a check review needs the decrypted check_item and the route's deps"
                 )
-            outcome = await grade_answer(
-                check_item,
-                CheckAnswer(
-                    question_hash=check_item.question_hash,
-                    answer_text=answer or "",
-                    selected_option=selected_option,
-                    reason=reason,
-                    confidence=confidence,
-                ),
-                deps=deps,
-                node_id=item.node_id,
-                # PKG-14 (A86): a floor when a served teach turn revealed the item
-                **({"max_rung": max_rung} if max_rung else {}),
-                # spec §13 A76 (fix round 3): a due item right after a release on
-                # its concept (a wrong loop answer this morning) is the re-check
-                same_session_recheck=recheck_after_release(
-                    user_id, item.node_id, loop_state, now=now, item=check_item
-                ),
+            # spec §13 A76 (fix round 3): a due item right after a release on
+            # its concept (a wrong loop answer this morning) is the re-check
+            recheck = await asyncio.to_thread(
+                recheck_after_release, user_id, item.node_id, loop_state, now=now, item=check_item
             )
+            async with within_grade_deadline():
+                outcome = await grade_answer(
+                    check_item,
+                    CheckAnswer(
+                        question_hash=check_item.question_hash,
+                        answer_text=answer or "",
+                        selected_option=selected_option,
+                        reason=reason,
+                        confidence=confidence,
+                    ),
+                    deps=deps,
+                    node_id=item.node_id,
+                    # PKG-14 (A86): a floor when a served teach turn revealed the item
+                    **({"max_rung": max_rung} if max_rung else {}),
+                    same_session_recheck=recheck,
+                )
             if outcome.refused is not None or outcome.unavailable:
                 # A33 (refused: never graded, never a skip) and invariant 28
                 # (unavailable: nothing for EITHER outcome) — nothing is written.
                 if claim is not None:
-                    _release_claim(session_id, sr_key(item), claim)
+                    await asyncio.to_thread(_release_claim, session_id, sr_key(item), claim)
                 return ReviewOutcome(unavailable=True, refused=outcome.refused is not None)
+            evidence = outcome.evidence
+            operation = operation_id or (review_operation_id(claim) if claim is not None else None)
+            if operation is not None:
+                evidence["operation_id"] = operation
             # PKG-14 (A93): the route's help floor, re-read inside the claim right
             # before the write (it raises the Evidence's rung in place)
             if refloor is not None:
-                refloor(outcome.evidence)
+                await asyncio.to_thread(refloor, evidence)
             # The one write. deps.pending_evidence is discarded, never flushed:
             # the retention target rides on this call only.
-            apply_graph_update(
-                user_id,
-                {"evidence": [outcome.evidence]},
-                course_id=item.course_id,
-                retention=retention,
+            final, graded_here = await asyncio.to_thread(
+                _write_check_evidence, user_id, item, evidence, retention=retention
             )
             written = True
-            correct = bool(outcome.correct)
-            hint = outcome.feedback_hint
-            if not correct:  # spec §3.3: corrective feedback WITH the answer
-                hint = f"{outcome.feedback_hint}\n\nAnswer: {check_item.reference_answer}"
-            rating_out = fsrs.rating_for(outcome.evidence["channel"], correct, 0)
-            next_due = _next_due_for_concept(user_id, item.node_id)
+            correct = bool(final["correct"])
+            if graded_here:
+                hint = outcome.feedback_hint
+                resolve = {"evidence": evidence, "matched_wrong_key": outcome.matched_wrong_key}
+                if not correct:  # spec §3.3: corrective feedback WITH the answer
+                    hint = f"{outcome.feedback_hint}\n\nAnswer: {check_item.reference_answer}"
+            else:  # #866 review A4: an earlier attempt's grade stands; this answer's feedback does not
+                hint = None if correct else f"Answer: {check_item.reference_answer}"
+            # #866 review A6: the rating the journal scheduled — the help floor's rung, never rung 0's
+            rating_out = fsrs.rating_for(
+                final["channel"], correct, final["max_rung"], idk=final["idk"]
+            )
+            next_due = await asyncio.to_thread(_next_due_for_concept, user_id, item.node_id)
     except BaseException:
         if claim is not None and not written:  # nothing written: the student may answer again
-            _release_claim(session_id, sr_key(item), claim)
+            await asyncio.to_thread(_release_claim, session_id, sr_key(item), claim)
         raise
-    sr, saved = _record(
+    sr, saved = await asyncio.to_thread(
+        _record,
         user_id,
         item,
         correct=correct,
@@ -1360,29 +1506,9 @@ async def grade_review(
         varied=varied,
         now=now,
     )
-    if saved and item.kind == "check" and outcome is not None:
-        # spec §13 A127: after the one write AND the record under our claim; a
-        # diagnosis, never a gate — the graded answer stands whatever happens here
-        try:
-            resolve_after_grade(
-                user_id,
-                item.node_id,
-                keys=resolvable_keys(
-                    check_item, correct=correct, matched_wrong_key=outcome.matched_wrong_key
-                ),
-                item_id=check_item.id,
-                attempt=outcome.evidence,
-                surface="review",
-                session_id=session_id,
-                request_id=request_id,
-            )
-        except Exception:
-            logger.warning("review: misconception resolution unavailable after saved grade")
-    if item.kind == "flashcard":  # the same achievement rate_card dispatches
-        try:
-            check_achievements(user_id, "flashcards_reviewed", {})
-        except Exception:
-            logger.exception(
-                "review: achievement dispatch failed user=%s card=%s", user_id, item.id
-            )
+    if saved:
+        await asyncio.to_thread(
+            _after_record, user_id, item, session_id=session_id, request_id=request_id,
+            check_item=check_item, resolve=resolve,
+        )
     return ReviewOutcome(correct=correct, hint=hint, next_due_at=next_due, rating=rating_out, sr=sr)

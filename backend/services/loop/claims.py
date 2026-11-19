@@ -112,6 +112,32 @@ def _claim_grading(session_id: str, qh: str, claim: str, now: float) -> None:
     _update_loop_state(session_id, take)
 
 
+#: Why a grading claim was given up for good with no evidence written, kept on
+#: the step as `grading_abandoned` (a code, never text): a later request moved
+#: past the item (its claim stale, or the item withdrawn under it), or the
+#: evidence store refused the saved grade for good (its node is gone or
+#: outside the course, or its committed receipt disagrees with the grade).
+ABANDON_MOVED_PAST = "moved_past"
+ABANDON_EVIDENCE_REFUSED = "evidence_refused"
+ABANDON_RECEIPT_MISMATCH = "receipt_mismatch"
+
+
+def _abandon_claimed(entry: dict, reason: str) -> None:
+    """Close a claimed check item for good without a grade: the claim, its
+    time and any saved checkpoint go in the caller's write; the step is never
+    graded again (`grading_superseded`, read by `_grading_open` and the answer
+    route) and keeps why (`grading_abandoned`) and the operation it discarded.
+    A late grade under that claim then finds no claim to save under (409)."""
+    claim = entry.get("grading_claim")
+    entry["grading_superseded"] = True
+    entry["grading_abandoned"] = reason
+    if claim:
+        entry["discarded_grade_operation_id"] = claim
+    entry.pop("grading_claim", None)
+    entry.pop("grading_claim_at", None)
+    entry.pop(grade_checkpoint.KEY, None)
+
+
 def _under_claim(qh: str, claim: str, change: Callable[[dict], None], *, release: bool):
     """A mutate that applies `change` to the item's entry only while `claim`
     holds it, and — `release` — gives the claim up in the same write."""
