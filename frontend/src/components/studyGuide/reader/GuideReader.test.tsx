@@ -45,6 +45,8 @@ vi.mock("@/components/quiz/question/askTurn", () => ({
   ABORTED: Symbol("aborted"),
   openTutorSession: vi.fn(),
   chatWithFallback: vi.fn(),
+  // no failure here is a budget pause (useTutorHandoff.pause.test.tsx covers that)
+  turnPauseOf: () => null,
 }));
 
 import type React from "react";
