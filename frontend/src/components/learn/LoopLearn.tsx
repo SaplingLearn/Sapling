@@ -165,6 +165,11 @@ const CHECK_CLOSED_COPY: Record<string, string> = {
   "This answer could not be recorded. Select another check to continue.":
     "Your answer to that check couldn't be recorded.",
 };
+/** What to tell the student when a submission's error is one of those 409s, else null. */
+function checkClosedCopy(submission: boolean, status: number | undefined, detail: string | undefined): string | null {
+  if (!submission || status !== 409 || !detail) return null;
+  return CHECK_CLOSED_COPY[detail] ?? null;
+}
 /** setTimeout's ceiling (2^31 − 1 ms): a later reset time is never armed early. */
 const MAX_TIMER_MS = 2_147_483_647;
 
@@ -1220,6 +1225,17 @@ export function LoopLearn() {
     }
   }, [applyActivated, showPrequestion, state.focusNodeId]);
 
+  /** The check an answer was for is gone server-side (current is null): free
+   *  the box, say why, and let the caller select another check. */
+  const dropClosedCheck = useCallback((copy: string, then?: () => void) => {
+    setPendingGrade(null);
+    dispatch({ type: "check", item: null });
+    setAttempt(EMPTY_DRAFT);
+    setHint(null);
+    toast.info(copy);
+    then?.();
+  }, [toast]);
+
   /** A turn that threw while this screen still owns it: what streamed stays,
    *  marked interrupted; a submission that may have been graded is re-read;
    *  then the error is routed (a pause, an already-graded resend, or a toast). */
@@ -1230,7 +1246,7 @@ export function LoopLearn() {
   }) => {
     const { status, detail } = extractErrorDetail(err);
     const closed = status === 409 && detail === SESSION_CLOSED_DETAIL; // reportError shows the close
-    const checkClosed = t.submission && status === 409 && !!detail && detail in CHECK_CLOSED_COPY;
+    const checkClosed = checkClosedCopy(t.submission, status, detail);
     // ADR 0020: what streamed stays, marked interrupted; a chat message the tutor
     // never answered offers Retry (a pause gives it back through onPaused, a
     // close has nothing to retry), and after an error it is back in the composer.
@@ -1243,14 +1259,7 @@ export function LoopLearn() {
     if (t.recover && t.sid && !closed && !checkClosed) void reconcile(t.sid, t.g, t.epoch);
     if (t.aborted) return;
     if (checkClosed) {
-      // the item is gone server-side (current is null): free the box, say why,
-      // and let the caller select another check
-      setPendingGrade(null);
-      dispatch({ type: "check", item: null });
-      setAttempt(EMPTY_DRAFT);
-      setHint(null);
-      toast.info(CHECK_CLOSED_COPY[detail!]);
-      t.onCheckClosed?.();
+      dropClosedCheck(checkClosed, t.onCheckClosed);
       return;
     }
     // At the hard level the stream ends with no `done`: that is the pause, not an error.
@@ -1261,7 +1270,7 @@ export function LoopLearn() {
     if (t.submission && status === 409 && detail === ALREADY_GRADED_DETAIL) return;
     if (budgetPauseOf(err)) t.onPaused?.(); // a 429: reportError shows the pause banner
     reportError(err, "The tutor couldn't answer. Try again.");
-  }, [reconcile, reportError, toast]);
+  }, [reconcile, reportError, dropClosedCheck]);
 
   const runTurn = useCallback(async (
     run: (h: StreamChatHandlers) => Promise<LoopTurnResult>,
