@@ -41,6 +41,7 @@ fast/smart knob on the loop (invariant 22).
 from __future__ import annotations
 
 import hashlib
+import json
 import secrets
 from collections.abc import Sequence
 from dataclasses import replace
@@ -250,10 +251,28 @@ LOOP_OUTPUT_TEMPLATE = (
     "or after it. The keys mean:\n\n{schema}"
 )
 
-#: Covers everything fixed the model is told: the system prompt and the output
-#: instruction (tests/evals/loop_tutor.py pins recordings to it).
+#: The loop agent's tool definitions (name, description, parameter schema) as
+#: the model sees them: a changed tool description changes what the model is
+#: told, so it is part of the prompt version (#866 D4).
+_TOOL_DEFS_JSON = json.dumps(
+    [
+        {
+            "name": t.tool_def.name,
+            "description": t.tool_def.description,
+            "parameters": t.tool_def.parameters_json_schema,
+        }
+        for t in _build_tools(learning_loop=True)
+    ],
+    sort_keys=True,
+)
+
+#: Covers everything fixed the model is told: the system prompt, the output
+#: instruction and the tool definitions (tests/evals/loop_tutor.py pins
+#: recordings to it).
 _PROMPT_HASH = hashlib.sha256(
-    (_LOOP_SYSTEM_PROMPT + "\x00" + LOOP_OUTPUT_TEMPLATE).encode("utf-8")
+    (
+        _LOOP_SYSTEM_PROMPT + "\x00" + LOOP_OUTPUT_TEMPLATE + "\x00" + _TOOL_DEFS_JSON
+    ).encode("utf-8")
 ).hexdigest()[:12]
 
 
@@ -962,7 +981,7 @@ LOOP_V2_OUTPUT = PromptedOutput(
 )
 
 #: The v2 variant's prompt version: the unchanged system prompt,
-#: its run instructions and its output template.
+#: its run instructions, its output template and the tool definitions.
 _V2_PROMPT_HASH = hashlib.sha256(
     (
         _LOOP_SYSTEM_PROMPT
@@ -970,6 +989,8 @@ _V2_PROMPT_HASH = hashlib.sha256(
         + V2_INSTRUCTIONS
         + "\x00"
         + LOOP_V2_OUTPUT_TEMPLATE
+        + "\x00"
+        + _TOOL_DEFS_JSON
     ).encode("utf-8")
 ).hexdigest()[:12]
 

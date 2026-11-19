@@ -804,8 +804,13 @@ def test_output_template_asks_for_the_object_not_the_schema():
     assert "{schema}" in tpl
     assert '"key_idea"' in tpl and '"body"' in tpl and '"question"' in tpl
     assert "properties" in tpl  # names the wrapper it must not write
-    want = hashlib.sha256((lt._LOOP_SYSTEM_PROMPT + "\x00" + tpl).encode("utf-8")).hexdigest()[:12]
+    want = hashlib.sha256(
+        (lt._LOOP_SYSTEM_PROMPT + "\x00" + tpl + "\x00" + lt._TOOL_DEFS_JSON).encode("utf-8")
+    ).hexdigest()[:12]
     assert lt._PROMPT_HASH == want
+    # the tool definitions are part of what the model is told (#866 D4)
+    assert '"search_course_materials"' in lt._TOOL_DEFS_JSON
+    assert '"read_graph_neighborhood"' in lt._TOOL_DEFS_JSON
 
 
 @pytest.mark.parametrize("ceiling", [0, 1, 2, 3, 4, 5])
