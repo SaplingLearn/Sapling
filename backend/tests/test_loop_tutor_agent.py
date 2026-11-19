@@ -52,10 +52,11 @@ def test_loop_tutor_tier_slots_and_defaults():
     from agents._providers import _DEFAULTS, AgentTask, model_name_for
 
     assert set(LOOP_TUTOR_SLOTS) <= set(get_args(AgentTask))
-    assert _DEFAULTS["loop_tutor_lite"] == "gemini-2.5-flash-lite"
-    assert _DEFAULTS["loop_tutor"] == "gemini-2.5-flash"
-    assert _DEFAULTS["loop_tutor_deep"] == "gemini-2.5-pro"
-    assert model_name_for("loop_tutor") == "gemini-2.5-flash"
+    # On Claude since 2026-11-19 (ADR 0030 mapping; Claude eval pending)
+    assert _DEFAULTS["loop_tutor_lite"] == "claude-haiku-5-5"
+    assert _DEFAULTS["loop_tutor"] == "claude-haiku-5-5"
+    assert _DEFAULTS["loop_tutor_deep"] == "claude-sonnet-5-5"
+    assert model_name_for("loop_tutor") == "claude-haiku-5-5"
 
 
 def _tool_names(tools) -> set:
@@ -301,7 +302,8 @@ def test_phase_prefix_rejects_unknown_phase_or_band():
         phase_prefix(phase="teach", band="expert", ceiling=Rung.H1)
 
 
-def test_tier_run_kwargs_per_slot():
+def test_tier_run_kwargs_per_slot(monkeypatch):
+    from agents._providers import ANTHROPIC_MAX_TOKENS
     from agents.loop_tutor import LOOP_TIER_SLOTS, tier_run_kwargs
     from learning.params import (
         LOOP_FLASH_THINKING_BUDGET,
@@ -314,6 +316,15 @@ def test_tier_run_kwargs_per_slot():
         "standard": "loop_tutor",
         "deep": "loop_tutor_deep",
     }
+    # Claude defaults: no Gemini thinking budget, Claude's ceiling, A18 kept
+    for tier in LOOP_TIER_SLOTS:
+        claude = tier_run_kwargs(tier, tool_choice="none")["model_settings"]
+        assert "google_thinking_config" not in claude and claude["max_tokens"] == ANTHROPIC_MAX_TOKENS
+        assert claude["tool_choice"] == "none"
+    # Pointed back at their Gemini models, the Gemini shapes are unchanged
+    monkeypatch.setenv("SAPLING_MODEL_LOOP_TUTOR_LITE", "gemini-2.5-flash-lite")
+    monkeypatch.setenv("SAPLING_MODEL_LOOP_TUTOR", "gemini-2.5-flash")
+    monkeypatch.setenv("SAPLING_MODEL_LOOP_TUTOR_DEEP", "gemini-2.5-pro")
     lite = tier_run_kwargs("lite")["model_settings"]
     assert lite["max_tokens"] == LOOP_MAX_VISIBLE_TOKENS and "google_thinking_config" not in lite
     std = tier_run_kwargs("standard")["model_settings"]
