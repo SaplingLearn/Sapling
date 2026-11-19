@@ -11,8 +11,10 @@ import {
   ABORTED,
   chatWithFallback,
   openTutorSession,
+  turnPauseOf,
   type TurnProgress,
 } from "@/components/quiz/question/askTurn";
+import { tutorPauseMessage } from "@/components/learn/BudgetPausedBanner";
 import { useToast } from "@/components/ToastProvider";
 import { useCrisisSupport } from "@/components/safety/CrisisSupportCard";
 import { newTurnId } from "@/lib/api";
@@ -51,8 +53,14 @@ export function useTutorHandoff(
       if (reply === ABORTED) return;
       if (typeof reply === "object") { crisis.intercept({ crisis_support: reply.crisis }); return; }
       router.push(`/learn?resume=${encodeURIComponent(sid)}`);
-    } catch {
-      if (!signal.aborted) toast.error("The tutor could not be opened. Try again.");
+    } catch (err) {
+      if (signal.aborted) return;
+      // The learning loop paused the tutor for the student's AI budget (the
+      // stream's `budget` end, or a 429 "ai budget reached"): a state of their
+      // day, not a failure — say until when, and offer no retry.
+      const paused = turnPauseOf(err);
+      if (paused) toast.warn(tutorPauseMessage(paused.resetAt, paused.sessionCapped));
+      else toast.error("The tutor could not be opened. Try again.");
     } finally {
       if (!signal.aborted) setBusy(false);
     }
