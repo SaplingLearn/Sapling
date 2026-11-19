@@ -1,7 +1,8 @@
 /**
  * The pure halves of the Tutor V2 fixes (PR #866 review): which side columns
  * fit (U5), the plan in the history (U2), the "Check me" note (NC), the chat
- * Retry's log edit (F11a) and the due line (F11b).
+ * Retry's log edit (F11a), the due line (F11b) and the course page's session
+ * count after a failed read (F11c).
  */
 import { describe, expect, it } from "vitest";
 import type { ChatMsg } from "../chat/ChatPanel";
@@ -11,6 +12,7 @@ import { EMPTY_PLAN_COPY, PROBE_PHASE_OPENERS, planTurnText, withPlanHistory } f
 import { NO_ITEM_COPY, PLAN_DONE_COPY, PREPARING_COPY, checkMeNote } from "./checkNote";
 import { dropInterruptedTurn } from "./chatRetry";
 import { dueCountText } from "./tutor/SessionPanel";
+import { sessionsCount } from "./tutor/TutorPages";
 
 describe("tutorColumns (U5)", () => {
   const both = MIN_CHAT_W + SIDEBAR_W + PANEL_W;
@@ -93,5 +95,16 @@ describe("dueCountText (F11b)", () => {
     expect(dueCountText(0)).toBe("Nothing due right now");
     expect(dueCountText(1)).toBe("1 review due");
     expect(dueCountText(4)).toBe("4 reviews due");
+  });
+});
+
+describe("sessionsCount (F11c)", () => {
+  it("counts a list that loaded", () => {
+    expect(sessionsCount(0, false)).toBe("0 sessions");
+    expect(sessionsCount(1, false)).toBe("1 session");
+  });
+  it("a failed read is never a count: not loaded, or at least what did load", () => {
+    expect(sessionsCount(0, true)).toBe("Not loaded");
+    expect(sessionsCount(2, true)).toBe("At least 2 sessions");
   });
 });

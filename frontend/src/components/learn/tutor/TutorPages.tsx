@@ -141,6 +141,15 @@ export function LoadFailed({ what, onRetry, testId }: { what: string; onRetry: (
   );
 }
 
+/** The course page's session count. A failed read is never a count of what
+ *  happened to load ("0 sessions"): nothing listed says "Not loaded", a partial
+ *  list (the loop's own open sessions) says "At least N". */
+export function sessionsCount(n: number, failed: boolean): string {
+  const noun = n === 1 ? "session" : "sessions";
+  if (!failed) return `${n} ${noun}`;
+  return n > 0 ? `At least ${n} ${noun}` : "Not loaded";
+}
+
 /** T2 · A course, like a Claude project: its sessions, progress and material. */
 export function TutorCourse({
   course,
@@ -181,7 +190,7 @@ export function TutorCourse({
           <div className={styles.cardHead}>
             <div>
               <span className="label-micro">Sessions in this course</span>
-              <h3 className="h-serif">{sessions.length} {sessions.length === 1 ? "session" : "sessions"}</h3>
+              <h3 className="h-serif" data-testid="tutor-course-sessions-count">{sessionsCount(sessions.length, !!onRetrySessions)}</h3>
             </div>
             <button type="button" className={styles.textLink} onClick={onAll}>All sessions <ChevRight /></button>
           </div>

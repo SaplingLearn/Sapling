@@ -354,6 +354,8 @@ describe("F11c — a failed read is an error with a retry, never an empty state"
     expect(await within(page).findByTestId("tutor-course-materials-error")).toBeTruthy();
     expect(page.textContent).not.toContain("No material yet");
     expect(page.textContent).not.toContain("No sessions yet");
+    // the heading counts only what loaded as "at least" (the loop's open session), never "0 sessions"
+    expect(within(page).getByTestId("tutor-course-sessions-count").textContent).toBe("At least 1 session");
     api.getDocuments.mockResolvedValue({ documents: [{ id: "d1", file_name: "Week 3 slides.pptx", course_id: "c1" }] });
     fireEvent.click(within(screen.getByTestId("tutor-course-materials-error")).getByRole("button", { name: "Try again" }));
     await waitFor(() => expect(page.textContent).toContain("Week 3 slides.pptx"));
@@ -361,6 +363,7 @@ describe("F11c — a failed read is an error with a retry, never an empty state"
     const sessionsError = within(page).getByTestId("tutor-course-sessions-error");
     fireEvent.click(within(sessionsError).getByRole("button", { name: "Try again" }));
     await waitFor(() => expect(within(page).queryByTestId("tutor-course-sessions-error")).toBeNull());
+    expect(within(page).getByTestId("tutor-course-sessions-count").textContent).toBe("1 session");
     expect(screen.queryByTestId("tutor-recents-error")).toBeNull();
   });
 });
