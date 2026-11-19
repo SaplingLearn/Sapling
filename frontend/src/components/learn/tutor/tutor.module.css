@@ -695,9 +695,12 @@
   gap: 6px 12px;
   font-size: 11px;
   color: var(--text-dim);
+  list-style: none;
+  margin: 0;
+  padding: 0;
 }
 
-.legend span {
+.legend li {
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -718,33 +721,73 @@
   gap: 16px;
 }
 
-.turn {
+/* The phase stepper (wireframe D): Check-in · Plan · Learn · Wrap-up across
+   the top of the conversation, aligned with its text. Each step after the
+   first is drawn behind a rule that takes the free width. 22px marks. */
+.stepper {
   display: flex;
-  gap: 12px;
-  align-items: flex-start;
-  max-width: min(85%, 860px);
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  padding: 16px clamp(16px, 4vw, 56px) 0;
+  list-style: none;
+  min-width: 0;
 }
 
-.avatar {
-  width: 32px;
-  height: 32px;
+.step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 22px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.step + .step {
+  flex: 1 1 0;
+}
+
+.step + .step::before {
+  content: "";
+  flex: 1 1 auto;
+  min-width: 12px;
+  height: 1px;
+  margin-right: 2px;
+  background: var(--border-strong);
+}
+
+.stepMark {
+  width: 22px;
+  height: 22px;
   border-radius: 50%;
-  background: var(--accent-soft);
-  color: var(--accent);
+  border: 1.5px solid var(--border-strong);
   display: grid;
   place-items: center;
   flex-shrink: 0;
+  box-sizing: border-box;
+  font: 600 11px/1 var(--font-mono);
 }
 
-.turnBody {
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: var(--r-lg);
-  padding: 12px 16px;
-  font: 400 14px/1.6 var(--font-serif);
-  min-width: 0;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+.step[data-state="done"] {
+  color: var(--text-dim);
+}
+
+.step[data-state="done"] .stepMark {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.step[data-state="current"] {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.step[data-state="current"] .stepMark {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-fg);
 }
 
 /* The actions under the latest turn (Continue, Check me, Start with …): 36px,
@@ -908,6 +951,17 @@
   .page,
   .col {
     padding: 16px;
+  }
+
+  /* Only the current step keeps its name on screen; the others keep theirs
+     for a screen reader. Four names do not fit across a phone. */
+  .step:not([data-state="current"]) .stepLabel {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
   }
 }
 

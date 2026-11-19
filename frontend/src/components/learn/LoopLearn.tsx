@@ -19,8 +19,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { FullHeightScreen } from "../FullHeightScreen";
 import { DisclaimerModal } from "../DisclaimerModal";
 import { AIDisclaimerChip } from "../chat/AIDisclaimerChip";
-import { ChatPanel, type ChatMsg } from "../chat/ChatPanel";
-import { KnowledgeGraph } from "../graph/KnowledgeGraph";
+import { ChatPanel, PageTurn, type ChatMsg } from "../chat/ChatPanel";
 import { useToast } from "../ToastProvider";
 import { useUser } from "@/context/UserContext";
 import { useIsMobile } from "@/lib/useIsMobile";
@@ -88,6 +87,7 @@ import { initialLoopState, reduceLoopEvent } from "./loopState";
 import { readResumeParam } from "./resumeParam";
 import styles from "./LoopLearn.module.css";
 import { DiagnosisSummary, GoalEditor } from "./LearningScope";
+import { planGoalReason, planKind } from "./planLabels";
 import { ReportQuestion } from "./ReportQuestion";
 import { CrisisSupportCard, useCrisisSupport } from "../safety/CrisisSupportCard";
 import { crisisSupportIn, type CrisisSupport } from "@/lib/crisisSupport";
@@ -100,6 +100,8 @@ import { Icon } from "../Icon";
 import { TutorSidebar } from "./tutor/TutorSidebar";
 import { TutorAllSessions, TutorCourse, TutorHome, type SessionFilter } from "./tutor/TutorPages";
 import { SessionPanel, type PanelConcept } from "./tutor/SessionPanel";
+import { SessionMap } from "./tutor/SessionMap";
+import { PhaseStepper } from "./tutor/PhaseStepper";
 import { SidebarGlyph } from "./tutor/TutorIcons";
 import { mergeSessions, sessionTitle, type TutorSessionRow } from "./tutor/sessions";
 import tutorStyles from "./tutor/tutor.module.css";
@@ -156,13 +158,7 @@ const ALREADY_GRADED_DETAIL = "already graded";
 const MAX_TIMER_MS = 2_147_483_647;
 
 const BAND_LABEL: Record<string, string> = { novice: "Getting started", develop: "Developing", profic: "Proficient" };
-const KIND_LABEL: Record<string, { label: string; chip: string }> = {
-  review: { label: "Review", chip: "chip chip--warn" },
-  new: { label: "New", chip: "chip chip--accent" },
-  sibling: { label: "Related", chip: "chip chip--info" },
-};
 const TEACHING: readonly LoopPhase[] = ["teach", "check", "feedback"];
-const RAIL_GRAPH_HEIGHT = 240;
 
 const FIELD_STYLE: React.CSSProperties = {
   width: "100%",
@@ -2049,7 +2045,7 @@ export function LoopLearn() {
   );
 
   const renderChatHeader = (firstConcept: LoopPlanConcept | undefined) => (
-    <div style={{ display: "flex", flexDirection: "column", gap: 10, paddingLeft: anyOf(!!item, !!prequestion, !!selfExplain) ? 0 : TURN_INDENT }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       {askRating && askRating === sessionId && <RatingPrompt onRate={rate} />}
       {item ? (
         <CheckCard
@@ -2146,6 +2142,7 @@ export function LoopLearn() {
                 : "Ask your AI tutor anything…"
           }
           attachHref="/library"
+          turnStyle="page"
           draftSeed={chatDraft.text}
           draftSeedKey={chatDraft.key}
         />
@@ -2355,7 +2352,7 @@ export function LoopLearn() {
       showTreeLink={!isMobile}
       onHide={() => setPanelOpen(false)}
       map={railGraph.nodes.length > 0 ? (
-        <RailGraph nodes={railGraph.nodes} edges={railGraph.edges} highlightId={focusNodeId ?? undefined} />
+        <SessionMap nodes={railGraph.nodes} edges={railGraph.edges} highlightId={focusNodeId ?? undefined} />
       ) : (
         <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Concepts appear here as you learn.</div>
       )}
@@ -2416,6 +2413,7 @@ export function LoopLearn() {
       <>
         {live && state.phase !== "close" && renderScopeSummary()}
         {goalProgress && goal && renderGoalProgress(goalProgress)}
+        {live && <PhaseStepper phase={state.phase} />}
         {notices}
         {allOf(!showPanel, live, !!learner) && (
           <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px clamp(16px, 4vw, 56px) 0" }}>
@@ -2569,9 +2567,6 @@ function CenteredCard({ testId, children }: { testId: string; children: React.Re
   );
 }
 
-/** Actions under a tutor turn line up with its bubble (avatar 32 + gap 12). */
-const TURN_INDENT = 44;
-
 const VERDICT_COPY: Record<string, { title: string; note: string }> = {
   correct: { title: "Correct", note: "That answer counts toward this concept." },
   not_yet: { title: "Not yet", note: "The tutor's reply above shows what to fix. Try another one on the same idea." },
@@ -2591,39 +2586,10 @@ function VerdictBanner({ verdict, concept }: { verdict: string; concept: string 
   );
 }
 
-/** One tutor turn outside the chat log (the check-in opener, the plan's intro):
- *  the avatar and serif bubble the conversation uses. */
+/** One tutor turn outside the chat log (the check-in opener, the plan's intro),
+ *  on the page as the conversation's turns are (`PageTurn`). */
 function TutorTurn({ children, testId }: { children: React.ReactNode; testId?: string }) {
-  return (
-    <div className={tutorStyles.turn}>
-      <span className={tutorStyles.avatar} aria-hidden><Icon name="sparkle" size={14} /></span>
-      <div className={tutorStyles.turnBody} data-testid={testId}>
-        <span className={tutorStyles.sr}>Tutor: </span>
-        {children}
-      </div>
-    </div>
-  );
-}
-
-/** The knowledge-map rail: `KnowledgeGraph` fed as Learn.tsx's
- *  SidebarKnowledgeGraph feeds it (measured width, fixed height). */
-function RailGraph({ nodes, edges, highlightId }: { nodes: GraphNode[]; edges: GraphEdge[]; highlightId?: string }) {
-  const [width, setWidth] = useState(0);
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const el = ref.current;
-    if (!el || typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver((entries) => setWidth(entries[0].contentRect.width));
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-  return (
-    <div ref={ref} style={{ width: "100%" }}>
-      {width > 0 && (
-        <KnowledgeGraph nodes={nodes} edges={edges} width={width} height={RAIL_GRAPH_HEIGHT} highlightId={highlightId} />
-      )}
-    </div>
-  );
+  return <PageTurn plain testId={testId}>{children}</PageTurn>;
 }
 
 function ProbePanel({
@@ -2852,7 +2818,8 @@ function PlanPanel({
         {plan && plan.length > 0 && (
           <ol aria-label="Concepts in today's plan" style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 6 }}>
             {plan.map((c, i) => {
-              const kind = KIND_LABEL[c.kind];
+              const kind = planKind(c.kind);
+              const why = planGoalReason(c.reason);
               return (
                 <li
                   key={c.node_id}
@@ -2861,12 +2828,10 @@ function PlanPanel({
                 >
                   <span className={tutorStyles.planBox} aria-hidden>{i + 1}</span>
                   <span style={{ flex: "1 1 100px", minWidth: 0, overflowWrap: "anywhere", fontSize: 14, fontWeight: 500 }}>{c.concept_name || "Concept"}
-                    {c.reason && <span data-testid={`loop-plan-reason-${c.node_id}`} className={tutorStyles.ps} style={{ display: "block", marginTop: 2, fontWeight: 400 }}>
-                      {c.reason === "prerequisite" ? "Prerequisite for your goal" : c.reason === "goal" ? "Your selected goal" : c.reason === "review" ? "Due for review" : "Related practice"}
-                    </span>}
+                    {why && <span data-testid={`loop-plan-reason-${c.node_id}`} className={tutorStyles.ps} style={{ display: "block", marginTop: 2, fontWeight: 400 }}>{why}</span>}
                   </span>
                   {c.band && <span className="chip">{BAND_LABEL[c.band] ?? c.band}</span>}
-                  {kind && <span className={kind.chip}>{kind.label}</span>}
+                  {kind && <span data-testid={`loop-plan-kind-${c.node_id}`} className={kind.chip}>{kind.label}</span>}
                 </li>
               );
             })}

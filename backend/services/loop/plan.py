@@ -38,6 +38,17 @@ from services.loop.pose import _NO_POSE, _pose_prequestion, _posed_prequestion
 logger = logging.getLogger("routes.learn_loop")
 
 
+def _goal_reason(node_id: str, scope: frozenset[str] | None, targets: frozenset[str]) -> dict:
+    """`reason`: why a goal session plans the concept — the goal itself or a
+    prerequisite of it (a goal plan holds nothing outside the goal's scope).
+    Absent without a goal: the concept's `kind` (review / new / started /
+    sibling) is then the one thing to say about it, so the two can never
+    disagree."""
+    if scope is None or node_id not in scope:
+        return {}
+    return {"reason": "goal" if node_id in targets else "prerequisite"}
+
+
 def plan_get(request: Request, user_id: str, session_id: str) -> dict:
     """Current goal-scoped frontier; every new frontier requires explicit approval."""
     _gate(user_id, request)
@@ -81,7 +92,7 @@ def plan_get(request: Request, user_id: str, session_id: str) -> dict:
                 "concept_name": names.get(n, ""),
                 "kind": kinds[n],
                 "p_known": view.states.get(n, BKT_L0),
-                "reason": "goal" if n in targets else "prerequisite" if view.scope is not None and n in view.scope else "review" if kinds[n] == "review" else "related",
+                **_goal_reason(n, view.scope, targets),
                 "target_node_ids": sorted(targets),
             }
             for n in ids

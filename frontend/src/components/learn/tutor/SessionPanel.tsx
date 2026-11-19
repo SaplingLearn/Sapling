@@ -2,26 +2,18 @@
 import React from "react";
 import Link from "next/link";
 import type { LoopPanelConcept } from "@/lib/api";
+import { MASTERY_PALETTE, TIER_LABEL, type MasteryTier } from "@/lib/graph/nodeStyle";
+import { planKind } from "../planLabels";
 import { SidebarGlyph } from "./TutorIcons";
 import { Meter } from "./TutorPages";
 import styles from "./tutor.module.css";
 
-const REASON_LABEL: Record<string, string> = {
-  prerequisite: "Prerequisite for your goal",
-  goal: "Your selected goal",
-  review: "Due for review",
-  related: "Related practice",
-};
-const KIND_LABEL: Record<string, string> = { review: "Due for review", new: "New", sibling: "Related practice" };
-
 export type PanelConcept = { nodeId: string; name: string; score: number | null };
 
-const LEGEND: [string, string][] = [
-  ["var(--state-mastery)", "Mastered"],
-  ["var(--state-progress)", "In progress"],
-  ["var(--state-struggle)", "Needs work"],
-  ["var(--state-neutral)", "Not started"],
-];
+/** The knowledge map's key: the map is drawn in mastery colours (one colour
+ *  per tier, `SessionMap`), so its key is built from the same palette and the
+ *  same tier names the map paints with — they cannot drift apart. */
+const MAP_TIERS: MasteryTier[] = ["mastered", "learning", "struggling", "unexplored"];
 
 /**
  * The session panel (wireframe: "Today's session"): the plan with the concept
@@ -80,7 +72,7 @@ export function SessionPanel({
                     <span className={styles.planBox} aria-hidden>{i + 1}</span>
                     <span className={styles.grow}>
                       <div className={styles.pn}>{c.concept_name || "Concept"}</div>
-                      <div className={styles.ps}>{(c.reason && REASON_LABEL[c.reason]) || KIND_LABEL[c.kind] || ""}</div>
+                      <div className={styles.ps}>{planKind(c.kind)?.label ?? ""}</div>
                     </span>
                   </li>
                 );
@@ -115,9 +107,9 @@ export function SessionPanel({
             )}
           </div>
           {map}
-          <div className={styles.legend}>
-            {LEGEND.map(([c, l]) => <span key={l}><i style={{ background: c }} />{l}</span>)}
-          </div>
+          <ul className={styles.legend} aria-label="Map key" data-testid="tutor-map-key">
+            {MAP_TIERS.map((t) => <li key={t}><i style={{ background: MASTERY_PALETTE[t] }} />{TIER_LABEL[t]}</li>)}
+          </ul>
         </section>
       </div>
     </aside>

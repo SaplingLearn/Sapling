@@ -24,10 +24,15 @@ from learning.params import (
 )
 from learning.probe import independent_observations
 
-PlanKind = Literal["review", "new", "sibling"]
+#: What a planned concept is to the student, one per concept (the Tutor shows
+#: it as the concept's one label): due for review, new material, new material
+#: the student has already made progress on (`started`), or a proficient
+#: sibling for interleaved practice.
+PlanKind = Literal["review", "new", "started", "sibling"]
 
 # PLAN_ORDER section name -> the kind its entries carry. Keyed by name, not by
 # position, so reordering PLAN_ORDER reorders the plan without mislabelling it.
+# A `new_material` entry the student has already started is `started` (plan()).
 _SECTION_KIND: dict[str, PlanKind] = {
     "due_reviews": "review",
     "new_material": "new",
@@ -260,13 +265,18 @@ def plan(
     goal_filter: Callable[[str], bool] | None,
     *,
     proficient: frozenset[str] = frozenset(),
+    started: frozenset[str] = frozenset(),
     max_concepts: int = PLAN_MAX_CONCEPTS,
     max_coupled: int = PLAN_MAX_COUPLED,
 ) -> Plan:
     """Reviews (deduplicated, filtered, uncapped — budget_select caps them
     upstream), then new fringe concepts (≤ max_concepts; a candidate already
     sharing a parent with ≥ max_coupled chosen new concepts is skipped), then at
-    most one proficient sibling per new concept. goal_filter=None keeps all."""
+    most one proficient sibling per new concept. goal_filter=None keeps all.
+
+    `started` names the concepts the student has already made progress on; a
+    fringe concept among them is planned exactly as new material is, but its
+    kind is `started`, never `new`. It changes no choice and no order."""
     keep = goal_filter or (lambda _n: True)
 
     reviews: list[str] = []
@@ -296,8 +306,9 @@ def plan(
 
     by_kind: dict[PlanKind, list[str]] = {"review": reviews, "new": new, "sibling": siblings}
     concepts = tuple(
-        PlanConcept(n, _SECTION_KIND[section])
+        PlanConcept(n, "started" if kind == "new" and n in started else kind)
         for section in PLAN_ORDER
-        for n in by_kind[_SECTION_KIND[section]]
+        for kind in (_SECTION_KIND[section],)
+        for n in by_kind[kind]
     )
     return Plan(concepts, tuple(PLAN_ORDER))

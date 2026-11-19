@@ -1,6 +1,8 @@
 /**
  * The Tutor shell's measurements agree (wireframes T1–T3, "AI tutor structure
- * layout V2").
+ * layout V2"), and a session follows the design's anatomy (regions D and F):
+ * the phase stepper, one label per planned concept, tutor turns on the page,
+ * and a session-panel map that fits under its own key.
  *
  * Geometry, deliberately: these are the sizes the design system fixes, so a
  * stray line-height or padding that makes one control 38px next to a 40px one,
@@ -8,7 +10,7 @@
  * spotted by eye. Every number below is the one `learn/tutor/tutor.module.css`
  * documents beside its rule.
  */
-import type { Page } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
 
 import { expect, killSwitchLane, test } from "./support/fixtures";
 
@@ -168,5 +170,106 @@ test("a session: the composer's controls are one 32px square and the actions und
   )) {
     expect(Math.abs(h - 36)).toBeLessThanOrEqual(SLACK);
   }
+  await expectNoHorizontalOverflow(page);
+});
+
+/** The stepper's step for each loop phase (wireframe D). */
+const STEP_FOR_PHASE: Record<string, string> = {
+  probe: "Check-in",
+  plan: "Plan",
+  teach: "Learn",
+  check: "Learn",
+  feedback: "Learn",
+  close: "Wrap-up",
+};
+
+/** The stepper agrees with the loop's phase: the current step, the ticks before it. */
+async function expectStepperAt(page: Page) {
+  const phase = (await page.getByTestId("loop-phase").getAttribute("data-phase"))!;
+  const stepper = page.getByTestId("tutor-phase-stepper");
+  await expect(stepper).toBeVisible();
+  expect(await stepper.evaluate((el) => el.tagName)).toBe("OL");
+  const steps = stepper.locator("li");
+  await expect(steps).toHaveCount(4);
+  const current = stepper.locator('li[aria-current="step"]');
+  await expect(current).toHaveCount(1);
+  await expect(current).toContainText(STEP_FOR_PHASE[phase]);
+  const at = ["Check-in", "Plan", "Learn", "Wrap-up"].indexOf(STEP_FOR_PHASE[phase]);
+  await expect(stepper.locator('li[data-state="done"]')).toHaveCount(at);
+  // every step's mark is one 22px circle
+  for (const h of await stepper.locator("li > span[aria-hidden]").evaluateAll(
+    (els) => els.map((e) => [e.getBoundingClientRect().width, e.getBoundingClientRect().height]),
+  )) {
+    expect(Math.abs(h[0] - 22)).toBeLessThanOrEqual(SLACK);
+    expect(Math.abs(h[1] - 22)).toBeLessThanOrEqual(SLACK);
+  }
+}
+
+/** A tutor turn's text sits on the page: no fill, no border, a bounded measure. */
+async function expectOnThePage(text: Locator) {
+  const style = await text.evaluate((el) => {
+    const s = getComputedStyle(el);
+    return { bg: s.backgroundColor, border: s.borderTopWidth, maxWidth: s.maxWidth };
+  });
+  expect(style.bg).toBe("rgba(0, 0, 0, 0)");
+  expect(style.border).toBe("0px");
+  expect(style.maxWidth).not.toBe("none");
+}
+
+test("a session: the stepper follows the phase, one label per planned concept, turns on the page, a map that fits its key", async ({ page }) => {
+  test.skip(killSwitchLane, "loop path: default lane only");
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/learn");
+  await page.getByTestId("loop-start-guided").click();
+  const phase = page.getByTestId("loop-phase");
+  // the seeded student's course has no check-in items left: the session opens on its plan
+  await expect(phase).toHaveAttribute("data-phase", "plan");
+  await expectStepperAt(page);
+
+  // PR #866 U3: each concept carries one label (its kind); outside a goal no
+  // reason line sits under it to contradict the badge
+  const concepts = page.locator('[data-testid^="loop-plan-concept-"]');
+  await expect(concepts.first()).toBeVisible();
+  for (const row of await concepts.all()) {
+    await expect(row.locator('[data-testid^="loop-plan-kind-"]')).toHaveCount(1);
+    await expect(row.locator('[data-testid^="loop-plan-reason-"]')).toHaveCount(0);
+  }
+  // the plan's intro is a tutor turn on the page, under the tutor's mark
+  const intro = page.locator('[class*="pageTurn"]').first();
+  await expect(intro).toContainText("Tutor");
+  await expectOnThePage(intro.locator('[class*="turnText"]'));
+
+  await page.getByTestId("loop-plan-approve").click();
+  await expect(phase).toHaveAttribute("data-phase", "teach");
+  await expect(page.getByTestId("loop-check-me")).toBeVisible();
+  await expectStepperAt(page);
+
+  // PR #866 U7a: every tutor turn in the conversation sits on the page
+  const turns = page.getByTestId("tutor-messages").locator('[data-testid="tutor-turn"]:not([data-visually-hidden])');
+  await expect(turns.first()).toBeVisible();
+  for (const turn of await turns.all()) await expectOnThePage(turn.locator('[class*="turnText"]'));
+
+  // PR #866 U4: the panel's map is drawn in the colours its key names, with
+  // nothing over its nodes, and every node and caption inside it
+  const rail = page.getByTestId("loop-rail");
+  const map = rail.getByTestId("graph-container");
+  await expect(map).toBeVisible();
+  await expect(rail.locator('svg[data-color-mode="mastery"]')).toHaveCount(1);
+  await expect(rail.getByTestId("graph-color-toggle")).toHaveCount(0);
+  await expect(rail.getByTestId("graph-zoom-controls")).toHaveCount(0);
+  await expect(rail.getByTestId("tutor-map-key").locator("li")).toHaveCount(4);
+  await expect
+    .poll(async () => {
+      const box = (await map.boundingBox())!;
+      const parts = await map.locator('[data-testid="graph-node"] :is(text, [data-testid="graph-node-circle"])').evaluateAll(
+        (els) => els.map((e) => {
+          const r = e.getBoundingClientRect();
+          return [r.left, r.top, r.right, r.bottom];
+        }),
+      );
+      return parts.length > 0 && parts.every(([l, t, r, b]) =>
+        l >= box.x - SLACK && t >= box.y - SLACK && r <= box.x + box.width + SLACK && b <= box.y + box.height + SLACK);
+    })
+    .toBe(true);
   await expectNoHorizontalOverflow(page);
 });

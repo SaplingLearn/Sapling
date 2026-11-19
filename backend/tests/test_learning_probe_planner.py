@@ -326,6 +326,21 @@ def test_plan_sections_follow_plan_order():
     assert out.order == P.PLAN_ORDER
 
 
+def test_plan_labels_started_new_material_without_changing_the_plan():
+    """U3 (PR #866 review): a fringe concept the student has already made
+    progress on is planned exactly as new material is, but its one label is
+    `started`, never `new`. `started` touches no other section's kind."""
+    from learning.planner import plan
+
+    edges = [("P", "N1"), ("P", "N2"), ("Q", "N3"), ("P", "K")]
+    args = (["N1", "N3"], ["R1"], _sib_map(edges), None)
+    plain = plan(*args, proficient=frozenset({"K", "R1"}))
+    out = plan(*args, proficient=frozenset({"K", "R1"}), started=frozenset({"N3", "R1", "K"}))
+    assert [c.node_id for c in out.concepts] == [c.node_id for c in plain.concepts] == ["R1", "N1", "N3", "K"]
+    assert [c.kind for c in out.concepts] == ["review", "new", "started", "sibling"]
+    assert out.order == plain.order
+
+
 def test_plan_coupled_cap():
     from learning.planner import plan
 
@@ -556,6 +571,8 @@ def probe():
         ns.consume = p("_consume_pending")
         ns.scope = p("_session_scope", return_value=("off-1", "c1"))
         ns.states = p("_plan_states", return_value={"A": 0.5, "B": _BELOW, "K": _PROF})
+        # the map's progress tiers: nothing studied yet, so new material is `new`
+        ns.started = p("_plan_started", return_value=frozenset())
         ns.edges = p("_plan_prereq_edges", return_value=[("K", "B")])
         ns.has_items = p("_probe_course_has_items", return_value=True)
         ns.full = _node_items("A", P.PROBE_ITEMS_PER_SKILL_MAX) + _node_items("B", 2, difficulty=1)
@@ -1462,10 +1479,49 @@ def test_plan_get_returns_ordered_sections_and_stores_proposal(probe):
     assert set(probe.due.call_args.args[1]) == set(probe.states.return_value)
 
 
+def test_plan_get_gives_each_concept_one_kind_and_no_goal_reason_without_a_goal(probe):
+    """U3 (PR #866 review): without a goal, `reason` is absent — the kind is
+    the one thing the Tutor says about a concept, so a new concept can never
+    read "Related practice" beside a "New" badge. New material the student
+    has already studied (a map tier past unexplored) is `started`; untouched
+    new material stays `new`."""
+    _planning(probe)
+    probe.started.return_value = frozenset({"N2", "R1", "K"})
+    body = client.get(f"{LOOP}/plan", params=PLAN_Q).json()
+    kinds = {c["node_id"]: c["kind"] for c in body["concepts"]}
+    assert kinds == {"R1": "review", "N1": "new", "N2": "started", "K": "sibling"}
+    assert all("reason" not in c for c in body["concepts"])
+    assert probe.store["doc"]["plan"]["proposed_kinds"] == kinds
+    assert probe.started.call_args.args == (UID, "c1")
+
+
 def test_plan_get_wrong_phase_is_409(probe):
     _probing(probe)
     r = client.get(f"{LOOP}/plan", params=PLAN_Q)
     assert r.status_code == 409 and r.json()["detail"] == "phase is probe"
+
+
+def test_plan_started_reads_the_progress_tiers_of_the_course():
+    """`_plan_started`: the (user, course) nodes whose map tier shows progress
+    — one paged `graph_nodes` read, filtered in the database, so an
+    `unexplored` concept (and a course hub) is never `started`."""
+    calls = []
+
+    class Pages:
+        def select_with_count(self, columns, **kwargs):
+            calls.append((columns, kwargs))
+            return [{"id": "A"}, {"id": "B"}, {"id": None}][kwargs["offset"]:], 0
+
+    with patch_loop("table", return_value=Pages()) as tbl:
+        assert services.loop.planning._plan_started(UID, "c1") == frozenset({"A", "B"})
+    assert tbl.call_args.args == ("graph_nodes",)
+    columns, kwargs = calls[0]
+    assert columns == "id"
+    assert kwargs["filters"] == {
+        "user_id": f"eq.{UID}",
+        "course_id": "eq.c1",
+        "mastery_tier": "in.(struggling,learning,mastered)",
+    }
 
 
 def test_plan_get_reviews_only_due():

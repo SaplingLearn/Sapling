@@ -246,6 +246,30 @@ def _plan_states(user_id: str, course_id: str) -> dict[str, float]:
     return {n: (states[n].p_known if n in states else BKT_L0) for n in ids}
 
 
+#: The map tiers that show progress (`learning.bkt.tier_for`): a concept in one
+#: is not new to the student, whatever the loop itself has observed.
+_PROGRESS_TIERS = ("struggling", "learning", "mastered")
+
+
+def _plan_started(user_id: str, course_id: str) -> frozenset[str]:
+    """The (user, course) concepts the student has already made progress on:
+    a map tier past `unexplored`. `graph_nodes.mastery_tier` mirrors the loop's
+    posterior and also carries mastery from earlier study the loop never saw,
+    so it is the fact the Tutor's skill meter and map show beside the plan.
+    The planner labels such a concept `started`, never `new`. One paged
+    `graph_nodes` read."""
+    rows = page_all(
+        table("graph_nodes"), "id",
+        filters={
+            "user_id": f"eq.{user_id}",
+            "course_id": f"eq.{course_id}",
+            "mastery_tier": f"in.({','.join(_PROGRESS_TIERS)})",
+        },
+        order="id.asc",
+    )
+    return frozenset(r["id"] for r in rows if r.get("id"))
+
+
 def _plan_prereq_edges(user_id: str, node_ids: list[str]) -> list[tuple[str, str]]:
     """The user's prerequisite edges among `node_ids`, oriented (prerequisite,
     dependent) by EDGE_PREREQ_SOURCE_IS_PREREQ — the direction PKG-03's
@@ -499,6 +523,7 @@ def _current_plan(state: dict, user_id: str, course_id: str) -> _PlanView:
         siblings,
         (lambda n: n in scope and n in ready and n not in attempted and n not in unavailable) if scope is not None else None,
         proficient=proficient,
+        started=_plan_started(user_id, course_id),
     )
     return _PlanView(states, planning_states, scope, targets, ready, proposal,
                      scope_signature(targets, scope, edges) if scope is not None else None,
