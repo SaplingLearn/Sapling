@@ -1130,6 +1130,8 @@ def test_the_decisions_eval_replays_its_raw_model_grading_cassettes_as_recorded(
     assert len(grading) == 4
     for path in grading:
         body = json.loads(path.read_text())
+        # a re-recorded cassette wraps the output: {"output": ..., "recorded_under": ...}
+        body = body.get("output", body)
         assert model.model_validate(body).item_results == body["item_results"]
 
 
