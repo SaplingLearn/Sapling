@@ -9,6 +9,7 @@ from starlette.requests import Request
 from db.connection import table
 from services.tutor_sessions import get_pending
 from services.academics import course_offering_ids, offering_course_id
+from services.check_item_jobs import draft_missing_for_course
 from services.check_item_service import get_check_item
 from services.session_modes import NOT_REVIEW
 
@@ -120,7 +121,10 @@ def status(request: Request, user_id: str, session_id: str) -> dict:
 # client's retry state), never an empty list — that would start a new probe.
 # `loop_state=neq.{}` keeps legacy tutor sessions (the column default '{}') out
 # BEFORE the limit; mode='review' rows are PKG-12's daily review sessions
-# (NOT_REVIEW). A lazy session (spec §9) has no row until its first loop write,
+# (NOT_REVIEW). Reopening the course is also when the student's undrafted
+# uploads in it are scheduled for drafting (draft on enable, PR #866 C3): its
+# one write is that throttled claim, which never fails the list. A lazy
+# session (spec §9) has no row until its first loop write,
 # so it is not listed. `phase` is the phase GET /status reports for the same
 # document: `_loop_phase` (probe | plan | teach), refined in teach by
 # `_phase_for` (teach | check | feedback); a document whose close is being
@@ -191,6 +195,8 @@ def list_open_sessions(
     offering_ids = course_offering_ids(course_id)
     if offering_ids is None:
         raise HTTPException(status_code=503, detail=_OFFERINGS_UNKNOWN)
+    if offering_ids:
+        draft_missing_for_course(user_id, course_id, offerings=offering_ids)  # C3: throttled, never raises
     rows = (
         table("sessions").select(
             "id,topic,started_at,loop_state",

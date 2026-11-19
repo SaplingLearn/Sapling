@@ -374,3 +374,26 @@ def test_a_resume_that_is_not_an_open_loop_session_is_null(gate_on, rows):
 def test_a_resume_whose_course_cannot_be_resolved_is_null(gate_on):
     db = _Db([_row("s-x", offering="off-gone")])
     assert _get_resume(db, "s-x").json()["resume"] is None
+
+
+def test_reopening_a_course_schedules_its_undrafted_uploads(gate_on):
+    """Draft on enable (PR #866 C3): listing a course's open loop sessions is
+    the student reopening the loop there, so their uploads the loop never
+    drafted are scheduled (check_item_jobs.draft_missing_for_course: throttled,
+    off this thread, never raises)."""
+    db = _Db([_row("s1")])
+    with patch_loop("draft_missing_for_course", return_value=0) as draft:
+        r = _get(db)
+    assert r.status_code == 200
+    draft.assert_called_once_with(UID, COURSE, offerings=[OFF_ENROLLED, OFF_CURRENT])
+
+
+def test_no_drafting_is_scheduled_when_the_course_cannot_be_told(gate_on):
+    with patch_loop("draft_missing_for_course") as draft:
+        assert _get(_Db([], offerings_fail=True)).status_code == 503
+        assert _get(_Db([], offerings=())).status_code == 200
+    draft.assert_not_called()
+    with patch_loop("draft_missing_for_course") as draft, \
+         patch_loop("learning_loop_for_request", return_value=False):
+        assert _get(_Db([])).status_code == 404
+    draft.assert_not_called()

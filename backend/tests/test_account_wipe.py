@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from services import account_wipe as aw
+from services import check_item_service as cis
 from services import chunk_visibility as cv
 
 U, OTHER = "user_wipe", "user_keep"
@@ -24,6 +25,8 @@ WIPED = (
     "learner_state", "misconceptions", "posttest_poses", "posttest_skips",
     "quiz_evidence_claims", "learning_reveals", "learning_evidence_operations",
     "learning_self_explanations", "learning_prequestions", "learning_evidence_voids",
+    # owner decision (#879): erased too, not kept
+    "check_item_reports", "ai_tutor_daily_calls",
 )
 KEPT = (
     "users", "user_profiles", "user_settings", "user_roles", "oauth_tokens",
@@ -31,8 +34,7 @@ KEPT = (
     "gradescope_credentials", "user_cosmetics", "friendships", "rooms",
     "room_members", "feedback", "issue_reports", "events", "llm_usage",
     "admin_audit_log", "offering_concept_stats",
-    "checklist_budget_accounts", "checklist_budget_reservations", "ai_tutor_daily_calls",
-    "check_item_reports",
+    "checklist_budget_accounts", "checklist_budget_reservations",
 )
 
 #: The `learning_account_erase` RPC (20261111030019): the tables it deletes from.
@@ -73,6 +75,9 @@ def _match(row, col, cond):
         return cur is None if val == "null" else str(cur).lower() == val
     if op == "in":
         return str(cur) in {_unquote(v) for v in val.strip("()").split(",")}
+    if op == "ov":  # array overlap (check_items.source_document_ids)
+        wanted = {_unquote(v) for v in val.strip("{}").split(",")}
+        return bool(set(cur or []) & wanted)
     raise AssertionError(f"filter op {op!r} not modelled")
 
 
@@ -105,8 +110,9 @@ class FakeDB:
         db = self
 
         def hits(filters):
+            # `select` is PostgREST's projection, not a column filter
             return [r for r in db.rows.get(name, [])
-                    if all(_match(r, k, v) for k, v in (filters or {}).items())]
+                    if all(_match(r, k, v) for k, v in (filters or {}).items() if k != "select")]
 
         class _T:
             def select(self, columns="*", filters=None, limit=None, **_):
@@ -158,6 +164,7 @@ def db(monkeypatch):
     monkeypatch.setattr(aw, "table", fake.table)
     monkeypatch.setattr(aw, "rpc", fake.rpc)
     monkeypatch.setattr(cv, "table", fake.table)
+    monkeypatch.setattr(cis, "table", fake.table)  # the A23 item retirement
     return fake
 
 
@@ -213,6 +220,9 @@ def _seed_user(db, uid, *, n=1):
         db.add("course_chunks", id=f"{p}-ck{i}", doc_id=f"{p}-doc{i}", uploader_id=uid,
                visibility="private", category="lecture_notes")
         db.add("course_chunk_sources", chunk_id=f"{p}-ck{i}", doc_id=f"{p}-doc{i}")
+        # A course check item drafted from this upload (A23), served to classmates.
+        db.add("check_items", id=f"{p}-ci{i}", course_id="c1",
+               source_document_ids=[f"{p}-doc{i}"])
 
 
 # ── guard ───────────────────────────────────────────────────────────────────
@@ -259,8 +269,12 @@ def test_wipes_the_scope_and_keeps_everything_else(db):
         "learner_state": 2, "misconceptions": 2, "posttest_poses": 2, "posttest_skips": 2,
         "quiz_evidence_claims": 2, "learning_reveals": 2,
         "learning_evidence_operations": 2,
+        "check_item_reports": 2, "ai_tutor_daily_calls": 2, "check_items": 2,
     }
     assert [r["id"] for r in db.rows["course_chunks"]] == [f"{OTHER}-ck0", f"{OTHER}-ck1"]
+    # A23: the items drafted from the wiped uploads left the class pool; a
+    # classmate's stay.
+    assert [r["id"] for r in db.rows["check_items"]] == [f"{OTHER}-ci0", f"{OTHER}-ci1"]
 
 
 def test_counters_reset_and_featured_achievements_cleared(db):
@@ -349,6 +363,60 @@ def test_failed_withdrawal_stops_before_hard_deleting_documents(db, monkeypatch)
     (doc,) = db.of("documents", user_id=U)
     assert doc["deleted_at"] is not None  # soft-deleted, kept for the re-run
     assert "documents" not in db.ops("delete")
+
+
+def test_items_are_retired_after_the_withdrawals_and_before_the_hard_delete(db, monkeypatch):
+    """A23: the wipe retires every check item drafted from the account's
+    uploads, once every chunk is withdrawn and while the documents are still
+    soft-deleted rows (their ids are what a re-run retires by)."""
+    _seed_user(db, U, n=2)
+    order = []
+    real_withdraw = cv.withdraw_document_chunks
+    real_retire = cis.retire_items_for_documents
+
+    def withdraw(doc_id, user_id):
+        order.append(("withdraw", doc_id))
+        return real_withdraw(doc_id, user_id)
+
+    def retire(doc_ids):
+        order.append(("retire", sorted(doc_ids)))
+        assert all(db.of("documents", id=d) for d in doc_ids)  # not yet hard-deleted
+        return real_retire(doc_ids)
+
+    monkeypatch.setattr(cv, "withdraw_document_chunks", withdraw)
+    monkeypatch.setattr(cis, "retire_items_for_documents", retire)
+
+    counts = aw.wipe_account_data(U)
+
+    assert order[-1] == ("retire", [f"{U}-doc0", f"{U}-doc1"])
+    assert [o for o, _ in order[:-1]] == ["withdraw", "withdraw"]
+    assert counts["check_items"] == 2 and counts["documents"] == 2
+
+
+def test_a_failed_item_retirement_stops_before_hard_deleting_documents(db, monkeypatch):
+    _seed_user(db, U)
+
+    def down(_doc_ids):
+        raise RuntimeError("PostgREST down")
+
+    monkeypatch.setattr(cis, "retire_items_for_documents", down)
+
+    with pytest.raises(aw.AccountWipeIncomplete):
+        aw.wipe_account_data(U)
+
+    (doc,) = db.of("documents", user_id=U)
+    assert doc["deleted_at"] is not None  # soft-deleted, kept for the re-run
+    assert "documents" not in db.ops("delete")
+    assert db.of("check_items", id=f"{U}-ci0")  # still there: the re-run retires it
+
+    monkeypatch.undo()  # the store is back: a re-run finishes the job
+    monkeypatch.setattr(aw, "table", db.table)
+    monkeypatch.setattr(aw, "rpc", db.rpc)
+    monkeypatch.setattr(cv, "table", db.table)
+    monkeypatch.setattr(cis, "table", db.table)
+    counts = aw.wipe_account_data(U)
+    assert counts["check_items"] == 1 and counts["documents"] == 1
+    assert db.rows["check_items"] == [] and db.of("documents", user_id=U) == []
 
 
 # ── chunks ──────────────────────────────────────────────────────────────────
@@ -453,6 +521,12 @@ WIPED_NOT_BUNDLED = {
         "idempotency receipts of evidence commits, fingerprinted with the source's "
         "course id; the evidence itself is in node_mastery_events and learner_state"
     ),
+    # Owner decision (#879): erased by the wipe, never copied.
+    "check_item_reports": (
+        "reports on THIS environment's course items (items never move); a "
+        "quarantine they reached is held on the item, not in the report"
+    ),
+    "ai_tutor_daily_calls": "per-day tutor-call counts this environment's daily cap reads",
 }
 
 

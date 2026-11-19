@@ -401,6 +401,7 @@ BACKEND_RPCS = frozenset({
     "discard_tutor_session",         # services/tutor_sessions.py (#117, stateless_tutor_sessions)
     "claim_tutor_session",  # services/tutor_sessions.py (loop close of a pending session), 20261118052843
     "encryption_aad_swap",           # db/backfill_encryption_aad.py (sec2 M13, 20261116162200)
+    "encryption_aad_swap_nested",    # db/backfill_encryption_aad.py (PR #866 C6, 20261118195701)
     "enqueue_job",                   # services/jobs.py (#116)
     "fail_job",                      # services/jobs.py (#116)
     "heartbeat_job",                 # services/jobs.py (#116, 20261108213623)
@@ -421,6 +422,8 @@ BACKEND_RPCS = frozenset({
     "checklist_budget_reconcile",
     "checklist_budget_start",
     "learning_account_erase",        # services/account_wipe.py (_ERASE_RPC, admin account wipe)
+    "learning_node_erase",           # services/graph_service.py (_NODE_ERASE, PR #866 C9; 20261118195124)
+    "learning_session_text_erase",   # services/tutor/sessions.py (_SESSION_TEXT_ERASE, PR #866 C8; 20261118195124)
     "learning_evidence_commit",      # learning/evidence_transaction.py
     "learning_evidence_receipt",
     "learning_evidence_snapshot",

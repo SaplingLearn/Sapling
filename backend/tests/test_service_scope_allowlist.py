@@ -134,6 +134,10 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
     ("services/ai_budget.py", "_check_platform", "runs_as_service"): "llm_usage / ai_tutor_daily_calls are service-only (bucket E)",
     ("services/checklist_budget.py", "_call", "runs_as_service"): "checklist_budget_* RPCs and tables are service-only (A148)",
     ("services/check_item_service.py", "retire_items_for_documents", "runs_as_service"): "check_items is a service-only course asset (A148)",
+    ("services/check_item_service.py", "claim_undrafted_documents", "runs_as_service"):
+        "draft on enable: check_items is a service-only course asset (A148); the delegating legacy start reaches it",
+    ("services/check_item_service.py", "_with_live_sources", "runs_as_service"):
+        "A23: an item's source documents are its uploaders', never the reader's (live or not)",
     ("services/quiz_learning.py", "_open_misconceptions", "runs_as_service"):
         "misconceptions is service-only (A148); the quiz plan reads it (A143, A146)",
     ("services/quiz_learning.py", "_bank_keys", "runs_as_service"):
@@ -196,6 +200,10 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
     ("services/feature_flags.py", "_read_version", "service_scope"):
         "#117 flag store's version row (cross-replica cache bust)",
     ("services/graph_service.py", "ensure_user_exists", "runs_as_service"): "inserts a users row",
+    ("services/graph_service.py", "_erase_node_loop_rows", "runs_as_service"):
+        "PR #866 C9: a deleted node's loop rows (posttest_*, the teach-prompt erase RPC) are service-only (A148)",
+    ("services/tutor/sessions.py", "_erase_session_text", "runs_as_service"):
+        "PR #866 C8: a deleted session's teach-prompt text, through a service-only erase RPC (A148)",
     ("services/graph_service.py", "aensure_user_exists", "runs_as_service"):
         "inserts a users row (#117 async twin)",
     ("services/gradescope/jobs.py", "stage_sync", "runs_as_service"):

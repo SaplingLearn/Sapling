@@ -70,12 +70,13 @@ import json
 import logging
 import threading
 from collections import deque
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from typing import NamedTuple
 
 import config
+import httpx
 from agents._run import run_agent_sync
 from agents.check_items import CheckItemsUnavailable, draft_items
 from agents.check_items_key_match import MatchItem, match_keys, matches
@@ -715,6 +716,51 @@ def _to_items(rows) -> list[CheckItem]:
     return items
 
 
+@runs_as_service  # an item's source documents are its uploaders', never the reader's (A23)
+def _with_live_sources(rows) -> list[dict]:
+    """A23: the rows whose every source document still exists — not deleted,
+    not soft-deleted. Withdrawal retires an item (retire_items_for_documents)
+    when its document goes, its uploader opts out, or their account is wiped;
+    this read is the serving side of the same rule, so an item a missed or
+    failed retirement left behind is never served either. One `in.(…)`
+    documents read per _DOC_ID_BATCH cited ids; a row that cites none (no
+    source recorded) is kept. An item it withholds is retired on the spot
+    (retire_items_for_documents), so a missed retirement heals on the first
+    read that meets it. Raises on a failed documents read, like the item read
+    it filters (the caller's own error handling applies)."""
+    rows = list(rows or [])
+    cited = sorted({d for r in rows for d in (r.get("source_document_ids") or []) if d})
+    if not cited:
+        return rows
+    live: set[str] = set()
+    for start in range(0, len(cited), _DOC_ID_BATCH):
+        batch = cited[start : start + _DOC_ID_BATCH]
+        found = table("documents").select(
+            "id",
+            filters={
+                "id": "in.(" + ",".join(pg_quote_value(d) for d in batch) + ")",
+                "deleted_at": "is.null",
+            },
+        )
+        live.update(r["id"] for r in found or [] if r.get("id"))
+    kept = [r for r in rows if set(r.get("source_document_ids") or []) <= live]
+    if len(kept) < len(rows):
+        gone = sorted(set(cited) - live)
+        logger.warning(
+            "check items: %d item(s) cite %d withdrawn document(s); not served, retiring (A23)",
+            len(rows) - len(kept),
+            len(gone),
+        )
+        # Self-healing: the retirement a past withdrawal missed (an account
+        # wiped before the wipe retired items) happens now, once. A failure is
+        # only logged: the read already withholds them.
+        try:
+            retire_items_for_documents(gone)
+        except (httpx.HTTPError, RuntimeError, ValueError) as exc:
+            logger.warning("check items: withdrawn-source retirement failed (%s)", type(exc).__name__)
+    return kept
+
+
 def _unheld(items: Iterable[CheckItem]) -> list[CheckItem]:
     """A124: the items no hold withdraws — no key hold, and (A123) no staff
     hold: neither quarantined by reporters nor retired by staff. The student
@@ -733,14 +779,15 @@ def list_items(
     difficulty: int | None = None,
 ) -> list[CheckItem]:
     """Every item for one course concept a student may be served (A124: no
-    held one), filtered on plaintext columns only."""
+    held one; A23: none whose source document is gone), filtered on plaintext
+    columns only."""
     filters = {"course_id": f"eq.{course_id}", "concept_key": f"eq.{concept_key}"}
     if format is not None:
         filters["format"] = f"eq.{format}"
     if difficulty is not None:
         filters["difficulty"] = f"eq.{difficulty}"
     rows = table(_TABLE).select(_COLUMNS, filters=filters, order="created_at,id")
-    return _unheld(_to_items(rows))
+    return _unheld(_to_items(_with_live_sources(rows)))
 
 
 def get_check_item(item_id: str, *, include_held: bool = False) -> CheckItem | None:
@@ -760,9 +807,10 @@ def get_check_item(item_id: str, *, include_held: bool = False) -> CheckItem | N
 
 
 def items_for_concepts(course_id: str, concept_keys: Iterable[str]) -> dict[str, list[CheckItem]]:
-    """Every item a student may be served (A124: no held one) for the given
-    keys, in ONE `in.(...)` select, grouped by key (every requested key
-    present, [] when it has none)."""
+    """Every item a student may be served (A124: no held one; A23: none whose
+    source document is gone, `_with_live_sources`) for the given keys, in ONE
+    `in.(...)` select, grouped by key (every requested key present, [] when it
+    has none)."""
     keys = list(dict.fromkeys(k for k in concept_keys if k))
     if not keys:
         return {}
@@ -775,7 +823,7 @@ def items_for_concepts(course_id: str, concept_keys: Iterable[str]) -> dict[str,
         order="created_at,id",
     )
     grouped: dict[str, list[CheckItem]] = {k: [] for k in keys}
-    for item in _unheld(_to_items(rows)):
+    for item in _unheld(_to_items(_with_live_sources(rows))):
         grouped.setdefault(item.concept_key, []).append(item)
     return grouped
 
@@ -882,7 +930,7 @@ def multi_concept_items(course_id: str, apex_key: str) -> list[CheckItem]:
         filters={"course_id": f"eq.{course_id}", "apex_key": f"eq.{apex_key}"},
         order="created_at,id",
     )
-    return [i for i in _unheld(_to_items(rows)) if components_of(i.concept_key)]
+    return [i for i in _unheld(_to_items(_with_live_sources(rows))) if components_of(i.concept_key)]
 
 
 def count_items(course_id: str, concept_key: str) -> int:
@@ -3476,18 +3524,29 @@ def mark_drafting(document_id: str, status: str) -> None:
     Never raises on a failed write (bookkeeping, see above)."""
     if status not in DRAFTING_STATUSES:
         raise ValueError(f"not a drafting status: {status!r}")
+    _write_drafting(
+        document_id,
+        {"check_items_status": status, "check_items_at": _stamp(_utcnow())},
+        {},
+        repr(status),
+    )
+
+
+def _write_drafting(document_id: str, data: dict, only_if: dict, what: str) -> None:
+    """The one drafting-bookkeeping write (mark_drafting, clear_drafting):
+    never raises."""
     try:
         table("documents").update(
-            {"check_items_status": status, "check_items_at": _stamp(_utcnow())},
-            filters={"id": f"eq.{document_id}"},
+            data,
+            filters={"id": f"eq.{document_id}", **only_if},
             prefer_return_minimal=True,
         )
     except Exception as exc:
         # The class only, no traceback: bookkeeping, and before the migration
         # runs every upload meets it (a traceback per upload is noise).
         logger.warning(
-            "check items: drafting status %r not recorded for document %s (%s)",
-            status,
+            "check items: drafting status %s not recorded for document %s (%s)",
+            what,
             document_id,
             type(exc).__name__,
         )
@@ -3525,6 +3584,102 @@ def drafting_pending(user_id: str, course_id: str | None) -> bool:
         )
         return False
     return bool(rows)
+
+
+def clear_drafting(document_id: str) -> None:
+    """Take a `pending` mark back to NULL (never drafted): a drafting run that
+    will not run after all (its uploader's loop gate turned off between the
+    claim and the run). The student is then no longer told "preparing", and a
+    later enable claims the document again. Never raises (bookkeeping)."""
+    _write_drafting(
+        document_id,
+        {"check_items_status": None, "check_items_at": None},
+        {"check_items_status": f"eq.{DRAFTING_PENDING}"},
+        "cleared",
+    )
+
+
+def _ids(rows) -> list[str]:
+    """The string ids of a PostgREST answer; [] for anything else."""
+    if not isinstance(rows, list):
+        return []
+    return [r["id"] for r in rows if isinstance(r, dict) and isinstance(r.get("id"), str) and r["id"]]
+
+
+def _undrafted_filter(cutoff: str) -> str:
+    """Never drafted (NULL: uploaded with the loop off, or before A128), or a
+    `pending` mark older than the TTL (its run died with a process or a
+    deploy's dropped queue)."""
+    return (
+        f"(check_items_status.is.null,and(check_items_status.eq.{DRAFTING_PENDING},"
+        f"check_items_at.lt.{cutoff}))"
+    )
+
+
+@runs_as_service  # spec §13 A148: check_items is a service-only course asset; reached from the legacy start route too
+def claim_undrafted_documents(
+    user_id: str,
+    course_id: str,
+    *,
+    limit: int,
+    may_draft: Callable[[], bool] = lambda: True,
+    offerings: list[str] | None = None,
+) -> list[str]:
+    """Draft on enable (owner decision, PR #866 C3): mark `pending`, and return,
+    up to `limit` of the student's own live course-material uploads in the
+    course that no drafting run has covered — `_undrafted_filter` — newest
+    first. A document some run already drafted items from is marked `done`
+    instead (an upload drafted before A128 recorded nothing). The mark is a
+    conditional write (only a row still undrafted moves), so two processes
+    scanning together never claim one document twice, and it is what
+    `drafting_pending` reads: the loop says "preparing" from here on.
+    `may_draft` is asked once, only when there is something to claim (the
+    caller's budget check), and False claims nothing. `offerings`: the
+    course's offering ids when the caller already read them. Raises on a
+    failed read or write (the caller schedules nothing then)."""
+    offerings = course_offering_ids(course_id) if offerings is None else offerings
+    if not offerings:
+        return []
+    cutoff = _stamp(_utcnow() - timedelta(seconds=CHECK_ITEM_DRAFT_PENDING_TTL_S))
+    owned = {
+        "user_id": f"eq.{user_id}",
+        "offering_id": f"in.({','.join(pg_quote_value(o) for o in offerings)})",
+        "deleted_at": "is.null",
+        # only course material is ever drafted from (document_is_item_source)
+        "shareability": f"eq.{COURSE_MATERIAL}",
+        "or": _undrafted_filter(cutoff),
+    }
+    ids = _ids(table("documents").select("id", filters=owned, order="created_at.desc", limit=limit))
+    if not ids:
+        return []
+    drafted = {
+        d
+        for r in table(_TABLE).select(
+            "source_document_ids",
+            filters={"source_document_ids": "ov.{" + ",".join(pg_quote_value(d) for d in ids) + "}"},
+        )
+        or []
+        for d in (r.get("source_document_ids") or [])
+    } & set(ids)
+    now = _stamp(_utcnow())
+    if drafted:
+        table("documents").update(
+            {"check_items_status": DRAFTING_DONE, "check_items_at": now},
+            filters={**owned, "id": "in.(" + ",".join(pg_quote_value(d) for d in sorted(drafted)) + ")"},
+            prefer_return_minimal=True,
+        )
+    todo = [d for d in ids if d not in drafted]
+    if not todo or not may_draft():
+        return []
+    claimed = table("documents").update(
+        {"check_items_status": DRAFTING_PENDING, "check_items_at": now},
+        filters={
+            **owned,
+            "id": "in.(" + ",".join(pg_quote_value(d) for d in todo) + ")",
+            "select": "id",  # the claimed rows come back as ids only
+        },
+    )
+    return _ids(claimed)
 
 
 # ── upload-time drafting pool ──────────────────────────────────────────────

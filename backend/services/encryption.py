@@ -311,8 +311,11 @@ def claim_binding(claim: str) -> Binding:
 
 
 #: Ciphertexts stored INSIDE a plaintext jsonb column rather than as a column
-#: of their own: (table, column, path). Not in ENCRYPTED_COLUMNS (the backfill
-#: and the account bundle walk real columns); bound with `nested_bind`.
+#: of their own: (table, column, path). Not in ENCRYPTED_COLUMNS (a real
+#: column's registry); bound with `nested_bind`. The AAD backfill re-seals them
+#: in every table that holds the column (db/backfill_encryption_aad.py
+#: NESTED_HOLDERS) and the account bundle re-keys them (NESTED_ENCRYPTED), so a
+#: new path here is covered by both.
 #: sessions.loop_state carries the student's goal text (ADR 0033) and a step's
 #: or probe's sealed grade checkpoint (ADR 0038), both keyed on the session.
 NESTED_CIPHERTEXTS: frozenset[tuple[str, str, str]] = frozenset({

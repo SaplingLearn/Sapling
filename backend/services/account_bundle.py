@@ -61,11 +61,13 @@ environment's account), the loop's per-environment bookkeeping
 (`learning_evidence_operations`, wiped, never bundled: idempotency receipts of
 evidence commits whose fingerprints bind the source's course id, so they could
 never replay on the target — the evidence itself travels in
-`node_mastery_events` and `learner_state`), `check_item_reports` (kept by the
-wipe: a report is feedback on a course item, like `feedback`, and its count
-holds the item's quarantine for the whole class), the AI budget records (the
-checklist budget ledger and `ai_tutor_daily_calls`: kept by the wipe, never
-bundled), and every privacy/consent/notification choice in
+`node_mastery_events` and `learner_state`), `check_item_reports` (wiped,
+never bundled: a report is feedback on a course item of THIS environment —
+items are matched by `(course_id, question_hash)` and never move — and a
+quarantine it helped reach is recorded on the item, not in the report),
+`ai_tutor_daily_calls` (wiped, never bundled: a per-day count the daily cap
+of THIS environment reads), the checklist budget ledger (kept by the wipe,
+never bundled: spend records), and every privacy/consent/notification choice in
 `user_settings` (see `_SETTINGS_COPIED`): consent is the person's, given on
 each environment, and is never carried from one to the other — the Terms and
 Privacy Policy accepted on one environment included. The imported

@@ -11,7 +11,7 @@ from functools import partial
 from starlette.concurrency import run_in_threadpool
 
 from db.async_connection import apage_all
-from db.connection import page_all, table
+from db.connection import page_all, rpc, table
 from db.scope import runs_as_service
 from learning import bkt, evidence_replay
 from learning.evidence import (
@@ -756,10 +756,37 @@ def update_course_nickname(user_id: str, course_id: str, nickname: str) -> dict:
     return {"updated": True}
 
 
-def delete_node(user_id: str, node_id: str) -> dict:
-    """Delete a single graph node and its edges. Owner-scoped.
+#: 20261118195124_learning_session_node_erase.sql: deletes one node's rows
+#: from the loop's append-only teach-prompt records (service_role may not
+#: delete from them directly).
+_NODE_ERASE = "learning_node_erase"
 
-    Returns 404 if the node doesn't belong to the user.
+#: Loop tables keyed by (user_id, node_id) with no foreign key to the node, so
+#: no cascade removes their rows with it (learner_state, misconceptions and
+#: the evidence journal DO cascade from graph_nodes).
+_NODE_KEYED_LOOP_TABLES = ("posttest_poses", "posttest_skips")
+
+
+@runs_as_service  # the learning loop's tables are service-only (A148)
+def _erase_node_loop_rows(user_id: str, node_id: str) -> None:
+    """PR #866 C9: the student's loop rows that name a deleted node and have
+    no FK to it — its post-test poses and skips, and (through _NODE_ERASE)
+    its prequestion and self-explanation records. Owner-scoped and
+    idempotent. learning_reveals is not node-keyed: a reveal names a course
+    ITEM (its question_hash), which outlives the student's node and must stay
+    revealed if the concept is added again. Raises on a failed call."""
+    for name in _NODE_KEYED_LOOP_TABLES:
+        table(name).delete(filters={"user_id": f"eq.{user_id}", "node_id": f"eq.{node_id}"})
+    rpc(_NODE_ERASE, {"p_user_id": user_id, "p_node_id": node_id})
+
+
+def delete_node(user_id: str, node_id: str) -> dict:
+    """Delete a single graph node and its edges, then its loop rows that no
+    FK cascades (`_erase_node_loop_rows`). Owner-scoped.
+
+    Returns 404 if the node doesn't belong to the user — after clearing any
+    loop rows still naming it, so a retry after a failed clean-up (the node
+    already gone) finishes the job.
     """
     rows = table("graph_nodes").select(
         "id,course_id",
@@ -767,12 +794,16 @@ def delete_node(user_id: str, node_id: str) -> dict:
         limit=1,
     ) or []
     if not rows:
+        _erase_node_loop_rows(user_id, node_id)
         return {"error": "Node not found", "deleted": False}
     course_id = rows[0].get("course_id")
 
     table("graph_edges").delete(filters={"user_id": f"eq.{user_id}", "source_node_id": f"eq.{node_id}"})
     table("graph_edges").delete(filters={"user_id": f"eq.{user_id}", "target_node_id": f"eq.{node_id}"})
     table("graph_nodes").delete(filters={"id": f"eq.{node_id}", "user_id": f"eq.{user_id}"})
+    # After the node, never before: a failed node delete must not lose a live
+    # node's release records (A76) or its open post-test.
+    _erase_node_loop_rows(user_id, node_id)
 
     if course_id:
         # course_id from graph_nodes is the abstract course; refresh each of the

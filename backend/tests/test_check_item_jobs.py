@@ -15,6 +15,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from services import ai_budget
 from services import check_item_jobs as cij
 from services import jobs
 from services.encryption import encrypt_json
@@ -196,3 +197,338 @@ def test_the_worker_loads_the_check_items_job():
     assert "services.check_item_jobs" in HANDLER_MODULES
     assert "check_items.document" in load_handlers()
     assert jobs.get_handler("check_items.document") is cij._run_check_items_document_job
+
+
+# ── the uploader's loop gate, at run time ───────────────────────────────────
+
+
+def test_with_the_loop_off_a_failed_indexing_raises_for_the_queue_to_retry():
+    from services import check_item_service, document_indexing
+
+    with patch.object(cij, "learning_loop_for_uploader", return_value=False), \
+         patch.object(document_indexing, "index_document", side_effect=RuntimeError("down")), \
+         patch.object(check_item_service, "clear_drafting") as clear:
+        with pytest.raises(RuntimeError):
+            cij._run_check_items_document_job({"doc_id": "doc-1", "user_id": "u1", "course_id": "c-1"})
+    clear.assert_called_once_with("doc-1")  # the mark is back before anything can fail
+
+
+def test_the_handler_rereads_the_loop_gate_and_drafts_nothing_when_it_is_off():
+    """A kill switch thrown (or the uploader's flag turned off) after the
+    enqueue: the job indexes the document — indexing is the upload's — takes
+    its `pending` mark back, and drafts nothing."""
+    from services import check_item_service, document_indexing
+    from services import documents as rd
+
+    with patch.object(cij, "learning_loop_for_uploader", return_value=False) as gate, \
+         patch.object(document_indexing, "index_document") as idx, \
+         patch.object(check_item_service, "clear_drafting") as clear, \
+         patch.object(cij, "table") as table, \
+         patch.object(rd, "_index_then_draft") as chain:
+        cij._run_check_items_document_job({"doc_id": "doc-1", "user_id": "u1", "course_id": "c-1"})
+    gate.assert_called_once_with("u1")
+    idx.assert_called_once_with("doc-1")
+    clear.assert_called_once_with("doc-1")
+    chain.assert_not_called()
+    table.assert_not_called()  # not even the concept names are read
+
+
+def test_the_kill_switch_reaches_a_job_enqueued_before_it_was_thrown(monkeypatch):
+    import config
+    from services import check_item_service, document_indexing
+    from services import documents as rd
+
+    monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", False)
+    with patch.object(document_indexing, "index_document"), \
+         patch.object(check_item_service, "clear_drafting"), \
+         patch.object(rd, "_index_then_draft") as chain:
+        cij._run_check_items_document_job({"doc_id": "doc-1", "user_id": "u1", "course_id": "c-1"})
+    chain.assert_not_called()
+
+
+def test_clear_drafting_takes_only_a_pending_mark_back():
+    from services import check_item_service as svc
+
+    table = MagicMock()
+    with patch.object(svc, "table", table):
+        svc.clear_drafting("doc-1")
+    data, = table.return_value.update.call_args.args
+    assert data == {"check_items_status": None, "check_items_at": None}
+    assert table.return_value.update.call_args.kwargs["filters"] == {
+        "id": "eq.doc-1", "check_items_status": "eq.pending",
+    }
+    table.return_value.update.side_effect = RuntimeError("down")
+    with patch.object(svc, "table", table):
+        svc.clear_drafting("doc-1")  # bookkeeping: never raises
+
+
+# ── draft on enable (C3) ────────────────────────────────────────────────────
+
+
+@pytest.fixture
+def scans():
+    cij.reset_enable_scans()
+    yield
+    cij.reset_enable_scans()
+
+
+def test_enable_schedules_each_claimed_document_on_the_job_path(scans):
+    from services import check_item_service as svc
+
+    with patch.object(svc, "claim_undrafted_documents", return_value=["d1", "d2"]) as claim, \
+         patch.object(cij, "enqueue_for_document", return_value=True) as enqueue, \
+         patch.object(cij, "_draft_in_process") as inline:
+        assert cij.draft_missing_for_course("u1", "c-1") == 2
+    assert claim.call_args.args == ("u1", "c-1")
+    assert claim.call_args.kwargs["limit"] == cij.ENABLE_MAX_DOCS
+    assert [c.args for c in enqueue.call_args_list] == [("d1",), ("d2",)]
+    assert all(c.kwargs == {"user_id": "u1", "course_id": "c-1"} for c in enqueue.call_args_list)
+    inline.assert_not_called()
+
+
+def test_enable_runs_a_document_the_queue_did_not_take_on_the_drafting_pool(scans):
+    from services import check_item_service as svc
+
+    with patch.object(svc, "claim_undrafted_documents", return_value=["d1"]), \
+         patch.object(cij, "enqueue_for_document", return_value=False), \
+         patch.object(cij, "_draft_in_process") as inline:
+        assert cij.draft_missing_for_course("u1", "c-1") == 1
+    inline.assert_called_once_with("d1", "u1", "c-1")
+
+
+def test_the_in_process_fallback_never_runs_on_the_callers_thread():
+    import threading
+
+    ran = {}
+
+    def body(doc_id, user_id, course_id):
+        ran.update(args=(doc_id, user_id, course_id), thread=threading.current_thread().name)
+
+    with patch.object(cij, "_draft_document", side_effect=body):
+        cij._draft_in_process("d1", "u1", "c-1").result(timeout=5)
+    assert ran["args"] == ("d1", "u1", "c-1")
+    assert ran["thread"].startswith("check-items") and ran["thread"] != threading.current_thread().name
+
+
+def test_enable_rescans_a_course_at_most_once_per_interval(scans, monkeypatch):
+    from services import check_item_service as svc
+
+    clock = [1000.0]
+    monkeypatch.setattr(cij.time, "monotonic", lambda: clock[0])
+    with patch.object(svc, "claim_undrafted_documents", return_value=[]) as claim:
+        cij.draft_missing_for_course("u1", "c-1")
+        cij.draft_missing_for_course("u1", "c-1")  # the next request: no rescan
+        cij.draft_missing_for_course("u1", "c-2")  # another course is its own scan
+        clock[0] += cij.ENABLE_RESCAN_S
+        cij.draft_missing_for_course("u1", "c-1")
+    assert [c.args for c in claim.call_args_list] == [("u1", "c-1"), ("u1", "c-2"), ("u1", "c-1")]
+
+
+@pytest.mark.parametrize("decision, ok", [
+    ("normal", True), ("soft", True), ("hard", False),
+    (ai_budget.AIBudgetUnavailable("usage unreadable"), False),
+])
+def test_enable_claims_nothing_past_the_generation_budget(scans, decision, ok):
+    side = decision if isinstance(decision, Exception) else None
+    ret = None if side else MagicMock(level=decision)
+    with patch.object(ai_budget, "check", side_effect=side, return_value=ret) as check:
+        assert cij._within_budget("u1") is ok
+    check.assert_called_once_with("u1", "generation")
+
+
+def test_a_failed_scan_or_enqueue_never_fails_the_session(scans):
+    from services import check_item_service as svc
+
+    with patch.object(svc, "claim_undrafted_documents", side_effect=RuntimeError("down")):
+        assert cij.draft_missing_for_course("u1", "c-1") == 0
+    cij.reset_enable_scans()
+    # the drafting pool refusing work (the app shutting down) skips that one only
+    with patch.object(svc, "claim_undrafted_documents", return_value=["d1", "d2"]), \
+         patch.object(cij, "enqueue_for_document", return_value=False), \
+         patch.object(cij, "_draft_in_process",
+                      side_effect=[RuntimeError("cannot schedule new futures after shutdown"), None]) as inline:
+        assert cij.draft_missing_for_course("u1", "c-1") == 2
+    assert inline.call_count == 2
+    assert cij.draft_missing_for_course("", "c-1") == 0
+
+
+def test_a_failure_on_the_drafting_pool_is_logged(caplog):
+    from concurrent.futures import Future
+
+    with patch.object(cij, "_draft_document", side_effect=RuntimeError("boom")):
+        future = cij._draft_in_process("d1", "u1", "c-1")
+        assert isinstance(future.exception(timeout=5), RuntimeError)
+    failed = Future()
+    failed.set_exception(RuntimeError("boom"))
+    with caplog.at_level("ERROR"):
+        cij._log_failure("d1", failed)
+    assert any("draft on enable failed for doc d1" in r.getMessage() for r in caplog.records)
+
+
+# ── claim_undrafted_documents, on a filter-honouring fake ───────────────────
+
+
+def _cond(row: dict, expr: str) -> bool:
+    """One PostgREST condition `col.op.value` (the ops the claim sends)."""
+    col, op, val = expr.split(".", 2)
+    cur = row.get(col)
+    if op == "is":
+        return cur is None
+    if op == "eq":
+        return cur is not None and str(cur) == val
+    if op in ("lt", "gt"):
+        return cur is not None and (str(cur) < val if op == "lt" else str(cur) > val)
+    raise AssertionError(expr)
+
+
+def _split_top(body: str) -> list[str]:
+    parts, depth, cur = [], 0, ""
+    for ch in body:
+        depth += ch == "("
+        depth -= ch == ")"
+        if ch == "," and depth == 0:
+            parts.append(cur)
+            cur = ""
+        else:
+            cur += ch
+    return [*parts, cur]
+
+
+def _or(row: dict, expr: str) -> bool:
+    def one(term: str) -> bool:
+        if term.startswith("and("):
+            return all(one(t) for t in _split_top(term[4:-1]))
+        return _cond(row, term)
+
+    return any(one(t) for t in _split_top(expr[1:-1]))
+
+
+def _matches(row: dict, filters: dict) -> bool:
+    for col, f in filters.items():
+        if col == "select":
+            continue
+        if col == "or":
+            if not _or(row, f):
+                return False
+            continue
+        op, _, val = f.partition(".")
+        cur = row.get(col)
+        if op == "in":
+            if str(cur) not in {v.strip('"') for v in val.strip("()").split(",")}:
+                return False
+        elif op == "ov":
+            if not set(cur or []) & {v.strip('"') for v in val.strip("{}").split(",")}:
+                return False
+        elif not _cond(row, f"{col}.{f}"):
+            return False
+    return True
+
+
+class _Store:
+    def __init__(self, tables):
+        self.tables, self.writes = tables, []
+
+    def __call__(self, name):
+        store = self
+
+        class _T:
+            def select(self, cols, filters=None, order=None, limit=None, **_):
+                rows = [dict(r) for r in store.tables.get(name, []) if _matches(r, filters or {})]
+                if order:
+                    key, _, way = order.partition(".")
+                    rows.sort(key=lambda r: str(r.get(key)), reverse=way == "desc")
+                return rows[:limit] if limit else rows
+
+            def update(self, data, filters, *, prefer_return_minimal=False):
+                hit = [r for r in store.tables.get(name, []) if _matches(r, filters)]
+                store.writes.append((name, dict(data), dict(filters)))
+                for r in hit:
+                    r.update(data)
+                return [] if prefer_return_minimal else [{"id": r["id"]} for r in hit]
+
+        return _T()
+
+
+def _doc(doc_id, **over):
+    return {"id": doc_id, "user_id": "u1", "offering_id": "off-1", "deleted_at": None,
+            "shareability": "course_material", "check_items_status": None,
+            "check_items_at": None, "created_at": f"2026-11-0{doc_id[-1]}T00:00:00Z", **over}
+
+
+def test_the_claim_marks_undrafted_course_material_pending_and_the_loop_says_preparing():
+    from services import check_item_service as svc
+
+    store = _Store({
+        "documents": [
+            _doc("d1"),                                       # never drafted
+            _doc("d2"),                                       # never drafted, but has items
+            _doc("d3", check_items_status="done"),            # drafted
+            _doc("d4", shareability="personal_notes"),        # never a source
+            _doc("d5", deleted_at="2026-11-10T00:00:00Z"),    # deleted
+            _doc("d6", user_id="u2"),                         # a classmate's
+            _doc("d7", check_items_status="pending",          # its run died long ago
+                 check_items_at="2026-01-01T00:00:00Z"),
+            _doc("d8", offering_id="off-other"),              # another course
+        ],
+        "check_items": [{"id": "i1", "source_document_ids": ["d2"]}],
+    })
+    asked = []
+    with patch.object(svc, "table", store), \
+         patch.object(svc, "course_offering_ids", return_value=["off-1"]):
+        assert svc.drafting_pending("u1", "c-1") is False
+        claimed = svc.claim_undrafted_documents(
+            "u1", "c-1", limit=5, may_draft=lambda: asked.append(1) or True)
+        assert sorted(claimed) == ["d1", "d7"]
+        assert asked == [1]
+        status = {d["id"]: d["check_items_status"] for d in store.tables["documents"]}
+        assert status == {"d1": "pending", "d2": "done", "d3": "done", "d4": None, "d5": None,
+                          "d6": None, "d7": "pending", "d8": None}
+        # A128: the student's own fresh `pending` upload is what the loop's
+        # "preparing" state reads (services/loop/planning.py::_preparing)
+        assert svc.drafting_pending("u1", "c-1") is True
+        # a second scan finds nothing left to claim
+        assert svc.claim_undrafted_documents("u1", "c-1", limit=5) == []
+
+
+def test_the_claim_claims_nothing_when_the_budget_says_no():
+    from services import check_item_service as svc
+
+    store = _Store({"documents": [_doc("d1")], "check_items": []})
+    with patch.object(svc, "table", store), \
+         patch.object(svc, "course_offering_ids", return_value=["off-1"]):
+        assert svc.claim_undrafted_documents("u1", "c-1", limit=5, may_draft=lambda: False) == []
+    assert store.tables["documents"][0]["check_items_status"] is None
+    assert store.writes == []
+
+
+def test_the_claim_is_conditional_so_two_scans_never_claim_one_document():
+    from services import check_item_service as svc
+
+    store = _Store({"documents": [_doc("d1")], "check_items": []})
+
+    def racer():  # another replica claims d1 between our read and our write
+        store.tables["documents"][0].update(check_items_status="pending",
+                                            check_items_at="2099-01-01T00:00:00Z")
+        return True
+
+    with patch.object(svc, "table", store), \
+         patch.object(svc, "course_offering_ids", return_value=["off-1"]):
+        assert svc.claim_undrafted_documents("u1", "c-1", limit=5, may_draft=racer) == []
+
+
+def test_the_claim_takes_the_newest_documents_first_up_to_its_limit():
+    from services import check_item_service as svc
+
+    store = _Store({"documents": [_doc(f"d{i}") for i in range(1, 5)], "check_items": []})
+    with patch.object(svc, "table", store), \
+         patch.object(svc, "course_offering_ids", return_value=["off-1"]):
+        assert sorted(svc.claim_undrafted_documents("u1", "c-1", limit=2)) == ["d3", "d4"]
+
+
+def test_a_course_with_no_offering_claims_nothing():
+    from services import check_item_service as svc
+
+    table = MagicMock()
+    with patch.object(svc, "table", table), patch.object(svc, "course_offering_ids", return_value=[]):
+        assert svc.claim_undrafted_documents("u1", "c-1", limit=5) == []
+    table.assert_not_called()
