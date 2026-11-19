@@ -4401,3 +4401,109 @@ def test_a_report_never_carries_free_text(gate_on, seams, reports):
     assert r.status_code == 422 and reports.calls == []
     r = client.post(REPORT, json=_report_body(reason="something else"))
     assert r.status_code == 422 and reports.calls == []
+
+
+# ── #866 B4: a loop chat turn persists under its client turn id ────────────
+
+
+class _MessagesStore:
+    """An in-memory `messages` table: insert appends; upsert with
+    ignore_duplicates keeps an existing id (PostgREST's on_conflict=id,
+    resolution=ignore-duplicates); select filters on `id=eq.<id>`."""
+
+    def __init__(self, fail_assistant_upserts: int = 0):
+        self.rows: list[dict] = []
+        self.fail_assistant_upserts = fail_assistant_upserts
+
+    def insert(self, row):
+        self.rows.append(dict(row))
+
+    def upsert(self, row, on_conflict="id", *, ignore_duplicates=False):
+        assert on_conflict == "id" and ignore_duplicates
+        if row["role"] == "assistant" and self.fail_assistant_upserts:
+            self.fail_assistant_upserts -= 1
+            raise RuntimeError("the reply row write failed")
+        if all(r["id"] != row["id"] for r in self.rows):
+            self.rows.append(dict(row))
+
+    def select(self, columns="*", *, filters=None, limit=None, order=None):
+        want = (filters or {}).get("id", "")
+        hits = [r for r in self.rows if not want or f"eq.{r['id']}" == want]
+        return hits[:limit] if limit else hits
+
+    def ids(self, role):
+        return [r["id"] for r in self.rows if r["role"] == role]
+
+
+def _real_message_saves(seams, store):
+    """Route the loop's message writes through the REAL save_message_sync over `store`."""
+    from services.tutor import messages as tm
+
+    stack = ExitStack()
+    stack.enter_context(patch.object(tm, "table", side_effect=with_async_twins(lambda name: store)))
+    stack.enter_context(patch.object(tm, "raise_if_discarded", lambda session_id: None))
+    seams.save_msg.side_effect = lambda *a, **k: tm.save_message_sync(*a, **k)
+    return stack
+
+
+def test_a_retried_loop_chat_turn_saves_its_rows_once_and_then_replays(gate_on, seams):
+    """#866 B4: a loop chat turn the client sent with a `turn_id` writes its user
+    and reply rows under the turn-derived ids. An attempt that wrote the user row
+    and then failed leaves an orphan the retry neither duplicates nor reads back
+    as history; once the reply row lands, `_persisted_turn` (the replay
+    `_loop_turn_entry` answers a resend with) finds it."""
+    import asyncio
+
+    from services.tutor.messages import _persisted_turn, _turn_message_id
+
+    seams.store["doc"] = {"phase": "teach"}
+    store = _MessagesStore(fail_assistant_upserts=1)
+    agent, _seen = _json_agent()
+    body = {"session_id": "s1", "user_id": "u1", "message": "hi", "turn_id": "turn-0001"}
+    user_id = _turn_message_id("s1", "turn-0001", "user")
+    reply_id = _turn_message_id("s1", "turn-0001", "assistant")
+    no_raise = TestClient(app, raise_server_exceptions=False)
+    with (
+        _real_message_saves(seams, store),
+        patch_loop("_load_message_history", return_value=[]) as load_history,
+        patch_loop("loop_tutor_agent", agent),
+        patch_loop("record_agent_usage", side_effect=lambda r, **k: r),
+    ):
+        first = no_raise.post("/api/learn/loop/chat", json=body)
+        assert first.status_code >= 500, first.text
+        assert store.ids("user") == [user_id] and store.ids("assistant") == []
+        second = no_raise.post("/api/learn/loop/chat", json=body)
+        assert second.status_code == 200, second.text
+        assert load_history.call_args.kwargs["exclude_id"] == user_id
+        with patch("services.tutor.messages.table", side_effect=with_async_twins(lambda name: store)):
+            replay = asyncio.run(_persisted_turn("s1", "turn-0001"))
+    assert store.ids("user") == [user_id], "the retry duplicated the user row"
+    assert store.ids("assistant") == [reply_id]
+    assert replay is not None and replay["replayed"] is True
+    assert replay["reply"] == second.json()["reply"]
+
+
+def test_a_loop_turn_without_a_turn_id_saves_under_fresh_ids(gate_on, seams):
+    """No `turn_id` (or not a student chat turn): plain inserts under random ids,
+    and the history load excludes nothing."""
+    seams.store["doc"] = {"phase": "teach"}
+    store = _MessagesStore()
+    agent, _seen = _json_agent()
+    with (
+        _real_message_saves(seams, store),
+        patch_loop("_load_message_history", return_value=[]) as load_history,
+        patch_loop("loop_tutor_agent", agent),
+        patch_loop("record_agent_usage", side_effect=lambda r, **k: r),
+    ):
+        r = client.post("/api/learn/loop/chat", json={"session_id": "s1", "user_id": "u1", "message": "hi"})
+        assert r.status_code == 200, r.text
+        assert load_history.call_args.kwargs["exclude_id"] is None
+        a = client.post(
+            "/api/learn/loop/action",
+            json={"session_id": "s1", "user_id": "u1", "action_type": "hint", "turn_id": "turn-0002"},
+        )
+        assert a.status_code == 200, a.text
+    assert [c.kwargs.get("message_id") for c in seams.save_msg.call_args_list] == [None] * len(
+        seams.save_msg.call_args_list
+    )
+    assert len({r["id"] for r in store.rows}) == len(store.rows) == 3  # user, reply, action reply

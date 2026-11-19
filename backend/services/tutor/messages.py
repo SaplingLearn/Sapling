@@ -126,10 +126,19 @@ async def save_message(
         await table("messages").ainsert(row)
 
 
-def save_message_sync(session_id: str, role: str, content: str, graph_update: dict = None) -> None:
-    """`save_message` for `_consume_pending`, which runs in the threadpool."""
+def save_message_sync(
+    session_id: str, role: str, content: str, graph_update: dict = None,
+    *, message_id: str | None = None,
+) -> None:
+    """`save_message` for sync callers (`_consume_pending`, which runs in the
+    threadpool, and the learning loop's turn). ``message_id``: as
+    `save_message`'s — a turn-derived id makes the write idempotent (#866 B4)."""
     raise_if_discarded(session_id)
-    table("messages").insert(_message_row(session_id, role, content, graph_update, None))
+    row = _message_row(session_id, role, content, graph_update, message_id)
+    if message_id:
+        table("messages").upsert(row, on_conflict="id", ignore_duplicates=True)
+    else:
+        table("messages").insert(row)
 
 
 #: Namespace for turn-derived message ids (#761). Any fixed UUID works; it

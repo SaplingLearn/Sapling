@@ -45,6 +45,7 @@ _PUBLIC = {
     "_get_course_info": "course",
     "_load_message_history_sync": "messages",
     "_observe_persisted_turn": "run",
+    "_turn_message_id": "messages",
     "MODE_DISPLAY_NAMES": "sessions",
     "SESSION_LIST_MAX": "sessions",
     "action": "turns",

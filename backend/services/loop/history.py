@@ -82,6 +82,7 @@ def _load_loop_history(
     user_id: str | None = None,
     course_id: str | None = None,
     loop_state: dict | None = None,
+    exclude_id: str | None = None,
 ) -> list:
     """The loop history (spec §13 A19): the session's learner brief as a
     synthetic first message, then a block-trimmed window of the legacy history
@@ -90,7 +91,9 @@ def _load_loop_history(
     built yet and `user_id` is given (a loop turn), it is built and stored here
     (a failure logs and the turn runs without it; the next turn retries). No
     row yet (a lazy session), or `user_id=None`, reads only. Leading assistant
-    messages are kept: dropping them would move the window every turn."""
+    messages are kept: dropping them would move the window every turn.
+    `exclude_id`: the current turn's own user row, left by an earlier attempt
+    that persisted it and then failed (#761) — not history."""
     rows = table("sessions").select(
         "id,loop_brief", filters={"id": f"eq.{session_id}", **NOT_REVIEW}, limit=1
     )
@@ -123,6 +126,6 @@ def _load_loop_history(
                     LEARNER_BRIEF_RETRY_AFTER_S,
                 )
                 brief = ""
-    msgs = _load_message_history(session_id)
+    msgs = _load_message_history(session_id, exclude_id=exclude_id)
     window = msgs[len(msgs) - _history_window(len(msgs)) :]
     return ([_brief_message(brief)] if brief else []) + window
