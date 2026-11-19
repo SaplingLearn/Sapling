@@ -85,7 +85,7 @@ import { DiagnosisSummary, GoalEditor } from "./LearningScope";
 import { planGoalReason, planKind } from "./planLabels";
 import { ReportQuestion } from "./ReportQuestion";
 import { CrisisSupportCard, useCrisisSupport } from "../safety/CrisisSupportCard";
-import { crisisSupportIn, takeNoteCardShown, type CrisisSupport } from "@/lib/crisisSupport";
+import { crisisSupportIn, crisisSupportInError, takeNoteCardShown, type CrisisSupport } from "@/lib/crisisSupport";
 import { ConfidenceControl } from "./ConfidenceControl";
 import { OptionList } from "./OptionList";
 import { PrequestionCard, renderGuess } from "./PrequestionCard";
@@ -857,12 +857,17 @@ export function LoopLearn() {
       listStarted(r.session_id, title);
     } catch (err) {
       if (g !== gen.current) return;
+      // docs/safety/crisis-support.md: a refused start (a 429, a 500) can carry
+      // the card (b2-data's note-matched screen, via ErrorCardMiddleware) —
+      // the student never gets a refusal without it, unless Send to tutor
+      // just showed it for this note.
+      if (!cardShown) interceptCrisis({ crisis_support: crisisSupportInError(err) });
       setLoadError("start"); // never an empty probe: the start card offers a retry
       reportError(err, "Couldn't start a session.");
     } finally {
       if (g === gen.current) setStarting(false);
     }
-  }, [courseId, userId, course, deepLink, state.phase, sessionTransitionBusy, clearSessionView, nextProbe, reportError, wrapUpLeaving, adoptStarted, listStarted]);
+  }, [courseId, userId, course, deepLink, state.phase, sessionTransitionBusy, clearSessionView, nextProbe, reportError, wrapUpLeaving, adoptStarted, listStarted, interceptCrisis]);
 
   const loadSessions = useCallback(async () => {
     if (!courseId || !userId) return;

@@ -389,6 +389,26 @@ describe("G1 — Send to tutor names its note", () => {
     expect(screen.queryByTestId("crisis-support-card")).toBeNull();
   });
 
+  it("a refused start that carries the card shows it beside the error (crisis-support.md)", async () => {
+    search.params = new URLSearchParams("topic=Week%203%20notes&note=note-1");
+    api.listLoopSessionsFor.mockResolvedValue(listed([]));
+    api.startLoopSession.mockRejectedValue(new ApiError("Too many requests", 429, { body: { detail: "Too many requests", crisis_support: crisisFixture, crisis_support_alongside: true } }));
+    render(<LoopLearn />);
+    expect(await screen.findByTestId("crisis-support-card")).toBeTruthy();
+    expect(await screen.findByTestId("loop-start-error")).toBeTruthy(); // and the start offers its retry
+    expect(api.nextLoopProbe).not.toHaveBeenCalled();
+  });
+
+  it("a refused start whose card the notetaker just showed does not pop it up again", async () => {
+    search.params = new URLSearchParams("topic=Week%203%20notes&note=note-1");
+    markNoteCardShown("note-1");
+    api.listLoopSessionsFor.mockResolvedValue(listed([]));
+    api.startLoopSession.mockRejectedValue(new ApiError("Too many requests", 429, { body: { detail: "Too many requests", crisis_support: crisisFixture, crisis_support_alongside: true } }));
+    render(<LoopLearn />);
+    expect(await screen.findByTestId("loop-start-error")).toBeTruthy();
+    expect(screen.queryByTestId("crisis-support-card")).toBeNull();
+  });
+
   it("a start on any other topic does not name the note", async () => {
     search.params = new URLSearchParams("topic=Week%203%20notes&note=note-1");
     await resumedTeach("Sorting");
