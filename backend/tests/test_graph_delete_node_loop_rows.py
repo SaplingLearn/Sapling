@@ -125,3 +125,27 @@ def test_the_session_erase_function_clears_text_and_keeps_the_rows():
     assert "SET guess_json = NULL, text_erased_at = clock_timestamp()" in body
     assert body.count("WHERE user_id = p_user_id AND session_id = p_session_id") == 2
     assert "GRANT EXECUTE ON FUNCTION learning_session_text_erase(text, text) TO service_role;" in sql
+
+
+def test_a_failed_clean_up_still_refreshes_the_course_context():
+    """#866 review C9: the node is deleted before its loop rows are erased. If
+    that erase raises, the error still reaches the caller (a retry finishes
+    the erase through the 404 path), but the course context is refreshed now,
+    because the retry's 404 path has no course to refresh."""
+    from unittest.mock import MagicMock, patch
+
+    import pytest
+
+    from services import graph_service
+
+    fake = _Db([{"id": "n1", "course_id": "c1"}])
+    refresh = MagicMock()
+    down = MagicMock(side_effect=RuntimeError("PGRST202: learning_node_erase not found"))
+    with patch.object(graph_service, "table", side_effect=fake.table), \
+         patch.object(graph_service, "rpc", down), \
+         patch.object(graph_service, "_refresh_course_context", refresh), \
+         patch("services.academics.user_offering_ids_for_course", return_value=["o1"]):
+        with pytest.raises(RuntimeError):
+            graph_service.delete_node("u1", "n1")
+    assert ("delete", "graph_nodes", {"id": "eq.n1", "user_id": "eq.u1"}) in fake.log
+    refresh.assert_called_once_with("o1", "u1")

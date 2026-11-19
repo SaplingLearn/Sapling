@@ -801,16 +801,20 @@ def delete_node(user_id: str, node_id: str) -> dict:
     table("graph_edges").delete(filters={"user_id": f"eq.{user_id}", "source_node_id": f"eq.{node_id}"})
     table("graph_edges").delete(filters={"user_id": f"eq.{user_id}", "target_node_id": f"eq.{node_id}"})
     table("graph_nodes").delete(filters={"id": f"eq.{node_id}", "user_id": f"eq.{user_id}"})
-    # After the node, never before: a failed node delete must not lose a live
-    # node's release records (A76) or its open post-test.
-    _erase_node_loop_rows(user_id, node_id)
-
-    if course_id:
-        # course_id from graph_nodes is the abstract course; refresh each of the
-        # user's offerings of that course (analytics is offering-scoped).
-        from services.academics import user_offering_ids_for_course
-        for offering_id in user_offering_ids_for_course(user_id, course_id):
-            _refresh_course_context(offering_id, user_id)
+    try:
+        # After the node, never before: a failed node delete must not lose a live
+        # node's release records (A76) or its open post-test.
+        _erase_node_loop_rows(user_id, node_id)
+    finally:
+        # The node is gone either way, so its course context is refreshed even
+        # when the clean-up raises (#866 review, C9): the retry takes the 404
+        # path above, which finishes the erase but has no course to refresh.
+        if course_id:
+            # course_id from graph_nodes is the abstract course; refresh each of the
+            # user's offerings of that course (analytics is offering-scoped).
+            from services.academics import user_offering_ids_for_course
+            for offering_id in user_offering_ids_for_course(user_id, course_id):
+                _refresh_course_context(offering_id, user_id)
     return {"deleted": True}
 
 
