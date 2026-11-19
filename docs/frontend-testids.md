@@ -1028,7 +1028,7 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `loop-sessions-error` | `GET /sessions` (or a read-only resume) failed |
 | `loop-sessions-retry` | retry — never falls through to a new session or probe |
 | `loop-no-course` | the student has no enrolled course |
-| `loop-no-course-link` | the knowledge-map link inside `loop-no-course` |
+| `loop-no-course-link` | the knowledge-map link inside `loop-no-course` (absent while `hide_tree` hides the Tree) |
 | `loop-start-error` | a new session could not start (a 429 or an error on `/start-session`) — never an empty probe |
 | `loop-start-retry` | retry the start |
 | `loop-start-crisis` | `/start-session` answered with the crisis-support card (no session was opened); the card's `crisis-support-dismiss` starts a fresh session on the course (docs/safety/crisis-support.md) |
@@ -1040,7 +1040,7 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `loop-budget-paused` | the budget pause banner (A20/A26/A39); `role="status"`, `data-reset-at` (ISO or empty), `data-session-capped` (`true`: "paused for this session", no reset time) |
 | `loop-budget-study-link` | link to `/study?mode=cards` inside the banner |
 | `loop-no-check-items` | "No check items for this course yet" (A23) |
-| `loop-tree-link` | link to `/tree` (`?node=<id>` once a `learner_state` event names the concept) |
+| `loop-tree-link` | link to `/tree` (`?node=<id>` once a `learner_state` event names the concept): the session panel's "Open map", or "Map" in the TopBar on a phone; absent while `hide_tree` hides the Tree |
 | `loop-rail` | the session panel, "Today's session" (wide screens only): the plan (the approved one from `/status` after a reload), a skill meter per concept, due review (`tutor-panel-review`) and the knowledge map; the tree link sits in the TopBar on narrow screens |
 | `loop-verdict` | wireframe T9: the graded check's verdict over the feedback; `data-verdict` = correct / not_yet / idk |
 | `loop-close-new-session` | the wrap-up's "Start a new session" (to the Tutor home) |

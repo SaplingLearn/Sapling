@@ -148,7 +148,7 @@ describe("F3 — a ?topic= link never offers to restart the session already on i
   });
 });
 
-describe("F5 — the hide_study and hide_library nav flags", () => {
+describe("F5 — the hide_study, hide_library and hide_tree nav flags", () => {
   it("hide_study: no link to Study anywhere — budget banner, panel, home, wrap-up — and no due read", async () => {
     flags.hide_study = "on";
     retention.courseIds = ["c1"];
@@ -185,6 +185,39 @@ describe("F5 — the hide_study and hide_library nav flags", () => {
     const page = await screen.findByTestId("tutor-course-page");
     await waitFor(() => expect(page.textContent).toContain("0 files"));
     expect(within(page).queryAllByRole("link").filter((a) => a.getAttribute("href") === "/library")).toEqual([]);
+  });
+
+  it("hide_tree: no map link in the session panel, on a phone, or on the no-course card", async () => {
+    flags.hide_tree = "on";
+    await resumedTeach();
+    expect(screen.getByTestId("tutor-map-key")).toBeTruthy(); // the panel's own map section stays
+    expect(screen.queryByTestId("loop-tree-link")).toBeNull();
+    cleanup();
+    viewport.mobile = true;
+    await resumedTeach();
+    expect(screen.queryByTestId("loop-tree-link")).toBeNull();
+    expect(screen.getAllByTestId("loop-new-session").length).toBeGreaterThan(0);
+    cleanup();
+    viewport.mobile = false;
+    api.getCourses.mockResolvedValue({ courses: [] });
+    render(<LoopLearn />);
+    expect((await screen.findByTestId("loop-no-course")).textContent).toContain("add a course to get started");
+    expect(screen.queryByTestId("loop-no-course-link")).toBeNull();
+    expect(screen.queryAllByRole("link").filter((a) => a.getAttribute("href")?.startsWith("/tree"))).toEqual([]);
+  });
+
+  it("the tree visible (the default): Open map, the phone's Map and the no-course link point at /tree", async () => {
+    await resumedTeach();
+    expect(screen.getByTestId("loop-tree-link").getAttribute("href")).toMatch(/^\/tree/);
+    cleanup();
+    viewport.mobile = true;
+    await resumedTeach();
+    expect(screen.getByTestId("loop-tree-link").getAttribute("href")).toMatch(/^\/tree/);
+    cleanup();
+    viewport.mobile = false;
+    api.getCourses.mockResolvedValue({ courses: [] });
+    render(<LoopLearn />);
+    expect((await screen.findByTestId("loop-no-course-link")).getAttribute("href")).toBe("/tree");
   });
 
   it("both visible (the default): the links are there", async () => {

@@ -284,6 +284,7 @@ export function LoopLearn() {
   // Dashboard do): no Study link until the flags are in.
   const studyVisible = useStudyNavShown();
   const libraryVisible = useFlag("hide_library") !== "on";
+  const treeVisible = useFlag("hide_tree") !== "on";
   // A session picked in another course: resumed once that course's sessions list.
   const pendingResume = useRef<string | null>(null);
 
@@ -1847,7 +1848,7 @@ export function LoopLearn() {
   // A phone has no sidebar or panel on screen: the map and New session sit here.
   const renderMobileActions = () => (
     <>
-      <Link data-testid="loop-tree-link" href={treeHref} className="btn btn--sm btn--ghost">Map</Link>
+      {treeVisible && <Link data-testid="loop-tree-link" href={treeHref} className="btn btn--sm btn--ghost">Map</Link>}
       <button
         data-testid="loop-new-session"
         type="button"
@@ -2225,8 +2226,10 @@ export function LoopLearn() {
         <CenteredCard testId="loop-no-course">
           <h2 className="h-serif" style={{ margin: "0 0 6px", fontSize: 20 }}>Add a course to start learning</h2>
           <p style={{ color: "var(--text-dim)", fontSize: 14, margin: 0 }}>
-            The tutor works course by course — add one from your{" "}
-            <Link data-testid="loop-no-course-link" href="/tree">knowledge map</Link>.
+            {treeVisible
+              ? <>The tutor works course by course — add one from your{" "}
+                <Link data-testid="loop-no-course-link" href="/tree">knowledge map</Link>.</>
+              : "The tutor works course by course — add a course to get started."}
           </p>
         </CenteredCard>
       );
@@ -2407,7 +2410,7 @@ export function LoopLearn() {
       learnerChip={learnerChip}
       hasLearner={!!learner}
       treeHref={treeHref}
-      showTreeLink={!isMobile}
+      showTreeLink={allOf(!isMobile, treeVisible)}
       onHide={layout.hidePanel}
       map={railGraph.nodes.length > 0 ? (
         <SessionMap nodes={railGraph.nodes} edges={railGraph.edges} highlightId={focusNodeId ?? undefined} />
