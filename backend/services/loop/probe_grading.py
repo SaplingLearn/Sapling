@@ -13,6 +13,7 @@ from starlette.requests import Request
 from agents.deps import SaplingDeps
 from agents.tools.check import CheckAnswer, GradeOutcome, grade_answer
 from learning import grade_checkpoint
+from learning.claim_deadline import GradeDeadlineExceeded, within_grade_deadline
 from learning import probe as probe_policy
 from learning.evidence import PlanningPersistenceUnavailable
 from learning.goals import goal_version
@@ -173,33 +174,7 @@ async def _probe_submission(body: ProbeAnswerBody, request: Request, *, loop_on:
         confidence=None if idk else body.confidence,
     )
     try:
-        outcome = await grade_answer(
-            item.item,
-            answer,
-            deps=deps,
-            node_id=node_id,
-            max_rung=floor,
-            same_session_recheck=recheck,
-            confront=False,  # A120: the probe is a diagnostic — it never sets a marker
-        )
-        if outcome.refused:  # A33, read BEFORE `unavailable`: never a skip
-
-            disowned = outcome.refused == "disowned_answer"  # A97: never escalated to idk
-
-            def count_refusal(pr: dict, cur: dict) -> None:
-                if not disowned:
-                    pr["refusals"][qh] = int(pr["refusals"].get(qh) or 0) + 1
-                if disowned or pr["refusals"][qh] < CHECK_REFUSALS_AS_IDK:
-                    _release(pr, cur)  # nothing was graded: asked again
-
-            state = await asyncio.to_thread(
-                _update_loop_state, body.session_id, _under_probe_claim(qh, claim, count_refusal)
-            )
-            if (_probe_doc(state).get("current") or {}).get("grading_claim") != claim:
-                return {"graded": False, "refused": True}
-            synthetic_idk = True
-            idk = True  # the CHECK_REFUSALS_AS_IDK-th refusal is an idk observation (A1)
-            answer = CheckAnswer(question_hash=qh, idk=True)
+        async with within_grade_deadline(_now_s() - now):
             outcome = await grade_answer(
                 item.item,
                 answer,
@@ -207,42 +182,69 @@ async def _probe_submission(body: ProbeAnswerBody, request: Request, *, loop_on:
                 node_id=node_id,
                 max_rung=floor,
                 same_session_recheck=recheck,
-                confront=False,
+                confront=False,  # A120: the probe is a diagnostic — it never sets a marker
             )
-        if outcome.unavailable:  # invariant 28: nothing for either outcome
-            await asyncio.to_thread(
-                _update_loop_state, body.session_id, _under_probe_claim(qh, claim, _not_asked)
-            )
-            return {"graded": False, "unavailable": True}
+            if outcome.refused:  # A33, read BEFORE `unavailable`: never a skip
 
-        floor = await asyncio.to_thread(
-            _refloor, deps.pending_evidence, body.user_id, item.item, None, floor
-        )
-        previously_seen = bool(posed.get("previously_seen", False)) or qh in (
-            await asyncio.to_thread(seen_hashes, body.user_id)
-        )
-        _tag_planning_evidence(deps.pending_evidence, item.item, synthetic_idk=synthetic_idk,
-                               previously_seen=previously_seen, operation_id=claim, observed_at=now)
-        correct = bool(outcome.correct)
-        evidence = outcome.evidence or {}
-        observation = {
-            "node_id": node_id, "question_hash": qh, "difficulty": int(posed["difficulty"]),
-            "channel": posed["channel"], "correct": correct,
-            "idk": bool(evidence.get("idk", idk)),
-            "independent": floor == 0 and not recheck and not synthetic_idk and not previously_seen,
-            "max_rung": int(floor), "same_session_recheck": bool(recheck),
-            "synthetic_idk": synthetic_idk,
-        }
-        checkpoint = grade_checkpoint.GradeCheckpoint(
-            kind="probe", operation_id=claim, user_id=body.user_id,
-            session_id=body.session_id, course_id=course_id or None, question_hash=qh,
-            goal_version=goal_version(state), evidence=copy.deepcopy(deps.pending_evidence),
-            continuation={"observation": observation, "correct": correct,
-                          "check_item_id": item.id,
-                          # A120: the attempt log change (and a row to record), re-applied below
-                          "diagnosis": getattr(outcome, "diagnosis", None),
-                          "answer": answer.model_dump(mode="json")},
-        )
+                disowned = outcome.refused == "disowned_answer"  # A97: never escalated to idk
+
+                def count_refusal(pr: dict, cur: dict) -> None:
+                    if not disowned:
+                        pr["refusals"][qh] = int(pr["refusals"].get(qh) or 0) + 1
+                    if disowned or pr["refusals"][qh] < CHECK_REFUSALS_AS_IDK:
+                        _release(pr, cur)  # nothing was graded: asked again
+
+                state = await asyncio.to_thread(
+                    _update_loop_state, body.session_id, _under_probe_claim(qh, claim, count_refusal)
+                )
+                if (_probe_doc(state).get("current") or {}).get("grading_claim") != claim:
+                    return {"graded": False, "refused": True}
+                synthetic_idk = True
+                idk = True  # the CHECK_REFUSALS_AS_IDK-th refusal is an idk observation (A1)
+                answer = CheckAnswer(question_hash=qh, idk=True)
+                outcome = await grade_answer(
+                    item.item,
+                    answer,
+                    deps=deps,
+                    node_id=node_id,
+                    max_rung=floor,
+                    same_session_recheck=recheck,
+                    confront=False,
+                )
+            if outcome.unavailable:  # invariant 28: nothing for either outcome
+                await asyncio.to_thread(
+                    _update_loop_state, body.session_id, _under_probe_claim(qh, claim, _not_asked)
+                )
+                return {"graded": False, "unavailable": True}
+
+            floor = await asyncio.to_thread(
+                _refloor, deps.pending_evidence, body.user_id, item.item, None, floor
+            )
+            previously_seen = bool(posed.get("previously_seen", False)) or qh in (
+                await asyncio.to_thread(seen_hashes, body.user_id)
+            )
+            _tag_planning_evidence(deps.pending_evidence, item.item, synthetic_idk=synthetic_idk,
+                                   previously_seen=previously_seen, operation_id=claim, observed_at=now)
+            correct = bool(outcome.correct)
+            evidence = outcome.evidence or {}
+            observation = {
+                "node_id": node_id, "question_hash": qh, "difficulty": int(posed["difficulty"]),
+                "channel": posed["channel"], "correct": correct,
+                "idk": bool(evidence.get("idk", idk)),
+                "independent": floor == 0 and not recheck and not synthetic_idk and not previously_seen,
+                "max_rung": int(floor), "same_session_recheck": bool(recheck),
+                "synthetic_idk": synthetic_idk,
+            }
+            checkpoint = grade_checkpoint.GradeCheckpoint(
+                kind="probe", operation_id=claim, user_id=body.user_id,
+                session_id=body.session_id, course_id=course_id or None, question_hash=qh,
+                goal_version=goal_version(state), evidence=copy.deepcopy(deps.pending_evidence),
+                continuation={"observation": observation, "correct": correct,
+                              "check_item_id": item.id,
+                              # A120: the attempt log change (and a row to record), re-applied below
+                              "diagnosis": getattr(outcome, "diagnosis", None),
+                              "answer": answer.model_dump(mode="json")},
+            )
         checkpointed = True
         await asyncio.to_thread(_save_grade_checkpoint, checkpoint)
         return await asyncio.to_thread(
@@ -256,6 +258,11 @@ async def _probe_submission(body: ProbeAnswerBody, request: Request, *, loop_on:
                 )
             except Exception:
                 logger.warning("probe grading claim could not be released")
+        if isinstance(exc, GradeDeadlineExceeded):  # #866 A1: nothing saved, claim released above
+            raise HTTPException(
+                status_code=503,
+                detail="Checking your answer took too long, so nothing was recorded. Please submit it again.",
+            ) from None
         if isinstance(exc, PlanningPersistenceUnavailable):
             raise HTTPException(status_code=503, detail="Learning evidence unavailable; retry the same answer") from None
         raise

@@ -1034,6 +1034,36 @@ def test_probe_answer_persists_grade_answer_evidence_exactly_once(probe):
     assert probe.store["doc"]["current"] is None and probe.store["doc"]["steps"] == {}
 
 
+def test_a_probe_grade_that_outlives_its_deadline_is_a_503_that_records_nothing(probe, monkeypatch):
+    """#866 review A1: the probe grader runs inside `within_grade_deadline`. A
+    grade that outlives it is cancelled: 503, no observation and no evidence,
+    the claim released with the item still posed — and it grades on resubmit."""
+    import learning.claim_deadline as deadline
+
+    _answer_doc(probe)
+    fast = probe.grade.side_effect
+
+    async def slow(*args, **kwargs):
+        await asyncio.sleep(5)
+        return await fast(*args, **kwargs)
+
+    monkeypatch.setattr(deadline, "GRADE_DEADLINE_S", 0.05)
+    probe.grade.side_effect = slow
+    r = client.post(f"{LOOP}/probe/answer", json=_answer(answer="because"))
+    assert r.status_code == 503, r.text
+    assert r.json()["detail"] == (
+        "Checking your answer took too long, so nothing was recorded. Please submit it again."
+    )
+    pr = probe.store["doc"]["probe"]
+    assert pr["history"] == [] and pr["current"]["question_hash"] == "h-A-3"
+    assert "grading_claim" not in pr["current"] and "grading_claim_at" not in pr["current"]
+    assert probe.agu.call_count == 0
+    probe.grade.side_effect = fast
+    r = client.post(f"{LOOP}/probe/answer", json=_answer(answer="because"))
+    assert r.status_code == 200 and r.json()["graded"] is True, r.text
+    assert probe.agu.call_count == 1
+
+
 def test_probe_answer_wrong_returns_reference(probe):
     _answer_doc(probe)
     probe.grade.side_effect = _grader(correct=False)

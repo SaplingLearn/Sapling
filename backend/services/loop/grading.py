@@ -14,6 +14,7 @@ from agents.deps import SaplingDeps
 from agents.tools.check import CHANNEL_FOR_FORMAT, CheckAnswer, grade_answer
 from learning import arms, gates, policy
 from learning import grade_checkpoint
+from learning.claim_deadline import GradeDeadlineExceeded, within_grade_deadline
 from learning.multi_concept import is_multi_concept
 from learning.evidence import PlanningPersistenceUnavailable
 from learning.goals import goal_version
@@ -162,40 +163,7 @@ async def _grade_submission(
         confidence=None if idk else body.confidence,
     )
     try:
-        outcome = await grade_answer(
-            _item_like(item),
-            answer,
-            deps=deps,
-            node_id=node_id,
-            max_rung=rung,
-            same_session_recheck=recheck,
-            **combo,
-        )
-        refused = bool(outcome.refused)
-        if refused:  # A33, read BEFORE `unavailable`: not an outage, never a genuine attempt
-
-            # A97: a disowned answer is never escalated to idk — the student may
-            # have been right; they are only asked to state their own answer
-            disowned = outcome.refused == "disowned_answer"
-
-            def count_refusal(e: dict) -> None:
-                if not disowned:
-                    e["refusals"] = int(e.get("refusals") or 0) + 1
-                if disowned or e["refusals"] < CHECK_REFUSALS_AS_IDK:
-                    # nothing was graded: the claim goes with the count
-                    e.pop("grading_claim", None)
-                    e.pop("grading_claim_at", None)
-
-            state = await asyncio.to_thread(
-                _update_loop_state,
-                body.session_id,
-                _under_claim(qh, claim, count_refusal, release=False),
-            )
-            if (_steps(state).get(qh) or {}).get("grading_claim") != claim:
-                return _Submission("refused", state, rendered, scope, refused=True)
-            # never a skip: the CHECK_REFUSALS_AS_IDK-th refusal is an idk observation (A1)
-            idk, genuine = True, False
-            answer = CheckAnswer(question_hash=qh, idk=True)
+        async with within_grade_deadline(_now_s() - now):
             outcome = await grade_answer(
                 _item_like(item),
                 answer,
@@ -205,68 +173,102 @@ async def _grade_submission(
                 same_session_recheck=recheck,
                 **combo,
             )
-        if outcome.unavailable:  # invariant 28: nothing for either outcome; the item stays open
+            refused = bool(outcome.refused)
+            if refused:  # A33, read BEFORE `unavailable`: not an outage, never a genuine attempt
 
-            def note_attempt(e: dict) -> None:
-                if genuine:
-                    _record_attempt(e, now, failed=True)
+                # A97: a disowned answer is never escalated to idk — the student may
+                # have been right; they are only asked to state their own answer
+                disowned = outcome.refused == "disowned_answer"
 
-            state = await asyncio.to_thread(
-                _update_loop_state,
-                body.session_id,
-                _under_claim(qh, claim, note_attempt, release=True),
+                def count_refusal(e: dict) -> None:
+                    if not disowned:
+                        e["refusals"] = int(e.get("refusals") or 0) + 1
+                    if disowned or e["refusals"] < CHECK_REFUSALS_AS_IDK:
+                        # nothing was graded: the claim goes with the count
+                        e.pop("grading_claim", None)
+                        e.pop("grading_claim_at", None)
+
+                state = await asyncio.to_thread(
+                    _update_loop_state,
+                    body.session_id,
+                    _under_claim(qh, claim, count_refusal, release=False),
+                )
+                if (_steps(state).get(qh) or {}).get("grading_claim") != claim:
+                    return _Submission("refused", state, rendered, scope, refused=True)
+                # never a skip: the CHECK_REFUSALS_AS_IDK-th refusal is an idk observation (A1)
+                idk, genuine = True, False
+                answer = CheckAnswer(question_hash=qh, idk=True)
+                outcome = await grade_answer(
+                    _item_like(item),
+                    answer,
+                    deps=deps,
+                    node_id=node_id,
+                    max_rung=rung,
+                    same_session_recheck=recheck,
+                    **combo,
+                )
+            if outcome.unavailable:  # invariant 28: nothing for either outcome; the item stays open
+
+                def note_attempt(e: dict) -> None:
+                    if genuine:
+                        _record_attempt(e, now, failed=True)
+
+                state = await asyncio.to_thread(
+                    _update_loop_state,
+                    body.session_id,
+                    _under_claim(qh, claim, note_attempt, release=True),
+                )
+                return _Submission("unavailable", state, rendered, scope, refused=refused)
+            # A93: the help floor re-read inside the claim, right before the write
+            rung = await asyncio.to_thread(
+                _refloor,
+                deps.pending_evidence,
+                body.user_id,
+                item,
+                _ts(entry.get("first_shown_at")),
+                rung,
             )
-            return _Submission("unavailable", state, rendered, scope, refused=refused)
-        # A93: the help floor re-read inside the claim, right before the write
-        rung = await asyncio.to_thread(
-            _refloor,
-            deps.pending_evidence,
-            body.user_id,
-            item,
-            _ts(entry.get("first_shown_at")),
-            rung,
-        )
-        previously_seen = qh in await asyncio.to_thread(seen_hashes, body.user_id)
-        _tag_planning_evidence(deps.pending_evidence, item, synthetic_idk=bool(refused),
-                               previously_seen=previously_seen, operation_id=claim, observed_at=now)
-        correct = bool(outcome.correct)
-        verdict = "idk" if idk else ("correct" if correct else "not_yet")
-        evidence = outcome.evidence or {}
-        graded = {
-            "graded_at": now,
-            "last_correct": correct,
-            "last_verdict": verdict,
-            "max_rung": rung,
-            "assisted": bool(evidence.get("assisted")),
-            "node_id": node_id,
-            "channel": evidence.get("channel"),
-            "confidence": outcome.confidence,
-            "grader_backend": outcome.grader_backend,
-            "fsrs_rating": policy.evidence_for_rung(correct, Rung(rung)).fsrs_rating,
-            "p_before": p_before,
-            "feedback_given": False,
-        }
-
-        if state.get("goal"):
-            effective_rung = max(rung, int(evidence.get("max_rung") or 0))
-            rechecked = bool(recheck or evidence.get("same_session_recheck"))
-            graded["goal_observation"] = {
-                "node_id": node_id, "question_hash": qh, "difficulty": item.difficulty,
-                "channel": CHANNEL_FOR_FORMAT[item.format], "correct": correct, "idk": bool(idk),
-                "max_rung": effective_rung, "same_session_recheck": rechecked,
-                "previously_seen": previously_seen, "synthetic_idk": bool(refused),
-                "independent": effective_rung == 0 and not rechecked and not refused
-                and not previously_seen and not evidence.get("assisted", False),
+            previously_seen = qh in await asyncio.to_thread(seen_hashes, body.user_id)
+            _tag_planning_evidence(deps.pending_evidence, item, synthetic_idk=bool(refused),
+                                   previously_seen=previously_seen, operation_id=claim, observed_at=now)
+            correct = bool(outcome.correct)
+            verdict = "idk" if idk else ("correct" if correct else "not_yet")
+            evidence = outcome.evidence or {}
+            graded = {
+                "graded_at": now,
+                "last_correct": correct,
+                "last_verdict": verdict,
+                "max_rung": rung,
+                "assisted": bool(evidence.get("assisted")),
+                "node_id": node_id,
+                "channel": evidence.get("channel"),
+                "confidence": outcome.confidence,
+                "grader_backend": outcome.grader_backend,
+                "fsrs_rating": policy.evidence_for_rung(correct, Rung(rung)).fsrs_rating,
+                "p_before": p_before,
+                "feedback_given": False,
             }
 
-        checkpoint = grade_checkpoint.GradeCheckpoint(
-            kind="check", operation_id=claim, user_id=body.user_id,
-            session_id=body.session_id, course_id=course_id or None, question_hash=qh,
-            goal_version=goal_version(state), evidence=copy.deepcopy(deps.pending_evidence),
-            continuation={"graded": graded, "correct": correct, "genuine": genuine,
-                          "diagnosis": getattr(outcome, "diagnosis", None), "rendered": rendered,
-                          "answer": answer.model_dump(mode="json"), "verdict": verdict, "refused": refused},
-        )
+            if state.get("goal"):
+                effective_rung = max(rung, int(evidence.get("max_rung") or 0))
+                rechecked = bool(recheck or evidence.get("same_session_recheck"))
+                graded["goal_observation"] = {
+                    "node_id": node_id, "question_hash": qh, "difficulty": item.difficulty,
+                    "channel": CHANNEL_FOR_FORMAT[item.format], "correct": correct, "idk": bool(idk),
+                    "max_rung": effective_rung, "same_session_recheck": rechecked,
+                    "previously_seen": previously_seen, "synthetic_idk": bool(refused),
+                    "independent": effective_rung == 0 and not rechecked and not refused
+                    and not previously_seen and not evidence.get("assisted", False),
+                }
+
+            checkpoint = grade_checkpoint.GradeCheckpoint(
+                kind="check", operation_id=claim, user_id=body.user_id,
+                session_id=body.session_id, course_id=course_id or None, question_hash=qh,
+                goal_version=goal_version(state), evidence=copy.deepcopy(deps.pending_evidence),
+                continuation={"graded": graded, "correct": correct, "genuine": genuine,
+                              "diagnosis": getattr(outcome, "diagnosis", None), "rendered": rendered,
+                              "answer": answer.model_dump(mode="json"), "verdict": verdict, "refused": refused},
+            )
         # Treat a lost checkpoint acknowledgment as potentially saved. Never release
         # its claim or call the grader again while that uncertainty exists.
         checkpointed = True
@@ -290,6 +292,11 @@ async def _grade_submission(
                 )
             except Exception:
                 logger.warning("grading claim could not be released")
+        if isinstance(exc, GradeDeadlineExceeded):  # #866 A1: nothing saved, claim released above
+            raise HTTPException(
+                status_code=503,
+                detail="Checking your answer took too long, so nothing was recorded. Please submit it again.",
+            ) from None
         if isinstance(exc, PlanningPersistenceUnavailable):
             raise HTTPException(status_code=503, detail="Learning evidence unavailable; retry the same answer") from None
         raise

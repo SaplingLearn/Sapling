@@ -167,6 +167,38 @@ def test_a_grade_runs_only_inside_its_claim():
         asyncio.run(run(0, own_timeout))
 
 
+_SLOW_GRADE_503 = "Checking your answer took too long, so nothing was recorded. Please submit it again."
+
+
+def test_a_check_grade_that_outlives_its_deadline_is_a_503_that_records_nothing(
+    gate_on, seams, monkeypatch,
+):
+    """#866 review A1: the check grader runs inside `within_grade_deadline`. A
+    grade that outlives it is cancelled: 503, nothing saved (no checkpoint, no
+    grade, no evidence), the claim released — and the same answer grades on
+    the next submit."""
+    import learning.claim_deadline as deadline
+
+    async def slow(item, answer, **kw):
+        await asyncio.sleep(5)
+        return routes.CORRECT
+
+    monkeypatch.setattr(deadline, "GRADE_DEADLINE_S", 0.05)
+    seams.grade.side_effect = slow
+    with pytest.raises(HTTPException) as late:
+        submit()
+    assert late.value.status_code == 503 and late.value.detail == _SLOW_GRADE_503
+    entry = seams.store["doc"]["steps"]["qh-1"]
+    assert "grading_claim" not in entry and "grading_claim_at" not in entry
+    assert grade_checkpoint.KEY not in entry and entry.get("graded_at") is None
+    seams.flush.assert_not_called()
+    assert not _in_flight(seams.store["doc"])
+    seams.grade.side_effect = None  # the grader answers in time: the same answer grades
+    assert submit().kind == "feedback"
+    assert seams.store["doc"]["steps"]["qh-1"]["graded_at"] is not None
+    seams.flush.assert_called_once()
+
+
 # ── #866 review A2: a permanent evidence refusal ──────────────────────────────
 
 
