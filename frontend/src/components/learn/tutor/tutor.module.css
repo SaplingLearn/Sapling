@@ -725,6 +725,10 @@
    the top of the conversation, aligned with its text. Each step after the
    first is drawn behind a rule that takes the free width. 22px marks. */
 .stepper {
+  /* Sized from the conversation column, not the viewport: with the sidebar
+     and the session panel open the column is ~280px at a 900px window, where
+     four labels cannot sit side by side (PR #866 review U7b). */
+  container: stepper / inline-size;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -756,6 +760,28 @@
   height: 1px;
   margin-right: 2px;
   background: var(--border-strong);
+}
+
+/* A label that still does not fit is cut with an ellipsis, never drawn over
+   the next step's mark. */
+.stepLabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Too narrow for all four labels (they need ~370px with their marks): only
+   the current step keeps its label on screen; the others stay in the list
+   for a screen reader, as on a phone. */
+@container stepper (max-width: 400px) {
+  .step:not([data-state="current"]) .stepLabel {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
 }
 
 .stepMark {

@@ -2468,9 +2468,10 @@ export function LoopLearn() {
     const live = allOf(!!sessionId, !readOnly);
     return (
       <>
+        {/* the conversation column's first row (design T4-T10, anatomy D) */}
+        {live && <PhaseStepper phase={state.phase} />}
         {live && state.phase !== "close" && renderScopeSummary()}
         {goalProgress && goal && renderGoalProgress(goalProgress)}
-        {live && <PhaseStepper phase={state.phase} />}
         {notices}
         {allOf(!showPanel, live, !!learner) && (
           <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px clamp(16px, 4vw, 56px) 0" }}>

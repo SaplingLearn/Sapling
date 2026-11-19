@@ -509,6 +509,9 @@ describe("LoopLearn — probe and plan", () => {
     // the stepper follows the loop's phase (PR #866 U7b)
     const step = () => screen.getByTestId("tutor-phase-stepper").querySelector('[aria-current="step"]')?.textContent;
     expect(step()).toBe("2Plan");
+    // the conversation column's first row (design T4-T10): before the scope line
+    const stepper = screen.getByTestId("tutor-phase-stepper");
+    expect(stepper.compareDocumentPosition(screen.getByTestId("loop-goal-summary")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     fireEvent.click(screen.getByTestId("loop-plan-approve"));
     await waitFor(() => expect(screen.getByTestId("loop-phase").getAttribute("data-phase")).toBe("teach"));
     expect(step()).toBe("3Learn");
