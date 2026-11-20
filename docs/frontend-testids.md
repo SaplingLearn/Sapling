@@ -961,8 +961,8 @@ loop active (`GET /api/learn/loop/review/active` 200 — a gate-only probe; the 
 | --- | --- |
 | `review-due-panel` | the "Due today" panel root |
 | `review-budget` | chip: minutes left of today's review budget |
-| `review-empty` | "All caught up — nothing is due right now." (no item and nothing due; never shown beside a stale item; makes no "due later" claim — `/review/summary` counts today, as of its read) |
-| `review-budget-paused` | the budget pause banner (PKG-13, spec §3.5): a review call answered 429 `ai budget reached` (by its `scope`: the per-minute rate limit says "Too many AI requests in the last minute. Send this answer again at <time>.") or `/review/summary` reports `paused` > 0 novice concepts ("<n> concept(s) paused until <reset>, when your monthly AI budget resets. …" — the cap its `paused_scope` names, the reset `paused_until`, dated when a week or more away; #866 K18); `role="status"`, `data-reset-at`, `data-session-capped` |
+| `review-empty` | "All caught up — nothing is due right now." (no item and nothing due; never shown beside a stale item; makes no "due later" claim — `/review/summary` counts today, as of its read); "Nothing else is due right now." while the summary holds concepts back (`paused` / `grading_paused`) |
+| `review-budget-paused` | the budget pause banner (PKG-13, spec §3.5): a review call answered 429 `ai budget reached` (by its `scope`: the per-minute rate limit says "Too many AI requests in the last minute. Send this answer again at <time>.", the grader cap "Today's grading limit is reached: checks can't be graded until <time>. Flashcards keep working.") or `/review/summary` reports `paused` > 0 novice concepts ("<n> concept(s) paused until <reset>, when your monthly AI budget resets. …" — the cap its `paused_scope` names, the reset `paused_until`, dated when a week or more away; #866 K18) or `grading_paused` > 0 concepts held at the grader cap ("Checks on <n> concept(s) wait until <time>, when today's grading limit resets. …", #866 K16); `role="status"`, `data-reset-at`, `data-session-capped` |
 | `review-budget-spent` | no item while items are still due — today's review budget is spent (shows how many remain: the due reviews, and the never-rated cards as "new cards", #866 K14) |
 | `review-item` | the served item (a check's prompt, or a flashcard's front/back) |
 | `review-new-card` | "New card" chip on a served flashcard never rated yet (`/review/next` item `new`; spec §13 A74's pool — a new card, not a review that is due; #866 K14) |
@@ -975,9 +975,9 @@ loop active (`GET /api/learn/loop/review/active` 200 — a gate-only probe; the 
 | `review-submit` | "Check" / "Try again" — sends a check answer |
 | `review-flip` | "Show answer" on a flashcard |
 | `review-rate-1` / `review-rate-2` / `review-rate-3` | a flashcard self-rating (forgot / hard / easy) |
-| `review-hint` | the result line: verdict + corrective hint (with the answer when wrong), "Grader unavailable", or the A33 own-words prompt |
+| `review-hint` | the result line: verdict + corrective hint (with the answer when wrong), the grader-could-not-grade line (nothing recorded; Next moves on and the question comes back after the rest of today's review — #866 K16), or the A33 own-words prompt |
 | `review-graded` | "Your answer is already recorded" — a resend met `409 already graded` (the answer counted) |
-| `review-next` | "Next" — polls `/review/next` after a graded answer (also while paused, so review keeps moving) |
+| `review-next` | "Next" — polls `/review/next` after a graded answer (also while paused, so review keeps moving, and after a grade the grader could not make — never after an A33 refusal; a check the queue moves past unanswered comes back with what was typed, #866 K16) |
 | `review-report` | "Report this question" on a served check (answered or not; never on a flashcard), only while the `item_reports` flag is on (spec §13 A113, #695) — opens the reasons |
 | `review-report-reasons` | the reasons group (`role="group"`): buttons only, no text box |
 | `review-report-reason-{reason}` | one reason — `wrong_answer` / `unclear` / `not_from_my_course` — posts `/api/learn/loop/report` (`surface: review`, the item's id) and loads the next item |

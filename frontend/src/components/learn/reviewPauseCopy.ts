@@ -14,9 +14,15 @@ const LIFTS: Record<string, string> = {
   daily_tutor_calls: "your daily tutor limit resets",
 };
 
-/** A 429 "ai budget reached" on /review/answer. Its one budget cap there is the
- *  per-minute rate limit on a check (spec §3.5): send the answer again then. */
+/** A 429 "ai budget reached" on /review/answer: the per-minute rate limit on a
+ *  check (spec §3.5) — send the answer again then — or the grader cap (#866
+ *  K16), until which no check can be graded; flashcards need no grader. */
 export function answerPauseMessage(pause: LoopBudgetPause): string {
+  if (pause.scope === "daily_grades") {
+    return pause.resetAt
+      ? `Today's grading limit is reached: checks can't be graded until ${formatResetAt(pause.resetAt)}. Flashcards keep working.`
+      : "Today's grading limit is reached: checks can't be graded for now. Flashcards keep working.";
+  }
   if (pause.scope === "rate_limit") {
     return pause.resetAt
       ? `Too many AI requests in the last minute. Send this answer again at ${formatResetAt(pause.resetAt)}.`
@@ -34,4 +40,12 @@ export function pausedConceptsMessage(n: number, scope?: string | null, until?: 
   const lifts = scope == null ? LIFTS.daily_usd : LIFTS[scope] ?? "your AI budget resets";
   const when = until ? `until ${formatResetAt(until)}, when ${lifts}` : `until ${lifts}`;
   return `${n} ${n === 1 ? "concept" : "concepts"} paused ${when}. Flashcards and other reviews keep working.`;
+}
+
+/** Concepts held back at the grader cap (`/review/summary` `grading_paused`,
+ *  #866 K16): their checks wait until it lifts; flashcards keep being served. */
+export function gradingPausedMessage(n: number, until?: string | null): string {
+  const what = `Checks on ${n} ${n === 1 ? "concept" : "concepts"} wait`;
+  const when = until ? `until ${formatResetAt(until)}, when today's grading limit resets` : "until today's grading limit resets";
+  return `${what} ${when}. Flashcards keep working.`;
 }

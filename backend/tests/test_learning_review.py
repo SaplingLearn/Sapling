@@ -1401,6 +1401,7 @@ def test_summary_counts_due_unservable_paused_and_budget(monkeypatch):
         "in_budget": 2,
         "unservable": 1,
         "paused": 1,
+        "grading_paused": 0,
         "budget_min": params.REVIEW_DAILY_BUDGET_MIN,
         "remaining_budget_s": params.REVIEW_DAILY_BUDGET_MIN * 60 - 60,
         "retention_target": params.FSRS_RETENTION_DEFAULT,
@@ -1816,6 +1817,7 @@ def client(monkeypatch):
     # summary test cover the two seams themselves.
     monkeypatch.setattr("services.ai_budget.enforce_rate_limit_for", lambda user_id: None)
     setattr_loop(monkeypatch, "_pause_novice", lambda user_id: False)
+    setattr_loop(monkeypatch, "_grading_cap", lambda user_id: None)  # #866 K16: grading open
     setattr_loop(monkeypatch, "user_offering_ids_for_course", lambda uid, cid: ["off-1"] if cid == COURSE else [])
     return TestClient(app)
 
@@ -2485,6 +2487,8 @@ def test_review_summary_counts_by_kind(client, monkeypatch):
         "paused": 1,
         "paused_scope": "daily_usd",
         "paused_until": reset.isoformat(),
+        "grading_paused": 0,
+        "grading_paused_until": None,
         "budget_min": params.REVIEW_DAILY_BUDGET_MIN,
         "remaining_budget_s": params.REVIEW_DAILY_BUDGET_MIN * 60,
         "retention_target": params.FSRS_RETENTION_LARGE_SET,
@@ -3405,3 +3409,199 @@ def _loop_handler_defs() -> dict:
             if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 defs.setdefault(n.name, n)
     return defs
+
+
+# ── #866 K16: a check that cannot be graded never pins the queue ─────────────
+
+
+def test_an_item_without_a_rubric_is_never_served(monkeypatch):
+    """#866 K16: the grader answers `unavailable` to every answer to an item
+    whose rubric is empty (a malformed rubric_json reads as []), so it is not
+    servable: the review serves the concept's other item, and a concept with
+    none is unservable — never an item that re-serves forever."""
+    from learning import review
+    from learning.checks import is_servable
+
+    profic = (params.REVIEW_FORMAT_BY_BAND["profic"], params.REVIEW_DIFFICULTY_BY_BAND["profic"])
+    broken = _check_item("n-due", "qh-broken", *profic)
+    broken.rubric = []
+    assert is_servable(broken) is False
+    assert is_servable(_check_item("n-due", "qh-1", *profic)) is True
+    past = (NOW - timedelta(days=1)).isoformat()
+    factory, _ = _tables({
+        "learner_state": [_due_row("n-due", 0.9, past)],
+        "graph_nodes": [{"id": "n-due", "course_id": COURSE, "concept_name": "Gradient descent"}],
+    })
+    monkeypatch.setattr(review, "table", factory)
+    monkeypatch.setattr(review, "user_offering_ids_for_course", lambda u, c: ["off-1"])
+    monkeypatch.setattr(review, "decayed_p", lambda p, elapsed, s: p)
+    monkeypatch.setattr(review, "list_items", lambda course_id, concept_key, **kw: [broken])
+    queue, stats = review.due_queue_with_stats(USER, COURSE, NOW)
+    assert queue == [] and stats["unservable"] == 1
+    monkeypatch.setattr(
+        review, "list_items",
+        lambda course_id, concept_key, **kw: [broken, _check_item("n-due", "qh-1", *profic)],
+    )
+    queue, _ = review.due_queue_with_stats(USER, COURSE, NOW)
+    assert [i.question_hash for i in queue] == ["qh-1"]
+
+
+def _grading_capped_queue(monkeypatch, hold):
+    """A due card and a due concept; `hold` is the queue's grader-cap read."""
+    from learning import review
+
+    past = (NOW - timedelta(days=1)).isoformat()
+    factory, _ = _tables({
+        "flashcards": [_card("f1", past)],
+        "learner_state": [_due_row("n-due", 0.9, past)],
+        "graph_nodes": [{"id": "n-due", "course_id": COURSE, "concept_name": "Gradient descent"}],
+    })
+    monkeypatch.setattr(review, "table", factory)
+    monkeypatch.setattr(review, "decayed_p", lambda p, elapsed, s: p)
+    reads = []
+    monkeypatch.setattr(
+        review, "list_items", lambda c, k, **kw: reads.append(k) or [_check_item("n-due", "qh-1")]
+    )
+    queue, stats = review.due_queue_with_stats(USER, None, NOW, hold_checks=hold)
+    return queue, stats, reads
+
+
+def test_at_the_grader_cap_checks_are_held_and_flashcards_are_served(monkeypatch):
+    """#866 K16 (spec §3.5 grader cap): at STUDENT_DAILY_GRADES no check can be
+    graded until the cap lifts, so the queue holds every due concept back —
+    before any item read, like A20's novice pause — and counts it under
+    `grading_paused`; flashcards (no grader) keep being served. Below the cap
+    nothing changes, and the cap is read only when a concept is due."""
+    queue, stats, reads = _grading_capped_queue(monkeypatch, lambda: True)
+    assert [i.kind for i in queue] == ["flashcard"] and reads == []
+    assert stats["grading_paused"] == 1 and stats["due"] == {"flashcard": 1, "check": 0}
+    queue, stats, _ = _grading_capped_queue(monkeypatch, lambda: False)
+    assert sorted(i.kind for i in queue) == ["check", "flashcard"]
+    assert stats["grading_paused"] == 0
+
+
+def test_review_next_holds_checks_at_the_grader_cap_and_the_summary_says_until_when(
+    client, monkeypatch, store
+):
+    """#866 K16: /review/next serves the due flashcard, not the check that
+    cannot be graded (its open entry stays for when grading reopens), and
+    /review/summary says how many concepts wait and when the cap lifts."""
+    from learning import review
+    from services.ai_budget import BudgetDecision
+
+    reset = datetime(2026, 9, 27, tzinfo=timezone.utc)
+    cap = BudgetDecision(level="hard", tier_ceiling="none", scope="daily_grades", reset_at=reset)
+    setattr_loop(monkeypatch, "_grading_cap", lambda user_id: cap)
+    past = (NOW - timedelta(days=1)).isoformat()
+    factory, _ = _tables({
+        "flashcards": [_card("f1", past)],
+        "learner_state": [_due_row("n-due", 0.9, past)],
+        "graph_nodes": [{"id": "n-due", "course_id": COURSE, "concept_name": "Gradient descent"}],
+    })
+    monkeypatch.setattr(review, "table", factory)
+    monkeypatch.setattr(review, "decayed_p", lambda p, elapsed, s: p)
+    monkeypatch.setattr(review, "list_items", lambda c, k, **kw: [_check_item("n-due", "qh-1")])
+    monkeypatch.setattr(review, "load_card", lambda u, cid: _card_row(id=cid))
+    monkeypatch.setattr(review, "log_event", lambda *a, **k: None)
+    monkeypatch.setattr(review, "review_retention", lambda u, c: params.FSRS_RETENTION_DEFAULT)
+    _session(monkeypatch, {"sr": {}, "review": {"spent_s": 0}, "open": {
+        "n-due": {"item_id": "ci-qh-1", "served_at": 0.0}}})
+    with _loop():
+        nxt = client.get(f"{REVIEW}/next?user_id={USER}").json()
+        summary = client.get(f"{REVIEW}/summary?user_id={USER}").json()
+    assert nxt["item"]["kind"] == "flashcard" and nxt["item"]["id"] == "f1"
+    assert store.state.extra["open"]["n-due"]["item_id"] == "ci-qh-1"  # kept for later
+    assert summary["grading_paused"] == 1
+    assert summary["grading_paused_until"] == reset.isoformat()
+
+
+def test_review_answer_refuses_a_check_at_the_grader_cap_before_any_claim(
+    client, monkeypatch, store
+):
+    """#866 K16: a check answered at the grader cap is the cap's 429 (scope
+    daily_grades, reset_at) before the claim: nothing is graded or written, the
+    item stays open, and the typed answer can be sent once grading reopens. A
+    flashcard (no grader) is still rated."""
+    from learning import review
+    from services.ai_budget import BudgetDecision
+
+    reset = datetime(2026, 9, 27, tzinfo=timezone.utc)
+    cap = BudgetDecision(level="hard", tier_ceiling="none", scope="daily_grades", reset_at=reset)
+    setattr_loop(monkeypatch, "_grading_cap", lambda user_id: cap)
+    _session(monkeypatch)
+    _check_answer_seams(monkeypatch, _check_item("n-due", "qh-1"))
+    graded = []
+
+    async def fake_grade(user_id, item, **kw):
+        graded.append(item.kind)
+        return review.ReviewOutcome(correct=True, sr={})
+
+    monkeypatch.setattr(review, "grade_review", fake_grade)
+    monkeypatch.setattr(review, "load_card", lambda u, cid: _card_row())
+    _opened(store, "n-due", "ci-qh-1")
+    _opened(store, "fc:f1", "f1")
+    base = {"user_id": USER, "session_id": _sid(), "course_id": COURSE}
+    with _loop():
+        check = client.post(
+            f"{REVIEW}/answer", json={**base, "kind": "check", "item_id": "ci-qh-1", "answer": "x"}
+        )
+        card = client.post(
+            f"{REVIEW}/answer", json={**base, "kind": "flashcard", "item_id": "f1", "rating": 2}
+        )
+    assert check.status_code == 429, check.text
+    assert check.json()["detail"] == "ai budget reached" and check.json()["scope"] == "daily_grades"
+    assert check.json()["reset_at"] == reset.isoformat()
+    assert "claim" not in store.state.extra["open"]["n-due"]
+    assert card.status_code == 200 and graded == ["flashcard"]
+
+
+def test_an_unavailable_grade_defers_its_item_behind_the_rest_of_the_queue(monkeypatch, store):
+    """#866 K16: a grade the grader could not make (an outage, a run below the
+    confidence floor) writes nothing and releases the claim, and the open entry
+    records it (`unavailable_at`): /review/next then serves every other due
+    item first, and this one after them — it stays the only item served for its
+    concept (A70: no item shopping). A refused answer (A33, the student's own
+    doing) is not deferred."""
+    from learning import review
+
+    _checked(monkeypatch, unavailable=True)
+    item = _serve_check(store)
+    review.claim_item("sess-1", "n1", "ci-q", "c1", NOW)
+    out = _grade_check(item, _check_item("n1", "q"), {"sr": {}}, answer="x", claim="c1")
+    entry = store.state.extra["open"]["n1"]
+    assert out.unavailable is True and "claim" not in entry and entry["unavailable_at"] == _T
+    state = store.state.extra
+    card = _item("flashcard", 0.9, id="f1")
+    assert review.deferred(state, item, NOW) is True and review.deferred(state, card, NOW) is False
+    assert review.try_order([item, card], state, NOW) == [card, item]
+    # the item alone is served again (the student can try once more)
+    assert review.try_order([item], state, NOW) == [item]
+    # a refusal (A33) only releases the claim: the item stays first
+    _checked(monkeypatch, refused="grader_directive")
+    other = _serve_check(store, item_id="ci-r", node_id="n2", qh="r")
+    review.claim_item("sess-1", "n2", "ci-r", "c2", NOW)
+    _grade_check(other, _check_item("n2", "r"), {"sr": {}}, answer="x", claim="c2")
+    assert "unavailable_at" not in store.state.extra["open"]["n2"]
+    assert review.try_order([card, other], store.state.extra, NOW) == [other, card]
+
+
+def test_review_next_serves_the_rest_before_an_item_whose_grade_was_unavailable(
+    client, monkeypatch, store
+):
+    """#866 K16 through the route: after an unavailable grade the next item is
+    the due flashcard, not the same check again."""
+    from learning import review
+
+    check = _item("check", 0.4, id="ci-qh-1", node_id="n-due", question_hash="qh-1", format="free")
+    card = _item("flashcard", 0.9, id="f1")
+    _session(monkeypatch, {"sr": {}, "review": {"spent_s": 0}, "open": {
+        "n-due": {"item_id": "ci-qh-1", "served_at": 0.0, "unavailable_at": 1.0}}})
+    monkeypatch.setattr(review, "due_queue_with_stats", lambda u, c, now, **kw: (
+        [check, card], {"unservable": 0, "paused": 0, "due": {"check": 1, "flashcard": 1}}))
+    monkeypatch.setattr(review, "review_retention", lambda u, c: params.FSRS_RETENTION_DEFAULT)
+    monkeypatch.setattr(review, "load_card", lambda u, cid: _card_row(id=cid))
+    setattr_loop(monkeypatch, "get_check_item", lambda item_id: _check_item("n-due", "qh-1"))
+    monkeypatch.setattr(review, "log_event", lambda *a, **k: None)
+    with _loop():
+        body = client.get(f"{REVIEW}/next?user_id={USER}").json()
+    assert body["item"]["kind"] == "flashcard"

@@ -83,6 +83,9 @@ export interface ReviewSummaryResponse {
    *  lifts; null when nothing is paused. Absent from a server before the fix. */
   paused_scope?: string | null;
   paused_until?: string | null;
+  /** #866 K16: concepts held back at the grader cap, and when it lifts. */
+  grading_paused?: number;
+  grading_paused_until?: string | null;
   budget_min: number;
   remaining_budget_s: number;
   retention_target: number;

@@ -309,6 +309,7 @@ def _check_item(key, course=COURSE):
         question_hash=f"qh-{key}",
         created_at=None,
         final_answer="42",
+        rubric=[{"id": "r1", "text": "names the idea"}],  # #866 K16: gradable
         prompt=f"Explain {key}",
         options=None,
     )
@@ -629,6 +630,7 @@ def test_review_next_serves_the_sibling_of_the_concept_just_graded(queue_env, mo
     monkeypatch.setattr(review, "log_event", lambda *a, **kw: None)
     setattr_loop(monkeypatch, "_review_now", lambda: NOW)
     setattr_loop(monkeypatch, "_pause_novice", lambda user_id: False)
+    setattr_loop(monkeypatch, "_grading_cap", lambda user_id: None)  # #866 K16: grading open
     setattr_loop(monkeypatch, "user_offering_ids_for_course", lambda u, c: ["off-1"])
     setattr_loop(monkeypatch, "get_check_item", lambda item_id: _check_item(item_id.removeprefix("ci-")))
     with (
@@ -743,6 +745,7 @@ def test_review_next_never_re_serves_a_reported_open_item_as_the_partner(
     monkeypatch.setattr(review, "log_event", lambda *a, **kw: None)
     setattr_loop(monkeypatch, "_review_now", lambda: NOW)
     setattr_loop(monkeypatch, "_pause_novice", lambda user_id: False)
+    setattr_loop(monkeypatch, "_grading_cap", lambda user_id: None)  # #866 K16: grading open
     setattr_loop(monkeypatch, "user_offering_ids_for_course", lambda u, c: ["off-1"])
     setattr_loop(monkeypatch, "get_check_item", lambda item_id: _check_item(item_id.removeprefix("ci-")))
 

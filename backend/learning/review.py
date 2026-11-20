@@ -21,7 +21,10 @@ selector chose, so a reported item never comes back as a confusable partner
 either: the partner is served with another item, or is `unservable`. At the
 tutor hard budget level the route passes `pause_novice=True` and novice-band
 concepts are held back (`paused`); flashcards and develop/profic concepts keep
-being served (A20).
+being served (A20). At the grader cap (spec §3.5 STUDENT_DAILY_GRADES) the
+route passes `hold_checks=True`: no check can be graded until the cap lifts,
+so every due concept is held back (`grading_paused`) and flashcards are served
+(#866 K16).
 
 Grading has ONE path per kind. A check item goes through PKG-05's
 `grade_answer` (A16, invariant 19) and its one Evidence dict is persisted,
@@ -525,6 +528,7 @@ def _due_concepts(
     *,
     pause: Callable[[], bool],
     stats: dict,
+    hold: Callable[[], bool] = lambda: False,
 ) -> list[_Concept]:
     rows = table("learner_state").select(
         _CONCEPT_COLUMNS,
@@ -540,11 +544,13 @@ def _due_concepts(
     by_id = {
         n["id"]: n for n in nodes or [] if course_id is None or n.get("course_id") == course_id
     }
+    due = [(row, by_id[row["node_id"]]) for row in rows if row["node_id"] in by_id]
+    if due and hold():  # #866 K16: the grader cap — no check can be graded until it lifts
+        stats["grading_paused"] += len(due)
+        logger.info("review: %d due concept(s) held at the grader cap", len(due))
+        return []
     concepts = []
-    for row in rows:
-        node = by_id.get(row["node_id"])
-        if node is None:
-            continue
+    for row, node in due:
         try:
             stability = _stability(row.get("fsrs_s"))
         except InvalidStability as exc:
@@ -580,6 +586,29 @@ def is_open(loop_state: dict | None, item: ReviewItem, now: datetime) -> bool:
     """`item` is the one this session served for its key and it awaits its answer
     (re-serving it writes nothing and emits nothing)."""
     return open_item_ids(loop_state, now).get(sr_key(item)) == item.id
+
+
+#: The open entry's key recording when the grader could not grade an answer to
+#: it (#866 K16: an outage, a run below the confidence floor), written when the
+#: claim is given back.
+_UNAVAILABLE_KEY = "unavailable_at"
+
+
+def deferred(loop_state: dict | None, item: ReviewItem, now: datetime) -> bool:
+    """#866 K16: `item` is open and its last answer could not be graded."""
+    if not is_open(loop_state, item, now):
+        return False
+    entry = ((loop_state or {}).get("open") or {}).get(sr_key(item)) or {}
+    return entry.get(_UNAVAILABLE_KEY) is not None
+
+
+def try_order(queue: list[ReviewItem], loop_state: dict | None, now: datetime) -> list[ReviewItem]:
+    """The order /review/next tries the queue in: the item already open for its
+    key first — a refresh never moves on (A70) — then the queue's own order;
+    and an open item whose last answer could not be graded (#866 K16) after
+    every other item, so an outage or the grader's doubt never pins the queue
+    on it. It is still the only item served for its key (no item shopping)."""
+    return sorted(queue, key=lambda i: (deferred(loop_state, i, now), not is_open(loop_state, i, now)))
 
 
 class _Selector:
@@ -783,6 +812,7 @@ def due_queue_with_stats(
     pause_novice: bool | Callable[[], bool] = False,
     interleave: bool = True,
     varied: bool = False,
+    hold_checks: bool | Callable[[], bool] = False,
 ) -> tuple[list[ReviewItem], dict]:
     """Rule 1. Returns (the ordered, budgeted queue, stats).
 
@@ -797,6 +827,8 @@ def due_queue_with_stats(
     `interleave=False` (the summary, which reports counts only) skips its reads.
     `varied` (spec §13 A140): the student's varied_isomorphs — the pick's
     cue-familiarity tie-break and the interleave's definitional-item rule.
+    `hold_checks` (#866 K16): the grader cap is hard, so every due concept is
+    held back (read once, only when a concept is due).
 
     stats = {"due": {"flashcard": n, "check": n}, "new": n, "in_budget": n,
     "unservable": n, "paused": n}: `due` counts everything due this session (a
@@ -804,18 +836,20 @@ def due_queue_with_stats(
     servability is unknown), `new` the never-rated cards among `due`'s
     flashcards (A74: in the pool, but new cards rather than due reviews —
     #866 K14), `in_budget` the queue, `unservable` the concepts examined that
-    had no servable item, `paused` the novice concepts held back (A20)."""
+    had no servable item, `paused` the novice concepts held back (A20),
+    `grading_paused` the concepts held at the grader cap (#866 K16)."""
     state = loop_state or {}
     sr = state.get("sr") or {}
     served_today = set((state.get("review") or {}).get("served_hashes") or [])
-    stats: dict[str, Any] = {"unservable": 0, "paused": 0}
+    stats: dict[str, Any] = {"unservable": 0, "paused": 0, "grading_paused": 0}
     cards = [
         c for c in _due_flashcards(user_id, course_id, now) if not _target_met(sr.get(sr_key(c)))
     ]
     concepts = [
         c
         for c in _due_concepts(
-            user_id, course_id, now, pause=_pause_check(pause_novice), stats=stats
+            user_id, course_id, now, pause=_pause_check(pause_novice), stats=stats,
+            hold=_pause_check(hold_checks),
         )
         if not _target_met(sr.get(c.node["id"]))
     ]
@@ -895,10 +929,12 @@ def summary(
     loop_state: dict | None,
     pause_novice: bool | Callable[[], bool] = False,
     retention: float | None = None,
+    hold_checks: bool | Callable[[], bool] = False,
 ) -> dict:
     """The `/review/summary` body (`paused` = novice concepts held back at the
-    tutor hard level; `due` everything due today, `new` the never-rated cards
-    among it (#866 K14), `in_budget` what today's remaining budget covers)."""
+    tutor hard level; `grading_paused` the concepts held at the grader cap
+    (#866 K16); `due` everything due today, `new` the never-rated cards among it
+    (#866 K14), `in_budget` what today's remaining budget covers)."""
     _, stats = due_queue_with_stats(
         user_id,
         course_id,
@@ -906,6 +942,7 @@ def summary(
         loop_state=loop_state,
         pause_novice=pause_novice,
         interleave=False,  # counts only: the order is not served here
+        hold_checks=hold_checks,
     )
     if retention is None:
         retention = review_retention(user_id, course_id)
@@ -915,6 +952,7 @@ def summary(
         "in_budget": stats["in_budget"],
         "unservable": stats["unservable"],
         "paused": stats["paused"],
+        "grading_paused": stats.get("grading_paused", 0),
         "budget_min": REVIEW_DAILY_BUDGET_MIN,
         "remaining_budget_s": remaining_budget_s(loop_state),
         "retention_target": retention,
@@ -1077,12 +1115,20 @@ def drop_reported(session_id: str, item_id: str, now: datetime) -> bool:
     return bool(_persist_loop_state(session_id, drop))
 
 
-def _release_claim(session_id: str, key: str, claim: str) -> None:
+def _release_claim(
+    session_id: str, key: str, claim: str, *, unavailable_at: float | None = None
+) -> None:
+    """Give the claim back (nothing was written). `unavailable_at` (#866 K16):
+    the grader could not grade it — the open entry records when, so /review/next
+    serves the rest of the queue before it (`try_order`)."""
+
     def release(doc: dict) -> None:
         entry = (doc.get("open") or {}).get(key)
         if isinstance(entry, dict) and entry.get("claim") == claim:
             entry.pop("claim", None)
             entry.pop("claim_at", None)
+            if unavailable_at is not None:
+                entry[_UNAVAILABLE_KEY] = unavailable_at
 
     try:
         _persist_loop_state(session_id, release)
@@ -1472,8 +1518,13 @@ async def grade_review(
             if outcome.refused is not None or outcome.unavailable:
                 # A33 (refused: never graded, never a skip) and invariant 28
                 # (unavailable: nothing for EITHER outcome) — nothing is written.
+                # #866 K16: an item the grader could not grade waits behind the
+                # rest of the queue; a refusal is the student's to rephrase.
                 if claim is not None:
-                    await asyncio.to_thread(_release_claim, session_id, sr_key(item), claim)
+                    await asyncio.to_thread(
+                        _release_claim, session_id, sr_key(item), claim,
+                        unavailable_at=None if outcome.refused is not None else now.timestamp(),
+                    )
                 return ReviewOutcome(unavailable=True, refused=outcome.refused is not None)
             evidence = outcome.evidence
             operation = operation_id or (review_operation_id(claim) if claim is not None else None)

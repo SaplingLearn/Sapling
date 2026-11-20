@@ -54,7 +54,7 @@ import { BudgetPausedBanner, formatResetAt } from "./BudgetPausedBanner";
 import { ConfidenceControl } from "./ConfidenceControl";
 import { FIELD_STYLE } from "./loopShared";
 import { ReportQuestion } from "./ReportQuestion";
-import { answerPauseMessage, pausedConceptsMessage } from "./reviewPauseCopy";
+import { answerPauseMessage, gradingPausedMessage, pausedConceptsMessage } from "./reviewPauseCopy";
 import tutorStyles from "./tutor/tutor.module.css";
 import { useCrisisSupport } from "../safety/CrisisSupportCard";
 
@@ -114,6 +114,9 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
   const statusRef = React.useRef<HTMLDivElement>(null);
   const errorRef = React.useRef<HTMLDivElement>(null);
   const promptId = React.useId();
+  // #866 K16: what was typed for each check the queue moved past unanswered (a
+  // grade the grader could not make, a pause), so it comes back with the check.
+  const drafts = React.useRef(new Map<string, Draft>());
 
   // The summary only feeds the banner: re-read with EVERY load (a mount-time
   // read went stale as the student reviewed), a failure keeps the last one.
@@ -140,10 +143,11 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
       const r = await getReviewNext(userId, courseId);
       if (mine !== seq.current) return;
       setNext(r);
-      setAnswer("");
-      setChoice("");
-      setReason("");
-      setConfidence(null);
+      const kept = r.item ? drafts.current.get(r.item.id) : undefined;
+      setAnswer(kept?.answer ?? "");
+      setChoice(kept?.choice ?? "");
+      setReason(kept?.reason ?? "");
+      setConfidence(kept?.confidence ?? null);
       setFlipped(false);
       setResult(null);
       setAlreadyGraded(false);
@@ -168,6 +172,14 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
   // No feedback survey over a review item, answered or not, until the queue
   // moves past it (lib/feedbackPacing.ts).
   useFeedbackHold(item !== null);
+  // After a refusal or an outage nothing was recorded: the item stays answerable.
+  const retryable = result !== null && result.unavailable;
+  const answered = alreadyGraded || (result !== null && !result.unavailable);
+  React.useEffect(() => {
+    if (item?.kind !== "check") return;
+    if (answered) drafts.current.delete(item.id);
+    else drafts.current.set(item.id, { answer, choice, reason, confidence });
+  }, [item, answered, answer, choice, reason, confidence]);
 
   // spec §13 A135: apply `focusNext` once nothing is in flight and its target is
   // on screen. A dialog (the crisis-support card) keeps focus.
@@ -286,9 +298,6 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
     return true;
   };
 
-  // After a refusal or an outage nothing was recorded: the item stays answerable.
-  const retryable = result !== null && result.unavailable;
-  const answered = alreadyGraded || (result !== null && !result.unavailable);
   const canSubmit = !busy && !answered && checkHasAnswer(item, choice, reason, answer);
 
   return (
@@ -330,7 +339,7 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
       {/* Always in the DOM, so the note is announced when it appears. */}
       <div aria-live="polite">{renderNotice(notice)}</div>
 
-      {renderNothingServed(next, item, statusRef)}
+      {renderNothingServed(next, item, statusRef, held(summary))}
 
       {item && (
         <div data-testid="review-item" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -361,7 +370,9 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
             </div>
           )}
 
-          {(answered || pause !== null) && (
+          {/* #866 K16: after a grade the grader could not make, Next goes on and
+              the question comes back after the rest (a refusal stays: own words) */}
+          {(answered || pause !== null || (retryable && !result?.refused)) && (
             <button
               data-testid="review-next"
               className="btn btn--sm"
@@ -386,6 +397,9 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
 
 /** Why the panel moved past the last item (see the header). */
 type Notice = "reported" | "gone";
+
+/** What was typed for a check, kept while the queue is on other items (#866 K16). */
+type Draft = { answer: string; choice: string; reason: string; confidence: StudentConfidence | null };
 
 const NOTICE_TEXT: Record<Notice, string> = {
   reported: "Thanks — that question is reported and won't be shown to you again.",
@@ -427,6 +441,10 @@ function checkHasAnswer(item: ReviewItem | null, choice: string, reason: string,
   return item.format === "mc_reason" ? choice !== "" && reason.trim() !== "" : answer.trim() !== "";
 }
 
+/** Concepts the queue holds back today (novice at the tutor hard level, or all
+ *  at the grader cap): not "all caught up" while they wait. */
+const held = (summary: ReviewSummaryResponse | null) => (summary?.paused ?? 0) + (summary?.grading_paused ?? 0);
+
 function renderPauseBanner(pause: LoopBudgetPause | null, summary: ReviewSummaryResponse | null) {
   if (pause) {
     return (
@@ -437,6 +455,11 @@ function renderPauseBanner(pause: LoopBudgetPause | null, summary: ReviewSummary
         message={answerPauseMessage(pause)}
       />
     );
+  }
+  const grading = summary?.grading_paused ?? 0;
+  if (grading > 0) { // #866 K16: the grader cap holds every due concept's check
+    const until = summary?.grading_paused_until ?? null;
+    return <BudgetPausedBanner testId="review-budget-paused" resetAt={until} message={gradingPausedMessage(grading, until)} />;
   }
   const paused = summary?.paused ?? 0;
   if (paused > 0) {
@@ -451,6 +474,7 @@ function renderNothingServed(
   next: ReviewNextResponse | null,
   item: ReviewItem | null,
   statusRef: React.RefObject<HTMLDivElement | null>,
+  heldBack: number,
 ) {
   if (!next || item) return null;
   return next.due_total > 0 ? (
@@ -459,7 +483,7 @@ function renderNothingServed(
     </div>
   ) : (
     <div ref={statusRef} tabIndex={-1} data-testid="review-empty" style={{ fontSize: 14, color: "var(--text-muted)" }}>
-      All caught up — nothing is due right now.
+      {heldBack > 0 ? "Nothing else is due right now." : "All caught up — nothing is due right now."}
     </div>
   );
 }
@@ -478,7 +502,8 @@ function stillWaiting(next: ReviewNextResponse): string {
 
 function resultText(result: ReviewAnswerResponse): React.ReactNode {
   if (result.refused) return "Answer in your own words — that read as instructions to the grader.";
-  if (result.unavailable) return "Grader unavailable — try again later.";
+  // #866 K16: the queue moves on, and this question comes back after the rest
+  if (result.unavailable) return "The grader couldn't grade that just now. Nothing was recorded: try again, or press Next — this question comes back after the rest of today's review.";
   return (
     <>
       <strong>{result.correct ? "Correct." : "Not yet."}</strong>

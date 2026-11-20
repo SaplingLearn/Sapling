@@ -475,9 +475,12 @@ def held(item) -> bool:
 def is_servable(item) -> bool:
     """A34: only an item that states a final answer can be leak-checked, so
     only such an item is ever selected (fail closed; a legacy row is None).
-    A124: and never a held one (a key nobody has confirmed after a dispute;
-    A123: an item its reporters quarantined or staff retired)."""
-    return states_final_answer(item) and not held(item)
+    #866 K16: and only one with a rubric — the grader answers `unavailable` to
+    every answer to an item with none (a malformed rubric_json reads as []), so
+    posing it could only ever re-serve it. A124: and never a held one (a key
+    nobody has confirmed after a dispute; A123: an item its reporters
+    quarantined or staff retired)."""
+    return states_final_answer(item) and bool(getattr(item, "rubric", None)) and not held(item)
 
 
 # ── identity ───────────────────────────────────────────────────────────────

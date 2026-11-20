@@ -594,6 +594,80 @@ describe("DueQueue — stated confidence (spec §13 A127)", () => {
   });
 });
 
+describe("DueQueue — a check that cannot be graded never pins the queue (#866 K16)", () => {
+  const unavailable = () => graded({ correct: null, hint: null, unavailable: true, refused: false });
+
+  it("an ungraded answer says the question comes back later, and Next moves on", async () => {
+    mockNext.mockResolvedValueOnce(next(FREE)).mockResolvedValueOnce(next(CARD));
+    mockAnswer.mockResolvedValueOnce(unavailable());
+    render(<DueQueue userId="u1" />);
+    await userEvent.type(await screen.findByTestId("review-answer-input"), "the base case");
+    await userEvent.click(screen.getByTestId("review-submit"));
+    const hint = await screen.findByTestId("review-hint");
+    expect(hint.textContent).toContain("Nothing was recorded");
+    expect(hint.textContent).toContain("comes back after the rest of today's review");
+    expect(hint.textContent).not.toMatch(/try again later/i);
+    expect(screen.getByTestId("review-submit").textContent).toBe("Try again");
+    await userEvent.click(screen.getByTestId("review-next"));
+    expect(await screen.findByTestId("review-flip")).toBeTruthy();
+  });
+
+  it("the question comes back with what the student had typed", async () => {
+    mockNext.mockResolvedValueOnce(next(FREE)).mockResolvedValueOnce(next(CARD)).mockResolvedValueOnce(next(FREE));
+    mockAnswer.mockResolvedValueOnce(unavailable()).mockResolvedValueOnce(graded({ hint: null }));
+    render(<DueQueue userId="u1" />);
+    await userEvent.type(await screen.findByTestId("review-answer-input"), "the base case");
+    await userEvent.click(screen.getByTestId("review-submit"));
+    await userEvent.click(await screen.findByTestId("review-next"));
+    await userEvent.click(await screen.findByTestId("review-flip"));
+    await userEvent.click(screen.getByTestId("review-rate-3"));
+    await userEvent.click(await screen.findByTestId("review-next"));
+    const box = (await screen.findByTestId("review-answer-input")) as HTMLTextAreaElement;
+    expect(box.value).toBe("the base case");
+  });
+
+  it("at the grader cap the answer's 429 says checks wait, and Next goes on to the flashcards", async () => {
+    mockNext.mockResolvedValueOnce(next(FREE)).mockResolvedValueOnce(next(CARD));
+    mockAnswer.mockRejectedValue(new ApiError("ai budget reached", 429, {
+      body: { detail: "ai budget reached", reset_at: "2026-09-27T00:00:00Z", scope: "daily_grades", session_capped: false },
+    }));
+    render(<DueQueue userId="u1" />);
+    await userEvent.type(await screen.findByTestId("review-answer-input"), "the base case");
+    await userEvent.click(screen.getByTestId("review-submit"));
+    const banner = await screen.findByTestId("review-budget-paused");
+    expect(banner.textContent).toContain("Today's grading limit is reached");
+    expect(banner.textContent).toContain("Flashcards keep working");
+    expect(banner.textContent).not.toContain("AI tutor paused");
+    await userEvent.click(screen.getByTestId("review-next"));
+    expect(await screen.findByTestId("review-flip")).toBeTruthy();
+  });
+
+  it("checks held at the grader cap are named, with when grading reopens", async () => {
+    mockNext.mockResolvedValue(next(null, 600, 0));
+    mockSummary.mockResolvedValue(summary({ grading_paused: 2, grading_paused_until: "2026-09-27T00:00:00Z" }));
+    render(<DueQueue userId="u1" />);
+    const banner = await screen.findByTestId("review-budget-paused");
+    expect(banner.textContent).toContain("Checks on 2 concepts wait until");
+    expect(banner.textContent).toContain("when today's grading limit resets");
+    expect(banner.getAttribute("data-reset-at")).toBe("2026-09-27T00:00:00Z");
+    // nothing else is due, but the checks are not "all caught up"
+    await waitFor(() => expect(screen.getByTestId("review-empty").textContent).toContain("Nothing else is due right now"));
+  });
+
+  it("Next after a rate-limit pause brings the same check back with the answer kept", async () => {
+    mockNext.mockResolvedValue(next(FREE));
+    mockAnswer.mockRejectedValue(new ApiError("ai budget reached", 429, {
+      body: { detail: "ai budget reached", reset_at: "2026-09-27T00:01:00Z", scope: "rate_limit", session_capped: false },
+    }));
+    render(<DueQueue userId="u1" />);
+    await userEvent.type(await screen.findByTestId("review-answer-input"), "the base case");
+    await userEvent.click(screen.getByTestId("review-submit"));
+    await userEvent.click(await screen.findByTestId("review-next"));
+    await waitFor(() => expect(mockNext).toHaveBeenCalledTimes(2));
+    expect((screen.getByTestId("review-answer-input") as HTMLTextAreaElement).value).toBe("the base case");
+  });
+});
+
 describe("DueQueue — the answer boxes are visible fields (#866 Z29)", () => {
   // Tailwind's preflight strips every textarea's border, padding and fill: a box
   // with no style of its own is invisible, so each one carries the loop's field

@@ -36,7 +36,9 @@ from services.loop.reveals import _ledger, _refloor, _reveal_floor
 # user, course and UTC day) is keyed on the requesting user, and a row of another
 # student's is a 403. No review route gates on the tutor budget level: the only budget
 # reads are `pause_novice` (A20 — novice concepts pause, flashcards and the rest keep
-# working) and the rate limit on a CHECK answer, the one body that runs a model.
+# working), the grader cap (#866 K16 — at STUDENT_DAILY_GRADES the queue holds its
+# checks and a check answer is the cap's 429) and the rate limit on a CHECK answer,
+# the one body that runs a model.
 
 
 _REVIEW_NOT_FOUND = "review item not found"
@@ -58,6 +60,25 @@ def _review_now() -> datetime:
 def _pause_novice(user_id: str) -> bool:
     """A20: at the tutor hard level novice-band concepts are held back."""
     return bool(ai_budget.check(user_id, "tutor", "novice").pause_novice)
+
+
+def _grading_cap(user_id: str):
+    """#866 K16: the grader cap's hard decision (spec §3.5 STUDENT_DAILY_GRADES;
+    scope daily_grades, reset at the next UTC midnight), or None while grading
+    is open. At the cap no check can be graded until it lifts: the queue holds
+    its checks back and serves flashcards, and /review/answer answers a check
+    with the cap's 429 before any claim."""
+    decision = ai_budget.check(user_id, "grader")
+    return decision if decision.level == "hard" else None
+
+
+def _grading_until(user_id: str, held: int) -> dict:
+    """`grading_paused_until`: when the grader cap that holds `held` concepts
+    lifts (#866 K16; the decision `_grading_cap` read, from this request's
+    budget cache). Read only when something is held."""
+    decision = _grading_cap(user_id) if held else None
+    reset = decision.reset_at if decision is not None else None
+    return {"grading_paused_until": reset.isoformat() if reset else None}
 
 
 _NO_PAUSE = {"paused_scope": None, "paused_until": None}
@@ -148,11 +169,13 @@ def review_next(
         now,
         loop_state=loop_state,
         pause_novice=lambda: _pause_novice(user_id),
+        hold_checks=lambda: _grading_cap(user_id) is not None,  # #866 K16
         # spec §13 A140: passed only when on, so a flag-off build is the plain one
         **({"varied": True} if varied_practice.varied_on(user_id) else {}),
     )
-    # the item already open for its key first: a refresh never moves on
-    ordered = sorted(queue, key=lambda i: not review.is_open(loop_state, i, now))
+    # the item already open for its key first: a refresh never moves on; one
+    # whose last answer could not be graded after the rest (#866 K16)
+    ordered = review.try_order(queue, loop_state, now)
     payload = None
     try:
         for item in ordered:
@@ -203,6 +226,10 @@ async def review_answer(body: ReviewAnswerBody, request: Request) -> dict:
     # #117: every sync PostgREST read and write below hops off the event loop
     if body.kind == "check":  # the one review body that runs a model (the grader)
         await asyncio.to_thread(ai_budget.enforce_rate_limit_for, body.user_id)
+        # #866 K16: at the grader cap no answer can be graded until it lifts —
+        # the cap's 429 before any claim (nothing is graded or written; spec §3.5)
+        if (capped := await asyncio.to_thread(_grading_cap, body.user_id)) is not None:
+            raise ai_budget.AIBudgetExceeded(capped)
     await asyncio.to_thread(_review_course, body.user_id, body.course_id)
     now = _review_now()
     if body.session_id != review.review_session_id(body.user_id, body.course_id, now):
@@ -313,7 +340,9 @@ def review_summary(
 ) -> dict:
     """Today's due counts, budget and retention target. Read-only: it never creates
     the review session. `paused_scope` / `paused_until` name the cap that holds
-    the `paused` novice concepts and when it lifts (#866 K18)."""
+    the `paused` novice concepts and when it lifts (#866 K18);
+    `grading_paused_until` when the grader cap that holds the `grading_paused`
+    concepts lifts (#866 K16)."""
     _gate(user_id, request)
     enforce_abuse_limit(abuse_limits.LOOP_ACTION, user_id)  # audit Z02
     _review_course(user_id, course_id)
@@ -328,8 +357,10 @@ def review_summary(
         now,
         loop_state=loop_state,
         pause_novice=lambda: _pause_novice(user_id),
+        hold_checks=lambda: _grading_cap(user_id) is not None,  # #866 K16
     )
     body.update(_pause_scope(user_id, body.get("paused") or 0))
+    body.update(_grading_until(user_id, body.get("grading_paused") or 0))
     return body
 
 

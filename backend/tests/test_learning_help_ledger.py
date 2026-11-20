@@ -16,7 +16,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from learning import params
-from learning.checks import CheckItem
+from learning.checks import CheckItem, RubricItem
 from learning.ladder import Rung
 from tests import test_learn_loop_routes as _routes
 from tests import test_learning_probe_planner as _probe
@@ -163,7 +163,8 @@ def _item(i, qh, fmt="free", d=2):
     return CheckItem(
         id=f"id{i}", course_id="c1", concept_key="k", format=fmt, difficulty=d,
         prompt=f"What is {i}?", reference_answer=f"answer {i} is 4{i}",
-        rubric=[], common_wrong=[], source_chunk_ids=[], question_hash=qh,
+        # #866 K16: a servable item has a rubric (the grader needs one)
+        rubric=[RubricItem(id="r1", text="states it")], common_wrong=[], source_chunk_ids=[], question_hash=qh,
         final_answer=f"4{i}", created_at=f"2026-01-0{i}",
     )
 
