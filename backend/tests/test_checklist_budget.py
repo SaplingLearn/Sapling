@@ -527,3 +527,34 @@ def test_pre_generation_denial_releases_only_prepared_hold(monkeypatch, reservat
         svc.refresh_checklist("owner", "course", learning_loop=True)
     assert error.value.status_code == 503
     assert calls == [{"no_dispatch": True}]
+
+
+def test_the_default_slot_hold_fits_the_daily_cap():
+    """#866 review (b1-budget, defect 1): the SQL admit denies a hold above the
+    daily cap even at zero spend. The default topic_checklist slot (and its
+    llm_fallback model) must fit, or no loop-on student could ever refresh."""
+    from decimal import Decimal
+
+    import config
+    from agents.topic_checklist import checklist_model_names
+
+    hold = budget.price_hold(checklist_model_names())
+    assert hold.usd <= Decimal(str(config.STUDENT_DAILY_BUDGET_USD))
+
+
+def test_a_hold_above_the_daily_cap_is_a_policy_error_before_any_rpc(monkeypatch, caplog):
+    """A slot priced past the daily cap (e.g. SAPLING_MODEL_TOPIC_CHECKLIST on
+    Sonnet) is a configuration error: an ERROR naming the cause and the policy
+    503, never the misleading "no allowance left", and no database call."""
+    import logging
+
+    from fastapi import HTTPException
+
+    calls = []
+    monkeypatch.setattr(budget, "_call", lambda *a, **k: calls.append(a))
+    with caplog.at_level(logging.ERROR, logger=budget.__name__):
+        with pytest.raises(HTTPException) as exc:
+            budget.admit("u1", "e1", "h", ("claude-sonnet-5-5", "gemini-2.5-flash"))
+    assert exc.value.status_code == 503 and "price policy" in exc.value.detail
+    assert calls == []
+    assert any("exceeds the daily cap" in r.getMessage() for r in caplog.records)

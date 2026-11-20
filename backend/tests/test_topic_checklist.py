@@ -978,3 +978,37 @@ def test_a_learning_loop_refresh_runs_and_settles_on_the_real_claude_slot(state,
     assert bill["created_at"] == NOW.isoformat()
     stored = db["topic_checklists"][0]
     assert decrypt_json(stored["content"], bind=bind("topic_checklists", "content", stored)) == outline().model_dump()
+
+
+def test_a_loop_off_run_sends_mains_output_ceiling_and_timeout(monkeypatch):
+    """#866 review (b1-budget, defect 3): main's checklist agent had no
+    model_settings, so a Claude slot ran at the model's own max_tokens and the
+    slot timeout. The loop-off path restates those over the loop agent's
+    8192-token / 60 s spend-hold bounds."""
+    import asyncio
+    import json
+
+    from anthropic.resources.beta.messages.messages import AsyncMessages
+    from anthropic.types.beta import BetaMessage, BetaTextBlock, BetaUsage
+
+    from agents._providers import ANTHROPIC_MAX_TOKENS, timeout_for
+    from services import topic_checklist_service as svc
+
+    sent = []
+
+    async def create(self, **kwargs):
+        sent.append((kwargs["max_tokens"], kwargs.get("timeout")))
+        return BetaMessage(
+            id="m", type="message", role="assistant", model=kwargs["model"],
+            content=[BetaTextBlock(type="text", text=json.dumps({"topics": []}))],
+            stop_reason="end_turn", stop_sequence=None,
+            usage=BetaUsage(input_tokens=10, output_tokens=5,
+                            cache_creation_input_tokens=0, cache_read_input_tokens=0),
+        )
+
+    monkeypatch.delenv("SAPLING_MODEL_MODE", raising=False)
+    monkeypatch.setattr(AsyncMessages, "create", create)
+    monkeypatch.setattr(svc, "record_agent_usage", lambda r, **k: r)
+    asyncio.run(svc._generate_unbudgeted({"sources": [], "assessments": []}, "u"))
+    assert [max_tokens for max_tokens, _ in sent] == [ANTHROPIC_MAX_TOKENS]
+    assert svc._main_run_settings()["timeout"] == timeout_for("topic_checklist")

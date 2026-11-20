@@ -14,6 +14,7 @@ possible bill.
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import ROUND_CEILING, Decimal, InvalidOperation
@@ -26,6 +27,8 @@ from db.connection import rpc
 from db.scope import runs_as_service
 from services import llm_pricing
 from services.usage_receipts import PreparedUsageReceipt
+
+_logger = logging.getLogger(__name__)
 
 POLICY = "checklist-50k-3x8192-v2"
 #: The run the hold prices (agents/topic_checklist.py CHECKLIST_LIMITS): the
@@ -182,11 +185,23 @@ def _holds(row: dict, hold: Hold) -> bool:
 def admit(user_id: str, enrollment_id: str, input_hash: str, model_names: tuple[str, ...]) -> Reservation | None:
     """Admit one paid refresh, holding `price_hold(model_names)`."""
     hold = price_hold(model_names)
+    daily_usd = _cap(config.STUDENT_DAILY_BUDGET_USD)
+    if hold.usd > Decimal(daily_usd):
+        # #866 review (b1-budget, defect 1): the SQL admit denies a hold above
+        # the daily cap even at zero spend, so every refresh would read as "no
+        # allowance left". Say what is wrong instead, before any database call.
+        _logger.error(
+            "checklist hold %s USD on %s exceeds the daily cap %s USD: no paid "
+            "refresh can ever be admitted; point the topic_checklist slot at a "
+            "cheaper model or raise STUDENT_DAILY_BUDGET_USD",
+            hold.usd, list(hold.models), daily_usd,
+        )
+        raise _policy_error()
     operation_id = uuid4()
     params = {"p_user_id": user_id, "p_enrollment_id": enrollment_id, "p_input_hash": input_hash,
               "p_operation_id": str(operation_id), "p_receipt_id": str(uuid5(NAMESPACE_URL, f"sapling:checklist-receipt:{operation_id}")),
               "p_policy": POLICY,
-              "p_daily_usd": _cap(config.STUDENT_DAILY_BUDGET_USD),
+              "p_daily_usd": daily_usd,
               "p_monthly_usd": _cap(config.STUDENT_MONTHLY_BUDGET_USD),
               "p_daily_tokens": _token_cap(config.STUDENT_DAILY_TOKENS),
               "p_held_usd": str(hold.usd), "p_held_tokens": hold.tokens, "p_models": list(hold.models)}

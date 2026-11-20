@@ -460,9 +460,34 @@ def _needs_generation(snapshot: dict, cache: dict | None) -> bool:
     return bool(snapshot["payload"]["sources"]) and (cache is None or cache["input_hash"] != snapshot["hash"])
 
 
+#: Gemini's own output ceiling for the 2.5 models (what a request with no
+#: max_output_tokens gets), for a slot pointed back at a gemini-* model.
+_GEMINI_DEFAULT_MAX_OUTPUT_TOKENS = 65_536
+
+
+def _main_run_settings() -> dict:
+    """The bounds main's checklist run had (#866 review of b1-budget, defect 3).
+    Main's agent carried NO model_settings, so a request went out at the slot
+    model's own ceiling and the resilience layer's per-slot timeout. The loop's
+    agent adds a fixed 8192-token cap and a 60 s timeout for its spend hold;
+    those cannot be unset per run, so a loop-off run restates main's values on
+    top: Claude's ceiling (adaptive thinking counts against it, so 8192 could
+    cut a long outline and turn it into validation retries and a 503 main never
+    gave), Gemini's own default, and the slot timeout."""
+    from agents._providers import ANTHROPIC_MAX_TOKENS, slot_provider, timeout_for
+
+    ceiling = (
+        ANTHROPIC_MAX_TOKENS
+        if slot_provider("topic_checklist") == "anthropic"
+        else _GEMINI_DEFAULT_MAX_OUTPUT_TOKENS
+    )
+    return {"max_tokens": ceiling, "timeout": timeout_for("topic_checklist")}
+
+
 async def _generate_unbudgeted(payload: dict, user_id: str) -> TopicOutline:
     result = await asyncio.wait_for(topic_checklist_agent.run(
         json.dumps(payload), deps=payload, usage_limits=WORKER_LIMITS,
+        model_settings=_main_run_settings(),
     ), timeout=GENERATION_TIMEOUT_SECONDS)
     # Attribute the usage row to the student explicitly: the per-user cost
     # rollups and the $ai_generation mirror both key on it.
