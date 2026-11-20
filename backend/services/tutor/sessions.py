@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
 
-from db.connection import rpc, table
+from db.connection import like_literal, pg_quote_value, rpc, table
 from db.scope import runs_as_service
 from models import EndSessionBody, ModeSwitchBody, RenameSessionBody
 from services import events_service
@@ -20,6 +20,7 @@ from services.academics import offering_course_id
 from services.auth_guard import get_session_user_id, guard_off_loop, require_self
 from services import abuse_limits
 from services.request_limits import aenforce_abuse_limit
+from services.graph_service import _normalize_concept
 from services.encryption import bind, decrypt_if_present, decrypt_json_column, encrypt_json
 from services.session_modes import NOT_REVIEW, REVIEW_MODE
 from services.streak_service import touch_streak_safe
@@ -55,28 +56,41 @@ MODE_DISPLAY_NAMES = {
 #: The `sessions` columns `_session_summary` reads its own concept from.
 _SESSION_CONCEPT_COLUMNS = "user_id,topic,offering_id"
 
+#: How many candidate nodes the session-concept lookup reads: the name filter
+#: leaves only spellings of one name, so this only bounds the read.
+_CONCEPT_CANDIDATES = 50
+
 
 def _session_concept(session: dict | None) -> str | None:
     """#866 K47: the concept a session was opened on — its topic, when that is
     the name of one of the student's graph nodes (in the session's course when
-    it has one), as the picker and the map send it; the stored name. None for a
-    free topic, a course or a note's title, or a failed read (best effort: the
+    it has one), as the picker and the map send it; the stored name. A topic
+    matches a node up to case and spacing (`graph_service._normalize_concept`,
+    the fold the graph dedups on and the quiz's tutor recency matches with), so
+    both readers agree on which sessions were on a concept. None for a free
+    topic, a course or a note's title, or a failed read (best effort: the
     summary never fails an end)."""
     row = session or {}
     topic = (row.get("topic") or "").strip()
     user_id = row.get("user_id")
-    if not topic or not user_id:
+    key = _normalize_concept(topic)
+    if not key or not user_id:
         return None
-    filters = {"user_id": f"eq.{user_id}", "concept_name": f"eq.{topic}"}
+    # Server-side narrowing to spellings of this one name (each word verbatim,
+    # anything between words); the exact fold is decided below, in Python.
+    pattern = "%".join(like_literal(word) for word in key.split(" "))
+    filters = {"user_id": f"eq.{user_id}", "or": f"(concept_name.ilike.{pg_quote_value(pattern)})"}
     try:
         course_id = offering_course_id(row.get("offering_id"))
         if course_id:
             filters["course_id"] = f"eq.{course_id}"
-        rows = table("graph_nodes").select("concept_name", filters=filters, limit=1)
+        rows = table("graph_nodes").select("concept_name", filters=filters, limit=_CONCEPT_CANDIDATES) or []
     except Exception:  # noqa: BLE001 — best effort: an unread concept never fails the end
         logger.warning("session summary: the session's concept could not be read", exc_info=True)
         return None
-    return (rows[0].get("concept_name") or None) if rows else None
+    names = [r.get("concept_name") or "" for r in rows if isinstance(r, dict)]
+    matches = [name for name in names if _normalize_concept(name) == key]
+    return (topic if topic in matches else matches[0]) if matches else None
 
 
 def _session_summary(

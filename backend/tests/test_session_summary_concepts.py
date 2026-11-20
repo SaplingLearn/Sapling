@@ -13,6 +13,7 @@ is the name of one of the student's graph nodes.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
@@ -25,8 +26,27 @@ ENDED = "2026-11-01T10:20:00+00:00"
 SESSION = {"user_id": "u1", "topic": "Recursion", "offering_id": "off-1", "started_at": STARTED}
 
 
+def _matches(node: dict, filters: dict) -> bool:
+    """PostgREST's answer to the concept lookup: `eq.` is exact, an
+    `or=(concept_name.ilike."…")` is a case-insensitive LIKE (`%` any run)."""
+    name = node.get("concept_name") or ""
+    eq = filters.get("concept_name")
+    if eq is not None:
+        return name == eq.removeprefix("eq.")
+    ilike = re.fullmatch(r'\(concept_name\.ilike\."(.*)"\)', filters.get("or", ""))
+    if ilike is None:
+        return True
+    literal = ilike.group(1).replace("\\\\", "\\")  # undo pg_quote_value's doubling
+    regex = "".join(
+        ".*" if part == "%" else re.escape(part[-1])
+        for part in re.findall(r"\\.|%|.", literal)
+    )
+    return re.fullmatch(regex, name, flags=re.IGNORECASE | re.DOTALL) is not None
+
+
 def _tables(*, msgs, nodes, sessions=None):
-    """sessions / messages / graph_nodes, recording reads."""
+    """sessions / messages / graph_nodes, recording reads; the node lookup
+    honours its name filter, as PostgREST would."""
     reads: dict[str, list[dict]] = {}
 
     def factory(name):
@@ -36,7 +56,7 @@ def _tables(*, msgs, nodes, sessions=None):
             reads.setdefault(name, []).append({"columns": columns, "filters": filters or {}, "limit": limit})
             return {
                 "messages": msgs,
-                "graph_nodes": nodes,
+                "graph_nodes": [n for n in nodes if _matches(n, filters or {})],
                 "sessions": sessions or [],
             }.get(name, [])
 
@@ -59,8 +79,37 @@ def test_a_session_opened_on_a_concept_covers_it():
     assert summary == {"concepts_covered": ["Recursion"], "time_spent_minutes": 20}
     # the student's own node, in the session's course, by its stored name
     lookup = reads["graph_nodes"][0]
-    assert lookup["filters"] == {"user_id": "eq.u1", "concept_name": "eq.Recursion", "course_id": "eq.c1"}
-    assert lookup["columns"] == "concept_name" and lookup["limit"] == 1
+    assert lookup["filters"] == {"user_id": "eq.u1", "or": '(concept_name.ilike."recursion")', "course_id": "eq.c1"}
+    assert lookup["columns"] == "concept_name" and lookup["limit"] == 50
+
+
+def test_a_topic_matches_its_node_up_to_case_and_spacing_as_the_quiz_signal_does():
+    """One rule for "the session's own concept" in both K47 readers: the
+    graph's own case/whitespace fold. A topic "recursion " (or " Binary   SEARCH")
+    is the session opened on the stored node, whose stored name is listed."""
+    msgs = [{"role": "user", "graph_update_json": None}]
+    summary, reads = _summary({**SESSION, "topic": "recursion "}, msgs, [{"concept_name": "Recursion"}])
+    assert summary["concepts_covered"] == ["Recursion"]
+    summary, reads = _summary(
+        {**SESSION, "topic": " Binary   SEARCH"}, msgs, [{"concept_name": "Binary Search"}],
+    )
+    assert summary["concepts_covered"] == ["Binary Search"]
+    # the server-side narrowing: the folded words, joined by LIKE's %
+    assert reads["graph_nodes"][0]["filters"]["or"] == '(concept_name.ilike."binary%search")'
+
+
+def test_a_candidate_the_fold_does_not_equal_is_no_match():
+    # the ilike pattern is a superset ("binary%search" also matches
+    # "Binary tree search"); only an exact fold counts
+    msgs = [{"role": "user", "graph_update_json": None}]
+    summary, _ = _summary({**SESSION, "topic": "Binary Search"}, msgs, [{"concept_name": "Binary tree search"}])
+    assert summary["concepts_covered"] == []
+
+
+def test_a_like_metacharacter_in_the_topic_is_escaped():
+    msgs = [{"role": "user", "graph_update_json": None}]
+    _, reads = _summary({**SESSION, "topic": "100% of_it"}, msgs, [])
+    assert reads["graph_nodes"][0]["filters"]["or"] == '(concept_name.ilike."100\\\\%%of\\\\_it")'
 
 
 def test_it_comes_first_and_the_tutors_new_concepts_follow():
@@ -86,7 +135,7 @@ def test_a_free_topic_a_course_or_a_note_title_is_no_concept():
     msgs = [{"role": "user", "graph_update_json": None}]
     summary, reads = _summary({**SESSION, "topic": "Week 3 notes"}, msgs, [])
     assert summary["concepts_covered"] == []
-    assert reads["graph_nodes"][0]["filters"]["concept_name"] == "eq.Week 3 notes"
+    assert reads["graph_nodes"][0]["filters"]["or"] == '(concept_name.ilike."week%3%notes")'
 
 
 def test_no_session_row_or_topic_reads_nothing_more():
