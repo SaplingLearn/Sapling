@@ -27,8 +27,10 @@ export type AdminFlag = {
   requires?: string | null;
   /** #866 K24: what every student gets whatever is stored here, and why — the
    *  learning loop's kill switch, or an env override — or null when the
-   *  stored settings decide. */
-  forced?: FlagRule | null;
+   *  stored settings decide. `only_with` names a flag the answer holds under:
+   *  a loop flag's own env override forces it only for students with
+   *  `learning_loop` on, and the rest still get its off variant. */
+  forced?: (FlagRule & { only_with?: string | null }) | null;
   updated_at: string | null; updated_by: string | null; updated_by_name: string | null;
   targets: AdminFlagTarget[];
 };

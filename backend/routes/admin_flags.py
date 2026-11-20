@@ -53,6 +53,8 @@ def _served(served: loop_gate.ServedFlag | None) -> dict | None:
     out = _rule(served.resolution)
     if served.master is not None:
         out["master"] = {"key": loop_gate.LEARNING_LOOP_FLAG, **_rule(served.master)}
+    if served.only_with is not None:
+        out["only_with"] = served.only_with  # forced only for students with it on
     return out
 
 

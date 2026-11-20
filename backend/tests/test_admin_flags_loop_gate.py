@@ -157,6 +157,26 @@ def test_the_list_names_an_env_override_of_the_loop(monkeypatch):
     assert rows["quiz_concept_plan"]["forced"] is None  # still its own settings, per student
 
 
+def test_a_loop_flags_own_env_override_holds_only_where_the_loop_is_on(monkeypatch):
+    """SAPLING_FLAG_<KEY>=on for a loop flag forces it for students with the
+    loop on; a student without it still gets off, so the row must not claim
+    "on for every student" unless learning_loop is forced on too."""
+    monkeypatch.setenv("SAPLING_FLAG_QUIZ_CONCEPT_PLAN", "on")
+    db = _db(learning_loop="off", quiz_concept_plan="off")
+    on_override = {"variant": "on", "step": "env_override", "detail": "SAPLING_FLAG_QUIZ_CONCEPT_PLAN"}
+    assert _rows(db)["quiz_concept_plan"]["forced"] == {**on_override, "only_with": "learning_loop"}
+    assert _explain(db, "quiz_concept_plan")["step"] == "requires"  # u1 has no loop: off
+
+    monkeypatch.setenv("SAPLING_FLAG_LEARNING_LOOP", "on")
+    assert _rows(db)["quiz_concept_plan"]["forced"] == on_override  # now truly everyone
+
+    monkeypatch.delenv("SAPLING_FLAG_LEARNING_LOOP")
+    monkeypatch.setenv("SAPLING_FLAG_QUIZ_CONCEPT_PLAN", "off")
+    assert _rows(db)["quiz_concept_plan"]["forced"] == {  # off holds whatever the loop says
+        "variant": "off", "step": "env_override", "detail": "SAPLING_FLAG_QUIZ_CONCEPT_PLAN",
+    }
+
+
 def test_the_list_reads_no_flag_for_the_forced_answer(monkeypatch):
     """`forced` is the environment only: the kill switch costs no read."""
     monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", False)

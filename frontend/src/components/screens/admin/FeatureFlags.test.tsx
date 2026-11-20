@@ -212,6 +212,24 @@ describe("FeatureFlagsTab", () => {
     );
   });
 
+  it("a loop flag's own env override says it holds only for students with the loop on (#866 K24)", async () => {
+    api.adminListFlags.mockResolvedValue({ flags: [
+      { ...LOOP, default_variant: "off" },
+      { ...PLAN, default_variant: "off", forced: {
+        variant: "on", step: "env_override", detail: "SAPLING_FLAG_QUIZ_CONCEPT_PLAN", only_with: "learning_loop",
+      } },
+    ] });
+    render(<FeatureFlagsTab />);
+    expect((await screen.findByTestId("flag-state-quiz_concept_plan")).textContent).toBe("On");
+    expect(screen.getByTestId("flag-forced-quiz_concept_plan").textContent).toBe("Set on the server");
+    fireEvent.click(screen.getByTestId("flag-row-quiz_concept_plan"));
+    expect((await screen.findByTestId("flag-forced-note-quiz_concept_plan")).textContent).toBe(
+      "On for every student with Learning loop on: the server's SAPLING_FLAG_QUIZ_CONCEPT_PLAN environment variable "
+      + "forces it, whatever is set here; a change here applies once that is lifted. "
+      + "Students without Learning loop get Off.",
+    );
+  });
+
   it("adds and removes an override", async () => {
     const withTarget = {
       ...FLAG,

@@ -111,6 +111,11 @@ class ServedFlag(NamedTuple):
 
     resolution: Resolution
     master: Resolution | None = None
+    #: forced_for_everyone only: the flag the answer is conditional on — set
+    #: when a loop flag's own SAPLING_FLAG_ override forces a non-off answer
+    #: but `learning_loop` is not forced on, so only students with the loop on
+    #: get it and the rest still get off (learning_loop's own rules decide).
+    only_with: str | None = None
 
 
 def _off(key: str) -> str:
@@ -145,8 +150,11 @@ def forced_for_everyone(key: str) -> ServedFlag | None:
     decide, student by student (the admin flag list's row state). The
     environment only, no read: the kill switch over `learning_loop` and
     LOOP_FLAGS; for a LOOP_FLAGS key, `learning_loop` forced off by its
-    SAPLING_FLAG_ override; then the flag's own override. A flag the loop does
-    not gate: None (its `env_override` is reported as before)."""
+    SAPLING_FLAG_ override; then the flag's own override — for a LOOP_FLAGS
+    key a non-off one holds for every student only when `learning_loop` is
+    forced on too; otherwise it holds only for students with the loop on, and
+    the answer says so (`only_with`). A flag the loop does not gate: None (its
+    `env_override` is reported as before)."""
     if key != LEARNING_LOOP_FLAG and key not in LOOP_FLAGS:
         return None
     if not config.LEARNING_LOOP_ENABLED:
@@ -158,6 +166,10 @@ def forced_for_everyone(key: str) -> ServedFlag | None:
             Resolution(master, "env_override", f"SAPLING_FLAG_{LEARNING_LOOP_FLAG.upper()}"),
         )
     own = env_override(key)
-    if own is not None:
-        return ServedFlag(Resolution(own, "env_override", f"SAPLING_FLAG_{key.upper()}"))
-    return None
+    if own is None:
+        return None
+    forced = Resolution(own, "env_override", f"SAPLING_FLAG_{key.upper()}")
+    if key in LOOP_FLAGS and own != _off(key) and master is None:
+        # learning_loop is not forced: a student without it still gets off
+        return ServedFlag(forced, only_with=LEARNING_LOOP_FLAG)
+    return ServedFlag(forced)

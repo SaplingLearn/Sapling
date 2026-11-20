@@ -163,6 +163,15 @@ export function forcedNote(flag: AdminFlag): { chip: string; tip: string } | nul
     const needs = flagMeta(f.master?.key ?? f.detail).title;
     return { chip: `${needs} off`, tip: `${v} for every student: it needs ${needs}, which the server's ${f.master?.detail ?? "settings"} forces off, ${tail}` };
   }
+  if (f.only_with) {
+    const needs = flagMeta(f.only_with).title;
+    const off = variantLabel(flag, flag.variants[0]);
+    return {
+      chip: "Set on the server",
+      tip: `${v} for every student with ${needs} on: the server's ${f.detail} environment variable forces it, `
+        + `${tail} Students without ${needs} get ${off}.`,
+    };
+  }
   return { chip: "Set on the server", tip: `${v} for every student: the server's ${f.detail} environment variable forces it, ${tail}` };
 }
 
