@@ -43,18 +43,18 @@ import {
   answerAtEnd,
   chooseOption,
   expectAskReply,
-  expectAskedQuestionFloored,
+  expectAskedAnswerKeepsItsCredit,
   expectQuizAskSession,
   primeQuizBrowser,
   scriptedStem,
 } from "./support/quizStack";
-import { BKT_L0, bktAfterCorrect } from "./support/quiz";
+import { bktAfterCorrect } from "./support/quiz";
 import { USER_ACTIVE } from "./support/stack";
 
-/** PKG-14b (spec §11.2): 3 unassisted `mc` corrects from the BKT prior (the
- *  seeded node has no learner_state row, HANDOFF-03) → 0.978259, in both lanes
- *  — the quiz has no legacy path after the cutover. */
-const ALL_CORRECT_AFTER = bktAfterCorrect(BKT_L0, 3);
+/** PKG-14b (spec §11.2): 3 unassisted `mc` corrects from the node's stored
+ *  score (no learner_state row: BKT starts from it, #866 K03), in both lanes —
+ *  the quiz has no legacy path after the cutover. */
+const ALL_CORRECT_AFTER = bktAfterCorrect(SEEDED_RECURSION_MASTERY, 3);
 
 /** The one attempt row this journey created — the seeded baseline attempts are
  *  namespaced `rich-*` and the route mints uuid4 ids. */
@@ -154,10 +154,10 @@ test("a quiz launched from the tree moves mastery and returns to the node panel"
   await expect(newRow).toBeVisible({ timeout: 30_000 });
   await expect(newRow).toContainText("3/3");
   // `formatMasteryDelta` renders the attempt's p_delta (p_after − p_before of
-  // the evidence: BKT_L0 0.35 → 0.978259 = +63%). The sign is the point: an
+  // the evidence, from the seeded 0.25: #866 K03). The sign is the point: an
   // all-correct quiz can never render a negative move.
   await expect(newRow).toContainText(
-    `+${Math.round((ALL_CORRECT_AFTER - BKT_L0) * 100)}% mastery`,
+    `+${Math.round((ALL_CORRECT_AFTER - SEEDED_RECURSION_MASTERY) * 100)}% mastery`,
   );
   await expect(page.getByTestId(`tree-node-recent-quiz-${SEEDED_RECURSION_ATTEMPT}`)).toBeVisible();
 });
@@ -340,8 +340,8 @@ test("Ask about this seeds the tutor, streams, and leaves the attempt intact", a
   expect(finished.id).toBe(midAttempt.id);
   expect(finished.completed_at).not.toBeNull();
   expect(Number(finished.score)).toBe(2);
-  // …and its evidence on the asked question carries the help floor (A99).
-  await expectAskedQuestionFloored(NODE_RECURSION, askedHash);
+  // …and its evidence on the asked question keeps its credit: the Ask came after the answer was locked (A99, #866 K20).
+  await expectAskedAnswerKeepsItsCredit(NODE_RECURSION, askedHash);
 
   // ── The handoff was real: the tutor now lists the session it opened ──────
   const sessionsAfter = await page.request.get(`/api/learn/sessions/${USER_ACTIVE}?limit=50`);

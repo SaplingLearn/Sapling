@@ -60,9 +60,11 @@ export const MC_G = 0.25;
 export const MC_S = 0.1;
 
 /** §3.1 correct update + learn step, `n` unassisted `mc` corrects from `before`.
- *  A node with no `learner_state` row starts from BKT_L0, NOT from its legacy
- *  `graph_nodes.mastery_score` (HANDOFF-03: the legacy score is not a prior), so
- *  the seeded 0.25 concept's first quiz reads `before = BKT_L0`. */
+ *  A node with no `learner_state` row starts from its stored
+ *  `graph_nodes.mastery_score` when that is above 0 (#866 audit K03, owner
+ *  decision 2026-11-19; it replaces HANDOFF-03's "the legacy score is not a
+ *  prior"), so the seeded 0.25 concept's first quiz reads `before = 0.25`; a
+ *  never-studied concept (score 0) still starts from BKT_L0. */
 export function bktAfterCorrect(before: number, n: number): number {
   let p = before;
   for (let i = 0; i < n; i++) {
@@ -166,18 +168,21 @@ export async function expectQuizAskSession(userId: string, timeout = 10_000): Pr
 }
 
 /**
- * Spec §13 A99: the quiz evidence on the asked question carries the help
- * floor — its row (one per question, the A100 claim) is graded at the reveal
- * rung, in both lanes.
+ * Spec §13 A99 as amended by #866 K20 (owner decision 2026-11-19): "Ask about
+ * this" opens only on an answer already locked, so help asked AFTER it does
+ * not floor that answer — its evidence row (one per question, the A100 claim)
+ * keeps full credit (max_rung 0), in both lanes. The help row itself is
+ * recorded at QUIZ_ASK_HELP_RUNG (`expectQuizAskSession`), so a later answer to the same
+ * question is floored.
  */
-export async function expectAskedQuestionFloored(nodeId: string, questionHash: string): Promise<void> {
+export async function expectAskedAnswerKeepsItsCredit(nodeId: string, questionHash: string): Promise<void> {
   const rows = await queryRaw(
     `SELECT max_rung FROM node_mastery_events
       WHERE node_id = $1 AND event_type = 'evidence' AND question_hash = $2`,
     [nodeId, questionHash],
   );
   expect(rows).toHaveLength(1);
-  expect(Number(rows[0].max_rung)).toBe(QUIZ_ASK_HELP_RUNG);
+  expect(Number(rows[0].max_rung)).toBe(0);
 }
 
 // ── Timeouts ──────────────────────────────────────────────────────────────

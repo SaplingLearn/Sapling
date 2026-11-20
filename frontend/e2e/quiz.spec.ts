@@ -42,7 +42,6 @@ import {
   QUIZ_LENGTH,
   SEEDED_MASTERY,
   SUBMIT_TIMEOUT,
-  BKT_L0,
   answerAtEnd,
   appAttempts,
   bktAfterCorrect,
@@ -54,10 +53,9 @@ import {
   startQuiz,
 } from "./support/quiz";
 
-/** PKG-14b (spec §11.2, PKG-14 §Derived expectations): 3 unassisted `mc`
- *  corrects from the BKT prior (the seeded node has no learner_state row) →
- *  0.710733 → 0.913664 → 0.978259. */
-const EXPECTED_AFTER = bktAfterCorrect(BKT_L0, QUIZ_LENGTH);
+/** PKG-14b (spec §11.2): 3 unassisted `mc` corrects from the node's stored
+ *  score (it has no learner_state row, so BKT starts from it: #866 K03). */
+const EXPECTED_AFTER = bktAfterCorrect(SEEDED_MASTERY, QUIZ_LENGTH);
 
 /** The whole scripted quiz, answered correctly, in `at-end` order. */
 const ALL_CORRECT = CORRECT_LABELS.map((label, i) => ({ n: i + 1, label }));
@@ -129,9 +127,9 @@ test("quiz journey: all-correct answers raise mastery in UI and DB, monotonicall
 
   // MONOTONICITY (UI): a fully correct quiz never lowers the score.
   expect(uiAfter).toBeGreaterThanOrEqual(uiBefore);
-  // The evidence path's `before` is the BKT prior, not the legacy seeded
-  // score: a node with no learner_state row starts from BKT_L0 (HANDOFF-03).
-  expect(uiBefore).toBe(Math.round(BKT_L0 * 100));
+  // The evidence path's `before` is the stored score the screens showed: a
+  // node with no learner_state row starts BKT from it (#866 K03).
+  expect(uiBefore).toBe(Math.round(SEEDED_MASTERY * 100));
 
   // ── DB: node score moved, and UI and DB agree ───────────────────────────
   const nodeAfter = await queryRaw(
@@ -168,7 +166,7 @@ test("quiz journey: all-correct answers raise mastery in UI and DB, monotonicall
     // MONOTONICITY (event): a correct-only submission records a delta ≥ 0.
     expect(Number(ev.delta)).toBeGreaterThanOrEqual(0);
   }
-  expect(Number(eventsAfter[0].p_before)).toBeCloseTo(BKT_L0, 10);
+  expect(Number(eventsAfter[0].p_before)).toBeCloseTo(SEEDED_MASTERY, 10);
   expect(Number(eventsAfter[QUIZ_LENGTH - 1].p_after)).toBeCloseTo(EXPECTED_AFTER, 5);
 
   // ── DB: the attempt row was completed through the app ───────────────────

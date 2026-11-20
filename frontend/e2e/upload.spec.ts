@@ -339,6 +339,10 @@ test("with upload_prereq_edges on, an upload writes its prerequisite edge once (
   browser,
   page,
 }) => {
+  // #866 K55/Z42: A118 is a learning-loop amendment, so the edges follow the
+  // uploader's loop gate — with the loop off (both off lanes) the upload is the
+  // pre-loop upload and writes no edge, whatever this flag says.
+  test.skip(loopOffLane, "loop path: the edges follow the uploader's learning-loop gate");
   await expectFunctionMode();
 
   // Turn the flag on for this student through the API the /admin tab uses.

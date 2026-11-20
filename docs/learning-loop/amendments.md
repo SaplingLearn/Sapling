@@ -413,3 +413,24 @@ not make on its own; what the code does meanwhile is stated with each:
    pins. **Waits on the owner:** a timed practice exam, an exam-proximity
    rule beside A13's retention target, or neither; that amendment updates the
    test.
+
+### Owner decisions from the #866 review (2026-11-19), to record in §13
+
+Two changes to rules the spec states, decided by the owner during the #866
+integration. They are in the code and its tests; the spec rows still read
+the old way until they are recorded as amendments:
+
+- **A stored score is the starting belief (supersedes HANDOFF-03).** A
+  concept with no `learner_state` row starts BKT from its stored
+  `graph_nodes.mastery_score` when that is above 0, clamped to `BKT_P_MAX`;
+  a never-studied concept (score 0) keeps `BKT_L0`. Propagated neighbours
+  are seeded the same way. Known gap: the A123 void replay still starts such
+  a node from the prior, because the seed is not journaled
+  (`backend/services/graph_service.py::_unmeasured_state`; the tests in
+  `backend/tests/test_learning_evidence_apply.py` named `*stored_mastery*`).
+- **Help asked after a locked answer does not floor it (amends A99).**
+  "Ask about this" opens only on an answer already recorded, so the quiz's
+  help floor applies only to help recorded before the answer; the help row
+  still floors any later answer to the same question
+  (`backend/services/quiz/submission.py::_help_floor`, its `answered_at`
+  cutoffs; the E2E `expectAskedAnswerKeepsItsCredit`).

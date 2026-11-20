@@ -73,7 +73,7 @@ import {
   answerAtEnd,
   appAttempts,
   expectAskReply,
-  expectAskedQuestionFloored,
+  expectAskedAnswerKeepsItsCredit,
   expectQuizAskSession,
   chooseAndSubmit,
   expectLocation,
@@ -499,8 +499,8 @@ test("ask-without-abandoning: the tutor opens over the question, streams, closes
   expect(attempts).toHaveLength(1);
   expect(attempts[0].completed_at).not.toBeNull();
   expect(Number(attempts[0].score)).toBe(QUIZ_LENGTH - 1);
-  // …and the asked question's evidence carries the help floor (A99).
-  await expectAskedQuestionFloored(NODE_ID, askedHash);
+  // …and the asked question's evidence keeps its credit: the Ask came after the answer was locked (A99, #866 K20).
+  await expectAskedAnswerKeepsItsCredit(NODE_ID, askedHash);
 
   // The dashboard exit (R-10): a quiz reached from the dashboard says so, and
   // goes back there rather than to the tree — or, as before #537, to /learn.

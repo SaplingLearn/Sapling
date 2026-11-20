@@ -58,7 +58,7 @@ export {
   ASK_PANEL_REPLY,
   ASK_PANEL_REPLY_TAIL,
   expectAskReply,
-  expectAskedQuestionFloored,
+  expectAskedAnswerKeepsItsCredit,
   expectQuizAskSession,
 } from "./quiz";
 

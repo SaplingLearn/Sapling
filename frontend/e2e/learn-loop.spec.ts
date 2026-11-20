@@ -1393,7 +1393,13 @@ test("a phone learner confirms a goal, sees prerequisite planning and retains it
   await context.close();
 });
 
-test("an earned hint arriving late cannot reopen a graded check in the same session", async ({ browser }) => {
+test("an answer waits for an earned hint in flight, and a graded check shows no hint after it", async ({ browser }) => {
+  // #866 K09: once the server has granted (and charged) a hint, Submit and
+  // "I don't know" wait for it, so the old race — a late hint landing on a
+  // check already graded — can no longer be started from the UI. This pins
+  // what the UI now promises: the answer controls hold while the hint loads,
+  // the hint arrives on the open check, and "I don't know" then grades it with
+  // no hint left behind on the graded check.
   test.skip(loopOffLane, "loop path: default lane only");
   test.setTimeout(LOOP_JOURNEY_TIMEOUT_MS);
   const P = await learningParams(["PROBE_SESSION_CAP", "GATE_INDEPENDENT_MIN_S_NOVICE"]);
@@ -1405,7 +1411,7 @@ test("an earned hint arriving late cannot reopen a graded check in the same sess
     actionStarted = true;
     await held;
     try {
-      await route.fulfill({ json: { reply: "OBSOLETE_HINT_FOR_GRADED_CHECK", phase: "hint", graph_update: {}, mastery_changes: [] } });
+      await route.continue();
     } catch { /* the context may have closed after an earlier assertion */ }
   });
   try {
@@ -1419,23 +1425,22 @@ test("an earned hint arriving late cannot reopen a graded check in the same sess
     // The server must grant the hint — for this novice on a concept with no
     // prerequisite edge that is the worked example, granted first and asked for
     // by the client at once (spec §13 A122); otherwise the real attempt/dwell
-    // gate. Only its later text response is held, modeling an in-flight action
-    // rather than bypassing help.
+    // gate. Only its response is held, modeling an in-flight action.
     await expect.poll(async () => {
       if (!actionStarted && await hint.isEnabled()) await hint.click();
       return actionStarted;
     }, { timeout: Number(P.GATE_INDEPENDENT_MIN_S_NOVICE) * 1000 + GATE_POLL_MARGIN_MS, intervals: [100, 500] }).toBe(true);
-    await page.getByTestId("loop-attempt-idk").click();
-    await expect(page.getByTestId("loop-phase")).toHaveAttribute("data-phase", "feedback");
-    await expect(page.getByTestId("tutor-stop")).toHaveCount(0);
+    // K09: the charged hint is in flight, so the answer controls wait for it.
+    await expect(page.getByTestId("loop-attempt-idk")).toBeDisabled();
+    await expect(page.getByTestId("loop-attempt-submit")).toBeDisabled();
     const delivered = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/learn/loop/action");
     release();
     await (await delivered).finished();
-    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+    await expect(page.getByTestId("loop-attempt-idk")).toBeEnabled();
+    await page.getByTestId("loop-attempt-idk").click();
     await expect(page.getByTestId("loop-phase")).toHaveAttribute("data-phase", "feedback");
     await expect(page.getByTestId("loop-continue")).toBeVisible();
     await expect(page.getByTestId("loop-check-prompt")).toHaveCount(0);
-    await expect(page.getByText("OBSOLETE_HINT_FOR_GRADED_CHECK", { exact: true })).toHaveCount(0);
   } finally {
     release();
     await context.close();
