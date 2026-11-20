@@ -5,15 +5,15 @@ SQL only (no app imports): tests/test_tutor_sessions_store.py pins what the
 app does with the answers; this pins the SQL — the atomic materialisation,
 the tombstones, the TTL/cap bounds and that the store is service-only.
 """
+from db.migration_units import MIGRATION_UNITS
 import json
-from pathlib import Path
 
 import psycopg
 import pytest
 
 pytestmark = pytest.mark.integration
 
-_MIGRATIONS = Path(__file__).resolve().parents[2] / "db" / "migrations"
+_MIGRATIONS = MIGRATION_UNITS
 _MIGRATION = _MIGRATIONS / "20261109024225_tutor_pending_sessions.sql"
 #: #117 part 3: learning-loop sessions carry their starting loop document.
 _LOOP_MIGRATION = _MIGRATIONS / "20261111030007_tutor_pending_loop_state.sql"

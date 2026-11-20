@@ -5,6 +5,7 @@ the first history message. Spec §3.4, §3.5, §4, §6, §9, §13 A19/A25."""
 
 from __future__ import annotations
 
+from db.migration_units import MIGRATION_UNITS
 import pathlib
 import re
 from tests.split_patches import patch_loop, setattr_loop
@@ -14,7 +15,7 @@ import services.loop.history
 import services.loop.state
 
 
-MIG_DIR = pathlib.Path(__file__).resolve().parents[1] / "db" / "migrations"
+MIG_DIR = MIGRATION_UNITS
 
 
 def _migration() -> str:

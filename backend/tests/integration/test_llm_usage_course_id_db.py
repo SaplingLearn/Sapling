@@ -11,9 +11,9 @@ Run inside the flock'd local-stack cycle with RUN_INTEGRATION=1."""
 
 from __future__ import annotations
 
+from db.migration_units import MIGRATION_UNITS
 import os
 import uuid
-from pathlib import Path
 
 import pytest
 
@@ -21,7 +21,7 @@ from tests.integration.conftest import _require_local_db_url
 
 pytestmark = pytest.mark.integration
 
-MIGRATION = next((Path(__file__).resolve().parents[2] / "db" / "migrations").glob(
+MIGRATION = next(MIGRATION_UNITS.glob(
     "*_learning_llm_usage_course_id.sql"
 ))
 

@@ -6,11 +6,12 @@ journal records a multi-concept answer."""
 
 from __future__ import annotations
 
+from db.migration_units import MIGRATION_UNITS
 import pathlib
 
 BACKEND = pathlib.Path(__file__).resolve().parents[1]
 REPO = BACKEND.parent
-MIGRATIONS = sorted(p.name for p in (BACKEND / "db" / "migrations").glob("*_learning_varied_practice*.sql"))
+MIGRATIONS = sorted(p.name for p in (MIGRATION_UNITS).glob("*_learning_varied_practice*.sql"))
 
 
 def _wave4(text: str, heading: str) -> str:

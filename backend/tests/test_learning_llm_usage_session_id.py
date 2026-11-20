@@ -13,6 +13,7 @@ unknown and retries — the graph_service journal idiom.
 
 from __future__ import annotations
 
+from db.migration_units import MIGRATION_UNITS
 import ast
 import asyncio
 import importlib
@@ -27,7 +28,7 @@ from agents.usage import record_agent_usage
 from services import events_service
 
 BACKEND = Path(__file__).resolve().parents[1]
-MIG_DIR = BACKEND / "db" / "migrations"
+MIG_DIR = MIGRATION_UNITS
 SCRIPTS = BACKEND / "scripts"
 
 

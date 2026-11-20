@@ -3,6 +3,7 @@ plumbing, route hook, backfill. Spec §3.4, §3.5, §4, §8.6/8.9/8.12, §13 A2/
 
 from __future__ import annotations
 
+from db.migration_units import MIGRATION_UNITS
 import json
 import pathlib
 import re
@@ -15,7 +16,7 @@ from tests.db_fakes import with_async_twins
 from tests.split_patches import DOCUMENTS_MODULES, patch_documents, patch_profile_table, setattr_in
 import services.loop.turn
 
-MIG_DIR = pathlib.Path(__file__).resolve().parents[1] / "db" / "migrations"
+MIG_DIR = MIGRATION_UNITS
 
 
 @pytest.fixture(autouse=True)

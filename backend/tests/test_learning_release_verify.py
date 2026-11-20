@@ -11,6 +11,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from db.migration_units import unit_sql
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 verify = importlib.import_module("learning_release_verify")
 SHA = "a" * 40
@@ -364,7 +366,7 @@ def test_every_column_the_learning_wave2_migrations_add_is_required():
     directory = verify.BACKEND / "db" / "migrations"
     introduced = set()
     for name in _LEARNING_SCHEMA_MIGRATIONS:
-        introduced |= _introduced_columns((directory / name).read_text())
+        introduced |= _introduced_columns(unit_sql(name, directory))
     # 7 post-test window/outcome columns (A112), 13 for A113, 1 for A119, 11 for A124,
     # 22 for A123 (learning_evidence_voids 11, misconception_attempts 6, five columns
     # on node_mastery_events, check_item_reviews and misconceptions), 2 for A128

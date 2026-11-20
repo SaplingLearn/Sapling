@@ -11,8 +11,8 @@ term's enrollment and never touches a node (#766), so it orphans nothing.
 """
 from __future__ import annotations
 
+from db.migration_units import MIGRATION_UNITS
 import re
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -20,7 +20,7 @@ import pytest
 from services import graph_service
 
 MIGRATION = next(
-    (Path(__file__).resolve().parents[1] / "db" / "migrations").glob("*_learning_session_node_erase.sql")
+    (MIGRATION_UNITS).glob("*_learning_session_node_erase.sql")
 )
 
 

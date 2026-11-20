@@ -4,6 +4,7 @@ patch `learning.misconceptions.table`; the rollup test patches `.rpc`."""
 
 from __future__ import annotations
 
+from db.migration_units import MIGRATION_UNITS
 import pathlib
 import re
 from contextlib import contextmanager
@@ -21,7 +22,7 @@ from learning.params import (
 )
 
 BACKEND = pathlib.Path(__file__).resolve().parents[1]
-MIG_DIR = BACKEND / "db" / "migrations"
+MIG_DIR = MIGRATION_UNITS
 
 
 def _migration() -> str:

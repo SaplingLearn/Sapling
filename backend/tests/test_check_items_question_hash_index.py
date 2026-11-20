@@ -8,11 +8,11 @@ by question_hash each such read scans every course's bank."""
 
 from __future__ import annotations
 
-import pathlib
+from db.migration_units import MIGRATION_UNITS
 import re
 from unittest.mock import MagicMock, patch
 
-MIGRATIONS = pathlib.Path(__file__).resolve().parents[1] / "db" / "migrations"
+MIGRATIONS = MIGRATION_UNITS
 
 _INDEX = re.compile(
     r"CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:CONCURRENTLY\s+)?(?:IF\s+NOT\s+EXISTS\s+)?(\w+)\s+"

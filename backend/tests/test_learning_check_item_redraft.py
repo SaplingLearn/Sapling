@@ -9,13 +9,13 @@ bookkeeping fails open: a read or write error never blocks drafting."""
 
 from __future__ import annotations
 
-import pathlib
+from db.migration_units import MIGRATION_UNITS
 import re
 from unittest.mock import patch
 
 import pytest
 
-MIG_DIR = pathlib.Path(__file__).resolve().parents[1] / "db" / "migrations"
+MIG_DIR = MIGRATION_UNITS
 _KEY = "learning rate"
 _CHUNK = {"id": "c1", "chunk_index": 0, "chunk_text": "learning rate text", "doc_id": "doc-1"}
 _OTHER = {"id": "c2", "chunk_index": 1, "chunk_text": "learning rate, revised", "doc_id": "doc-2"}

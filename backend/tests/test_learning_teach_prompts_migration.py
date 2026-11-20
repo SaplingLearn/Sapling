@@ -7,12 +7,13 @@ tests/integration/test_teach_prompts_db.py."""
 
 from __future__ import annotations
 
+from db.migration_units import MIGRATION_UNITS
 import re
 from pathlib import Path
 from unittest.mock import patch
 
 BACKEND = Path(__file__).resolve().parents[1]
-MIG_DIR = BACKEND / "db" / "migrations"
+MIG_DIR = MIGRATION_UNITS
 
 
 def _body() -> str:

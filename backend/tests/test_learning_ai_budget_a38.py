@@ -5,6 +5,7 @@ store is a fake table + rpc and the clock is fixed."""
 
 from __future__ import annotations
 
+from db.migration_units import MIGRATION_UNITS
 import itertools
 import logging
 import pathlib
@@ -17,7 +18,7 @@ import config
 from services import ai_budget
 
 BACKEND = pathlib.Path(__file__).resolve().parents[1]
-MIG_DIR = BACKEND / "db" / "migrations"
+MIG_DIR = MIGRATION_UNITS
 UID = "user_a38"
 NOW = datetime(2026, 9, 29, 15, 0, 0, tzinfo=timezone.utc)
 _ids = itertools.count()

@@ -12,8 +12,8 @@ payload key sets: the pre-series behaviour must be byte-identical.
 
 from __future__ import annotations
 
+from db.migration_units import MIGRATION_UNITS
 import contextlib
-import pathlib
 import re
 from datetime import datetime, timedelta, timezone
 from tests.split_patches import patch_in
@@ -26,7 +26,7 @@ from main import app
 
 client = TestClient(app)
 
-MIG_DIR = pathlib.Path(__file__).resolve().parents[1] / "db" / "migrations"
+MIG_DIR = MIGRATION_UNITS
 USER_ID = "user_test"
 
 LEGACY_LIST_COLS = (

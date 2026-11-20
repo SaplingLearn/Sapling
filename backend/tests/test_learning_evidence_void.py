@@ -17,6 +17,7 @@ for real in tests/integration/test_learning_evidence_void_db.py).
 
 from __future__ import annotations
 
+from db.migration_units import MIGRATION_UNITS
 from copy import deepcopy
 from datetime import datetime, timezone
 
@@ -432,10 +433,9 @@ def test_the_backend_holds_select_and_insert_only_on_both_records():
     records and grants back exactly SELECT and INSERT, guarded (a plain
     Postgres has no service_role). The real-DB half:
     tests/integration/test_learning_evidence_void_db.py."""
-    import pathlib
     import re
 
-    migrations = pathlib.Path(__file__).resolve().parents[1] / "db" / "migrations"
+    migrations = MIGRATION_UNITS
     (grants,) = sorted(migrations.glob("*_learning_evidence_void_grants.sql"))
     (a123,) = sorted(migrations.glob("*_learning_evidence_void.sql"))
     assert grants.name > a123.name, "must sort after A123's migration"
@@ -461,10 +461,9 @@ def test_the_snapshots_the_writer_plans_from_return_exact_floats(function):
     defines or alters each snapshot function must set extra_float_digits = 3:
     a CREATE OR REPLACE replaces every SET clause, so a later re-creation
     carries it itself."""
-    import pathlib
     import re
 
-    migrations = pathlib.Path(__file__).resolve().parents[1] / "db" / "migrations"
+    migrations = MIGRATION_UNITS
     head = re.compile(
         rf"(CREATE\s+OR\s+REPLACE\s+FUNCTION|ALTER\s+FUNCTION)\s+(?:public\.)?{function}\s*\(", re.I
     )

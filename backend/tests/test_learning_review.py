@@ -4,6 +4,7 @@ Hermetic: every table() is a mock, the grader helper is patched."""
 
 from __future__ import annotations
 
+from db.migration_units import MIGRATION_UNITS
 import asyncio
 import copy
 import pathlib
@@ -23,7 +24,7 @@ import services.loop.reviews
 NOW = datetime(2026, 9, 26, 12, 0, tzinfo=timezone.utc)
 USER = "user_andres"
 COURSE = "course-1"
-MIG_DIR = pathlib.Path(__file__).resolve().parents[1] / "db" / "migrations"
+MIG_DIR = MIGRATION_UNITS
 
 
 def _tables(data: dict):

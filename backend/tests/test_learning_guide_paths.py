@@ -33,6 +33,8 @@ from urllib.parse import unquote
 
 import pytest
 
+from db.migration_units import MIGRATION_UNITS
+
 REPO = Path(__file__).resolve().parents[2]
 GUIDE = REPO / "docs" / "learning-loop"
 
@@ -134,10 +136,22 @@ def _problem(span: str) -> str | None:
     path_text, _, symbol = span.partition("::")
     path_text = path_text.split("#", 1)[0]
     if "*" in path_text:
+        if path_text.startswith("backend/db/migrations/") and MIGRATION_UNITS.glob(Path(path_text).name):
+            return None  # a consolidated migration's unit (db/migration_units.py)
         return None if list(REPO.glob(path_text)) else "glob matches no file"
     path = REPO / path_text
     if path_text.endswith("/"):
         return None if path.is_dir() else "no such directory"
+    if not path.exists() and path_text.startswith("backend/db/migrations/"):
+        # A migration consolidated into one file is cited by its unit name
+        # (db/migration_units.py): the citation resolves to that unit's SQL.
+        unit = MIGRATION_UNITS / path.name
+        if not unit.exists():
+            return "no such file"
+        if not symbol:
+            return None
+        word = r"(?<![A-Za-z0-9_])" + re.escape(symbol) + r"(?![A-Za-z0-9_])"
+        return None if re.search(word, unit.read_text()) else f"`{symbol}` does not appear in {path_text}"
     if not path.exists():
         return "no such file"
     if not symbol:

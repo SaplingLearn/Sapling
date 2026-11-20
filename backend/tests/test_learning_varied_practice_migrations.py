@@ -8,10 +8,11 @@ tests/integration/test_varied_practice_db.py."""
 
 from __future__ import annotations
 
+from db.migration_units import MIGRATION_UNITS
 import pathlib
 import re
 
-MIGRATIONS = pathlib.Path(__file__).resolve().parents[1] / "db" / "migrations"
+MIGRATIONS = MIGRATION_UNITS
 REVIEW = MIGRATIONS / "20261108205812_learning_varied_practice_review.sql"
 VALIDATE = MIGRATIONS / "20261108224511_learning_varied_practice_validate.sql"
 LOCK_TIMEOUT = "SET LOCAL lock_timeout = '5s';"

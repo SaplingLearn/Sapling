@@ -6,6 +6,7 @@ sends and models the FK cascades the wipe relies on. The REAL
 chunk rules are exercised end to end rather than mocked away (one test swaps
 it for a recorder to pin call order, one for a failure).
 """
+from db.migration_units import MIGRATION_UNITS
 import re
 from pathlib import Path
 
@@ -473,7 +474,7 @@ def test_classmates_shared_chunk_survives_and_orphan_private_rows_go(db):
 
 # ── The three per-user table sets agree (bundle / wipe / seeder) ────────────
 
-_MIGRATIONS = Path(__file__).resolve().parent.parent / "db" / "migrations"
+_MIGRATIONS = MIGRATION_UNITS
 
 #: Seeder writes that are not per-user account data (catalog rows it may
 #: create on a bare stack, and the account rows it only UPDATEs).

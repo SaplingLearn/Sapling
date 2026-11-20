@@ -25,11 +25,11 @@ can never satisfy one.
 
 from __future__ import annotations
 
-import pathlib
+from db.migration_units import MIGRATION_UNITS
 import re
 from typing import NamedTuple
 
-MIGRATIONS = pathlib.Path(__file__).resolve().parents[1] / "db" / "migrations"
+MIGRATIONS = MIGRATION_UNITS
 #: Definitions from this day on are in scope (the wave-2 migrations, and the
 #: base's checklist-budget fix of the same day).
 WAVE2_START = "20261108000000"

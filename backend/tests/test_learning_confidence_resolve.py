@@ -20,6 +20,7 @@
 
 from __future__ import annotations
 
+from db.migration_units import MIGRATION_UNITS
 import asyncio
 import pathlib
 import re
@@ -44,7 +45,7 @@ import services.loop.closing
 import services.loop.practice
 
 BACKEND = pathlib.Path(__file__).resolve().parents[1]
-MIGRATION = BACKEND / "db" / "migrations" / "20261108092032_learning_student_confidence.sql"
+MIGRATION = MIGRATION_UNITS / "20261108092032_learning_student_confidence.sql"
 
 # the route suites' fixtures (their autouse rate-limit overrides apply here too)
 gate_on, no_rate_limit, seams = _routes.gate_on, _routes.no_rate_limit, _routes.seams
@@ -488,15 +489,15 @@ def test_the_migration_adds_the_column_and_the_commit_function_admits_it():
 
 #: The A123 × A127 reconcile, the definition A141's review re-creates.
 RECONCILE = (
-    BACKEND / "db" / "migrations" / "20261108103333_learning_evidence_commit_reconcile.sql"
+    MIGRATION_UNITS / "20261108103333_learning_evidence_commit_reconcile.sql"
 )
 #: A123's definition, the one A127's three edits are applied to.
-A123_VOID = BACKEND / "db" / "migrations" / "20261108072715_learning_evidence_void.sql"
+A123_VOID = MIGRATION_UNITS / "20261108072715_learning_evidence_void.sql"
 #: Spec §13 A141's review: the LAST definition of learning_evidence_commit, the
 #: reconcile's with the journal's multi_concept key.
-A141_REVIEW = BACKEND / "db" / "migrations" / "20261108205812_learning_varied_practice_review.sql"
+A141_REVIEW = MIGRATION_UNITS / "20261108205812_learning_varied_practice_review.sql"
 #: Spec §13 A150: the LAST definition, A141's review's with the journal's seeds key.
-A150_SEEDS = BACKEND / "db" / "migrations" / "20261120070405_learning_evidence_seeds.sql"
+A150_SEEDS = MIGRATION_UNITS / "20261120070405_learning_evidence_seeds.sql"
 
 
 def _commit_body(text: str) -> str:
@@ -571,7 +572,7 @@ def test_the_function_the_database_runs_is_a123s_plus_the_new_key():
     assert seeds == _commit_body(A141_REVIEW.read_text())
     later = [
         p.name
-        for p in sorted((BACKEND / "db" / "migrations").glob("*.sql"))
+        for p in sorted((MIGRATION_UNITS).glob("*.sql"))
         if p.name > RECONCILE.name
         and "CREATE OR REPLACE FUNCTION learning_evidence_commit" in p.read_text()
     ]

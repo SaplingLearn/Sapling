@@ -5,11 +5,11 @@ Read from the SQL files only: this guards the DDL graph_service depends on and
 does NOT prove the live schema. The E2E lane's fresh-DB replay (`make e2e-up`
 with E2E_FRESH_DB=1) is what applies it."""
 
-import pathlib
+from db.migration_units import MIGRATION_UNITS
 import re
 from typing import get_args
 
-MIG_DIR = pathlib.Path(__file__).resolve().parents[1] / "db" / "migrations"
+MIG_DIR = MIGRATION_UNITS
 #: PKG-05's CHECK list as applied; its migration is immutable, so this is history.
 PKG05_BACKENDS = ("deterministic", "gemini", "gemini_second", "jev")
 #: The list in force since A116: the CHECK the last migration applies, and the Literal.

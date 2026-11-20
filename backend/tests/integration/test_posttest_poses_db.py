@@ -6,11 +6,11 @@ dict, never what PostgREST does with it. Writes go through the route helpers
 (the app layer); assertions read back over psycopg (#397). Since A112 a node
 has one pose row per fixed follow-up window."""
 
+from db.migration_units import MIGRATION_UNITS
 import os
 import threading
 import uuid
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from types import SimpleNamespace
 
 import psycopg
@@ -188,7 +188,7 @@ def test_the_windows_migration_is_idempotent_and_keys_by_window(db_conn):
     url = (os.getenv("SUPABASE_DB_URL") or "").strip()
     _require_local_db_url(url)
     (mig,) = sorted(
-        (Path(__file__).resolve().parents[2] / "db" / "migrations").glob(
+        MIGRATION_UNITS.glob(
             "*_learning_posttest_windows.sql"
         )
     )

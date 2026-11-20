@@ -14,6 +14,7 @@ and every table() is a fake. No model is ever called."""
 
 from __future__ import annotations
 
+from db.migration_units import MIGRATION_UNITS
 import asyncio
 import json
 import pathlib
@@ -50,7 +51,7 @@ from tests.test_learning_check_items import (
     _mc_draft,
 )
 
-MIG_DIR = pathlib.Path(__file__).resolve().parents[1] / "db" / "migrations"
+MIG_DIR = MIGRATION_UNITS
 BACKEND = pathlib.Path(__file__).resolve().parents[1]
 COURSE = "course-1"
 _CHUNK = {"id": "c1", "chunk_index": 0, "chunk_text": "learning rate text", "doc_id": "doc-1"}

@@ -12,9 +12,9 @@ that raises is counted for its cell (`swap_failed`)."""
 
 from __future__ import annotations
 
+from db.migration_units import MIGRATION_UNITS
 import hashlib
 import json
-import pathlib
 import re
 
 import httpx
@@ -25,7 +25,7 @@ from services import encryption as enc
 from services.encryption import bind, decrypt_json, encrypt
 from tests.test_backfill_encryption_aad import FakeDB
 
-MIGRATIONS = pathlib.Path(__file__).resolve().parents[1] / "db" / "migrations"
+MIGRATIONS = MIGRATION_UNITS
 RESEAL = "learning_prequestion_guess_reseal"
 #: The append-only tables where service_role holds no UPDATE (20261109032302,
 #: pinned by tests/integration/test_rls_lockdown_db.py::SERVICE_ROLE_NARROWED).

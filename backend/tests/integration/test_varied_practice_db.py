@@ -24,9 +24,9 @@ Run inside the flock'd local-stack cycle with RUN_INTEGRATION=1."""
 
 from __future__ import annotations
 
+from db.migration_units import MIGRATION_UNITS
 import os
 import uuid
-from pathlib import Path
 
 import pytest
 
@@ -36,7 +36,7 @@ pytestmark = pytest.mark.integration
 
 COURSE = "rich-course-cs101"
 MIGRATION = next(
-    (Path(__file__).resolve().parents[2] / "db" / "migrations").glob("*_learning_varied_practice.sql")
+    MIGRATION_UNITS.glob("*_learning_varied_practice.sql")
 )
 SEP = "\x1f"
 
@@ -233,7 +233,7 @@ def test_the_check_is_added_not_valid_then_validated_in_its_own_transaction(db_c
     import psycopg
     from psycopg.rows import dict_row
 
-    migrations = Path(__file__).resolve().parents[2] / "db" / "migrations"
+    migrations = MIGRATION_UNITS
     review = migrations / "20261108205812_learning_varied_practice_review.sql"
     validate = migrations / "20261108224511_learning_varied_practice_validate.sql"
     assert _validated(db_conn) is True  # after every migration

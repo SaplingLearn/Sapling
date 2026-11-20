@@ -3,10 +3,10 @@ properties graph_service depends on and do NOT prove the live schema. That
 needs `python -m db.migrate` / a replay on PG15 (the E2E lane's
 `make e2e-up`), whose status is recorded in HANDOFF-03 Known gaps."""
 
-import pathlib
+from db.migration_units import MIGRATION_UNITS
 import re
 
-MIG_DIR = pathlib.Path(__file__).resolve().parents[1] / "db" / "migrations"
+MIG_DIR = MIGRATION_UNITS
 
 NEW_EVENT_COLUMNS = (
     "channel",

@@ -10,11 +10,12 @@ tests/integration/test_exact_floats_db.py.
 
 from __future__ import annotations
 
+from db.migration_units import MIGRATION_UNITS
 import pathlib
 import re
 
 BACKEND = pathlib.Path(__file__).resolve().parents[1]
-MIGRATIONS = BACKEND / "db" / "migrations"
+MIGRATIONS = MIGRATION_UNITS
 
 
 def _sql() -> str:
@@ -91,5 +92,5 @@ def test_the_backend_reaches_postgrest_with_the_service_key_or_the_user_scope_on
     from db import user_jwt
 
     assert user_jwt.ROLE == "authenticated"
-    rls = (BACKEND / "db" / "migrations" / "20261109032302_learning_loop_rls.sql").read_text()
+    rls = (MIGRATION_UNITS / "20261109032302_learning_loop_rls.sql").read_text()
     assert "ALTER ROLE authenticated SET extra_float_digits = 3;" in rls

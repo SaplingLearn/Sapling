@@ -1,10 +1,10 @@
 """PKG-00 migration invariants. Live schema is proven by migration replay in
 the E2E lane; this guards the properties later packages depend on."""
 
-import pathlib
+from db.migration_units import MIGRATION_UNITS
 import re
 
-MIG_DIR = pathlib.Path(__file__).resolve().parents[1] / "db" / "migrations"
+MIG_DIR = MIGRATION_UNITS
 
 
 def _migration() -> str:

@@ -10,10 +10,10 @@ answer would have written and reads back over psycopg (#397)."""
 
 from __future__ import annotations
 
+from db.migration_units import MIGRATION_UNITS
 import os
 import uuid
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from types import SimpleNamespace
 
 import psycopg
@@ -296,7 +296,7 @@ def test_the_migration_is_idempotent(db_conn):
     url = (os.getenv("SUPABASE_DB_URL") or "").strip()
     _require_local_db_url(url)
     (mig,) = sorted(
-        (Path(__file__).resolve().parents[2] / "db" / "migrations").glob(
+        MIGRATION_UNITS.glob(
             "*_learning_posttest_outcomes.sql"
         )
     )

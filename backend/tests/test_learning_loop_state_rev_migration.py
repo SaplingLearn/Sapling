@@ -5,10 +5,10 @@ Read from the SQL file only: this guards the DDL the store depends on and does
 NOT prove the live schema. The E2E lane's fresh-DB replay (`make e2e-up` with
 E2E_FRESH_DB=1) is what applies it."""
 
-import pathlib
+from db.migration_units import MIGRATION_UNITS
 import re
 
-MIG_DIR = pathlib.Path(__file__).resolve().parents[1] / "db" / "migrations"
+MIG_DIR = MIGRATION_UNITS
 
 
 def _migration() -> tuple[str, str]:

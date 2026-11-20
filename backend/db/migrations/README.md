@@ -95,3 +95,19 @@ default encoding otherwise and dies on a non-cp1252 migration.
 `tests/test_migration_naming.py` fails if a new `NNNN_` file appears or a
 prefix is unsortable. `tests/test_migrations.py` pins apply order, including
 the three legacy duplicate-prefix pairs whose order is load-bearing.
+
+## Consolidated migrations
+
+`20261120205818_learning_system.sql` holds the learning system (#866): the 62 migrations written for it,
+concatenated unchanged in filename order and consolidated before any
+environment applied them (staging's and production's ledgers held none). The
+runner applies it as one migration, in one transaction.
+
+Each original starts at a `-- @@ unit <original filename>` line. Code that
+needs one migration's SQL reads it by that name through
+`db/migration_units.py` (`unit_sql`, `units`, or `MIGRATION_UNITS`, which
+globs and opens units the way a `Path` opens files), so tests, scripts and
+docs keep citing the original filenames.
+
+Only consolidate migrations that no environment has applied: the ledger keys
+on filename, so a consolidated file re-runs every statement it holds.

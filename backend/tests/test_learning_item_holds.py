@@ -11,7 +11,7 @@ database."""
 
 from __future__ import annotations
 
-import pathlib
+from db.migration_units import MIGRATION_UNITS
 import re
 from unittest.mock import patch
 
@@ -33,7 +33,7 @@ from learning.checks import (
 from tests.test_learning_check_items import _cached_tables, _item
 from tests.test_learning_item_keys import _row
 
-MIG_DIR = pathlib.Path(__file__).resolve().parents[1] / "db" / "migrations"
+MIG_DIR = MIGRATION_UNITS
 
 
 def _migration() -> str:

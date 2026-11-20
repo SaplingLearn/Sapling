@@ -17,10 +17,10 @@ Run inside the flock'd local-stack cycle with RUN_INTEGRATION=1."""
 
 from __future__ import annotations
 
+from db.migration_units import MIGRATION_UNITS
 import os
 import uuid
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -29,7 +29,7 @@ from tests.integration.conftest import _require_local_db_url
 
 pytestmark = pytest.mark.integration
 
-MIGRATION = next((Path(__file__).resolve().parents[2] / "db" / "migrations").glob("*_learning_teach_prompts.sql"))
+MIGRATION = next(MIGRATION_UNITS.glob("*_learning_teach_prompts.sql"))
 USER = "rich-user-loop"  # seeded by db.seed_local_rich
 
 

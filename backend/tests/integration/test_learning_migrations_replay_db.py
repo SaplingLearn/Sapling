@@ -17,6 +17,7 @@ Run inside the B6 flock'd cycle with RUN_INTEGRATION=1.
 
 from __future__ import annotations
 
+from db.migration_units import MIGRATION_UNITS
 import os
 import uuid
 from pathlib import Path
@@ -27,7 +28,7 @@ from tests.integration.conftest import _require_local_db_url
 
 pytestmark = pytest.mark.integration
 
-MIG_DIR = Path(__file__).resolve().parents[2] / "db" / "migrations"
+MIG_DIR = MIGRATION_UNITS
 #: Every learning migration since aaa9085e (the PKG-14 base): half A's arm, poses
 #: and reveals (A88), half B's llm_usage.session_id (A92) and help ledger (A93),
 #: the tier re-derive (A95) and the quiz evidence claims (A100).

@@ -12,8 +12,8 @@ tests/integration/test_check_item_reports_db.py."""
 
 from __future__ import annotations
 
+from db.migration_units import MIGRATION_UNITS
 import math
-import pathlib
 import re
 from datetime import datetime, timedelta, timezone
 from typing import get_args
@@ -27,7 +27,7 @@ from learning import item_lint, item_reports, params
 from learning.checks import CheckItem, Option, RubricItem, WrongReason, question_hash
 from tests.test_learning_check_items import _cached_tables, _draft, _mc_draft, _opts
 
-MIG_DIR = pathlib.Path(__file__).resolve().parents[1] / "db" / "migrations"
+MIG_DIR = MIGRATION_UNITS
 NOW = datetime(2026, 11, 8, 12, 0, tzinfo=timezone.utc)
 
 

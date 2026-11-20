@@ -3,6 +3,7 @@ come from a fake table and the clock is fixed: no DB, no LLM, no network."""
 
 from __future__ import annotations
 
+from db.migration_units import MIGRATION_UNITS
 import asyncio
 import itertools
 import pathlib
@@ -17,7 +18,7 @@ from learning import params
 from services import ai_budget, events_service, llm_pricing
 
 BACKEND = pathlib.Path(__file__).resolve().parents[1]
-MIG_DIR = BACKEND / "db" / "migrations"
+MIG_DIR = MIGRATION_UNITS
 UID = "user_andres"
 NOW = datetime(2026, 9, 26, 15, 0, 0, tzinfo=timezone.utc)
 _ids = itertools.count()

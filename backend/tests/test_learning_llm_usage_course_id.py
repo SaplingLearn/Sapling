@@ -6,6 +6,7 @@ idiom, tests/test_learning_llm_usage_session_id.py)."""
 
 from __future__ import annotations
 
+from db.migration_units import MIGRATION_UNITS
 import ast
 import re
 from pathlib import Path
@@ -16,7 +17,7 @@ from agents.usage import record_agent_usage
 from services import events_service
 
 BACKEND = Path(__file__).resolve().parents[1]
-MIG_DIR = BACKEND / "db" / "migrations"
+MIG_DIR = MIGRATION_UNITS
 
 
 def _migration() -> Path:

@@ -7,6 +7,7 @@ source, imports under key B into the target, and reads the result back under B.
 """
 from __future__ import annotations
 
+from db.migration_units import MIGRATION_UNITS
 import base64
 import csv
 import io
@@ -888,12 +889,11 @@ def _schema_columns(name: str) -> set[str]:
     """Columns of `name` across the migrations: its last CREATE TABLE plus
     every ALTER TABLE … ADD COLUMN."""
     import re
-    from pathlib import Path
 
     from tests.test_account_wipe import _create_table_body
 
     cols = {m.group(1) for m in re.finditer(r"^\s*(\w+)\s+\w", _create_table_body(name), re.M)}
-    migrations = Path(__file__).resolve().parent.parent / "db" / "migrations"
+    migrations = MIGRATION_UNITS
     for path in sorted(migrations.glob("*.sql")):
         for stmt in re.findall(rf"ALTER TABLE (?:public\.)?{name}\b([^;]*);", path.read_text(), re.I):
             cols |= set(re.findall(r"ADD COLUMN(?: IF NOT EXISTS)?\s+(\w+)", stmt, re.I))

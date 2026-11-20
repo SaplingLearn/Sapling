@@ -6,7 +6,7 @@ A20 (arm sessions are exempt from tier downgrades and pause at hard).
 
 from __future__ import annotations
 
-import pathlib
+from db.migration_units import MIGRATION_UNITS
 import re
 from collections import Counter
 from unittest.mock import MagicMock, patch
@@ -22,7 +22,7 @@ import services.loop.state
 # the route suite's fixtures (no_rate_limit is autouse there, so here too)
 gate_on, no_rate_limit, seams = _routes.gate_on, _routes.no_rate_limit, _routes.seams
 
-MIG_DIR = pathlib.Path(__file__).resolve().parents[1] / "db" / "migrations"
+MIG_DIR = MIGRATION_UNITS
 
 
 def test_migration_adds_nullable_loop_arm():

@@ -27,6 +27,7 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 BACKEND = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND))
 
+from db.migration_units import units  # noqa: E402
 from promotion.preflight import ledger_diff, ledger_exists, recorded_filenames  # noqa: E402
 
 MAX_RESPONSE_BYTES = 128_000
@@ -343,11 +344,13 @@ def _arguments(value: str) -> str:
 def required_rpcs(directory: Path) -> dict[str, list[str]]:
     """Read declared signatures from learning/budget migrations, not a stale list."""
     found: dict[str, set[str]] = {}
-    for path in sorted(directory.glob("*.sql")):
-        if not any(key in path.name for key in ("learning_", "budget", "receipt", "reservation")):
+    # Per migration unit: the consolidated learning-system file is read as the
+    # migrations it was made of (db/migration_units.py), each filtered by its name.
+    for name, text in units(directory):
+        if not any(key in name for key in ("learning_", "budget", "receipt", "reservation")):
             continue
         # Current series declarations are static, unquoted public functions.
-        sql = re.sub(r"/\*.*?\*/|--[^\n]*", "", path.read_text(), flags=re.S)
+        sql = re.sub(r"/\*.*?\*/|--[^\n]*", "", text, flags=re.S)
         matches = list(FUNCTION.finditer(sql))
         declared = re.findall(r"\bCREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\b", sql, re.I)
         if len(matches) != len(declared) or re.search(r"\bDROP\s+FUNCTION\b", sql, re.I):

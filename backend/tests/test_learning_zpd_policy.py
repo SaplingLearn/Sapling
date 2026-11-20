@@ -3,6 +3,7 @@ clocks are floats, the only I/O is a mocked `table`."""
 
 from __future__ import annotations
 
+from db.migration_units import MIGRATION_UNITS
 import logging
 import pathlib
 import re
@@ -14,7 +15,7 @@ from learning import params
 from tests.work_meter import assert_linear, cpu_seconds
 
 BACKEND = pathlib.Path(__file__).resolve().parents[1]
-MIG_DIR = BACKEND / "db" / "migrations"
+MIG_DIR = MIGRATION_UNITS
 
 PARAM_NAMES = (
     "BKT_PROFICIENT",

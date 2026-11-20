@@ -17,6 +17,7 @@ the service's parse and the pure rules run for real), the grader at
 
 from __future__ import annotations
 
+from db.migration_units import MIGRATION_UNITS
 import asyncio
 import json
 import pathlib
@@ -40,7 +41,7 @@ from learning.checks import (
 )
 from tests.test_learning_check_items import _ItemsTable, _cached_tables, _draft, _mc_draft
 
-MIG_DIR = pathlib.Path(__file__).resolve().parents[1] / "db" / "migrations"
+MIG_DIR = MIGRATION_UNITS
 BACKEND = pathlib.Path(__file__).resolve().parents[1]
 COURSE = "course-1"
 

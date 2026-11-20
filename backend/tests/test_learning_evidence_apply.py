@@ -4,6 +4,7 @@ tests/test_graph_service.py::_bulk_factory."""
 
 from __future__ import annotations
 
+from db.migration_units import MIGRATION_UNITS
 import re
 from copy import deepcopy
 from contextlib import contextmanager
@@ -343,11 +344,10 @@ class TestLearnerState:
     def test_columns_match_the_migration(self):
         """read_states selects LEARNER_STATE_COLUMNS by name; a column the
         migration does not create is a PostgREST 400 on every read."""
-        import pathlib
 
         from learning.learner_state import LEARNER_STATE_COLUMNS
 
-        mig_dir = pathlib.Path(__file__).resolve().parents[1] / "db" / "migrations"
+        mig_dir = MIGRATION_UNITS
         [path] = sorted(mig_dir.glob("*_learning_learner_state.sql"))
         body = path.read_text().split("CREATE TABLE IF NOT EXISTS learner_state (", 1)[1]
         body = body.split("PRIMARY KEY", 1)[0]

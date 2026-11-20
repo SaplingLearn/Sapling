@@ -13,8 +13,8 @@ tests/integration/test_posttest_outcomes_db.py."""
 
 from __future__ import annotations
 
+from db.migration_units import MIGRATION_UNITS
 import re
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -37,7 +37,7 @@ import services.loop.planning
 
 FMT = {"f": "free", "t": "teachback", "m": "mc_reason"}
 MIGRATION = next(
-    (Path(__file__).resolve().parents[1] / "db" / "migrations").glob("*_learning_posttest_outcomes.sql")
+    (MIGRATION_UNITS).glob("*_learning_posttest_outcomes.sql")
 )
 
 

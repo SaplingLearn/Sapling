@@ -6,15 +6,15 @@ SQL thresholds ARE learning.params', and the CASE agrees with tier_for."""
 
 from __future__ import annotations
 
+from db.migration_units import MIGRATION_UNITS
 import re
-from pathlib import Path
 
 import pytest
 
 from learning.bkt import tier_for
 from learning.params import BAND_NOVICE_MAX, BKT_PROFICIENT, TIER_UNEXPLORED_MAX
 
-MIG_DIR = Path(__file__).resolve().parents[1] / "db" / "migrations"
+MIG_DIR = MIGRATION_UNITS
 
 
 def _sql() -> str:
