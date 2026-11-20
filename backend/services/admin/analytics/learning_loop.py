@@ -702,8 +702,10 @@ def learning_loop_report(from_iso: str, to_iso: str) -> LearningLoopKpis:
         earnest_revise=earnest,
         gates=Gates(
             zero_leaks=served <= GATE_LEAKS_MAX,
-            ceiling_compliance_ok=compliance.rate is not None
-            and compliance.rate >= GATE_CEILING_COMPLIANCE_MIN,
+            # #866 K56: no step carries the signal → inconclusive, never a fail
+            ceiling_compliance_ok=None
+            if compliance.rate is None
+            else compliance.rate >= GATE_CEILING_COMPLIANCE_MIN,
             earnest_revise_ok=None if earnest.gate == "inconclusive" else earnest.gate == "pass",
         ),
         calibration=Calibration(**bkt_calibration(valid), excluded_void=excluded_void),
