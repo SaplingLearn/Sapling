@@ -244,6 +244,28 @@ CASES: list[Case[LoopInput, ConfrontReply]] = [
         },
     ),
     Case(
+        # spec §13 A122 (#866 Z23): a novice whose prerequisite is not known gets
+        # the worked example first — the confronting hint is the H4 example on
+        # an isomorph, in the worked-example-first band format
+        name="confront_hint_worked_first_novice_h4",
+        inputs=(
+            "hint",
+            "novice",
+            int(Rung.H4),
+            "[ACTION: The student asked for a hint. Give a small scaffold or clue without "
+            "giving away the answer.]",
+        ),
+        metadata={
+            "reference": "By the power rule the derivative of x^4 is 4x^3.",
+            "final_answer": "4x^3",
+            "trusted": True,
+            "attempt_first": False,
+            "item_prompt": "What is the derivative of x^4?",
+            "item_format": "free",
+            "misconception": _MIS_POWER,
+        },
+    ),
+    Case(
         name="confront_feedback_injected_misconception_text",
         inputs=(
             "feedback",
@@ -301,6 +323,7 @@ def assembled(case_input: LoopInput, v2: bool = V2) -> str:
         item_format=meta.get("item_format") if phase != "teach" else None,
         answer_released=_released(meta),
         verdict=meta.get("verdict"),
+        attempt_first=meta.get("attempt_first", True),  # A122 (#866 Z23)
         v2=v2,
         plan_reason=plan_reason,
     )

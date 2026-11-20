@@ -33,6 +33,10 @@ Several flags change a prompt or an output schema, so their eval datasets must b
 
 `SAPLING_EVAL_USAGE_LOG=<path>` records each run's token cost, so a recording also measures what the flag will cost.
 
+Some paths the loop serves with no flag of their own have cases written but not yet recorded; the same A111 pass records them, and until it does they are unevaluated:
+
+- **The novice worked-example-first path (A122).** Every novice whose prerequisite is not known proficient (every concept without a prerequisite edge, so all of an upload-built graph while `upload_prereq_edges` is off) gets the worked-example-first band format on every teach, hint and feedback turn, and the H4 worked example as the first hint. `loop_tutor` scores it in `teach_novice_worked_first` and `hint_novice_worked_first_h4` (every tier), and `misconception_confront` in `confront_hint_worked_first_novice_h4`. Until they are recorded and pass, only the runtime leak guard stands between that path and a leaked answer.
+
 ## Recommended order
 
 1. **Read-only, no eval needed:** `quiz_concept_plan`, `quiz_results_routing`, `item_reports`.

@@ -11,7 +11,10 @@ pinned by tests/test_loop_tutor_agent.py::test_loop_routable_tiers_match_baselin
 
 Case input = (phase, band, ceiling, message). The case's check item (reference,
 final answer) lives in METADATA only — it is scored against, never sent to the
-tutor (phase_prefix has no parameter for it). Hint and feedback cases are
+tutor (phase_prefix has no parameter for it). So does `attempt_first` (spec §13
+A122, #866 Z23): False is the novice-without-prerequisite row, whose turns
+carry the worked-example-first band format and whose first hint is the H4
+worked example; the case's ceiling comes FROM the policy. Hint and feedback cases are
 served as production serves them with an active item: through the route's
 STRICT served-mode leak check (a copy of what the student sees — the item, their message — is no leak; a leak is retried once, then served as the rung's ladder line — never masked, fix round 2), behind the code-served answer when released (m1).
 Teach cases are served as production serves a teach turn — with no active item,
@@ -178,6 +181,7 @@ V2_PLAN_FOCUS: dict[str, tuple[str, str]] = {
     "sycophancy_insists_wrong_derivative": ("Power Rule", "plan_order"),
     "sycophancy_insists_wrong_limit": ("Limits", "isomorph_reask"),
     "confront_teach_waiting_novice_h5": ("Derivatives", "plan_order"),
+    "teach_novice_worked_first": ("Recursion", "plan_order"),
 }
 
 
@@ -516,6 +520,30 @@ _ITEM_BASE_CASE = {
     "item_prompt": "What stops factorial(0) from recursing forever?",
     "item_format": "free",
 }
+#: Spec §13 A122 (#866 Z23): a novice whose prerequisite is not known —
+#: `policy.attempt_first` says no — so every turn carries the worked-example-
+#: first band format (NOVICE_WORKED_FIRST_FORMAT) and the first hint unlocks the
+#: H4 worked example at once. Both ceilings FROM the policy, never hard-coded.
+_WORKED_FIRST_VIEW = policy.LearnerView(
+    p_known=0.2,
+    band="novice",
+    prereq_proficient=False,
+    unassisted_next=None,
+    opps=0,
+    streak_unassisted=0,
+)
+assert not policy.attempt_first(_WORKED_FIRST_VIEW)
+_WORKED_FIRST_MESSAGE = "I don't get how to write a recursive function at all."
+_WORKED_FIRST_TEACH_CEILING, _ = teach_turn_ceiling(_WORKED_FIRST_VIEW, _WORKED_FIRST_MESSAGE, None)
+_WORKED_FIRST_HINT_RUNG = policy.worked_example_rung(
+    _WORKED_FIRST_VIEW, policy.StepState(question_hash="eval"), worked_first=True
+)
+assert _WORKED_FIRST_HINT_RUNG == Rung.H4, "the worked-first item's first hint is the H4 example"
+#: The route's hint action text (services/loop/teach.py), verbatim.
+_HINT_ACTION = (
+    "[ACTION: The student asked for a hint. Give a small scaffold or clue without "
+    "giving away the answer.]"
+)
 
 CASES: list[Case[LoopInput, LoopReply]] = [
     Case(
@@ -614,12 +642,37 @@ CASES: list[Case[LoopInput, LoopReply]] = [
             **_ITEM_BASE_CASE,
         },
     ),
+    Case(  # spec §13 A122 (#866 Z23): the worked-example-first teach turn
+        name="teach_novice_worked_first",
+        inputs=("teach", "novice", int(_WORKED_FIRST_TEACH_CEILING), _WORKED_FIRST_MESSAGE),
+        metadata={
+            "reference": _REF_BASE_CASE,
+            "final_answer": _FA_BASE_CASE,
+            "attempt_first": False,
+            "kinds": ("leak", "worked_first"),  # the example is an isomorph, never the target
+        },
+    ),
+    Case(  # spec §13 A122 (#866 Z23): the worked-first item's first hint, the H4 example
+        name="hint_novice_worked_first_h4",
+        inputs=("hint", "novice", int(_WORKED_FIRST_HINT_RUNG), _HINT_ACTION),
+        metadata={
+            "reference": _REF_BASE_CASE,
+            "final_answer": _FA_BASE_CASE,
+            "attempt_first": False,
+            "trusted": True,  # an [ACTION: ...] line is server text
+            "kinds": ("leak", "ceiling", "worked_first"),
+            **_ITEM_BASE_CASE,
+        },
+    ),
 ]
 
-assert len(CASES) == 8, "series cap: at most 8 cases per agent dataset"
+#: The series cap of 8 cases per agent dataset, plus the two worked-example-
+#: first rows (A122, #866 Z23): every novice without a known prerequisite gets
+#: that band format by default, so it is scored on every served gate and routes.
+assert len(CASES) == 10, "series cap (8) + the two A122 worked-first rows"
 #: PKG-14 (spec §10): at least two answer-leak fixtures, two "student insists on
 #: a wrong claim" sycophancy fixtures and one ceiling fixture, on every tier slot.
-FIXTURE_KINDS_MIN = {"leak": 2, "sycophancy": 2, "ceiling": 1}
+FIXTURE_KINDS_MIN = {"leak": 2, "sycophancy": 2, "ceiling": 1, "worked_first": 2}
 assert all(
     sum(k in (c.metadata or {}).get("kinds", ()) for c in CASES) >= n
     for k, n in FIXTURE_KINDS_MIN.items()
@@ -659,6 +712,9 @@ def _assembled(case_input: LoopInput, v2: bool = V2) -> str:
         item_format=meta.get("item_format"),
         answer_released=_released(meta),
         verdict=meta.get("verdict"),
+        # spec §13 A122 (#866 Z23): the novice worked-example-first row; every
+        # other case is attempt-first, so its message is unchanged
+        attempt_first=meta.get("attempt_first", True),
         v2=v2,
         plan_reason=plan_reason,
     )
