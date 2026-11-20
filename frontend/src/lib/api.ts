@@ -22,6 +22,7 @@ import { createStreamPacer, type StreamPacer } from '@/lib/streamPacer';
 import { REAUTH_REQUIRED, isReauthRequired, notifyReauthRequired } from '@/lib/reauth';
 import { ApiError, apiErrorOf, errorFieldsFrom, parseErrorBody } from '@/lib/apiError';
 import { loopBudgetNoticeOf, type LoopBudgetNotice } from '@/lib/loopBudget';
+import type { LoopCreditFields } from '@/lib/loopCredit';
 
 export const API_URL = '';
 
@@ -1323,7 +1324,7 @@ export interface LoopStartResult extends LoopLearningScope, WithCrisisSupport {
  *  list); absent, nothing moved. */
 export interface LoopPlanMoved { approved_plan?: { concepts: LoopPanelConcept[]; cursor: number } }
 /** A loop turn's `done.data` / JSON body (HANDOFF-07 §Symbols). */
-export interface LoopTurnResult extends ChatResult, LoopPlanMoved {
+export interface LoopTurnResult extends ChatResult, LoopPlanMoved, LoopCreditFields { // #866 K07: credit
   phase?: string;
   check?: LoopCheckItem | null;
   budget?: LoopBudgetNotice | null;
@@ -1338,8 +1339,6 @@ export interface LoopTurnResult extends ChatResult, LoopPlanMoved {
   unavailable?: boolean;
   answer_released?: boolean;
   refused?: boolean;
-  /** #866 K07: on a correct verdict, what it earned — see LoopCredit. */
-  credit?: LoopCredit;
   /** PKG-14: present (true) on the graded check that reached ZPD_RATING_EVERY_N_CHECKS. */
   ask_rating?: boolean;
   /** Spec §13 A138: this turn opened a new segment on its ungraded guess (present only then). */
@@ -1349,10 +1348,8 @@ export interface LoopTurnResult extends ChatResult, LoopPlanMoved {
   /** Spec §13 A138: the prequestion answer route's turn (its guess is saved). */
   prequestion_answered?: boolean;
 }
-/** #866 K07: what a correct check answer earned from the help used before it
- *  (backend services/loop/turn.py::_credit_for): `full`, `partial` (a hint,
- *  H1-H3) or `none` (a worked example or a shown answer, H4-H6). */
-export type LoopCredit = 'full' | 'partial' | 'none';
+/** #866 K07: what a correct check answer earned — lib/loopCredit.ts. */
+export type { LoopCredit, LoopCreditReason } from '@/lib/loopCredit';
 /** The perceived-difficulty answer (spec §3.4, §6 zpd.rating). */
 export type LoopRating = 'too_easy' | 'appropriate' | 'too_hard';
 export interface LoopCheckNext extends LoopLearningScope, LoopPlanMoved {

@@ -406,7 +406,9 @@ def seams():
                        "same_session_recheck": kw["same_session_recheck"],
                        "grader_backend": outcome.grader_backend, "confidence": outcome.confidence,
                        # spec §13 A127: the stated label, as the real grade_answer journals it
-                       "student_confidence": stated_confidence(answer.confidence, idk=answer.idk)},
+                       "student_confidence": stated_confidence(answer.confidence, idk=answer.idk),
+                       # spec §13 A141: as the real grade_answer flags a multi-concept apex
+                       "multi_concept": bool(kw.get("multi_concept"))},
                 )
                 row = ev.model_dump(mode="json")
                 kw["deps"].pending_evidence.append(row)
@@ -1798,6 +1800,72 @@ def test_check_answer_says_what_a_correct_answer_earned(gate_on, seams, rung, cr
     assert body["verdict"] == "correct" and body["credit"] == credit
     weight = policy.evidence_for_rung(True, Rung(rung)).weight
     assert (credit == "none") == (weight == 0) and (credit == "full") == (weight == 1)
+
+
+@pytest.mark.parametrize(
+    "rung,recheck,multi,reasons",
+    [
+        (0, True, False, ["recheck"]),  # A76: the next graded item after a release
+        (0, False, True, ["multi_concept"]),  # A141: a multi-concept item's apex
+        (1, True, False, ["hint", "recheck"]),
+    ],
+)
+def test_a_correct_answer_reports_the_weight_the_journal_credited(
+    gate_on, seams, rung, recheck, multi, reasons
+):
+    """#866 K07 (review): the credit is the weight the writer journals
+    (learning.evidence.evidence_weight over the flushed row), not a second rule
+    rebuilt from the rung: an unassisted correct re-check after a release, or a
+    multi-concept apex, counts at a reduced weight and says so, naming the
+    factors that reduced it."""
+    from learning.evidence import Evidence, evidence_weight
+
+    seams.store["doc"] = _state(rung=rung)
+    agent_p, usage_p, _ = _feedback_agent()
+    with agent_p, usage_p, patch_loop("recheck_after_release", return_value=recheck), \
+            patch_loop("is_multi_concept", return_value=multi):
+        body = client.post("/api/learn/loop/check/answer", json=_answer(answer="n == 0 returns 1")).json()
+    assert body["verdict"] == "correct"
+    assert body["credit"] == "partial" and body["credit_reasons"] == reasons
+    flushed = Evidence.model_validate(seams.flush.call_args.args[0].pending_evidence[0])
+    entry = seams.store["doc"]["steps"]["qh-1"]
+    assert entry["credit_factors"] == reasons
+    assert entry["credit_weight"] == evidence_weight(flushed) and 0 < entry["credit_weight"] < 1
+
+
+def test_a_recheck_the_writer_forced_reports_its_reduced_credit(gate_on, seams):
+    """#866 K07 (review): apply_graph_update marks an answer to a question this
+    session already checked as a same-session re-check (graph_service), so the
+    committed receipt, not the sealed grade alone, says what was credited."""
+    seams.store["doc"] = _state(rung=0)
+    attest = seams.receipt.side_effect
+
+    def forced(user_id, operation):
+        receipt = attest(user_id, operation)
+        for row in receipt["observations"]:
+            row.update(same_session_recheck=True, independent=False)
+        return receipt
+
+    seams.receipt.side_effect = forced
+    agent_p, usage_p, _ = _feedback_agent()
+    with agent_p, usage_p:
+        body = client.post("/api/learn/loop/check/answer", json=_answer(answer="n == 0 returns 1")).json()
+    assert body["verdict"] == "correct"
+    assert body["credit"] == "partial" and body["credit_reasons"] == ["recheck"]
+
+
+@pytest.mark.parametrize(
+    "rung,credit",
+    [(0, {"credit": "full"}), (2, {"credit": "partial", "credit_reasons": ["hint"]}), (5, {"credit": "none"})],
+)
+def test_a_step_graded_before_the_credit_record_falls_back_to_its_rung(rung, credit):
+    """#866 K07: a step saved before `credit_weight` was recorded carries only
+    its rung; the one rung mapping answers for it. A recorded weight wins."""
+    from services.loop.turn import _credit_for
+
+    assert _credit_for({"max_rung": rung}) == credit
+    recorded = {"max_rung": 0, "credit_weight": 0.25, "credit_factors": ["hint", "recheck"]}
+    assert _credit_for(recorded) == {"credit": "partial", "credit_reasons": ["hint", "recheck"]}
 
 
 def test_check_answer_names_no_credit_for_a_wrong_answer(gate_on, seams):

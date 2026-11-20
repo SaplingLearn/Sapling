@@ -165,14 +165,25 @@ def _turn_row_ids(kind, session_id: str, body) -> tuple[str | None, str | None]:
     )
 
 
-def _credit_for(entry: dict) -> str:
-    """#866 K07: what a CORRECT graded answer earned, from the help its step
-    recorded (`max_rung`, the A88/A93 floor included) through the one evidence
-    mapping (`policy.evidence_for_rung`): "full", "partial" (help H1-H3: the
-    assisted weight) or "none" (H4-H6: no upward evidence). Never a model's
-    word; the client words the verdict banner from it."""
-    weight = policy.evidence_for_rung(True, Rung(int(entry.get("max_rung") or 0))).weight
-    return "none" if weight <= 0 else "partial" if weight < 1 else "full"
+def _credit_for(entry: dict) -> dict:
+    """#866 K07: what a CORRECT graded answer earned — the weight the writer
+    journaled for it, recorded on the graded step (`credit_weight`,
+    checkpoint._credited): "full", "partial" (with `credit_reasons`, the
+    learning.evidence.weight_factors that reduced it) or "none" (a correct
+    answer after H4-H6). A step graded before that record carries only its
+    `max_rung` (the A88/A93 floor included), read through the one rung mapping
+    (`policy.evidence_for_rung`). Never a model's word; the client words the
+    verdict banner from it."""
+    weight = entry.get("credit_weight")
+    if isinstance(weight, (int, float)) and not isinstance(weight, bool):
+        reasons = [f for f in entry.get("credit_factors") or [] if isinstance(f, str)]
+    else:
+        weight = policy.evidence_for_rung(True, Rung(int(entry.get("max_rung") or 0))).weight
+        reasons = ["hint"] if 0 < weight < 1 else []
+    credit = "none" if weight <= 0 else "partial" if weight < 1 else "full"
+    if credit == "partial" and reasons:
+        return {"credit": credit, "credit_reasons": reasons}
+    return {"credit": credit}
 
 
 class _LoopTurn:
@@ -1500,5 +1511,5 @@ class _LoopTurn:
         if getattr(self, "ask_rating", False):  # PKG-14: present only when true, never false
             extra["ask_rating"] = True
         if self.kind == "feedback" and self.verdict == "correct":
-            extra["credit"] = _credit_for(self.entry)  # #866 K07
+            extra.update(_credit_for(self.entry))  # #866 K07
         return extra

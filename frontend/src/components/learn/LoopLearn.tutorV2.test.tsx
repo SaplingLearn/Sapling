@@ -1025,12 +1025,13 @@ describe("K31 — Tutor V2 renames and deletes sessions, as the legacy Learn scr
 
 describe("K07 — the verdict says what a correct answer earned", () => {
   const plan1 = { concepts: [{ node_id: "n1", concept_name: "Recursion", kind: "new" }], cursor: 0 };
-  async function answerCorrect(credit?: "full" | "partial" | "none") {
+  async function answerCorrect(credit?: "full" | "partial" | "none", reasons?: string[]) {
     api.getLoopSessionStatus.mockResolvedValue(status({ approved_plan: plan1 }));
     api.nextLoopCheck.mockResolvedValue({ phase: "check", check: pose });
     api.streamLoopCheckAnswer.mockResolvedValue(turn({
       reply: "Right.", phase: "feedback", graded: true, verdict: "correct",
       learner_state: [{ node_id: "n1", p_known: 0.6, band: "develop" }], ...(credit ? { credit } : {}),
+      ...(reasons ? { credit_reasons: reasons } : {}),
     }));
     await resumedTeach();
     fireEvent.click(await screen.findByTestId("loop-check-me"));
@@ -1049,8 +1050,23 @@ describe("K07 — the verdict says what a correct answer earned", () => {
   });
 
   it("a correct answer after a hint says it counts partly", async () => {
-    const banner = await answerCorrect("partial");
+    const banner = await answerCorrect("partial", ["hint"]);
+    expect(banner.textContent).toContain("counts partly toward this concept, because you used a hint.");
+  });
+
+  it("a partial credit names what reduced it, never a hint it did not use (review)", async () => {
+    const banner = await answerCorrect("partial", ["recheck", "multi_concept"]);
+    expect(banner.getAttribute("data-credit")).toBe("partial");
     expect(banner.textContent).toContain("counts partly toward this concept");
+    expect(banner.textContent).toContain("already checked, or its answer shown, earlier this session");
+    expect(banner.textContent).toContain("more than one concept at once");
+    expect(banner.textContent).not.toContain("hint");
+  });
+
+  it("a partial credit with no reason says only that it counts partly", async () => {
+    const banner = await answerCorrect("partial");
+    expect(banner.textContent).toContain("That answer counts partly toward this concept.");
+    expect(banner.textContent).not.toContain("because");
   });
 
   it("an unassisted correct answer, or a server that sends no credit, counts in full", async () => {
