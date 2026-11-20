@@ -1599,8 +1599,8 @@ def test_loop_turn_body_and_question_survive_the_served_path_at_the_journeys_run
 #
 # The quiz "Ask about this" sheet asserts E2E_TUTOR_REPLY in the kill-switch lane
 # and E2E_LOOP_TUTOR_REPLY in the default lane, through frontend/e2e/support/
-# quiz.ts (re-exported by support/quizStack.ts). inv_13a's sync scan reads only
-# *.spec.ts, so the support copies are pinned here.
+# quiz.ts (re-exported by support/quizStack.ts). inv_13a's sync scan reads the
+# support modules too since Z48; these pins also hold quizStack.ts's copy.
 
 _SUPPORT_CONST_RX = r'export const (TUTOR_REPLY|LOOP_TUTOR_REPLY) =\s*((?:"(?:[^"\\]|\\.)*"\s*\+?\s*)+);'
 
