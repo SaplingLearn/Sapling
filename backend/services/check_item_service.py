@@ -1856,6 +1856,22 @@ def retire_items_for_uploader(user_id: str) -> int:
         return 0
 
 
+def report_withdrawal_failure(user_id: str | None, document_id: str | None) -> None:
+    """A23 / Z34: a withdrawal that failed — `retire_items_for_documents` for
+    a deleted document raised — is never silent: logged at ERROR and emitted
+    as `learn.check_items_failed` (reason WithdrawalError), exactly as the
+    opt-out path reports its own (`retire_items_for_uploader`), so an operator
+    sees it and re-runs the idempotent withdrawal. Meanwhile the serving reads
+    withhold those items and retire them when they meet them
+    (`_with_live_sources`). Never raises."""
+    logger.error(
+        "check items: withdrawal FAILED for deleted document %s — items drafted from it "
+        "wait for the serving read or a re-run to retire them (A23)",
+        document_id,
+    )
+    _report_failure(user_id, document_id, None, _WITHDRAWAL_ERROR)
+
+
 # ── generation (flag-gated; spec §7: course level, never one student's gate) ─
 
 
