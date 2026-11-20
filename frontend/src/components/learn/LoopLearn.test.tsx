@@ -925,6 +925,17 @@ describe("LoopLearn — teach / check / feedback (A16, A46)", () => {
     expect(screen.getByTestId("loop-check-me")).toBeTruthy();
   });
 
+  it("K06: an open check holds the composer (a chat would only re-pose it, ungraded); feedback reopens it", async () => {
+    api.streamLoopCheckAnswer.mockResolvedValue(turn({ graded: true, verdict: "idk", phase: "feedback", reply: "No problem." }));
+    await withCheckItem();
+    const composer = screen.getByTestId("tutor-input");
+    expect(composer).toBeDisabled();
+    expect(composer.getAttribute("placeholder")).toMatch(/answer the question above/i);
+    fireEvent.click(screen.getByTestId("loop-attempt-idk"));
+    await screen.findByTestId("loop-continue");
+    expect(screen.getByTestId("tutor-input")).toBeEnabled();
+  });
+
   it("a denied hint names its reason", async () => {
     api.requestLoopHint.mockResolvedValue({ denied: "no_genuine_attempt" });
     await withCheckItem();

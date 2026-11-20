@@ -35,6 +35,10 @@ export function uiPhaseOf(phase: string): LoopPhase | null {
   return (UI_PHASES as readonly string[]).includes(phase) ? (phase as LoopPhase) : null;
 }
 
+/** K06: an ungraded check is posed — the check card is the one way to answer
+ *  it (a chat turn now only re-poses it, ungraded and with no reply). */
+export const checkIsOpen = (state: LoopUiState): boolean => state.item !== null && state.phase === "check";
+
 export function initialLoopState(): LoopUiState {
   return {
     phase: "probe",
