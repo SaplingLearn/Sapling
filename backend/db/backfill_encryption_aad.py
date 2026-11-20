@@ -15,7 +15,12 @@ Safe to run against a live app:
 * Compare-and-swap. Each rewrite goes through the `encryption_aad_swap` SQL
   function (migration 20261116162200), which writes only if the cell still
   holds the value this run read (md5), so a concurrent write by the app is
-  never overwritten; that row is retried on the next run.
+  never overwritten; that row is retried on the next run. A cell of an
+  append-only table, where the backend holds no UPDATE (`APPEND_ONLY_SWAPS`:
+  learning_prequestions.guess_json), goes through a SECURITY DEFINER
+  compare-and-swap of its own that only re-seals (PR #866 Z15). A swap that
+  is refused or fails is counted for its cell (`swap_failed`) and the run
+  goes on.
 * Idempotent and resumable. A v2 value under the active kid is skipped, rows
   are paged by primary key (keyset, never offsets), so an interrupted run is
   re-run as is (``--start-after`` skips ahead in a single column).
@@ -80,6 +85,15 @@ from services.encryption import ACTIVE_KID, V2_PREFIX, ColumnSpec
 SWAP_FN = "encryption_aad_swap"
 #: Migration 20261118195701: the in-document twin of SWAP_FN.
 SWAP_NESTED_FN = "encryption_aad_swap_nested"
+#: 🔒 cells in append-only tables, where service_role holds no UPDATE (spec
+#: §13 A138), so SWAP_FN (SECURITY INVOKER) is refused: each is re-sealed
+#: through a SECURITY DEFINER compare-and-swap of its own, which takes
+#: (p_id, p_old_md5, p_new) and only ever replaces a stored value with a v2
+#: ciphertext (PR #866 Z15). A new one is added here with its migration.
+APPEND_ONLY_SWAPS: dict[tuple[str, str], str] = {
+    # 20261120055827_learning_prequestion_guess_reseal.sql
+    ("learning_prequestions", "guess_json"): "learning_prequestion_guess_reseal",
+}
 DEFAULT_BATCH = 200
 #: Primary keys listed per column and category before the list is truncated.
 MAX_LISTED = 25
@@ -95,10 +109,12 @@ class ColumnReport:
     counts: Counter = field(default_factory=Counter)
     listed: dict[str, list[str]] = field(default_factory=dict)
     last_pk: str | None = None
+    #: the error class of the first swap that raised (e.g. HTTPStatusError)
+    failure: str | None = None
 
     def note(self, kind: str, pk: str) -> None:
         self.counts[kind] += 1
-        if kind in ("v2_bad", "undecryptable", "non_string", "no_key", "conflict"):
+        if kind in ("v2_bad", "undecryptable", "non_string", "no_key", "conflict", "swap_failed"):
             ids = self.listed.setdefault(kind, [])
             if len(ids) < MAX_LISTED:
                 ids.append(pk)
@@ -243,10 +259,14 @@ def _md5(value: str) -> str:
 
 def _swap(spec: ColumnSpec, pk_value: str, old: str, new: str) -> bool:
     (pk,) = spec.pk
-    out = rpc(SWAP_FN, {
-        "p_table": spec.table, "p_column": spec.column, "p_pk_column": pk,
-        "p_pk": pk_value, "p_old_md5": _md5(old), "p_new": new,
-    })
+    fn = APPEND_ONLY_SWAPS.get((spec.table, spec.column))
+    if fn is not None:
+        out = rpc(fn, {"p_id": pk_value, "p_old_md5": _md5(old), "p_new": new})
+    else:
+        out = rpc(SWAP_FN, {
+            "p_table": spec.table, "p_column": spec.column, "p_pk_column": pk,
+            "p_pk": pk_value, "p_old_md5": _md5(old), "p_new": new,
+        })
     if isinstance(out, list):
         out = out[0] if out else False
     return bool(out)
@@ -270,7 +290,16 @@ def backfill_column(
             if max_rows is not None and report.counts["rewritten"] >= max_rows:
                 continue
             new = encryption._seal_v2(plain, binding)
-            if swap(spec, pk_value, row[spec.column], new):
+            try:
+                swapped = swap(spec, pk_value, row[spec.column], new)
+            except httpx.HTTPError as exc:
+                # One refused or failed write is that cell's (Z15: a missing
+                # grant once crashed the whole run here): counted, listed and
+                # left v1 for the next run; the rest of the column still runs.
+                report.note("swap_failed", pk_value)
+                report.failure = report.failure or type(exc).__name__
+                continue
+            if swapped:
                 report.counts["rewritten"] += 1
             else:
                 report.note("conflict", pk_value)
@@ -335,7 +364,13 @@ def backfill_nested(
                 if max_rows is not None and report.counts["rewritten"] >= max_rows:
                     continue
                 new = encryption._seal_v2(plain, opened_with)
-                if swap(spec, pk_value, path, value, new):
+                try:
+                    swapped = swap(spec, pk_value, path, value, new)
+                except httpx.HTTPError as exc:
+                    report.note("swap_failed", pk_value)
+                    report.failure = report.failure or type(exc).__name__
+                    continue
+                if swapped:
                     report.counts["rewritten"] += 1
                 else:
                     report.note("conflict", pk_value)
@@ -361,9 +396,17 @@ def _key_guard() -> None:
         )
 
 
-def _probe_swap(*, nested: bool = False) -> None:
+def _probe_swap(*, nested: bool = False, append_only: Iterable[str] = ()) -> None:
     """Fail before scanning when a swap function the run needs is not
     deployed (each probe names a row that does not exist: nothing changes)."""
+    for fn in sorted(set(append_only)):
+        try:
+            rpc(fn, {"p_id": "", "p_old_md5": "", "p_new": "enc2:probe"})
+        except httpx.HTTPError as e:
+            raise Abort(
+                f"{fn} is not callable ({type(e).__name__}); apply migrations first "
+                "(python -m db.migrate) — see APPEND_ONLY_SWAPS"
+            ) from e
     try:
         rpc(SWAP_FN, {
             "p_table": "encryption_key_check", "p_column": "canary", "p_pk_column": "id",
@@ -395,11 +438,15 @@ def _print_report(report: ColumnReport, apply: bool) -> None:
           f"{s.aad_table or s.table}.{s.aad_column or s.column} by {'|'.join(s.key)})")
     print(f"  v2 ok: {c['v2']}   v1: {c['v1']}   "
           f"{'rewritten' if apply else 'would rewrite'}: {c['rewritten'] if apply else c['v1']}")
-    for kind in ("conflict", "v2_bad", "v2_other_kid", "undecryptable", "non_string", "no_key"):
+    for kind in ("conflict", "swap_failed", "v2_bad", "v2_other_kid", "undecryptable",
+                 "non_string", "no_key"):
         if c[kind]:
             ids = report.listed.get(kind, [])
             more = "" if len(ids) >= c[kind] else f" (+{c[kind] - len(ids)} more)"
             print(f"  {kind}: {c[kind]}  {s.pk[0]}={', '.join(ids)}{more}")
+    if report.failure:
+        print(f"  swap_failed: the write was refused or failed ({report.failure}); "
+              "those cells stay v1 for the next run")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -421,7 +468,11 @@ def main(argv: list[str] | None = None) -> int:
             raise Abort("--start-after needs exactly one column (--table and --column)")
         _key_guard()
         if args.apply:
-            _probe_swap(nested=any(isinstance(s, NestedSpec) for s in specs))
+            _probe_swap(
+                nested=any(isinstance(s, NestedSpec) for s in specs),
+                append_only=[APPEND_ONLY_SWAPS[(s.table, s.column)] for s in specs
+                             if (s.table, s.column) in APPEND_ONLY_SWAPS],
+            )
             if not encryption.write_v2_enabled():
                 print("WARNING: ENCRYPTION_WRITE_V2 is not on in THIS environment. Every "
                       "deployed instance must run the v2 readers and write v2 before --apply.")

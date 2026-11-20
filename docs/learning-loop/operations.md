@@ -313,7 +313,11 @@ readiness record before merging. The ordered lists:
   `backend/db/migrations/20261120055517_learning_check_items_question_hash.sql`
   (Z36: an index led by `check_items.question_hash`, which the served-text
   scan's read by hash needs; either side of the code; lock_timeout 5s, safe
-  to run again).
+  to run again) and
+  `backend/db/migrations/20261120055827_learning_prequestion_guess_reseal.sql`
+  (Z15: the compare-and-swap that re-seals an append-only prequestion guess;
+  before `python -m db.backfill_encryption_aad --apply`, which probes it and
+  aborts without writing when it is missing; either side of the code).
 
 Exact wording, the consequences of a wrong order and the rollback notes for
 each are in the readiness record's rollout sections. The data model each

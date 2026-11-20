@@ -268,7 +268,13 @@ where it was stale against the code.
    `loop_state` (on `sessions` and `tutor_pending_sessions`) and re-seals each
    v1 value in place through `encryption_aad_swap_nested` (migration
    `20261118195701`), a compare-and-swap on that one value that also bumps
-   `sessions.loop_state_rev` (#866 C6).
+   `sessions.loop_state_rev` (#866 C6). A cell of an append-only table, where
+   the backend holds no UPDATE (`APPEND_ONLY_SWAPS`: the learning loop's
+   `learning_prequestions.guess_json`), is re-sealed through a SECURITY
+   DEFINER compare-and-swap of its own that only replaces a stored value with
+   a v2 ciphertext (`learning_prequestion_guess_reseal`, migration
+   `20261120055827`; #866 Z15). A swap that is refused or fails is counted for
+   its cell (`swap_failed`, listed by primary key) and the run goes on.
 7. **The key canary** is bound (`encryption_key_check|canary|1`) and seeded as
    v2 when writes are on, but always READ with legacy allowed and never
    backfilled: a v2 canary would make a rollback to pre-v2 code refuse to boot,
