@@ -110,11 +110,12 @@ class ChatBody(BaseModel):
     # turn is not deduplicated across requests.
     turn_id: Optional[str] = Field(default=None, pattern=r"^[A-Za-z0-9_\-]{8,128}$")
     # #866 K12 (docs/safety/crisis-support.md): the quiz Ask panel's first
-    # message QUOTES one quiz question (its stem, options, key and explanation,
-    # and the student's recorded answer), named as on the session start. The
-    # server reads that question off the student's own attempt; only text found
-    # there is screened as stored material (the card beside the reply). Never
-    # trusted on its own: everything else in the message is screened as typed.
+    # message QUOTES one quiz question (its stem, options, key and explanation),
+    # named as on the session start. The server reads that question off the
+    # student's own attempt; only text found there, filling a whole field of
+    # the message, is screened as stored material (the card beside the reply).
+    # Never trusted on its own: everything else in the message, the answer the
+    # student wrote included, is screened as typed.
     quiz_attempt_id: Optional[Id] = None
     quiz_question_index: Optional[int] = Field(default=None, ge=0)
 
