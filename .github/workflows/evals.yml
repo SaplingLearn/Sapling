@@ -77,6 +77,7 @@ on:
       - 'backend/services/growth.py'
       - 'backend/services/jobs.py'
       - 'backend/services/llm_budget.py'
+      - 'backend/services/log_privacy.py'
       - 'backend/services/open_access.py'
       - 'backend/services/posthog_client.py'
       - 'backend/services/prompt_dimensions.py'
