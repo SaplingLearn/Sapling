@@ -208,6 +208,13 @@ function QueueBody() {
 
   React.useEffect(() => { void load(); }, [load]);
 
+  // #866 K25: the queue comes a page at a time (`page_size`) and a decision
+  // removes its rows from this page only. When the page runs out while the
+  // server counted more waiting, read the queue again so the next ones come
+  // up. Keyed on the boolean: a read that answers the same never loops.
+  const pageDone = queue !== null && queue.items.length === 0 && queue.count > 0;
+  React.useEffect(() => { if (pageDone) void load(); }, [pageDone, load]);
+
   const loadStats = async (courseId: string) => {
     if (!courseId) return;
     setStatsLoading(true);
@@ -386,6 +393,15 @@ function QueueBody() {
         </div>
       ) : !queue ? (
         <div style={{ color: "var(--text-muted)", fontSize: 13 }}>Loading…</div>
+      ) : pageDone ? (
+        <div data-testid="admin-items-more" role={error ? "alert" : "status"} style={{ display: "flex", alignItems: "center", gap: 12, color: "var(--text-muted)", fontSize: 13 }}>
+          <span>{queue.count} more to review — {error ?? "loading them…"}</span>
+          {error && (
+            <button type="button" data-testid="admin-items-retry" className="btn btn--sm" onClick={() => void load()}>
+              Try again
+            </button>
+          )}
+        </div>
       ) : queue.items.length === 0 ? (
         <div data-testid="admin-items-empty" style={{ color: "var(--text-muted)", fontSize: 14 }}>
           Nothing to review: no flagged, held or reported question is waiting.

@@ -547,8 +547,9 @@ file entered the lint block new, so there is no baselined backlog.
 | `admin-items-tab-{view}` | the page's two tabs (`queue` / `audit`): the review queue and the A124 key audit |
 | `admin-items` | the queue's root |
 | `admin-items-count` | "N to review" (and "showing the first P" when the queue is longer than a page) |
-| `admin-items-empty` | nothing flagged, held or reported is waiting |
-| `admin-items-retry` | "Try again" after the queue failed to load (`error && !data` gate) |
+| `admin-items-empty` | nothing flagged, held or reported is waiting (the server's count is 0, never only an emptied page) |
+| `admin-items-more` | #866 K25: every row of the page was decided while the server counted more waiting — "N more to review", read again at once (the next page comes up), with the read's error and `admin-items-retry` if it failed |
+| `admin-items-retry` | "Try again" after the queue failed to load (`error && !data` gate), or after the next page failed to load (inside `admin-items-more`) |
 | `admin-items-row-{itemId}` | one queued check item: course · concept, format, flags, reports, the question with its key marked, the final answer, a numeric item's key value ± tolerance (A124) and the reference (`<details>`) |
 | `admin-items-held-{itemId}` | "Held — served to no one until approved": a hold withdraws it from every student — a key hold (spec §13 A124) or a staff hold (A123: quarantined by `quarantine_min_reporters` students' reports, nothing deleted; or retired and waiting to be removed); absent once approved |
 | `admin-items-reports-{itemId}-{reason}` | a report-count chip by reason (`wrong_answer` / `unclear` / `not_from_my_course`); absent at zero |

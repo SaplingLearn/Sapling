@@ -258,6 +258,40 @@ describe("AdminCheckItems", () => {
     expect(api.adminCheckItemQueue).toHaveBeenCalledTimes(2);
   });
 
+  it("after deciding the whole page it reads the next one, never 'nothing to review' (#866 K25)", async () => {
+    // The server sends the queue a page at a time; 3 wait, this page holds 1.
+    api.adminCheckItemQueue
+      .mockResolvedValueOnce(queue([entry()], { count: 3, page_size: 1 }))
+      .mockResolvedValueOnce(queue([entry({ id: "i2", question_hash: "qh2" })], { count: 2, page_size: 1 }));
+    api.adminApproveCheckItem.mockResolvedValue({ id: "i1", status: "approved", restored: false });
+    render(<AdminCheckItems />);
+    fireEvent.click(await screen.findByTestId("admin-items-approve-i1"));
+    expect(await screen.findByTestId("admin-items-row-i2")).toBeTruthy();
+    expect(api.adminCheckItemQueue).toHaveBeenCalledTimes(2);
+    expect(screen.queryByTestId("admin-items-empty")).toBeNull();
+    expect(screen.getByTestId("admin-items-count").textContent).toContain("2 to review — showing the first 1");
+  });
+
+  it("says more are waiting while it reads the next page, and offers a retry if that read fails (#866 K25)", async () => {
+    let finish: (q: AdminCheckItemQueue) => void = () => {};
+    api.adminCheckItemQueue
+      .mockResolvedValueOnce(queue([entry()], { count: 2, page_size: 1 }))
+      .mockRejectedValueOnce(new Error("down"))
+      .mockImplementationOnce(() => new Promise<AdminCheckItemQueue>((resolve) => { finish = resolve; }));
+    api.adminRetireCheckItem.mockResolvedValue({ id: "i1", status: "retired", items: 1, students: 0, voided: 0 });
+    render(<AdminCheckItems />);
+    const retire = await screen.findByTestId("admin-items-retire-i1");
+    fireEvent.click(retire);
+    fireEvent.click(retire);
+    // the next-page read failed: say so, never "nothing to review"
+    fireEvent.click(await screen.findByTestId("admin-items-retry"));
+    expect(screen.queryByTestId("admin-items-empty")).toBeNull();
+    expect((await screen.findByTestId("admin-items-more")).textContent).toContain("1 more to review");
+    finish(queue([entry({ id: "i2", question_hash: "qh2" })], { count: 1, page_size: 1 }));
+    expect(await screen.findByTestId("admin-items-row-i2")).toBeTruthy();
+    expect(api.adminCheckItemQueue).toHaveBeenCalledTimes(3);
+  });
+
   it("an unfinished retire can only be retired again", async () => {
     api.adminCheckItemQueue.mockResolvedValue(queue([entry({ retire_pending: true, status: "retired" })]));
     render(<AdminCheckItems />);
