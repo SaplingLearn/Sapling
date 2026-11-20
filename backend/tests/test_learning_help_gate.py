@@ -207,6 +207,8 @@ def test_after_the_strict_gate_holds_the_same_attempts_at_h1(gate_on, seams):
     assert out[0][1] == {"genuine": True, "counted": True, "attempts": 1, "independent_s": 45.0}
     assert out[0][2] == {"rung": 1, "intent": intent(Rung.H1)}
     for at, a, h in out[1:]:
+        # #866 K32: time alone kept it from counting, so the answer says how long is left
+        assert a.pop("wait_s") > 0
         assert a == {"genuine": False, "counted": False, "attempts": 1, "independent_s": float(at)}
         assert h == {"denied": "dwell"}
     entry = seams.store["doc"]["steps"]["qh-1"]

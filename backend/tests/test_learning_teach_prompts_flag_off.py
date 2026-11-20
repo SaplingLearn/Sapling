@@ -42,12 +42,16 @@ _NONCE = "0" * 24
 _UUID = uuid.UUID("12345678-1234-5678-1234-567812345678")
 
 #: f9eca612, captured with this module (see the docstring).
+#: hint_h4, feedback_first_correct_ends_segment and feedback_released were
+#: re-captured for #866 Z07: the check item's text now reaches the tutor inside
+#: the untrusted-content envelope (agents/loop_tutor.py), with either flag. The
+#: three requests differ from f9eca612 by exactly those three envelope lines.
 F9ECA612 = {
     "teach_chat": "3f17df906cffeec34019aa73653978d647098522b1a6b67d5352a060b9a5971f",
     "teach_chat_poses_check": "6ad0dad50ef12447650a802bb8d94b7d6529e611027627428c8f9702f22cf641",
-    "hint_h4": "d6ca4de3eb24b70b1557e24ba1e73a5a1f81da4625748943775126f262b2903d",
-    "feedback_first_correct_ends_segment": "8f26dc625393c69baf9b4f74ccbec6068521c01e0d4c7526b7b301b07b1985fd",
-    "feedback_released": "1599d23c3dece22c8e70815a000225b89079930609041530e96b059f65dcf9f6",
+    "hint_h4": "d0594a68976790ce8a8f673fb04b91e20a9f74582ca3c56cfa861183dca18fc7",
+    "feedback_first_correct_ends_segment": "ae2416d8bea48a6ded1880304a0ea3ec66767376aa146aba6daefdc846957d23",
+    "feedback_released": "221283ef6d48d2270c5c963c9fecbee5f414ba271abd9e08d6489ba7a48bdf59",
     "plan_approve": "44a84b5ad5b1d9597e2f0eafe636b7d67315a6ee0ea995abe210f135e6448521",
     "status": "2c1e614faaeddec44561d80d2e8b59df9219f51790cd1cde81865fff0813c1b2",
     "check_next": "311f203195565a1f7763b80af61f459c060e3e136b37e2764868bacedef8fcb8",

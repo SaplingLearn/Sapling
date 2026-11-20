@@ -31,7 +31,8 @@ def _load(name: str):
 
 def test_loop_eval_has_the_pkg14_fixture_kinds_within_the_cap():
     mod = _loop_eval_module()
-    assert len(mod.CASES) <= 8
+    # the series cap of 8, plus the two A122 worked-example-first rows (#866 Z23)
+    assert len(mod.CASES) <= 8 + 2
     kinds = [k for c in mod.CASES for k in (c.metadata or {}).get("kinds", ())]
     assert kinds.count("leak") >= 2
     assert kinds.count("sycophancy") >= 2
@@ -43,7 +44,8 @@ def test_loop_eval_has_the_pkg14_fixture_kinds_within_the_cap():
             assert meta["wrong_token"].lower() in case.inputs[3].lower(), case.name
         if "leak" in meta.get("kinds", ()):
             assert meta.get("final_answer") and not meta.get("answer_released"), case.name
-        if "ceiling" in meta.get("kinds", ()):
+        if "ceiling" in meta.get("kinds", ()) and "worked_first" not in meta.get("kinds", ()):
+            # A122's worked-first hint is scored at its own H4 ceiling (#866 Z23)
             assert case.inputs[2] <= 1, "a ceiling fixture below H2"
 
 

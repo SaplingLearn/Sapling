@@ -41,6 +41,8 @@ on:
       # import it), so a change there changes every recorded request of both
       # (spec section 13 A138/A139 review).
       - 'backend/services/prompt_safety.py'
+      # agents/tools/note_context.py (the tutor's note tools) imports it
+      - 'backend/services/notes_service.py'
       # The loop's served path: replay recomputes every served text the rung
       # and confront judges read through services/loop/served.py (and the
       # close through services/loop/closing.py); MODEL_SAFETY_PROMPT from
