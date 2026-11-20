@@ -103,7 +103,7 @@ Several flags change a prompt or an output schema, so their eval datasets must b
 - **Changes:** uploads extract prerequisite relations and write them as graph edges, so propagation, prerequisite bands, wheelspin repair and plan order start acting on them.
 - **Before:** the concept-extraction eval re-checked with relations on; a manual look at the edges written for a few real uploads.
 - **Watch:** cycles broken and edges dropped per document (logged by `concept_prereqs.resolve_prerequisites`); plan order complaints.
-- **Roll back:** off stops new edges; edges already written stay.
+- **Roll back:** off stops new edges; edges already written stay. It acts only while the learning loop is on for the uploader, so the `LEARNING_LOOP_ENABLED` kill switch (or the uploader's `learning_loop` flag off) stops it too.
 
 ### probe_matched_pretest (A130) — measurement protocol
 - **Changes:** a concept's first probe question is matched in form to its delayed post-test items, so pre/post pairs compare like with like.

@@ -281,7 +281,17 @@ def flag_reads(monkeypatch):
     return reads
 
 
-def test_the_flag_is_per_student_and_off_without_one(monkeypatch, flag_reads):
+@pytest.fixture
+def loop_on(monkeypatch):
+    """A118 is a learning-loop amendment: it acts only while the loop is on
+    for the uploader (the kill switch, then their learning_loop flag)."""
+    import config
+
+    monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", True)
+    monkeypatch.setenv("SAPLING_FLAG_LEARNING_LOOP", "on")
+
+
+def test_the_flag_is_per_student_and_off_without_one(monkeypatch, flag_reads, loop_on):
     from services import feature_flags as ff
 
     monkeypatch.setenv(FLAG_ENV, "on")
@@ -302,6 +312,24 @@ def test_the_flag_is_per_student_and_off_without_one(monkeypatch, flag_reads):
     assert cp.upload_prereqs_on("u1") is True
     assert cp.upload_prereqs_on("u-out") is False
     assert cp.upload_prereqs_on(None) is False  # a stored default never reaches no-one
+
+
+def test_the_loop_gate_and_its_kill_switch_cover_a118(monkeypatch, flag_reads):
+    """#866 Z42: upload_prereq_edges needs the learning loop on for the
+    uploader, like the quiz's loop flags (#884). The env kill switch stops it
+    without a flag read; the uploader's learning_loop flag off stops it too."""
+    import config
+
+    monkeypatch.setenv(FLAG_ENV, "on")
+    monkeypatch.setenv("SAPLING_FLAG_LEARNING_LOOP", "on")
+    monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", False)
+    assert cp.upload_prereqs_on("u1") is False
+    assert flag_reads == []  # the kill switch is read first
+    monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", True)
+    monkeypatch.setenv("SAPLING_FLAG_LEARNING_LOOP", "off")
+    assert cp.upload_prereqs_on("u1") is False
+    monkeypatch.setenv("SAPLING_FLAG_LEARNING_LOOP", "on")
+    assert cp.upload_prereqs_on("u1") is True
 
 
 # ── The extraction request, per variant ──────────────────────────────────────
