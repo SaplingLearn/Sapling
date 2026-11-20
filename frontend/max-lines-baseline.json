@@ -3,18 +3,18 @@
   "max-lines": {
     "src/app/(shell)/notetaker/page.tsx": 1874,
     "src/components/Gradebook/GradescopeSyncModal.tsx": 1502,
-    "src/components/graph/KnowledgeGraph2D.tsx": 1435,
-    "src/components/learn/LoopLearn.tsx": 2806,
+    "src/components/graph/KnowledgeGraph2D.tsx": 1428,
+    "src/components/learn/LoopLearn.tsx": 2603,
     "src/components/screens/Admin.tsx": 1110,
     "src/components/screens/AdminAnalytics.tsx": 962,
     "src/components/screens/Calendar.tsx": 890,
-    "src/components/screens/Dashboard.tsx": 1165,
+    "src/components/screens/Dashboard.tsx": 1160,
     "src/components/screens/Gradebook/Course.tsx": 1560,
     "src/components/screens/Learn.tsx": 2154,
     "src/components/screens/Settings.tsx": 1127,
     "src/components/screens/Social.tsx": 1506,
-    "src/lib/api.ts": 2195,
+    "src/lib/api.ts": 2192,
     "src/lib/graph/radialLayout.ts": 1022,
-    "src/lib/types.ts": 878
+    "src/lib/types.ts": 873
   }
 }
