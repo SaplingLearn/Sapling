@@ -45,8 +45,15 @@ describe("nodeUses", () => {
   it("quotes the mastered cut-off the app uses", () => {
     const cut = [0.94, 0.95, 0.96].find((score) => tierFor(score) === "mastered")!;
     expect(tierFor(cut - 0.01)).not.toBe("mastered");
-    expect(text(mastered)).toContain(`above the ${cut.toFixed(2)} mastery cut-off`);
+    expect(text(mastered)).toContain(`at or above the ${cut.toFixed(2)} mastery cut-off`);
     expect(text(mastered)).not.toMatch(/0\.75/);
+  });
+
+  it("never says a concept sitting exactly on the cut-off is above it", () => {
+    // tierFor counts the cut-off itself as mastered, so a 0.95 node is AT it
+    const onTheCut = everyConcept.filter((node) => node.tier === "mastered" && node.mastery === 0.95);
+    expect(onTheCut.length).toBeGreaterThan(0);
+    for (const node of onTheCut) expect(text(node)).not.toMatch(/already above the/);
   });
 
   it("puts a struggling concept near the front of review, a learning one mid-queue", () => {

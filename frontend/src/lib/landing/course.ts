@@ -381,7 +381,7 @@ export function nodeUses(node: GraphNode, degree: number): NodeUse[] {
       tag: 'QUIZ TARGETING',
       text:
         t === 'mastered'
-          ? 'Adaptive quizzes spend few questions here. It is already above the 0.95 mastery cut-off, so the generator spends them on weaker nodes.'
+          ? 'Adaptive quizzes spend few questions here. It is already at or above the 0.95 mastery cut-off, so the generator spends them on weaker nodes.'
           : 'POST /api/quiz/generate takes this node id. Every answer writes a mastery delta back onto it, which moves the ring you are looking at.',
     },
     {
