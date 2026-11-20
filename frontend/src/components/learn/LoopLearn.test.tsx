@@ -1247,6 +1247,19 @@ describe("LoopLearn — PKG-13 fix round", () => {
     expect((screen.getByTestId("tutor-input") as HTMLTextAreaElement).disabled).toBe(false);
   });
 
+  it("#866 K35: Check me at the novice pause says this concept's checks wait — not just the same banner", async () => {
+    const later = new Date(Date.now() + 3_600_000).toISOString();
+    api.nextLoopCheck.mockRejectedValue(new ApiError("x", 429, {
+      body: { detail: "ai budget reached", reset_at: later, scope: "daily_usd", session_capped: false, pause_novice: true },
+    }));
+    await resumedTeach();
+    fireEvent.click(await screen.findByTestId("loop-check-me"));
+    const banner = await screen.findByTestId("loop-budget-paused");
+    expect(banner.textContent).toContain("checks on concepts you're just starting are paused too");
+    expect(banner.textContent).not.toContain("Practice and review keep working");
+    expect((await screen.findByText(/Checks on this concept wait until/)).getAttribute("role")).toBe("status");
+  });
+
   it("m: a session-capped pause stays for the session", async () => {
     const soon = new Date(Date.now() + 50).toISOString();
     api.nextLoopCheck.mockRejectedValue(new ApiError("x", 429, { body: { detail: "ai budget reached", reset_at: soon, session_capped: true } }));

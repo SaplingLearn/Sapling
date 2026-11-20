@@ -328,6 +328,10 @@ describe('budgetPauseOf (spec §3.5 / A20 429 body, A39 session_capped)', () => 
     const capped = { ...body, scope: 'session_requests', session_capped: true };
     expect(budgetPauseOf(new ApiError('x', 429, { body: capped }))).toEqual({ resetAt: body.reset_at, sessionCapped: true, scope: 'session_requests' });
   });
+  it("says when the hard level holds novice checks too (#866 K35)", () => {
+    const held = { ...body, scope: 'daily_usd', session_capped: false, pause_novice: true };
+    expect(budgetPauseOf(new ApiError('x', 429, { body: held }))).toEqual({ resetAt: body.reset_at, sessionCapped: false, scope: 'daily_usd', pauseNovice: true });
+  });
   it("keeps the cap's scope, so a monthly reset is never read as tonight's (#866 K18)", () => {
     const monthly = { ...body, reset_at: '2026-12-01T00:00:00+00:00', scope: 'monthly_usd', session_capped: false };
     expect(budgetPauseOf(new ApiError('x', 429, { body: monthly }))).toEqual({ resetAt: monthly.reset_at, sessionCapped: false, scope: 'monthly_usd' });

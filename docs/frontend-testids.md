@@ -1042,7 +1042,7 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `loop-readonly-transcript` | a `?resume=` session that is not an open loop session (a legacy one), shown read-only |
 | `loop-readonly-new-session` | "Start a new session" beside the read-only transcript |
 | `loop-notices` | the notices container — always on the page, `aria-live="polite"` and empty until a notice arrives, so each notice below is announced as it is added (spec §13 A135) |
-| `loop-budget-paused` | the budget pause banner (A20/A26/A39); `role="status"`, `data-reset-at` (ISO or empty), `data-session-capped` (`true`: "paused for this session", no reset time) |
+| `loop-budget-paused` | the budget pause banner (A20/A26/A39); `role="status"`, `data-reset-at` (ISO or empty), `data-session-capped` (`true`: "paused for this session", no reset time); when the 429 or `budget` notice says `pause_novice`, it says checks on concepts the student is just starting are paused too, and a "Check me" that met that pause says so beside the button (#866 K35) |
 | `loop-budget-study-link` | link to `/study?mode=cards` inside the banner |
 | `loop-no-check-items` | "No check items for this course yet" (A23) |
 | `loop-tree-link` | link to `/tree` (`?node=<id>` once a `learner_state` event names the concept): the session panel's "Open map", or "Map" in the TopBar on a phone; absent while `hide_tree` hides the Tree |

@@ -68,6 +68,9 @@ describe('reduceLoopEvent', () => {
   it('A39: session_capped rides the pause', () => {
     const s = reduceLoopEvent(initialLoopState(), { type: 'budget', level: 'hard', resetAt: null, sessionCapped: true });
     expect(s.budgetPause).toEqual({ resetAt: null, sessionCapped: true });
+    // #866 K35: whether the hard level holds novice checks rides along
+    const held = reduceLoopEvent(initialLoopState(), { type: 'budget', level: 'hard', resetAt: null, pauseNovice: true });
+    expect(held.budgetPause).toEqual({ resetAt: null, sessionCapped: false, pauseNovice: true });
   });
 
   it('budget_clear lifts the pause (the next successful tutor turn, or its reset time)', () => {

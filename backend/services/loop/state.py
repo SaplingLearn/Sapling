@@ -158,14 +158,16 @@ class _BudgetPaused(HTTPException):
 
 def _budget_data(decision) -> dict:
     """The pause notice (JSON `budget`, SSE `budget` data): level and reset, plus
-    the binding scope and `session_capped` for PKG-13's banner (A39, 06b(j)) —
-    the same keys the 429 body carries."""
+    the binding scope and `session_capped` for PKG-13's banner (A39, 06b(j)) and
+    `pause_novice` (#866 K35: checks on novice-band concepts wait too) — the
+    same keys the 429 body carries."""
     reset = decision.reset_at
     return {
         "level": decision.level,
         "reset_at": reset.isoformat() if reset else None,
         "scope": decision.scope,
         "session_capped": bool(decision.session_capped),
+        "pause_novice": bool(getattr(decision, "pause_novice", False)),
     }
 
 

@@ -102,7 +102,7 @@ import { CenteredCard } from "./CenteredCard";
 import { ClosePanel } from "./ClosePanel";
 import { RatingPrompt } from "./RatingPrompt";
 import { claimWrapUpAsk, useWrapUpAsk } from "./WrapUpRating";
-import { checkMeNote, PREPARING_COPY } from "./checkNote";
+import { checkMeFailure, checkMeNote, FEEDBACK_PENDING_COPY, PREPARING_COPY } from "./checkNote";
 import { withPlanHistory } from "./loopHistory";
 import { dropInterruptedTurn } from "./chatRetry";
 import { modalOpen } from "./modalOpen";
@@ -125,8 +125,6 @@ const PROBE_UNAVAILABLE_COPY = "Couldn't grade that one — here's another.";
 const PROBE_REFUSED_COPY = "Answer in your own words — that read as instructions to the grader.";
 const CLOSED_ELSEWHERE_COPY = "This session was closed — start a new one to keep learning.";
 const CONTINUE_MESSAGE = "Let's continue.";
-const FEEDBACK_PENDING_DETAIL = "feedback pending; retry feedback before another check";
-const FEEDBACK_PENDING_COPY = "Your answer is recorded. Retry feedback before another check.";
 // spec §13 A113 (#695): the check card's "Report this question" went through
 const REPORTED_COPY = "Thanks — that question is reported and won't be shown to you again. Use Check me for another.";
 const WITHDRAWN_DETAIL = "check item withdrawn";
@@ -513,7 +511,7 @@ export function LoopLearn() {
   const reportError = useCallback((err: unknown, fallback: string) => {
     const pause = budgetPauseOf(err);
     if (pause) {
-      dispatch({ type: "budget", level: "hard", resetAt: pause.resetAt, sessionCapped: pause.sessionCapped });
+      dispatch({ type: "budget", level: "hard", resetAt: pause.resetAt, sessionCapped: pause.sessionCapped, pauseNovice: pause.pauseNovice });
       return;
     }
     const { status, detail } = extractErrorDetail(err);
@@ -779,7 +777,7 @@ export function LoopLearn() {
     if (r.materials_unavailable) setMaterialsNote(true); // A128: the opener's retrieval failed
     if (r.budget?.level === "hard") {
       // A27: a capped student still gets the template opener and the probe
-      dispatch({ type: "budget", level: "hard", resetAt: r.budget.reset_at, sessionCapped: r.budget.session_capped });
+      dispatch({ type: "budget", level: "hard", resetAt: r.budget.reset_at, sessionCapped: r.budget.session_capped, pauseNovice: r.budget.pause_novice });
     }
     return true;
   }, [applyLearningScope, interceptCrisis]);
@@ -1202,7 +1200,7 @@ export function LoopLearn() {
     setPrequestion(null);
     showPrequestion(res.prequestion);
     if (res.budget?.level === "hard") {
-      dispatch({ type: "budget", level: "hard", resetAt: res.budget.reset_at, sessionCapped: res.budget.session_capped });
+      dispatch({ type: "budget", level: "hard", resetAt: res.budget.reset_at, sessionCapped: res.budget.session_capped, pauseNovice: res.budget.pause_novice });
     } else if (!hardSeen) {
       dispatch({ type: "budget_clear" }); // a tutor turn got through
     }
@@ -1312,7 +1310,7 @@ export function LoopLearn() {
       onBudget: (b) => {
         if (!acceptsEvents()) return;
         if (b.level === "hard") hardSeen = true;
-        dispatch({ type: "budget", level: b.level, resetAt: b.reset_at, sessionCapped: b.session_capped });
+        dispatch({ type: "budget", level: b.level, resetAt: b.reset_at, sessionCapped: b.session_capped, pauseNovice: b.pause_novice });
       },
     };
     try {
@@ -1552,7 +1550,7 @@ export function LoopLearn() {
       setSelfExplain(t.self_explain ?? null);
       if (t.phase) dispatch({ type: "phase", phase: t.phase });
       if (t.budget?.level === "hard") {
-        dispatch({ type: "budget", level: "hard", resetAt: t.budget.reset_at, sessionCapped: t.budget.session_capped });
+        dispatch({ type: "budget", level: "hard", resetAt: t.budget.reset_at, sessionCapped: t.budget.session_capped, pauseNovice: t.budget.pause_novice });
       }
     } catch (err) {
       if (ownsHint()) reportError(err, "Couldn't get a hint.");
@@ -1646,14 +1644,15 @@ export function LoopLearn() {
       } else setCheckNote(checkMeNote(r, conceptNames)); // why nothing was posed
     } catch (err) {
       if (g !== gen.current || epoch !== turnEpoch.current) return;
-      const { status, detail } = extractErrorDetail(err);
-      if (status === 409 && detail === FEEDBACK_PENDING_DETAIL) {
+      const failed = checkMeFailure(err);
+      if (failed === "feedback") {
         dispatch({ type: "check", item: null });
         dispatch({ type: "phase", phase: "feedback" });
         setFeedbackPending(true);
         setCheckNote(FEEDBACK_PENDING_COPY);
         return;
       }
+      if (failed) setCheckNote(failed.note); // #866 K35: this concept's check waits (the banner says why)
       reportError(err, "Couldn't get a check question.");
     } finally {
       if (g === gen.current) setCheckBusy(false);
@@ -1923,7 +1922,7 @@ export function LoopLearn() {
           testId="loop-budget-paused"
           resetAt={paused.resetAt}
           sessionCapped={paused.sessionCapped}
-          message={tutorPauseMessage(paused.resetAt, paused.sessionCapped)}
+          message={tutorPauseMessage(paused.resetAt, paused.sessionCapped, paused.pauseNovice)}
         >
           {studyVisible && <>{" "}<Link data-testid="loop-budget-study-link" href="/study" style={{ color: "var(--accent)", fontWeight: 500 }}>
             Review flashcards

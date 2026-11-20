@@ -1,4 +1,19 @@
-import type { LoopCheckNext } from "@/lib/api";
+import { budgetPauseOf, type LoopCheckNext } from "@/lib/api";
+import { extractErrorDetail } from "@/lib/errorMessage";
+import { checkPausedNote } from "./BudgetPausedBanner";
+
+export const FEEDBACK_PENDING_DETAIL = "feedback pending; retry feedback before another check";
+export const FEEDBACK_PENDING_COPY = "Your answer is recorded. Retry feedback before another check.";
+
+/** A failed "Check me" the panel says itself: a feedback turn still pending
+ *  (409), or — #866 K35 — the concept's check held at the budget's hard level
+ *  (the 429; reportError also shows the banner). Else null. */
+export function checkMeFailure(err: unknown): "feedback" | { note: string } | null {
+  const { status, detail } = extractErrorDetail(err);
+  if (status === 409 && detail === FEEDBACK_PENDING_DETAIL) return "feedback";
+  const pause = budgetPauseOf(err);
+  return pause ? { note: checkPausedNote(pause) } : null;
+}
 
 // spec §13 A128: the student's own upload is still being drafted into questions
 export const PREPARING_COPY = "Preparing practice questions from your upload…";

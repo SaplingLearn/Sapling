@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatResetAt } from "./BudgetPausedBanner";
+import { formatResetAt, tutorPauseMessage } from "./BudgetPausedBanner";
 
 /** The month and day `at` falls on in the runner's zone, as the banner prints them. */
 const monthDay = (at: string) => new Date(at).toLocaleString(undefined, { month: "short", day: "numeric" });
@@ -32,5 +32,19 @@ describe("formatResetAt (#866 K18)", () => {
 
   it("an unreadable time reads as later", () => {
     expect(formatResetAt("not a date", now)).toBe("later");
+  });
+});
+
+describe("tutorPauseMessage (#866 K35)", () => {
+  it("at a hard level that holds novice checks, says so instead of 'practice keeps working'", () => {
+    const text = tutorPauseMessage(null, false, true);
+    expect(text).toContain("checks on concepts you're just starting are paused too");
+    expect(text).not.toContain("Practice and review keep working");
+    expect(tutorPauseMessage(null, true, true)).toContain("for this session");
+  });
+
+  it("a rate-limit-only pause holds no check: practice and review keep working", () => {
+    expect(tutorPauseMessage(null, false)).toBe("Tutor chat paused for now. Practice and review keep working.");
+    expect(tutorPauseMessage(null, false, false)).toContain("Practice and review keep working");
   });
 });

@@ -1241,6 +1241,8 @@ export interface LoopBudgetNotice {
   reset_at: string | null;
   scope: string | null;
   session_capped: boolean;
+  /** #866 K35: the hard level holds checks on novice-band concepts too. */
+  pause_novice?: boolean;
 }
 export interface LoopStartResult extends LoopLearningScope, WithCrisisSupport {
   session_id: string;
@@ -1329,8 +1331,9 @@ export interface LoopCheckAnswer {
   /** A127: sent only when chosen, and never with an idk (which states none). */
   confidence?: StudentConfidence | null;
 }
-/** `scope`: the cap that paused (the 429's binding scope, #866 K18), when the body names one. */
-export interface LoopBudgetPause { resetAt: string | null; sessionCapped: boolean; scope?: string }
+/** `scope`: the cap that paused (the 429's binding scope, #866 K18), when the body names one;
+ *  `pauseNovice`: the hard level holds checks on novice-band concepts too (#866 K35). */
+export interface LoopBudgetPause { resetAt: string | null; sessionCapped: boolean; scope?: string; pauseNovice?: boolean }
 
 const loopPost = <T>(path: string, body: Record<string, unknown>) =>
   fetchJSON<T>(`/api/learn/loop${path}`, { method: 'POST', body: JSON.stringify(body) });
@@ -1348,6 +1351,7 @@ function loopBudgetNoticeOf(data: unknown): LoopBudgetNotice {
     reset_at: typeof d.reset_at === 'string' ? d.reset_at : null,
     scope: typeof d.scope === 'string' ? d.scope : null,
     session_capped: d.session_capped === true, // A39: a missing field reads as false
+    ...(d.pause_novice === true ? { pause_novice: true } : {}), // #866 K35
   };
 }
 
@@ -1361,11 +1365,11 @@ export const budgetPauseOf = (err: unknown): LoopBudgetPause | null => {
   if (body === undefined && err instanceof Error) {
     try { body = JSON.parse(err.message); } catch { return null; }
   }
-  const b = body as { detail?: unknown; reset_at?: unknown; session_capped?: unknown; scope?: unknown } | null;
+  const b = body as { detail?: unknown; reset_at?: unknown; session_capped?: unknown; scope?: unknown; pause_novice?: unknown } | null;
   if (!b || b.detail !== 'ai budget reached') return null;
   return {
     resetAt: typeof b.reset_at === 'string' ? b.reset_at : null, sessionCapped: b.session_capped === true,
-    ...(typeof b.scope === 'string' ? { scope: b.scope } : {}),
+    ...(typeof b.scope === 'string' ? { scope: b.scope } : {}), ...(b.pause_novice === true ? { pauseNovice: true } : {}),
   };
 };
 
