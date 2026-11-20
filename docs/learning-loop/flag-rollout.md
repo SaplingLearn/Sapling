@@ -88,7 +88,7 @@ Several flags change a prompt or an output schema, so their eval datasets must b
 ### quiz_item_gates (A145)
 - **Changes:** every generated quiz question gets a concept check and a blind key solve on the `quiz_check` slot before it is served; only verified questions count as evidence.
 - **Before:** a live smoke of the checks on real quiz questions (`quiz_item_gates` eval) and a measured cost: it adds two to three model calls per quiz.
-- **Watch:** `quiz.items_gated` codes (dropped, practice, verified); top-up rate; cost per quiz.
+- **Watch:** `quiz.items_gated` codes (dropped, practice, verified), and passes marked `unavailable` (the checks were down, or cut at their generation run's time bound: the run and its checks share `QUIZ_GENERATION_TIMEOUT_SEC`); top-up rate; cost per quiz.
 
 ### quiz_misconceptions (A146)
 - **Changes:** a "Sure" wrong answer on a verified quiz question whose option embodies a known misconception records it; a later correct, unassisted answer closes it.

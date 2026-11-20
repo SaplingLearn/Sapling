@@ -1039,7 +1039,11 @@ sequenceDiagram
    one when it was written from course passages is **dropped** (never
    served; it counts toward the bounded top-up); aligned with an agreed key
    is **verified**; anything unchecked is **practice** — served, never
-   evidence. `quiz.items_gated` counts the codes.
+   evidence. The checks run inside their run's `QUIZ_GENERATION_TIMEOUT_SEC`
+   (`backend/services/quiz/generation.py::_time_left`, #866 Z13): a pass
+   still running when the run's bound is spent is cut, and one with no time
+   left never starts; its questions are practice, like an outage's.
+   `quiz.items_gated` counts the codes (such a pass with `unavailable`).
 4. **The evidence.** Submit runs the A132 lint gate, which also keeps a
    question its gate did not verify out of evidence (both outcomes,
    `quiz.evidence_excluded`), then A100's farm guard and A99's help floor,
@@ -1061,4 +1065,7 @@ sequenceDiagram
 
 What stays as it was: the farm guard (A94, A100), "Ask about this" (A99),
 the stated confidence and the lint gate (A132), and the integrity guard. The
+stated confidence ("How sure are you?") is asked, and kept, only while the
+learning loop is on for the student (#866 K46): with the loop off the quiz
+question screen is the pre-loop one. The
 quiz is never a post-test or a learning-gain measure.
