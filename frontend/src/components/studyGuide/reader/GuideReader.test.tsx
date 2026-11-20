@@ -494,7 +494,8 @@ describe("the concept map and the tutor", () => {
     await user.click(screen.getByTestId("guide-concept-prompt-s1-i7-2"));
 
     await waitFor(() => expect(routerPush).toHaveBeenCalledWith("/learn?resume=sid-1"));
-    expect(mocks.openTutorSession).toHaveBeenCalledWith("u1", "Loops", "course-cs101", expect.any(AbortSignal));
+    // #866 K01: a guide ask opens with the guide origin (the loop teaches at once)
+    expect(mocks.openTutorSession).toHaveBeenCalledWith("u1", "Loops", "course-cs101", expect.any(AbortSignal), { guide: true });
     expect(mocks.chatWithFallback.mock.calls[0][0]).toMatchObject({ sid: "sid-1", userId: "u1", message: "Quiz me on Loops." });
   });
 
@@ -521,6 +522,7 @@ describe("the concept map and the tutor", () => {
       "Control flow and functions",
       "course-cs101",
       expect.any(AbortSignal),
+      { guide: true },
     );
     const { message } = mocks.chatWithFallback.mock.calls[0][0];
     expect(message).toContain("My question: Why does a loop stop?");

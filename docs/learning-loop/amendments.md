@@ -434,3 +434,11 @@ the old way until they are recorded as amendments:
   still floors any later answer to the same question
   (`backend/services/quiz/submission.py::_help_floor`, its `answered_at`
   cutoffs; the E2E `expectAskedAnswerKeepsItsCredit`).
+- **A study guide's Ask teaches from the first turn (extends A99).** The
+  guide's rail question box and concept-map Ask open a `guide_ask` session:
+  `teach` on the asked concept when the student has it in the course, else an
+  open teaching session with no planned concept (the empty plan's shape); no
+  check-in, no segment prequestion, no open question on the greeting, and no
+  help row (a guide Ask is about no one graded question; the served-text scan
+  still records any check-item answer the tutor reveals)
+  (`backend/services/guide_ask.py`, `backend/tests/test_guide_ask_session.py`).

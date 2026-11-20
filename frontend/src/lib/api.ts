@@ -259,14 +259,17 @@ export interface QuizAskOrigin {
   questionIndex: number;
 }
 
-const quizAskFields = (quizAsk?: QuizAskOrigin) =>
-  quizAsk
-    ? {
-        origin: 'quiz_ask' as const,
-        quiz_attempt_id: quizAsk.attemptId,
-        quiz_question_index: quizAsk.questionIndex,
-      }
-    : {};
+/** #866 audit K01: a study guide's "Ask the tutor" (the rail's question box,
+ *  a concept map's Ask). On the loop path the session skips the check-in and
+ *  the plan and answers the question from the first turn, as a quiz ask does;
+ *  the legacy path ignores it. */
+export type GuideAskOrigin = { guide: true };
+/** Where a tutor session was opened from, when it is not the Tutor itself. */
+export type AskOrigin = QuizAskOrigin | GuideAskOrigin;
+
+const askOriginFields = (origin?: AskOrigin) =>
+  !origin ? {} : 'guide' in origin ? { origin: 'guide_ask' as const }
+    : { origin: 'quiz_ask' as const, quiz_attempt_id: origin.attemptId, quiz_question_index: origin.questionIndex };
 
 export const startSession = (
   userId: string,
@@ -275,7 +278,7 @@ export const startSession = (
   courseId?: string,
   useSharedContext = true,
   modelPref?: ModelPref,
-  quizAsk?: QuizAskOrigin,
+  quizAsk?: AskOrigin,
   /** Send to tutor's note, when `topic` is still its title (see startSessionStream). */
   fromNoteId?: string,
 ) =>
@@ -290,7 +293,7 @@ export const startSession = (
       use_shared_context: useSharedContext,
       course_id: courseId,
       ...(modelPref ? { model_pref: modelPref } : {}),
-      ...quizAskFields(quizAsk),
+      ...askOriginFields(quizAsk),
       ...(fromNoteId ? { from_note_id: fromNoteId } : {}),
     }),
   });
@@ -545,7 +548,7 @@ export const startSessionStream = (
   courseId?: string,
   modelPref?: ModelPref,
   handlers: StreamChatHandlers = {},
-  quizAsk?: QuizAskOrigin,
+  quizAsk?: AskOrigin,
   /**
    * Send to tutor's note (docs/safety/crisis-support.md), when `topic` is
    * still that note's title: the backend checks it against the student's own
@@ -563,7 +566,7 @@ export const startSessionStream = (
       use_shared_context: useSharedContext,
       course_id: courseId,
       ...(modelPref ? { model_pref: modelPref } : {}),
-      ...quizAskFields(quizAsk),
+      ...askOriginFields(quizAsk),
       ...(fromNoteId ? { from_note_id: fromNoteId } : {}),
     },
     handlers,

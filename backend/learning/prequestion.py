@@ -65,6 +65,7 @@ ANSWER_LEAD = "The answer: "
 HARD_LEVEL_LINE = "Keep this answer in mind — we'll build on it next."
 
 _QUIZ_ASK_ORIGIN = "quiz_ask"  # services/quiz_ask.QUIZ_ASK_ORIGIN (A99)
+_GUIDE_ASK_ORIGIN = "guide_ask"  # services/guide_ask.GUIDE_ASK_ORIGIN (#866 K01)
 
 
 def records(state: Mapping[str, Any]) -> dict[str, dict]:
@@ -104,7 +105,9 @@ def segment_open(state: Mapping[str, Any]) -> str | None:
     plan = _plan(state)
     if not isinstance(concept, str) or not concept or plan.get("done"):
         return None
-    if state.get("origin") == _QUIZ_ASK_ORIGIN:
+    # a guide Ask's first message is the student's own question: a pretest
+    # card before it would hold the very turn the Ask sent (#866 K01)
+    if state.get("origin") in (_QUIZ_ASK_ORIGIN, _GUIDE_ASK_ORIGIN):
         return None
     if int(state.get("teach_turns") or 0) or int(state.get("concept_checks") or 0):
         return None

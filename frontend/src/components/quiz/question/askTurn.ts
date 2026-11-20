@@ -13,6 +13,7 @@ import {
   startSessionStream,
   streamChat,
   type LoopBudgetPause,
+  type AskOrigin,
   type QuizAskOrigin,
   type StreamChatHandlers,
 } from "@/lib/api";
@@ -95,7 +96,7 @@ export async function openTutorSession(
   conceptName: string,
   courseId: string | null,
   signal: AbortSignal,
-  origin?: QuizAskOrigin,
+  origin?: AskOrigin,
 ): Promise<string | null | typeof ABORTED | CrisisAnswer> {
   try {
     const started = await startSessionStream(

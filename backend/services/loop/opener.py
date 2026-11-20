@@ -9,13 +9,14 @@ import uuid
 from services.loop.errors import HTTPException
 from starlette.requests import Request
 from learning.goals import encode_goal
-from learning.turn_shape import LOOP_PLAN_OPENER, LOOP_PROBE_OPENER, LOOP_QUIZ_ASK_OPENER
+from learning.turn_shape import LOOP_GUIDE_ASK_OPENER, LOOP_PLAN_OPENER, LOOP_PROBE_OPENER, LOOP_QUIZ_ASK_OPENER
 from models import StartSessionBody
 from services.tutor import _get_course_id_for_topic_sync as _get_course_id_for_topic
 from services.tutor_sessions import stash_pending
 from services.academics import require_course_enrollment, resolve_offering
 from services.check_item_jobs import draft_missing_for_course
 from services.graph_service import get_graph
+from services.guide_ask import GUIDE_ASK_ORIGIN, guide_ask_node, guide_ask_state
 from services.quiz_ask import QUIZ_ASK_ORIGIN, open_quiz_ask
 
 from services.loop.constants import _LOOP_OPENER_TEMPLATE
@@ -89,7 +90,7 @@ class _LoopOpener(_LoopTurn):
         self.arm = _arm_for(body.user_id, request)  # PKG-14 (A20), as _LoopTurn
         # A99: a quiz-ask session names its quiz question; the help row is written
         # here, before any tutor text exists (a failed write is a 503)
-        if body.goal is not None and body.origin == "quiz_ask":
+        if body.goal is not None and body.origin in ("quiz_ask", GUIDE_ASK_ORIGIN):
             raise HTTPException(status_code=422, detail="Choose a goal in a course learning session")
         self.quiz_ask = open_quiz_ask(body, session_id=self.session_id)
         # A106 (review m2): a quiz-ask session runs on the quiz node's course only
@@ -130,7 +131,15 @@ class _LoopOpener(_LoopTurn):
         )
         # A99: a quiz-ask session skips the probe and the plan — it teaches the
         # quiz's concept from the first turn (the materialised row keeps this doc)
-        self.state = quiz_ask_state(self.quiz_ask.node_id) if self.quiz_ask is not None else {}
+        # #866 K01: a study guide's Ask teaches from its first turn too, on the
+        # concept it names when the student has it in this course
+        self.guide_ask = body.origin == GUIDE_ASK_ORIGIN
+        if self.quiz_ask is not None:
+            self.state = quiz_ask_state(self.quiz_ask.node_id)
+        elif self.guide_ask:
+            self.state = guide_ask_state(guide_ask_node(self.user_id, self.course_id, body.topic))
+        else:
+            self.state = {}
         if body.goal is not None:
             self.state["goal"] = encode_goal(body.goal, self.session_id)
             self.state["goal_version"] = 1
@@ -156,7 +165,9 @@ class _LoopOpener(_LoopTurn):
             return None
         # the opener is never paused: at the hard level it is a template (A27). A
         # quiz-ask session has no check-in, so its template never promises one
-        return LOOP_QUIZ_ASK_OPENER if self.quiz_ask is not None else _LOOP_OPENER_TEMPLATE
+        if self.quiz_ask is not None:
+            return LOOP_QUIZ_ASK_OPENER
+        return LOOP_GUIDE_ASK_OPENER if self.guide_ask else _LOOP_OPENER_TEMPLATE
 
     def complete(self, reply: str, merged: dict, mastery: list) -> dict:
         self._now = _now_s()
@@ -167,14 +178,15 @@ class _LoopOpener(_LoopTurn):
         if self.reveal_fallback is not None:
             raise RuntimeError("the opener's reveals could not be recorded")  # never served unrecorded
         self._emit_reveal()
-        if self.tier != "none" and not self._probing() and self.quiz_ask is None:
+        if self.tier != "none" and not self._probing() and self.quiz_ask is None and not self.guide_ask:
             # Spec §13 A121: a model opener ends with the tutor's own question,
             # as any served teach turn does, so the student's reply to it is
             # judged like any other. A template opener asks nothing and leaves
             # the key unset. So does a quiz-ask session's opener (A99, K39): its
             # one client, the quiz's Ask panel, never shows the greeting and
             # sends the student's own question about the quiz item first — that
-            # message answers nothing the student saw.
+            # message answers nothing the student saw. A study guide's Ask (K01)
+            # is the same: its first message is the student's own question.
             self.state[OPEN_QUESTION_KEY] = True
         notice: dict = {}
         # A128: no session row yet — the lazy document carries the note's key

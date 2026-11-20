@@ -17,7 +17,10 @@ import {
 import { tutorPauseMessage } from "@/components/learn/BudgetPausedBanner";
 import { useToast } from "@/components/ToastProvider";
 import { useCrisisSupport } from "@/components/safety/CrisisSupportCard";
-import { newTurnId } from "@/lib/api";
+import { newTurnId, type GuideAskOrigin } from "@/lib/api";
+
+/** #866 K01: the origin a guide's Ask opens its session with. */
+const GUIDE_ASK: GuideAskOrigin = { guide: true };
 
 export type AskTutor = (topic: string, message: string) => Promise<void>;
 
@@ -41,7 +44,8 @@ export function useTutorHandoff(
     const progress: TurnProgress = { sawToken: false, partial: "" };
     setBusy(true);
     try {
-      const sid = await openTutorSession(userId, topic, courseId, signal);
+      // K01: a guide ask teaches from the first turn (no check-in to answer first)
+      const sid = await openTutorSession(userId, topic, courseId, signal, GUIDE_ASK);
       if (sid === ABORTED) return;
       if (typeof sid === "object" && sid !== null) { crisis.intercept({ crisis_support: sid.crisis }); return; }
       if (!sid) throw new Error("The tutor did not start a session.");

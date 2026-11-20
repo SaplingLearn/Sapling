@@ -75,6 +75,8 @@ LOOP_PLAN_OPENER = (
 #: on the quiz question's concept from its first turn (A99) — so it never
 #: promises either. Neutral, like the others: it teaches nothing and asks nothing.
 LOOP_QUIZ_ASK_OPENER = "Welcome! We'll work through the idea behind your quiz question together."
+#: #866 K01: a study guide's Ask (services/guide_ask.py) has no check-in to promise.
+LOOP_GUIDE_ASK_OPENER = "Welcome! Let's work through your question about the study guide together."
 
 
 @dataclass(frozen=True)
