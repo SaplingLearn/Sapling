@@ -35,6 +35,7 @@ Several flags change a prompt or an output schema, so their eval datasets must b
 
 Some paths the loop serves with no flag of their own have cases written but not yet recorded; the same A111 pass records them, and until it does they are unevaluated:
 
+- **The check-item pipeline's own steps (A119, A124, A37).** Every drafting call of a learning-loop uploader runs the alignment check, the blind key solve and key match, and the mc_reason top-up below the floor; their verdicts decide which items are stored and which keys are verified. `tests/evals/check_item_gates.py` scores them (`check_items_verify`, `check_items_solve`, `check_items_topup`, each on its own slot), and `check_items` now also drafts production's three-concept call. They are replayed from the start, so they fail closed until recorded.
 - **The novice worked-example-first path (A122).** Every novice whose prerequisite is not known proficient (every concept without a prerequisite edge, so all of an upload-built graph while `upload_prereq_edges` is off) gets the worked-example-first band format on every teach, hint and feedback turn, and the H4 worked example as the first hint. `loop_tutor` scores it in `teach_novice_worked_first` and `hint_novice_worked_first_h4` (every tier), and `misconception_confront` in `confront_hint_worked_first_novice_h4`. Until they are recorded and pass, only the runtime leak guard stands between that path and a leaked answer.
 
 ## Recommended order

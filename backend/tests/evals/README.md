@@ -154,6 +154,20 @@ Offline (in `run_all.py` + CI): `document_classification`, `document_summary`,
 `decisions`, `session_close` and `misconception_confront` (two slots) — 255
 cassettes, judge cassettes included.
 
+Added by #866 (Z23, Z24), written as code and recorded in the A111 pass (three
+runs each, floors from their minimum); until then each fails closed:
+
+- **Replayed from the start** (they score paths the loop serves by default):
+  `check_items`' two three-concept cases (production drafts
+  `CHECK_ITEM_CONCEPTS_PER_CALL` concepts per call; `ConceptsCovered` scores
+  that every concept gets a stored item), `loop_tutor`'s and
+  `misconception_confront`'s worked-example-first cases (spec §13 A122), and
+  `check_item_gates.py`'s `check_items_verify` (the A119 alignment check),
+  `check_items_solve` (the A124 blind solve and key match) and
+  `check_items_topup` (the A37 mc_reason top-up), each on its own slot and
+  scored by production's own reading of its answers (`item_alignment.align`,
+  `item_keys.compare`, `check_items_key_match.matches`).
+
 `check_items` (learning loop PKG-04, 6 cassettes) drafts one course concept's
 nine items per case from `fixtures/tutor_course.json` passages and scores them
 with the same code rules the service stores by (`learning/checks.py::
