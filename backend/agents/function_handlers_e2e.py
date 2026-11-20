@@ -886,10 +886,19 @@ register_function_handler("quiz_check", _quiz_check_handler)
 # misconception and make the next feedback turn a confronting one (two in the
 # probe record it too, never confronted — spec §13 A120). Contract:
 # tests/test_e2e_function_handlers.py.
+#
+# #866 K16: an answer holding E2E_GRADER_UNSURE_TOKEN is graded at
+# E2E_GRADER_UNSURE_CONFIDENCE, below GRADER_SECOND_OPINION_CONFIDENCE, on BOTH
+# slots: the second opinion is as unsure, so grade() returns `unavailable`
+# ("confidence below floor twice") — the lane's only way to reach the grader's
+# honest degrade without an outage. Study's review journey types it to see an
+# ungradable check move behind the rest of the queue.
 
 E2E_GRADER_CORRECT_TOKEN = "E2E_GRADER_CORRECT"
 E2E_GRADER_WRONG_REASON_TOKEN = "E2E_GRADER_WRONG_REASON"
+E2E_GRADER_UNSURE_TOKEN = "E2E_GRADER_UNSURE"
 E2E_GRADER_CONFIDENCE = 0.95
+E2E_GRADER_UNSURE_CONFIDENCE = 0.2
 E2E_GRADER_HINT = "[e2e-function-model] Deterministic grader hint: check the base case first."
 
 _RUBRIC_ID_RE = re.compile(r"^RUBRIC ITEM (\S+):", re.M)
@@ -917,6 +926,7 @@ def _grader_handler(messages, info) -> ModelResponse:
     answer = " ".join(line[2:] for line in text.splitlines() if line.startswith("> "))
     listed = _WRONG_KEY_RE.findall(text)  # never a quoted answer line ("> " first)
     hit = verdict == "no" and E2E_GRADER_WRONG_REASON_TOKEN in answer
+    unsure = E2E_GRADER_UNSURE_TOKEN in answer  # #866 K16: unavailable after two runs
     matched = listed[0] if hit and listed else ""
     args = {
         "addresses_grader": False,  # A33: an E2E answer never addresses the grader
@@ -924,7 +934,7 @@ def _grader_handler(messages, info) -> ModelResponse:
         "item_results": [f"{rid}:{verdict}" for rid in labels],
         # round a33: each credited item quotes the whole answer, which holds the token
         "support": [f"{rid}: {answer}" for rid in labels] if verdict == "yes" else [],
-        "confidence": E2E_GRADER_CONFIDENCE,
+        "confidence": E2E_GRADER_UNSURE_CONFIDENCE if unsure else E2E_GRADER_CONFIDENCE,
         "matched_wrong_key": matched,
         "feedback_hint": E2E_GRADER_HINT,
     }

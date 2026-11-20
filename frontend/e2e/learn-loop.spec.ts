@@ -80,6 +80,8 @@ const LOOP_FEEDBACK_BODY = "Look at which part of the item your answer addressed
 const LOOP_FEEDBACK_QUESTION = "How would you check that part yourself next time?";
 /** Must match backend/agents/function_handlers_e2e.py::E2E_GRADER_CORRECT_TOKEN */
 const GRADER_CORRECT_TOKEN = "E2E_GRADER_CORRECT";
+/** #866 K16. Must match backend/agents/function_handlers_e2e.py::E2E_GRADER_UNSURE_TOKEN */
+const GRADER_UNSURE_TOKEN = "E2E_GRADER_UNSURE";
 /** Must match backend/agents/function_handlers_e2e.py::E2E_CLOSE_SUMMARY */
 const CLOSE_SUMMARY =
   "[e2e-function-model] Deterministic session close: the student checked " +
@@ -1216,38 +1218,58 @@ test("Study: a never-rated card is a new card, and the queue keeps the student's
 
 test("Study: a check the grader could not grade moves on and comes back with what was typed (#866 K16)", async ({ browser }) => {
   test.skip(loopOffLane, "loop path: default lane only");
+  test.setTimeout(LOOP_JOURNEY_TIMEOUT_MS);
+  // The real queue (no stubs): one due concept with a seeded check item and the
+  // capped user's due card. The concept's R is the lower, so DASH serves its check
+  // first; proficient, so the $ cap's novice pause (A20) does not hold it.
+  const node = "rich-node-capped-binary";
+  await queryRaw(
+    `INSERT INTO learner_state (user_id, node_id, p_known, fsrs_d, fsrs_s, fsrs_last_review_at, fsrs_due_at)
+     VALUES ($1, $2, 0.97, 5, 200, now() - interval '20 days', now() - interval '1 hour')`,
+    [USER_CAPPED, node],
+  );
+  await queryRaw(
+    `UPDATE flashcards SET fsrs_s = 5000, fsrs_d = 5, reps = 3, last_rating = 3,
+            last_reviewed_at = now() - interval '1 day', due_at = now() - interval '1 hour'
+      WHERE id = $1`,
+    [CAPPED_CARD_ID],
+  );
   const { context, page } = await signIn(browser, USER_CAPPED, "Casey Cap");
-  const check = {
-    kind: "check", id: "e2e-k16-check", cost_s: 45, sr: { stage: "acquire", correct: 0, target: 3 },
-    concept_name: "Binary Numbers", format: "free", difficulty: 1, prompt: "What is a bit?",
-  };
-  const card = { kind: "flashcard", id: "e2e-k16-card", cost_s: 15, sr: { stage: "acquire", correct: 0, target: 3 }, topic: "Bits", front: "One bit holds?", back: "0 or 1" };
-  // The server's order (fulfilled here, so the grader's answer can be pinned):
-  // the open check until its grade comes back unavailable, then the card, then
-  // the deferred check again. Keyed on what was answered, never on call count.
-  const answered = { check: false, card: false };
-  const nextBody = () => ({
-    item: answered.check && !answered.card ? card : check,
-    remaining_budget_s: 600, session_id: "e2e-k16", retention_target: 0.9, due_total: 2, new_total: 0, in_budget: 2,
-  });
-  await page.route("**/api/learn/loop/review/next*", (route) => route.fulfill({ json: nextBody() }));
-  await page.route("**/api/learn/loop/review/answer", async (route) => {
-    const kind = (route.request().postDataJSON() as { kind: string }).kind;
-    answered[kind === "check" ? "check" : "card"] = true;
-    const unavailable = kind === "check";
-    await route.fulfill({ json: { correct: unavailable ? null : true, hint: null, next_due_at: null, rating: unavailable ? null : 3, remaining_budget_s: 600, sr: {}, unavailable, refused: false } });
-  });
-  await page.goto("/study");
-  await page.getByRole("textbox", { name: "Your answer" }).fill("a binary digit");
-  await page.getByTestId("review-submit").click();
-  await expect(page.getByTestId("review-hint")).toContainText("comes back after the rest of today's review");
-  await page.getByTestId("review-next").click();
-  await expect(page.getByTestId("review-item")).toContainText("One bit holds?");
-  await page.getByTestId("review-flip").click();
-  await page.getByTestId("review-rate-3").click();
-  await page.getByTestId("review-next").click();
-  await expect(page.getByRole("textbox", { name: "Your answer" })).toHaveValue("a binary digit");
-  await context.close();
+  try {
+    await page.goto("/study");
+    await expect(page.getByTestId("review-item")).toContainText("Binary Numbers");
+    // The function-mode grader is unsure on this token on both slots: unavailable
+    const typed = `a binary digit ${GRADER_UNSURE_TOKEN}`;
+    await page.getByRole("textbox", { name: "Your answer" }).fill(typed);
+    await page.getByTestId("review-submit").click();
+    await expect(page.getByTestId("review-hint")).toContainText("comes back after the rest of today's review");
+    // the claim was given back and the open entry marked, never closed or recorded
+    const open = (await queryRaw(
+      `SELECT loop_state->'open'->$2->>'unavailable_at' AS unavailable_at,
+              loop_state->'open'->$2->>'graded_at' AS graded_at
+         FROM sessions WHERE user_id = $1 AND loop_state->'open' ? $2`,
+      [USER_CAPPED, node],
+    )) as { unavailable_at: string | null; graded_at: string | null }[];
+    expect(open).toHaveLength(1);
+    expect(open[0].unavailable_at).not.toBeNull();
+    expect(open[0].graded_at).toBeNull();
+    // Next serves the rest of the queue first: the card
+    await page.getByTestId("review-next").click();
+    await expect(page.getByTestId("review-item")).toContainText(CAPPED_CARD_FRONT);
+    await page.getByTestId("review-flip").click();
+    await page.getByTestId("review-rate-3").click();
+    await page.getByTestId("review-next").click();
+    // then the same check again (A70: the only item served for its concept), with what was typed
+    await expect(page.getByTestId("review-item")).toContainText("Binary Numbers");
+    await expect(page.getByRole("textbox", { name: "Your answer" })).toHaveValue(typed);
+    const evidence = (await queryRaw(
+      `SELECT count(*)::int AS n FROM node_mastery_events WHERE node_id = $1 AND event_type = 'evidence'`,
+      [node],
+    )) as { n: number }[];
+    expect(evidence[0].n).toBe(0); // an ungraded answer moved nothing
+  } finally {
+    await context.close();
+  }
 });
 
 // PKG-14b (spec §11.2, §11.4): the loop is every student's default — the
