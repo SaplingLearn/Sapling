@@ -323,6 +323,7 @@ def seams():
 
     p_known = {"node-1": 0.5}
     n_strong: dict[str, int] = {}
+    opps: dict[str, int] = {}
 
     def _read_states(user_id, node_ids, **kw):
         return {
@@ -334,6 +335,9 @@ def seams():
                 # A110 (c): a seeded profic belief is a confirmed one (one strong
                 # unassisted observation) unless a test overrides it
                 n_strong_unassisted=n_strong.get(n, 1 if p_known[n] >= BAND_DEVELOP_MAX else 0),
+                # a seeded belief is a measured one (graded once) unless a test
+                # sets 0: a row only propagation wrote (#866 K22/K52)
+                opps=opps.get(n, 1),
             )
             for n in node_ids
             if n in p_known
@@ -344,7 +348,7 @@ def seams():
         def p(name, **kw):
             return stack.enter_context(patch_loop(name, **kw))
 
-        ns = SimpleNamespace(store=store, p_known=p_known, n_strong=n_strong)
+        ns = SimpleNamespace(store=store, p_known=p_known, n_strong=n_strong, opps=opps)
         ns.load = p("load_loop_state", side_effect=_load)
         # the REAL update_loop_state runs over the store's own load/save
         stack.enter_context(patch("learning.loop_state_store.load_loop_state", side_effect=_load))
@@ -1053,6 +1057,40 @@ def test_check_phase_chat_serves_the_pose_without_a_model(gate_on, seams):
     assert seams.store["doc"]["current"] == "qh-1", (
         "a message typed in the check phase closes nothing"
     )
+
+
+@pytest.mark.parametrize(
+    ("row", "measured"),
+    [("graded", True), ("propagated_only", False), ("none", False)],
+)
+def test_a_posed_checks_concept_is_measured_only_once_an_answer_on_it_was_graded(
+    gate_on, seams, row, measured
+):
+    """#866 K22/K52: while a check is posed, the turn's learner_state carries
+    `measured: false` unless an answer on the concept itself was graded
+    (opps > 0). A row only propagation from a neighbour wrote (opps 0) holds a
+    belief, not a measurement, so the meter keeps the map's score or "not
+    started" — as with no row at all (the prior)."""
+    from learning.params import BKT_L0
+
+    if row == "propagated_only":
+        seams.p_known["node-1"] = 0.45  # a correct answer on a dependent lifted it
+        seams.opps["node-1"] = 0
+    elif row == "none":
+        seams.p_known.pop("node-1")
+    never = MagicMock(side_effect=AssertionError("the check pose never reaches the model"))
+    with patch_loop("stream_structured_turn", never):
+        r = client.post(
+            "/api/learn/loop/chat/stream",
+            json={"session_id": "s1", "user_id": "u1", "message": "is it n == 0?"},
+        )
+    [ls] = [e["data"] for e in _sse_events(r.text) if e["type"] == "learner_state"]
+    assert ls["node_id"] == "node-1"
+    assert ls["p_known"] == {"graded": 0.5, "propagated_only": 0.45, "none": BKT_L0}[row]
+    if measured:
+        assert "measured" not in ls
+    else:
+        assert ls["measured"] is False
 
 
 def test_hard_budget_pauses_a_teach_stream_and_persists_only_activity(gate_on, seams):

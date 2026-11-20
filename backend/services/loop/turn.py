@@ -93,6 +93,7 @@ from services.loop.learner import (
     _failed_on_concept,
     _learner_state,
     _learner_view,
+    _measured,
     _node_for_item,
     _prereq_proficient,
     _seconds_since,
@@ -243,6 +244,8 @@ class _LoopTurn:
         prereq = _prereq_proficient(self.user_id, self.concept_node) if self.concept_node else True
         # spec §13 A122: the band format reads policy.attempt_first off this view
         self.learner_view = _learner_view(learner, band=self.band, prereq_proficient=prereq)
+        # #866 K22/K52: graded on this concept, not only reached by propagation
+        self.measured = _measured(learner)
         self.ceiling, self.ceiling_reason = _ceiling_for(
             step=self.step,
             learner=self.learner_view,
@@ -1090,7 +1093,10 @@ class _LoopTurn:
             "tier": self.tier,
             "ceiling": int(self.ceiling),
             "learner_state": (
-                [{"node_id": self.node_id, "p_known": self.p_known, "band": self.band}]
+                # #866 K52: `measured: false` (present only then) — the concept has no
+                # stored state yet, so p_known/band are the BKT prior, never shown as a score
+                [{"node_id": self.node_id, "p_known": self.p_known, "band": self.band,
+                  **({} if self.measured else {"measured": False})}]
                 if self.node_id
                 else []
             ),
