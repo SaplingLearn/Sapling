@@ -9,24 +9,7 @@ import { LONG_TEXT_MAX } from "@/lib/inputLimits";
 // Numeric scale — the brand's tone is "quiet library," not emoji reactions —
 // with its two ends labelled under it (shared with the Tutor's wrap-up).
 import { SessionRatingScale } from "./learn/SessionRatingScale";
-
-const HELPFULNESS = [
-  "Explanations clicked",
-  "Right pace",
-  "Got me unstuck",
-  "Questions were sharp",
-  "Matched my style",
-  "Concepts felt linked",
-];
-
-const FRICTION = [
-  "Too slow",
-  "Too surface",
-  "Felt repetitive",
-  "Off-topic",
-  "Confusing",
-  "Didn't match my level",
-];
+import { ChipPicker, FRICTION, HELPFULNESS, toggled } from "./sessionFeedbackOptions";
 
 export interface SessionFeedbackContext {
   sessionId?: string;
@@ -63,9 +46,7 @@ export function SessionFeedbackFlow({ open, context, onClose }: SessionFeedbackF
     onClose();
   }, [onClose]);
 
-  const toggle = (list: string[], setList: (v: string[]) => void, v: string) => {
-    setList(list.includes(v) ? list.filter(x => x !== v) : [...list, v]);
-  };
+  const toggle = (list: string[], setList: (v: string[]) => void, v: string) => setList(toggled(list, v));
 
   const submit = async () => {
     if (!userId || rating === null) return;
@@ -206,37 +187,6 @@ export function SessionFeedbackFlow({ open, context, onClose }: SessionFeedbackF
             </button>
           )}
         </div>
-      </div>
-    </div>
-  );
-}
-
-function ChipPicker({ label, options, selected, onToggle }: {
-  label: string; options: string[]; selected: string[]; onToggle: (v: string) => void;
-}) {
-  return (
-    <div>
-      <div className="label-micro" style={{ marginBottom: 8 }}>{label}</div>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-        {options.map(o => {
-          const isSel = selected.includes(o);
-          return (
-            <button
-              key={o}
-              onClick={() => onToggle(o)}
-              style={{
-                padding: "5px 11px",
-                fontSize: 12,
-                borderRadius: "var(--r-full)",
-                background: isSel ? "var(--accent-soft)" : "transparent",
-                color: isSel ? "var(--accent)" : "var(--text-dim)",
-                border: `1px solid ${isSel ? "var(--accent-border)" : "var(--border)"}`,
-              }}
-            >
-              {o}
-            </button>
-          );
-        })}
       </div>
     </div>
   );

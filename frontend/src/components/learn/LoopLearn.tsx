@@ -101,7 +101,7 @@ import tutorStyles from "./tutor/tutor.module.css";
 import { CenteredCard } from "./CenteredCard";
 import { ClosePanel } from "./ClosePanel";
 import { RatingPrompt } from "./RatingPrompt";
-import { claimWrapUpAsk } from "./WrapUpRating";
+import { claimWrapUpAsk, useWrapUpAsk } from "./WrapUpRating";
 import { checkMeNote, PREPARING_COPY } from "./checkNote";
 import { withPlanHistory } from "./loopHistory";
 import { dropInterruptedTurn } from "./chatRetry";
@@ -335,7 +335,7 @@ export function LoopLearn() {
   const [closeBusy, setCloseBusy] = useState(false);
   const [closeNote, setCloseNote] = useState<string | null>(null);
   // The wrap-up that asks "How was that session?" (claimWrapUpAsk), and its topic
-  const [wrapUpAsk, setWrapUpAsk] = useState<{ sessionId: string; topic?: string } | null>(null);
+  const [wrapUpAsk, setWrapUpAsk] = useWrapUpAsk(close);
 
   // Knowledge map
   const [graphLoading, setGraphLoading] = useState(false);
@@ -426,7 +426,7 @@ export function LoopLearn() {
     const listed = lastListedTopic.current;
     const topic = (listed?.sessionId === sid ? listed.topic : courseName) || undefined;
     setWrapUpAsk(claimWrapUpAsk(sid) ? { sessionId: sid, topic } : null);
-  }, [courseName]);
+  }, [courseName, setWrapUpAsk]);
 
   const applyLearningScope = useCallback((payload: LoopLearningScope | null | undefined) => {
     if (!payload) return;

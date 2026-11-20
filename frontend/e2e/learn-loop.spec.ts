@@ -438,6 +438,9 @@ test("loop user completes probe → plan → check (explicit submission) with a 
   await expect(rating).toContainText("1 = Frustrating");
   await expect(rating).toContainText("4 = Great session");
   await rating.getByRole("button", { name: "4 – Great session" }).click();
+  // …then the legacy dialog's follow-ups on the same card, sent as one row
+  await rating.getByRole("button", { name: "Right pace" }).click();
+  await page.getByTestId("loop-close-rating-send").click();
   await expect(page.getByTestId("loop-close-rating-sent")).toBeVisible();
 
   // ── Database: the loop's writes, through apply_graph_update ──────────────

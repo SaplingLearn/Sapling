@@ -2355,9 +2355,15 @@ describe("LoopLearn — no feedback survey mid-learning", () => {
     expect(JSON.parse(localStorage.getItem(PROMPTED_SESSIONS_KEY) ?? "[]")).toEqual(["s2"]);
     expect(endedSession()).toBeNull();
     fireEvent.click(within(rating).getByRole("button", { name: "4 – Great session" }));
+    // U9: the legacy dialog's follow-ups, on the same card, sent as one row
+    fireEvent.click(screen.getByRole("button", { name: "Right pace" }));
+    fireEvent.click(screen.getByRole("button", { name: "Felt repetitive" }));
+    fireEvent.change(screen.getByTestId("loop-close-rating-comment"), { target: { value: " more examples " } });
+    fireEvent.click(screen.getByTestId("loop-close-rating-send"));
     expect(await screen.findByTestId("loop-close-rating-sent")).toBeTruthy();
     expect(api.submitFeedback).toHaveBeenCalledWith({
-      user_id: "u1", type: "session", rating: 4, selected_options: [], session_id: "s2", topic: "t s2",
+      user_id: "u1", type: "session", rating: 4, selected_options: ["Right pace", "Felt repetitive"],
+      comment: "more examples", session_id: "s2", topic: "t s2",
     });
 
     api.startLoopSession.mockResolvedValue({ session_id: "s9", initial_message: "" });

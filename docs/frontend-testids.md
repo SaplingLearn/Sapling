@@ -1110,6 +1110,10 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `loop-close-concept-{nodeId}` | one checked concept on the wrap-up (spec §13 A117): `data-baseline` = `pre_session` / `check_in` / `teaching` (where its change starts; a close stored before A117 reads `pre_session`), `data-direction` = `up` / `down` / `same` — a first measurement with no move after it is `same` with a "first measured" label, never an arrow |
 | `loop-close-self-eval` | the self-evaluation question — a reflection prompt, no input (A60: nothing stores an answer) |
 | `loop-close-if-then` | the stored if-then plan (rendered only when non-empty) |
+| `loop-close-rating` | the wrap-up's "How was that session?" card (paced: once per session, `lib/feedbackPacing.ts`); the 1–4 scale's buttons are `loop-close-rating-{1..4}` |
+| `loop-close-rating-details` | the follow-ups a rating reveals on the same card (U9): `loop-close-rating-helpful-{i}` / `loop-close-rating-friction-{i}` chips (`aria-pressed`), `loop-close-rating-comment` |
+| `loop-close-rating-send` | sends the rating, chips and note as ONE session feedback row |
+| `loop-close-rating-sent` | the thanks line once the feedback is sent |
 | `loop-close-done` | the closed state ("Session closed." + a link to the review queue); also a session found closed elsewhere (a 409 `this session is closed`) whose stored close could not be read |
 | `loop-close-study-link` | the "Review what's due" link inside `loop-close-done` (`/study?mode=cards`) |
 
