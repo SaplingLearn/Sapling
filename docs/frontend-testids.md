@@ -346,6 +346,7 @@ journeys keep anchoring: `quiz-panel`, `quiz-start`,
 | `quiz-results-graph` | the concept neighbourhood above the score (`graph/ConceptNeighbourhood`) |
 | `quiz-results-score` | the "{n} of {total} correct" line — a count, not a percentage |
 | `quiz-results-mastery` | the mastery delta line, "B% → A% · tier-before → tier-after" |
+| `quiz-results-unchanged` | why the mastery did not move, when it did not (a question counts once a day and only when it passed its checks; a round of the last quiz's missed questions was practice) — absent while `quiz-results-learning` is shown, whose `quiz-results-no-change` says it (#866 K40) |
 | `quiz-results-xp` | "+{Δ} XP · {streak}-day streak" — absent when either gamification read failed |
 | `quiz-results-perfect` | the line shown instead of the missed list on a clean sweep |
 | `quiz-results-learning` | the "Your skill meters" block (`results/LearningBlock`) — present only when the submit returned a `learning` block (`quiz_results_routing`, learning-loop spec §13 A147) |

@@ -270,6 +270,48 @@ describe("QuizResults", () => {
     );
   });
 
+  it("never says grew of a node that did not move, and says why it did not (#866 K40)", () => {
+    // A submit writes evidence for a question at most once a day (A100) and
+    // never for one its checks flagged: an all-right quiz can move nothing.
+    renderResults({ ...PERFECT, result: { ...PERFECT.result!, mastery_before: 0.4, mastery_after: 0.4 } });
+    expect(screen.getByTestId("quiz-results-graph")).toHaveAttribute("aria-label", "Recursion node stayed at 40% mastery");
+    expect(screen.getByTestId("quiz-results-perfect")).toHaveTextContent(/^Nothing to review — every answer was right\.$/);
+    expect(screen.getByTestId("quiz-results-unchanged")).toHaveTextContent(
+      "Your mastery didn't change this time: a question counts toward it once a day, and only when it passed its checks.",
+    );
+    // half a point is still the same whole percent on screen
+    cleanup();
+    renderResults({ result: { ...RESULT, mastery_before: 0.402, mastery_after: 0.404 } });
+    expect(screen.getByTestId("quiz-results-graph")).toHaveAttribute("aria-label", "Recursion node stayed at 40% mastery");
+  });
+
+  it("says a round of the last quiz's missed questions was practice when it moved nothing (#866 K40)", () => {
+    renderResults({
+      scope: { kind: "missed", conceptId: "recursion", missedCount: 3 },
+      reserved: { reservedCount: 3, regeneratedCount: 0 },
+      result: { ...RESULT, mastery_before: 0.4, mastery_after: 0.4 },
+    });
+    expect(screen.getByTestId("quiz-results-unchanged")).toHaveTextContent(
+      "These questions were in your last quiz, and a question counts toward your mastery once a day, so this round was practice.",
+    );
+  });
+
+  it("adds no note when the mastery moved, or when the learner model's block says it", () => {
+    renderResults();
+    expect(screen.queryByTestId("quiz-results-unchanged")).toBeNull();
+    cleanup();
+    renderResults({
+      result: {
+        ...RESULT,
+        mastery_before: 0.4,
+        mastery_after: 0.4,
+        learning: { changes: [], review: { due_count: 0, next_due_at: null }, next_step: "none", learn: null },
+      },
+    });
+    expect(screen.queryByTestId("quiz-results-unchanged")).toBeNull();
+    expect(screen.getByTestId("quiz-results-no-change")).toBeInTheDocument();
+  });
+
   it("says the node moved, not grew, when mastery went down", () => {
     renderResults({ result: { ...RESULT, mastery_after: 0.2 } });
     expect(screen.getByTestId("quiz-results-graph")).toHaveAttribute(

@@ -105,6 +105,39 @@ export function masteryLine(
   return learnerBlock ? numbers : `${numbers} · ${tiers.before} → ${tiers.after}`;
 }
 
+/** Which way the mastery moved, as the screen shows it (whole percent). */
+export type MasteryMove = "up" | "down" | "same";
+
+export function masteryMove(before: number, after: number): MasteryMove {
+  const [from, to] = [pct(before), pct(after)];
+  return to > from ? "up" : to < from ? "down" : "same";
+}
+
+/** The canvas's accessible name: "grew" only for a node that did (#866 K40). */
+export function growthLabel(name: string, before: number, after: number): string {
+  const move = masteryMove(before, after);
+  if (move === "same") return `${name} node stayed at ${pct(before)}% mastery`;
+  return `${name} node ${move === "up" ? "grew" : "moved"} from ${pct(before)}% to ${pct(after)}% mastery`;
+}
+
+/**
+ * Why a graded quiz left the mastery where it was (#866 K40). A submit writes
+ * mastery evidence for each question at most once a day (learning-loop spec
+ * §13 A100) and never for a question its checks flagged (A132, A145), so a
+ * quiz can be all right and move nothing. A round made entirely of the last
+ * quiz's missed questions (G5) moves nothing for a day by construction: those
+ * questions were just answered. Null when the learner model's block, which
+ * says the same in its own words, is on the screen.
+ */
+export function unchangedNote(session: QuizSession, learnerBlock: boolean): string | null {
+  if (learnerBlock) return null;
+  const reserved = session.reserved;
+  if (session.scope.kind === "missed" && reserved && reserved.reservedCount > 0 && reserved.regeneratedCount === 0) {
+    return "These questions were in your last quiz, and a question counts toward your mastery once a day, so this round was practice.";
+  }
+  return "Your mastery didn't change this time: a question counts toward it once a day, and only when it passed its checks.";
+}
+
 export function QuizResults({
   session,
   actions,
@@ -132,10 +165,11 @@ export function QuizResults({
   const after = result.mastery_after;
   const tierBefore = concept.tier;
   const tierAfter = tierFor(after);
-  // "grew" is the whole promise of the screen; a mastery that went down still
-  // gets an honest verb rather than a cheerful one.
-  const verb = after >= before ? "grew" : "moved";
-  const growthLabel = `${concept.name} node ${verb} from ${pct(before)}% to ${pct(after)}% mastery`;
+  // "grew" is the whole promise of the screen, so it is said only of a node
+  // that did; one that went down gets an honest verb, one that did not move
+  // says so, and why (#866 K40).
+  const grew = masteryMove(before, after) === "up";
+  const unchanged = masteryMove(before, after) === "same" ? unchangedNote(session, Boolean(result.learning)) : null;
 
   const missed = buildMissedItems(session);
   const isPerfect = missed.length === 0;
@@ -173,7 +207,7 @@ export function QuizResults({
           // The name is set below the canvas in the display serif; captioning
           // the centre too would say it twice. The siblings stay captioned.
           showCentreLabel={false}
-          ariaLabel={growthLabel}
+          ariaLabel={growthLabel(concept.name, before, after)}
           testid="quiz-results-graph"
         />
       </div>
@@ -191,6 +225,11 @@ export function QuizResults({
       <p className="quiz-results__delta" data-testid="quiz-results-mastery">
         {masteryLine(before, after, { before: tierBefore, after: tierAfter }, Boolean(result.learning))}
       </p>
+      {unchanged && (
+        <p className="quiz-results__unchanged" data-testid="quiz-results-unchanged">
+          {unchanged}
+        </p>
+      )}
 
       <div className="quiz-results__rule">
         <span className="quiz-results__score" data-testid="quiz-results-score">
@@ -211,7 +250,7 @@ export function QuizResults({
 
       {isPerfect ? (
         <p className="quiz-results__perfect" data-testid="quiz-results-perfect">
-          Nothing to review — every answer was right. {concept.name} keeps growing on your tree.
+          Nothing to review — every answer was right.{grew ? ` ${concept.name} keeps growing on your tree.` : ""}
         </p>
       ) : (
         <MissedList

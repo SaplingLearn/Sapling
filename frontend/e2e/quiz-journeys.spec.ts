@@ -666,6 +666,13 @@ test("missed review: the re-practice serves the SAME question back and says so (
   });
   // And the copy tells the truth about what it just did.
   await expect(page.getByTestId("quiz-results")).toContainText("The ones you missed, again");
+  // #866 K40: question 2 already counted toward the mastery in the first quiz
+  // (a question counts once a day, spec §13 A100), so this round moved nothing,
+  // and the results say that rather than "grew".
+  await expect(page.getByTestId("quiz-results-unchanged")).toHaveText(
+    "These questions were in your last quiz, and a question counts toward your mastery once a day, so this round was practice.",
+  );
+  await expect(page.getByTestId("quiz-results-graph")).toHaveAttribute("aria-label", /node stayed at \d+% mastery$/);
 
   // Two real attempts: the practice run is a first-class attempt of its own,
   // scored and stored, not a replay of the first.
