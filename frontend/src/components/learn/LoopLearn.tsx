@@ -1421,7 +1421,7 @@ export function LoopLearn() {
   };
 
   const submitAttempt = async (idk: boolean) => {
-    if (!sessionId || !item || attemptBusy || pendingGrade) return;
+    if (!sessionId || !item || attemptBusy || pendingGrade || hintBusy) return;
     focusAfter.current = "answered";
     const g = gen.current;
     // an idk states no confidence (spec §13 A127)
@@ -2907,7 +2907,8 @@ function CheckCard({
   selfExplain?: React.ReactNode;
 }) {
   const mc = item.format === "mc_reason";
-  const canSubmit = !busy && (mc ? draft.option !== "" && draft.reason.trim() !== "" : draft.answer.trim() !== ""); // K02
+  // K02: an mc_reason answer needs its reason; K09: a loading hint (its rung already charged) is shown first
+  const canSubmit = !busy && !hintBusy && (mc ? draft.option !== "" && draft.reason.trim() !== "" : draft.answer.trim() !== "");
   const ids = useId();
   const headingId = `${ids}-heading`;
   const promptId = `${ids}-prompt`;
@@ -3010,7 +3011,7 @@ function CheckCard({
         >
           <Icon name="sparkle" size={13} />{hintBusy ? "Hint…" : hintRetry ? "Retry earned hint" : "Hint"}
         </button>
-        <button data-testid="loop-attempt-idk" className="btn btn--ghost" disabled={busy} onClick={onIdk}>
+        <button data-testid="loop-attempt-idk" className="btn btn--ghost" disabled={busy || hintBusy} onClick={onIdk}>
           I don&apos;t know
         </button>
       </div>
