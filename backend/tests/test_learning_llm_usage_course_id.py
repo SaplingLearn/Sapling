@@ -158,11 +158,19 @@ def test_an_unrelated_error_keeps_the_column_and_never_loops(monkeypatch):
 
 #: (module, innermost enclosing function, the recording call) → the course_id=
 #: expression. The loop's run sites that may have no session record the course
-#: their deps carry; a session's row is attributed through its session.
+#: their deps carry. Since #866 K60 the session's own run sites (the tutor turn,
+#: its continuation, the close) record the session's course too: attributing
+#: a row through its session at report time lost the course whenever the
+#: session was deleted later (tests/test_loop_usage_course.py).
 COURSE_SITES = {
     ("agents/check_items.py", "_record_unfinished", "record_agent_usage"): {"deps.course_id"},
     ("agents/check_items.py", "run_drafting", "record_agent_usage"): {"deps.course_id"},
     ("agents/grader.py", "_run_once", "record_agent_usage"): {"deps.course_id"},
+    ("services/loop/turn.py", "record_usage", "record_agent_usage"): {"self.course_id or None"},
+    ("services/loop/continuation.py", "_loop_continuation_text", "record_agent_usage"): {
+        "turn.course_id or None"
+    },
+    ("agents/session_close.py", "run_session_close", "record_agent_usage"): {"course_id"},
     ("services/learning_decisions.py", "_run_decision", "record_agent_usage"): {
         "getattr(deps, 'course_id', None)"
     },

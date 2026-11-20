@@ -1566,6 +1566,7 @@ def test_loop_continuation_is_tool_less_budget_checked_and_capped():
     turn = SimpleNamespace(
         user_id="u1",
         session_id="s1",  # PKG-14b (A92): the continuation's usage row names its session
+        course_id="course-1",  # #866 K60: … and its course
         band="develop",
         slot="loop_tutor",
         tier="standard",
@@ -1609,6 +1610,7 @@ def test_loop_continuation_is_tool_less_budget_checked_and_capped():
         assert (
             seen["usage"]["task"] == "loop_tutor"
             and seen["usage"]["feature"] == "loop_tutor_continuation"
+            and seen["usage"]["course_id"] == "course-1"  # #866 K60
         )
         # no tool result to continue from: the turn itself, re-run tool-less
         order.clear()

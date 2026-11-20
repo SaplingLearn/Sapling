@@ -171,7 +171,9 @@ export function LoopCostPanel({ cost }: { cost: LoopCostPerGain | null | undefin
       )}
       {cost.unattributed.rows > 0 && (
         <p data-testid="admin-loop-cost-unattributed" style={muted}>
-          {`${fmtUsd(cost.unattributed.cost_usd)} over ${plural(cost.unattributed.rows, "call")} has no course on record (written before courses were recorded on model calls); it is in the totals, not in any course.`}
+          {/* #866 K60: every loop call records its course now; an older call that
+              named it only through its session loses it with the session */}
+          {`${fmtUsd(cost.unattributed.cost_usd)} over ${plural(cost.unattributed.rows, "call")} has no course on record: the call did not record its course, and its session (if it named one) has since been deleted or never had a course. It is in the totals, not in any course.`}
         </p>
       )}
       <p data-testid="admin-loop-cost-note" style={{ ...muted, fontSize: 12 }}>

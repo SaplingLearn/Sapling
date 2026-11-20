@@ -32,6 +32,7 @@ from learning.session_close import (
 from models import CloseBody, EndSessionBody
 from services.tutor_sessions import PENDING_SESSIONS, claim_pending, release_claim_tombstone
 from services import ai_budget, events_service
+from services.academics import offering_course_id
 from services.ai_budget import AIBudgetExceeded
 from services.auth_guard import get_session_user_id, guard_off_loop
 from services.encryption import bind, decrypt_if_present, decrypt_json_column
@@ -294,13 +295,17 @@ def _name_in_answer(name: str, item) -> bool:
 
 
 async def _model_close(
-    draft, *, user_id: str, request_id: str, session_id: str | None = None
+    draft, *, user_id: str, request_id: str, session_id: str | None = None,
+    course_id: str | None = None,
 ) -> object | None:
     """One close run under CLOSE_RUN_TIMEOUT_S (a timed-out run is the
     unavailable agent: the deterministic close is stored)."""
     try:
         return await asyncio.wait_for(
-            run_session_close(draft, user_id=user_id, request_id=request_id, session_id=session_id),
+            run_session_close(
+                draft, user_id=user_id, request_id=request_id, session_id=session_id,
+                course_id=course_id,
+            ),
             CLOSE_RUN_TIMEOUT_S,
         )
     except TimeoutError:
@@ -353,7 +358,7 @@ async def close_session(
     else:
         rows = await asyncio.to_thread(  # #117: off the event loop
             table("sessions").select,
-            "id,user_id,loop_state,close_json,close_phase",
+            "id,user_id,offering_id,loop_state,close_json,close_phase",
             # PKG-12: a review session is not a tutor session — never closed (404)
             filters={"id": f"eq.{session_id}", **NOT_REVIEW},
             limit=1,
@@ -402,8 +407,12 @@ async def close_session(
                             raise
                         limited = True
                 if not limited:
+                    # #866 K60: the close's usage row names the session's course
+                    offering = rows[0].get("offering_id") or ""
+                    course = await asyncio.to_thread(offering_course_id, offering) if offering else ""
                     out = await _model_close(
-                        draft, user_id=user_id, request_id=request_id, session_id=session_id
+                        draft, user_id=user_id, request_id=request_id, session_id=session_id,
+                        course_id=course or None,
                     )
             record = (
                 served_close(out, draft, items)

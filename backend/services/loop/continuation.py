@@ -153,6 +153,7 @@ async def _loop_continuation_text(turn, messages: list) -> str | None:
                     task=turn.slot,
                     user_id=turn.user_id,
                     session_id=turn.session_id,
+                    course_id=turn.course_id or None,  # #866 K60
                 )
             except Exception as exc:
                 # The canonical helper never raises. Keep instrumentation from

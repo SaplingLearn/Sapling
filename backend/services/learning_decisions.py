@@ -954,6 +954,7 @@ class _ShadowDeps:
     request_id: str | None
     session_id: str | None
     feature: str
+    course_id: str | None = None  # #866 K60: the billed row's course (A137)
 
 
 _SHADOW_TASKS: set[asyncio.Task] = set()
@@ -977,6 +978,7 @@ def _shadow(decision: str, state, deps, primary_value, primary_confidence: float
             request_id=deps.request_id,
             session_id=getattr(deps, "session_id", None),
             feature=getattr(deps, "feature", "unknown"),
+            course_id=getattr(deps, "course_id", None),
         )
         task = asyncio.get_running_loop().create_task(
             _run_shadow(decision, state, sdeps, str(primary_value), float(primary_confidence))

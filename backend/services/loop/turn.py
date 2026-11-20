@@ -838,6 +838,9 @@ class _LoopTurn:
             task=self.slot,
             user_id=self.user_id,
             session_id=self.session_id,
+            # #866 K60: the course on the row itself, so a later session delete
+            # never takes this spend off the course (cost_per_gain, A137)
+            course_id=self.course_id or None,
         )
 
     def _leak_rung(self) -> Rung:
