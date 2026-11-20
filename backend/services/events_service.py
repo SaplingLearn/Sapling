@@ -839,6 +839,23 @@ def log_llm_usage(
     except Exception:  # pragma: no cover - defensive
         logger.exception("log_llm_usage failed; row dropped")
         return
+    _after_llm_usage_recorded(row)
+
+
+def note_written_llm_usage(row: dict) -> None:
+    """What `log_llm_usage` does after it queues a row, for a usage row its
+    writer committed to llm_usage itself — the topic checklist's receipt, which
+    `checklist_budget_reconcile` writes with the cache in one transaction
+    (#866 Z54). The row is never queued again. Never raises."""
+    if not _logging_enabled() or not isinstance(row, dict):
+        return
+    _after_llm_usage_recorded(row)
+
+
+def _after_llm_usage_recorded(row: dict) -> None:
+    """A row on its way into llm_usage (queued, or written by its writer):
+    settle the run's budget reservation and send the PostHog mirror. Never raises."""
+    user_id = row.get("user_id")
     # The run's real usage is on its way into llm_usage: stop counting its
     # budget reservation once that has had time to land (sec2 M4).
     try:
@@ -853,14 +870,14 @@ def log_llm_usage(
     try:
         posthog_client.capture_ai_generation(
             user_id=user_id,
-            model=model,
+            model=row["model"],
             provider=row["provider"],
             input_tokens=row["prompt_tokens"],
             output_tokens=row["completion_tokens"],
             cost_usd=row["cost_usd"],
-            request_id=request_id,
-            feature=feature,
-            task=task,
+            request_id=row.get("request_id"),
+            feature=row["feature"],
+            task=row.get("task"),
         )
     except Exception:  # pragma: no cover - defensive; the capture is guarded
         logger.debug("PostHog $ai_generation mirror failed", exc_info=True)
