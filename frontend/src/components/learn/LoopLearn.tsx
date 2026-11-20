@@ -101,7 +101,7 @@ import { CenteredCard } from "./CenteredCard";
 import { ClosePanel } from "./ClosePanel";
 import { RatingPrompt } from "./RatingPrompt";
 import { claimWrapUpAsk, useWrapUpAsk } from "./WrapUpRating";
-import { checkMeFailure, checkMeNote, FEEDBACK_PENDING_COPY, PREPARING_COPY } from "./checkNote";
+import { checkMeFailure, checkMeNote, FEEDBACK_PENDING_COPY } from "./checkNote";
 import { SESSION_CLOSED_DETAIL, sessionRefusal } from "./sessionErrors";
 import { withPlanHistory } from "./loopHistory";
 import { dropInterruptedTurn } from "./chatRetry";

@@ -68,6 +68,15 @@ function withLearnerState(state: LoopUiState, ls: LoopLearnerState): LoopUiState
   return { ...state, learnerState: { ...state.learnerState, [ls.node_id]: ls }, focusNodeId: ls.node_id };
 }
 
+/** The pause a hard `budget` event shows; `pauseNovice` (#866 K35) and
+ *  `aiLimit` (#866 K11) are present only when true. */
+function pauseOf(ev: Extract<LoopUiEvent, { type: "budget" }>): LoopBudgetPause {
+  return {
+    resetAt: ev.resetAt, sessionCapped: ev.sessionCapped === true,
+    ...(ev.pauseNovice ? { pauseNovice: true } : {}), ...(ev.aiLimit ? { aiLimit: true } : {}),
+  };
+}
+
 export function reduceLoopEvent(state: LoopUiState, ev: LoopUiEvent): LoopUiState {
   switch (ev.type) {
     case "phase": {
@@ -93,13 +102,7 @@ export function reduceLoopEvent(state: LoopUiState, ev: LoopUiEvent): LoopUiStat
     case "budget":
       // soft = the invisible downgrade (spec §3.5): nothing renders
       if (ev.level !== "hard") return state;
-      return {
-        ...state,
-        budgetPause: {
-          resetAt: ev.resetAt, sessionCapped: ev.sessionCapped === true,
-          ...(ev.pauseNovice ? { pauseNovice: true } : {}), ...(ev.aiLimit ? { aiLimit: true } : {}),
-        },
-      };
+      return { ...state, budgetPause: pauseOf(ev) };
     case "budget_clear":
       return state.budgetPause ? { ...state, budgetPause: null } : state;
     case "reset":
