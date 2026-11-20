@@ -422,7 +422,11 @@ BODY_OVERRIDES: dict[tuple[str, str], dict[str, Any]] = {
     ("POST", "/api/study-guide/{user_id}/guides"): {"scope_kind": "exam"},
     ("PATCH", "/api/learn/sessions/{session_id}"): {"user_id": SELF, "topic": "matrix"},
     ("POST", "/api/learn/mode-switch"): {"new_mode": "socratic"},
-    ("POST", "/api/learn/chat"): {"message": "matrix probe"},
+    # #866 K12: a chat turn may name the quiz question it quotes; the matrix's
+    # A attempt id rides with its index, as the Ask panel sends them
+    ("POST", "/api/learn/chat"): {"message": "matrix probe", "quiz_question_index": 0},
+    ("POST", "/api/learn/loop/chat"): {"message": "matrix probe", "quiz_question_index": 0},
+    ("POST", "/api/learn/loop/chat/stream"): {"message": "matrix probe", "quiz_question_index": 0},
     # learning loop: the quiz-ask session that names A's attempt
     ("POST", "/api/learn/start-session"):
         {"topic": "matrix", "origin": "quiz_ask", "quiz_question_index": 0},
@@ -434,7 +438,7 @@ BODY_OVERRIDES: dict[tuple[str, str], dict[str, Any]] = {
         {"topic": "matrix", "origin": "quiz_ask", "quiz_question_index": 0},
     ("POST", "/api/learn/loop/report"): {"surface": "review", "reason": "unclear"},
     ("POST", "/api/learn/loop/review/answer"): {"kind": "flashcard", "rating": 3},
-    ("POST", "/api/learn/chat/stream"): {"message": "matrix probe"},
+    ("POST", "/api/learn/chat/stream"): {"message": "matrix probe", "quiz_question_index": 0},
     ("POST", "/api/quiz/attempts/{attempt_id}/answer"): {"question_index": 0, "selected_index": 0},
     ("PATCH", "/api/topic-checklist/{user_id}/courses/{course_id}/topics/{topic_id}"): {"checked": True},
     ("PATCH", "/api/graph/{user_id}/courses/{course_id}/color"): {"color": "#123456"},
