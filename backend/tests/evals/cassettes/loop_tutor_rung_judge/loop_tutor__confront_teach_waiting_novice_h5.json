@@ -1,8 +1,8 @@
 {
-  "judge_model": "gemini-2.5-pro",
+  "judge_model": "claude-opus-5-5",
   "judge_prompt_hash": "71530d86d71daaecad405563f53fdab3f424bf8124ff0b35fb8f6237f943b326",
   "output": {
-    "evidence": "If you take the derivative of x^3... the power rule also says to reduce the exponent by one. So, the correct derivative of x^3 is 3x^2.",
+    "evidence": "So, the correct derivative of x^3 is 3x^2.",
     "reveals_final_answer": false,
     "rung": 4
   },
