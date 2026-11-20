@@ -1138,12 +1138,68 @@ NAV_FEATURES_NOT_ENFORCED: dict[str, str] = {
     "hide_tutor": "the quiz Ask panel streams through the tutor's chat/session "
                   "endpoints and the dashboard/tree list sessions; the learning "
                   "loop's /api/learn/loop also serves quiz-ask sessions, Study's "
-                  "daily review and the delayed post-test",
+                  "daily review and the delayed post-test (hide_study gates "
+                  "Study's paths of it: NAV_FEATURE_PATHS)",
     "hide_tree": "/api/graph backs the course list every page loads",
     "hide_library": "/api/documents backs the shared upload modal (Calendar) and "
                     "Study's document list",
     "hide_course_planner": "the page is static; it calls no API",
 }
+
+
+#: #866 Z37: paths of a router SHARED by several surfaces that only a hidden
+#: feature's page calls — the opposite of an exemption list. Study's daily
+#: review (DueQueue) and retention check (RetentionCheck) run on
+#: /api/learn/loop, which the Tutor, the quiz Ask panel and the Dashboard also
+#: call, so hide_study 404s just these. Left visible on purpose: /review/summary
+#: (the Tutor's due pill), /review/active (the loop probe every page runs) and
+#: /posttest/due (the Dashboard card and the nav badge read it; whether those
+#: should also hide under hide_study is the frontend's F5 call).
+NAV_FEATURE_PATHS: dict[str, dict[str, tuple[tuple[str, str], ...]]] = {
+    "hide_study": {
+        "/api/learn/loop": (
+            ("GET", r"/review/next"),
+            ("POST", r"/review/answer"),
+            ("POST", r"/posttest/(start|answer|shown)"),
+        ),
+    },
+}
+
+
+def require_feature_paths_visible(flag: str, prefix: str):
+    """Router dependency for NAV_FEATURE_PATHS: 404 on the listed paths when
+    the ``hide_<feature>`` flag hides the feature for the session user;
+    every other path of the router is untouched."""
+    gated = tuple(
+        (method, re.compile(re.escape(prefix) + pattern + r"/?$"))
+        for method, pattern in NAV_FEATURE_PATHS[flag][prefix]
+    )
+
+    def _dependency(request: Request) -> None:
+        path = request.url.path
+        if not any((m == "*" or m == request.method) and rx.match(path) for m, rx in gated):
+            return
+        from services.auth_guard import get_session_user_id
+        try:
+            uid = get_session_user_id(request)
+        except HTTPException:
+            uid = None
+        if flag_variant(flag, uid) == "on":
+            raise HTTPException(status_code=404, detail="Not found")
+    return _dependency
+
+
+def nav_feature_path_gate(prefix: str) -> list:
+    """``include_router(dependencies=...)`` for a shared router: the
+    ``require_feature_paths_visible`` gate of every flag that lists paths of
+    ``prefix`` in NAV_FEATURE_PATHS."""
+    from fastapi import Depends
+
+    return [
+        Depends(require_feature_paths_visible(flag, prefix))
+        for flag, routers in NAV_FEATURE_PATHS.items()
+        if prefix in routers
+    ]
 
 
 def require_feature_visible(flag: str, prefix: str):

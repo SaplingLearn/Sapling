@@ -56,7 +56,7 @@ from routes.topic_checklist import router as topic_checklist_router
 from routes.study import router as study_router
 from services import ai_budget
 from services.quiz import config as quiz_config, errors as quiz_errors
-from services.feature_flags import nav_feature_gate
+from services.feature_flags import nav_feature_gate, nav_feature_path_gate
 from services.llm_budget import LLMBudgetExceeded
 from db.scope import (
     ScopeUnavailable,
@@ -581,7 +581,8 @@ app.include_router(learn.router,       prefix="/api/learn")
 # role under db_user_scope (#115): the loop's tables are service-only (bucket E,
 # spec §13 A148) and every handler checks ownership in code (require_self /
 # the session's owner), which the cross-user matrix pins.
-app.include_router(learn_loop.router, prefix="/api/learn/loop", dependencies=_SVC)
+# #866 Z37: hide_study 404s Study's paths of it (review queue, retention check).
+app.include_router(learn_loop.router, prefix="/api/learn/loop", dependencies=nav_feature_path_gate("/api/learn/loop") + _SVC)
 app.include_router(quiz.router,        prefix="/api/quiz", dependencies=nav_feature_gate("/api/quiz"))
 app.include_router(calendar.router,    prefix="/api/calendar", dependencies=nav_feature_gate("/api/calendar"))
 # Social stays service role until step 2e: room_messages has no policies or

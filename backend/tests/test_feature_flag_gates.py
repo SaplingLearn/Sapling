@@ -302,3 +302,64 @@ def test_warned_set_is_bounded(monkeypatch):
     for i in range(10):
         ff.explain(f"not_registered_{i}", None)
     assert len(ff._warned) <= 3
+
+
+# ── #866 Z37: the Study page's half of the learning loop's router ──────────
+#
+# Study's daily review (DueQueue) and retention check (RetentionCheck) call
+# /api/learn/loop, which other visible surfaces share, so hide_study gates
+# only those paths (NAV_FEATURE_PATHS). The loop's own gate answers 404 while
+# the loop is off, so these probes turn it on: a visible path then answers the
+# auth guard's 401, never the gate's 404.
+
+#: (method, path) only Study calls.
+LOOP_STUDY_CALLS = [
+    ("GET", "/api/learn/loop/review/next?user_id=u1"),
+    ("POST", "/api/learn/loop/review/answer"),
+    ("POST", "/api/learn/loop/posttest/start"),
+    ("POST", "/api/learn/loop/posttest/answer"),
+    ("POST", "/api/learn/loop/posttest/shown"),
+]
+
+#: (method, path) another surface calls: the Tutor's due pill (/review/summary),
+#: the loop probe every page runs (/review/active), the Dashboard card and nav
+#: badge (/posttest/due).
+LOOP_SHARED_CALLS = [
+    ("GET", "/api/learn/loop/review/summary?user_id=u1"),
+    ("GET", "/api/learn/loop/review/active?user_id=u1"),
+    ("GET", "/api/learn/loop/posttest/due?user_id=u1"),
+]
+
+
+@pytest.fixture
+def loop_on(monkeypatch):
+    monkeypatch.delenv("LEARNING_LOOP_ENABLED", raising=False)
+    monkeypatch.setenv("SAPLING_FLAG_LEARNING_LOOP", "on")
+    monkeypatch.setenv("SAPLING_FLAG_RETENTION_DUE_BADGE", "on")
+
+
+@pytest.mark.parametrize("method,path", LOOP_STUDY_CALLS)
+def test_hide_study_gates_the_loops_study_paths(monkeypatch, loop_on, method, path):
+    monkeypatch.setenv("SAPLING_FLAG_HIDE_STUDY", "on")
+    assert _gated(_call(method, path)), f"{method} {path} served while hide_study hides Study"
+    monkeypatch.setenv("SAPLING_FLAG_HIDE_STUDY", "off")
+    r = _call(method, path)
+    assert not _gated(r) and r.status_code != 405, f"{method} {path} is not a route"
+
+
+@pytest.mark.parametrize("method,path", LOOP_SHARED_CALLS)
+def test_hide_study_leaves_the_loops_shared_paths(monkeypatch, loop_on, method, path):
+    monkeypatch.setenv("SAPLING_FLAG_HIDE_STUDY", "on")
+    r = _call(method, path)
+    assert not _gated(r) and r.status_code != 405, f"{method} {path} is used by another surface"
+
+
+def test_every_gated_loop_path_has_a_probe():
+    probes = [(m, p.split("?")[0]) for m, p in LOOP_STUDY_CALLS]
+    for flag, routers in ff.NAV_FEATURE_PATHS.items():
+        for prefix, paths in routers.items():
+            for method, pattern in paths:
+                rx = re.compile(re.escape(prefix) + pattern + r"/?$")
+                assert any(method in ("*", m) and rx.match(p) for m, p in probes), (
+                    f"no probe for {flag}: {method} {prefix}{pattern}"
+                )
