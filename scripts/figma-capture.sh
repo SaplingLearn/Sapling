@@ -40,6 +40,14 @@ cd "$ROOT"
 if [ "${E2E_SLOT_LOCKED:-0}" != "1" ]; then
   export SAPLING_MODEL_MODE=function
   export SAPLING_FUNCTION_HANDLERS=agents.function_handlers_showcase
+  # The flag-off lane: production's default (the learning_loop flag ships
+  # off). scripts/e2e-up.sh switches the flag on for every student unless the
+  # caller exported a value, but the recipes (frontend/e2e/figma/recipes: the
+  # learn/* states are the LEGACY tutor's) and the showcase handler module
+  # cover the app with the loop off — the module registers no learning-loop
+  # slot. Exported before the cycle so its e2e-up.sh and Playwright
+  # (support/lane.ts) both see it.
+  export SAPLING_FLAG_LEARNING_LOOP=off
   exec "$ROOT/scripts/e2e-cycle.sh" -- "$ROOT/scripts/figma-capture.sh" "$@"
 fi
 

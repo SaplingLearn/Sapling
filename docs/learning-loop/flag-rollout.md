@@ -10,6 +10,8 @@ Every flag below only matters for a student who has the learning system at all. 
 
 Above it sits the env kill switch `LEARNING_LOOP_ENABLED`: `false`/`0`/`off`/`no` turns the loop off for everyone, whatever the flag says, with no database read. Unset means "the flag decides" — it no longer means on. `SAPLING_FLAG_LEARNING_LOOP=off` forces the flag off without touching the kill switch. Both off paths answer the loop routes as 404 (`invariants.md` §9) and each has its own E2E lane (kill switch, flag-off).
 
+The showcase drivers (`scripts/gallery-shots.sh`, `scripts/figma-capture.sh`) boot the flag-off lane: their recipes and `backend/agents/function_handlers_showcase.py` photograph production's default, the pre-loop app. Before the flag is on for everyone, give them loop recipes and showcase handlers for the loop slots, or the public gallery keeps showing the legacy tutor.
+
 ## How to switch a flag
 
 Flags live in `backend/services/feature_flags.py::REGISTRY`; their stored configuration is in the `feature_flags` and `feature_flag_targets` tables. Change them through the admin Flags tab, or the admin API (`routes/admin_flags.py`):

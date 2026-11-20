@@ -2781,6 +2781,51 @@ def test_inv_13b_no_oracle_reads_the_retired_toggle():
     assert hits == [], f"an oracle reads the retired toggle: {hits}"
 
 
+# ── Z49: the showcase lanes photograph production's default ──────────────────
+# scripts/e2e-up.sh switches the learning_loop flag on for every student unless
+# the caller exported a value, but the showcase drivers' recipes and their
+# handler module (agents/function_handlers_showcase.py) cover the app with the
+# loop OFF — production's default, the flag ships off. Each driver boots its
+# cycle in the flag-off lane.
+
+SHOWCASE_DRIVERS = ("gallery-shots.sh", "figma-capture.sh")
+
+
+@pytest.mark.parametrize("driver", SHOWCASE_DRIVERS)
+def test_z49_showcase_drivers_boot_their_stack_with_the_loop_off(driver, tmp_path):
+    """The real driver, run against a stub e2e-cycle.sh that records what the
+    cycle (e2e-up.sh, then Playwright) would inherit: the flag-off lane and
+    the showcase handlers."""
+    root = tmp_path / "repo"
+    (root / "scripts").mkdir(parents=True)
+    script = root / "scripts" / driver
+    script.write_text((BACKEND.parent / "scripts" / driver).read_text())
+    record = tmp_path / "booted.txt"
+    stub = root / "scripts" / "e2e-cycle.sh"
+    stub.write_text(
+        "#!/usr/bin/env bash\n"
+        f'printf "flag=%s\\nkill=%s\\nhandlers=%s\\n" "${{SAPLING_FLAG_LEARNING_LOOP-unset}}" '
+        f'"${{LEARNING_LOOP_ENABLED-unset}}" "${{SAPLING_FUNCTION_HANDLERS-unset}}" > "{record}"\n'
+    )
+    python = root / "backend" / "venv" / "bin" / "python"
+    python.parent.mkdir(parents=True)
+    python.write_text("#!/bin/sh\nexit 0\n")
+    for executable in (script, stub, python):
+        executable.chmod(0o755)
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in ("SAPLING_FLAG_LEARNING_LOOP", "LEARNING_LOOP_ENABLED", "E2E_SLOT_LOCKED")
+    }
+    subprocess.run(["bash", str(script)], cwd=root, env=env, capture_output=True, timeout=60)
+    booted = dict(line.split("=", 1) for line in record.read_text().splitlines())
+    assert booted == {
+        "flag": "off",  # the flag-off lane: frontend/e2e/support/lane.ts's loopOffLane
+        "kill": "unset",
+        "handlers": "agents.function_handlers_showcase",
+    }
+
+
 # ── PKG-14b: the evidence-only rule (spec §11) ──────────────────────────────
 
 LEGACY_MASTERY_SYMBOLS = ("mastery_delta", "MASTERY_DELTA_PER", "get_mastery_tier")
