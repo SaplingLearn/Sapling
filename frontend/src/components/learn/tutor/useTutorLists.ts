@@ -59,7 +59,8 @@ export function useTutorLists({ userId, sessionId, sessionClosed, wantMaterials,
     if (!userId || !studyVisible) return;
     let cancelled = false;
     getReviewSummary(userId)
-      .then((r) => { if (!cancelled) setDueReviews((r.due?.flashcard ?? 0) + (r.due?.check ?? 0)); })
+      // #866 K14: never-rated cards are new cards, not reviews that are due
+      .then((r) => { if (!cancelled) setDueReviews((r.due?.flashcard ?? 0) + (r.due?.check ?? 0) - (r.new ?? 0)); })
       .catch(() => { if (!cancelled) setDueReviews(null); });
     return () => { cancelled = true; };
   }, [userId, studyVisible, sessionClosed]);

@@ -6,6 +6,7 @@
 // clears it — the next successful tutor turn or a reload does.
 import React from "react";
 
+import type { LoopBudgetPause } from "@/lib/api";
 import { Icon } from "../Icon";
 
 export function BudgetPausedBanner({
@@ -50,21 +51,38 @@ export function BudgetPausedBanner({
   );
 }
 
-/** "3:00 PM" when the reset is today, "Tue 3:00 PM" when it is not. */
+/** Whole local calendar days from `now`'s date to `at`'s. */
+const daysAhead = (at: Date, now: Date) =>
+  Math.round(
+    (new Date(at.getFullYear(), at.getMonth(), at.getDate()).getTime()
+      - new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()) / 86_400_000,
+  );
+
+/** "3:00 PM" when the reset is today, "Tue 3:00 PM" within the week, and
+ *  "Dec 1, 7:00 PM" further out (#866 K18: the monthly cap lifts on the 1st, and
+ *  a bare weekday weeks away read as this week's). */
 export function formatResetAt(resetAt: string, now: Date = new Date()): string {
   const at = new Date(resetAt);
   if (Number.isNaN(at.getTime())) return "later";
-  const sameDay = at.toDateString() === now.toDateString();
-  return at.toLocaleString(undefined, {
-    ...(sameDay ? {} : { weekday: "short" }),
-    hour: "numeric",
-    minute: "2-digit",
-  });
+  const days = daysAhead(at, now);
+  const day = days === 0 ? {} : days > 0 && days < 7 ? { weekday: "short" as const } : { month: "short" as const, day: "numeric" as const };
+  return at.toLocaleString(undefined, { ...day, hour: "numeric", minute: "2-digit" });
 }
 
-/** The tutor-pause copy (spec §3.5, §13 A39). */
-export function tutorPauseMessage(resetAt: string | null, sessionCapped: boolean): string {
-  if (sessionCapped) return "Tutor chat paused for this session. Practice and review keep working.";
-  if (!resetAt) return "Tutor chat paused for now. Practice and review keep working.";
-  return `Tutor chat paused until ${formatResetAt(resetAt)}. Practice and review keep working.`;
+/** The tutor-pause copy (spec §3.5, §13 A39). `pauseNovice` (#866 K35): the hard
+ *  level holds checks on novice-band concepts too (A20), so "practice keeps
+ *  working" would promise a "Check me" that cannot pose one. */
+export function tutorPauseMessage(resetAt: string | null, sessionCapped: boolean, pauseNovice = false): string {
+  const when = sessionCapped ? " for this session" : resetAt ? ` until ${formatResetAt(resetAt)}` : " for now";
+  const rest = pauseNovice
+    ? "Review keeps working, but checks on concepts you're just starting are paused too."
+    : "Practice and review keep working.";
+  return `Tutor chat paused${when}. ${rest}`;
+}
+
+/** #866 K35: "Check me" answered 429 — at the hard level the concept's check is
+ *  held (a novice-band concept, A20): say so beside the button. */
+export function checkPausedNote(pause: LoopBudgetPause): string {
+  const until = pause.sessionCapped ? " for this session" : pause.resetAt ? ` until ${formatResetAt(pause.resetAt)}` : " for now";
+  return `Checks on this concept wait${until}: you're just starting it, and the AI budget is paused. Keep going with review on Study.`;
 }

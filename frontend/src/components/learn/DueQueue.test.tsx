@@ -326,6 +326,36 @@ describe("DueQueue", () => {
     expect(screen.queryByTestId("review-empty")).toBeNull();
   });
 
+  it("never-rated cards wait as new cards, not as due reviews (#866 K14)", async () => {
+    // 253 in the pool: 5 due reviews and 248 cards never rated (A74)
+    mockNext.mockResolvedValue({ ...next(null, 0, 253), new_total: 248 });
+    render(<DueQueue userId="u1" />);
+    const spent = await screen.findByTestId("review-budget-spent");
+    expect(spent.textContent).toContain("5 more due and 248 new cards");
+    expect(spent.textContent).not.toContain("253");
+  });
+
+  it("only new cards left: they wait, and nothing is called due (#866 K14)", async () => {
+    mockNext.mockResolvedValue({ ...next(null, 0, 1), new_total: 1 });
+    render(<DueQueue userId="u1" />);
+    const spent = await screen.findByTestId("review-budget-spent");
+    expect(spent.textContent).toContain("1 new card will wait for tomorrow");
+    expect(spent.textContent).not.toMatch(/due/);
+  });
+
+  it("a never-rated card is marked as a new card (#866 K14)", async () => {
+    mockNext.mockResolvedValue(next({ ...CARD, new: true }));
+    render(<DueQueue userId="u1" />);
+    expect((await screen.findByTestId("review-new-card")).textContent).toBe("New card");
+  });
+
+  it("a card due for review carries no new-card mark", async () => {
+    mockNext.mockResolvedValue(next(CARD));
+    render(<DueQueue userId="u1" />);
+    await screen.findByTestId("review-flip");
+    expect(screen.queryByTestId("review-new-card")).toBeNull();
+  });
+
   it("never attaches a late answer to a newer item", async () => {
     let resolveAnswer: (v: unknown) => void = () => {};
     mockNext.mockResolvedValueOnce(next(FREE)).mockResolvedValueOnce(next(CARD));
@@ -420,6 +450,33 @@ describe("DueQueue launch polish (PKG-13; spec §11.3, §3.5)", () => {
     mockSummary.mockResolvedValue(summary({ paused: 1 }));
     render(<DueQueue userId="u1" />);
     expect((await screen.findByTestId("review-budget-paused")).textContent).toContain("1 concept paused");
+  });
+
+  it("concepts held by the monthly cap say so, with the reset's date — never 'daily' (#866 K18)", async () => {
+    const until = "2026-12-01T00:00:00+00:00";
+    mockNext.mockResolvedValue(next(CARD));
+    mockSummary.mockResolvedValue(summary({ paused: 2, paused_scope: "monthly_usd", paused_until: until }));
+    render(<DueQueue userId="u1" courseId="c1" />);
+    const banner = await screen.findByTestId("review-budget-paused");
+    expect(banner.textContent).toContain("2 concepts paused until");
+    expect(banner.textContent).toContain(new Date(until).toLocaleString(undefined, { month: "short", day: "numeric" }));
+    expect(banner.textContent).toContain("when your monthly AI budget resets");
+    expect(banner.textContent).not.toMatch(/daily/i);
+    expect(banner.getAttribute("data-reset-at")).toBe(until);
+  });
+
+  it("an answer's rate-limit 429 says to send it again shortly — not that the tutor is paused (#866 K18)", async () => {
+    mockNext.mockResolvedValue(next(FREE));
+    mockAnswer.mockRejectedValue(new ApiError("ai budget reached", 429, {
+      body: { detail: "ai budget reached", reset_at: "2026-09-27T00:01:00Z", scope: "rate_limit", session_capped: false },
+    }));
+    render(<DueQueue userId="u1" courseId="c1" />);
+    await userEvent.type(await screen.findByTestId("review-answer-input"), "the base case");
+    await userEvent.click(screen.getByTestId("review-submit"));
+    const banner = await screen.findByTestId("review-budget-paused");
+    expect(banner.textContent).toContain("Too many AI requests in the last minute");
+    expect(banner.textContent).not.toContain("AI tutor paused");
+    expect((screen.getByTestId("review-answer-input") as HTMLTextAreaElement).value).toBe("the base case");
   });
 
   it("a failed summary is ignored (it only feeds the banner)", async () => {
@@ -537,6 +594,173 @@ describe("DueQueue — stated confidence (spec §13 A127)", () => {
   });
 });
 
+describe("DueQueue — a check that cannot be graded never pins the queue (#866 K16)", () => {
+  const unavailable = () => graded({ correct: null, hint: null, unavailable: true, refused: false });
+
+  it("an ungraded answer says the question comes back later, and Next moves on", async () => {
+    mockNext.mockResolvedValueOnce(next(FREE)).mockResolvedValueOnce(next(CARD));
+    mockAnswer.mockResolvedValueOnce(unavailable());
+    render(<DueQueue userId="u1" />);
+    await userEvent.type(await screen.findByTestId("review-answer-input"), "the base case");
+    await userEvent.click(screen.getByTestId("review-submit"));
+    const hint = await screen.findByTestId("review-hint");
+    expect(hint.textContent).toContain("Nothing was recorded");
+    expect(hint.textContent).toContain("comes back after the rest of today's review");
+    expect(hint.textContent).not.toMatch(/try again later/i);
+    expect(screen.getByTestId("review-submit").textContent).toBe("Try again");
+    await userEvent.click(screen.getByTestId("review-next"));
+    expect(await screen.findByTestId("review-flip")).toBeTruthy();
+  });
+
+  it("the question comes back with what the student had typed", async () => {
+    mockNext.mockResolvedValueOnce(next(FREE)).mockResolvedValueOnce(next(CARD)).mockResolvedValueOnce(next(FREE));
+    mockAnswer.mockResolvedValueOnce(unavailable()).mockResolvedValueOnce(graded({ hint: null }));
+    render(<DueQueue userId="u1" />);
+    await userEvent.type(await screen.findByTestId("review-answer-input"), "the base case");
+    await userEvent.click(screen.getByTestId("review-submit"));
+    await userEvent.click(await screen.findByTestId("review-next"));
+    await userEvent.click(await screen.findByTestId("review-flip"));
+    await userEvent.click(screen.getByTestId("review-rate-3"));
+    await userEvent.click(await screen.findByTestId("review-next"));
+    const box = (await screen.findByTestId("review-answer-input")) as HTMLTextAreaElement;
+    expect(box.value).toBe("the base case");
+  });
+
+  it("at the grader cap the answer's 429 says checks wait, and Next goes on to the flashcards", async () => {
+    mockNext.mockResolvedValueOnce(next(FREE)).mockResolvedValueOnce(next(CARD));
+    mockAnswer.mockRejectedValue(new ApiError("ai budget reached", 429, {
+      body: { detail: "ai budget reached", reset_at: "2026-09-27T00:00:00Z", scope: "daily_grades", session_capped: false },
+    }));
+    render(<DueQueue userId="u1" />);
+    await userEvent.type(await screen.findByTestId("review-answer-input"), "the base case");
+    await userEvent.click(screen.getByTestId("review-submit"));
+    const banner = await screen.findByTestId("review-budget-paused");
+    expect(banner.textContent).toContain("Today's grading limit is reached");
+    expect(banner.textContent).toContain("Flashcards keep working");
+    expect(banner.textContent).not.toContain("AI tutor paused");
+    await userEvent.click(screen.getByTestId("review-next"));
+    expect(await screen.findByTestId("review-flip")).toBeTruthy();
+  });
+
+  it("checks held at the grader cap are named, with when grading reopens", async () => {
+    mockNext.mockResolvedValue(next(null, 600, 0));
+    mockSummary.mockResolvedValue(summary({ grading_paused: 2, grading_paused_until: "2026-09-27T00:00:00Z" }));
+    render(<DueQueue userId="u1" />);
+    const banner = await screen.findByTestId("review-budget-paused");
+    expect(banner.textContent).toContain("Checks on 2 concepts wait until");
+    expect(banner.textContent).toContain("when today's grading limit resets");
+    expect(banner.getAttribute("data-reset-at")).toBe("2026-09-27T00:00:00Z");
+    // nothing else is due, but the checks are not "all caught up"
+    await waitFor(() => expect(screen.getByTestId("review-empty").textContent).toContain("Nothing else is due right now"));
+  });
+
+  it("Next after a rate-limit pause brings the same check back with the answer kept", async () => {
+    mockNext.mockResolvedValue(next(FREE));
+    mockAnswer.mockRejectedValue(new ApiError("ai budget reached", 429, {
+      body: { detail: "ai budget reached", reset_at: "2026-09-27T00:01:00Z", scope: "rate_limit", session_capped: false },
+    }));
+    render(<DueQueue userId="u1" />);
+    await userEvent.type(await screen.findByTestId("review-answer-input"), "the base case");
+    await userEvent.click(screen.getByTestId("review-submit"));
+    await userEvent.click(await screen.findByTestId("review-next"));
+    await waitFor(() => expect(mockNext).toHaveBeenCalledTimes(2));
+    expect((screen.getByTestId("review-answer-input") as HTMLTextAreaElement).value).toBe("the base case");
+  });
+});
+
+describe("DueQueue — the student's review day ends mid-answer (#866 K17)", () => {
+  const nextDay = (item: unknown) => ({ ...next(item), session_id: "sess-2" });
+
+  it("an answer sent after the day ended reloads today's queue, keeping what was typed", async () => {
+    mockNext.mockResolvedValueOnce(next(FREE)).mockResolvedValueOnce(nextDay(FREE));
+    mockAnswer.mockRejectedValueOnce(conflict("review session expired")).mockResolvedValueOnce(graded());
+    render(<DueQueue userId="u1" />);
+    await userEvent.type(await screen.findByTestId("review-answer-input"), "the base case");
+    await userEvent.click(screen.getByTestId("review-submit"));
+    expect((await screen.findByTestId("review-new-day")).textContent).toContain("A new review day began");
+    expect((screen.getByTestId("review-answer-input") as HTMLTextAreaElement).value).toBe("the base case");
+    await userEvent.click(screen.getByTestId("review-submit"));
+    await waitFor(() => expect(mockAnswer).toHaveBeenLastCalledWith(expect.objectContaining({ session_id: "sess-2" })));
+  });
+
+  it("when today's queue serves another item first, the notice never claims the typed answer is on screen", async () => {
+    mockNext.mockResolvedValueOnce(next(FREE)).mockResolvedValueOnce(nextDay(CARD));
+    mockAnswer.mockRejectedValueOnce(conflict("review session expired"));
+    render(<DueQueue userId="u1" />);
+    await userEvent.type(await screen.findByTestId("review-answer-input"), "the base case");
+    await userEvent.click(screen.getByTestId("review-submit"));
+    const note = (await screen.findByTestId("review-new-day")).textContent;
+    expect(note).toContain("A new review day began");
+    expect(note).not.toContain("still here");
+    expect(note).toContain("If that question comes back today, what you typed comes back with it.");
+    expect(screen.getByTestId("review-flip")).toBeTruthy();
+  });
+
+  it("a flashcard rating sent after the day ended reloads without mentioning typed text", async () => {
+    mockNext.mockResolvedValueOnce(next(CARD)).mockResolvedValueOnce(nextDay(CARD));
+    mockAnswer.mockRejectedValueOnce(conflict("review session expired"));
+    render(<DueQueue userId="u1" />);
+    await userEvent.click(await screen.findByTestId("review-flip"));
+    await userEvent.click(screen.getByTestId("review-rate-3"));
+    expect((await screen.findByTestId("review-new-day")).textContent).toBe("A new review day began, so the queue reloaded.");
+  });
+
+  it("a report sent after the day ended goes to today's session when the question is served again", async () => {
+    flags.item_reports = "on";
+    mockNext.mockResolvedValueOnce(next(FREE)).mockResolvedValueOnce(nextDay(FREE)).mockResolvedValueOnce(nextDay(MC));
+    mockReport.mockRejectedValueOnce(conflict("review session expired"))
+      .mockResolvedValueOnce({ reported: true, first: true, quarantined: false });
+    render(<DueQueue userId="u1" />);
+    await screen.findByTestId("review-item");
+    await userEvent.click(screen.getByTestId("review-report"));
+    await userEvent.click(screen.getByTestId("review-report-reason-unclear"));
+    expect(await screen.findByTestId("review-reported")).toBeTruthy();
+    expect(mockReport.mock.calls.map(([body]) => body.session_id)).toEqual(["sess-1", "sess-2"]);
+    expect(await screen.findByTestId("review-option-A")).toBeTruthy();
+  });
+
+  it("a report the new day cannot take says it was not sent — never silently dropped", async () => {
+    flags.item_reports = "on";
+    mockNext.mockResolvedValueOnce(next(FREE)).mockResolvedValueOnce(nextDay(CARD));
+    mockReport.mockRejectedValueOnce(conflict("review session expired"));
+    render(<DueQueue userId="u1" />);
+    await screen.findByTestId("review-item");
+    await userEvent.click(screen.getByTestId("review-report"));
+    await userEvent.click(screen.getByTestId("review-report-reason-unclear"));
+    expect((await screen.findByTestId("review-not-reported")).textContent).toContain("wasn't sent");
+    expect(mockReport).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("DueQueue — the answer boxes are visible fields (#866 Z29)", () => {
+  // Tailwind's preflight strips every textarea's border, padding and fill: a box
+  // with no style of its own is invisible, so each one carries the loop's field
+  // style (FIELD_STYLE, as the loop's check card does) and a visible label.
+  const looksLikeAField = (box: HTMLElement) => {
+    expect(box.style.border).toBe("1px solid var(--border)");
+    expect(box.style.background).toBe("var(--bg-input)");
+    expect(box.style.padding).toBe("10px 12px");
+  };
+
+  it("a free check's answer box is styled and has a visible label", async () => {
+    mockNext.mockResolvedValue(next(FREE));
+    render(<DueQueue userId="u1" courseId="c1" />);
+    const box = await screen.findByLabelText("Your answer");
+    expect(box).toBe(screen.getByTestId("review-answer-input"));
+    expect(screen.getByText("Your answer").tagName).toBe("LABEL");
+    looksLikeAField(box);
+  });
+
+  it("an mc_reason check's reason box is styled and has a visible label", async () => {
+    mockNext.mockResolvedValue(next(MC));
+    render(<DueQueue userId="u1" courseId="c1" />);
+    const box = await screen.findByLabelText("Your reasoning");
+    expect(box).toBe(screen.getByTestId("review-reason-input"));
+    expect(screen.getByText("Your reasoning").tagName).toBe("LABEL");
+    looksLikeAField(box);
+  });
+});
+
 describe("DueQueue — keyboard and screen reader (spec §13 A135)", () => {
   it("the first load moves no focus: Study owns it when the page opens", async () => {
     mockNext.mockResolvedValue(next(FREE));
@@ -550,7 +774,7 @@ describe("DueQueue — keyboard and screen reader (spec §13 A135)", () => {
     mockNext.mockResolvedValueOnce(next(FREE)).mockResolvedValueOnce(next(MC));
     mockAnswer.mockResolvedValue(graded());
     render(<DueQueue userId="u1" courseId="c1" />);
-    expect(await screen.findByRole("textbox", { name: "Review answer" })).toHaveAccessibleDescription("What stops factorial(0)?");
+    expect(await screen.findByRole("textbox", { name: "Your answer" })).toHaveAccessibleDescription("What stops factorial(0)?");
     await userEvent.type(screen.getByTestId("review-answer-input"), "the base case");
     await userEvent.click(screen.getByTestId("review-submit"));
     await userEvent.click(await screen.findByTestId("review-next"));

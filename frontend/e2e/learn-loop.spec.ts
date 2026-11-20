@@ -81,6 +81,8 @@ const LOOP_FEEDBACK_BODY = "Look at which part of the item your answer addressed
 const LOOP_FEEDBACK_QUESTION = "How would you check that part yourself next time?";
 /** Must match backend/agents/function_handlers_e2e.py::E2E_GRADER_CORRECT_TOKEN */
 const GRADER_CORRECT_TOKEN = "E2E_GRADER_CORRECT";
+/** #866 K16. Must match backend/agents/function_handlers_e2e.py::E2E_GRADER_UNSURE_TOKEN */
+const GRADER_UNSURE_TOKEN = "E2E_GRADER_UNSURE";
 /** Must match backend/agents/function_handlers_e2e.py::E2E_CLOSE_SUMMARY */
 const CLOSE_SUMMARY =
   "[e2e-function-model] Deterministic session close: the student checked " +
@@ -1184,7 +1186,8 @@ test("budget cap: tutor chat pauses on /learn; review still serves and grades on
   // runs (spec §3.5: the probe keeps working at the hard level; grading has its own cap).
   await expect(banner).toBeVisible();
   await expect(page.getByTestId("loop-probe-item")).toBeVisible();
-  await expect(banner).toContainText("Practice and review keep working");
+  // #866 K35: a $ cap holds checks on novice-band concepts too (A20), and says so
+  await expect(banner).toContainText("Review keeps working, but checks on concepts you're just starting are paused too");
   await expect(banner).toContainText("Tutor chat paused until"); // the daily copy (A39: not session-capped)
   expect(await banner.getAttribute("data-reset-at")).toBeTruthy();
   await expect(page.getByTestId("loop-budget-study-link")).toHaveAttribute("href", "/study");
@@ -1217,6 +1220,92 @@ test("budget cap: tutor chat pauses on /learn; review still serves and grades on
   expect(new Date(card[0].due_at).getTime()).toBeGreaterThan(Date.now());
 
   await context.close();
+});
+
+test("Study: a never-rated card is a new card, and the queue keeps the student's local day (#866 K14, K17)", async ({ browser }) => {
+  test.skip(loopOffLane, "loop path: default lane only");
+  // The capped user's one seeded card, never rated: due_at NULL enters the review
+  // pool (spec §13 A74) as a NEW card, not a review that is due.
+  await queryRaw(
+    `UPDATE flashcards SET due_at = NULL, fsrs_s = NULL, fsrs_d = NULL, reps = 0, last_reviewed_at = NULL WHERE id = $1`,
+    [CAPPED_CARD_ID],
+  );
+  const { context, page } = await signIn(browser, USER_CAPPED, "Casey Cap");
+  const served = page.waitForResponse((r) => new URL(r.url()).pathname === "/api/learn/loop/review/next");
+  await page.goto("/study");
+  const response = await served;
+  // K17: the review is keyed on the student's local day (JS getTimezoneOffset)
+  const offset = await page.evaluate(() => new Date().getTimezoneOffset());
+  expect(new URL(response.url()).searchParams.get("tz_offset_min")).toBe(String(offset));
+  const body = (await response.json()) as { new_total: number; item: { id: string; new?: boolean } | null };
+  expect(body.new_total).toBeGreaterThanOrEqual(1);
+  await expect(page.getByTestId("review-item")).toContainText(CAPPED_CARD_FRONT);
+  await expect(page.getByTestId("review-new-card")).toHaveText("New card");
+  await page.getByTestId("review-flip").click();
+  await page.getByTestId("review-rate-3").click();
+  await expect(page.getByTestId("review-hint")).toBeVisible();
+  await expect
+    .poll(async () => ((await queryRaw(`SELECT due_at FROM flashcards WHERE id = $1`, [CAPPED_CARD_ID])) as { due_at: string | null }[])[0].due_at, {
+      timeout: DB_POLL_TIMEOUT_MS,
+    })
+    .not.toBeNull();
+  await context.close();
+});
+
+test("Study: a check the grader could not grade moves on and comes back with what was typed (#866 K16)", async ({ browser }) => {
+  test.skip(loopOffLane, "loop path: default lane only");
+  test.setTimeout(LOOP_JOURNEY_TIMEOUT_MS);
+  // The real queue (no stubs): one due concept with a seeded check item and the
+  // capped user's due card. The concept's R is the lower, so DASH serves its check
+  // first; proficient, so the $ cap's novice pause (A20) does not hold it.
+  const node = "rich-node-capped-binary";
+  await queryRaw(
+    `INSERT INTO learner_state (user_id, node_id, p_known, fsrs_d, fsrs_s, fsrs_last_review_at, fsrs_due_at)
+     VALUES ($1, $2, 0.97, 5, 200, now() - interval '20 days', now() - interval '1 hour')`,
+    [USER_CAPPED, node],
+  );
+  await queryRaw(
+    `UPDATE flashcards SET fsrs_s = 5000, fsrs_d = 5, reps = 3, last_rating = 3,
+            last_reviewed_at = now() - interval '1 day', due_at = now() - interval '1 hour'
+      WHERE id = $1`,
+    [CAPPED_CARD_ID],
+  );
+  const { context, page } = await signIn(browser, USER_CAPPED, "Casey Cap");
+  try {
+    await page.goto("/study");
+    await expect(page.getByTestId("review-item")).toContainText("Binary Numbers");
+    // The function-mode grader is unsure on this token on both slots: unavailable
+    const typed = `a binary digit ${GRADER_UNSURE_TOKEN}`;
+    await page.getByRole("textbox", { name: "Your answer" }).fill(typed);
+    await page.getByTestId("review-submit").click();
+    await expect(page.getByTestId("review-hint")).toContainText("comes back after the rest of today's review");
+    // the claim was given back and the open entry marked, never closed or recorded
+    const open = (await queryRaw(
+      `SELECT loop_state->'open'->$2->>'unavailable_at' AS unavailable_at,
+              loop_state->'open'->$2->>'graded_at' AS graded_at
+         FROM sessions WHERE user_id = $1 AND loop_state->'open' ? $2`,
+      [USER_CAPPED, node],
+    )) as { unavailable_at: string | null; graded_at: string | null }[];
+    expect(open).toHaveLength(1);
+    expect(open[0].unavailable_at).not.toBeNull();
+    expect(open[0].graded_at).toBeNull();
+    // Next serves the rest of the queue first: the card
+    await page.getByTestId("review-next").click();
+    await expect(page.getByTestId("review-item")).toContainText(CAPPED_CARD_FRONT);
+    await page.getByTestId("review-flip").click();
+    await page.getByTestId("review-rate-3").click();
+    await page.getByTestId("review-next").click();
+    // then the same check again (A70: the only item served for its concept), with what was typed
+    await expect(page.getByTestId("review-item")).toContainText("Binary Numbers");
+    await expect(page.getByRole("textbox", { name: "Your answer" })).toHaveValue(typed);
+    const evidence = (await queryRaw(
+      `SELECT count(*)::int AS n FROM node_mastery_events WHERE node_id = $1 AND event_type = 'evidence'`,
+      [node],
+    )) as { n: number }[];
+    expect(evidence[0].n).toBe(0); // an ungraded answer moved nothing
+  } finally {
+    await context.close();
+  }
 });
 
 // PKG-14b (spec §11.2, §11.4): the loop is every student's default — the

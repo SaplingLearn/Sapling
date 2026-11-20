@@ -967,10 +967,11 @@ loop active (`GET /api/learn/loop/review/active` 200 — a gate-only probe; the 
 | --- | --- |
 | `review-due-panel` | the "Due today" panel root |
 | `review-budget` | chip: minutes left of today's review budget |
-| `review-empty` | "All caught up — nothing is due right now." (no item and nothing due; never shown beside a stale item; makes no "due later" claim — `/review/summary` counts today, as of its read) |
-| `review-budget-paused` | the budget pause banner (PKG-13, spec §3.5): a review call answered 429 `ai budget reached` ("AI tutor paused until <time>. Flashcards and review keep working.") or `/review/summary` reports `paused` > 0 novice concepts ("<n> concept(s) paused until your daily AI budget resets. …"); `role="status"`, `data-reset-at`, `data-session-capped` |
-| `review-budget-spent` | no item while items are still due — today's review budget is spent (shows how many remain) |
+| `review-empty` | "All caught up — nothing is due right now." (no item and nothing due; never shown beside a stale item; makes no "due later" claim — `/review/summary` counts today, as of its read); "Nothing else is due right now." while the summary holds concepts back (`paused` / `grading_paused`) |
+| `review-budget-paused` | the budget pause banner (PKG-13, spec §3.5): a review call answered 429 `ai budget reached` (by its `scope`: the per-minute rate limit says "Too many AI requests in the last minute. Send this answer again at <time>.", the grader cap "Today's grading limit is reached: checks can't be graded until <time>. Flashcards keep working.") or `/review/summary` reports `paused` > 0 novice concepts ("<n> concept(s) paused until <reset>, when your monthly AI budget resets. …" — the cap its `paused_scope` names, the reset `paused_until`, dated when a week or more away; #866 K18) or `grading_paused` > 0 concepts held at the grader cap ("Checks on <n> concept(s) wait until <time>, when today's grading limit resets. …", #866 K16); `role="status"`, `data-reset-at`, `data-session-capped` |
+| `review-budget-spent` | no item while items are still due — today's review budget is spent (shows how many remain: the due reviews, and the never-rated cards as "new cards", #866 K14) |
 | `review-item` | the served item (a check's prompt, or a flashcard's front/back) |
+| `review-new-card` | "New card" chip on a served flashcard never rated yet (`/review/next` item `new`; spec §13 A74's pool — a new card, not a review that is due; #866 K14) |
 | `review-answer-input` | free-response answer textarea (a `free` check) |
 | `review-option-{letter}` | one stored `mc_reason` option radio, suffixed with the option's own letter (stored order; correctness never marked, A22); the radio group is named by the question (spec §13 A135) |
 | `review-reason-input` | the one-sentence reason textarea of an `mc_reason` check |
@@ -980,15 +981,17 @@ loop active (`GET /api/learn/loop/review/active` 200 — a gate-only probe; the 
 | `review-submit` | "Check" / "Try again" — sends a check answer |
 | `review-flip` | "Show answer" on a flashcard |
 | `review-rate-1` / `review-rate-2` / `review-rate-3` | a flashcard self-rating (forgot / hard / easy) |
-| `review-hint` | the result line: verdict + corrective hint (with the answer when wrong), "Grader unavailable", or the A33 own-words prompt |
+| `review-hint` | the result line: verdict + corrective hint (with the answer when wrong), the grader-could-not-grade line (nothing recorded; Next moves on and the question comes back after the rest of today's review — #866 K16), or the A33 own-words prompt |
 | `review-graded` | "Your answer is already recorded" — a resend met `409 already graded` (the answer counted) |
-| `review-next` | "Next" — polls `/review/next` after a graded answer (also while paused, so review keeps moving) |
+| `review-next` | "Next" — polls `/review/next` after a graded answer (also while paused, so review keeps moving, and after a grade the grader could not make — never after an A33 refusal; a check the queue moves past unanswered comes back with what was typed, #866 K16) |
 | `review-report` | "Report this question" on a served check (answered or not; never on a flashcard), only while the `item_reports` flag is on (spec §13 A113, #695) — opens the reasons |
 | `review-report-reasons` | the reasons group (`role="group"`): buttons only, no text box |
 | `review-report-reason-{reason}` | one reason — `wrong_answer` / `unclear` / `not_from_my_course` — posts `/api/learn/loop/report` (`surface: review`, the item's id) and loads the next item |
 | `review-report-cancel` | closes the reasons without reporting |
 | `review-reported` | "Thanks — that question is reported…" above the next item |
 | `review-skipped` | "That question is no longer available, so it was skipped." — a 404 on `/review/answer` or `/report` moved on to the next item |
+| `review-new-day` | "A new review day began, so the queue reloaded. …" — an answer met `409 review session expired`: the review session is one per the student's LOCAL day (`tz_offset_min`), and what was typed comes back with that check: on screen when today's queue serves it first, else kept until it is served again (the text says which; #866 K17) |
+| `review-not-reported` | a report met `409 review session expired` and today's queue does not serve the question again, so the report was not sent (said, never silently dropped; when the question is served again the report goes to today's session) (#866 K17) |
 | `review-load-error` / `review-load-retry` | `/review/next` failed: why, and "Try again" |
 
 ### `retention`
@@ -1064,7 +1067,7 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `loop-readonly-transcript` | a `?resume=` session that is not an open loop session (a legacy one), shown read-only |
 | `loop-readonly-new-session` | "Start a new session" beside the read-only transcript |
 | `loop-notices` | the notices container — always on the page, `aria-live="polite"` and empty until a notice arrives, so each notice below is announced as it is added (spec §13 A135) |
-| `loop-budget-paused` | the budget pause banner (A20/A26/A39); `role="status"`, `data-reset-at` (ISO or empty), `data-session-capped` (`true`: "paused for this session", no reset time) |
+| `loop-budget-paused` | the budget pause banner (A20/A26/A39); `role="status"`, `data-reset-at` (ISO or empty), `data-session-capped` (`true`: "paused for this session", no reset time); when the 429 or `budget` notice says `pause_novice`, it says checks on concepts the student is just starting are paused too, and a "Check me" that met that pause says so beside the button (#866 K35) |
 | `loop-budget-study-link` | link to `/study?mode=cards` inside the banner |
 | `loop-no-check-items` | "No check items for this course yet" (A23) |
 | `loop-tree-link` | link to `/tree` (`?node=<id>` once a `learner_state` event names the concept): the session panel's "Open map", or "Map" in the TopBar on a phone; absent while `hide_tree` hides the Tree |

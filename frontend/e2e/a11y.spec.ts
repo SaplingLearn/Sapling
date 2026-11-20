@@ -659,6 +659,11 @@ test("review queue: a flashcard, its answer, the rated result and a multiple-cho
     await expect(page.getByTestId("review-option-B")).toBeVisible();
     await page.getByTestId("review-option-B").check();
     await page.getByTestId("review-confidence-sure").click();
+    // #866 Z29: under Tailwind's preflight an unstyled textarea has no border or
+    // fill; the reason box is a visible, labelled field
+    const reasonBox = page.getByRole("textbox", { name: "Your reasoning" });
+    await expect(reasonBox).toBeVisible();
+    expect(await reasonBox.evaluate((el) => getComputedStyle(el).borderTopWidth)).toBe("1px");
     await expectAccessible(page, "review: a multiple-choice check");
   } finally {
     await context.close();
@@ -671,6 +676,8 @@ test("retention check: opened with nothing eligible yet", async ({ browser }) =>
   try {
     await page.goto("/study");
     await expect(page.getByTestId("retention-open")).toBeEnabled();
+    // #866 Z29: the course picker is a visible field, not a borderless select
+    expect(await page.getByTestId("retention-course").evaluate((el) => getComputedStyle(el).borderTopWidth)).toBe("1px");
     await expectAccessible(page, "review: retention check entry");
     await page.getByTestId("retention-open").click();
     await expect(page.getByTestId("retention-empty")).toBeVisible();

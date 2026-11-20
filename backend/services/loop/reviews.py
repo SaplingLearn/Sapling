@@ -33,10 +33,13 @@ from services.loop.reveals import _ledger, _refloor, _reveal_floor
 # ── PKG-12: the daily review queue (spec §3.2, §3.5, §5; A16, A20, A22, A23, A33, A52) ──
 # Every review route is require_self + the gate (`_gate`, 404 when the loop is off,
 # before any read). The review session (a `sessions` row with mode 'review', one per
-# user, course and UTC day) is keyed on the requesting user, and a row of another
+# user, course and the student's local day — the client's `tz_offset_min`, #866 K17)
+# is keyed on the requesting user, and a row of another
 # student's is a 403. No review route gates on the tutor budget level: the only budget
 # reads are `pause_novice` (A20 — novice concepts pause, flashcards and the rest keep
-# working) and the rate limit on a CHECK answer, the one body that runs a model.
+# working), the grader cap (#866 K16 — at STUDENT_DAILY_GRADES the queue holds its
+# checks and a check answer is the cap's 429) and the rate limit on a CHECK answer,
+# the one body that runs a model.
 
 
 _REVIEW_NOT_FOUND = "review item not found"
@@ -58,6 +61,43 @@ def _review_now() -> datetime:
 def _pause_novice(user_id: str) -> bool:
     """A20: at the tutor hard level novice-band concepts are held back."""
     return bool(ai_budget.check(user_id, "tutor", "novice").pause_novice)
+
+
+def _grading_cap(user_id: str):
+    """#866 K16: the grader cap's hard decision (spec §3.5 STUDENT_DAILY_GRADES;
+    scope daily_grades, reset at the next UTC midnight), or None while grading
+    is open. At the cap no check can be graded until it lifts: the queue holds
+    its checks back and serves flashcards, and /review/answer answers a check
+    with the cap's 429 before any claim."""
+    decision = ai_budget.check(user_id, "grader")
+    return decision if decision.level == "hard" else None
+
+
+def _grading_until(user_id: str, held: int) -> dict:
+    """`grading_paused_until`: when the grader cap that holds `held` concepts
+    lifts (#866 K16; the decision `_grading_cap` read, from this request's
+    budget cache). Read only when something is held."""
+    decision = _grading_cap(user_id) if held else None
+    reset = decision.reset_at if decision is not None else None
+    return {"grading_paused_until": reset.isoformat() if reset else None}
+
+
+_NO_PAUSE = {"paused_scope": None, "paused_until": None}
+
+
+def _pause_scope(user_id: str, paused: int) -> dict:
+    """#866 K18: which cap holds the `paused` novice concepts and when it lifts —
+    the tutor budget's binding scope and reset (the decision `_pause_novice`
+    read, served from this request's budget cache). A monthly cap lifts on the
+    1st of next month, weeks away: Study says so instead of promising the daily
+    reset. Read only when something is paused."""
+    if not paused:
+        return dict(_NO_PAUSE)
+    decision = ai_budget.check(user_id, "tutor", "novice")
+    if not decision.pause_novice:
+        return dict(_NO_PAUSE)
+    reset = decision.reset_at
+    return {"paused_scope": decision.scope, "paused_until": reset.isoformat() if reset else None}
 
 
 def _review_deps(
@@ -83,9 +123,13 @@ def _review_course(user_id: str, course_id: str | None) -> None:
         raise HTTPException(status_code=404, detail="Course not found")
 
 
-def _review_session(user_id: str, course_id: str | None, now: datetime) -> tuple[str, dict]:
+def _review_session(
+    user_id: str, course_id: str | None, now: datetime, tz_offset_min: int = 0
+) -> tuple[str, dict]:
     try:
-        return review.load_or_create_review_session(user_id, course_id, now)
+        return review.load_or_create_review_session(
+            user_id, course_id, now, tz_offset_min=tz_offset_min
+        )
     except PermissionError:
         raise HTTPException(status_code=403, detail="Session user mismatch") from None
 
@@ -108,19 +152,22 @@ def _serve_review_item(user_id: str, item, loop_state: dict, session_id: str, no
 
 
 def review_next(
-    request: Request, user_id: str, course_id: str | None = None
+    request: Request, user_id: str, course_id: str | None = None, tz_offset_min: int = 0
 ) -> dict:
     """The next item of today's review queue (or null). A served item stays the
     answerable one until it is answered: a refresh re-serves it (no write, no
     event) instead of choosing another — never item shopping. A new item is
     opened for answering and `review.served` follows the successful serve.
     `due_total` is everything due today; `in_budget` what the remaining budget
-    covers (null item + due_total > 0 = the budget is spent, not caught up)."""
+    covers (null item + due_total > 0 = the budget is spent, not caught up);
+    `new_total` the never-rated cards among `due_total` (A74's pool: new
+    cards, not due reviews — #866 K14). `tz_offset_min` (the client's JS
+    getTimezoneOffset) names the student's day (#866 K17)."""
     _gate(user_id, request)
     enforce_abuse_limit(abuse_limits.LOOP_ACTION, user_id)  # audit Z02
     _review_course(user_id, course_id)
     now = _review_now()
-    sid, loop_state = _review_session(user_id, course_id, now)
+    sid, loop_state = _review_session(user_id, course_id, now, tz_offset_min)
     retention = review.review_retention(user_id, course_id)
     queue, stats = review.due_queue_with_stats(
         user_id,
@@ -128,11 +175,13 @@ def review_next(
         now,
         loop_state=loop_state,
         pause_novice=lambda: _pause_novice(user_id),
+        hold_checks=lambda: _grading_cap(user_id) is not None,  # #866 K16
         # spec §13 A140: passed only when on, so a flag-off build is the plain one
         **({"varied": True} if varied_practice.varied_on(user_id) else {}),
     )
-    # the item already open for its key first: a refresh never moves on
-    ordered = sorted(queue, key=lambda i: not review.is_open(loop_state, i, now))
+    # the item already open for its key first: a refresh never moves on; one
+    # whose last answer could not be graded after the rest (#866 K16)
+    ordered = review.try_order(queue, loop_state, now)
     payload = None
     try:
         for item in ordered:
@@ -155,6 +204,7 @@ def review_next(
         "session_id": sid,
         "retention_target": retention,
         "due_total": sum(due.values()),
+        "new_total": stats.get("new", 0),
         "in_budget": len(queue),
     }
 
@@ -182,11 +232,16 @@ async def review_answer(body: ReviewAnswerBody, request: Request) -> dict:
     # #117: every sync PostgREST read and write below hops off the event loop
     if body.kind == "check":  # the one review body that runs a model (the grader)
         await asyncio.to_thread(ai_budget.enforce_rate_limit_for, body.user_id)
+        # #866 K16: at the grader cap no answer can be graded until it lifts —
+        # the cap's 429 before any claim (nothing is graded or written; spec §3.5)
+        if (capped := await asyncio.to_thread(_grading_cap, body.user_id)) is not None:
+            raise ai_budget.AIBudgetExceeded(capped)
     await asyncio.to_thread(_review_course, body.user_id, body.course_id)
     now = _review_now()
-    if body.session_id != review.review_session_id(body.user_id, body.course_id, now):
-        raise HTTPException(status_code=409, detail=_REVIEW_EXPIRED)  # a new UTC day began
-    sid, loop_state = await asyncio.to_thread(_review_session, body.user_id, body.course_id, now)
+    tz = body.tz_offset_min  # #866 K17: the student's day, not the UTC one
+    if body.session_id != review.review_session_id(body.user_id, body.course_id, now, tz_offset_min=tz):
+        raise HTTPException(status_code=409, detail=_REVIEW_EXPIRED)  # the student's new day began
+    sid, loop_state = await asyncio.to_thread(_review_session, body.user_id, body.course_id, now, tz)
     check = card_row = deps = None
     if body.kind == "check":
         check = await asyncio.to_thread(get_check_item, body.item_id)
@@ -213,9 +268,12 @@ async def review_answer(body: ReviewAnswerBody, request: Request) -> dict:
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None
-    retention = loop_state["review"].get("retention") or await asyncio.to_thread(
-        review.review_retention, body.user_id, body.course_id
-    )
+    # #866 K54: the item's own course's target (the Flashcards page's rating uses
+    # the same), never the session scope's: Study reads its queue unscoped
+    if check is not None:
+        retention = await asyncio.to_thread(review.course_retention, body.user_id, check.course_id)
+    else:
+        retention = await asyncio.to_thread(review.card_retention, body.user_id, card_row or {})
     claim = str(uuid.uuid4())
     try:
         operation_id = await asyncio.to_thread(
@@ -288,25 +346,34 @@ async def review_answer(body: ReviewAnswerBody, request: Request) -> dict:
 
 
 def review_summary(
-    request: Request, user_id: str, course_id: str | None = None
+    request: Request, user_id: str, course_id: str | None = None, tz_offset_min: int = 0
 ) -> dict:
     """Today's due counts, budget and retention target. Read-only: it never creates
-    the review session."""
+    the review session. `paused_scope` / `paused_until` name the cap that holds
+    the `paused` novice concepts and when it lifts (#866 K18);
+    `grading_paused_until` when the grader cap that holds the `grading_paused`
+    concepts lifts (#866 K16)."""
     _gate(user_id, request)
     enforce_abuse_limit(abuse_limits.LOOP_ACTION, user_id)  # audit Z02
     _review_course(user_id, course_id)
     now = _review_now()
     try:
-        loop_state = review.peek_review_session(user_id, course_id, now)
+        loop_state = review.peek_review_session(
+            user_id, course_id, now, tz_offset_min=tz_offset_min  # #866 K17
+        )
     except PermissionError:
         raise HTTPException(status_code=403, detail="Session user mismatch") from None
-    return review.summary(
+    body = review.summary(
         user_id,
         course_id,
         now,
         loop_state=loop_state,
         pause_novice=lambda: _pause_novice(user_id),
+        hold_checks=lambda: _grading_cap(user_id) is not None,  # #866 K16
     )
+    body.update(_pause_scope(user_id, body.get("paused") or 0))
+    body.update(_grading_until(user_id, body.get("grading_paused") or 0))
+    return body
 
 
 def review_active(request: Request, user_id: str) -> dict:

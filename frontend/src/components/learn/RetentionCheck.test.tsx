@@ -419,3 +419,10 @@ it("a 503 on Open reads as words too (#866 K13)", async () => {
   expect(alert.textContent).not.toMatch(/post-test unavailable/);
   expect(alert.textContent).toMatch(/Couldn't open retention checks/);
 });
+
+it("the course picker is a visible field, like the answer boxes (#866 Z29)", () => {
+  // Tailwind's preflight strips a select's border and fill: it takes the
+  // answer boxes' field style (LoopLearn.module.css .scopeText).
+  render(<RetentionCheck userId="u1" courses={courses} />);
+  expect(screen.getByTestId("retention-course").className).toMatch(/scopeText/);
+});

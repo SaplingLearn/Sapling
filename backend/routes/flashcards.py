@@ -275,7 +275,10 @@ def get_flashcards(
 def rate_card(body: FlashcardRatingBody, request: Request):
     require_self(body.user_id, request)
     with _flashcard_errors():
-        return {"ok": True, **cards.rate_card(body.user_id, body.card_id, body.rating)}
+        return {"ok": True, **cards.rate_card(
+            body.user_id, body.card_id, body.rating,
+            loop_on=learning_loop_for_request(body.user_id),  # #866 K54
+        )}
 
 
 @router.delete("/{card_id}")

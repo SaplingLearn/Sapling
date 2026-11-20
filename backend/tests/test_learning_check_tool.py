@@ -742,6 +742,34 @@ def test_e2e_grader_handler_reads_rubric_ids_off_the_message(_clean_registry, mo
     assert res.confidence == E2E_GRADER_CONFIDENCE >= GRADER_LOW_CONFIDENCE
 
 
+def test_e2e_grader_handler_is_unsure_on_the_unsure_token(_clean_registry, monkeypatch):
+    """#866 K16: an answer holding E2E_GRADER_UNSURE_TOKEN is graded below the
+    second-opinion floor on both slots, so grade() degrades to `unavailable`
+    after exactly two runs (never refused, never a verdict) — the E2E lane's
+    deterministic ungradable answer. Any other answer keeps full confidence."""
+    import agents.grader as g
+    from agents._providers import model_for
+    from learning.params import GRADER_SECOND_OPINION_CONFIDENCE
+
+    runs = []
+    monkeypatch.setattr(g, "record_agent_usage", lambda r, **kw: runs.append(kw) or r)
+    with g.grader_agent.override(model=model_for("grader")):
+        from agents.function_handlers_e2e import (
+            E2E_GRADER_UNSURE_CONFIDENCE,
+            E2E_GRADER_UNSURE_TOKEN,
+        )
+
+        res = asyncio.run(
+            g.grade(_item(), format="free", student_answer=f"a bit {E2E_GRADER_UNSURE_TOKEN}", deps=_deps())
+        )
+        plain = asyncio.run(g.grade(_item(), format="free", student_answer="a bit", deps=_deps()))
+    assert E2E_GRADER_UNSURE_CONFIDENCE < GRADER_SECOND_OPINION_CONFIDENCE
+    assert res.unavailable is True and res.refused is None and res.budget_capped is False
+    assert res.item_results == {}
+    assert len(runs) == 3  # two unsure runs, then the plain answer's one
+    assert plain.unavailable is False and plain.item_results == {"r1": False, "r2": False}
+
+
 # ── grade_answer (the route helper, A16) ──────────────────────────────────
 
 

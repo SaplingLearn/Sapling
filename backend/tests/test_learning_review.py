@@ -340,6 +340,36 @@ def test_due_queue_merges_orders_and_drops_not_due(monkeypatch):
     assert kwargs["filters"]["user_id"] == f"eq.{USER}"
 
 
+def test_never_scheduled_cards_are_new_cards_not_due_reviews(monkeypatch):
+    """#866 K14: a card never rated (`due_at` NULL) still enters the pool (A74),
+    last in DASH order (R = 1.0), but it is NEW, not a due review: the stats
+    count it under `new` as well as in `due` (A72's "everything due today"), so
+    Study can say "3 more due and 2 new cards" where the Flashcards page says
+    "3 due"; and its served payload says so."""
+    from learning import review
+
+    past = (NOW - timedelta(days=3)).isoformat()
+    factory, _ = _tables(
+        {
+            "flashcards": [
+                _card("f-due", past, reps=2, last_rating=3),
+                _card("f-new-1", None, fsrs_d=None, fsrs_s=None, due_at=None, last_reviewed_at=None),
+                _card("f-new-2", None, fsrs_d=None, fsrs_s=None, due_at=None, last_reviewed_at=None),
+            ],
+        }
+    )
+    monkeypatch.setattr(review, "table", factory)
+    queue, stats = review.due_queue_with_stats(USER, None, NOW)
+    assert [i.id for i in queue] == ["f-due", "f-new-1", "f-new-2"]
+    assert stats["due"] == {"flashcard": 3, "check": 0} and stats["new"] == 2
+    out = review.summary(USER, None, NOW, loop_state={}, retention=params.FSRS_RETENTION_DEFAULT)
+    assert out["due"] == {"flashcard": 3, "check": 0} and out["new"] == 2
+    monkeypatch.setattr(review, "decrypt_if_present", lambda v, **_: v)
+    new_card = review.serve(queue[1], card_row={"id": "f-new-1"}, loop_state={"sr": {}})
+    assert new_card["new"] is True
+    assert "new" not in review.serve(queue[0], card_row={"id": "f-due"}, loop_state={"sr": {}})
+
+
 def test_due_queue_keeps_course_cards_and_term_less_cards_only(monkeypatch):
     """get_flashcards' rule: a course keeps its enrolled offerings' cards and
     every term-less card; another course's card is not due here."""
@@ -1367,9 +1397,11 @@ def test_summary_counts_due_unservable_paused_and_budget(monkeypatch):
     )
     assert out == {
         "due": {"flashcard": 2, "check": 0},
+        "new": 0,
         "in_budget": 2,
         "unservable": 1,
         "paused": 1,
+        "grading_paused": 0,
         "budget_min": params.REVIEW_DAILY_BUDGET_MIN,
         "remaining_budget_s": params.REVIEW_DAILY_BUDGET_MIN * 60 - 60,
         "retention_target": params.FSRS_RETENTION_DEFAULT,
@@ -1785,6 +1817,7 @@ def client(monkeypatch):
     # summary test cover the two seams themselves.
     monkeypatch.setattr("services.ai_budget.enforce_rate_limit_for", lambda user_id: None)
     setattr_loop(monkeypatch, "_pause_novice", lambda user_id: False)
+    setattr_loop(monkeypatch, "_grading_cap", lambda user_id: None)  # #866 K16: grading open
     setattr_loop(monkeypatch, "user_offering_ids_for_course", lambda uid, cid: ["off-1"] if cid == COURSE else [])
     return TestClient(app)
 
@@ -1860,7 +1893,7 @@ def test_review_summary_200_when_active(client, monkeypatch):
     loop is on for the student, the gate's 404 when it is off."""
     from learning import review
 
-    monkeypatch.setattr(review, "peek_review_session", lambda u, c, now: {"sr": {}, "review": {}})
+    monkeypatch.setattr(review, "peek_review_session", lambda u, c, now, **kw: {"sr": {}, "review": {}})
     monkeypatch.setattr(
         review, "summary", lambda u, c, now, **kw: {"due": {"flashcard": 0, "check": 0}}
     )
@@ -1919,6 +1952,21 @@ def test_review_next_serves_first_item_with_budget_and_events(client, monkeypatc
     assert store.calls == [_sid()] and store.state.extra["open"]["n-due"]["item_id"] == "ci-qh-1"
 
 
+def test_review_next_reports_new_cards_beside_the_due_total(client, monkeypatch):
+    """#866 K14: `due_total` stays everything due today (A72); `new_total` is the
+    never-rated cards among it, so a spent budget reads "N more due and M new
+    cards", never M brand-new cards as due reviews."""
+    from learning import review
+
+    _session(monkeypatch)
+    monkeypatch.setattr(review, "due_queue_with_stats", lambda u, c, now, **kw: (
+        [], {"unservable": 0, "paused": 0, "due": {"flashcard": 250, "check": 3}, "new": 248}))
+    monkeypatch.setattr(review, "review_retention", lambda u, c: params.FSRS_RETENTION_DEFAULT)
+    with _loop():
+        body = client.get(f"{REVIEW}/next?user_id={USER}").json()
+    assert (body["item"], body["due_total"], body["new_total"]) == (None, 253, 248)
+
+
 def test_review_next_passes_the_tutor_hard_level(client, monkeypatch):
     from learning import review
 
@@ -1973,7 +2021,7 @@ def test_review_next_skips_an_item_that_no_longer_loads(client, monkeypatch, sto
 def test_review_next_another_users_session_is_403(client, monkeypatch):
     from learning import review
 
-    def other(u, c, now):
+    def other(u, c, now, **kw):
         raise PermissionError("review session belongs to another user")
 
     monkeypatch.setattr(review, "load_or_create_review_session", other)
@@ -2050,6 +2098,8 @@ def test_review_answer_grades_and_returns_next_due(client, monkeypatch, store):
     _session(monkeypatch, {"sr": {}, "review": {"spent_s": 45, "retention": 0.93}})
     _check_answer_seams(monkeypatch, _check_item("n-due", "qh-1"))
     _opened(store, "n-due", "ci-qh-1")
+    # #866 K54: the item's own course's target (not the session's cached one)
+    monkeypatch.setattr(review, "review_retention", lambda u, c: {COURSE: 0.93}[c])
     seen = {}
 
     async def fake_grade(user_id, item, **kw):
@@ -2410,7 +2460,7 @@ def test_review_summary_counts_by_kind(client, monkeypatch):
     from learning import review
 
     monkeypatch.setattr(
-        review, "peek_review_session", lambda u, c, now: {"sr": {}, "review": {"spent_s": 0}}
+        review, "peek_review_session", lambda u, c, now, **kw: {"sr": {}, "review": {"spent_s": 0}}
     )
     seen_kw = {}
 
@@ -2424,19 +2474,71 @@ def test_review_summary_counts_by_kind(client, monkeypatch):
     monkeypatch.setattr(review, "due_queue_with_stats", fake_queue)
     monkeypatch.setattr(review, "review_retention", lambda u, c: params.FSRS_RETENTION_LARGE_SET)
     setattr_loop(monkeypatch, "_pause_novice", lambda user_id: True)  # A20
+    reset = datetime(2026, 9, 27, tzinfo=timezone.utc)
+    monkeypatch.setattr("services.ai_budget.check", lambda user_id, kind, band=None, **kw: _hard(
+        "daily_usd", reset))
     with _loop(), patch.object(review, "load_or_create_review_session", side_effect=AssertionError):
         r = client.get(f"{REVIEW}/summary?user_id={USER}&course_id={COURSE}")
     assert r.status_code == 200, r.text
     assert seen_kw["pause_novice"]() is True
     assert r.json() == {
         "due": {"flashcard": 2, "check": 1},
+        "new": 0,
         "in_budget": 1,
         "unservable": 2,
         "paused": 1,
+        "paused_scope": "daily_usd",
+        "paused_until": reset.isoformat(),
+        "grading_paused": 0,
+        "grading_paused_until": None,
         "budget_min": params.REVIEW_DAILY_BUDGET_MIN,
         "remaining_budget_s": params.REVIEW_DAILY_BUDGET_MIN * 60,
         "retention_target": params.FSRS_RETENTION_LARGE_SET,
     }
+
+
+def _hard(scope, reset):
+    """A tutor hard-level decision that holds novice concepts (spec §3.5, A20)."""
+    from services.ai_budget import BudgetDecision
+
+    return BudgetDecision(
+        level="hard", tier_ceiling="none", scope=scope, reset_at=reset, pause_novice=True
+    )
+
+
+@pytest.mark.parametrize(
+    "scope,reset",
+    [
+        ("monthly_usd", datetime(2026, 10, 1, tzinfo=timezone.utc)),
+        ("daily_tutor_calls", datetime(2026, 9, 27, tzinfo=timezone.utc)),
+    ],
+)
+def test_review_summary_names_the_cap_that_holds_paused_concepts(client, monkeypatch, scope, reset):
+    """#866 K18: the summary says which cap holds the paused novice concepts and
+    when it lifts. At the monthly cap that is the 1st of next month, weeks away,
+    never "when the daily budget resets"; with nothing paused, nothing is said
+    (and the budget is not read for it)."""
+    from learning import review
+
+    monkeypatch.setattr(
+        review, "peek_review_session", lambda u, c, now, **kw: {"sr": {}, "review": {"spent_s": 0}}
+    )
+    paused = {"n": 2}
+    monkeypatch.setattr(review, "due_queue_with_stats", lambda u, c, now, **kw: (
+        [], {"unservable": 0, "paused": paused["n"], "due": {"flashcard": 0, "check": 0}, "in_budget": 0}))
+    monkeypatch.setattr(review, "review_retention", lambda u, c: params.FSRS_RETENTION_DEFAULT)
+    reads = []
+    monkeypatch.setattr("services.ai_budget.check", lambda user_id, kind, band=None, **kw: (
+        reads.append((kind, band)) or _hard(scope, reset)))
+    with _loop():
+        body = client.get(f"{REVIEW}/summary?user_id={USER}").json()
+    assert (body["paused"], body["paused_scope"], body["paused_until"]) == (2, scope, reset.isoformat())
+    assert reads == [("tutor", "novice")]
+    paused["n"], reads[:] = 0, []
+    with _loop():
+        body = client.get(f"{REVIEW}/summary?user_id={USER}").json()
+    assert (body["paused"], body["paused_scope"], body["paused_until"]) == (0, None, None)
+    assert reads == []
 
 
 # ── Fix round: stable open item, course scope, the cheap probe, event honesty ──
@@ -3309,3 +3411,315 @@ def _loop_handler_defs() -> dict:
             if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 defs.setdefault(n.name, n)
     return defs
+
+
+# ── #866 K16: a check that cannot be graded never pins the queue ─────────────
+
+
+def test_an_item_without_a_rubric_is_never_served(monkeypatch):
+    """#866 K16: the grader answers `unavailable` to every answer to an item
+    whose rubric is empty (a malformed rubric_json reads as []), so it is not
+    servable: the review serves the concept's other item, and a concept with
+    none is unservable — never an item that re-serves forever."""
+    from learning import review
+    from learning.checks import is_servable
+
+    profic = (params.REVIEW_FORMAT_BY_BAND["profic"], params.REVIEW_DIFFICULTY_BY_BAND["profic"])
+    broken = _check_item("n-due", "qh-broken", *profic)
+    broken.rubric = []
+    assert is_servable(broken) is False
+    assert is_servable(_check_item("n-due", "qh-1", *profic)) is True
+    past = (NOW - timedelta(days=1)).isoformat()
+    factory, _ = _tables({
+        "learner_state": [_due_row("n-due", 0.9, past)],
+        "graph_nodes": [{"id": "n-due", "course_id": COURSE, "concept_name": "Gradient descent"}],
+    })
+    monkeypatch.setattr(review, "table", factory)
+    monkeypatch.setattr(review, "user_offering_ids_for_course", lambda u, c: ["off-1"])
+    monkeypatch.setattr(review, "decayed_p", lambda p, elapsed, s: p)
+    monkeypatch.setattr(review, "list_items", lambda course_id, concept_key, **kw: [broken])
+    queue, stats = review.due_queue_with_stats(USER, COURSE, NOW)
+    assert queue == [] and stats["unservable"] == 1
+    monkeypatch.setattr(
+        review, "list_items",
+        lambda course_id, concept_key, **kw: [broken, _check_item("n-due", "qh-1", *profic)],
+    )
+    queue, _ = review.due_queue_with_stats(USER, COURSE, NOW)
+    assert [i.question_hash for i in queue] == ["qh-1"]
+
+
+def _grading_capped_queue(monkeypatch, hold):
+    """A due card and a due concept; `hold` is the queue's grader-cap read."""
+    from learning import review
+
+    past = (NOW - timedelta(days=1)).isoformat()
+    factory, _ = _tables({
+        "flashcards": [_card("f1", past)],
+        "learner_state": [_due_row("n-due", 0.9, past)],
+        "graph_nodes": [{"id": "n-due", "course_id": COURSE, "concept_name": "Gradient descent"}],
+    })
+    monkeypatch.setattr(review, "table", factory)
+    monkeypatch.setattr(review, "decayed_p", lambda p, elapsed, s: p)
+    reads = []
+    monkeypatch.setattr(
+        review, "list_items", lambda c, k, **kw: reads.append(k) or [_check_item("n-due", "qh-1")]
+    )
+    queue, stats = review.due_queue_with_stats(USER, None, NOW, hold_checks=hold)
+    return queue, stats, reads
+
+
+def test_at_the_grader_cap_checks_are_held_and_flashcards_are_served(monkeypatch):
+    """#866 K16 (spec §3.5 grader cap): at STUDENT_DAILY_GRADES no check can be
+    graded until the cap lifts, so the queue holds every due concept back —
+    before any item read, like A20's novice pause — and counts it under
+    `grading_paused`; flashcards (no grader) keep being served. Below the cap
+    nothing changes, and the cap is read only when a concept is due."""
+    queue, stats, reads = _grading_capped_queue(monkeypatch, lambda: True)
+    assert [i.kind for i in queue] == ["flashcard"] and reads == []
+    assert stats["grading_paused"] == 1 and stats["due"] == {"flashcard": 1, "check": 0}
+    queue, stats, _ = _grading_capped_queue(monkeypatch, lambda: False)
+    assert sorted(i.kind for i in queue) == ["check", "flashcard"]
+    assert stats["grading_paused"] == 0
+
+
+def test_review_next_holds_checks_at_the_grader_cap_and_the_summary_says_until_when(
+    client, monkeypatch, store
+):
+    """#866 K16: /review/next serves the due flashcard, not the check that
+    cannot be graded (its open entry stays for when grading reopens), and
+    /review/summary says how many concepts wait and when the cap lifts."""
+    from learning import review
+    from services.ai_budget import BudgetDecision
+
+    reset = datetime(2026, 9, 27, tzinfo=timezone.utc)
+    cap = BudgetDecision(level="hard", tier_ceiling="none", scope="daily_grades", reset_at=reset)
+    setattr_loop(monkeypatch, "_grading_cap", lambda user_id: cap)
+    past = (NOW - timedelta(days=1)).isoformat()
+    factory, _ = _tables({
+        "flashcards": [_card("f1", past)],
+        "learner_state": [_due_row("n-due", 0.9, past)],
+        "graph_nodes": [{"id": "n-due", "course_id": COURSE, "concept_name": "Gradient descent"}],
+    })
+    monkeypatch.setattr(review, "table", factory)
+    monkeypatch.setattr(review, "decayed_p", lambda p, elapsed, s: p)
+    monkeypatch.setattr(review, "list_items", lambda c, k, **kw: [_check_item("n-due", "qh-1")])
+    monkeypatch.setattr(review, "load_card", lambda u, cid: _card_row(id=cid))
+    monkeypatch.setattr(review, "log_event", lambda *a, **k: None)
+    monkeypatch.setattr(review, "review_retention", lambda u, c: params.FSRS_RETENTION_DEFAULT)
+    _session(monkeypatch, {"sr": {}, "review": {"spent_s": 0}, "open": {
+        "n-due": {"item_id": "ci-qh-1", "served_at": 0.0}}})
+    with _loop():
+        nxt = client.get(f"{REVIEW}/next?user_id={USER}").json()
+        summary = client.get(f"{REVIEW}/summary?user_id={USER}").json()
+    assert nxt["item"]["kind"] == "flashcard" and nxt["item"]["id"] == "f1"
+    assert store.state.extra["open"]["n-due"]["item_id"] == "ci-qh-1"  # kept for later
+    assert summary["grading_paused"] == 1
+    assert summary["grading_paused_until"] == reset.isoformat()
+
+
+def test_review_answer_refuses_a_check_at_the_grader_cap_before_any_claim(
+    client, monkeypatch, store
+):
+    """#866 K16: a check answered at the grader cap is the cap's 429 (scope
+    daily_grades, reset_at) before the claim: nothing is graded or written, the
+    item stays open, and the typed answer can be sent once grading reopens. A
+    flashcard (no grader) is still rated."""
+    from learning import review
+    from services.ai_budget import BudgetDecision
+
+    reset = datetime(2026, 9, 27, tzinfo=timezone.utc)
+    cap = BudgetDecision(level="hard", tier_ceiling="none", scope="daily_grades", reset_at=reset)
+    setattr_loop(monkeypatch, "_grading_cap", lambda user_id: cap)
+    _session(monkeypatch)
+    _check_answer_seams(monkeypatch, _check_item("n-due", "qh-1"))
+    graded = []
+
+    async def fake_grade(user_id, item, **kw):
+        graded.append(item.kind)
+        return review.ReviewOutcome(correct=True, sr={})
+
+    monkeypatch.setattr(review, "grade_review", fake_grade)
+    monkeypatch.setattr(review, "load_card", lambda u, cid: _card_row())
+    _opened(store, "n-due", "ci-qh-1")
+    _opened(store, "fc:f1", "f1")
+    base = {"user_id": USER, "session_id": _sid(), "course_id": COURSE}
+    with _loop():
+        check = client.post(
+            f"{REVIEW}/answer", json={**base, "kind": "check", "item_id": "ci-qh-1", "answer": "x"}
+        )
+        card = client.post(
+            f"{REVIEW}/answer", json={**base, "kind": "flashcard", "item_id": "f1", "rating": 2}
+        )
+    assert check.status_code == 429, check.text
+    assert check.json()["detail"] == "ai budget reached" and check.json()["scope"] == "daily_grades"
+    assert check.json()["reset_at"] == reset.isoformat()
+    assert "claim" not in store.state.extra["open"]["n-due"]
+    assert card.status_code == 200 and graded == ["flashcard"]
+
+
+def test_an_unavailable_grade_defers_its_item_behind_the_rest_of_the_queue(monkeypatch, store):
+    """#866 K16: a grade the grader could not make (an outage, a run below the
+    confidence floor) writes nothing and releases the claim, and the open entry
+    records it (`unavailable_at`): /review/next then serves every other due
+    item first, and this one after them — it stays the only item served for its
+    concept (A70: no item shopping). A refused answer (A33, the student's own
+    doing) is not deferred."""
+    from learning import review
+
+    _checked(monkeypatch, unavailable=True)
+    item = _serve_check(store)
+    review.claim_item("sess-1", "n1", "ci-q", "c1", NOW)
+    out = _grade_check(item, _check_item("n1", "q"), {"sr": {}}, answer="x", claim="c1")
+    entry = store.state.extra["open"]["n1"]
+    assert out.unavailable is True and "claim" not in entry and entry["unavailable_at"] == _T
+    state = store.state.extra
+    card = _item("flashcard", 0.9, id="f1")
+    assert review.deferred(state, item, NOW) is True and review.deferred(state, card, NOW) is False
+    assert review.try_order([item, card], state, NOW) == [card, item]
+    # the item alone is served again (the student can try once more)
+    assert review.try_order([item], state, NOW) == [item]
+    # a refusal (A33) only releases the claim: the item stays first
+    _checked(monkeypatch, refused="grader_directive")
+    other = _serve_check(store, item_id="ci-r", node_id="n2", qh="r")
+    review.claim_item("sess-1", "n2", "ci-r", "c2", NOW)
+    _grade_check(other, _check_item("n2", "r"), {"sr": {}}, answer="x", claim="c2")
+    assert "unavailable_at" not in store.state.extra["open"]["n2"]
+    assert review.try_order([card, other], store.state.extra, NOW) == [other, card]
+
+
+def test_review_next_serves_the_rest_before_an_item_whose_grade_was_unavailable(
+    client, monkeypatch, store
+):
+    """#866 K16 through the route: after an unavailable grade the next item is
+    the due flashcard, not the same check again."""
+    from learning import review
+
+    check = _item("check", 0.4, id="ci-qh-1", node_id="n-due", question_hash="qh-1", format="free")
+    card = _item("flashcard", 0.9, id="f1")
+    _session(monkeypatch, {"sr": {}, "review": {"spent_s": 0}, "open": {
+        "n-due": {"item_id": "ci-qh-1", "served_at": 0.0, "unavailable_at": 1.0}}})
+    monkeypatch.setattr(review, "due_queue_with_stats", lambda u, c, now, **kw: (
+        [check, card], {"unservable": 0, "paused": 0, "due": {"check": 1, "flashcard": 1}}))
+    monkeypatch.setattr(review, "review_retention", lambda u, c: params.FSRS_RETENTION_DEFAULT)
+    monkeypatch.setattr(review, "load_card", lambda u, cid: _card_row(id=cid))
+    setattr_loop(monkeypatch, "get_check_item", lambda item_id: _check_item("n-due", "qh-1"))
+    monkeypatch.setattr(review, "log_event", lambda *a, **k: None)
+    with _loop():
+        body = client.get(f"{REVIEW}/next?user_id={USER}").json()
+    assert body["item"]["kind"] == "flashcard"
+
+
+# ── #866 K17: the review day is the student's local day ─────────────────────
+
+# 22:00 in New York (UTC-4 in September: getTimezoneOffset 240) is 02:00 UTC
+# the next day: the student's day is still Sep 26.
+_NY = 240
+_NY_LATE = datetime(2026, 9, 27, 2, 0, tzinfo=timezone.utc)
+_NY_MORNING = datetime(2026, 9, 26, 12, 0, tzinfo=timezone.utc)
+
+
+def test_review_session_id_follows_the_students_local_day():
+    """#866 K17: one review session (and one 12-minute budget) per LOCAL day:
+    the morning's session is still the one at 10 PM in New York, though the UTC
+    day turned over at 8 PM; the next local day starts a new one. A client
+    that sends no offset keeps the UTC day."""
+    from learning.review import review_session_id
+
+    morning = review_session_id(USER, None, _NY_MORNING, tz_offset_min=_NY)
+    assert review_session_id(USER, None, _NY_LATE, tz_offset_min=_NY) == morning
+    assert review_session_id(USER, None, _NY_LATE + timedelta(hours=3), tz_offset_min=_NY) != morning
+    assert review_session_id(USER, None, _NY_LATE) != morning  # the UTC day: Sep 27
+    assert review_session_id(USER, None, _NY_MORNING) == review_session_id(USER, None, _NY_MORNING, tz_offset_min=0)
+
+
+def test_the_review_routes_keep_the_students_local_day(client, monkeypatch, store):
+    """#866 K17: at 10 PM in New York /review/next and /review/summary read the
+    morning's session (its budget is not reset at 8 PM), and an answer sent
+    with that session and the offset is graded — never a 409 "review session
+    expired". Without the offset the server's day is the UTC one."""
+    from learning import review
+
+    setattr_loop(monkeypatch, "_review_now", lambda: _NY_LATE)
+    _session(monkeypatch, {"sr": {}, "review": {"spent_s": 300}})
+    monkeypatch.setattr(review, "due_queue_with_stats", lambda u, c, now, **kw: (
+        [], {"unservable": 0, "paused": 0, "due": {"flashcard": 0, "check": 0}, "in_budget": 0}))
+    monkeypatch.setattr(review, "review_retention", lambda u, c: params.FSRS_RETENTION_DEFAULT)
+    peeked = []
+    real_peek = review.peek_review_session
+    monkeypatch.setattr(review, "peek_review_session", lambda u, c, now, **kw: (
+        peeked.append(review.review_session_id(u, c, now, **kw)) or real_peek(u, c, now, **kw)))
+
+    async def fake_grade(user_id, item, **kw):
+        return review.ReviewOutcome(correct=True, sr={})
+
+    monkeypatch.setattr(review, "grade_review", fake_grade)
+    monkeypatch.setattr(review, "load_card", lambda u, cid: _card_row())
+    _opened(store, "fc:f1", "f1")
+    morning = review.review_session_id(USER, None, _NY_MORNING, tz_offset_min=_NY)
+    card = {"user_id": USER, "session_id": morning, "kind": "flashcard", "item_id": "f1", "rating": 3}
+    with _loop():
+        nxt = client.get(f"{REVIEW}/next?user_id={USER}&tz_offset_min={_NY}").json()
+        client.get(f"{REVIEW}/summary?user_id={USER}&tz_offset_min={_NY}")
+        utc = client.post(f"{REVIEW}/answer", json=card)
+        local = client.post(f"{REVIEW}/answer", json={**card, "tz_offset_min": _NY})
+    assert nxt["session_id"] == morning and peeked == [morning]
+    assert nxt["remaining_budget_s"] == params.REVIEW_DAILY_BUDGET_MIN * 60 - 300
+    assert utc.status_code == 409 and utc.json()["detail"] == "review session expired"
+    assert local.status_code == 200, local.text
+
+
+def test_a_review_report_keeps_the_students_local_day(client, store, review_report, monkeypatch):
+    """#866 K17: a report sent at 10 PM in New York with the morning's session
+    is recorded, not a silent 409."""
+    from learning import review
+
+    setattr_loop(monkeypatch, "_review_now", lambda: _NY_LATE)
+    morning = review.review_session_id(USER, COURSE, _NY_MORNING, tz_offset_min=_NY)
+    with _loop():
+        r = client.post("/api/learn/loop/report", json=_report(session_id=morning, tz_offset_min=_NY))
+    assert r.status_code == 200, r.text
+    assert len(review_report.calls) == 1
+
+
+# ── #866 K54: an item is scheduled at its own course's retention target ──────
+
+
+def test_course_retention_is_the_items_own_courses_target(monkeypatch):
+    """#866 K54 (spec §3.2 rule 2): the exam window and the large set are a
+    course's, so an item's target is its own course's — whatever scope Study's
+    queue is read in (it is read unscoped). A card with no course (term-less)
+    has none: the default. A card's course is its offering's."""
+    from learning import review
+
+    targets = {"c-exam": params.FSRS_RETENTION_EXAM}
+    monkeypatch.setattr(review, "review_retention", lambda u, c: targets[c])
+    monkeypatch.setattr(review, "offering_course_id", lambda off: {"off-exam": "c-exam"}[off])
+    assert review.course_retention(USER, "c-exam") == params.FSRS_RETENTION_EXAM
+    assert review.course_retention(USER, None) == params.FSRS_RETENTION_DEFAULT
+    assert review.card_retention(USER, _card_row(offering_id="off-exam")) == params.FSRS_RETENTION_EXAM
+    assert review.card_retention(USER, _card_row(offering_id=None)) == params.FSRS_RETENTION_DEFAULT
+
+
+def test_review_answer_schedules_each_item_at_its_own_courses_target(client, monkeypatch, store):
+    """#866 K54: in Study's unscoped review a card of a course with an exam in
+    the window is scheduled at FSRS_RETENTION_EXAM, as the Flashcards page
+    schedules it — never at the session's cached all-courses target."""
+    from learning import review
+
+    _session(monkeypatch, {"sr": {}, "review": {"spent_s": 0, "retention": params.FSRS_RETENTION_LARGE_SET}})
+    monkeypatch.setattr(review, "load_card", lambda u, cid: _card_row(offering_id="off-exam"))
+    monkeypatch.setattr(review, "offering_course_id", lambda off: "c-exam")
+    monkeypatch.setattr(review, "review_retention", lambda u, c: {"c-exam": params.FSRS_RETENTION_EXAM}[c])
+    seen = {}
+
+    async def fake_grade(user_id, item, **kw):
+        seen.update(kw)
+        return review.ReviewOutcome(correct=True, sr={})
+
+    monkeypatch.setattr(review, "grade_review", fake_grade)
+    _opened(store, "fc:f1", "f1")
+    body = {"user_id": USER, "session_id": _sid(None), "kind": "flashcard", "item_id": "f1", "rating": 3}
+    with _loop():
+        r = client.post(f"{REVIEW}/answer", json=body)
+    assert r.status_code == 200, r.text
+    assert seen["retention"] == params.FSRS_RETENTION_EXAM

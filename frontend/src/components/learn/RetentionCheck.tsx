@@ -55,7 +55,8 @@ export function RetentionCheck({ userId, courses, initialCourseId = "" }: {
       <h2 style={{ margin: 0, fontSize: 17 }}>Retention check</h2>
       <p style={{ margin: 0, fontSize: 13 }}>Check what you remember after time away. No tutor hints are offered here; the server tracks any help or intervening practice.</p>
       <label>Course
-        <select aria-label="Retention course" aria-describedby={fellBack ? noteId : undefined} data-testid="retention-course" value={courseId} onChange={(event) => setSelected(event.target.value)} style={{ display: "block", width: "100%", minWidth: 0, marginTop: 4 }}>
+        {/* #866 Z29: the answer boxes' field style — Tailwind's preflight strips a select's border and fill */}
+        <select aria-label="Retention course" aria-describedby={fellBack ? noteId : undefined} data-testid="retention-course" value={courseId} onChange={(event) => setSelected(event.target.value)} className={styles.scopeText} style={{ display: "block", minWidth: 0, marginTop: 4 }}>
           {!courseId && <option value="">Add a course first</option>}
           {courses.map((course) => <option key={course.course_id} value={course.course_id}>{course.course_name}</option>)}
         </select>

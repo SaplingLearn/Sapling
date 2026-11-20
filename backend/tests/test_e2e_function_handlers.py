@@ -1559,6 +1559,7 @@ def test_loop_constants_do_not_state_a_seeded_answer():
         run = answer_run(text)
         assert m.E2E_GRADER_CORRECT_TOKEN not in text
         assert m.E2E_GRADER_WRONG_REASON_TOKEN not in text
+        assert m.E2E_GRADER_UNSURE_TOKEN not in text  # #866 K16
         assert not find_runs(run, answer_run(m.E2E_LOOP_FINAL_ANSWER)), text
         assert not {run[i : i + LEAK_NGRAM] for i in range(len(run) - LEAK_NGRAM + 1)} & grams
     # A34: the final answer is copied verbatim from the reference and absent from the prompt.

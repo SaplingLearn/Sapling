@@ -30,7 +30,6 @@ import {
   emptyDraft,
   homeModel,
   orderNames,
-  shuffled,
   type Card,
 } from "./flashcardsModel";
 import {
@@ -247,8 +246,11 @@ function useStarts({ userId, courseId, courseName, semester, random, data, onRev
     void start(plan).finally(() => setPlaying(null));
   };
 
+  // #866 K53: GET /api/flashcards lists the due cards first in FSRS review
+  // order (most at risk first), and the home keeps that order: never
+  // shuffled, so stopping partway leaves the least urgent cards, not a random set.
   const playDue = () => {
-    const deck = shuffled(model.dueCards, random);
+    const deck = [...model.dueCards];
     if (deck.length) onReview({ deck, title: "Due today", from: "home" });
   };
 

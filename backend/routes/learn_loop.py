@@ -432,9 +432,10 @@ def plan_approve(body: PlanApproveBody, request: Request) -> dict:
 @router.get("/review/next", dependencies=_SAME_ORIGIN)  # it serves and opens an item (#866 Z39)
 @same_doc(loop_service.review_next)
 def review_next(
-    request: Request, user_id: str = Query(...), course_id: str | None = Query(None)
+    request: Request, user_id: str = Query(...), course_id: str | None = Query(None),
+    tz_offset_min: int = Query(0),  # #866 K17: the student's day
 ) -> dict:
-    return loop_service.review_next(request, user_id, course_id)
+    return loop_service.review_next(request, user_id, course_id, tz_offset_min)
 
 
 @router.post("/review/answer")
@@ -446,9 +447,10 @@ async def review_answer(body: ReviewAnswerBody, request: Request) -> dict:
 @router.get("/review/summary")
 @same_doc(loop_service.review_summary)
 def review_summary(
-    request: Request, user_id: str = Query(...), course_id: str | None = Query(None)
+    request: Request, user_id: str = Query(...), course_id: str | None = Query(None),
+    tz_offset_min: int = Query(0),  # #866 K17: the student's day
 ) -> dict:
-    return loop_service.review_summary(request, user_id, course_id)
+    return loop_service.review_summary(request, user_id, course_id, tz_offset_min)
 
 
 @router.get("/review/active")

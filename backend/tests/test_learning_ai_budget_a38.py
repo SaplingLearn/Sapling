@@ -377,6 +377,8 @@ def test_the_429_body_carries_session_capped(store):
     assert (capped.json()["scope"], capped.json()["session_capped"]) == ("rate_limit", True)
     plain = TestClient(_raising_app(lambda: ai_budget.check(UID, "tutor", "develop"))).post("/turn")
     assert (plain.json()["scope"], plain.json()["session_capped"]) == ("rate_limit", False)
+    # #866 K35: a 60-second burst alone holds no novice check; the session cap does
+    assert (plain.json()["pause_novice"], capped.json()["pause_novice"]) == (False, True)
 
 
 # ── C3 (06b k): the soft scope is the one that caused the downgrade ──────────

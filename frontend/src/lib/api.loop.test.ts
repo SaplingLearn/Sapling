@@ -326,7 +326,15 @@ describe('budgetPauseOf (spec §3.5 / A20 429 body, A39 session_capped)', () => 
   });
   it('carries session_capped when the body says so', () => {
     const capped = { ...body, scope: 'session_requests', session_capped: true };
-    expect(budgetPauseOf(new ApiError('x', 429, { body: capped }))).toEqual({ resetAt: body.reset_at, sessionCapped: true });
+    expect(budgetPauseOf(new ApiError('x', 429, { body: capped }))).toEqual({ resetAt: body.reset_at, sessionCapped: true, scope: 'session_requests' });
+  });
+  it("says when the hard level holds novice checks too (#866 K35)", () => {
+    const held = { ...body, scope: 'daily_usd', session_capped: false, pause_novice: true };
+    expect(budgetPauseOf(new ApiError('x', 429, { body: held }))).toEqual({ resetAt: body.reset_at, sessionCapped: false, scope: 'daily_usd', pauseNovice: true });
+  });
+  it("keeps the cap's scope, so a monthly reset is never read as tonight's (#866 K18)", () => {
+    const monthly = { ...body, reset_at: '2026-12-01T00:00:00+00:00', scope: 'monthly_usd', session_capped: false };
+    expect(budgetPauseOf(new ApiError('x', 429, { body: monthly }))).toEqual({ resetAt: monthly.reset_at, sessionCapped: false, scope: 'monthly_usd' });
   });
   it('ignores other statuses and other 429s', () => {
     expect(budgetPauseOf(new ApiError('boom', 503, { body }))).toBeNull();
@@ -391,6 +399,15 @@ describe('Report this question and the review queue (spec §13 A113)', () => {
     expect(urlOf()).toContain('/api/learn/loop/report');
     expect(initOf().method).toBe('POST');
     expect(bodyOf()).toEqual(loop);
+  });
+  it("a review report names the student's local day (#866 K17)", async () => {
+    const { reportCheckItem } = await import('./api');
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(json({ reported: true, first: true, quarantined: false }));
+    const tz = vi.spyOn(Date.prototype, 'getTimezoneOffset').mockReturnValue(240);
+    const review = { surface: 'review', user_id: 'u', session_id: 's1', item_id: 'ci-1', reason: 'unclear' } as const;
+    await reportCheckItem(review);
+    expect(bodyOf()).toEqual({ ...review, tz_offset_min: 240 });
+    tz.mockRestore();
   });
   it('the admin queue reads GET /queue and decides by item id', async () => {
     const { adminApproveCheckItem, adminCheckItemQueue, adminRetireCheckItem } = await import('./api');

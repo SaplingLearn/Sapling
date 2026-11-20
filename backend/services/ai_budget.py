@@ -682,8 +682,10 @@ def enforce_rate_limit(request: Request) -> None:
 
 async def budget_exceeded_handler(request: Request, exc: AIBudgetExceeded) -> JSONResponse:
     """HTTP 429 {"detail": "ai budget reached", "reset_at": <iso or null>} (spec §3.5, A20), plus
-    the house request_id, the scope and session_capped (06b j); Retry-After (≥ 1 s) when the reset is known, rounded UP
-    so a client that obeys it never retries before reset_at."""
+    the house request_id, the scope and session_capped (06b j), and pause_novice (#866 K35: the
+    hard level holds checks on novice-band concepts too, so "practice keeps working" is not the
+    whole story); Retry-After (≥ 1 s) when the reset is known, rounded UP so a client that obeys
+    it never retries before reset_at."""
     rid = getattr(request.state, "request_id", None) or current_request_id()
     reset_at = exc.decision.reset_at
     headers: dict[str, str] = {}
@@ -696,6 +698,7 @@ async def budget_exceeded_handler(request: Request, exc: AIBudgetExceeded) -> JS
         "reset_at": reset_at.isoformat() if reset_at else None,
         "scope": exc.decision.scope,
         "session_capped": exc.decision.session_capped,
+        "pause_novice": bool(getattr(exc.decision, "pause_novice", False)),
         "request_id": rid,
     }
     return JSONResponse(

@@ -719,7 +719,8 @@ A76's re-check rule (see [§2](#2-a-session-probe--plan--teach--check--close)).
 
 The Study screen's **DueQueue** works through today's reviews, one item at a
 time, inside a daily review session (a `sessions` row with `mode='review'`,
-one per student, course and UTC day; it is not a tutor session, A73).
+one per student, course and the student's local day — the client's
+`tz_offset_min`, #866 K17; it is not a tutor session, A73).
 
 ```mermaid
 sequenceDiagram
@@ -748,7 +749,9 @@ sequenceDiagram
    check item picked by band (format and difficulty), excluding items served
    today, seen, revealed, reported and the post-test reserves (with a
    fallback set when nothing else is left). Novice concepts pause while the
-   tutor budget is at its hard level.
+   tutor budget is at its hard level; at the grader cap every concept is held
+   back and flashcards are served (#866 K16). An item with no rubric is never
+   servable: the grader cannot grade it.
 3. **Order and budget.** DASH order (`fsrs.order_due`: predicted recall
    nearest 0.33 first, i.e. overdue triage), then the longest prefix that fits
    the remaining daily budget (`REVIEW_DAILY_BUDGET_MIN` = 12 minutes; 45 s
@@ -765,7 +768,9 @@ sequenceDiagram
    the student has not met (seen, revealed, reported or served today); a
    review never serves a multi-concept item.
 5. **Serving is a claim.** The open item is re-served until answered; an
-   answer claims it (A70), so a double submit grades once.
+   answer claims it (A70), so a double submit grades once. An open item whose
+   last answer the grader could not grade is served after the rest of the
+   queue (`learning/review.py::try_order`, #866 K16).
 6. **Grading.** A check item goes through `grade_answer` with the help floor
    and one `apply_graph_update` call carrying the retention target (A71);
    a correct unassisted answer can resolve a misconception (A127). A

@@ -19,6 +19,9 @@ import type {
 import { statusOf } from '@/lib/errorMessage';
 import type { WithCrisisSupport } from '@/lib/crisisSupport';
 import type { AdminFlag, FlagRule } from '@/lib/adminFlags';
+import type {
+  ReviewAnswerBody, ReviewAnswerResponse, ReviewNextResponse, ReviewSummaryResponse,
+} from '@/lib/reviewTypes';
 import { createStreamPacer, type StreamPacer } from '@/lib/streamPacer';
 import { REAUTH_REQUIRED, isReauthRequired, notifyReauthRequired } from '@/lib/reauth';
 import { ApiError, apiErrorOf, errorFieldsFrom, parseErrorBody } from '@/lib/apiError';
@@ -1025,92 +1028,34 @@ export const deleteFlashcard = (userId: string, cardId: string) =>
 
 // Learning loop (PKG-12): the daily review queue (backend/routes/learn_loop.py
 // /review/*). Every route 404s while the loop is off for this student (spec §7),
-// so callers treat a 404 as "inactive", never as an error.
-export interface ReviewSr {
-  stage: 'acquire' | 'relearn' | 'done';
-  correct: number;
-  target: number;
-}
-export interface ReviewItemPayload {
-  kind: 'flashcard' | 'check';
-  id: string;
-  cost_s: number;
-  sr: ReviewSr;
-  // check items
-  node_id?: string | null;
-  concept_name?: string | null;
-  format?: 'free' | 'mc_reason' | null;
-  difficulty?: number | null;
-  prompt?: string | null;
-  // mc_reason only: the stored options in stored order; correctness is never marked (A22)
-  options?: { letter: string; text: string }[] | null;
-  // flashcards
-  topic?: string | null;
-  front?: string | null;
-  back?: string | null;
-}
-export interface ReviewNextResponse {
-  item: ReviewItemPayload | null;
-  remaining_budget_s: number;
-  session_id: string;
-  retention_target: number;
-  // everything due today; in_budget = what today's remaining budget covers. A null
-  // item with due_total > 0 means the budget is spent, not that nothing is due.
-  due_total: number;
-  in_budget: number;
-}
-export interface ReviewAnswerBody {
-  user_id: string;
-  session_id: string;
-  course_id?: string;
-  kind: 'flashcard' | 'check';
-  item_id: string;
-  answer?: string;
-  selected_option?: string;
-  reason?: string;
-  rating?: number;
-  /** Spec §13 A127: a check's stated confidence, only when chosen (never a flashcard's). */
-  confidence?: StudentConfidence;
-}
-export interface ReviewAnswerResponse extends WithCrisisSupport {
-  correct: boolean | null;
-  hint: string | null;
-  next_due_at: string | null;
-  rating: number | null;
-  remaining_budget_s: number;
-  sr: ReviewSr | Record<string, never>;
-  unavailable: boolean;
-  // A33: the answer read as instructions to the grader — ask for it in the
-  // student's own words (nothing was recorded; the item stays answerable)
-  refused: boolean;
-}
-export interface ReviewSummaryResponse {
-  due: { flashcard: number; check: number };
-  in_budget: number;
-  unservable: number;
-  paused: number;
-  budget_min: number;
-  remaining_budget_s: number;
-  retention_target: number;
-}
+// so callers treat a 404 as "inactive", never as an error. Its wire types live in
+// lib/reviewTypes.ts and are re-exported here.
+export type {
+  ReviewAnswerBody, ReviewAnswerResponse, ReviewItemPayload, ReviewNextResponse, ReviewSr, ReviewSummaryResponse,
+} from '@/lib/reviewTypes';
 
 const reviewQuery = (userId: string, courseId?: string) => {
   const params = new URLSearchParams({ user_id: userId });
   if (courseId) params.set('course_id', courseId);
   return params.toString();
 };
+/** #866 K17: the review queue keeps the student's LOCAL day (one session and one
+ *  daily budget per day), from JS getTimezoneOffset, as the Daily Goal panel does. */
+const localTzOffset = () => new Date().getTimezoneOffset();
+const reviewDayQuery = (userId: string, courseId?: string) =>
+  `${reviewQuery(userId, courseId)}&tz_offset_min=${localTzOffset()}`;
 
 export const getReviewNext = (userId: string, courseId?: string) =>
-  fetchJSON<ReviewNextResponse>(`/api/learn/loop/review/next?${reviewQuery(userId, courseId)}`);
+  fetchJSON<ReviewNextResponse>(`/api/learn/loop/review/next?${reviewDayQuery(userId, courseId)}`);
 
 export const answerReview = (body: ReviewAnswerBody) =>
   fetchJSON<ReviewAnswerResponse>('/api/learn/loop/review/answer', {
     method: 'POST',
-    body: JSON.stringify(body),
+    body: JSON.stringify({ ...body, tz_offset_min: localTzOffset() }),
   });
 
 export const getReviewSummary = (userId: string, courseId?: string) =>
-  fetchJSON<ReviewSummaryResponse>(`/api/learn/loop/review/summary?${reviewQuery(userId, courseId)}`);
+  fetchJSON<ReviewSummaryResponse>(`/api/learn/loop/review/summary?${reviewDayQuery(userId, courseId)}`);
 
 /** Is the learning loop on for this student? Probes GET /review/active — a
  *  gate-only route that builds nothing (PKG-07's /status needs a loop session id).
@@ -1280,6 +1225,8 @@ export interface LoopBudgetNotice {
   reset_at: string | null;
   scope: string | null;
   session_capped: boolean;
+  /** #866 K35: the hard level holds checks on novice-band concepts too. */
+  pause_novice?: boolean;
 }
 export interface LoopStartResult extends LoopLearningScope, WithCrisisSupport {
   session_id: string;
@@ -1368,7 +1315,9 @@ export interface LoopCheckAnswer {
   /** A127: sent only when chosen, and never with an idk (which states none). */
   confidence?: StudentConfidence | null;
 }
-export interface LoopBudgetPause { resetAt: string | null; sessionCapped: boolean }
+/** `scope`: the cap that paused (the 429's binding scope, #866 K18), when the body names one;
+ *  `pauseNovice`: the hard level holds checks on novice-band concepts too (#866 K35). */
+export interface LoopBudgetPause { resetAt: string | null; sessionCapped: boolean; scope?: string; pauseNovice?: boolean }
 
 const loopPost = <T>(path: string, body: Record<string, unknown>) =>
   fetchJSON<T>(`/api/learn/loop${path}`, { method: 'POST', body: JSON.stringify(body) });
@@ -1386,6 +1335,7 @@ function loopBudgetNoticeOf(data: unknown): LoopBudgetNotice {
     reset_at: typeof d.reset_at === 'string' ? d.reset_at : null,
     scope: typeof d.scope === 'string' ? d.scope : null,
     session_capped: d.session_capped === true, // A39: a missing field reads as false
+    ...(d.pause_novice === true ? { pause_novice: true } : {}), // #866 K35
   };
 }
 
@@ -1399,9 +1349,12 @@ export const budgetPauseOf = (err: unknown): LoopBudgetPause | null => {
   if (body === undefined && err instanceof Error) {
     try { body = JSON.parse(err.message); } catch { return null; }
   }
-  const b = body as { detail?: unknown; reset_at?: unknown; session_capped?: unknown } | null;
+  const b = body as { detail?: unknown; reset_at?: unknown; session_capped?: unknown; scope?: unknown; pause_novice?: unknown } | null;
   if (!b || b.detail !== 'ai budget reached') return null;
-  return { resetAt: typeof b.reset_at === 'string' ? b.reset_at : null, sessionCapped: b.session_capped === true };
+  return {
+    resetAt: typeof b.reset_at === 'string' ? b.reset_at : null, sessionCapped: b.session_capped === true,
+    ...(typeof b.scope === 'string' ? { scope: b.scope } : {}), ...(b.pause_novice === true ? { pauseNovice: true } : {}),
+  };
 };
 
 /** The student's open loop sessions for a course, newest first (PKG-13's
@@ -1579,7 +1532,8 @@ export type LoopReportBody =
  *  (spec §13 A123 — a report never deletes a question). */
 export interface LoopReportResult { reported: true; first: boolean; quarantined: boolean }
 export const reportCheckItem = (body: LoopReportBody) =>
-  loopPost<LoopReportResult>('/report', body);
+  // #866 K17: a review report names the student's day, as /review/next keeps it
+  loopPost<LoopReportResult>('/report', body.surface === 'review' ? { ...body, tz_offset_min: localTzOffset() } : body);
 
 export interface RetentionItem extends LoopCheckItem { node_id: string }
 export type RetentionAnswerResult = WithCrisisSupport & (

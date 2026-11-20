@@ -2182,7 +2182,7 @@ def test_review_routes_ignore_the_tutor_close_phase(monkeypatch):
     monkeypatch.setattr(
         review,
         "load_or_create_review_session",
-        lambda u, c, now: ("rs-1", {"phase": "close", "sr": {}, "review": {"spent_s": 0}}),
+        lambda u, c, now, **kw: ("rs-1", {"phase": "close", "sr": {}, "review": {"spent_s": 0}}),
     )
     monkeypatch.setattr(review, "review_retention", lambda u, c: 0.9)
     monkeypatch.setattr(review, "due_queue_with_stats", lambda u, c, now, **kw: ([], {"due": {}}))

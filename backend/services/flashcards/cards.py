@@ -38,8 +38,10 @@ _LEGACY_LIST_COLS = (
     "last_reviewed_at,created_at"
 )
 _FSRS_LIST_COLS = ",fsrs_d,fsrs_s,due_at,reps,lapses"
-#: What `rate_card` reads of the card it updates.
+#: What `rate_card` reads of the card it updates (with the loop on, its
+#: offering too: the course whose retention target it is scheduled at).
 _RATE_COLS = "id,times_reviewed,last_reviewed_at,fsrs_d,fsrs_s,reps,lapses"
+_RATE_COLS_LOOP = _RATE_COLS + ",offering_id"
 RATING_INVALID_DETAIL = "rating must be one of 1, 2, 3"
 
 
@@ -217,16 +219,22 @@ def _own_card(user_id: str, card_id: str, columns: str) -> dict:
     return rows[0]
 
 
-def rate_card(user_id: str, card_id: str, rating: int) -> dict:
+def rate_card(user_id: str, card_id: str, rating: int, *, loop_on: bool = False) -> dict:
     """Record one review of the user's card: the count, rating and time, plus
     its FSRS state (PKG-11 / PKG-14b: every rating is an FSRS review, 1/2/3 ->
     Again/Hard/Good via ``FLASHCARD_RATING_TO_FSRS``; any other value is
     ``Unprocessable``). Answers the card's next ``due_at`` and the FSRS
-    rating."""
+    rating.
+
+    ``loop_on`` (the route's learning-loop gate, #866 K54): the card is
+    scheduled at its course's retention target — the one Study's review
+    schedules the same card at (``learning.review.card_retention``: an exam
+    window's 0.95, a large set's 0.85). Off, the default as before: there is
+    no review queue to agree with."""
     fsrs_rating = FLASHCARD_RATING_TO_FSRS.get(rating)
     if fsrs_rating is None:
         raise Unprocessable(RATING_INVALID_DETAIL)
-    card = _own_card(user_id, card_id, _RATE_COLS)
+    card = _own_card(user_id, card_id, _RATE_COLS_LOOP if loop_on else _RATE_COLS)
     now = datetime.now(timezone.utc)
     payload = {
         "times_reviewed": (card["times_reviewed"] or 0) + 1,
@@ -235,7 +243,7 @@ def rate_card(user_id: str, card_id: str, rating: int) -> dict:
     }
     # PKG-12 reopen: the pure helper learning/review.py shares; it returns
     # the three columns above (same values) plus the FSRS five.
-    payload.update(flashcard_fsrs_update(card, rating, now=now))
+    payload.update(flashcard_fsrs_update(card, rating, now=now, **_retention_kw(user_id, card, loop_on)))
     table("flashcards").update(
         payload, filters={"id": f"eq.{card_id}", "user_id": f"eq.{user_id}"},
     )
@@ -258,6 +266,16 @@ def rate_card(user_id: str, card_id: str, rating: int) -> dict:
             user_id, card_id,
         )
     return {"due_at": payload["due_at"], "fsrs_rating": fsrs_rating}
+
+
+def _retention_kw(user_id: str, card: dict, loop_on: bool) -> dict:
+    """`flashcard_fsrs_update`'s retention for `rate_card` (#866 K54): the
+    card's course's target with the loop on; none (the default) off."""
+    if not loop_on:
+        return {}
+    from learning.review import card_retention  # the loop's module, only on its path
+
+    return {"retention": card_retention(user_id, card)}
 
 
 def delete_card(user_id: str, card_id: str) -> None:

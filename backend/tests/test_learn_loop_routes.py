@@ -119,6 +119,7 @@ HARD_BUDGET = {
     "reset_at": RESET_ISO,
     "scope": "daily_usd",
     "session_capped": False,
+    "pause_novice": True,  # #866 K35: checks on novice concepts wait too
 }
 CORRECT = SimpleNamespace(
     correct=True,
@@ -1115,7 +1116,7 @@ def test_develop_check_pose_is_served_at_the_hard_level_with_the_notice(gate_on,
     assert r.status_code == 200
     body = r.json()
     assert body["reply"] == ITEM.prompt and body["tier"] == "none"
-    assert body["budget"] == HARD_BUDGET
+    assert body["budget"] == {**HARD_BUDGET, "pause_novice": False}
 
 
 def test_soft_level_reaches_tier_and_context_policy(gate_on, seams):
@@ -1900,7 +1901,7 @@ def test_check_answer_hard_budget_serves_template_feedback_not_429(gate_on, seam
     body = r.json()
     assert ITEM.reference_answer in body["reply"] and body["tier"] == "none"
     assert body["reply"].startswith("Not yet.")
-    assert body["budget"] == HARD_BUDGET
+    assert body["budget"] == {**HARD_BUDGET, "pause_novice": False}
     seams.flush.assert_called_once()  # grading has its own cap; the evidence still lands
     assert seams.zpd.emit_zpd_step.call_args.kwargs["tier"] == "none"
 
@@ -2229,6 +2230,7 @@ def test_the_budget_notice_carries_scope_and_session_capped(gate_on, seams):
         "reset_at": RESET_ISO,
         "scope": "daily_tutor_calls",
         "session_capped": True,
+        "pause_novice": True,  # #866 K35
     }
     r = client.post(
         "/api/learn/loop/chat", json={"session_id": "s1", "user_id": "u1", "message": "hi"}
