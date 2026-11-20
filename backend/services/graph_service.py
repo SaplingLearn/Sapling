@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import uuid
 from collections.abc import Callable
 from dataclasses import replace
@@ -1665,6 +1666,12 @@ async def aget_recommendations(user_id: str, semester: str | None = None) -> lis
     return _recommendations_from(rows)
 
 
+def _whole_percent(score) -> int:
+    """A mastery score in whole percent, rounded half-up as every frontend
+    surface rounds it (Math.round) — never truncated (K50)."""
+    return math.floor(float(score) * 100 + 0.5)
+
+
 def _recommendations_from(rows: list) -> list:
     recs = []
     for r in rows:
@@ -1672,8 +1679,8 @@ def _recommendations_from(rows: list) -> list:
         if tier == "unexplored":
             reason = "You haven't studied this yet — a great place to start."
         elif tier == "struggling":
-            reason = f"You're struggling here ({int(r['mastery_score']*100)}%) — focus here to improve."
+            reason = f"You're struggling here ({_whole_percent(r['mastery_score'])}%) — focus here to improve."
         else:
-            reason = f"You're making progress ({int(r['mastery_score']*100)}%) — keep going!"
+            reason = f"You're making progress ({_whole_percent(r['mastery_score'])}%) — keep going!"
         recs.append({"concept_name": r["concept_name"], "reason": reason})
     return recs
