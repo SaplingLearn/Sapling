@@ -400,14 +400,7 @@ function QueueBody() {
       ) : !queue ? (
         <div style={{ color: "var(--text-muted)", fontSize: 13 }}>Loading…</div>
       ) : pageDone ? (
-        <div data-testid="admin-items-more" role={error ? "alert" : "status"} style={{ display: "flex", alignItems: "center", gap: 12, color: "var(--text-muted)", fontSize: 13 }}>
-          <span>{queue.count} more to review — {error ?? "loading them…"}</span>
-          {error && (
-            <button type="button" data-testid="admin-items-retry" className="btn btn--sm" onClick={() => void load()}>
-              Try again
-            </button>
-          )}
-        </div>
+        <NextPage count={queue.count} error={error} onRetry={() => void load()} />
       ) : queue.items.length === 0 ? (
         <div data-testid="admin-items-empty" style={{ color: "var(--text-muted)", fontSize: 14 }}>
           Nothing to review: no flagged, held or reported question is waiting.
@@ -438,6 +431,21 @@ function QueueBody() {
 }
 
 const pctStat = (v: number | null) => (v === null ? "—" : `${Math.round(v * 100)}%`);
+
+/** #866 K25: every row of the page was decided while the server counted more
+ *  waiting: say how many, while the next page is read (or why it was not). */
+function NextPage({ count, error, onRetry }: { count: number; error: string | null; onRetry: () => void }) {
+  return (
+    <div data-testid="admin-items-more" role={error ? "alert" : "status"} style={{ display: "flex", alignItems: "center", gap: 12, color: "var(--text-muted)", fontSize: 13 }}>
+      <span>{count} more to review — {error ?? "loading them…"}</span>
+      {error && (
+        <button type="button" data-testid="admin-items-retry" className="btn btn--sm" onClick={onRetry}>
+          Try again
+        </button>
+      )}
+    </div>
+  );
+}
 
 /** Spec §13 A131: one question's numbers — n, the share right with its Wilson
  *  95% interval, the item–rest discrimination — and what they flag. */
