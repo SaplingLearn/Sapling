@@ -3534,9 +3534,14 @@ def mark_drafting(document_id: str, status: str) -> None:
     )
 
 
+@runs_as_service  # Z66: check_items_status/_at are system columns the student's role may not UPDATE
 def _write_drafting(document_id: str, data: dict, only_if: dict, what: str) -> None:
     """The one drafting-bookkeeping write (mark_drafting, clear_drafting):
-    never raises."""
+    never raises. It runs as the service role: the upload's post-roll and the
+    drafting pool carry the upload request's scope, and under
+    `db_user_scope=enforce` the student's role holds no UPDATE on these two
+    columns (main's step-2c grant lists the documents columns a student
+    edits; the drafting status is the backend's)."""
     try:
         table("documents").update(
             data,

@@ -143,6 +143,9 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
     ("services/quiz_learning.py", "_bank_keys", "runs_as_service"):
         "check_items is a service-only course asset (A148); the quiz plan reads its keys (A144)",
     ("services/check_item_service.py", "retire_items_for_uploader", "runs_as_service"): "check_items is a service-only course asset (A148)",
+    ("services/check_item_service.py", "_write_drafting", "runs_as_service"):
+        "PR #866 Z66: documents.check_items_status/_at are backend bookkeeping, outside the "
+        "student's column UPDATE grant; written from the upload's post-roll and the drafting pool",
     # ── Services ──
     ("services/academics.py", "resolve_offering", "service_scope"): "on-demand course_offerings insert (catalog)",
     ("services/academics.py", "school_peer_user_ids", "runs_as_service"): "reads other students' enrollments",
