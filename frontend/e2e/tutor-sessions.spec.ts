@@ -111,8 +111,11 @@ test.describe("Tutor V2: a session on what the student chose", () => {
         await expect(picker).toHaveCount(0);
         await expect(page.getByLabel(`Unlink ${name}`)).toBeVisible();
       }
+      // the deep link is consumed (and the query dropped) as soon as /learn reads it,
+      // so wait on the navigation event, not a later poll of the URL
+      const toLearn = page.waitForURL(/\/learn\?/, { timeout: 30_000 });
       await page.getByRole("button", { name: "Send to tutor" }).click();
-      await expect(page).toHaveURL(/\/learn\?/, { timeout: 30_000 });
+      await toLearn;
       const { state } = await startedSession(page);
       expect([...goalTargets(state)].sort()).toEqual((await Promise.all(linked.map(nodeId))).sort());
       for (const name of linked) await expect(page.getByTestId("loop-goal-summary")).toContainText(name);
