@@ -1017,10 +1017,12 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `tutor-turn` | a `ChatPanel` tutor turn drawn on the page (`turnStyle="page"`, `PageTurn`: the tutor's mark and name over the text, no bubble); `data-visually-hidden` while unpainted |
 | `tutor-session-map` | the session panel's knowledge map (`learn/tutor/SessionMap.tsx`): fixed mastery colours, no zoom buttons; it frames its nodes until the student zooms or pans it, and re-frames on a double-click or a new node set |
 | `tutor-map-key` | the map's key under it: a list of the four mastery tiers, in the colours the map paints with |
+| `tutor-map-error` | in place of the session panel's map when the knowledge map failed to load: "Couldn't load …" with Try again (#866 Z63) |
 | `tutor-panel-due-count` | the session panel's count of reviews due (`GET /review/summary`: flashcards plus checks, all courses); absent while `hide_study` hides Study |
 | `tutor-drawer` / `tutor-drawer-scrim` | on a phone, the sidebar or session panel as a modal drawer (`learn/tutor/TutorDrawer.tsx`, `role="dialog"`, `aria-modal`) and its scrim (a click closes it) |
 | `tutor-recents-error` / `tutor-course-sessions-error` / `tutor-course-materials-error` / `tutor-all-sessions-error` | a failed sessions or materials read: "Couldn't load …" with Try again — never an empty state |
 | `tutor-course-sessions-count` | the course page's session count; after a failed read "Not loaded" (or "At least N" for the sessions that did load), never "0 sessions" |
+| `tutor-course-concepts-error` | the course page's concept count when the map failed to load: "Couldn't load …" with Try again, never "0 concepts" (#866 Z63) |
 | `tutor-crumb-course` | the TopBar's course breadcrumb (opens the course page) |
 | `tutor-panel-hide` / `tutor-panel-toggle` | hide the session panel (its head) / show it again (the TopBar, only while it is hidden) |
 | `tutor-key-idea` | the tutor turn's "Key idea:" paragraph, shown as the labelled key-idea block (`ChatPanel`'s `splitKeyIdea`) |
@@ -1028,7 +1030,7 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `loop-sessions-error` | `GET /sessions` (or a read-only resume) failed |
 | `loop-sessions-retry` | retry — never falls through to a new session or probe |
 | `loop-no-course` | the student has no enrolled course |
-| `loop-no-course-link` | the knowledge-map link inside `loop-no-course` (absent while `hide_tree` hides the Tree) |
+| `loop-no-course-link` | the link inside `loop-no-course` to the Dashboard, where courses are added (#866 Z61) |
 | `loop-start-error` | a new session could not start (a 429 or an error on `/start-session`) — never an empty probe |
 | `loop-start-retry` | retry the start |
 | `loop-start-crisis` | `/start-session` answered with the crisis-support card (no session was opened); the card's `crisis-support-dismiss` starts a fresh session on the course (docs/safety/crisis-support.md) |
