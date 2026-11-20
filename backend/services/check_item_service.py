@@ -1144,7 +1144,10 @@ def check_stored_alignment(
         if found is None:
             return None
         for (n, item), verdict in zip(singles, found):
-            out[n] = align(len(content_criteria(item)), item.concept_key, verdict, scope)
+            out[n] = align(
+                len(content_criteria(item)), item.concept_key, verdict, scope,
+                final_answer=item.final_answer,
+            )
     if multis:
         named = [
             (_item_subject(i), tuple(scope.get(k, k) for k in components_of(i.concept_key)))
@@ -1991,8 +1994,10 @@ def _align_screened(
     in code by learning.item_alignment.align — an unasked criterion dropped
     (the stored rubric still ends with MC_REASON_CRITERION on an mc_reason
     item), a draft with no criterion left or testing no listed concept
-    rejected, a draft that tests another listed concept moved under it. Each
-    kept draft carries the check's flags and is stamped aligned. Returns the
+    rejected, a draft that tests another listed concept moved under it —
+    unless its final answer is that concept's name (Z10: A34's rule, which
+    validation applied only to the concept it was drafted for), which rejects
+    it too. Each kept draft carries the check's flags and is stamped aligned. Returns the
     screened drafts per concept key (a re-tag can add a key), every drop with
     its reason in place; None when the check was unavailable (the caller
     fails closed). No valid draft → no call."""
@@ -2012,7 +2017,10 @@ def _align_screened(
                 continue
             checked += 1
             criteria = _draft_criteria(entry.draft)
-            result = align(len(criteria), key, next(verdict_at), scope)
+            result = align(
+                len(criteria), key, next(verdict_at), scope,
+                final_answer=entry.draft.final_answer,
+            )
             if result.reject:
                 if result.unverified:
                     unverified += 1

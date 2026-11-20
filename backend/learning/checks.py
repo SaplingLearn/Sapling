@@ -1449,6 +1449,17 @@ def _names_the_concept(run: tuple[str, ...], concept: tuple[str, ...]) -> bool:
     return _in_a_spelling(tuple(t for t in concept if t not in _DETERMINERS), core)
 
 
+def final_answer_names_concept(final_answer: str | None, concept: str | None) -> bool:
+    """A34's concept rule over plain text: the final answer is (part of) the
+    name of the concept the item is filed under, so every hint that says the
+    concept would be blocked as a leak. `validate_draft` applies it against
+    the concept a draft was written for; a move to another concept (an A119
+    re-tag) must apply it again against the new one (learning.item_alignment
+    .align)."""
+    run = answer_run(final_answer)
+    return bool(run) and _names_the_concept(run, answer_run(concept))
+
+
 def _final_answer_reasons(draft: CheckItemDraft) -> list[str]:
     """A34: the final answer the reference concludes with, stated verbatim."""
     run = answer_run(draft.final_answer)

@@ -13,8 +13,10 @@ the same check and the same rules:
   reason criterion stays), `rubric_unasked_dropped` recorded in lint_flags;
 - another listed concept → the item is re-keyed under it (a new id) and the old
   row deleted, `concept_retagged` recorded;
-- no criterion asked, "none", or a concept outside the course → the item is
-  retired (deleted through the A23 retire path);
+- no criterion asked, "none", a concept outside the course, or another listed
+  concept whose name is the item's final answer (A34: filed there it would
+  block every hint) → the item is retired (deleted through the A23 retire
+  path);
 - no verdict (the check unavailable, or an item left unanswered) → the item is
   left untouched and the run exits 1.
 

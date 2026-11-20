@@ -957,3 +957,90 @@ class TestSlotAndAgent:
         from services import check_item_service as svc
 
         assert "aligned_at" not in svc._COLUMNS and "aligned_at" not in svc._QUEUE_COLUMNS
+
+
+# ── PR #866 Z10: a re-tag re-applies A34's concept rule ──────────────────────
+
+
+def _answers_merge_sort(**over) -> CheckItemDraft:
+    """A valid free draft for "Divide and Conquer" whose final answer is
+    "Merge sort" — the name of another listed concept, the one it tests."""
+    base = dict(
+        concept="Divide and Conquer",
+        format="free",
+        difficulty=2,
+        prompt="Which algorithm splits a list in halves, sorts each half, then combines them?",
+        reference_answer=(
+            "It splits the list, sorts each half recursively and merges the two sorted "
+            "halves. Final answer: Merge sort."
+        ),
+        final_answer="Merge sort",
+        rubric=["Names the algorithm.", "Says the sorted halves are combined."],
+        wrong_keys=["confuses_with_quicksort"],
+        wrong_texts=["Names quicksort, which partitions around a pivot instead."],
+        chunk_ids=["c1"],
+    )
+    base.update(over)
+    return CheckItemDraft(**base)
+
+
+_SORTING = ["Divide and Conquer", "Merge Sort"]
+
+
+class TestRetagKeepsTheConceptRule:
+    def test_align_rejects_a_retag_onto_the_concept_its_answer_names(self):
+        scope = {"divide and conquer": "Divide and Conquer", "merge sort": "Merge Sort"}
+        verdict = ia.Verdict({"c1": True, "c2": True}, "Merge Sort")
+        out = ia.align(2, "divide and conquer", verdict, scope, final_answer="Merge sort")
+        assert out.reject == ia.ANSWER_NAMES_CONCEPT and not out.unverified
+        assert ia.REASON_CODES[out.reject] == "answer_names_concept"
+        # the same verdict for an answer that names no listed concept re-tags
+        kept = ia.align(2, "divide and conquer", verdict, scope, final_answer="O(n log n)")
+        assert kept.reject is None and kept.concept_key == "merge sort"
+
+    def test_the_draft_is_valid_as_drafted(self):
+        assert validate_draft(_answers_merge_sort()) == []
+        assert validate_draft(_answers_merge_sort(concept="Merge Sort"))  # A34 refuses it there
+
+    def test_a_drafted_retag_onto_the_answers_concept_is_never_stored(self, monkeypatch):
+        out, table_, _, _, _ = _generate(
+            monkeypatch,
+            _output(_answers_merge_sort()),
+            _verifier(lambda item: ([True] * len(item.criteria), "Merge Sort")),
+            names=_SORTING,
+            drafted=("divide and conquer",),
+        )
+        assert _stored(table_) == [] and out.items_created == 0
+
+    def test_a_drafted_retag_whose_answer_names_no_concept_still_moves(self, monkeypatch):
+        draft = _answers_merge_sort(
+            prompt="What is the running time of the algorithm that sorts halves and merges them?",
+            reference_answer="Each level merges n items over log n levels. Final answer: O(n log n).",
+            final_answer="O(n log n)",
+        )
+        out, table_, _, _, _ = _generate(
+            monkeypatch,
+            _output(draft),
+            _verifier(lambda item: ([True] * len(item.criteria), "Merge Sort")),
+            names=_SORTING,
+            drafted=("divide and conquer",),
+        )
+        assert [r["concept_key"] for r in _stored(table_)] == ["merge sort"]
+
+    def test_the_backfill_retires_a_stored_item_rather_than_retag_it(self, monkeypatch):
+        from services import check_item_service as svc
+        from tests.test_learning_check_items import _item
+
+        item = _item(
+            concept_key="divide and conquer",
+            prompt="Which algorithm splits a list in halves, sorts each, then combines them?",
+            reference_answer="It merges the sorted halves. Final answer: Merge sort.",
+            final_answer="Merge sort",
+        )
+        monkeypatch.setattr(
+            svc, "verify_items", _verifier(lambda i: ([True] * len(i.criteria), "Merge Sort"))
+        )
+        scope = {"divide and conquer": "Divide and Conquer", "merge sort": "Merge Sort"}
+        (result,) = svc.check_stored_alignment(COURSE, [item], scope, flex=False)
+        assert result.reject == ia.ANSWER_NAMES_CONCEPT
+        assert result.concept_key == "divide and conquer"  # never re-keyed
