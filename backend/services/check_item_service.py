@@ -3782,7 +3782,7 @@ def clear_dropped_drafting() -> int:
             filters={"id": f"in.({ids})", "check_items_status": f"eq.{DRAFTING_PENDING}"},
             prefer_return_minimal=True,
         )
-    except Exception as exc:
+    except (httpx.HTTPError, RuntimeError, ValueError) as exc:  # the module's DB-failure set (:761)
         logger.warning(
             "check items: %d dropped drafting marks not taken back (%s); they re-drive after "
             "their TTL", len(dropped), type(exc).__name__,

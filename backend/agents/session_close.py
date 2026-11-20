@@ -270,6 +270,7 @@ async def run_session_close(
                 UnfinishedRun(usage), feature="session_close", task="session_close",
                 user_id=user_id, session_id=session_id,
             )
+    assert result is not None  # the except branch returned; the run completed
     record_agent_usage(result, feature="session_close", task="session_close",
                        user_id=user_id, session_id=session_id)
     return result.output
