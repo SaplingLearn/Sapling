@@ -737,3 +737,62 @@ describe("Z63 — a failed map read says so, with a retry, never an empty map", 
     expect(page.textContent).toContain("1 concept");
   });
 });
+
+describe("K08 — the current concept follows the plan cursor the server moved", () => {
+  const plan2 = (cursor: number) => ({ concepts: [
+    { node_id: "n1", concept_name: "Recursion", kind: "new" },
+    { node_id: "n2", concept_name: "Stacks", kind: "new" },
+  ], cursor });
+
+  it("after a graded check moves the cursor, the next check, the phase line and the panel name the next concept", async () => {
+    api.getLoopSessionStatus.mockResolvedValue(status({ approved_plan: plan2(0) }));
+    const next = { ...pose, question_hash: "qh8", prompt: "What does the stack hold?" };
+    api.nextLoopCheck.mockResolvedValueOnce({ phase: "check", check: pose }).mockResolvedValueOnce({ phase: "check", check: next });
+    api.streamLoopCheckAnswer.mockResolvedValue(turn({
+      reply: "Not quite.", phase: "feedback", graded: true, verdict: "not_yet",
+      learner_state: [{ node_id: "n1", p_known: 0.4, band: "develop" }], approved_plan: plan2(1),
+    }));
+    await resumedTeach();
+    fireEvent.click(await screen.findByTestId("loop-check-me"));
+    expect((await screen.findByTestId("loop-check-prompt")).textContent).toContain("Recursion");
+    fireEvent.change(screen.getByTestId("loop-attempt-input"), { target: { value: "n == 0" } });
+    fireEvent.click(screen.getByTestId("loop-attempt-submit"));
+    const banner = await screen.findByTestId("loop-verdict");
+    expect(banner.textContent).toContain("Recursion · check"); // the graded concept
+    expect(banner.textContent).toContain("Next up: Stacks.");
+    expect(banner.textContent).not.toContain("same idea");
+    expect(screen.getByTestId("tutor-phase-line").textContent).toBe("Stacks · concept 2 of 2");
+    const current = screen.getByTestId("loop-rail").querySelector('li[aria-current="step"]');
+    expect(current?.textContent).toContain("Stacks");
+    await waitFor(() => expect((screen.getByTestId("loop-check-me") as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByTestId("loop-check-me"));
+    await waitFor(() => expect(screen.getByTestId("loop-check-prompt").getAttribute("data-question-hash")).toBe("qh8"));
+    expect(screen.getByTestId("loop-check-prompt").textContent).toContain("Stacks");
+    expect(screen.getByTestId("loop-check-prompt").textContent).not.toContain("Recursion");
+  });
+
+  it("Check me that moved past a concept with no check names the concept it posed on", async () => {
+    api.getLoopSessionStatus.mockResolvedValue(status({ approved_plan: plan2(0) }));
+    api.nextLoopCheck.mockResolvedValue({ phase: "check", check: pose, approved_plan: plan2(1) });
+    await resumedTeach();
+    fireEvent.click(await screen.findByTestId("loop-check-me"));
+    expect((await screen.findByTestId("loop-check-prompt")).textContent).toContain("Stacks");
+    expect(screen.getByTestId("tutor-phase-line").textContent).toBe("Stacks · concept 2 of 2");
+  });
+
+  it("a not-yet that stays on the concept still says to try another on the same idea", async () => {
+    api.getLoopSessionStatus.mockResolvedValue(status({ approved_plan: plan2(0) }));
+    api.nextLoopCheck.mockResolvedValue({ phase: "check", check: pose });
+    api.streamLoopCheckAnswer.mockResolvedValue(turn({
+      reply: "Not quite.", phase: "feedback", graded: true, verdict: "not_yet",
+      learner_state: [{ node_id: "n1", p_known: 0.4, band: "develop" }],
+    }));
+    await resumedTeach();
+    fireEvent.click(await screen.findByTestId("loop-check-me"));
+    await screen.findByTestId("loop-check-prompt");
+    fireEvent.change(screen.getByTestId("loop-attempt-input"), { target: { value: "n == 0" } });
+    fireEvent.click(screen.getByTestId("loop-attempt-submit"));
+    expect((await screen.findByTestId("loop-verdict")).textContent).toContain("Try another one on the same idea.");
+    expect(screen.getByTestId("tutor-phase-line").textContent).toBe("Recursion · concept 1 of 2");
+  });
+});

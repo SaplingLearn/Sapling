@@ -1012,7 +1012,7 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `tutor-home-continue` / `tutor-home-due` / `tutor-home-start-with` / `tutor-home-goal` | the home's suggestions: back to the open session; Study's due review; a session titled after the weakest concept; a session that opens the goal editor |
 | `tutor-course-page` | a course page (T2); `data-course-id`: its sessions, progress and material; `tutor-course-start` (TopBar) goes to the home |
 | `tutor-all-sessions` | every session (T3), with a search and an All / In progress / Wrapped up filter |
-| `tutor-phase-line` | the TopBar's line under the title: Check-in / Plan · N concepts / "<concept> · concept i of n" / Wrap-up / "Wrapped up · read-only" |
+| `tutor-phase-line` | the TopBar's line under the title: Check-in / Plan · N concepts / "<concept> · concept i of n" (the approved plan's cursor, which a turn or Check me that moves it reports) / Wrap-up / "Wrapped up · read-only" |
 | `tutor-phase-stepper` | the first row of the conversation column (`learn/tutor/PhaseStepper.tsx`): the ordered Check-in · Plan · Learn · Wrap-up list (`<ol aria-label="Session progress">`); each `li` has `data-state` = done / current / todo and the current one has `aria-current="step"` |
 | `tutor-turn` | a `ChatPanel` tutor turn drawn on the page (`turnStyle="page"`, `PageTurn`: the tutor's mark and name over the text, no bubble); `data-visually-hidden` while unpainted |
 | `tutor-session-map` | the session panel's knowledge map (`learn/tutor/SessionMap.tsx`): fixed mastery colours, no zoom buttons; it frames its nodes until the student zooms or pans it, and re-frames on a double-click or a new node set |
@@ -1044,7 +1044,7 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `loop-no-check-items` | "No check items for this course yet" (A23) |
 | `loop-tree-link` | link to `/tree` (`?node=<id>` once a `learner_state` event names the concept): the session panel's "Open map", or "Map" in the TopBar on a phone; absent while `hide_tree` hides the Tree |
 | `loop-rail` | the session panel, "Today's session" (wide screens only): the plan (the approved one from `/status` after a reload), a skill meter per concept, due review (`tutor-panel-review`) and the knowledge map; the tree link sits in the TopBar on narrow screens |
-| `loop-verdict` | wireframe T9: the graded check's verdict over the feedback; `data-verdict` = correct / not_yet / idk |
+| `loop-verdict` | wireframe T9: the graded check's verdict over the feedback; `data-verdict` = correct / not_yet / idk; a not_yet names the next concept ("Next up: …") when the grade moved the plan on |
 | `loop-close-new-session` | the wrap-up's "Start a new session" (to the Tutor home) |
 | `tutor-attach` | the composer's "+" next to Send: opens the Library to add material |
 | `loop-learner-state` | the current concept's belief; `data-node-id`, `data-p-known`, `data-band` (present, empty, before any event) |

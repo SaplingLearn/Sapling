@@ -22,6 +22,7 @@ from learning.evidence import PREREQ_RELATIONSHIP_TYPE, PlanningPersistenceUnava
 from learning.planning_history import read_planning_history
 from learning.fsrs import budget_select, order_due
 from learning.goals import (
+    approved_plan_view,
     public_goal,
     goal_version,
     attempted_nodes,
@@ -388,6 +389,24 @@ def _plan_node_names(user_id: str, node_ids: list[str]) -> dict[str, str]:
         or []
     )
     return {r["id"]: r.get("concept_name") or "" for r in rows if r.get("id")}
+
+
+def _plan_position(doc: dict) -> tuple[list, object]:
+    """Where the approved plan stands: its concepts (band repair may insert
+    one, spec §13 A122) and its cursor. Reads only."""
+    plan = doc.get("plan") if isinstance(doc.get("plan"), dict) else {}
+    return list(plan.get("approved") or []), plan.get("cursor")
+
+
+def _moved_plan_view(user_id: str, before: tuple[list, object], after: dict) -> dict:
+    """#866 K08: `approved_plan` (GET /status's shape) when this request moved
+    the approved plan — the cursor of a graded check's feedback or of an
+    activation past a concept with no check, or band repair's list — so the
+    Tutor's current concept follows it; {} when it did not, so a response
+    that moved nothing is the one it was. One `graph_nodes` read for names."""
+    if _plan_position(after) == before:
+        return {}
+    return approved_plan_view(after, lambda ids: _plan_node_names(user_id, ids))
 
 
 def _plan_due_reviews(

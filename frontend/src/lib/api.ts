@@ -1305,8 +1305,12 @@ export interface LoopStartResult extends LoopLearningScope, WithCrisisSupport {
   /** A128: the opener's course-material retrieval failed (present only when true). */
   materials_unavailable?: boolean;
 }
+/** #866 K08: the approved plan as GET /status lists it, sent by a turn or
+ *  "Check me" only when that request moved it (its cursor, or band repair's
+ *  list); absent, nothing moved. */
+export interface LoopPlanMoved { approved_plan?: { concepts: LoopPanelConcept[]; cursor: number } }
 /** A loop turn's `done.data` / JSON body (HANDOFF-07 §Symbols). */
-export interface LoopTurnResult extends ChatResult {
+export interface LoopTurnResult extends ChatResult, LoopPlanMoved {
   phase?: string;
   check?: LoopCheckItem | null;
   budget?: LoopBudgetNotice | null;
@@ -1332,7 +1336,7 @@ export interface LoopTurnResult extends ChatResult {
 }
 /** The perceived-difficulty answer (spec §3.4, §6 zpd.rating). */
 export type LoopRating = 'too_easy' | 'appropriate' | 'too_hard';
-export interface LoopCheckNext extends LoopLearningScope {
+export interface LoopCheckNext extends LoopLearningScope, LoopPlanMoved {
   phase: LoopPhase;
   check?: LoopCheckItem | null;
   pending_grade?: LoopPendingGrade | null;
@@ -1448,7 +1452,7 @@ export const listLoopSessionsFor = async (
 
 /** GET /status for one session (read-only): where it stands and, while an item
  *  takes answers, its pose. The resume restore and the post-submission reconcile. */
-export interface LoopSessionStatus extends LoopLearningScope {
+export interface LoopSessionStatus extends LoopLearningScope, LoopPlanMoved {
   active: boolean;
   session_id: string;
   /** PKG-08's phase: probe | plan | teach | close. */
@@ -1462,8 +1466,8 @@ export interface LoopSessionStatus extends LoopLearningScope {
   prequestion?: LoopPrequestion | null;
   /** Spec §13 A139: the open self-explanation prompt (absent when none). */
   self_explain?: LoopSelfExplain | null;
-  /** The approved plan, in order, with its cursor (absent before approval). */
-  approved_plan?: { concepts: LoopPanelConcept[]; cursor: number };
+  // approved_plan (LoopPlanMoved): the approved plan, in order, with its cursor
+  // (absent before approval) — always, on /status
 }
 /** A concept as the Tutor's session panel lists it. */
 export interface LoopPanelConcept { node_id: string; concept_name: string; kind: string; reason?: LoopPlanConcept['reason'] }

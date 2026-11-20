@@ -112,7 +112,8 @@ import { CheckCard } from "./CheckCard";
 import { LoopNotices } from "./LoopNotices";
 import { ReadOnlyTranscript } from "./ReadOnlyTranscript";
 import {
-  conceptAt, cursorNode, dueLink, findRow, isOpenPhase, panelPlanOf, phaseText, weakestConcept, type ApprovedPlan,
+  conceptAt, currentConcept, dueLink, findRow, isOpenPhase, nextAfterVerdict, panelPlanOf, phaseText, weakestConcept,
+  type ApprovedPlan,
 } from "./tutor/sessionView";
 
 // ── Copy ─────────────────────────────────────────────────────────────────
@@ -1173,6 +1174,7 @@ export function LoopLearn() {
     // check or learner state. Its turn's state changes already happened, so
     // an absent field here is not a "clear": nothing else is applied.
     if (res.replayed) return;
+    if (res.approved_plan) setApprovedPlan(res.approved_plan); // K08: the server moved the plan's cursor
     if (submission && res.graded) {
       setVerdict(res.verdict ? { verdict: res.verdict, nodeId: res.learner_state?.[0]?.node_id ?? state.focusNodeId } : null);
       setPendingGrade(null);
@@ -1615,6 +1617,7 @@ export function LoopLearn() {
       const r = await nextLoopCheck(sessionId, userId);
       if (g !== gen.current || epoch !== turnEpoch.current) return;
       applyLearningScope(r);
+      if (r.approved_plan) setApprovedPlan(r.approved_plan); // K08: activation moved past a concept
       if (r.pending_grade) {
         setPendingGrade(r.pending_grade);
         dispatch({ type: "check", item: null });
@@ -1693,7 +1696,7 @@ export function LoopLearn() {
   const conceptNames = useMemo(() => {
     const names = new Map<string, string>();
     for (const n of graph.nodes) if (n.course_id === courseId) names.set(n.id, n.name);
-    for (const c of panelPlanOf(plan, approvedPlan) ?? []) if (c.concept_name) names.set(c.node_id, c.concept_name);
+    for (const c of [...(plan ?? []), ...(approvedPlan?.concepts ?? [])]) if (c.concept_name) names.set(c.node_id, c.concept_name);
     return names;
   }, [graph.nodes, plan, approvedPlan, courseId]);
   const railGraph = useMemo(() => {
@@ -1707,8 +1710,11 @@ export function LoopLearn() {
     return want ? railGraph.nodes.find((n) => n.name.toLowerCase() === want)?.id ?? null : null;
   }, [railGraph.nodes, deepLink]);
   const focusNodeId = state.focusNodeId ?? linkedNodeId;
+  // K08: the concept the session is on — the plan cursor the server moves
+  const currentNodeId = currentConcept(approvedPlan, focusNodeId);
+  const mapNodeId = currentNodeId ?? focusNodeId;
   const learner = state.focusNodeId ? state.learnerState[state.focusNodeId] : undefined;
-  const treeHref = focusNodeId ? `/tree?node=${encodeURIComponent(focusNodeId)}` : "/tree";
+  const treeHref = mapNodeId ? `/tree?node=${encodeURIComponent(mapNodeId)}` : "/tree";
   const teaching = TEACHING.includes(state.phase);
   const streaming = streamingText !== null;
   // The card shows the current pose and hint, so the log does not paint those
@@ -1719,7 +1725,7 @@ export function LoopLearn() {
   // adds no node, so nothing is announced twice.
   const logMessages = useMemo(() => {
     // U2: the opener's row shows the approved plan, never steps already done
-    const history = withPlanHistory(messages, panelPlanOf(plan, approvedPlan));
+    const history = withPlanHistory(messages, panelPlanOf(state.phase, plan, approvedPlan));
     const inCard = new Set<string>();
     if (item?.prompt) inCard.add(item.prompt);
     if (item && hint && "reply" in hint) inCard.add(hint.reply);
@@ -1728,7 +1734,7 @@ export function LoopLearn() {
     return inCard.size === 0
       ? history
       : history.map((m) => (m.role === "assistant" && inCard.has(m.content) ? { ...m, visuallyHidden: true } : m));
-  }, [messages, plan, approvedPlan, item, hint, prequestion]);
+  }, [messages, state.phase, plan, approvedPlan, item, hint, prequestion]);
 
   // spec §13 A135: apply `focusAfter` once the screen has settled — no reply
   // streaming, the target rendered and enabled. Only a lost focus (left on the
@@ -1788,12 +1794,12 @@ export function LoopLearn() {
   // the same element tree the inline JSX produced (nothing remounts).
   const inSession = view === "session";
   const sessionRow = findRow(sessionRows, sessionId);
-  const panelPlan = panelPlanOf(plan, approvedPlan);
+  const panelPlan = panelPlanOf(state.phase, plan, approvedPlan);
   /** The TopBar's line under the title: where the session is (no step pills). */
   const phaseLine = (): string => {
     if (readOnly) return "Wrapped up · read-only";
     if (!sessionId) return starting ? "Starting…" : "";
-    return phaseText(state.phase, panelPlan, focusNodeId ?? cursorNode(approvedPlan), conceptNames);
+    return phaseText(state.phase, panelPlan, currentNodeId, conceptNames);
   };
   const topTitle = (): string => {
     if (view === "home") return "New session";
@@ -1999,7 +2005,7 @@ export function LoopLearn() {
       {item ? (
         <CheckCard
           item={item}
-          conceptName={conceptAt(conceptNames, focusNodeId, approvedPlan)}
+          conceptName={conceptAt(conceptNames, currentNodeId, null)}
           draft={attempt}
           setDraft={setAttempt}
           busy={attemptBusy || streaming}
@@ -2047,7 +2053,8 @@ export function LoopLearn() {
       ) : (
         <>
           {state.phase === "feedback" && verdict && (
-            <VerdictBanner verdict={verdict.verdict} concept={conceptAt(conceptNames, verdict.nodeId, approvedPlan)} />
+            <VerdictBanner verdict={verdict.verdict} concept={conceptAt(conceptNames, verdict.nodeId, approvedPlan)}
+              next={nextAfterVerdict(approvedPlan, verdict.nodeId, conceptNames)} />
           )}
           {renderTeachActions(firstConcept)}
         </>
@@ -2212,7 +2219,7 @@ export function LoopLearn() {
   /** Skill per concept in today's plan (else the concept being taught): the
    *  loop's own estimate when it has one, else the map's mastery. */
   const panelSkills = (): PanelConcept[] => {
-    const ids = panelPlan && panelPlan.length > 0 ? panelPlan.map((c) => c.node_id) : focusNodeId ? [focusNodeId] : [];
+    const ids = panelPlan && panelPlan.length > 0 ? panelPlan.map((c) => c.node_id) : mapNodeId ? [mapNodeId] : [];
     return ids.map((id) => {
       // measured only: the loop's estimate once this session observed the
       // concept, else the map's mastery. The plan's p_known for an untested
@@ -2227,7 +2234,7 @@ export function LoopLearn() {
   const renderRail = () => (
     <SessionPanel
       plan={state.phase === "plan" ? null : panelPlan}
-      currentNodeId={teaching ? focusNodeId ?? cursorNode(approvedPlan) : null}
+      currentNodeId={teaching ? currentNodeId : null}
       skills={panelSkills()}
       dueCount={lists.dueReviews}
       dueHref={dueHref}
@@ -2237,7 +2244,7 @@ export function LoopLearn() {
       showTreeLink={allOf(!isMobile, treeVisible)}
       onHide={layout.hidePanel}
       map={railGraph.nodes.length > 0 ? (
-        <SessionMap nodes={railGraph.nodes} edges={railGraph.edges} highlightId={focusNodeId ?? undefined} />
+        <SessionMap nodes={railGraph.nodes} edges={railGraph.edges} highlightId={mapNodeId ?? undefined} />
       ) : graphError ? <LoadFailed testId="tutor-map-error" what="your map" onRetry={() => void refreshGraph()} /> : (
         <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Concepts appear here as you learn.</div>
       )}

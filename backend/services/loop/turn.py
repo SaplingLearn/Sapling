@@ -125,7 +125,7 @@ from services.loop.guard import (
     _visible_text,
     with_confrontation,
 )
-from services.loop.planning import _plan_node_names, _with_goal_context
+from services.loop.planning import _moved_plan_view, _plan_node_names, _plan_position, _with_goal_context
 from services.loop.cursor import _auto_poses_checks, _h6_ok, _leak_checked_payload
 from services.loop.pose import (
     _emit_prequestion,
@@ -1097,6 +1097,9 @@ class _LoopTurn:
             "hint_offer": {"rung": offer_rung} if offer_rung is not None else None,
             "budget": _budget_data(self.planned) if self.planned.level == "hard" else None,
             "check": check,
+            # #866 K08: the approved plan, when this turn moved its cursor (a
+            # graded check's feedback, an activation past a concept with no check)
+            **_moved_plan_view(self.user_id, _plan_position(self.state), saved),
             **_materials_notice(out),
             **teach_prompts,
             # spec §13 A138: the answer route's turn (present only there)

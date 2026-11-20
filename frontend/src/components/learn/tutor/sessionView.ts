@@ -13,9 +13,28 @@ export function dueLink(courseIds: string[]): string {
   return courseIds.length > 0 ? retentionHref(courseIds) : "/study";
 }
 
-/** The plan the panel lists: the one on screen, else the approved one /status reported. */
-export function panelPlanOf(plan: LoopPlanConcept[] | null, approved: { concepts: LoopPanelConcept[] } | null): LoopPanelConcept[] | null {
-  return plan ?? approved?.concepts ?? null;
+/** The plan the panel lists: while planning, the proposal on screen; once a
+ *  plan is approved, that plan as the server last reported it (a feedback turn's
+ *  band repair can add a concept to it, #866 K08), else the proposal. */
+export function panelPlanOf(phase: LoopPhase, plan: LoopPlanConcept[] | null, approved: { concepts: LoopPanelConcept[] } | null): LoopPanelConcept[] | null {
+  return phase === "plan" ? plan ?? approved?.concepts ?? null : approved?.concepts ?? plan ?? null;
+}
+
+/** The concept the session is on (#866 K08): the approved plan's cursor, which
+ *  the server moves (null once the plan is done); with no plan approved, the
+ *  concept the last turn named. */
+export function currentConcept(approved: ApprovedPlan | null, focus: string | null): string | null {
+  return approved ? cursorNode(approved) : focus;
+}
+
+/** Where a graded check left the plan, for its verdict's note (#866 K08):
+ *  undefined while the next check stays on the graded concept; the next
+ *  concept's name once the cursor moved on; null once the plan has no next. */
+export function nextAfterVerdict(approved: ApprovedPlan | null, graded: string | null, names: Map<string, string>): string | null | undefined {
+  if (!approved || !graded) return undefined;
+  const at = cursorNode(approved);
+  if (at === graded) return undefined;
+  return at ? names.get(at) ?? "the next concept" : null;
 }
 
 /** The name of `id`, else of the approved plan's current concept. */

@@ -430,6 +430,8 @@ def seams():
         ns.select_item = p("select_item", wraps=checks.select_item)
         ns.reserve = p("posttest_reserves", return_value=frozenset({"qh-reserve"}))
         ns.concept_key = p("_concept_key_for_node", return_value="recursion")
+        # #866 K08: the approved plan's names, read when a request moved its cursor
+        ns.plan_names = p("_plan_node_names", return_value={})
         ns.flush = p("flush_pending", return_value=[{"node_id": "node-1"}])
         ns.receipts = {}
 
@@ -3111,8 +3113,36 @@ def test_check_next_with_nothing_to_activate_reports_the_plan(gate_on, seams):
     # no check item — so the response says so instead of a bare "plan done"
     assert r.json() == {
         "phase": "teach", "plan_done": True, "check": None, "checks_unavailable_node_ids": ["node-1"],
+        # #866 K08: the cursor moved past node-1, so the plan says where it is now
+        "approved_plan": {"concepts": [{"node_id": "node-1", "concept_name": "", "kind": "new"}], "cursor": 1},
     }
     assert seams.store["doc"]["plan"]["done"] is True
+
+
+def test_check_next_that_moves_past_a_concept_with_no_check_says_where_the_plan_is(gate_on, seams):
+    """#866 K08: activation moved the cursor past node-1 (nothing servable) and
+    posed node-2's item; the response carries the approved plan with its new
+    cursor, so the check card and the session panel name node-2. A check that
+    stays on the concept sends no plan: nothing moved."""
+    seams.plan_names.return_value = {"node-1": "Recursion", "node-2": "Stacks"}
+    seams.store["doc"] = _plan_state()
+    seams.list_items.return_value = [ITEM]
+    # three formats miss on node-1, on the read-only trial and on the write
+    seams.select_item.side_effect = [None, None, None, ITEM] * 2
+    body = client.post("/api/learn/loop/check/next", json={"session_id": "s1", "user_id": "u1"}).json()
+    assert body["check"]["question_hash"] == ITEM.question_hash
+    assert body["approved_plan"] == {
+        "concepts": [
+            {"node_id": "node-1", "concept_name": "Recursion", "kind": "new"},
+            {"node_id": "node-2", "concept_name": "Stacks", "kind": "new"},
+        ],
+        "cursor": 1,
+    }
+    seams.store["doc"] = _plan_state()
+    seams.select_item.side_effect = None
+    seams.select_item.return_value = ITEM
+    body = client.post("/api/learn/loop/check/next", json={"session_id": "s1", "user_id": "u1"}).json()
+    assert body["check"]["question_hash"] == ITEM.question_hash and "approved_plan" not in body
 
 
 def test_check_next_pauses_a_novice_concept_at_the_hard_level(gate_on, seams):
@@ -3154,6 +3184,35 @@ def test_feedback_counts_the_check_and_advances_after_the_per_concept_cap(gate_o
     assert doc["teach_turns"] == 0 and doc["concept_checks"] == 0
     assert doc["plan"]["cursor"] == 1 and doc["concept"] == "node-2"
     assert not doc.get("current")
+
+
+def test_feedback_that_moves_the_cursor_says_where_the_plan_is(gate_on, seams):
+    """#866 K08: the feedback turn at the per-concept cap moves the cursor to
+    node-2; its response carries the approved plan with the new cursor (the
+    Tutor's current concept, panel and next check follow it). Below the cap
+    nothing moved, and no plan is sent."""
+    from learning.params import LOOP_CHECKS_PER_CONCEPT
+
+    seams.plan_names.return_value = {"node-1": "Recursion", "node-2": "Stacks"}
+
+    def answer(concept_checks: int) -> dict:
+        st = _plan_state(concept_checks=concept_checks, teach_turns=2)
+        st.update(_state())
+        seams.store["doc"] = st
+        agent, _ = _json_agent()
+        with (
+            patch_loop("loop_tutor_agent", agent),
+            patch_loop("record_agent_usage", side_effect=lambda r, **k: r),
+        ):
+            return client.post(
+                "/api/learn/loop/check/answer",
+                json={"session_id": "s1", "user_id": "u1", "question_hash": "qh-1", "answer": "n == 0"},
+            ).json()
+
+    moved = answer(LOOP_CHECKS_PER_CONCEPT - 1)
+    assert moved["graded"] is True and moved["approved_plan"]["cursor"] == 1
+    assert [c["concept_name"] for c in moved["approved_plan"]["concepts"]] == ["Recursion", "Stacks"]
+    assert "approved_plan" not in answer(0)
 
 
 def test_feedback_below_the_cap_counts_the_check_and_stays(gate_on, seams):
