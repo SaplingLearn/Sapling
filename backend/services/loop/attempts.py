@@ -280,7 +280,8 @@ def _time_still_needed(
             return None
         waits.append(signals.required_s - signals.alone_s)
     wait = max(waits)
-    return round(wait, 1) if wait > 0 else None
+    # rounded UP to a tenth: a wait under 0.05 s must never read as 0 (no wait)
+    return math.ceil(wait * 10) / 10 if wait > 0 else None
 
 
 def _mark_earnest_blocked(session_id: str, qh: str, step: StepState, entry: dict) -> None:

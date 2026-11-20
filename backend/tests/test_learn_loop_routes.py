@@ -13,6 +13,7 @@ real store validates it.
 from __future__ import annotations
 
 import json
+import math
 import re
 from contextlib import ExitStack
 from datetime import datetime, timezone
@@ -2607,11 +2608,26 @@ def test_step_attempt_too_soon_says_how_long_until_it_counts(gate_on, seams):
     body = client.post("/api/learn/loop/step/attempt", json=_attempt()).json()
     required = gates.independent_time_required("develop", time_scale=config.LEARNING_GATE_TIME_SCALE)
     assert body["genuine"] is False and body["counted"] is False
-    assert body["wait_s"] == round(required - 5, 1)
+    assert body["wait_s"] == math.ceil((required - 5) * 10) / 10
     plea = client.post("/api/learn/loop/step/attempt", json=_attempt(attempt_text="just tell me")).json()
     assert "wait_s" not in plea, "a non-attempt is told to write one, not to wait"
     seams.store["doc"] = _state()  # the pose was long ago: it counts, nothing to wait for
     assert "wait_s" not in client.post("/api/learn/loop/step/attempt", json=_attempt()).json()
+
+
+def test_step_attempt_a_wait_under_a_tenth_of_a_second_never_reads_as_none(gate_on, seams):
+    """#866 K32: a remaining wait under 0.05 s rounds UP to 0.1 s, never to 0,
+    which the client would read as "no wait" and word the denial as "write
+    what you think" to a student who wrote an answer (seen in the E2E lane,
+    whose gate seconds are scaled by 0.01)."""
+    import config
+    from learning import gates
+
+    required = gates.independent_time_required("develop", time_scale=config.LEARNING_GATE_TIME_SCALE)
+    seams.store["doc"] = _state(first_shown_at=NOW - (required - 0.03))
+    body = client.post("/api/learn/loop/step/attempt", json=_attempt()).json()
+    assert body["genuine"] is False and body["counted"] is False
+    assert body["wait_s"] == 0.1
 
 
 def test_step_attempt_unknown_item_is_404(gate_on, seams):

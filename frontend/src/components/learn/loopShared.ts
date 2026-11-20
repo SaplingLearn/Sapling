@@ -26,7 +26,7 @@ export type HintView = { denied: string } | { reply: string } | null;
  *  (`wait_s` from /step/attempt) is "too_soon", never "write something"; an H6
  *  gate another genuine try lifts is "h6_attempt"; any other H6 gate never lifts. */
 export function hintDenial(denied: string, lifts: LoopHintResponse["lifts"], attemptWaitS: number | undefined): string {
-  if (denied === "no_genuine_attempt" && attemptWaitS) return "too_soon";
+  if (denied === "no_genuine_attempt" && attemptWaitS !== undefined) return "too_soon";
   if (denied === "h6_gate" && lifts === "attempt") return "h6_attempt";
   return denied;
 }
