@@ -70,7 +70,7 @@ import hashlib
 import json
 import logging
 import threading
-from collections import deque
+from collections import Counter, deque
 from collections.abc import Callable, Iterable, Iterator
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
@@ -134,7 +134,7 @@ from learning.item_alignment import (
     kept_flags,
     merge_flags,
 )
-from learning.item_audit import AMBIGUOUS, CORRECT, WRONG
+from learning.item_audit import CORRECT
 from learning.item_keys import (
     TO_MATCH,
     KeyCheck,
@@ -145,7 +145,14 @@ from learning.item_keys import (
     settle,
 )
 from learning.item_lint import LINT_FLAGS, lint_check_item, lint_item
-from learning.item_reports import QUARANTINED, RETIRED, review_statuses
+from learning.item_reports import (
+    AUDIT_HOLD,
+    AUDITS,
+    QUARANTINED,
+    RETIRED,
+    audit_holds,
+    review_statuses,
+)
 from learning.multi_concept import combinations, combo_key, components_of
 from learning.multi_concept import label as multi_concept_label
 from learning.surface import Surface, SurfacedCheckItemDraft, from_varied, surface, surface_of
@@ -351,19 +358,24 @@ def _build_row(
     return row
 
 
-# A top-up draft whose prompt a stored item of the concept already has (A37).
+# A draft whose prompt a stored item of the concept already has (A37; Z09: the
+# main pass too, never only the top-up): the stored item is kept as it is.
 _REPEAT = "repeat: the prompt is a stored item's"
 # A draft whose prompt is a question retired for the course (A113).
 _RETIRED = "retired: the prompt repeats a question withdrawn from this course"
 # A draft whose prompt is a question its reporters quarantined (A123): stored,
 # held like the question's other rows, so it serves no one until staff decide.
 _QUARANTINED = "quarantined: the prompt repeats a question held for staff review"
+# A draft whose prompt is a question staff audited wrong or ambiguous (A124),
+# with no approval since (Z09): stored held under the audit's code, so a key
+# staff found wrong is never served again on a model's say-so.
+_AUDITED = "audited: the prompt repeats a question whose key staff found wrong or ambiguous"
 
 
 class _ConceptWrite(NamedTuple):
     """What one concept's write stored and dropped."""
 
-    ids: list[str]  # the rows upserted
+    ids: list[str]  # the NEW rows written (Z09: never a stored row rewritten)
     # of those, the mc_reason rows a student can be served (A124: a held one is
     # not, so it counts toward no A37 floor): id -> difficulty
     mc_reason: dict[str, int]
@@ -459,16 +471,25 @@ def _store_screened(
     exclude_ids: Iterable[str] = (),
     unsourced: bool = False,
 ) -> _ConceptWrite:
-    """Store the screened drafts of one concept in ONE upsert, saying what it
+    """Store the screened drafts of one concept in ONE insert, saying what it
     stored and why each mc_reason draft was dropped. `limit` caps the valid
     rows stored (the top-up's missing count); the rest are logged, not stored.
-    A draft whose row id is in `exclude_ids` (the top-up's stored items: the
-    id is the prompt's question_hash) is a repeat: dropped before `limit`
-    counts it, so it never rewrites the stored item or takes a new one's slot.
-    A draft of a question retired for the course (A113) is dropped the same
-    way, after one read of the batch's decisions; that read raises like the
-    upsert does, so a blip drops the batch (the caller reports StorageError)
-    rather than risk re-publishing a retired key. A119: an aligned draft
+    Z09: a drafting write only ever ADDS rows. A draft whose row id is already
+    stored (one read of the batch's ids; the id is the prompt's question_hash
+    under the concept) or is in `exclude_ids` (the top-up's own) is a repeat:
+    dropped before `limit` counts it, so it never takes a new one's slot and
+    never rewrites the stored item — its key, its hold, staff's audit verdict
+    or approval — and it is not counted as stored, so a concept whose drafter
+    only repeats its stored stems fails its pass (A41). The insert itself is
+    ON CONFLICT DO NOTHING, so a row stored after that read is not rewritten
+    either. A draft of a question retired for the course (A113) is dropped
+    the same way, after one read of the batch's decisions; that read raises
+    like the insert does, so a blip drops the batch (the caller reports
+    StorageError) rather than risk re-publishing a retired key. A draft of a
+    question staff audited wrong or ambiguous with no approval since
+    (item_reports.audit_holds) is stored held under the audit's code with
+    `canonical_verified` false, the hold `record_item_audit` put on the
+    question's other rows. A119: an aligned draft
     carries the check's flags and `aligned_at`. A124: a key-checked draft
     carries `key_checked_at` and, agreed, `canonical_verified`; a held one its
     hold code — it is stored, but serves no one, so it takes no `limit` slot
@@ -513,10 +534,13 @@ def _store_screened(
         )
     hashes = [b["question_hash"] for _, b in built if isinstance(b, dict)]
     decided = review_statuses(course_id, hashes) if hashes else {}
+    audited = audit_holds(course_id, hashes) if hashes else {}
+    exclude |= _stored_ids(b["id"] for _, b in built if isinstance(b, dict))
     rows: list[dict] = []
     seen: set[str] = set()
     mc_drops: list[str] = []
-    surplus = repeats = withdrawn = quarantined = served = 0
+    counts: Counter[str] = Counter()
+    served = 0
     for entry, row in built:
         fmt = entry.format
         if not isinstance(row, dict):
@@ -525,7 +549,7 @@ def _store_screened(
             continue
         status = decided.get(row["question_hash"])
         if status == RETIRED:
-            withdrawn += 1
+            counts["retired"] += 1
             if fmt == _MC_REASON:
                 mc_drops.append(_RETIRED)
             continue
@@ -534,62 +558,36 @@ def _store_screened(
             # name a row twice (PostgREST rejects it), and it is one item.
             continue
         if row["id"] in exclude:
-            repeats += 1
+            counts["repeat"] += 1
             if fmt == _MC_REASON:
                 mc_drops.append(_REPEAT)
             continue
-        if status == QUARANTINED:
-            row["lint_flags"] = merge_flags(row.get("lint_flags"), [REPORTS_THRESHOLD])
+        audit_code = audited.get(row["question_hash"])
+        _hold_as_decided(row, status, audit_code)
         held = _row_held(row)
         if limit is not None and not held and served >= limit:
-            surplus += 1
+            counts["surplus"] += 1
             continue
         seen.add(row["id"])
         rows.append(row)
         if status == QUARANTINED:
-            quarantined += 1
-            if fmt == _MC_REASON:
-                mc_drops.append(_QUARANTINED)
+            counts["quarantined"] += 1
+            reason = _QUARANTINED
+        elif audit_code:
+            counts["audited"] += 1
+            reason = _AUDITED
         elif held:
-            if fmt == _MC_REASON and entry.reasons:
-                mc_drops.append(entry.reasons)
+            reason = entry.reasons
         else:
             served += 1
-    if repeats:
-        logger.info(
-            "check items: %d draft(s) repeat a stored item's prompt; not stored "
-            "(course=%s concept=%s)",
-            repeats,
-            course_id,
-            concept_key,
-        )
-    if withdrawn:
-        logger.info(
-            "check items: %d draft(s) repeat a question retired for the course; not stored "
-            "(course=%s concept=%s)",
-            withdrawn,
-            course_id,
-            concept_key,
-        )
-    if quarantined:
-        logger.info(
-            "check items: %d draft(s) repeat a question quarantined for the course; "
-            "stored held (course=%s concept=%s)",
-            quarantined,
-            course_id,
-            concept_key,
-        )
-    if surplus:
-        logger.info(
-            "check items: %d valid draft(s) beyond the %d asked for; not stored "
-            "(course=%s concept=%s)",
-            surplus,
-            limit,
-            course_id,
-            concept_key,
-        )
+            reason = ""
+        if fmt == _MC_REASON and reason:
+            mc_drops.append(reason)
+    _log_store(counts, limit, course_id, concept_key)
     if rows:
-        table(_TABLE).upsert(rows, on_conflict=_ON_CONFLICT)
+        # DO NOTHING on conflict (Z09): a row stored since the read above is
+        # never rewritten by a draft
+        table(_TABLE).upsert(rows, on_conflict=_ON_CONFLICT, ignore_duplicates=True)
     return _ConceptWrite(
         [r["id"] for r in rows],
         {r["id"]: r["difficulty"] for r in rows if r["format"] == _MC_REASON and not _row_held(r)},
@@ -603,6 +601,65 @@ def _row_held(row: dict) -> bool:
     return held_flags(row.get("lint_flags"), row.get("canonical_verified"))
 
 
+def _stored_ids(item_ids: Iterable[str]) -> set[str]:
+    """Z09: the ids among `item_ids` that are already stored, one `in.(...)`
+    read per _HASH_BATCH ids. Raises on a failed read."""
+    ids = sorted({i for i in item_ids if i})
+    found: set[str] = set()
+    for start in range(0, len(ids), _HASH_BATCH):
+        batch = ids[start : start + _HASH_BATCH]
+        rows = table(_TABLE).select(
+            "id", filters={"id": "in.(" + ",".join(pg_quote_value(i) for i in batch) + ")"}
+        )
+        found.update(r["id"] for r in rows or [] if isinstance(r, dict) and r.get("id") in batch)
+    return found
+
+
+def _hold_as_decided(row: dict, status: str | None, audit_code: str | None) -> None:
+    """Hold a new row of a question staff have decided on, in place: A123's
+    `reports_threshold` for a quarantined question (the database's trigger
+    adds it whatever the write says; it is added here so the slot count sees
+    it), and Z09's audit code for a question staff audited wrong or ambiguous
+    (item_reports.audit_holds), its key unconfirmed — the hold
+    `record_item_audit` put on the question's other rows."""
+    if status == QUARANTINED:
+        row["lint_flags"] = merge_flags(row.get("lint_flags"), [REPORTS_THRESHOLD])
+    if audit_code:
+        row["lint_flags"] = merge_flags(row.get("lint_flags"), [audit_code])
+        row["canonical_verified"] = False
+
+
+#: `_store_screened`'s log line per outcome it counts (draft counts, never text).
+_STORE_LOG = {
+    "repeat": "%d draft(s) repeat a stored item's prompt; not stored",
+    "retired": "%d draft(s) repeat a question retired for the course; not stored",
+    "quarantined": "%d draft(s) repeat a question quarantined for the course; stored held",
+    "audited": (
+        "%d draft(s) repeat a question whose key staff audited wrong or ambiguous; stored held"
+    ),
+}
+
+
+def _log_store(counts: Counter, limit: int | None, course_id: str, concept_key: str) -> None:
+    for kind, line in _STORE_LOG.items():
+        if counts[kind]:
+            logger.info(
+                "check items: " + line + " (course=%s concept=%s)",
+                counts[kind],
+                course_id,
+                concept_key,
+            )
+    if counts["surplus"]:
+        logger.info(
+            "check items: %d valid draft(s) beyond the %d asked for; not stored "
+            "(course=%s concept=%s)",
+            counts["surplus"],
+            limit,
+            course_id,
+            concept_key,
+        )
+
+
 def create_items(
     course_id: str,
     concept_key: str,
@@ -614,8 +671,9 @@ def create_items(
 ) -> list[str]:
     """Repair each draft where no guess is needed (A37; logged at INFO by
     rule), validate it (invalid → dropped + WARNING naming every rule), then
-    upsert every valid row in ONE call on (course_id, concept_key,
-    question_hash). Returns the stored ids. Raises on a PostgREST failure (the
+    insert every valid NEW row in ONE call on (course_id, concept_key,
+    question_hash) — a row already stored is a repeat, never rewritten (Z09).
+    Returns the stored ids. Raises on a PostgREST failure (the
     caller logs it). It runs NO alignment check (A119) and NO key check
     (A124), and stamps neither `aligned_at` nor `key_checked_at` (its rows are
     unverified): tests and evals call it; generation writes through
@@ -1202,11 +1260,15 @@ def apply_item_alignment(row: dict, item: CheckItem, result: Alignment, *, at: s
     stored and the new ones), `aligned_at`. On the same concept the row is
     updated in place. A re-tag re-keys it: the row as stored (every other
     column's ciphertext copied untouched, `canonical_verified`, the A124
-    `key_checked_at` and the A140 surface descriptor with it) is upserted
+    `key_checked_at` and the A140 surface descriptor with it) is inserted
     under (course_id, the tested concept, question_hash) — its new id — and
-    the old row deleted through the A23 retire path. Evidence is never
-    written. Returns the item's id after the write; raises on a failed write
-    (a re-run finishes a half-done re-key: the old row is still unchecked)."""
+    the old row deleted through the A23 retire path. A row already stored
+    under that key IS this question under the tested concept: it is kept as
+    it is (ON CONFLICT DO NOTHING, Z09 — never its key, hold, audit verdict
+    or approval rewritten by a model's re-tag) and the misfiled copy goes.
+    Evidence is never written. Returns the item's id after the write; raises
+    on a failed write (a re-run finishes a half-done re-key: the old row is
+    still unchecked)."""
     criteria = content_criteria(item)
     update: dict = {
         "lint_flags": merge_flags(lint_check_item(item), kept_flags(item.lint_flags), result.flags),
@@ -1234,7 +1296,7 @@ def apply_item_alignment(row: dict, item: CheckItem, result: Alignment, *, at: s
         update["rubric_json"] = encrypt_if_present(
             rubric_text, bind=bind(_TABLE, "rubric_json", new_id))
     moved.update(update, id=new_id, concept_key=result.concept_key)
-    table(_TABLE).upsert([moved], on_conflict=_ON_CONFLICT)
+    table(_TABLE).upsert([moved], on_conflict=_ON_CONFLICT, ignore_duplicates=True)
     retire_items_by_id([item.id])
     return new_id
 
@@ -1409,14 +1471,14 @@ def confirm_course_item(course_id: str, question_hash: str) -> None:
 # until an approval or a later "correct" — a key staff found wrong is never
 # served again on their say-so alone. Hashes, ids, enums and timestamps only.
 
-_AUDITS = "check_item_audits"
+_AUDITS = AUDITS
 _AUDITS_ON_CONFLICT = "course_id,question_hash"
 _AUDIT_ROW_COLUMNS = (
     "course_id,question_hash,item_id,concept_key,format,difficulty,key_status,verdict,"
     "audited_by,audited_at"
 )
-#: The hold code each non-"correct" verdict sets.
-_AUDIT_HOLD = {WRONG: KEY_AUDIT_WRONG, AMBIGUOUS: KEY_AUDIT_AMBIGUOUS}
+#: The hold code each non-"correct" verdict sets (item_reports' one map).
+_AUDIT_HOLD = AUDIT_HOLD
 
 
 def key_status(item) -> str:

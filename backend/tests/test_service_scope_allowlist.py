@@ -125,6 +125,8 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
     ("learning/item_reports.py", "record_report", "runs_as_service"): "check_item_reports/reviews + RPCs are service-only (A148)",
     ("learning/item_reports.py", "decide", "runs_as_service"): "check_item_reports/reviews + RPCs are service-only (A148)",
     ("learning/item_reports.py", "review_statuses", "runs_as_service"): "check_item_reports/reviews + RPCs are service-only (A148)",
+    ("learning/item_reports.py", "audit_holds", "runs_as_service"):
+        "PR #866 Z09: check_item_audits and check_item_reviews are service-only (A148); the drafting write reads them",
     ("learning/item_reports.py", "retired_items", "runs_as_service"): "check_item_reports/reviews + RPCs are service-only (A148)",
     ("learning/item_reports.py", "report_counts", "runs_as_service"): "check_item_reports/reviews + RPCs are service-only (A148)",
     ("learning/item_reports.py", "reviews", "runs_as_service"): "check_item_reports/reviews + RPCs are service-only (A148)",

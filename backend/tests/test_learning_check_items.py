@@ -2588,7 +2588,8 @@ class TestCreateItems:
         upsert = mocks["check_items"].upsert
         upsert.assert_called_once()
         rows, kwargs = upsert.call_args[0][0], upsert.call_args[1]
-        assert kwargs == {"on_conflict": "course_id,concept_key,question_hash"}
+        # Z09: an insert that never rewrites a stored row (ON CONFLICT DO NOTHING)
+        assert kwargs == {"on_conflict": "course_id,concept_key,question_hash", "ignore_duplicates": True}
         row = rows[0]
         assert (
             ids
@@ -4664,9 +4665,11 @@ class _ItemsTable:
         self.selects: list[dict] = []
         self.columns: list[str] = []  # each select's columns, in order
 
-    def upsert(self, rows, on_conflict=None):
+    def upsert(self, rows, on_conflict=None, ignore_duplicates=False):
         self.upserts.append([dict(r) for r in rows])
         for row in rows:
+            if ignore_duplicates and row["id"] in self.rows:
+                continue  # ON CONFLICT DO NOTHING: a stored row is never rewritten
             self.rows[row["id"]] = dict(row)
         return []
 
@@ -4812,7 +4815,8 @@ class TestMcTopUp:
         out, items, topups, ev = self._run(monkeypatch, main, None)
         assert topups == [] and self._topup_events(ev) == []
         assert len(items.mc_reason("learning rate")) == 2 and out.items_created == 2
-        assert items.columns == ["id"], "only the A23 count: no top-up read at >= 2 this pass"
+        # the A23 count and the write's stored-id read (Z09): no top-up read at >= 2
+        assert items.columns == ["id", "id"], "no top-up read at >= 2 this pass"
 
     def test_items_stored_before_the_pass_count_toward_the_floor(self, monkeypatch):
         """The floor is what the concept ENDS the pass with: an mc_reason item

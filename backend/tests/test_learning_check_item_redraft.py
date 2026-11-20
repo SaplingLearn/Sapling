@@ -65,7 +65,7 @@ class _Items:
     def select(self, columns, filters=None, **kw):
         return []
 
-    def upsert(self, rows, on_conflict=None):
+    def upsert(self, rows, on_conflict=None, ignore_duplicates=False):
         self.upserts.append(rows)
         return []
 

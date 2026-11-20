@@ -753,7 +753,8 @@ class _Recorder:
             def update(self, row, filters=None, **kw):
                 rec.writes.append(("update", name, row, filters))
 
-            def upsert(self, rows, on_conflict=None):
+            def upsert(self, rows, on_conflict=None, ignore_duplicates=False):
+                assert ignore_duplicates, "Z09: a re-key never rewrites a stored row"
                 rec.writes.append(("upsert", name, rows, on_conflict))
                 return []
 
