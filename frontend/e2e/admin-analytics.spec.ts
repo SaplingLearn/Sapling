@@ -11,8 +11,9 @@
  * in a real browser context, and assert the DASHBOARD renders the data: the
  * events-per-day and errors-per-day charts, the top-event-types entry, the
  * error-feed row for the missing-note path, the cost group-by toggle driving its
- * heading, and the range presets re-running the panels. A student visiting
- * the route gets the refusal screen.
+ * heading, the range presets re-running the panels, and the Learning loop
+ * panel's cost section reading the loop spend (spec §13 A137). A student
+ * visiting the route gets the refusal screen.
  *
  * Isolation: `events` is not in TRUNCATE_DENYLIST, so this test starts from
  * an empty events table; causal assertions key on values unique to this test
@@ -102,6 +103,20 @@ test("admin analytics dashboard renders live usage, errors, and controls (#122)"
     // A range preset re-runs every panel without breaking the page.
     await adminPage.getByTestId("admin-analytics-range-7d").click();
     await expect(adminPage.getByRole("img", { name: "Events per day" })).toBeVisible();
+
+    // spec §13 A137: the Learning loop panel's cost section reads the loop's
+    // llm_usage spend (course_id included) from the real database: present,
+    // never "could not be read".
+    await expect(adminPage.getByTestId("admin-loop-cost")).toBeVisible();
+    await expect(adminPage.getByTestId("admin-loop-cost-unavailable")).toHaveCount(0);
+    await expect(adminPage.getByTestId("admin-loop-cost-student-month")).toContainText("$0.36");
+
+    // #866 K56/K57: the events table starts empty, so no step in the range
+    // carries the ceiling signal: that gate is inconclusive, never a red fail,
+    // and the panel names what each gate counted.
+    await expect(adminPage.getByTestId("admin-loop-gate-ceiling")).toHaveAttribute("data-state", "inconclusive");
+    await expect(adminPage.getByTestId("admin-loop-gate-counts")).toContainText("ceiling compliance over 0 steps");
+    await expect(adminPage.getByTestId("admin-loop-gate-unscanned")).toHaveCount(0);
 
     // 4) DB causality: THIS test's note produced THIS event row.
     const rows = await queryRaw(

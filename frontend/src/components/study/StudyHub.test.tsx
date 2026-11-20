@@ -105,7 +105,7 @@ beforeEach(() => {
     total: 1, limit: 100, offset: 0,
     attempts: [{
       quiz_id: "a1", status: "completed", concept_node_id: "rec", concept_name: "Recursion", course_id: "c1",
-      score: 6, total: 10, difficulty: "medium", mastery_before: 0.25, mastery_after: 0.3, mastery_delta: 0.05,
+      score: 6, total: 10, difficulty: "medium", mastery_before: 0.25, mastery_after: 0.3, p_delta: 0.05,
       created_at: new Date(2026, 10, 7, 10).toISOString(), completed_at: new Date(2026, 10, 7, 10, 10).toISOString(),
     }],
   });
@@ -154,6 +154,23 @@ describe("StudyHub", () => {
     expect(screen.getAllByText("Recursion Quiz")).toHaveLength(1); // recent activity only
     expect(screen.getByTitle("Mastery change from this quiz").textContent).toBe("Recursion+5%");
     expect(screen.getByText("1 card")).toBeTruthy();
+  });
+
+  it("draws the loop's reviews (the reviews slot) under the page header, before the exam tabs (U10)", async () => {
+    renderHub({ reviews: <div data-testid="reviews-slot">due</div> });
+    await waitFor(() => expect(screen.getByTestId("readiness-pct").textContent).toBe("47%"));
+    const slot = screen.getByTestId("reviews-slot");
+    const title = screen.getByRole("heading", { name: "Study" });
+    const firstTab = screen.getAllByRole("tab")[0];
+    expect(title.compareDocumentPosition(slot) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(slot.compareDocumentPosition(firstTab) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(slot.parentElement?.className).toContain("areaReviews");
+  });
+
+  it("keeps the reviews for a student with no course this term", async () => {
+    renderHub({ courses: [], reviews: <div data-testid="reviews-slot">due</div> });
+    expect(await screen.findByTestId("reviews-slot")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Study" })).toBeTruthy();
   });
 
   it("offers Quiz in the Study tools unless hide_quiz hides it (#620)", async () => {
@@ -293,8 +310,11 @@ describe("StudyHub", () => {
     renderHub();
     await hubLoaded();
     fireEvent.click(screen.getByRole("button", { name: /1\s*Mastered/ }));
-    expect(screen.getByTestId("tile-var").style.opacity).toBe("1");
-    expect(screen.getByTestId("tile-rec").style.opacity).toBe("0.3");
+    // Dimmed, the tile recedes but its words stay AA: nothing on it fades but its ring.
+    expect(screen.getByTestId("tile-var").dataset.dim).toBeUndefined();
+    expect(screen.getByTestId("tile-rec").dataset.dim).toBe("true");
+    expect(screen.getByTestId("tile-rec").style.opacity).toBe("");
+    expect(within(screen.getByTestId("tile-rec")).getByText("Recursion").style.color).toBe("var(--text-muted)");
     // The tile itself only selects; the menu is behind its "..." button.
     fireEvent.click(screen.getByTestId("tile-loop"));
     expect(screen.queryByRole("menu")).toBeNull();
@@ -308,6 +328,31 @@ describe("StudyHub", () => {
       .toBe("/quiz?concept=loop&from=link&return=%2Fstudy%3Fcourse%3Dc1&start=1");
     expect(within(menu).getByRole("menuitem", { name: /1 Flashcards/ }).getAttribute("href"))
       .toBe("/flashcards?course=c1&concepts=Loops&start=1");
+  });
+
+  it("a tile holds its two controls side by side, never one inside the other (spec §13 A135)", async () => {
+    renderHub();
+    await hubLoaded();
+    const tile = screen.getByTestId("tile-loop");
+    // The tile is no control itself; its select button and its "..." are.
+    expect(tile.getAttribute("role")).toBeNull();
+    expect(tile.tabIndex).toBe(-1);
+    const select = screen.getByTestId("study-tile-select-loop");
+    expect(tile.contains(select)).toBe(true);
+    expect(select.getAttribute("aria-pressed")).toBe("false");
+    expect(select.textContent).toContain("Loops");
+    expect(select.querySelector("button, a, [tabindex]")).toBeNull();
+    expect(select.contains(screen.getByTestId("tile-actions-loop"))).toBe(false);
+    // Its own press selects (Enter and Space are a button's click) ...
+    fireEvent.click(select);
+    expect(select.getAttribute("aria-pressed")).toBe("true");
+    expect(within(screen.getByTestId("focus-card")).getByText("Loops")).toBeTruthy();
+    // ... and so does a press anywhere else on the tile, once: the second unselects.
+    fireEvent.click(tile);
+    expect(select.getAttribute("aria-pressed")).toBe("false");
+    // The squares beside the figure are a group of toggles, one per concept.
+    const squares = within(screen.getByRole("group", { name: "Concepts" })).getAllByRole("button");
+    expect(squares.map(sq => sq.getAttribute("aria-pressed"))).toEqual(squares.map(() => "false"));
   });
 
   it("only one tile menu is open; Esc and an outside press close it", async () => {
@@ -435,7 +480,7 @@ describe("StudyHub", () => {
       total: 6, limit: 100, offset: 0,
       attempts: [1, 2, 3, 4, 5, 6].map(n => ({
         quiz_id: `a${n}`, status: "completed", concept_node_id: "rec", concept_name: `Topic ${n}`, course_id: "c1",
-        score: 6, total: 10, difficulty: "medium", mastery_before: null, mastery_after: null, mastery_delta: null,
+        score: 6, total: 10, difficulty: "medium", mastery_before: null, mastery_after: null, p_delta: null,
         // All later than the fixture's flashcard review (Nov 8, 09:00), so the
         // four newest rows are quizzes.
         created_at: new Date(2026, 10, 8, 10, n).toISOString(), completed_at: new Date(2026, 10, 8, 10, 10 + n).toISOString(),
@@ -686,7 +731,7 @@ describe("StudyHub generates the course's topic outline", () => {
 });
 
 describe("StudyHub readiness follows the selected exam", () => {
-  const squares = () => within(screen.getByLabelText("Readiness")).getByRole("img").querySelectorAll("button");
+  const squares = () => within(within(screen.getByLabelText("Readiness")).getByRole("group", { name: "Concepts" })).getAllByRole("button");
   const legend = () => ["Mastered", "Learning", "Struggling", "Not Started"]
     .map(l => screen.getByRole("button", { name: new RegExp(`^\\d+\\s*${l}$`) }).textContent);
 
@@ -735,8 +780,8 @@ describe("StudyHub readiness follows the selected exam", () => {
     for (const id of ["var", "arr"]) expect(screen.queryByTestId(`tile-${id}`)).toBeNull();
     expect(within(screen.getByTestId("focus-card")).getByText("Recursion")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /^1\s*Learning$/ }));
-    expect(screen.getByTestId("tile-loop").style.opacity).toBe("1");
-    expect(screen.getByTestId("tile-rec").style.opacity).toBe("0.3");
+    expect(screen.getByTestId("tile-loop").dataset.dim).toBeUndefined();
+    expect(screen.getByTestId("tile-rec").dataset.dim).toBe("true");
 
     // Quiz 3 has nothing linked: the course's number, under QUIZ 3's name.
     expect(unlinkedNote()).toBeNull();
@@ -797,6 +842,9 @@ describe("StudyHub's roadmap and Up Next follow the selected exam", () => {
   /** The concepts on the roadmap, in reading order. */
   const tiles = () =>
     within(screen.getByLabelText("Roadmap")).queryAllByTestId(/^tile-(?!actions-)/).map(t => t.getAttribute("data-testid")!.slice(5));
+  /** Whether a tile's concept is selected: its select button's pressed state
+   *  (the tile itself is not a control; it also holds the "..." button). */
+  const pressed = (id: string) => screen.getByTestId(`study-tile-select-${id}`).getAttribute("aria-pressed");
   /** Each column's name and "mastered/total". */
   const columns = () =>
     [...screen.getByLabelText("Roadmap").querySelectorAll('[data-flip^="col:"]')].map(col => col.firstElementChild!.firstElementChild!.textContent);
@@ -867,14 +915,14 @@ describe("StudyHub's roadmap and Up Next follow the selected exam", () => {
     await screen.findByText("Ready for Exam 2");
     fireEvent.click(screen.getByRole("tab", { name: /Quiz 3/ }));
     fireEvent.click(screen.getByTestId("tile-var"));
-    expect(screen.getByTestId("tile-var").getAttribute("aria-pressed")).toBe("true");
+    expect(pressed("var")).toBe("true");
     expect(within(screen.getByTestId("focus-card")).getByText("Variables")).toBeTruthy();
     fireEvent.click(screen.getByRole("tab", { name: /Exam 2/ }));
     expect(screen.queryByTestId("tile-var")).toBeNull();
     // Up Next is the exam's queue again, not the concept that is no longer shown.
     expect(within(screen.getByTestId("focus-card")).getByText("Up Next")).toBeTruthy();
     expect(within(screen.getByTestId("focus-card")).getByText("Recursion")).toBeTruthy();
-    expect(tiles().map(id => screen.getByTestId(`tile-${id}`).getAttribute("aria-pressed"))).toEqual(["false", "false"]);
+    expect(tiles().map(pressed)).toEqual(["false", "false"]);
   });
 
   it("an exam already sat scopes the page like one ahead, and is worded as coverage", async () => {

@@ -12,7 +12,7 @@ import React from "react";
 import { INHERIT_FONT } from "@/lib/inheritFont";
 import { Icon } from "../Icon";
 import { cardsFor, type RoadmapColumn } from "./hubModel";
-import { ELLIPSIS } from "./hubUi";
+import { ELLIPSIS, ROADMAP_ID } from "./hubUi";
 import { RoadmapTile } from "./RoadmapTile";
 import s from "./StudyHub.module.css";
 import { TC, type ExamScope } from "./studyModel";
@@ -86,8 +86,7 @@ export interface RoadmapProps {
 
 export function Roadmap({ columns, pending = false, scope, cards, tileMenu, openCols, quizShown, nav, set, closeTileMenu }: RoadmapProps) {
   /* Stacking: every column is its own stacking context (its colEnter
-     opacity/transform animation), and so is any hovered (lifted) or dimmed
-     tile. A z-index on the menu alone is therefore trapped and later
+     opacity/transform animation), and so is any lifted tile. A z-index on the menu alone is therefore trapped and later
      tiles/columns paint over it, so the column AND the tile that own the open
      menu are lifted above their siblings. An open menu can also hang past the
      section's bottom edge; lifting the section keeps it over whatever follows
@@ -96,7 +95,7 @@ export function Roadmap({ columns, pending = false, scope, cards, tileMenu, open
   const grid = React.useRef<HTMLDivElement | null>(null);
   useFlip(grid, scope?.id ?? "");
   return (
-    <section aria-label="Roadmap" className={`${s.areaRoadmap} ${s.paneEnter}`}
+    <section id={ROADMAP_ID} aria-label="Roadmap" className={`${s.areaRoadmap} ${s.paneEnter}`}
       style={{ position: "relative", zIndex: lift(!!tileMenu), padding: "16px 6px 24px 0" }}>
       <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 12 }}>
         <span className="label-micro" style={{ flexShrink: 0 }}>Roadmap</span>

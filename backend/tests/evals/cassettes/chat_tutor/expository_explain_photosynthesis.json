@@ -1,24 +1,19 @@
 {
-  "text": "# Photosynthesis at the cellular level\n\nYour course notes describe it as converting light energy into chemical energy in chloroplasts, through the light-dependent reactions and the Calvin cycle. Here is how those fit together.\n\n## Overview\nPhotosynthesis takes place in the **chloroplast**. The overall equation is:\n\n$$6CO_2 + 6H_2O + \\text{light} \\rightarrow C_6H_{12}O_6 + 6O_2$$\n\nThe two stages occupy different compartments:\n\n| Stage | Location | Inputs | Outputs |\n|---|---|---|---|\n| Light-dependent reactions | Thylakoid membranes | H\u2082O, light, ADP, NADP\u207a | O\u2082, ATP, NADPH |\n| Calvin cycle | Stroma | CO\u2082, ATP, NADPH | G3P (becomes glucose), ADP, NADP\u207a |\n\n## Structure\n- **Thylakoids** are flattened sacs stacked into **grana**. They hold chlorophyll and the protein complexes of the electron transport chain.\n- The **thylakoid lumen** is the space inside the thylakoids. It collects protons (H\u207a).\n- The **stroma** is the fluid around the thylakoids. It contains the enzymes of the Calvin cycle.\n\n## Stage 1: Light-dependent reactions\n1. **Photosystem II (PSII)** absorbs light. This excites electrons in chlorophyll.\n2. PSII replaces those electrons by **splitting water** (photolysis). This releases O\u2082 and H\u207a into the lumen.\n3. The excited electrons pass down an **electron transport chain**. Their energy pumps more H\u207a into the lumen.\n4. **Photosystem I (PSI)** re-energizes the electrons with a second photon. They are then passed to **NADP\u207a**, which becomes **NADPH**.\n5. The H\u207a gradient across the thylakoid membrane (high in the lumen, low in the stroma) drives **ATP synthase**. This makes ATP from ADP and P\u1d62. The process is called **chemiosmosis**, or photophosphorylation.\n\n## Stage 2: Calvin cycle (in the stroma)\n1. **Carbon fixation:** the enzyme **RuBisCO** attaches CO\u2082 to a 5-carbon sugar, **RuBP**. The product splits into two 3-carbon molecules (3-PGA).\n2. **Reduction:** ATP and NADPH convert 3-PGA into **G3P**.\n3. **Regeneration:** most of the G3P is used to rebuild RuBP, which costs more ATP. This keeps the cycle running.\n4. One G3P in every six produced leaves the cycle. Two G3P combine to make glucose.\n\nFixing 3 CO\u2082 produces 1 net G3P. Making one glucose therefore takes 6 turns of the cycle.\n\n## Worked example: following one carbon atom\nA CO\u2082 molecule diffuses into the stroma. RuBisCO attaches it to RuBP, and it becomes part of 3-PGA. ATP and NADPH made in the thylakoids reduce it to G3P. That G3P either regenerates RuBP or leaves the cycle to become part of glucose. The oxygen released earlier came from **water**, not CO\u2082.\n\n## Key links\n- The light reactions make the ATP and NADPH that the Calvin cycle uses. The Calvin cycle returns ADP and NADP\u207a to the light reactions.\n- The proton gradient and ATP synthase work like the ones in mitochondria, so your mitosis and cell-biology background should help here.\n\nI can go deeper on the electron transport chain, or on photorespiration and C4/CAM plants, if you want either.\n\nI've explained photosynthesis from light capture through the Calvin cycle, and I raised your Photosynthesis mastery score slightly, from 0.55 to 0.60. I can go deeper on any stage if you'd like.",
-  "tool_calls": [
-    {
-      "args": {
-        "query": "photosynthesis cellular level chloroplast light reactions Calvin cycle"
-      },
-      "tool_name": "search_course_materials"
-    },
-    {
-      "args": {
-        "updates": [
-          {
-            "concept_name": "Photosynthesis",
-            "event_type": "interaction",
-            "mastery_delta": 0.05,
-            "reason": "received cellular-level explanation"
-          }
-        ]
-      },
-      "tool_name": "update_mastery_tool"
-    }
-  ]
+  "output": {
+    "text": "# Photosynthesis at the cellular level\n\nYour course notes describe photosynthesis as converting light energy to chemical energy in chloroplasts, through the light-dependent reactions and the Calvin cycle. Here is how that works inside the cell.\n\n## Overview\n\nPhotosynthesis happens in **chloroplasts**. The overall equation is:\n\n$$6\\,CO_2 + 6\\,H_2O + \\text{light} \\rightarrow C_6H_{12}O_6 + 6\\,O_2$$\n\nThe process has two linked stages. The light-dependent reactions capture energy as ATP and NADPH. The Calvin cycle then uses that ATP and NADPH to build sugar from CO\u2082.\n\n## Chloroplast structure\n\n- **Outer and inner membranes** enclose the organelle.\n- **Thylakoids** are flattened sacs whose membranes hold the pigments and electron carriers. Stacks of them are called **grana**.\n- **Thylakoid lumen** is the space inside a thylakoid.\n- **Stroma** is the fluid surrounding the grana, and it is where the Calvin cycle runs.\n\n## Stage 1: Light-dependent reactions (thylakoid membrane)\n\n1. **Photosystem II (PSII)** absorbs light using chlorophyll. The energy excites electrons.\n2. **Water splitting** replaces those electrons: $2H_2O \\rightarrow 4H^+ + 4e^- + O_2$. This is the source of the O\u2082 released.\n3. The excited electrons move down an **electron transport chain** (plastoquinone \u2192 cytochrome b\u2086f \u2192 plastocyanin). Their energy is used to pump H\u207a into the lumen.\n4. **Photosystem I (PSI)** re-excites the electrons with a second photon of light. They are passed to **ferredoxin**, and **NADP\u207a reductase** uses them to make **NADPH**.\n5. **Chemiosmosis:** The H\u207a gradient (high in the lumen, low in the stroma) drives H\u207a through **ATP synthase**. This phosphorylates ADP to make **ATP**. The process is called photophosphorylation.\n\n**Outputs:** ATP, NADPH, and O\u2082.\n\n## Stage 2: Calvin cycle (stroma)\n\n1. **Carbon fixation:** The enzyme **RuBisCO** attaches CO\u2082 to **RuBP**, a 5-carbon sugar. The product splits into two molecules of **3-PGA**.\n2. **Reduction:** ATP and NADPH convert 3-PGA into **G3P**, a 3-carbon sugar.\n3. **Regeneration:** Most G3P is recycled, using more ATP, to remake RuBP. Some G3P leaves the cycle to become glucose and other carbohydrates.\n\nFor each net G3P produced, the cycle fixes 3 CO\u2082 and uses 9 ATP and 6 NADPH.\n\n## Quick summary\n\n| | Light reactions | Calvin cycle |\n|---|---|---|\n| Location | Thylakoid membrane | Stroma |\n| Inputs | H\u2082O, light, ADP, NADP\u207a | CO\u2082, ATP, NADPH |\n| Outputs | O\u2082, ATP, NADPH | G3P (sugar), ADP, NADP\u207a |\n\nThe two stages depend on each other. The Calvin cycle returns ADP and NADP\u207a to the light reactions, and the light reactions supply the ATP and NADPH the Calvin cycle needs.\n\n## Worked example: following one carbon atom\n\nTake one CO\u2082 molecule that enters a leaf and diffuses into the stroma:\n1. RuBisCO attaches it to RuBP, giving a 6-carbon intermediate that immediately splits into two 3-PGA.\n2. ATP and NADPH, made moments earlier on the thylakoid membrane, reduce the 3-PGA to G3P.\n3. After three turns of the cycle, one G3P exits. Two G3P can combine to form one glucose.\n\nThe energy in that glucose came from photons absorbed at PSII and PSI. The electrons came from water, and the O\u2082 you breathe is the leftover from splitting that water.\n\nI can also go into RuBisCO's photorespiration problem, or into C4 and CAM adaptations, if you'd like.",
+    "tool_calls": [
+      {
+        "args": {
+          "query": "photosynthesis cellular level chloroplast light reactions Calvin cycle"
+        },
+        "tool_name": "search_course_materials"
+      }
+    ]
+  },
+  "recorded_under": {
+    "input_sha256": "36e04587a7da82d877ea86a4cb3901ac9c404a0a0c6a99a042524217c8de3f45",
+    "model": "claude-sonnet-5-5",
+    "prompt_hash": "7011ea8770e5",
+    "schema_hash": "38a346cadbd3"
+  }
 }

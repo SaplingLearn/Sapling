@@ -1,11 +1,28 @@
 {
-  "text": "# Big-O Notation\n\n## Overview\nBig-O describes how an algorithm's running time (or memory) **grows as the input size $n$ gets large**. It gives an asymptotic *upper bound*. It ignores constants and lower-order terms, so you can compare algorithms without worrying about the hardware.\n\n## Details\nFormally, $f(n) = O(g(n))$ if there are constants $c > 0$ and $n_0$ such that\n\n$$f(n) \\le c\\cdot g(n) \\quad \\text{for all } n \\ge n_0.$$\n\nThis is a limit-style, \"for large enough $n$\" idea, so your comfort with limits carries over.\n\n**Simplification rules**\n- Drop constants: $5n \\to O(n)$.\n- Keep only the dominant term: $3n^2 + 10n + 7 \\to O(n^2)$.\n- Sequential steps add, so the larger one wins. Nested loops multiply.\n\n**Common classes (slowest growth to fastest)**\n\n| Class | Name | Example |\n|---|---|---|\n| $O(1)$ | constant | array index lookup |\n| $O(\\log n)$ | logarithmic | binary search |\n| $O(n)$ | linear | scan a list |\n| $O(n\\log n)$ | linearithmic | merge sort |\n| $O(n^2)$ | quadratic | nested loops over the input |\n| $O(2^n)$ | exponential | naive Fibonacci |\n\n## Examples\n**Loops**\n```python\ndef has_pair_sum(a, target):\n    for i in range(len(a)):          # n iterations\n        for j in range(i+1, len(a)): # up to n iterations\n            if a[i] + a[j] == target:\n                return True\n    return False\n```\nThe inner loop runs about $n(n-1)/2$ times in total. That is $\\tfrac12 n^2 - \\tfrac12 n$, which is $O(n^2)$ after dropping the constant and the lower-order term.\n\n**Recursion (from your recursion lab)**\n```python\ndef fib(n):\n    if n <= 1:          # base case\n        return n\n    return fib(n-1) + fib(n-2)\n```\nEach call spawns two more calls, and the depth is about $n$. The number of calls therefore roughly doubles per level, which gives $O(2^n)$. This is why naive Fibonacci becomes unusably slow around $n \\approx 40$. Compare a factorial function that makes one recursive call per level: $T(n) = T(n-1) + O(1)$, so it is $O(n)$.\n\n## Key takeaways\n- Big-O is about **growth rate**, not exact time.\n- To find it, count how many times the dominant operation runs as a function of $n$, then simplify.\n- For recursion, write a recurrence such as $T(n)=T(n-1)+O(1)$ and solve it. A solid base case matters here, so it's worth reviewing if that still feels shaky.\n\nI can walk you through solving a recurrence, or through analyzing a loop of your own.",
-  "tool_calls": [
-    {
-      "args": {
-        "query": "Big-O notation"
+  "output": {
+    "text": "# Big-O Notation\n\n## Overview\nBig-O describes how an algorithm's running time (or memory) **grows as the input size $n$ gets large**. Your course notes define it as an asymptotic upper bound on running time. It ignores constants and small terms and keeps only the dominant growth.\n\n## Details\nFormally, $f(n) = O(g(n))$ if there are constants $c > 0$ and $n_0$ such that\n\n$$f(n) \\le c \\cdot g(n) \\quad \\text{for all } n \\ge n_0.$$\n\nThis is the same idea as a limit at infinity, which you've mastered. You are asking what happens as $n \\to \\infty$.\n\n**Simplification rules**\n- Drop constants: $5n \\to O(n)$.\n- Drop lower-order terms: $n^2 + 100n + 7 \\to O(n^2)$.\n- Nested loops multiply. Sequential blocks add, and then the larger one dominates.\n\n**Common classes, from slowest growth to fastest**\n\n| Class | Name | Typical example |\n|---|---|---|\n| $O(1)$ | constant | array index lookup |\n| $O(\\log n)$ | logarithmic | binary search |\n| $O(n)$ | linear | scan a list |\n| $O(n \\log n)$ | linearithmic | merge sort |\n| $O(n^2)$ | quadratic | double nested loop |\n| $O(2^n)$ | exponential | naive Fibonacci |\n\n## Examples\n\n**Loop example**\n```python\ndef has_duplicate(xs):\n    for i in range(len(xs)):          # n iterations\n        for j in range(i + 1, len(xs)):  # up to n iterations\n            if xs[i] == xs[j]:\n                return True\n    return False\n```\nThe inner loop runs about $\\frac{n(n-1)}{2}$ times in total. Dropping the constant and the lower-order term leaves $O(n^2)$.\n\n**Recursion example (from your lab)**\n```python\ndef fib(n):\n    if n <= 1:        # base case\n        return n\n    return fib(n-1) + fib(n-2)\n```\nEach call spawns two more calls, and the depth is about $n$. So the number of calls roughly doubles at each level, which gives $O(2^n)$. In fact the bound is a bit tighter, about $O(1.6^n)$, but $O(2^n)$ is a valid upper bound. That is the point of Big-O: it is an upper bound, not an exact count.\n\n## Key takeaways\n- Big-O describes **growth rate**, not exact time.\n- Worst-case is the default unless stated otherwise.\n- To find it, count how many times the dominant operation runs as a function of $n$, then simplify.\n\nI'll add this to your graph so we can track it. Since recursion ties into Big-O, a good next step is analyzing recursive runtimes, such as how the base case and the number of recursive calls shape the bound.\n\nI added two related concepts to your graph: Asymptotic Upper Bound and Time Complexity. I can walk through recurrence relations for recursive runtimes next, or give you practice problems on simplifying Big-O. Which would you prefer?",
+    "tool_calls": [
+      {
+        "args": {
+          "query": "Big-O notation"
+        },
+        "tool_name": "search_course_materials"
       },
-      "tool_name": "search_course_materials"
-    }
-  ]
+      {
+        "args": {
+          "concepts": [
+            "Asymptotic Upper Bound",
+            "Time Complexity"
+          ]
+        },
+        "tool_name": "apply_graph_update_tool"
+      }
+    ]
+  },
+  "recorded_under": {
+    "input_sha256": "3993da36c2b0a7dcde0614c63f97479a7e89be8d927c7991a9fb5954f3dd3a9b",
+    "model": "claude-sonnet-5-5",
+    "prompt_hash": "7011ea8770e5",
+    "schema_hash": "38a346cadbd3"
+  }
 }

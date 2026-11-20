@@ -24,14 +24,17 @@ import {
 } from "@/lib/graph/nodeStyle";
 import { nodeBlobPath, wobbleFor } from "@/lib/graph/blobShape";
 import { IS_TEST_MODE } from "@/lib/testMode";
+import { GraphZoomControls } from "./GraphZoomControls";
 import {
   ANCHOR_WIDTH,
   ARROW_REF_X,
   ARROW_SIZE,
+  captionBox,
   conceptLabelOpacity,
   conceptLabelSize,
   conceptLabelWeight,
   courseLabelSize,
+  frameReach,
   hoverFocusId,
   hoverMastery,
   isDragPinned,
@@ -108,11 +111,27 @@ type Props = {
    * simulation's spacing, which the full tree depends on.
    */
   initialZoom?: number;
+  /**
+   * Keep every node and its whole caption in the window: the view frames the
+   * nodes where they come to rest (as an `initialZoom` caller's does), with
+   * room for each caption as drawn, never past full size, and follows them
+   * until the student pans or zooms. Off (default): the planned opening view.
+   * The Tutor's session panel, a small overview, turns it on.
+   */
+  fit?: boolean;
   /** `course` (default): course colours, tier as opacity. `mastery`: one
    *  colour per mastery tier, hubs brown, edges blend between their ends. */
   colorMode?: GraphColorMode;
   /** Top offset of the zoom stack (default 12, flush with the corner). */
   zoomControlsTop?: number;
+  /** Draw the zoom stack (default). A small overview that links to the full
+   *  map leaves it off, so nothing is drawn over its nodes; a double-click on
+   *  it then does what the stack's reset does (re-frame, hand the view back). */
+  zoomControls?: boolean;
+  /** `always` (default): the wheel zooms. `pinch`: only a pinch (a wheel with
+   *  ctrl/⌘, which is how a trackpad pinch arrives) zooms; a plain wheel
+   *  scrolls whatever holds the graph — a map inside a scrolling panel. */
+  wheelZoom?: "always" | "pinch";
   /**
    * Obsidian-style legibility (preview only for now): hovering a concept
    * fades everything but it and its neighbours, concept labels fade in with
@@ -535,8 +554,11 @@ function KnowledgeGraph2DImpl({
   comparisonColor = "#8a7bc4",
   comparisonLabel,
   initialZoom = 1,
+  fit,
   colorMode = "course",
   zoomControlsTop = 12,
+  zoomControls,
+  wheelZoom,
   legible = false,
   focusCourseId = null,
   onHoverCourse,
@@ -558,6 +580,9 @@ function KnowledgeGraph2DImpl({
   // labels never fade, or with an opening zoom of its own, opens as planned
   // at full size.
   const openZoom = legible && initialZoom === 1 ? LABEL_ZOOM.hidden : 1;
+  // Framed on where the nodes rest (`contentFrame`), not on the plan: a
+  // caller with an opening zoom of its own, or one that asks to `fit`.
+  const framed = !!fit || initialZoom !== 1;
   // The current zoom, for the per-tick writer (legible nodes keep a minimum
   // on-screen size, so arrow insets depend on it).
   const viewScaleRef = React.useRef(initialZoom);
@@ -839,7 +864,7 @@ function KnowledgeGraph2DImpl({
     // into frame again, easing there rather than staying where the student
     // left the old one. A resize alone keeps their view.
     const idsKey = nodes.map((n) => n.id).sort().join("|");
-    if (initialZoom !== 1 && framedIdsRef.current !== null && framedIdsRef.current !== idsKey) {
+    if (framed && framedIdsRef.current !== null && framedIdsRef.current !== idsKey) {
       viewTouchedRef.current = false;
     }
     framedIdsRef.current = idsKey;
@@ -1154,20 +1179,34 @@ function KnowledgeGraph2DImpl({
    * fragment off to one side with a neighbour cut off at the edge.
    */
   const contentFrame = (): { tx: number; ty: number; scale: number } | null => {
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    for (const n of simNodesRef.current) {
-      if (n.x == null || n.y == null) continue;
-      const r = nodeRadius(n) + 24;
-      minX = Math.min(minX, n.x - r);
-      maxX = Math.max(maxX, n.x + r);
-      minY = Math.min(minY, n.y - r);
-      maxY = Math.max(maxY, n.y + r + 10); // the caption sits under the node
+    // Where the nodes reach (`frameReach`) when drawn at `zoom`: with `fit`,
+    // each whole caption counts, and a course code's size depends on the zoom.
+    const reachAt = (zoom: number) => {
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const n of simNodesRef.current) {
+        if (n.x == null || n.y == null) continue;
+        const r = nodeRadius(n);
+        const reach = frameReach(r, fit ? captionBox(n, r, zoom, legible, MIN_ZOOM) : null);
+        minX = Math.min(minX, n.x - reach.x);
+        maxX = Math.max(maxX, n.x + reach.x);
+        minY = Math.min(minY, n.y - reach.up);
+        maxY = Math.max(maxY, n.y + reach.down);
+      }
+      return Number.isFinite(minX) ? { minX, minY, maxX, maxY } : null;
+    };
+    const floor = fit ? FIT_MIN_ZOOM : MIN_ZOOM;
+    let scale = view.scale;
+    let box: ReturnType<typeof reachAt> = null;
+    // The zoom the box asks for changes the captions it holds: a few rounds settle it.
+    for (let round = 0; round < (fit ? 3 : 1); round++) {
+      box = reachAt(scale);
+      if (!box) return null;
+      scale = Math.max(floor, Math.min(initialZoom, width / (box.maxX - box.minX), height / (box.maxY - box.minY)));
     }
-    if (!Number.isFinite(minX)) return null;
-    const scale = Math.max(MIN_ZOOM, Math.min(initialZoom, width / (maxX - minX), height / (maxY - minY)));
+    if (!box) return null;
     return {
-      tx: width / 2 - ((minX + maxX) / 2) * scale,
-      ty: height / 2 - ((minY + maxY) / 2) * scale,
+      tx: width / 2 - ((box.minX + box.maxX) / 2) * scale,
+      ty: height / 2 - ((box.minY + box.maxY) / 2) * scale,
       scale,
     };
   };
@@ -1175,7 +1214,7 @@ function KnowledgeGraph2DImpl({
   // the layout settles — following the fragment into place rather than
   // jumping once it stops.
   frameContentRef.current = (snap = false) => {
-    if (initialZoom === 1 || viewTouchedRef.current || dragRef.current) return;
+    if (!framed || viewTouchedRef.current || dragRef.current) return;
     const target = contentFrame();
     if (!target) return;
     fittedViewRef.current = target;
@@ -1435,6 +1474,7 @@ function KnowledgeGraph2DImpl({
 
   const onWheel = (e: React.WheelEvent) => {
     if (!svgRef.current) return;
+    if (wheelZoom === "pinch" && !e.ctrlKey && !e.metaKey) return; // the panel scrolls
     const rect = svgRef.current.getBoundingClientRect();
     const mx = e.clientX - rect.left;
     const my = e.clientY - rect.top;
@@ -1447,8 +1487,21 @@ function KnowledgeGraph2DImpl({
 
   const resetView = () => {
     viewTouchedRef.current = false;
-    easeView((initialZoom !== 1 ? contentFrame() : null) ?? fittedViewRef.current ?? initialView());
+    easeView((framed ? contentFrame() : null) ?? fittedViewRef.current ?? initialView());
   };
+  // With no zoom stack there is no reset button: a double-click is the reset.
+  const onDoubleClick = () => {
+    if (zoomControls === false) resetView();
+  };
+  // A pinch also asks the browser to zoom the page: React's wheel listener is
+  // passive, so the graph takes those events itself.
+  React.useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg || wheelZoom !== "pinch") return;
+    const keep = (e: WheelEvent) => { if (e.ctrlKey || e.metaKey) e.preventDefault(); };
+    svg.addEventListener("wheel", keep, { passive: false });
+    return () => svg.removeEventListener("wheel", keep);
+  }, [wheelZoom]);
 
   const hoveredMastery = hoverMastery(hovered, subjectAverage);
 
@@ -1750,6 +1803,7 @@ function KnowledgeGraph2DImpl({
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
         onWheel={onWheel}
+        onDoubleClick={onDoubleClick}
       >
         <defs>
           {legible && (
@@ -1777,60 +1831,20 @@ function KnowledgeGraph2DImpl({
         </g>
       </svg>
 
-      <div
-        data-testid="graph-zoom-controls"
-        style={{
-          position: "absolute",
-          top: zoomControlsTop,
-          right: 12,
-          display: "flex",
-          flexDirection: "column",
-          gap: 4,
-          background: "var(--bg-panel)",
-          border: "1px solid var(--border)",
-          borderRadius: "var(--r-sm)",
-          padding: 4,
-          boxShadow: "var(--shadow-sm)",
-        }}
-      >
-        <button
-          data-testid="graph-zoom-in"
-          className="btn btn--ghost btn--sm"
-          style={{ padding: "2px 8px", fontFamily: "var(--font-mono)" }}
+      {zoomControls !== false && (
+        <GraphZoomControls
+          top={zoomControlsTop}
           // About the window's centre in every mode. The plain mode used to
           // scale about the content origin, so each press slid what you were
           // looking at toward a corner (quiz home's preview lost its focus
           // concept off the edge in three presses).
-          onClick={() => {
+          onZoom={(factor) => {
             viewTouchedRef.current = true;
-            zoomAbout(1.25, width / 2, height / 2);
+            zoomAbout(factor, width / 2, height / 2);
           }}
-          title="Zoom in"
-        >
-          +
-        </button>
-        <button
-          data-testid="graph-zoom-out"
-          className="btn btn--ghost btn--sm"
-          style={{ padding: "2px 8px", fontFamily: "var(--font-mono)" }}
-          onClick={() => {
-            viewTouchedRef.current = true;
-            zoomAbout(1 / 1.25, width / 2, height / 2);
-          }}
-          title="Zoom out"
-        >
-          −
-        </button>
-        <button
-          data-testid="graph-zoom-reset"
-          className="btn btn--ghost btn--sm"
-          style={{ padding: "2px 8px", fontSize: 10 }}
-          onClick={resetView}
-          title="Reset view"
-        >
-          ⟲
-        </button>
-      </div>
+          onReset={resetView}
+        />
+      )}
 
       {hovered && !dragRef.current && renderTooltip(hovered, tooltipRef, tooltipPos, courseColor(hovered), hoveredMastery)}
       {/* The a11y node list doubles as the browser suite's data seam (#395):

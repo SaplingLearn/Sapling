@@ -337,13 +337,13 @@ function quizRows(attempts: AttemptSummary[], courseId: string, conceptIds: Set<
   return here.map(a => {
     const ts = a.completed_at || a.created_at;
     const pct = Math.round((a.score! / a.total!) * 100);
-    const moved = a.mastery_delta != null && !!a.concept_name;
+    const moved = a.p_delta != null && !!a.concept_name;
     return {
       key: `q${a.quiz_id}`, at: Date.parse(ts), kind: "quiz" as const,
       title: `${a.concept_name || "Concept"} Quiz`,
       meta: `Quiz · ${fmtWhen(ts, today)}`,
       result: `${pct}%`, resultColor: scoreColor(pct),
-      chips: moved ? [{ id: a.concept_node_id, name: a.concept_name, delta: Math.round(a.mastery_delta! * 100) }] : [],
+      chips: moved ? [{ id: a.concept_node_id, name: a.concept_name, delta: Math.round(a.p_delta! * 100) }] : [],
     };
   });
 }

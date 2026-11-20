@@ -78,6 +78,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, NamedTuple
 
 from db.connection import like_literal, pg_quote_value, table
+from learning.void_store import voided_event_ids
+from services.session_modes import NOT_REVIEW
 from services.timestamps import calendar_days_since
 from services.tool_signals import Expect, report_empty_result
 
@@ -274,9 +276,15 @@ def _velocity(concept_node_id: str) -> float | None:
     try:
         from services.graph_service import _compute_velocity
 
+        # spec §13 A123: a void row (graded against an item staff retired) is
+        # no part of the velocity — left out before the cap, as get_graph does
+        voided = voided_event_ids(node_id=concept_node_id)
+        filters = {"node_id": f"eq.{concept_node_id}"}
+        if voided:
+            filters["id"] = f"not.in.({','.join(pg_quote_value(v) for v in sorted(voided))})"
         rows = table("node_mastery_events").select(
             "delta,created_at",
-            filters={"node_id": f"eq.{concept_node_id}"},
+            filters=filters,
             # desc + limit so the cap keeps the NEWEST events; asc + limit
             # would keep the oldest, which is the opposite of what a 14-day
             # window wants.
@@ -518,7 +526,11 @@ def _tutor_recency(user_id: str, scope: CourseScope, concept_name: str) -> _Tuto
     `messages` is session-scoped and carries no `user_id`, so ownership comes
     from the `sessions` read and the message read is bounded to the ids it
     returned. `content` is column-encrypted and never selected — the concept
-    lives in the plaintext `graph_update_json` the tutor's graph tools write.
+    lives in the plaintext `graph_update_json` the tutor's graph tools write,
+    and in a session's `topic`: a turn the student wrote in a session opened
+    on this concept is tutoring on it. PKG-14b (spec §11.2) took away the
+    tutor's mastery tool, whose `updated_nodes` named most of the concepts a
+    turn covered; without the topic this signal went quiet (#866 K47).
 
     `node_mastery_events` would be a cheaper primary read for this — indexed
     on `(node_id, created_at)`, no name matching, no offering dependency — but
@@ -534,10 +546,11 @@ def _tutor_recency(user_id: str, scope: CourseScope, concept_name: str) -> _Tuto
     cutoff = datetime.now(timezone.utc) - timedelta(days=_TUTOR_WINDOW_DAYS)
     try:
         sessions, total = table("sessions").select_with_count(
-            "id,started_at",
+            "id,started_at,topic",
             filters={
                 "user_id": f"eq.{user_id}",
                 "offering_id": f"in.({','.join(scope.offering_ids)})",
+                **NOT_REVIEW,  # learning-loop review sessions are not tutoring
                 # Started recently OR never finished. `started_at` alone
                 # excludes the dashboard's first-class "Where you left off"
                 # resume flow: a session is not auto-ended and has no age
@@ -565,13 +578,17 @@ def _tutor_recency(user_id: str, scope: CourseScope, concept_name: str) -> _Tuto
     if not session_ids or not key:
         return _Tutor(sessions_14d=total)
 
+    # Sessions opened on this concept (#866 K47): the student's own turns there count too.
+    on_concept = [s["id"] for s in sessions if s.get("id") and _normalize(s.get("topic")) == key]
+    filters = {"session_id": f"in.({','.join(session_ids)})"}
+    if on_concept:
+        filters["or"] = f"(graph_update_json.not.is.null,and(role.eq.user,session_id.in.({','.join(on_concept)})))"
+    else:
+        filters["graph_update_json"] = "not.is.null"
     try:
         messages = table("messages").select(
-            "created_at,graph_update_json",
-            filters={
-                "session_id": f"in.({','.join(session_ids)})",
-                "graph_update_json": "not.is.null",
-            },
+            "created_at,graph_update_json,session_id,role",
+            filters=filters,
             order="created_at.desc",
             limit=_TUTOR_MESSAGE_SCAN,
         ) or []
@@ -582,7 +599,8 @@ def _tutor_recency(user_id: str, scope: CourseScope, concept_name: str) -> _Tuto
         return _Tutor(sessions_14d=total)
 
     for msg in messages:  # newest first — the first match is the most recent
-        if _touches_concept(msg.get("graph_update_json"), key):
+        own_turn = msg.get("role") == "user" and msg.get("session_id") in on_concept
+        if own_turn or _touches_concept(msg.get("graph_update_json"), key):
             return _Tutor(
                 sessions_14d=total,
                 concept_days_since=_days_since(msg.get("created_at")),

@@ -9,6 +9,8 @@ imports it through ``services.tutor``).
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
+from typing import NamedTuple
 
 from starlette.concurrency import run_in_threadpool
 
@@ -20,81 +22,136 @@ from services.encryption import bind, decrypt_if_present
 logger = logging.getLogger(__name__)
 
 
+class _TopicRead(NamedTuple):
+    """One read `_get_course_id_for_topic` (and its sync twin) tries: what it
+    selects, how its rows answer, and whether a failed read is logged and
+    skipped (best effort) or propagates."""
+
+    table: str
+    columns: str
+    filters: dict
+    limit: int | None
+    match: Callable[[list, str], tuple[bool, str | None]]
+    best_effort: bool
+
+
+_ENROLLED_COLUMNS = (
+    "offering_id,course_offerings!inner(course_id,courses!inner(course_code,course_name))"
+)
+
+
+def _first_course_id(rows: list, _topic_trim: str) -> tuple[bool, str | None]:
+    """(found, course id) for graph rows: the first that carries a course."""
+    for row in rows or []:
+        if row.get("course_id"):
+            return True, row["course_id"]
+    return False, None
+
+
+def _topic_reads(topic_trim: str, user_id: str) -> tuple[_TopicRead, ...]:
+    """The reads, in the order they are tried: the student's enrolled courses
+    (matched on code / name / subject-root label; best effort, as it always
+    was), then their graph nodes by concept name, then by the legacy subject."""
+    mine = {"user_id": f"eq.{user_id}"}
+    return (
+        _TopicRead("enrollments", _ENROLLED_COLUMNS, mine, None,
+                   _enrolled_course_match, best_effort=True),
+        _TopicRead("graph_nodes", "course_id", {**mine, "concept_name": f"eq.{topic_trim}"}, 10,
+                   _first_course_id, best_effort=False),
+        _TopicRead("graph_nodes", "course_id", {**mine, "subject": f"eq.{topic_trim}"}, 1,
+                   _first_course_id, best_effort=False),
+    )
+
+
+def _read_failed(read: _TopicRead, topic_trim: str, user_id: str, exc: Exception) -> None:
+    # Never the topic itself: it is the student's typed text.
+    logger.warning(
+        "Failed to resolve course_id from %s for topic (%d chars) user_id=%r: %s",
+        read.table, len(topic_trim), user_id, type(exc).__name__,
+    )
+
+
+def _select_kwargs(read: _TopicRead) -> dict:
+    return {"filters": read.filters, **({"limit": read.limit} if read.limit else {})}
+
+
 async def _get_course_id_for_topic(topic: str, user_id: str) -> str:
     """
     Find the course_id associated with a topic/concept for a user.
     First checks if topic matches a course_code or course_name,
     then falls back to finding via graph_nodes.
+
+    Enrollment keys on an offering; the abstract course (which the session and
+    knowledge graph key on) sits behind offering_id → course_offerings.course_id
+    → courses, so the topic is matched against the abstract course's code/name.
     """
-    if not topic:
-        return ""
-    topic_trim = topic.strip()
+    topic_trim = (topic or "").strip()
     if not topic_trim:
         return ""
-    
-    # First, check if topic matches a course code or name in user's enrolled
-    # courses. Enrollment keys on an offering; the abstract course (which the
-    # session + knowledge graph key on) sits behind
-    # offering_id → course_offerings.course_id → courses. Match the topic against
-    # the abstract course's code/name and return the abstract course_id.
-    try:
-        enrolled = await table("enrollments").aselect(
-            "offering_id,course_offerings!inner(course_id,courses!inner(course_code,course_name))",
-            filters={"user_id": f"eq.{user_id}"},
-        )
-        for row in enrolled:
-            offering = row.get("course_offerings", {})
-            if not isinstance(offering, dict):
-                continue
-            abstract_course_id = offering.get("course_id")
-            course = offering.get("courses", {}) if isinstance(offering.get("courses"), dict) else {}
-            course_code = course.get("course_code", "") or ""
-            course_name = course.get("course_name", "") or ""
+    for read in _topic_reads(topic_trim, user_id):
+        # The read AND its matching are guarded together: an enrollment row of
+        # an unexpected shape is a failed best-effort read (logged, the graph
+        # fallbacks still run), as it was before #866.
+        try:
+            rows = await table(read.table).aselect(read.columns, **_select_kwargs(read))
+            found, course_id = read.match(rows or [], topic_trim)
+        except Exception as exc:
+            if not read.best_effort:
+                raise
+            _read_failed(read, topic_trim, user_id, exc)
+            continue
+        if found:
+            return course_id
+    return ""
 
-            # Match on course_code (exact or case-insensitive)
-            if course_code and topic_trim.upper() == course_code.upper():
-                return abstract_course_id
-            # Match on course_name
-            if course_name and topic_trim.lower() == course_name.lower():
-                return abstract_course_id
-            # Same label as graph subject roots (graph_service)
-            label = f"{course_code} - {course_name}" if course_code else course_name
-            if label and topic_trim == label:
-                return abstract_course_id
-    except Exception as e:
-        # Never the topic itself: it is the student's typed text.
-        logger.warning(
-            "Failed to resolve course_id for topic (%d chars) user_id=%r: %s",
-            len(topic_trim), user_id, type(e).__name__,
-        )
-    
-    # Fallback: find via graph_nodes - look for nodes matching topic
-    # that have a course_id
-    node_rows = await table("graph_nodes").aselect(
-        "course_id",
-        filters={
-            "user_id": f"eq.{user_id}",
-            "concept_name": f"eq.{topic_trim}",
-        },
-        limit=10,
-    )
-    for row in (node_rows or []):
-        if row.get("course_id"):
-            return row["course_id"]
-    
-    # Try matching on subject field (legacy support)
-    subject_rows = await table("graph_nodes").aselect(
-        "course_id",
-        filters={
-            "user_id": f"eq.{user_id}",
-            "subject": f"eq.{topic_trim}",
-        },
-        limit=1,
-    )
-    for row in (subject_rows or []):
-        if row.get("course_id"):
-            return row["course_id"]
-    
+
+def _enrolled_course_match(enrolled, topic_trim: str) -> tuple[bool, str | None]:
+    """(matched, abstract course id) for the first enrolled course whose code,
+    name or graph subject-root label is the topic. Shared by
+    `_get_course_id_for_topic` and its sync twin."""
+    for row in enrolled:
+        offering = row.get("course_offerings", {})
+        if not isinstance(offering, dict):
+            continue
+        abstract_course_id = offering.get("course_id")
+        course = offering.get("courses", {}) if isinstance(offering.get("courses"), dict) else {}
+        course_code = course.get("course_code", "") or ""
+        course_name = course.get("course_name", "") or ""
+
+        # Match on course_code (exact or case-insensitive)
+        if course_code and topic_trim.upper() == course_code.upper():
+            return True, abstract_course_id
+        # Match on course_name
+        if course_name and topic_trim.lower() == course_name.lower():
+            return True, abstract_course_id
+        # Same label as graph subject roots (graph_service)
+        label = f"{course_code} - {course_name}" if course_code else course_name
+        if label and topic_trim == label:
+            return True, abstract_course_id
+    return False, None
+
+
+def _get_course_id_for_topic_sync(topic: str, user_id: str) -> str:
+    """`_get_course_id_for_topic` for sync callers: the learning loop's
+    session opener, which resolves the course in sync code. The same reads
+    (`_topic_reads`), matchers and logging."""
+    topic_trim = (topic or "").strip()
+    if not topic_trim:
+        return ""
+    for read in _topic_reads(topic_trim, user_id):
+        # The read AND its matching are guarded together: an enrollment row of
+        # an unexpected shape is a failed best-effort read (logged, the graph
+        # fallbacks still run), as it was before #866.
+        try:
+            rows = table(read.table).select(read.columns, **_select_kwargs(read))
+            found, course_id = read.match(rows or [], topic_trim)
+        except Exception as exc:
+            if not read.best_effort:
+                raise
+            _read_failed(read, topic_trim, user_id, exc)
+            continue
+        if found:
+            return course_id
     return ""
 
 

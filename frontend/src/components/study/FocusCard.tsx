@@ -21,11 +21,15 @@ import s from "./StudyHub.module.css";
 import { ST_LABEL, ring, type Concept } from "./studyModel";
 import { leaveOnClick, type ToolKey, type ToolNav } from "./useToolNav";
 
+/* Every word on the block is --sidenav-fg (white, 4.85:1 on the olive), its
+   chips a dark --sidenav-wash under it (globals.css, spec §13 A135). A paler
+   tint for secondary text (the micro label was --sap-100, the notes 86% white)
+   missed AA at these sizes, so the hierarchy is size, weight and case. */
 /* `.label-micro`, for the one place it sits on the dark block. */
-const MICRO_ON_DARK: React.CSSProperties = { fontFamily: MONO, fontSize: 10, letterSpacing: "0.14em", textTransform: "uppercase", color: "var(--sap-100)" };
-const BLOCK: React.CSSProperties = { borderRadius: "var(--r-lg)", background: "var(--sidenav-bg)", color: "#FFFFFF", padding: "16px 18px" };
-const FALLBACK_NOTE: React.CSSProperties = { margin: "0 0 10px", fontSize: "var(--fs-sm)", lineHeight: 1.3, color: "rgba(255,255,255,0.86)" };
-const CHIP: React.CSSProperties = { display: "inline-flex", alignItems: "center", height: 22, padding: "0 8px", borderRadius: 11, color: "#FFFFFF", fontSize: "var(--fs-xs)", fontWeight: 600, whiteSpace: "nowrap" };
+const MICRO_ON_DARK: React.CSSProperties = { fontFamily: MONO, fontSize: 10, letterSpacing: "0.14em", textTransform: "uppercase" };
+const BLOCK: React.CSSProperties = { borderRadius: "var(--r-lg)", background: "var(--sidenav-bg)", color: "var(--sidenav-fg)", padding: "16px 18px" };
+const FALLBACK_NOTE: React.CSSProperties = { margin: "0 0 10px", fontSize: "var(--fs-sm)", lineHeight: 1.3 };
+const CHIP: React.CSSProperties = { display: "inline-flex", alignItems: "center", height: 22, padding: "0 8px", borderRadius: 11, color: "var(--sidenav-fg)", fontSize: "var(--fs-xs)", fontWeight: 600, whiteSpace: "nowrap" };
 const PRETTY = { textWrap: "pretty" } as React.CSSProperties;
 /** The gap mark's own chip: the icon, its padding, and the line's gap after
  *  it. Derived, so it cannot drift from what the mark actually renders. */
@@ -51,7 +55,7 @@ function MorePrereqs({ rest }: { rest: Concept[] }) {
   const [open, setOpen] = React.useState(false);
   return (
     <span onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)} style={{ position: "relative", flexShrink: 0 }}>
-      <span tabIndex={0} onFocus={() => setOpen(true)} onBlur={() => setOpen(false)} style={{ ...CHIP, background: "rgba(255,255,255,0.22)", cursor: "default" }}>+{rest.length} more</span>
+      <span tabIndex={0} onFocus={() => setOpen(true)} onBlur={() => setOpen(false)} style={{ ...CHIP, background: "var(--sidenav-wash-strong)", cursor: "default" }}>+{rest.length} more</span>
       {open && (
         <span style={{ position: "absolute", left: 0, top: "100%", paddingTop: 6, zIndex: 25 }}>
           <span className={s.pop} style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 180, padding: "8px 10px", ...POPOVER, borderRadius: "var(--r-md)" }}>
@@ -82,10 +86,12 @@ function GapWarning({ concept }: { concept: Concept }) {
   const [open, setOpen] = React.useState(false);
   return (
     <span onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)} style={{ position: "relative", flexShrink: 0, display: "flex" }}>
-      <span tabIndex={0} aria-label={`${concept.name} · ${concept.gap}`} onFocus={() => setOpen(true)} onBlur={() => setOpen(false)}
-        style={{ ...CHIP, padding: `0 ${GAP_MARK_PAD}px`, background: "var(--warn-soft)", cursor: "default" }}>
+      {/* A button, not a focusable span: a span may not carry a name of its
+          own (axe aria-prohibited-attr), and this one has no text to read. */}
+      <button type="button" aria-label={`${concept.name} · ${concept.gap}`} onFocus={() => setOpen(true)} onBlur={() => setOpen(false)}
+        style={{ ...CHIP, padding: `0 ${GAP_MARK_PAD}px`, border: 0, background: "var(--warn-soft)", cursor: "default" }}>
         <WarnIcon size={GAP_MARK_ICON} />
-      </span>
+      </button>
       {open && (
         <span style={{ position: "absolute", left: -4, top: "100%", paddingTop: 6, zIndex: 25 }}>
           <span role="tooltip" data-testid="focus-gap-warning" className={s.pop}
@@ -104,7 +110,7 @@ function Prereqs({ prereqs, gapOn }: { prereqs: Concept[]; gapOn: Concept | null
   const fit = chipsThatFit(prereqs.map(t => t.name), gapOn ? GAP_MARK_W : 0);
   const rest = prereqs.slice(fit);
   return (
-    <div style={{ display: "flex", flexWrap: "nowrap", alignItems: "center", gap: PREREQ_GAP, height: 22, minWidth: 0, fontSize: "var(--fs-sm)", color: "rgba(255,255,255,0.86)" }}>
+    <div style={{ display: "flex", flexWrap: "nowrap", alignItems: "center", gap: PREREQ_GAP, height: 22, minWidth: 0, fontSize: "var(--fs-sm)" }}>
       {gapOn && <GapWarning concept={gapOn} />}
       {/* Only the chips clip. The gap mark and "+N more" open their pop-ups
           below the line, and a line that clipped hid both. */}
@@ -115,7 +121,7 @@ function Prereqs({ prereqs, gapOn }: { prereqs: Concept[]; gapOn: Concept | null
             row clips, and a hard cut mid-word reads as a rendering bug. The
             title carries the full name either way. */}
         {prereqs.slice(0, fit).map(t => (
-          <span key={t.id} title={`${t.name} · ${ST_LABEL[t.st]}`} style={{ ...CHIP, gap: 5, minWidth: 0, background: "rgba(255,255,255,0.12)" }}>
+          <span key={t.id} title={`${t.name} · ${ST_LABEL[t.st]}`} style={{ ...CHIP, gap: 5, minWidth: 0, background: "var(--sidenav-wash)" }}>
             <StatusDot st={t.st} size={7} />
             <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>{t.name}</span>
           </span>
@@ -197,7 +203,7 @@ export function FocusEmpty({ hasConcepts, pending = false }: { hasConcepts: bool
   return (
     <div key={String(hasConcepts)} className={s.focusEmpty} data-flip={`focus-empty:${hasConcepts}`} data-flip-how="fade" style={{ ...BLOCK, display: "flex", flexDirection: "column", justifyContent: "center", gap: 6 }}>
       <span style={{ fontFamily: DISPLAY, fontSize: "var(--fs-xl)", fontWeight: 600 }}>{title}</span>
-      <span style={{ fontSize: "var(--fs-md)", color: "rgba(255,255,255,0.86)" }}>{body}</span>
+      <span style={{ fontSize: "var(--fs-md)" }}>{body}</span>
     </div>
   );
 }

@@ -812,6 +812,7 @@ function AssignmentTable({
           <span className="label-micro" style={{ fontSize: 10 }}>Sort</span>
           <div style={{ minWidth: 140 }}>
             <CustomSelect
+              ariaLabel="Sort"
               size="sm"
               value={sortKey}
               onChange={v => setSortKey(v as SortKey)}
@@ -882,6 +883,7 @@ function AssignmentTable({
                   <td style={{ padding: 10 }}>
                     {editingThis ? (
                       <CustomSelect
+                        ariaLabel="Course"
                         size="sm"
                         value={draft.course_id || ""}
                         onChange={v => setDraft(d => ({ ...d, course_id: v }))}
@@ -895,6 +897,7 @@ function AssignmentTable({
                   <td style={{ padding: 10 }}>
                     {editingThis ? (
                       <CustomSelect
+                        ariaLabel="Type"
                         size="sm"
                         value={draft.assignment_type || ""}
                         onChange={v => setDraft(d => ({ ...d, assignment_type: v }))}

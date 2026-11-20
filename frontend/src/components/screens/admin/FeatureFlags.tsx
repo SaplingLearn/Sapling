@@ -10,7 +10,9 @@ import { InfoTip, Tooltip } from "@/components/ui/Tooltip";
 import { adminListFlags, adminListRoles, adminUpdateFlag, type AdminFlag } from "@/lib/api";
 
 import { FlagPanel } from "./FlagPanel";
-import { changeSummary, flagMeta, groupFlags, relativeTime, rolloutPhrase, switchFor, variantLabel } from "./flagLabels";
+import {
+  changeSummary, flagMeta, forcedNote, groupFlags, relativeTime, rolloutPhrase, switchFor, variantLabel,
+} from "./flagLabels";
 
 /**
  * Admin "Feature flags" tab (#620, ADR 0029).
@@ -105,6 +107,10 @@ function FlagRow({ flag, onOpen, onToggle }: {
   const sw = switchFor(flag);
   const rollout = rolloutPhrase(flag, flag.rollout_percent, flag.rollout_variant);
   const overrides = flag.targets.length;
+  // #866 K24: the server can decide above the stored settings (the learning
+  // loop's kill switch, an env override): the row says what everyone gets
+  const forced = forcedNote(flag);
+  const needs = flag.requires ? flagMeta(flag.requires).title : null;
 
   return (
     <div className="flag-row" data-testid={`flag-row-${flag.key}`} onClick={onOpen}>
@@ -130,6 +136,11 @@ function FlagRow({ flag, onOpen, onToggle }: {
             </span>
           </Tooltip>
         )}
+        {needs && (
+          <Tooltip content={`Acts only for students who also have ${needs} on; nobody else gets it, whatever is set here.`}>
+            <span className="chip" tabIndex={0} data-testid={`flag-requires-${flag.key}`}>Needs {needs}</span>
+          </Tooltip>
+        )}
       </div>
 
       <div className="flag-row__changed">
@@ -148,8 +159,13 @@ function FlagRow({ flag, onOpen, onToggle }: {
 
       <div className="flag-row__state" onClick={(e) => e.stopPropagation()}>
         <span className="flag-row__state-label" data-testid={`flag-state-${flag.key}`}>
-          {variantLabel(flag, flag.default_variant)}
+          {variantLabel(flag, flag.forced?.variant ?? flag.default_variant)}
         </span>
+        {forced && (
+          <Tooltip content={forced.tip}>
+            <span className="chip chip--warn" tabIndex={0} data-testid={`flag-forced-${flag.key}`}>{forced.chip}</span>
+          </Tooltip>
+        )}
         {sw && (
           <Tooltip
             content={hideFlag

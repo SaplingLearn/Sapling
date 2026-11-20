@@ -1,0 +1,11 @@
+{
+  "judge_model": "claude-opus-5-5",
+  "judge_prompt_hash": "058d561bcb0cda3956d731c2c28419de88d3f9a85f548c93641542b407c2c89e",
+  "output": {
+    "affirms_misconception": false,
+    "confronts": false,
+    "evidence": "However, if we also lower the exponent by one, the result would be 3x^2.",
+    "only_states_correction": true
+  },
+  "served_sha256": "e0a91cd3f6aef06b87a2fb422efa80d5107e133e16da2ceb48cecd8a4830a644"
+}

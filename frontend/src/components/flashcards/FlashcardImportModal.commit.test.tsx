@@ -104,13 +104,13 @@ afterEach(() => {
 describe("FlashcardImportModal form (characterization)", () => {
   it("prefills course from the first course and topic from defaultTopic", () => {
     render(modal({ defaultTopic: "Cells" }));
-    expect(courseTrigger()).toHaveAccessibleName(/^CS101\s*Intro$/);
+    expect(courseTrigger()).toHaveAccessibleName("Course, CS101 Intro");
     expect(topicInput().value).toBe("Cells");
   });
 
   it("defaultCourseId wins over the first course; a code-less course shows its name", () => {
     render(modal({ courses: [COURSE, COURSE2], defaultCourseId: "c-2" }));
-    expect(courseTrigger()).toHaveAccessibleName("Biology");
+    expect(courseTrigger()).toHaveAccessibleName("Course, Biology");
   });
 
   it("lists course options with code and name, the chosen one selected, and picks one", () => {
@@ -124,14 +124,15 @@ describe("FlashcardImportModal form (characterization)", () => {
 
     fireEvent.click(opts[1]);
     expect(screen.queryByRole("option")).not.toBeInTheDocument();
-    expect(courseTrigger()).toHaveAccessibleName("Biology");
+    expect(courseTrigger()).toHaveAccessibleName("Course, Biology");
   });
 
   it("shows the placeholder with no courses and fills the pick when courses arrive after opening", () => {
     const { rerender } = render(modal({ courses: [] }));
-    expect(courseTrigger()).toHaveAccessibleName("Pick a course…");
+    // spec §13 A135: a CustomSelect is named by its label and its choice.
+    expect(courseTrigger()).toHaveAccessibleName("Course Pick a course…");
     rerender(modal({ courses: [COURSE] }));
-    expect(courseTrigger()).toHaveAccessibleName(/^CS101/);
+    expect(courseTrigger()).toHaveAccessibleName(/^Course, CS101/);
   });
 
   // The picker is a segmented control styled in the CSS module, so the active
@@ -438,7 +439,7 @@ describe("FlashcardImportModal layout", () => {
     // is named by the course it shows.
     expect(within(preview()).getByRole("group", { name: "Course" })).toContainElement(courseTrigger());
     expect(courseTrigger()).toHaveAttribute("aria-haspopup", "listbox");
-    expect(courseTrigger()).toHaveAccessibleName(/^CS101\s*Intro$/);
+    expect(courseTrigger()).toHaveAccessibleName("Course, CS101 Intro");
     // Topic: named by its visible label; the same input the placeholder finds.
     expect(within(preview()).getByRole("textbox", { name: "Topic" })).toBe(topicInput());
     expect(topicInput()).toHaveValue("Cells");
@@ -449,11 +450,12 @@ describe("FlashcardImportModal layout", () => {
 
   it("falls back to a plain select with a placeholder while the chosen course is not in the list", () => {
     render(modal({ courses: [COURSE, COURSE2], defaultCourseId: "" }));
-    expect(courseTrigger()).toHaveAccessibleName("Pick a course…");
+    // spec §13 A135: a CustomSelect is named by its label and its choice.
+    expect(courseTrigger()).toHaveAccessibleName("Course Pick a course…");
     expect(commitButton()).toBeDisabled();
     fireEvent.click(courseTrigger());
     fireEvent.click(screen.getByRole("option", { name: /Biology/ }));
-    expect(courseTrigger()).toHaveAccessibleName("Biology");
+    expect(courseTrigger()).toHaveAccessibleName("Course, Biology");
   });
 
   it("says in the footer what Import will do, or what it is waiting for", () => {
@@ -503,8 +505,9 @@ describe("FlashcardImportModal layout", () => {
 describe("FlashcardImportModal Paste options row", () => {
   const source = () => screen.getByRole("region", { name: "Card source" });
   const format = () => screen.getByRole("group", { name: "Card format" });
-  const termSeparator = () => screen.getByRole("button", { name: "Between term and definition" });
-  const cardSeparator = () => screen.getByRole("button", { name: "Between cards" });
+  // spec §13 A135: each separator select is named by its label, then its choice.
+  const termSeparator = () => screen.getByRole("button", { name: /^Between term and definition / });
+  const cardSeparator = () => screen.getByRole("button", { name: /^Between cards / });
   const pick = (trigger: HTMLElement, option: string) => {
     fireEvent.click(trigger);
     fireEvent.click(screen.getByRole("option", { name: option }));
@@ -527,8 +530,9 @@ describe("FlashcardImportModal Paste options row", () => {
     expect(within(source()).getByText("and cards by")).toBeInTheDocument();
     expect(termSeparator()).toHaveTextContent("Tab");
     expect(cardSeparator()).toHaveTextContent("New line");
-    // The old stacked captions are gone.
-    expect(within(source()).queryByText("Between term and definition")).not.toBeInTheDocument();
+    // The old stacked captions are gone. (The select's own name sits in a
+    // `hidden` label span, spec §13 A135: it is not a caption.)
+    expect(within(source()).queryByText("Between term and definition", { ignore: "script, style, [hidden]" })).not.toBeInTheDocument();
   });
 
   it("re-parses with the separators picked, a custom one included", () => {
@@ -572,7 +576,7 @@ describe("FlashcardImportModal Paste options row", () => {
     render(modal());
     fireEvent.click(screen.getByRole("button", { name: "Cloze deletion (AI)" }));
     expect(screen.getByRole("button", { name: "Cloze deletion (AI)" })).toHaveAttribute("aria-pressed", "true");
-    expect(screen.queryByRole("button", { name: "Between cards" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Between cards / })).not.toBeInTheDocument();
     const textarea = screen.getByPlaceholderText(/Paste a paragraph/);
     const go = screen.getByRole("button", { name: "Generate cloze cards" });
     expect(go).toBeDisabled();

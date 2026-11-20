@@ -1,0 +1,21 @@
+# Optional analysis extra for the within-student learning trial
+# (backend/learning_trial; docs/research/learning-loop/2026-11-08-within-student-
+# trial-preregistration.md).
+#
+# Installs what learning_trial.glmm needs to fit the crossed random-intercept
+# logistic GLMM (statsmodels' BinomialBayesMixedGLM). Never in requirements.txt
+# or requirements.lock: no application module imports learning_trial
+# (tests/test_learning_trial_import_guard.py), and every other learning_trial
+# path is stdlib-only, so the app venv runs the primary analysis, the power
+# simulation and the exporter without these. Without them, `--glmm` exits with
+# an install hint and nothing else changes. Install into a SEPARATE venv:
+#
+#   python -m venv .venv-analysis
+#   .venv-analysis/bin/pip install -r requirements-analysis.txt
+#   .venv-analysis/bin/python -m learning_trial analyze trial.csv --glmm
+#
+# Checked with numpy 2.5.4, scipy 1.18.1, pandas 3.1.1, statsmodels 0.15.0.
+numpy>=2.0,<3
+scipy>=1.13,<2
+pandas>=2.2,<4
+statsmodels>=0.14,<0.16

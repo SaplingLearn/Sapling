@@ -55,19 +55,22 @@
 .ideas { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 12px; }
 .idea {
   height: 26px; padding: 0 11px; max-width: 100%;
-  border: 0; border-radius: var(--r-full); background: rgba(255, 255, 255, 0.15); color: #fff;
+  border: 0; border-radius: var(--r-full); background: var(--sidenav-wash); color: var(--sidenav-fg);
   font: inherit; font-size: var(--fs-sm); font-weight: 500; cursor: pointer;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   transition: background-color var(--dur-fast) var(--ease);
 }
-.idea:hover { background: rgba(255, 255, 255, 0.26); }
+.idea:hover { background: var(--sidenav-wash-strong); }
 /* Only there when a sort found nothing. */
 .heroNote:empty { display: none; }
-.heroNote { margin: 10px 0 0; min-height: 17px; font-size: var(--fs-sm); line-height: 17px; color: rgba(255, 255, 255, 0.92); }
+.heroNote { margin: 10px 0 0; min-height: 17px; font-size: var(--fs-sm); line-height: 17px; color: var(--sidenav-fg); }
 .stats { display: flex; gap: 22px; margin: 0; padding-left: 26px; border-left: 1px solid rgba(255, 255, 255, 0.22); }
 .stat { display: flex; flex-direction: column-reverse; }
 .stat .statFigure { margin: 0; font-size: 28px; font-weight: 600; line-height: 1; color: #fff; font-variant-numeric: tabular-nums; }
-.statLabel { margin-top: 3px; font-size: var(--fs-xs); opacity: 0.85; }
+.statLabel { margin-top: 3px; font-size: var(--fs-xs); color: var(--sidenav-fg); }
+
+/* Text on the olive hero is the rail's white (4.85:1 on --sidenav-bg); a chip
+   darkens the olive (6.11:1, 7.05:1 hovered) rather than lightening it (A135). */
 
 /* ── your sets: the deck grid ────────────────────────────────────────────── */
 

@@ -335,6 +335,28 @@ def test_the_breaker_opens_from_real_failing_calls(_fresh_state):
     assert calls["n"] == before
 
 
+def test_throttled_gemini_flex_calls_open_only_their_own_breaker(_fresh_state):
+    """Z18: background check-item drafting on Gemini's Flex tier (A23) expects
+    429/503s. They feed `google:flex`, never the `google` breaker every
+    standard-tier call shares, so a throttled Flex run cannot fail them."""
+    fn, calls = _scripted(_http(429, "gemini-2.5-flash-lite"))
+    flex = Agent(
+        _ResilientFn(fn, provider="google", task="check_items", model_name="gemini-2.5-flash-lite")
+    )
+    runs = -(-_resilience.BREAKER_FAILURE_THRESHOLD // _resilience.RETRY_ATTEMPTS)
+    for _ in range(runs):
+        with pytest.raises(ModelHTTPError):
+            asyncio.run(flex.run("hi", model_settings={"service_tier": "flex"}))
+    assert _resilience.breaker_for("google:flex").state == "open"
+    assert _resilience.breaker_for("google").state == "closed"
+    ok, _ = _scripted("fine")
+    standard = Agent(_ResilientFn(ok, provider="google", task="grader", model_name="gemini-2.5-flash"))
+    assert asyncio.run(standard.run("hi")).output == "fine"
+    # the tier key is Gemini's: an Anthropic call never splits off
+    site = _ResilientFn(fn)._site({"service_tier": "flex"})
+    assert site.breaker_key == "anthropic"
+
+
 def test_a_non_retryable_error_counts_as_the_provider_answering():
     b = _resilience.breaker_for("anthropic")
     for _ in range(_resilience.BREAKER_FAILURE_THRESHOLD - 1):
@@ -540,6 +562,36 @@ def test_fallback_names(monkeypatch):
     assert set(_providers._GEMINI_FALLBACKS) == set(_providers._DEFAULTS)
 
 
+def test_the_loop_key_and_alignment_checks_never_fall_back_to_the_drafters_family():
+    # A119 / A124: a check must not fall back onto the drafter's model (the
+    # drafter's own fallback is gemini-*), and an unavailable check already
+    # fails closed (the item is held).
+    for task in ("check_items_verify", "check_items_solve"):
+        assert _providers._GEMINI_FALLBACKS[task] is None
+        assert _providers.fallback_model_name_for(task, "claude-haiku-5-5") is None
+    # A loop slot on its Claude default falls back to the Gemini model its gates
+    # were recorded on; pointed back at Gemini, it falls back to its Claude
+    # default, like every other slot.
+    assert _providers.fallback_model_name_for("grader", "claude-haiku-5-5") == "gemini-2.5-flash-lite"
+    assert _providers.fallback_model_name_for("loop_tutor_deep", "claude-sonnet-5-5") == "gemini-2.5-pro"
+    assert _providers.fallback_model_name_for("grader", "gemini-2.5-flash-lite") == "claude-haiku-5-5"
+
+
+def test_a_run_that_asks_for_a_longer_timeout_gets_a_longer_deadline():
+    # The loop's Flex drafting waits up to FLEX_TIMEOUT_S (900 s): a 120 s slot
+    # deadline would cut every queued request and retry it as a new generation.
+    from learning.params import FLEX_TIMEOUT_S
+
+    assert _providers.deadline_for("check_items") == _providers.timeout_for("check_items")
+    assert _providers.deadline_for("check_items", {"timeout": FLEX_TIMEOUT_S}) == FLEX_TIMEOUT_S
+    assert _providers.deadline_for(
+        "check_items", {"timeout": httpx.Timeout(FLEX_TIMEOUT_S, connect=5.0)}
+    ) == FLEX_TIMEOUT_S
+    # never shorter than the slot's: ocr_vision pins 60 s and keeps 120 s
+    assert _providers.deadline_for("ocr_vision", {"timeout": 60.0}) == 120.0
+    assert _providers.deadline_for("quiz", {"timeout": True}) == _providers.timeout_for("quiz")
+
+
 def test_a_built_fallback_is_resilient_but_never_falls_back_again():
     fb = _providers._build_fallback_model("quiz", "claude-haiku-5-5")
     assert isinstance(fb, _providers._LoopSafeGoogleModel)
@@ -610,3 +662,46 @@ def test_function_mode_never_meets_the_resilience_layer(monkeypatch):
         assert asyncio.run(Agent(model).run("hi")).output == "scripted"
     finally:
         _providers.clear_function_handlers()
+
+
+# ── a single-attempt request (#866, the checklist's spend hold) ─────────────
+
+
+def test_a_single_attempt_request_makes_one_attempt_and_no_fallback(monkeypatch, _fresh_state):
+    """The topic checklist holds and receipts every request it dispatches, so
+    a retry or a fallback hidden inside one dispatch could bill unheld. A run
+    that sends SINGLE_ATTEMPT_SETTING makes exactly one attempt, falls back to
+    nothing even with llm_fallback on, and never forwards the key."""
+    seen_settings: list = []
+
+    def fn(messages, info):
+        seen_settings.append(dict(info.model_settings or {}))
+        raise _http(529)
+
+    fb_fn, fb_calls = _scripted("from gemini")
+    _use_fallback(monkeypatch, FunctionModel(fb_fn, model_name="gemini-2.5-flash-lite"))
+    monkeypatch.setenv("SAPLING_FLAG_LLM_FALLBACK", "on")
+    agent = Agent(_ResilientFn(fn))
+    with pytest.raises(ModelHTTPError):
+        asyncio.run(agent.run("hi", model_settings={_resilience.SINGLE_ATTEMPT_SETTING: True}))
+    assert len(seen_settings) == 1 and _fresh_state == []  # one attempt, no backoff
+    assert fb_calls["n"] == 0  # no fallback
+    assert _resilience.SINGLE_ATTEMPT_SETTING not in seen_settings[0]  # never sent on
+
+    # without the setting the same request retries and falls back, as before
+    seen_settings.clear()
+    assert asyncio.run(agent.run("hi")).output == "from gemini"
+    assert len(seen_settings) == _resilience.RETRY_ATTEMPTS and fb_calls["n"] == 1
+
+
+def test_a_single_attempt_stream_opens_once(monkeypatch, _fresh_state):
+    stream, calls = _scripted_stream(_http(529), ["ok"])
+    agent = Agent(_ResilientFn(stream_function=stream))
+
+    async def go():
+        async with agent.run_stream("hi", model_settings={_resilience.SINGLE_ATTEMPT_SETTING: True}) as r:
+            return await r.get_output()
+
+    with pytest.raises(ModelHTTPError):
+        asyncio.run(go())
+    assert calls["n"] == 1 and _fresh_state == []

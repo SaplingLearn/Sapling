@@ -1,11 +1,19 @@
 {
-  "text": "The course materials don't cover supply and demand in detail. The syllabus only mentions economics as a topic. So this explanation is general rather than tied to your notes.\n\n## Overview\nA market price settles where the quantity buyers want equals the quantity sellers offer. This point is called the **equilibrium**.\n\n## Detailed explanation\n**Demand** shows how much buyers will purchase at each price. When price rises, quantity demanded falls, so the demand curve slopes downward.\n\n**Supply** shows how much sellers will offer at each price. When price rises, quantity supplied rises, so the supply curve slopes upward.\n\nThe two curves cross at the equilibrium price $P^*$ and quantity $Q^*$. Away from that point, market forces push the price back:\n- **Price above $P^*$:** There is a *surplus*, because sellers offer more than buyers want. Sellers cut prices to clear their stock, and the price falls.\n- **Price below $P^*$:** There is a *shortage*, because buyers want more than is available. Buyers bid the price up, and the price rises.\n\n**Shifts in the curves** change the equilibrium:\n- Demand rises (for example, a trend or higher income). The demand curve shifts right, so both $P^*$ and $Q^*$ go up.\n- Supply falls (for example, a crop failure or higher costs). The supply curve shifts left, so $P^*$ goes up and $Q^*$ goes down.\n\n## Worked example\nSuppose demand is $Q_d = 100 - 2P$ and supply is $Q_s = 20 + 3P$.\n\nSet $Q_d = Q_s$:\n$$100 - 2P = 20 + 3P \\Rightarrow 80 = 5P \\Rightarrow P^* = 16$$\nThen $Q^* = 100 - 2(16) = 68$.\n\nCheck a price of $P = 20$. Then $Q_d = 60$ and $Q_s = 80$, so there is a surplus of 20. Sellers lower prices toward 16.\n\nNow suppose a supply shock changes supply to $Q_s = 3P - 10$. Then $100 - 2P = 3P - 10$, so $P^* = 22$. The price rises because supply fell.\n\nLinear curves like these are also a handy place to use your algebra and calculus skills. For example, the slope of each curve is a derivative, and it measures how sensitive quantity is to price.",
-  "tool_calls": [
-    {
-      "args": {
-        "query": "supply and demand determine price equilibrium"
-      },
-      "tool_name": "search_course_materials"
-    }
-  ]
+  "output": {
+    "text": "Your uploaded materials don't cover supply and demand in detail. The syllabus only says economics is part of the course. So this explanation is general, not tied to your course's notation.\n\n## Overview\nPrice settles where the quantity buyers want equals the quantity sellers offer. That point is the **equilibrium**.\n\n## Explanation\n**Demand** is how much buyers want at each price. As price rises, quantity demanded falls, so the curve slopes downward:\n$$Q_d = a - bP$$\n\n**Supply** is how much sellers will offer at each price. As price rises, quantity supplied rises, so the curve slopes upward:\n$$Q_s = c + dP$$\n\n**Equilibrium** is where the two curves cross: $Q_d = Q_s$. This gives the equilibrium price $P^*$ and quantity $Q^*$.\n\nMarkets move toward that point on their own:\n- **Price above $P^*$ gives a surplus.** Sellers have unsold goods, so they cut prices.\n- **Price below $P^*$ gives a shortage.** Buyers compete for limited goods, so prices rise.\n\n**Shifts in the curves** change the equilibrium:\n- A rise in demand, for example from higher income or a trend, shifts the demand curve right. Both $P^*$ and $Q^*$ rise.\n- A rise in supply, for example from cheaper inputs or better technology, shifts the supply curve right. $P^*$ falls and $Q^*$ rises.\n- A fall in either one does the opposite.\n\nMovement along a curve is caused by a price change. A shift of the curve is caused by something other than price.\n\n## Worked example\nLet $Q_d = 100 - 2P$ and $Q_s = 20 + 3P$.\n\nSet them equal:\n$$100 - 2P = 20 + 3P \\Rightarrow 80 = 5P \\Rightarrow P^* = 16$$\n\nThen $Q^* = 100 - 2(16) = 68$.\n\nCheck a price of $P = 20$:\n- $Q_d = 60$ and $Q_s = 80$, so there is a surplus of 20.\n- Sellers cut prices until they reach 16.\n\nNow suppose demand rises to $Q_d = 130 - 2P$. Then $130 - 2P = 20 + 3P$, so $P^* = 22$ and $Q^* = 86$. Higher demand raises both price and quantity.\n\nYou could also connect this to your calculus: the slopes $-b$ and $d$ are derivatives, which measure how sensitive quantity is to price.\n\nI can add Supply And Demand to your graph as a tracked concept if you'd like.",
+    "tool_calls": [
+      {
+        "args": {
+          "query": "supply and demand determine price equilibrium"
+        },
+        "tool_name": "search_course_materials"
+      }
+    ]
+  },
+  "recorded_under": {
+    "input_sha256": "103d57a6b137d42e3bcde43e1c815b6c32321d4ea348653285fd0e28db3bc3ef",
+    "model": "claude-sonnet-5-5",
+    "prompt_hash": "7011ea8770e5",
+    "schema_hash": "38a346cadbd3"
+  }
 }

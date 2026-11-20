@@ -2,9 +2,9 @@
 history behind the scores."""
 from __future__ import annotations
 
-from config import get_mastery_tier
 from db.local_study_data import clock, quizzes, tutoring
 from db.local_study_data.placement import Placement
+from learning.bkt import tier_for
 
 #: What one tutor session moved its concept by.
 _TUTOR_DELTA = 0.03
@@ -24,7 +24,7 @@ def nodes(place: Placement) -> list[dict]:
         "concept_name": concept.name,
         "subject": concept.name.split()[0],
         "mastery_score": concept.score,
-        "mastery_tier": get_mastery_tier(concept.score),
+        "mastery_tier": tier_for(concept.score),
         "times_studied": concept.times_studied,
         "last_studied_at": _last_studied(place, concept.last_studied),
     } for concept in place.data.concepts]

@@ -1,0 +1,10 @@
+{
+  "judge_model": "claude-opus-5-5",
+  "judge_prompt_hash": "71530d86d71daaecad405563f53fdab3f424bf8124ff0b35fb8f6237f943b326",
+  "output": {
+    "evidence": "What result do you get for the derivative of x^3 when you apply the limit definition, lim(h->0) [f(x+h) - f(x)]/h?",
+    "reveals_final_answer": false,
+    "rung": 3
+  },
+  "served_sha256": "69946a0aff0113aed7764eac2220f953ae1e09db7e734119603b01f0e3da479f"
+}

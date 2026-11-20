@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 
 from models import Id, LongText, ShortText
 
+from learning.gate import learning_loop_for_request
 from routes._errors import domain_status
 from services import abuse_limits, crisis_support
 from services.auth_guard import require_self
@@ -46,6 +47,13 @@ from services.flashcards import (
     suggest_flashcard_set,
     update_flashcard_set,
 )
+from services.flashcards.cards import (  # noqa: F401  (re-export, #118)
+    _FSRS_LIST_COLS,
+    _LEGACY_LIST_COLS,
+    _loop_order,
+    _order_due_rows,
+)
+from services.flashcards.integrity import IntegrityRefused
 from services.flashcards.context import (  # noqa: F401  (re-export, #118)
     _COURSE_DOC_COLS,
     _COURSE_DOC_LIMIT,
@@ -79,7 +87,9 @@ class GenerateFlashcardsBody(BaseModel):
 class FlashcardRatingBody(BaseModel):
     user_id: Id
     card_id: Id
-    rating: int  # 1 = forgot, 2 = hard, 3 = easy
+    # 1 = forgot, 2 = hard, 3 = easy: FSRS Again/Hard/Good via
+    # learning.params.FLASHCARD_RATING_TO_FSRS (PKG-11); any other value is a 422.
+    rating: int
 
 
 #: Cards one import may carry (a large Anki deck is a few thousand).
@@ -162,6 +172,7 @@ _ERROR_STATUS = {
     RateLimited: 429, StorageError: 500, UpstreamError: 502,
     FlashcardSetInvalid: 422, FlashcardSetNotFound: 404,
     FlashcardSetLimitReached: 409, FlashcardSetRateLimited: 429,
+    IntegrityRefused: 409,  # spec §13 A125 (services/flashcards/integrity.py)
 }
 
 
@@ -241,6 +252,7 @@ async def _generate(body: GenerateFlashcardsBody, request: Request) -> dict:
             return generation.generate(
                 body.user_id, topic=body.topic, count=body.count, session_id=body.session_id,
                 semester=body.semester, course_id=body.course_id,
+                loop_on=learning_loop_for_request(body.user_id),  # spec §13 A125
             )
 
     return await run_in_threadpool(run)
@@ -252,18 +264,21 @@ def get_flashcards(
     request: Request,
     topic: str | None = None,
     semester: str | None = None,
+    due_only: bool = False,
 ):
     require_self(user_id, request)
     with _flashcard_errors():
-        return {"flashcards": cards.get_flashcards(user_id, topic, semester)}
+        return cards.get_flashcards(user_id, topic, semester, due_only=due_only)
 
 
 @router.post("/rate")
 def rate_card(body: FlashcardRatingBody, request: Request):
     require_self(body.user_id, request)
     with _flashcard_errors():
-        cards.rate_card(body.user_id, body.card_id, body.rating)
-    return {"ok": True}
+        return {"ok": True, **cards.rate_card(
+            body.user_id, body.card_id, body.rating,
+            loop_on=learning_loop_for_request(body.user_id),  # #866 K54
+        )}
 
 
 @router.delete("/{card_id}")
@@ -343,6 +358,7 @@ def import_parse(body: ImportParseBody, request: Request):
     require_self(body.user_id, request)
     return _rate_limited_import(
         import_flow.import_parse, body.user_id, body.source, body.payload, body.options,
+        loop_on=learning_loop_for_request(body.user_id),
     )
 
 
@@ -358,6 +374,7 @@ def import_generate(body: ImportGenerateBody, request: Request):
     return _rate_limited_import(
         import_flow.import_generate, body.user_id, source=body.source, text=body.text,
         document_id=body.document_id, count=body.count, difficulty=body.difficulty,
+        loop_on=learning_loop_for_request(body.user_id),
     )
 
 
@@ -368,6 +385,7 @@ def import_cleanup(body: ImportCleanupBody, request: Request):
     require_self(body.user_id, request)
     return _rate_limited_import(
         import_flow.import_cleanup, body.user_id, _card_inputs(body.cards),
+        loop_on=learning_loop_for_request(body.user_id),
     )
 
 
@@ -377,4 +395,7 @@ def import_cloze(body: ImportClozeBody, request: Request):
     if crisis := crisis_support.screen(request, body.user_id, "flashcard_import_cloze", body.paragraph):
         return crisis_support.json_body(crisis, cards=[])
     require_self(body.user_id, request)
-    return _rate_limited_import(import_flow.import_cloze, body.user_id, body.paragraph)
+    return _rate_limited_import(
+        import_flow.import_cloze, body.user_id, body.paragraph,
+        loop_on=learning_loop_for_request(body.user_id),
+    )

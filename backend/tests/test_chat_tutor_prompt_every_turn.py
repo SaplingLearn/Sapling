@@ -208,7 +208,7 @@ def test_textless_continuation_carries_rules_and_no_tools_notice(mode, call_tool
     with agent.override(model=FunctionModel(model)):
         with agent.override(tools=[stub], toolsets=[]):
             first = asyncio.run(agent.run("and the step size?", **run_kwargs))
-        text = asyncio.run(_continuation_text(agent, first, run_kwargs))
+        text = asyncio.run(_continuation_text(agent, first, run_kwargs, usage_session_id=None))
 
     # Premise: the first run really produced no reply of its own.
     assert len(model.first_run_seen) == (2 if call_tool else 1)
@@ -343,7 +343,7 @@ def test_continuation_gemini_request_has_notice_and_no_tools(monkeypatch):
     )
     run_kwargs = {"deps": _deps(), "message_history": _history()}
     with agent.override(model=model), pytest.raises(_Sent) as sent:
-        asyncio.run(_continuation_text(agent, textless, run_kwargs))
+        asyncio.run(_continuation_text(agent, textless, run_kwargs, usage_session_id=None))
 
     config = sent.value.kwargs["config"]
     assert not config.get("tools"), "the continuation must declare no tools"

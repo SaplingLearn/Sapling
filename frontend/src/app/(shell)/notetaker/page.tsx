@@ -27,7 +27,9 @@ import type {
 import { now } from "@/lib/testMode";
 import { useToast } from "@/components/ToastProvider";
 import { humanizeError } from "@/lib/errorMessage";
+import { withheldNotice } from "@/lib/integrityNotice";
 import { quizHrefForNote } from "@/lib/quiz/noteHref";
+import { noteTutorHref } from "@/lib/data";
 import { useNoteAutosave, type AutosaveStatus } from "@/lib/notes/useNoteAutosave";
 import { CHAT_MESSAGE_MAX, NOTE_BODY_MAX, NOTE_TITLE_MAX } from "@/lib/inputLimits";
 import { CrisisSupportCard, useCrisisSupport } from "@/components/safety/CrisisSupportCard";
@@ -51,12 +53,8 @@ type Course = {
   color: string;
 };
 
-type Concept = {
-  id: string;
-  name: string;
-  course: string;
-  mastery: Mastery;
-};
+// `courseId`: the concept's own course (#866 K05: Send to tutor's goal names only its note's course's)
+type Concept = { id: string; name: string; course: string; courseId: string | null; mastery: Mastery };
 
 type Note = {
   id: string;
@@ -121,6 +119,7 @@ function apiConceptToConcept(c: ApiLinkedConcept, courseCode: string): Concept {
     id: c.id,
     name: c.concept_name,
     course: courseCode,
+    courseId: c.course_id ?? null,
     mastery: normalizeMastery(c.mastery_tier),
   };
 }
@@ -404,6 +403,8 @@ function NotetakerScreen() {
       try {
         const res = await extractNoteConcepts(noteId, userId);
         if (crisis.intercept(res) && !res.crisis_support_alongside) return; // nothing was linked
+        // spec §13 A125: names held back for giving away an open check's answer
+        if (res?.withheld) toast.warn(withheldNotice(res.withheld, "concept"));
         await refreshActiveConcepts();
       } catch (e) {
         console.error("Extract failed", e);
@@ -438,10 +439,7 @@ function NotetakerScreen() {
         // `note` names the note, so a start on its title unchanged is screened
         // as the student's stored material, not as a topic they typed
         // (docs/safety/crisis-support.md): the card shows beside the session.
-        const open = () => router.push(
-          `/learn?topic=${encodeURIComponent(res.topic ?? "")}&course=${encodeURIComponent(res.course_id ?? "")}`
-            + `&note=${encodeURIComponent(noteId)}`,
-        );
+        const open = () => router.push(noteTutorHref(res, noteId, active.linkedConcepts)); // K05
         // Beside a result, the tutor opens once the card is closed, told the
         // card was shown so its start does not pop the same one up again; a
         // card that stands in for the result opens nothing.
@@ -540,7 +538,11 @@ function NotetakerScreen() {
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
       <div style={layoutRowStyle(fullscreen)}>
-        <div style={notesListRailStyle(fullscreen)} aria-hidden={fullscreen}>
+        {/* A collapsed pane is `inert`, not just aria-hidden: its controls stay
+            in the DOM for the width transition, and inert also takes them out
+            of the tab order (aria-hidden alone left them focusable; spec §13
+            A135). */}
+        <div style={notesListRailStyle(fullscreen)} inert={fullscreen}>
           <NotesList
             notes={filtered}
             totalCount={notes.length}
@@ -576,7 +578,7 @@ function NotetakerScreen() {
           </div>
         </div>
 
-        <div style={noteDetailRailStyle(fullscreen)} aria-hidden={fullscreen}>
+        <div style={noteDetailRailStyle(fullscreen)} inert={fullscreen}>
           <NoteDetail
             note={active}
             course={courseFor(active.courseId)}
@@ -593,7 +595,7 @@ function NotetakerScreen() {
           />
         </div>
 
-        <div style={chatRailStyle(fullscreen)} aria-hidden={!fullscreen}>
+        <div style={chatRailStyle(fullscreen)} inert={!fullscreen}>
           {/* Keyed per note: switching notes starts a fresh thread + composer. */}
           <AIChatPanel key={active.id} noteId={active.id} userId={userId} />
         </div>

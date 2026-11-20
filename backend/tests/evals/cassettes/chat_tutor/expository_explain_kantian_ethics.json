@@ -1,11 +1,27 @@
 {
-  "text": "Your course materials don't cover Kantian ethics. The uploads are about calculus, recursion, and the syllabus topics. So this explanation comes from general knowledge, not your notes.\n\n## Overview\nKantian ethics is a **deontological** theory from Immanuel Kant. It judges an action by whether it follows moral duty, not by its consequences. Morality comes from reason, and it binds every rational agent.\n\n## Key ideas\n\n**1. Good will.** Kant says the only thing good without qualification is a good will. That means acting out of duty, because it is right. Acting from inclination or self-interest doesn't count. A shopkeeper who gives correct change only to protect his reputation is acting *in accordance with* duty, but not *from* duty.\n\n**2. The Categorical Imperative.** A moral command that applies regardless of what you want. It has several formulations:\n- **Universal Law:** Act only on a maxim you could will to become a universal law.\n- **Humanity (End-in-itself):** Treat humanity, in yourself and others, never merely as a means, but always also as an end.\n- **Autonomy / Kingdom of Ends:** Act as though you were legislating for a community of rational beings.\n\n**3. Hypothetical vs. categorical imperatives.** \"If you want to pass, study\" depends on a goal, so it is hypothetical. \"Do not lie\" holds unconditionally, so it is categorical.\n\n**4. Perfect and imperfect duties.** Perfect duties, such as not lying or not killing, have no exceptions. Imperfect duties, such as helping others, leave you room to decide when and how.\n\n## Worked example: false promises\nSuppose you are tempted to borrow money by promising to repay it, knowing you won't.\n- **Maxim:** \"I'll make false promises when I need money.\"\n- **Universalize it:** if everyone did this, promises would be meaningless and nobody would believe them. The maxim undermines itself.\n- **Humanity test:** the lender is being used merely as a means, because they can't consent to a deal they don't know is false.\n\nThe action is therefore forbidden.\n\n## Common criticisms\n- It is rigid. The classic case is lying to a murderer at your door.\n- Conflicting duties are hard to resolve.\n- Maxims can be framed in different ways, which changes the result of the universalization test.\n\nIf you'd like, upload your ethics readings and I'll tie this to your course's framing. I can also compare it with utilitarianism.",
-  "tool_calls": [
-    {
-      "args": {
-        "query": "Kantian ethics"
+  "output": {
+    "text": "Your uploaded materials don't cover Kantian ethics, so this explanation comes from general knowledge. I've added it to your graph.\n\n## Overview\nKantian ethics is a **deontological** theory, developed by Immanuel Kant. It holds that an action is morally right because of the principle it follows, not because of its consequences. Morality is a matter of duty and reason.\n\n## Key ideas\n\n**1. Good will.** The only thing good without qualification is a good will, meaning acting from duty. An act has moral worth only when you do it *because it is right*. Doing it out of inclination or self-interest doesn't count.\n\n**2. The Categorical Imperative.** This is an unconditional command of reason. It has several formulations:\n- **Universal Law:** Act only on a maxim you could will to become a universal law.\n- **Humanity (end-in-itself):** Treat humanity, in yourself and others, always as an end and never merely as a means.\n- **Autonomy:** Think of yourself as a lawmaker in a community of rational agents, bound by laws you give yourself.\n\n**3. Perfect and imperfect duties.**\n- Perfect duties are strict, such as not lying and not breaking promises.\n- Imperfect duties leave room for choice, such as helping others and developing your talents.\n\n**4. Hypothetical vs. categorical imperatives.** \"If you want X, do Y\" depends on your goals. \"Do Y\" applies regardless of your goals, and moral duties are of this kind.\n\n## Worked example: a false promise\nSuppose you need money and consider promising to repay a loan that you know you won't repay.\n\n- **Maxim:** \"When I need money, I'll make false promises to get it.\"\n- **Universalize:** If everyone did this, promises would mean nothing and nobody would lend. The maxim defeats itself, so it is a contradiction in conception.\n- **Humanity test:** You would be using the lender merely as a means, because they can't consent to a deal they don't know about.\n\nThe act is therefore forbidden, whatever good might come of it.\n\n## Common criticisms\n- The theory seems too rigid. Kant's own view implies you shouldn't lie even to a murderer asking where your friend is hiding.\n- It gives little guidance when duties conflict.\n- It is hard to say how to formulate a maxim at the right level of generality.\n\n## Contrast with consequentialism\nUtilitarianism asks \"which action produces the best outcome?\" Kant asks \"which action could I rationally will as a universal rule, one that respects persons?\"\n\nI can walk through another example, or compare it with utilitarianism in more detail, if you'd like.",
+    "tool_calls": [
+      {
+        "args": {
+          "query": "Kantian ethics"
+        },
+        "tool_name": "search_course_materials"
       },
-      "tool_name": "search_course_materials"
-    }
-  ]
+      {
+        "args": {
+          "concepts": [
+            "Kantian Ethics"
+          ]
+        },
+        "tool_name": "apply_graph_update_tool"
+      }
+    ]
+  },
+  "recorded_under": {
+    "input_sha256": "554cbc34021c83b1ccf33ae0cbd9e948e2474ac09dd2c956d373907d3d644752",
+    "model": "claude-sonnet-5-5",
+    "prompt_hash": "7011ea8770e5",
+    "schema_hash": "38a346cadbd3"
+  }
 }

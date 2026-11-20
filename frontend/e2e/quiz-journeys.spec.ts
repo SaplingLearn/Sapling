@@ -19,6 +19,11 @@
  *   exits                   nothing lands on /learn; every way out is deliberate
  *                           (R-10).
  *   keyboard                the whole quiz is playable without a mouse (§5 B2).
+ *   stated confidence       "How sure are you?" rides each answer to the stored
+ *                           response and the mastery evidence, survives a
+ *                           leave-and-resume, and a skip stores none
+ *                           (learning-loop spec §13 A132) — with the loop on;
+ *                           with it off the quiz asks none (#866 K46).
  *
  * ── THE GENERATION BUDGET (read before adding a test) ─────────────────────
  *
@@ -53,9 +58,11 @@ import { DISMISSED_KEY, STORAGE_KEY } from "@/lib/quiz/session";
 import type { AttemptsPage } from "@/lib/quiz/types";
 import { queryRaw } from "./support/db";
 import { expect, test } from "./support/fixtures";
+import { loopOffLane } from "./support/lane";
 import { USER_ACTIVE } from "./support/stack";
 import {
   CONCEPT_NAME,
+  CONFIDENCE_LEVELS,
   CORRECT_LABELS,
   COURSE_CODE_CS,
   COURSE_ID_CS,
@@ -64,10 +71,12 @@ import {
   QUIZ_LENGTH,
   STREAM_TIMEOUT,
   SUBMIT_TIMEOUT,
-  TUTOR_REPLY,
   answerAsYouGo,
   answerAtEnd,
   appAttempts,
+  expectAskReply,
+  expectAskedAnswerKeepsItsCredit,
+  expectQuizAskSession,
   chooseAndSubmit,
   expectLocation,
   expectOnQuestion,
@@ -459,8 +468,12 @@ test("ask-without-abandoning: the tutor opens over the question, streams, closes
   await expect(seed).toContainText(optionTextOf(1, correct));
   await expect(seed).toContainText(explanationOf(1, correct));
 
-  // The streamed reply, byte-for-byte the function-mode constant.
-  await expect(sheet).toContainText(TUTOR_REPLY, { timeout: STREAM_TIMEOUT });
+  // The streamed reply, byte-for-byte the function-mode constant of THIS lane
+  // (spec §11.4): the loop opener's turn by default, the legacy tutor's under
+  // the kill switch.
+  await expectAskReply(sheet, STREAM_TIMEOUT);
+  // Spec §13 A99: a quiz-ask session (help recorded; default lane: teach, no probe).
+  const askedHash = await expectQuizAskSession(USER_ACTIVE);
 
   await page.getByTestId("quiz-ask-panel-close").click();
   await expect(sheet).toHaveCount(0);
@@ -488,6 +501,8 @@ test("ask-without-abandoning: the tutor opens over the question, streams, closes
   expect(attempts).toHaveLength(1);
   expect(attempts[0].completed_at).not.toBeNull();
   expect(Number(attempts[0].score)).toBe(QUIZ_LENGTH - 1);
+  // …and the asked question's evidence keeps its credit: the Ask came after the answer was locked (A99, #866 K20).
+  await expectAskedAnswerKeepsItsCredit(NODE_ID, askedHash);
 
   // The dashboard exit (R-10): a quiz reached from the dashboard says so, and
   // goes back there rather than to the tree — or, as before #537, to /learn.
@@ -651,6 +666,13 @@ test("missed review: the re-practice serves the SAME question back and says so (
   });
   // And the copy tells the truth about what it just did.
   await expect(page.getByTestId("quiz-results")).toContainText("The ones you missed, again");
+  // #866 K40: question 2 already counted toward the mastery in the first quiz
+  // (a question counts once a day, spec §13 A100), so this round moved nothing,
+  // and the results say that rather than "grew".
+  await expect(page.getByTestId("quiz-results-unchanged")).toHaveText(
+    "These questions were in your last quiz, and a question counts toward your mastery once a day, so this round was practice.",
+  );
+  await expect(page.getByTestId("quiz-results-graph")).toHaveAttribute("aria-label", /node stayed at \d+% mastery$/);
 
   // Two real attempts: the practice run is a first-class attempt of its own,
   // scored and stored, not a replay of the first.
@@ -709,8 +731,11 @@ test("entry points: each link shape arrives in the state it promised", async ({ 
 
   // (e) Plain nav — no target, so the ranked primary is the offer. The name is
   //     derived from the database through the same rule the client mirrors.
+  //     Since #849 the card has no "Ready for you" eyebrow: the suggestion is
+  //     the card without "← Back to the suggestion", which only a pick shows.
   await openQuizHome(page, "/quiz");
   await expect(page.getByTestId("quiz-proposal")).toContainText(ranking.primary.concept_name);
+  await expect(page.getByTestId("quiz-pick-reset")).toHaveCount(0);
 });
 
 // ── 6. Exits ───────────────────────────────────────────────────────────────
@@ -718,8 +743,24 @@ test("entry points: each link shape arrives in the state it promised", async ({ 
 // The three destinations ride on the runs that already reach them (one
 // journey per destination keeps the lane short): "Back to your tree" on
 // leave-and-return, "Back to dashboard" on ask-without-abandoning, and
-// "Done → /quiz" on the keyboard pass. Quiz home has no Cancel link since
-// #849 — the sidebar is the way out — so it has no exit journey of its own.
+// "Done → /quiz" on the keyboard pass. Quiz home itself has no Cancel since
+// #849 (it duplicated the sidebar), so leaving a quiz you never started is the
+// sidebar's job, whatever the entry source.
+
+test("exits: quiz home has no Cancel of its own; the sidebar leaves it", async ({ page }) => {
+  test.setTimeout(120_000);
+  await preAckDisclaimer(page);
+
+  await openQuizHome(page, TREE_ENTRY);
+  await expect(page.getByTestId("quiz-proposal")).toBeVisible({ timeout: SUBMIT_TIMEOUT });
+  await expect(page.getByTestId("quiz-cancel")).toHaveCount(0);
+
+  await openQuizHome(page, "/quiz");
+  await expect(page.getByTestId("quiz-proposal")).toBeVisible({ timeout: SUBMIT_TIMEOUT });
+  await expect(page.getByTestId("quiz-cancel")).toHaveCount(0);
+  await page.getByTestId("nav-link-dashboard").click();
+  await expectLocation(page, "/dashboard");
+});
 
 // ── 7. Keyboard only ───────────────────────────────────────────────────────
 
@@ -857,4 +898,145 @@ test("#537: Done drops the deep link and returns a clean quiz home", async ({ pa
     timeout: SUBMIT_TIMEOUT,
   });
   await expect(page.getByTestId("quiz-results")).toHaveCount(0);
+});
+
+// ── 8. Stated confidence (learning-loop spec §13 A132) ─────────────────────
+
+/** True for the POST that records one quiz answer. */
+function isAnswerPost(request: { method(): string; url(): string }): boolean {
+  return request.method() === "POST"
+    && /^\/api\/quiz\/attempts\/[^/]+\/answer$/.test(new URL(request.url()).pathname);
+}
+
+test("stated confidence: a level rides its answer to the response and the evidence, survives leave-and-resume, and a skip stores none", async ({
+  page,
+}) => {
+  // The control is the learning system's (#866 K46): the default lane, where the loop is on.
+  test.skip(loopOffLane, "the loop off asks no confidence: the journey below");
+  test.setTimeout(180_000);
+  let answerPosts = 0;
+  page.on("request", request => {
+    if (isAnswerPost(request)) answerPosts += 1;
+  });
+  await preAckDisclaimer(page);
+  await openQuizHome(page, TREE_ENTRY);
+  await startQuiz(page);
+
+  // ── Q1: "Sure", chosen with the mouse; nothing is chosen for the student ──
+  const level = (name: keyof typeof CONFIDENCE_LEVELS) => page.getByTestId(`quiz-confidence-${name}`);
+  await expect(page.getByTestId("quiz-confidence")).toBeVisible();
+  for (const name of Object.keys(CONFIDENCE_LEVELS) as (keyof typeof CONFIDENCE_LEVELS)[]) {
+    await expect(level(name)).toHaveAttribute("aria-checked", "false");
+  }
+  await level("sure").click();
+  await expect(level("sure")).toHaveAttribute("aria-checked", "true");
+  // Choosing makes no request: the level rides the answer.
+  expect(answerPosts).toBe(0);
+  const first = page.waitForRequest(isAnswerPost);
+  await chooseAndSubmit(page, CORRECT_LABELS[0]);
+  expect((await first).postDataJSON()).toMatchObject({ question_index: 0, confidence: "sure" });
+
+  // ── Q2: "Guessing", chosen from the keyboard (A127 (b)) ───────────────────
+  await expectOnQuestion(page, 2);
+  // A new question starts with no level.
+  await expect(level("sure")).toHaveAttribute("aria-checked", "false");
+  // One tab stop: the first level while none is chosen; the arrows move AND choose.
+  await tabUntilFocused(page, "quiz-confidence-guessing");
+  await page.keyboard.press("ArrowRight");
+  await expect(level("fairly_sure")).toHaveAttribute("aria-checked", "true");
+  await expect.poll(() => focusedTestId(page)).toBe("quiz-confidence-fairly_sure");
+  await page.keyboard.press("ArrowLeft");
+  await expect(level("guessing")).toHaveAttribute("aria-checked", "true");
+  // Enter on a level chooses it — it is not the footer's submit there.
+  await page.keyboard.press("Enter");
+  await expect(level("guessing")).toHaveAttribute("aria-checked", "true");
+  await expectOnQuestion(page, 2);
+  expect(answerPosts).toBe(1);
+
+  // ── Leave before answering it, and come back ──────────────────────────────
+  await page.getByTestId("quiz-leave").click();
+  await page.getByTestId("quiz-leave-confirm").click();
+  await expectLocation(page, TREE_RETURN);
+  await openQuizHome(page, "/quiz");
+  await page.getByTestId("quiz-resume").click();
+  await expectOnQuestion(page, 2);
+  // The unsent choice came back with the session the browser saved.
+  await expect(level("guessing")).toHaveAttribute("aria-checked", "true");
+  const second = page.waitForRequest(isAnswerPost);
+  await chooseAndSubmit(page, wrongLabelFor(2));
+  expect((await second).postDataJSON()).toMatchObject({ question_index: 1, confidence: "guessing" });
+
+  // ── Q3: skipped — no key on the wire, and Submit never waited on it ───────
+  await expectOnQuestion(page, 3);
+  const third = page.waitForRequest(isAnswerPost);
+  await chooseAndSubmit(page, CORRECT_LABELS[2]);
+  const thirdBody = (await third).postDataJSON() as Record<string, unknown>;
+  expect(thirdBody.question_index).toBe(2);
+  expect("confidence" in thirdBody).toBe(false);
+  await expectResults(page);
+  await expect(page.getByTestId("quiz-results-score")).toHaveText(`2 of ${QUIZ_LENGTH} correct`, {
+    timeout: SUBMIT_TIMEOUT,
+  });
+
+  // ── The stored floats: the response rows (real) and the evidence (double) ─
+  const [{ id: attemptId }] = await appAttempts();
+  const responses = await queryRaw(
+    "SELECT question_index, confidence FROM quiz_responses WHERE attempt_id = $1 ORDER BY question_index",
+    [attemptId],
+  );
+  expect(responses).toHaveLength(QUIZ_LENGTH);
+  expect(Number(responses[0].confidence)).toBeCloseTo(CONFIDENCE_LEVELS.sure, 6);
+  expect(Number(responses[1].confidence)).toBeCloseTo(CONFIDENCE_LEVELS.guessing, 6);
+  expect(responses[2].confidence).toBeNull();
+
+  // The student's stated confidence, beside — never instead of — the
+  // grader's `confidence`, and the exact level, not a float4 neighbour of it.
+  const evidence = await queryRaw(
+    `SELECT correct, student_confidence, confidence
+       FROM node_mastery_events
+      WHERE node_id = $1 AND event_type = 'evidence'
+      ORDER BY created_at, evidence_seq`,
+    [NODE_ID],
+  );
+  expect(evidence).toHaveLength(QUIZ_LENGTH);
+  expect(evidence.map(e => e.correct)).toEqual([true, false, true]);
+  expect(evidence.map(e => (e.student_confidence === null ? null : Number(e.student_confidence)))).toEqual([
+    CONFIDENCE_LEVELS.sure,
+    CONFIDENCE_LEVELS.guessing,
+    null,
+  ]);
+  for (const e of evidence) expect(e.confidence).toBeNull();
+});
+
+test("stated confidence, loop off: the quiz asks none, sends none and stores none (#866 K46)", async ({ page }) => {
+  // Owner decision 2026-11-18: with the loop off the quiz is main's, which has
+  // no "How sure are you?" (it is A132's, the learning system's).
+  test.skip(!loopOffLane, "the pre-loop quiz: the kill-switch and flag-off lanes");
+  test.setTimeout(180_000);
+  const bodies: Record<string, unknown>[] = [];
+  page.on("request", request => {
+    if (isAnswerPost(request)) bodies.push(request.postDataJSON() as Record<string, unknown>);
+  });
+  await preAckDisclaimer(page);
+  await openQuizHome(page, TREE_ENTRY);
+  await startQuiz(page);
+  for (let n = 1; n <= QUIZ_LENGTH; n += 1) {
+    await expectOnQuestion(page, n);
+    await expect(page.getByTestId("quiz-confidence")).toHaveCount(0);
+    await chooseAndSubmit(page, CORRECT_LABELS[n - 1]);
+  }
+  await expectResults(page);
+  expect(bodies).toHaveLength(QUIZ_LENGTH);
+  for (const body of bodies) expect("confidence" in body).toBe(false);
+
+  const [{ id: attemptId }] = await appAttempts();
+  const responses = await queryRaw("SELECT confidence FROM quiz_responses WHERE attempt_id = $1", [attemptId]);
+  expect(responses).toHaveLength(QUIZ_LENGTH);
+  for (const r of responses) expect(r.confidence).toBeNull();
+  const evidence = await queryRaw(
+    "SELECT student_confidence FROM node_mastery_events WHERE node_id = $1 AND event_type = 'evidence'",
+    [NODE_ID],
+  );
+  expect(evidence).toHaveLength(QUIZ_LENGTH);
+  for (const e of evidence) expect(e.student_confidence).toBeNull();
 });

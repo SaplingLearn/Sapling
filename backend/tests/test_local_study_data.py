@@ -19,7 +19,7 @@ from agents.study_guide import (
     mastered_words,
 )
 from agents.topic_checklist import TopicOutline
-from config import get_mastery_tier
+from learning.bkt import tier_for
 from db import local_study_data as data
 from db.local_study_data import guides as guide_builder
 from db.local_study_data import materials as material_builder
@@ -139,7 +139,7 @@ def test_each_class_has_a_tree_across_all_four_tiers(rows):
         nodes = [n for n in rows["graph_nodes"] if n["course_id"] == cls.course_id]
         assert 15 <= len(nodes) <= 25
         assert {n["mastery_tier"] for n in nodes} == TIERS
-        assert all(n["mastery_tier"] == get_mastery_tier(n["mastery_score"]) for n in nodes)
+        assert all(n["mastery_tier"] == tier_for(n["mastery_score"]) for n in nodes)
         for node in nodes:
             # "Never studied" has neither a count nor a date.
             assert (node["times_studied"] == 0) == (node["last_studied_at"] is None)

@@ -1,12 +1,19 @@
 {
-  "text": "Before we dig in, I'll check whether your course materials cover this.\n\nYour course materials don't cover Roman history. They're about calculus, recursion, biology, and physics. So I'll answer from general knowledge and won't tie it to your course.\n\nHistorians rarely point to a single cause. Common threads include:\n- Political instability, such as frequent civil wars and rapid turnover of emperors\n- Economic strain from heavy taxation, inflation, and reliance on a costly army\n- Military pressure from migrating and invading groups\n- The split into Eastern and Western halves, with the West weaker\n\nWhich of these do you think would hurt an empire most, and why?",
-  "tool_calls": [
-    {
-      "args": {
-        "limit": 3,
-        "query": "fall of the Roman Empire"
-      },
-      "tool_name": "search_course_materials"
-    }
-  ]
+  "output": {
+    "text": "Your course materials don't cover Roman history. They're about calculus, recursion, biology, physics, and economics. So I'll teach this from general knowledge, not your notes.\n\nHistorians usually point to several causes working together, not a single one: economic strain and inflation, political instability and civil wars, military pressure from migrating groups, and the split between the eastern and western halves of the empire.\n\nLet's start with what you already think. Which of those factors do you suspect mattered most, and why?",
+    "tool_calls": [
+      {
+        "args": {
+          "query": "fall of the Roman Empire"
+        },
+        "tool_name": "search_course_materials"
+      }
+    ]
+  },
+  "recorded_under": {
+    "input_sha256": "7c8d09dd3f47a091f697b077993da00aaf8784ef6cc8314e361fb53f11f1ff8e",
+    "model": "claude-sonnet-5-5",
+    "prompt_hash": "3962b95f3e62",
+    "schema_hash": "38a346cadbd3"
+  }
 }

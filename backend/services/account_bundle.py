@@ -22,6 +22,18 @@ differ in exactly the ways that make a row-for-row copy wrong:
 - **No chunks.** `course_chunks` never moves: documents import as
   `index_status='pending'` so the target re-indexes them under its own key and
   its own visibility rules (`shareability` travels, so the decision does too).
+- **No check items.** The learning loop's course assets (`check_items` and
+  their review/audit/draft records) are the course's, generated per
+  environment, and never move. The student's own loop rows do (learner state,
+  misconceptions and their attempts, evidence voids, post-tests, the help
+  ledger, teach-prompt records); a `check_item_id` they carry is the
+  source's id, as on `node_mastery_events`, and items are matched by
+  `(course_id, question_hash)` wherever the loop needs one. Their abstract
+  `course_id` is remapped like `graph_nodes.course_id`.
+- **Ciphertext inside JSON.** `sessions.loop_state` holds two encrypted values
+  inside its JSON (a goal's `text_encrypted`, a pending `grade_checkpoint`);
+  they are decrypted and re-encrypted like a 🔒 column (`NESTED_ENCRYPTED`),
+  and the sweep below looks inside every JSON value, not only at the top.
 
 Rows are exported with `select=*` rather than a column allowlist, so a new
 plaintext column travels without a code change. The risk of that is a NEW 🔒
@@ -41,11 +53,21 @@ preserved — the target's copies of them were just wiped.
 Never copied: OAuth tokens, roles, social (rooms/friendships), telemetry
 (events/llm_usage), feedback/issue reports, gradescope links (credentials do not
 move), cosmetics (`equipped_*`/`featured_*` ids), `avatar_url` (storage buckets
-differ), `course_chunks`, in-flight staging (`document_uploads`, `gradescope_syncs`,
-`tutor_pending_sessions`: wiped, never bundled), `legal_acceptances` (kept by the
-wipe and never bundled: a consent record belongs to the account in the
-environment where it was given, never to another environment's account), and
-every privacy/consent/notification choice in
+differ), `course_chunks`, `check_items`, in-flight staging (`document_uploads`,
+`gradescope_syncs`, `tutor_pending_sessions`: wiped, never bundled),
+`legal_acceptances` (kept by the wipe and never bundled: a consent record
+belongs to the account in the environment where it was given, never to another
+environment's account), the loop's per-environment bookkeeping
+(`learning_evidence_operations`, wiped, never bundled: idempotency receipts of
+evidence commits whose fingerprints bind the source's course id, so they could
+never replay on the target — the evidence itself travels in
+`node_mastery_events` and `learner_state`), `check_item_reports` (wiped,
+never bundled: a report is feedback on a course item of THIS environment —
+items are matched by `(course_id, question_hash)` and never move — and a
+quarantine it helped reach is recorded on the item, not in the report),
+`ai_tutor_daily_calls` (wiped, never bundled: a per-day count the daily cap
+of THIS environment reads), the checklist budget ledger (kept by the wipe,
+never bundled: spend records), and every privacy/consent/notification choice in
 `user_settings` (see `_SETTINGS_COPIED`): consent is the person's, given on
 each environment, and is never carried from one to the other — the Terms and
 Privacy Policy accepted on one environment included. The imported
@@ -76,7 +98,9 @@ from services.xp_service import idempotency_key as xp_idempotency_key
 
 logger = logging.getLogger(__name__)
 
-BUNDLE_VERSION = 1
+#: 2: the learning loop's tables. A version-1 bundle carries none of them, and
+#: importing it would wipe the target's loop rows without replacing them.
+BUNDLE_VERSION = 2
 
 
 class BundleError(ValueError):
@@ -111,6 +135,7 @@ JSON = "json"
 _ENCRYPTED_TABLES = (
     "user_profiles", "assignments", "topic_checklists", "documents", "notes", "flashcards",
     "sessions", "messages", "study_guides", "quiz_attempts", "quiz_responses", "quiz_context",
+    "misconceptions", "learning_prequestions", "learning_self_explanations",
 )
 
 ENCRYPTED: dict[str, dict[str, str]] = {
@@ -119,6 +144,18 @@ ENCRYPTED: dict[str, dict[str, str]] = {
         for spec in encryption.ENCRYPTED_COLUMNS if spec.table == name
     }
     for name in _ENCRYPTED_TABLES
+}
+
+#: Encrypted values INSIDE a JSON column: table -> column -> object key -> the
+#: path its binding names (`encryption.NESTED_CIPHERTEXTS`). Each is a TEXT
+#: ciphertext wherever the key sits in the document. `sessions.loop_state`: a
+#: goal's prose (learning/goals.py) and a pending grade checkpoint
+#: (learning/grade_checkpoint.py, its JSON sealed whole), both bound to the
+#: session; session ids are preserved, so source and target bind alike.
+NESTED_ENCRYPTED: dict[str, dict[str, dict[str, str]]] = {
+    "sessions": {"loop_state": {
+        "text_encrypted": "goal.text_encrypted", "grade_checkpoint": "grade_checkpoint",
+    }},
 }
 
 # base64(nonce || ciphertext || tag): 12-byte nonce + 16-byte GCM tag at least.
@@ -212,29 +249,68 @@ def _encrypt(kind: str, value: Any, binding: encryption.Binding) -> Any:
     return encryption.encrypt_if_present(value, bind=binding)
 
 
+def _strings(value: Any, path: str, skip_keys: Iterable[str]) -> Iterator[tuple[str, str]]:
+    """(path, string) for every string in a JSON value, except under `skip_keys`."""
+    if isinstance(value, str):
+        yield path, value
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            if key not in skip_keys:
+                yield from _strings(item, f"{path}.{key}", skip_keys)
+    elif isinstance(value, list):
+        for i, item in enumerate(value):
+            yield from _strings(item, f"{path}[{i}]", skip_keys)
+
+
 def _assert_no_unlisted_ciphertext(table_name: str, row: dict, listed: Iterable[str]) -> None:
-    """Refuse a string that decrypts under our key in a column not in ENCRYPTED.
+    """Refuse our ciphertext anywhere ENCRYPTED and NESTED_ENCRYPTED do not
+    name — a top-level column, or a value inside a JSON column.
 
     AES-GCM authenticates, so a successful decrypt is proof the value is our
     ciphertext — this has no false positives. It is what keeps `select=*` safe
-    when a new 🔒 column lands without an `ENCRYPTED` entry. A v2 value
-    (`enc2:` envelope) is ciphertext by its prefix alone: opening it would need
-    the binding of a column nobody listed, so it is not attempted.
+    when a new 🔒 column (or a new encrypted field inside a JSON document)
+    lands without an entry. A v2 value (`enc2:` envelope) is ciphertext by its
+    prefix alone: opening it would need the binding of a cell nobody listed,
+    so it is not attempted.
     """
     skip = set(listed)
+    nested = NESTED_ENCRYPTED.get(table_name, {})
     for column, value in row.items():
-        if column in skip or not isinstance(value, str) or not _looks_like_ciphertext(value):
+        if column in skip:
             continue
-        if not encryption.is_v2(value):
-            try:
-                # The legacy v1 shape: unbound, so the v1 path (no AAD).
-                encryption.decrypt(value)
-            except Exception:
+        for path, text in _strings(value, column, nested.get(column, {})):
+            if not _looks_like_ciphertext(text):
                 continue
-        raise BundleError(
-            f"{table_name}.{column} holds ciphertext but is not in account_bundle.ENCRYPTED; "
-            "add it there before copying accounts"
-        )
+            if not encryption.is_v2(text):
+                try:
+                    # The legacy v1 shape: unbound, so the v1 path (no AAD).
+                    encryption.decrypt(text)
+                except Exception:
+                    continue
+            raise BundleError(
+                f"{table_name}.{path} holds ciphertext but is not in account_bundle.ENCRYPTED "
+                "or NESTED_ENCRYPTED; add it there before copying accounts"
+            )
+
+
+def _map_nested(value: Any, keys: Iterable[str], fn) -> Any:
+    """`value` with `fn(key, v)` applied to every non-null value under `keys`."""
+    if isinstance(value, dict):
+        return {
+            k: (fn(k, v) if k in keys and v is not None else _map_nested(v, keys, fn))
+            for k, v in value.items()
+        }
+    if isinstance(value, list):
+        return [_map_nested(v, keys, fn) for v in value]
+    return value
+
+
+def _nested_binding(table_name: str, column: str, path: str, row: dict,
+                    where: str) -> encryption.Binding:
+    try:
+        return encryption.nested_bind(table_name, column, path, row.get("id"))
+    except (encryption.UnknownColumn, encryption.MissingRowKey) as exc:
+        raise BundleError(f"{where}: {exc}") from exc
 
 
 # ── What moves ───────────────────────────────────────────────────────────────
@@ -259,6 +335,14 @@ SPECS: tuple[_Spec, ...] = (
     _Spec("graph_nodes"),
     _Spec("graph_edges"),
     _Spec("node_mastery_events", key="node_id", parent="graph_nodes"),
+    # The learning loop's per-node rows: after the nodes and the evidence
+    # journal they reference (learning_evidence_voids.event_id is a FK to
+    # node_mastery_events).
+    _Spec("learner_state", order="node_id"),
+    _Spec("misconceptions"),
+    _Spec("misconception_attempts", key="misconception_id", parent="misconceptions"),
+    _Spec("learning_evidence_voids", key="event_id", parent="node_mastery_events",
+          order="event_id"),
     # Before enrollments: enrollments.syllabus_doc_id references documents.
     _Spec("documents"),
     _Spec("enrollments"),
@@ -285,13 +369,38 @@ SPECS: tuple[_Spec, ...] = (
     _Spec("quiz_context"),
     _Spec("xp_events"),
     _Spec("user_achievements", order="achievement_id"),
+    # The rest of the learning loop: post-tests, the help ledger, quiz
+    # evidence claims, item reports and the teach-prompt records.
+    _Spec("posttest_poses", order="node_id,window_days"),
+    _Spec("posttest_skips", order="node_id,window_days"),
+    _Spec("quiz_evidence_claims", order="question_hash"),
+    _Spec("learning_reveals"),
+    _Spec("learning_prequestions"),
+    _Spec("learning_self_explanations"),
 )
 
 # Tables whose rows carry an `offering_id` to remap.
 _OFFERING_TABLES = ("documents", "enrollments", "notes", "flashcards", "sessions", "study_guides")
 
 # Tables whose rows carry an abstract `course_id` to remap (by course_code).
-_COURSE_TABLES = ("graph_nodes", "flashcard_sets")
+_COURSE_TABLES = (
+    "graph_nodes", "flashcard_sets", "learning_evidence_voids", "misconception_attempts",
+    "posttest_poses", "posttest_skips", "learning_prequestions",
+    "learning_self_explanations",
+)
+
+# Foreign keys between bundled tables that are not covered by a parent spec
+# (child, column, parent, parent column). Import checks them BEFORE the wipe: a
+# row naming a parent the bundle does not carry would fail its insert after it.
+_BUNDLE_FKS = (
+    ("learner_state", "node_id", "graph_nodes", "id"),
+    ("misconceptions", "node_id", "graph_nodes", "id"),
+    ("learning_evidence_voids", "event_id", "node_mastery_events", "id"),
+)
+
+# Columns the database generates and refuses on insert (GENERATED ALWAYS AS
+# IDENTITY): dropped on import, the target numbers the rows itself.
+_GENERATED_ON_INSERT = {"misconception_attempts": ("id",)}
 
 USER_COUNTERS = (
     "total_xp", "level", "streak_count", "longest_streak", "onboarding_completed",
@@ -395,7 +504,8 @@ def _is_achievement_xp(row: Any) -> bool:
 
 
 def _plain(table_name: str, row: dict) -> dict:
-    """`row` with every 🔒 column strictly decrypted (and swept for strays)."""
+    """`row` with every 🔒 column, and every encrypted value inside a JSON
+    column, strictly decrypted (and swept for strays)."""
     cols = ENCRYPTED.get(table_name, {})
     _assert_no_unlisted_ciphertext(table_name, row, cols)
     out = dict(row)
@@ -406,6 +516,13 @@ def _plain(table_name: str, row: dict) -> dict:
             binding = _binding(table_name, column, row, where)
             out[column] = (_decrypt_json if kind == JSON else _decrypt_text)(
                 out[column], where, binding)
+    for column, paths in NESTED_ENCRYPTED.get(table_name, {}).items():
+        if out.get(column) is not None:
+            def _open(key, v, column=column, paths=paths):
+                where = f"{table_name}.{column}…{key} (row {rid})"
+                return _decrypt_text(
+                    v, where, _nested_binding(table_name, column, paths[key], row, where))
+            out[column] = _map_nested(out[column], paths, _open)
     return out
 
 
@@ -682,6 +799,26 @@ def _resolve_offerings(catalog: dict, course_map: dict[str, str]) -> dict[str, s
     return out
 
 
+def _grade_checkpoint_for_target(text: Any, course_map: dict) -> Any:
+    """A pending grade checkpoint (decrypted JSON text) bound to the target's
+    course: `open_checkpoint` refuses one whose course_id is not the session's,
+    and the session's course is the target's after the remap. Written exactly
+    as `grade_checkpoint.seal` writes it."""
+    if not isinstance(text, str):
+        return text
+    try:
+        checkpoint = json.loads(text)
+    except ValueError as exc:
+        raise BundleError("sessions.loop_state: a grade checkpoint is not JSON") from exc
+    if not isinstance(checkpoint, dict) or checkpoint.get("course_id") is None:
+        return text
+    src = checkpoint["course_id"]
+    if src not in course_map:
+        raise BundleError(f"sessions.loop_state: course {src} is not in the bundle's catalog")
+    checkpoint["course_id"] = course_map[src]
+    return json.dumps(checkpoint, sort_keys=True, separators=(",", ":"), allow_nan=False)
+
+
 def _target_row(name: str, row: dict, user_id: str, offering_map: dict, course_map: dict) -> dict:
     """One bundle row → the row to insert here: remapped and re-encrypted."""
     if not isinstance(row, dict):
@@ -689,6 +826,8 @@ def _target_row(name: str, row: dict, user_id: str, offering_map: dict, course_m
     out = dict(row)
     if "user_id" in out:
         out["user_id"] = user_id
+    for column in _GENERATED_ON_INSERT.get(name, ()):
+        out.pop(column, None)
     if name in _OFFERING_TABLES and out.get("offering_id") is not None:
         src = out["offering_id"]
         if src not in offering_map:
@@ -711,6 +850,13 @@ def _target_row(name: str, row: dict, user_id: str, offering_map: dict, course_m
             # Sealed AFTER the remaps: the binding names the target cell.
             where = f"{name}.{column} (row {out.get('id') or '?'})"
             out[column] = _encrypt(kind, out[column], _binding(name, column, out, where))
+    for column, paths in NESTED_ENCRYPTED.get(name, {}).items():
+        if out.get(column) is not None:
+            def _seal(key, v, column=column, paths=paths):
+                where = f"{name}.{column}…{key} (row {out.get('id') or '?'})"
+                text = _grade_checkpoint_for_target(v, course_map) if key == "grade_checkpoint" else v
+                return _encrypt(TEXT, text, _nested_binding(name, column, paths[key], out, where))
+            out[column] = _map_nested(out[column], paths, _seal)
     return out
 
 
@@ -848,6 +994,14 @@ def import_account(user_id: str, bundle: dict) -> dict[str, int]:
     prepared["xp_events"], xp_skipped = _remap_achievement_xp(
         user_id, prepared["xp_events"], ach_slug_of, ach_by_slug,
     )
+
+    for child, column, parent, parent_column in _BUNDLE_FKS:
+        have = {r.get(parent_column) for r in prepared[parent]}
+        dangling = sorted({str(r.get(column)) for r in prepared[child]} - {str(h) for h in have})
+        if dangling:
+            raise BundleError(
+                f"{child}.{column} names {parent} rows the bundle does not carry: {dangling[:5]}"
+            )
 
     user_update = {
         k: v for k, v in (bundle.get("user") or {}).items()

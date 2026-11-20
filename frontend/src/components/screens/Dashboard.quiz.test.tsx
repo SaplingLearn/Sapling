@@ -134,7 +134,7 @@ describe("Dashboard — simplified actions", () => {
         layoutState.pref = layout;
         vi.mocked(useIsMobile).mockReturnValue(mobile);
         render(<Dashboard />);
-        await screen.findByText(/concepts across/);
+        await screen.findByText(/concepts? across/);
         expect(screen.queryByTestId("dashboard-review-due")).toBeNull();
         expect(screen.queryByRole("button", { name: "Search" })).toBeNull();
         expect(screen.queryByRole("button", { name: /Review what's due/ })).toBeNull();

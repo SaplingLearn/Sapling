@@ -1,0 +1,316 @@
+{
+  "items": [
+    {
+      "answer_kind": "free",
+      "canonical_answer": "",
+      "chunk_ids": [
+        "eval-doc-2:c3"
+      ],
+      "concept": "Big-O Notation",
+      "difficulty": 1,
+      "final_answer": "Exponential upper bound on running time.",
+      "format": "free",
+      "options": [],
+      "prompt": "In Big-O Notation, what does O(2^n) represent for the naive Fibonacci recursion?",
+      "reference_answer": "O(2^n) represents an exponential upper bound on the running time of the naive Fibonacci recursion, meaning the time it takes grows exponentially with the input size n. Final answer: Exponential upper bound on running time.",
+      "rubric": [
+        "Mentions that O(2^n) is an upper bound.",
+        "States that the bound is exponential or related to 2^n."
+      ],
+      "stepwise": false,
+      "tolerance": "",
+      "wrong_keys": [
+        "confuses_with_tight_bound",
+        "confuses_with_lower_bound"
+      ],
+      "wrong_texts": [
+        "Treats the Big-O notation as a tight bound instead of an upper bound.",
+        "Interprets Big-O notation as a lower bound on the running time."
+      ]
+    },
+    {
+      "answer_kind": "free",
+      "canonical_answer": "",
+      "chunk_ids": [
+        "eval-doc-2:c3"
+      ],
+      "concept": "Big-O Notation",
+      "difficulty": 2,
+      "final_answer": "Running time grows quadratically with input size n.",
+      "format": "free",
+      "options": [],
+      "prompt": "If a recursive function has a time complexity of O(n^2), what does this imply about its performance as the input size 'n' increases?",
+      "reference_answer": "A time complexity of O(n^2) implies that the running time of the function grows quadratically with the input size 'n'. For example, if 'n' doubles, the running time will roughly quadruple. Final answer: Running time grows quadratically with input size n.",
+      "rubric": [
+        "Correctly identifies the growth rate as quadratic.",
+        "Relates the growth rate to the input size 'n'."
+      ],
+      "stepwise": false,
+      "tolerance": "",
+      "wrong_keys": [
+        "confuses_quadratic_with_linear",
+        "confuses_with_fixed_time"
+      ],
+      "wrong_texts": [
+        "Assumes the growth rate is linear (O(n)) instead of quadratic.",
+        "Suggests the running time remains constant regardless of input size."
+      ]
+    },
+    {
+      "answer_kind": "free",
+      "canonical_answer": "",
+      "chunk_ids": [
+        "eval-doc-2:c3"
+      ],
+      "concept": "Big-O Notation",
+      "difficulty": 3,
+      "final_answer": "Running time increases by a factor slightly more than 2.",
+      "format": "free",
+      "options": [],
+      "prompt": "Consider a program that sorts a list of N items using an algorithm with a time complexity of O(N log N). How would its performance likely change if the input size was increased from 1000 to 2000 items?",
+      "reference_answer": "Increasing the input size from 1000 to 2000 items would mean 'n' doubles. Since the complexity is O(N log N), the running time would increase by a factor slightly more than 2, as log N also increases with N. Final answer: Running time increases by a factor slightly more than 2.",
+      "rubric": [
+        "Correctly states that the running time increases by a factor.",
+        "Accurately describes the factor as slightly more than doubling."
+      ],
+      "stepwise": false,
+      "tolerance": "",
+      "wrong_keys": [
+        "assumes_linear_growth",
+        "assumes_exponential_growth"
+      ],
+      "wrong_texts": [
+        "Assumes the running time doubles exactly, ignoring the 'log N' factor.",
+        "Incorrectly assumes exponential growth for an O(N log N) algorithm."
+      ]
+    },
+    {
+      "answer_kind": "free",
+      "canonical_answer": "",
+      "chunk_ids": [
+        "eval-doc-2:c3"
+      ],
+      "concept": "Big-O Notation",
+      "difficulty": 1,
+      "final_answer": "Describes the upper bound on algorithm running time.",
+      "format": "teachback",
+      "options": [],
+      "prompt": "Explain to a classmate who missed the lecture what Big-O Notation is used for in computer science.",
+      "reference_answer": "Big-O Notation is used to describe the asymptotic upper bound on the running time of an algorithm, essentially telling us how the runtime scales as the input size grows. Final answer: Describes the upper bound on algorithm running time.",
+      "rubric": [
+        "Explains Big-O notation relates to running time.",
+        "Mentions it's an upper bound.",
+        "Includes the concept of scaling with input size."
+      ],
+      "stepwise": false,
+      "tolerance": "",
+      "wrong_keys": [
+        "confuses_with_exact_time",
+        "confuses_with_memory_usage"
+      ],
+      "wrong_texts": [
+        "Assumes Big-O notation gives the exact running time rather than an upper bound.",
+        "Mistakes Big-O notation for describing memory usage instead of time complexity."
+      ]
+    },
+    {
+      "answer_kind": "free",
+      "canonical_answer": "",
+      "chunk_ids": [
+        "eval-doc-2:c3"
+      ],
+      "concept": "Big-O Notation",
+      "difficulty": 2,
+      "final_answer": "Algorithm A is better because its linear growth is slower than B's quadratic growth.",
+      "format": "teachback",
+      "options": [],
+      "prompt": "Imagine you have two algorithms to solve the same problem: Algorithm A is O(n) and Algorithm B is O(n^2). Explain to a classmate which one is generally better for large inputs and why.",
+      "reference_answer": "Algorithm A is generally better for large inputs because O(n) means its runtime grows linearly with the input size 'n', while O(n^2) means Algorithm B's runtime grows quadratically. Linear growth is much slower than quadratic growth for large 'n'. Final answer: Algorithm A is better because its linear growth is slower than B's quadratic growth.",
+      "rubric": [
+        "Correctly identifies Algorithm A as better for large inputs.",
+        "Explains that O(n) is linear growth and O(n^2) is quadratic growth.",
+        "States linear growth is slower than quadratic growth for large inputs."
+      ],
+      "stepwise": false,
+      "tolerance": "",
+      "wrong_keys": [
+        "prefers_higher_order_term",
+        "ignores_input_size"
+      ],
+      "wrong_texts": [
+        "Incorrectly assumes that a higher order term like O(n^2) might be better.",
+        "Forgets to mention that the 'large inputs' condition is key to the comparison."
+      ]
+    },
+    {
+      "answer_kind": "free",
+      "canonical_answer": "",
+      "chunk_ids": [
+        "eval-doc-2:c3"
+      ],
+      "concept": "Big-O Notation",
+      "difficulty": 3,
+      "final_answer": "Runtime grows logarithmically and very slowly with large n.",
+      "format": "teachback",
+      "options": [],
+      "prompt": "A student is analyzing a recursive function and finds its complexity is O(log n). Explain to them what this means in terms of how the function's runtime changes as the input size 'n' gets very large.",
+      "reference_answer": "O(log n) means the runtime grows logarithmically, which is very efficient. As 'n' gets very large, the runtime increases much, much slower than 'n' itself. For example, doubling 'n' only adds a small constant amount to the runtime. Final answer: Runtime grows logarithmically and very slowly with large n.",
+      "rubric": [
+        "Correctly identifies the growth as logarithmic.",
+        "Emphasizes that logarithmic growth is very slow, especially for large inputs.",
+        "Provides an example or analogy for logarithmic growth (e.g., doubling n adds a constant)."
+      ],
+      "stepwise": false,
+      "tolerance": "",
+      "wrong_keys": [
+        "confuses_log_with_linear",
+        "confuses_log_with_exponential"
+      ],
+      "wrong_texts": [
+        "Treats logarithmic growth the same as linear growth (O(n)).",
+        "Mistakes logarithmic growth for exponential growth (O(2^n))."
+      ]
+    },
+    {
+      "answer_kind": "free",
+      "canonical_answer": "",
+      "chunk_ids": [
+        "eval-doc-2:c3"
+      ],
+      "concept": "Big-O Notation",
+      "difficulty": 1,
+      "final_answer": "An exponential upper bound on the running time.",
+      "format": "mc_reason",
+      "options": [
+        {
+          "is_correct": true,
+          "misconception_key": null,
+          "misconception_text": null,
+          "text": "An exponential upper bound on the running time."
+        },
+        {
+          "is_correct": false,
+          "misconception_key": "confuses_exponential_with_linear",
+          "misconception_text": "Mistakes exponential growth for linear growth.",
+          "text": "A linear upper bound on the running time."
+        },
+        {
+          "is_correct": false,
+          "misconception_key": "confuses_upper_bound_with_exact_time",
+          "misconception_text": "Believes Big-O notation provides the precise runtime instead of an upper bound.",
+          "text": "The exact running time in seconds."
+        },
+        {
+          "is_correct": false,
+          "misconception_key": "confuses_upper_bound_with_lower_bound",
+          "misconception_text": "Interprets Big-O notation as a lower bound rather than an upper bound.",
+          "text": "A lower bound on the running time."
+        }
+      ],
+      "prompt": "In Big-O Notation, O(2^n) for naive Fibonacci recursion indicates which of the following about its running time?",
+      "reference_answer": "The notation O(2^n) signifies an asymptotic upper bound on the running time. For the naive Fibonacci recursion, this means the time complexity grows exponentially with the input size 'n'. Final answer: An exponential upper bound on the running time.",
+      "rubric": [
+        "Correctly identifies Big-O notation as an upper bound.",
+        "Correctly identifies the growth rate as exponential."
+      ],
+      "stepwise": false,
+      "tolerance": "",
+      "wrong_keys": [],
+      "wrong_texts": []
+    },
+    {
+      "answer_kind": "free",
+      "canonical_answer": "",
+      "chunk_ids": [
+        "eval-doc-2:c3"
+      ],
+      "concept": "Big-O Notation",
+      "difficulty": 2,
+      "final_answer": "The running time increases linearly with 'n'.",
+      "format": "mc_reason",
+      "options": [
+        {
+          "is_correct": true,
+          "misconception_key": null,
+          "misconception_text": null,
+          "text": "The running time increases linearly with 'n'."
+        },
+        {
+          "is_correct": false,
+          "misconception_key": "confuses_linear_with_quadratic",
+          "misconception_text": "Mistakes linear growth (O(n)) for quadratic growth (O(n^2)).",
+          "text": "The running time increases quadratically with 'n'."
+        },
+        {
+          "is_correct": false,
+          "misconception_key": "confuses_linear_with_constant",
+          "misconception_text": "Assumes the running time is unaffected by input size, confusing O(n) with O(1).",
+          "text": "The running time remains constant."
+        },
+        {
+          "is_correct": false,
+          "misconception_key": "reverses_growth_trend",
+          "misconception_text": "Incorrectly believes the runtime decreases with increasing input size.",
+          "text": "The running time decreases as 'n' increases."
+        }
+      ],
+      "prompt": "If an algorithm's running time is described as O(n), what does this imply about its performance as 'n' increases?",
+      "reference_answer": "O(n) signifies a linear upper bound on the running time. This means that as the input size 'n' increases, the running time increases proportionally, or linearly. Final answer: The running time increases linearly with 'n'.",
+      "rubric": [
+        "Correctly identifies the growth rate as linear.",
+        "Relates the growth rate to the input size 'n'."
+      ],
+      "stepwise": false,
+      "tolerance": "",
+      "wrong_keys": [],
+      "wrong_texts": []
+    },
+    {
+      "answer_kind": "free",
+      "canonical_answer": "",
+      "chunk_ids": [
+        "eval-doc-2:c3"
+      ],
+      "concept": "Big-O Notation",
+      "difficulty": 3,
+      "final_answer": "Increases by a small, constant amount.",
+      "format": "mc_reason",
+      "options": [
+        {
+          "is_correct": true,
+          "misconception_key": null,
+          "misconception_text": null,
+          "text": "Increases by a small, constant amount."
+        },
+        {
+          "is_correct": false,
+          "misconception_key": "confuses_log_with_linear",
+          "misconception_text": "Mistakes logarithmic growth for linear growth, assuming doubling 'n' doubles the time.",
+          "text": "Doubles, increasing linearly with 'n'."
+        },
+        {
+          "is_correct": false,
+          "misconception_key": "confuses_log_with_exponential",
+          "misconception_text": "Incorrectly associates logarithmic complexity with exponential growth.",
+          "text": "Increases exponentially."
+        },
+        {
+          "is_correct": false,
+          "misconception_key": "confuses_log_with_constant",
+          "misconception_text": "Assumes logarithmic growth means the time does not change, confusing O(log n) with O(1).",
+          "text": "Stays the same."
+        }
+      ],
+      "prompt": "An algorithm has a time complexity of O(log n). If the input size doubles, what is the most likely effect on its running time?",
+      "reference_answer": "O(log n) indicates logarithmic growth, meaning the running time increases very slowly. When the input size doubles, the running time increases by a small, constant amount, not proportionally to the input size. Final answer: Increases by a small, constant amount.",
+      "rubric": [
+        "Correctly describes the effect of doubling input size on O(log n) complexity.",
+        "Specifies that the increase is a small, constant amount."
+      ],
+      "stepwise": false,
+      "tolerance": "",
+      "wrong_keys": [],
+      "wrong_texts": []
+    }
+  ]
+}

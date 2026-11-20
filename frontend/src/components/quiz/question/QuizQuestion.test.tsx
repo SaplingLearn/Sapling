@@ -33,6 +33,8 @@ const api = vi.hoisted(() => ({
   streamChat: vi.fn(),
   sendChat: vi.fn(),
   shouldFallBackToJson: vi.fn(() => true),
+  // the learning loop's budget pause (lib/api.ts): none unless a case says so
+  budgetPauseOf: vi.fn((_err: unknown): { resetAt: string | null; sessionCapped: boolean } | null => null),
   newTurnId: vi.fn(() => "turn-test-0001"),
 }));
 vi.mock("@/lib/api", () => api);
@@ -129,7 +131,7 @@ function makeActions(): QuizActions {
   };
 }
 
-function renderScreen(session: QuizSession, actions: QuizActions = makeActions()) {
+function renderScreen(session: QuizSession, actions: QuizActions = makeActions(), askConfidence = false) {
   const view = render(
     <QuizQuestion
       session={session}
@@ -138,6 +140,7 @@ function renderScreen(session: QuizSession, actions: QuizActions = makeActions()
       concept={CONCEPT}
       userId="user-1"
       courseId="course-cs101"
+      askConfidence={askConfidence}
     />,
   );
   return { ...view, actions };
@@ -191,7 +194,12 @@ describe("QuizQuestion — the question", () => {
     const session = makeSession({ items: [item(0, { question: { ...question(1), type, options: [] } })] });
     const view = renderScreen(session, actions);
     const input = screen.getByRole("textbox", { name: /^Your answer/ });
+    // No answer choices: with the loop off no radio group at all, as before the
+    // loop (#866 K46); with it on, the one radio group is the stated confidence (A132).
     expect(screen.queryByRole("radiogroup")).not.toBeInTheDocument();
+    view.rerender(<QuizQuestion session={session} actions={actions} config={null} concept={CONCEPT} userId="user-1" courseId="course-cs101" askConfidence />);
+    expect(screen.queryByRole("radiogroup", { name: "Answer choices" })).not.toBeInTheDocument();
+    expect(screen.getByRole("radiogroup", { name: /How sure are you/ })).toBeInTheDocument();
     expect(screen.getByTestId("quiz-submit-answer")).toBeDisabled();
     fireEvent.change(input, { target: { value: "2(x+1)" } });
     expect(actions.write).toHaveBeenCalledWith("2(x+1)");
@@ -426,6 +434,126 @@ describe("QuizQuestion — keyboard", () => {
 
     fireEvent.click(screen.getByTestId("quiz-leave-cancel"));
     expect(leaving.cancelLeave).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("QuizQuestion — stated confidence (learning-loop spec §13 A132)", () => {
+  const withConfidence = () => ({ ...makeActions(), setConfidence: vi.fn() });
+  const written = (over: Partial<QuizItem> = {}) =>
+    item(0, { question: { ...question(1), type: "short_answer", options: [] }, answerText: "", ...over });
+
+  it.each([
+    ["multiple choice", () => item(0)],
+    ["written", () => written()],
+  ] as const)("offers the optional control on a %s question, with its own testids", (_kind, make) => {
+    renderScreen(makeSession({ items: [make()] }), withConfidence(), true);
+    const group = screen.getByTestId("quiz-confidence");
+    expect(group).toHaveAttribute("role", "radiogroup");
+    expect(group).toHaveAccessibleName(/How sure are you\? \(optional\)/);
+    for (const level of ["guessing", "fairly_sure", "sure"]) {
+      expect(screen.getByTestId(`quiz-confidence-${level}`)).toHaveAttribute("aria-checked", "false");
+    }
+    // Nothing is chosen for the student: no default level.
+    expect(screen.queryByTestId("quiz-confidence-clear")).not.toBeInTheDocument();
+  });
+
+  it("shows the current question's level and hands a choice to the hook — no request of its own", () => {
+    const actions = withConfidence();
+    renderScreen(makeSession({ items: [item(0, { confidence: "fairly_sure" }), item(1), item(2)] }), actions, true);
+    expect(screen.getByTestId("quiz-confidence-fairly_sure")).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(screen.getByTestId("quiz-confidence-sure"));
+    expect(actions.setConfidence).toHaveBeenLastCalledWith("sure");
+    fireEvent.click(screen.getByTestId("quiz-confidence-clear"));
+    expect(actions.setConfidence).toHaveBeenLastCalledWith(null);
+    expect(actions.submitAnswer).not.toHaveBeenCalled();
+    expect(actions.select).not.toHaveBeenCalled();
+  });
+
+  it("Submit never waits on it: a skipped control leaves Submit as the answer alone decides", () => {
+    const actions = withConfidence();
+    renderScreen(makeSession({ items: [item(0, { selectedIndex: 1 }), item(1), item(2)] }), actions, true);
+    expect(screen.getByTestId("quiz-submit-answer")).toBeEnabled();
+    fireEvent.click(screen.getByTestId("quiz-submit-answer"));
+    expect(actions.submitAnswer).toHaveBeenCalledOnce();
+  });
+
+  it("stops taking changes while the answer is in flight and once its verdict is showing", () => {
+    const actions = withConfidence();
+    const view = renderScreen(makeSession({ items: [item(0, { selectedIndex: 1, confidence: "sure" })] }), actions, true);
+    view.rerender(
+      <QuizQuestion session={makeSession({ items: [item(0, { selectedIndex: 1, confidence: "sure" })] })}
+        actions={actions} config={null} concept={CONCEPT} userId="user-1" courseId="course-cs101" pending askConfidence />,
+    );
+    expect(screen.getByTestId("quiz-confidence-guessing")).toBeDisabled();
+    view.rerender(
+      <QuizQuestion
+        session={makeSession({
+          phase: "answered",
+          items: [item(0, {
+            selectedIndex: 1, confidence: "sure",
+            verdict: { isCorrect: true, correctIndex: 1, explanation: "Right." },
+          })],
+        })}
+        actions={actions} config={null} concept={CONCEPT} userId="user-1" courseId="course-cs101" askConfidence
+      />,
+    );
+    // Still on screen (nothing moves when the verdict lands), showing the level sent.
+    expect(screen.getByTestId("quiz-confidence-sure")).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByTestId("quiz-confidence-sure")).toBeDisabled();
+    expect(screen.getByTestId("quiz-confidence-clear")).toBeDisabled();
+  });
+
+  it("owns its keys: arrows move and choose, Enter chooses instead of submitting, a letter is no answer shortcut", () => {
+    const actions = withConfidence();
+    renderScreen(makeSession({ items: [item(0, { selectedIndex: 1 }), item(1), item(2)] }), actions, true);
+    const guessing = screen.getByTestId("quiz-confidence-guessing");
+
+    fireEvent.keyDown(guessing, { key: "ArrowRight" });
+    expect(actions.setConfidence).toHaveBeenLastCalledWith("fairly_sure");
+    fireEvent.keyDown(guessing, { key: "End" });
+    expect(actions.setConfidence).toHaveBeenLastCalledWith("sure");
+
+    // Enter is the button's own activation here (a choice), never the footer's
+    // submit: the root must not pre-empt it.
+    expect(fireEvent.keyDown(guessing, { key: "Enter" })).toBe(true);
+    expect(fireEvent.keyDown(guessing, { key: " " })).toBe(true);
+    expect(actions.submitAnswer).not.toHaveBeenCalled();
+    fireEvent.keyDown(guessing, { key: "c" });
+    expect(actions.select).not.toHaveBeenCalled();
+
+    // Escape is still the way out of the quiz from anywhere on the screen.
+    fireEvent.keyDown(guessing, { key: "Escape" });
+    expect(actions.requestLeave).toHaveBeenCalledOnce();
+  });
+
+  it("is one tab stop: the chosen level, else the first", () => {
+    const view = renderScreen(makeSession(), withConfidence(), true);
+    const tabbable = () =>
+      ["guessing", "fairly_sure", "sure"].filter(l => screen.getByTestId(`quiz-confidence-${l}`).tabIndex === 0);
+    expect(tabbable()).toEqual(["guessing"]);
+    view.rerender(
+      <QuizQuestion session={makeSession({ items: [item(0, { confidence: "sure" }), item(1), item(2)] })}
+        actions={withConfidence()} config={null} concept={CONCEPT} userId="user-1" courseId="course-cs101" askConfidence />,
+    );
+    expect(tabbable()).toEqual(["sure"]);
+  });
+
+  it("with the learning loop off it asks nothing: no control, and the letters are answer shortcuts again", () => {
+    // #866 K46: the control is the learning system's; off is the pre-loop screen.
+    const actions = withConfidence();
+    renderScreen(makeSession(), actions);
+    expect(screen.queryByTestId("quiz-confidence")).not.toBeInTheDocument();
+    expect(screen.queryByRole("radiogroup", { name: /How sure are you/ })).not.toBeInTheDocument();
+    fireEvent.keyDown(root(), { key: "b" });
+    expect(actions.select).toHaveBeenCalledWith(1);
+    expect(actions.setConfidence).not.toHaveBeenCalled();
+  });
+
+  it("a written question's Enter still submits from its input", () => {
+    const actions = withConfidence();
+    renderScreen(makeSession({ items: [written({ answerText: "base case", confidence: "guessing" })] }), actions, true);
+    fireEvent.keyDown(screen.getByRole("textbox", { name: /^Your answer/ }), { key: "Enter" });
+    expect(actions.submitAnswer).toHaveBeenCalledOnce();
   });
 });
 
@@ -709,6 +837,11 @@ describe("QuizQuestion — Ask about this never orphans the attempt", () => {
       true,
       "course-cs101",
     ]);
+    // spec §13 A99: the session is ABOUT this question — the attempt and its index
+    expect(api.startSessionStream.mock.calls[0][7]).toEqual({
+      attemptId: "attempt-1",
+      questionIndex: 0,
+    });
 
     await waitFor(() => expect(api.streamChat).toHaveBeenCalledTimes(1));
     const seedMessage = api.streamChat.mock.calls[0][2] as string;

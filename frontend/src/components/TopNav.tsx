@@ -29,7 +29,9 @@ import { Avatar } from "./Avatar";
 import { Icon } from "./Icon";
 import { ShellActions } from "./ShellActions";
 import { SaplingWordmark } from "./SaplingWordmark";
+import { RETENTION_NAV_HREF, RetentionDueDot } from "./RetentionDueDot";
 import { useUser } from "@/context/UserContext";
+import { useRetentionNavDue } from "./useRetentionNav";
 import { useIsMobile } from "@/lib/useIsMobile";
 import type { NavSection } from "@/lib/navFeatures";
 import { useVisibleNavSections } from "@/lib/useNavSections";
@@ -55,6 +57,8 @@ export function TopNav() {
   const { userName, avatarUrl, isAdmin, isAuthenticated } = useUser();
   const isMobile = useIsMobile();
   const groups = useVisibleNavSections();
+  // hide_study hides the check's page: the closed menu then carries no dot
+  const { due: retentionDue } = useRetentionNavDue();
   const [mobileOpen, setMobileOpen] = React.useState(false);
   const mobileRef = React.useRef<HTMLDivElement | null>(null);
 
@@ -102,14 +106,16 @@ export function TopNav() {
       {isMobile && (
         <div ref={mobileRef} style={{ position: "relative" }}>
           <button
-            aria-label="Navigation menu"
+            aria-label={retentionDue ? "Navigation menu, retention check due" : "Navigation menu"}
             aria-expanded={mobileOpen}
             onClick={() => setMobileOpen((o) => !o)}
             style={{
               padding: 6, display: "flex", flexDirection: "column", justifyContent: "center", gap: 4,
-              minWidth: 44, minHeight: 44, alignItems: "center",
+              minWidth: 44, minHeight: 44, alignItems: "center", position: "relative",
             }}
           >
+            {/* A126: the closed menu hides the Study row, so the button carries the dot */}
+            {retentionDue && !mobileOpen && <RetentionDueDot testid="topnav-menu-retention-due" overlay />}
             {[0, 1, 2].map((i) => (
               <span
                 key={i}
@@ -295,6 +301,9 @@ function NavGroupTrigger({
 }) {
   const active = isActiveGroup(pathname, group);
   const wrapperRef = React.useRef<HTMLDivElement | null>(null);
+  // A126: the Study row hides in the panel, so its group's trigger carries the dot
+  const { due: retentionDue } = useRetentionNavDue();
+  const groupDue = retentionDue && group.items.some((item) => item.href === RETENTION_NAV_HREF);
 
   return (
     <div
@@ -343,6 +352,7 @@ function NavGroupTrigger({
         }}
       >
         {group.label}
+        {groupDue && <RetentionDueDot testid="topnav-group-retention-due" />}
         <span
           aria-hidden
           style={{
@@ -416,6 +426,9 @@ function NavGroupTrigger({
               >
                 <Icon name={item.icon} size={15} />
                 <span style={{ flex: 1 }}>{item.label}</span>
+                {groupDue && item.href === RETENTION_NAV_HREF && (
+                  <RetentionDueDot testid="topnav-retention-due" />
+                )}
               </Link>
             );
           })}
@@ -426,6 +439,7 @@ function NavGroupTrigger({
 }
 
 function MobilePanel({ pathname, groups }: { pathname: string; groups: NavGroup[] }) {
+  const { due: retentionDue } = useRetentionNavDue();
   return (
     <div
       style={{
@@ -464,6 +478,9 @@ function MobilePanel({ pathname, groups }: { pathname: string; groups: NavGroup[
               >
                 <Icon name={item.icon} size={15} />
                 {item.label}
+                {retentionDue && item.href === RETENTION_NAV_HREF && (
+                  <RetentionDueDot testid="topnav-mobile-retention-due" />
+                )}
               </Link>
             );
           })}

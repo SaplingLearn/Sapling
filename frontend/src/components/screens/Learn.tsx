@@ -22,6 +22,9 @@ import { useConfirm } from "@/lib/useConfirm";
 import { useIsMobile } from "@/lib/useIsMobile";
 import { useActiveSemester, courseInTerm } from "@/lib/useActiveSemester";
 import { useUser } from "@/context/UserContext";
+import { LoopLearn } from "../learn/LoopLearn";
+import { useLoopStatus } from "../learn/useLoopStatus";
+import { readResumeParam } from "../learn/resumeParam";
 import {
   startSession,
   startSessionStream,
@@ -48,10 +51,13 @@ import {
   type GraphDelta,
 } from "@/lib/api";
 import { dropOptimisticConcept, reconcileNodes, retargetEdges } from "@/lib/graphOptimistic";
-import { humanizeError, isNotFound, readableError, statusOf } from "@/lib/errorMessage";
+import { humanizeError, isNotFound, readableError } from "@/lib/errorMessage";
+import { forgetEndedSession, noteLearningSession, rememberEndedSession, useFeedbackHold } from "@/lib/feedbackPacing";
 import type { GraphNode as ApiNode, GraphEdge as ApiEdge } from "@/lib/types";
 import { apiToGraphNode, type GraphNode, type GraphEdge } from "@/lib/data";
 import { focusCardDescription, focusCardTitle, sessionSubtitle } from "./learn/view";
+import { resumedTranscript, type MarkdownProfile } from "./learn/resumedTranscript";
+import { answeredByTheLoop, isSessionEndedError, pauseCopyOr, removeInterruptedTurn } from "./learn/turns";
 
 function apiToGraphEdge(e: ApiEdge): GraphEdge {
   return {
@@ -71,8 +77,6 @@ const MODES: { id: Mode; name: string; tip: string }[] = [
 ];
 
 const VALID_MODES: Mode[] = ["socratic", "expository", "teachback"];
-// Read by SessionFeedbackGlobal when the student navigates away from /learn.
-const LAST_SESSION_CTX_KEY = "sapling_last_session_context";
 const RAIL_OPEN_KEY = "sapling_learn_rail_open";
 const RAIL_WIDTH = 400;
 
@@ -98,11 +102,13 @@ function normalizeMode(input: string | null): Mode {
   return (VALID_MODES as string[]).includes(input) ? (input as Mode) : "socratic";
 }
 
-// Mirrors backend/config.py::get_mastery_tier so a streamed delta classifies
-// mastery the same way a full graph refetch would.
+// Mirrors backend/learning/bkt.py::tier_for (learning/params.py BKT_PROFICIENT /
+// BAND_NOVICE_MAX / TIER_UNEXPLORED_MAX, PKG-14b) so a streamed delta classifies
+// mastery the same way a full graph refetch would. Pinned by
+// backend/tests/test_mastery_tier_unification.py.
 function tierForScore(score: number): GraphNode["mastery_tier"] {
-  if (score >= 0.75) return "mastered";
-  if (score >= 0.45) return "learning";
+  if (score >= 0.95) return "mastered";
+  if (score >= 0.3) return "learning";
   if (score >= 0.1) return "struggling";
   return "unexplored";
 }
@@ -129,11 +135,10 @@ function rawNodeIdentity(raw: Record<string, unknown>): { id?: string; name?: st
 // spec sketches. It's a dict keyed by which graph tool wrote
 // (backend/agents/tools/graph.py via services/chat_stream.py
 // merge_graph_updates): `new_nodes` entries are {concept_name,
-// initial_mastery}; `updated_nodes` entries are {concept_name,
-// mastery_delta, reason, event_type}. Neither carries an `id` or an
-// absolute post-update score. `delta.mastery_changes` ({concept, before,
-// after}) IS authoritative for an existing node's new score, so it drives
-// merges for updates; `nodes` entries are read defensively via
+// initial_mastery} (PKG-14b: the tutor's mastery-write tool is gone, so no
+// other key is produced). They carry no `id` and no absolute post-update
+// score. `delta.mastery_changes` ({concept, before, after}) IS authoritative
+// for an existing node's new score, so it drives merges for updates; `nodes` entries are read defensively via
 // `rawNodeIdentity` — and any fields we don't recognize are ignored rather
 // than crashing.
 //
@@ -314,48 +319,45 @@ export function applyGraphDeltaAssembly(
   setGraphEdges(prev => mergeGraphEdges(prev, edges));
 }
 
-// #164: Dashboard's "Where you left off" cards push /learn?resume=<id>; Tree's
-// session rows used ?session=<id> before both callers unified on ?resume=.
-// Accept both so any bookmarked/legacy link keeps working.
-export function readResumeParam(params: { get(name: string): string | null }): string | null {
-  return params.get("resume") ?? params.get("session");
-}
+// #164: ?resume=<id> (and the legacy ?session=<id>). Moved to
+// components/learn/resumeParam.ts so LoopLearn reads the same deep link
+// without importing this screen (PKG-13); re-exported for its callers.
+export { readResumeParam };
 
-// ADR 0020 Retry: drop the interrupted assistant bubble and — when it sits
-// directly before it — the user bubble of the same turn, so the re-send
-// (which appends a fresh user bubble) doesn't duplicate either. Pure and
-// exported for Learn.resume.test.ts.
-export function removeInterruptedTurn(
-  messages: ChatMsg[],
-  interruptedId: string,
-  retryText: string,
-): ChatMsg[] {
-  const i = messages.findIndex(m => m.id === interruptedId);
-  if (i === -1) return messages;
-  const next = [...messages.slice(0, i), ...messages.slice(i + 1)];
-  if (i > 0 && next[i - 1]?.role === "user" && next[i - 1].content === retryText) {
-    next.splice(i - 1, 1);
-  }
-  return next;
-}
-
-// A turn the server refused because the session is already over (#761 /
-// #762): a 409 whose envelope carries `error.code: "SESSION_ENDED"` —
-// `ApiError.code` off fetchJSON, the same `code` streamSSE attaches. A coded
-// error decides it by its code (a 409 with any OTHER code is an ordinary
-// error); only an error with no code at all — an older backend — falls back
-// to the bare 409.
-export const SESSION_ENDED_CODE = "SESSION_ENDED";
-export function isSessionEndedError(err: unknown): boolean {
-  const code = err !== null && typeof err === "object" ? (err as { code?: unknown }).code : undefined;
-  if (typeof code === "string") return code === SESSION_ENDED_CODE;
-  return statusOf(err) === 409;
-}
+// The ADR 0020 Retry's bubble surgery, the ended-session 409 (#761/#762) and
+// an answer only the learning loop gives (#866 K49): ./learn/turns.ts.
 
 export function Learn() {
+  const { userId, userReady } = useUser();
+  // Learning loop (PKG-13; post-launch PKG-14b, spec §11.2): one GET decides the
+  // tree — the loop status probe is the only input (never learning_loop_beta; the
+  // server gate decides, spec §7). null → the loading fallback; true → the loop;
+  // false (the kill switch: {active: false} / the gate's 404) → legacy; any other
+  // failure → a retry state, NEVER the legacy tree (the backend delegates the
+  // legacy calls to the loop, so failing open would give a hybrid).
+  // #866 K49: the legacy tree asks for `recheck` when an answer can only be the loop's.
+  const { status: loop, retry, recheck } = useLoopStatus(userId, userReady);
+  if (loop === null) return <div style={{ padding: 40, color: "var(--text-dim)" }}>Loading…</div>;
+  if (loop === "error") {
+    return (
+      <div data-testid="loop-status-error" role="alert" style={{ padding: 40, color: "var(--text-dim)" }}>
+        <p style={{ marginBottom: 12 }}>Couldn&apos;t reach the tutor. Try again.</p>
+        <button type="button" className="btn btn--primary" data-testid="loop-status-retry" onClick={retry}>
+          Try again
+        </button>
+      </div>
+    );
+  }
+  if (loop) {
+    return (
+      <Suspense fallback={<div style={{ padding: 40, color: "var(--text-dim)" }}>Loading…</div>}>
+        <LoopLearn />
+      </Suspense>
+    );
+  }
   return (
     <Suspense fallback={<div style={{ padding: 40, color: "var(--text-dim)" }}>Loading…</div>}>
-      <LearnInner />
+      <LearnInner onLoopAnswer={recheck} />
     </Suspense>
   );
 }
@@ -365,7 +367,7 @@ type SearchParams = ReturnType<typeof useSearchParams>;
 type Router = ReturnType<typeof useRouter>;
 type Toast = ReturnType<typeof useToast>;
 
-function LearnInner() {
+function LearnInner({ onLoopAnswer }: { onLoopAnswer: () => void }) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { userId, userReady } = useUser();
@@ -385,7 +387,7 @@ function LearnInner() {
   const rail = useRailCollapse(isMobile);
   const session = useTutorSession({
     router, searchParams, userId, userReady, toast, prefs, sharedCtx, modelPref,
-    applyGraphDelta: data.applyGraphDelta, setFocusedNodeId,
+    applyGraphDelta: data.applyGraphDelta, setFocusedNodeId, onLoopAnswer,
   });
   const { sessionId, starting, summary, beginSession, handleResume } = session;
 
@@ -559,7 +561,6 @@ function LearnInner() {
         <SessionSummary
           summary={summary}
           onClose={session.closeSummary}
-          onStartNext={session.startNextFromSummary}
         />
       )}
     </FullHeightScreen>
@@ -862,6 +863,14 @@ type RailCollapse = ReturnType<typeof useRailCollapse>;
 
 // The tutor session on screen and every async path that changes it or talks
 // to it: start, resume, send, retry, hint/confused/skip, mode switch, end.
+/** Feedback pacing (lib/feedbackPacing.ts) for the legacy tutor: the session
+ *  on screen counts against prompts, and none opens while a call runs or the
+ *  session is live. */
+function useLearnFeedbackPacing({ sessionId, busy, live }: { sessionId: string | null; busy: boolean; live: boolean }) {
+  useEffect(() => { if (sessionId) noteLearningSession(sessionId); }, [sessionId]);
+  useFeedbackHold(busy || live);
+}
+
 // docs/safety/crisis-support.md: what a session start does with the card its
 // answer may carry. The card INSTEAD of a greeting (no session was opened)
 // always shows and stops the start (`blockedByCard`); the card BESIDE one
@@ -882,7 +891,7 @@ function startCards(intercept: (response: unknown) => boolean, fromNoteId: strin
   };
 }
 
-function useTutorSession({ router, searchParams, userId, userReady, toast, prefs, sharedCtx, modelPref, applyGraphDelta, setFocusedNodeId }: {
+function useTutorSession({ router, searchParams, userId, userReady, toast, prefs, sharedCtx, modelPref, applyGraphDelta, setFocusedNodeId, onLoopAnswer }: {
   router: Router;
   searchParams: SearchParams;
   userId: string;
@@ -893,8 +902,10 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
   modelPref: ModelPref;
   applyGraphDelta: (delta: GraphDelta) => void;
   setFocusedNodeId: (id: string | null) => void;
+  onLoopAnswer: () => void;
 }) {
   const { mode, setMode, topic, setTopic, topicDraft, setTopicDraft, selectedCourseId, setSelectedCourseId, fromNote } = prefs;
+  const loopSignal = useCallback((err: unknown) => { if (answeredByTheLoop(err)) onLoopAnswer(); }, [onLoopAnswer]); // #866 K49
   // docs/safety/crisis-support.md: a session start the crisis screen answered
   // (no session was opened) shows the card as a dialog over the picker; on a
   // note's title the card shows over the session that did start.
@@ -934,6 +945,9 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
   // The server answered 409 to a turn: this session is over (backend E1).
   // Cleared by `enterSession`, so it never follows the student elsewhere.
   const [sessionEnded, setSessionEnded] = useState(false);
+  // "inert" only while a resumed learning-loop session is on screen (Z08,
+  // learn/resumedTranscript.ts); `enterSession` puts it back to "rich".
+  const [transcriptMarkdown, setTranscriptMarkdown] = useState<MarkdownProfile>("rich");
   // Latest mode switch issued; an older one's failure must not roll back a
   // newer one.
   const modeSwitchSeqRef = useRef(0);
@@ -961,6 +975,7 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
     setResuming(false);
     setActionPending(false);
     setSessionEnded(false);
+    setTranscriptMarkdown("rich");
     setStreamingText(null);
     setStreamingStatus(null);
     return epoch;
@@ -973,11 +988,19 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
   };
   // The feedback context belongs to the last session the student ENDED; once
   // they move into another one it would attribute feedback to the wrong one.
-  const clearLastSessionContext = () => {
-    try { sessionStorage.removeItem(LAST_SESSION_CTX_KEY); } catch {}
-  };
+  const clearLastSessionContext = forgetEndedSession;
 
   const [summary, setSummary] = useState<SessionSummaryData | null>(null);
+  // Feedback pacing (lib/feedbackPacing.ts), as in LoopLearn: a prompt counts
+  // against the session on screen, and no survey opens while a session is live
+  // or a tutor turn streams. Ending it is the natural break — End session here
+  // (summary or not), or the server's 409.
+  const [endedHere, setEndedHere] = useState<string | null>(null);
+  useLearnFeedbackPacing({
+    sessionId,
+    busy: starting || resuming || sending || actionPending || streamingText !== null,
+    live: !!sessionId && !sessionEnded && sessionId !== endedHere,
+  });
   const idCounter = useRef(0);
   const msgId = () => `m-${++idCounter.current}`;
 
@@ -1052,12 +1075,13 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
             if (isCurrent()) setStreamingText(prev => (prev ?? "") + delta);
           },
           onGraphUpdate: applyGraphDelta,
+          onPhase: onLoopAnswer, // only the loop's streams send a phase (#866 K49)
           onProgress: (step) => {
             const label = tutorStepLabel(step);
             if (label && isCurrent()) setStreamingStatus(label);
           },
           signal: controller.signal,
-        }, fromNoteId);
+        }, undefined, fromNoteId);
         if (blockedByCard(res)) { if (isCurrent()) setMessages([]); return; }
         if (!res.session_id) throw new Error("Session stream completed without a session_id.");
         newSessionId = res.session_id;
@@ -1079,7 +1103,7 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
         // ChatPanel drops the Stop affordance for this leg (mirrors `send`).
         if (!isCurrent()) return;
         setStreamingText(null);
-        const res = await startSession(userId, topicName, mode, selectedCourseId || undefined, sharedCtx, modelPref, fromNoteId);
+        const res = await startSession(userId, topicName, mode, selectedCourseId || undefined, sharedCtx, modelPref, undefined, fromNoteId);
         if (blockedByCard(res)) { if (isCurrent()) setMessages([]); return; }
         newSessionId = res.session_id;
         replyText = res.initial_message || "Let's begin.";
@@ -1091,8 +1115,9 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
       setMessages([{ id: msgId(), role: "assistant", content: replyText }]);
     } catch (err) {
       if (!isCurrent()) return;
+      loopSignal(err);
       showErrorCard(err); // a refusal can carry the card
-      toast.error(readableError(err, "Couldn't start session."));
+      toast.error(pauseCopyOr(err, readableError(err, "Couldn't start session.")));
       setMessages([]);
     } finally {
       if (isCurrent()) {
@@ -1131,13 +1156,9 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
       setTopic(res.session.topic);
       setMode(normalizeMode(res.session.mode));
       setSelectedCourseId(res.session.course_id || "");
-      setMessages(
-        (res.messages ?? []).map(m => ({
-          id: msgId(),
-          role: m.role === "user" ? "user" : "assistant",
-          content: m.content,
-        })),
-      );
+      const transcript = resumedTranscript(res, msgId);
+      setMessages(transcript.messages);
+      setTranscriptMarkdown(transcript.markdown);
     } catch (err) {
       if (!isCurrent()) return;
       toast.error(readableError(err, "Resume failed."));
@@ -1248,6 +1269,7 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
             if (isCurrent()) setStreamingText(t => (t ?? "") + delta);
           },
           onGraphUpdate: applyGraphDelta,
+          onPhase: onLoopAnswer, // only the loop's streams send a phase (#866 K49)
           onProgress: (step) => {
             const label = tutorStepLabel(step);
             if (label && isCurrent()) setStreamingStatus(label);
@@ -1261,6 +1283,7 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
           appendInterrupted();
           return;
         }
+        loopSignal(err);
         if (isSessionEndedError(err)) {
           // 409: the session is over. Not a failure to retry — no JSON rung
           // (it would 409 too), no interrupted bubble.
@@ -1271,7 +1294,7 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
           // Rung 2: interrupted after producing text — surface it, never
           // silently re-run (the user already saw partial text). The error
           // detail goes to a toast; the transcript keeps the partial.
-          toast.error(readableError(err, "The tutor was interrupted."));
+          toast.error(pauseCopyOr(err, readableError(err, "The tutor was interrupted.")));
           appendInterrupted();
           return;
         }
@@ -1283,7 +1306,7 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
           // stays as an interrupted bubble, error detail in a toast, and
           // Retry is a deliberate user decision rather than a silent
           // re-run.
-          toast.error(readableError(err, "The tutor was interrupted."));
+          toast.error(pauseCopyOr(err, readableError(err, "The tutor was interrupted.")));
           appendInterrupted();
           return;
         }
@@ -1316,11 +1339,12 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
         setMessages(m => [...m, { id: msgId(), role: "assistant", content: res.reply || "", crisisSupport }]);
       }
     } catch (err) {
+      loopSignal(err);
       if (isSessionEndedError(err)) { endedTurn(); return; }
       // The Rung-3 JSON fallback itself failed — the ladder is exhausted.
       // ADR 0020 treats this like any mid-stream failure: interrupted bubble
       // + Retry, error detail in a toast rather than a fake assistant reply.
-      toast.error(readableError(err, "The tutor is unavailable."));
+      toast.error(pauseCopyOr(err, readableError(err, "The tutor is unavailable.")));
       appendInterrupted();
     } finally {
       // A superseded turn leaves `sending` alone: `enterSession` already
@@ -1336,7 +1360,7 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
         streamAbort.current = null;
       }
     }
-  }, [sessionId, userId, mode, sharedCtx, modelPref, applyGraphDelta, toast]);
+  }, [sessionId, userId, mode, sharedCtx, modelPref, applyGraphDelta, toast, loopSignal, onLoopAnswer]);
 
   // ADR 0020 Retry: re-dispatch the interrupted turn's original text. Drop
   // the failed pair first (removeInterruptedTurn) so `send`'s own user-bubble
@@ -1384,8 +1408,9 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
     } catch (err) {
       if (!isCurrent()) return;
       setMessages(m => m.filter(x => x.id !== labelId));
+      loopSignal(err);
       if (isSessionEndedError(err)) { setSessionEnded(true); return; }
-      toast.error(humanizeError(err, "Action failed."));
+      toast.error(pauseCopyOr(err, humanizeError(err, "Action failed.")));
     } finally {
       if (isCurrent()) {
         setSending(false);
@@ -1437,9 +1462,8 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
       const res = await endSession(sessionId, userId);
       // Write session context for navigate-away feedback — even if the
       // student has already moved on, this IS the session they ended.
-      try {
-        sessionStorage.setItem(LAST_SESSION_CTX_KEY, JSON.stringify({ sessionId, topic }));
-      } catch {}
+      rememberEndedSession({ sessionId, topic });
+      setEndedHere(sessionId);
       // …but its summary only belongs on screen while they're still in it.
       if (sessionEpochRef.current === epoch) setSummary(res.summary ?? null);
     } catch (err) {
@@ -1465,21 +1489,12 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
     router.replace(`/learn?mode=${mode}`, { scroll: false });
   };
 
-  const startNextFromSummary = (concept: string) => {
-    setSummary(null);
-    enterSession(null);
-    setMessages([]);
-    setTopicDraft(concept);
-    setTopic(concept);
-    router.replace(`/learn?topic=${encodeURIComponent(concept)}&mode=${mode}`, { scroll: false });
-  };
-
   const stopStream = () => streamAbort.current?.abort();
 
   return {
     sessionId, messages, sending, starting, resuming, streamingText, streamingStatus, actionPending,
-    sessionEnded, summary, beginSession, handleStart, handleResume, send, handleRetry, handleAction,
-    handleModeSwitch, endConfirm, closeSummary, handleBackToLearn, startNextFromSummary, stopStream,
+    sessionEnded, transcriptMarkdown, summary, beginSession, handleStart, handleResume, send, handleRetry, handleAction,
+    handleModeSwitch, endConfirm, closeSummary, handleBackToLearn, stopStream,
     crisisDialog: crisis.dialog,
   };
 }
@@ -1774,6 +1789,7 @@ function EntryStartCard({
     <div className="card" style={{ padding: "var(--pad-xl)" }}>
       <div className="label-micro" style={{ marginBottom: 8 }}>Course (optional)</div>
       <CustomSelect<string>
+        ariaLabel="Course (optional)"
         value={selectedCourseId}
         options={[
           { value: "", label: "No course" },
@@ -1922,6 +1938,7 @@ function ChatColumn({ session, topic, mode, courseCode, sharedCtx, setSharedCtx,
         // the waiting bubble but no Stop.
         onStop={session.actionPending ? undefined : session.stopStream}
         onRetry={session.handleRetry}
+        markdown={session.transcriptMarkdown}
       />
     </div>
   );

@@ -587,7 +587,9 @@ class TestRateAndDeleteAreTheOwnersOnly:
              patch_flashcards("check_achievements"):
             r = client.post("/api/flashcards/rate",
                             json={"user_id": USER_ID, "card_id": "f1", "rating": 2})
-        assert r.status_code == 200 and r.json() == {"ok": True}
+        # PKG-11 / PKG-14b: every rating is an FSRS review (2 = hard -> FSRS Hard)
+        assert r.status_code == 200
+        assert r.json()["ok"] is True and r.json()["fsrs_rating"] == 2 and r.json()["due_at"]
         assert cards_table.select.call_args.kwargs["filters"] == self.OWN
         written, = cards_table.update.call_args.args
         assert (written["times_reviewed"], written["last_rating"]) == (3, 2)
@@ -633,11 +635,29 @@ class TestRateAndDeleteAreTheOwnersOnly:
 
 
 class TestListErrors:
+    @staticmethod
+    def _postgrest_error(status: int, body: dict) -> Exception:
+        import httpx
+
+        request = httpx.Request("GET", "http://db/rest/v1/flashcards")
+        response = httpx.Response(status, json=body, request=request)
+        return httpx.HTTPStatusError(f"{status} error", request=request, response=response)
+
     def test_a_database_without_the_table_lists_no_cards(self):
-        with patch("services.flashcards.cards.table",
-                   side_effect=RuntimeError('relation "flashcards" does not exist')):
+        missing = self._postgrest_error(
+            404, {"code": "PGRST205", "message": "Could not find the table 'public.flashcards'"})
+        with patch("services.flashcards.cards.table", side_effect=missing):
             r = client.get(f"/api/flashcards/user/{USER_ID}")
-        assert r.status_code == 200 and r.json() == {"flashcards": []}
+        assert r.status_code == 200 and r.json() == {"flashcards": [], "due_count": 0}
+
+    def test_a_not_found_that_is_not_the_missing_table_is_a_500(self):
+        """Matched on PostgREST's error code, not its text: a 404 from a proxy or
+        a missing column says "not found" too, and must not read as no deck."""
+        other = self._postgrest_error(
+            400, {"code": "42703", "message": "column flashcards.due_at not found"})
+        with patch("services.flashcards.cards.table", side_effect=other):
+            r = client.get(f"/api/flashcards/user/{USER_ID}")
+        assert r.status_code == 500
 
     def test_any_other_failure_is_a_500_with_the_error(self):
         with patch("services.flashcards.cards.table", side_effect=RuntimeError("connection reset")):
@@ -767,3 +787,21 @@ class TestWeakConceptsStayInTheRequestsCourse:
                 "user_id": USER_ID, "topic": "Recursion", "count": 1, "course_id": "c-cs",
             })
         weak.assert_called_once_with(USER_ID, "Recursion", course_id="c-cs")
+
+
+def test_a_nan_score_neither_breaks_nor_hides_the_weak_concept_list(monkeypatch):
+    """PostgREST sends a float8 NaN as the string "NaN". The filter and the sort
+    read it through one rule (stored_score): the row is a weak concept at 0.0,
+    sorted first, and the other weak concepts are still listed. Before, the
+    filter classified it and the sort compared "NaN" with floats, which raised
+    and the caller's guard returned [] for the whole course."""
+    from services.flashcards import context
+
+    rows = [
+        {"concept_name": "Heaps", "mastery_score": 0.2},
+        {"concept_name": "Graphs", "mastery_score": "NaN"},
+        {"concept_name": "Trees", "mastery_score": 0.9},
+        {"concept_name": "Tries", "mastery_score": 0.1},
+    ]
+    monkeypatch.setattr(context, "_weak_concept_candidates", lambda *a, **k: rows)
+    assert context._get_weak_concepts("u1", "CS101") == ["Graphs", "Tries", "Heaps"]

@@ -460,35 +460,33 @@ _CARD = {"id": "f1", "user_id": ME, "topic": "Recursion", "offering_id": None,
 
 
 class TestCardListDueAt:
-    def test_a_stored_due_at_is_never_surfaced(self):
-        """Nothing writes `flashcards.due_at` (there is no scheduler), so a
-        value on a database that still carries the reverted learning-loop
-        column is stale: a card frozen "due" forever. The list answers
-        `due_at: null` for every card, keeping the key."""
+    """The learning loop reland (PKG-11 / PKG-14b): `rate_card` schedules every
+    card with FSRS (migration 20260927035346_learning_flashcards_fsrs), so the
+    list reads and serves its schedule. tests/test_learning_flashcards_fsrs.py
+    pins the order and the rating."""
+
+    def test_a_stored_due_at_is_the_cards_schedule(self):
         captured = {}
-        rows = [{**_CARD, "due_at": "2026-11-12T09:00:00+00:00"},
+        rows = [{**_CARD, "due_at": "2026-11-12T09:00:00+00:00", "fsrs_s": 2.0},
                 {**_CARD, "id": "f2", "due_at": None}]
         with patch("services.flashcards.cards.table", side_effect=_cards_table(rows, captured)):
             r = client.get(f"/api/flashcards/user/{ME}")
         assert r.status_code == 200
         cards = {c["id"]: c for c in r.json()["flashcards"]}
-        assert set(cards) == {"f1", "f2"}
-        assert all("due_at" in c and c["due_at"] is None for c in cards.values())
+        assert cards["f1"]["due_at"] == "2026-11-12T09:00:00+00:00"
+        assert cards["f2"]["due_at"] is None  # never rated: never due
+        assert r.json()["due_count"] == 1
 
-    def test_due_at_is_null_on_a_database_without_the_column(self):
-        """No migration here adds `flashcards.due_at`, so the read must not
-        name it: a row that lacks the key still lists, with `due_at: null`."""
+    def test_the_read_names_the_card_and_its_fsrs_state(self):
         captured = {}
         with patch("services.flashcards.cards.table", side_effect=_cards_table([_CARD], captured)):
-            r = client.get(f"/api/flashcards/user/{ME}")
-        assert r.status_code == 200
-        [card] = r.json()["flashcards"]
-        assert "due_at" in card and card["due_at"] is None
-        assert "due_at" not in captured["columns"]
+            client.get(f"/api/flashcards/user/{ME}")
+        assert captured["columns"] == (
+            "id,user_id,topic,offering_id,front,back,times_reviewed,last_rating,"
+            "last_reviewed_at,created_at,fsrs_d,fsrs_s,due_at,reps,lapses"
+        )
 
-    def test_only_the_card_fields_are_returned(self):
-        """The read is `*`; scheduler bookkeeping a database may carry beside
-        `due_at` is not part of the card."""
+    def test_a_card_carries_its_fsrs_state_and_course(self):
         captured = {}
         rows = [{**_CARD, "due_at": None, "fsrs_s": 3.2, "fsrs_d": 5.1, "reps": 4, "lapses": 1}]
         with patch("services.flashcards.cards.table", side_effect=_cards_table(rows, captured)):
@@ -496,4 +494,5 @@ class TestCardListDueAt:
         assert set(card) == {
             "id", "user_id", "topic", "offering_id", "front", "back", "times_reviewed",
             "last_rating", "last_reviewed_at", "created_at", "due_at", "course_id",
+            "fsrs_s", "fsrs_d", "reps", "lapses",
         }

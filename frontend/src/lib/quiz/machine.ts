@@ -11,6 +11,7 @@
  * to see whether an event was accepted.
  */
 
+import type { StudentConfidence } from "@/lib/api";
 import { QUIZ_ERROR_COPY } from "./errors";
 import type { EntryRequest } from "./source";
 import type {
@@ -55,6 +56,16 @@ export type QuizEvent =
   | { type: "GENERATE_FAILED"; error: QuizError }
   | { type: "SELECT"; index: number }
   | { type: "WRITE"; text: string }
+  /**
+   * Learning-loop spec §13 A132: the current question's optional stated
+   * confidence (A127's "Guessing" / "Fairly sure" / "Sure"; null takes a
+   * choice back). Answer state like SELECT and WRITE: it lives on the item
+   * until `/answer` carries it, so choosing makes no request and Submit never
+   * waits on it. Accepted only while the current item is live (`active`, no
+   * verdict) — once recorded, the server keeps the first response, so a
+   * change afterwards would describe an answer it never went with.
+   */
+  | { type: "CONFIDENCE"; level: StudentConfidence | null }
   | { type: "SUBMIT_ANSWER" }
   | { type: "ANSWER_RECORDED"; result: AnswerResult }
   | { type: "ANSWER_FAILED"; error: QuizError }
@@ -262,6 +273,7 @@ function itemsFor(questions: WireQuestion[]): QuizItem[] {
     selectedIndex: null,
     verdict: null,
     flagged: false,
+    confidence: null,
   }));
 }
 
@@ -398,6 +410,14 @@ function onSelect(session: QuizSession, event: EventOf<"SELECT">): QuizSession {
   if (session.phase !== "active") return session;
   if (!session.items[session.cursor]) return session;
   return withItem(session, session.cursor, { selectedIndex: event.index });
+}
+
+function onConfidence(session: QuizSession, event: EventOf<"CONFIDENCE">): QuizSession {
+  if (session.phase !== "active") return session;
+  const item = session.items[session.cursor];
+  if (!item || item.verdict) return session;
+  if ((item.confidence ?? null) === event.level) return session;
+  return withItem(session, session.cursor, { confidence: event.level });
 }
 
 function onSubmitAnswer(session: QuizSession): QuizSession {
@@ -617,6 +637,7 @@ const HANDLERS = {
   GENERATE_FAILED: onGenerateFailed,
   WRITE: onWrite,
   SELECT: onSelect,
+  CONFIDENCE: onConfidence,
   SUBMIT_ANSWER: onSubmitAnswer,
   ANSWER_RECORDED: onAnswerRecorded,
   ANSWER_FAILED: onAnswerFailed,
@@ -659,6 +680,15 @@ function wireVerdict(question: WireQuestion, response: WireResponse | undefined)
     : null;
 }
 
+/** §13 A132: an answered question's stated confidence is the one its recorded
+ *  response carries (null = none was stated) — the server's word, like the
+ *  answer itself. An unanswered one keeps the choice this browser saved before
+ *  it left. */
+function resumedConfidence(previous: QuizItem | undefined, response: WireResponse | undefined): StudentConfidence | null {
+  if (response) return response.confidence ?? null;
+  return previous?.confidence ?? null;
+}
+
 function resumedItem(
   question: WireQuestion,
   index: number,
@@ -673,6 +703,7 @@ function resumedItem(
     answerText: response?.answer_text ?? previous?.answerText,
     verdict: selected === undefined ? null : previous?.verdict ?? wireVerdict(question, response),
     flagged: previous?.flagged ?? false,
+    confidence: resumedConfidence(previous, response),
   };
 }
 

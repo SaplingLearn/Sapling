@@ -83,23 +83,29 @@ export function ShellFrame({ children }: { children: React.ReactNode }) {
     >
       <a href="#main-content" className="skip-link">Skip to content</a>
       <TopNav />
-      <main
-        id="main-content"
-        tabIndex={-1}
-        // The "authed shell mounted" E2E anchor — see the sidebar layout above.
-        data-testid="app-shell"
-        // The shell's scrollport — see the sidebar layout above.
-        data-scroll-container=""
-        style={{
-          flex: 1,
-          overflowY: "auto",
-          minWidth: 0,
-          position: "relative",
-          zIndex: 1,
-        }}
-      >
-        <NavFeatureGate>{children}</NavFeatureGate>
-      </main>
+      {/* Same element path to <main> as the sidebar layout (root → nav →
+          wrapper div → main): crossing the mobile breakpoint swaps the nav but
+          must NOT remount the page — a remount drops a screen's in-memory
+          state (quiz results, a streaming chat turn, unsaved input). */}
+      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", position: "relative" }}>
+        <main
+          id="main-content"
+          tabIndex={-1}
+          // The "authed shell mounted" E2E anchor — see the sidebar layout above.
+          data-testid="app-shell"
+          // The shell's scrollport — see the sidebar layout above.
+          data-scroll-container=""
+          style={{
+            flex: 1,
+            overflowY: "auto",
+            minWidth: 0,
+            position: "relative",
+            zIndex: 1,
+          }}
+        >
+          <NavFeatureGate>{children}</NavFeatureGate>
+        </main>
+      </div>
       <Suspense fallback={null}>
         <FeedbackFlow />
         <SessionFeedbackGlobal />

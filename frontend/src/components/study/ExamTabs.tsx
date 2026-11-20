@@ -9,12 +9,19 @@
  *
  * The selected tab's underline slides over from the tab that had it, on the
  * clock the rest of the hub changes on (./hubMotion.ts).
+ *
+ * The exams are tabs (WAI-ARIA tabs, automatic activation): a tab re-scopes
+ * the page under the row to its exam, the readiness band with Up Next and the
+ * roadmap (`aria-controls`). One tab is in the Tab order, the selected one;
+ * the arrow keys, Home and End move along the row and select the tab they
+ * land on, which only re-draws what is on the page. With no exam there are no
+ * tabs, and the row holds only its "+ Add Exam or Deadline" link.
  */
 import React from "react";
 import { INHERIT_FONT } from "@/lib/inheritFont";
 import { Icon } from "../Icon";
 import { HUB_EASE, HUB_SWITCH_MS, HUB_WHOLE, reducedMotion } from "./hubMotion";
-import { DISPLAY, ELLIPSIS, POPOVER } from "./hubUi";
+import { DISPLAY, ELLIPSIS, POPOVER, READINESS_ID, ROADMAP_ID } from "./hubUi";
 import s from "./StudyHub.module.css";
 import { countdown, countFg, daysTo, fmtDow, type AssessType, type Assessment } from "./studyModel";
 
@@ -29,9 +36,26 @@ const TAB_LINE: React.CSSProperties = { position: "absolute", left: 0, right: 0,
 const ICON_BUTTON: React.CSSProperties = { width: 36, height: 36, display: "flex", alignItems: "center", justifyContent: "center", border: 0, borderRadius: "var(--r-sm)", background: "transparent", color: "var(--text-dim)", cursor: "pointer", position: "relative" };
 const BADGE: React.CSSProperties = { position: "absolute", top: 2, right: 1, minWidth: 16, height: 16, padding: "0 4px", boxSizing: "border-box", borderRadius: 8, background: "var(--err)", color: "#FFFFFF", fontSize: "var(--fs-2xs)", fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 0 0 2px var(--bg)" };
 
-function ExamTab({ exam, on, today, onSelect }: { exam: Assessment; on: boolean; today: Date; onSelect: () => void }) {
+/** What every tab re-scopes. */
+const TAB_PANELS = `${READINESS_ID} ${ROADMAP_ID}`;
+
+/**
+ * Where an arrow key, Home or End moves from tab `at` of `count` (the arrows
+ * wrap round the row); null for any other key.
+ */
+export function tabStep(key: string, at: number, count: number): number | null {
+  if (key === "ArrowRight") return (at + 1) % count;
+  if (key === "ArrowLeft") return (at - 1 + count) % count;
+  if (key === "Home") return 0;
+  if (key === "End") return count - 1;
+  return null;
+}
+
+/** `tabStop`: this tab is the row's one stop in the Tab order (roving tabindex). */
+function ExamTab({ exam, on, tabStop, today, onSelect }: { exam: Assessment; on: boolean; tabStop: boolean; today: Date; onSelect: () => void }) {
   return (
-    <button role="tab" aria-selected={on} data-tab={exam.id} className={on ? undefined : s.hoverTab} onClick={onSelect} style={TAB}>
+    <button type="button" role="tab" aria-selected={on} aria-controls={TAB_PANELS} tabIndex={tabStop ? 0 : -1} data-tab={exam.id}
+      className={on ? undefined : s.hoverTab} onClick={onSelect} style={TAB}>
       <span style={{ fontSize: "var(--fs-base)", fontWeight: 600, color: on ? "var(--text)" : "var(--text-muted)", transition: TITLE_FADE, whiteSpace: "nowrap" }}>{exam.title}</span>
       <span style={{ fontSize: "var(--fs-sm)", color: "var(--text-muted)", whiteSpace: "nowrap" }}>{fmtDow(exam.iso, today)}</span>
       {on && <span data-tab-line="" aria-hidden="true" style={TAB_LINE} />}
@@ -64,6 +88,20 @@ function useSlidingLine(list: React.RefObject<HTMLElement | null>, selectedId: s
     running.current = line.animate([{ transform: start }, { transform: "none" }], { ...HUB_WHOLE, easing: HUB_EASE });
   }, [list, selectedId]);
   React.useEffect(() => () => running.current?.cancel(), []);
+}
+
+/** The tab list's keys: an arrow, Home or End selects the tab it lands on and
+ *  moves focus there (the tab that had focus leaves the Tab order with it). */
+function tabKeys(exams: Assessment[], onSelectExam: (id: string) => void) {
+  return (e: React.KeyboardEvent<HTMLElement>) => {
+    const at = exams.findIndex(x => x.id === (e.target as HTMLElement).dataset.tab);
+    const to = at < 0 ? null : tabStep(e.key, at, exams.length);
+    if (to === null) return;
+    e.preventDefault();
+    const id = exams[to].id;
+    onSelectExam(id);
+    [...e.currentTarget.querySelectorAll<HTMLElement>("[data-tab]")].find(t => t.dataset.tab === id)?.focus();
+  };
 }
 
 function DeadlineRow({ item, today, onPick }: { item: Assessment; today: Date; onPick: () => void }) {
@@ -133,10 +171,15 @@ export function ExamTabs(props: ExamTabsProps) {
   const { exams, exam, soon, today, bellOpen, onBell, onAdd } = props;
   const tabs = React.useRef<HTMLDivElement | null>(null);
   useSlidingLine(tabs, exam?.id ?? null);
+  // The selected tab is the row's Tab stop; the first one if none is.
+  const stop = exams.some(e => e.id === exam?.id) ? exam?.id : exams[0]?.id;
+  // The tab list only once there are tabs: the "+ Add" link that stands in
+  // for them is no tab (axe aria-required-children), but keeps their place.
+  const tablist = exams.length > 0 ? { role: "tablist", "aria-label": "Exams", onKeyDown: tabKeys(exams, props.onSelectExam) } : {};
   return (
     <div className={s.areaTabs} style={{ display: "flex", alignItems: "center", gap: 16, borderBottom: "1px solid var(--border)", minWidth: 0 }}>
-      <div ref={tabs} key={props.courseId} className={s.paneEnter} role="tablist" aria-label="Exams" style={{ flex: "0 1 auto", minWidth: 0, alignSelf: "stretch", display: "flex", gap: 28, overflowX: "auto", overflowY: "hidden" }}>
-        {exams.map(e => <ExamTab key={e.id} exam={e} on={e.id === exam?.id} today={today} onSelect={() => props.onSelectExam(e.id)} />)}
+      <div ref={tabs} key={props.courseId} className={s.paneEnter} {...tablist} style={{ flex: "0 1 auto", minWidth: 0, alignSelf: "stretch", display: "flex", gap: 28, overflowX: "auto", overflowY: "hidden" }}>
+        {exams.map(e => <ExamTab key={e.id} exam={e} on={e.id === exam?.id} tabStop={e.id === stop} today={today} onSelect={() => props.onSelectExam(e.id)} />)}
         {exams.length === 0 && (
           <button onClick={onAdd} style={{ alignSelf: "center", padding: "0 0 8px", border: 0, background: "transparent", ...INHERIT_FONT, fontSize: "var(--fs-md)", fontWeight: 600, color: "var(--brand-forest)", cursor: "pointer" }}>+ Add Exam or Deadline</button>
         )}

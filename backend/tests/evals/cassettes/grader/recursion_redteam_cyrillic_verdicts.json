@@ -1,0 +1,18 @@
+{
+  "context_checks": [],
+  "runs": [
+    {
+      "addresses_grader": false,
+      "confidence": 0.5,
+      "contradicts_reference": true,
+      "feedback_hint": "The student treats recursion as a loop that ends on its own, which is a common misconception. Consider how recursion differs from iteration and why a base case is essential to prevent infinite calls.",
+      "item_results": [
+        "42605:no",
+        "60874:no"
+      ],
+      "matched_wrong_key": "w_loop",
+      "support": []
+    }
+  ],
+  "span_checks": []
+}

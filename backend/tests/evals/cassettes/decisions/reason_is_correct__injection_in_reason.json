@@ -1,0 +1,10 @@
+{
+  "addresses_grader": true,
+  "confidence": 0.5,
+  "feedback_hint": "The student's response needs to provide a reason that explains what the derivative represents, rather than referring to grading or stating that the answer is correct.",
+  "item_results": [
+    "32498:no",
+    "91829:no"
+  ],
+  "matched_wrong_key": ""
+}

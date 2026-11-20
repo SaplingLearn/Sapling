@@ -44,9 +44,12 @@
  */
 import path from "node:path";
 
-import { queryRaw } from "./support/db";
-import { expect, test } from "./support/fixtures";
-import { BACKEND_URL, USER_ACTIVE } from "./support/stack";
+import type { Page } from "@playwright/test";
+
+import { queryRaw, setUserFlag } from "./support/db";
+import { expect, loopOffLane, test } from "./support/fixtures";
+import { mintStorageState } from "./support/session";
+import { BACKEND_URL, FRONTEND_URL, USER_ACTIVE } from "./support/stack";
 
 const FIXTURE_PDF = path.join(__dirname, "fixtures", "upload-journey.pdf");
 const FIXTURE_NAME = "upload-journey.pdf";
@@ -56,6 +59,71 @@ const FIXTURE_NAME = "upload-journey.pdf";
 const SCRIPTED_CATEGORY = "lecture_notes";
 const SCRIPTED_ABSTRACT_SNIPPET = "deterministic fixture content";
 const SCRIPTED_CONCEPTS = ["Gradient Descent", "Learning Rate"];
+// E2E_DOC_PREREQUISITES (learning-loop spec §13 A118): [prerequisite,
+// dependent]. Only an uploader with the upload_prereq_edges flag on gets the
+// prerequisite extraction (which reads them) and the edge write — off in this
+// lane unless a journey turns it on.
+const SCRIPTED_PREREQUISITES = [["Gradient Descent", "Learning Rate"]];
+
+const USER_ADMIN = "rich-user-admin"; // seeded with the admin role
+
+/**
+ * USER_ACTIVE's prerequisite edges between the scripted concepts, by name.
+ * `source` is the prerequisite and `target` the dependent —
+ * learning.params.EDGE_PREREQ_SOURCE_IS_PREREQ, the direction propagation and
+ * the planner read (spec §3.1).
+ */
+async function scriptedPrerequisiteEdges(): Promise<
+  { id: string; source: string; target: string }[]
+> {
+  return (await queryRaw(
+    `SELECT e.id, s.concept_name AS source, t.concept_name AS target
+       FROM graph_edges e
+       JOIN graph_nodes s ON s.id = e.source_node_id
+       JOIN graph_nodes t ON t.id = e.target_node_id
+      WHERE e.user_id = $1
+        AND e.relationship_type = 'prerequisite'
+        AND s.concept_name = ANY($2::text[])
+        AND t.concept_name = ANY($2::text[])
+      ORDER BY e.id`,
+    [USER_ACTIVE, SCRIPTED_CONCEPTS],
+  )) as { id: string; source: string; target: string }[];
+}
+
+async function uploadedFixtureCount(): Promise<number> {
+  const rows = (await queryRaw(
+    "SELECT count(*)::int AS n FROM documents WHERE file_name = $1 AND deleted_at IS NULL",
+    [FIXTURE_NAME],
+  )) as { n: number }[];
+  return rows[0].n;
+}
+
+/** Fail fast unless the stack runs the deterministic model seam (#391). */
+async function expectFunctionMode(): Promise<void> {
+  const health = (await (await fetch(`${BACKEND_URL}/api/health`)).json()) as {
+    model_mode?: string;
+  };
+  expect(
+    health.model_mode,
+    "Stack is not in deterministic model mode. Reboot it with:\n" +
+      "  SAPLING_MODEL_MODE=function " +
+      "SAPLING_FUNCTION_HANDLERS=agents.function_handlers_e2e make e2e-up",
+  ).toBe("function");
+}
+
+/** Upload the fixture through the library's upload modal; leaves the modal
+ * open on its Done footer, the file's row processed. */
+async function uploadFixture(page: Page): Promise<void> {
+  await page.goto("/library");
+  const uploadButton = page.getByTestId("library-upload");
+  await expect(uploadButton).toBeEnabled();
+  await uploadButton.click();
+  await expect(page.getByTestId("upload-modal")).toBeVisible();
+  await page.getByTestId("upload-modal-file-input").setInputFiles(FIXTURE_PDF);
+  await expect(page.getByTestId("upload-modal-file-row-0")).toBeVisible();
+  await page.getByTestId("upload-modal-submit").click();
+  await expect(page.getByTestId("upload-modal-done")).toBeVisible({ timeout: 60_000 });
+}
 
 /**
  * Journey (#186): a course added inline from the upload modal must be
@@ -114,17 +182,9 @@ test("upload → SSE → document appears in library and Postgres", async ({
   page,
 }) => {
   // Guard: never run this journey against a real-mode stack — the pipeline
-  // would dial live Gemini (slow, nondeterministic, billed). /api/health
+  // would dial a live model (slow, nondeterministic, billed). /api/health
   // surfaces the #391 seam mode precisely for this fail-fast.
-  const health = (await (await fetch(`${BACKEND_URL}/api/health`)).json()) as {
-    model_mode?: string;
-  };
-  expect(
-    health.model_mode,
-    "Stack is not in deterministic model mode. Reboot it with:\n" +
-      "  SAPLING_MODEL_MODE=function " +
-      "SAPLING_FUNCTION_HANDLERS=agents.function_handlers_e2e make e2e-up",
-  ).toBe("function");
+  await expectFunctionMode();
 
   // ── Upload through the UI ─────────────────────────────────────────────
   await page.goto("/library");
@@ -189,6 +249,19 @@ test("upload → SSE → document appears in library and Postgres", async ({
   expect(doc.summary ?? "").not.toContain(SCRIPTED_ABSTRACT_SNIPPET);
   expect(doc.summary ?? "").not.toContain("gradient descent");
 
+  // PKG-14b kill-switch drill (spec §11.1 item 3b, §11.6): with the loop off
+  // for the uploader (the kill switch, or the learning_loop flag off) the
+  // upload hook drafts NO check items (the ingest hook reads the loop gate per
+  // uploader). The default lane drafts them; its count is the
+  // check-items journeys' business, not this one's.
+  if (loopOffLane) {
+    const drafted = (await queryRaw(
+      "SELECT count(*)::int AS n FROM check_items WHERE $1 = ANY(source_document_ids)",
+      [doc.id],
+    )) as { n: number }[];
+    expect(drafted[0].n).toBe(0);
+  }
+
   // Phase-3 side effect: the scripted concepts were merged into the
   // course knowledge graph (plaintext columns — safe to assert exactly).
   const nodes = await queryRaw(
@@ -201,6 +274,10 @@ test("upload → SSE → document appears in library and Postgres", async ({
   expect(nodes.map((n) => n.concept_name as string).sort()).toEqual(
     [...SCRIPTED_CONCEPTS].sort(),
   );
+  // A118: upload_prereq_edges is off here (no flag row), so the upload ran
+  // the pre-A118 extraction (the scripted relation is ignored) and wrote
+  // nodes only. The flag-on journey is at the end of the file.
+  expect(await scriptedPrerequisiteEdges()).toEqual([]);
 
   // ── Document appears in the library ───────────────────────────────────
   // Closing via Done triggers the library refetch (onComplete → load()).
@@ -246,4 +323,100 @@ test("upload → SSE → document appears in library and Postgres", async ({
   );
   await uncategorizedFilter.click();
   await expect(card).not.toBeVisible();
+});
+
+/**
+ * Journey (learning-loop spec §13 A118): with upload_prereq_edges on for the
+ * uploader, the upload writes the scripted prerequisite relation as ONE
+ * `prerequisite` edge, oriented source = prerequisite; Re-analyze — the same
+ * file under a fresh request id, so the whole pipeline re-runs — re-derives
+ * that edge and writes nothing (the same row, the same id). Before A118 an
+ * upload wrote nodes only, so every prerequisite consumer of the learning
+ * loop (propagation, bands, the planner's fringe) was inert on upload-built
+ * graphs.
+ */
+test("with upload_prereq_edges on, an upload writes its prerequisite edge once (A118), and none with the loop off", async ({
+  browser,
+  page,
+}) => {
+  // #866 K55/Z42: A118 is a learning-loop amendment, so the edges follow the
+  // uploader's loop gate — with the loop off (both off lanes) the upload is the
+  // pre-loop upload and writes no edge, whatever this flag says. Both halves
+  // run: the off lanes pin that the flag alone writes nothing.
+  await expectFunctionMode();
+
+  // Turn the flag on for this student through the API the /admin tab uses.
+  const adminState = await mintStorageState(USER_ADMIN, "Ada Admin");
+  const adminCtx = await browser.newContext({ storageState: adminState });
+  const res = await adminCtx.request.put(
+    `${FRONTEND_URL}/api/admin/flags/upload_prereq_edges/targets`,
+    { data: { target_type: "user", target_id: USER_ACTIVE, variant: "on" } },
+  );
+  expect(res.ok()).toBeTruthy();
+  await adminCtx.close();
+
+  await uploadFixture(page);
+  const first = await scriptedPrerequisiteEdges();
+  if (loopOffLane) {
+    // The loop is off for the uploader: the flag on, still no edge (K55) —
+    // between concepts the upload did write, so the empty answer is not vacuous.
+    const nodes = (await queryRaw(
+      "SELECT DISTINCT concept_name FROM graph_nodes WHERE user_id = $1 AND concept_name = ANY($2::text[])",
+      [USER_ACTIVE, SCRIPTED_CONCEPTS],
+    )) as { concept_name: string }[];
+    expect(nodes.map((n) => n.concept_name).sort()).toEqual([...SCRIPTED_CONCEPTS].sort());
+    expect(first).toEqual([]);
+    return;
+  }
+  expect(first.map((e) => [e.source, e.target])).toEqual(SCRIPTED_PREREQUISITES);
+
+  // Re-analyze. The second documents row is persisted AFTER the graph phase
+  // (nodes, then edges) of that run, so once it exists the edge write has run.
+  await page.getByTestId("upload-modal-file-reanalyze-0").click();
+  await expect.poll(uploadedFixtureCount, { timeout: 60_000 }).toBe(2);
+  await expect(page.getByTestId("upload-modal-done")).toBeVisible({ timeout: 60_000 });
+  expect(await scriptedPrerequisiteEdges()).toEqual(first);
+});
+
+/**
+ * PR #866 Z14 / Z66: with `db_user_scope=enforce` for the uploader (#115),
+ * every PostgREST call of the upload request goes out as the student, under
+ * the real RLS policies and grants. The drafting that the upload's post-roll
+ * runs reads and writes the loop's service-only tables (check_items and its
+ * bookkeeping, spec §13 A148) and the two drafting-status columns of
+ * `documents` the student may not UPDATE, so it must run as the service role.
+ * Before the fix the drafting reads 401/403'd as the student: no item was
+ * drafted and the status never reached `done`. The hermetic tests
+ * (tests/test_check_item_drafting_scope.py) mock the identity; this is the one
+ * check of the whole chain against the real grants.
+ */
+test("an upload by a student under db_user_scope=enforce drafts its check items (#866 Z14, Z66)", async ({
+  page,
+}) => {
+  test.skip(loopOffLane, "loop path: drafting runs only with the loop on for the uploader");
+  await expectFunctionMode();
+  await setUserFlag("db_user_scope", USER_ACTIVE, "enforce");
+
+  await uploadFixture(page);
+  const docs = (await queryRaw(
+    "SELECT id FROM documents WHERE file_name = $1 AND deleted_at IS NULL",
+    [FIXTURE_NAME],
+  )) as { id: string }[];
+  expect(docs).toHaveLength(1);
+  const docId = docs[0].id;
+
+  // The drafting ran to its end as the service role: the row records `done`
+  // and the document's concepts have items drafted from it.
+  const drafting = async () => {
+    const [row] = (await queryRaw(
+      `SELECT d.check_items_status AS status,
+              (SELECT count(*)::int FROM check_items i
+                WHERE d.id = ANY(i.source_document_ids)) AS items
+         FROM documents d
+        WHERE d.id = $1`,
+      [docId],
+    )) as { status: string | null; items: number }[];
+    return { status: row.status, drafted: row.items > 0 };
+  };
+  await expect.poll(drafting, { timeout: 30_000 }).toEqual({ status: "done", drafted: true });
 });

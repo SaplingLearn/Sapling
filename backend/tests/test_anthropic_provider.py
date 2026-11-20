@@ -70,11 +70,29 @@ def test_unknown_env_override_fails_at_model_construction(monkeypatch):
 
 
 def test_every_default_slot_is_claude():
-    """The swap itself: no agent slot still defaults to Gemini."""
-    assert {provider_for_model(m) for m in _DEFAULTS.values()} == {"anthropic"}
+    """The swap itself: no agent slot still defaults to Gemini — except the
+    learning-loop slots awaiting their Claude eval pass, which are named, and
+    only those (LOOP_SLOTS_PENDING_CLAUDE_EVAL)."""
+    from agents._providers import LOOP_SLOTS_PENDING_CLAUDE_EVAL
+
+    claude = {t: m for t, m in _DEFAULTS.items() if t not in LOOP_SLOTS_PENDING_CLAUDE_EVAL}
+    assert {provider_for_model(m) for m in claude.values()} == {"anthropic"}
     assert set(_ANTHROPIC_EFFORT) == set(_DEFAULTS), (
         "every slot needs an explicit Claude effort level"
     )
+
+
+def test_every_default_is_claude_and_the_pending_set_is_unevaluated():
+    """No slot defaults to Gemini (owner decision 2026-11-19: everything runs on
+    Claude). The pending set names the loop slots whose Claude eval pass has not
+    run; none of them may list a claude-* model as evaluated, or the boot guard
+    would stop saying so. A slot leaves the set in the change that records its
+    Claude eval and adds the model to EVALUATED_MODELS."""
+    from agents._providers import EVALUATED_MODELS, LOOP_SLOTS_PENDING_CLAUDE_EVAL
+
+    assert {t for t, m in _DEFAULTS.items() if provider_for_model(m) != "anthropic"} == set()
+    for slot in LOOP_SLOTS_PENDING_CLAUDE_EVAL:
+        assert not any(provider_for_model(m) == "anthropic" for m in EVALUATED_MODELS[slot]), slot
 
 
 def test_provider_model_strips_a_provider_qualifier():

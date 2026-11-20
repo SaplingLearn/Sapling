@@ -19,9 +19,12 @@ import {
 } from "@/lib/markdownImages";
 import { MermaidBlock } from "./MermaidBlock";
 import { FunctionPlot } from "./FunctionPlot";
+import { INERT_COMPONENTS, type MarkdownProfile } from "./inertMarkdown";
 
 // Castel-style shortcuts. Tutor can write `\R` instead of `\mathbb{R}`.
-const KATEX_MACROS: Record<string, string> = {
+// Frozen and never handed to KaTeX itself: KaTeX writes every \gdef / \global
+// definition into the macros object it is given (Z32).
+const KATEX_MACROS: Readonly<Record<string, string>> = Object.freeze({
   "\\R": "\\mathbb{R}",
   "\\Z": "\\mathbb{Z}",
   "\\N": "\\mathbb{N}",
@@ -43,7 +46,14 @@ const KATEX_MACROS: Record<string, string> = {
   "\\dx": "\\,dx",
   "\\dy": "\\,dy",
   "\\dt": "\\,dt",
-};
+});
+
+// The table every "rich" render shares, as on main: a definition one rich
+// message makes carries into the next (the loop-off app renders exactly as
+// before). An "inert" render — class material the learning loop serves
+// verbatim — gets its own copy of the pristine table instead, so its \gdef
+// stays in that message and no other message's reaches it (Z32).
+const SHARED_KATEX_MACROS: Record<string, string> = { ...KATEX_MACROS };
 
 const CALLOUT_NAMES = new Set([
   "theorem",
@@ -423,20 +433,35 @@ const COMPONENTS: Components = {
 export const MarkdownChat = React.memo(function MarkdownChat({
   children,
   components,
+  profile = "rich",
 }: {
   children: string;
   components?: Components;
+  /** "inert" (Z08, `inertMarkdown.tsx`): text that may repeat class material
+   *  verbatim — no directive syntax, links as text naming their host, no
+   *  image fetched, nothing embedded, no diagram drawn. */
+  profile?: MarkdownProfile;
 }) {
+  const inert = profile === "inert";
   return (
     <div style={{ lineHeight: 1.55 }}>
       <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkMath, remarkDirective, remarkSaplingDirectives]}
+        remarkPlugins={
+          inert
+            ? [remarkGfm, remarkMath] // a "::geogebra{…}" line stays text
+            : [remarkGfm, remarkMath, remarkDirective, remarkSaplingDirectives]
+        }
         rehypePlugins={[
-          [rehypeKatex, { macros: KATEX_MACROS, strict: "ignore" }],
+          // Z32: inert, a fresh copy of the pristine table per render
+          [rehypeKatex, { macros: inert ? { ...KATEX_MACROS } : SHARED_KATEX_MACROS, strict: "ignore" }],
           rehypeExtractDiagramBlocks,
           [rehypeHighlight, { detect: true, ignoreMissing: true }],
         ]}
-        components={{ ...COMPONENTS, ...(components || {}) }}
+        components={
+          inert
+            ? { ...COMPONENTS, ...(components || {}), ...INERT_COMPONENTS }
+            : { ...COMPONENTS, ...(components || {}) }
+        }
       >
         {children}
       </ReactMarkdown>

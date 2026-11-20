@@ -1,9 +1,4 @@
 {
-  "src/components/CustomSelect.tsx": {
-    "react-hooks/set-state-in-effect": {
-      "count": 1
-    }
-  },
   "src/components/Dialog.tsx": {
     "react-hooks/set-state-in-effect": {
       "count": 2
@@ -27,11 +22,6 @@
   "src/components/Gradebook/AssignmentModal.tsx": {
     "no-restricted-syntax": {
       "count": 12
-    }
-  },
-  "src/components/SessionFeedbackGlobal.tsx": {
-    "react-hooks/set-state-in-effect": {
-      "count": 1
     }
   },
   "src/components/TopNav.test.tsx": {
@@ -74,7 +64,7 @@
   },
   "src/components/screens/Dashboard.tsx": {
     "no-restricted-syntax": {
-      "count": 13
+      "count": 10
     },
     "react/no-unescaped-entities": {
       "count": 2
@@ -99,6 +89,9 @@
     }
   },
   "src/components/screens/Settings.tsx": {
+    "@next/next/no-location-assign-relative-destination": {
+      "count": 2
+    },
     "no-restricted-syntax": {
       "count": 15
     }
@@ -124,6 +117,11 @@
   "src/lib/api.ts": {
     "@typescript-eslint/no-explicit-any": {
       "count": 21
+    }
+  },
+  "src/lib/reauth.ts": {
+    "@next/next/no-location-assign-relative-destination": {
+      "count": 1
     }
   },
   "src/lib/useActiveSemester.ts": {

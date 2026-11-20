@@ -714,9 +714,9 @@ describe("RESUME (resumeFrom)", () => {
       queueIndex: 0,
       attemptId: "attempt-1",
       items: [
-        { index: 0, question: mc(1), selectedIndex: 1, answerText: undefined, verdict: null, flagged: false },
-        { index: 1, question: mc(2), selectedIndex: null, answerText: undefined, verdict: null, flagged: false },
-        { index: 2, question: mc(3), selectedIndex: null, answerText: undefined, verdict: null, flagged: false },
+        { index: 0, question: mc(1), selectedIndex: 1, answerText: undefined, verdict: null, flagged: false, confidence: null },
+        { index: 1, question: mc(2), selectedIndex: null, answerText: undefined, verdict: null, flagged: false, confidence: null },
+        { index: 2, question: mc(3), selectedIndex: null, answerText: undefined, verdict: null, flagged: false, confidence: null },
       ],
       cursor: 1,
       phase: "active",
@@ -781,10 +781,10 @@ describe("RESUME (resumeFrom)", () => {
     expect(s.sourceAttemptId).toBe("prev");
     expect(s.reserved).toEqual({ reservedCount: 2, regeneratedCount: 1 });
     expect(s.items).toEqual([
-      { index: 0, question: mc(1), selectedIndex: 1, answerText: undefined, verdict: stored.items[0].verdict, flagged: true },
-      { index: 1, question: written(2), selectedIndex: null, answerText: "draft", verdict: null, flagged: false },
+      { index: 0, question: mc(1), selectedIndex: 1, answerText: undefined, verdict: stored.items[0].verdict, flagged: true, confidence: null },
+      { index: 1, question: written(2), selectedIndex: null, answerText: "draft", verdict: null, flagged: false, confidence: null },
       // A stored verdict with no server response is dropped; the stored pick stays.
-      { index: 2, question: mc(3), selectedIndex: 0, answerText: undefined, verdict: null, flagged: false },
+      { index: 2, question: mc(3), selectedIndex: 0, answerText: undefined, verdict: null, flagged: false, confidence: null },
     ]);
     // Item 2 holds a pick, so it counts as answered: the cursor stops on item 1.
     expect(s.cursor).toBe(1);
@@ -804,7 +804,7 @@ describe("RESUME (resumeFrom)", () => {
     const s = resume(d, null);
     expect(s.items[0]).toEqual({
       index: 0, question: written(1), selectedIndex: null, answerText: "w",
-      verdict: { isCorrect: false, correctIndex: -1, explanation: "" }, flagged: false,
+      verdict: { isCorrect: false, correctIndex: -1, explanation: "" }, flagged: false, confidence: null,
     });
     expect(s.items[1].verdict).toBeNull();
     // Every item answered (a pick on the MC one), but the last has no verdict.

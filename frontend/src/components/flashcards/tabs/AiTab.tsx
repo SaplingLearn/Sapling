@@ -6,6 +6,7 @@ import { useUser } from "@/context/UserContext";
 import { importGenerate } from "@/lib/api";
 import { useCrisisSupport } from "@/components/safety/CrisisSupportCard";
 import type { ParsedCard } from "@/lib/flashcardParsers";
+import { withheldNotice } from "@/lib/integrityNotice";
 import s from "../FlashcardImportModal.module.css";
 import { humanizeError } from "@/lib/errorMessage";
 
@@ -60,7 +61,9 @@ export function AiTab({ documents, documentsLoading = false, onCards }: Props) {
       if (crisis.intercept(res)) return; // no cards were generated
       onCards(res.cards.map((c, i) => ({ front: c.front, back: c.back, row: i + 1 })));
       toast.success(`Generated ${res.cards.length} cards.`);
+      if (res.withheld) toast.warn(withheldNotice(res.withheld, "card"));
     } catch (err) {
+      // humanizeError: a 409 integrity detail (spec §13 A125) reads as prose
       toast.error(humanizeError(err, "Couldn't generate cards. Try again."));
     } finally {
       setBusy(false);
@@ -82,6 +85,7 @@ export function AiTab({ documents, documentsLoading = false, onCards }: Props) {
       ) : (
         <div className={s.fill}>
           <CustomSelect
+            ariaLabel="Library document"
             className={`${s.select} ${s.selectFill}`}
             size="sm"
             value={docId}

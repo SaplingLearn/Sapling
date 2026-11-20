@@ -16,6 +16,7 @@ Moved out of the route (names unchanged, re-exported by ``routes/quiz.py``):
 - ``practice``: G5 re-serve of missed questions.
 - ``generation``: ``_quiz_via_agent``, ``_generate_or_502``, ``generate_quiz``.
 - ``submission``: grading, score/mastery writes, ``submit_quiz``.
+- ``plan``: ``quiz_plan``, the learning loop's concept plan (spec §13 A143).
 
 Moved from ``services/quiz_*.py`` (the old paths are aliases of these):
 ``algebra``, ``config``, ``context`` (was ``quiz_context_service``),
@@ -38,10 +39,11 @@ _PUBLIC = {
     "answer_question": "attempts",
     "generate_quiz": "generation",
     "get_attempt": "history",
+    # A quiz item's cross-attempt identity (E5), read by the study guide's
+    # check answers (spec §13 A143's evidence key).
+    "question_hash": "identity",
     "list_attempts": "history",
-    # The mastery rule, for the other writer of mastery from one graded
-    # answer: a study guide's check question (services/study_guides/answers.py).
-    "mastery_after": "config",
+    "quiz_plan": "plan",
     "quiz_config_payload": "config",
     "submit_quiz": "submission",
 }

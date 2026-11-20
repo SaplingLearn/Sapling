@@ -49,13 +49,7 @@ import type { GuideContent, GuideOptions, Item } from "@/lib/studyGuide/types";
 import { queryRaw } from "./support/db";
 import { decryptText } from "./support/decrypt";
 import { expect, test } from "./support/fixtures";
-import {
-  COURSE_ID_CS,
-  MASTERY_PER_CORRECT,
-  MASTERY_PER_WRONG,
-  NODE_ID,
-  masteryOf,
-} from "./support/quiz";
+import { COURSE_ID_CS, NODE_ID, masteryOf } from "./support/quiz";
 import { BACKEND_URL, USER_ACTIVE } from "./support/stack";
 
 // ── The rich seed (db/seed_local_rich.py) ──────────────────────────────────
@@ -143,9 +137,12 @@ const CHECK = {
     "Factorial(3) is 3 times factorial(2), which is 2 times factorial(1), which is 1. That makes 6.",
 } as const;
 
-/** `services/study_guides/answers.py`: the event a first answer journals. */
-const EVENT_CORRECT = "guide_check_correct";
-const EVENT_INCORRECT = "guide_check_incorrect";
+/** `services/study_guides/answers.py`: a first answer is graded evidence, as a
+ *  quiz question's is (learning-loop PKG-14b) — one `mc` Evidence row on the
+ *  concept's node, with no session and no check item, and the graph runs BKT
+ *  on it. Never a flat delta, so no fixed step is asserted here: the row's own
+ *  `p_before` / `p_after` are the move, and the node's score mirrors `p_after`. */
+const EVIDENCE_EVENT = "evidence";
 
 /** Generous for three scripted sections; it normally takes a second or two. */
 const GENERATION_TIMEOUT = 60_000;
@@ -232,16 +229,56 @@ async function classDocuments(): Promise<{ id: string; file_name: string }[]> {
   return rows as { id: string; file_name: string }[];
 }
 
-/** The mastery events check answers journalled for the seeded student. */
-async function guideCheckEvents() {
+type EvidenceRow = {
+  id: string;
+  node_id: string;
+  channel: string;
+  correct: boolean;
+  delta: number;
+  p_before: number;
+  p_after: number;
+  session_id: string | null;
+  check_item_id: string | null;
+};
+
+/** The seeded student's evidence rows. The stack is held across specs, so a
+ *  quiz may already have journalled some: a step reads only the rows that are
+ *  new since `guideCheckBaseline`. */
+async function evidenceRows(): Promise<EvidenceRow[]> {
   return (await queryRaw(
-    `SELECT e.event_type, e.delta, e.node_id
+    `SELECT e.id, e.node_id, e.channel, e.correct, e.delta, e.p_before, e.p_after,
+            e.session_id, e.check_item_id
        FROM node_mastery_events e
        JOIN graph_nodes n ON n.id = e.node_id
-      WHERE n.user_id = $1 AND e.event_type IN ($2, $3)
-      ORDER BY e.created_at`,
-    [USER_ACTIVE, EVENT_CORRECT, EVENT_INCORRECT],
-  )) as { event_type: string; delta: number; node_id: string }[];
+      WHERE n.user_id = $1 AND e.event_type = $2
+      ORDER BY e.evidence_seq, e.id`,
+    [USER_ACTIVE, EVIDENCE_EVENT],
+  )) as EvidenceRow[];
+}
+
+/** The evidence ids already journalled, before a check is answered. */
+async function guideCheckBaseline(): Promise<Set<string>> {
+  return new Set((await evidenceRows()).map(row => row.id));
+}
+
+/** The evidence check answers journalled since `baseline`. */
+async function guideCheckEvents(baseline: Set<string>): Promise<EvidenceRow[]> {
+  return (await evidenceRows()).filter(row => !baseline.has(row.id));
+}
+
+/** One counted guide check answer: an unassisted `mc` evidence row on the
+ *  node, outside any session, whose move the node's score now mirrors. */
+async function expectGuideEvidence(row: EvidenceRow, correct: boolean): Promise<void> {
+  expect(row.node_id).toBe(NODE_ID);
+  expect(row.channel).toBe("mc");
+  expect(row.correct).toBe(correct);
+  expect(row.session_id).toBeNull();
+  expect(row.check_item_id).toBeNull();
+  expect(Number(row.delta)).toBeCloseTo(Number(row.p_after) - Number(row.p_before), 6);
+  // A correct answer always raises BKT's estimate; a wrong one can go either
+  // way (the learn step), so only a right answer's direction is pinned.
+  if (correct) expect(Number(row.p_after)).toBeGreaterThan(Number(row.p_before));
+  expect(await masteryOf(NODE_ID)).toBeCloseTo(Number(row.p_after), 6);
 }
 
 /**
@@ -514,21 +551,21 @@ test("a guide is made in the dialog, written, read, answered, saved and found ag
   const result = page.getByTestId(`guide-check-result-${check}`);
   const wrongOption = page.getByTestId(`guide-check-option-${check}-${CHECK.wrong}`);
   const rightOption = page.getByTestId(`guide-check-option-${check}-${CHECK.right}`);
-  const masteryBefore = await masteryOf(NODE_ID);
-  expect(await guideCheckEvents()).toHaveLength(0);
+  const baseline = await guideCheckBaseline();
 
   // Wrong first: a nudge toward the method, and the answer is not given away.
   await pickCheckOption(page, check, CHECK.wrong);
-  await expect(result).toHaveText(`Not quite. ${CHECK.explainIncorrect}`);
+  // The result leads with the verdict and the explanation; when the answer
+  // moved the concept across a tier, a line naming it follows (the move is
+  // checked against the evidence row below).
+  await expect(result).toContainText(`Not quite. ${CHECK.explainIncorrect}`);
   await expect(wrongOption).toHaveClass(/answer-option--chosen-wrong/);
   await expect(rightOption).toHaveClass(/answer-option--default/);
 
-  const counted = await guideCheckEvents();
+  const counted = await guideCheckEvents(baseline);
   expect(counted).toHaveLength(1);
-  expect(counted[0].event_type).toBe(EVENT_INCORRECT);
-  expect(counted[0].node_id).toBe(NODE_ID);
-  expect(Number(counted[0].delta)).toBeCloseTo(-MASTERY_PER_WRONG, 6);
-  expect(await masteryOf(NODE_ID)).toBeCloseTo(masteryBefore - MASTERY_PER_WRONG, 6);
+  await expectGuideEvidence(counted[0], false);
+  const masteryAfterWrong = await masteryOf(NODE_ID);
 
   // Then the right one: the server answers `counted: false`, and the reader
   // keeps the first answer shown, as a reload would (b4cacb93). Nothing more
@@ -538,12 +575,12 @@ test("a guide is made in the dialog, written, read, answered, saved and found ag
   );
   await pickCheckOption(page, check, CHECK.right);
   expect((await (await laterAnswer).json()).counted).toBe(false);
-  await expect(result).toHaveText(`Not quite. ${CHECK.explainIncorrect}`);
+  await expect(result).toContainText(`Not quite. ${CHECK.explainIncorrect}`);
   await expect(wrongOption).toHaveClass(/answer-option--chosen-wrong/);
   await expect(rightOption).toHaveClass(/answer-option--default/);
 
-  expect(await guideCheckEvents()).toEqual(counted);
-  expect(await masteryOf(NODE_ID)).toBeCloseTo(masteryBefore - MASTERY_PER_WRONG, 6);
+  expect(await guideCheckEvents(baseline)).toEqual(counted);
+  expect(await masteryOf(NODE_ID)).toBeCloseTo(masteryAfterWrong, 6);
   // The stored answer is the first one, encrypted.
   const answered = await storedGuide(guideId);
   expect(answered.answers_type).toBe("string");
@@ -806,7 +843,7 @@ test("a reload brings back the guide, its read mark and its answered question", 
   const rightOption = page.getByTestId(`guide-check-option-${check}-${CHECK.right}`);
   const keyTerms = page.getByTestId(`guide-block-${itemId(section, PLACE.keyTerms)}`);
   const sections = page.locator('section[data-testid^="guide-section-"]');
-  const masteryBefore = await masteryOf(NODE_ID);
+  const baseline = await guideCheckBaseline();
 
   // Read a section, and wait for the mark to be stored before the next write.
   await readToggle.click();
@@ -815,10 +852,10 @@ test("a reload brings back the guide, its read mark and its answered question", 
 
   // Answer the question right the first time.
   await pickCheckOption(page, check, CHECK.right);
-  await expect(result).toHaveText(`Correct. ${CHECK.explainCorrect}`);
-  const events = await guideCheckEvents();
-  expect(events.map(event => event.event_type)).toEqual([EVENT_CORRECT]);
-  expect(await masteryOf(NODE_ID)).toBeCloseTo(masteryBefore + MASTERY_PER_CORRECT, 6);
+  await expect(result).toContainText(`Correct. ${CHECK.explainCorrect}`);
+  const events = await guideCheckEvents(baseline);
+  expect(events).toHaveLength(1);
+  await expectGuideEvidence(events[0], true);
 
   const before = { sections: await sections.count(), keyTerms: await keyTerms.textContent() };
   const generateCalls = watchGenerateCalls(page);
@@ -845,5 +882,5 @@ test("a reload brings back the guide, its read mark and its answered question", 
   await expect(rightOption).toHaveClass(/answer-option--correct/);
 
   expect(generateCalls).toEqual([]);
-  expect(await guideCheckEvents()).toEqual(events);
+  expect(await guideCheckEvents(baseline)).toEqual(events);
 });

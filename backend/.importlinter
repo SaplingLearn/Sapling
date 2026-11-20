@@ -68,6 +68,8 @@ ignore_imports =
     db.local_study_data.guides -> services.study_guides.signals
     db.local_study_data.guides -> services.study_guides.verify
     db.seed_showcase -> services.encryption
+    db.seed_showcase_loop -> services.encryption
+    db.seed_showcase_loop -> services.encryption_canary
     db.seed_staging -> services.encryption
     # sec2 M14/M13: every encrypting ops script checks the key canary before
     # it writes (services/encryption_canary.py); the AAD backfill also seals
@@ -104,6 +106,7 @@ source_modules =
     services.flashcards
     services.gradebook
     services.gradescope
+    services.loop
     services.profile
     services.quiz
     services.social
@@ -117,6 +120,7 @@ forbidden_modules =
     services.flashcards.*
     services.gradebook.*
     services.gradescope.*
+    services.loop.*
     services.profile.*
     services.quiz.*
     services.social.*

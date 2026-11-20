@@ -31,10 +31,12 @@ import threading
 from agents._providers import model_mode
 from db.connection import rpc
 from services.document_indexing import (
+    EMBEDDINGS_UNAVAILABLE,
     INDEX_LEASE_SECONDS,
     INDEX_MAX_ATTEMPTS,
     index_document,
 )
+from services.rag_service import embedding_blocked
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +91,12 @@ def sweep_once(stop: threading.Event | None = None) -> int:
     same reason the upload post-roll does. Never raises: a failed claim (the
     RPC does not exist until the migration runs) ends the pass with a warning,
     and one bad document never costs the rest.
+
+    Spec §13 A128: while the embeddings breaker is open the pass backs off —
+    it claims nothing (a claim would spend an attempt on a document the
+    outage, not its content, keeps out of the index), and a document that
+    comes back deferred ends the pass too: `index_document` put it back
+    unclaimed, so the next claim could hand it straight back.
     """
     if not sweeper_enabled():
         return 0
@@ -96,6 +104,12 @@ def sweep_once(stop: threading.Event | None = None) -> int:
     for _ in range(BATCH_SIZE):
         if stop is not None and stop.is_set():
             logger.info("[RAG] index sweep stopping: shutdown requested")
+            break
+        if embedding_blocked():
+            logger.info(
+                "[RAG] index sweep backing off: the embeddings breaker is open "
+                "(next pass in %ss)", SWEEP_INTERVAL_SECONDS,
+            )
             break
         try:
             claimed = rpc(
@@ -114,12 +128,19 @@ def sweep_once(stop: threading.Event | None = None) -> int:
             break
         doc_id = claimed[0]["id"]
         try:
-            index_document(doc_id, claimed=True)
-            driven += 1
+            outcome = index_document(doc_id, claimed=True)
         except Exception:
             # The row stays 'indexing' until its lease expires, then a later
             # sweep takes it again with the attempt already spent.
             logger.exception("[RAG] index sweep could not re-drive doc %s", doc_id)
+            continue
+        if getattr(outcome, "error", None) == EMBEDDINGS_UNAVAILABLE:
+            logger.info(
+                "[RAG] index sweep backing off: the embeddings breaker opened "
+                "(doc %s put back)", doc_id,
+            )
+            break
+        driven += 1
     if driven:
         logger.info("[RAG] index sweep re-drove %d document(s)", driven)
     return driven

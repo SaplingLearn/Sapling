@@ -1,5 +1,6 @@
 import type { GraphNode as ApiNode } from "@/lib/types";
 import type { EnrolledCourse } from "@/lib/api";
+import { LOOP_GOAL_MAX_TARGETS } from "@/lib/inputLimits";
 
 export type Course = {
   id: string;
@@ -77,15 +78,37 @@ export type GraphEdge = {
 // their own name as the topic. The course is passed as `course` — the param
 // the Learn screen reads (`searchParams.get("course")`); the earlier handlers
 // passed `course_id`, which Learn silently ignored, dropping course scope.
+// A concept node also names itself (`concept`, #866 K05): the learning loop's
+// Tutor starts a session on that concept; the legacy Learn screen ignores it.
 export function learnHrefForNode(
-  n: Pick<GraphNode, "name" | "course_id" | "is_subject_root">,
+  n: Pick<GraphNode, "id" | "name" | "course_id" | "is_subject_root">,
   mode = "socratic",
 ): string {
   const p = new URLSearchParams();
   if (!n.is_subject_root) p.set("topic", n.name);
+  if (!n.is_subject_root && n.id) p.set("concept", n.id);
   p.set("mode", mode);
   if (n.course_id) p.set("course", n.course_id);
   return `/learn?${p.toString()}`;
+}
+
+// Send to tutor's link (#866 K05): the note's title and course, the note itself
+// (`note`), and its linked concepts (`concept`, comma-joined node ids), so the
+// learning loop's session is on what the note is about; the legacy Learn
+// screen ignores `concept`. Only the concepts of the course the link names go
+// (the loop's goal refuses another course's), at most the goal's target cap,
+// in linked order: a note linked across courses or past the cap still starts.
+export function noteTutorHref(
+  res: { topic?: string; course_id?: string | null },
+  noteId: string,
+  concepts: { id: string; courseId: string | null }[],
+): string {
+  const href = `/learn?topic=${encodeURIComponent(res.topic ?? "")}&course=${encodeURIComponent(res.course_id ?? "")}`
+    + `&note=${encodeURIComponent(noteId)}`;
+  const ids = res.course_id
+    ? concepts.filter((c) => c.courseId === res.course_id).map((c) => c.id).slice(0, LOOP_GOAL_MAX_TARGETS)
+    : [];
+  return ids.length > 0 ? `${href}&concept=${encodeURIComponent(ids.join(","))}` : href;
 }
 
 // Adapter from the backend `ApiNode` shape to the frontend `GraphNode`

@@ -7,7 +7,8 @@ other. Each test wipes the process-local store between steps (`_replica_hop`)
 to stand in for "the next request landed on the other replica".
 
 The fake below mirrors the three SQL functions of
-20261109024225_tutor_pending_sessions.sql; tests/integration/
+20261109024225_tutor_pending_sessions.sql (with the loop document of
+20261111030007_tutor_pending_loop_state.sql); tests/integration/
 test_tutor_pending_sessions_db.py pins the SQL itself against Postgres.
 """
 from __future__ import annotations
@@ -25,8 +26,10 @@ from tests.agent_run_fakes import run_result
 from tests.db_fakes import add_async_twins
 from tests.split_patches import patch_tutor
 
-#: #117 wave 3: a sync PostgREST call on the event loop raises here.
-pytestmark = pytest.mark.usefixtures("no_sync_db_on_loop")
+#: #117 wave 3: a sync PostgREST call on the event loop raises here. Spec §11.5
+#: (learning loop PKG-14b): these drive the legacy /api/learn/* tutor, so they
+#: run as kill-switch tests (with the loop on, the routes hand the turn to it).
+pytestmark = [pytest.mark.kill_switch, pytest.mark.usefixtures("no_sync_db_on_loop")]
 
 client = TestClient(app)
 
@@ -94,8 +97,9 @@ class _FakeDB:
             return []
 
         def delete(filters=None, **_k):
+            gone = [dict(r) for r in rows if _match(r, filters)]  # Prefer: return=representation
             rows[:] = [r for r in rows if not _match(r, filters)]
-            return []
+            return gone
 
         m.select.side_effect = select
         m.update.side_effect = update
@@ -129,6 +133,7 @@ class _FakeDB:
             "mode": p["p_mode"], "topic": p["p_topic"], "course_id": p["p_course_id"],
             "offering_id": p["p_offering_id"], "use_shared_context": p["p_use_shared_context"],
             "assistant_reply": p["p_assistant_reply"], "graph_update": p["p_graph_update"],
+            "loop_state": p.get("p_loop_state"),
             "stashed_at": now.isoformat(), "discarded_at": None,
         })
         return True
@@ -150,6 +155,7 @@ class _FakeDB:
             self.rows["sessions"].append({
                 "id": r["session_id"], "user_id": r["user_id"], "mode": r["mode"],
                 "topic": r["topic"], "offering_id": r["offering_id"] or None,
+                "loop_state": r.get("loop_state") or {},
                 "started_at": now.isoformat(), "ended_at": None,
             })
         self.rows["messages"].append({
@@ -161,6 +167,19 @@ class _FakeDB:
         self.rows["tutor_pending_sessions"].remove(r)
         return [{"outcome": "materialized", "session_mode": r["mode"],
                  "session_topic": r["topic"], "session_offering_id": r["offering_id"]}]
+
+    def claim_tutor_session(self, p):
+        """claim_tutor_session: the caller's own live pending row, returned as
+        it was and turned into an "ended" tombstone, in one step."""
+        r, now = self.store(p["p_session_id"]), _now()
+        if not (r and r["user_id"] == p["p_user_id"] and r["state"] == "pending"
+                and datetime.fromisoformat(r["stashed_at"]) >= now - timedelta(seconds=p["p_ttl_seconds"])):
+            return []
+        claimed = dict(r)
+        r.update(state="ended", discarded_at=now.isoformat(), mode=None, topic=None,
+                 course_id=None, offering_id=None, assistant_reply=None,
+                 graph_update=None, loop_state=None)
+        return [claimed]
 
     def discard_tutor_session(self, p):
         r, now = self.store(p["p_session_id"]), _now()
@@ -174,7 +193,7 @@ class _FakeDB:
             "session_id": p["p_session_id"], "user_id": p["p_user_id"],
             "state": p["p_reason"], "discarded_at": now.isoformat(),
             "stashed_at": now.isoformat(), "mode": None, "topic": None,
-            "assistant_reply": None, "graph_update": None,
+            "assistant_reply": None, "graph_update": None, "loop_state": None,
         })
         return was
 
@@ -423,8 +442,172 @@ def test_the_stash_carries_the_bounds():
     assert (params["p_ttl_seconds"], params["p_tombstone_ttl_seconds"], params["p_max_entries"]) == (
         ts.PENDING_TTL_SECONDS, ts.DISCARD_TOMBSTONE_TTL_SECONDS, ts.PENDING_MAX_ENTRIES)
     assert params["p_graph_update"] is None, "an empty graph update stores NULL, like messages"
+    assert params["p_loop_state"] is None, "a tutor session carries no loop document"
     # Sealed for the messages row the materialisation copies it into.
     assert decrypt_if_present(params["p_assistant_reply"],
                               bind=bind("messages", "content", "s1")) == GREETING
     assert decrypt_if_present(params["p_assistant_reply"],
                               bind=bind("messages", "content", "s2")) is None
+
+
+# ── a close racing the first turn (claim_pending under the lock) ────────────
+
+
+def test_a_close_waits_for_a_materialising_first_turn_and_finds_nothing_pending(monkeypatch):
+    """Turn first: it holds the materialisation lock while it writes the row and
+    only then drops the pending entry. The close's claim_pending waits for it
+    and then sees the session as materialised (None)."""
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+    from concurrent.futures import TimeoutError as FutureTimeout
+
+    monkeypatch.setattr(ts, "stored", lambda: False)
+    monkeypatch.setitem(ts.PENDING_SESSIONS, "s-race", {"user_id": "u1", "stashed_at": "now"})
+    inside, release = threading.Event(), threading.Event()
+
+    def first_turn():
+        with ts.materialization_lock("s-race"):
+            inside.set()
+            release.wait(5)
+            ts.PENDING_SESSIONS.pop("s-race", None)  # the row is written: no longer pending
+
+    # Futures re-raise a thread's exception at .result(), so a failing
+    # claim_pending surfaces as itself; release is set whatever happens.
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        turn = pool.submit(first_turn)
+        try:
+            assert inside.wait(5)
+            close = pool.submit(ts.claim_pending, "s-race", "u1")
+            with pytest.raises(FutureTimeout):
+                close.result(timeout=0.2)  # still waiting for the turn's lock
+        finally:
+            release.set()
+        turn.result(timeout=5)
+        assert close.result(timeout=5) is None
+    assert ts.discarded_reason("s-race", "u1") is None, "nothing was ended: the turn won"
+
+
+def test_a_close_that_wins_makes_a_waiting_first_turn_answer_409_at_materialisation(monkeypatch):
+    """Close first, memory mode: a first turn already past its ownership check
+    and waiting on the materialisation lock re-checks under it, finds the entry
+    gone and the claim's "ended" tombstone, and refuses with 409 — it never
+    writes into (or 404s on) the session being closed."""
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    from fastapi import HTTPException
+
+    from services.tutor import pending as tutor_pending
+
+    monkeypatch.setattr(ts, "stored", lambda: False)
+    monkeypatch.setitem(ts.PENDING_SESSIONS, "s-won", {"user_id": "u1", "topic": "T"})
+    turn_started = threading.Event()
+    real_lock = ts.materialization_lock
+
+    def lock_announcing_the_turn(session_id):
+        turn_started.set()
+        return real_lock(session_id)
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with real_lock("s-won"):  # the close holds the lock first...
+            monkeypatch.setattr(tutor_pending, "materialization_lock", lock_announcing_the_turn)
+            turn = pool.submit(tutor_pending._consume_pending, "s-won", "u1")
+            assert turn_started.wait(5), "the turn reached its locked re-check"
+            # ...and claims under it, exactly as claim_pending does.
+            assert ts.discard_pending("s-won", user_id="u1", reason="ended") == {"user_id": "u1", "topic": "T"}
+        with pytest.raises(HTTPException) as exc:
+            turn.result(timeout=5)
+    assert exc.value.status_code == 409
+
+
+def test_a_close_that_wins_leaves_a_tombstone_until_its_row_is_stored(monkeypatch):
+    """Close first: the claim takes the payload and leaves the "ended"
+    tombstone; a later first turn answers 409. Once the close has stored the
+    row, release_claim_tombstone drops it — the row's close is the guard."""
+    from fastapi import HTTPException
+
+    from services.tutor import pending as tutor_pending
+
+    monkeypatch.setattr(ts, "stored", lambda: False)
+    monkeypatch.setitem(ts.PENDING_SESSIONS, "s-won", {"user_id": "u1", "topic": "T"})
+
+    assert ts.claim_pending("s-won", "u1") == {"user_id": "u1", "topic": "T"}
+    assert "s-won" not in ts.PENDING_SESSIONS
+    assert ts.discarded_reason("s-won", "u1") == "ended"
+    with pytest.raises(HTTPException) as exc:
+        tutor_pending._consume_pending("s-won", "u1")
+    assert exc.value.status_code == 409
+    assert ts.claim_pending("s-won", "u1") is None, "a second close finds nothing pending"
+
+    ts.release_claim_tombstone("s-won", "u1")
+    assert ts.discarded_reason("s-won", "u1") is None
+
+
+def test_the_table_claim_is_one_locked_call_and_a_racing_turn_reads_it_as_ended(db):
+    """Table mode: claim_tutor_session returns the payload and leaves the
+    tombstone in one call (no separate read, no snapshot to go stale); the
+    racing turn's materialisation answers 409."""
+    from fastapi import HTTPException
+
+    ts.stash_pending("s-tab", {
+        "user_id": "u1", "mode": "socratic", "topic": "Recursion", "course_id": "",
+        "offering_id": "", "use_shared_context": True, "assistant_reply": GREETING,
+        "graph_update": {},
+    })
+    _replica_hop()
+    db.rpcs.clear()
+    claimed = ts.claim_pending("s-tab", "u1")
+    assert claimed["topic"] == "Recursion" and db.rpcs == ["claim_tutor_session"]
+    assert db.store("s-tab")["state"] == "ended" and db.store("s-tab")["topic"] is None
+    with pytest.raises(HTTPException) as exc:
+        ts.materialize_stored("s-tab", "u1")
+    assert exc.value.status_code == 409
+
+    ts.release_claim_tombstone("s-tab", "u1")
+    assert db.store("s-tab") is None
+
+
+def test_a_table_claim_at_the_ttl_edge_trusts_the_databases_clock(db, monkeypatch):
+    """The RPC decided liveness on the DATABASE clock, under its lock, and has
+    already tombstoned the row. The app must not re-check `stashed_at` with
+    its own clock: a few seconds of skew at the TTL's edge would read the row
+    it just claimed as expired, and the close of a real session would 404
+    (C7)."""
+    ts.stash_pending("s-edge", {
+        "user_id": "u1", "mode": "socratic", "topic": "Recursion", "course_id": "",
+        "offering_id": "", "use_shared_context": True, "assistant_reply": GREETING,
+        "graph_update": {},
+    })
+    _replica_hop()
+    # The database still calls the row live; this process's clock is past the TTL.
+    monkeypatch.setattr(ts, "_within", lambda _ts, _seconds: False)
+    claimed = ts.claim_pending("s-edge", "u1")
+    assert claimed is not None and claimed["topic"] == "Recursion"
+    assert claimed["assistant_reply"] == GREETING
+    assert db.store("s-edge")["state"] == "ended"
+
+
+def test_a_table_claim_of_another_students_session_is_404_and_changes_nothing(db):
+    from fastapi import HTTPException
+
+    ts.stash_pending("s-foreign", {
+        "user_id": "u2", "mode": "socratic", "topic": "T", "course_id": "",
+        "offering_id": "", "use_shared_context": True, "assistant_reply": GREETING,
+        "graph_update": {},
+    })
+    _replica_hop()
+    with pytest.raises(HTTPException) as exc:
+        ts.claim_pending("s-foreign", "u1")
+    assert exc.value.status_code == 404
+    assert db.store("s-foreign")["state"] == "pending"
+
+
+def test_claim_pending_refuses_another_students_session(monkeypatch):
+    from fastapi import HTTPException
+
+    monkeypatch.setattr(ts, "stored", lambda: False)
+    monkeypatch.setitem(ts.PENDING_SESSIONS, "s-other", {"user_id": "u2"})
+    with pytest.raises(HTTPException) as exc:
+        ts.claim_pending("s-other", "u1")
+    assert exc.value.status_code == 404
+    assert "s-other" in ts.PENDING_SESSIONS and ts.discarded_reason("s-other") is None

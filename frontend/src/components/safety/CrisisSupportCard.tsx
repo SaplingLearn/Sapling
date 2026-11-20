@@ -12,10 +12,14 @@
  * `CrisisSupportCard` sits in a conversation (ChatPanel, the quiz's Ask
  * panel); `CrisisSupportDialog` shows it over a surface that has no
  * conversation to put it in (a session start, a note action, an answer box).
+ *
+ * While a card is on screen, in either form and on any surface, it holds the
+ * shell's feedback prompts (lib/feedbackPacing.ts), so no survey opens over it.
  */
 
 import React, { useCallback, useId, useRef, useState } from "react";
 import Dialog from "../Dialog";
+import { useFeedbackHold } from "@/lib/feedbackPacing";
 import { crisisSupportIn, type CrisisSupport, type CrisisSupportAction } from "@/lib/crisisSupport";
 
 const CARD: React.CSSProperties = {
@@ -73,6 +77,8 @@ export function CrisisSupportCard({
 }) {
   const autoId = useId();
   const headingId = titleId ?? autoId;
+  // No feedback survey over the card: held while it is mounted.
+  useFeedbackHold(true);
   return (
     <section
       data-testid="crisis-support-card"

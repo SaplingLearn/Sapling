@@ -75,6 +75,13 @@ export function QuizHome({ home, config, entry, session, actions, onPickedChange
     [home.nodes],
   );
 
+  // Spec §13 A143: the plan's skill meter per proposed concept, so a topic row
+  // reads the same measure as the card (`metaLine`).
+  const planOf = React.useMemo(
+    () => new Map(home.candidates.flatMap(c => (c.plan ? [[c.node.id, c.plan] as const] : []))),
+    [home.candidates],
+  );
+
   /** Remember the choices a dialog was started with (§5 B1.6). `setConfig`
    *  persists on its own; `start` does not. */
   const remember = (cfg: SessionConfig) => savePrefs(prefsFor(cfg));
@@ -134,6 +141,7 @@ export function QuizHome({ home, config, entry, session, actions, onPickedChange
       title={proposal.title}
       meta={proposal.meta}
       rationale={proposal.rationale}
+      planLine={proposal.planLine}
       definitionPending={proposal.definitionPending}
       definition={proposal.definition}
       configLine={proposal.configLine}
@@ -167,6 +175,7 @@ export function QuizHome({ home, config, entry, session, actions, onPickedChange
       onPick={proposal.choose}
       onIntent={home.prefetchDescription}
       returnedId={proposal.returnedId}
+      planOf={planOf}
     />
   );
 

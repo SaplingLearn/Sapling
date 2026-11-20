@@ -22,6 +22,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from services.prompt_safety import wrap_document_input
+
 from services import document_indexing as di
 from services import document_jobs as dj
 from services import jobs
@@ -471,6 +473,7 @@ def _process(row, *, extract=None, persist=None, existing=None, agents=None, job
     post = {name: MagicMock() for name in (
         "_refresh_course_context", "_check_upload_achievements")}
     sched = MagicMock()
+    chain = MagicMock()  # the learning loop's index-then-draft post-roll step
     with patch.object(dj, "table", uploads), \
          patch_documents("extract_text_from_file", extract), \
          patch_documents("_persist_document", persist), \
@@ -480,7 +483,8 @@ def _process(row, *, extract=None, persist=None, existing=None, agents=None, job
          patch_documents("_graph_backstop"), \
          patch_documents("_refresh_course_context", post["_refresh_course_context"]), \
          patch_documents("_check_upload_achievements", post["_check_upload_achievements"]), \
-         patch("services.document_indexing.schedule_document_index", sched):
+         patch("services.document_indexing.schedule_document_index", sched), \
+         patch_documents("_index_then_check_items", chain):
         for p in patches:
             p.start()
         try:
@@ -489,7 +493,7 @@ def _process(row, *, extract=None, persist=None, existing=None, agents=None, job
             for p in patches:
                 p.stop()
     return SimpleNamespace(uploads=uploads, extract=extract, persist=persist, post=post,
-                           sched=sched)
+                           sched=sched, chain=chain)
 
 
 @pytest.mark.parametrize("payload", [{}, {"upload_id": ""}, None, {"upload_id": 3}])
@@ -498,7 +502,23 @@ def test_process_job_refuses_a_payload_without_an_upload_id(payload):
         dj._run_document_process_job(payload)
 
 
-def test_process_job_runs_the_pipeline_and_records_every_stage():
+#: The upload's loop decision is the UPLOADER's gate: off by the env kill
+#: switch, or by the uploader's `learning_loop` flag under an open switch —
+#: both must be the pre-loop upload — and on.
+LOOP_MODES = ("kill_switch", "flag_off", "on")
+
+
+def _set_loop(monkeypatch, config, loop: str) -> bool:
+    monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", loop != "kill_switch")
+    monkeypatch.setenv("SAPLING_FLAG_LEARNING_LOOP", "off" if loop == "flag_off" else "on")
+    return loop == "on"
+
+
+@pytest.mark.parametrize("loop", LOOP_MODES)
+def test_process_job_runs_the_pipeline_and_records_every_stage(monkeypatch, loop):
+    import config
+
+    loop_on = _set_loop(monkeypatch, config, loop)
     out = _process(_staged_row())
     stages = [d["stage"] for d, _ in out.uploads.updates if "stage" in d]
     assert stages == ["extracting", "classifying", "extracting_concepts", "merging",
@@ -525,7 +545,51 @@ def test_process_job_runs_the_pipeline_and_records_every_stage():
     # The streaming route's post-roll, uploader threaded through.
     out.post["_refresh_course_context"].assert_called_once_with("off-1", "u1")
     out.post["_check_upload_achievements"].assert_called_once_with("u1")
-    out.sched.assert_called_once_with("doc-1", "u1")
+    if loop_on:
+        # Learning loop PKG-04: the index-then-draft chain replaces the plain
+        # index step, with the course and the run's concept names.
+        out.chain.assert_called_once_with("doc-1", "u1", "c-1", ["Backprop"])
+        out.sched.assert_not_called()
+    else:
+        out.sched.assert_called_once_with("doc-1", "u1")
+        out.chain.assert_not_called()
+
+
+@pytest.mark.parametrize("prereqs_on", [False, True])
+def test_process_job_resolves_upload_prereq_edges_once_like_the_route(prereqs_on):
+    """Learning-loop spec §13 A118 on the worker path: upload_prereq_edges is
+    resolved once for the uploader; off, the extraction request is the pre-A118
+    one and nothing reads the course's concepts; on, the course's concepts ride
+    in the message and the validated edges are written once the nodes exist."""
+    from agents.concept_extraction import ConceptList
+
+    agents = list(_agent_patches())
+    # #835/#118 (spec §13 A149): the worker runs the one pipeline
+    # (agents.document.run_document_agents), which reads the concepts and
+    # writes the edges; the worker resolves the flag
+    with patch("services.concept_prereqs.upload_prereqs_on", return_value=prereqs_on) as flag, \
+         patch("agents.document.course_concept_names",
+               return_value=["Chain Rule"]) as names, \
+         patch("agents.document.write_document_prerequisites") as write:
+        concept_run = agents[2]
+        mock = concept_run.start()
+        try:
+            out = _process(_staged_row(), agents=[a for i, a in enumerate(agents) if i != 2])
+        finally:
+            concept_run.stop()
+    assert out.uploads.row["stage"] == "done"
+    flag.assert_called_once_with("u1")
+    (prompt,), kwargs = mock.call_args  # the prompt positionally, as every worker's
+    if prereqs_on:
+        names.assert_called_once_with("u1", "c-1")
+        assert kwargs["output_type"] is ConceptList and "Chain Rule" in prompt
+        (user, course, concepts), _ = write.call_args
+        assert (user, course) == ("u1", "c-1") and concepts.concepts[0].name == "Backprop"
+    else:
+        names.assert_not_called()
+        write.assert_not_called()
+        assert set(kwargs) == {"deps", "usage_limits"}
+        assert prompt == wrap_document_input(_text())  # #890: the envelope
 
 
 @pytest.mark.parametrize("stage", ["done", "failed", "inline"])
@@ -559,6 +623,7 @@ def test_process_job_records_an_agent_failure_and_saves_nothing():
                                                                         "agent_failed")
     out.persist.assert_not_called()
     out.sched.assert_not_called()
+    out.chain.assert_not_called()
 
 
 def test_process_job_adopts_the_row_a_racing_attempt_saved():
@@ -568,6 +633,7 @@ def test_process_job_adopts_the_row_a_racing_attempt_saved():
     assert out.uploads.row["stage"] == "done"
     assert out.uploads.row["document_id"] == "doc-w"
     out.sched.assert_not_called()  # the winner already ran the post-roll
+    out.chain.assert_not_called()
 
 
 def test_process_job_rerun_adopts_a_document_an_earlier_attempt_saved():
@@ -630,7 +696,11 @@ _INLINE_STEPS = [("status", "start"), ("progress", "classify"), ("progress", "cl
                  ("result", "finalize"), ("status", "done")]
 
 
-def test_flag_off_stream_is_unchanged_and_never_touches_the_queue():
+@pytest.mark.parametrize("loop", LOOP_MODES)
+def test_flag_off_stream_is_unchanged_and_never_touches_the_queue(monkeypatch, loop):
+    import config
+
+    loop_on = _set_loop(monkeypatch, config, loop)
     a, b, c, d = _route_agent_patches()
     with patch_documents("_validate_user"), \
          patch_documents("require_course_enrollment", return_value="off-1"), \
@@ -647,11 +717,22 @@ def test_flag_off_stream_is_unchanged_and_never_touches_the_queue():
     ext.assert_called_once()
     tasks = {task[0]: task[1:] for task in spawn.call_args.args}
     from routes import documents
-    assert tasks["index_document"] == (documents.schedule_document_index, "stream-1", "u1")
+    if loop_on:
+        # Learning loop PKG-04: the ordered index-then-draft chain instead
+        assert "index_document" not in tasks
+        assert tasks["index_then_check_items"] == (
+            documents._index_then_check_items, "stream-1", "u1", "c-1", ["Backprop"])
+    else:
+        assert tasks["index_document"] == (documents.schedule_document_index, "stream-1", "u1")
+        assert "index_then_check_items" not in tasks
 
 
-def test_flag_off_sync_is_unchanged_and_never_touches_the_queue():
+@pytest.mark.parametrize("loop", LOOP_MODES)
+def test_flag_off_sync_is_unchanged_and_never_touches_the_queue(monkeypatch, loop):
+    import config
     from tests.test_documents_routes import _make_orchestrator_result
+
+    loop_on = _set_loop(monkeypatch, config, loop)
 
     result = _make_orchestrator_result()
     with patch_documents("_validate_user"), \
@@ -664,7 +745,9 @@ def test_flag_off_sync_is_unchanged_and_never_touches_the_queue():
          patch_documents("_persist_document", return_value=("doc-1", {"id": "doc-1"})), \
          patch_documents("refresh_course_context"), \
          patch_documents("_check_upload_achievements"), \
-         patch_documents("schedule_document_index") as sched:
+         patch_documents("schedule_document_index") as sched, \
+         patch_documents("_index_then_check_items") as chain, \
+         patch_documents("model_mode", return_value="real"):
         r = _client().post(
             "/api/documents/upload/sync",
             files={"file": ("notes.pdf", io.BytesIO(b"%PDF-1.4 x"), "application/pdf")},
@@ -672,7 +755,13 @@ def test_flag_off_sync_is_unchanged_and_never_touches_the_queue():
         )
     assert r.status_code == 200 and r.json() == {"id": "doc-1", "categories": []}
     ext.assert_called_once()
-    sched.assert_called_once_with("doc-1", "u1")
+    if loop_on:
+        names = [c.name for c in result.concepts.concepts]
+        chain.assert_called_once_with("doc-1", "u1", "c-1", names)
+        sched.assert_not_called()
+    else:
+        sched.assert_called_once_with("doc-1", "u1")
+        chain.assert_not_called()
 
 
 # ── routes, flag ON ─────────────────────────────────────────────────────────
@@ -1341,6 +1430,7 @@ def test_rerun_adoption_restores_the_stored_result_categories_and_quiet_progress
     assert progress == {"adopted": True, "category": "syllabus", "concept_count": 2}
     out.extract.assert_not_called()
     out.sched.assert_not_called()
+    out.chain.assert_not_called()
 
     # The stream for that row: no "Extracted 0 chars" from a run that never ran.
     with patch.object(dj, "read_status", return_value={**final, "id": "up-1"}), \

@@ -23,6 +23,7 @@ import {
 } from "./importModalModel";
 import s from "./FlashcardImportModal.module.css";
 import { humanizeError } from "@/lib/errorMessage";
+import { CLEANUP_WITHHELD_NOTICE } from "@/lib/integrityNotice";
 
 type TabKey = "paste" | "upload" | "url" | "ai" | "photo";
 
@@ -165,7 +166,9 @@ function useCleanup(cards: ParsedCard[], onChange: (next: ParsedCard[]) => void)
       const res = await importCleanup(userId, valid);
       if (!run.isCurrent()) return;
       onChange(numberedCards(res.cards));
-      toast.success("Cleaned up.");
+      // spec §13 A125: a held-back cleanup returns the student's cards unchanged
+      if (res.withheld) toast.warn(CLEANUP_WITHHELD_NOTICE);
+      else toast.success("Cleaned up.");
     } catch (err) {
       if (run.isCurrent()) toast.error(humanizeError(err, "Couldn't tidy up that import."));
     } finally {
@@ -290,6 +293,7 @@ function CourseField({ courses, courseId, onCourse }: Pick<DestinationProps, "co
   }
   return (
     <CustomSelect
+      ariaLabel="Course"
       className={`${s.select} ${s.selectFill} ${s.selectLg}`}
       value={courseId}
       onChange={onCourse}

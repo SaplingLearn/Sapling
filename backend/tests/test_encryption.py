@@ -140,3 +140,23 @@ def test_points_text_column_round_trip():
         assert encryption.decrypt_numeric(ct) == float(value)
     assert encryption.encrypt_if_present(None) is None
     assert encryption.decrypt_numeric(None) is None
+
+
+# ── Derived keys ──────────────────────────────────────────────────────────────
+
+
+def test_derive_key_is_a_stable_32_byte_secret_per_purpose():
+    # A server secret for a purpose other than column encryption (the check
+    # items' option slot, spec §13 A37): HMAC-SHA256 of the purpose under
+    # ENCRYPTION_KEY — deterministic, 32 bytes, never the AES key itself, and a
+    # different key for every purpose.
+    a = encryption.derive_key("check_items.option_slot")
+    assert isinstance(a, bytes) and len(a) == 32
+    assert encryption.derive_key("check_items.option_slot") == a
+    assert encryption.derive_key("another.purpose") != a
+    assert a != encryption._KEY
+
+
+def test_derive_key_refuses_an_empty_purpose():
+    with pytest.raises(ValueError):
+        encryption.derive_key("")

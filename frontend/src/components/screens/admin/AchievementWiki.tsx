@@ -133,12 +133,14 @@ export function AchievementWiki() {
           />
         </div>
         <CustomSelect
+          ariaLabel="Category filter"
           size="sm"
           value={categoryFilter}
           onChange={setCategoryFilter}
           options={[{ value: "all" as const, label: "All categories" }, ...CAT_ORDER.map(c => ({ value: c, label: CAT_META[c].label }))]}
         />
         <CustomSelect
+          ariaLabel="Rarity filter"
           size="sm"
           value={rarityFilter}
           onChange={setRarityFilter}
@@ -515,6 +517,7 @@ function AchievementCard({
             </LabeledField>
             <LabeledField label="Category">
               <CustomSelect<AchievementCategory>
+                ariaLabel="Category"
                 value={category}
                 onChange={setCategory}
                 options={CAT_ORDER.map(c => ({ value: c, label: CAT_META[c].label }))}
@@ -522,6 +525,7 @@ function AchievementCard({
             </LabeledField>
             <LabeledField label="Rarity">
               <CustomSelect<RarityTier>
+                ariaLabel="Rarity"
                 value={rarity}
                 onChange={setRarity}
                 options={RARITIES.map(r => ({ value: r, label: r }))}
@@ -644,6 +648,7 @@ function AchievementCard({
             })}
             <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 6 }}>
               <CustomSelect
+                ariaLabel="Cosmetic to link"
                 size="sm"
                 value={pendingCosmeticId}
                 onChange={setPendingCosmeticId}
@@ -710,6 +715,7 @@ function GrantPanel({ achievements, users }: { achievements: Achievement[]; user
       <div className="label-micro" style={{ marginBottom: 10 }}>Grant to user</div>
       <LabeledField label="User">
         <CustomSelect
+          ariaLabel="User"
           size="sm"
           value={grant.userId}
           onChange={v => setGrant(g => ({ ...g, userId: v }))}
@@ -719,6 +725,7 @@ function GrantPanel({ achievements, users }: { achievements: Achievement[]; user
       </LabeledField>
       <LabeledField label="Achievement">
         <CustomSelect
+          ariaLabel="Achievement"
           size="sm"
           value={grant.achievementId}
           onChange={v => setGrant(g => ({ ...g, achievementId: v }))}

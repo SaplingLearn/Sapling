@@ -15,6 +15,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import type { StudentConfidence } from "@/lib/api";
 import { answerQuestion, generateQuiz, getAttempt, submitQuiz } from "./api";
 import { QUIZ_ERROR_COPY, describeQuizError, type QuizError } from "./errors";
 import { returnToSource } from "./exits";
@@ -43,6 +44,9 @@ export interface QuizActions {
   start(request: StartRequest, config?: SessionConfig): void;
   select(index: number): void;
   write?(text: string): void;
+  /** Learning-loop spec §13 A132: state (or, with null, take back) the current
+   *  question's confidence. No request: the next `/answer` carries it. */
+  setConfidence?(level: StudentConfidence | null): void;
   submitAnswer(): void;
   next(): void;
   /** Move to question `index` (back, or ahead to skip). Ignored mid-request. */
@@ -183,9 +187,11 @@ async function withNetworkRetry<T>(call: () => Promise<T>): Promise<T> {
  * connection, a wedged worker) left the skeleton up forever.
  *
  * Generation is bounded server-side per agent run (`QUIZ_GENERATION_TIMEOUT_SEC`,
- * 90s) and may run one top-up after the first, so the client allows both plus
+ * 90s; the item checks on a run's questions run inside that bound too, #866 K44)
+ * and may run one top-up after the first, so the client allows both plus
  * headroom — it is a backstop for a request the server has lost, never a
- * second, tighter budget. Submit is plain database work.
+ * second, tighter budget (backend tests/test_quiz_learning_routes.py pins it
+ * above the two bounds). Submit is plain database work.
  */
 export const GENERATE_TIMEOUT_MS = 200_000;
 export const SUBMIT_TIMEOUT_MS = 45_000;
@@ -477,6 +483,9 @@ export function useQuizSession(userId: string, entry: EntryRequest): QuizSession
           selectedIndex: item.selectedIndex,
           ...(isWrittenType(item.question.type) ? { answerText: item.answerText ?? "" } : {}),
           questionId: item.question.id,
+          // §13 A132: whatever was chosen when Submit was pressed; nothing at
+          // all when the control was skipped.
+          ...(item.confidence ? { confidence: item.confidence } : {}),
         }),
       );
       if (!isLive(request)) return;
@@ -529,6 +538,11 @@ export function useQuizSession(userId: string, entry: EntryRequest): QuizSession
       },
       write: text => {
         if (!answeringRef.current) apply({ type: "WRITE", text });
+      },
+      // Refused while the answer is in flight, like `write`: the request
+      // already carries the level it was sent with.
+      setConfidence: level => {
+        if (!answeringRef.current) apply({ type: "CONFIDENCE", level });
       },
 
       submitAnswer: () => {

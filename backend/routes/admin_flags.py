@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from db.connection import table
+from learning import gate as loop_gate
 from services import feature_flags
 from services.admin_audit import log_admin_action
 from services.auth_guard import get_session_user_id, require_admin, require_admin_recent
@@ -40,6 +41,23 @@ def _check(fd: feature_flags.FlagDef, value: Optional[str], field: str) -> None:
         raise HTTPException(status_code=422, detail=f"{field} must be one of {list(fd.variants)}")
 
 
+def _rule(r: feature_flags.Resolution) -> dict:
+    return {"variant": r.variant, "step": r.step, "detail": r.detail}
+
+
+def _served(served: loop_gate.ServedFlag | None) -> dict | None:
+    """A resolution as the admin UI reads it; behind a "requires" (the loop
+    off for the student), the `learning_loop` answer that decided it."""
+    if served is None:
+        return None
+    out = _rule(served.resolution)
+    if served.master is not None:
+        out["master"] = {"key": loop_gate.LEARNING_LOOP_FLAG, **_rule(served.master)}
+    if served.only_with is not None:
+        out["only_with"] = served.only_with  # forced only for students with it on
+    return out
+
+
 def _view(fd: feature_flags.FlagDef, snap: feature_flags.Snapshot) -> dict:
     row = snap.flags.get(fd.key) or {}
     rules = snap.targets.get(fd.key, [])
@@ -58,6 +76,12 @@ def _view(fd: feature_flags.FlagDef, snap: feature_flags.Snapshot) -> dict:
         # SAPLING_FLAG_<KEY>: wins over everything stored, so the UI must
         # not present the stored default as the live answer when it is set.
         "env_override": feature_flags.env_override(fd.key),
+        # #866 K24: the learning loop's gate over its own flags — the flag this
+        # one acts under for the same student, and what every student gets
+        # whatever is stored here (the kill switch, a SAPLING_FLAG_ override),
+        # so the row never shows a stored "On" the server does not serve.
+        "requires": loop_gate.LEARNING_LOOP_FLAG if fd.key in loop_gate.LOOP_FLAGS else None,
+        "forced": _served(loop_gate.forced_for_everyone(fd.key)),
         "rollout_percent": row.get("rollout_percent") or 0,
         "rollout_variant": row.get("rollout_variant"),
         "updated_at": row.get("updated_at"),
@@ -190,7 +214,10 @@ def delete_target(key: str, target_type: Literal["user", "role"], target_id: str
 
 @router.get("/{key}/explain")
 def explain_flag(key: str, request: Request, user_id: Optional[str] = None):
+    """What one student gets right now, and the rule that decided it — for a
+    learning-loop flag, under the loop's gate (#866 K24: the kill switch, then
+    their `learning_loop` flag, then the flag's own rules). Any other flag
+    answers exactly as feature_flags.explain does."""
     require_admin(request)
     _def(key)
-    r = feature_flags.explain(key, user_id or None, fresh=True)
-    return {"variant": r.variant, "step": r.step, "detail": r.detail}
+    return _served(loop_gate.served_flag(key, user_id or None, fresh=True))

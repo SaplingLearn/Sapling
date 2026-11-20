@@ -1,20 +1,30 @@
 """Exercise the real checklist service against persistent in-memory table state."""
+import asyncio
 import copy
+import functools
+import threading
+from concurrent.futures import ThreadPoolExecutor
 import json
 from datetime import datetime, timezone
+from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
 from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
+from pydantic_ai.usage import RunUsage
 
+import config
 from agents.topic_checklist import TopicOutline, topic_checklist_agent
-from services import academics
+from services import academics, ai_budget, checklist_budget
+from services.checklist_budget_run import ChecklistDispatches
 from services import topic_checklist_service as svc
 from services.encryption import bind, decrypt_json, encrypt_if_present
 
 NOW = datetime(2026, 10, 12, 12, tzinfo=timezone.utc)
+# The budgeted path's real seams, before the `state` fixture stubs them.
+_REAL_ADMIT, _REAL_RECONCILE, _REAL_GENERATE = checklist_budget.admit, checklist_budget.reconcile, svc._generate
 
 
 def outline():
@@ -25,6 +35,12 @@ def outline():
          "prerequisites": ["Functions"], "importance": 0.9,
          "source_ids": ["document:doc"], "assessment_ids": ["exam"]},
     ]})
+
+
+def free_generation(value, reservation):
+    # Explicit local nonbillable test outcome, not a real-provider fallback.
+    tracker = ChecklistDispatches(reservation=reservation, nonbillable_test=True)
+    return svc.ChecklistGeneration(RunUsage(), tracker, value)
 
 
 class MemoryTable:
@@ -101,7 +117,7 @@ def state(monkeypatch):
                          "assignment_type": "exam", "due_date": "2026-10-15", "notes": encrypt_if_present("Recursion")},
                         {"id": "late", "enrollment_id": "enr", "title": "Final", "assignment_type": "exam", "due_date": "2026-12-15"}],
         "graph_nodes": [{"id": "n", "user_id": "u", "course_id": "course", "concept_name": "Recursion",
-                         "mastery_score": 0.3, "mastery_tier": "struggling", "times_studied": 1,
+                         "mastery_score": 0.25, "mastery_tier": "struggling", "times_studied": 1,
                          "last_studied_at": "2026-10-11T12:00:00Z"}],
     }
     reads = []
@@ -119,6 +135,9 @@ def state(monkeypatch):
 
     monkeypatch.setattr(svc, "table", service_table)
     monkeypatch.setattr(academics, "table", lambda name: MemoryTable(db, name))
+    monkeypatch.setattr(ai_budget, "table", lambda name: MemoryTable(db, name))
+    monkeypatch.setattr(ai_budget, "_utcnow", lambda: NOW)
+    monkeypatch.setattr(config, "PLATFORM_DAILY_BUDGET_USD", None)
     db["_reads"] = reads
     monkeypatch.setattr(svc, "current_term", lambda: {"id": "fall"})
     monkeypatch.setattr(svc, "term_id_for_label", lambda label: {"Fall 2026": "fall", "Spring 2026": "spring"}.get(label))
@@ -131,12 +150,31 @@ def state(monkeypatch):
     monkeypatch.setattr(svc, "datetime", FrozenDatetime)
     calls = []
 
-    async def generate(payload, user_id):
+    async def generate(payload, user_id, reservation):
         assert user_id == "u"
         calls.append(payload)
-        return outline()
+        return free_generation(outline(), reservation)
 
+    def admit(user_id, enrollment_id, input_hash, model_names):
+        models = checklist_budget.price_hold(model_names).models
+        return checklist_budget.Reservation(uuid4(), user_id, enrollment_id, input_hash, 1, models=models)
+
+    def reconcile(reservation, *, receipt=None, content=None, no_dispatch=False):
+        assert receipt is None and no_dispatch
+        if content is not None:
+            MemoryTable(db, "topic_checklists").upsert({
+                "enrollment_id": reservation.enrollment_id, "input_hash": reservation.input_hash,
+                "content": content, "generated_at": NOW.isoformat(),
+            }, on_conflict="enrollment_id")
+        return {"state": "released"}
+
+    monkeypatch.setattr(checklist_budget, "admit", admit)
+    monkeypatch.setattr(checklist_budget, "reconcile", reconcile)
     monkeypatch.setattr(svc, "_generate", generate)
+    # These tests drive a learning-loop student's refresh, the budgeted path
+    # (the route passes the gate's answer). A loop-off student's refresh, the
+    # one before the loop, has its own tests (`loop_off` below).
+    monkeypatch.setattr(svc, "refresh_checklist", functools.partial(svc.refresh_checklist, learning_loop=True))
     return db, calls
 
 
@@ -196,7 +234,35 @@ def test_seven_day_review_boundary_and_unstudied_topics(state):
     assert by_name["Recursion"]["status"] == "needs_review"
     assert by_name["Recursion"]["review_reasons"] == ["Review overdue"]
     checked = svc.set_reviewed("u", "course", svc.topic_key("Recursion"), True)
-    assert next(t for t in checked["topics"] if t["name"] == "Recursion")["status"] == "mastered"
+    assert next(t for t in checked["topics"] if t["name"] == "Recursion")["status"] == "in_progress"
+
+
+@pytest.mark.parametrize("score,status", [
+    (0.0, "needs_review"),
+    (0.1, "needs_review"),
+    (0.299999, "needs_review"),
+    (0.3, "in_progress"),
+    (0.44, "in_progress"),
+    (0.8, "in_progress"),
+    (0.9, "in_progress"),
+    (0.949999, "in_progress"),
+    (0.95, "mastered"),
+    (0.99, "mastered"),
+])
+def test_checklist_status_matches_canonical_graph_presentation_boundaries(state, score, status):
+    db, _ = state
+    # Deliberately stale stored tier: presentation follows the current scalar
+    # and the real BKT helper, never this old label or a checkmark. The graph's
+    # top tier at .95 is separate from strict strong-evidence mastery.
+    db["graph_nodes"][0].update(mastery_score=score, mastery_tier="mastered" if score < 0.95 else "learning")
+    original = copy.deepcopy(db["graph_nodes"])
+    initial = next(t for t in svc.refresh_checklist("u", "course")["topics"] if t["name"] == "Recursion")
+    assert initial["status"] == status
+    assert initial["review_reasons"] == (["Weak mastery"] if status == "needs_review" else [])
+    checked = svc.set_reviewed("u", "course", svc.topic_key("Recursion"), True)
+    topic = next(t for t in checked["topics"] if t["name"] == "Recursion")
+    assert topic["checked"] is True and topic["status"] == status
+    assert db["graph_nodes"] == original
 
 
 def test_mastery_updates_do_not_regenerate_but_new_materials_do(state):
@@ -286,7 +352,7 @@ def test_generation_failure_preserves_existing_data_and_checks(state, monkeypatc
     stored = copy.deepcopy(db["topic_checklists"])
     db["courses"][0]["description"] += " Loops."
 
-    async def broken(payload, user_id):
+    async def broken(payload, user_id, reservation):
         raise RuntimeError("provider unavailable")
 
     monkeypatch.setattr(svc, "_generate", broken)
@@ -310,10 +376,10 @@ def test_no_evidence_produces_empty_state_without_guessing(state):
 def test_wrong_evidence_is_rejected_before_persistence(state, monkeypatch):
     db, _ = state
 
-    async def invalid(payload, user_id):
+    async def invalid(payload, user_id, reservation):
         value = outline()
         value.topics[0].source_ids = ["document:another-student"]
-        return value
+        return free_generation(value, reservation)
 
     monkeypatch.setattr(svc, "_generate", invalid)
     with pytest.raises(HTTPException) as err:
@@ -439,8 +505,8 @@ def test_assessment_ids_name_every_linked_assessment_whatever_its_date(state, mo
     linked = outline().model_dump()
     linked["topics"][1]["assessment_ids"] = ["late", "exam", "gone", "past"]  # not in date order
 
-    async def generate(payload, user_id):
-        return TopicOutline.model_validate(linked)
+    async def generate(payload, user_id, reservation):  # the loop's checklist budget
+        return free_generation(TopicOutline.model_validate(linked), reservation)
 
     monkeypatch.setattr(svc, "_generate", generate)
     svc.refresh_checklist("u", "course")
@@ -503,9 +569,9 @@ def test_unicode_and_metadata_cannot_bypass_source_budget(state):
 
 def test_prerequisite_gaps_count_only_known_weak_unreviewed_prerequisites(state):
     db, _ = state
-    db["graph_nodes"][0].update(mastery_score=0.9, last_studied_at="2026-10-11T12:00:00Z")
+    db["graph_nodes"][0].update(mastery_score=0.95, last_studied_at="2026-10-11T12:00:00Z")
     db["graph_nodes"].append({**db["graph_nodes"][0], "id": "fn", "concept_name": "Functions",
-                              "mastery_score": 0.3})
+                              "mastery_score": 0.25})
     recursion = next(t for t in svc.refresh_checklist("u", "course")["topics"] if t["name"] == "Recursion")
     assert recursion["status"] == "mastered"
     assert recursion["prerequisite_gaps"] == ["Functions"] and recursion["priority"] == "high"
@@ -515,9 +581,21 @@ def test_prerequisite_gaps_count_only_known_weak_unreviewed_prerequisites(state)
     assert recursion["prerequisite_gaps"] == [] and recursion["priority"] == "normal"
 
 
+@pytest.mark.parametrize("score,gaps", [(0.299999, ["Functions"]), (0.3, []), (0.44, [])])
+def test_prerequisite_gaps_use_the_same_canonical_weak_boundary(state, score, gaps):
+    db, _ = state
+    db["graph_nodes"][0].update(mastery_score=0.95)
+    db["graph_nodes"].append({**db["graph_nodes"][0], "id": "fn", "concept_name": "Functions", "mastery_score": score})
+    recursion = next(t for t in svc.refresh_checklist("u", "course")["topics"] if t["name"] == "Recursion")
+    assert recursion["prerequisite_gaps"] == gaps
+    assert recursion["priority"] == ("high" if gaps else "normal")
+
+
 def test_untracked_prerequisite_alone_does_not_raise_priority(state):
     db, _ = state
-    db["graph_nodes"][0].update(mastery_score=0.9, last_studied_at="2026-10-11T12:00:00Z")
+    # Keep the target in the graph's top tier so the upcoming exam is not an
+    # independent urgency reason; this test isolates the unknown prerequisite.
+    db["graph_nodes"][0].update(mastery_score=0.95, last_studied_at="2026-10-11T12:00:00Z")
     recursion = next(t for t in svc.refresh_checklist("u", "course")["topics"] if t["name"] == "Recursion")
     assert recursion["prerequisite_gaps"] == [] and recursion["priority"] == "normal"
 
@@ -559,3 +637,379 @@ def test_no_tracked_nodes_means_no_edge_read(state):
     db["graph_nodes"] = []
     svc.build_snapshot("u", svc.resolve_scope("u", "course", None), NOW.date())
     assert not [r for r in db["_reads"] if r[0] == "graph_edges"]
+
+
+@pytest.mark.parametrize("scope", ["daily_usd", "monthly_usd", "daily_tokens"])
+def test_refresh_checks_configured_spend_before_any_generation(state, scope):
+    db, calls = state
+    svc.refresh_checklist("u", "course")
+    svc.set_reviewed("u", "course", svc.topic_key("Functions"), True)
+    stored = copy.deepcopy(db["topic_checklists"])
+    db["courses"][0]["description"] += " New material."
+    db["llm_usage"] = [{
+        "id": "spent", "user_id": "u", "task": "topic_checklist",
+        "cost_usd": config.STUDENT_MONTHLY_BUDGET_USD if scope == "monthly_usd" else
+                    config.STUDENT_DAILY_BUDGET_USD if scope == "daily_usd" else 0,
+        "total_tokens": config.STUDENT_DAILY_TOKENS if scope == "daily_tokens" else 0,
+        "created_at": "2026-10-01T12:00:00Z" if scope == "monthly_usd" else NOW.isoformat(),
+    }]
+    with pytest.raises(ai_budget.AIBudgetExceeded) as error:
+        svc.refresh_checklist("u", "course")
+    assert error.value.decision.scope == scope
+    assert len(calls) == 1 and db["topic_checklists"] == stored
+    assert svc.get_checklist("u", "course")["topics"]
+    assert db["topic_checklist_progress"]
+    assert svc._generation_locks == {}
+
+
+def test_fresh_cache_and_empty_sources_need_no_budget_read(state, monkeypatch):
+    db, calls = state
+    svc.refresh_checklist("u", "course")
+
+    def unavailable(*args):
+        pytest.fail("A cache hit/no-evidence response must not read spending.")
+
+    monkeypatch.setattr(ai_budget, "check", unavailable)
+    assert svc.refresh_checklist("u", "course")["topics"]
+    db["courses"][0]["description"] = None
+    db["documents"] = db["graph_nodes"] = db["assignments"] = []
+    assert svc.refresh_checklist("u", "course")["topics"] == []
+    assert len(calls) == 1
+
+
+def test_budget_read_outage_is_retryable_and_never_calls_model(state, monkeypatch):
+    db, calls = state
+
+    def unavailable(*args):
+        raise RuntimeError("usage store unavailable")
+
+    monkeypatch.setattr(ai_budget, "_load_rows", unavailable)
+    with pytest.raises(HTTPException) as error:
+        svc.refresh_checklist("u", "course")
+    assert error.value.status_code == 503
+    assert "usage" in error.value.detail.lower()
+    assert calls == [] and not db.get("topic_checklists")
+    assert svc._generation_locks == {}
+
+
+def test_actual_refresh_endpoint_preserves_budget_429(state, monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from routes import topic_checklist as routes
+
+    db, calls = state
+    db["llm_usage"] = [{"id": "spent", "user_id": "u", "task": "topic_checklist",
+                        "created_at": NOW.isoformat(), "cost_usd": config.STUDENT_DAILY_BUDGET_USD}]
+    monkeypatch.setattr(routes, "require_self", lambda user_id, request: user_id)
+    # The route hands the service the student's gate answer: on here (the
+    # fixture's learning-loop refresh). Without the loop there is no budget.
+    monkeypatch.setattr(routes, "refresh_checklist", svc.refresh_checklist)
+    app = FastAPI()
+    app.add_exception_handler(ai_budget.AIBudgetExceeded, ai_budget.budget_exceeded_handler)
+    app.include_router(routes.router, prefix="/api/topic-checklist")
+    response = TestClient(app).post("/api/topic-checklist/u/courses/course/refresh")
+    assert response.status_code == 429 and response.json()["scope"] == "daily_usd"
+    assert response.json()["detail"] == ai_budget.BUDGET_REACHED_DETAIL
+    assert int(response.headers["Retry-After"]) > 0
+    assert calls == []
+
+
+@pytest.mark.parametrize("other_course", [False, True])
+def test_concurrent_misses_coalesce_or_recheck_spend_after_wait(state, monkeypatch, other_course):
+    db, calls = state
+    if other_course:
+        db["courses"].append({"id": "course2", "course_code": "CS2", "course_name": "Second", "description": "Functions."})
+        db["course_offerings"].append({"id": "off2", "course_id": "course2", "term_id": "fall"})
+        db["enrollments"].append({"id": "enr2", "user_id": "u", "offering_id": "off2"})
+    started, second_snapshot, release = threading.Event(), threading.Event(), threading.Event()
+    original_snapshot = svc._current_checklist
+
+    def snapshot(user, course, semester):
+        result = original_snapshot(user, course, semester)
+        if threading.current_thread().name.endswith("_1"):
+            second_snapshot.set()
+        return result
+
+    async def generate(payload, user_id, reservation):
+        calls.append(payload)
+        started.set()
+        assert release.wait(3), "First request never released"
+        # A committed usage row from the first generation reaches the cap.
+        db["llm_usage"] = [{"id": "spent", "user_id": "u", "task": "topic_checklist",
+                            "created_at": NOW.isoformat(), "cost_usd": config.STUDENT_DAILY_BUDGET_USD}]
+        return free_generation(outline(), reservation)
+
+    monkeypatch.setattr(svc, "_current_checklist", snapshot)
+    monkeypatch.setattr(svc, "_generate", generate)
+    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="checklist") as workers:
+        first = workers.submit(svc.refresh_checklist, "u", "course")
+        assert started.wait(3)
+        second = workers.submit(svc.refresh_checklist, "u", "course2" if other_course else "course")
+        try:
+            assert second_snapshot.wait(3)
+        finally:
+            release.set()
+        assert first.result(timeout=3)["topics"]
+        if other_course:
+            with pytest.raises(ai_budget.AIBudgetExceeded) as error:
+                second.result(timeout=3)
+            assert error.value.decision.scope == "daily_usd"
+        else:
+            assert second.result(timeout=3)["topics"]
+    assert len(calls) == 1
+    assert len(db["topic_checklists"]) == 1
+    assert svc._generation_locks == {}
+
+
+def test_failed_generation_preserves_usage_without_queueing(monkeypatch):
+    async def failing_run(message, **kwargs):
+        kwargs["usage"].input_tokens = 25
+        kwargs["usage"].output_tokens = 9
+        raise TimeoutError("provider timeout")
+
+    monkeypatch.setattr(topic_checklist_agent, "run", failing_run)
+    reservation = checklist_budget.Reservation(uuid4(), "u", "enr", "a" * 64, 1)
+    result = asyncio.run(svc._generate({"sources": []}, "u", reservation))
+    assert isinstance(result.error, TimeoutError)
+    assert result.usage.input_tokens == 25 and result.usage.output_tokens == 9
+    assert result.dispatches.dispatched == 0 and not result.dispatches.responses
+
+
+def test_generation_wait_timeout_preserves_holder_and_drops_waiter_reference(state, monkeypatch):
+    db, calls = state
+    started, release = threading.Event(), threading.Event()
+
+    async def generate(payload, user_id, reservation):
+        calls.append(payload)
+        started.set()
+        assert release.wait(3)
+        return free_generation(outline(), reservation)
+
+    monkeypatch.setattr(svc, "_generate", generate)
+    monkeypatch.setattr(svc, "GENERATION_WAIT_SECONDS", 0.02)
+    with ThreadPoolExecutor(max_workers=1) as workers:
+        holder = workers.submit(svc.refresh_checklist, "u", "course")
+        assert started.wait(3)
+        try:
+            with pytest.raises(HTTPException) as error:
+                svc.refresh_checklist("u", "course")
+            assert error.value.status_code == 503
+            assert int(error.value.headers["Retry-After"]) > 0
+            lock, references = svc._generation_locks["u"]
+            assert lock.locked() and references == 1
+        finally:
+            release.set()
+        assert holder.result(timeout=3)["topics"]
+    assert len(calls) == 1 and svc._generation_locks == {}
+    monkeypatch.setattr(ai_budget, "check", lambda *args: pytest.fail("Completed cache hit is free"))
+    assert svc.refresh_checklist("u", "course")["topics"]
+    assert len(db["topic_checklists"]) == 1
+
+
+@pytest.mark.parametrize("cancelled", [False, True])
+def test_failed_generation_preserves_original_model_failure(monkeypatch, cancelled):
+    original = asyncio.CancelledError() if cancelled else RuntimeError("original failure")
+
+    async def failing_run(message, **kwargs):
+        raise original
+
+    monkeypatch.setattr(topic_checklist_agent, "run", failing_run)
+    reservation = checklist_budget.Reservation(uuid4(), "u", "enr", "a" * 64, 1)
+    result = asyncio.run(svc._generate({"sources": []}, "u", reservation))
+    assert result.error is original
+
+
+# ── A loop-off student's refresh: as before the loop (owner decision 2026-11-18) ──
+
+
+@pytest.fixture
+def loop_off(state, monkeypatch):
+    """The `state` course for a student with the learning loop off. Every AI
+    budget read, spend hold and budgeted generation fails the test."""
+    db, calls = state
+
+    async def generate(payload, user_id):
+        assert user_id == "u"
+        calls.append(payload)
+        return outline()
+
+    def no_budget(*args, **kwargs):
+        pytest.fail("a loop-off refresh read the AI budget or took a spend hold")
+
+    monkeypatch.setattr(svc, "_generate_unbudgeted", generate)
+    monkeypatch.setattr(svc, "_generate", no_budget)
+    for name in ("admit", "start", "reconcile", "read"):
+        monkeypatch.setattr(checklist_budget, name, no_budget)
+    for name in ("check", "_usage", "_load_rows", "enforce_rate_limit_for"):
+        monkeypatch.setattr(ai_budget, name, no_budget)
+    return db, calls, functools.partial(svc.refresh_checklist.func, learning_loop=False)
+
+
+def test_loop_off_refresh_is_the_pre_loop_refresh_with_no_budget(loop_off):
+    """No AI budget read and no spend hold, even past the loop's daily cap: the
+    run, its cache write (sealed to the enrollment) and a free cache hit after."""
+    db, calls, refresh = loop_off
+    db["llm_usage"] = [{"id": "spent", "user_id": "u", "task": "chat_tutor", "created_at": NOW.isoformat(),
+                        "cost_usd": config.STUDENT_DAILY_BUDGET_USD * 10, "total_tokens": config.STUDENT_DAILY_TOKENS}]
+    result = refresh("u", "course")
+    assert not result["needs_refresh"] and [t["name"] for t in result["topics"]] == ["Recursion", "Functions"]
+    stored = db["topic_checklists"][0]
+    assert decrypt_json(stored["content"], bind=bind("topic_checklists", "content", stored)) == outline().model_dump()
+    assert refresh("u", "course")["topics"] == result["topics"]
+    assert len(calls) == 1 and svc._generation_locks == {}
+
+
+def test_loop_off_refresh_keeps_the_rate_limit_and_failure_answers(loop_off, monkeypatch):
+    db, calls, refresh = loop_off
+    for index in range(6):
+        db["courses"][0]["description"] += f" Topic {index}."
+        refresh("u", "course")
+    db["courses"][0]["description"] += " New topic."
+    with pytest.raises(HTTPException) as err:
+        refresh("u", "course")
+    assert err.value.status_code == 429 and "Retry-After" in err.value.headers
+    assert len(calls) == 6
+
+    async def broken(payload, user_id):
+        raise RuntimeError("provider unavailable")
+
+    monkeypatch.setattr(svc, "check_rate_limit", lambda *args, **kwargs: None)
+    monkeypatch.setattr(svc, "_generate_unbudgeted", broken)
+    stored = copy.deepcopy(db["topic_checklists"])
+    with pytest.raises(HTTPException) as err:
+        refresh("u", "course")
+    assert err.value.status_code == 503 and db["topic_checklists"] == stored
+
+
+def test_loop_off_generation_records_its_usage_row(monkeypatch):
+    """The pre-loop run: WORKER_LIMITS, and one usage row for the student."""
+    recorded = []
+
+    def handler(messages, info):
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {"topics": []})])
+
+    def record(result, **kwargs):
+        recorded.append(kwargs)
+        return result
+
+    monkeypatch.setattr(svc, "record_agent_usage", record)
+    with topic_checklist_agent.override(model=FunctionModel(handler)):
+        result = asyncio.run(svc._generate_unbudgeted({"sources": [], "assessments": []}, "u"))
+    assert result == TopicOutline(topics=[])
+    assert recorded == [{"feature": "topic_checklist", "task": "topic_checklist", "user_id": "u"}]
+
+
+# ── B1: the budget path on the slot's real model (the Claude default) ────────
+
+
+def test_a_learning_loop_refresh_runs_and_settles_on_the_real_claude_slot(state, monkeypatch):
+    """The whole budgeted refresh on the model `model_for("topic_checklist")`
+    really resolves to (claude-haiku-5-5, with gemini-2.5-flash its fallback):
+    admission holds llm_pricing's price for both, Claude counts the full request
+    before generating, the dispatch starts under that hold, and the bill settles
+    as a Claude bill at llm_pricing's price. Only the Anthropic SDK calls and the
+    budget RPCs are stubbed (no network, no database)."""
+    from anthropic.resources.beta.messages.messages import AsyncMessages
+    from anthropic.types.beta import BetaMessage, BetaMessageTokensCount, BetaTextBlock, BetaUsage
+    from pydantic_ai.models.anthropic import AnthropicModel
+
+    from services import llm_pricing
+
+    db, _ = state
+    model = topic_checklist_agent.model
+    assert isinstance(model.wrapped, AnthropicModel) and model.wrapped.model_name == "claude-haiku-5-5"
+    monkeypatch.setattr(checklist_budget, "admit", _REAL_ADMIT)
+    monkeypatch.setattr(checklist_budget, "reconcile", _REAL_RECONCILE)
+    monkeypatch.setattr(svc, "_generate", _REAL_GENERATE)
+    sdk, rpcs, reservation = [], [], {}
+
+    async def count_tokens(self, **kwargs):
+        sdk.append(("count", kwargs["model"], bool(kwargs.get("system")), "output_config" in kwargs))
+        return BetaMessageTokensCount(input_tokens=1500)
+
+    async def create(self, **kwargs):
+        sdk.append(("create", kwargs["model"], kwargs["max_tokens"]))
+        return BetaMessage(
+            id="msg_checklist", type="message", role="assistant", model=kwargs["model"],
+            content=[BetaTextBlock(type="text", text=json.dumps(outline().model_dump()))],
+            stop_reason="end_turn", stop_sequence=None,
+            usage=BetaUsage(input_tokens=1500, output_tokens=400,
+                            cache_creation_input_tokens=0, cache_read_input_tokens=0),
+        )
+
+    def rpc(name, params):
+        rpcs.append((name, params))
+        if name == "checklist_budget_admit":
+            reservation.update(
+                operation_id=params["p_operation_id"], user_id=params["p_user_id"],
+                enrollment_id=params["p_enrollment_id"], input_hash=params["p_input_hash"], fence=1,
+                state="prepared", dispatch_at=None, models=params["p_models"],
+                held_usd=float(params["p_held_usd"]), held_tokens=params["p_held_tokens"])
+        elif name == "checklist_budget_start":
+            reservation.update(state="started", dispatch_at=NOW.isoformat())
+        else:
+            assert params["p_action"] == "settle"
+            reservation.update(state="settled", receipt=params["p_receipt"], fingerprint=params["p_fingerprint"])
+            MemoryTable(db, "topic_checklists").upsert({
+                "enrollment_id": reservation["enrollment_id"], "input_hash": reservation["input_hash"],
+                "content": params["p_content"], "generated_at": NOW.isoformat(),
+            }, on_conflict="enrollment_id")
+        return {"status": {"checklist_budget_admit": "admitted"}.get(name, reservation["state"]),
+                "reservation": dict(reservation)}
+
+    monkeypatch.setattr(AsyncMessages, "count_tokens", count_tokens)
+    monkeypatch.setattr(AsyncMessages, "create", create)
+    monkeypatch.setattr(checklist_budget, "rpc", rpc)
+
+    result = svc.refresh_checklist("u", "course")
+
+    assert not result["needs_refresh"] and {t["name"] for t in result["topics"]} == {"Recursion", "Functions"}
+    assert sdk == [("count", "claude-haiku-5-5", True, True), ("create", "claude-haiku-5-5", 8192)]
+    assert [name for name, _ in rpcs] == [
+        "checklist_budget_admit", "checklist_budget_start", "checklist_budget_reconcile"]
+    admitted = rpcs[0][1]
+    hold = checklist_budget.price_hold(("claude-haiku-5-5",))
+    # the budgeted run is single-attempt, so only the slot's own model can bill it
+    assert admitted["p_models"] == ["anthropic:claude-haiku-5-5"]
+    assert admitted["p_held_usd"] == str(hold.usd) and admitted["p_held_tokens"] == 74_576
+    bill = rpcs[2][1]["p_receipt"]
+    assert (bill["model"], bill["provider"], bill["prompt_tokens"], bill["completion_tokens"]) == (
+        "claude-haiku-5-5", "anthropic", 1500, 400)
+    assert bill["cost_usd"] == llm_pricing.cost_usd("claude-haiku-5-5", 1500, 400, cached_tokens=0)
+    assert bill["created_at"] == NOW.isoformat()
+    stored = db["topic_checklists"][0]
+    assert decrypt_json(stored["content"], bind=bind("topic_checklists", "content", stored)) == outline().model_dump()
+
+
+def test_a_loop_off_run_sends_mains_output_ceiling_and_timeout(monkeypatch):
+    """#866 review (b1-budget, defect 3): main's checklist agent had no
+    model_settings, so a Claude slot ran at the model's own max_tokens and the
+    slot timeout. The loop-off path restates those over the loop agent's
+    8192-token / 60 s spend-hold bounds."""
+    import asyncio
+    import json
+
+    from anthropic.resources.beta.messages.messages import AsyncMessages
+    from anthropic.types.beta import BetaMessage, BetaTextBlock, BetaUsage
+
+    from agents._providers import ANTHROPIC_MAX_TOKENS, timeout_for
+    from services import topic_checklist_service as svc
+
+    sent = []
+
+    async def create(self, **kwargs):
+        sent.append((kwargs["max_tokens"], kwargs.get("timeout")))
+        return BetaMessage(
+            id="m", type="message", role="assistant", model=kwargs["model"],
+            content=[BetaTextBlock(type="text", text=json.dumps({"topics": []}))],
+            stop_reason="end_turn", stop_sequence=None,
+            usage=BetaUsage(input_tokens=10, output_tokens=5,
+                            cache_creation_input_tokens=0, cache_read_input_tokens=0),
+        )
+
+    monkeypatch.delenv("SAPLING_MODEL_MODE", raising=False)
+    monkeypatch.setattr(AsyncMessages, "create", create)
+    monkeypatch.setattr(svc, "record_agent_usage", lambda r, **k: r)
+    asyncio.run(svc._generate_unbudgeted({"sources": [], "assessments": []}, "u"))
+    assert [max_tokens for max_tokens, _ in sent] == [ANTHROPIC_MAX_TOKENS]
+    assert svc._main_run_settings()["timeout"] == timeout_for("topic_checklist")

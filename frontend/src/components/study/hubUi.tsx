@@ -15,6 +15,11 @@ export const DISPLAY = "var(--font-display)";
 export const SANS = "var(--font-sans)";
 export const MONO = "var(--font-mono)";
 
+/** The two parts of the page an exam tab re-scopes, by id: the readiness band
+ *  with Up Next, and the roadmap (each tab's `aria-controls`). */
+export const READINESS_ID = "study-hub-readiness";
+export const ROADMAP_ID = "study-hub-roadmap";
+
 /** One line, cut with an ellipsis. */
 export const ELLIPSIS: React.CSSProperties = { whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" };
 

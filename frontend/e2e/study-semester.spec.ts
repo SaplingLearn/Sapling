@@ -42,7 +42,7 @@
  */
 import type { Page } from "@playwright/test";
 
-import { expect, test } from "./support/fixtures";
+import { expect, loopOffLane, test } from "./support/fixtures";
 
 const COURSE_CS = "rich-course-cs101";
 const COURSE_MATH = "rich-course-math210";
@@ -95,6 +95,17 @@ async function offeredCourses(page: Page) {
 test("flashcards follow the semester selection; All semesters shows every term", async ({
   page,
 }) => {
+  // PKG-14b (spec §11.4), lane-aware: by default the loop's DueQueue sits
+  // above the Study hub; with the loop off (kill switch or flag) the review panel is absent
+  // (the hub alone).
+  await page.goto("/study");
+  await expect(page.getByRole("heading", { name: "Study" }).first()).toBeVisible({ timeout: 30_000 });
+  if (loopOffLane) {
+    await expect(page.getByTestId("review-due-panel")).toHaveCount(0);
+  } else {
+    await expect(page.getByTestId("review-due-panel")).toBeVisible();
+  }
+
   // 1. Default = All semesters: the read is unscoped, and the fall deck (on
   //    CS101) and the spring deck (on MATH210) are both served.
   expect(await openFlashcards(page, COURSE_CS)).toBeNull();

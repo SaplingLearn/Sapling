@@ -37,16 +37,21 @@ function rememberFlags(who: string, flags: FlagMap): void {
   }
 }
 
-const FlagsContext = createContext<{ flags: FlagMap | null; onAppRoute: boolean; ready: boolean }>({
+/** `fresh`: the map is this visit's successful read, not the last-known map a
+ *  failed (or degraded) read fell back to — a guess, which useLoopStatus does
+ *  not let skip its probe (#866 K49). */
+const FlagsContext = createContext<{ flags: FlagMap | null; onAppRoute: boolean; ready: boolean; fresh: boolean }>({
   flags: null,
   onAppRoute: false,
   ready: true,
+  fresh: false,
 });
 
 export function FlagsProvider({ children }: { children: React.ReactNode }) {
   const { userId, isAuthenticated, userReady } = useUser();
   const onAppRoute = isAppShellRoute(usePathname());
   const [flags, setFlags] = useState<FlagMap | null>(null);
+  const [fresh, setFresh] = useState(false);
   const [loadedFor, setLoadedFor] = useState<string | null>(null);
   const generation = useRef(0);
   const loadedAt = useRef(0);
@@ -83,6 +88,7 @@ export function FlagsProvider({ children }: { children: React.ReactNode }) {
       if (gen !== generation.current) return;
       if (who && fresh) rememberFlags(who, f);
       setFlags(who ? f : null);
+      setFresh(who !== null && fresh);
       setLoadedFor(who);
       loadedAt.current = Date.now();
       // #677/#675: product_analytics gates posthog-js, fail-closed: only a
@@ -111,6 +117,7 @@ export function FlagsProvider({ children }: { children: React.ReactNode }) {
           if (gen !== generation.current) return;
           rememberFlags(who, f);
           setFlags(f);
+          setFresh(true);
           setProductAnalyticsFlag(f.product_analytics === "on");
         },
         () => {
@@ -132,7 +139,7 @@ export function FlagsProvider({ children }: { children: React.ReactNode }) {
   const who = isAuthenticated && userId ? userId : null;
   const ready = userReady && (who === null || (loadedFor === who && flags !== null));
 
-  return <FlagsContext.Provider value={{ flags, onAppRoute, ready }}>{children}</FlagsContext.Provider>;
+  return <FlagsContext.Provider value={{ flags, onAppRoute, ready, fresh }}>{children}</FlagsContext.Provider>;
 }
 
 /** The variant of `key` for this student; "off" until loaded, on error, off-shell. */
@@ -147,11 +154,13 @@ const NO_FLAGS: FlagMap = {};
 /**
  * Every client-visible flag at once, plus whether they have loaded — for
  * callers that must not act on the "off" placeholder (NavFeatureGate would
- * otherwise show a hidden feature's page while flags are in flight). Off the
- * app shell (and outside a provider) there is nothing to load: ready, empty.
+ * otherwise show a hidden feature's page while flags are in flight) — and
+ * whether the map is this visit's read (`fresh`) or the remembered one. Off
+ * the app shell (and outside a provider) there is nothing to load: ready,
+ * empty, fresh.
  */
-export function useFlagMap(): { flags: FlagMap; ready: boolean } {
-  const { flags, onAppRoute, ready } = useContext(FlagsContext);
-  if (!onAppRoute) return { flags: NO_FLAGS, ready: true };
-  return { flags: flags ?? NO_FLAGS, ready };
+export function useFlagMap(): { flags: FlagMap; ready: boolean; fresh: boolean } {
+  const { flags, onAppRoute, ready, fresh } = useContext(FlagsContext);
+  if (!onAppRoute) return { flags: NO_FLAGS, ready: true, fresh: true };
+  return { flags: flags ?? NO_FLAGS, ready, fresh };
 }

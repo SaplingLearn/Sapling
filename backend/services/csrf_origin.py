@@ -49,6 +49,8 @@ import logging
 from collections.abc import Callable, Iterable
 from urllib.parse import urlsplit
 
+from starlette.requests import Request
+
 from services.session_tokens import SESSION_COOKIE_NAMES
 
 logger = logging.getLogger("sapling.csrf_origin")
@@ -122,6 +124,26 @@ def decide(
     if "sec-fetch-site" in headers:
         return "browser request without origin"
     return None  # a non-browser client (server-side call, script)
+
+
+#: Sec-Fetch-Site values a state-changing GET accepts: the app's own
+#: same-origin /api rewrite, or a navigation the user started themselves.
+_SAME_ORIGIN_FETCH = frozenset({"same-origin", "none"})
+
+
+def require_same_origin_fetch(request: Request) -> None:
+    """Route dependency for a GET that WRITES (#866 Z39: the loop's
+    /review/next serves and opens an item, /plan writes loop_state). The
+    middleware above checks only unsafe methods, and the Lax session cookie
+    rides a cross-site top-level navigation and a sibling subdomain's fetch.
+    A browser marks both with ``Sec-Fetch-Site`` (``cross-site`` /
+    ``same-site``): 403. A request without the header is a non-browser client
+    (rule 4 above) and passes."""
+    from fastapi import HTTPException
+
+    site = request.headers.get("sec-fetch-site")
+    if site is not None and site.strip().lower() not in _SAME_ORIGIN_FETCH:
+        raise HTTPException(status_code=403, detail="Cross-origin request refused")
 
 
 class CsrfOriginMiddleware:

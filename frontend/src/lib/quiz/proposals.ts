@@ -14,7 +14,7 @@
  * or build a queue (R4 §2). The full node list is already loaded for the
  * "pick something specific" list, so the rule is reproduced over that instead of
  * fetching a second, thinner answer. The codebase has precedent for mirroring
- * with a citation (`Learn.tsx::tierForScore` mirrors `config.py::get_mastery_tier`).
+ * with a citation (`Learn.tsx::tierForScore` mirrors `learning/bkt.py::tier_for`).
  *
  * TODO(#537-followup: enriched /recommendations) — once the endpoint returns
  * node_id / course_id / mastery_score / last_studied_at, delete this mirror and
@@ -35,7 +35,7 @@ import type { GraphNode } from "@/lib/types";
 import { queueOf } from "./machine";
 import { daysAgo, relativeStudied } from "./relativeTime";
 import { QUEUE_MAX } from "./session";
-import type { AttemptSummary, QuizSession } from "./types";
+import type { AttemptSummary, PlanReason, PlannedConcept, QuizPlan, QuizSession, SkillBand } from "./types";
 
 /** The tiers `get_recommendations` considers worth suggesting. `mastered` and
  *  `subject_root` are excluded by the same filter. */
@@ -51,6 +51,14 @@ export interface Candidate {
   color: string;
   rationale: string;
   lastAttempt?: AttemptSummary;
+  /** Spec §13 A143: the learner model's proposal — why, the skill meter and its band. */
+  plan?: CandidatePlan;
+}
+
+export interface CandidatePlan {
+  reason: PlanReason;
+  pKnown: number;
+  band: SkillBand;
 }
 
 /** The membership half of the rule: is this node one the student owes time to? */
@@ -100,11 +108,45 @@ function pct(score: number): number {
   return Math.round(score * 100);
 }
 
-/** "29% · struggling · last studied 4 days ago" (§5 B1.2). */
-export function metaLine(node: GraphNode, now: Date = new Date()): string {
+/** The skill bands in a student's words — the quiz results say them the
+ *  same way (`results/LearningBlock.tsx`). */
+export const BAND_WORDS: Record<SkillBand, string> = {
+  novice: "just starting",
+  develop: "developing",
+  profic: "proficient",
+};
+
+function studiedPhrase(node: GraphNode, now: Date): string {
   const studied = relativeStudied(node.last_studied_at, now);
-  const when = studied === "not studied yet" ? studied : `last studied ${studied}`;
+  return studied === "not studied yet" ? studied : `last studied ${studied}`;
+}
+
+/**
+ * "29% · struggling · last studied 4 days ago" (§5 B1.2).
+ *
+ * ONE measure per concept on the quiz home. A concept the learner model's plan
+ * proposes (spec §13 A143) reads its skill meter and band — the decayed BKT
+ * estimate the plan ranked it by, its reason line states and the quiz results
+ * report — never the graph's stored mastery score beside it, which is not
+ * decayed and, for a concept never studied, is not the model's prior either.
+ * A concept the plan does not propose keeps the graph's score and tier.
+ */
+export function metaLine(node: GraphNode, now: Date = new Date(), plan?: CandidatePlan): string {
+  const when = studiedPhrase(node, now);
+  if (plan) return `${skillPercent(plan.pKnown)} · ${BAND_WORDS[plan.band]} · ${when}`;
   return `${pct(node.mastery_score)}% · ${node.mastery_tier} · ${when}`;
+}
+
+/** `metaLine` without its number, for a card whose plan line already states
+ *  the skill meter: "developing · not studied yet". */
+export function planStateLine(node: GraphNode, plan: CandidatePlan, now: Date = new Date()): string {
+  return `${BAND_WORDS[plan.band]} · ${studiedPhrase(node, now)}`;
+}
+
+/** What the home ranks and shows a concept by: its skill meter when the plan
+ *  proposes it, else the graph's mastery score (see `metaLine`). */
+export function shownMastery(node: GraphNode, plan?: CandidatePlan): number {
+  return plan ? plan.pKnown : node.mastery_score;
 }
 
 /**
@@ -288,6 +330,119 @@ export function entrySelection(
   }
 
   return { conceptId: null, courseId: entry.course ?? null, unresolved: false };
+}
+
+// ── The learner model's plan (learning-loop spec §13 A143) ──────────────────
+//
+// With `quiz_concept_plan` on, the backend ranks the concepts from the learner
+// model (`GET /api/quiz/plan`, `backend/learning/quiz_plan.py`): reviews whose
+// FSRS date has passed first, most overdue first; then concepts the student
+// holds an open misconception on; then concepts whose prerequisites are
+// proficient but which are not yet. These replace the mirror above — the
+// graph's mastery tier — as the home's proposals and its "due" queue. The
+// plan is intersected with the scoped graph, so a concept outside the active
+// semester never appears.
+
+/** "62%" — the skill meter, as the card and the rows read it. */
+export function skillPercent(pKnown: number): string {
+  return `${Math.round(pKnown * 100)}%`;
+}
+
+/** Why the learner model proposes a concept, in a student's words. */
+export function planReasonCopy(reason: PlanReason): string {
+  switch (reason) {
+    case "due":
+      return "Due for review — bring it back before it fades.";
+    case "misconception":
+      // Never "this round checks it": a round targets the misconception only
+      // with quiz_planned_questions on (server-only), in a multiple-choice or
+      // mixed format, and only if a tagged distractor survives (#866 K43).
+      return "You've mixed this one up before — worth practising again.";
+    default:
+      return "Ready to learn — everything it builds on is solid.";
+  }
+}
+
+/** The short form for an alternative row. */
+function planRowCopy(concept: PlannedConcept): string {
+  const skill = `skill ${skillPercent(concept.p_known)}`;
+  switch (concept.reason) {
+    case "due":
+      return `${skill} · due for review`;
+    case "misconception":
+      return `${skill} · mixed up before`;
+    default:
+      return `${skill} · ready to learn`;
+  }
+}
+
+/** The plan's concepts as candidates, in the plan's order, over the scoped
+ *  graph only. */
+export function rankFromPlan(
+  plan: QuizPlan,
+  nodes: GraphNode[],
+  courses: EnrolledCourse[],
+  attempts: AttemptSummary[],
+): Candidate[] {
+  const byId = new Map(nodes.filter(n => !n.is_subject_root).map(n => [n.id, n]));
+  const out: Candidate[] = [];
+  for (const concept of plan.concepts) {
+    const node = byId.get(concept.node_id);
+    if (!node) continue;
+    const course = courseFor(node, courses);
+    const lastAttempt = latestCompletedAttempt(node.id, attempts);
+    out.push({
+      node,
+      course,
+      color: colorFor(node, course),
+      rationale: planRowCopy(concept),
+      plan: { reason: concept.reason, pKnown: concept.p_known, band: concept.band },
+      ...(lastAttempt ? { lastAttempt } : {}),
+    });
+  }
+  return out;
+}
+
+/** "Practice this course" from the plan: the course's proposed concepts in
+ *  the plan's order, capped at `QUEUE_MAX` — never a concept the learner model
+ *  does not propose (not ready, or proficient and not yet due). */
+export function courseQueueFromPlan(candidates: Candidate[], courseId: string): string[] {
+  return candidates
+    .filter(c => c.plan && c.node.course_id === courseId)
+    .slice(0, QUEUE_MAX)
+    .map(c => c.node.id);
+}
+
+/**
+ * "Practice this course" on a planned home. The course's own plan (read with
+ * its `course_id`) when there is one, else the all-courses plan's concepts of
+ * that course. When the learner model proposes none of them (each is
+ * proficient and not yet due, or waits on a prerequisite), the tier ranking's
+ * queue for the course stands in: the student asked to practise THIS course,
+ * and an empty queue would quietly swap the card for an unrelated concept.
+ */
+export function plannedCourseQueue(
+  candidates: Candidate[],
+  courseCandidates: Candidate[] | null | undefined,
+  nodes: GraphNode[],
+  courseId: string,
+): string[] {
+  const planned = courseQueueFromPlan(courseCandidates ?? candidates, courseId);
+  return planned.length > 0 ? planned : queueFor("course", nodes, courseId);
+}
+
+/** "Review everything due" from the plan: the concepts whose FSRS review is
+ *  due, in the plan's (overdue-first) order, over the scoped graph. */
+export function dueFromPlan(
+  plan: QuizPlan,
+  nodes: GraphNode[],
+): { conceptIds: string[]; count: number; courseCount: number } {
+  const scoped = new Map(nodes.map(n => [n.id, n]));
+  const due = plan.concepts.filter(c => c.reason === "due" && scoped.has(c.node_id));
+  const courses = new Set(
+    due.map(c => scoped.get(c.node_id)?.course_id).filter((id): id is string => Boolean(id)),
+  );
+  return { conceptIds: due.map(c => c.node_id), count: due.length, courseCount: courses.size };
 }
 
 /**

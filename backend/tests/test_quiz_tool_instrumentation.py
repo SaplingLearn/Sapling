@@ -470,3 +470,19 @@ def test_misconceptions_read_asks_only_for_rows_that_carry_text():
     assert (captured.get("filters") or {}).get("common_misconceptions") == "neq.{}", (
         "the read must spend its row budget on rows that actually carry text"
     )
+
+
+def test_an_empty_progress_read_for_a_student_with_a_graph_is_reported(sink):
+    """read_user_progress is an agent read tool that can return zero concepts:
+    it routes that through report_empty_result like read_concepts_for_user
+    (CLAUDE.md, F5), scoped to the course it read."""
+    from agents.tools.chat_context import read_user_progress_tool
+
+    empty = SimpleNamespace(progress=lambda *a, **k: _async(SimpleNamespace(total_concepts=0)))
+    with _probe(True), patch("agents.tools.retrieval.resolve_retrieval", return_value=empty):
+        asyncio.run(read_user_progress_tool(_ctx(feature="tutor")))
+    events_service.flush_now()
+
+    assert [e["event_type"] for e in sink] == ["quiz.tool_empty"]
+    assert sink[0]["payload"]["tool"] == "read_user_progress"
+    assert sink[0]["payload"]["feature"] == "tutor"

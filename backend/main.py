@@ -34,7 +34,7 @@ from services import log_privacy  # noqa: E402
 
 log_privacy.install()
 
-from routes import graph, learn, quiz, calendar, social, extract, auth, documents, flashcards, study_guide, feedback, careers, onboarding, gradebook, gradescope, notes, academics, gamification
+from routes import graph, learn, learn_loop, quiz, calendar, social, extract, auth, documents, flashcards, study_guide, feedback, careers, onboarding, gradebook, gradescope, notes, academics, gamification
 from routes.profile import router as profile_router
 from routes.auth_handoff import router as auth_handoff_router
 from routes.admin_flags import router as admin_flags_router
@@ -42,6 +42,7 @@ from routes.flags import router as flags_router
 from routes.admin import router as admin_router
 from routes.admin_analytics import router as admin_analytics_router
 from routes.admin_documents import router as admin_documents_router
+from routes.admin_check_items import router as admin_check_items_router
 from routes.admin_jobs import router as admin_jobs_router
 from routes.admin_llm import router as admin_llm_router
 from routes.admin_email import router as admin_email_router
@@ -53,8 +54,10 @@ from routes.newsletter import router as newsletter_router
 from routes.internal_metrics import router as internal_metrics_router
 from routes.topic_checklist import router as topic_checklist_router
 from routes.study import router as study_router
+from services import ai_budget
 from services.quiz import config as quiz_config, errors as quiz_errors
-from services.feature_flags import nav_feature_gate
+from services.feature_flags import nav_feature_gate, nav_feature_path_gate
+from learning.gate import loop_off_for_everyone
 from services.llm_budget import LLMBudgetExceeded
 from db.scope import (
     ScopeUnavailable,
@@ -70,6 +73,8 @@ from services.logfire_scrubber import (
     scrub_value,
     strip_query_request_hook,
 )
+from services.ops_logging import install_accounting_logfire_bridge
+from services.ai_trace_privacy import content_free_tracer_provider
 from services import crisis_support, otel_fastapi_compat
 from services.request_context import (
     RequestIDMiddleware,
@@ -79,12 +84,14 @@ from services.request_context import (
 from services.body_limit import BodySizeLimitMiddleware
 from services.csrf_origin import CsrfOriginMiddleware
 from services.encryption_canary import verify_encryption_key
+from services.learning_schema_check import check_learning_schema
 from services.storage_service import (
     ALLOWED_CONTENT_TYPES,
     ICON_CONTENT_TYPES,
     ensure_bucket_exists,
 )
 from services.durable import init_dbos, shutdown_dbos
+from services.check_item_service import shutdown_draft_pool
 from services.index_sweeper import start_sweeper, stop_sweeper
 from services.spend_alerts import start_spend_alerts, stop_spend_alerts
 from services.account_purge_sweeper import start_purge_sweeper, stop_purge_sweeper
@@ -105,8 +112,8 @@ load_dotenv(Path(__file__).with_name(".env"))
 RECOST_PROJECT_ID = "eaf22d10-840d-494f-8513-2dcef769ace1"
 recost_api_key = os.getenv("RECOST_API_KEY")
 
-# Logfire: free local traces during dev; sends to logfire.pydantic.dev only
-# if LOGFIRE_TOKEN is set. Safe to leave on in all environments.
+# Logfire sends externally only if LOGFIRE_TOKEN is set. Operator acceptance
+# still requires reviewed capture settings, destination and delivery checks.
 #
 # No student content leaves the process (services/logfire_scrubber.py has the
 # full story). Agent spans are instrumented WITHOUT content (prompts, outputs,
@@ -116,7 +123,9 @@ recost_api_key = os.getenv("RECOST_API_KEY")
 # with a length + sha256 fingerprint (no preview) and strips query strings
 # from URL attributes. ``ALL_PATTERNS`` makes Logfire route those attribute
 # names to the callback in addition to its built-in set (password, secret, ...).
-# URL attributes keep the path only (QueryStringStripProcessor).
+# URL attributes keep the path only (QueryStringStripProcessor). The agent
+# spans also go through the learning loop's content-free tracer provider
+# (services/ai_trace_privacy.py), which drops content the SDK still routes.
 logfire.configure(
     send_to_logfire="if-token-present",
     service_name="sapling-backend",
@@ -128,7 +137,10 @@ logfire.configure(
     # snapshots the pending span (whose message would spell the query out).
     additional_span_processors=[QueryStringStripProcessor()],
 )
-logfire.instrument_pydantic_ai(**PYDANTIC_AI_INSTRUMENTATION)
+logfire.instrument_pydantic_ai(
+    **PYDANTIC_AI_INSTRUMENTATION, tracer_provider=content_free_tracer_provider(),
+)
+install_accounting_logfire_bridge()
 
 # ── App lifespan: self-bootstrap external resources ─────────────────────────
 #
@@ -158,11 +170,16 @@ logfire.instrument_pydantic_ai(**PYDANTIC_AI_INSTRUMENTATION)
 async def _lifespan(_app: FastAPI):
     # #771: the model mode is fixed for the life of the process from here on,
     # so the import-time agents and every per-call gate agree on it.
-    from agents._providers import freeze_model_mode
+    from agents._providers import check_slot_guards, freeze_model_mode
     freeze_model_mode()
     # #174: fail loudly at startup if required secrets are missing, before
     # serving any request, rather than booting and failing opaquely later.
     validate_config()
+    # Spec §13 A128: an evidence-producing model slot flipped (by env) to a
+    # model outside its evaluated set warns, and a second opinion or key solve
+    # resolved to its partner's model logs an ERROR — once each, with one event
+    # (queued; the events worker below drains it). Warn only: never blocks boot.
+    check_slot_guards()
     # APP_ENV=local may boot without ANTHROPIC_API_KEY; say so once, up front,
     # rather than leaving a developer to find it in a request's 502 traceback.
     from agents._providers import warn_if_anthropic_key_missing
@@ -171,6 +188,9 @@ async def _lifespan(_app: FastAPI):
     # read helpers fail soft, so a mismatch otherwise surfaces as garbage reads
     # and writes the real environment can never decrypt.
     verify_encryption_key()
+    # Learning-loop spec §13 A138 review: one ERROR when the wave-4 learning
+    # schema is behind the code. Warn only: its readers read no rows meanwhile.
+    check_learning_schema()
     async with AsyncExitStack() as stack:
         await _start(stack)
         yield
@@ -252,6 +272,21 @@ async def _start(stack: AsyncExitStack) -> None:
     # decision_router flag; say so if a deployment still sets the old ones.
     from services import decisions
     decisions.warn_removed_env()
+    # PKG-15 (review minor 7): let in-flight Jev decision shadows finish (bounded)
+    # so their decision.shadow + llm_usage rows reach the event drain, then close
+    # the Jev clients. Registered after the events worker and the tutor-router
+    # drain, so both run before either of those stops. No-ops when Jev never ran
+    # (JEV_ENABLED=false).
+    from agents import _jev
+    from services import learning_decisions
+    stack.push_async_callback(_jev.aclose_clients)
+    stack.push_async_callback(learning_decisions.shutdown_shadows)
+    # A38 low-severity 4: drop queued check-item drafting (non-daemon workers,
+    # each run up to FLEX_TIMEOUT_S) so a deploy's SIGTERM does not wait on it.
+    # Registered LAST so it runs FIRST (A38 fix round, m8): before the event
+    # drain stops, so no drafting starts after it; the stack still runs every
+    # later teardown if an earlier one raises.
+    stack.callback(shutdown_draft_pool)
 
 
 def _drop_request_arguments(_request, _attributes):
@@ -523,6 +558,12 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
         headers={"X-Request-ID": rid} if rid else {},
     )
 
+# PKG-06b (spec §3.5, A20): an over-budget model call answers 429 {"detail": "ai budget reached", "reset_at": …}.
+app.add_exception_handler(ai_budget.AIBudgetExceeded, ai_budget.budget_exceeded_handler)
+# docs/safety/crisis-support.md: a crisis screen dependency ends the request
+# with the card, ahead of the rate limit (a 200, not an error).
+app.add_exception_handler(crisis_support.CrisisAnswered, crisis_support.answered_handler)
+
 # #771: a hidden nav feature (`hide_<feature>` "on") 404s on its API too, not
 # just in the nav. Which routers each flag gates — and the paths another
 # visible surface still needs — is services/feature_flags.py::NAV_FEATURE_API.
@@ -537,6 +578,17 @@ _ADMIN_SVC = [Depends(admin_service_route)]
 app.include_router(graph.router,       prefix="/api/graph")
 app.include_router(topic_checklist_router, prefix="/api/topic-checklist")
 app.include_router(learn.router,       prefix="/api/learn")
+# Learning loop: 404 unless the loop is on for the student (the LEARNING_LOOP_ENABLED kill switch, then their learning_loop flag). Service
+# role under db_user_scope (#115): the loop's tables are service-only (bucket E,
+# spec §13 A148) and every handler checks ownership in code (require_self /
+# the session's owner), which the cross-user matrix pins.
+# #866 Z37: hide_study 404s Study's paths of it (review queue, retention check).
+app.include_router(
+    learn_loop.router,
+    prefix="/api/learn/loop",
+    # off for everyone (kill switch, flag forced off): no flag is read before the loop's 404
+    dependencies=nav_feature_path_gate("/api/learn/loop", unless=loop_off_for_everyone) + _SVC,
+)
 app.include_router(quiz.router,        prefix="/api/quiz", dependencies=nav_feature_gate("/api/quiz"))
 app.include_router(calendar.router,    prefix="/api/calendar", dependencies=nav_feature_gate("/api/calendar"))
 # Social stays service role until step 2e: room_messages has no policies or
@@ -575,6 +627,8 @@ app.include_router(admin_llm_router,   prefix="/api/admin/llm", dependencies=_AD
 app.include_router(admin_router,       prefix="/api/admin", dependencies=_ADMIN_SVC)
 app.include_router(admin_analytics_router, prefix="/api/admin/analytics", dependencies=_ADMIN_SVC)
 app.include_router(admin_documents_router, prefix="/api/admin/documents", dependencies=_ADMIN_SVC)
+# Learning-loop check-item review queue (spec §13 A113): flagged/reported items.
+app.include_router(admin_check_items_router, prefix="/api/admin/check-items", dependencies=_ADMIN_SVC)
 app.include_router(admin_email_router, prefix="/api/admin/email", dependencies=_ADMIN_SVC)
 app.include_router(newsletter_router,  prefix="/api/newsletter", dependencies=_SVC)  # public; newsletter_emails is service-only
 # Public, no session: the unsubscribe page linked from every email (and the

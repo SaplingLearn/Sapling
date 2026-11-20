@@ -140,6 +140,96 @@ describe("FeatureFlagsTab", () => {
     expect(api.adminExplainFlag).toHaveBeenCalledWith("hide_quiz", "u1");
   });
 
+  // #866 K24: a learning-loop flag as the student is served it
+  const LOOP = {
+    ...FLAG, key: "learning_loop", description: "The AI learning system.", client_visible: true,
+    default_variant: "on", requires: null, forced: null,
+  };
+  const PLAN = { ...LOOP, key: "quiz_concept_plan", description: "Quiz concept plan.", requires: "learning_loop" };
+  const KILL = { variant: "off", step: "kill_switch", detail: "LEARNING_LOOP_ENABLED" };
+
+  const check = async (key: string) => {
+    fireEvent.click(await screen.findByTestId(`flag-row-${key}`));
+    await screen.findByTestId(`flag-panel-${key}`);
+    fireEvent.change(screen.getByTestId(`flag-explain-input-${key}`), { target: { value: "u1" } });
+    fireEvent.keyDown(screen.getByTestId(`flag-explain-input-${key}`), { key: "Enter" });
+    return (await screen.findByTestId(`flag-explain-result-${key}`)).textContent;
+  };
+
+  it("under the kill switch a loop flag's row reads Off and says why, whatever is stored (#866 K24)", async () => {
+    api.adminListFlags.mockResolvedValue({ flags: [{ ...LOOP, forced: KILL }, { ...PLAN, forced: KILL }] });
+    render(<FeatureFlagsTab />);
+    expect((await screen.findByTestId("flag-state-learning_loop")).textContent).toBe("Off");
+    expect(screen.getByTestId("flag-state-quiz_concept_plan").textContent).toBe("Off");
+    expect(screen.getByTestId("flag-forced-learning_loop").textContent).toBe("Kill switch on");
+    // the stored default is still what the switch edits
+    expect(screen.getByTestId("flag-toggle-learning_loop").getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("names the kill switch when it decides a student's answer (#866 K24)", async () => {
+    api.adminListFlags.mockResolvedValue({ flags: [{ ...LOOP, forced: KILL }] });
+    api.adminExplainFlag.mockResolvedValue(KILL);
+    render(<FeatureFlagsTab />);
+    expect(await check("learning_loop"))
+      .toContain("Off: the LEARNING_LOOP_ENABLED kill switch turns the learning loop off for everyone");
+    // the panel says it too, beside the stored everyone-default it edits
+    expect(screen.getByTestId("flag-forced-note-learning_loop").textContent).toBe(
+      "Off for every student: the server's LEARNING_LOOP_ENABLED kill switch turns the learning loop off, "
+      + "whatever is set here; a change here applies once that is lifted.",
+    );
+  });
+
+  it("a loop flag says it needs the learning loop, and why a student without it gets Off (#866 K24)", async () => {
+    api.adminListFlags.mockResolvedValue({ flags: [LOOP, PLAN] });
+    api.adminExplainFlag.mockResolvedValue({
+      variant: "off", step: "requires", detail: "learning_loop",
+      master: { key: "learning_loop", variant: "off", step: "default", detail: "stored default" },
+    });
+    render(<FeatureFlagsTab />);
+    expect((await screen.findByTestId("flag-requires-quiz_concept_plan")).textContent).toBe("Needs Learning loop");
+    expect(screen.queryByTestId("flag-requires-learning_loop")).toBeNull();
+    expect(screen.getByTestId("flag-state-quiz_concept_plan").textContent).toBe("On"); // nothing forces it
+    expect(await check("quiz_concept_plan"))
+      .toContain("Off: needs Learning loop, which is off for them — the default for everyone");
+  });
+
+  it("names an env override that forces the loop off for everyone (#866 K24)", async () => {
+    const forcedOff = {
+      variant: "off", step: "requires", detail: "learning_loop",
+      master: { key: "learning_loop", variant: "off", step: "env_override", detail: "SAPLING_FLAG_LEARNING_LOOP" },
+    };
+    api.adminListFlags.mockResolvedValue({ flags: [
+      { ...LOOP, forced: { variant: "off", step: "env_override", detail: "SAPLING_FLAG_LEARNING_LOOP" } },
+      { ...PLAN, forced: forcedOff },
+    ] });
+    api.adminExplainFlag.mockResolvedValue(forcedOff);
+    render(<FeatureFlagsTab />);
+    expect((await screen.findByTestId("flag-state-learning_loop")).textContent).toBe("Off");
+    expect(screen.getByTestId("flag-forced-learning_loop").textContent).toBe("Set on the server");
+    expect(screen.getByTestId("flag-forced-quiz_concept_plan").textContent).toBe("Learning loop off");
+    expect(await check("quiz_concept_plan")).toContain(
+      "Off: needs Learning loop, which is off for them — forced by the SAPLING_FLAG_LEARNING_LOOP environment variable",
+    );
+  });
+
+  it("a loop flag's own env override says it holds only for students with the loop on (#866 K24)", async () => {
+    api.adminListFlags.mockResolvedValue({ flags: [
+      { ...LOOP, default_variant: "off" },
+      { ...PLAN, default_variant: "off", forced: {
+        variant: "on", step: "env_override", detail: "SAPLING_FLAG_QUIZ_CONCEPT_PLAN", only_with: "learning_loop",
+      } },
+    ] });
+    render(<FeatureFlagsTab />);
+    expect((await screen.findByTestId("flag-state-quiz_concept_plan")).textContent).toBe("On");
+    expect(screen.getByTestId("flag-forced-quiz_concept_plan").textContent).toBe("Set on the server");
+    fireEvent.click(screen.getByTestId("flag-row-quiz_concept_plan"));
+    expect((await screen.findByTestId("flag-forced-note-quiz_concept_plan")).textContent).toBe(
+      "On for every student with Learning loop on: the server's SAPLING_FLAG_QUIZ_CONCEPT_PLAN environment variable "
+      + "forces it, whatever is set here; a change here applies once that is lifted. "
+      + "Students without Learning loop get Off.",
+    );
+  });
+
   it("adds and removes an override", async () => {
     const withTarget = {
       ...FLAG,

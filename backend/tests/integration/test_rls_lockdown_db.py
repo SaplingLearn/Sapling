@@ -318,6 +318,18 @@ def test_anon_and_authenticated_hold_no_sequence_privileges(db_conn):
     assert not rows, f"unprivileged roles hold sequence privileges: {rows}"
 
 
+#: Learning loop (spec §13 A123, A138, A139; A148 restates them): append-only
+#: records where the backend holds exactly what it uses, so even the service
+#: role cannot edit or delete one. Pinned EXACTLY (no more, no less); every
+#: other public table keeps full access.
+SERVICE_ROLE_NARROWED: dict[str, frozenset[str]] = {
+    "learning_evidence_voids": frozenset({"SELECT", "INSERT"}),
+    "misconception_attempts": frozenset({"SELECT", "INSERT"}),
+    "learning_prequestions": frozenset({"SELECT", "INSERT"}),
+    "learning_self_explanations": frozenset({"SELECT", "INSERT", "UPDATE"}),
+}
+
+
 def test_service_role_keeps_full_table_access(db_conn):
     # The backend authenticates as service_role. Losing a grant here would turn
     # the lockdown into an outage, so pin it alongside the revokes.
@@ -329,12 +341,25 @@ def test_service_role_keeps_full_table_access(db_conn):
           FROM pg_tables t
          CROSS JOIN unnest(ARRAY['SELECT','INSERT','UPDATE','DELETE']) AS p(priv)
          WHERE t.schemaname = 'public'
-           AND NOT has_table_privilege('service_role', format('public.%I', t.tablename), p.priv)
+           AND NOT (t.tablename = ANY(%s::text[]))
+           AND NOT has_table_privilege('service_role', format('public.%%I', t.tablename), p.priv)
          ORDER BY 1
-        """
+        """,
+        (list(SERVICE_ROLE_NARROWED),),
     ).fetchall()
     missing = [r["missing"] for r in rows]
     assert not missing, f"service_role lost access: {missing}"
+    for table, expected in SERVICE_ROLE_NARROWED.items():
+        held = {
+            r["priv"] for r in db_conn.execute(
+                """
+                SELECT p.priv FROM unnest(%s::text[]) AS p(priv)
+                 WHERE has_table_privilege('service_role', format('public.%%I', %s::text), p.priv)
+                """,
+                (list(_ALL_TABLE_PRIVS), table),
+            ).fetchall()
+        }
+        assert held == expected, f"service_role on {table}: {sorted(held)}, want {sorted(expected)}"
     bypass = db_conn.execute(
         "SELECT rolbypassrls FROM pg_roles WHERE rolname = 'service_role'"
     ).fetchone()["rolbypassrls"]
@@ -374,7 +399,10 @@ BACKEND_RPCS = frozenset({
     "consume_auth_handoff",          # routes/auth_handoff.py (sec2 M2, 20261116155242)
     "db_scope_divergences",          # routes/admin_analytics.py (#115, 20261109023455)
     "discard_tutor_session",         # services/tutor_sessions.py (#117, stateless_tutor_sessions)
+    "claim_tutor_session",  # services/tutor_sessions.py (loop close of a pending session), 20261118052843
     "encryption_aad_swap",           # db/backfill_encryption_aad.py (sec2 M13, 20261116162200)
+    "encryption_aad_swap_nested",    # db/backfill_encryption_aad.py (PR #866 C6, 20261118195701)
+    "learning_prequestion_guess_reseal",  # db/backfill_encryption_aad.py APPEND_ONLY_SWAPS (PR #866 Z15, 20261120055827)
     "enqueue_job",                   # services/jobs.py (#116)
     "fail_job",                      # services/jobs.py (#116)
     "heartbeat_job",                 # services/jobs.py (#116, 20261108213623)
@@ -386,6 +414,27 @@ BACKEND_RPCS = frozenset({
     "prune_jobs",                    # services/jobs.py (#116, 20261108213623)
     "prune_document_uploads",        # services/jobs.py jobs.prune (#116, 20261108212226)
     "prune_gradescope_syncs",        # services/jobs.py jobs.prune (#116, 20261108214227)
+    # Learning loop (all service_role-only, spec §13 A148)
+    "ai_budget_bump_tutor_calls",    # services/ai_budget.py (_TUTOR_CALLS_RPC)
+    "check_item_report_quarantine",  # learning/item_reports.py (_REPORT_RPC)
+    "check_item_review_decide",      # learning/item_reports.py (_DECIDE_RPC)
+    "checklist_budget_admit",        # services/checklist_budget.py (f"checklist_budget_{name}")
+    "checklist_budget_read",
+    "checklist_budget_reconcile",
+    "checklist_budget_start",
+    "learning_account_erase",        # services/account_wipe.py (_ERASE_RPC, admin account wipe)
+    "learning_node_erase",           # services/graph_service.py (_NODE_ERASE, PR #866 C9; 20261118195124)
+    "learning_session_text_erase",   # services/tutor/sessions.py (_SESSION_TEXT_ERASE, PR #866 C8; 20261118195124)
+    "learning_evidence_commit",      # learning/evidence_transaction.py
+    "learning_evidence_receipt",
+    "learning_evidence_snapshot",
+    "learning_evidence_void_commit",
+    "learning_evidence_void_pending",
+    "learning_evidence_void_snapshot",
+    "learning_float_probe",          # scripts/learning_release_verify.py (FLOAT_PROBE_RPC)
+    "misconception_record",          # learning/misconceptions.py
+    "misconception_rollup",
+    "posttest_anchors",              # learning/posttest_store.py (_ANCHORS_RPC)
     "release_lease",                 # services/pg_lease.py (#117, stateless_locks)
     "renew_lease",                   # services/pg_lease.py (#117, stateless_locks)
     "stash_tutor_session",           # services/tutor_sessions.py (#117, stateless_tutor_sessions)
@@ -426,8 +475,11 @@ def _existing_roles(db_conn, names) -> list[str]:
 def _backend_rpc_call_sites() -> set[str]:
     """Function names the backend passes to `rpc(...)`, by source scan.
 
-    Literal first arguments, plus a module-level `NAME = "fn"` constant used as
-    the argument (routes/internal_metrics.py's METRICS_RPC)."""
+    Literal first arguments, a module-level `NAME = "fn"` constant used as
+    the argument (routes/internal_metrics.py's METRICS_RPC), and the string
+    values of a module-level dict a variable argument is looked up in
+    (`fn = TABLE.get(...)` / `fn = TABLE[...]`, then `rpc(fn, ...)`:
+    db/backfill_encryption_aad.py's APPEND_ONLY_SWAPS)."""
     names: set[str] = set()
     for path in _BACKEND.rglob("*.py"):
         rel = path.relative_to(_BACKEND).parts
@@ -437,10 +489,15 @@ def _backend_rpc_call_sites() -> set[str]:
         if "rpc(" not in src:
             continue
         names.update(re.findall(r"\brpc\(\s*[\"'](\w+)[\"']", src))
-        for const in re.findall(r"\brpc\(\s*([A-Z][A-Z0-9_]*)\b", src):
+        for const in re.findall(r"\brpc\(\s*(_?[A-Z][A-Z0-9_]*)\b", src):
             m = re.search(rf"^{const}\s*=\s*[\"'](\w+)[\"']", src, re.MULTILINE)
             if m:
                 names.add(m.group(1))
+        for var in set(re.findall(r"\brpc\(\s*([a-z_]\w*)\s*,", src)):
+            for const in re.findall(rf"\b{var}\s*=\s*(_?[A-Z][A-Z0-9_]*)\s*(?:\.get\(|\[)", src):
+                body = re.search(rf"^{const}\b[^=\n]*=\s*\{{(.*?)^\}}", src, re.MULTILINE | re.DOTALL)
+                if body:
+                    names.update(re.findall(r":\s*[\"'](\w+)[\"']", body.group(1)))
     return names
 
 

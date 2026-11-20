@@ -2,11 +2,16 @@
 
 CRUD lives here; agent-backed actions (summarize, extract concepts, chat,
 generate quiz, send to tutor) come in Phase 4 below.
+
+The model-calling actions run the crisis screen (a note never blocks: its card
+rides alongside), then the learning loop's integrity guard (spec §13 A125):
+services/note_guard.py says which actions and why.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Iterable
 
 from fastapi import APIRouter, HTTPException, Request
 from typing import Annotated
@@ -16,14 +21,16 @@ from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded
 
 from agents import ORCHESTRATOR_LIMITS, WORKER_LIMITS
 from agents.deps import SaplingDeps
-from agents.note_chat import note_chat_agent
+from agents.note_chat import integrity_run_args, note_chat_agent
 from agents.note_concepts import note_concepts_agent
 from agents.note_summary import note_summary_agent
 from agents.tools.graph import apply_concepts_to_graph
 from agents.usage import record_agent_usage
 from db.connection import table
+from learning.gate import learning_loop_for_request
 from models import CHAT_MESSAGE_MAX, Id
-from services import crisis_support, events_service
+from services import crisis_support, events_service, integrity_guard
+from services.note_guard import note_chat_texts, note_texts, open_note_guard
 from services.academics import (
     course_offering_ids, offering_course_id, require_course_enrollment, resolve_offering,
     term_id_for_label, user_offering_ids_for_course,
@@ -32,21 +39,13 @@ from services.auth_guard import get_session_user_id, require_self, guard_off_loo
 from services import abuse_limits
 from services.request_limits import aenforce_abuse_limit
 from services.notes_service import (
-    create_note,
-    delete_note,
-    get_note,
-    link_concept,
-    link_prechecked_concepts,
-    list_linked_concepts,
-    list_notes,
-    save_summary,
-    tutor_topic,
-    unlink_concept,
-    update_note,
+    create_note, delete_note, get_note, link_concept, link_prechecked_concepts, list_linked_concepts,
+    list_notes, save_summary, tutor_topic, unlink_concept, update_note,
 )
 from services.http_cache import cached_json, conditional, make_etag
 from services.request_context import current_request_id
 from services.xp_service import award_xp_safe
+from learning.bkt import stored_score
 
 logger = logging.getLogger(__name__)
 
@@ -386,12 +385,14 @@ def _note_user_prompt(note: dict) -> str:
     return f"Title: {title}\n\nBody:\n{body_text}"
 
 
-def _note_texts(note: dict) -> tuple[str | None, ...]:
-    """The student-written note text an agent action hands a model (the title
-    and body; `last_summary` is model output, not the student's words),
-    screened in full (a quotation like the rest). A match never blocks the
-    action: `crisis_support.alongside` shows the card beside its answer."""
-    return (note.get("title"), note.get("body"))
+async def _integrity_guard(user_id: str, surface: str, texts: Iterable[str | None]) -> integrity_guard.Guard:
+    """Spec §13 A125 (services/note_guard.py): 409 when the text quotes a posed check.
+    Off with the loop (kill switch, or the student's `learning_loop` flag), read once."""
+    active = await asyncio.to_thread(learning_loop_for_request, user_id)
+    guard = await open_note_guard(user_id, surface, texts, active=active)
+    if guard.refused:
+        raise HTTPException(status_code=409, detail=integrity_guard.REFUSED_DETAIL)
+    return guard
 
 
 def _deps_for(user_id: str, course_id: str | None, note_id: str | None) -> SaplingDeps:
@@ -412,10 +413,12 @@ async def summarize(note_id: str, body: AgentActionBody, request: Request):
     if not note:
         raise HTTPException(status_code=404, detail="Note not found.")
     # docs/safety/crisis-support.md: the note never blocks; a match shows the card alongside
-    screen = await crisis_support.screen_content_async(request, body.user_id, "note_summarize", *_note_texts(note))
+    screen = await crisis_support.screen_content_async(request, body.user_id, "note_summarize", *note_texts(note))
 
     async def action() -> dict:
         await aenforce_abuse_limit(abuse_limits.NOTE_AI_ACTION, body.user_id)
+        # spec §13 A125: a note quoting a posed check never reaches the model; a summary stating its key is never saved
+        guard = await _integrity_guard(body.user_id, "note_summary", note_texts(note))
         user_prompt = _note_user_prompt(note)
         # The graph keys on the abstract course; the note carries the offering.
         course_id = offering_course_id(note.get("offering_id"))
@@ -425,6 +428,8 @@ async def summarize(note_id: str, body: AgentActionBody, request: Request):
             feature="notes", task="note_summary", user_id=body.user_id,
         )
         summary_text = result.output.summary
+        if not await asyncio.to_thread(guard.screen, summary_text):
+            raise HTTPException(status_code=409, detail=integrity_guard.WITHHELD_DETAIL)
         await save_summary(note_id=note_id, user_id=body.user_id, summary=summary_text)
         return {"summary": summary_text}
 
@@ -441,11 +446,14 @@ async def extract_concepts(
         raise HTTPException(status_code=404, detail="Note not found.")
     # docs/safety/crisis-support.md: the note never blocks; a match shows the card alongside
     screen = await crisis_support.screen_content_async(
-        request, body.user_id, "note_extract_concepts", *_note_texts(note)
+        request, body.user_id, "note_extract_concepts", *note_texts(note)
     )
 
     async def action() -> dict:
         await aenforce_abuse_limit(abuse_limits.NOTE_AI_ACTION, body.user_id)
+        # spec §13 A125: as summarize; a name stating a posed check's key (and not the
+        # note's own word) is dropped before it is filed or returned
+        guard = await _integrity_guard(body.user_id, "note_concepts", note_texts(note))
         user_prompt = _note_user_prompt(note)
         # Concepts land in the abstract-course graph; resolve offering → course.
         course_id = offering_course_id(note.get("offering_id"))
@@ -455,13 +463,16 @@ async def extract_concepts(
             feature="notes", task="note_concepts", user_id=body.user_id,
         )
         names = [n.strip() for n in (result.output.concepts or []) if n and n.strip()]
+        keep = await asyncio.to_thread(guard.screen_each, names, own=guard.own_text)
+        withheld = keep.count(False)
+        names = [n for n, ok in zip(names, keep) if ok]
         await apply_concepts_to_graph(user_id=body.user_id, course_id=course_id, concept_names=names)
         nodes = await _lookup_concept_nodes_by_name(user_id=body.user_id, course_id=course_id, names=names)
         # Both sides are already proven the student's: get_note above is
         # user-scoped and the lookup filters graph_nodes by user_id, so one bulk
         # idempotent write replaces link_concept's per-node re-checks.
         linked = await link_prechecked_concepts(note_id=note_id, node_ids=[n["id"] for n in nodes])
-        return {"concepts": names, "linked": linked}
+        return {"concepts": names, "linked": linked, **({"withheld": withheld} if withheld else {})}
 
     return await crisis_support.alongside(screen, action())
 
@@ -480,24 +491,31 @@ async def note_chat(note_id: str, body: NoteChatBody, request: Request):
     note = await get_note(note_id=note_id, user_id=body.user_id)
     if not note:
         raise HTTPException(status_code=404, detail="Note not found.")
-    # ...the note the chat agent reads never blocks: a match shows the card alongside
-    # Re-read every turn: the card goes beside each answer, the event once a
-    # day per note version.
+    # ...the note the chat agent reads (its title, body and tags) never blocks: a
+    # match shows the card alongside. Re-read every turn: the card goes beside
+    # each answer, the event once a day per note version.
     screen = await crisis_support.screen_content_async(
-        request, body.user_id, "note_chat", *_note_texts(note),
+        request, body.user_id, "note_chat",
+        *note_texts(note), *(t for t in note.get("tags") or [] if isinstance(t, str)),
         once_a_day=(note_id, note.get("updated_at")),
     )
 
     async def action() -> dict:
         await aenforce_abuse_limit(abuse_limits.NOTE_AI_ACTION, body.user_id)
+        # spec §13 A125: the message and the note the agent grounds in (deps.note, which
+        # read_active_note serves) are checked before any model call; the reply after
+        active = await asyncio.to_thread(learning_loop_for_request, body.user_id)  # read once (Z26: the rule too)
+        guard = await open_note_guard(body.user_id, "note_chat", note_chat_texts(body.message, note), active=active)
+        if guard.refused:
+            return {"reply": integrity_guard.REFUSED_REPLY, "degraded": False, "integrity": "refused"}
         course_id = offering_course_id(note.get("offering_id"))
         deps = _deps_for(body.user_id, course_id, note_id)
-        # M7: a concept the chat adds must come from the message or the note
-        # (the agent's read tools add what they return).
+        deps.note, deps.integrity = note, guard  # the agent's graph writes are screened too
+        # M7: a new concept must come from the message or the note (read tools add theirs)
         deps.concept_context = [body.message, note.get("title") or "", note.get("body") or ""]
         try:
             result = record_agent_usage(
-                await note_chat_agent.run(body.message, deps=deps, usage_limits=ORCHESTRATOR_LIMITS),
+                await note_chat_agent.run(body.message, deps=deps, usage_limits=ORCHESTRATOR_LIMITS, **integrity_run_args(active)),
                 feature="notes", task="note_chat", user_id=body.user_id,
             )
         except UsageLimitExceeded as e:
@@ -513,6 +531,8 @@ async def note_chat(note_id: str, body: NoteChatBody, request: Request):
             # budget reply) so alerting fires; the log carries a traceback.
             logger.exception("note_chat agent returned unexpected model behavior")
             raise HTTPException(status_code=500, detail="Something went wrong answering that.") from e
+        if not await asyncio.to_thread(guard.screen, result.output):
+            return {"reply": integrity_guard.WITHHELD_REPLY, "degraded": False, "integrity": "withheld"}
         return {"reply": result.output, "degraded": False}
 
     return await crisis_support.alongside(screen, action())
@@ -529,7 +549,7 @@ async def send_to_tutor(
     # docs/safety/crisis-support.md: the note never blocks; a match shows the card alongside,
     # recorded here; the /learn start it hands over records no second card for this version.
     screen = await crisis_support.screen_content_async(
-        request, body.user_id, "note_send_to_tutor", *_note_texts(note),
+        request, body.user_id, "note_send_to_tutor", *note_texts(note),
         hands_off_note=(note_id, note.get("updated_at")),
     )
 
@@ -573,7 +593,7 @@ async def generate_quiz_from_note(
             detail="Link at least one concept before generating a quiz.",
         )
     # Lowest mastery wins so the quiz targets the weakest spot.
-    chosen = min(linked, key=lambda c: float(c.get("mastery_score") or 0.0))
+    chosen = min(linked, key=lambda c: stored_score(c.get("mastery_score")))
     return {
         "concept_node_id": chosen.get("id"),
         "concept_name": chosen.get("concept_name"),

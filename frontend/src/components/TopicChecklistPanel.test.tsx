@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { TopicChecklistPanel } from "./TopicChecklistPanel";
 import { getTopicChecklist, refreshTopicChecklist, setTopicReviewed, type TopicChecklist } from "@/lib/topicChecklistApi";
 
@@ -131,6 +131,30 @@ describe("Topic checklist integration", () => {
     await waitFor(() => expect(checkbox).not.toBeDisabled());
     fireEvent.click(checkbox);
     expect(checkbox).toBeChecked();
+  });
+
+  it("does not roll back the new semester when the previous semester's pending save rejects", async () => {
+    let rejectSave!: (reason: Error) => void;
+    vi.mocked(setTopicReviewed).mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectSave = reject; }));
+    const spring = fixture();
+    spring.semester = "Spring 2026";
+    spring.topics[0].checked = true; // same name-based topic id, different enrollment state
+    vi.mocked(getTopicChecklist).mockResolvedValueOnce(fixture()).mockResolvedValueOnce(spring);
+    render(<TopicChecklistPanel userId="u" courseId="cs" semesters={["Fall 2026", "Spring 2026"]} />);
+    open();
+    const checkbox = await screen.findByRole("checkbox", { name: "Studied Recursion" });
+    await waitFor(() => expect(checkbox).not.toBeDisabled());
+    fireEvent.click(checkbox);
+    expect(checkbox).toBeChecked();
+    await waitFor(() => expect(setTopicReviewed).toHaveBeenCalledOnce());
+    fireEvent.change(screen.getByLabelText("Checklist semester"), { target: { value: "Spring 2026" } });
+    await screen.findByText("Semester: Spring 2026");
+    await waitFor(() => expect(screen.getByRole("checkbox")).not.toBeDisabled());
+    expect(screen.getByRole("checkbox")).toBeChecked();
+    await act(async () => { rejectSave(new Error("old semester save failed")); });
+    expect(screen.getByRole("checkbox")).toBeChecked();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByText("Semester: Spring 2026")).toBeVisible();
   });
 
   it("keeps a failed check unchecked and aborts requests on unmount", async () => {

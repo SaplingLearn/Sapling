@@ -44,8 +44,30 @@ jobs:
     runs-on: ubuntu-latest
     # Acceptance bar (#389): total wall clock under 15 minutes — enforced.
     timeout-minutes: 15
+    # PKG-14b (spec §11.4): three lanes. `default` sets no LEARNING_LOOP_ENABLED
+    # (the switch's code default) and runs the loop: the per-student
+    # learning_loop flag ships off, so it is turned on for every student
+    # (SAPLING_FLAG_LEARNING_LOOP=on, as scripts/e2e-up.sh does); `kill-switch`
+    # sets "false" (the legacy Learn/tutor/Study path; /api/learn/loop/* 404)
+    # whatever the flag says; `flag-off` is production's default — the switch
+    # unset and every student's flag off (SAPLING_FLAG_LEARNING_LOOP=off), the
+    # pre-loop app for each student (frontend/e2e/support/lane.ts::loopOffLane).
+    strategy:
+      fail-fast: false
+      matrix:
+        lane: [default, kill-switch, flag-off]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # One step before the stack starts, so the stack AND Playwright see the
+      # same values (frontend/e2e/support/lane.ts: killSwitchLane, loopOffLane).
+      - name: Select the lane
+        run: |
+          if [ "${{ matrix.lane }}" = "kill-switch" ]; then echo "LEARNING_LOOP_ENABLED=false" >> "$GITHUB_ENV"; fi
+          if [ "${{ matrix.lane }}" = "flag-off" ]; then
+            echo "SAPLING_FLAG_LEARNING_LOOP=off" >> "$GITHUB_ENV"
+          else
+            echo "SAPLING_FLAG_LEARNING_LOOP=on" >> "$GITHUB_ENV"
+          fi
       # This lane reaches `supabase start` through `make e2e-up` ->
       # scripts/e2e-up.sh, so it has the SAME exposure integration.yml does:
       # Supabase's ports sit inside Linux's ephemeral source-port range, and an
@@ -124,6 +146,15 @@ jobs:
           # last 429. e2e-up.sh sets the same value; kept here so what the
           # lane actually runs under is visible beside the rest of the seam.
           QUIZ_GENERATE_RATE_LIMIT: "1000"
+          # LEARNING_LOOP_ENABLED and SAPLING_FLAG_LEARNING_LOOP come from the
+          # lane step above (PKG-14b, spec §11.4): never set here, where a step
+          # value would override the lane's for the stack but not for Playwright.
+          # spec §13 A5: the E2E env scales the ZPD gate seconds (e2e-up.sh sets the same)
+          LEARNING_GATE_TIME_SCALE: "0.01"
+          # Scripted grading/tutor/router calls run a whole session in seconds;
+          # relax only the minute burst allowance, preserving money/token caps.
+          # Canonical e2e-up applies the same function-mode-only default.
+          LEARN_RATE_LIMIT_PER_MIN: "1000"
           # The study-guide limits (services/study_guides/limits.py) are
           # counted the same way; e2e-up.sh sets the same values.
           STUDY_GUIDE_GENERATE_RATE_LIMIT: "1000"
@@ -138,6 +169,15 @@ jobs:
         working-directory: frontend
         run: npx playwright test e2e/
 
+      # Spec §11.4: each lane's oracles must exit 0 (graph|counts|ciphertext|
+      # logscan|orphans + learn_loop). Runs even when Playwright failed, so a
+      # red journey still reports what the database looks like; exit 1 =
+      # findings, 2 = infra.
+      - name: Run the e2e oracles
+        if: ${{ !cancelled() }}
+        working-directory: backend
+        run: venv/bin/python -m e2e_oracles
+
       # #390 — flake tracking: a test that passed only on retry is real
       # signal, not noise. Parse the JSON report's stats into the job summary
       # and fail-visible (not fail-red) by listing every flaky test title.
@@ -148,7 +188,7 @@ jobs:
           R=e2e/results/last-run.json
           if [ ! -f "$R" ]; then echo "no report produced" >> "$GITHUB_STEP_SUMMARY"; exit 0; fi
           {
-            echo "## Browser-lane run stats"
+            echo "## Browser-lane run stats (${{ matrix.lane }} lane)"
             jq -r '.stats | "| expected | unexpected | flaky | skipped |\n|---|---|---|---|\n| \(.expected) | \(.unexpected) | \(.flaky) | \(.skipped) |"' "$R"
             FLAKY=$(jq -r '[.. | objects | select(.status? == "flaky")] | length' "$R")
             if [ "$FLAKY" -gt 0 ]; then
@@ -166,11 +206,13 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: e2e-artifacts
+          name: e2e-artifacts-${{ matrix.lane }}
           path: |
             frontend/test-results/
             frontend/e2e/results/last-run.json
             .e2e/*.log
+          # .e2e is hidden; upload-artifact v4 otherwise silently omits its logs.
+          include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 14
 

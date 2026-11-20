@@ -63,8 +63,9 @@ export function TopicChecklistPanel({ userId, courseId, semester, semesters = []
     setError("");
     // A controlled checkbox only moves when state does: show the check now and
     // put it back if the save fails, rather than lagging behind the request.
-    const setChecked = (value: boolean) => setData((prev) => prev && {
-      ...prev, topics: prev.topics.map((topic) => topic.id === topicId ? { ...topic, checked: value } : topic),
+    const setChecked = (value: boolean) => setData((prev) => {
+      if (generation.current !== version || abort.signal.aborted || !prev) return prev;
+      return { ...prev, topics: prev.topics.map((topic) => topic.id === topicId ? { ...topic, checked: value } : topic) };
     });
     if (topicId) setChecked(!!checked);
     try {
@@ -79,8 +80,10 @@ export function TopicChecklistPanel({ userId, courseId, semester, semesters = []
         if (generation.current === version && !abort.signal.aborted) setData(result);
       }
     } catch {
-      if (topicId) setChecked(!checked);
-      if (generation.current === version && !abort.signal.aborted) setError("Could not save the checklist. Please try again.");
+      if (generation.current === version && !abort.signal.aborted) {
+        if (topicId) setChecked(!checked);
+        setError("Could not save the checklist. Please try again.");
+      }
     } finally {
       if (generation.current === version) setBusy(false);
     }

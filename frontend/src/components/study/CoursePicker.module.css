@@ -30,4 +30,7 @@ button.field[aria-expanded="true"] { background: var(--bg-panel); border-color: 
   background: transparent; color: var(--text);
   font: inherit; text-align: left; cursor: pointer;
 }
-.option:hover, .option[aria-selected="true"] { background: var(--bg-subtle); }
+.option[data-active], .option[aria-selected="true"] { background: var(--bg-subtle); }
+/* The list holds focus; its active row carries the ring a focused button would. */
+.menu:focus { outline: none; }
+.menu:focus-visible .option[data-active] { box-shadow: inset 0 0 0 2px var(--accent); }

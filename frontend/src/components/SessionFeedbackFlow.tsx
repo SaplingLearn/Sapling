@@ -6,35 +6,10 @@ import { useUser } from "@/context/UserContext";
 import { useScrollLock } from "@/lib/useScrollLock";
 import { useToast } from "./ToastProvider";
 import { LONG_TEXT_MAX } from "@/lib/inputLimits";
-
-export const SESSION_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
-export const SESSION_COOLDOWN_KEY = "sapling_last_session_feedback";
-
-// Numeric scale — the brand's tone is "quiet library," not emoji reactions.
-const RATINGS: { value: number; label: string }[] = [
-  { value: 1, label: "Frustrating" },
-  { value: 2, label: "Just okay" },
-  { value: 3, label: "Productive" },
-  { value: 4, label: "Great session" },
-];
-
-const HELPFULNESS = [
-  "Explanations clicked",
-  "Right pace",
-  "Got me unstuck",
-  "Questions were sharp",
-  "Matched my style",
-  "Concepts felt linked",
-];
-
-const FRICTION = [
-  "Too slow",
-  "Too surface",
-  "Felt repetitive",
-  "Off-topic",
-  "Confusing",
-  "Didn't match my level",
-];
+// Numeric scale — the brand's tone is "quiet library," not emoji reactions —
+// with its two ends labelled under it (shared with the Tutor's wrap-up).
+import { SessionRatingScale } from "./learn/SessionRatingScale";
+import { ChipPicker, FRICTION, HELPFULNESS, toggled } from "./sessionFeedbackOptions";
 
 export interface SessionFeedbackContext {
   sessionId?: string;
@@ -60,8 +35,9 @@ export function SessionFeedbackFlow({ open, context, onClose }: SessionFeedbackF
 
   useScrollLock(open);
 
-  const close = useCallback((recordCooldown: boolean) => {
-    if (recordCooldown) localStorage.setItem(SESSION_COOLDOWN_KEY, String(Date.now()));
+  // Pacing (cooldown, one prompt per session) is recorded by the opener when
+  // the prompt opens — lib/feedbackPacing.ts — so every close here counts.
+  const close = useCallback(() => {
     setStep(0);
     setRating(null);
     setHelpful([]);
@@ -70,9 +46,7 @@ export function SessionFeedbackFlow({ open, context, onClose }: SessionFeedbackF
     onClose();
   }, [onClose]);
 
-  const toggle = (list: string[], setList: (v: string[]) => void, v: string) => {
-    setList(list.includes(v) ? list.filter(x => x !== v) : [...list, v]);
-  };
+  const toggle = (list: string[], setList: (v: string[]) => void, v: string) => setList(toggled(list, v));
 
   const submit = async () => {
     if (!userId || rating === null) return;
@@ -88,7 +62,7 @@ export function SessionFeedbackFlow({ open, context, onClose }: SessionFeedbackF
         topic: context?.topic,
       });
       toast.success("Thanks — this helps tune your tutor.");
-      close(true);
+      close();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to submit.");
     } finally {
@@ -111,7 +85,7 @@ export function SessionFeedbackFlow({ open, context, onClose }: SessionFeedbackF
         alignItems: "center",
         justifyContent: "center",
       }}
-      onClick={() => !submitting && close(true)}
+      onClick={() => !submitting && close()}
     >
       <div
         onClick={e => e.stopPropagation()}
@@ -126,7 +100,7 @@ export function SessionFeedbackFlow({ open, context, onClose }: SessionFeedbackF
       >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
           <div className="h-serif" style={{ fontSize: 22 }}>How was that session?</div>
-          <button className="btn btn--ghost btn--sm" onClick={() => close(true)} aria-label="Close">×</button>
+          <button className="btn btn--ghost btn--sm" onClick={() => close()} aria-label="Close">×</button>
         </div>
 
         {context?.topic && (
@@ -152,33 +126,7 @@ export function SessionFeedbackFlow({ open, context, onClose }: SessionFeedbackF
         {step === 0 && (
           <div>
             <div className="label-micro" style={{ marginBottom: 8 }}>How did it feel?</div>
-            <div style={{ display: "flex", gap: 8, justifyContent: "space-between" }}>
-              {RATINGS.map(r => {
-                const sel = rating === r.value;
-                return (
-                  <button
-                    key={r.value}
-                    onClick={() => setRating(r.value)}
-                    aria-label={r.label}
-                    title={r.label}
-                    className="h-serif"
-                    style={{
-                      flex: 1,
-                      padding: "14px 4px",
-                      fontSize: 20,
-                      fontWeight: 500,
-                      color: sel ? "var(--accent)" : "var(--text-dim)",
-                      borderRadius: "var(--r-md)",
-                      border: `1px solid ${sel ? "var(--accent-border)" : "var(--border)"}`,
-                      background: sel ? "var(--accent-soft)" : "var(--bg-panel)",
-                      transition: "background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease)",
-                    }}
-                  >
-                    {r.value}
-                  </button>
-                );
-              })}
-            </div>
+            <SessionRatingScale value={rating} onSelect={setRating} />
           </div>
         )}
 
@@ -227,7 +175,7 @@ export function SessionFeedbackFlow({ open, context, onClose }: SessionFeedbackF
           {step > 0 ? (
             <button className="btn" onClick={() => setStep(step - 1)} disabled={submitting}>Back</button>
           ) : (
-            <button className="btn btn--ghost" onClick={() => close(true)} disabled={submitting}>Skip</button>
+            <button className="btn btn--ghost" onClick={() => close()} disabled={submitting}>Skip</button>
           )}
           {step < 3 ? (
             <button className="btn btn--primary" onClick={() => setStep(step + 1)} disabled={!canNext || submitting}>
@@ -239,37 +187,6 @@ export function SessionFeedbackFlow({ open, context, onClose }: SessionFeedbackF
             </button>
           )}
         </div>
-      </div>
-    </div>
-  );
-}
-
-function ChipPicker({ label, options, selected, onToggle }: {
-  label: string; options: string[]; selected: string[]; onToggle: (v: string) => void;
-}) {
-  return (
-    <div>
-      <div className="label-micro" style={{ marginBottom: 8 }}>{label}</div>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-        {options.map(o => {
-          const isSel = selected.includes(o);
-          return (
-            <button
-              key={o}
-              onClick={() => onToggle(o)}
-              style={{
-                padding: "5px 11px",
-                fontSize: 12,
-                borderRadius: "var(--r-full)",
-                background: isSel ? "var(--accent-soft)" : "transparent",
-                color: isSel ? "var(--accent)" : "var(--text-dim)",
-                border: `1px solid ${isSel ? "var(--accent-border)" : "var(--border)"}`,
-              }}
-            >
-              {o}
-            </button>
-          );
-        })}
       </div>
     </div>
   );

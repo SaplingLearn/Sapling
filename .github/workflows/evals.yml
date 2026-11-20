@@ -13,13 +13,92 @@ on:
     paths:
       - 'backend/agents/**'
       - 'backend/tests/evals/**'
+      - 'backend/services/abuse_limits.py'
       - 'backend/services/agent_events.py'
+      - 'backend/services/request_limits.py'
       - 'backend/routes/documents.py'
       # chat_tutor joined the harness (#149): its prompt assembly lives in
       # the learn route and its graph tools sit on graph_service.
       - 'backend/routes/learn.py'
       - 'backend/services/graph_service.py'
       - 'backend/services/graph_context.py'
+      # The learning loop's datasets (loop_tutor, misconception_confront,
+      # session_close, grader, decisions, check_items, the rung judge) score
+      # the SERVED path: the policy, leak, turn-shape and evidence modules,
+      # the loop route's served helpers, the learning decision seam and the
+      # stream helpers; the replay harness patches ai_budget and
+      # events_service and the decisions gate reads llm_pricing (spec
+      # section 13 A142).
+      - 'backend/learning/**'
+      - 'backend/routes/learn_loop.py'
+      - 'backend/services/learning_decisions.py'
+      - 'backend/services/chat_stream.py'
+      - 'backend/services/ai_budget.py'
+      - 'backend/services/events_service.py'
+      - 'backend/services/llm_pricing.py'
+      # INJECTION_GUARD_PROMPT is part of the loop tutor's and the chat
+      # tutor's system prompts (agents/loop_tutor.py and agents/chat_tutor.py
+      # import it), so a change there changes every recorded request of both
+      # (spec section 13 A138/A139 review).
+      - 'backend/services/prompt_safety.py'
+      # agents/tools/note_context.py (the tutor's note tools) imports it
+      - 'backend/services/notes_service.py'
+      # The loop's served path: replay recomputes every served text the rung
+      # and confront judges read through services/loop/served.py (and the
+      # close through services/loop/closing.py); MODEL_SAFETY_PROMPT from
+      # crisis_support_copy rides the loop tutor's system prompt.
+      - 'backend/services/loop/**'
+      - 'backend/services/crisis_support_copy.py'
+      # Everything else the harness imports, top-level or lazily (pinned by
+      # backend/tests/test_eval_served_cassettes.py: a module the evals import
+      # that no line here covers fails that test). Text helpers and the
+      # check-item store shape served text; the rest decides what a recorded
+      # request carries or how the harness runs.
+      - 'backend/config.py'
+      - 'backend/db/*.py'
+      - 'backend/models/__init__.py'
+      - 'backend/services/gradebook/**'
+      - 'backend/services/quiz/**'
+      - 'backend/services/tutor/**'
+      - 'backend/services/academics.py'
+      - 'backend/services/achievement_service.py'
+      - 'backend/services/ai_trace_privacy.py'
+      - 'backend/services/analytics_consent.py'
+      - 'backend/services/auth_guard.py'
+      - 'backend/services/check_item_service.py'
+      - 'backend/services/chunk_visibility.py'
+      - 'backend/services/chunker.py'
+      - 'backend/services/concept_prereqs.py'
+      - 'backend/services/course_context_service.py'
+      - 'backend/services/email_shape.py'
+      - 'backend/services/email_variables.py'
+      - 'backend/services/encryption.py'
+      - 'backend/services/exam_proximity.py'
+      - 'backend/services/feature_flags.py'
+      - 'backend/services/fingerprint.py'
+      - 'backend/services/graph_update_model.py'
+      - 'backend/services/growth.py'
+      - 'backend/services/jobs.py'
+      - 'backend/services/llm_budget.py'
+      - 'backend/services/log_privacy.py'
+      - 'backend/services/open_access.py'
+      - 'backend/services/posthog_client.py'
+      - 'backend/services/prompt_dimensions.py'
+      - 'backend/services/request_context.py'
+      - 'backend/services/session_modes.py'
+      - 'backend/services/session_tokens.py'
+      - 'backend/services/share_screen.py'
+      - 'backend/services/streak_service.py'
+      - 'backend/services/text_fold.py'
+      - 'backend/services/timestamps.py'
+      - 'backend/services/token_overlap.py'
+      - 'backend/services/tool_signals.py'
+      - 'backend/services/tutor_sessions.py'
+      - 'backend/services/xp_service.py'
+      # The harness's own inputs: the pinned pydantic-ai / pydantic-evals
+      # versions (a provider adapter change moves what is sent) and this file.
+      - 'backend/requirements.lock'
+      - '.github/workflows/evals.yml'
 
 # Least privilege: the GITHUB_TOKEN is read-only unless a job
 # grants itself more.
@@ -43,6 +122,13 @@ jobs:
         run: |
           cd backend
           pip install --require-hashes -r requirements.lock
+      # Spec section 13 A40 06(s): every floor is the minimum of its recorded
+      # runs (a routing block, or the newest committed run log); fails before
+      # the replay on a floor someone set from one run or by hand.
+      - name: Check the floors against their recorded runs
+        run: |
+          cd backend
+          python tests/evals/floors.py --check
       - name: Run evals against cassettes
         env:
           SAPLING_EVAL_MODE: replay

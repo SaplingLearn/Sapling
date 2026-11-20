@@ -162,6 +162,7 @@ const STATUS_COPY: Record<number, string> = {
   404: "We couldn't find that — it may have been deleted.",
   408: "That took too long. Try again.",
   409: "That changed somewhere else. Reload and try again.",
+  413: "That is too long to send. Try something shorter.",
   429: "Too many requests right now. Wait a moment and try again.",
   500: "Something went wrong on our end. Try again in a moment.",
 };

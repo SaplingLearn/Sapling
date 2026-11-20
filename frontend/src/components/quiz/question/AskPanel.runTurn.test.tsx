@@ -19,6 +19,8 @@ const api = vi.hoisted(() => ({
   sendChat: vi.fn(),
   endSession: vi.fn(),
   shouldFallBackToJson: vi.fn(() => true),
+  // the learning loop's budget pause (lib/api.ts): none unless a case says so
+  budgetPauseOf: vi.fn((_err: unknown): { resetAt: string | null; sessionCapped: boolean } | null => null),
   newTurnId: vi.fn(() => `turn-${Math.random().toString(36).slice(2, 14)}`),
 }));
 vi.mock("@/lib/api", () => api);
@@ -65,12 +67,15 @@ function deferred<T>() {
 type Handlers = {
   onToken?: (d: string) => void;
   onProgress?: (s: string) => void;
+  onRetract?: (reason: string) => void;
+  onBudget?: (notice: { level: string; reset_at: string | null; scope: string | null; session_capped: boolean }) => void;
   signal?: AbortSignal;
 };
 
 beforeEach(() => {
   vi.clearAllMocks();
   api.shouldFallBackToJson.mockReturnValue(true);
+  api.budgetPauseOf.mockReturnValue(null);
   api.startSessionStream.mockResolvedValue({ session_id: SESSION, reply: "Hi." });
   api.startSession.mockResolvedValue({ session_id: SESSION, initial_message: "Hi." });
   api.streamChat.mockResolvedValue({ reply: "The base case is the exit." });
@@ -95,6 +100,7 @@ describe("AskPanel runTurn — opening the session", () => {
       undefined,
       undefined,
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      undefined, // no quiz_ask origin without an attempt (spec §13 A99)
     ]);
     expect(api.startSession.mock.calls[0]).toEqual([
       "user-1",
@@ -102,6 +108,8 @@ describe("AskPanel runTurn — opening the session", () => {
       "socratic",
       undefined,
       true,
+      undefined,
+      undefined, // no quiz_ask origin without an attempt (spec §13 A99)
     ]);
   });
 
@@ -204,6 +212,7 @@ describe("AskPanel runTurn — the chat leg", () => {
       true,
       undefined,
       turnId,
+      undefined, // no attempt, so the seed names no quiz question (#866 K12)
     ]);
     // streaming + status were cleared before the JSON leg.
     expect(screen.queryByText("Searching your course materials…")).toBeNull();
@@ -228,7 +237,7 @@ describe("AskPanel runTurn — the chat leg", () => {
       true,
       undefined,
     ]);
-    expect(Object.keys(call[6] as object)).toEqual(["onToken", "onProgress", "signal"]);
+    expect(Object.keys(call[6] as object)).toEqual(["onToken", "onProgress", "onRetract", "onBudget", "signal"]);
     expect(typeof call[7]).toBe("string");
   });
 
@@ -372,5 +381,114 @@ describe("AskPanel runTurn — a superseded turn", () => {
     expect(screen.queryByRole("alert")).toBeNull();
     expect(screen.queryByText(/Interrupted/)).toBeNull();
     expect(screen.getByText("Thinking…")).toBeInTheDocument();
+  });
+});
+
+// ── The learning loop's stream (a loop-on student's /chat/stream) ────────────
+
+describe("AskPanel runTurn — a retract withdraws what was streamed (A46)", () => {
+  it("clears the withdrawn text at once; the whole reply follows", async () => {
+    let handlers: Handlers | undefined;
+    const pending = deferred<{ reply: string }>();
+    api.streamChat.mockImplementationOnce(async (...args: unknown[]) => {
+      handlers = args[6] as Handlers;
+      handlers.onToken?.("Leaked: pick option B");
+      return pending.promise;
+    });
+    render(<AskPanel open {...baseProps} />);
+    expect(await screen.findByText("Leaked: pick option B")).toBeInTheDocument();
+    await act(async () => {
+      handlers!.onRetract?.("leak");
+    });
+    expect(screen.queryByText(/Leaked: pick option B/)).toBeNull();
+    await act(async () => {
+      handlers!.onToken?.("What does the base case stop?");
+      pending.resolve({ reply: "What does the base case stop?" });
+    });
+    expect(await screen.findByText("What does the base case stop?")).toBeInTheDocument();
+    expect(screen.queryByText(/Leaked: pick option B/)).toBeNull();
+  });
+
+  it("never keeps withdrawn text as the interrupted partial when the turn then fails", async () => {
+    api.shouldFallBackToJson.mockReturnValue(false);
+    api.streamChat.mockImplementationOnce(async (...args: unknown[]) => {
+      const h = args[6] as Handlers;
+      h.onToken?.("Leaked: pick option B");
+      h.onRetract?.("leak");
+      throw new Error("the tutor was interrupted");
+    });
+    render(<AskPanel open {...baseProps} />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("the tutor was interrupted");
+    expect(screen.queryByText(/Leaked: pick option B/)).toBeNull();
+    expect(screen.queryByText(/Interrupted/)).toBeNull();
+  });
+
+  it("never keeps withdrawn text as the interrupted partial on Stop (closing the panel)", async () => {
+    api.streamChat.mockImplementationOnce(async (...args: unknown[]) => {
+      const h = args[6] as Handlers;
+      h.onToken?.("Leaked: pick option B");
+      h.onRetract?.("leak");
+      h.onToken?.("Think about ");
+      return new Promise(() => {});
+    });
+    const { rerender } = render(<AskPanel open {...baseProps} />);
+    expect(await screen.findByText("Think about")).toBeInTheDocument();
+    await act(async () => {
+      rerender(<AskPanel open={false} {...baseProps} />);
+    });
+    await act(async () => {
+      rerender(<AskPanel open {...baseProps} />);
+    });
+    expect(screen.getByText("Think about")).toBeInTheDocument(); // what was shown after the retract stays
+    expect(screen.queryByText(/Leaked: pick option B/)).toBeNull();
+  });
+});
+
+describe("AskPanel runTurn — the AI budget pause", () => {
+  const NOTICE = { level: "hard", reset_at: null, scope: "session", session_capped: true };
+
+  it("a paused stream shows the pause copy, not an error, and asks the JSON route nothing", async () => {
+    api.streamChat.mockImplementationOnce(async (...args: unknown[]) => {
+      (args[6] as Handlers).onBudget?.(NOTICE);
+      throw new Error("Chat stream ended without a done event.");
+    });
+    render(<AskPanel open {...baseProps} />);
+    const banner = await screen.findByTestId("quiz-ask-budget-paused");
+    expect(banner).toHaveTextContent("Tutor chat paused for this session. Practice and review keep working.");
+    expect(banner.getAttribute("data-session-capped")).toBe("true");
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByTestId("quiz-ask-retry")).toBeNull();
+    expect(api.sendChat).not.toHaveBeenCalled();
+    expect(document.querySelectorAll(".quiz-ask__turn--assistant")).toHaveLength(0);
+  });
+
+  it("a 429 'ai budget reached' from the JSON route shows the pause copy with its reset", async () => {
+    const refused = Object.assign(new Error("ai budget reached"), { status: 429 });
+    api.budgetPauseOf.mockImplementation((err: unknown) =>
+      err === refused ? { resetAt: "2026-11-09T15:00:00Z", sessionCapped: false } : null,
+    );
+    api.streamChat.mockRejectedValueOnce(new Error("stream died"));
+    api.sendChat.mockRejectedValueOnce(refused);
+    render(<AskPanel open {...baseProps} />);
+    const banner = await screen.findByTestId("quiz-ask-budget-paused");
+    expect(banner.getAttribute("data-reset-at")).toBe("2026-11-09T15:00:00Z");
+    expect(banner).toHaveTextContent(/^Tutor chat paused until /);
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("a served turn at the hard level shows the reply and the pause notice; the next turn clears it", async () => {
+    api.streamChat
+      .mockImplementationOnce(async (...args: unknown[]) => {
+        (args[6] as Handlers).onBudget?.({ ...NOTICE, session_capped: false });
+        return { reply: "A worked example." };
+      })
+      .mockResolvedValueOnce({ reply: "Glad that helped." });
+    render(<AskPanel open {...baseProps} />);
+    expect(await screen.findByText("A worked example.")).toBeInTheDocument();
+    expect(screen.getByTestId("quiz-ask-budget-paused")).toBeInTheDocument();
+    fireEvent.change(screen.getByTestId("quiz-ask-input"), { target: { value: "Thanks" } });
+    fireEvent.click(screen.getByTestId("quiz-ask-send"));
+    expect(await screen.findByText("Glad that helped.")).toBeInTheDocument();
+    expect(screen.queryByTestId("quiz-ask-budget-paused")).toBeNull();
   });
 });

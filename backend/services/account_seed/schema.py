@@ -24,7 +24,8 @@ SessionMode = Literal["socratic", "expository"]
 
 class Concept(BaseModel):
     name: str = Field(min_length=2, max_length=80)
-    #: 0..1 — the seeder derives the tier with config.get_mastery_tier.
+    #: 0..1 — the seeder derives the tier with learning.bkt.tier_for (the one
+    #: score -> tier map, spec §3.1).
     mastery: float = Field(ge=0.0, le=1.0)
     description: str = Field(min_length=10, max_length=300)
 
@@ -204,6 +205,6 @@ class MajorPack(BaseModel):
 def _tier(score: float) -> str:
     # The seeder writes mastery_tier with this same function, so "spans all
     # four tiers" is checked against exactly what the graph will show.
-    from config import get_mastery_tier
+    from learning.bkt import tier_for
 
-    return get_mastery_tier(score)
+    return tier_for(score)

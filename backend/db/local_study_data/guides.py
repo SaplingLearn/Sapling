@@ -11,7 +11,6 @@ line on a quiz mistake, so what is stored is what the app would have stored.
 """
 from __future__ import annotations
 
-from config import get_mastery_tier
 from db.local_study_data import clock, coursework, materials
 from db.local_study_data.blocks import Part
 from db.local_study_data.placement import Placement
@@ -24,6 +23,7 @@ from db.local_study_data.spec import (
     Material,
     SectionDraft,
 )
+from learning.bkt import tier_for
 from models.study_guide import (
     GUIDE_FORMAT,
     QUIZ_HISTORY_SOURCE,
@@ -238,7 +238,7 @@ def _tiers(data: ClassData, spec: GuideSpec) -> list[str]:
     every section is ``unexplored``."""
     if not spec.use_history:
         return ["unexplored"] * len(spec.sections)
-    return [get_mastery_tier(data.concept(key).score) for key in spec.sections]
+    return [tier_for(data.concept(key).score) for key in spec.sections]
 
 
 def scope_label(data: ClassData, scope: str | None) -> str:

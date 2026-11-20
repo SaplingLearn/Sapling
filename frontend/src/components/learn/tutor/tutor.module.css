@@ -1,0 +1,1044 @@
+/* The Tutor's shell (wireframes T1–T17, "AI tutor structure layout V2"):
+   a Claude-style tutor sidebar (new session, search, courses, recents), the
+   TopBar, the chat column, and the session panel on the right. Colours come
+   from the globals.css tokens only (WCAG 2.1 AA on every surface they meet). */
+
+.shell {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+
+/* ── Tutor sidebar ─────────────────────────────────────────────────────── */
+.side {
+  width: 252px;
+  flex-shrink: 0;
+  background: var(--bg-subtle);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* Sidebar sizes: every row, the search and New session are 36px tall; the
+   head's toggle is the shell's 32px icon button. */
+.sideInner {
+  --side-control: 36px;
+  padding: 22px 14px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  overflow-y: auto;
+  height: 100%;
+}
+
+.sideHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 4px;
+}
+
+.sideHead h2 {
+  margin: 0;
+  font-size: 22px;
+  line-height: 32px;
+}
+
+.sideNew {
+  width: 100%;
+  height: var(--side-control);
+  padding-top: 0;
+  padding-bottom: 0;
+  box-sizing: border-box;
+}
+
+.iconBtn {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--r-sm);
+  display: inline-grid;
+  place-items: center;
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+
+.iconBtn:hover {
+  background: var(--bg-soft);
+  color: var(--text);
+}
+
+.iconBtn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 11px;
+  height: var(--side-control, 36px);
+  box-sizing: border-box;
+  border-radius: var(--r-sm);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+}
+
+.search input {
+  border: 0;
+  background: transparent;
+  outline: none;
+  width: 100%;
+  min-width: 0;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.search:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.sideSec {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.sideSec > :global(.label-micro) {
+  padding: 0 8px 6px;
+}
+
+.sideRow {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: var(--side-control, 36px);
+  box-sizing: border-box;
+  padding: 0 8px;
+  border-radius: var(--r-sm);
+  font-size: 13px;
+  color: var(--text-dim);
+  text-align: left;
+  width: 100%;
+  min-width: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+
+.sideRow:hover {
+  background: var(--bg-soft);
+  color: var(--text);
+}
+
+.sideRow[aria-current="true"] {
+  background: var(--bg-panel);
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: var(--shadow-sm);
+  border-color: var(--border);
+}
+
+.sideRow:disabled {
+  cursor: not-allowed;
+}
+
+.rowText {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.cdot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* An open session: filled. A wrapped-up one: a ring. */
+.sdot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  border: 1.5px solid var(--text-muted);
+}
+
+.sdotOn {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.sideWhen {
+  font: 400 10px/14px var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  padding: 8px 8px 3px;
+}
+
+.code {
+  font: 500 11px var(--font-mono);
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.textLink {
+  color: var(--accent);
+  font-weight: 500;
+  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: none;
+  transition: color var(--dur-fast) var(--ease);
+}
+
+.textLink:hover {
+  color: var(--brand-forest);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* ── Main column + TopBar ──────────────────────────────────────────────── */
+.main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg);
+}
+
+.topbar {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  padding: 22px clamp(24px, 4vw, 56px) 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  flex-shrink: 0;
+}
+
+.topTitle {
+  flex: 1;
+  min-width: 0;
+}
+
+/* TopBar rhythm, the same on every page: crumb 14 · 4 · title 36 · 4 · line 20,
+   and every action 32px tall. */
+.topTitle h1 {
+  margin: 0;
+  font-size: 30px;
+  line-height: 36px;
+  overflow-wrap: anywhere;
+}
+
+.crumb {
+  display: block;
+  font-size: 10px;
+  line-height: 14px;
+  height: 14px;
+  margin-bottom: 4px;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  color: var(--text-muted);
+  text-align: left;
+  transition: color var(--dur-fast) var(--ease);
+}
+
+.crumb:hover {
+  color: var(--accent);
+}
+
+.topSub {
+  font-size: 13px;
+  line-height: 20px;
+  min-height: 20px;
+  color: var(--text-dim);
+  margin-top: 4px;
+}
+
+.crumbStatic {
+  font-size: 10px;
+  line-height: 14px;
+  height: 14px;
+  margin-bottom: 4px;
+}
+
+.topActs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.topActs > :is(button, a, span) {
+  height: 32px;
+  box-sizing: border-box;
+}
+
+.body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.center {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* ── T1 Tutor home ─────────────────────────────────────────────────────── */
+/* One 8px rhythm: mark 56 · 24 · heading 48 · 16 · intro 48 (2 × 24) · 24 ·
+   suggestions 40 · 16 · CTA 40. Every control on the page is 40px tall. */
+.home {
+  --home-control: 40px;
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  padding: 40px 32px;
+}
+
+.home > * {
+  margin: 0;
+}
+
+.home > .heroMark {
+  margin-bottom: 24px;
+}
+
+.home > h2 {
+  margin-bottom: 16px;
+}
+
+.home > .quote {
+  margin-bottom: 24px;
+}
+
+.home > .suggest {
+  margin-bottom: 16px;
+}
+
+.home > .ctaNote {
+  margin-top: 12px;
+}
+
+.heroMark {
+  width: 56px;
+  height: 56px;
+  flex-shrink: 0;
+  color: var(--accent);
+  display: grid;
+  place-items: center;
+}
+
+.home h2:focus {
+  outline: none;
+}
+
+.home h2 {
+  font: 600 42px/48px var(--font-display);
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+}
+
+.quote {
+  font: italic 400 15px/24px var(--font-serif);
+  color: var(--text-dim);
+  max-width: 560px;
+  margin: 0;
+  text-wrap: balance;
+}
+
+.suggest {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+  max-width: 680px;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: var(--home-control, 40px);
+  padding: 0 16px;
+  box-sizing: border-box;
+  line-height: 1;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 500;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  background: var(--bg-panel);
+  cursor: pointer;
+  text-decoration: none;
+  transition: border-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+
+.pill:hover {
+  border-color: var(--accent-border);
+  color: var(--accent);
+}
+
+.pill:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.cta {
+  height: var(--home-control, 40px);
+  padding: 0 16px;
+  box-sizing: border-box;
+}
+
+.ctaNote {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-muted);
+}
+
+/* ── T2 / T3 pages ─────────────────────────────────────────────────────── */
+.page {
+  padding: 24px clamp(24px, 4vw, 56px) 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.grid2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.cardHead {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 16px 22px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.cardHead h3 {
+  margin: 2px 0 0;
+  font-size: 18px;
+}
+
+.cardPad {
+  padding: 18px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.listRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 22px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  min-width: 0;
+  transition: background var(--dur-fast) var(--ease);
+}
+
+.listRow:last-child {
+  border-bottom: 0;
+}
+
+.listRow:hover {
+  background: var(--bg-subtle);
+}
+
+.listRowStatic {
+  cursor: default;
+}
+
+/* #866 K31: a row of every session (T3) with its rename and delete actions
+   beside the button that opens it (never inside it). */
+.sessionRow {
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+}
+
+.sessionRow:last-child {
+  border-bottom: 0;
+}
+
+.sessionRow > .listRow {
+  flex: 1;
+  min-width: 0;
+  border-bottom: 0;
+}
+
+.rowActs {
+  display: flex;
+  gap: 4px;
+  padding-right: 14px;
+  flex-shrink: 0;
+}
+
+.renameInput {
+  flex: 1;
+  min-width: 0;
+  margin: 8px 12px 8px 22px;
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg-input);
+  color: var(--text);
+}
+
+.listRowStatic:hover {
+  background: transparent;
+}
+
+.lt {
+  font-weight: 600;
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ls {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.grow {
+  flex: 1;
+  min-width: 0;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* The filters sit beside the 36px search: one height. */
+.segPill {
+  display: inline-flex;
+  align-items: center;
+  height: 36px;
+  box-sizing: border-box;
+  padding: 6px 14px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  background: var(--bg-subtle);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.segPill[aria-pressed="true"] {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-color: var(--accent);
+}
+
+/* ── Session panel (right) ─────────────────────────────────────────────── */
+.panel {
+  width: 300px;
+  flex-shrink: 0;
+  border-left: 1px solid var(--border);
+  background: var(--bg-subtle);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.panelHead {
+  padding: 18px 18px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.panelHead h2 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.panelInner {
+  padding: 0 18px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.panelSec {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.planRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border-radius: var(--r-md);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  min-width: 0;
+}
+
+.planCur {
+  background: var(--brand-forest);
+  border-color: transparent;
+  color: var(--accent-fg);
+}
+
+.planBox {
+  width: 20px;
+  height: 20px;
+  border-radius: var(--r-xs);
+  border: 1.5px solid var(--border-strong);
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  font: 600 10px var(--font-mono);
+}
+
+.planCur .planBox {
+  border-color: color-mix(in srgb, var(--accent-fg) 70%, transparent);
+}
+
+.planDone .planBox {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-fg);
+}
+
+.pn {
+  font-size: 13px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.ps {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.planCur .ps {
+  color: var(--accent-fg);
+}
+
+.meter {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 90px 36px;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+}
+
+.meter > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bar {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--bg-soft);
+  overflow: hidden;
+  display: block;
+}
+
+.bar > i {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+}
+
+.pct {
+  font: 500 11px var(--font-mono);
+  color: var(--text-dim);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.reviewBox {
+  padding: 12px;
+  border-radius: var(--r-md);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  font-size: 11px;
+  color: var(--text-dim);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.legend i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+/* ── Conversation pieces (T4–T12) ──────────────────────────────────────── */
+.col {
+  padding: 24px clamp(24px, 4vw, 56px) 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* The phase stepper (wireframe D): Check-in · Plan · Learn · Wrap-up across
+   the top of the conversation, aligned with its text. Each step after the
+   first is drawn behind a rule that takes the free width. 22px marks. */
+.stepper {
+  /* Sized from the conversation column, not the viewport: with the sidebar
+     and the session panel open the column is ~280px at a 900px window, where
+     four labels cannot sit side by side (PR #866 review U7b). */
+  container: stepper / inline-size;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  padding: 16px clamp(16px, 4vw, 56px) 0;
+  list-style: none;
+  min-width: 0;
+}
+
+.step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 22px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.step + .step {
+  flex: 1 1 0;
+}
+
+.step + .step::before {
+  content: "";
+  flex: 1 1 auto;
+  min-width: 12px;
+  height: 1px;
+  margin-right: 2px;
+  background: var(--border-strong);
+}
+
+/* A label that still does not fit is cut with an ellipsis, never drawn over
+   the next step's mark. */
+.stepLabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Too narrow for all four labels (they need ~370px with their marks): only
+   the current step keeps its label on screen; the others stay in the list
+   for a screen reader, as on a phone. */
+@container stepper (max-width: 400px) {
+  .step:not([data-state="current"]) .stepLabel {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+}
+
+.stepMark {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1.5px solid var(--border-strong);
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  font: 600 11px/1 var(--font-mono);
+}
+
+.step[data-state="done"] {
+  color: var(--text-dim);
+}
+
+.step[data-state="done"] .stepMark {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.step[data-state="current"] {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.step[data-state="current"] .stepMark {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-fg);
+}
+
+/* The actions under the latest turn (Continue, Check me, Start with …): 36px,
+   the sidebar's control height. */
+.chatActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.chatActions > :is(button, a) {
+  height: 36px;
+  padding-top: 0;
+  padding-bottom: 0;
+  box-sizing: border-box;
+}
+
+.qcard {
+  padding: 20px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.qhead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.qlabel {
+  color: var(--accent);
+  margin: 0;
+  font-weight: 400;
+}
+
+.q {
+  font: 500 18px/1.4 var(--font-display);
+  margin: 0;
+  letter-spacing: -0.01em;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.fl {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+}
+
+.verdictYes,
+.verdictNo {
+  border-radius: var(--r-lg);
+  padding: 14px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border: 1px solid;
+}
+
+.verdictYes {
+  background: var(--accent-soft);
+  border-color: var(--accent-border);
+}
+
+.verdictNo {
+  background: var(--warn-soft);
+  border-color: color-mix(in srgb, var(--warn) 22%, transparent);
+}
+
+.closeGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.moved {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 14px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.movedRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 1100px) {
+  .grid2,
+  .closeGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* A phone: the sidebar opens as a drawer over the page. */
+.drawerScrim {
+  position: fixed;
+  inset: 0;
+  /* over the app's own top bar, so the drawer's head (Tutor, Hide) shows */
+  z-index: 1000;
+  background: rgba(26, 24, 20, 0.32);
+}
+
+.drawer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: min(300px, 86vw);
+  display: flex;
+  box-shadow: var(--shadow-lg);
+}
+
+.drawer .side {
+  width: 100%;
+}
+
+@media (max-width: 767px) {
+  .panel {
+    display: none;
+  }
+
+  /* A phone: the title takes the full row, the actions wrap under it. */
+  .topbar {
+    flex-wrap: wrap;
+    align-items: flex-start;
+    padding: 16px;
+    row-gap: 12px;
+  }
+
+  .topTitle {
+    flex: 1 1 calc(100% - 44px);
+  }
+
+  .topActs {
+    flex: 1 1 100%;
+    justify-content: flex-start;
+  }
+
+  .topTitle h1 {
+    font-size: 24px;
+  }
+
+  .home h2 {
+    font-size: 30px;
+    line-height: 36px;
+  }
+
+  .page,
+  .col {
+    padding: 16px;
+  }
+
+  /* Only the current step keeps its name on screen; the others keep theirs
+     for a screen reader. Four names do not fit across a phone. */
+  .step:not([data-state="current"]) .stepLabel {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+}
+
+/* A heading or card that takes focus programmatically (a new question, the
+   plan, the wrap-up — spec §13 A135) is not a control: no ring around it.
+   Every control keeps the global :focus-visible ring. */
+.shell [tabindex="-1"]:focus {
+  outline: none;
+}

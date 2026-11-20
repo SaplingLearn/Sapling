@@ -59,6 +59,15 @@ MODEL_PRICING: dict[str, tuple[float, float]] = {
     "jev-preview": (0.000042, 0.0),
 }
 
+# Cached-input rates per 1K tokens (spec §13 A21): 10% of the input rate —
+# Flash-Lite $0.01/M, Flash $0.03/M, Pro $0.125/M. A model missing here bills
+# cached input at its full input rate (the no-cache upper bound), never lower.
+CACHED_INPUT_PRICING: dict[str, float] = {
+    "gemini-2.5-pro": 0.000125,
+    "gemini-2.5-flash": 0.00003,
+    "gemini-2.5-flash-lite": 0.00001,
+}
+
 #: Model FAMILIES priced by prefix, consulted only when a served id has no
 #: exact entry above. Jev responses report the versioned id that actually
 #: served (`jev-1.14.0` the day the vendor ships it, whatever alias was
@@ -88,9 +97,9 @@ _LONG_PROMPT_PRICING: dict[str, tuple[int, tuple[float, float]]] = {
 #: Prompt-cache pricing as ``(read_multiplier, write_multiplier)`` of the input
 #: rate, by model-family prefix. Anthropic: reads 0.1x, 5-minute writes 1.25x
 #: (the agents use the default 5-minute TTL; a 1-hour TTL writes at 2x and
-#: would need its own entry). Families without an entry keep pricing every
-#: prompt token at the full input rate — Gemini's implicit-cache discount is
-#: not modelled, exactly as before ADR 0030.
+#: would need its own entry). Families without an entry bill cached input at
+#: their `CACHED_INPUT_PRICING` rate (spec §13 A21: Gemini's implicit cache at
+#: 10% of input), or at the full input rate when they have none.
 _CACHE_MULTIPLIERS: tuple[tuple[str, tuple[float, float]], ...] = (
     ("claude-", (0.1, 1.25)),
 )
@@ -238,6 +247,7 @@ def cost_usd(
     model: str,
     prompt_tokens: int,
     completion_tokens: int,
+    cached_tokens: int | None = None,
     *,
     cache_read_tokens: int = 0,
     cache_write_tokens: int = 0,
@@ -245,12 +255,16 @@ def cost_usd(
 ) -> float | None:
     """Compute USD cost for a call, or ``None`` if the model isn't priced.
 
-    ``cache_read_tokens`` / ``cache_write_tokens`` are the parts of
-    ``prompt_tokens`` served from / written to the provider's prompt cache;
-    for a family in ``_CACHE_MULTIPLIERS`` they are re-priced at its
-    multiples of the input rate, otherwise they cost like any prompt token.
-    ``requests`` (model requests in the run) picks a per-request rate card
-    — see ``_LONG_PROMPT_PRICING``.
+    Cached input is part of ``prompt_tokens``. Two sources report it:
+    ``cache_read_tokens`` / ``cache_write_tokens`` (pydantic-ai ``RunUsage``,
+    the parts served from / written to the provider's prompt cache) and
+    ``cached_tokens`` (spec §13 A21: the run site's measured cached input).
+    For a family in ``_CACHE_MULTIPLIERS`` (Claude) reads and writes are
+    re-priced at its multiples of the input rate; otherwise the cached input
+    (the larger of the two reports, clamped to the prompt) bills at the
+    model's ``CACHED_INPUT_PRICING`` rate, or at the full input rate when it
+    has none. ``requests`` (model requests in the run) picks a per-request rate
+    card — see ``_LONG_PROMPT_PRICING``.
 
     Rounds to ``COST_SCALE`` (10) decimal places, half-up, to match
     ``llm_usage.cost_usd numeric(18,10)``. An unknown model returns ``None``
@@ -275,19 +289,28 @@ def cost_usd(
         return None
 
     in_rate, out_rate = rates
-    read, write = int(cache_read_tokens), int(cache_write_tokens)
-    read_mult = write_mult = 1.0
-    canonical = _canonical_model(model)
-    for prefix, multipliers in _CACHE_MULTIPLIERS:
-        if canonical.startswith(prefix):
-            read_mult, write_mult = multipliers
-            break
-    uncached = max(int(prompt_tokens) - read - write, 0)
+    canonical = model if model in MODEL_PRICING else _canonical_model(model)
+    prompt = int(prompt_tokens)
+    read = max(int(cache_read_tokens or 0), int(cached_tokens or 0), 0)
+    write = max(int(cache_write_tokens or 0), 0)
     in_rate_d = Decimal(str(in_rate))
+    multipliers = next(
+        (m for prefix, m in _CACHE_MULTIPLIERS if _canonical_model(model).startswith(prefix)), None
+    )
+    if multipliers is not None:
+        read_mult, write_mult = multipliers
+        uncached = max(prompt - read - write, 0)
+        input_cost = (
+            in_rate_d * Decimal(uncached)
+            + in_rate_d * Decimal(str(read_mult)) * Decimal(read)
+            + in_rate_d * Decimal(str(write_mult)) * Decimal(write)
+        )
+    else:
+        cached = min(read, prompt)
+        cached_rate = Decimal(str(CACHED_INPUT_PRICING.get(canonical, in_rate)))
+        input_cost = in_rate_d * Decimal(prompt - cached) + cached_rate * Decimal(cached)
     cost = (
-        in_rate_d * Decimal(uncached)
-        + in_rate_d * Decimal(str(read_mult)) * Decimal(read)
-        + in_rate_d * Decimal(str(write_mult)) * Decimal(write)
+        input_cost
         + Decimal(str(out_rate)) * Decimal(int(completion_tokens))
     ) / Decimal(1000)
     return float(cost.quantize(_COST_QUANTUM, rounding=ROUND_HALF_UP))

@@ -7,8 +7,10 @@ import { Avatar } from "./Avatar";
 import { Icon } from "./Icon";
 import { SaplingWordmark } from "./SaplingWordmark";
 import { useUser } from "@/context/UserContext";
+import { useRetentionDue } from "@/context/RetentionDueContext";
 import type { NavItem } from "@/lib/navFeatures";
 import { useVisibleNavSections } from "@/lib/useNavSections";
+import { RETENTION_NAV_HREF, RetentionDueDot } from "./RetentionDueDot";
 import { STUDY_TOOL_PATHS } from "@/lib/toolHrefs";
 
 type Entry = NavItem;
@@ -84,8 +86,9 @@ function fade(collapsed: boolean): React.CSSProperties {
 /* Active/hover surfaces.
  *
  * A plain neutral highlight. The selected row is a flat `--bg-soft` fill,
- * which inside the olive rail resolves to a translucent cream wash (see
- * [data-app-sidenav] in globals.css), with the label in bold cream.
+ * which inside the olive rail resolves to a translucent dark wash (see
+ * [data-app-sidenav] in globals.css; a cream wash failed AA under the white
+ * label), with the label in bold cream.
  * No rail, no hue on the label: the fill IS the treatment.
  *
  * Hover is the same colour at half strength, so it is unmistakably the
@@ -112,16 +115,52 @@ function useCollapsed(): [boolean, (v: boolean) => void] {
   return [collapsed, update];
 }
 
+/* On the Tutor the rail gives its width to the chat: it shows as the narrow
+   icon rail whatever the stored preference, and opens over the page (no
+   layout shift) while the pointer is on it or focus is inside it. Arriving
+   at the Tutor closes it at once, even with the pointer still on the rail. */
+/** On the Tutor the rail floats over its fixed 64px slot (so a hover-open
+ *  never pushes the chat); elsewhere it sits in the flow as before. */
+function railPlacement(onTutor: boolean, peek: boolean): React.CSSProperties {
+  if (!onTutor) return { position: "relative", zIndex: 1, boxShadow: "none" };
+  return {
+    position: "absolute", top: 0, left: 0, bottom: 0, zIndex: 40,
+    boxShadow: peek ? "var(--shadow-lg)" : "none",
+  };
+}
+function useTutorPeek(onTutor: boolean) {
+  const [peek, setPeek] = React.useState(false);
+  React.useEffect(() => { if (!onTutor) setPeek(false); }, [onTutor]);
+  const handlers = onTutor
+    ? {
+        onMouseEnter: () => setPeek(true),
+        onMouseLeave: () => setPeek(false),
+        onFocus: () => setPeek(true),
+        onBlur: (e: React.FocusEvent<HTMLElement>) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setPeek(false);
+        },
+        onKeyDown: (e: React.KeyboardEvent<HTMLElement>) => {
+          if (e.key === "Escape") { setPeek(false); (document.activeElement as HTMLElement | null)?.blur(); }
+        },
+      }
+    : {};
+  return { peek: onTutor && peek, handlers, close: () => setPeek(false) };
+}
+
 export function SideNav() {
   const pathname = usePathname() || "/";
   const { userName, avatarUrl, isAdmin, isAuthenticated } = useUser();
-  const [collapsed, setCollapsed] = useCollapsed();
+  const [storedCollapsed, setCollapsed] = useCollapsed();
+  const onTutor = isActive(pathname, "/learn");
+  const { peek, handlers: peekHandlers } = useTutorPeek(onTutor);
+  const collapsed = onTutor ? !peek : storedCollapsed;
   const sections = useVisibleNavSections();
+  const { due: retentionDue } = useRetentionDue();
   const settingsActive = isActive(pathname, "/settings");
 
   const width = collapsed ? SIDE_NAV_COLLAPSED : SIDE_NAV_EXPANDED;
 
-  return (
+  const rail = (
     <aside
       role="navigation"
       aria-label="Primary"
@@ -133,8 +172,7 @@ export function SideNav() {
         height: "100%",
         background: "var(--sidenav-bg)",
         borderRadius: "0 var(--r-lg) var(--r-lg) 0",
-        position: "relative",
-        zIndex: 1,
+        ...railPlacement(onTutor, peek),
         padding: `16px ${collapsed ? RAIL_PAD_X.narrow : RAIL_PAD_X.wide}px`,
         display: "flex",
         flexDirection: "column",
@@ -142,7 +180,7 @@ export function SideNav() {
         // The rail itself never scrolls: only the destinations region below
         // does, so the account footer stays pinned at the bottom.
         overflow: "hidden",
-        transition: "width var(--dur) var(--ease), min-width var(--dur) var(--ease), padding var(--dur) var(--ease)",
+        transition: "width var(--dur) var(--ease), min-width var(--dur) var(--ease), padding var(--dur) var(--ease), box-shadow var(--dur) var(--ease)",
       }}
     >
       {/* Wide: the wordmark. Narrow: the Sapling symbol, centred. The two
@@ -259,6 +297,7 @@ export function SideNav() {
               entry={item}
               active={isActive(pathname, item.href)}
               collapsed={collapsed}
+              retentionDue={retentionDue && item.href === RETENTION_NAV_HREF}
             />
           ))}
         </React.Fragment>
@@ -288,7 +327,7 @@ export function SideNav() {
           bare icon in the narrow one — the usual sidebar toggle.
           Same insets, padding and row height as NavLink so it lines up with
           the destinations above it. */}
-      <button
+      {!onTutor && <button
         type="button"
         aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
         title={collapsed ? "Expand sidebar" : undefined}
@@ -317,7 +356,7 @@ export function SideNav() {
       >
         <PanelToggleIcon collapsed={collapsed} />
         <span aria-hidden style={{ flex: 1, ...fade(collapsed) }}>Collapse</span>
-      </button>
+      </button>}
 
       {isAdmin && (
         <NavLink
@@ -399,15 +438,30 @@ export function SideNav() {
       </div>
     </aside>
   );
+
+  if (!onTutor) return rail;
+  // A fixed 64px slot keeps the page where it is while the rail opens over it.
+  return (
+    <div
+      data-app-sidenav-slot=""
+      {...peekHandlers}
+      style={{ width: SIDE_NAV_COLLAPSED, minWidth: SIDE_NAV_COLLAPSED, height: "100%", position: "relative", zIndex: 40, flexShrink: 0 }}
+    >
+      {rail}
+    </div>
+  );
 }
 
-function NavLink({ entry, active, collapsed }: { entry: Entry; active: boolean; collapsed: boolean }) {
+function NavLink({ entry, active, collapsed, retentionDue = false }: {
+  entry: Entry; active: boolean; collapsed: boolean; retentionDue?: boolean;
+}) {
+  const label = retentionDue ? `${entry.label}, retention check due` : entry.label;
   return (
     <Link
       href={entry.href}
       data-testid={`nav-link-${entry.href.slice(1)}`}
-      title={collapsed ? entry.label : undefined}
-      aria-label={collapsed ? entry.label : undefined}
+      title={collapsed ? label : undefined}
+      aria-label={collapsed || retentionDue ? label : undefined}
       style={{
         display: "flex",
         alignItems: "center",
@@ -439,8 +493,10 @@ function NavLink({ entry, active, collapsed }: { entry: Entry; active: boolean; 
         e.currentTarget.style.color = "var(--text-dim)";
       }}
     >
-      <span style={{ display: "inline-flex", flexShrink: 0 }}>
+      {/* A126: the dot rides the icon, so the narrow rail shows it too. */}
+      <span style={{ display: "inline-flex", flexShrink: 0, position: "relative" }}>
         <Icon name={entry.icon} size={ICON_SIZE} />
+        {retentionDue && <RetentionDueDot testid="nav-retention-due" overlay />}
       </span>
       <span aria-hidden={collapsed || undefined} style={{ flex: 1, ...fade(collapsed) }}>
         {entry.label}

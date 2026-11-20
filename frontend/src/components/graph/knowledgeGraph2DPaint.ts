@@ -6,7 +6,7 @@
  */
 import type { GraphEdge, GraphNode } from "@/lib/data";
 import { blobProfile, rimRadius, wobbleFor } from "@/lib/graph/blobShape";
-import { NODE_STROKE_OPACITY, opacityFor } from "@/lib/graph/nodeStyle";
+import { NODE_STROKE_OPACITY, courseLabel, opacityFor, truncateLabel } from "@/lib/graph/nodeStyle";
 import { isDirected } from "@/lib/graph/radialLayout";
 
 /** A link end: the node itself once the link force swapped it in, else its id. */
@@ -237,4 +237,52 @@ export function conceptLabelOpacity(
   zoomLabels: number,
 ): number {
   return legible ? (focusId ? (focused ? 1 : 0) : zoomLabels) * 0.85 : 0.85;
+}
+
+// ── Framing ────────────────────────────────────────────────────────────────
+
+/**
+ * Average advance of one caption character, in ems: a little over the UI
+ * sans's lowercase average, so a measured caption is never framed too tight.
+ * (Captions are SVG text; the frame is worked out without a layout pass.)
+ */
+const CAPTION_EM = 0.62;
+
+/**
+ * The caption under a node as it is drawn at zoom `scale`, in graph units from
+ * the node's centre: its width (centred under the node) and how far its foot
+ * reaches below. A course root shows its code (`courseLabel`) on a baseline
+ * `r + 4 + 0.92·size` below the centre; a concept its truncated name
+ * (`truncateLabel`) on `r + 13` — the sizes the renderer uses, focused
+ * concepts at their largest.
+ */
+export function captionBox(
+  n: Pick<GraphNode, "name" | "is_subject_root">,
+  r: number,
+  scale: number,
+  legible: boolean,
+  floorZoom: number,
+): { width: number; bottom: number } {
+  if (n.is_subject_root) {
+    const size = courseLabelSize(scale, floorZoom);
+    return { width: courseLabel(n.name).length * size * CAPTION_EM, bottom: r + 4 + size * 1.15 };
+  }
+  const size = conceptLabelSize(legible, true, scale);
+  return { width: truncateLabel(n.name).length * size * CAPTION_EM, bottom: r + 13 + size * 0.3 };
+}
+
+/**
+ * How far a node reaches when a view is framed on it: the mark with 24 of
+ * room round it and 10 more under it for the caption — or, given the caption
+ * as drawn (`captionBox`), as far as that caption reaches, whichever is more.
+ */
+export function frameReach(
+  r: number,
+  caption: { width: number; bottom: number } | null,
+): { x: number; up: number; down: number } {
+  return {
+    x: Math.max(r + 24, caption ? caption.width / 2 + 6 : 0),
+    up: r + 24,
+    down: Math.max(r + 34, caption ? caption.bottom + 6 : 0),
+  };
 }

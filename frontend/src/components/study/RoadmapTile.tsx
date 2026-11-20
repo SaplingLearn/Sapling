@@ -2,6 +2,10 @@
 /**
  * One concept on the roadmap. The tile selects the concept (the Up Next block
  * follows it); going INTO a tool for it is the "..." button's menu.
+ *
+ * The tile is not itself a control: it holds two, the select button (its ring
+ * and name) and the "..." button, side by side. A press anywhere else on it
+ * still selects, as the select button's own press does, by bubbling up to it.
  */
 import React from "react";
 import Link from "next/link";
@@ -22,10 +26,14 @@ const RELATION_TAG: Record<Exclude<TileRelation, "">, React.CSSProperties> = {
   Unlocks: { ...TAG, background: "var(--info-soft)", color: "var(--info)" },
 };
 
-/** Enter or Space: the keys that press a button. */
-const isPress = (e: React.KeyboardEvent) => e.key === "Enter" || e.key === " ";
-/** Keeps a press on a control inside the tile from also reaching the tile's own handler. */
-const keepPress = (e: React.KeyboardEvent) => { if (isPress(e)) e.stopPropagation(); };
+/* A dimmed tile (the legend's filter, or a concept the highlighted one does not
+   rest on or unlock) recedes without its words losing AA (spec §13 A135: never
+   an opacity dim on text; the whole tile at 30% put them near 1.5:1). Its fill
+   drops to the page (.tileDim), its ring and gap mark fade, and its name and
+   status go to --text-muted, AA on every tile fill and on the page. */
+const DIM_OPACITY = 0.3;
+const DIM_TEXT = "var(--text-muted)";
+const DIM_FADE = "opacity var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease)";
 
 /**
  * The open tile menu closes on Esc (focus returns to its "..." button) or on a
@@ -59,11 +67,12 @@ function useMenuDismiss(open: boolean, owner: React.RefObject<HTMLDivElement | n
   }, [open, owner, close]);
 }
 
-/** The mastery ring, filled in the concept's status colour once it is started. */
-function TileRing({ concept }: { concept: Concept }) {
+/** The mastery ring, filled in the concept's status colour once it is started.
+ *  `faded` on a dimmed tile: the ring is a picture, so it may fade (text may not). */
+function TileRing({ concept, faded }: { concept: Concept; faded: boolean }) {
   const color = TC[concept.st];
   return (
-    <span style={{ position: "relative", width: 28, height: 28, flexShrink: 0 }}>
+    <span style={{ position: "relative", width: 28, height: 28, flexShrink: 0, opacity: faded ? DIM_OPACITY : 1, transition: DIM_FADE }}>
       <svg width="28" height="28" viewBox="0 0 28 28" aria-hidden="true" style={{ display: "block", transform: "rotate(-90deg)" }}>
         <circle cx="14" cy="14" r="11.5" fill="none" stroke="var(--bg-soft)" strokeWidth="3" />
         <circle cx="14" cy="14" r="11.5" fill="none" stroke={color} strokeWidth="3" strokeLinecap="round" strokeDasharray={ring(concept.m, 11.5)} />
@@ -79,12 +88,12 @@ function TileRing({ concept }: { concept: Concept }) {
 /** What rides the tile besides its name: "Next", how it relates to the hot
  *  concept, and the mark for a prerequisite that is not mastered yet. */
 function TileMarks({ tile }: { tile: Tile }) {
-  const { t, isSel, isNext, rel } = tile;
+  const { t, isSel, isNext, rel, dim } = tile;
   return (
     <>
       {isNext && !isSel && <span style={NEXT_TAG}>Next</span>}
       {rel && <span style={RELATION_TAG[rel]}>{rel}</span>}
-      {!!t.gap && !rel && <span title={t.gap} style={{ display: "block", lineHeight: 0, flexShrink: 0 }}><WarnIcon size={14} /></span>}
+      {!!t.gap && !rel && <span title={t.gap} style={{ display: "block", lineHeight: 0, flexShrink: 0, opacity: dim ? DIM_OPACITY : 1, transition: DIM_FADE }}><WarnIcon size={14} /></span>}
     </>
   );
 }
@@ -109,8 +118,8 @@ function TileMenu({ concept, cardCount, quizShown, nav, onClose }: {
     nav.leaveTo(href);
   };
   return (
-    // Enter/Space on an item must follow the link, not reach the tile's toggle.
-    <div role="menu" aria-label={`${concept.name} actions`} className={s.pop} onClick={e => e.stopPropagation()} onKeyDown={keepPress}
+    // A press on an item follows the link; it must not also reach the tile's select.
+    <div role="menu" aria-label={`${concept.name} actions`} className={s.pop} onClick={e => e.stopPropagation()}
       style={{ position: "absolute", left: 0, right: 0, top: "calc(100% + 6px)", zIndex: 21, minWidth: 200, ...POPOVER, borderRadius: "var(--r-md)", padding: 4, display: "flex", flexDirection: "column", gap: 2, cursor: "default" }}>
       {shownTools(actions, quizShown).map(ac => (
         <Link key={ac.label} role="menuitem" href={ac.href} className={s.hoverOption} onClick={follow(ac.href)}
@@ -123,9 +132,10 @@ function TileMenu({ concept, cardCount, quizShown, nav, onClose }: {
   );
 }
 
-const tileClass = (isSel: boolean, isNext: boolean) => {
-  if (isSel) return `${s.tile} ${s.tileSel}`;
-  return isNext ? `${s.tile} ${s.tileNext}` : s.tile;
+const tileClass = (isSel: boolean, isNext: boolean, dim: boolean) => {
+  const dimmed = dim ? ` ${s.tileDim}` : "";
+  if (isSel) return `${s.tile} ${s.tileSel}${dimmed}`;
+  return isNext ? `${s.tile} ${s.tileNext}${dimmed}` : `${s.tile}${dimmed}`;
 };
 
 const statusLine = (t: Concept) => (t.st === "new" ? "Not Started" : `${ST_LABEL[t.st]} · ${t.m}%`);
@@ -146,23 +156,26 @@ export function RoadmapTile({ tile, menuOpen, cardCount, quizShown, nav, set, cl
   useMenuDismiss(menuOpen, owner, closeMenu);
   const toggle = () => set({ topic: isSel ? null : t.id, tileMenu: null });
   return (
-    <div ref={owner} role="button" tabIndex={0} aria-pressed={isSel} data-testid={`tile-${t.id}`} data-flip={`tile:${t.id}`} className={tileClass(isSel, isNext)}
+    // Every press on the tile that a control inside it does not keep (the
+    // "..." and its menu stop theirs) selects: the select button's click,
+    // Enter or Space on it (its own click), or a click on the padding or marks.
+    <div ref={owner} data-testid={`tile-${t.id}`} data-flip={`tile:${t.id}`} data-dim={dim || undefined} className={tileClass(isSel, isNext, dim)}
       onClick={toggle}
-      onKeyDown={e => { if (isPress(e)) { e.preventDefault(); toggle(); } }}
       onMouseEnter={() => set({ hover: t.id })} onMouseLeave={() => set({ hover: null })}
       // The tile that owns the open menu is lifted above its siblings, or the next tile paints over the menu.
-      style={{ position: "relative", zIndex: menuOpen ? 2 : undefined, display: "flex", alignItems: "center", gap: 10, padding: "9px 11px", borderRadius: "var(--r-md)", opacity: dim ? 0.3 : 1, cursor: "pointer" }}>
-      <TileRing concept={t} />
-      <span style={{ flex: 1, minWidth: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-        <span style={{ fontSize: "var(--fs-md)", fontWeight: 600, lineHeight: 1.25, textWrap: "pretty" } as React.CSSProperties}>{t.name}</span>
-        <span style={{ fontSize: "var(--fs-xs)", color: SC[t.st], whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{statusLine(t)}</span>
-      </span>
+      style={{ position: "relative", zIndex: menuOpen ? 2 : undefined, display: "flex", alignItems: "center", gap: 10, padding: "9px 11px", borderRadius: "var(--r-md)", cursor: "pointer" }}>
+      {/* No handler of its own: its click bubbles to the tile's. */}
+      <button type="button" aria-pressed={isSel} className={s.tileSelect} data-testid={`study-tile-select-${t.id}`}>
+        <TileRing concept={t} faded={dim} />
+        <span style={{ flex: 1, minWidth: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+          <span style={{ fontSize: "var(--fs-md)", fontWeight: 600, lineHeight: 1.25, textWrap: "pretty", color: dim ? DIM_TEXT : undefined, transition: DIM_FADE } as React.CSSProperties}>{t.name}</span>
+          <span style={{ fontSize: "var(--fs-xs)", color: dim ? DIM_TEXT : SC[t.st], whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", transition: DIM_FADE }}>{statusLine(t)}</span>
+        </span>
+      </button>
       <TileMarks tile={tile} />
       <button type="button" className={s.tileMore} data-testid={`tile-actions-${t.id}`} data-tile-actions=""
         aria-label={`Actions for ${t.name}`} title={tileActionsHint(quizShown)} aria-haspopup="menu" aria-expanded={menuOpen}
-        onClick={e => { e.stopPropagation(); set({ topic: t.id, tileMenu: menuOpen ? null : t.id }); }}
-        // Enter/Space must press THIS button, not reach the tile's select handler.
-        onKeyDown={keepPress}>
+        onClick={e => { e.stopPropagation(); set({ topic: t.id, tileMenu: menuOpen ? null : t.id }); }}>
         <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" fill="currentColor"><circle cx="2.5" cy="7" r="1.3" /><circle cx="7" cy="7" r="1.3" /><circle cx="11.5" cy="7" r="1.3" /></svg>
       </button>
       {menuOpen && <TileMenu concept={t} cardCount={cardCount} quizShown={quizShown} nav={nav} onClose={() => set({ tileMenu: null })} />}

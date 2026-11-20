@@ -13,7 +13,7 @@
 import React from "react";
 import { useToast } from "@/components/ToastProvider";
 import type { SessionConfig } from "@/lib/quiz/machine";
-import { entrySelection, queueFor, type Candidate } from "@/lib/quiz/proposals";
+import { entrySelection, type Candidate } from "@/lib/quiz/proposals";
 import type { EntryRequest } from "@/lib/quiz/source";
 import type { QuizSession } from "@/lib/quiz/types";
 import type { QuizHome as QuizHomeData } from "@/lib/quiz/useQuizHome";
@@ -25,11 +25,13 @@ import {
   cardDefinition,
   cardMeta,
   cardModeFor,
+  cardPlanLine,
   cardRationale,
   cardTitle,
   conceptStartRequest,
   configLineFor,
   courseFilterFor,
+  courseQueueFor,
   effectiveConfigFor,
   emptyTopicsCopy,
   entryKeyFor,
@@ -69,10 +71,15 @@ function useArrival(home: QuizHomeData, entry: EntryRequest) {
   }, [home.status, selection.unresolved, toast]);
 
   const courseQueue = React.useMemo(
-    () => (entry.course ? queueFor("course", home.nodes, entry.course) : []),
-    [entry.course, home.nodes],
+    () => courseQueueFor(
+      { planned: home.planned, candidates: home.candidates, nodes: home.nodes, courseCandidates: home.courseCandidates },
+      entry.course,
+    ),
+    [entry.course, home.nodes, home.planned, home.candidates, home.courseCandidates],
   );
-  const dueQueue = React.useMemo(() => queueFor("due", home.nodes), [home.nodes]);
+  // The tier ranking's due queue, or with `quiz_concept_plan` the learner
+  // model's (spec §13 A143): the hook decides, so the card and the queue agree.
+  const dueQueue = home.dueQueue;
   const arrival: Arrival = {
     conceptId: selection.conceptId,
     course: entry.course,
@@ -195,9 +202,22 @@ interface SwapInputs {
   reducedMotion: boolean;
 }
 
-/** Stacked (phone), the card is above the list the student clicked in. */
+/**
+ * The columns are stacked, the card above the list the student clicked in.
+ * They stack by the page column's width (a container query in `home.css`),
+ * so this reads the laid-out grid: one track is stacked. Without a layout to
+ * read (jsdom), a narrow viewport stands in.
+ */
+function columnsStacked(proposal: HTMLElement | null): boolean {
+  const grid = proposal?.closest<HTMLElement>(".quiz-home__grid");
+  const tracks = grid ? window.getComputedStyle(grid).gridTemplateColumns : "";
+  if (tracks && tracks !== "none") return tracks.trim().split(/\s+/).length === 1;
+  return Boolean(window.matchMedia?.("(max-width: 900px)").matches);
+}
+
+/** Stacked, the card is above the list the student clicked in: bring it into view. */
 function scrollCardIntoView(proposal: HTMLElement | null, reducedMotion: boolean) {
-  if (window.matchMedia?.("(max-width: 900px)").matches) {
+  if (columnsStacked(proposal)) {
     proposal?.scrollIntoView({ behavior: reducedMotion ? "auto" : "smooth", block: "start" });
   }
 }
@@ -250,14 +270,18 @@ function cardCopy(
   const conceptName = card?.node.concept_name ?? "";
   const courseCode = cardCourseCode(mode, entryCourse, card);
   const { definition, pending } = cardDefinition(queued, card, home);
+  // One skill meter on the card: when the plan line states it, the meta line
+  // keeps only the band (cardMeta).
+  const planLine = cardPlanLine(mode, pickedId, arrival.conceptId, card);
   return {
     accent: card?.color ?? null,
     queued,
     conceptName,
     courseCode,
     title: cardTitle(mode, courseCode, conceptName),
-    meta: cardMeta(mode, arrival.courseQueue.length, home.due, card),
+    meta: cardMeta(mode, arrival.courseQueue.length, home.due, card, home.planned, planLine !== null),
     rationale: cardRationale(mode, pickedId, arrival.conceptId, card, entry.source.kind),
+    planLine,
     definition,
     definitionPending: pending,
     configLine: configLineFor(queued, session.config),

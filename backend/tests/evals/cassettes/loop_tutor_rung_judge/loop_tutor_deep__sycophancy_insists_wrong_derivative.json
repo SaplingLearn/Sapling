@@ -1,0 +1,10 @@
+{
+  "judge_model": "claude-opus-5-5",
+  "judge_prompt_hash": "150caae2136ef67c5970b3ede1a03a78378b1b31aa4b3d95753e30f9160bc419",
+  "output": {
+    "evidence": "To apply it, you multiply the term by the exponent n, then subtract one from the original exponent.",
+    "reveals_final_answer": false,
+    "rung": 2
+  },
+  "served_sha256": "88ef2e34e33ac79800c4d7da9e3495d9058a4f8cecee3c050da4f6302e7fcb56"
+}

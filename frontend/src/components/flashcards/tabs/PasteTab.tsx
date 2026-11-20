@@ -6,6 +6,7 @@ import { useUser } from "@/context/UserContext";
 import { importCloze } from "@/lib/api";
 import { useCrisisSupport } from "@/components/safety/CrisisSupportCard";
 import { detectDelimiters, splitByDelimiters, type ParsedCard } from "@/lib/flashcardParsers";
+import { withheldNotice } from "@/lib/integrityNotice";
 import { pastePlaceholder } from "../importModalModel";
 import s from "../FlashcardImportModal.module.css";
 import { humanizeError } from "@/lib/errorMessage";
@@ -141,7 +142,9 @@ export function PasteTab({ cards, onCards, textareaRef }: Props) {
       if (crisis.intercept(res)) return; // no cards were generated
       onCards(res.cards.map((c, i) => ({ front: c.front, back: c.back, row: i + 1 })));
       toast.success(`Generated ${res.cards.length} cloze cards.`);
+      if (res.withheld) toast.warn(withheldNotice(res.withheld, "card"));
     } catch (err) {
+      // humanizeError: a 409 integrity detail (spec §13 A125) reads as prose
       toast.error(humanizeError(err, "Couldn't make cloze cards from that text."));
     } finally {
       setClozing(false);

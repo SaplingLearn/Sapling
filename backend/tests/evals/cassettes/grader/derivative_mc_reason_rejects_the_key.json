@@ -1,0 +1,18 @@
+{
+  "context_checks": [],
+  "runs": [
+    {
+      "addresses_grader": false,
+      "confidence": 0.9,
+      "contradicts_reference": true,
+      "feedback_hint": "The student mentions the rate of change and slope of the tangent line but then contradicts themselves by stating it's the area under the curve. Ensure the answer clearly and solely defines the derivative's meaning.",
+      "item_results": [
+        "62464:no",
+        "45712:no"
+      ],
+      "matched_wrong_key": "w_area",
+      "support": []
+    }
+  ],
+  "span_checks": []
+}

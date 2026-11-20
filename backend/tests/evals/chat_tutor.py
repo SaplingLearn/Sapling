@@ -8,7 +8,11 @@ Run via tests.evals._replay (record/replay/live):
 Each case input is a (mode, user_message) tuple. The adapter dispatches to
 the right mode-specific agent via `agent_for_mode(mode)`. Cassette key is
 the case name (NOT the input), so cassettes capture per-mode behavior even
-when two modes happen to share the same user message.
+when two modes happen to share the same user message. Each cassette also
+stores what it was recorded under (`identity`: the mode's prompt and the tool
+definitions it is sent, the reply type, the slot's model, and the assembled
+message plus the fixture course the tools read), and replay raises
+StaleRecordingError on any difference (D4).
 
 Why ChatReply wraps the str output: the shared `run_with_cassette` helper
 calls `output_model.model_validate(body)` on replayed JSON. `str` has no
@@ -20,6 +24,7 @@ any file outside `backend/tests/evals/chat_tutor.py`.
 
 from __future__ import annotations
 
+import json
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -33,10 +38,22 @@ from pydantic_ai.messages import ModelResponse, TextPart
 from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import Evaluator, EvaluatorContext
 
-from agents.chat_tutor import agent_for_mode
+from agents._providers import model_name_for
+from agents.chat_tutor import _PROMPT_HASHES, agent_for_mode
 from agents.deps import SaplingDeps
 from services.chat_stream import join_text_parts
-from _replay import MODE, cli_main, load_cassette, save_cassette
+from _replay import (
+    MODE,
+    cli_main,
+    input_identity,
+    load_recording,
+    prompt_identity,
+    recorded_under,
+    run_settings,
+    save_recording,
+    schema_hash,
+    text_sha256,
+)
 from _retrieval_fixture import FixtureRetrieval, load_fixture
 
 
@@ -151,30 +168,6 @@ class NoToolMisuseEvaluator(Evaluator[ChatInput, ChatReply]):
 # The two read-only graph tools' wire names (chat_tutor._build_tools).
 GRAPH_READ_TOOLS = ("read_graph_neighborhood", "read_concepts_for_user")
 
-# Mastery-delta band from the tool schema's own guidance
-# (agents/tools/graph.py::ConceptMasteryUpdate): +0.1..+0.3 for correct
-# answers, −0.05..−0.1 for gaps — so any emitted delta outside
-# [-0.1, +0.3] is off-script.
-MASTERY_DELTA_MIN = -0.1
-MASTERY_DELTA_MAX = 0.3
-
-
-def _mastery_updates(output: ChatReply | None) -> list[dict]:
-    """Flatten every update_mastery_tool call's `updates` entries.
-    Tolerates both the typed arg shape {"update": {"updates": [...]}} and
-    a flat {"updates": [...]}."""
-    entries: list[dict] = []
-    for call in (output.tool_calls if output else []) or []:
-        if call.tool_name != "update_mastery_tool":
-            continue
-        args = call.args or {}
-        payload = args.get("update") if isinstance(args.get("update"), dict) else args
-        for u in (payload or {}).get("updates", []) or []:
-            if isinstance(u, dict):
-                entries.append(u)
-    return entries
-
-
 @dataclass
 class GraphToolUsedEvaluator(Evaluator[ChatInput, ChatReply]):
     """Cases tagged `expects_graph_read` must have called at least one
@@ -187,27 +180,6 @@ class GraphToolUsedEvaluator(Evaluator[ChatInput, ChatReply]):
             return 1.0
         used = {t.tool_name for t in (ctx.output.tool_calls if ctx.output else [])}
         return 1.0 if used & set(GRAPH_READ_TOOLS) else 0.0
-
-
-@dataclass
-class MasteryUpdateEmittedEvaluator(Evaluator[ChatInput, ChatReply]):
-    """Cases tagged `expects_mastery_update` must emit at least one
-    update_mastery_tool call; and EVERY emitted delta (tagged or not)
-    must sit inside the band the tool schema instructs
-    ([-0.1, +0.3])."""
-
-    def evaluate(self, ctx: EvaluatorContext[ChatInput, ChatReply]) -> float:
-        updates = _mastery_updates(ctx.output)
-        if (ctx.metadata or {}).get("expects_mastery_update") and not updates:
-            return 0.0
-        for u in updates:
-            try:
-                delta = float(u.get("mastery_delta"))
-            except (TypeError, ValueError):
-                return 0.0
-            if not (MASTERY_DELTA_MIN <= delta <= MASTERY_DELTA_MAX):
-                return 0.0
-        return 1.0
 
 
 @dataclass
@@ -304,7 +276,7 @@ CASES: list[Case[ChatInput, ChatReply]] = [
             "expository",
             "Explain Big-O notation.",
         ),
-        metadata={"mode": "expository", "grounded": True, "expects_mastery_update": True},
+        metadata={"mode": "expository", "grounded": True},
     ),
     Case(
         name="expository_explain_photosynthesis",
@@ -312,7 +284,7 @@ CASES: list[Case[ChatInput, ChatReply]] = [
             "expository",
             "Explain photosynthesis at the cellular level.",
         ),
-        metadata={"mode": "expository", "grounded": True, "expects_mastery_update": True},
+        metadata={"mode": "expository", "grounded": True},
     ),
     Case(
         name="expository_explain_dependency_injection",
@@ -320,7 +292,7 @@ CASES: list[Case[ChatInput, ChatReply]] = [
             "expository",
             "What is dependency injection?",
         ),
-        metadata={"mode": "expository", "expects_mastery_update": True},
+        metadata={"mode": "expository"},
     ),
     Case(
         name="expository_explain_supply_demand",
@@ -328,7 +300,7 @@ CASES: list[Case[ChatInput, ChatReply]] = [
             "expository",
             "Explain how supply and demand determine price.",
         ),
-        metadata={"mode": "expository", "grounded": True, "expects_mastery_update": True},
+        metadata={"mode": "expository", "grounded": True},
     ),
     Case(
         name="expository_explain_kantian_ethics",
@@ -336,7 +308,7 @@ CASES: list[Case[ChatInput, ChatReply]] = [
             "expository",
             "What is Kantian ethics?",
         ),
-        metadata={"mode": "expository", "expects_mastery_update": True},
+        metadata={"mode": "expository"},
     ),
 
     # ── TEACHBACK ──────────────────────────────────────────────────────────
@@ -348,7 +320,7 @@ CASES: list[Case[ChatInput, ChatReply]] = [
             "splits into two identical daughter cells. Each one has the "
             "same chromosomes as the original.",
         ),
-        metadata={"mode": "teachback", "grounded": True, "expects_mastery_update": True},
+        metadata={"mode": "teachback", "grounded": True},
     ),
     Case(
         name="teachback_partial_correct",
@@ -357,7 +329,7 @@ CASES: list[Case[ChatInput, ChatReply]] = [
             "OK so a closure is a function that has variables. Like, "
             "you can use them inside it.",
         ),
-        metadata={"mode": "teachback", "grounded": True, "expects_mastery_update": True},
+        metadata={"mode": "teachback", "grounded": True},
     ),
     Case(
         name="teachback_misconception",
@@ -366,7 +338,7 @@ CASES: list[Case[ChatInput, ChatReply]] = [
             "Newton's first law says objects in motion stay in motion "
             "unless you push them. Force makes things keep moving.",
         ),
-        metadata={"mode": "teachback", "grounded": True, "expects_mastery_update": True},
+        metadata={"mode": "teachback", "grounded": True},
     ),
     Case(
         name="teachback_advanced",
@@ -376,7 +348,7 @@ CASES: list[Case[ChatInput, ChatReply]] = [
             "showing that strings of length p can be split such that "
             "the middle can be repeated and stay in the language.",
         ),
-        metadata={"mode": "teachback", "expects_mastery_update": True},
+        metadata={"mode": "teachback"},
     ),
     Case(
         name="teachback_minimal",
@@ -384,7 +356,7 @@ CASES: list[Case[ChatInput, ChatReply]] = [
             "teachback",
             "Recursion is when a function calls itself.",
         ),
-        metadata={"mode": "teachback", "grounded": True, "expects_mastery_update": True},
+        metadata={"mode": "teachback", "grounded": True},
     ),
 ]
 
@@ -423,33 +395,18 @@ def _make_deps() -> SaplingDeps:
 def _install_offline_graph_writes() -> None:
     """Record/live only: replace the graph WRITE seam with an in-memory stub.
 
-    The retrieval seam covers the tutor's READS; the write tools
-    (apply_graph_update_tool / update_mastery_tool) call
+    The retrieval seam covers the tutor's READS; the one write tool
+    (apply_graph_update_tool — PKG-14b removed update_mastery_tool) calls
     `services.graph_service.apply_graph_update`, which hits Supabase — and
-    an eval box has none, so a turn where the model dutifully updates
-    mastery would die with ConnectError. The stub echoes plausible
-    before/after deltas (seeded from fixture mastery) so the model's
-    second turn sees a sensible tool result; the cassette still captures
-    the model's tool_calls, which is what the evaluators score."""
+    an eval box has none, so a turn where the model registers a concept
+    would die with ConnectError. The stub records nothing and reports no
+    mastery change (new concepts start at 0.0 and move only by graded
+    evidence); the cassette still captures the model's tool_calls, which
+    is what the evaluators score."""
     import agents.tools.graph as _graph_tools
 
-    fixture_mastery = {
-        (c.get("concept_name") or "").lower(): float(c.get("mastery") or 0.0)
-        for c in load_fixture().get("concepts", [])
-    }
-
     def _offline_apply_graph_update(user_id, graph_update, course_id=None):
-        changes = []
-        for upd in graph_update.get("updated_nodes", []) or []:
-            name = upd.get("concept_name") or ""
-            try:
-                delta = float(upd.get("mastery_delta", 0.0) or 0.0)
-            except (TypeError, ValueError):
-                delta = 0.0
-            before = fixture_mastery.get(name.lower(), 0.3)
-            after = max(0.0, min(1.0, before + delta))
-            changes.append({"concept": name, "before": before, "after": after})
-        return changes
+        return []
 
     _graph_tools.apply_graph_update = _offline_apply_graph_update
 
@@ -524,6 +481,33 @@ def _assemble_message(user_message: str) -> str:
     return block + "\n\n[STUDENT QUESTION]\n" + user_message
 
 
+def graph_block(user_message: str) -> str:
+    """The fixture course's GRAPH CONTEXT block alone (tests/evals/loop_tutor.py
+    assembles its own message around it)."""
+    assembled = _assemble_message(user_message)
+    tail = "\n\n[STUDENT QUESTION]\n" + user_message
+    return assembled[: -len(tail)] if assembled.endswith(tail) else ""
+
+
+def identity(case_input: ChatInput) -> dict:
+    """What a chat_tutor cassette must have been recorded under (D4): the
+    mode's prompt and the tool definitions its agent sends, the reply type,
+    the `chat_tutor` slot's model, and the assembled message plus the fixture
+    course every tool call reads (its replies are part of what the model saw)."""
+    mode, user_message = case_input
+    agent = agent_for_mode(mode)
+    # the parsed course, canonically: a CRLF checkout of the same file is the same course
+    fixture = text_sha256(json.dumps(load_fixture(), sort_keys=True, ensure_ascii=False))
+    return recorded_under(
+        prompt_hash=prompt_identity(_PROMPT_HASHES[mode], agent),
+        schema_hash=schema_hash(str),
+        model=model_name_for("chat_tutor"),
+        input_sha256=input_identity(
+            _assemble_message(user_message) + "\x00fixture:" + fixture, run_settings(agent)
+        ),
+    )
+
+
 async def _run(case_input: ChatInput) -> ChatReply:
     """Local adapter that mirrors `_replay.run_with_cassette` but wraps
     the agent's plain-text reply in `ChatReply` so cassettes round-trip
@@ -536,18 +520,9 @@ async def _run(case_input: ChatInput) -> ChatReply:
     dataset = "chat_tutor"
 
     if MODE == "replay":
-        body = load_cassette(dataset, case_name)
-        if body is None:
-            raise RuntimeError(
-                f"No cassette for {dataset}/{case_name}. "
-                f"Run with SAPLING_EVAL_MODE=record to capture it."
-            )
-        # Cassettes recorded as plain strings (legacy) or as the
-        # ChatReply dict (new, with or without tool_calls) all
-        # round-trip cleanly.
-        if isinstance(body, str):
-            return ChatReply(text=body)
-        return ChatReply.model_validate(body)
+        return ChatReply.model_validate(
+            load_recording(dataset, case_name, identity(case_input))
+        )
 
     deps = _make_deps()
     agent = agent_for_mode(mode)
@@ -564,7 +539,7 @@ async def _run(case_input: ChatInput) -> ChatReply:
     output = ChatReply(text=reply_text, tool_calls=_extract_tool_calls(result))
 
     if MODE == "record":
-        save_cassette(dataset, case_name, output)
+        save_recording(dataset, case_name, output, identity(case_input))
 
     return output
 
@@ -580,7 +555,6 @@ def make_dataset() -> Dataset[ChatInput, ChatReply]:
             TeachBackProbesEvaluator(),
             NoToolMisuseEvaluator(),
             GraphToolUsedEvaluator(),
-            MasteryUpdateEmittedEvaluator(),
             GroundedConceptEvaluator(),
         ],
     )

@@ -11,6 +11,8 @@ import { CoursesKey, courseProgressFor, type CourseProgressEntry } from "../grap
 import { ManageCoursesModal } from "../ManageCoursesModal";
 import { DashboardSkeleton } from "../Skeleton";
 import { useUser } from "@/context/UserContext";
+import { retentionHref } from "@/context/RetentionDueContext";
+import { useRetentionNavDue } from "../useRetentionNav";
 import { useIsMobile } from "@/lib/useIsMobile";
 import { useLayoutPref } from "@/lib/useLayoutPref";
 import { useActiveSemester, courseInTerm } from "@/lib/useActiveSemester";
@@ -32,6 +34,7 @@ import { apiToGraphNode, learnHrefForNode, type GraphNode, type GraphEdge } from
 import { IS_TEST_MODE, now } from "@/lib/testMode";
 import { buildQuizHref } from "@/lib/quiz/source";
 import { DashboardActions, PANEL_GAP, TodayColumn } from "../dashboard/TodayColumn";
+import { LearnNextCard, type Recommendation } from "../dashboard/LearnNextCard";
 import {
   activeDaysFrom,
   assignmentUrgency,
@@ -219,7 +222,6 @@ function getWeekDays(today: Date) {
 }
 
 type Navigate = (href: string) => void;
-type Recommendation = { concept_name: string; reason?: string };
 
 function fetchDashboard(userId: string, activeSemester: string) {
   // Empty `activeSemester` means "All semesters" — the DEFAULT — so the
@@ -397,6 +399,9 @@ export function Dashboard() {
   const router = useRouter();
   const search = useSearchParams();
   const { userId, userName, userReady } = useUser();
+  // Spec §13 A126: a delayed retention check is open (the shell's one read);
+  // never while hide_study hides Study, the page the card sends the student to
+  const { due: retentionDue, courseIds: retentionCourseIds } = useRetentionNavDue();
   const [activeSemester, , semesterHydrated] = useActiveSemester();
   const isMobile = useIsMobile();
   const [layoutPref] = useLayoutPref();
@@ -593,6 +598,7 @@ export function Dashboard() {
   });
 
   const suggestBlock = suggestDismissed ? null : renderSuggestCard({ node: suggestNode, navigate, onDismiss: dismissSuggest });
+  const retentionBlock = renderRetentionCard({ due: retentionDue, courseIds: retentionCourseIds, navigate });
 
   const mainColumn = (
     <div
@@ -607,6 +613,7 @@ export function Dashboard() {
     >
       {heroBlock}
       {renderMobileMetaRow({ isMobile, navigate })}
+      {retentionBlock}
       {suggestBlock}
       {graphPanel}
     </div>
@@ -661,6 +668,7 @@ export function Dashboard() {
               <DashboardActions navigate={navigate} />
             </div>
           </div>
+          {retentionBlock}
           {suggestBlock}
           <div
             style={{
@@ -711,6 +719,7 @@ function renderGraphCard({
   graphArea: React.ReactNode;
 }) {
   const { keyHoverCourse, setKeyHoverCourse, graphHoverCourse, zoomedCourse, zoomToCourse } = focus;
+  const conceptCount = stats.total || nodes.filter((n) => !n.is_subject_root).length;
   return (
     // Flex-column so the inner gRef can flex: 1 and fill whatever
     // height the grid row decides (courses + upcoming stacked on the
@@ -728,7 +737,7 @@ function renderGraphCard({
         <div>
           <div className="label-micro">Your knowledge graph</div>
           <div className="h-serif" style={{ fontSize: 20, marginTop: 2 }}>
-            {stats.total || nodes.filter((n) => !n.is_subject_root).length} concepts across {scopedCourses.length} courses
+            {`${conceptCount} ${conceptCount === 1 ? "concept" : "concepts"} across ${scopedCourses.length} ${scopedCourses.length === 1 ? "course" : "courses"}`}
           </div>
         </div>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
@@ -929,6 +938,32 @@ function renderSuggestCard({
   );
 }
 
+/** Spec §13 A126: a nudge, never the check itself — opening one commits its
+ *  pose, so only the student's click on Study does that. */
+function renderRetentionCard({ due, courseIds, navigate }: { due: boolean; courseIds: string[]; navigate: Navigate }) {
+  if (!due) return null;
+  return (
+    <div
+      className="card fade-in"
+      data-testid="dashboard-retention-due"
+      role="status"
+      style={{ padding: "14px 18px", display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap", borderColor: "var(--accent-border)", background: "var(--accent-soft)" }}
+    >
+      <Icon name="bell" size={16} />
+      <div style={{ flex: 1, minWidth: 180, fontSize: 13 }}>
+        <strong>A retention check is due.</strong> A few questions on what you studied a while ago, with no hints.
+      </div>
+      <button
+        className="btn btn--sm btn--primary"
+        data-testid="dashboard-retention-open"
+        onClick={() => navigate(retentionHref(courseIds))}
+      >
+        Check what you remember
+      </button>
+    </div>
+  );
+}
+
 function renderMobileTabs({
   mobileTab, setMobileTab,
 }: {
@@ -1123,38 +1158,7 @@ function renderLegacyRightPanel({
         />
       </div>
 
-      <div className="card" style={{ padding: "var(--pad-lg)" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-          <div className="label-micro">Learn next</div>
-          <button className="btn btn--ghost btn--sm" onClick={() => navigate("/tree")}>Tree →</button>
-        </div>
-        {recommendations.length === 0 && (
-          <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Nothing suggested yet — start a session.</div>
-        )}
-        {recommendations.slice(0, 3).map((r, i) => (
-          <button
-            key={`${r.concept_name}-${i}`}
-            onClick={() => navigate(`/learn?topic=${encodeURIComponent(r.concept_name)}&mode=socratic`)}
-            style={{
-              display: "flex", alignItems: "flex-start", gap: 10, width: "100%",
-              padding: "10px 12px", borderRadius: "var(--r-md)",
-              background: "var(--bg-subtle)", marginBottom: 6, textAlign: "left",
-            }}
-          >
-            <Icon name="sparkle" size={14} />
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 13, fontWeight: 600 }}>{r.concept_name}</div>
-              {r.reason && <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{r.reason}</div>}
-            </div>
-            <Icon name="chev" size={12} />
-          </button>
-        ))}
-        <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
-          <button className="btn btn--sm" style={{ flex: 1 }} onClick={() => navigate("/social")}>
-            <Icon name="users" size={12} /> Study room
-          </button>
-        </div>
-      </div>
+      <LearnNextCard recommendations={recommendations} navigate={navigate} />
     </div>
   );
 }

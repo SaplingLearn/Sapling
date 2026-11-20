@@ -20,7 +20,7 @@
 
 import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, cleanup, act, within } from "@testing-library/react";
+import { render, screen, cleanup, act, within, fireEvent } from "@testing-library/react";
 
 vi.mock("next/navigation", () => ({
   usePathname: vi.fn(() => "/dashboard"),
@@ -337,5 +337,49 @@ describe("SideNav — collapsed state", () => {
     renderRail(false);
     expect(screen.getByRole("button", { name: "Collapse sidebar" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Expand sidebar" })).toBeNull();
+  });
+});
+
+describe("SideNav — on the Tutor the rail gives its width to the chat", () => {
+  const slot = () => document.querySelector("[data-app-sidenav-slot]") as HTMLElement;
+
+  it("shows the narrow rail on /learn even when the stored preference is expanded", () => {
+    mockedUsePathname.mockReturnValue("/learn");
+    const rail = renderRail(false);
+    expect(rail.style.width).toBe(`${SIDE_NAV_COLLAPSED}px`);
+    // The fixed slot holds the page's layout width; the rail floats in it.
+    expect(slot().style.width).toBe(`${SIDE_NAV_COLLAPSED}px`);
+    expect(rail.style.position).toBe("absolute");
+    // The rail manages itself here: no Collapse control.
+    expect(screen.queryByRole("button", { name: /collapse sidebar|expand sidebar/i })).toBeNull();
+  });
+
+  it("opens over the page on hover and closes when the pointer leaves", () => {
+    mockedUsePathname.mockReturnValue("/learn");
+    const rail = renderRail(false);
+    act(() => { fireEvent.mouseEnter(slot()); });
+    expect(rail.style.width).toBe(`${SIDE_NAV_EXPANDED}px`);
+    // Still the 64px slot underneath: the chat never moves.
+    expect(slot().style.width).toBe(`${SIDE_NAV_COLLAPSED}px`);
+    act(() => { fireEvent.mouseLeave(slot()); });
+    expect(rail.style.width).toBe(`${SIDE_NAV_COLLAPSED}px`);
+  });
+
+  it("opens for keyboard focus and closes when focus leaves the rail", () => {
+    mockedUsePathname.mockReturnValue("/learn");
+    const rail = renderRail(false);
+    const tutor = screen.getByRole("link", { name: /tutor/i });
+    act(() => { tutor.focus(); });
+    expect(rail.style.width).toBe(`${SIDE_NAV_EXPANDED}px`);
+    act(() => { fireEvent.blur(slot(), { relatedTarget: document.body }); });
+    expect(rail.style.width).toBe(`${SIDE_NAV_COLLAPSED}px`);
+  });
+
+  it("keeps the stored preference everywhere else", () => {
+    mockedUsePathname.mockReturnValue("/dashboard");
+    const rail = renderRail(false);
+    expect(rail.style.width).toBe(`${SIDE_NAV_EXPANDED}px`);
+    expect(slot()).toBeNull();
+    expect(screen.getByRole("button", { name: /collapse sidebar/i })).toBeTruthy();
   });
 });

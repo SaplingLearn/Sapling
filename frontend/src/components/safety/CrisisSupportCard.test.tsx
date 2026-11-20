@@ -6,12 +6,13 @@
  * form — a way back to studying.
  */
 import React from "react";
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { act, cleanup, render, renderHook, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import fixture from "@/test-utils/crisisSupport.json";
 import { crisisSupportOf, type CrisisSupport } from "@/lib/crisisSupport";
+import { __resetFeedbackPacingForTests, feedbackHeld, whenFeedbackFree } from "@/lib/feedbackPacing";
 import { CrisisSupportCard, CrisisSupportDialog, useCrisisSupport } from "./CrisisSupportCard";
 
 const support = crisisSupportOf(fixture) as CrisisSupport;
@@ -85,6 +86,30 @@ describe("CrisisSupportDialog", () => {
     expect(within(dialog).getByTestId("crisis-support-card")).toBeTruthy();
     await userEvent.click(within(dialog).getByTestId("crisis-support-dismiss"));
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+// lib/feedbackPacing.ts: no feedback survey opens over a crisis card, on any
+// surface, in either form.
+describe("the card holds the shell's feedback prompts", () => {
+  beforeEach(() => __resetFeedbackPacingForTests());
+
+  it("while it is on screen, and releases them when it goes", () => {
+    const open = vi.fn();
+    const view = render(<CrisisSupportCard support={support} />);
+    expect(feedbackHeld()).toBe(true);
+    whenFeedbackFree(open);
+    expect(open).not.toHaveBeenCalled();
+    view.unmount();
+    expect(feedbackHeld()).toBe(false);
+    expect(open).toHaveBeenCalledTimes(1);
+  });
+
+  it("in its dialog form, until the dialog closes", () => {
+    const { rerender } = render(<CrisisSupportDialog support={support} onClose={() => {}} />);
+    expect(feedbackHeld()).toBe(true);
+    rerender(<CrisisSupportDialog support={null} onClose={() => {}} />);
+    expect(feedbackHeld()).toBe(false);
   });
 });
 

@@ -146,7 +146,7 @@ def test_continuation_returns_this_runs_text_not_the_stale_reply():
     recorder = _Recorder()
     agent, result, run_kwargs = _textless_run(recorder, deps)
 
-    rescued = asyncio.run(_continuation_text(agent, result, run_kwargs))
+    rescued = asyncio.run(_continuation_text(agent, result, run_kwargs, usage_session_id=None))
 
     assert rescued == RESCUED_REPLY
     assert PRIOR_REPLY not in rescued
@@ -167,7 +167,7 @@ def test_continuation_runs_with_no_tools_so_it_cannot_write_again():
     recorder = _Recorder()
     agent, result, run_kwargs = _textless_run(recorder, deps)
 
-    asyncio.run(_continuation_text(agent, result, run_kwargs))
+    asyncio.run(_continuation_text(agent, result, run_kwargs, usage_session_id=None))
 
     assert recorder.tools_seen[-1] == [], (
         "the continuation was handed tools; it can re-execute a write"
@@ -183,7 +183,7 @@ def test_continuation_sees_the_tool_results_so_it_need_not_re_run_them():
     recorder = _Recorder()
     agent, result, run_kwargs = _textless_run(recorder, deps)
 
-    asyncio.run(_continuation_text(agent, result, run_kwargs))
+    asyncio.run(_continuation_text(agent, result, run_kwargs, usage_session_id=None))
 
     assert recorder.continuation_saw_tool_return, (
         "the continuation was not given the tool results from the first run"
@@ -199,7 +199,7 @@ def test_a_continuation_that_also_says_nothing_returns_none():
     recorder = _Recorder(rescue_text=None)
     agent, result, run_kwargs = _textless_run(recorder, deps)
 
-    rescued = asyncio.run(_continuation_text(agent, result, run_kwargs))
+    rescued = asyncio.run(_continuation_text(agent, result, run_kwargs, usage_session_id=None))
 
     assert rescued is None, (
         "a textless continuation must be None, not the recovered history"
@@ -214,7 +214,7 @@ def test_continuation_does_not_forward_unexpected_run_kwargs():
     agent, result, run_kwargs = _textless_run(recorder, deps)
     run_kwargs["usage_limits"] = object()  # not a valid limits object
 
-    rescued = asyncio.run(_continuation_text(agent, result, run_kwargs))
+    rescued = asyncio.run(_continuation_text(agent, result, run_kwargs, usage_session_id=None))
 
     assert rescued == RESCUED_REPLY
 
@@ -225,7 +225,7 @@ def test_whitespace_only_continuation_is_not_a_rescue(text):
     recorder = _Recorder(rescue_text=text)
     agent, result, run_kwargs = _textless_run(recorder, deps)
 
-    assert asyncio.run(_continuation_text(agent, result, run_kwargs)) is None
+    assert asyncio.run(_continuation_text(agent, result, run_kwargs, usage_session_id=None)) is None
 
 
 def test_stripping_tools_does_not_clobber_an_outer_model_override():
@@ -261,7 +261,7 @@ def test_stripping_tools_does_not_clobber_an_outer_model_override():
     with agent.override(model=FunctionModel(outer_model)):
         run_kwargs = {"deps": deps, "message_history": _history()}
         result = asyncio.run(agent.run("step size?", **run_kwargs))
-        rescued = asyncio.run(_continuation_text(agent, result, run_kwargs))
+        rescued = asyncio.run(_continuation_text(agent, result, run_kwargs, usage_session_id=None))
 
     assert rescued == RESCUED_REPLY, (
         "the continuation did not reach the overridden model"
@@ -300,7 +300,7 @@ def test_continuation_runs_under_its_own_bounded_budget():
 
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(Agent, "run", spy)
-        rescued = asyncio.run(_continuation_text(agent, result, run_kwargs))
+        rescued = asyncio.run(_continuation_text(agent, result, run_kwargs, usage_session_id=None))
 
     assert rescued == RESCUED_REPLY
     assert seen == [CONTINUATION_LIMITS], (
@@ -326,6 +326,6 @@ def test_a_continuation_over_budget_degrades_instead_of_escaping():
             UsageLimits(request_limit=1, tool_calls_limit=0, total_tokens_limit=1),
         )
         with pytest.raises(UsageLimitExceeded):
-            asyncio.run(_continuation_text(agent, result, run_kwargs))
+            asyncio.run(_continuation_text(agent, result, run_kwargs, usage_session_id=None))
 
     assert recorder.tool_calls == 1, "no write was re-applied on the way out"

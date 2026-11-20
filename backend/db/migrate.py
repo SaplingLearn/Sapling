@@ -57,6 +57,26 @@ MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 #     MIGRATE_MAINTENANCE_WORK_MEM=64MB python -m db.migrate
 MAINTENANCE_WORK_MEM = os.environ.get("MIGRATE_MAINTENANCE_WORK_MEM", "128MB")
 
+# How long a migration waits for a table lock before it fails (PR #866 Z67).
+# An ALTER on a live table queues for its lock behind whatever holds one (a
+# long analytics read), and every later read and write of that table queues
+# behind the waiting ALTER: with no bound, a migration that merely waits takes
+# the table offline for as long as the long reader runs. Several applied
+# learning-loop migrations validate a CHECK on populated tables
+# (node_mastery_events, sessions, flashcards) under ACCESS EXCLUSIVE and set no
+# lock_timeout of their own, and an applied file is never edited, so the bound
+# is set here, per session, for every file: a lock that does not come in time
+# fails that file (its transaction rolls back and nothing is recorded, so it is
+# safe to run again in a quieter moment) instead of queueing traffic. A file
+# that sets its own (`SET LOCAL lock_timeout`) keeps it. The bound covers the
+# WAIT only: a validating scan, once it holds its lock, runs to the end, so a
+# promote that applies such files belongs in a quiet window
+# (docs/learning-loop/operations.md). Override, or disable with 0:
+#     MIGRATE_LOCK_TIMEOUT=30s python -m db.migrate
+LOCK_TIMEOUT = os.environ.get("MIGRATE_LOCK_TIMEOUT", "5s")
+#: What LOCK_TIMEOUT may be: a number with an optional unit (Postgres' own).
+_LOCK_TIMEOUT_RE = re.compile(r"^\d+(?:ms|s|min|h)?$")
+
 
 # Two accepted filename shapes, both sortable and both fixed-width:
 #   NNNN_          legacy sequential prefix (frozen — see below)
@@ -174,6 +194,10 @@ def run(
         # The value is operator-supplied config, never request input, and a bad
         # value fails loudly here rather than mid-migration.
         cur.execute(f"SET maintenance_work_mem = '{MAINTENANCE_WORK_MEM}'")
+        if not _LOCK_TIMEOUT_RE.match(LOCK_TIMEOUT):
+            raise ValueError(f"MIGRATE_LOCK_TIMEOUT={LOCK_TIMEOUT!r}: a number with ms, s, min or h")
+        # set_config takes the value as a bound parameter (SET cannot)
+        cur.execute("SELECT set_config('lock_timeout', %s, false)", (LOCK_TIMEOUT,))
     conn.commit()
     # Registered here rather than in main() so every caller of run() — including
     # the E2E stack bring-up — surfaces migration warnings instead of dropping

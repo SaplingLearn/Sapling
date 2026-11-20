@@ -36,7 +36,7 @@ function Trend({ points }: { points: number }) {
 function Square({ concept, selected, faded, onToggle }: { concept: Concept; selected: boolean; faded: boolean; onToggle: () => void }) {
   const label = `${concept.name} · ${ST_LABEL[concept.st]}`;
   return (
-    <button className={s.hoverSeg} onClick={onToggle} title={label} aria-label={label} data-flip={`square:${concept.id}`} data-flip-how="fade"
+    <button className={s.hoverSeg} onClick={onToggle} title={label} aria-label={label} aria-pressed={selected} data-flip={`square:${concept.id}`} data-flip-how="fade"
       style={{ width: 14, height: 14, flexShrink: 0, padding: 0, border: 0, borderRadius: "var(--r-xs)", background: TC[concept.st], opacity: faded ? 0.3 : 1, boxShadow: selected ? SELECTED_RING : "none", cursor: "pointer" }} />
   );
 }
@@ -72,10 +72,13 @@ type BandProps = {
 };
 
 /** A square per concept, and the legend that filters the roadmap by status. */
-function ConceptKey({ concepts, ready, selectedId, level, onSelect, onLevel }: BandProps) {
+function ConceptKey({ concepts, selectedId, level, onSelect, onLevel }: BandProps) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      <div role="img" aria-label={`Overall mastery ${ready.pct} percent`} style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+      {/* A group of buttons, not an image: an image's content is one picture
+          to assistive tech, so the squares inside it could not be reached
+          (axe nested-interactive). The percentage is the figure above, in text. */}
+      <div role="group" aria-label="Concepts" style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
         {squaresOrder(concepts).map(t => (
           <Square key={t.id} concept={t} selected={t.id === selectedId} faded={!!level && t.st !== level}
             onToggle={() => onSelect(t.id === selectedId ? null : t.id)} />

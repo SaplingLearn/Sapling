@@ -23,6 +23,7 @@ import { FullHeightScreen } from "../FullHeightScreen";
 import { AIDisclaimerChip } from "../chat/AIDisclaimerChip";
 import { DisclaimerModal } from "../DisclaimerModal";
 import { useUser } from "@/context/UserContext";
+import { useLoopStatus } from "../learn/useLoopStatus";
 import { useActiveSemester } from "@/lib/useActiveSemester";
 import { usePrefersReducedMotion } from "@/lib/usePrefersReducedMotion";
 import { siblingsFor } from "@/lib/graph/neighbourhood";
@@ -66,6 +67,12 @@ export function QuizScreen() {
     pickedConceptId,
   );
   const { session, pending, config, actions } = useQuizSession(userId ?? "", entry);
+  // Learning-loop spec §13 A132: the question screen asks "How sure are you?"
+  // only while the loop is on for the student (#866 K46): the learning_loop flag
+  // AND the loop status probe, so the kill switch's pre-loop quiz asks none.
+  // A recent answer (Learn's or Study's probe) is reused: no second probe, and
+  // the control is there from the first question.
+  const { status: loopActive } = useLoopStatus(userId ?? "", userReady, { reuse: true });
 
   // `?concept=<id>` / `?topic=<name>` resolved against the SCOPED graph, so a
   // link into a term the student isn't looking at reads as unresolved rather
@@ -173,6 +180,7 @@ export function QuizScreen() {
           userId={userId}
           courseId={activeNode?.course_id ?? null}
           pending={pending}
+          askConfidence={loopActive === true}
         />
       );
     }
