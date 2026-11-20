@@ -1215,7 +1215,10 @@ describe("LoopLearn — PKG-13 fix round", () => {
     cleanup();
     api.getCourses.mockResolvedValue({ courses: [] });
     render(<LoopLearn />);
-    expect((await screen.findByTestId("loop-no-course-link")).getAttribute("href")).toBe("/tree");
+    // Z61: the Tree has no add-course control; the Dashboard's course manager does
+    const card = await screen.findByTestId("loop-no-course");
+    expect(screen.getByTestId("loop-no-course-link").getAttribute("href")).toBe("/dashboard");
+    expect(card.textContent).not.toContain("knowledge map");
   });
 
   it("m: ?resume= of an open loop session in ANOTHER course switches to that course and resumes it", async () => {

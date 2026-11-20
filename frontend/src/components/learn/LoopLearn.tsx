@@ -2231,10 +2231,9 @@ export function LoopLearn() {
         <CenteredCard testId="loop-no-course">
           <h2 className="h-serif" style={{ margin: "0 0 6px", fontSize: 20 }}>Add a course to start learning</h2>
           <p style={{ color: "var(--text-dim)", fontSize: 14, margin: 0 }}>
-            {treeVisible
-              ? <>The tutor works course by course — add one from your{" "}
-                <Link data-testid="loop-no-course-link" href="/tree">knowledge map</Link>.</>
-              : "The tutor works course by course — add a course to get started."}
+            {/* Z61: courses are added in the Dashboard's course manager (the Tree has no control for it) */}
+            The tutor works course by course — add one from your{" "}
+            <Link data-testid="loop-no-course-link" href="/dashboard">dashboard</Link>.
           </p>
         </CenteredCard>
       );
