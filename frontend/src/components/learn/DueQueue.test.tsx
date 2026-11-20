@@ -683,6 +683,28 @@ describe("DueQueue — the student's review day ends mid-answer (#866 K17)", () 
     await waitFor(() => expect(mockAnswer).toHaveBeenLastCalledWith(expect.objectContaining({ session_id: "sess-2" })));
   });
 
+  it("when today's queue serves another item first, the notice never claims the typed answer is on screen", async () => {
+    mockNext.mockResolvedValueOnce(next(FREE)).mockResolvedValueOnce(nextDay(CARD));
+    mockAnswer.mockRejectedValueOnce(conflict("review session expired"));
+    render(<DueQueue userId="u1" />);
+    await userEvent.type(await screen.findByTestId("review-answer-input"), "the base case");
+    await userEvent.click(screen.getByTestId("review-submit"));
+    const note = (await screen.findByTestId("review-new-day")).textContent;
+    expect(note).toContain("A new review day began");
+    expect(note).not.toContain("still here");
+    expect(note).toContain("If that question comes back today, what you typed comes back with it.");
+    expect(screen.getByTestId("review-flip")).toBeTruthy();
+  });
+
+  it("a flashcard rating sent after the day ended reloads without mentioning typed text", async () => {
+    mockNext.mockResolvedValueOnce(next(CARD)).mockResolvedValueOnce(nextDay(CARD));
+    mockAnswer.mockRejectedValueOnce(conflict("review session expired"));
+    render(<DueQueue userId="u1" />);
+    await userEvent.click(await screen.findByTestId("review-flip"));
+    await userEvent.click(screen.getByTestId("review-rate-3"));
+    expect((await screen.findByTestId("review-new-day")).textContent).toBe("A new review day began, so the queue reloaded.");
+  });
+
   it("a report sent after the day ended goes to today's session when the question is served again", async () => {
     flags.item_reports = "on";
     mockNext.mockResolvedValueOnce(next(FREE)).mockResolvedValueOnce(nextDay(FREE)).mockResolvedValueOnce(nextDay(MC));

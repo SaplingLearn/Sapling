@@ -43,6 +43,7 @@ import {
   type LoopBudgetPause,
   type LoopReportReason,
   type ReviewAnswerResponse,
+  type ReviewItemPayload,
   type ReviewNextResponse,
   type ReviewSummaryResponse,
   type StudentConfidence,
@@ -133,8 +134,8 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
   }, [userId, courseId]);
 
   /** Read the next item. `moved` says why the panel moved on, shown once the
-   *  next item is in. */
-  const load = React.useCallback(async (moved: Notice | null = null): Promise<ReviewNextResponse | null> => {
+   *  next item is in (a function picks it from what was served). */
+  const load = React.useCallback(async (moved: Moved = null): Promise<ReviewNextResponse | null> => {
     if (!userId) return null;
     const mine = ++seq.current;
     setBusy(true);
@@ -154,7 +155,7 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
       setFlipped(false);
       setResult(null);
       setAlreadyGraded(false);
-      setNotice(moved);
+      setNotice(typeof moved === "function" ? moved(r) : moved);
       return r;
     } catch (err) {
       if (mine !== seq.current) return null;
@@ -162,7 +163,7 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
       setNext(null); // never leave a stale item on screen
       setError(loadFailureMessage(err));
       setLoadFailed(true);
-      setNotice(moved); // a report that went through still did
+      setNotice(typeof moved === "function" ? null : moved); // a report that went through still did
       return null;
     } finally {
       if (mine === seq.current) setBusy(false);
@@ -244,7 +245,7 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
       const failed = answerFailure(err);
       if (failed.kind === "reload") {
         if (failed.notice) focusNext.current = "item";
-        await load(failed.notice);
+        await load(failed.notice === "newDay" ? (r) => newDayNotice(item, r) : failed.notice);
         return;
       }
       // a pause, not an error: the typed answer stays; flashcards keep working
@@ -401,7 +402,19 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
 // same element tree the inline JSX produced (nothing remounts). ──────────────
 
 /** Why the panel moved past the last item (see the header). */
-type Notice = "reported" | "gone" | "newDay" | "unreported";
+type Notice = "reported" | "gone" | "newDay" | "newDayLater" | "newDayPlain" | "unreported";
+
+/** `load`'s `moved`: a notice, or one chosen from the item the reload served. */
+type Moved = Notice | null | ((r: ReviewNextResponse) => Notice | null);
+
+/** #866 K17: what a new review day's reload says. The typed answer is on screen
+ *  only when today's queue served that same check first; any other item keeps
+ *  the draft for when the check comes back (`drafts`). A flashcard had nothing
+ *  typed. */
+function newDayNotice(was: ReviewItemPayload, r: ReviewNextResponse): Notice {
+  if (was.kind !== "check") return "newDayPlain";
+  return r.item?.id === was.id ? "newDay" : "newDayLater";
+}
 
 /** What was typed for a check, kept while the queue is on other items (#866 K16). */
 type Draft = { answer: string; choice: string; reason: string; confidence: StudentConfidence | null };
@@ -411,11 +424,14 @@ const NOTICE_TEXT: Record<Notice, string> = {
   gone: "That question is no longer available, so it was skipped.",
   // #866 K17: the review day is the student's local day
   newDay: "A new review day began, so the queue reloaded. Anything you had typed is still here.",
+  newDayLater: "A new review day began, so the queue reloaded. If that question comes back today, what you typed comes back with it.",
+  newDayPlain: "A new review day began, so the queue reloaded.",
   unreported: "A new review day began before your report was sent, and that question isn't in today's review, so the report wasn't sent.",
 };
 
 const NOTICE_TESTID: Record<Notice, string> = {
-  reported: "review-reported", gone: "review-skipped", newDay: "review-new-day", unreported: "review-not-reported",
+  reported: "review-reported", gone: "review-skipped", newDay: "review-new-day",
+  newDayLater: "review-new-day", newDayPlain: "review-new-day", unreported: "review-not-reported",
 };
 
 function renderNotice(notice: Notice | null) {
