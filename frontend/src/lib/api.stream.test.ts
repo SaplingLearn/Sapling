@@ -303,3 +303,34 @@ describe('newTurnId (#762)', () => {
     expect(a).not.toBe(b);
   });
 });
+
+describe('a mid-stream error that names its refusal (#866 K11)', () => {
+  const failWith = (data: Record<string, unknown>, message = 'Refused.') =>
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(sseBody([
+      ev('error', { type: 'error', step: 'reply', message, data: { request_id: 'r1', retryable: false, ...data } }),
+    ]), { status: 200 }) as never);
+
+  it('keeps the daily AI limit\'s code and reset time, which aiLimitOf reads as a pause', async () => {
+    failWith({ code: 'LLM_BUDGET_EXCEEDED', reset_at: '2026-11-21T00:00:00+00:00' });
+    const { streamLoopChat, aiLimitOf, budgetPauseOf } = await import('./api');
+    const err = await streamLoopChat('s1', 'u1', 'hi').catch((e: unknown) => e);
+    expect(aiLimitOf(err)).toEqual({ resetAt: '2026-11-21T00:00:00+00:00', sessionCapped: false, aiLimit: true });
+    expect(budgetPauseOf(err)).toBeNull(); // the loop's own tutor budget reader is unchanged
+  });
+
+  it('keeps a session refusal\'s status and detail, as an HTTP refusal reads', async () => {
+    failWith({ status: 409, detail: 'this session is closed' }, 'this session is closed');
+    const { streamLoopChat } = await import('./api');
+    const { extractErrorDetail } = await import('./errorMessage');
+    const err = await streamLoopChat('s1', 'u1', 'hi').catch((e: unknown) => e);
+    expect(extractErrorDetail(err)).toEqual({ status: 409, detail: 'this session is closed' });
+  });
+
+  it('an error event with neither keeps no status (the legacy tutor\'s errors read as before)', async () => {
+    failWith({});
+    const { streamChat } = await import('./api');
+    const { extractErrorDetail } = await import('./errorMessage');
+    const err = await streamChat('s1', 'u1', 'hi', 'socratic').catch((e: unknown) => e);
+    expect(extractErrorDetail(err)).toEqual({});
+  });
+});

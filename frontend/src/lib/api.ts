@@ -21,12 +21,14 @@ import type { WithCrisisSupport } from '@/lib/crisisSupport';
 import { createStreamPacer, type StreamPacer } from '@/lib/streamPacer';
 import { REAUTH_REQUIRED, isReauthRequired, notifyReauthRequired } from '@/lib/reauth';
 import { ApiError, apiErrorOf, errorFieldsFrom, parseErrorBody } from '@/lib/apiError';
+import { loopBudgetNoticeOf, type LoopBudgetNotice } from '@/lib/loopBudget';
 
 export const API_URL = '';
 
 // The error every failed response is thrown as lives in lib/apiError.ts, shared
 // with the SSE client; re-exported here, where callers have always imported it.
 export { ApiError, type ApiErrorFields } from '@/lib/apiError';
+export { aiLimitOf, budgetPauseOf, loopPauseOf, type LoopBudgetNotice, type LoopBudgetPause } from '@/lib/loopBudget';
 
 // ── Global 401 (#756) ─────────────────────────────────────────────────────────
 // A 401 from any session-authenticated call means the server no longer honours
@@ -371,6 +373,13 @@ interface StreamEvent {
 export class ChatStreamError extends Error {
   requestId?: string;
   retryable: boolean;
+  /** #866 K11: what the event named, when it did — `code`/`resetAt` (the daily AI
+   *  limit, lib/loopBudget.ts::aiLimitOf) and, for a learning-loop turn the session
+   *  refused mid-stream, `status` + `body.detail` (as an HTTP refusal reads). */
+  code?: string;
+  resetAt?: string;
+  status?: number;
+  body?: { detail: string };
   constructor(message: string, requestId?: string, retryable = true) {
     // Keep the full id here (correlation needs an exact match); a caller
     // that wants a short display form truncates it itself, same as
@@ -436,7 +445,12 @@ function streamErrorOf(ev: StreamEvent): ChatStreamError {
   // Only an explicit false clears the flag — absent/other values keep
   // the default-true contract with older backends.
   const retryable = ev.data?.retryable !== false;
-  return new ChatStreamError(ev.message || 'The tutor was interrupted.', requestId, retryable);
+  const err = new ChatStreamError(ev.message || 'The tutor was interrupted.', requestId, retryable);
+  const { code, reset_at: resetAt, status, detail } = ev.data ?? {};
+  if (typeof code === 'string') err.code = code;
+  if (typeof resetAt === 'string') err.resetAt = resetAt;
+  if (typeof status === 'number' && typeof detail === 'string') Object.assign(err, { status, body: { detail } });
+  return err;
 }
 
 type StreamEventHandler = (ev: StreamEvent, pacer: StreamPacer, h: StreamChatHandlers) => void;
@@ -1289,13 +1303,6 @@ export interface LoopPlan extends LoopLearningScope {
   phase?: LoopPhase;
 }
 export interface LoopOpenSession { session_id: string; topic: string; started_at: string; phase: LoopPhase }
-/** `budget` stream event / JSON `budget` key (06b j): level + reset + scope + session_capped. */
-export interface LoopBudgetNotice {
-  level: 'soft' | 'hard' | string;
-  reset_at: string | null;
-  scope: string | null;
-  session_capped: boolean;
-}
 export interface LoopStartResult extends LoopLearningScope, WithCrisisSupport {
   session_id: string;
   initial_message: string;
@@ -1387,7 +1394,6 @@ export interface LoopCheckAnswer {
   /** A127: sent only when chosen, and never with an idk (which states none). */
   confidence?: StudentConfidence | null;
 }
-export interface LoopBudgetPause { resetAt: string | null; sessionCapped: boolean }
 
 const loopPost = <T>(path: string, body: Record<string, unknown>) =>
   fetchJSON<T>(`/api/learn/loop${path}`, { method: 'POST', body: JSON.stringify(body) });
@@ -1398,30 +1404,6 @@ const loopAnswerFields = (a: LoopCheckAnswer): Record<string, unknown> => ({
   ...(!a.idk && a.confidence ? { confidence: a.confidence } : {}),
 });
 
-function loopBudgetNoticeOf(data: unknown): LoopBudgetNotice {
-  const d = (data ?? {}) as Record<string, unknown>;
-  return {
-    level: String(d.level ?? ''),
-    reset_at: typeof d.reset_at === 'string' ? d.reset_at : null,
-    scope: typeof d.scope === 'string' ? d.scope : null,
-    session_capped: d.session_capped === true, // A39: a missing field reads as false
-  };
-}
-
-/** A20/A26/A39: the 429 body `{"detail": "ai budget reached", "reset_at", "scope",
- *  "session_capped"}` from a JSON route (ApiError.body) or a stream route (sse.ts:
- *  Error.message = raw body, `.status` set). Any other error → null. */
-export const budgetPauseOf = (err: unknown): LoopBudgetPause | null => {
-  const status = (err as { status?: number } | null)?.status;
-  if (status !== 429) return null;
-  let body: unknown = err instanceof ApiError ? err.body : undefined;
-  if (body === undefined && err instanceof Error) {
-    try { body = JSON.parse(err.message); } catch { return null; }
-  }
-  const b = body as { detail?: unknown; reset_at?: unknown; session_capped?: unknown } | null;
-  if (!b || b.detail !== 'ai budget reached') return null;
-  return { resetAt: typeof b.reset_at === 'string' ? b.reset_at : null, sessionCapped: b.session_capped === true };
-};
 
 /** The student's open loop sessions for a course, newest first (PKG-13's
  *  GET /sessions; read-only, never rate-limited). */

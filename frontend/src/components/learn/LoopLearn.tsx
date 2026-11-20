@@ -28,7 +28,7 @@ import type { GraphEdge as ApiEdge, GraphNode as ApiNode } from "@/lib/types";
 import {
   answerLoopProbe,
   approveLoopPlan,
-  budgetPauseOf,
+  loopPauseOf,
   closeLoopSession,
   getCourses,
   getGraph,
@@ -519,9 +519,9 @@ export function LoopLearn() {
   // ── Error routing: a budget 429 is the banner, a closed session is the
   // close, anything else a toast ─────────────────────────────────────────
   const reportError = useCallback((err: unknown, fallback: string) => {
-    const pause = budgetPauseOf(err);
+    const pause = loopPauseOf(err); // K11: the loop's tutor budget, or the daily AI limit
     if (pause) {
-      dispatch({ type: "budget", level: "hard", resetAt: pause.resetAt, sessionCapped: pause.sessionCapped });
+      dispatch({ type: "budget", level: "hard", resetAt: pause.resetAt, sessionCapped: pause.sessionCapped, aiLimit: pause.aiLimit });
       return;
     }
     const { status, detail } = extractErrorDetail(err);
@@ -1290,7 +1290,7 @@ export function LoopLearn() {
     // ADR 0020: what streamed stays, marked interrupted; a chat message the tutor
     // never answered offers Retry (a pause gives it back through onPaused, a
     // close has nothing to retry), and after an error it is back in the composer.
-    const retryText = t.hardSeen || budgetPauseOf(err) || closed ? undefined : t.retryText;
+    const retryText = t.hardSeen || loopPauseOf(err) || closed ? undefined : t.retryText;
     if (t.streamed || retryText) setMessages((prev) => [...prev, { ...asMsg("assistant", t.streamed), interrupted: true, retryText }]);
     if (retryText && !t.aborted) setChatDraft((d) => ({ text: retryText, key: d.key + 1 }));
     // The grade lands BEFORE the feedback stream starts: a submission that did
@@ -1308,7 +1308,7 @@ export function LoopLearn() {
       return;
     }
     if (t.submission && status === 409 && detail === ALREADY_GRADED_DETAIL) return;
-    if (budgetPauseOf(err)) t.onPaused?.(); // a 429: reportError shows the pause banner
+    if (loopPauseOf(err)) t.onPaused?.(); // a pause: reportError shows the pause banner
     reportError(err, "The tutor couldn't answer. Try again.");
   }, [reconcile, reportError, dropClosedCheck]);
 
@@ -2158,7 +2158,7 @@ export function LoopLearn() {
             checkOpen ? CHECK_OPEN_COMPOSER_COPY : guessCardOpen
               ? PREQUESTION_COMPOSER_COPY
               : paused
-                ? "Tutor chat is paused — check answers still count."
+                ? paused.aiLimit ? "AI features are paused until today's limit resets." : "Tutor chat is paused — check answers still count."
                 : "Ask your AI tutor anything…"
           }
           attachHref={libraryVisible ? "/library" : undefined}

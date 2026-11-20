@@ -22,7 +22,7 @@ export type LoopUiEvent =
   | { type: "phase"; phase: string }
   | { type: "check"; item: LoopCheckItem | null }
   | { type: "learner_state"; state: LoopLearnerState }
-  | { type: "budget"; level: string; resetAt: string | null; sessionCapped?: boolean }
+  | { type: "budget"; level: string; resetAt: string | null; sessionCapped?: boolean; aiLimit?: boolean }
   | { type: "budget_clear" }
   | { type: "reset" };
 
@@ -78,7 +78,7 @@ export function reduceLoopEvent(state: LoopUiState, ev: LoopUiEvent): LoopUiStat
     case "budget":
       // soft = the invisible downgrade (spec §3.5): nothing renders
       if (ev.level !== "hard") return state;
-      return { ...state, budgetPause: { resetAt: ev.resetAt, sessionCapped: ev.sessionCapped === true } };
+      return { ...state, budgetPause: { resetAt: ev.resetAt, sessionCapped: ev.sessionCapped === true, ...(ev.aiLimit ? { aiLimit: true } : {}) } };
     case "budget_clear":
       return state.budgetPause ? { ...state, budgetPause: null } : state;
     case "reset":

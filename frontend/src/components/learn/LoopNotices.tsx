@@ -57,7 +57,7 @@ export function LoopNotices({
           testId="loop-budget-paused"
           resetAt={paused.resetAt}
           sessionCapped={paused.sessionCapped}
-          message={tutorPauseMessage(paused.resetAt, paused.sessionCapped)}
+          message={tutorPauseMessage(paused.resetAt, paused.sessionCapped, paused.aiLimit)}
         >
           {studyVisible && <>{" "}<Link data-testid="loop-budget-study-link" href="/study" style={{ color: "var(--accent)", fontWeight: 500 }}>
             Review flashcards

@@ -56,7 +56,7 @@ vi.mock("@/context/RetentionDueContext", async (orig) => ({
   useRetentionDue: () => ({ due: retention.courseIds.length > 0, courseIds: retention.courseIds, refresh: () => {} }),
 }));
 
-import { ApiError } from "@/lib/api";
+import { ApiError, ChatStreamError } from "@/lib/api";
 import { __resetFeedbackPacingForTests } from "@/lib/feedbackPacing";
 import { markNoteCardShown } from "@/lib/crisisSupport";
 import { LoopLearn } from "./LoopLearn";
@@ -1020,5 +1020,39 @@ describe("K31 — Tutor V2 renames and deletes sessions, as the legacy Learn scr
     await waitFor(() => expect(within(page).queryByTestId("tutor-session-row-s2")).toBeNull());
     expect(screen.getByTestId("loop-phase").getAttribute("data-session-id")).toBe("");
     expect(toast.success).toHaveBeenCalledWith("Session deleted.");
+  });
+});
+
+describe("K11 — a refusal mid-stream is read as the refusal it is", () => {
+  it("the daily AI limit is the pause banner with its reset time, not 'try again', and no Retry", async () => {
+    const reset = "2026-11-21T00:00:00+00:00";
+    api.streamLoopChat.mockRejectedValueOnce(Object.assign(
+      new ChatStreamError("You've reached today's limit for AI features.", "r1", false),
+      { code: "LLM_BUDGET_EXCEEDED", resetAt: reset },
+    ));
+    await resumedTeach();
+    fireEvent.change(screen.getByTestId("tutor-input"), { target: { value: "why?" } });
+    fireEvent.click(screen.getByTestId("tutor-send"));
+    const banner = await screen.findByTestId("loop-budget-paused");
+    expect(banner.getAttribute("data-reset-at")).toBe(reset);
+    expect(banner.textContent).toContain("today's limit for AI features");
+    expect(banner.textContent).not.toContain("Practice and review keep working");
+    expect(toast.error).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("tutor-retry")).toBeNull();
+    await waitFor(() => expect((screen.getByTestId("tutor-input") as HTMLTextAreaElement).value).toBe("why?"));
+  });
+
+  it("a session closed in another tab mid-stream shows the close, not 'couldn't answer'", async () => {
+    api.closeLoopSession.mockResolvedValue({ close: closeRecord, model_written: false, close_phase: null });
+    api.streamLoopChat.mockRejectedValueOnce(Object.assign(
+      new ChatStreamError("this session is closed", "r1", false),
+      { status: 409, body: { detail: "this session is closed" } },
+    ));
+    await resumedTeach();
+    fireEvent.change(screen.getByTestId("tutor-input"), { target: { value: "why?" } });
+    fireEvent.click(screen.getByTestId("tutor-send"));
+    await screen.findByTestId("loop-close-done");
+    expect(api.closeLoopSession).toHaveBeenCalledWith("s2", "u1");
+    expect(toast.error).not.toHaveBeenCalled();
   });
 });

@@ -761,6 +761,26 @@ def test_an_exhausted_conflict_ends_a_stream_in_a_terminal_error(gate_on, seams)
     seams.save_msg.assert_not_called()
 
 
+def test_a_stream_the_session_refused_before_serving_ends_in_that_refusal(gate_on, seams):
+    """#866 K11: the session was closed (another tab) between the route's check
+    and the turn's admission write — the terminal error carries the 409 and its
+    detail, as the JSON route answers it, so the client shows the close."""
+    from fastapi import HTTPException
+
+    from services.loop.turn import _LoopTurn
+
+    refused = HTTPException(status_code=409, detail="this session is closed")
+    with patch.object(_LoopTurn, "begin_activity", side_effect=refused):
+        r = client.post(
+            "/api/learn/loop/chat/stream", json={"session_id": "s1", "user_id": "u1", "message": "?"}
+        )
+    evs = _sse_events(r.text)
+    assert [e["type"] for e in evs] == ["error"]
+    assert evs[0]["data"]["status"] == 409 and evs[0]["data"]["detail"] == "this session is closed"
+    assert evs[0]["data"]["retryable"] is False
+    seams.save_msg.assert_not_called()
+
+
 def test_context_blocks_follow_the_policy():
     from services.loop.context import _context_blocks
     from services.rag_service import Retrieval

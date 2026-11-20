@@ -31,6 +31,8 @@ import logging
 from contextlib import aclosing
 from typing import Any, AsyncIterator, Awaitable, Callable
 
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
 from services.agent_events import SaplingEvent
 from services.llm_budget import budget_error_in
 
@@ -55,6 +57,36 @@ def _budget_event(exc: BaseException, request_id: str) -> SaplingEvent | None:
             "retryable": False,
             "code": budget.code,
             "reset_at": budget.reset_at_iso,
+        },
+    )
+
+
+def refusal_event(exc: BaseException, request_id: str) -> SaplingEvent | None:
+    """#866 K11: the terminal `error` for a learning-loop turn a request-level
+    refusal stopped — the per-user LLM budget (`_budget_event`: its `code` and
+    `reset_at`), or a 4xx HTTPException a step of the turn raised (the session
+    closed in another tab, a close in progress: `status` + `detail`, so the
+    client reads it exactly as it reads the same refusal from a JSON route).
+    `retryable: False`: a re-send meets the same refusal. None: any other
+    failure, and a 4xx marked `retryable`, keeps its own ladder."""
+    budget = _budget_event(exc, request_id)
+    if budget is not None:
+        return budget
+    if not isinstance(exc, StarletteHTTPException) or not 400 <= exc.status_code < 500:
+        return None
+    if getattr(exc, "retryable", False):  # a lost race (the loop's CAS conflict): retry it
+        return None
+    if not isinstance(exc.detail, str):
+        return None
+    return SaplingEvent(
+        type="error",
+        step="reply",
+        message=exc.detail,
+        data={
+            "request_id": request_id,
+            "retryable": False,
+            "status": exc.status_code,
+            "detail": exc.detail,
         },
     )
 
@@ -962,6 +994,10 @@ async def stream_structured_turn(
         logger.warning(
             "on_complete persistence failed after streamed reply", exc_info=complete_exc
         )
+        refused = refusal_event(complete_exc, request_id)  # #866 K11: e.g. closed meanwhile
+        if refused is not None and not (deps.graph_updates or deps.mastery_changes):
+            yield refused
+            return
         yield SaplingEvent(
             type="error",
             step="reply",

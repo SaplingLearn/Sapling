@@ -63,7 +63,9 @@ export function formatResetAt(resetAt: string, now: Date = new Date()): string {
 }
 
 /** The tutor-pause copy (spec §3.5, §13 A39). */
-export function tutorPauseMessage(resetAt: string | null, sessionCapped: boolean): string {
+export function tutorPauseMessage(resetAt: string | null, sessionCapped: boolean, aiLimit = false): string {
+  // #866 K11: the daily limit on every AI feature pauses checks too, so it never says practice works
+  if (aiLimit) return `You've reached today's limit for AI features. It resets ${resetAt ? `at ${formatResetAt(resetAt)}` : "tomorrow"}.`;
   if (sessionCapped) return "Tutor chat paused for this session. Practice and review keep working.";
   if (!resetAt) return "Tutor chat paused for now. Practice and review keep working.";
   return `Tutor chat paused until ${formatResetAt(resetAt)}. Practice and review keep working.`;
