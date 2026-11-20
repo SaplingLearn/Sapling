@@ -1272,6 +1272,15 @@ def _wire_close(
     monkeypatch.setattr(sc, "encrypt_json", lambda v, **_: "CIPHER")
     setattr_loop(monkeypatch, "decrypt_if_present", lambda v, **_: v)
     store = _loop_store(monkeypatch, loop_state)
+    # K04: a stored close ends the session through the legacy end body; the
+    # route tests record that hand-off instead of running it.
+    tables.ended = []
+
+    def legacy_end(body, request):
+        tables.ended.append((body.session_id, body.user_id))
+        return {"summary": {}, "achievements_earned": [{"id": "deep-focus"}]}
+
+    monkeypatch.setattr("services.loop.closing._legacy_end", legacy_end)
     return tables, events, store
 
 
@@ -2935,3 +2944,60 @@ def test_close_keys_are_deduplicated_across_nodes(monkeypatch):
         ])
     keys = services.loop.closing._close_misconception_keys("u", [{"node_id": "n1"}, {"node_id": "n2"}])
     assert keys == ["k1", "k2"]
+
+
+# ── K04 (PR #866 audit): Wrap up ends the session ───────────────────────────
+
+
+def test_close_route_ends_a_materialised_session_through_the_legacy_end(monkeypatch):
+    """/loop/close is Tutor V2's Wrap up: once the close is stored, the session
+    ends exactly as /end-session ends it (ended_at, session XP, streak,
+    session.ended, achievements), so a wrapped-up session never reopens as a
+    live legacy chat after a loop-off rollback."""
+    tables, _, _ = _wire_close(
+        monkeypatch, evidence=[EVIDENCE_N1], loop_state={"phase": "teach"}
+    )
+    setattr_loop(monkeypatch, "run_session_close", _fake_run(_close_out()))
+    r = client.post("/api/learn/loop/close", json={"session_id": "s1", "user_id": UID})
+    assert r.status_code == 200, r.text
+    assert tables.ended == [("s1", UID)]
+
+
+def test_close_route_repeat_close_still_finishes_the_session(monkeypatch):
+    """A stored close (a retry after a failed end) reaches the end again; the
+    legacy end is conditional on ended_at IS NULL, so it awards once."""
+    tables, _, _ = _wire_close(
+        monkeypatch, loop_state={"phase": "close"}, close_json="CIPHER"
+    )
+    setattr_loop(monkeypatch, "decrypt_json_column", lambda *a, **k: _close_out_record())
+    r = client.post("/api/learn/loop/close", json={"session_id": "s1", "user_id": UID})
+    assert r.status_code == 200, r.text
+    assert tables.ended == [("s1", UID)]
+
+
+def _close_out_record():
+    from learning.session_close import build_close, fallback_close
+
+    return fallback_close(build_close([], [], [], measured_before=())).model_dump()
+
+
+def test_close_route_pending_session_is_ended_without_an_award(monkeypatch):
+    """A never-materialised session ended by the legacy route earns nothing; its
+    loop close only marks the row the close created as ended."""
+    import routes.learn as learn
+
+    tables, _, _ = _wire_close(monkeypatch, session=False)
+    learn.PENDING_SESSIONS["s-pending"] = {
+        "user_id": UID,
+        "mode": "socratic",
+        "topic": "Recursion",
+        "offering_id": "off-1",
+        "assistant_reply": "hi",
+        "graph_update": {},
+    }
+    r = client.post("/api/learn/loop/close", json={"session_id": "s-pending", "user_id": UID})
+    assert r.status_code == 200, r.text
+    assert tables.ended == []
+    end = tables.writes("update", "sessions")[-1]
+    assert set(end[2]) == {"ended_at"}
+    assert end[3] == {"id": "eq.s-pending", "user_id": f"eq.{UID}", "ended_at": "is.null"}

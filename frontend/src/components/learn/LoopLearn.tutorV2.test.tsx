@@ -289,21 +289,18 @@ describe("F7 — a chat message never costs the student a hint", () => {
     expect(input.disabled).toBe(true);
     await act(async () => { hintTurn.resolve(turn({ reply: "Look at when n reaches zero.", phase: "check" })); });
     expect((await screen.findByTestId("loop-hint-reply")).textContent).toContain("Look at when n reaches zero.");
-    await waitFor(() => expect(input.disabled).toBe(false));
+    expect(input.disabled).toBe(true); // K06: the check is still open, and a chat would only re-pose it
     expect(api.streamLoopChat).not.toHaveBeenCalled();
   });
 
-  it("an earned hint whose text failed survives a chat turn: Retry earned hint asks for the text only", async () => {
+  it("an earned hint whose text failed: Retry earned hint asks for the text only (no chat meanwhile, K06)", async () => {
     api.requestLoopHint.mockResolvedValue({ rung: 2 });
     api.requestLoopHintTurn.mockRejectedValueOnce(new ApiError("unavailable", 503))
       .mockResolvedValueOnce(turn({ phase: "hint", reply: "The hint you earned." }));
-    api.streamLoopChat.mockResolvedValue(turn({ reply: "Think about the smallest input.", phase: "check" }));
     await withCheckItem();
     fireEvent.click(screen.getByTestId("loop-hint-button"));
     await screen.findByRole("button", { name: "Retry earned hint" });
-    fireEvent.change(screen.getByTestId("tutor-input"), { target: { value: "what is n here?" } });
-    fireEvent.click(screen.getByTestId("tutor-send"));
-    await screen.findByText("Think about the smallest input.");
+    expect(screen.getByTestId("tutor-input")).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Retry earned hint" }));
     expect((await screen.findByTestId("loop-hint-reply")).textContent).toContain("The hint you earned.");
     expect(api.requestLoopHint).toHaveBeenCalledTimes(1); // the rung was not asked for (or charged) again

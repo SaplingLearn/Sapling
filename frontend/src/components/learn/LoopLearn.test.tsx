@@ -472,6 +472,18 @@ describe("LoopLearn — probe and plan", () => {
     await waitFor(() => expect(api.answerLoopProbe).toHaveBeenCalledWith("s2", "u1", "qh", { option: "B", reason: "because", idk: false }));
   });
 
+  it("K02: an mc_reason probe item is not submittable until the reason is written (the grader judges it)", async () => {
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "probe", "2026-09-21T10:00:00Z")]));
+    api.nextLoopProbe.mockResolvedValue({ ...probeItem, format: "mc_reason", options: [{ letter: "A", text: "x" }, { letter: "B", text: "y" }] });
+    render(<LoopLearn />);
+    fireEvent.click(await screen.findByTestId("loop-probe-option-B"));
+    expect(screen.getByTestId("loop-probe-submit")).toBeDisabled();
+    fireEvent.change(screen.getByTestId("loop-probe-reason"), { target: { value: "   " } });
+    expect(screen.getByTestId("loop-probe-submit")).toBeDisabled();
+    fireEvent.change(screen.getByTestId("loop-probe-reason"), { target: { value: "because" } });
+    expect(screen.getByTestId("loop-probe-submit")).toBeEnabled();
+  });
+
   it("an ungradable probe answer is a muted line and the next item follows", async () => {
     api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "probe", "2026-09-21T10:00:00Z")]));
     api.nextLoopProbe.mockResolvedValue(probeItem);
@@ -843,6 +855,15 @@ describe("LoopLearn — teach / check / feedback (A16, A46)", () => {
     await waitFor(() => expect(api.streamLoopCheckAnswer).toHaveBeenCalledWith("s2", "u1", "qh7", { option: "A", reason: "since x", idk: false }, expect.any(Object)));
   });
 
+  it("K02: an mc_reason check is not submittable until the reason is written, and the field says it is required", async () => {
+    await withCheckItem({ ...pose, format: "mc_reason", options: [{ letter: "A", text: "x" }, { letter: "B", text: "y" }] });
+    fireEvent.click(screen.getByTestId("loop-attempt-option-A"));
+    expect(screen.getByTestId("loop-attempt-submit")).toBeDisabled();
+    expect(screen.queryByText("Your reasoning (optional)")).toBeNull();
+    fireEvent.change(screen.getByTestId("loop-attempt-reason"), { target: { value: "since x" } });
+    expect(screen.getByTestId("loop-attempt-submit")).toBeEnabled();
+  });
+
   it.each(["retry", "transform"])("A46: retract (%s) discards every streamed token; done.reply is final", async (reason) => {
     let finish: (v: unknown) => void = () => {};
     api.streamLoopChat.mockImplementation((_s: string, _u: string, _m: string, h: { onToken?: (d: string) => void; onRetract?: (r: string) => void }) => {
@@ -904,6 +925,17 @@ describe("LoopLearn — teach / check / feedback (A16, A46)", () => {
     expect(screen.getByTestId("loop-check-me")).toBeTruthy();
   });
 
+  it("K06: an open check holds the composer (a chat would only re-pose it, ungraded); feedback reopens it", async () => {
+    api.streamLoopCheckAnswer.mockResolvedValue(turn({ graded: true, verdict: "idk", phase: "feedback", reply: "No problem." }));
+    await withCheckItem();
+    const composer = screen.getByTestId("tutor-input");
+    expect(composer).toBeDisabled();
+    expect(composer.getAttribute("placeholder")).toMatch(/answer the question above/i);
+    fireEvent.click(screen.getByTestId("loop-attempt-idk"));
+    await screen.findByTestId("loop-continue");
+    expect(screen.getByTestId("tutor-input")).toBeEnabled();
+  });
+
   it("a denied hint names its reason", async () => {
     api.requestLoopHint.mockResolvedValue({ denied: "no_genuine_attempt" });
     await withCheckItem();
@@ -927,6 +959,26 @@ describe("LoopLearn — teach / check / feedback (A16, A46)", () => {
     expect(api.postLoopAttempt).toHaveBeenCalledWith("s2", "u1", "qh7", "it keeps calling itself");
     expect(api.requestLoopHint).toHaveBeenCalledWith("s2", "u1", "qh7");
     expect(api.requestLoopHintTurn).toHaveBeenCalledWith("s2", "u1");
+  });
+
+  it("K09: while a hint loads, Submit and 'I don't know' wait for it (the rung is already charged)", async () => {
+    const charged = deferred<unknown>();
+    api.postLoopAttempt.mockResolvedValue({ genuine: true, counted: true, attempts: 1, independent_s: 60 });
+    api.requestLoopHint.mockReturnValue(charged.promise);
+    api.streamLoopCheckAnswer.mockResolvedValue(turn({ graded: true }));
+    await withCheckItem();
+    fireEvent.change(screen.getByTestId("loop-attempt-input"), { target: { value: "it keeps calling itself" } });
+    fireEvent.click(screen.getByTestId("loop-hint-button"));
+    await waitFor(() => expect(api.requestLoopHint).toHaveBeenCalled());
+    expect(screen.getByTestId("loop-attempt-submit")).toBeDisabled();
+    expect(screen.getByTestId("loop-attempt-idk")).toBeDisabled();
+    fireEvent.click(screen.getByTestId("loop-attempt-submit"));
+    fireEvent.click(screen.getByTestId("loop-attempt-idk"));
+    expect(api.streamLoopCheckAnswer).not.toHaveBeenCalled();
+    api.requestLoopHintTurn.mockResolvedValue(turn({ reply: "Look at when n reaches zero.", phase: "hint" }));
+    await act(async () => charged.resolve({ rung: 1, intent: "Orient." }));
+    await screen.findByTestId("loop-hint-reply");
+    expect(screen.getByTestId("loop-attempt-submit")).toBeEnabled();
   });
 
   it("an item that opens on its worked example asks for it at once, before any attempt (spec §13 A122)", async () => {
@@ -1972,11 +2024,12 @@ describe("hint ownership within a learning session", () => {
     expect(api.streamLoopCheckAnswer).not.toHaveBeenCalled();
   });
 
-  it.each(["effort", "gate"] as const)("does not continue a pending %s request after the answer was graded", async (stage) => {
+  it.each(["effort", "gate"] as const)("K09: no answer is sent while the %s request of a hint is pending", async (stage) => {
     let finish!: (value: { counted: boolean; rung: number }) => void;
     const pending = new Promise<{ counted: boolean; rung: number }>((resolve) => { finish = resolve; });
     api.postLoopAttempt.mockResolvedValue({ counted: true });
     api.requestLoopHint.mockResolvedValue({ rung: 1 });
+    api.requestLoopHintTurn.mockResolvedValue(turn({ phase: "hint", reply: "Look at the base case." }));
     const deferred = stage === "effort" ? api.postLoopAttempt : api.requestLoopHint;
     deferred.mockReturnValue(pending);
     api.streamLoopCheckAnswer.mockResolvedValue(turn({ graded: true, phase: "feedback", reply: "Your answer was checked." }));
@@ -1984,17 +2037,17 @@ describe("hint ownership within a learning session", () => {
     if (stage === "effort") fireEvent.change(screen.getByTestId("loop-attempt-input"), { target: { value: "I tried tracing the base case." } });
     fireEvent.click(screen.getByTestId("loop-hint-button"));
     await waitFor(() => expect(deferred).toHaveBeenCalledTimes(1));
+    expect(screen.getByTestId("loop-attempt-idk")).toBeDisabled();
     fireEvent.click(screen.getByTestId("loop-attempt-idk"));
-    await screen.findByTestId("loop-continue");
+    expect(api.streamLoopCheckAnswer).not.toHaveBeenCalled();
     await act(async () => { finish({ counted: true, rung: 1 }); });
-    expect(screen.getByTestId("loop-phase").getAttribute("data-phase")).toBe("feedback");
-    expect(screen.queryByTestId("loop-check-prompt")).toBeNull();
-    expect(api.requestLoopHintTurn).not.toHaveBeenCalled();
-    if (stage === "effort") expect(api.requestLoopHint).not.toHaveBeenCalled();
-    expect(api.streamLoopCheckAnswer).toHaveBeenCalledWith("s2", "u1", "qh7", { idk: true }, expect.any(Object));
+    // the hint the server charged is shown before any answer is graded
+    expect((await screen.findByTestId("loop-hint-reply")).textContent).toBe("Look at the base case.");
+    fireEvent.click(screen.getByTestId("loop-attempt-idk"));
+    await waitFor(() => expect(api.streamLoopCheckAnswer).toHaveBeenCalledWith("s2", "u1", "qh7", { idk: true }, expect.any(Object)));
   });
 
-  it("ignores old hint text and cleanup while the next question's own hint is pending", async () => {
+  it("the next question's own hint replaces the last question's", async () => {
     let finishOld!: (value: ReturnType<typeof turn>) => void;
     let finishNew!: (value: ReturnType<typeof turn>) => void;
     api.requestLoopHint.mockResolvedValue({ rung: 1 });
@@ -2005,16 +2058,15 @@ describe("hint ownership within a learning session", () => {
     await withCheckItem();
     fireEvent.click(screen.getByTestId("loop-hint-button"));
     await waitFor(() => expect(api.requestLoopHintTurn).toHaveBeenCalledTimes(1));
-    fireEvent.click(screen.getByTestId("loop-attempt-idk"));
+    await act(async () => { finishOld(turn({ phase: "hint", reply: "The first question's hint." })); });
+    fireEvent.click(screen.getByTestId("loop-attempt-idk")); // K09: only once its hint is shown
     await screen.findByTestId("loop-continue");
     api.nextLoopCheck.mockResolvedValue({ phase: "check", check: { ...pose, question_hash: "next-question", prompt: "What changes in this next case?" } });
     fireEvent.click(screen.getByTestId("loop-check-me"));
     await waitFor(() => expect(screen.getByTestId("loop-check-prompt").getAttribute("data-question-hash")).toBe("next-question"));
     fireEvent.click(screen.getByTestId("loop-hint-button"));
     await waitFor(() => expect(api.requestLoopHintTurn).toHaveBeenCalledTimes(2));
-    await act(async () => { finishOld(turn({ phase: "hint", reply: "Obsolete hint for the previous question." })); });
     expect(screen.getByTestId("loop-hint-button").getAttribute("aria-disabled")).toBe("true");
-    expect(screen.queryByText("Obsolete hint for the previous question.")).toBeNull();
     expect(screen.queryByTestId("loop-hint-reply")).toBeNull();
     expect(screen.getByTestId("loop-check-prompt").getAttribute("data-question-hash")).toBe("next-question");
     await act(async () => { finishNew(turn({ phase: "hint", reply: "Current question's helpful hint." })); });
@@ -2616,6 +2668,7 @@ describe("LoopLearn — keyboard and screen reader (spec §13 A135)", () => {
     fireEvent.keyDown(a, { key: "ArrowLeft" });
     expect(c).toHaveAttribute("aria-checked", "true");
     expect(screen.getAllByRole("radio", { checked: true }).filter((r) => group.contains(r))).toEqual([c]);
+    fireEvent.change(screen.getByTestId("loop-attempt-reason"), { target: { value: "base two" } });
     fireEvent.click(screen.getByTestId("loop-attempt-submit"));
     await waitFor(() => expect(api.streamLoopCheckAnswer).toHaveBeenCalled());
     expect(api.streamLoopCheckAnswer.mock.calls[0][3]).toMatchObject({ option: "C" });

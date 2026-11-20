@@ -518,8 +518,11 @@ describe("DueQueue — stated confidence (spec §13 A127)", () => {
     expect(screen.getByTestId("review-confidence-sure").getAttribute("aria-checked")).toBe("false");
     await userEvent.click(screen.getByTestId("review-option-B"));
     await userEvent.click(screen.getByTestId("review-confidence-guessing"));
+    // K02: the grader judges the reason, so an option alone is not an answer
+    expect(screen.getByTestId("review-submit")).toBeDisabled();
+    await userEvent.type(screen.getByTestId("review-reason-input"), "it is the base case");
     await userEvent.click(screen.getByTestId("review-submit"));
-    expect(sent()).toMatchObject({ selected_option: "B", confidence: "guessing" });
+    expect(sent()).toMatchObject({ selected_option: "B", reason: "it is the base case", confidence: "guessing" });
   });
 
   it("a flashcard has no confidence control (its self-rating says how it went)", async () => {

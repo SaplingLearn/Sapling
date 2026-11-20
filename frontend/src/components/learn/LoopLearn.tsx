@@ -78,8 +78,8 @@ import { useFlag } from "@/context/FlagsContext";
 import { useStudyNavShown } from "../useRetentionNav";
 import { forgetEndedSession, noteLearningSession, useFeedbackHold } from "@/lib/feedbackPacing";
 import { BudgetPausedBanner, tutorPauseMessage } from "./BudgetPausedBanner";
-import { initialLoopState, reduceLoopEvent } from "./loopState";
-import { readResumeParam } from "./resumeParam";
+import { checkIsOpen, initialLoopState, reduceLoopEvent } from "./loopState";
+import { hasDeepLink, readDeepLink } from "./deepLink";
 import styles from "./LoopLearn.module.css";
 import { DiagnosisSummary, GoalEditor } from "./LearningScope";
 import { planGoalReason, planKind } from "./planLabels";
@@ -134,6 +134,8 @@ const WITHDRAWN_DETAIL = "check item withdrawn";
 const SELF_EXPLAIN_SAVED_COPY = "Saved — thanks.";
 /** Spec §13 A138: the composer's placeholder while the guess card is open. */
 const PREQUESTION_COMPOSER_COPY ="Answer the question above first, or choose “No idea”.";
+/** K06: a chat while a check is open only re-poses it (never graded, no reply), so the check's card is the way to answer. */
+const CHECK_OPEN_COMPOSER_COPY = "Answer the question above, ask for a hint, or choose “I don't know”.";
 /** routes/learn_loop.py: the prompt was superseded (a later turn closed it). */
 const SELF_EXPLAIN_GONE_DETAIL = "no open self-explanation prompt";
 
@@ -213,19 +215,6 @@ type HintView = { denied: string } | { reply: string } | null;
  *  page (T2) or every session (T3). */
 type TutorView = "session" | "home" | "course" | "all";
 
-/** The Learn deep links (Dashboard, Tree, notetaker, quiz): read ONCE at mount,
- *  so a consumed `?resume=` never re-applies on a session or course switch.
- *  `note`: Send to tutor's note, whose title is `topic`. */
-type DeepLink = { resume: string | null; topic: string; course: string; mode: string; suggest: string; note: string };
-const readDeepLink = (p: { get(name: string): string | null }): DeepLink => ({
-  resume: readResumeParam(p),
-  topic: (p.get("topic") ?? "").trim(),
-  course: (p.get("course") ?? "").trim(),
-  mode: (p.get("mode") ?? "").trim(),
-  suggest: (p.get("suggest") ?? "").trim(),
-  note: (p.get("note") ?? "").trim(),
-});
-const hasDeepLink = (d: DeepLink) => !!(d.resume || d.topic || d.course || d.mode || d.suggest || d.note);
 
 /** The phase GET /status reports for a document, in the UI's vocabulary. */
 const statusPhase = (st: LoopSessionStatus) => (st.loop_phase === "teach" ? st.phase : st.loop_phase);
@@ -475,6 +464,7 @@ export function LoopLearn() {
   }, []);
   const paused = state.budgetPause;
   const item = state.item;
+  const checkOpen = checkIsOpen(state);
   const exhaustedPracticeAttempt = practiceUnavailable.some((id) => goalProgress?.attempted_node_ids.includes(id));
 
   // A daily (or per-minute) pause lifts at its reset time — never earlier, and
@@ -1421,7 +1411,7 @@ export function LoopLearn() {
   };
 
   const submitAttempt = async (idk: boolean) => {
-    if (!sessionId || !item || attemptBusy || pendingGrade) return;
+    if (!sessionId || !item || attemptBusy || pendingGrade || hintBusy) return;
     focusAfter.current = "answered";
     const g = gen.current;
     // an idk states no confidence (spec §13 A127)
@@ -2190,10 +2180,10 @@ export function LoopLearn() {
           onRetry={retryTurn}
           // spec §13 A138 (review fix): the open guess card is the turn's one
           // open prompt (A121) — answer it, or "No idea", before the chat; F7: a
-          // hint that is loading holds it too
-          disabled={starting || scopeLoading || guessCardOpen || hintBusy}
+          // hint that is loading holds it too; K06: so does an open check
+          disabled={starting || scopeLoading || guessCardOpen || hintBusy || checkOpen}
           placeholder={
-            guessCardOpen
+            checkOpen ? CHECK_OPEN_COMPOSER_COPY : guessCardOpen
               ? PREQUESTION_COMPOSER_COPY
               : paused
                 ? "Tutor chat is paused — check answers still count."
@@ -2645,7 +2635,8 @@ function ProbePanel({
   onRetry: () => void;
 }) {
   const mc = item?.format === "mc_reason";
-  const canSubmit = !!item && !busy && (mc ? draft.option !== "" : draft.answer.trim() !== "");
+  // K02: an mc_reason answer needs its reason too (the grader judges it, never the option alone)
+  const canSubmit = !!item && !busy && (mc ? draft.option !== "" && draft.reason.trim() !== "" : draft.answer.trim() !== "");
   const ids = useId();
   const promptId = `${ids}-prompt`;
   const headingId = `${ids}-question`;
@@ -2906,7 +2897,8 @@ function CheckCard({
   selfExplain?: React.ReactNode;
 }) {
   const mc = item.format === "mc_reason";
-  const canSubmit = !busy && (mc ? draft.option !== "" : draft.answer.trim() !== "");
+  // K02: an mc_reason answer needs its reason; K09: a loading hint (its rung already charged) is shown first
+  const canSubmit = !busy && !hintBusy && (mc ? draft.option !== "" && draft.reason.trim() !== "" : draft.answer.trim() !== "");
   const ids = useId();
   const headingId = `${ids}-heading`;
   const promptId = `${ids}-prompt`;
@@ -2951,7 +2943,7 @@ function CheckCard({
             labelledBy={promptId}
             disabled={busy}
           />
-          <label className={tutorStyles.fl} htmlFor={`${ids}-reason`} style={{ marginBottom: -8 }}>Your reasoning (optional)</label>
+          <label className={tutorStyles.fl} htmlFor={`${ids}-reason`} style={{ marginBottom: -8 }}>Your reasoning</label>
           <input
             id={`${ids}-reason`}
             data-testid="loop-attempt-reason"
@@ -3009,7 +3001,7 @@ function CheckCard({
         >
           <Icon name="sparkle" size={13} />{hintBusy ? "Hint…" : hintRetry ? "Retry earned hint" : "Hint"}
         </button>
-        <button data-testid="loop-attempt-idk" className="btn btn--ghost" disabled={busy} onClick={onIdk}>
+        <button data-testid="loop-attempt-idk" className="btn btn--ghost" disabled={busy || hintBusy} onClick={onIdk}>
           I don&apos;t know
         </button>
       </div>
