@@ -111,7 +111,8 @@ screens the learning loop's routes the same way: see "Surfaces covered".)
      action's normal result plus `crisis_support` and
      `crisis_support_alongside: true` (no card `reply`: the note chat's
      `reply` is the agent's), for the streamed start in its `done` event's
-     data; or its error body plus `crisis_support`.
+     data; or its error body plus `crisis_support` (a streamed start that
+     ends in an `error` event carries it in that event's data).
    - The frontend renders `crisis_support` as a calm card
      (`frontend/src/components/safety/CrisisSupportCard.tsx`): inline in a
      conversation; as a dialog where there is none (the tutor's start screen,

@@ -844,4 +844,35 @@ describe("crisis support", () => {
       fetchSpy.mockRestore();
     }
   });
+
+  it("a streamed start that ENDS in an error event still shows the card, through the real SSE client (#866 K38)", async () => {
+    // The stream opened (200) and then failed: the backend puts the card in
+    // the error event's data, and the thrown ChatStreamError keeps it.
+    nav.search = "topic=Week%203&course=c1&note=n1";
+    const real = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
+    api.startSessionStream.mockImplementationOnce(real.startSessionStream as never);
+    const event = (name: string, data: unknown) => `event: ${name}\ndata: ${JSON.stringify(data)}\n\n`;
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (url) =>
+      String(url).includes("/api/learn/start-session/stream")
+        ? new Response(
+            event("token", { type: "token", step: "reply", message: "", data: { delta: "Let's" } })
+            + event("error", {
+              type: "error", step: "reply", message: "The tutor is unavailable.",
+              data: { request_id: "r1", retryable: false, crisis_support: crisisFixture },
+            }),
+            { status: 200, headers: { "Content-Type": "text/event-stream" } },
+          )
+        : new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } }),
+    );
+    try {
+      renderLearn();
+      await screen.findByTestId("tutor-session-resume-sess-a");
+      fireEvent.click(screen.getByTestId("tutor-start"));
+      expect(await screen.findByRole("dialog")).toHaveTextContent(crisisFixture.title);
+      expect(api.startSession).not.toHaveBeenCalled(); // text streamed: no JSON rung
+      expect(screen.getByTestId("tutor-start")).toBeInTheDocument(); // no session
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
 });
