@@ -20,6 +20,7 @@ from services.achievement_service import check_achievements
 from services.check_item_service import (
     DRAFTING_FAILED,
     DRAFTING_PENDING,
+    clear_drafting,
     drafting_flags,
     generate_for_document,
     mark_drafting,
@@ -124,6 +125,14 @@ def _index_then_draft(
     except Exception:
         logger.exception("Indexing doc %s before check items failed", doc_id)
     here = model_mode() == "function" or jobs.current_job() is not None
+    if not check_item_jobs.within_generation_budget(user_id):
+        # Z20: drafting is minutes of model calls billed to the uploader. Past
+        # their generation budget (or with it unreadable) none start; the
+        # mark goes back to "never drafted", so draft on enable claims the
+        # document when the student next opens the course with room.
+        logger.info("Check items for doc %s skipped: the uploader's generation budget", doc_id)
+        clear_drafting(doc_id)
+        return
     try:
         # spec §13 A140/A141: the uploader's drafting flags, resolved ONCE for
         # this run; with both off the call is exactly the one it always was

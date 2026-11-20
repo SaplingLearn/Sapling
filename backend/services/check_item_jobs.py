@@ -29,8 +29,13 @@ pipeline failure — the nightly backfill (spec §11.7) drafts what a run left.
 
 The per-user LLM budget (#119): the work is the uploader's (llm_usage rows are
 attributed to them, `acting_for`), and it is post-response background work, so
-the budget never refuses it (`llm_budget.background_work`) — as in-process,
-where it rides the upload request's own budget decision.
+the token budget never refuses a request mid-run (`llm_budget.background_work`)
+— as in-process, where it rides the upload request's own budget decision. The
+uploader's GENERATION budget (`ai_budget.check(..., "generation")`, a fresh
+read) is asked once per document before its drafting starts, on every path
+(`within_generation_budget`, Z20): a hard-capped student, or an unreadable
+ledger, drafts nothing — the document is indexed, its `pending` mark is taken
+back, and draft on enable claims it once the budget has room.
 
 The loop gate is the uploader's AT RUN TIME too: the job re-reads it
 (`learning_loop_for_uploader`) before drafting, so the env kill switch or the
@@ -202,7 +207,7 @@ def _scan_due(user_id: str, course_id: str) -> bool:
         return True
 
 
-def _within_budget(user_id: str) -> bool:
+def within_generation_budget(user_id: str) -> bool:
     """The student's generation budget has room (the hard level, or a usage
     read that failed, schedules nothing: no evidence of room, no spend)."""
     try:
@@ -251,7 +256,7 @@ def draft_missing_for_course(
     try:
         claimed = claim_undrafted_documents(
             user_id, course_id, limit=ENABLE_MAX_DOCS, offerings=offerings,
-            may_draft=lambda: _within_budget(user_id),
+            may_draft=lambda: within_generation_budget(user_id),
         )
     except _STORE_FAILURES as exc:
         logger.warning("check items: draft on enable could not scan course %s for %s (%s)",

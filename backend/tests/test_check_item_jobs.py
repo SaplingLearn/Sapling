@@ -130,6 +130,36 @@ def test_a_drafting_failure_inside_a_job_is_logged_never_raised(caplog):
     assert any("Check items for doc doc-1 failed" in r.getMessage() for r in caplog.records)
 
 
+@pytest.mark.parametrize("in_job", [False, True])
+def test_upload_drafting_starts_nothing_past_the_uploaders_generation_budget(in_job):
+    """Z20: upload-time drafting (in-process and on the worker) is minutes of
+    model calls billed to the uploader. It asks the generation budget once per
+    document, fresh; past it the document is indexed, nothing is drafted or
+    queued, and the `pending` mark is taken back so draft on enable claims it
+    when the budget has room."""
+    from services.documents import post_roll as rd
+
+    job = jobs.Job(id="j-1", type="check_items.document", payload={}, attempt=1,
+                   max_attempts=5, locked_by="w")
+    token = jobs._CURRENT_JOB.set(job) if in_job else None
+    try:
+        with patch.object(rd, "model_mode", return_value="real"), \
+             patch.object(ai_budget, "check", return_value=MagicMock(level="hard")) as check, \
+             patch.object(rd, "index_document") as idx, \
+             patch.object(rd, "generate_for_document") as gen, \
+             patch.object(rd, "queue_generation_for_document") as queue, \
+             patch.object(rd, "clear_drafting") as clear:
+            rd._index_then_draft("doc-1", "u1", "c-1", ["A"])
+    finally:
+        if token is not None:
+            jobs._CURRENT_JOB.reset(token)
+    check.assert_called_once_with("u1", "generation")
+    idx.assert_called_once_with("doc-1")
+    gen.assert_not_called()
+    queue.assert_not_called()
+    clear.assert_called_once_with("doc-1")
+
+
 # ── the worker's handler ────────────────────────────────────────────────────
 
 
@@ -332,7 +362,7 @@ def test_enable_claims_nothing_past_the_generation_budget(scans, decision, ok):
     side = decision if isinstance(decision, Exception) else None
     ret = None if side else MagicMock(level=decision)
     with patch.object(ai_budget, "check", side_effect=side, return_value=ret) as check:
-        assert cij._within_budget("u1") is ok
+        assert cij.within_generation_budget("u1") is ok
     check.assert_called_once_with("u1", "generation")
 
 
