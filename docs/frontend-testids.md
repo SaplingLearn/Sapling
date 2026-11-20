@@ -346,7 +346,7 @@ journeys keep anchoring: `quiz-panel`, `quiz-start`,
 | `quiz-results-graph` | the concept neighbourhood above the score (`graph/ConceptNeighbourhood`) |
 | `quiz-results-score` | the "{n} of {total} correct" line — a count, not a percentage |
 | `quiz-results-mastery` | the mastery delta line, "B% → A% · tier-before → tier-after" ("B% → A%" alone while `quiz-results-learning` is shown: its levels are the screen's one scale, #866 K42) |
-| `quiz-results-unchanged` | why the mastery did not move, when it did not (a question counts once a day and only when it passed its checks; a round of the last quiz's missed questions was practice) — absent while `quiz-results-learning` is shown, whose `quiz-results-no-change` says it (#866 K40) |
+| `quiz-results-unchanged` | why the mastery did not move, when the shown percent did not and submit's `mastery_unmoved` names why (a question counts once a day, one that failed its checks does not count, a right answer with help earns no credit, the write failed; a round of the last quiz's missed questions that was all counted already was practice) — absent when submit names no reason (evidence was written), and while `quiz-results-learning` is shown, whose `quiz-results-no-change` says it (#866 K40) |
 | `quiz-results-xp` | "+{Δ} XP · {streak}-day streak" — absent when either gamification read failed |
 | `quiz-results-perfect` | the line shown instead of the missed list on a clean sweep |
 | `quiz-results-learning` | the "Your skill meters" block (`results/LearningBlock`) — present only when the submit returned a `learning` block (`quiz_results_routing`, learning-loop spec §13 A147) |

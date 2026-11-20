@@ -26,7 +26,7 @@ import type { NeighbourNode } from "@/lib/graph/neighbourhood";
 import { useUser } from "@/context/UserContext";
 import { queueOf } from "@/lib/quiz/machine";
 import type { QuizActions } from "@/lib/quiz/useQuizSession";
-import type { QuizSession } from "@/lib/quiz/types";
+import type { MasteryUnmovedReason, QuizSession } from "@/lib/quiz/types";
 import { sourceLabel } from "@/lib/quiz/exits";
 import { AskPanel } from "../question/AskPanel";
 import type { QuizConceptSummary } from "../question/QuizQuestion";
@@ -120,22 +120,33 @@ export function growthLabel(name: string, before: number, after: number): string
   return `${name} node ${move === "up" ? "grew" : "moved"} from ${pct(before)}% to ${pct(after)}% mastery`;
 }
 
+/** Each reason submit can name, as the note's clause (#866 K40). */
+const UNMOVED_WHY: Record<Exclude<MasteryUnmovedReason, "write_failed">, string> = {
+  already_counted: "a question counts toward it once a day",
+  not_verified: "a question that didn't pass its checks doesn't count",
+  helped: "a right answer you had help with earns no credit",
+};
+
 /**
- * Why a graded quiz left the mastery where it was (#866 K40). A submit writes
- * mastery evidence for each question at most once a day (learning-loop spec
- * §13 A100) and never for a question its checks flagged (A132, A145), so a
- * quiz can be all right and move nothing. A round made entirely of the last
- * quiz's missed questions (G5) moves nothing for a day by construction: those
- * questions were just answered. Null when the learner model's block, which
- * says the same in its own words, is on the screen.
+ * Why a graded quiz left the mastery where it was (#866 K40), from what submit
+ * says it could not write (`mastery_unmoved`), never from the percent: the
+ * percent can stand still with evidence written, and then no reason is true.
+ * A round made entirely of the last quiz's missed questions (G5) that was all
+ * already counted gets its own line: those questions were just answered. Null
+ * when submit names no reason, or when the learner model's block, which says
+ * the same in its own words, is on the screen.
  */
 export function unchangedNote(session: QuizSession, learnerBlock: boolean): string | null {
-  if (learnerBlock) return null;
+  const reasons = session.result?.mastery_unmoved ?? [];
+  if (learnerBlock || reasons.length === 0) return null;
+  if (reasons.includes("write_failed")) return "Your score is saved, but your mastery couldn't be updated this time.";
   const reserved = session.reserved;
-  if (session.scope.kind === "missed" && reserved && reserved.reservedCount > 0 && reserved.regeneratedCount === 0) {
+  const repractice = session.scope.kind === "missed" && reserved && reserved.reservedCount > 0 && reserved.regeneratedCount === 0;
+  if (repractice && reasons.length === 1 && reasons[0] === "already_counted") {
     return "These questions were in your last quiz, and a question counts toward your mastery once a day, so this round was practice.";
   }
-  return "Your mastery didn't change this time: a question counts toward it once a day, and only when it passed its checks.";
+  const why = reasons.flatMap((r) => (r === "write_failed" ? [] : [UNMOVED_WHY[r]]));
+  return `Your mastery didn't change this time: ${why.join("; ")}.`;
 }
 
 export function QuizResults({

@@ -199,6 +199,10 @@ export interface QuizLearning {
   learn: { concept_id: string; concept_name: string; course_id: string | null } | null;
 }
 
+/** #866 K40: each is true of at least one question of the submit; `write_failed`
+ *  is the evidence claim or the graph write failing (#760), and comes alone. */
+export type MasteryUnmovedReason = "not_verified" | "already_counted" | "helped" | "write_failed";
+
 export interface SubmitResult {
   score: number;
   total: number;
@@ -208,6 +212,10 @@ export interface SubmitResult {
   p_delta?: number;
   /** Spec §13 A147: present only with `quiz_results_routing` on. */
   learning?: QuizLearning;
+  /** #866 K40: why no question of this submit could move the mastery
+   *  (backend services/quiz/unmoved.py). Present only then: absent, a
+   *  question could have moved it, whatever the shown percent did. */
+  mastery_unmoved?: MasteryUnmovedReason[];
   results: {
     question_id: string;
     selected: string;

@@ -270,14 +270,17 @@ describe("QuizResults", () => {
     );
   });
 
-  it("never says grew of a node that did not move, and says why it did not (#866 K40)", () => {
+  it("never says grew of a node that did not move, and says why when submit names it (#866 K40)", () => {
     // A submit writes evidence for a question at most once a day (A100) and
     // never for one its checks flagged: an all-right quiz can move nothing.
-    renderResults({ ...PERFECT, result: { ...PERFECT.result!, mastery_before: 0.4, mastery_after: 0.4 } });
+    renderResults({
+      ...PERFECT,
+      result: { ...PERFECT.result!, mastery_before: 0.4, mastery_after: 0.4, mastery_unmoved: ["not_verified", "already_counted"] },
+    });
     expect(screen.getByTestId("quiz-results-graph")).toHaveAttribute("aria-label", "Recursion node stayed at 40% mastery");
     expect(screen.getByTestId("quiz-results-perfect")).toHaveTextContent(/^Nothing to review — every answer was right\.$/);
     expect(screen.getByTestId("quiz-results-unchanged")).toHaveTextContent(
-      "Your mastery didn't change this time: a question counts toward it once a day, and only when it passed its checks.",
+      "Your mastery didn't change this time: a question that didn't pass its checks doesn't count; a question counts toward it once a day.",
     );
     // half a point is still the same whole percent on screen
     cleanup();
@@ -285,15 +288,42 @@ describe("QuizResults", () => {
     expect(screen.getByTestId("quiz-results-graph")).toHaveAttribute("aria-label", "Recursion node stayed at 40% mastery");
   });
 
-  it("says a round of the last quiz's missed questions was practice when it moved nothing (#866 K40)", () => {
-    renderResults({
-      scope: { kind: "missed", conceptId: "recursion", missedCount: 3 },
+  it("states no reason for an unchanged percent submit names none for (#866 K40)", () => {
+    // Evidence was written (a 99.5% mastery reads 100%; answers that net out):
+    // "once a day" or "its checks" would be false.
+    renderResults({ ...PERFECT, result: { ...PERFECT.result!, mastery_before: 0.996, mastery_after: 0.998 } });
+    expect(screen.getByTestId("quiz-results-graph")).toHaveAttribute("aria-label", "Recursion node stayed at 100% mastery");
+    expect(screen.queryByTestId("quiz-results-unchanged")).toBeNull();
+  });
+
+  it("names help and a failed write as what they are (#866 K40)", () => {
+    renderResults({ result: { ...RESULT, mastery_before: 0.4, mastery_after: 0.4, mastery_unmoved: ["helped"] } });
+    expect(screen.getByTestId("quiz-results-unchanged")).toHaveTextContent(
+      "Your mastery didn't change this time: a right answer you had help with earns no credit.",
+    );
+    cleanup();
+    renderResults({ result: { ...RESULT, mastery_before: 0.4, mastery_after: 0.4, mastery_unmoved: ["write_failed"] } });
+    expect(screen.getByTestId("quiz-results-unchanged")).toHaveTextContent(
+      "Your score is saved, but your mastery couldn't be updated this time.",
+    );
+  });
+
+  it("says a round of the last quiz's missed questions was practice when it was all counted already (#866 K40)", () => {
+    const missedRound = {
+      scope: { kind: "missed", conceptId: "recursion", missedCount: 3 } as const,
       reserved: { reservedCount: 3, regeneratedCount: 0 },
-      result: { ...RESULT, mastery_before: 0.4, mastery_after: 0.4 },
-    });
+    };
+    renderResults({ ...missedRound, result: { ...RESULT, mastery_before: 0.4, mastery_after: 0.4, mastery_unmoved: ["already_counted"] } });
     expect(screen.getByTestId("quiz-results-unchanged")).toHaveTextContent(
       "These questions were in your last quiz, and a question counts toward your mastery once a day, so this round was practice.",
     );
+    cleanup();
+    // the same round with a flagged question too is not just practice
+    renderResults({
+      ...missedRound,
+      result: { ...RESULT, mastery_before: 0.4, mastery_after: 0.4, mastery_unmoved: ["not_verified", "already_counted"] },
+    });
+    expect(screen.getByTestId("quiz-results-unchanged")).not.toHaveTextContent("this round was practice");
   });
 
   it("adds no note when the mastery moved, or when the learner model's block says it", () => {
@@ -305,6 +335,7 @@ describe("QuizResults", () => {
         ...RESULT,
         mastery_before: 0.4,
         mastery_after: 0.4,
+        mastery_unmoved: ["already_counted"],
         learning: { changes: [], review: { due_count: 0, next_due_at: null }, next_step: "none", learn: null },
       },
     });
