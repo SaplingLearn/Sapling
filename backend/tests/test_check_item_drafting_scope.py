@@ -89,3 +89,31 @@ def test_the_drafting_status_writes_run_as_the_service_role(enforced, monkeypatc
 
     assert [(t, v) for t, v, _ in rec.calls] == [("documents", "update")] * 3
     assert rec.as_student() == []
+
+
+def test_an_upload_drafting_run_reads_and_writes_as_the_service_role(enforced, monkeypatch):
+    """Z14: the run inside the upload request's scope (the post-roll, or the
+    pool that copies its context) — the document read, the item count, the
+    redraft ledger, the run's end mark — never goes out as the student."""
+    import config
+    from agents.check_items import CheckItemsUnavailable
+
+    monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", True)
+    rec = _Recorder({"documents": [{"id": "doc-1", "user_id": "u1"}]})
+    monkeypatch.setattr(svc, "table", rec)
+    chunk = {"id": "c1", "chunk_index": 0, "doc_id": "doc-1",
+             "chunk_text": "Gradient descent moves each parameter by the learning rate."}
+    monkeypatch.setattr(svc, "source_chunks", lambda row: [dict(chunk)])
+    monkeypatch.setattr(svc, "draft_items", lambda *a, **k: None)
+    monkeypatch.setattr(svc, "run_agent_sync", lambda _coro: CheckItemsUnavailable(reason="Timeout"))
+    monkeypatch.setattr(svc, "log_event", lambda *a, **k: None)
+
+    out = svc.generate_for_document(
+        "doc-1", user_id="u1", course_id="c-1", concept_names=["Learning rate"], flex=True
+    )
+
+    assert out.unavailable == 1  # the run reached its drafting call
+    touched = {(t, v) for t, v, _ in rec.calls}
+    assert {("documents", "select"), ("check_items", "select"),
+            ("check_item_draft_failures", "select"), ("documents", "update")} <= touched
+    assert rec.as_student() == []

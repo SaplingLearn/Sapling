@@ -3400,6 +3400,7 @@ def generate_combos_for_document(
     return outcome
 
 
+@runs_as_service  # Z14: drafting is backend work on a course asset; its tables are service-only (A148)
 def generate_for_document(
     document_id: str,
     *,
@@ -3416,6 +3417,11 @@ def generate_for_document(
     of its concepts. Usage is attributed to the uploader. `flags` are the
     uploader's (drafting_flags, resolved once by the hook): A140's varied
     drafting, A141's combinations after the concepts' own items.
+
+    Runs as the service role (Z14): the upload's post-roll and the drafting
+    pool carry the upload request's scope, and the run reads and writes the
+    loop's service-only tables (check_items and its bookkeeping, A148), never
+    as the uploading student.
 
     A128: it records how drafting ended on the document's row
     (`check_items_status`, `drafting_status_for`): `done`, `unavailable` (a
