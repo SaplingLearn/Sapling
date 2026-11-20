@@ -33,7 +33,7 @@ const RELATION_TAG: Record<Exclude<TileRelation, "">, React.CSSProperties> = {
    status go to --text-muted, AA on every tile fill and on the page. */
 const DIM_OPACITY = 0.3;
 const DIM_TEXT = "var(--text-muted)";
-const DIM_FADE = "opacity 160ms ease, color 160ms ease";
+const DIM_FADE = "opacity var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease)";
 
 /**
  * The open tile menu closes on Esc (focus returns to its "..." button) or on a

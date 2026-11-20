@@ -47,7 +47,7 @@ export function WrapUpRating({ sessionId, topic }: { sessionId: string; topic?: 
   };
 
   return (
-    <section data-testid="loop-close-rating" aria-labelledby="loop-close-rating-h" className="card" style={{ padding: "var(--pad-lg)", display: "flex", flexDirection: "column", gap: 10 }}>
+    <section data-testid="loop-close-rating" aria-labelledby="loop-close-rating-h" className="card fade-in" style={{ padding: "var(--pad-lg)", display: "flex", flexDirection: "column", gap: 10 }}>
       <span className="label-micro">Your feedback</span>
       <h3 id="loop-close-rating-h" className="h-serif" style={{ margin: 0, fontSize: 18 }}>How was that session?</h3>
       <SessionRatingScale value={rating} onSelect={(value) => void choose(value)} disabled={sent === "sending" || sent === "sent"} testIdPrefix="loop-close-rating" />

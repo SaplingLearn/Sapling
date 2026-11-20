@@ -39,7 +39,7 @@ export function closeConceptView(c: LoopCloseConcept): {
 function MovedCard({ concepts, names }: { concepts: LoopCloseConcept[]; names: Map<string, string> }) {
   const up = concepts.filter((c) => closeConceptView(c).dir === "up").length;
   return (
-    <section className="card" aria-labelledby="loop-close-moved">
+    <section className="card fade-in" aria-labelledby="loop-close-moved">
       <div className={tutorStyles.cardHead}>
         <div>
           <span className="label-micro">What moved</span>

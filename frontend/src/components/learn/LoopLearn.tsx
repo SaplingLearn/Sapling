@@ -2508,7 +2508,7 @@ export function LoopLearn() {
   );
 
   return (
-    <FullHeightScreen className={styles.screen}>
+    <FullHeightScreen className={`${styles.screen} fade-in`}>
       <DisclaimerModal />
       {crisisDialog}
       <div
@@ -2598,7 +2598,7 @@ function VerdictBanner({ verdict, concept }: { verdict: string; concept: string 
   const copy = VERDICT_COPY[verdict] ?? VERDICT_COPY.not_yet;
   const yes = verdict === "correct";
   return (
-    <div data-testid="loop-verdict" data-verdict={verdict} className={yes ? tutorStyles.verdictYes : tutorStyles.verdictNo}>
+    <div data-testid="loop-verdict" data-verdict={verdict} className={`${yes ? tutorStyles.verdictYes : tutorStyles.verdictNo} fade-in`}>
       {concept && <span className="label-micro">{concept} · check</span>}
       <div style={{ font: "600 17px var(--font-display)", color: yes ? "var(--sap-600)" : "var(--warn)" }}>{copy.title}</div>
       <div style={{ fontSize: 14 }}>{copy.note}</div>

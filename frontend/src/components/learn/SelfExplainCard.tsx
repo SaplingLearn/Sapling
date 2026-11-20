@@ -74,7 +74,7 @@ export function SelfExplainCard({
       data-testid="loop-self-explain"
       data-juncture={prompt.juncture}
       data-prompt-id={prompt.prompt_id}
-      className={nested ? undefined : "card"}
+      className={nested ? "fade-in" : "card fade-in"}
       style={
         nested
           ? {

@@ -22,7 +22,7 @@ export function CenteredCard({ testId, children }: { testId: string; children: R
   }, []);
   return (
     <div style={{ flex: 1, overflowY: "auto", padding: 32 }}>
-      <div ref={ref} tabIndex={-1} data-testid={testId} className="card" style={{ maxWidth: 520, margin: "24px auto", padding: "var(--pad-xl)" }}>
+      <div ref={ref} tabIndex={-1} data-testid={testId} className="card fade-in" style={{ maxWidth: 520, margin: "24px auto", padding: "var(--pad-xl)" }}>
         {children}
       </div>
     </div>

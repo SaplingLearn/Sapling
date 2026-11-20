@@ -94,7 +94,7 @@ export function PrequestionCard({
       data-format={prequestion.format}
       data-difficulty={prequestion.difficulty}
       data-answered={answered ? "true" : "false"}
-      className="card"
+      className="card fade-in"
       style={{ padding: "14px 16px", display: "flex", flexDirection: "column", gap: 10, borderColor: "var(--accent-border)" }}
     >
       <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>

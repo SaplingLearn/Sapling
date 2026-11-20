@@ -66,6 +66,7 @@
   border: 1px solid transparent;
   cursor: pointer;
   flex-shrink: 0;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
 }
 
 .iconBtn:hover {
@@ -133,6 +134,7 @@
   background: transparent;
   border: 1px solid transparent;
   cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
 }
 
 .sideRow:hover {
@@ -206,6 +208,7 @@
   padding: 0;
   cursor: pointer;
   text-decoration: none;
+  transition: color var(--dur-fast) var(--ease);
 }
 
 .textLink:hover {
@@ -269,6 +272,7 @@
   cursor: pointer;
   color: var(--text-muted);
   text-align: left;
+  transition: color var(--dur-fast) var(--ease);
 }
 
 .crumb:hover {
@@ -413,6 +417,7 @@
   background: var(--bg-panel);
   cursor: pointer;
   text-decoration: none;
+  transition: border-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
 }
 
 .pill:hover {
@@ -485,6 +490,7 @@
   color: var(--text);
   cursor: pointer;
   min-width: 0;
+  transition: background var(--dur-fast) var(--ease);
 }
 
 .listRow:last-child {
@@ -605,7 +611,7 @@
 .planCur {
   background: var(--brand-forest);
   border-color: transparent;
-  color: #fff;
+  color: var(--accent-fg);
 }
 
 .planBox {
@@ -620,7 +626,7 @@
 }
 
 .planCur .planBox {
-  border-color: rgba(255, 255, 255, 0.7);
+  border-color: color-mix(in srgb, var(--accent-fg) 70%, transparent);
 }
 
 .planDone .planBox {
@@ -641,7 +647,7 @@
 }
 
 .planCur .ps {
-  color: #fff;
+  color: var(--accent-fg);
 }
 
 .meter {
@@ -886,7 +892,7 @@
 
 .verdictNo {
   background: var(--warn-soft);
-  border-color: rgba(163, 76, 38, 0.22);
+  border-color: color-mix(in srgb, var(--warn) 22%, transparent);
 }
 
 .closeGrid {
