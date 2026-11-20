@@ -82,8 +82,9 @@ sequenceDiagram
    failed drafting three times on unchanged sources is skipped for a while
    (`check_item_draft_failures`, A41).
 4. **Draft.** `backend/agents/check_items.py::draft_items`, up to three
-   concepts per call, on the `check_items` slot (Gemini Flex for background
-   prefill; long timeout; 429/503 retried). It never raises: a failure is
+   concepts per call, on the `check_items` slot (Claude Sonnet by default;
+   the Gemini Flex tier only when the slot is pointed at a gemini-* model; long
+   timeout; 429/503 retried). It never raises: a failure is
    `CheckItemsUnavailable`, logged as `learn.check_items_failed`, and a
    multi-concept call that failed validation is split and retried one concept
    at a time. Usage is billed to the uploader (A44).

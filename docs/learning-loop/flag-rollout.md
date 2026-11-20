@@ -4,6 +4,12 @@ Every newer learning-loop behaviour ships behind its own feature flag, off by de
 
 Nothing here is switched on by this document. Turning a flag on is the owner's call.
 
+## The master flag: `learning_loop`
+
+Every flag below only matters for a student who has the learning system at all. That is the per-student `learning_loop` flag (`off` | `on`, ships `off`): the loop tutor and its routes, Study's review queue and retention check, the retention badge, the quiz learning features, the integrity guard on notes and flashcards, and check-item drafting on their uploads. Off is the pre-loop app. Roll it out the same way as any flag (yourself, then a class, then everyone).
+
+Above it sits the env kill switch `LEARNING_LOOP_ENABLED`: `false`/`0`/`off`/`no` turns the loop off for everyone, whatever the flag says, with no database read. Unset means "the flag decides" — it no longer means on. `SAPLING_FLAG_LEARNING_LOOP=off` forces the flag off without touching the kill switch. Both off paths answer the loop routes as 404 (`invariants.md` §9) and each has its own E2E lane (kill switch, flag-off).
+
 ## How to switch a flag
 
 Flags live in `backend/services/feature_flags.py::REGISTRY`; their stored configuration is in the `feature_flags` and `feature_flag_targets` tables. Change them through the admin Flags tab, or the admin API (`routes/admin_flags.py`):
@@ -22,8 +28,8 @@ Per-student flags are resolved once per request (or once per quiz generation and
 
 Several flags change a prompt or an output schema, so their eval datasets must be recorded live and pass before the flag goes on (`backend/tests/evals/README.md`; record with `SAPLING_EVAL_MODE=record`, three recordings for a floor). Two facts gate every such recording today:
 
-- The loop slots (`check_items`, `grader`, `grader_second`, `learning_decision`, `loop_tutor*`, `session_close`) still default to Gemini (`agents/_providers.py::LOOP_SLOTS_PENDING_CLAUDE_EVAL`). Recording them needs either a valid Gemini key, or the slot moved to Claude by the A111 runbook (record on Claude, gates pass, then remove the slot from the pending set).
-- The loop tutor's rung judge defaults to `gemini-2.5-pro` (`RUNG_JUDGE_MODEL`, env-overridable).
+- The loop slots (`check_items`, `grader`, `grader_second`, `learning_decision`, `loop_tutor*`, `session_close`) default to Claude since 2026-11-19, but their Claude eval pass has not run: they stay in `agents/_providers.py::LOOP_SLOTS_PENDING_CLAUDE_EVAL` and the boot guard warns `pending_claude_eval` for each. Record each dataset live on Claude (an `ANTHROPIC_API_KEY`), pass its gates, then add the model to `EVALUATED_MODELS` and remove the slot from the pending set in one change (A111).
+- The loop tutor's rung judge and the misconception confront judge default to `claude-opus-5-5` (`RUNG_JUDGE_MODEL` / `CONFRONT_JUDGE_MODEL`, env-overridable; `backend/tests/evals/_judge_model.py`). Their committed judgements were recorded on Gemini, so they are re-recorded with the datasets.
 
 `SAPLING_EVAL_USAGE_LOG=<path>` records each run's token cost, so a recording also measures what the flag will cost.
 

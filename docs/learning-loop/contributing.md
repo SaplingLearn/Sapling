@@ -70,9 +70,10 @@ does the same for every drafting request.
 For a new agent task (slot):
 
 - Add it to the `AgentTask` literal, `_DEFAULTS` **and** `_ANTHROPIC_EFFORT`
-  in `backend/agents/_providers.py`. A slot whose default is a `gemini-*`
-  model must be in `LOOP_SLOTS_PENDING_CLAUDE_EVAL` and every other must
-  default to Claude (`backend/tests/test_anthropic_provider.py` pins this).
+  in `backend/agents/_providers.py`. Every slot defaults to Claude
+  (`backend/tests/test_anthropic_provider.py` pins this); an evidence slot
+  whose Claude eval has not been recorded yet goes in
+  `LOOP_SLOTS_PENDING_CLAUDE_EVAL`.
 - If its output is evidence or what evidence is graded against, add it to
   `EVIDENCE_SLOTS` with its evaluated model set (A128), and if it must be
   independent of another slot's model family (as `grader_second` is of

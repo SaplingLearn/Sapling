@@ -81,7 +81,7 @@ The arrows are imports or calls. Two rules shape them:
 
 ## `backend/learning/` — policy, math and stores
 
-61 modules plus `backend/learning/__init__.py`. The tables group them by job and mark each **pure** (imports only
+63 modules plus `backend/learning/__init__.py`. The tables group them by job and mark each **pure** (imports only
 the standard library, pydantic and other `learning` modules — no database, no
 agent, no network) or **IO** (reads or writes the database through
 `backend/db/connection.py::table` / `rpc`, or reads config or encryption).
@@ -301,23 +301,24 @@ screen, entry checks and rate-limit read. The spec's §9 route table predates
 
 Every LLM call is a Pydantic AI agent; a **slot** (task) names a model role.
 `backend/agents/_providers.py` holds the defaults (`_DEFAULTS`), the Claude
-effort per slot (`_ANTHROPIC_EFFORT`), the slots still on Gemini
-(`LOOP_SLOTS_PENDING_CLAUDE_EVAL`) and the evidence slots
+effort per slot (`_ANTHROPIC_EFFORT`), the loop slots whose Claude eval pass
+is still pending (`LOOP_SLOTS_PENDING_CLAUDE_EVAL`; every loop slot defaults to
+Claude since 2026-11-19, and the boot guard warns until each is re-recorded) and the evidence slots
 (`EVIDENCE_SLOTS`). A slot's model can be overridden with
 `SAPLING_MODEL_<SLOT>` (for example `SAPLING_MODEL_GRADER`).
 
 | Slot | Agent module | Job | Default model | Claude effort | Pending Claude eval | Function-mode handler |
 |---|---|---|---|---|---|---|
-| `check_items` | `backend/agents/check_items.py` | Draft items for up to three concepts per call. Four more drafters ride this slot: the `mc_reason` top-up (`backend/agents/check_items_topup.py`), and behind their flags the varied drafter and its top-up (`backend/agents/check_items_varied.py`, `backend/agents/check_items_varied_topup.py`, A140) and the combination drafter (`backend/agents/check_items_combo.py`, A141) | `gemini-2.5-flash-lite` | medium | yes | `_check_items_handler` (fixed items; varied surfaces and combinations when asked) |
+| `check_items` | `backend/agents/check_items.py` | Draft items for up to three concepts per call. Four more drafters ride this slot: the `mc_reason` top-up (`backend/agents/check_items_topup.py`), and behind their flags the varied drafter and its top-up (`backend/agents/check_items_varied.py`, `backend/agents/check_items_varied_topup.py`, A140) and the combination drafter (`backend/agents/check_items_combo.py`, A141) | `claude-sonnet-5-5` (off the Haiku its checks were accepted on, A124) | medium | yes | `_check_items_handler` (fixed items; varied surfaces and combinations when asked) |
 | `check_items_verify` | `backend/agents/check_items_verify.py` | Alignment check: is each rubric criterion asked; which concept does the item test. The combination check (`backend/agents/check_items_combo_verify.py`, A141: is every component needed?) rides this slot | `claude-haiku-5-5` | low | no | `_verify_handler` (both) |
 | `check_items_solve` | `backend/agents/check_items_solve.py` | Blind solve of each drafted item (never sees the key); the free-text key match (`backend/agents/check_items_key_match.py`) rides this slot | `claude-haiku-5-5` | medium | no | `_solve_handler` (both) |
-| `grader` | `backend/agents/grader.py` | Rubric grading, one yes/no per criterion, with quoted support | `gemini-2.5-flash-lite` | low | yes | `_grader_handler` |
-| `grader_second` | `backend/agents/grader.py` (same agent) | The second opinion and the span checks, on a different model | `gemini-2.5-flash` | medium | yes | `_grader_handler` |
-| `learning_decision` | `backend/agents/learning_decision.py` | The loop's typed closed judgments (reason correct? which wrong key?) | `gemini-2.5-flash-lite` | low | yes | `_decision_handler` |
-| `loop_tutor_lite` | `backend/agents/loop_tutor.py` | Tutor tier "lite" (not routable today: lite turns route up) | `gemini-2.5-flash-lite` | low | yes | `_loop_tutor_handler` |
-| `loop_tutor` | `backend/agents/loop_tutor.py` | Tutor tier "standard" | `gemini-2.5-flash` | medium | yes | `_loop_tutor_handler` |
-| `loop_tutor_deep` | `backend/agents/loop_tutor.py` | Tutor tier "deep": novice teach turns, H4/H5 hints, an active misconception, two or more failed genuine attempts | `gemini-2.5-pro` | high | yes | `_loop_tutor_handler` |
-| `session_close` | `backend/agents/session_close.py` | The close: summary, one self-evaluation question, one if-then plan | `gemini-2.5-flash-lite` | low | yes | `_structured_output` (fixed close) |
+| `grader` | `backend/agents/grader.py` | Rubric grading, one yes/no per criterion, with quoted support | `claude-haiku-5-5` | low | yes | `_grader_handler` |
+| `grader_second` | `backend/agents/grader.py` (same agent) | The second opinion and the span checks, on a different model | `claude-sonnet-5-5` | low | yes | `_grader_handler` |
+| `learning_decision` | `backend/agents/learning_decision.py` | The loop's typed closed judgments (reason correct? which wrong key?) | `claude-haiku-5-5` | low | yes | `_decision_handler` |
+| `loop_tutor_lite` | `backend/agents/loop_tutor.py` | Tutor tier "lite" (not routable today: lite turns route up) | `claude-haiku-5-5` | low | yes | `_loop_tutor_handler` |
+| `loop_tutor` | `backend/agents/loop_tutor.py` | Tutor tier "standard" | `claude-haiku-5-5` | medium | yes | `_loop_tutor_handler` |
+| `loop_tutor_deep` | `backend/agents/loop_tutor.py` | Tutor tier "deep": novice teach turns, H4/H5 hints, an active misconception, two or more failed genuine attempts | `claude-sonnet-5-5` | low | yes | `_loop_tutor_handler` |
+| `session_close` | `backend/agents/session_close.py` | The close: summary, one self-evaluation question, one if-then plan | `claude-haiku-5-5` | low | yes | `_structured_output` (fixed close) |
 
 The quiz (not the loop) adds one slot and one agent (A144, A145): the
 planned quiz writer `backend/agents/quiz_planned.py` rides the quiz's own

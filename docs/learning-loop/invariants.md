@@ -281,6 +281,15 @@ before it existed: wave 4's four flags are pinned that way against
 the quiz agent's request on four variants, and the whole generate, answer and
 submit flow).
 
+**What still differs with the loop off** (deliberate, reviewed 2026-11-19).
+The legacy tutor routes and the topic checklist run exactly as on `main` (no
+AI budget reads, no tutor-call count; the checklist restates main's output
+bounds, `services/topic_checklist_service.py::_main_run_settings`). The
+differences a loop-off student can see are UI only: the legacy session-rating
+dialog renders the shared `learn/SessionRatingScale` (accessible names such as
+"4 – Great session"), and its cross-session cooldown lives in
+`frontend/src/lib/feedbackPacing.ts`.
+
 **Why.** A kill switch must work even when the database is down and must not
 leave a half-loop running; a flag that fails open would change pedagogy or
 the measurement protocol without anyone deciding to.
@@ -308,9 +317,12 @@ kill-switch lane.
   constants the E2E specs assert equal the handlers' (`inv_13a`).
 - The TypeSafe SDK is imported only by `backend/agents/_jev.py`, and its client
   exists only in real mode with Jev enabled (`inv_24`).
-- A loop slot's default moves from Gemini to Claude only with its eval
-  re-recorded (`LOOP_SLOTS_PENDING_CLAUDE_EVAL`; `backend/tests/test_anthropic_provider.py`);
-  an evidence slot on an unevaluated model warns at boot (A128).
+- Every slot defaults to Claude (owner decision 2026-11-19). A loop slot whose
+  Claude eval has not been re-recorded stays in `LOOP_SLOTS_PENDING_CLAUDE_EVAL`
+  and lists no claude-* model in `EVALUATED_MODELS`
+  (`backend/tests/test_anthropic_provider.py`); an evidence slot on an
+  unevaluated model warns at boot (A128), and no default may break A22/A124
+  (`backend/tests/test_learning_degraded_mode.py`).
 - A key is verified only by a solve on another model than its writer's: the
   loop's `check_items_solve` against `check_items` (`INDEPENDENT_SLOTS`,
   A124), and the quiz's `quiz_check` against the model that wrote the

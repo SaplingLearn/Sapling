@@ -188,7 +188,7 @@ area; within a group, the order follows the order you meet them. "Spec" is
 |---|---|---|
 | Slot, task | A named model role (`grader`, `loop_tutor`, …) with a default model and settings. | `backend/agents/_providers.py::model_for` |
 | Effort | Claude's quality/cost dial per slot (`low`, `medium`, `high`). | `backend/agents/_providers.py::_ANTHROPIC_EFFORT` |
-| Pending Claude eval | The loop slots that still default to Gemini until their eval datasets are re-recorded on Claude. | `backend/agents/_providers.py::LOOP_SLOTS_PENDING_CLAUDE_EVAL` |
+| Pending Claude eval | The loop slots that default to Claude (since 2026-11-19) but whose eval datasets have not yet been re-recorded on Claude; the boot guard warns for each. | `backend/agents/_providers.py::LOOP_SLOTS_PENDING_CLAUDE_EVAL` |
 | Evidence slot | A slot whose output is evidence or what evidence is graded against; running one on an unevaluated model logs a warning and an event. | `backend/agents/_providers.py::EVIDENCE_SLOTS` |
 | Second opinion | A re-grade on a different model (`grader_second`): it replaces a first run that is invalid or below 0.4 confidence, and confirms a verdict that credits something when the first run contradicts itself or the answer looks suspicious (then both must credit). | `backend/agents/grader.py::grade` |
 | Learning decision seam | The loop's typed closed judgments (is this reason correct, which wrong key matched) with selectable backends, including Jev. | `backend/services/learning_decisions.py` |

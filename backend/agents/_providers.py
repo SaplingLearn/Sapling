@@ -210,10 +210,8 @@ _DEFAULTS: dict[AgentTask, str] = {
 # to its Claude default. `SAPLING_MODEL_FALLBACK_<TASK>` overrides the name,
 # the same ADR-0008 tuning knob the primary has; the flag still gates.
 #
-# Learning-loop slots: a slot still on its Gemini default (the pending set)
-# has no Claude default, so it falls back to nothing; its entry is the Gemini
-# model a Claude flip falls back to, the one its quality gates were recorded
-# on. The two key/alignment checks (A119 check_items_verify, A124
+# Learning-loop slots: each defaults to Claude (2026-11-19) and falls back to
+# the Gemini model its quality gates were recorded on. The two key/alignment checks (A119 check_items_verify, A124
 # check_items_solve) have NO fallback (None): they must come from a different
 # model family than the gemini-* drafter, or a correlated check would pass the
 # drafter's own mistakes, and an unavailable check already fails closed
@@ -453,10 +451,10 @@ EVIDENCE_SLOTS: tuple[AgentTask, ...] = (
     "loop_tutor_lite", "loop_tutor", "loop_tutor_deep", "session_close",
 )
 
-#: The models each evidence slot's quality gates were recorded and passed on:
-#: today exactly its default. A pending slot's set holds no claude-* model
-#: until its A111 eval pass moves it (that change adds the model here, flips
-#: the default and leaves the pending set together). check_items_verify and
+#: The models each evidence slot's quality gates were recorded and passed on.
+#: A pending slot's set holds no claude-* model until its A111 eval pass
+#: lands (that change adds the Claude model here and leaves the pending set
+#: together); until then its Claude default is reported `pending_claude_eval`. check_items_verify and
 #: check_items_solve were built and accepted on claude-haiku-5-5 (A119, A124).
 EVALUATED_MODELS: dict[AgentTask, frozenset[str]] = {
     "check_items": frozenset({"gemini-2.5-flash-lite"}),

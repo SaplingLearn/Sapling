@@ -138,12 +138,14 @@ Operationally:
   `SAPLING_MODEL_LOOP_TUTOR=claude-sonnet-5-5`) moves a slot with no code
   change. The provider follows the name: `claude-*` → Anthropic, `gemini-*` →
   Google; anything else is an error.
-- **Still on Gemini.** `check_items`, `grader`, `grader_second`,
+- **On Claude, eval pending.** `check_items`, `grader`, `grader_second`,
   `learning_decision`, the three `loop_tutor*` tiers and `session_close`
-  default to Gemini until their eval datasets are re-recorded live on Claude
-  and pass (A111; `backend/agents/_providers.py::LOOP_SLOTS_PENDING_CLAUDE_EVAL`).
-  Moving one is: flip its `_DEFAULTS` entry, remove it from the pending set,
-  add the model to its evaluated set, in one change.
+  default to Claude since 2026-11-19 (owner decision), but their eval
+  datasets were recorded on Gemini; until each is re-recorded live on Claude
+  and passes (A111), it stays in
+  `backend/agents/_providers.py::LOOP_SLOTS_PENDING_CLAUDE_EVAL` and the boot
+  guard warns `pending_claude_eval`. Clearing one is: add its Claude model to
+  its evaluated set and remove it from the pending set, in one change.
 - **The evidence-slot guard (A128).** At boot (real mode) and whenever a slot
   resolves a model, an evidence slot on a model outside its evaluated set
   logs one warning and emits one `system.unevaluated_slot` event per process;
