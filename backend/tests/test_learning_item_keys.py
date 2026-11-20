@@ -770,6 +770,7 @@ def admin_client(monkeypatch):
     import routes.admin_check_items as admin
 
     monkeypatch.setattr(admin, "require_admin", lambda request: None)
+    monkeypatch.setattr(admin, "require_admin_recent", lambda request: None)
     monkeypatch.setattr(admin, "get_session_user_id", lambda request: "admin-1")
     monkeypatch.setattr(admin, "log_event", lambda *a, **k: None)
     # spec §13 A123: an approval re-lints the course item's rows (a store write)
@@ -813,6 +814,7 @@ class TestAdminRoutes:
 
         touched = []
         monkeypatch.setattr(admin, "require_admin", deny)
+        monkeypatch.setattr(admin, "require_admin_recent", deny)
         monkeypatch.setattr(admin, "audit_population", lambda c: touched.append(c) or [])
         monkeypatch.setattr(admin, "get_check_item", lambda i, **k: touched.append(i))
         from main import app

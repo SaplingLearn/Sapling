@@ -95,7 +95,7 @@ Three building blocks gate every authenticated route:
 
 - **`get_session_user_id(request)`** — verifies the HMAC token and returns the `user_id`; raises `401` on missing/invalid/expired tokens.
 - **`require_self(user_id, request)`** — confirms the session user matches the target resource owner; raises `403 "Forbidden: not your account"` otherwise.
-- **`require_admin(request)`** — joins `user_roles` to `roles` and checks for the `admin` slug; raises `403 "Admin access required"` otherwise. Step-up: the session must also have been issued within `ADMIN_REAUTH_WINDOW_SECONDS` (12 h), else `401` with `detail.code = "reauth_required"` and the admin console asks for a fresh Google sign-in. **`require_admin_recent(request)`** applies the stricter `ADMIN_DESTRUCTIVE_REAUTH_WINDOW_SECONDS` (30 min) to account wipe/seed/copy, role assign/revoke, email broadcasts and feature-flag changes.
+- **`require_admin(request)`** — joins `user_roles` to `roles` and checks for the `admin` slug; raises `403 "Admin access required"` otherwise. Step-up: the session must also have been issued within `ADMIN_REAUTH_WINDOW_SECONDS` (12 h), else `401` with `detail.code = "reauth_required"` and the admin console asks for a fresh Google sign-in. **`require_admin_recent(request)`** applies the stricter `ADMIN_DESTRUCTIVE_REAUTH_WINDOW_SECONDS` (30 min) to account wipe/seed/copy, role assign/revoke, email broadcasts, feature-flag changes, and the learning loop's check-item retire and holding audit verdicts (`wrong`/`ambiguous`).
 - **`require_role(role_slug)`** — generic factory that returns a checker for any role.
 
 Errors are surfaced as standard FastAPI `HTTPException` with deterministic status codes (`401` unauthenticated, `403` authorized-but-forbidden).

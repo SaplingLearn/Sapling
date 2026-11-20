@@ -791,6 +791,7 @@ def admin_client(monkeypatch):
     import routes.admin_check_items as admin
 
     monkeypatch.setattr(admin, "require_admin", lambda request: None)
+    monkeypatch.setattr(admin, "require_admin_recent", lambda request: None)
     monkeypatch.setattr(admin, "get_session_user_id", lambda request: "admin-1")
     events = []
     monkeypatch.setattr(admin, "log_event", lambda et, **kw: events.append({"event_type": et, **kw}))
@@ -814,6 +815,7 @@ def test_every_admin_endpoint_is_admin_only(monkeypatch, method, path):
     import routes.admin_check_items as admin
 
     monkeypatch.setattr(admin, "require_admin", _deny)
+    monkeypatch.setattr(admin, "require_admin_recent", _deny)
     touched = []
     monkeypatch.setattr(admin, "get_check_item", lambda i, **k: touched.append(i))
     monkeypatch.setattr(admin.item_reports, "report_counts", lambda: touched.append("reports"))
@@ -821,6 +823,30 @@ def test_every_admin_endpoint_is_admin_only(monkeypatch, method, path):
 
     r = getattr(TestClient(app), method)(ADMIN + path)
     assert r.status_code == 403 and touched == []
+
+
+def _stale(request):
+    raise HTTPException(status_code=401, detail={"code": "reauth_required"})
+
+
+@pytest.mark.parametrize("path,body", [("/i1/retire", None), ("/i1/audit", {"verdict": "wrong"}),
+                                       ("/i1/audit", {"verdict": "ambiguous"})])
+def test_an_irreversible_or_holding_decision_needs_a_recent_admin_sign_in(monkeypatch, path, body):
+    """#866 Z40: retire (voids every student's evidence, deletes the item) and
+    a holding audit verdict take the destructive-action step-up — an admin
+    session older than ADMIN_DESTRUCTIVE_REAUTH_WINDOW_SECONDS is a 401
+    reauth_required before anything is read or written."""
+    import routes.admin_check_items as admin
+
+    monkeypatch.setattr(admin, "require_admin", lambda request: None)
+    monkeypatch.setattr(admin, "require_admin_recent", _stale)
+    monkeypatch.setattr(admin, "get_session_user_id", lambda request: "admin-1")
+    touched = []
+    monkeypatch.setattr(admin, "get_check_item", lambda i, **k: touched.append(i))
+    from main import app
+
+    r = TestClient(app).post(ADMIN + path, json=body)
+    assert r.status_code == 401 and touched == []
 
 
 def test_the_queue_decrypts_only_its_page_at_the_read_boundary(admin_client, monkeypatch):
