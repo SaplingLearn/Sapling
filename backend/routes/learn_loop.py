@@ -47,6 +47,7 @@ from pydantic import ValidationError
 
 from services import crisis_support
 from services.ai_budget import enforce_rate_limit
+from services.csrf_origin import require_same_origin_fetch
 import services.loop as loop_service
 from routes._docs import same_doc
 from services.loop import _NOT_ENABLED
@@ -105,6 +106,8 @@ def _kill_switch_first(request: Request) -> None:
 
 
 _RATE_LIMITED = [Depends(_kill_switch_first), Depends(enforce_rate_limit)]
+#: A GET that writes refuses a cross-site browser fetch (#866 Z39).
+_SAME_ORIGIN = [Depends(require_same_origin_fetch)]
 
 
 def _screened(surface: str, *fields: str, respond) -> list:
@@ -382,7 +385,7 @@ async def probe_answer(body: ProbeAnswerBody, request: Request) -> dict:
     return await loop_service.probe_answer(body, request)
 
 
-@router.get("/plan")
+@router.get("/plan", dependencies=_SAME_ORIGIN)  # it writes loop_state (#866 Z39)
 @same_doc(loop_service.plan_get)
 def plan_get(request: Request, user_id: str = Query(...), session_id: str = Query(...)) -> dict:
     return loop_service.plan_get(request, user_id, session_id)
@@ -394,7 +397,7 @@ def plan_approve(body: PlanApproveBody, request: Request) -> dict:
     return loop_service.plan_approve(body, request)
 
 
-@router.get("/review/next")
+@router.get("/review/next", dependencies=_SAME_ORIGIN)  # it serves and opens an item (#866 Z39)
 @same_doc(loop_service.review_next)
 def review_next(
     request: Request, user_id: str = Query(...), course_id: str | None = Query(None)

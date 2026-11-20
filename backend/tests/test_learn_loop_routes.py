@@ -4512,3 +4512,33 @@ def test_a_loop_turn_without_a_turn_id_saves_under_fresh_ids(gate_on, seams):
         seams.save_msg.call_args_list
     )
     assert len({r["id"] for r in store.rows}) == len(store.rows) == 3  # user, reply, action reply
+
+
+# ── #866 Z39: the loop's state-changing GETs refuse a cross-site fetch ──────
+
+
+@pytest.mark.parametrize(
+    "path,seam",
+    [
+        ("/api/learn/loop/review/next?user_id=u1", "review_next"),
+        ("/api/learn/loop/plan?user_id=u1&session_id=s1", "plan_get"),
+    ],
+)
+def test_a_state_changing_get_refuses_a_cross_site_browser_fetch(monkeypatch, path, seam):
+    """GET /review/next serves (writes the review session, opens an item, the
+    help ledger) and GET /plan writes loop_state, but CsrfOriginMiddleware
+    checks only unsafe methods and the Lax cookie rides a top-level
+    navigation or a sibling subdomain's fetch. A browser marks both with
+    Sec-Fetch-Site; only same-origin (the app's /api rewrite) or none (typed
+    by the user) reaches the handler. A non-browser client sends none."""
+    import services.loop as loop_service
+
+    calls = []
+    monkeypatch.setattr(loop_service, seam, lambda *a, **k: calls.append(a) or {})
+    for site in ("cross-site", "same-site"):
+        r = client.get(path, headers={"Sec-Fetch-Site": site})
+        assert r.status_code == 403, (site, r.text)
+    assert calls == []
+    for headers in ({"Sec-Fetch-Site": "same-origin"}, {"Sec-Fetch-Site": "none"}, {}):
+        assert client.get(path, headers=headers).status_code == 200
+    assert len(calls) == 3
