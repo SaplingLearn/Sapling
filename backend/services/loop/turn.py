@@ -165,6 +165,16 @@ def _turn_row_ids(kind, session_id: str, body) -> tuple[str | None, str | None]:
     )
 
 
+def _credit_for(entry: dict) -> str:
+    """#866 K07: what a CORRECT graded answer earned, from the help its step
+    recorded (`max_rung`, the A88/A93 floor included) through the one evidence
+    mapping (`policy.evidence_for_rung`): "full", "partial" (help H1-H3: the
+    assisted weight) or "none" (H4-H6: no upward evidence). Never a model's
+    word; the client words the verdict banner from it."""
+    weight = policy.evidence_for_rung(True, Rung(int(entry.get("max_rung") or 0))).weight
+    return "none" if weight <= 0 else "partial" if weight < 1 else "full"
+
+
 class _LoopTurn:
     """One loop turn, shared by the JSON and streamed paths.
 
@@ -1485,4 +1495,6 @@ class _LoopTurn:
         }
         if getattr(self, "ask_rating", False):  # PKG-14: present only when true, never false
             extra["ask_rating"] = True
+        if self.kind == "feedback" and self.verdict == "correct":
+            extra["credit"] = _credit_for(self.entry)  # #866 K07
         return extra

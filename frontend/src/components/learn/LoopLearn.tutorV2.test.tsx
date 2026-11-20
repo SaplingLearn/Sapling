@@ -1023,6 +1023,43 @@ describe("K31 — Tutor V2 renames and deletes sessions, as the legacy Learn scr
   });
 });
 
+describe("K07 — the verdict says what a correct answer earned", () => {
+  const plan1 = { concepts: [{ node_id: "n1", concept_name: "Recursion", kind: "new" }], cursor: 0 };
+  async function answerCorrect(credit?: "full" | "partial" | "none") {
+    api.getLoopSessionStatus.mockResolvedValue(status({ approved_plan: plan1 }));
+    api.nextLoopCheck.mockResolvedValue({ phase: "check", check: pose });
+    api.streamLoopCheckAnswer.mockResolvedValue(turn({
+      reply: "Right.", phase: "feedback", graded: true, verdict: "correct",
+      learner_state: [{ node_id: "n1", p_known: 0.6, band: "develop" }], ...(credit ? { credit } : {}),
+    }));
+    await resumedTeach();
+    fireEvent.click(await screen.findByTestId("loop-check-me"));
+    await screen.findByTestId("loop-check-prompt");
+    fireEvent.change(screen.getByTestId("loop-attempt-input"), { target: { value: "n == 0" } });
+    fireEvent.click(screen.getByTestId("loop-attempt-submit"));
+    return screen.findByTestId("loop-verdict");
+  }
+
+  it("a correct answer after a worked example or a shown answer does not say it counts", async () => {
+    const banner = await answerCorrect("none");
+    expect(banner.getAttribute("data-credit")).toBe("none");
+    expect(banner.textContent).toContain("Correct");
+    expect(banner.textContent).not.toContain("That answer counts toward this concept.");
+    expect(banner.textContent).toContain("doesn't count toward the concept");
+  });
+
+  it("a correct answer after a hint says it counts partly", async () => {
+    const banner = await answerCorrect("partial");
+    expect(banner.textContent).toContain("counts partly toward this concept");
+  });
+
+  it("an unassisted correct answer, or a server that sends no credit, counts in full", async () => {
+    expect((await answerCorrect("full")).textContent).toContain("That answer counts toward this concept.");
+    cleanup();
+    expect((await answerCorrect()).textContent).toContain("That answer counts toward this concept.");
+  });
+});
+
 describe("K11 — a refusal mid-stream is read as the refusal it is", () => {
   it("the daily AI limit is the pause banner with its reset time, not 'try again', and no Retry", async () => {
     const reset = "2026-11-21T00:00:00+00:00";

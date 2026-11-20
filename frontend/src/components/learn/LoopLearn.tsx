@@ -320,7 +320,7 @@ export function LoopLearn() {
   // PKG-14: the session a graded check asked to rate (done.ask_rating); one click hides it
   const [askRating, setAskRating] = useState<string | null>(null);
   // Wireframe T9: the last graded check's verdict, shown over the feedback turn
-  const [verdict, setVerdict] = useState<{ verdict: string; nodeId: string | null } | null>(null);
+  const [verdict, setVerdict] = useState<{ verdict: string; nodeId: string | null; credit?: LoopTurnResult["credit"] } | null>(null);
   // Spec §13 A138: the open segment-opening guess; A139: the open "why" prompt.
   // Both are server-driven: a served turn closes them and may open new ones.
   const [prequestion, setPrequestion] = useState<LoopPrequestion | null>(null);
@@ -1236,7 +1236,7 @@ export function LoopLearn() {
     if (res.replayed) return;
     if (res.approved_plan) setApprovedPlan(res.approved_plan); // K08: the server moved the plan's cursor
     if (submission && res.graded) {
-      setVerdict(res.verdict ? { verdict: res.verdict, nodeId: res.learner_state?.[0]?.node_id ?? state.focusNodeId } : null);
+      setVerdict(res.verdict ? { verdict: res.verdict, nodeId: res.learner_state?.[0]?.node_id ?? state.focusNodeId, credit: res.credit } : null);
       setPendingGrade(null);
       // graded — correct, not yet, idk, or a refusal the server graded as idk:
       // the item takes no more answers
@@ -2114,7 +2114,7 @@ export function LoopLearn() {
       ) : (
         <>
           {state.phase === "feedback" && verdict && (
-            <VerdictBanner verdict={verdict.verdict} concept={conceptAt(conceptNames, verdict.nodeId, approvedPlan)}
+            <VerdictBanner verdict={verdict.verdict} credit={verdict.credit} concept={conceptAt(conceptNames, verdict.nodeId, approvedPlan)}
               next={nextAfterVerdict(approvedPlan, verdict.nodeId, conceptNames)} />
           )}
           {renderTeachActions(firstConcept)}

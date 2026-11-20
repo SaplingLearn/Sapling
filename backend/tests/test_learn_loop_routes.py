@@ -1784,6 +1784,32 @@ def test_check_answer_grades_flushes_once_then_one_feedback_turn(gate_on, seams)
 
 
 @pytest.mark.parametrize(
+    "rung,credit", [(0, "full"), (1, "partial"), (3, "partial"), (4, "none"), (6, "none")]
+)
+def test_check_answer_says_what_a_correct_answer_earned(gate_on, seams, rung, credit):
+    """#866 K07: a correct answer after help is credited at the assisted weight
+    (H1-H3) or not at all (H4-H6: the worked example, a reveal); the response
+    names which, from the step's rung through policy.evidence_for_rung, so the
+    verdict banner never says a no-credit answer counted."""
+    seams.store["doc"] = _state(rung=rung)
+    agent_p, usage_p, _ = _feedback_agent()
+    with agent_p, usage_p:
+        body = client.post("/api/learn/loop/check/answer", json=_answer(answer="n == 0 returns 1")).json()
+    assert body["verdict"] == "correct" and body["credit"] == credit
+    weight = policy.evidence_for_rung(True, Rung(rung)).weight
+    assert (credit == "none") == (weight == 0) and (credit == "full") == (weight == 1)
+
+
+def test_check_answer_names_no_credit_for_a_wrong_answer(gate_on, seams):
+    """#866 K07: `credit` rides a correct verdict only."""
+    seams.grade.return_value = WRONG
+    agent_p, usage_p, _ = _feedback_agent("Not quite. Try factorial(1) next?")
+    with agent_p, usage_p:
+        body = client.post("/api/learn/loop/check/answer", json=_answer(answer="it recurses")).json()
+    assert body["verdict"] == "not_yet" and "credit" not in body
+
+
+@pytest.mark.parametrize(
     "first_confidence,label",
     [(0.9, "claude"), (GRADER_SECOND_OPINION_CONFIDENCE / 2, "claude_second")],
 )
