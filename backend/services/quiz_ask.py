@@ -139,10 +139,12 @@ def quiz_ask_session_ids(handle, *, to_iso: str) -> set[str]:
 
 def _quoted_texts(user_id: str, attempt_id: str, question_index: int) -> list[str]:
     """The quiz question's own text as stored on the student's attempt — its
-    stem, option texts, key, accepted answers and explanation — and the answer
-    the student recorded for it: everything the Ask panel's first message
-    quotes. [] for an attempt that is missing or another student's, or no such
-    question (the message is then screened as typed, as before)."""
+    stem, option texts (the chosen one among them), key, accepted answers and
+    explanation: what the Ask panel's first message quotes of the question.
+    Never the answer the student WROTE ("I wrote: …"): that is their own typed
+    text, screened as typed. [] for an attempt that is missing or another
+    student's, or no such question (the message is then screened as typed, as
+    before)."""
     rows = table("quiz_attempts").select(
         "user_id,questions_json", filters={"id": f"eq.{attempt_id}"}, limit=1
     )
@@ -160,16 +162,6 @@ def _quoted_texts(user_id: str, attempt_id: str, question_index: int) -> list[st
     texts = [question.get("question"), *(o.get("text") for o in options),
              question.get("correct_answer"), *(question.get("accepted_answers") or []),
              question.get("explanation")]
-    from services.quiz.wire import _written_response_text
-
-    for row in table("quiz_responses").select(
-        "attempt_id,question_index,selected_index,answer_text",
-        filters={"attempt_id": f"eq.{attempt_id}", "question_index": f"eq.{question_index}"},
-    ) or []:
-        texts.append(_written_response_text(row))
-        selected = row.get("selected_index")
-        if isinstance(selected, int) and 0 <= selected < len(options):
-            texts.append(options[selected].get("text"))
     return sorted({t.strip() for t in texts if isinstance(t, str) and t.strip()}, key=len, reverse=True)
 
 

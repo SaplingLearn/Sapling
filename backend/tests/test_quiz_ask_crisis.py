@@ -9,11 +9,13 @@ message got the crisis card INSTEAD of the explanation, every time, and Retry
 re-sent the same message.
 
 The message names the question it quotes (`quiz_attempt_id`,
-`quiz_question_index`, as the session start does). Text found on that question
-of the student's own attempt — and the answer they recorded — is stored
+`quiz_question_index`, as the session start does). Text of that question on the
+student's own attempt found in the message is stored
 material: the turn runs and the card rides BESIDE the reply, its event once a
-day. Everything else in the message is typed and blocks as before, and a quote
-that is not the student's, or not in the message, changes nothing.
+day. Everything else in the message is typed and blocks as before — the answer
+the student WROTE ("I wrote: …") included, and a stored text found only inside
+typed words — and a quote that is not the student's, or not in the message,
+changes nothing.
 """
 
 from __future__ import annotations
@@ -71,21 +73,18 @@ def flag(monkeypatch):
 
 @pytest.fixture
 def stored(monkeypatch):
-    """The student's attempt and recorded answer, as services/quiz_ask.py reads
-    them (decryption stood in). Yields the table factory's call log and a dict
-    to change the attempt's owner or question with."""
+    """The student's attempt, as services/quiz_ask.py reads it (decryption
+    stood in). Yields the table factory's call log and a dict to change the
+    attempt's owner or question with."""
     state = {"owner": "u1", "question": QUESTION}
     reads: list[str] = []
 
     def table(name):
         reads.append(name)
         handle = MagicMock()
-        if name == "quiz_attempts":
-            handle.select.return_value = [{"user_id": state["owner"], "questions_json": [state["question"]]}]
-        else:
-            handle.select.return_value = [
-                {"attempt_id": "att1", "question_index": 0, "selected_index": 1, "answer_text": None}
-            ]
+        handle.select.return_value = (
+            [{"user_id": state["owner"], "questions_json": [state["question"]]}] if name == "quiz_attempts" else []
+        )
         return handle
 
     with (
@@ -186,23 +185,29 @@ def test_what_the_question_does_not_hold_is_typed_and_blocks(message, quoted, ch
     assert len(_shown(sink)) == 1
 
 
-def test_a_written_answer_the_student_recorded_is_stored_material_too(flag, sink, stored, tutor):
-    """The panel quotes what the student wrote ("I wrote: …"); it is their
-    recorded answer, read off quiz_responses — material they stored, not a
-    message they are typing now."""
+def _written_seed(question: dict, wrote: str) -> str:
+    return "\n".join(["I got this quiz question wrong and want to understand why.", "",
+                      f"Question: {question['question']}", f"I wrote: {wrote}",
+                      f"The correct answer is: {question['correct_answer']}",
+                      f"Explanation given: {question['explanation']}", "", "Help me understand why."])
+
+
+@pytest.mark.parametrize("path", ["/api/learn/chat", "/api/learn/chat/stream"])
+def test_a_written_answer_is_the_students_own_typed_text_and_blocks(path, flag, sink, stored, tutor):
+    """The panel quotes what the student wrote ("I wrote: …"). That is text
+    they typed, not the question's material: a crisis phrase in it gets the
+    card INSTEAD of the turn, as it would anywhere else they type, and nothing
+    of quiz_responses is read to unblock it."""
     flag("on")
-    written = {**QUESTION, "type": "short_answer", "options": [], "correct_answer": "Ask about the plan",
-               "question": "What should the nurse do first?"}
+    written = {**QUESTION, "type": "short_answer", "options": [], "correct_answer": "Ask about the plan"}
     stored["state"]["question"] = written
-    seed = "\n".join(["I got this quiz question wrong and want to understand why.", "",
-                      f"Question: {written['question']}", f"I wrote: {TYPED_CRISIS}",
-                      "The correct answer is: Ask about the plan", f"Explanation given: {EXPLANATION}", "",
-                      "Help me understand why."])
-    with patch("services.quiz.wire._written_response_text", return_value=TYPED_CRISIS):
-        r = client.post("/api/learn/chat", json=_turn(seed))
+    r = client.post(path, json=_turn(_written_seed(written, TYPED_CRISIS)))
     assert r.status_code == 200, r.text
-    assert r.json()["crisis_support_alongside"] is True
-    tutor["chat"].assert_awaited_once()
+    body = _events(r.text)[-1][1]["data"] if path.endswith("stream") else r.json()
+    assert body["crisis_support"] == CARD and "crisis_support_alongside" not in body
+    tutor["chat"].assert_not_awaited()
+    tutor["stream"].assert_not_awaited()
+    assert "quiz_responses" not in stored["reads"]
 
 
 def test_with_the_flag_off_the_seed_runs_as_before_and_nothing_is_read(flag, sink, stored, tutor):
