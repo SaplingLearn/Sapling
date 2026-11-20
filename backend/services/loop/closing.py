@@ -8,6 +8,7 @@ import copy
 import logging
 import re
 import uuid
+from datetime import datetime, timezone
 from services.loop.errors import HTTPException
 from starlette.requests import Request
 from agents._run import run_agent_sync
@@ -320,6 +321,7 @@ async def close_session(
     *,
     request_id: str | None = None,
     rate_limit: str | None = None,
+    seen: dict | None = None,
 ) -> dict:
     """Close a loop session (Behaviour 10). A pending (never-materialised)
     session has no transcript or evidence: its deterministic close is stored
@@ -331,9 +333,12 @@ async def close_session(
     then stored ONCE (the write is conditional on `close_json IS NULL`), the
     phase moved to `close`, and `learn.session_closed` emitted. A close that
     finds the session already closed returns the stored close: no model call,
-    no write, no event."""
+    no write, no event. `seen` (when given) learns whether the session was
+    still pending (`seen["pending"]`), for `close`'s end of the session."""
     request_id = request_id or current_request_id() or str(uuid.uuid4())
     pending = await asyncio.to_thread(claim_pending, session_id, user_id)  # 404 if foreign
+    if seen is not None:
+        seen["pending"] = pending is not None
     claim = ""
     if pending is not None:
         phase = "close"
@@ -446,9 +451,46 @@ async def close(body: CloseBody, request: Request) -> dict:
     if not body.user_id:
         body.user_id = await guard_off_loop(get_session_user_id, request)
     await _agate(body.user_id, request)
-    return await close_session(
-        body.session_id, body.user_id, request_id=_request_id(request), rate_limit="raise"
+    seen: dict = {}
+    closed = await close_session(
+        body.session_id,
+        body.user_id,
+        request_id=_request_id(request),
+        rate_limit="raise",
+        seen=seen,
     )
+    # #117: the legacy end body is sync (DB reads and writes): off the event loop
+    await asyncio.to_thread(
+        _end_closed_session, body.session_id, body.user_id, request, pending=seen.get("pending", False)
+    )
+    return closed
+
+
+def _end_closed_session(session_id: str, user_id: str, request: Request, *, pending: bool) -> None:
+    """PR #866 K04: Wrap up (/close) ends the session, as /end-session does —
+    `ended_at`, the session XP, the streak, `session.ended`, the summary and the
+    session achievements — through the legacy end body itself (never its loop
+    delegate, which would close again). That body ends only a session whose
+    `ended_at` is still null, so a repeated close (the stored close returned)
+    awards nothing twice, and a failure here leaves the close stored for the
+    client's retry to finish. A session closed while still pending (no turn
+    was ever taken) earns nothing, as the legacy end of a pending session
+    earns nothing: only the row its close created is marked ended. (The
+    response stays the close: no client reads the end's achievements.)"""
+    if pending:
+        table("sessions").update(
+            {"ended_at": datetime.now(timezone.utc).isoformat()},
+            filters={"id": f"eq.{session_id}", "user_id": f"eq.{user_id}", "ended_at": "is.null"},
+        )
+        return
+    _legacy_end(EndSessionBody(session_id=session_id, user_id=user_id), request)
+
+
+def _legacy_end(body: EndSessionBody, request: Request) -> dict | None:
+    """The legacy tutor's end body, with no loop delegate (K04)."""
+    from services import tutor  # lazy: the domain map (services/tutor/__init__.py)
+
+    return tutor.end_session(body, request)
 
 
 def end_session(body: EndSessionBody, request: Request) -> None:
