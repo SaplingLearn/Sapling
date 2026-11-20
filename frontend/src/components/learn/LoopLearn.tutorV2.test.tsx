@@ -1115,3 +1115,19 @@ describe("K10 — Stop while a saved reply types out keeps the saved turn", () =
     expect(screen.queryByTestId("tutor-retry")).toBeNull();
   });
 });
+
+describe("K52 — the prior is never shown as a measured skill", () => {
+  it("a chat turn on a concept with no stored state leaves its meter at 'not started'", async () => {
+    api.getLoopSessionStatus.mockResolvedValue(status({ approved_plan: { concepts: [{ node_id: "n1", concept_name: "Recursion", kind: "new" }], cursor: 0 } }));
+    api.streamLoopChat.mockResolvedValue(turn({ reply: "Think about when it stops.", phase: "check",
+      learner_state: [{ node_id: "n1", p_known: 0.35, band: "develop", measured: false }] }));
+    await resumedTeach();
+    fireEvent.change(screen.getByTestId("tutor-input"), { target: { value: "hmm" } });
+    fireEvent.click(screen.getByTestId("tutor-send"));
+    await screen.findByText("Think about when it stops.");
+    const meter = screen.getByRole("meter", { name: "Recursion skill" });
+    expect(meter.getAttribute("aria-valuenow")).toBe("0");
+    expect(meter.parentElement?.textContent).toContain("—");
+    expect(meter.parentElement?.textContent).not.toContain("35%");
+  });
+});

@@ -244,6 +244,7 @@ class _LoopTurn:
         self.concept_node = self.node_id or self.state.get("concept")
         learner = _learner_state(self.user_id, self.concept_node)
         self.band, self.p_known = _band_of(learner)
+        self.measured = learner is not None  # #866 K52: no stored state = the prior, not a measurement
         self.variant = arms.variant_for(self.user_id, self.concept_node or "", self.arm)
         self.verdict = verdict or (
             self.entry.get("last_verdict") if self.phase == "feedback" else None
@@ -1100,7 +1101,10 @@ class _LoopTurn:
             "tier": self.tier,
             "ceiling": int(self.ceiling),
             "learner_state": (
-                [{"node_id": self.node_id, "p_known": self.p_known, "band": self.band}]
+                # #866 K52: `measured: false` (present only then) — the concept has no
+                # stored state yet, so p_known/band are the BKT prior, never shown as a score
+                [{"node_id": self.node_id, "p_known": self.p_known, "band": self.band,
+                  **({} if self.measured else {"measured": False})}]
                 if self.node_id
                 else []
             ),

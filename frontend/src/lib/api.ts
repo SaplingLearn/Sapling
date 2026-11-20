@@ -1284,7 +1284,9 @@ export type LoopProbeAnswerResult = LoopLearningScope & WithCrisisSupport & (
   // unavailable → counted as not asked; refused (A33) → the item stays posed;
   // recorded: false → graded but lost to a stale claim (the probe moved on)
   | { graded: false; unavailable?: boolean; refused?: boolean; recorded?: boolean });
-export interface LoopLearnerState { node_id: string; p_known: number; band: LoopBand }
+/** `measured: false` (#866 K52; present only then): the concept has no stored
+ *  state yet — p_known/band are the prior, never shown as the student's skill. */
+export interface LoopLearnerState { node_id: string; p_known: number; band: LoopBand; measured?: false }
 export interface LoopPlanConcept {
   node_id: string;
   concept_name: string;

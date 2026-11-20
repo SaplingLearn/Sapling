@@ -2271,6 +2271,27 @@ def test_a_streamed_run_counted_past_the_daily_cap_ends_on_the_budget_notice(gat
     seams.save_msg.assert_not_called()
 
 
+@pytest.mark.parametrize("stored", [True, False])
+def test_a_turn_marks_a_concept_with_no_stored_state_as_unmeasured(gate_on, seams, stored):
+    """#866 K52: a chat turn while a check is posed on a concept the student has
+    no learner_state for reports the BKT prior with `measured: false`, so the
+    client never shows the prior as a measured skill; a stored state carries
+    no such key."""
+    from learning.params import BKT_L0
+
+    if not stored:
+        seams.p_known.pop("node-1")
+    agent_p, usage_p, _ = _feedback_agent("Think about when it stops. What do you notice?")
+    with agent_p, usage_p:
+        body = client.post("/api/learn/loop/chat", json={"session_id": "s1", "user_id": "u1", "message": "hmm"}).json()
+    (entry,) = body["learner_state"]
+    assert entry["node_id"] == "node-1"
+    if stored:
+        assert entry["p_known"] == 0.5 and "measured" not in entry
+    else:
+        assert entry["p_known"] == BKT_L0 and entry["measured"] is False
+
+
 def test_a_template_turn_counts_no_tutor_call(gate_on, seams):
     """The check pose, deterministic payloads, openers at the hard level and
     the refusal/unavailable templates run no model: nothing is counted."""

@@ -60,6 +60,14 @@ export function hintTurnEvents(t: LoopTurnResult): LoopUiEvent[] {
   return events;
 }
 
+/** A turn's learner state: it focuses its concept and, when measured, records
+ *  the concept's skill. #866 K52: an unmeasured one (`measured: false`, the
+ *  prior) moves the focus only — the prior is never shown as a skill. */
+function withLearnerState(state: LoopUiState, ls: LoopLearnerState): LoopUiState {
+  if (ls.measured === false) return { ...state, focusNodeId: ls.node_id };
+  return { ...state, learnerState: { ...state.learnerState, [ls.node_id]: ls }, focusNodeId: ls.node_id };
+}
+
 export function reduceLoopEvent(state: LoopUiState, ev: LoopUiEvent): LoopUiState {
   switch (ev.type) {
     case "phase": {
@@ -81,11 +89,7 @@ export function reduceLoopEvent(state: LoopUiState, ev: LoopUiEvent): LoopUiStat
       };
     }
     case "learner_state":
-      return {
-        ...state,
-        learnerState: { ...state.learnerState, [ev.state.node_id]: ev.state },
-        focusNodeId: ev.state.node_id,
-      };
+      return withLearnerState(state, ev.state);
     case "budget":
       // soft = the invisible downgrade (spec §3.5): nothing renders
       if (ev.level !== "hard") return state;
