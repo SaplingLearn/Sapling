@@ -960,6 +960,25 @@ def test_status_lists_the_approved_plan_for_the_session_panel(gate_on, seams, mo
     assert "approved_plan" not in body and len(seen) == 1
 
 
+def test_status_names_why_a_goal_session_planned_each_concept(gate_on, seams, monkeypatch):
+    """#866 K28: in a goal session GET /plan says why each concept is there (the
+    goal, or a prerequisite of it); the approved plan /status lists after a
+    reload says the same, so the plan's row in the conversation keeps its
+    words. Every concept a goal session plans is in the goal's scope."""
+    setattr_loop(monkeypatch, "_plan_node_names", lambda uid, ids: {"n1": "Binary", "n2": "Bitwise"})
+    seams.store["doc"] = {
+        "phase": "teach",
+        "goal": {"target_node_ids": ["n2"], "text_encrypted": None},
+        "goal_version": 1,
+        "plan": {"approved": ["n1", "n2"], "cursor": 0, "proposed_kinds": {"n1": "new", "n2": "new"}},
+    }
+    body = client.get("/api/learn/loop/status?user_id=u1&session_id=s1").json()
+    assert body["approved_plan"]["concepts"] == [
+        {"node_id": "n1", "concept_name": "Binary", "kind": "new", "reason": "prerequisite"},
+        {"node_id": "n2", "concept_name": "Bitwise", "kind": "new", "reason": "goal"},
+    ]
+
+
 def test_status_of_a_lazy_session_is_a_fresh_state(gate_on, seams):
     from services.tutor_sessions import PENDING_SESSIONS
 

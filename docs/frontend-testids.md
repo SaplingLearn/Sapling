@@ -1062,7 +1062,7 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `loop-probe-reference` | the answer shown after a wrong answer or idk (spec §3.3) |
 | `loop-probe-retry` | the next probe item failed to load — retry (`/probe/next`, same session) |
 | `loop-probe-next` | "Next" under the reference — the next probe item, or the plan after the probe's last answer |
-| `loop-plan-concept-{nodeId}` | one planned concept: its name, its one kind badge `loop-plan-kind-{nodeId}` (Due for review / New / Keep practicing / Related practice) and, in a goal session only, `loop-plan-reason-{nodeId}` (Your selected goal / Prerequisite for your goal); a band chip only when the response carries one |
+| `loop-plan-concept-{nodeId}` | one planned concept: its name, its one kind badge `loop-plan-kind-{nodeId}` (Due for review / New / Keep practicing / Related practice) and, in a goal session only, `loop-plan-reason-{nodeId}` (Your selected goal / Prerequisite for your goal), which /status's approved plan carries too |
 | `loop-plan-kind-{nodeId}` | that concept's kind badge (`learn/planLabels.ts::planKind`, from GET /plan `kind`: review / new / started / sibling); the session panel shows the same label under the concept's name |
 | `loop-plan-reason-{nodeId}` | why a goal session plans it (`planGoalReason`: `goal` / `prerequisite`); absent outside a goal session |
 | `loop-plan-retry` | the plan failed to load — retry (`GET /plan`) |

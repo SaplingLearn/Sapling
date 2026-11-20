@@ -1275,7 +1275,6 @@ export interface LoopPlanConcept {
    *  unexplored). `string`: a kind this client does not know shows no badge. */
   kind: 'review' | 'new' | 'started' | 'sibling' | string;
   p_known: number;
-  band?: LoopBand;
   /** Sent only in a goal session: 'goal' | 'prerequisite'. 'review' and
    *  'related' are what servers before #866 sent outside a goal; they stay in
    *  the union for deploy skew and are never shown (`planGoalReason`). */

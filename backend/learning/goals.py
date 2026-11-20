@@ -126,10 +126,18 @@ def approved_plan_view(state: dict, names) -> dict:
     kinds = plan.get("proposed_kinds") if isinstance(plan.get("proposed_kinds"), dict) else {}
     cursor = plan.get("cursor")
     named = names(approved)
+    # #866 K28: GET /plan's `reason` in a goal session (the goal, or a
+    # prerequisite of it): every concept a goal session plans is in its scope
+    goal = state.get("goal") if isinstance(state.get("goal"), dict) else {}
+    targets = set(goal.get("target_node_ids") or [])
+
+    def reason(n: str) -> dict:
+        return {"reason": "goal" if n in targets else "prerequisite"} if targets else {}
+
     return {
         "approved_plan": {
             "concepts": [
-                {"node_id": n, "concept_name": named.get(n, ""), "kind": kinds.get(n) or "new"}
+                {"node_id": n, "concept_name": named.get(n, ""), "kind": kinds.get(n) or "new", **reason(n)}
                 for n in approved
             ],
             "cursor": cursor if isinstance(cursor, int) and not isinstance(cursor, bool) else 0,

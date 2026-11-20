@@ -7,7 +7,6 @@ import { planGoalReason, planKind } from "./planLabels";
 import { Icon } from "../Icon";
 import tutorStyles from "./tutor/tutor.module.css";
 import { modalOpen } from "./modalOpen";
-import { BAND_LABEL } from "./loopShared";
 import { TutorTurn } from "./TutorTurn";
 
 export function PlanPanel({
@@ -68,7 +67,6 @@ export function PlanPanel({
                   <span style={{ flex: "1 1 100px", minWidth: 0, overflowWrap: "anywhere", fontSize: 14, fontWeight: 500 }}>{c.concept_name || "Concept"}
                     {why && <span data-testid={`loop-plan-reason-${c.node_id}`} className={tutorStyles.ps} style={{ display: "block", marginTop: 2, fontWeight: 400 }}>{why}</span>}
                   </span>
-                  {c.band && <span className="chip">{BAND_LABEL[c.band] ?? c.band}</span>}
                   {kind && <span data-testid={`loop-plan-kind-${c.node_id}`} className={kind.chip}>{kind.label}</span>}
                 </li>
               );

@@ -497,6 +497,23 @@ describe("U2 — the history stays true after the plan is approved", () => {
     expect(screen.getByTestId("tutor-messages").textContent).not.toContain("Welcome!");
     expect(screen.getByTestId("tutor-messages").textContent).not.toContain("Here's today's plan");
   });
+
+  it("K28: a goal session's plan keeps its reasons after a reload (/status sends them)", async () => {
+    api.resumeSession.mockResolvedValue({ session: { id: "s2" }, messages: [
+      { id: "m0", role: "assistant", content: OPENER, created_at: "" },
+      { id: "m1", role: "assistant", content: "welcome back", created_at: "" },
+    ] });
+    api.getLoopSessionStatus.mockResolvedValue(status({
+      goal: { text: "", target_node_ids: ["n2"] },
+      approved_plan: { concepts: [
+        { node_id: "n1", concept_name: "Binary", kind: "new", reason: "prerequisite" },
+        { node_id: "n2", concept_name: "Bitwise", kind: "new", reason: "goal" },
+      ], cursor: 0 },
+    }));
+    await resumedTeach();
+    await waitFor(() => expect(screen.getByTestId("tutor-messages").textContent).toContain("1. Binary — Prerequisite for your goal"));
+    expect(screen.getByTestId("tutor-messages").textContent).toContain("2. Bitwise — Your selected goal");
+  });
 });
 
 describe("U5 — the conversation keeps a readable width", () => {
