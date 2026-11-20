@@ -516,6 +516,8 @@ entered the lint block new, so there is no baselined backlog.
 | `admin-analytics-cost-group-feature` / `-user` / `-model` | the LLM-cost group-by toggle (drives the `group_by` query) |
 | `admin-analytics-usage-retry` / `-users-retry` / `-cost-retry` / `-errors-retry` | per-panel "Try again" after a failed load (`error && !data` gate) |
 | `admin-analytics-users-sort-events` / `-cost` / `-tokens` | Top-users table column-sort headers (#122) — first click sorts desc, second flips |
+| `admin-loop-gate-leaks` / `-ceiling` / `-earnest` | the spec §10 gate chips (`screens/admin/LoopGates.tsx`), `data-state` `pass` / `fail` / `inconclusive` — inconclusive when nothing in the range carries the gate's signal (#866 K56), never a silent pass |
+| `admin-loop-gate-counts` / `admin-loop-gate-unscanned` | #866 K57: what the gates counted — served reveals, leaks caught and cut before serving, turns served unscanned, the steps ceiling compliance was measured on — and, when any turn was served unscanned, the note that "Zero served reveals" cannot vouch for it (absent at zero) |
 | `admin-loop-items-link` | the Learning loop panel's link to the `/admin/check-items` review queue (spec §13 A113) |
 | `admin-loop-calibration-void` | the calibration's "N answers to retired questions left out" line (spec §13 A123: void evidence; absent at zero) |
 | `admin-loop-confidence` | the Learning loop panel's "Do students know what they know?" table (spec §13 A127): stated confidence vs correctness; rows `admin-loop-confidence-{channel}-{level}` (`other` for a value no level names) and `admin-loop-confidence-{channel}-all` |

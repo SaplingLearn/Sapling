@@ -19,6 +19,7 @@ import { TopBar } from "../TopBar";
 import { useToast } from "../ToastProvider";
 import { HelpAbusePanel } from "./admin/HelpAbusePanel";
 import { HintTrendPanel } from "./admin/HintTrendPanel";
+import { LoopGates } from "./admin/LoopGates";
 import { SelfExplanationPanel } from "./admin/SelfExplanationPanel";
 import { MultiConceptPanel } from "./admin/MultiConceptPanel";
 import { LoopCostPanel } from "./AdminLoopCost";
@@ -172,17 +173,6 @@ function Panel<T>({ title, query, testid, children }: {
 
 const fmtRate = (v: number | null) => (v == null ? "—" : formatPct(v * 100));
 const fmtNum = (v: number | null, digits = 3) => (v == null ? "—" : v.toFixed(digits));
-
-/** A §10 gate: pass / fail, or "inconclusive" (null) — never a silent pass. */
-function GateChip({ label, ok, testid }: { label: string; ok: boolean | null; testid: string }) {
-  const state = ok == null ? "inconclusive" : ok ? "pass" : "fail";
-  return (
-    <span data-testid={testid} data-state={state} className={`chip ${ok === false ? "chip--err" : ""}`}
-      title={ok == null ? "No step carries the signal yet in this range." : undefined}>
-      {label}: {state}
-    </span>
-  );
-}
 
 /** BKT's predicted P(correct) against what students actually did unaided
  *  (spec §13 A110). A well-calibrated model's 0.8 predictions come true ~80%
@@ -578,11 +568,7 @@ export function LearningLoopPanelBody({ d }: { d: LearningLoopKpisData }) {
     <>
       <SlotWarnings warnings={d.slot_warnings ?? []} />
       {d.truncated && <div style={{ marginBottom: 8 }}><TruncatedBadge /></div>}
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
-        <GateChip label="Zero served reveals" ok={d.gates.zero_leaks} testid="admin-loop-gate-leaks" />
-        <GateChip label="Ceiling compliance ≥ 95%" ok={d.gates.ceiling_compliance_ok} testid="admin-loop-gate-ceiling" />
-        <GateChip label="Earnest-revise ≤ 5%" ok={d.gates.earnest_revise_ok} testid="admin-loop-gate-earnest" />
-      </div>
+      <LoopGates d={d} />
       <div style={{ display: "flex", gap: 24, flexWrap: "wrap", marginBottom: 16 }}>
         <Stat label="Graded steps" value={d.steps_total} />
         <Stat label="In-band share" value={fmtRate(d.in_band_share)} />
