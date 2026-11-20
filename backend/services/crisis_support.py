@@ -530,7 +530,8 @@ async def _stream_with_card(events: Any, payload: dict[str, Any]):
     carrying the card (`_STREAM_CARD_KEYS`); every other event as it came."""
     try:
         async for item in events:
-            extra = _STREAM_CARD_KEYS.get(item.get("event")) if isinstance(item, dict) else None
+            event_type = item.get("event") if isinstance(item, dict) else None
+            extra = _STREAM_CARD_KEYS.get(event_type) if isinstance(event_type, str) else None
             if extra is not None:
                 event = json.loads(item["data"])
                 event["data"] = {**(event.get("data") or {}), "crisis_support": payload, **extra}
