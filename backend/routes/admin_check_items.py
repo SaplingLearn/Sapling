@@ -76,7 +76,7 @@ from learning.params import (
     ITEM_STATS_LOW_DISCRIMINATION,
     ITEM_STATS_MIN_N,
 )
-from services.auth_guard import get_session_user_id, require_admin
+from services.auth_guard import get_session_user_id, require_admin, require_admin_recent
 from services.check_item_service import (
     audit_population,
     confirm_course_item,
@@ -212,8 +212,9 @@ def retire(item_id: str, request: Request) -> dict:
     """Retire the course item now: the decision is recorded first (from then
     on no grade of it commits and nothing serves it), then its evidence is
     voided student by student and its rows deleted. A failure (503) leaves it
-    retire-pending in the queue; retiring again finishes it."""
-    require_admin(request)
+    retire-pending in the queue; retiring again finishes it. Irreversible, so
+    it takes the destructive-action step-up (#866 Z40)."""
+    require_admin_recent(request)
     admin = get_session_user_id(request)
     item = _stored(item_id)
     _decide(item, item_reports.RETIRED, admin)
@@ -324,8 +325,13 @@ def audit_summary(request: Request, course_id: str) -> dict:
 def audit(item_id: str, body: AuditBody, request: Request) -> dict:
     """Record staff's verdict on the item's key and act on it: "correct"
     confirms the key, "wrong" / "ambiguous" holds it (503 when it could not
-    be recorded; recording it again finishes it)."""
-    require_admin(request)
+    be recorded; recording it again finishes it). A holding verdict holds the
+    item from every student in the course, so it takes the destructive-action
+    step-up (#866 Z40); "correct" only confirms."""
+    if body.verdict == "correct":
+        require_admin(request)
+    else:
+        require_admin_recent(request)
     admin = get_session_user_id(request)
     item = _stored(item_id)
     try:

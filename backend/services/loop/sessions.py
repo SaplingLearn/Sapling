@@ -44,9 +44,10 @@ def status(request: Request, user_id: str, session_id: str) -> dict:
     _gate(user_id, request)
     pending = get_pending(session_id)
     if pending is not None:
-        if pending.get("user_id") != user_id:
-            raise HTTPException(status_code=404, detail="Session not found")
-        state: dict = copy.deepcopy(pending.get("loop_state") or {})
+        # #866 Z41: another student's pending session answers like an id that
+        # names nothing (a fresh loop), never a 404 that says it exists
+        mine = pending.get("user_id") == user_id
+        state: dict = copy.deepcopy(pending.get("loop_state") or {}) if mine else {}
     else:
         try:
             _session_scope(session_id, user_id)

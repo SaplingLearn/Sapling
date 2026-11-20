@@ -11,7 +11,7 @@
 // Rendered inside the check card under a worked-example hint (the Hint button
 // keeps focus there), or in place of the Continue / Check me row after
 // feedback — where LoopLearn moves lost focus to `inputRef` (spec §13 A135).
-import React, { useId, useState } from "react";
+import React, { useEffect, useId, useState } from "react";
 
 import type { LoopSelfExplain } from "@/lib/api";
 
@@ -33,13 +33,22 @@ export const SELF_EXPLAIN_SUBLINE = "Not scored — a sentence or two is plenty.
 export function SelfExplainCard({
   prompt,
   busy,
+  saving = busy,
   onSend,
   onSkip,
+  onDraft,
   inputRef,
   nested = false,
 }: {
   prompt: LoopSelfExplain;
+  /** Nothing can be sent or skipped (this reply saving, or another turn running). */
   busy: boolean;
+  /** This card's own reply is being saved: only then does Send say "Saving…". */
+  saving?: boolean;
+  /** Whether the card holds unsent text (false again when it goes), so
+   *  LoopLearn can hold the chat: a served turn would close the card and drop
+   *  the text (#866 Z60). Pass a stable callback (a state setter). */
+  onDraft?: (hasText: boolean) => void;
   onSend: (reply: string) => void;
   onSkip: () => void;
   /** The reply box, for LoopLearn's focus move after feedback. */
@@ -48,10 +57,13 @@ export function SelfExplainCard({
   nested?: boolean;
 }) {
   const [reply, setReply] = useState("");
+  const hasText = reply.trim() !== "";
+  useEffect(() => { onDraft?.(hasText); }, [hasText, onDraft]);
+  useEffect(() => () => onDraft?.(false), [onDraft]);
   const ids = useId();
   const headingId = `${ids}-heading`;
   const promptId = `${ids}-prompt`;
-  const canSend = !busy && reply.trim() !== "";
+  const canSend = !busy && hasText;
   const send = () => {
     if (canSend) onSend(reply.trim());
   };
@@ -106,7 +118,7 @@ export function SelfExplainCard({
           disabled={!canSend}
           onClick={send}
         >
-          {busy ? "Saving…" : "Send"}
+          {saving ? "Saving…" : "Send"}
         </button>
         <button type="button" data-testid="loop-self-explain-skip" className="btn btn--sm btn--ghost" disabled={busy} onClick={onSkip}>
           Skip

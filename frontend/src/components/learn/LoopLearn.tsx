@@ -93,7 +93,7 @@ import { SelfExplainCard } from "./SelfExplainCard";
 import { retentionHref, useRetentionDue } from "@/context/RetentionDueContext";
 import { Icon } from "../Icon";
 import { TutorSidebar } from "./tutor/TutorSidebar";
-import { TutorAllSessions, TutorCourse, TutorHome, type SessionFilter } from "./tutor/TutorPages";
+import { LoadFailed, TutorAllSessions, TutorCourse, TutorHome, type SessionFilter } from "./tutor/TutorPages";
 import { SessionPanel, type PanelConcept } from "./tutor/SessionPanel";
 import { SessionMap } from "./tutor/SessionMap";
 import { PhaseStepper } from "./tutor/PhaseStepper";
@@ -101,7 +101,7 @@ import { TutorDrawer } from "./tutor/TutorDrawer";
 import { useTutorLayout } from "./tutor/useTutorLayout";
 import { useTutorLists } from "./tutor/useTutorLists";
 import { SidebarGlyph } from "./tutor/TutorIcons";
-import { mergeSessions, sessionTitle, type TutorSessionRow } from "./tutor/sessions";
+import { listedOpenTitle, mergeSessions, sessionTitle, sessionToLeave, type TutorSessionRow } from "./tutor/sessions";
 import tutorStyles from "./tutor/tutor.module.css";
 import { CenteredCard } from "./CenteredCard";
 import { ClosePanel } from "./ClosePanel";
@@ -355,6 +355,7 @@ export function LoopLearn() {
   const [prequestionBusy, setPrequestionBusy] = useState(false);
   const [selfExplain, setSelfExplain] = useState<LoopSelfExplain | null>(null);
   const [selfExplainBusy, setSelfExplainBusy] = useState(false);
+  const [explainDraft, setExplainDraft] = useState(false); // Z60: unsent "why" text holds the chat
   const [selfExplainSaved, setSelfExplainSaved] = useState(false);
 
   // Close
@@ -380,6 +381,7 @@ export function LoopLearn() {
   const bootKey = useRef<string | null>(null);
   const resumePending = useRef(true); // the deep link's ?resume= is honoured once
   const topicStarted = useRef(false); // the deep link's ?topic= starts a session once
+  const lastStart = useRef<{ topic?: string; mode?: string; goal?: boolean }>({}); // the start card's "Try again" repeats it
   const sessionRef = useRef<string | null>(null);
   const streamAbort = useRef<AbortController | null>(null);
   const turnEpoch = useRef(0); // a late recovery snapshot cannot undo a newer turn
@@ -821,15 +823,18 @@ export function LoopLearn() {
 
   /** Start a session and its probe. `closeCurrent` (the "New session" button):
    *  the open session being left is closed first (A60's wrap-up), so sessions
-   *  do not pile up open; a close that cannot run now (409) starts nothing. */
+   *  do not pile up open; a close that cannot run now (409) starts nothing.
+   *  With none on screen (a read-only transcript), the course's listed open
+   *  session is the one left (Z64: one open session per course). */
   const newSession = useCallback(async (
     { closeCurrent = false, topic, mode }: { closeCurrent?: boolean; topic?: string; mode?: string } = {},
   ) => {
     if (!courseId || !userId || sessionTransitionBusy) return;
+    lastStart.current = { topic, mode };
     // An explicit start wins over a boot that has not listed the sessions yet.
     bootKey.current = `${userId}:${courseId}`;
-    const leaving = sessionRef.current;
-    if (closeCurrent && leaving && isOpenPhase(state.phase) && !(await wrapUpLeaving(leaving))) return;
+    const leaving = closeCurrent ? sessionToLeave(sessionRef.current, isOpenPhase(state.phase), openSessions) : null;
+    if (leaving && !(await wrapUpLeaving(leaving))) return;
     const g = ++gen.current;
     clearSessionView();
     setSessionId(null);
@@ -858,7 +863,7 @@ export function LoopLearn() {
     } finally {
       if (g === gen.current) setStarting(false);
     }
-  }, [courseId, userId, course, deepLink, state.phase, sessionTransitionBusy, clearSessionView, nextProbe, reportError, wrapUpLeaving, adoptStarted, listStarted, interceptCrisis]);
+  }, [courseId, userId, course, deepLink, state.phase, openSessions, sessionTransitionBusy, clearSessionView, nextProbe, reportError, wrapUpLeaving, adoptStarted, listStarted, interceptCrisis]);
 
   const loadSessions = useCallback(async () => {
     if (!courseId || !userId) return;
@@ -1007,8 +1012,10 @@ export function LoopLearn() {
   const startGuided = async (opts: { topic?: string; goal?: boolean } = {}) => {
     setView("session");
     await newSession({ closeCurrent: true, topic: opts.topic, mode: deepLink.mode });
+    lastStart.current.goal = opts.goal;
     if (opts.goal && mounted.current && sessionRef.current) { setGoalEditor(true); setGoalError(null); }
   };
+  const retryStart = () => (lastStart.current.goal ? startGuided(lastStart.current) : newSession(lastStart.current));
 
   // ── Probe ──────────────────────────────────────────────────────────────
   /** After a graded answer: the probe's last answer already moved the session
@@ -2115,7 +2122,7 @@ export function LoopLearn() {
                 key={selfExplain.prompt_id}
                 prompt={selfExplain}
                 nested
-                busy={selfExplainBusy || attemptBusy || streaming}
+                busy={selfExplainBusy || attemptBusy || streaming} saving={selfExplainBusy} onDraft={setExplainDraft}
                 onSend={(reply) => void sendSelfExplain(reply)}
                 onSkip={() => void sendSelfExplain(null)}
               />
@@ -2137,7 +2144,7 @@ export function LoopLearn() {
           key={selfExplain.prompt_id}
           prompt={selfExplain}
           inputRef={selfExplainRef}
-          busy={selfExplainBusy || streaming || starting || scopeLoading}
+          busy={selfExplainBusy || streaming || starting || scopeLoading} saving={selfExplainBusy} onDraft={setExplainDraft}
           onSend={(reply) => void sendSelfExplain(reply)}
           onSkip={() => void sendSelfExplain(null)}
         />
@@ -2180,8 +2187,9 @@ export function LoopLearn() {
           onRetry={retryTurn}
           // spec §13 A138 (review fix): the open guess card is the turn's one
           // open prompt (A121) — answer it, or "No idea", before the chat; F7: a
-          // hint that is loading holds it too; K06: so does an open check
-          disabled={starting || scopeLoading || guessCardOpen || hintBusy || checkOpen}
+          // hint that is loading holds it too; K06: so does an open check; Z60: so
+          // does an unsent self-explanation
+          disabled={anyOf(starting, scopeLoading, guessCardOpen, hintBusy, checkOpen, explainDraft && !!selfExplain)}
           placeholder={
             checkOpen ? CHECK_OPEN_COMPOSER_COPY : guessCardOpen
               ? PREQUESTION_COMPOSER_COPY
@@ -2216,10 +2224,9 @@ export function LoopLearn() {
         <CenteredCard testId="loop-no-course">
           <h2 className="h-serif" style={{ margin: "0 0 6px", fontSize: 20 }}>Add a course to start learning</h2>
           <p style={{ color: "var(--text-dim)", fontSize: 14, margin: 0 }}>
-            {treeVisible
-              ? <>The tutor works course by course — add one from your{" "}
-                <Link data-testid="loop-no-course-link" href="/tree">knowledge map</Link>.</>
-              : "The tutor works course by course — add a course to get started."}
+            {/* Z61: courses are added in the Dashboard's course manager (the Tree has no control for it) */}
+            The tutor works course by course — add one from your{" "}
+            <Link data-testid="loop-no-course-link" href="/dashboard">dashboard</Link>.
           </p>
         </CenteredCard>
       );
@@ -2233,12 +2240,8 @@ export function LoopLearn() {
                 {readOnly.topic ? `“${readOnly.topic}” — ` : ""}an earlier session. Start a new one to keep learning.
               </span>
               <div style={{ flex: 1 }} />
-              <button
-                data-testid="loop-readonly-new-session"
-                className="btn btn--primary btn--sm"
-                disabled={sessionTransitionBusy}
-                onClick={() => void newSession()}
-              >
+              <button data-testid="loop-readonly-new-session" className="btn btn--primary btn--sm" disabled={sessionTransitionBusy}
+                onClick={() => void newSession({ closeCurrent: true, mode: deepLink.mode })}>
                 Start a new session
               </button>
             </div>
@@ -2285,12 +2288,7 @@ export function LoopLearn() {
           <p style={{ color: "var(--text-dim)", fontSize: 14, margin: "0 0 16px" }}>
             Nothing was started. Try again in a moment.
           </p>
-          <button
-            data-testid="loop-start-retry"
-            className="btn btn--primary"
-            disabled={starting}
-            onClick={() => void newSession({ topic: deepLink.topic, mode: deepLink.mode })}
-          >
+          <button data-testid="loop-start-retry" className="btn btn--primary" disabled={starting} onClick={() => void retryStart()}>
             Try again
           </button>
         </CenteredCard>
@@ -2404,7 +2402,7 @@ export function LoopLearn() {
       onHide={layout.hidePanel}
       map={railGraph.nodes.length > 0 ? (
         <SessionMap nodes={railGraph.nodes} edges={railGraph.edges} highlightId={focusNodeId ?? undefined} />
-      ) : (
+      ) : graphError ? <LoadFailed testId="tutor-map-error" what="your map" onRetry={() => void refreshGraph()} /> : (
         <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Concepts appear here as you learn.</div>
       )}
     />
@@ -2422,8 +2420,8 @@ export function LoopLearn() {
           dueCount={lists.dueReviews}
           dueHref={dueHref}
           startWith={weakestConcept(railGraph.nodes)}
-          busy={anyOf(!courseId, sessionTransitionBusy, openSessions === null)}
-          closesCurrent={leaving ? sessionTitle(sessionRow ?? { topic: "" }, course ?? undefined) : null}
+          busy={anyOf(!courseId, sessionTransitionBusy, openSessions === null)} starting={starting}
+          closesCurrent={leaving ? sessionTitle(sessionRow ?? { topic: "" }, course ?? undefined) : listedOpenTitle(sessionId, openSessions, course ?? undefined)}
           onContinue={() => { if (openHere) openRow(openHere); }}
           onStart={() => void startGuided()}
           onStartWith={(topic) => void startGuided({ topic })}
@@ -2442,7 +2440,7 @@ export function LoopLearn() {
         dueHref={dueHref}
         libraryHref={libraryVisible ? "/library" : null}
         onRetrySessions={lists.retryRecent}
-        onRetryMaterials={lists.retryMaterials}
+        onRetryMaterials={lists.retryMaterials} onRetryConcepts={graphError ? () => void refreshGraph() : null}
         onOpen={openRow}
         onAll={showAll}
       />

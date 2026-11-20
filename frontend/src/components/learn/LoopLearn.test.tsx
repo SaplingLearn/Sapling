@@ -1267,7 +1267,10 @@ describe("LoopLearn — PKG-13 fix round", () => {
     cleanup();
     api.getCourses.mockResolvedValue({ courses: [] });
     render(<LoopLearn />);
-    expect((await screen.findByTestId("loop-no-course-link")).getAttribute("href")).toBe("/tree");
+    // Z61: the Tree has no add-course control; the Dashboard's course manager does
+    const card = await screen.findByTestId("loop-no-course");
+    expect(screen.getByTestId("loop-no-course-link").getAttribute("href")).toBe("/dashboard");
+    expect(card.textContent).not.toContain("knowledge map");
   });
 
   it("m: ?resume= of an open loop session in ANOTHER course switches to that course and resumes it", async () => {
@@ -3069,6 +3072,19 @@ describe("LoopLearn — self-explanation prompts (spec §13 A139)", () => {
     expect(await screen.findByTestId("crisis-support-card")).toBeTruthy();
     expect(screen.getByTestId("loop-self-explain")).toBeTruthy();
     expect(screen.queryByTestId("loop-self-explain-saved")).toBeNull();
+  });
+
+  it("an explanation being typed holds the chat, so no turn can close the card and drop it (Z60)", async () => {
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "feedback", "2026-09-21T10:00:00Z")]));
+    api.getLoopSessionStatus.mockResolvedValue(status({ phase: "feedback", self_explain: feedbackPrompt }));
+    render(<LoopLearn />);
+    await screen.findByTestId("loop-self-explain");
+    const composer = screen.getByTestId("tutor-input") as HTMLTextAreaElement;
+    expect(composer.disabled).toBe(false);
+    fireEvent.change(screen.getByTestId("loop-self-explain-input"), { target: { value: "Because the rule" } });
+    await waitFor(() => expect((screen.getByTestId("tutor-input") as HTMLTextAreaElement).disabled).toBe(true));
+    fireEvent.change(screen.getByTestId("loop-self-explain-input"), { target: { value: "" } });
+    await waitFor(() => expect((screen.getByTestId("tutor-input") as HTMLTextAreaElement).disabled).toBe(false));
   });
 
   it("a resumed session restores an open prompt; the next served turn closes it", async () => {

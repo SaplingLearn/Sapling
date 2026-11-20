@@ -201,12 +201,12 @@ describe("F5 — the hide_study, hide_library and hide_tree nav flags", () => {
     viewport.mobile = false;
     api.getCourses.mockResolvedValue({ courses: [] });
     render(<LoopLearn />);
-    expect((await screen.findByTestId("loop-no-course")).textContent).toContain("add a course to get started");
-    expect(screen.queryByTestId("loop-no-course-link")).toBeNull();
+    await screen.findByTestId("loop-no-course");
+    expect(screen.getByTestId("loop-no-course-link").getAttribute("href")).toBe("/dashboard"); // Z61: courses are added there
     expect(screen.queryAllByRole("link").filter((a) => a.getAttribute("href")?.startsWith("/tree"))).toEqual([]);
   });
 
-  it("the tree visible (the default): Open map, the phone's Map and the no-course link point at /tree", async () => {
+  it("the tree visible (the default): Open map and the phone's Map point at /tree", async () => {
     await resumedTeach();
     expect(screen.getByTestId("loop-tree-link").getAttribute("href")).toMatch(/^\/tree/);
     cleanup();
@@ -217,7 +217,7 @@ describe("F5 — the hide_study, hide_library and hide_tree nav flags", () => {
     viewport.mobile = false;
     api.getCourses.mockResolvedValue({ courses: [] });
     render(<LoopLearn />);
-    expect((await screen.findByTestId("loop-no-course-link")).getAttribute("href")).toBe("/tree");
+    expect((await screen.findByTestId("loop-no-course-link")).getAttribute("href")).toBe("/dashboard");
   });
 
   it("both visible (the default): the links are there", async () => {
@@ -640,5 +640,83 @@ describe("B4 — a replayed turn changes no state", () => {
     fireEvent.click(screen.getByTestId("tutor-send"));
     await screen.findByText("A fresh turn.");
     await waitFor(() => expect(screen.queryByText(/every concept in today's plan/)).toBeNull()); // a served turn clears it
+  });
+});
+
+describe("Z58 — Try again after a failed start repeats that start", () => {
+  const node = { id: "n1", concept_name: "Recursion", mastery_tier: "struggling", mastery_score: 0.2, is_subject_root: false, subject: "Intro CS", course_id: "c1" };
+  beforeEach(() => {
+    api.listLoopSessionsFor.mockResolvedValue(listed([]));
+    api.getGraph.mockResolvedValue({ nodes: [node], edges: [], stats: {} });
+    api.startLoopSession.mockRejectedValueOnce(new ApiError("boom", 503)).mockResolvedValue({ session_id: "s9", initial_message: "" });
+    api.nextLoopProbe.mockResolvedValue(probeItem);
+  });
+
+  it("'Start with X' retries on X", async () => {
+    render(<LoopLearn />);
+    fireEvent.click(await screen.findByTestId("tutor-home-start-with"));
+    fireEvent.click(await screen.findByTestId("loop-start-retry"));
+    await screen.findByTestId("loop-probe-item");
+    expect(api.startLoopSession.mock.calls.map((c) => c[2])).toEqual(["Recursion", "Recursion"]);
+  });
+
+  it("'Set a goal' retries into the goal editor", async () => {
+    render(<LoopLearn />);
+    fireEvent.click(await screen.findByTestId("tutor-home-goal"));
+    fireEvent.click(await screen.findByTestId("loop-start-retry"));
+    expect(await screen.findByTestId("loop-goal-save")).toBeTruthy();
+    expect(api.startLoopSession).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("Z64 — one open session per course, from the read-only view too", () => {
+  it("'Start a new session' on a read-only transcript wraps up the course's open session first", async () => {
+    const today = new Date().toISOString();
+    api.getSessions.mockResolvedValue({ sessions: [
+      { id: "old", topic: "Big-O practice", mode: "socratic", course_id: "c1", started_at: today, ended_at: null, message_count: 3, is_active: true, loop_open: false },
+    ] });
+    api.resumeSession.mockImplementation(async (id: string) => ({ session: { id, topic: "x" }, messages: [{ id: `m-${id}`, role: "assistant", content: id === "s2" ? "welcome back" : `chat ${id}`, created_at: "" }] }));
+    api.closeLoopSession.mockResolvedValue({ close: closeRecord, model_written: false, close_phase: "teach" });
+    api.startLoopSession.mockResolvedValue({ session_id: "s9", initial_message: "" });
+    api.nextLoopProbe.mockResolvedValue(probeItem);
+    await resumedTeach();
+    fireEvent.click(await screen.findByTestId("tutor-recent-old"));
+    await screen.findByTestId("loop-readonly-transcript");
+    fireEvent.click(screen.getByTestId("loop-readonly-new-session"));
+    await waitFor(() => expect(api.startLoopSession).toHaveBeenCalledTimes(1));
+    expect(api.closeLoopSession).toHaveBeenCalledWith("s2", "u1");
+    expect(api.closeLoopSession.mock.invocationCallOrder[0]).toBeLessThan(api.startLoopSession.mock.invocationCallOrder[0]);
+  });
+
+  it("the Tutor home reached from a read-only transcript says which open session a start wraps up", async () => {
+    const today = new Date().toISOString();
+    api.getSessions.mockResolvedValue({ sessions: [
+      { id: "old", topic: "Big-O practice", mode: "socratic", course_id: "c1", started_at: today, ended_at: null, message_count: 3, is_active: true, loop_open: false },
+    ] });
+    api.resumeSession.mockImplementation(async (id: string) => ({ session: { id, topic: "x" }, messages: [{ id: `m-${id}`, role: "assistant", content: id === "s2" ? "welcome back" : `chat ${id}`, created_at: "" }] }));
+    await resumedTeach("Sorting");
+    fireEvent.click(await screen.findByTestId("tutor-recent-old"));
+    await screen.findByTestId("loop-readonly-transcript");
+    fireEvent.click(screen.getAllByTestId("loop-new-session")[0]);
+    expect((await screen.findByTestId("tutor-home")).textContent).toContain("Starting wraps up “Sorting” first.");
+  });
+});
+
+describe("Z63 — a failed map read says so, with a retry, never an empty map", () => {
+  it("the panel's map and the course page show the failure; Try again reads the map again", async () => {
+    api.getGraph.mockRejectedValueOnce(new ApiError("boom", 503))
+      .mockResolvedValue({ nodes: [{ id: "n1", concept_name: "Recursion", mastery_tier: "learning", mastery_score: 0.4, is_subject_root: false, subject: "Intro CS", course_id: "c1" }], edges: [], stats: {} });
+    await resumedTeach();
+    await screen.findByTestId("tutor-map-error"); // the session panel's map
+    expect(screen.queryByText("Concepts appear here as you learn.")).toBeNull();
+    fireEvent.click(screen.getByTestId("tutor-course-c1"));
+    const page = await screen.findByTestId("tutor-course-page");
+    const failed = within(page).getByTestId("tutor-course-concepts-error");
+    expect(page.textContent).not.toContain("0 concepts");
+    expect(page.textContent).not.toContain("Concepts appear here as you learn.");
+    fireEvent.click(within(failed).getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(within(page).queryByTestId("tutor-course-concepts-error")).toBeNull());
+    expect(api.getGraph).toHaveBeenCalledTimes(2);
+    expect(page.textContent).toContain("1 concept");
   });
 });

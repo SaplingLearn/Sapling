@@ -15,11 +15,15 @@
  *
  * The review queue lives only where the learning loop is on, so a "review"
  * step is offered only when the loop status probe says it is; otherwise the
- * Learn step stands in. Nothing here moves a meter or writes anything.
+ * Learn step stands in. A step whose page a hide flag hides (`hide_study`,
+ * `hide_tutor`) is never offered: NavFeatureGate would only bounce it to
+ * /dashboard. Nothing here moves a meter or writes anything.
  */
 
 import React from "react";
 import { useLoopStatus } from "@/components/learn/useLoopStatus";
+import { useStudyNavShown } from "@/components/useRetentionNav";
+import { useFlag } from "@/context/FlagsContext";
 import { useUser } from "@/context/UserContext";
 import { BAND_WORDS } from "@/lib/quiz/proposals";
 import type { QuizLearning } from "@/lib/quiz/types";
@@ -72,8 +76,10 @@ export function LearningBlock({
   // step that needs the learning loop on.
   const wantsReview = learning.next_step === "review";
   const { status: loopActive } = useLoopStatus(userId, userReady && wantsReview);
-  const reviewOffered = wantsReview && loopActive === true;
-  const learn = learning.learn;
+  const studyShown = useStudyNavShown();
+  const tutorShown = useFlag("hide_tutor") !== "on";
+  const reviewOffered = wantsReview && loopActive === true && studyShown;
+  const learn = tutorShown ? learning.learn : null;
   const nextDue = dueIn(learning.review.next_due_at);
 
   return (

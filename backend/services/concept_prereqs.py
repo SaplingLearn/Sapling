@@ -264,7 +264,7 @@ def upload_prereqs_on(user_id: str | None) -> bool:
     reshape the learning dynamics (and the Study hub's roadmap order), so the
     uploader's learning-loop gate comes first: loop off — the kill switch or
     the student's flag — is the pre-loop upload and the flag is not read
-    (K55). Blocking on a cold flag cache: call it off the event loop."""
+    (K55; audit Z42). Blocking on a cold flag cache: call it off the event loop."""
     return (
         bool(user_id)
         and learning_loop_for_uploader(user_id)

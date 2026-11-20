@@ -2989,6 +2989,7 @@ def test_a_graded_review_item_keeps_its_record_when_reported(client, store, revi
 
 
 def test_only_an_item_todays_review_served_can_be_reported(client, store, review_report):
+    _opened(store, "n-gone", "ci-withdrawn")  # served today, withdrawn since
     with _loop():
         expired = client.post("/api/learn/loop/report", json=_report(session_id="yesterday"))
         store.state.extra["review"]["served_hashes"] = []
@@ -2999,6 +3000,24 @@ def test_only_an_item_todays_review_served_can_be_reported(client, store, review
     assert not_served.status_code == 404 and not_served.json()["detail"] == "review item not served"
     assert gone.status_code == 409 and gone.json()["detail"] == "check item withdrawn"
     assert other_course.status_code == 404
+    assert review_report.calls == []
+
+
+def test_a_review_report_never_lands_on_another_courses_item(client, monkeypatch, store, review_report):
+    """#866 Z38: question_hash is the prompt's hash and item ids are computable,
+    so another course's item with the same prompt shares today's served hash.
+    It is refused exactly like an item never served (404), and an id that
+    names nothing reads the same — never a 409 that says it exists."""
+    foreign = _check_item("n-other", "qh-1")
+    foreign.id = "ci-foreign"
+    foreign.course_id = "course-2"
+    items = {review_report.item.id: review_report.item, foreign.id: foreign}
+    setattr_loop(monkeypatch, "get_check_item", lambda item_id: items.get(item_id))
+    with _loop():
+        other = client.post("/api/learn/loop/report", json=_report(item_id="ci-foreign"))
+        missing = client.post("/api/learn/loop/report", json=_report(item_id="ci-never-served"))
+    assert other.status_code == 404 and other.json()["detail"] == "review item not served"
+    assert missing.status_code == 404 and missing.json()["detail"] == "review item not served"
     assert review_report.calls == []
 
 

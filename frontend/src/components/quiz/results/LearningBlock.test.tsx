@@ -10,6 +10,7 @@ import React from "react";
 import type { QuizLearning } from "@/lib/quiz/types";
 
 const loop = vi.hoisted(() => ({ status: true as boolean | "error" | null, calls: [] as [string, boolean][] }));
+const nav = vi.hoisted(() => ({ studyShown: true, flags: {} as Record<string, string> }));
 
 vi.mock("@/components/learn/useLoopStatus", () => ({
   useLoopStatus: (userId: string, ready: boolean) => {
@@ -17,6 +18,8 @@ vi.mock("@/components/learn/useLoopStatus", () => ({
     return { status: ready ? loop.status : null, retry: () => {} };
   },
 }));
+vi.mock("@/components/useRetentionNav", () => ({ useStudyNavShown: () => nav.studyShown }));
+vi.mock("@/context/FlagsContext", () => ({ useFlag: (key: string) => nav.flags[key] ?? "off" }));
 vi.mock("@/context/UserContext", () => ({
   useUser: () => ({ userId: "user_andres", userReady: true }),
 }));
@@ -27,6 +30,8 @@ afterEach(() => {
   cleanup();
   loop.status = true;
   loop.calls = [];
+  nav.studyShown = true;
+  nav.flags = {};
 });
 
 const LEARNING: QuizLearning = {
@@ -97,6 +102,24 @@ describe("LearningBlock", () => {
       "Nothing is due for review right now. Recursion comes back for review in 3 days.",
     );
     expect(screen.getByTestId("quiz-next-step-learn").textContent).toBe("Practise Loops in Learn");
+  });
+
+  it("never links to a page a hide flag hides (Z62): Study while hidden, Learn under hide_tutor", () => {
+    nav.studyShown = false;
+    render(<LearningBlock learning={LEARNING} conceptName="Recursion" />);
+    expect(screen.queryByTestId("quiz-next-step-review")).toBeNull();
+    expect(screen.getByTestId("quiz-next-step-learn").className).toBe("btn btn--primary");
+    cleanup();
+    nav.studyShown = true;
+    nav.flags = { hide_tutor: "on" };
+    render(<LearningBlock learning={LEARNING} conceptName="Recursion" />);
+    expect(screen.getByTestId("quiz-next-step-review")).toBeTruthy();
+    expect(screen.queryByTestId("quiz-next-step-learn")).toBeNull();
+    cleanup();
+    nav.studyShown = false;
+    render(<LearningBlock learning={LEARNING} conceptName="Recursion" />);
+    expect(screen.queryByTestId("quiz-learning-next")).toBeNull();
+    expect(screen.queryByText("Next:")).toBeNull();
   });
 
   it("says plainly when no meter moved and offers no step when there is none", () => {

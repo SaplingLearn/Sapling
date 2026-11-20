@@ -63,15 +63,24 @@ async def _run_turn_json(turn: _LoopTurn) -> dict:
             await asyncio.to_thread(_count_tutor_call, turn.user_id)
         except AIBudgetExceeded as exc:  # Z19: past the day's cap by a parallel run
             raise _BudgetPaused(exc.decision) from None
+        result = None
+        recorded = False
         with capture_run_messages() as messages:
             try:
                 result = await turn.agent.run(turn.assembled, usage=usage, **turn.run_kwargs)
             except UnexpectedModelBehavior:
                 logger.warning("Loop tool run ended without a structured turn", exc_info=True)
                 turn.record_usage(UnfinishedRun(usage))
-            else:
-                turn.record_usage(result)
-                reply = turn.render(result.output)
+                recorded = True
+            finally:
+                # #866 Z51: any other failure (a provider error after the tool
+                # round, UsageLimitExceeded, a cancellation) still cost the
+                # requests the provider answered — record them, then propagate
+                if result is None and not recorded and usage.requests:
+                    turn.record_usage(UnfinishedRun(usage))
+        if result is not None:
+            turn.record_usage(result)
+            reply = turn.render(result.output)
         if reply is None:
             reply = await _continue_turn(turn, list(messages))
         return {

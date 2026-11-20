@@ -154,7 +154,10 @@ def test_a_quiz_ask_session_started_on_one_worker_continues_on_the_other(gate_on
         foreign = client.get(f"/api/learn/loop/status?user_id={OTHER}&session_id={sid}")
     assert status.status_code == 200, status.text
     assert status.json()["phase"] == "teach", "worker B reads the pending document"
-    assert foreign.status_code == 404
+    # #866 Z41: another student's pending session reads like an id that names
+    # nothing (a fresh loop), never a 404 that says it exists
+    assert foreign.status_code == 200, foreign.text
+    assert "node-1" not in foreign.text and foreign.json()["items"] == 0
     seams.load.assert_not_called()
 
     seams.store["doc"] = copy.deepcopy(doc)  # sessions.loop_state, once materialised
