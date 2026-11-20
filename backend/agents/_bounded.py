@@ -88,6 +88,21 @@ def clamp_unit_value(value, field: str):
     return clamped
 
 
+def exceeds_unit(value) -> bool:
+    """True for a finite number above 1, the value `clamp_unit_value` clamps DOWN
+    to 1.0 (#866 review). The clamp keeps the output valid, but the model's
+    number was not a 0..1 confidence (40 meant as 40%, or a stray 1.02), so a
+    caller that turns confidence into trust reads it as no confidence at all
+    rather than as the maximum. A value clamped up to 0.0 needs no such note:
+    0 already means no confidence."""
+    return (
+        not isinstance(value, bool)
+        and isinstance(value, (int, float))
+        and math.isfinite(value)
+        and value > 1.0
+    )
+
+
 def clamp_unit(field: str) -> BeforeValidator:
     """`Annotated[float, clamp_unit("x")] = Field(ge=0.0, le=1.0, ...)`: the
     numeric twin of `clip_prose`. The schema keeps its bound (decode-enforced on
