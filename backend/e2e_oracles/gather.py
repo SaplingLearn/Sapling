@@ -536,7 +536,9 @@ def _readable(row) -> dict:
 def _learn_loop_activity(conn, step_rows, args, learn_loop) -> list[Finding]:
     """The rows behind `learn_loop_activity_findings` (e)–(h): every loop session
     (non-empty loop_state, not a review session) with its document, the
-    (user, question_hash) pairs that have evidence / a zpd.step event, the
+    (session_id, question_hash) pairs that have an evidence row / a check-phase
+    zpd.step event (Z47: the session that wrote each — a row without one, a
+    quiz answer's or a post-test's, vouches for no loop session), the
     DECRYPTED assistant messages of those sessions, and the loop-user count.
     The sentinel is E2E_LOOP_FINAL_ANSWER, read from the handler module's
     source (db.e2e_handler_constants) — never a second literal."""
@@ -547,18 +549,18 @@ def _learn_loop_activity(conn, step_rows, args, learn_loop) -> list[Finding]:
         "WHERE loop_state <> '{}'::jsonb AND mode IS DISTINCT FROM 'review'"
     ).fetchall()
     evidence = {
-        (r["user_id"], r["question_hash"])
+        (r["session_id"], r["question_hash"])
         for r in conn.execute(
-            "SELECT /* learn_loop:evidence_hashes */ DISTINCT g.user_id AS user_id, "
+            "SELECT /* learn_loop:evidence_hashes */ DISTINCT e.session_id AS session_id, "
             "e.question_hash AS question_hash FROM node_mastery_events e "
-            "JOIN graph_nodes g ON g.id = e.node_id "
-            "WHERE e.event_type = 'evidence' AND e.question_hash IS NOT NULL"
+            "WHERE e.event_type = 'evidence' AND e.question_hash IS NOT NULL "
+            "AND e.session_id IS NOT NULL"
         ).fetchall()
     }
     stepped = {
-        (r.get("user_id"), (r.get("payload") or {}).get("question_hash"))
-        for r in step_rows
-        if isinstance(r.get("payload"), dict)
+        (payload.get("session_id"), payload.get("question_hash"))
+        for payload in (r.get("payload") for r in step_rows)
+        if isinstance(payload, dict) and payload.get("phase") == "check" and payload.get("session_id")
     }
     messages = [
         {

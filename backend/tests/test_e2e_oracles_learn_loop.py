@@ -229,8 +229,8 @@ def _step(**over):
 def _activity(**over):
     kw = dict(
         sessions=[_session({"qh": _step()})],
-        evidence_hashes={("u", "qh")},
-        step_event_hashes={("u", "qh")},
+        evidence_keys={("s1", "qh")},
+        step_event_keys={("s1", "qh")},
         messages=[{"session_id": "s1", "at": 50.0, "content": "Key idea: bits."}],
         sentinel=SENTINEL,
         loop_users=2,
@@ -245,7 +245,7 @@ def test_activity_clean_run_has_no_findings():
 
 
 def test_a_graded_step_without_an_evidence_row_is_a_finding():
-    f = learn_loop_activity_findings(**_activity(evidence_hashes=set()))
+    f = learn_loop_activity_findings(**_activity(evidence_keys=set()))
     assert len(f) == 1 and "evidence" in f[0].summary
     assert f[0].evidence["sample"] == [["s1", "qh"]]
 
@@ -258,12 +258,12 @@ def test_an_ungraded_step_needs_no_evidence():
             )
         ]
     )
-    kw.update(evidence_hashes=set(), step_event_hashes=set(), expect_activity=False)
+    kw.update(evidence_keys=set(), step_event_keys=set(), expect_activity=False)
     assert learn_loop_activity_findings(**kw) == []
 
 
 def test_a_served_feedback_without_a_zpd_step_event_is_a_finding():
-    f = learn_loop_activity_findings(**_activity(step_event_hashes=set()))
+    f = learn_loop_activity_findings(**_activity(step_event_keys=set()))
     assert len(f) == 1 and "zpd.step" in f[0].summary
 
 
@@ -342,8 +342,8 @@ def test_an_h6_worked_answer_is_a_release_at_its_logged_time():
     steps = {"qh": _step(graded_at=None, feedback_given=False, rungs=[{"rung": 6, "at": 80.0}])}
     kw = _activity(
         sessions=[_session(steps)],
-        evidence_hashes=set(),
-        step_event_hashes=set(),
+        evidence_keys=set(),
+        step_event_keys=set(),
         messages=[{"session_id": "s1", "at": 81.0, "content": SENTINEL}],
         expect_activity=False,
     )
@@ -354,8 +354,8 @@ def test_another_sessions_release_does_not_open_this_one():
     released = _session({"qa": _step(last_verdict="idk", graded_at=10.0)}, sid="s0")
     kw = _activity(
         sessions=[released, _session({"qh": _step()})],
-        evidence_hashes={("u", "qa"), ("u", "qh")},
-        step_event_hashes={("u", "qa"), ("u", "qh")},
+        evidence_keys={("s0", "qa"), ("s1", "qh")},
+        step_event_keys={("s0", "qa"), ("s1", "qh")},
         messages=[{"session_id": "s1", "at": 150.0, "content": SENTINEL}],
     )
     assert len(learn_loop_activity_findings(**kw)) == 1
@@ -374,7 +374,7 @@ def test_expect_activity_refuses_a_vacuous_pass(over, needle):
 
 
 def test_without_expect_activity_an_idle_stack_is_clean():
-    kw = _activity(sessions=[], evidence_hashes=set(), step_event_hashes=set(), messages=[])
+    kw = _activity(sessions=[], evidence_keys=set(), step_event_keys=set(), messages=[])
     kw["expect_activity"] = False
     assert learn_loop_activity_findings(**kw) == []
 
@@ -399,7 +399,8 @@ def test_run_learn_loop_gathers_activity_and_decrypts_messages(monkeypatch):
             "event_type = 'zpd.step'": [
                 {
                     "user_id": "u",
-                    "payload": {"p_known_before": 0.3, "p_known_after": 0.5, "question_hash": "qh"},
+                    "payload": {"p_known_before": 0.3, "p_known_after": 0.5, "question_hash": "qh",
+                                "phase": "check", "session_id": "s1"},
                 }
             ],
         }
@@ -410,6 +411,38 @@ def test_run_learn_loop_gathers_activity_and_decrypts_messages(monkeypatch):
     summaries = " | ".join(f.summary for f in findings)
     assert "evidence" in summaries and "final answer" in summaries
     assert "zpd.step" not in summaries  # the step event is there
+
+
+def test_a_grade_in_one_session_never_vouches_for_the_same_item_in_another(monkeypatch):
+    """Z47: (e) and (f) tie each graded step to ITS session's rows. The student
+    answered item qh in s1 (its evidence row and its feedback zpd.step are
+    there) and again in s2, where the evidence flush was lost and no zpd.step
+    was emitted: s2's step is two findings, though the (user, qh) pair has both
+    rows table-wide."""
+    import services.encryption as enc
+
+    step_payload = {"p_known_before": 0.3, "p_known_after": 0.5, "question_hash": "qh",
+                    "phase": "check", "session_id": "s1"}
+    conn = _Conn(
+        {
+            **_answers(steps=[]),
+            "learn_loop:sessions": [
+                _session({"qh": _step()}, sid="s1"),
+                _session({"qh": _step(graded_at=300.0)}, sid="s2"),
+            ],
+            "learn_loop:evidence_hashes": [{"user_id": "u", "session_id": "s1", "question_hash": "qh"}],
+            "learn_loop:messages": [],
+            "learn_loop:loop_users": [{"n": 1}],
+            "event_type = 'zpd.step'": [{"user_id": "u", "payload": step_payload}],
+        }
+    )
+    monkeypatch.setattr(gather, "_db_conn", lambda: conn)
+    monkeypatch.setattr(enc, "decrypt_if_present", lambda v, **_: v)
+    findings, _ = gather.run_learn_loop(SimpleNamespace(user="x", expect_loop_activity=True))
+    [evidence] = [f for f in findings if "evidence row" in f.summary]
+    [stepped] = [f for f in findings if "zpd.step event" in f.summary]
+    assert evidence.evidence["sample"] == [["s2", "qh"]]
+    assert stepped.evidence["sample"] == [["s2", "qh"]]
 
 
 # ── D7: the leak check is per ITEM, and an unreadable row is a finding ───────
@@ -434,8 +467,8 @@ def test_a_released_item_opens_only_its_own_key():
     }
     kw = _activity(
         sessions=[_session(steps)],
-        evidence_hashes={("u", "qa")},
-        step_event_hashes={("u", "qa")},
+        evidence_keys={("s1", "qa")},
+        step_event_keys={("s1", "qa")},
         messages=[{"session_id": "s1", "at": 120.0, "content": f"It is {_ckey('loop-a')}."}],
     )
     assert learn_loop_activity_findings(**kw) == []
@@ -458,8 +491,8 @@ def test_a_bare_sentinel_after_one_release_still_leaks_the_next_item():
     }
     kw = _activity(
         sessions=[_session(steps)],
-        evidence_hashes={("u", "qa")},
-        step_event_hashes={("u", "qa")},
+        evidence_keys={("s1", "qa")},
+        step_event_keys={("s1", "qa")},
         messages=[{"session_id": "s1", "at": 120.0, "content": SENTINEL}],
     )
     f = learn_loop_activity_findings(**kw)
@@ -469,7 +502,7 @@ def test_a_bare_sentinel_after_one_release_still_leaks_the_next_item():
     assert learn_loop_activity_findings(**kw) == []
     # B graded correct releases nothing (the feedback never states it) ...
     steps["qb"].update(graded_at=115.0, last_verdict="correct", feedback_given=True)
-    kw.update(evidence_hashes={("u", "qa"), ("u", "qb")}, step_event_hashes={("u", "qa"), ("u", "qb")},
+    kw.update(evidence_keys={("s1", "qa"), ("s1", "qb")}, step_event_keys={("s1", "qa"), ("s1", "qb")},
               messages=[{"session_id": "s1", "at": 120.0, "content": SENTINEL}])
     assert len(learn_loop_activity_findings(**kw)) == 1
     # ... B's own release does
@@ -488,8 +521,8 @@ def test_an_abandoned_item_does_not_hold_back_a_later_items_release():
     }
     kw = _activity(
         sessions=[_session(steps)],
-        evidence_hashes={("u", "qb")},
-        step_event_hashes={("u", "qb")},
+        evidence_keys={("s1", "qb")},
+        step_event_keys={("s1", "qb")},
         messages=[{"session_id": "s1", "at": 120.0, "content": SENTINEL}],
     )
     assert learn_loop_activity_findings(**kw) == []
@@ -511,7 +544,7 @@ def test_run_learn_loop_marks_a_row_it_cannot_decrypt(monkeypatch):
         {
             **_answers(steps=[]),
             "learn_loop:sessions": [_session({"qh": _step()})],
-            "learn_loop:evidence_hashes": [{"user_id": "u", "question_hash": "qh"}],
+            "learn_loop:evidence_hashes": [{"session_id": "s1", "question_hash": "qh"}],
             "learn_loop:messages": [
                 {"session_id": "s1", "at": 150.0, "content": "enc2:0:bad"},
                 {"session_id": "s1", "at": 151.0, "content": "boom"},
@@ -519,7 +552,8 @@ def test_run_learn_loop_marks_a_row_it_cannot_decrypt(monkeypatch):
             "learn_loop:loop_users": [{"n": 2}],
             "event_type = 'zpd.step'": [
                 {"user_id": "u", "payload": {"p_known_before": 0.3, "p_known_after": 0.5,
-                                             "question_hash": "qh"}}
+                                             "question_hash": "qh", "phase": "check",
+                                             "session_id": "s1"}}
             ],
         }
     )
