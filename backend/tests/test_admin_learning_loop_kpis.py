@@ -198,7 +198,7 @@ def test_empty_range_is_nones_not_zeros(monkeypatch):
     assert b["unassisted_next_session"]["rate"] is None
     assert b["gates"] == {
         "zero_leaks": True,
-        "ceiling_compliance_ok": False,
+        "ceiling_compliance_ok": None,  # #866 K56: nothing measured → inconclusive, never a fail
         "earnest_revise_ok": None,  # A109: no step carries the signal → inconclusive
     }
     assert b["htc_k_trend"] == []

@@ -21,7 +21,7 @@ Flags live in `backend/services/feature_flags.py::REGISTRY`; their stored config
 | 1. Try it on yourself | `PUT /api/admin/flags/{key}/targets` with your user | On for the listed users only |
 | 2. Partial rollout | `PATCH /api/admin/flags/{key}` with `rollout_percent` and `rollout_variant: "on"` | On for a stable percentage of students |
 | 3. Everyone | `PATCH /api/admin/flags/{key}` with `default_variant: "on"` | On for all students |
-| Check one student | `GET /api/admin/flags/{key}/explain` | Which rule decided their variant |
+| Check one student | `GET /api/admin/flags/{key}/explain` | Which rule decided their variant; for a learning-loop flag the kill switch, then their `learning_loop` flag, come first (`learning/gate.py::served_flag`) |
 | **Roll back** | `PATCH` with `default_variant: "off"`, `rollout_percent: 0`; or set the env var `SAPLING_FLAG_<KEY>=off` on the backend | Off at once; the env var overrides everything stored |
 
 Per-student flags are resolved once per request (or once per quiz generation and submit), so a rollback takes effect on the student's next action.

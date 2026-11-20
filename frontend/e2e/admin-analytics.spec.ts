@@ -111,6 +111,13 @@ test("admin analytics dashboard renders live usage, errors, and controls (#122)"
     await expect(adminPage.getByTestId("admin-loop-cost-unavailable")).toHaveCount(0);
     await expect(adminPage.getByTestId("admin-loop-cost-student-month")).toContainText("$0.36");
 
+    // #866 K56/K57: the events table starts empty, so no step in the range
+    // carries the ceiling signal: that gate is inconclusive, never a red fail,
+    // and the panel names what each gate counted.
+    await expect(adminPage.getByTestId("admin-loop-gate-ceiling")).toHaveAttribute("data-state", "inconclusive");
+    await expect(adminPage.getByTestId("admin-loop-gate-counts")).toContainText("ceiling compliance over 0 steps");
+    await expect(adminPage.getByTestId("admin-loop-gate-unscanned")).toHaveCount(0);
+
     // 4) DB causality: THIS test's note produced THIS event row.
     const rows = await queryRaw(
       "SELECT payload FROM events WHERE event_type = 'note.created' AND user_id = $1",

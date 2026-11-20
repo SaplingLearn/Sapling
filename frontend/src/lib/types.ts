@@ -927,7 +927,8 @@ export interface LearningLoopKpisData {
     graded_steps: number; earnest_blocked: number; unmeasured_steps: number; rate: number | null;
     gate: 'pass' | 'fail' | 'inconclusive';
   };
-  gates: { zero_leaks: boolean; ceiling_compliance_ok: boolean; earnest_revise_ok: boolean | null };
+  /** a null gate is inconclusive: nothing in the range carries its signal (#866 K56; A109) */
+  gates: { zero_leaks: boolean; ceiling_compliance_ok: boolean | null; earnest_revise_ok: boolean | null };
   /** `excluded_void`: independent observations left out, graded against an
    *  item staff retired, so void evidence (spec §13 A123) — the drop, visible */
   calibration: { all: LoopCalibrationReport; posttest: LoopCalibrationReport; excluded_void: number };

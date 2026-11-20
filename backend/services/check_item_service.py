@@ -1636,11 +1636,23 @@ def course_audit_rows(course_id: str) -> list[dict]:
     )
 
 
+class ItemAuditUnfinished(RuntimeError):
+    """record_item_audit wrote the verdict row, then failed on the item's rows:
+    the verdict stands (with `key_status`), its hold or confirmation may not.
+    Any other failure of record_item_audit wrote nothing (#866 K59)."""
+
+    def __init__(self, key_status: str):
+        super().__init__("audit verdict recorded; the item's rows were not all updated")
+        self.key_status = key_status
+
+
 def record_item_audit(item: CheckItem, verdict: str, *, auditor: str | None) -> str:
     """Record staff's verdict on a stored item's key and act on the item (see
     above). Returns the key status the audit row carries. Raises on a failed
     read or write: the caller answers 503, and recording the same verdict
-    again finishes it (the row is upserted, the item updates are absolute)."""
+    again finishes it (the row is upserted, the item updates are absolute).
+    A failure after the verdict row is written raises ItemAuditUnfinished, so
+    the caller knows the verdict was recorded; any other raise wrote nothing."""
     if verdict not in ITEM_AUDIT_VERDICTS:
         raise ValueError(f"unknown audit verdict {verdict!r}")
     scope = {"course_id": f"eq.{item.course_id}", "question_hash": f"eq.{item.question_hash}"}
@@ -1664,17 +1676,20 @@ def record_item_audit(item: CheckItem, verdict: str, *, auditor: str | None) -> 
         on_conflict=_AUDITS_ON_CONFLICT,
     )
     code = _AUDIT_HOLD.get(verdict)
-    # every row of the course item (one per concept that holds the question —
-    # the same prompt): a never-linted one is linted from the audited item
-    for row in table(_TABLE).select("id,lint_flags", filters=scope) or []:
-        table(_TABLE).update(
-            {
-                "lint_flags": audited_flags(_linted(row.get("lint_flags"), item), code),
-                "canonical_verified": verdict == CORRECT,
-            },
-            filters={"id": f"eq.{row['id']}"},
-            prefer_return_minimal=True,
-        )
+    try:
+        # every row of the course item (one per concept that holds the question —
+        # the same prompt): a never-linted one is linted from the audited item
+        for row in table(_TABLE).select("id,lint_flags", filters=scope) or []:
+            table(_TABLE).update(
+                {
+                    "lint_flags": audited_flags(_linted(row.get("lint_flags"), item), code),
+                    "canonical_verified": verdict == CORRECT,
+                },
+                filters={"id": f"eq.{row['id']}"},
+                prefer_return_minimal=True,
+            )
+    except Exception as exc:  # the verdict row stands: say so, whatever failed
+        raise ItemAuditUnfinished(status) from exc
     return status
 
 

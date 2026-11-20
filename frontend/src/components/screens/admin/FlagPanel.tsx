@@ -12,7 +12,7 @@ import {
 } from "@/lib/api";
 import type { AdminUserListItem } from "@/lib/types";
 
-import { changeSummary, explainPhrase, flagMeta, otherVariant, variantLabel } from "./flagLabels";
+import { changeSummary, explainPhrase, flagMeta, forcedNote, otherVariant, variantLabel } from "./flagLabels";
 
 const PRESETS = [0, 10, 25, 50, 100];
 
@@ -88,6 +88,7 @@ function PanelBody({ flag, roles, onSaved }: {
   };
 
   const variantOptions = flag.variants.map((v) => ({ value: v, label: variantLabel(flag, v) }));
+  const forced = forcedNote(flag); // #866 K24: the server decides above these settings
 
   return (
     <div className="flag-panel">
@@ -101,6 +102,7 @@ function PanelBody({ flag, roles, onSaved }: {
         <div className="flag-panel__fit">
           <Toggle options={variantOptions} value={def} onChange={setDef} testid={`flag-default-${flag.key}`} />
         </div>
+        {forced && <p className="flag-panel__muted" data-testid={`flag-forced-note-${flag.key}`}>{forced.tip}</p>}
       </section>
 
       <section className="flag-panel__section">

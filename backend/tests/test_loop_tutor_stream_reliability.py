@@ -246,6 +246,7 @@ def _route_turn(model):
     turn = SimpleNamespace(
         user_id="u1",
         session_id="s1",
+        course_id="course-1",  # #866 K60: a loop turn's usage rows name its course
         request_id="r1",
         band="develop",
         slot="loop_tutor",

@@ -53,7 +53,9 @@ class EarnestRevise(BaseModel):
 
 class Gates(BaseModel):
     zero_leaks: bool
-    ceiling_compliance_ok: bool
+    # #866 K56: None = inconclusive (no step carries max_rung_used and the
+    # ceiling), never a fail — as earnest_revise_ok below
+    ceiling_compliance_ok: bool | None
     # A109: None = inconclusive (no graded step carries the signal), never a pass
     earnest_revise_ok: bool | None
 

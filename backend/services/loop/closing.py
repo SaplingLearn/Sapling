@@ -9,6 +9,8 @@ import logging
 import re
 import uuid
 from datetime import datetime, timezone
+
+import httpx
 from services.loop.errors import HTTPException
 from services import abuse_limits
 from services.request_limits import aenforce_abuse_limit
@@ -32,6 +34,7 @@ from learning.session_close import (
 from models import CloseBody, EndSessionBody
 from services.tutor_sessions import PENDING_SESSIONS, claim_pending, release_claim_tombstone
 from services import ai_budget, events_service
+from services.academics import offering_course_id
 from services.ai_budget import AIBudgetExceeded
 from services.auth_guard import get_session_user_id, guard_off_loop
 from services.encryption import bind, decrypt_if_present, decrypt_json_column
@@ -294,17 +297,35 @@ def _name_in_answer(name: str, item) -> bool:
 
 
 async def _model_close(
-    draft, *, user_id: str, request_id: str, session_id: str | None = None
+    draft, *, user_id: str, request_id: str, session_id: str | None = None,
+    course_id: str | None = None,
 ) -> object | None:
     """One close run under CLOSE_RUN_TIMEOUT_S (a timed-out run is the
     unavailable agent: the deterministic close is stored)."""
     try:
         return await asyncio.wait_for(
-            run_session_close(draft, user_id=user_id, request_id=request_id, session_id=session_id),
+            run_session_close(
+                draft, user_id=user_id, request_id=request_id, session_id=session_id,
+                course_id=course_id,
+            ),
             CLOSE_RUN_TIMEOUT_S,
         )
     except TimeoutError:
         logger.warning("session_close timed out; storing fallback close")
+        return None
+
+
+async def _session_course(session_id: str, offering_id: str | None) -> str | None:
+    """#866 K60: the abstract course the close's usage row names — its
+    session's offering's, as the cost report resolves a session. A label on a
+    usage row only: a failed read names none and the close goes on."""
+    if not offering_id:
+        return None
+    try:
+        return await asyncio.to_thread(offering_course_id, offering_id) or None  # #117: off the loop
+    except (httpx.HTTPError, RuntimeError, ValueError):  # the DB client's failures (check_item_service:761)
+        logger.warning("close of %s: its course was not read; its usage row names none", session_id,
+                       exc_info=True)
         return None
 
 
@@ -353,7 +374,7 @@ async def close_session(
     else:
         rows = await asyncio.to_thread(  # #117: off the event loop
             table("sessions").select,
-            "id,user_id,loop_state,close_json,close_phase",
+            "id,user_id,offering_id,loop_state,close_json,close_phase",
             # PKG-12: a review session is not a tutor session — never closed (404)
             filters={"id": f"eq.{session_id}", **NOT_REVIEW},
             limit=1,
@@ -402,8 +423,11 @@ async def close_session(
                             raise
                         limited = True
                 if not limited:
+                    # #866 K60: the close's usage row names the session's course
+                    course = await _session_course(session_id, rows[0].get("offering_id"))
                     out = await _model_close(
-                        draft, user_id=user_id, request_id=request_id, session_id=session_id
+                        draft, user_id=user_id, request_id=request_id, session_id=session_id,
+                        course_id=course,
                     )
             record = (
                 served_close(out, draft, items)

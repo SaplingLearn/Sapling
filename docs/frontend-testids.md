@@ -516,6 +516,8 @@ entered the lint block new, so there is no baselined backlog.
 | `admin-analytics-cost-group-feature` / `-user` / `-model` | the LLM-cost group-by toggle (drives the `group_by` query) |
 | `admin-analytics-usage-retry` / `-users-retry` / `-cost-retry` / `-errors-retry` | per-panel "Try again" after a failed load (`error && !data` gate) |
 | `admin-analytics-users-sort-events` / `-cost` / `-tokens` | Top-users table column-sort headers (#122) — first click sorts desc, second flips |
+| `admin-loop-gate-leaks` / `-ceiling` / `-earnest` | the spec §10 gate chips (`screens/admin/LoopGates.tsx`), `data-state` `pass` / `fail` / `inconclusive` — inconclusive when nothing in the range carries the gate's signal (#866 K56), never a silent pass |
+| `admin-loop-gate-counts` / `admin-loop-gate-unscanned` | #866 K57: what the gates counted — served reveals, leaks caught and cut before serving, turns served unscanned, the steps ceiling compliance was measured on — and, when any turn was served unscanned, the note that "Zero served reveals" cannot vouch for it (absent at zero) |
 | `admin-loop-items-link` | the Learning loop panel's link to the `/admin/check-items` review queue (spec §13 A113) |
 | `admin-loop-calibration-void` | the calibration's "N answers to retired questions left out" line (spec §13 A123: void evidence; absent at zero) |
 | `admin-loop-confidence` | the Learning loop panel's "Do students know what they know?" table (spec §13 A127): stated confidence vs correctness; rows `admin-loop-confidence-{channel}-{level}` (`other` for a value no level names) and `admin-loop-confidence-{channel}-all` |
@@ -547,10 +549,11 @@ file entered the lint block new, so there is no baselined backlog.
 | `admin-items-tab-{view}` | the page's two tabs (`queue` / `audit`): the review queue and the A124 key audit |
 | `admin-items` | the queue's root |
 | `admin-items-count` | "N to review" (and "showing the first P" when the queue is longer than a page) |
-| `admin-items-empty` | nothing flagged, held or reported is waiting |
-| `admin-items-retry` | "Try again" after the queue failed to load (`error && !data` gate) |
+| `admin-items-empty` | nothing flagged, held or reported is waiting (the server's count is 0, never only an emptied page) |
+| `admin-items-more` | #866 K25: every row of the page was decided while the server counted more waiting — "N more to review", read again at once (the next page comes up), with the read's error and `admin-items-retry` if it failed |
+| `admin-items-retry` | "Try again" after the queue failed to load (`error && !data` gate), or after the next page failed to load (inside `admin-items-more`) |
 | `admin-items-row-{itemId}` | one queued check item: course · concept, format, flags, reports, the question with its key marked, the final answer, a numeric item's key value ± tolerance (A124) and the reference (`<details>`) |
-| `admin-items-held-{itemId}` | "Held — served to no one until approved": a hold withdraws it from every student — a key hold (spec §13 A124) or a staff hold (A123: quarantined by `quarantine_min_reporters` students' reports, nothing deleted; or retired and waiting to be removed); absent once approved |
+| `admin-items-held-{itemId}` | "Held — served to no one until approved": a hold withdraws it from every student — a key hold (spec §13 A124) or a staff hold (A123: quarantined by `quarantine_min_reporters` students' reports, nothing deleted; or retired and waiting to be removed, where it reads "Held — served to no one": a retired question is never approved); absent once approved. After a failed Approve or Retire the queue (and a loaded course's statistics) is read again, so a retire left pending shows as one (#866 K58) |
 | `admin-items-reports-{itemId}-{reason}` | a report-count chip by reason (`wrong_answer` / `unclear` / `not_from_my_course`); absent at zero |
 | `admin-items-flag-{itemId}-{flag}` | an item-flaw lint chip (`correct_longest` / `correct_repeats_stem` / `all_or_none_of_above` / `duplicate_options` / `negative_stem`), what the A119 alignment check changed (`rubric_unasked_dropped` / `concept_retagged`), or why it is held — A124's key holds (`key_disputed` / `key_unsolved` / `key_audit_wrong` / `key_audit_ambiguous`) or A123's staff holds (`reports_threshold` "Quarantined by student reports", `staff_retired`) |
 | `admin-items-approve-{itemId}` | Approve — reviewed, OK: its key confirmed (A124) and any hold lifted (A123: the quarantine), so a held item is restored to students ("Approve and restore" on a held item); every row of that course question leaves the queue until a newer report (absent on a retire-pending item) |
@@ -586,7 +589,9 @@ baselined backlog — every button/input in them is tagged.
 | --- | --- |
 | `admin-tab-{tab}` | one tab-bar button per `Tab` value (`Admin.tsx`) |
 | `flag-row-{key}` | a flag's list row (grouped by nav section); click opens its right-hand panel |
-| `flag-state-{key}` | the row's current everyone-default in words (`Visible`/`Hidden` for a `hide_*` flag) |
+| `flag-state-{key}` | the row's current everyone-default in words (`Visible`/`Hidden` for a `hide_*` flag); for a learning-loop flag the server forces for everyone (#866 K24: the `LEARNING_LOOP_ENABLED` kill switch, a `SAPLING_FLAG_` override), that answer instead |
+| `flag-forced-{key}` | #866 K24: the chip beside it when the server decides above the stored settings — "Kill switch on", "Learning loop off" (the loop forced off by its env override) or "Set on the server" — its tooltip saying what every student gets and why (a loop flag's own env override that forces it on while `learning_loop` is not forced says it holds only for students with the loop on); `flag-forced-note-{key}` is the same note in the panel's Everyone section |
+| `flag-requires-{key}` | #866 K24: "Needs Learning loop" on a flag that acts only where the student's `learning_loop` flag is on (`learning/gate.py::LOOP_FLAGS`) |
 | `flag-toggle-{key}` | the row's `role="switch"` (`ui/Switch.tsx`); checked = Visible for a hide flag. Opens the confirm dialog, never saves directly |
 | `flag-open-{key}` | the row's chevron button that opens the panel (the keyboard path to it) |
 | `flag-save-scope-{key}` | the plain-language scope of a pending default/rollout change (design spec §7) — in the row switch's confirm dialog, or in the panel's sticky footer while edits are staged |
@@ -608,7 +613,7 @@ baselined backlog — every button/input in them is tagged.
 | `flag-target-add-{key}` | "Add override" (`adminUpsertFlagTarget`) |
 | `flag-explain-input-{key}` | "Check a student" input — name/email search, or a raw user id + Enter (`adminExplainFlag`) |
 | `flag-explain-user-{key}-{userId}` | one student search result there; clicking it runs the check |
-| `flag-explain-result-{key}` | the answer in words, e.g. `Hidden: from the Admin role override` |
+| `flag-explain-result-{key}` | the answer in words, e.g. `Hidden: from the Admin role override`; a learning-loop flag answers under the loop's gate (#866 K24), e.g. `Off: the LEARNING_LOOP_ENABLED kill switch turns the learning loop off for everyone` or `Off: needs Learning loop, which is off for them — the default for everyone` |
 
 ### `admin-user`
 

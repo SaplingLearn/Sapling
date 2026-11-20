@@ -208,6 +208,13 @@ function QueueBody() {
 
   React.useEffect(() => { void load(); }, [load]);
 
+  // #866 K25: the queue comes a page at a time (`page_size`) and a decision
+  // removes its rows from this page only. When the page runs out while the
+  // server counted more waiting, read the queue again so the next ones come
+  // up. Keyed on the boolean: a read that answers the same never loops.
+  const pageDone = queue !== null && queue.items.length === 0 && queue.count > 0;
+  React.useEffect(() => { if (pageDone) void load(); }, [pageDone, load]);
+
   const loadStats = async (courseId: string) => {
     if (!courseId) return;
     setStatsLoading(true);
@@ -267,6 +274,12 @@ function QueueBody() {
       toast.success(message);
     } catch (err) {
       toast.error(humanizeError(err, action === "approve" ? "Couldn't approve it." : "Couldn't retire it."));
+      // #866 K58: a failed decision can still have changed the question — a
+      // retire is decided before its results are voided, so a 503 leaves it
+      // retire-pending and held, and it can no longer be approved. Show what
+      // the server holds now instead of the row as it was.
+      void load();
+      if (stats) void loadStats(stats.course_id);
     } finally {
       setBusyId(null);
     }
@@ -386,6 +399,8 @@ function QueueBody() {
         </div>
       ) : !queue ? (
         <div style={{ color: "var(--text-muted)", fontSize: 13 }}>Loading…</div>
+      ) : pageDone ? (
+        <NextPage count={queue.count} error={error} onRetry={() => void load()} />
       ) : queue.items.length === 0 ? (
         <div data-testid="admin-items-empty" style={{ color: "var(--text-muted)", fontSize: 14 }}>
           Nothing to review: no flagged, held or reported question is waiting.
@@ -416,6 +431,21 @@ function QueueBody() {
 }
 
 const pctStat = (v: number | null) => (v === null ? "—" : `${Math.round(v * 100)}%`);
+
+/** #866 K25: every row of the page was decided while the server counted more
+ *  waiting: say how many, while the next page is read (or why it was not). */
+function NextPage({ count, error, onRetry }: { count: number; error: string | null; onRetry: () => void }) {
+  return (
+    <div data-testid="admin-items-more" role={error ? "alert" : "status"} style={{ display: "flex", alignItems: "center", gap: 12, color: "var(--text-muted)", fontSize: 13 }}>
+      <span>{count} more to review — {error ?? "loading them…"}</span>
+      {error && (
+        <button type="button" data-testid="admin-items-retry" className="btn btn--sm" onClick={onRetry}>
+          Try again
+        </button>
+      )}
+    </div>
+  );
+}
 
 /** Spec §13 A131: one question's numbers — n, the share right with its Wilson
  *  95% interval, the item–rest discrimination — and what they flag. */
@@ -518,7 +548,8 @@ function QueueRow({
         {entry.retire_pending && <span className="chip chip--err">Retire not finished — retire again</span>}
         {entry.held && (
           <span className="chip chip--err" data-testid={`admin-items-held-${entry.id}`}>
-            Held — served to no one until approved
+            {/* a retired question is never approved: retiring again removes it */}
+            {entry.retire_pending ? "Held — served to no one" : "Held — served to no one until approved"}
           </span>
         )}
         {reasons.map((r) => (

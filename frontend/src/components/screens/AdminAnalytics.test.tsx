@@ -509,6 +509,37 @@ describe("Learning loop panel (spec §10, §13 A110)", () => {
     expect(screen.getByTestId("admin-loop-gate-leaks").getAttribute("data-state")).toBe("fail");
   });
 
+  it("shows what each gate counted: reveals served, leaks caught, turns unscanned, steps measured (#866 K57)", () => {
+    render(<LearningLoopPanelBody d={loopFixture} />);
+    const counts = screen.getByTestId("admin-loop-gate-counts").textContent;
+    expect(counts).toContain("0 served reveals");
+    expect(counts).toContain("1 leak caught and cut before serving");
+    expect(counts).toContain("0 turns served unscanned");
+    expect(counts).toContain("ceiling compliance over 40 steps");
+    expect(screen.queryByTestId("admin-loop-gate-unscanned")).toBeNull();
+  });
+
+  it("says the zero-reveal gate cannot vouch for turns served unscanned (#866 K57)", () => {
+    render(<LearningLoopPanelBody d={{ ...loopFixture, unscanned_turns: 3 }} />);
+    expect(screen.getByTestId("admin-loop-gate-counts").textContent).toContain("3 turns served unscanned");
+    const note = screen.getByTestId("admin-loop-gate-unscanned").textContent;
+    expect(note).toContain("3 tutor turns were served without the answer scan");
+    expect(note).toContain("cannot vouch for what they said");
+  });
+
+  it("an unmeasured ceiling gate is inconclusive, never a red fail (#866 K56)", () => {
+    render(
+      <LearningLoopPanelBody
+        d={{ ...loopFixture, ceiling_compliance: { steps: 0, compliant: 0, rate: null },
+          gates: { ...loopFixture.gates, ceiling_compliance_ok: null } }}
+      />,
+    );
+    const chip = screen.getByTestId("admin-loop-gate-ceiling");
+    expect(chip.getAttribute("data-state")).toBe("inconclusive");
+    expect(chip.className).not.toContain("chip--err");
+    expect(screen.getByTestId("admin-loop-gate-counts").textContent).toContain("ceiling compliance over 0 steps");
+  });
+
   it("shows the pre/post gain per fixed window, with the delayed stratum under each (spec §13 A112)", () => {
     render(<LearningLoopPanelBody d={loopFixture} />);
     const week = screen.getByTestId("admin-loop-gain-7");

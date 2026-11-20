@@ -27,8 +27,12 @@ spent; its post-tests measure sessions 7 to 28 days and more before, so a short
 range divides one period's spend by another period's learning.
 
 A row is attributed to a course by its own `course_id` (A137: the drafting,
-grading and decision run sites record it), else by its session's course; a row
-with neither is counted in `unattributed` and in the overall block only. A row
+grading and decision run sites record it; since #866 K60 so do the tutor's
+turns and continuations, the session close and the decision shadows, so a
+session deleted later no longer takes their cost off the course), else by its
+session's course, read at report time; a row with neither — an older row whose
+session is gone or never named a course — is counted in `unattributed` and in
+the overall block only. A row
 with no `cost_usd` (an unpriced model) adds no dollars and is counted in
 `unpriced_rows`. The pairs follow learning/learning_gain.py exactly: an
 unassisted post-test outcome with a pretest, and nothing graded against an item

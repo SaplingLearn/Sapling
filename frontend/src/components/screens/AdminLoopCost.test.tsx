@@ -97,6 +97,18 @@ describe("LoopCostPanel", () => {
     expect(screen.getByTestId("admin-loop-cost-unattributed")).toHaveTextContent("$0.04 over 3 calls");
   });
 
+  it("names every way a call can lack a course, not only its age (#866 K60)", () => {
+    render(<LoopCostPanel cost={report({ unattributed: { cost_usd: 0.04, rows: 1 } })} />);
+    const line = screen.getByTestId("admin-loop-cost-unattributed").textContent ?? "";
+    expect(line).toContain("$0.04 over 1 call has no course on record");
+    // a call that named its course only through its session loses it when the
+    // session is deleted, or when the session never had one
+    expect(line).toContain("the call did not record its course");
+    expect(line).toContain("has since been deleted or never had a course");
+    expect(line).not.toContain("written before courses were recorded");
+    expect(line).toContain("in the totals, not in any course");
+  });
+
   it("says when the spend could not be read, and shows nothing for an older backend", () => {
     const { container, rerender } = render(<LoopCostPanel cost={null} />);
     expect(screen.getByTestId("admin-loop-cost-unavailable")).toBeInTheDocument();

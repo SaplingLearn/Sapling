@@ -168,7 +168,7 @@ but not yet alone. The layer decides how much help a turn may give.
 | `backend/learning/learner_brief.py` | IO | Builds and stores the bounded learner brief. |
 | `backend/learning/session_close.py` | IO | Close draft, deterministic fallback, normalisation, encrypted store; the insert-if-missing session helper. |
 | `backend/learning/review.py` | IO | The daily review queue: due items, budget, interleaving, claims, grading. |
-| `backend/learning/gate.py` | config, feature flags | The gate: the kill switch, then the student's `learning_loop` flag — `learning_loop_active`, `learning_loop_for_request`, `learning_loop_for_uploader`. |
+| `backend/learning/gate.py` | config, feature flags | The gate: the kill switch, then the student's `learning_loop` flag — `learning_loop_active`, `learning_loop_for_request`, `learning_loop_for_uploader`. `LOOP_FLAGS` names the flags that act only where the loop is on; `served_flag` / `forced_for_everyone` are the admin Flags page's view of a flag under the gate (#866 K24). |
 | `backend/learning/prequestion.py` | pure (listed) | The segment prequestion (A138): when a segment opens, the skip rules, the item choice with its pool rule, the pose and the answer lead. |
 | `backend/learning/prequestion_store.py` | IO (encryption) | `learning_prequestions`: one row per answered prequestion, the guess encrypted; also the release read A76's re-check rule makes. |
 | `backend/learning/self_explain.py` | pure (listed) | Self-explanation prompts (A139): the junctures decided in code, the four prompts, the once-per-concept cap. |

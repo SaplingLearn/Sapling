@@ -509,7 +509,8 @@ def test_run_session_close_bills_a_failed_run(monkeypatch, session_id):
     result, metadata = billed[0]
     assert isinstance(result, sc.UnfinishedRun)
     assert result.usage().requests == 1 and result.usage().input_tokens == 10
-    assert metadata == {"feature": "session_close", "task": "session_close", "user_id": "u", "session_id": session_id}
+    assert metadata == {"feature": "session_close", "task": "session_close", "user_id": "u",
+                        "session_id": session_id, "course_id": None}
 
 
 def test_a_close_cut_off_by_its_timeout_still_bills_what_it_spent(monkeypatch):
@@ -600,7 +601,8 @@ def test_run_session_close_runs_under_close_limits_and_records_usage(monkeypatch
     assert seen["deps"].learning_loop is True
     assert seen["deps"].session_id == session_id
     assert "<<student_text " in seen["message"]
-    assert billed == [{"feature": "session_close", "task": "session_close", "user_id": "u", "session_id": session_id}]
+    assert billed == [{"feature": "session_close", "task": "session_close", "user_id": "u",
+                       "session_id": session_id, "course_id": None}]
 
 
 def test_close_budget_band_is_novice_when_the_session_checked_a_novice_concept(monkeypatch):
@@ -1310,7 +1312,7 @@ def _wire_close(
 
 
 def _fake_run(out=None, runs=None, sessions=None):
-    async def run(draft, *, user_id, request_id, session_id=None):
+    async def run(draft, *, user_id, request_id, session_id=None, course_id=None):
         if runs is not None:
             runs.append((draft, user_id))
         if sessions is not None:
@@ -2332,7 +2334,7 @@ def test_a_racing_second_store_never_overwrites_or_emits(monkeypatch):
     )
     setattr_loop(monkeypatch, "decrypt_json_column", lambda v, **_: v)
 
-    async def first_close_lands_meanwhile(draft, *, user_id, request_id, session_id=None):
+    async def first_close_lands_meanwhile(draft, *, user_id, request_id, session_id=None, course_id=None):
         tables.rows["sessions"][0]["close_json"] = {"summary": "FIRST.", "model_written": True}
         tables.rows["sessions"][0]["close_phase"] = "teach"
         return _close_out()
@@ -2451,7 +2453,7 @@ def test_a_timed_out_close_run_stores_the_fallback(monkeypatch):
     _, events, _ = _wire_close(monkeypatch, evidence=[EVIDENCE_N1], loop_state={"phase": "teach"})
     setattr_loop(monkeypatch, "CLOSE_RUN_TIMEOUT_S", 0.01)
 
-    async def slow(draft, *, user_id, request_id, session_id=None):
+    async def slow(draft, *, user_id, request_id, session_id=None, course_id=None):
         await asyncio.sleep(1)
         return _close_out()
 

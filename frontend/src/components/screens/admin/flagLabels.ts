@@ -6,7 +6,7 @@
  * reading a visibility switch, so the UI only ever says Visible / Hidden.
  * Any other flag keeps its own variant names. Pure functions only.
  */
-import type { AdminFlag } from "@/lib/api";
+import type { AdminFlag, FlagRule } from "@/lib/api";
 import { NAV_SECTIONS, NESTED_NAV_FEATURES } from "@/lib/navFeatures";
 
 export type FlagMeta = { title: string; group: string; hideFlag: boolean };
@@ -115,22 +115,64 @@ export function changeSummary(
   return `${s.charAt(0).toUpperCase()}${s.slice(1)}.${tail}`;
 }
 
-/** The explain endpoint's answer, in words. `roleName` maps a role id. */
+/** Why a rule decided, in words (the part after "On: "), or null for a step this
+ *  UI does not know. */
+function ruleClause(r: FlagRule, roleName: (id: string) => string | undefined): string | null {
+  switch (r.step) {
+    case "user": return "this student has their own override";
+    case "role": return `from the ${roleName(r.detail) ?? r.detail} role override`;
+    case "rollout": return `they're in the ${r.detail} rollout`;
+    case "default": return "the default for everyone";
+    case "env_override": return `forced by the ${r.detail} environment variable`;
+    case "fail_closed": return `fell back to off (${r.detail})`;
+    // #866 K24: the learning loop's gate over its own flags (learning/gate.py)
+    case "kill_switch": return `the ${r.detail} kill switch turns the learning loop off for everyone`;
+    default: return null;
+  }
+}
+
+/** The explain endpoint's answer, in words. `roleName` maps a role id. A
+ *  learning-loop flag the loop is off for names what turned the loop off for
+ *  them (#866 K24). */
 export function explainPhrase(
   flag: AdminFlag,
-  r: { variant: string; step: string; detail: string },
+  r: FlagRule,
   roleName: (id: string) => string | undefined,
 ): string {
   const v = variantLabel(flag, r.variant);
-  switch (r.step) {
-    case "user": return `${v}: this student has their own override`;
-    case "role": return `${v}: from the ${roleName(r.detail) ?? r.detail} role override`;
-    case "rollout": return `${v}: they're in the ${r.detail} rollout`;
-    case "default": return `${v}: the default for everyone`;
-    case "env_override": return `${v}: forced by the ${r.detail} environment variable`;
-    case "fail_closed": return `${v}: fell back to off (${r.detail})`;
-    default: return `${v} (${r.step}${r.detail ? `: ${r.detail}` : ""})`;
+  if (r.step === "requires") {
+    const needs = flagMeta(r.master?.key ?? r.detail).title;
+    const why = r.master ? ruleClause(r.master, roleName) : null;
+    return why ? `${v}: needs ${needs}, which is off for them — ${why}` : `${v}: needs ${needs} on`;
   }
+  const why = ruleClause(r, roleName);
+  return why ? `${v}: ${why}` : `${v} (${r.step}${r.detail ? `: ${r.detail}` : ""})`;
+}
+
+/** #866 K24: a row whose answer for everyone the server decides above its
+ *  stored settings — the chip's words and its tooltip — or null. */
+export function forcedNote(flag: AdminFlag): { chip: string; tip: string } | null {
+  const f = flag.forced;
+  if (!f) return null;
+  const v = variantLabel(flag, f.variant);
+  const tail = "whatever is set here; a change here applies once that is lifted.";
+  if (f.step === "kill_switch") {
+    return { chip: "Kill switch on", tip: `${v} for every student: the server's ${f.detail} kill switch turns the learning loop off, ${tail}` };
+  }
+  if (f.step === "requires") {
+    const needs = flagMeta(f.master?.key ?? f.detail).title;
+    return { chip: `${needs} off`, tip: `${v} for every student: it needs ${needs}, which the server's ${f.master?.detail ?? "settings"} forces off, ${tail}` };
+  }
+  if (f.only_with) {
+    const needs = flagMeta(f.only_with).title;
+    const off = variantLabel(flag, flag.variants[0]);
+    return {
+      chip: "Set on the server",
+      tip: `${v} for every student with ${needs} on: the server's ${f.detail} environment variable forces it, `
+        + `${tail} Students without ${needs} get ${off}.`,
+    };
+  }
+  return { chip: "Set on the server", tip: `${v} for every student: the server's ${f.detail} environment variable forces it, ${tail}` };
 }
 
 /** "3h ago" style, for the last-change column. */
