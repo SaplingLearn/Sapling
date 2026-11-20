@@ -78,7 +78,7 @@ import logging
 import re
 import secrets
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Annotated, Literal
 
 import httpx
 from google.genai.types import ThinkingConfig
@@ -92,6 +92,7 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.usage import RunUsage
 
 from agents import GRADER_LIMITS
+from agents._bounded import clamp_unit
 from agents._providers import ANTHROPIC_MAX_TOKENS, model_for, settings_for_slot, slot_provider
 from agents.deps import SaplingDeps
 from agents.usage import record_agent_usage
@@ -213,7 +214,9 @@ class GraderOutput(BaseModel):
             "item you answered no."
         )
     )
-    confidence: float = Field(
+    # #866 Z55: Claude cannot enforce ge/le at decode time; an overshoot is clamped
+    # locally (agents/_bounded.py), never a failed output that spends the one retry
+    confidence: Annotated[float, clamp_unit("grader confidence")] = Field(
         ge=0.0, le=1.0, description="Your confidence in the whole judgment, 0 to 1."
     )
     matched_wrong_key: str = Field(

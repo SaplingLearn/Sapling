@@ -6,13 +6,14 @@ from __future__ import annotations
 
 import hashlib
 import re
-from typing import Literal
+from typing import Annotated, Literal
 
 from google.genai.types import ThinkingConfig
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 from pydantic_ai.models.google import GoogleModelSettings
 
+from agents._bounded import clamp_unit
 from agents._providers import model_for, settings_for_slot
 from agents.deps import SaplingDeps
 
@@ -21,12 +22,17 @@ class DecisionYesNoOutput(BaseModel):
     answer: Literal["yes", "no", "unclear"] = Field(
         description='"yes", "no", or "unclear" when the state does not settle it.'
     )
-    confidence: float = Field(ge=0.0, le=1.0, description="Your confidence in the answer, 0 to 1.")
+    # #866 Z44: clamped locally — Claude cannot enforce ge/le at decode time
+    confidence: Annotated[float, clamp_unit("decision confidence")] = Field(
+        ge=0.0, le=1.0, description="Your confidence in the answer, 0 to 1."
+    )
 
 
 class DecisionPickOutput(BaseModel):
     choice: str = Field(description='Exactly one listed OPTION key, or "none" when no option fits.')
-    confidence: float = Field(ge=0.0, le=1.0, description="Your confidence in the choice, 0 to 1.")
+    confidence: Annotated[float, clamp_unit("decision confidence")] = Field(
+        ge=0.0, le=1.0, description="Your confidence in the choice, 0 to 1."
+    )
 
 
 QUESTION_MATCH_WRONG_REASON = (
