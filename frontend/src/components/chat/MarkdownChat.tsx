@@ -22,9 +22,8 @@ import { FunctionPlot } from "./FunctionPlot";
 import { INERT_COMPONENTS, type MarkdownProfile } from "./inertMarkdown";
 
 // Castel-style shortcuts. Tutor can write `\R` instead of `\mathbb{R}`.
-// Frozen: KaTeX writes every \gdef / \global definition into the macros object
-// it is handed, so each render gets its own copy (`MarkdownChat` below) — one
-// message can never redefine math for another (Z32).
+// Frozen and never handed to KaTeX itself: KaTeX writes every \gdef / \global
+// definition into the macros object it is given (Z32).
 const KATEX_MACROS: Readonly<Record<string, string>> = Object.freeze({
   "\\R": "\\mathbb{R}",
   "\\Z": "\\mathbb{Z}",
@@ -48,6 +47,13 @@ const KATEX_MACROS: Readonly<Record<string, string>> = Object.freeze({
   "\\dy": "\\,dy",
   "\\dt": "\\,dt",
 });
+
+// The table every "rich" render shares, as on main: a definition one rich
+// message makes carries into the next (the loop-off app renders exactly as
+// before). An "inert" render — class material the learning loop serves
+// verbatim — gets its own copy of the pristine table instead, so its \gdef
+// stays in that message and no other message's reaches it (Z32).
+const SHARED_KATEX_MACROS: Record<string, string> = { ...KATEX_MACROS };
 
 const CALLOUT_NAMES = new Set([
   "theorem",
@@ -446,8 +452,8 @@ export const MarkdownChat = React.memo(function MarkdownChat({
             : [remarkGfm, remarkMath, remarkDirective, remarkSaplingDirectives]
         }
         rehypePlugins={[
-          // a fresh copy per render: this message's \gdef stays in this message (Z32)
-          [rehypeKatex, { macros: { ...KATEX_MACROS }, strict: "ignore" }],
+          // Z32: inert, a fresh copy of the pristine table per render
+          [rehypeKatex, { macros: inert ? { ...KATEX_MACROS } : SHARED_KATEX_MACROS, strict: "ignore" }],
           rehypeExtractDiagramBlocks,
           [rehypeHighlight, { detect: true, ignoreMissing: true }],
         ]}
