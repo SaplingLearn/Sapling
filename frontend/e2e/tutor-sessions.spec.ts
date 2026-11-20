@@ -7,7 +7,8 @@
  *  1. K05 — "Start with X" on the Tutor home, and a map concept's Learn link
  *     (`/learn?topic=X&concept=<node id>&course=<course>`, learnHrefForNode),
  *     start a session whose goal is X: sessions.loop_state.goal names the node,
- *     and the scope line says so — never a whole-course session titled X.
+ *     and the scope line says so — never a whole-course session titled X. A
+ *     note's Send to tutor starts on the note's linked concepts the same way.
  *  2. K30 — "Set a goal" shows the goal editor before anything starts: no
  *     session row, nothing posed. Saving starts the session on the goal, so its
  *     check-in burns no item (probe.unavailable stays empty).
@@ -90,6 +91,31 @@ test.describe("Tutor V2: a session on what the student chose", () => {
       const { state } = await startedSession(page);
       expect(goalTargets(state)).toEqual([id]);
       await expect(page.getByTestId("loop-goal-summary")).toContainText(name);
+    } finally {
+      await context.close();
+    }
+  });
+
+  test("K05: Send to tutor starts a session on the note's linked concepts", async ({ browser }) => {
+    const { context, page } = await signIn(browser);
+    try {
+      const linked = ["Bitwise Operators", "Two's Complement"];
+      await page.goto("/notetaker");
+      await page.getByRole("button", { name: /Create your first note/ }).click();
+      await page.getByRole("dialog").filter({ hasText: "Which course is this for?" }).getByRole("button").first().click();
+      await page.getByPlaceholder("Untitled note").fill("Bit tricks");
+      for (const name of linked) {
+        await page.getByRole("button", { name: "Link concept" }).click();
+        const picker = page.getByRole("dialog").filter({ hasText: "Pick a concept to link" });
+        await picker.getByRole("button", { name: new RegExp(`^${name}\\b`) }).click();
+        await expect(picker).toHaveCount(0);
+        await expect(page.getByLabel(`Unlink ${name}`)).toBeVisible();
+      }
+      await page.getByRole("button", { name: "Send to tutor" }).click();
+      await expect(page).toHaveURL(/\/learn\?/, { timeout: 30_000 });
+      const { state } = await startedSession(page);
+      expect([...goalTargets(state)].sort()).toEqual((await Promise.all(linked.map(nodeId))).sort());
+      for (const name of linked) await expect(page.getByTestId("loop-goal-summary")).toContainText(name);
     } finally {
       await context.close();
     }
