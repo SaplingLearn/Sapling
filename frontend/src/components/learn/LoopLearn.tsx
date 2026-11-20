@@ -184,8 +184,8 @@ function draftAnswer(draft: Draft, format: string): LoopCheckAnswer {
   return draft.confidence ? { ...a, confidence: draft.confidence } : a;
 }
 /** The Tutor's main column: a session (T4–T15), the Tutor home (T1), a course
- *  page (T2) or every session (T3). */
-type TutorView = "session" | "home" | "course" | "all";
+ *  page (T2), every session (T3), or the home's goal editor before a start (K30). */
+type TutorView = "session" | "home" | "course" | "all" | "goal";
 
 
 /** The phase GET /status reports for a document, in the UI's vocabulary. */
@@ -278,6 +278,7 @@ export function LoopLearn() {
   const [goalEditor, setGoalEditor] = useState(false);
   const [goalBusy, setGoalBusy] = useState(false);
   const [goalError, setGoalError] = useState<string | null>(null);
+  const [startGoal, setStartGoal] = useState<LoopGoal | null>(null); // K30: the goal a start was refused on
   const goalButton = useRef<HTMLButtonElement>(null);
 
   // Probe
@@ -352,7 +353,7 @@ export function LoopLearn() {
   const bootKey = useRef<string | null>(null);
   const resumePending = useRef(true); // the deep link's ?resume= is honoured once
   const topicStarted = useRef(false); // the deep link's ?topic= starts a session once
-  const lastStart = useRef<{ topic?: string; mode?: string; goal?: boolean }>({}); // the start card's "Try again" repeats it
+  const lastStart = useRef<{ topic?: string; mode?: string; goal?: LoopGoal }>({}); // the start card's "Try again" repeats it
   const sessionRef = useRef<string | null>(null);
   // K26: re-enter the session on screen as the server now has it (set below,
   // once `resume` exists). One at a time.
@@ -820,10 +821,10 @@ export function LoopLearn() {
    *  With none on screen (a read-only transcript), the course's listed open
    *  session is the one left (Z64: one open session per course). */
   const newSession = useCallback(async (
-    { closeCurrent = false, topic, mode }: { closeCurrent?: boolean; topic?: string; mode?: string } = {},
+    { closeCurrent = false, topic, mode, goal }: { closeCurrent?: boolean; topic?: string; mode?: string; goal?: LoopGoal } = {},
   ) => {
     if (!courseId || !userId || sessionTransitionBusy) return;
-    lastStart.current = { topic, mode };
+    lastStart.current = { topic, mode, goal };
     // An explicit start wins over a boot that has not listed the sessions yet.
     bootKey.current = `${userId}:${courseId}`;
     const leaving = closeCurrent ? sessionToLeave(sessionRef.current, isOpenPhase(state.phase), openSessions) : null;
@@ -838,7 +839,8 @@ export function LoopLearn() {
     const fromNoteId = deepLink.note && topic === deepLink.topic ? deepLink.note : null;
     const cardShown = !!fromNoteId && takeNoteCardShown(fromNoteId);
     try {
-      const r = await startLoopSession(userId, courseId, title, mode, undefined, fromNoteId);
+      // K05/K30: a session on chosen concepts starts on them (StartSessionBody.goal)
+      const r = await startLoopSession(userId, courseId, title, mode, goal, fromNoteId);
       if (g !== gen.current || !adoptStarted(r, cardShown)) return;
       await nextProbe(r.session_id, g);
       if (g !== gen.current) return;
@@ -851,6 +853,13 @@ export function LoopLearn() {
       // the student never gets a refusal without it, unless Send to tutor
       // just showed it for this note.
       if (!cardShown) interceptCrisis({ crisis_support: crisisSupportInError(err) });
+      if (goal && extractErrorDetail(err).status === 422) {
+        // K05/K30: a concept the course no longer has — choose again, never a retry that fails again
+        setStartGoal(goal);
+        setGoalError(humanizeError(err, "Confirm 1–12 concepts from this course."));
+        setView("goal");
+        return;
+      }
       setLoadError("start"); // never an empty probe: the start card offers a retry
       reportError(err, "Couldn't start a session.");
     } finally {
@@ -1012,14 +1021,15 @@ export function LoopLearn() {
     resumePending.current = true;
     void loadSessions();
   };
-  /** T1's start: a new session (the open one on screen is wrapped up first). */
-  const startGuided = async (opts: { topic?: string; goal?: boolean } = {}) => {
+  /** T1's start: a new session (the open one on screen is wrapped up first),
+   *  on the concepts of `goal` when one was chosen (K05, K30). */
+  const startGuided = (opts: { topic?: string; goal?: LoopGoal } = {}) => {
     setView("session");
-    await newSession({ closeCurrent: true, topic: opts.topic, mode: deepLink.mode });
-    lastStart.current.goal = opts.goal;
-    if (opts.goal && mounted.current && sessionRef.current) { setGoalEditor(true); setGoalError(null); }
+    return newSession({ closeCurrent: true, topic: opts.topic, mode: deepLink.mode, goal: opts.goal });
   };
-  const retryStart = () => (lastStart.current.goal ? startGuided(lastStart.current) : newSession(lastStart.current));
+  const retryStart = () => newSession(lastStart.current);
+  /** K30: the home's "Set a goal" sets it before anything starts or is posed. */
+  const showStartGoal = () => { setStartGoal(null); setGoalError(null); setView("goal"); };
 
   // ── Probe ──────────────────────────────────────────────────────────────
   /** After a graded answer: the probe's last answer already moved the session
@@ -1838,7 +1848,7 @@ export function LoopLearn() {
     return phaseText(state.phase, panelPlan, currentNodeId, conceptNames);
   };
   const topTitle = (): string => {
-    if (view === "home") return "New session";
+    if (view === "home" || view === "goal") return "New session";
     if (view === "all") return "All sessions";
     if (view === "course") return course ? `${course.course_code ? `${course.course_code} · ` : ""}${course.course_name}` : "Course";
     if (readOnly) return readOnly.topic || "Earlier session";
@@ -1846,6 +1856,7 @@ export function LoopLearn() {
   };
   const topSub = (): string => {
     if (view === "home") return "Choose where to start.";
+    if (view === "goal") return "Choose what this session is for.";
     if (view === "all") return "Newest first.";
     if (view === "course") return "Sessions, material and progress.";
     return phaseLine();
@@ -2304,7 +2315,7 @@ export function LoopLearn() {
           onContinue={() => { if (openHere) openRow(openHere); }}
           onStart={() => void startGuided()}
           onStartWith={(topic) => void startGuided({ topic })}
-          onGoal={() => void startGuided({ goal: true })}
+          onGoal={showStartGoal}
         />
       </div>
     );
@@ -2359,10 +2370,17 @@ export function LoopLearn() {
       </>
     );
   };
+  /** K30: the home's goal editor — saving starts the session on that goal. */
+  const renderStartGoal = () => (
+    <GoalEditor key={`start:${courseId}`} goal={startGoal} nodes={railGraph.nodes.filter((node) => !node.is_subject_root)}
+      busy={starting} error={goalError} loadingNodes={graphLoading} nodesError={graphError} onRetryNodes={() => void refreshGraph()}
+      onSave={(next) => void startGuided({ goal: next ?? undefined })} onCancel={showHome} />
+  );
   /** The main column's page: T1 home, T2 course, T3 all sessions, else the session. */
   const renderPage = (): React.ReactNode => {
     const pageable = !sessionsError && !noCourses;
     if (view === "home" && pageable) return renderHome();
+    if (view === "goal" && pageable) return renderStartGoal();
     if (view === "course" && course) return renderCourse(course);
     if (view === "all") return renderAll();
     return renderSession();

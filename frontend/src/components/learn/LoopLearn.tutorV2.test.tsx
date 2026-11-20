@@ -677,12 +677,15 @@ describe("Z58 — Try again after a failed start repeats that start", () => {
     expect(api.startLoopSession.mock.calls.map((c) => c[2])).toEqual(["Recursion", "Recursion"]);
   });
 
-  it("'Set a goal' retries into the goal editor", async () => {
+  it("'Set a goal' retries the start on that goal (K30: the goal is set before the start)", async () => {
     render(<LoopLearn />);
     fireEvent.click(await screen.findByTestId("tutor-home-goal"));
+    fireEvent.click(await screen.findByTestId("loop-goal-target-n1"));
+    fireEvent.click(screen.getByTestId("loop-goal-save"));
     fireEvent.click(await screen.findByTestId("loop-start-retry"));
-    expect(await screen.findByTestId("loop-goal-save")).toBeTruthy();
-    expect(api.startLoopSession).toHaveBeenCalledTimes(2);
+    await screen.findByTestId("loop-probe-item");
+    const goal = { text: "", target_node_ids: ["n1"] };
+    expect(api.startLoopSession.mock.calls.map((c) => c[4])).toEqual([goal, goal]);
   });
 });
 
@@ -875,5 +878,36 @@ describe("K29 — an open session past the open list's cap is in progress and re
     expect(screen.getByTestId("loop-phase").getAttribute("data-session-id")).toBe("old");
     expect(screen.queryByTestId("loop-readonly-transcript")).toBeNull();
     expect(screen.getByTestId("loop-close-button")).toBeTruthy(); // it can be wrapped up from its own course
+  });
+});
+
+describe("K30 — 'Set a goal' sets it before the session starts", () => {
+  const node = { id: "n1", concept_name: "Recursion", mastery_tier: "struggling", mastery_score: 0.2, is_subject_root: false, subject: "Intro CS", course_id: "c1" };
+  beforeEach(() => {
+    api.listLoopSessionsFor.mockResolvedValue(listed([]));
+    api.getGraph.mockResolvedValue({ nodes: [node], edges: [], stats: {} });
+    api.startLoopSession.mockResolvedValue({ session_id: "s9", initial_message: OPENER, goal: { text: "", target_node_ids: ["n1"] } });
+    api.nextLoopProbe.mockResolvedValue(probeItem);
+  });
+
+  it("opens the goal editor with nothing started or posed; saving starts the session on the goal", async () => {
+    render(<LoopLearn />);
+    fireEvent.click(await screen.findByTestId("tutor-home-goal"));
+    await screen.findByTestId("loop-goal-save");
+    expect(api.startLoopSession).not.toHaveBeenCalled();
+    expect(api.nextLoopProbe).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId("loop-goal-target-n1"));
+    fireEvent.click(screen.getByTestId("loop-goal-save"));
+    await screen.findByTestId("loop-probe-item");
+    expect(api.startLoopSession).toHaveBeenCalledWith("u1", "c1", "Intro CS", "", { text: "", target_node_ids: ["n1"] }, null);
+    expect(api.setLoopGoal).not.toHaveBeenCalled(); // no posed item is burnt by a later goal write
+  });
+
+  it("Cancel goes back to the home and starts nothing", async () => {
+    render(<LoopLearn />);
+    fireEvent.click(await screen.findByTestId("tutor-home-goal"));
+    fireEvent.click(await screen.findByTestId("loop-goal-cancel"));
+    expect(await screen.findByTestId("tutor-home")).toBeTruthy();
+    expect(api.startLoopSession).not.toHaveBeenCalled();
   });
 });

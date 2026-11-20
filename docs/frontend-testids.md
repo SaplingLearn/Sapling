@@ -998,7 +998,7 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | --- | --- |
 | `loop-status-error` | PKG-14b (spec §11.2): `Learn()`'s retry state — the status probe failed (5xx, network, timeout); "Couldn't reach the tutor. Try again." Never the legacy tree |
 | `loop-status-retry` | its button — re-runs `GET /api/learn/loop/review/active` |
-| `loop-phase` | root container; `data-phase` = probe / plan / teach / check / feedback / close (server-driven); `data-session-id` (empty until a session exists); `data-view` = session / home / course / all (the Tutor shell's page, wireframes T1–T3) |
+| `loop-phase` | root container; `data-phase` = probe / plan / teach / check / feedback / close (server-driven); `data-session-id` (empty until a session exists); `data-view` = session / home / course / all / goal (the Tutor shell's page, wireframes T1–T3; `goal` is the home's goal editor before a session starts) |
 | `tutor-sidebar` | the Tutor's own sidebar (`learn/tutor/TutorSidebar.tsx`): New session, the session search, the courses and the recents; a drawer on a phone (`tutor-sidebar-show` opens it, `tutor-sidebar-hide` closes it) |
 | `tutor-session-search` | the sidebar's session search (`type="search"`) |
 | `tutor-course-{courseId}` | one course in the sidebar; a click opens its page (T2); `aria-current="true"` while that page shows |
@@ -1009,7 +1009,7 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `loop-new-session` | New session: opens the Tutor home (T1) and writes nothing; in the sidebar on wide screens, "+ New" in the TopBar on a phone |
 | `tutor-home` | the Tutor home (T1): "What do you want to learn today?" — where `/learn` lands when the course has no open session (a `?topic=` link still starts one) |
 | `loop-start-guided` | the home's "Start a guided session": wraps up (`/close`) the open session on screen first, so sessions do not pile up open (a 409 there starts nothing), then starts one |
-| `tutor-home-continue` / `tutor-home-due` / `tutor-home-start-with` / `tutor-home-goal` | the home's suggestions: back to the open session; Study's due review; a session titled after the weakest concept; a session that opens the goal editor |
+| `tutor-home-continue` / `tutor-home-due` / `tutor-home-start-with` / `tutor-home-goal` | the home's suggestions: back to the open session; Study's due review; a session titled after the weakest concept; the goal editor (`data-view="goal"`), before anything starts — saving starts the session on that goal |
 | `tutor-course-page` | a course page (T2); `data-course-id`: its sessions, progress and material; `tutor-course-start` (TopBar) goes to the home |
 | `tutor-all-sessions` | every session (T3), with a search and an All / In progress / Wrapped up filter |
 | `tutor-phase-line` | the TopBar's line under the title: Check-in / Plan · N concepts / "<concept> · concept i of n" (the approved plan's cursor, which a turn or Check me that moves it reports) / Wrap-up / "Wrapped up · read-only" |
