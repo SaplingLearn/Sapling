@@ -472,6 +472,8 @@ never collide in the DOM.
 | `dashboard-plan-quiz` / `dashboard-plan-first-session` / `dashboard-plan-due-{assignmentId}` | plan items other than the session resume |
 | `dashboard-action-start` / `dashboard-action-calendar` | the greeting row's Start learning / Calendar buttons |
 | `dashboard-course-rows` / `dashboard-mastery-tree` | the mastery card's per-course rows and its Open Tree link |
+| `dashboard-learn-next` / `dashboard-learn-next-tree` / `dashboard-study-room` | the top-nav layout's Learn next card (`dashboard/LearnNextCard.tsx`), its Tree → link and its Study room button |
+| `dashboard-learn-next-item` | one Learn next recommendation, repeated with **no suffix** (an older server names no concept); carries `data-node-id` when the recommendation names its concept. With the learning loop on it opens the Tutor on that concept (`?concept=&course=`, #866 K05), otherwise main's `?topic=&mode=socratic` link |
 | `dashboard-retention-due` / `dashboard-retention-open` | the "A retention check is due" notice (spec §13 A126; only while the shell's due read says so, behind the `retention_due_badge` flag) and its button to `/study?retention-course={courseId}` — a link, never an opened check |
 
 ### `calendar`

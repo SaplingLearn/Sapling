@@ -201,6 +201,8 @@ const eslintConfig = [
       "src/components/ShellFrame.tsx",
       "src/components/screens/Social.tsx",
       "src/components/screens/Dashboard.tsx",
+      // Dashboard's Learn next card (#866 K05). New file, no baselined backlog.
+      "src/components/dashboard/LearnNextCard.tsx",
       "src/components/screens/Learn.tsx",
       // Learning loop (PKG-13): the loop-path Learn screen and its budget banner.
       "src/components/learn/LoopLearn.tsx",

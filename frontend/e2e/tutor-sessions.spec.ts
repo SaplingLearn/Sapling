@@ -8,7 +8,9 @@
  *     (`/learn?topic=X&concept=<node id>&course=<course>`, learnHrefForNode),
  *     start a session whose goal is X: sessions.loop_state.goal names the node,
  *     and the scope line says so — never a whole-course session titled X. A
- *     note's Send to tutor starts on the note's linked concepts the same way.
+ *     note's Send to tutor starts on the note's linked concepts the same way,
+ *     and the Dashboard's Learn next on its recommended concept (in the
+ *     loop-off lanes it keeps main's `?topic=X&mode=socratic` link).
  *  2. K30 — "Set a goal" shows the goal editor before anything starts: no
  *     session row, nothing posed. Saving starts the session on the goal, so its
  *     check-in burns no item (probe.unavailable stays empty).
@@ -124,6 +126,29 @@ test.describe("Tutor V2: a session on what the student chose", () => {
     }
   });
 
+  test("K05: the Dashboard's Learn next starts a session on the recommended concept", async ({ browser }) => {
+    const { context, page } = await signIn(browser);
+    try {
+      await page.addInitScript(() => localStorage.setItem("sapling_layout", "topnav")); // the card's layout
+      const loopStatus = page.waitForResponse((r) => r.url().includes("/api/learn/loop/status"));
+      await page.goto("/dashboard");
+      const item = page.getByTestId("dashboard-learn-next-item").first();
+      await expect(item).toBeVisible();
+      const id = await item.getAttribute("data-node-id");
+      expect(id, "a recommendation names its concept").toBeTruthy();
+      await loopStatus; // the link is the concept's once the loop is known to be on
+      const toLearn = page.waitForURL(/\/learn\?/, { timeout: 30_000 });
+      await item.click();
+      await toLearn;
+      const { state } = await startedSession(page);
+      expect(goalTargets(state)).toEqual([id]);
+      const [row] = await queryRaw("SELECT concept_name FROM graph_nodes WHERE id = $1", [id]);
+      await expect(page.getByTestId("loop-goal-summary")).toContainText(String(row.concept_name));
+    } finally {
+      await context.close();
+    }
+  });
+
   test("K30: Set a goal comes before the session, so its check-in burns nothing", async ({ browser }) => {
     const { context, page } = await signIn(browser);
     try {
@@ -175,6 +200,31 @@ test.describe("Tutor V2: a session on what the student chose", () => {
       await expect(list.getByTestId(`tutor-session-row-${id}`)).toHaveCount(0);
       await expect.poll(async () => (await queryRaw("SELECT id FROM sessions WHERE id = $1", [id])).length).toBe(0);
       await expect(page.getByTestId("loop-phase")).toHaveAttribute("data-session-id", "");
+    } finally {
+      await context.close();
+    }
+  });
+});
+
+test.describe("Learn next with the loop off", () => {
+  test.skip(!loopOffLane, "loop-off lanes only");
+
+  test("K05: the Dashboard's Learn next opens main's link, byte for byte", async ({ browser }) => {
+    const { context, page } = await signIn(browser);
+    try {
+      await page.addInitScript(() => localStorage.setItem("sapling_layout", "topnav"));
+      await page.goto("/dashboard");
+      const item = page.getByTestId("dashboard-learn-next-item").first();
+      await expect(item).toBeVisible();
+      const name = ((await item.locator("div > div").first().textContent()) ?? "").trim();
+      expect(name).not.toBe("");
+      const seen: string[] = [];
+      page.on("framenavigated", (f) => { if (f === page.mainFrame()) seen.push(f.url()); });
+      const toLearn = page.waitForURL(/\/learn/, { timeout: 30_000 });
+      await item.click();
+      await toLearn;
+      const opened = seen.map((u) => new URL(u)).find((u) => u.pathname === "/learn");
+      expect(opened?.search).toBe(`?topic=${encodeURIComponent(name)}&mode=socratic`);
     } finally {
       await context.close();
     }

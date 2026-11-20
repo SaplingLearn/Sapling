@@ -34,6 +34,7 @@ import { apiToGraphNode, learnHrefForNode, type GraphNode, type GraphEdge } from
 import { IS_TEST_MODE, now } from "@/lib/testMode";
 import { buildQuizHref } from "@/lib/quiz/source";
 import { DashboardActions, PANEL_GAP, TodayColumn } from "../dashboard/TodayColumn";
+import { LearnNextCard, type Recommendation } from "../dashboard/LearnNextCard";
 import {
   activeDaysFrom,
   assignmentUrgency,
@@ -221,7 +222,6 @@ function getWeekDays(today: Date) {
 }
 
 type Navigate = (href: string) => void;
-type Recommendation = { concept_name: string; reason?: string };
 
 function fetchDashboard(userId: string, activeSemester: string) {
   // Empty `activeSemester` means "All semesters" — the DEFAULT — so the
@@ -1158,38 +1158,7 @@ function renderLegacyRightPanel({
         />
       </div>
 
-      <div className="card" style={{ padding: "var(--pad-lg)" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-          <div className="label-micro">Learn next</div>
-          <button className="btn btn--ghost btn--sm" onClick={() => navigate("/tree")}>Tree →</button>
-        </div>
-        {recommendations.length === 0 && (
-          <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Nothing suggested yet — start a session.</div>
-        )}
-        {recommendations.slice(0, 3).map((r, i) => (
-          <button
-            key={`${r.concept_name}-${i}`}
-            onClick={() => navigate(`/learn?topic=${encodeURIComponent(r.concept_name)}&mode=socratic`)}
-            style={{
-              display: "flex", alignItems: "flex-start", gap: 10, width: "100%",
-              padding: "10px 12px", borderRadius: "var(--r-md)",
-              background: "var(--bg-subtle)", marginBottom: 6, textAlign: "left",
-            }}
-          >
-            <Icon name="sparkle" size={14} />
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 13, fontWeight: 600 }}>{r.concept_name}</div>
-              {r.reason && <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{r.reason}</div>}
-            </div>
-            <Icon name="chev" size={12} />
-          </button>
-        ))}
-        <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
-          <button className="btn btn--sm" style={{ flex: 1 }} onClick={() => navigate("/social")}>
-            <Icon name="users" size={12} /> Study room
-          </button>
-        </div>
-      </div>
+      <LearnNextCard recommendations={recommendations} navigate={navigate} />
     </div>
   );
 }
