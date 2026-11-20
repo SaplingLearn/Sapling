@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 
+import httpx
 import pytest
 
 from learning.cost_per_gain import cost_per_gain
@@ -107,9 +108,15 @@ def test_closing_a_session_hands_its_course_to_the_close_run(monkeypatch):
     assert seen == [("s1", "course-1")]
 
 
-def test_a_course_that_cannot_be_read_never_fails_the_close(monkeypatch):
-    """The course is a label on the usage row: a failed read names none, and
-    the model close still runs and is stored."""
+@pytest.mark.parametrize("error", [
+    RuntimeError("course_offerings unreachable"),
+    httpx.ConnectError("course_offerings unreachable"),
+    ValueError("course_offerings answered no JSON"),
+])
+def test_a_course_that_cannot_be_read_never_fails_the_close(monkeypatch, error):
+    """The course is a label on the usage row: a failed read (any of the DB
+    client's failures: httpx errors, the scope's RuntimeError, a bad body's
+    ValueError) names none, and the model close still runs and is stored."""
     from services.loop import closing
     from tests.test_learning_close_brief import EVIDENCE_N1, UID, _close_out, _wire_close, client
     from tests.split_patches import setattr_loop
@@ -118,7 +125,7 @@ def test_a_course_that_cannot_be_read_never_fails_the_close(monkeypatch):
     tables.rows["sessions"][0]["offering_id"] = "off-1"
 
     def down(offering):
-        raise RuntimeError("course_offerings unreachable")
+        raise error
 
     monkeypatch.setattr(closing, "offering_course_id", down)
     seen = []

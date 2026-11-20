@@ -9,6 +9,8 @@ import logging
 import re
 import uuid
 from datetime import datetime, timezone
+
+import httpx
 from services.loop.errors import HTTPException
 from services import abuse_limits
 from services.request_limits import aenforce_abuse_limit
@@ -321,7 +323,7 @@ async def _session_course(session_id: str, offering_id: str | None) -> str | Non
         return None
     try:
         return await asyncio.to_thread(offering_course_id, offering_id) or None  # #117: off the loop
-    except Exception:
+    except (httpx.HTTPError, RuntimeError, ValueError):  # the DB client's failures (check_item_service:761)
         logger.warning("close of %s: its course was not read; its usage row names none", session_id,
                        exc_info=True)
         return None
