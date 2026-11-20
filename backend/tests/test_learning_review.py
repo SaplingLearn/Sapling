@@ -2098,6 +2098,8 @@ def test_review_answer_grades_and_returns_next_due(client, monkeypatch, store):
     _session(monkeypatch, {"sr": {}, "review": {"spent_s": 45, "retention": 0.93}})
     _check_answer_seams(monkeypatch, _check_item("n-due", "qh-1"))
     _opened(store, "n-due", "ci-qh-1")
+    # #866 K54: the item's own course's target (not the session's cached one)
+    monkeypatch.setattr(review, "review_retention", lambda u, c: {COURSE: 0.93}[c])
     seen = {}
 
     async def fake_grade(user_id, item, **kw):
@@ -3677,3 +3679,47 @@ def test_a_review_report_keeps_the_students_local_day(client, store, review_repo
         r = client.post("/api/learn/loop/report", json=_report(session_id=morning, tz_offset_min=_NY))
     assert r.status_code == 200, r.text
     assert len(review_report.calls) == 1
+
+
+# ── #866 K54: an item is scheduled at its own course's retention target ──────
+
+
+def test_course_retention_is_the_items_own_courses_target(monkeypatch):
+    """#866 K54 (spec §3.2 rule 2): the exam window and the large set are a
+    course's, so an item's target is its own course's — whatever scope Study's
+    queue is read in (it is read unscoped). A card with no course (term-less)
+    has none: the default. A card's course is its offering's."""
+    from learning import review
+
+    targets = {"c-exam": params.FSRS_RETENTION_EXAM}
+    monkeypatch.setattr(review, "review_retention", lambda u, c: targets[c])
+    monkeypatch.setattr(review, "offering_course_id", lambda off: {"off-exam": "c-exam"}[off])
+    assert review.course_retention(USER, "c-exam") == params.FSRS_RETENTION_EXAM
+    assert review.course_retention(USER, None) == params.FSRS_RETENTION_DEFAULT
+    assert review.card_retention(USER, _card_row(offering_id="off-exam")) == params.FSRS_RETENTION_EXAM
+    assert review.card_retention(USER, _card_row(offering_id=None)) == params.FSRS_RETENTION_DEFAULT
+
+
+def test_review_answer_schedules_each_item_at_its_own_courses_target(client, monkeypatch, store):
+    """#866 K54: in Study's unscoped review a card of a course with an exam in
+    the window is scheduled at FSRS_RETENTION_EXAM, as the Flashcards page
+    schedules it — never at the session's cached all-courses target."""
+    from learning import review
+
+    _session(monkeypatch, {"sr": {}, "review": {"spent_s": 0, "retention": params.FSRS_RETENTION_LARGE_SET}})
+    monkeypatch.setattr(review, "load_card", lambda u, cid: _card_row(offering_id="off-exam"))
+    monkeypatch.setattr(review, "offering_course_id", lambda off: "c-exam")
+    monkeypatch.setattr(review, "review_retention", lambda u, c: {"c-exam": params.FSRS_RETENTION_EXAM}[c])
+    seen = {}
+
+    async def fake_grade(user_id, item, **kw):
+        seen.update(kw)
+        return review.ReviewOutcome(correct=True, sr={})
+
+    monkeypatch.setattr(review, "grade_review", fake_grade)
+    _opened(store, "fc:f1", "f1")
+    body = {"user_id": USER, "session_id": _sid(None), "kind": "flashcard", "item_id": "f1", "rating": 3}
+    with _loop():
+        r = client.post(f"{REVIEW}/answer", json=body)
+    assert r.status_code == 200, r.text
+    assert seen["retention"] == params.FSRS_RETENTION_EXAM

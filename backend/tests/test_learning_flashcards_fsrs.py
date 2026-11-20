@@ -211,8 +211,8 @@ class TestRateCard:
 
     def test_gate_on_selects_the_fsrs_columns(self):
         _, calls, _, _ = _rate(3, gate=True, row=SEEN_ROW)
-        assert (
-            calls["select_cols"] == "id,times_reviewed,last_reviewed_at,fsrs_d,fsrs_s,reps,lapses"
+        assert calls["select_cols"] == (  # #866 K54: and the course it is scheduled for
+            "id,times_reviewed,last_reviewed_at,fsrs_d,fsrs_s,reps,lapses,offering_id"
         )
 
     def test_gate_on_writes_state_beside_the_legacy_columns(self):
@@ -494,8 +494,57 @@ class TestFlashcardFsrsUpdate:
         assert r.status_code == 200, r.text
         spy.assert_called_once()
         (row, ui_rating), kwargs = spy.call_args
-        assert ui_rating == 2 and kwargs == {"now": NOW}  # no retention: the default
+        # a card with no course: the default target (#866 K54 — its course's otherwise)
+        from learning.params import FSRS_RETENTION_DEFAULT
+
+        assert ui_rating == 2 and kwargs == {"now": NOW, "retention": FSRS_RETENTION_DEFAULT}
         assert calls["update"] == self._pre_reopen(SEEN_ROW, 2, NOW)
+
+    def test_a_loop_students_card_is_scheduled_at_its_courses_target(self):
+        """#866 K54: with the loop on, a rating on the Flashcards page schedules
+        the card at its own course's retention target — the one Study's review
+        uses for the same card (learning.review.card_retention): in an exam
+        window FSRS_RETENTION_EXAM, never the default the page always used."""
+        import learning.flashcard_fsrs as helper
+        from learning import params
+
+        spy = MagicMock(wraps=helper.flashcard_fsrs_update)
+        row = {**SEEN_ROW, "offering_id": "off-exam"}
+        side_effect, calls = _rate_tables(row)
+        with (
+            _frozen_clock(),
+            patch_in(_LIST_MODULES, "table", side_effect=side_effect),
+            patch_in(_LIST_MODULES, "flashcard_fsrs_update", new=spy),
+            patch_in(_LIST_MODULES, "check_achievements", new=MagicMock()),
+            patch("learning.review.offering_course_id", return_value="c-exam"),
+            patch("learning.review.review_retention", return_value=params.FSRS_RETENTION_EXAM),
+        ):
+            r = client.post("/api/flashcards/rate", json={"user_id": USER_ID, "card_id": "card-1", "rating": 2})
+        assert r.status_code == 200, r.text
+        assert spy.call_args.kwargs == {"now": NOW, "retention": params.FSRS_RETENTION_EXAM}
+        assert calls["select_cols"].endswith(",offering_id")
+
+    def test_a_loop_off_rating_reads_no_course_and_keeps_the_default(self, monkeypatch):
+        """#866 K54, loop off: no Study review to agree with — the rating is as
+        before the fix (the default target, the same columns read)."""
+        import learning.flashcard_fsrs as helper
+
+        monkeypatch.setenv("SAPLING_FLAG_LEARNING_LOOP", "off")
+        spy = MagicMock(wraps=helper.flashcard_fsrs_update)
+        side_effect, calls = _rate_tables(SEEN_ROW)
+        retention = MagicMock()
+        with (
+            _frozen_clock(),
+            patch_in(_LIST_MODULES, "table", side_effect=side_effect),
+            patch_in(_LIST_MODULES, "flashcard_fsrs_update", new=spy),
+            patch_in(_LIST_MODULES, "check_achievements", new=MagicMock()),
+            patch("learning.review.card_retention", new=retention),
+        ):
+            r = client.post("/api/flashcards/rate", json={"user_id": USER_ID, "card_id": "card-1", "rating": 2})
+        assert r.status_code == 200, r.text
+        assert spy.call_args.kwargs == {"now": NOW}
+        assert calls["select_cols"] == "id,times_reviewed,last_reviewed_at,fsrs_d,fsrs_s,reps,lapses"
+        retention.assert_not_called()
 
     def test_the_route_no_longer_holds_fsrs_maths(self):
         import routes.flashcards as route

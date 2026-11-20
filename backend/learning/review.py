@@ -89,6 +89,7 @@ from learning.misconceptions import (  # PKG-10 (A76, A114); A127's resolution
 )
 from learning.params import (
     EDGE_PREREQ_SOURCE_IS_PREREQ,
+    FSRS_RETENTION_DEFAULT,
     FSRS_S0_GOOD,
     INTERLEAVE_DEFINITIONAL_DIFFICULTY,
     LOOP_GRADING_CLAIM_STALE_S,
@@ -101,7 +102,7 @@ from learning.params import (
     SR_RELEARN_SESSION_TARGET,
     SR_RELEARN_SESSIONS,
 )
-from services.academics import resolve_offering, user_offering_ids_for_course
+from services.academics import offering_course_id, resolve_offering, user_offering_ids_for_course
 from services.achievement_service import check_achievements
 from services.check_item_service import list_items
 from services.varied_practice import familiarity_for  # spec §13 A140
@@ -335,6 +336,24 @@ def review_retention(user_id: str, course_id: str | None) -> float:
     days until its next exam (no exam lookup without a course)."""
     exam = days_until_next_exam(user_id, course_id) if course_id else None
     return retention_target(_scheduled_concept_count(user_id, course_id), exam)
+
+
+def course_retention(user_id: str, course_id: str | None) -> float:
+    """#866 K54: the target an item is scheduled at — its OWN course's (rule 2:
+    the exam window and the large set are a course's), whatever scope Study's
+    queue is read in (it is read unscoped). An item with no course has neither:
+    FSRS_RETENTION_DEFAULT. /review/answer and the Flashcards page's rating
+    (loop on) both schedule through it, so one card gets one target."""
+    if not course_id:
+        return FSRS_RETENTION_DEFAULT
+    return review_retention(user_id, course_id)
+
+
+def card_retention(user_id: str, card_row: dict) -> float:
+    """`course_retention` of a `flashcards` row: its offering's course (a
+    term-less card has none)."""
+    offering = card_row.get("offering_id")
+    return course_retention(user_id, offering_course_id(offering) if offering else None)
 
 
 # ── queue ─────────────────────────────────────────────────────────────────────
