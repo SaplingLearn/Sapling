@@ -494,6 +494,9 @@ class AnswerItem(BaseModel):
 class SubmitQuizBody(BaseModel):
     quiz_id: Id
     answers: list[AnswerItem] = Field(max_length=QUIZ_MAX_QUESTIONS * 4)
+    # #866 K17: the results' due count reads Study's review session, which is
+    # one per the student's LOCAL day (JS getTimezoneOffset; clamped where read)
+    tz_offset_min: int = 0
 
 
 # ── Calendar ──────────────────────────────────────────────────────────────────

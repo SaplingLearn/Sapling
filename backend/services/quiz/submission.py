@@ -844,6 +844,7 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
             user_id,
             {"id": concept_node_id, "course_id": node.get("course_id"), "concept_name": concept_name},
             skills_before,
+            tz_offset_min=body.tz_offset_min,  # #866 K17: Study's review day is local
         )
         if routing_on
         else None

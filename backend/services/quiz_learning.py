@@ -773,20 +773,32 @@ def _pause_novice(user_id: str) -> bool:
     return bool(ai_budget.check(user_id, "tutor", "novice").pause_novice)
 
 
-def _servable_due_count(user_id: str, course_id: str | None, now: datetime) -> int | None:
+def _grading_capped(user_id: str) -> bool:
+    """Study's review queue holds every check at the grader cap (#866 K16) —
+    the same read `services/loop/reviews.py::_grading_cap` makes."""
+    from services import ai_budget
+
+    return ai_budget.check(user_id, "grader").level == "hard"
+
+
+def _servable_due_count(
+    user_id: str, course_id: str | None, now: datetime, *, tz_offset_min: int = 0
+) -> int | None:
     """PR #866 K15: how many of the course's due concepts Study's review queue
     can serve today — `learning.review.summary`'s due checks for the course,
     over the cross-course session the Study queue serves from (so a concept
-    with no servable check item, or paused, is not counted). None on a failed
-    read."""
+    with no servable check item, paused, or held at the grader cap is not
+    counted). That session is the student's LOCAL day's (`tz_offset_min`, JS
+    getTimezoneOffset, #866 K17). None on a failed read."""
     from learning import review
     from services.ai_budget import AIBudgetUnavailable
 
     try:
-        loop_state = review.peek_review_session(user_id, None, now)
+        loop_state = review.peek_review_session(user_id, None, now, tz_offset_min=tz_offset_min)
         counts = review.summary(
             user_id, course_id, now,
             loop_state=loop_state, pause_novice=lambda: _pause_novice(user_id),
+            hold_checks=lambda: _grading_capped(user_id),
         )
         return int((counts.get("due") or {}).get("check") or 0)
     # a failed PostgREST read, another student's session (PermissionError), a
@@ -796,14 +808,16 @@ def _servable_due_count(user_id: str, course_id: str | None, now: datetime) -> i
         return None
 
 
-def _servable_step(step: quiz_plan.NextStep, user_id: str, course_id: str | None, now: datetime) -> quiz_plan.NextStep:
+def _servable_step(
+    step: quiz_plan.NextStep, user_id: str, course_id: str | None, now: datetime, tz_offset_min: int = 0
+) -> quiz_plan.NextStep:
     """The next step with its due count cut to what Study's queue can serve
     (K15): 'Review what's due (N)' leads there, so N is what it will review;
     nothing servable falls through to Learn. An unreadable queue keeps the
     scheduled count."""
     if step.kind != quiz_plan.NEXT_REVIEW:
         return step
-    servable = _servable_due_count(user_id, course_id, now)
+    servable = _servable_due_count(user_id, course_id, now, tz_offset_min=tz_offset_min)
     if servable is None or servable >= step.due_count:
         return step
     if servable:
@@ -817,6 +831,8 @@ def results_block(
     node: Mapping,
     before: SkillSnapshot | None,
     now: datetime | None = None,
+    *,
+    tz_offset_min: int = 0,
 ) -> dict | None:
     """A147: the submit response's `learning` block — the skill meters that
     moved, what is due, and the next step — or None when it cannot be built
@@ -846,7 +862,7 @@ def results_block(
     if after is None:
         return None
     changes = quiz_plan.skill_changes(before.p_known, after.p_known, before.order)
-    step = _servable_step(quiz_plan.next_step(states, edges, now), user_id, course_id, now)
+    step = _servable_step(quiz_plan.next_step(states, edges, now), user_id, course_id, now, tz_offset_min)
     own = next((s for s in states if s.node_id == node_id), None)
     learn = (
         {

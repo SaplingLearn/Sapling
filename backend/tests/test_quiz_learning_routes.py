@@ -558,6 +558,21 @@ def test_the_results_block_rides_the_submit_response(monkeypatch):
     assert flow["submit"]["learning"] == block
     before.assert_called_once_with("user_andres", "node1")
     assert results.call_args.args[1] == {"id": "node1", "course_id": "course1", "concept_name": "Recursion"}
+    assert results.call_args.kwargs == {"tz_offset_min": 0}  # no offset sent: the UTC day
+
+
+def test_the_submit_passes_the_students_day_to_the_results_block(monkeypatch):
+    """#866 K17: the submit body's `tz_offset_min` reaches the results block, so
+    its 'Review what's due (N)' peeks Study's review session for the student's
+    local day."""
+    _flags(monkeypatch, "quiz_results_routing")
+    block = {"changes": [], "review": {"due_count": 0, "next_due_at": None}, "next_step": "none", "learn": None}
+    with (
+        patch.object(ql, "skill_snapshot", return_value=ql.SkillSnapshot(("node1",), {"node1": 0.35})),
+        patch.object(ql, "results_block", return_value=block) as results,
+    ):
+        _flow(monkeypatch, question_format="multiple_choice", submit_extra={"tz_offset_min": 300})
+    assert results.call_args.kwargs == {"tz_offset_min": 300}
 
 
 def test_results_block_words_the_meters_the_due_count_and_the_next_step():
@@ -612,6 +627,7 @@ def test_the_due_count_is_what_the_study_queue_can_serve():
     check item, not paused) — never an FSRS-due concept it would skip."""
     block, count = _due_block(1)
     assert count.call_args.args == ("u", "c1", NOW)
+    assert count.call_args.kwargs == {"tz_offset_min": 0}
     assert block["review"]["due_count"] == 1 and block["next_step"] == "review"
 
 
@@ -636,19 +652,103 @@ def test_servable_due_count_reads_the_study_queues_own_session(monkeypatch):
     from learning import review
 
     seen = {}
-    monkeypatch.setattr(review, "peek_review_session", lambda uid, course, now: seen.setdefault("peek", (uid, course, now)) and {"doc": 1})
+    monkeypatch.setattr(review, "peek_review_session", lambda uid, course, now, tz_offset_min=0: seen.setdefault("peek", (uid, course, now)) and {"doc": 1})
 
-    def summary(uid, course, now, *, loop_state, pause_novice):
+    def summary(uid, course, now, *, loop_state, pause_novice, hold_checks):
         seen["summary"] = (uid, course, now, loop_state)
         return {"due": {"check": 4, "flashcard": 9}}
 
     monkeypatch.setattr(review, "summary", summary)
     monkeypatch.setattr(ql, "_pause_novice", lambda uid: False)
+    monkeypatch.setattr(ql, "_grading_capped", lambda uid: False)
     assert ql._servable_due_count("u", "c1", NOW) == 4
     assert seen["peek"] == ("u", None, NOW)
     assert seen["summary"] == ("u", "c1", NOW, {"doc": 1})
     monkeypatch.setattr(review, "summary", lambda *a, **k: (_ for _ in ()).throw(httpx.ConnectError("down")))
     assert ql._servable_due_count("u", "c1", NOW) is None
+
+
+def test_at_the_grader_cap_the_quiz_counts_no_check_study_holds(monkeypatch):
+    """#866 K16 + K15: at the grader cap Study's queue holds every due check
+    (nothing can be graded), so the quiz's 'Review what's due (N)' counts the
+    same hold — the next step falls through to Learn instead of sending the
+    student to a queue that serves no check. The cap is the same read Study
+    makes (`ai_budget.check(user, 'grader').level == 'hard'`)."""
+    from learning import review
+    from services import ai_budget
+    from services.ai_budget import BudgetDecision
+
+    monkeypatch.setattr(review, "peek_review_session", lambda *a, **k: {"doc": 1})
+
+    def summary(uid, course, now, *, loop_state, pause_novice, hold_checks):
+        return {"due": {"check": 0 if hold_checks() else 2, "flashcard": 0}}
+
+    monkeypatch.setattr(review, "summary", summary)
+    monkeypatch.setattr(ql, "_pause_novice", lambda uid: False)
+    hard = BudgetDecision(level="hard", tier_ceiling="none", scope="daily_grades", reset_at=None)
+    open_ = BudgetDecision(level="normal", tier_ceiling="deep")
+    reads = []
+
+    def check(uid, kind, *rest):
+        reads.append(kind)
+        return hard if capped else open_
+
+    monkeypatch.setattr(ai_budget, "check", check)
+    before = ql.SkillSnapshot(("n",), {"n": 0.35})
+    nodes = [ql._Node("n", "Recursion", "c1"), ql._Node("due", "Loops", "c1"), ql._Node("due2", "Arrays", "c1")]
+    gone = NOW - timedelta(hours=1)
+    states = [
+        quiz_plan.ConceptState("n", 0.40),
+        quiz_plan.ConceptState("due", 0.97, fsrs_s=3.0, fsrs_last_review_at=NOW - timedelta(days=4), fsrs_due_at=gone),
+        quiz_plan.ConceptState("due2", 0.97, fsrs_s=3.0, fsrs_last_review_at=NOW - timedelta(days=4), fsrs_due_at=gone),
+    ]
+
+    def block():
+        with (
+            patch.object(ql, "skill_snapshot", return_value=before),
+            patch.object(ql, "_nodes", return_value=nodes),
+            patch.object(ql, "_concept_states", return_value=states),
+            patch.object(ql, "_prereq_edges", return_value=[]),
+        ):
+            return ql.results_block("u", {"id": "n", "course_id": "c1", "concept_name": "Recursion"}, before, now=NOW)
+
+    capped = True
+    out = block()
+    assert "grader" in reads
+    assert out["next_step"] == "learn" and out["review"]["due_count"] == 0
+    capped = False
+    out = block()
+    assert out["next_step"] == "review" and out["review"]["due_count"] == 2
+
+
+def test_the_quiz_counts_the_review_session_of_the_students_local_day(monkeypatch):
+    """#866 K17: Study's review session is one per the student's LOCAL day, so
+    the quiz's count peeks that day's session (the submit's `tz_offset_min`),
+    never the UTC day's."""
+    from learning import review
+
+    seen = {}
+
+    def peek(uid, course, now, *, tz_offset_min=0):
+        seen["peek"] = (uid, course, now, tz_offset_min)
+        return {"doc": 1}
+
+    monkeypatch.setattr(review, "peek_review_session", peek)
+    monkeypatch.setattr(review, "summary", lambda *a, **k: {"due": {"check": 1}})
+    monkeypatch.setattr(ql, "_pause_novice", lambda uid: False)
+    monkeypatch.setattr(ql, "_grading_capped", lambda uid: False)
+    assert ql._servable_due_count("u", "c1", NOW, tz_offset_min=300) == 1
+    assert seen["peek"] == ("u", None, NOW, 300)
+    before = ql.SkillSnapshot(("n",), {"n": 0.35})
+    with (
+        patch.object(ql, "skill_snapshot", return_value=before),
+        patch.object(ql, "_nodes", return_value=[ql._Node("n", "Recursion", "c1")]),
+        patch.object(ql, "_concept_states", return_value=[]),
+        patch.object(ql, "_prereq_edges", return_value=[]),
+        patch.object(quiz_plan, "next_step", return_value=quiz_plan.NextStep(quiz_plan.NEXT_REVIEW, 3, None)),
+    ):
+        ql.results_block("u", {"id": "n", "course_id": "c1"}, before, now=NOW, tz_offset_min=-60)
+    assert seen["peek"] == ("u", None, NOW, -60)
 
 
 def test_no_results_block_without_the_before_read():

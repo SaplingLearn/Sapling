@@ -137,7 +137,9 @@ export const submitQuiz = (
   fetchJSON<SubmitResult>("/api/quiz/submit", {
     method: "POST",
     ...(signal ? { signal } : {}),
-    body: JSON.stringify({ quiz_id: attemptId, answers }),
+    // #866 K17: the results' "Review what's due (N)" reads Study's review
+    // session, one per the student's LOCAL day (JS getTimezoneOffset)
+    body: JSON.stringify({ quiz_id: attemptId, answers, tz_offset_min: new Date().getTimezoneOffset() }),
   });
 
 /**

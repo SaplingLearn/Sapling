@@ -326,7 +326,7 @@ class _Tables:
         return mock
 
 
-def _flow(monkeypatch, *, question_format: str, difficulty: str = "adaptive") -> dict:
+def _flow(monkeypatch, *, question_format: str, difficulty: str = "adaptive", submit_extra: dict | None = None) -> dict:
     """/generate → /answer (each question, the first answered "Sure") → /submit
     on the E2E quiz handler, every write and response recorded."""
     from agents._providers import clear_function_handlers, model_for, register_function_handler
@@ -408,7 +408,7 @@ def _flow(monkeypatch, *, question_format: str, difficulty: str = "adaptive") ->
                 else:
                     body["selected_index"] = 1 if i % 2 == 0 else 0
                 answers.append(client.post(f"/api/quiz/attempts/{quiz_id}/answer", json=body))
-            submitted = client.post("/api/quiz/submit", json={"quiz_id": quiz_id, "answers": []})
+            submitted = client.post("/api/quiz/submit", json={"quiz_id": quiz_id, "answers": [], **(submit_extra or {})})
             assert submitted.status_code == 200, submitted.text
     finally:
         clear_function_handlers()

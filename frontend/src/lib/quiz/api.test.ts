@@ -181,7 +181,18 @@ describe("submitQuiz", () => {
     expect(JSON.parse(init.body as string)).toEqual({
       quiz_id: "a-1",
       answers: [{ question_id: 1, selected_label: "B" }],
+      tz_offset_min: new Date().getTimezoneOffset(),
     });
+  });
+
+  it("sends the student's time-zone offset, so the due count reads their local day's review (#866 K17)", async () => {
+    const spy = vi.spyOn(Date.prototype, "getTimezoneOffset").mockReturnValue(300);
+    try {
+      await submitQuiz("a-1", []);
+      expect(JSON.parse(lastCall()[1].body as string).tz_offset_min).toBe(300);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("accepts an empty answers list (recorded rows win at reconciliation)", async () => {
