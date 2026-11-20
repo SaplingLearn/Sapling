@@ -366,6 +366,7 @@ export function LoopLearn() {
   const [prequestionBusy, setPrequestionBusy] = useState(false);
   const [selfExplain, setSelfExplain] = useState<LoopSelfExplain | null>(null);
   const [selfExplainBusy, setSelfExplainBusy] = useState(false);
+  const [explainDraft, setExplainDraft] = useState(false); // Z60: unsent "why" text holds the chat
   const [selfExplainSaved, setSelfExplainSaved] = useState(false);
 
   // Close
@@ -2129,7 +2130,7 @@ export function LoopLearn() {
                 key={selfExplain.prompt_id}
                 prompt={selfExplain}
                 nested
-                busy={selfExplainBusy || attemptBusy || streaming}
+                busy={selfExplainBusy || attemptBusy || streaming} saving={selfExplainBusy} onDraft={setExplainDraft}
                 onSend={(reply) => void sendSelfExplain(reply)}
                 onSkip={() => void sendSelfExplain(null)}
               />
@@ -2151,7 +2152,7 @@ export function LoopLearn() {
           key={selfExplain.prompt_id}
           prompt={selfExplain}
           inputRef={selfExplainRef}
-          busy={selfExplainBusy || streaming || starting || scopeLoading}
+          busy={selfExplainBusy || streaming || starting || scopeLoading} saving={selfExplainBusy} onDraft={setExplainDraft}
           onSend={(reply) => void sendSelfExplain(reply)}
           onSkip={() => void sendSelfExplain(null)}
         />
@@ -2195,7 +2196,7 @@ export function LoopLearn() {
           // spec §13 A138 (review fix): the open guess card is the turn's one
           // open prompt (A121) — answer it, or "No idea", before the chat; F7: a
           // hint that is loading holds it too
-          disabled={starting || scopeLoading || guessCardOpen || hintBusy}
+          disabled={anyOf(starting, scopeLoading, guessCardOpen, hintBusy, explainDraft && !!selfExplain)}
           placeholder={
             guessCardOpen
               ? PREQUESTION_COMPOSER_COPY

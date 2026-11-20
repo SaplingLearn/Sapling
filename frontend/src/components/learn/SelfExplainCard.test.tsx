@@ -72,6 +72,21 @@ describe("SelfExplainCard (spec §13 A139)", () => {
     expect(onSkip).not.toHaveBeenCalled();
   });
 
+  it("says Saving… only while its own reply is saved, and reports whether it holds unsent text (Z60)", () => {
+    const onDraft = vi.fn();
+    const view = render(
+      <SelfExplainCard prompt={prompt} busy saving={false} onSend={vi.fn()} onSkip={vi.fn()} onDraft={onDraft} />,
+    );
+    expect(screen.getByTestId("loop-self-explain-send").textContent).toBe("Send"); // busy elsewhere (a streaming turn)
+    view.rerender(<SelfExplainCard prompt={prompt} busy={false} saving={false} onSend={vi.fn()} onSkip={vi.fn()} onDraft={onDraft} />);
+    fireEvent.change(screen.getByRole("textbox", { name: "Your explanation" }), { target: { value: "Because." } });
+    expect(onDraft).toHaveBeenLastCalledWith(true);
+    view.rerender(<SelfExplainCard prompt={prompt} busy saving onSend={vi.fn()} onSkip={vi.fn()} onDraft={onDraft} />);
+    expect(screen.getByTestId("loop-self-explain-send").textContent).toBe("Saving…");
+    view.unmount();
+    expect(onDraft).toHaveBeenLastCalledWith(false);
+  });
+
   it("nested under a hint it is a sub-section, and it never takes focus on its own", () => {
     renderCard({ nested: true });
     expect(screen.getByRole("heading", { name: SELF_EXPLAIN_HEADING }).tagName).toBe("H3");
