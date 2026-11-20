@@ -58,7 +58,6 @@ import {
   type LoopDiagnosis,
   type LoopLearningScope,
   type LoopOpenSession,
-  type LoopPanelConcept,
   type LoopPendingGrade,
   type LoopPhase,
   type LoopPlanConcept,
@@ -76,16 +75,15 @@ import {
 import { useFlag } from "@/context/FlagsContext";
 import { useStudyNavShown } from "../useRetentionNav";
 import { forgetEndedSession, noteLearningSession, useFeedbackHold } from "@/lib/feedbackPacing";
-import { BudgetPausedBanner, tutorPauseMessage } from "./BudgetPausedBanner";
 import { checkIsOpen, initialLoopState, reduceLoopEvent } from "./loopState";
 import { hasDeepLink, readDeepLink } from "./deepLink";
 import styles from "./LoopLearn.module.css";
-import { GoalEditor } from "./LearningScope";
+import { GoalEditor, GoalProgressNote, ScopeSummary } from "./LearningScope";
 import { CrisisSupportCard, useCrisisSupport } from "../safety/CrisisSupportCard";
 import { crisisSupportIn, crisisSupportInError, takeNoteCardShown, type CrisisSupport } from "@/lib/crisisSupport";
 import { PrequestionCard, renderGuess } from "./PrequestionCard";
 import { SelfExplainCard } from "./SelfExplainCard";
-import { retentionHref, useRetentionDue } from "@/context/RetentionDueContext";
+import { useRetentionDue } from "@/context/RetentionDueContext";
 import { Icon } from "../Icon";
 import { TutorSidebar } from "./tutor/TutorSidebar";
 import { LoadFailed, TutorAllSessions, TutorCourse, TutorHome, type SessionFilter } from "./tutor/TutorPages";
@@ -102,7 +100,7 @@ import { CenteredCard } from "./CenteredCard";
 import { ClosePanel } from "./ClosePanel";
 import { RatingPrompt } from "./RatingPrompt";
 import { claimWrapUpAsk, useWrapUpAsk } from "./WrapUpRating";
-import { checkMeNote, PREPARING_COPY } from "./checkNote";
+import { checkMeNote } from "./checkNote";
 import { withPlanHistory } from "./loopHistory";
 import { dropInterruptedTurn } from "./chatRetry";
 import { modalOpen } from "./modalOpen";
@@ -111,16 +109,13 @@ import { VerdictBanner } from "./VerdictBanner";
 import { ProbePanel } from "./ProbePanel";
 import { PlanPanel } from "./PlanPanel";
 import { CheckCard } from "./CheckCard";
+import { LoopNotices } from "./LoopNotices";
+import { ReadOnlyTranscript } from "./ReadOnlyTranscript";
+import {
+  conceptAt, cursorNode, dueLink, findRow, isOpenPhase, panelPlanOf, phaseText, weakestConcept, type ApprovedPlan,
+} from "./tutor/sessionView";
 
 // ── Copy ─────────────────────────────────────────────────────────────────
-const NO_CHECK_ITEMS_COPY =
-  "No check items for this course yet. You can still learn with the tutor; nothing is graded until the course has items.";
-// spec §13 A128: the session's course-material retrieval failed (an outage, not
-// an empty result). Shown once per session, from the turn's response field —
-// never a prompt change.
-const MATERIALS_UNAVAILABLE_COPY =
-  "Your course materials are temporarily unavailable, so answers may be less specific to your class.";
-const NO_FRESH_PRACTICE_COPY = "Fresh practice questions are unavailable for these concepts in this session. You can review source material with the tutor; source review does not assess or complete your goal. Starting another session will not replenish these questions.";
 const PROBE_UNAVAILABLE_COPY = "Couldn't grade that one — here's another.";
 const PROBE_REFUSED_COPY = "Answer in your own words — that read as instructions to the grader.";
 const CLOSED_ELSEWHERE_COPY = "This session was closed — start a new one to keep learning.";
@@ -302,7 +297,7 @@ export function LoopLearn() {
   const [planGoalVersion, setPlanGoalVersion] = useState<number | undefined>(undefined);
   const [planJustApproved, setPlanJustApproved] = useState(false);
   // The approved plan as GET /status reports it: the session panel's list after a reload
-  const [approvedPlan, setApprovedPlan] = useState<{ concepts: LoopPanelConcept[]; cursor: number } | null>(null);
+  const [approvedPlan, setApprovedPlan] = useState<ApprovedPlan | null>(null);
 
   // Teach / check / feedback
   const [messages, setMessages] = useState<ChatMsg[]>([]);
@@ -1903,100 +1898,29 @@ export function LoopLearn() {
     crisisDialogSupport !== null,
     messages[messages.length - 1]?.crisisSupport != null,
   );
-  const showPreparing = noCheckItems === "preparing" && !crisisOnScreen;
-  const showMaterialsNote = materialsNote && !crisisOnScreen;
-  const hasNotices = anyOf(
-    !!paused, noCheckItems === "none", showPreparing, showMaterialsNote, !!topicOffer,
-    practiceUnavailable.length > 0,
-  );
-  // Always in the DOM (spec §13 A135): a notice is announced when it is added to
-  // this polite region; one inserted together with its own region is not
-  // reliably read out.
+  // a render call, not a component: React sees the tree the inline JSX produced
   const renderNotices = () => (
-    <div
-      aria-live="polite"
-      data-testid="loop-notices"
-      style={hasNotices ? { display: "flex", flexDirection: "column", gap: 8, padding: "12px 32px 0" } : undefined}
-    >
-      {paused && (
-        <BudgetPausedBanner
-          testId="loop-budget-paused"
-          resetAt={paused.resetAt}
-          sessionCapped={paused.sessionCapped}
-          message={tutorPauseMessage(paused.resetAt, paused.sessionCapped)}
-        >
-          {studyVisible && <>{" "}<Link data-testid="loop-budget-study-link" href="/study" style={{ color: "var(--accent)", fontWeight: 500 }}>
-            Review flashcards
-          </Link></>}
-        </BudgetPausedBanner>
-      )}
-      {noCheckItems === "none" && (
-        <div
-          data-testid="loop-no-check-items"
-          role="status"
-          style={{ padding: "10px 14px", borderRadius: "var(--r-md)", background: "var(--info-soft)", fontSize: 13 }}
-        >
-          {NO_CHECK_ITEMS_COPY}
-        </div>
-      )}
-      {showPreparing && (
-        <div
-          data-testid="loop-preparing-items"
-          role="status"
-          style={{ padding: "10px 14px", borderRadius: "var(--r-md)", background: "var(--info-soft)", fontSize: 13 }}
-        >
-          {PREPARING_COPY}
-        </div>
-      )}
-      {showMaterialsNote && (
-        <div
-          data-testid="loop-materials-unavailable"
-          role="status"
-          style={{ padding: "10px 14px", borderRadius: "var(--r-md)", background: "var(--info-soft)", fontSize: 13 }}
-        >
-          {MATERIALS_UNAVAILABLE_COPY}
-        </div>
-      )}
-      {practiceUnavailable.length > 0 && (
-        <div data-testid="loop-practice-unavailable" role="status"
-          style={{ padding: "10px 14px", borderRadius: "var(--r-md)", background: "var(--info-soft)", fontSize: 14, lineHeight: 1.5 }}>
-          <p style={{ margin: "0 0 6px" }}>{NO_FRESH_PRACTICE_COPY}</p>
-          <p style={{ margin: "0 0 8px", overflowWrap: "anywhere" }}>Practice unavailable: {practiceUnavailable.map((id) => conceptNames.get(id) ?? "A selected concept").join(", ")}.</p>
-          {exhaustedPracticeAttempt && <p style={{ margin: "0 0 8px" }}>This session already moved past those concepts. Once new questions are available, start a new session to practise them.</p>}
-          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-            {libraryVisible && <Link data-testid="loop-practice-sources" href="/library" className="btn btn--sm btn--ghost" style={{ minHeight: 44, flex: "1 1 130px", whiteSpace: "normal", justifyContent: "center", textAlign: "center" }}>Review source material</Link>}
-            {!exhaustedPracticeAttempt && (state.phase === "plan" || (teaching && !item && !feedbackPending)) && (
-              <button data-testid="loop-practice-refresh" type="button" className="btn btn--sm"
-                style={{ minHeight: 44, flex: "1 1 130px", whiteSpace: "normal" }} disabled={sessionTransitionBusy || streaming || checkBusy}
-                onClick={() => {
-                  if (!sessionId) return;
-                  if (state.phase === "plan") void loadPlan(sessionId, gen.current);
-                  else void checkMe();
-                }}>Check for fresh practice</button>
-            )}
-          </div>
-        </div>
-      )}
-      {topicOffer && (
-        // ?topic= while a session is open: resume won (a reload never starts a
-        // probe, §11.3); the link's concept is one click away, never automatic.
-        <div
-          data-testid="loop-topic-offer"
-          role="status"
-          style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", fontSize: 13 }}
-        >
-          <span style={{ color: "var(--text-dim)" }}>You picked “{topicOffer}”. This session is still open.</span>
-          <button
-            data-testid="loop-topic-start"
-            className="btn btn--sm"
-            disabled={sessionTransitionBusy}
-            onClick={() => void newSession({ closeCurrent: true, topic: topicOffer, mode: deepLink.mode })}
-          >
-            Start a session on {topicOffer}
-          </button>
-        </div>
-      )}
-    </div>
+    <LoopNotices
+      paused={paused}
+      studyVisible={studyVisible}
+      noCheckItems={noCheckItems}
+      preparing={noCheckItems === "preparing" && !crisisOnScreen}
+      materialsNote={materialsNote && !crisisOnScreen}
+      practiceUnavailable={practiceUnavailable}
+      names={conceptNames}
+      exhaustedPracticeAttempt={exhaustedPracticeAttempt}
+      libraryVisible={libraryVisible}
+      canRefreshPractice={state.phase === "plan" || (teaching && !item && !feedbackPending)}
+      refreshDisabled={sessionTransitionBusy || streaming || checkBusy}
+      onRefreshPractice={() => {
+        if (!sessionId) return;
+        if (state.phase === "plan") void loadPlan(sessionId, gen.current);
+        else void checkMe();
+      }}
+      topicOffer={topicOffer}
+      topicStartDisabled={sessionTransitionBusy}
+      onTopicStart={() => void newSession({ closeCurrent: true, topic: topicOffer ?? undefined, mode: deepLink.mode })}
+    />
   );
   const notices = renderNotices();
 
@@ -2203,48 +2127,8 @@ export function LoopLearn() {
         </CenteredCard>
       );
     } else if (readOnly) {
-      return (
-        <div style={{ flex: 1, overflowY: "auto", padding: "20px 32px" }}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-              <span className="chip">Read-only</span>
-              <span style={{ fontSize: 14, color: "var(--text-dim)" }}>
-                {readOnly.topic ? `“${readOnly.topic}” — ` : ""}an earlier session. Start a new one to keep learning.
-              </span>
-              <div style={{ flex: 1 }} />
-              <button data-testid="loop-readonly-new-session" className="btn btn--primary btn--sm" disabled={sessionTransitionBusy}
-                onClick={() => void newSession({ closeCurrent: true, mode: deepLink.mode })}>
-                Start a new session
-              </button>
-            </div>
-            <div
-              data-testid="loop-readonly-transcript"
-              className="card"
-              style={{ padding: "var(--pad-lg)", display: "flex", flexDirection: "column", gap: 12 }}
-            >
-              {readOnly.messages.length === 0 && (
-                <div style={{ fontSize: 13, color: "var(--text-muted)" }}>No messages in this session.</div>
-              )}
-              {readOnly.messages.map((m) => (
-                <div key={m.id} style={{ alignSelf: m.role === "user" ? "flex-end" : "flex-start", maxWidth: "85%" }}>
-                  <div className="label-micro" style={{ marginBottom: 2 }}>{m.role === "user" ? "You" : "Tutor"}</div>
-                  <div
-                    style={{
-                      whiteSpace: "pre-wrap",
-                      fontSize: 14,
-                      padding: "8px 12px",
-                      borderRadius: "var(--r-md)",
-                      background: m.role === "user" ? "var(--accent-soft)" : "var(--bg-soft)",
-                    }}
-                  >
-                    {m.content}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      );
+      return <ReadOnlyTranscript topic={readOnly.topic} messages={readOnly.messages} startDisabled={sessionTransitionBusy}
+        onStart={() => void newSession({ closeCurrent: true, mode: deepLink.mode })} />;
     } else if (startCrisis && !sessionId) {
       // "Back to studying" starts a session on the course itself: the deep-link
       // topic may be the very text the card answered.
@@ -2325,26 +2209,6 @@ export function LoopLearn() {
   };
   const body = renderBody();
 
-  const renderScopeSummary = () => (
-    <div className={styles.scopeSummary} data-testid="loop-goal-summary">
-      {scopeError ? <><span>Couldn&apos;t load this session&apos;s learning scope. </span>
-        <button type="button" data-testid="loop-goal-retry" className="btn btn--sm" onClick={() => void retryLearningScope()}>Retry learning scope</button></>
-        : !scopeReady ? "Loading learning scope…"
-          : goal ? <><strong>Goal: </strong>{goal.text || "Selected concepts"}<span> · {goal.target_node_ids.map((id) => conceptNames.get(id) ?? "Selected concept").join(", ")}</span></>
-            : "Scope: Explore the whole course"}
-    </div>
-  );
-  const renderGoalProgress = (progress: LoopGoalProgress) => (
-    <div data-testid="loop-goal-progress" role="status" className={styles.scopeSummary}>
-      {progress.status === "continue_available"
-        ? "The next step toward your goal is ready to review. Approve the new plan before continuing."
-        : progress.status === "needs_more_practice"
-          ? "Your goal still needs prerequisite practice. Review source material; more practice is needed before the goal can continue."
-          : "You finished the practice planned for this session. This does not establish mastery; check what you retain after time away."}
-      {progress.unresolved_prerequisite_ids.length > 0 && <span> Prerequisites needing practice: {progress.unresolved_prerequisite_ids.map((id) => conceptNames.get(id) ?? "A prerequisite").join(", ")}.</span>}
-      {progress.remaining_target_node_ids.length > 0 && <span> Goal concepts remaining: {progress.remaining_target_node_ids.map((id) => conceptNames.get(id) ?? "A selected concept").join(", ")}.</span>}
-    </div>
-  );
   /** Skill per concept in today's plan (else the concept being taught): the
    *  loop's own estimate when it has one, else the map's mastery. */
   const panelSkills = (): PanelConcept[] => {
@@ -2438,8 +2302,10 @@ export function LoopLearn() {
       <>
         {/* the conversation column's first row (design T4-T10, anatomy D) */}
         {live && <PhaseStepper phase={state.phase} />}
-        {live && state.phase !== "close" && renderScopeSummary()}
-        {goalProgress && goal && renderGoalProgress(goalProgress)}
+        {live && state.phase !== "close" && (
+          <ScopeSummary error={scopeError} ready={scopeReady} goal={goal} names={conceptNames} onRetry={() => void retryLearningScope()} />
+        )}
+        {goalProgress && goal && <GoalProgressNote progress={goalProgress} names={conceptNames} />}
         {notices}
         {allOf(!showPanel, live, !!learner) && (
           <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px clamp(16px, 4vw, 56px) 0" }}>
@@ -2504,56 +2370,6 @@ export function LoopLearn() {
       </div>
     </FullHeightScreen>
   );
-}
-
-function dueLink(courseIds: string[]): string {
-  return courseIds.length > 0 ? retentionHref(courseIds) : "/study";
-}
-
-/** The plan the panel lists: the one on screen, else the approved one /status reported. */
-function panelPlanOf(plan: LoopPlanConcept[] | null, approved: { concepts: LoopPanelConcept[] } | null): LoopPanelConcept[] | null {
-  return plan ?? approved?.concepts ?? null;
-}
-
-/** The name of `id`, else of the approved plan's current concept. */
-function conceptAt(names: Map<string, string>, id: string | null, approved: { concepts: LoopPanelConcept[]; cursor: number } | null): string | null {
-  const at = id ?? cursorNode(approved);
-  return at ? names.get(at) ?? null : null;
-}
-
-/** The concept the approved plan's cursor is on (a resumed session's current one). */
-function cursorNode(p: { concepts: LoopPanelConcept[]; cursor: number } | null): string | null {
-  return p?.concepts[p.cursor]?.node_id ?? null;
-}
-
-function findRow(rows: TutorSessionRow[], id: string | null): TutorSessionRow | null {
-  return id ? rows.find((r) => r.id === id) ?? null : null;
-}
-
-/** Where an open session is, in words: "Check-in", "Plan · 3 concepts",
- *  "Recursion · concept 2 of 3", "Wrap-up". */
-function phaseText(phase: LoopPhase, plan: LoopPanelConcept[] | null, focus: string | null, names: Map<string, string>): string {
-  const n = plan?.length ?? 0;
-  if (phase === "probe") return "Check-in";
-  if (phase === "plan") return n ? `Plan · ${n} ${n === 1 ? "concept" : "concepts"}` : "Plan";
-  if (phase === "close") return "Wrap-up";
-  const name = focus ? names.get(focus) : undefined;
-  const at = plan && focus ? plan.findIndex((c) => c.node_id === focus) : -1;
-  if (name && at >= 0) return `${name} · concept ${at + 1} of ${n}`;
-  // an approved plan with no current concept: its cursor is past the end
-  return name ?? (n > 0 ? "Plan complete" : "Learning");
-}
-
-/** The concept T1 offers as a first focus: the weakest one not yet mastered. */
-function weakestConcept(nodes: GraphNode[]): string | null {
-  const open = nodes.filter((n) => !n.is_subject_root && n.mastery_tier !== "mastered");
-  open.sort((a, b) => a.mastery_score - b.mastery_score);
-  return open[0]?.name ?? null;
-}
-
-/** A session the "New session" button should wrap up first: one the student is in. */
-function isOpenPhase(phase: LoopPhase): boolean {
-  return phase !== "close";
 }
 
 // ── Pieces ─────────────────────────────────────────────────────────────────
