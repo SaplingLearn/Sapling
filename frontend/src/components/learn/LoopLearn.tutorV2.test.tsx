@@ -671,3 +671,36 @@ describe("Z58 — Try again after a failed start repeats that start", () => {
     expect(api.startLoopSession).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("Z64 — one open session per course, from the read-only view too", () => {
+  it("'Start a new session' on a read-only transcript wraps up the course's open session first", async () => {
+    const today = new Date().toISOString();
+    api.getSessions.mockResolvedValue({ sessions: [
+      { id: "old", topic: "Big-O practice", mode: "socratic", course_id: "c1", started_at: today, ended_at: null, message_count: 3, is_active: true, loop_open: false },
+    ] });
+    api.resumeSession.mockImplementation(async (id: string) => ({ session: { id, topic: "x" }, messages: [{ id: `m-${id}`, role: "assistant", content: id === "s2" ? "welcome back" : `chat ${id}`, created_at: "" }] }));
+    api.closeLoopSession.mockResolvedValue({ close: closeRecord, model_written: false, close_phase: "teach" });
+    api.startLoopSession.mockResolvedValue({ session_id: "s9", initial_message: "" });
+    api.nextLoopProbe.mockResolvedValue(probeItem);
+    await resumedTeach();
+    fireEvent.click(await screen.findByTestId("tutor-recent-old"));
+    await screen.findByTestId("loop-readonly-transcript");
+    fireEvent.click(screen.getByTestId("loop-readonly-new-session"));
+    await waitFor(() => expect(api.startLoopSession).toHaveBeenCalledTimes(1));
+    expect(api.closeLoopSession).toHaveBeenCalledWith("s2", "u1");
+    expect(api.closeLoopSession.mock.invocationCallOrder[0]).toBeLessThan(api.startLoopSession.mock.invocationCallOrder[0]);
+  });
+
+  it("the Tutor home reached from a read-only transcript says which open session a start wraps up", async () => {
+    const today = new Date().toISOString();
+    api.getSessions.mockResolvedValue({ sessions: [
+      { id: "old", topic: "Big-O practice", mode: "socratic", course_id: "c1", started_at: today, ended_at: null, message_count: 3, is_active: true, loop_open: false },
+    ] });
+    api.resumeSession.mockImplementation(async (id: string) => ({ session: { id, topic: "x" }, messages: [{ id: `m-${id}`, role: "assistant", content: id === "s2" ? "welcome back" : `chat ${id}`, created_at: "" }] }));
+    await resumedTeach("Sorting");
+    fireEvent.click(await screen.findByTestId("tutor-recent-old"));
+    await screen.findByTestId("loop-readonly-transcript");
+    fireEvent.click(screen.getAllByTestId("loop-new-session")[0]);
+    expect((await screen.findByTestId("tutor-home")).textContent).toContain("Starting wraps up “Sorting” first.");
+  });
+});

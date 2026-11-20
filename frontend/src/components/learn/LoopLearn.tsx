@@ -101,7 +101,7 @@ import { TutorDrawer } from "./tutor/TutorDrawer";
 import { useTutorLayout } from "./tutor/useTutorLayout";
 import { useTutorLists } from "./tutor/useTutorLists";
 import { SidebarGlyph } from "./tutor/TutorIcons";
-import { mergeSessions, sessionTitle, type TutorSessionRow } from "./tutor/sessions";
+import { listedOpenTitle, mergeSessions, sessionTitle, sessionToLeave, type TutorSessionRow } from "./tutor/sessions";
 import tutorStyles from "./tutor/tutor.module.css";
 import { CenteredCard } from "./CenteredCard";
 import { ClosePanel } from "./ClosePanel";
@@ -833,7 +833,9 @@ export function LoopLearn() {
 
   /** Start a session and its probe. `closeCurrent` (the "New session" button):
    *  the open session being left is closed first (A60's wrap-up), so sessions
-   *  do not pile up open; a close that cannot run now (409) starts nothing. */
+   *  do not pile up open; a close that cannot run now (409) starts nothing.
+   *  With none on screen (a read-only transcript), the course's listed open
+   *  session is the one left (Z64: one open session per course). */
   const newSession = useCallback(async (
     { closeCurrent = false, topic, mode }: { closeCurrent?: boolean; topic?: string; mode?: string } = {},
   ) => {
@@ -841,8 +843,8 @@ export function LoopLearn() {
     lastStart.current = { topic, mode };
     // An explicit start wins over a boot that has not listed the sessions yet.
     bootKey.current = `${userId}:${courseId}`;
-    const leaving = sessionRef.current;
-    if (closeCurrent && leaving && isOpenPhase(state.phase) && !(await wrapUpLeaving(leaving))) return;
+    const leaving = closeCurrent ? sessionToLeave(sessionRef.current, isOpenPhase(state.phase), openSessions) : null;
+    if (leaving && !(await wrapUpLeaving(leaving))) return;
     const g = ++gen.current;
     clearSessionView();
     setSessionId(null);
@@ -871,7 +873,7 @@ export function LoopLearn() {
     } finally {
       if (g === gen.current) setStarting(false);
     }
-  }, [courseId, userId, course, deepLink, state.phase, sessionTransitionBusy, clearSessionView, nextProbe, reportError, wrapUpLeaving, adoptStarted, listStarted, interceptCrisis]);
+  }, [courseId, userId, course, deepLink, state.phase, openSessions, sessionTransitionBusy, clearSessionView, nextProbe, reportError, wrapUpLeaving, adoptStarted, listStarted, interceptCrisis]);
 
   const loadSessions = useCallback(async () => {
     if (!courseId || !userId) return;
@@ -2247,12 +2249,8 @@ export function LoopLearn() {
                 {readOnly.topic ? `“${readOnly.topic}” — ` : ""}an earlier session. Start a new one to keep learning.
               </span>
               <div style={{ flex: 1 }} />
-              <button
-                data-testid="loop-readonly-new-session"
-                className="btn btn--primary btn--sm"
-                disabled={sessionTransitionBusy}
-                onClick={() => void newSession()}
-              >
+              <button data-testid="loop-readonly-new-session" className="btn btn--primary btn--sm" disabled={sessionTransitionBusy}
+                onClick={() => void newSession({ closeCurrent: true, mode: deepLink.mode })}>
                 Start a new session
               </button>
             </div>
@@ -2432,7 +2430,7 @@ export function LoopLearn() {
           dueHref={dueHref}
           startWith={weakestConcept(railGraph.nodes)}
           busy={anyOf(!courseId, sessionTransitionBusy, openSessions === null)} starting={starting}
-          closesCurrent={leaving ? sessionTitle(sessionRow ?? { topic: "" }, course ?? undefined) : null}
+          closesCurrent={leaving ? sessionTitle(sessionRow ?? { topic: "" }, course ?? undefined) : listedOpenTitle(sessionId, openSessions, course ?? undefined)}
           onContinue={() => { if (openHere) openRow(openHere); }}
           onStart={() => void startGuided()}
           onStartWith={(topic) => void startGuided({ topic })}

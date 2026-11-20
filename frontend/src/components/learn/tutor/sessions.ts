@@ -97,3 +97,19 @@ export function sessionTitle(row: Pick<TutorSessionRow, "topic">, course?: Enrol
     .some((n) => !!n && n.trim().toLowerCase() === topic.toLowerCase());
   return sameAsCourse ? "Guided session" : topic;
 }
+
+/** The course's listed open session a start wraps up when none is on screen (a
+ *  read-only transcript; LoopLearn's newSession, #866 Z64), named as the home
+ *  names it; null while a session is on screen or none is open. */
+export function listedOpenTitle(sessionId: string | null, open: LoopOpenSession[] | null, course?: EnrolledCourse): string | null {
+  const row = sessionId ? null : open?.[0];
+  return row ? sessionTitle(row, course) : null;
+}
+
+/** The session a "start a new one" wraps up first: the one on screen while it
+ *  is open; with none on screen (a read-only transcript), the course's listed
+ *  open session — one open session per course (#866 Z64). */
+export function sessionToLeave(onScreen: string | null, onScreenOpen: boolean, open: LoopOpenSession[] | null): string | null {
+  if (onScreen) return onScreenOpen ? onScreen : null;
+  return open?.[0]?.session_id ?? null;
+}
