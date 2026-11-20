@@ -697,6 +697,16 @@ describe("Flashcards home: the automatic decks", () => {
     expect(mocks.generate).not.toHaveBeenCalled();
   });
 
+  it("Due today plays the due cards in the server's review order, never shuffled (#866 K53)", async () => {
+    // GET /api/flashcards lists the due cards first, most at risk first (FSRS
+    // order): here r1 before v1. Stopping partway must leave the least urgent.
+    mocks.cards.mockResolvedValue({ flashcards: [CARDS[2], CARDS[0], CARDS[1], CARDS[3], CARDS[4]] });
+    const user = await home();
+    await user.click(within(deck("auto:due")).getByRole("button", { name: "Review Due today" }));
+    expect(await screen.findByText("Card 1 of 2")).toBeTruthy();
+    expect(screen.getByTestId("flashcards-card").textContent).toContain("Q-r1");
+  });
+
   it("with no due dates there is no due deck and no due figure anywhere", async () => {
     mocks.cards.mockResolvedValue({ flashcards: CARDS_NO_DUE });
     mocks.sets.mockResolvedValue({ sets: [savedSet()] });

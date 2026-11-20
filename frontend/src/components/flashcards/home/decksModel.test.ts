@@ -164,6 +164,8 @@ describe("the decks", () => {
       peek: { shown: ["Variables", "Recursion"], more: 0 },
       mastery: { mastered: 1, learning: 0, struggling: 1, total: 2 },
       fact: null,
+      // #866 K53: it plays in the server's review order (most at risk first)
+      onlyDue: true, shuffle: false,
     });
     expect(mixable(decks[0])).toBe(false);
     expect(mixable(decks[1])).toBe(true);

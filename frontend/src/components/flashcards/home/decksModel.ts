@@ -147,7 +147,8 @@ export function buildDecks(input: {
       meta: plural(model.dueCards.length, "card"),
       names: [], generate: [], cards: model.dueCards.length,
       peek: peekNames(topics), mastery: masteryCounts(topics, concepts), fact: null,
-      palette: PALETTE_DUE, set: null, onlyDue: true, shuffle: true,
+      // #866 K53: in the server's review order, most at risk first (playDue)
+      palette: PALETTE_DUE, set: null, onlyDue: true, shuffle: false,
     });
   }
   const everything = model.columns.flatMap(col => col.items).filter(item => !item.custom).map(item => item.name);
