@@ -317,6 +317,10 @@ CHECK_ITEM_STEPWISE_MIN_STEPS = 2  # † A17/A22 "≥ 2 numbered steps"; spec la
 CHECK_ITEM_FLEX_RETRIES = 2  # † A23 "retries on 503/429"; spec lacks the count
 CHECK_ITEM_BACKFILL_MIN_CHUNK_SCORE = 1  # † §3.5, A23 relevance floor (backfill only)
 CHECK_ITEM_DRAFT_WORKERS = 2  # † upload-time drafting pool; a Flex run holds a thread for minutes
+# † Z21: an uploader's drafting runs queued or running on that pool at once. One
+# student's bulk upload must not queue hours of drafting ahead of everyone
+# else's; a document past it is left undrafted, and draft on enable claims it.
+CHECK_ITEM_DRAFT_QUEUE_PER_USER = 2
 # † bounded redrafting of concepts whose drafts always fail (owner decision A38 low-severity 2)
 CHECK_ITEM_REDRAFT_MAX_FAILURES = 3
 # † how long a stalled concept stays skipped: past this many days since its

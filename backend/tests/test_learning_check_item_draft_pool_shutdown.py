@@ -21,7 +21,7 @@ def svc(monkeypatch):
     svc.shutdown_draft_pool()
 
 
-def test_shutdown_cancels_queued_drafting_and_is_idempotent(svc):
+def test_shutdown_cancels_queued_drafting_and_is_idempotent(svc, monkeypatch):
     running = threading.Event()
     release = threading.Event()
     ran: list[str] = []
@@ -31,11 +31,14 @@ def test_shutdown_cancels_queued_drafting_and_is_idempotent(svc):
         running.set()
         release.wait(10)
 
+    monkeypatch.setattr(svc, "clear_dropped_drafting", lambda: 0)
     with patch.object(svc, "generate_for_document", side_effect=fake_generate):
-        kw = {"user_id": "u1", "course_id": "course-1", "concept_names": ["A"]}
-        first = svc.queue_generation_for_document("doc-1", **kw)
+        kw = {"course_id": "course-1", "concept_names": ["A"]}
+        first = svc.queue_generation_for_document("doc-1", user_id="u1", **kw)
         assert running.wait(10)
-        queued = [svc.queue_generation_for_document(f"doc-{n}", **kw) for n in (2, 3)]
+        queued = [
+            svc.queue_generation_for_document(f"doc-{n}", user_id=f"u{n}", **kw) for n in (2, 3)
+        ]
         svc.shutdown_draft_pool()
         assert all(f.cancelled() for f in queued), "queued drafting is dropped, not awaited"
         svc.shutdown_draft_pool()  # idempotent
@@ -114,3 +117,75 @@ def test_a_failing_dbos_shutdown_never_skips_the_pool():
             with TestClient(app):
                 pass
         down.assert_called_once_with()
+
+
+def test_one_uploader_cannot_queue_drafting_ahead_of_everyone_else(svc, monkeypatch):
+    """Z21: an uploader holds at most CHECK_ITEM_DRAFT_QUEUE_PER_USER places on
+    the pool (queued or running). A document past that is not queued: its
+    `pending` mark goes back to "never drafted", so draft on enable claims it.
+    A classmate's upload still queues, and a finished run frees its place."""
+    from learning.params import CHECK_ITEM_DRAFT_QUEUE_PER_USER
+
+    release = threading.Event()
+    ran: list[str] = []
+    cleared: list[str] = []
+    monkeypatch.setattr(svc, "clear_drafting", cleared.append)
+
+    def fake_generate(document_id, **kwargs):
+        ran.append(document_id)
+        release.wait(10)
+
+    kw = {"course_id": "course-1", "concept_names": ["A"]}
+    with patch.object(svc, "generate_for_document", side_effect=fake_generate):
+        mine = [
+            svc.queue_generation_for_document(f"bulk-{n}", user_id="u1", **kw)
+            for n in range(CHECK_ITEM_DRAFT_QUEUE_PER_USER + 3)
+        ]
+        theirs = svc.queue_generation_for_document("classmate", user_id="u2", **kw)
+        assert all(f is not None for f in mine[:CHECK_ITEM_DRAFT_QUEUE_PER_USER])
+        assert mine[CHECK_ITEM_DRAFT_QUEUE_PER_USER:] == [None, None, None]
+        assert cleared == [f"bulk-{n}" for n in range(CHECK_ITEM_DRAFT_QUEUE_PER_USER, len(mine))]
+        assert theirs is not None
+        release.set()
+        for f in [*mine[:CHECK_ITEM_DRAFT_QUEUE_PER_USER], theirs]:
+            f.result(timeout=10)
+        later = svc.queue_generation_for_document("bulk-later", user_id="u1", **kw)
+        assert later is not None
+        later.result(timeout=10)
+    assert "classmate" in ran and "bulk-later" in ran
+    assert svc._drafting_by_user == {} and svc._drafting_docs == {}
+
+
+def test_shutdown_takes_back_the_dropped_documents_marks_in_one_write(svc, monkeypatch):
+    """Z21: a deploy drops the queued drafting; the dropped documents go back to
+    "never drafted" at once (one conditional write), so draft on enable re-drives
+    them instead of leaving them `pending` until the TTL."""
+    running = threading.Event()
+    release = threading.Event()
+    writes: list[tuple[dict, dict]] = []
+
+    class _Docs:
+        def update(self, data, *, filters, prefer_return_minimal):
+            writes.append((data, filters))
+
+    monkeypatch.setattr(svc, "table", lambda name: _Docs())
+
+    def fake_generate(document_id, **kwargs):
+        running.set()
+        release.wait(10)
+
+    kw = {"course_id": "course-1", "concept_names": ["A"]}
+    with patch.object(svc, "generate_for_document", side_effect=fake_generate):
+        first = svc.queue_generation_for_document("doc-1", user_id="u1", **kw)
+        assert running.wait(10)
+        svc.queue_generation_for_document("doc-2", user_id="u2", **kw)
+        svc.queue_generation_for_document("doc-3", user_id="u3", **kw)
+        svc.shutdown_draft_pool()
+        release.set()
+        first.result(timeout=10)
+    assert writes == [(
+        {"check_items_status": None, "check_items_at": None},
+        {"id": 'in.("doc-2","doc-3")', "check_items_status": "eq.pending"},
+    )]
+    svc.shutdown_draft_pool()
+    assert len(writes) == 1, "nothing dropped twice"

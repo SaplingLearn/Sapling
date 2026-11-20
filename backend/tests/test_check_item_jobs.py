@@ -340,6 +340,18 @@ def test_the_in_process_fallback_never_runs_on_the_callers_thread():
     assert ran["thread"].startswith("check-items") and ran["thread"] != threading.current_thread().name
 
 
+def test_draft_on_enable_holds_to_the_uploaders_places_on_the_pool(monkeypatch):
+    """Z21: draft on enable shares the per-uploader bound; a claimed document
+    past it gets its mark back, for the next scan."""
+    from services import check_item_service as svc
+
+    cleared = []
+    monkeypatch.setattr(svc, "submit_drafting", lambda *a, **k: None)
+    monkeypatch.setattr(svc, "clear_drafting", cleared.append)
+    assert cij._draft_in_process("d1", "u1", "c-1") is None
+    assert cleared == ["d1"]
+
+
 def test_enable_rescans_a_course_at_most_once_per_interval(scans, monkeypatch):
     from services import check_item_service as svc
 

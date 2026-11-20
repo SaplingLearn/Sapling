@@ -65,6 +65,7 @@ only so as not to fight that trigger).
 from __future__ import annotations
 
 import contextvars
+import functools
 import hashlib
 import json
 import logging
@@ -152,6 +153,7 @@ from learning.params import (
     CHECK_ITEM_CONCEPTS_PER_CALL,
     CHECK_ITEM_DIFFICULTIES,
     CHECK_ITEM_DRAFT_PENDING_TTL_S,
+    CHECK_ITEM_DRAFT_QUEUE_PER_USER,
     CHECK_ITEM_DRAFT_WORKERS,
     CHECK_ITEM_INITIAL_PER_CONCEPT,
     CHECK_ITEM_MAX_CHUNKS,
@@ -3687,23 +3689,37 @@ def claim_undrafted_documents(
 # One upload's drafting is up to ceil(CHECK_ITEM_MAX_CONCEPTS_PER_DOC /
 # CHECK_ITEM_CONCEPTS_PER_CALL) = 4 sequential generation runs plus at most
 # CHECK_ITEM_MAX_CONCEPTS_PER_DOC x CHECK_ITEM_MC_TOPUP_CALLS = 10 one-concept
-# mc_reason top-up runs (A37), all on Flex and on this one thread, each up to
-# FLEX_TIMEOUT_S x (CHECK_ITEM_FLEX_RETRIES + 1): a thread held for minutes,
-# hours at worst.
+# mc_reason top-up runs (A37), all on this one thread, each up to
+# FLEX_TIMEOUT_S (x (CHECK_ITEM_FLEX_RETRIES + 1) on a Gemini Flex slot): a
+# thread held for minutes, hours at worst.
 # On the event loop's default executor or Starlette's request threadpool a few
 # concurrent uploads would starve every other threaded call in the process
 # (the next upload's extraction and persist among them), so real-mode drafting
 # runs HERE, CHECK_ITEM_DRAFT_WORKERS at a time; the rest wait in the queue.
+# Z21: one uploader holds at most CHECK_ITEM_DRAFT_QUEUE_PER_USER places in it
+# (queued or running), so a bulk upload never queues hours of drafting ahead
+# of every classmate's; a document past that bound gets its `pending` mark
+# taken back (`clear_drafting`), and draft on enable
+# (services/check_item_jobs.py::draft_missing_for_course) claims it when its
+# uploader next opens a loop session in the course.
 # The workers are not daemons: concurrent.futures joins them at interpreter
 # exit. So the app's shutdown hook (main.py's lifespan) calls
 # `shutdown_draft_pool`, which drops every QUEUED drafting (owner decision A38,
 # low-severity 4) instead of letting a deploy's SIGTERM wait for the whole
 # queue; a run already in flight still finishes or dies with the platform's
-# kill after its grace period. The nightly `--all-courses` backfill (spec
-# §11.7) drafts what was dropped.
+# kill after its grace period. The dropped documents' marks are taken back in
+# one write, so draft on enable re-drives them at once instead of after
+# CHECK_ITEM_DRAFT_PENDING_TTL_S (a run killed in flight leaves its mark, which
+# the same claim re-drives once the TTL has passed).
 
 _draft_pool_instance: ThreadPoolExecutor | None = None
 _draft_pool_lock = threading.Lock()
+#: Z21: uploader -> their drafting runs queued or running on the pool.
+_drafting_by_user: dict[str, int] = {}
+#: a queued or running drafting future -> its document (the shutdown re-mark)
+_drafting_docs: dict[Future, str] = {}
+#: documents whose queued drafting a shutdown cancelled, not yet re-marked
+_dropped_docs: list[str] = []
 
 
 def _draft_pool() -> ThreadPoolExecutor:
@@ -3716,15 +3732,75 @@ def _draft_pool() -> ThreadPoolExecutor:
         return _draft_pool_instance
 
 
+def _release_drafting(user_id: str, future: Future | None) -> None:
+    with _draft_pool_lock:
+        document_id = _drafting_docs.pop(future, None) if future is not None else None
+        if document_id is not None and future is not None and future.cancelled():
+            _dropped_docs.append(document_id)
+        left = _drafting_by_user.get(user_id, 0) - 1
+        if left > 0:
+            _drafting_by_user[user_id] = left
+        else:
+            _drafting_by_user.pop(user_id, None)
+
+
+def submit_drafting(
+    user_id: str, document_id: str, fn: Callable, /, *args, **kwargs
+) -> Future | None:
+    """Queue one document's drafting (`fn(*args, **kwargs)`, in the caller's
+    context) on the bounded pool, unless its uploader already holds
+    CHECK_ITEM_DRAFT_QUEUE_PER_USER places there (Z21): then None, and the
+    caller takes the document's `pending` mark back. Raises RuntimeError when
+    the pool is shutting down with the app."""
+    with _draft_pool_lock:
+        if _drafting_by_user.get(user_id, 0) >= CHECK_ITEM_DRAFT_QUEUE_PER_USER:
+            return None
+        _drafting_by_user[user_id] = _drafting_by_user.get(user_id, 0) + 1
+    try:
+        future = _draft_pool().submit(contextvars.copy_context().run, fn, *args, **kwargs)
+    except BaseException:
+        _release_drafting(user_id, None)
+        raise
+    with _draft_pool_lock:
+        _drafting_docs[future] = document_id
+    future.add_done_callback(functools.partial(_release_drafting, user_id))
+    return future
+
+
+def clear_dropped_drafting() -> int:
+    """Take back, in one write, the `pending` marks of the documents whose
+    queued drafting a shutdown dropped (only a mark still `pending` moves).
+    Returns how many it named. Never raises (bookkeeping)."""
+    with _draft_pool_lock:
+        dropped, _dropped_docs[:] = list(_dropped_docs), []
+    if not dropped:
+        return 0
+    ids = ",".join(pg_quote_value(d) for d in sorted(set(dropped)))
+    try:
+        table("documents").update(
+            {"check_items_status": None, "check_items_at": None},
+            filters={"id": f"in.({ids})", "check_items_status": f"eq.{DRAFTING_PENDING}"},
+            prefer_return_minimal=True,
+        )
+    except Exception as exc:
+        logger.warning(
+            "check items: %d dropped drafting marks not taken back (%s); they re-drive after "
+            "their TTL", len(dropped), type(exc).__name__,
+        )
+    return len(dropped)
+
+
 def shutdown_draft_pool() -> None:
     """Drop the queued drafting and let the pool go without waiting (the app's
-    shutdown hook). Idempotent; a later upload builds a new pool."""
+    shutdown hook), then take the dropped documents' marks back. Idempotent; a
+    later upload builds a new pool."""
     global _draft_pool_instance
     with _draft_pool_lock:
         pool, _draft_pool_instance = _draft_pool_instance, None
     if pool is not None:
         pool.shutdown(wait=False, cancel_futures=True)
         logger.info("check items: drafting pool shut down; queued drafting dropped")
+    clear_dropped_drafting()
 
 
 def _generate_for_document_logged(document_id: str, **kwargs) -> None:
@@ -3741,14 +3817,17 @@ def queue_generation_for_document(
     course_id: str,
     concept_names: Iterable[str],
     flags: DraftingFlags = DraftingFlags(),
-) -> Future:
+) -> Future | None:
     """Queue the upload hook's drafting (background prefill, Flex) on this
     module's own bounded pool and return at once. The caller's context
     (request id) rides along; a failure is logged, never raised. `flags`: the
     uploader's drafting flags, resolved once by the hook (A140, A141); with
-    both off the queued call is exactly the one it always was."""
-    return _draft_pool().submit(
-        contextvars.copy_context().run,
+    both off the queued call is exactly the one it always was. None when the
+    uploader is at CHECK_ITEM_DRAFT_QUEUE_PER_USER (Z21): nothing is queued
+    and the document's mark is taken back, so draft on enable claims it."""
+    future = submit_drafting(
+        user_id,
+        document_id,
         _generate_for_document_logged,
         document_id,
         user_id=user_id,
@@ -3757,3 +3836,10 @@ def queue_generation_for_document(
         flex=True,
         **({"flags": flags} if any(flags) else {}),
     )
+    if future is None:
+        logger.info(
+            "check items: uploader of document %s already has %d drafting runs queued; "
+            "left for draft on enable", document_id, CHECK_ITEM_DRAFT_QUEUE_PER_USER,
+        )
+        clear_drafting(document_id)
+    return future
