@@ -42,7 +42,7 @@ const api = vi.hoisted(() => ({
   postLoopAttempt: vi.fn(), requestLoopHint: vi.fn(), requestLoopHintTurn: vi.fn(), closeLoopSession: vi.fn(),
   getGraph: vi.fn(), nextLoopCheck: vi.fn(), submitLoopRating: vi.fn(), reportCheckItem: vi.fn(),
   streamLoopPrequestionAnswer: vi.fn(), postLoopSelfExplain: vi.fn(), getSessions: vi.fn(), getDocuments: vi.fn(),
-  getReviewSummary: vi.fn(), submitFeedback: vi.fn(),
+  getReviewSummary: vi.fn(), submitFeedback: vi.fn(), renameSession: vi.fn(), deleteSession: vi.fn(),
 }));
 vi.mock("@/lib/api", async (orig) => ({ ...(await orig<typeof import("@/lib/api")>()), ...api }));
 const flags = vi.hoisted(() => ({}) as Record<string, string>);
@@ -964,5 +964,53 @@ describe("K30 — 'Set a goal' sets it before the session starts", () => {
     fireEvent.click(await screen.findByTestId("loop-goal-cancel"));
     expect(await screen.findByTestId("tutor-home")).toBeTruthy();
     expect(api.startLoopSession).not.toHaveBeenCalled();
+  });
+});
+
+describe("K31 — Tutor V2 renames and deletes sessions, as the legacy Learn screen does", () => {
+  const today = new Date().toISOString();
+  const recent = (id: string, topic: string, loopOpen: boolean) => (
+    { id, topic, mode: "socratic", course_id: "c1", started_at: today, ended_at: null, message_count: 2, is_active: true, loop_open: loopOpen }
+  );
+
+  async function allSessions() {
+    api.getSessions.mockResolvedValue({ sessions: [recent("s2", "t s2", true), recent("old", "Big-O practice", false)] });
+    await resumedTeach();
+    fireEvent.click(screen.getByTestId("tutor-view-all"));
+    return screen.findByTestId("tutor-all-sessions");
+  }
+
+  it("renames a session from every session's list", async () => {
+    api.renameSession.mockResolvedValue({ updated: true, session: { id: "old", topic: "Big-O review" } });
+    const page = await allSessions();
+    fireEvent.click(within(page).getByTestId("tutor-session-rename-old"));
+    const input = within(page).getByTestId("tutor-session-name-old");
+    fireEvent.change(input, { target: { value: "Big-O review" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(api.renameSession).toHaveBeenCalledWith("old", "u1", "Big-O review"));
+    expect(await within(page).findByText("Big-O review")).toBeTruthy();
+    expect(within(page).queryByText("Big-O practice")).toBeNull();
+  });
+
+  it("Escape leaves the name as it was", async () => {
+    const page = await allSessions();
+    fireEvent.click(within(page).getByTestId("tutor-session-rename-old"));
+    const input = within(page).getByTestId("tutor-session-name-old");
+    fireEvent.change(input, { target: { value: "Nope" } });
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(within(page).getByText("Big-O practice")).toBeTruthy();
+    expect(api.renameSession).not.toHaveBeenCalled();
+  });
+
+  it("deletes a session after a confirm; deleting the open one leaves nothing of it on screen", async () => {
+    api.deleteSession.mockResolvedValue({ deleted: true });
+    const page = await allSessions();
+    fireEvent.click(within(page).getByTestId("tutor-session-delete-s2"));
+    expect(api.deleteSession).not.toHaveBeenCalled(); // the first click only arms it
+    fireEvent.click(within(page).getByTestId("tutor-session-delete-s2"));
+    await waitFor(() => expect(api.deleteSession).toHaveBeenCalledWith("s2", "u1"));
+    await waitFor(() => expect(within(page).queryByTestId("tutor-session-row-s2")).toBeNull());
+    expect(screen.getByTestId("loop-phase").getAttribute("data-session-id")).toBe("");
+    expect(toast.success).toHaveBeenCalledWith("Session deleted.");
   });
 });

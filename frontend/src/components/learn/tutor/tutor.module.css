@@ -505,6 +505,45 @@
   cursor: default;
 }
 
+/* #866 K31: a row of every session (T3) with its rename and delete actions
+   beside the button that opens it (never inside it). */
+.sessionRow {
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+}
+
+.sessionRow:last-child {
+  border-bottom: 0;
+}
+
+.sessionRow > .listRow {
+  flex: 1;
+  min-width: 0;
+  border-bottom: 0;
+}
+
+.rowActs {
+  display: flex;
+  gap: 4px;
+  padding-right: 14px;
+  flex-shrink: 0;
+}
+
+.renameInput {
+  flex: 1;
+  min-width: 0;
+  margin: 8px 12px 8px 22px;
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg-input);
+  color: var(--text);
+}
+
 .listRowStatic:hover {
   background: transparent;
 }

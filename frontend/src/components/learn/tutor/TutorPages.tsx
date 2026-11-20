@@ -6,6 +6,7 @@ import type { GraphNode } from "@/lib/data";
 import { Icon } from "../../Icon";
 import { ChevRight } from "./TutorIcons";
 import { courseColor, sessionTitle, shortWhen, type TutorSessionRow } from "./sessions";
+import { ManagedSessionRow } from "./ManagedSessionRow";
 import styles from "./tutor.module.css";
 
 /** Mastery as the map colours it: mastered / in progress / needs work / not started. */
@@ -272,7 +273,8 @@ export function TutorCourse({
 type Filter = "all" | "open" | "done";
 const FILTERS: [Filter, string][] = [["all", "All"], ["open", "In progress"], ["done", "Wrapped up"]];
 
-/** T3 · Every session, newest first, with search and a status filter. */
+/** T3 · Every session, newest first, with search and a status filter; each
+ *  can be renamed or deleted (#866 K31). */
 export function TutorAllSessions({
   sessions,
   courses,
@@ -282,6 +284,8 @@ export function TutorAllSessions({
   setFilter,
   onRetry,
   onOpen,
+  onRename,
+  onDelete,
 }: {
   sessions: TutorSessionRow[];
   courses: EnrolledCourse[];
@@ -292,6 +296,8 @@ export function TutorAllSessions({
   /** Present when the session list failed to load: the rows may be incomplete. */
   onRetry?: (() => void) | null;
   onOpen: (row: TutorSessionRow) => void;
+  onRename: (row: TutorSessionRow, topic: string) => void;
+  onDelete: (row: TutorSessionRow) => void;
 }) {
   const search = useFocusHeading<HTMLInputElement>();
   const byId = new Map(courses.map((c, i) => [c.course_id, { c, i }]));
@@ -317,18 +323,19 @@ export function TutorAllSessions({
       <section className="card">
         {rows.map((s) => {
           const entry = byId.get(s.courseId ?? "");
+          const title = sessionTitle(s, entry?.c);
           return (
-            <button key={s.id} type="button" className={styles.listRow} onClick={() => onOpen(s)}>
+            <ManagedSessionRow key={s.id} row={s} title={title} onOpen={onOpen} onRename={onRename} onDelete={onDelete}>
               <span className={styles.cdot} style={{ background: courseColor(entry?.c, entry?.i ?? 0) }} aria-hidden />
               <span className={styles.grow}>
-                <div className={styles.lt}>{sessionTitle(s, entry?.c)}</div>
+                <div className={styles.lt}>{title}</div>
                 <div className={styles.ls}>
                   {entry?.c.course_code && <span style={{ fontFamily: "var(--font-mono)" }}>{entry.c.course_code} · </span>}
                   {shortWhen(s.startedAt)}
                 </div>
               </span>
               <span className={s.open ? "chip chip--accent" : "chip"}>{s.open ? "In progress" : "Wrapped up"}</span>
-            </button>
+            </ManagedSessionRow>
           );
         })}
         {rows.length === 0 && !onRetry && (

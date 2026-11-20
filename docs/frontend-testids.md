@@ -1012,6 +1012,9 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `tutor-home-continue` / `tutor-home-due` / `tutor-home-start-with` / `tutor-home-goal` | the home's suggestions: back to the open session; Study's due review; a session on the weakest concept (its goal, #866 K05); the goal editor (`data-view="goal"`), before anything starts — saving starts the session on that goal |
 | `tutor-course-page` | a course page (T2); `data-course-id`: its sessions, progress and material; `tutor-course-start` (TopBar) goes to the home |
 | `tutor-all-sessions` | every session (T3), with a search and an All / In progress / Wrapped up filter |
+| `tutor-session-row-{sessionId}` | one session of every session's list: the button that opens it, then its Rename and Delete (#866 K31, as the legacy Learn screen's recent sessions) |
+| `tutor-session-rename-{sessionId}` / `tutor-session-name-{sessionId}` | Rename turns the row's name into the field `tutor-session-name-{sessionId}` (Enter or leaving it saves, Escape keeps the name) |
+| `tutor-session-delete-{sessionId}` | Delete, then "Confirm delete" within 3 s; the session leaves every list, and the screen lets go of it if it was on screen |
 | `tutor-phase-line` | the TopBar's line under the title: Check-in / Plan · N concepts / "<concept> · concept i of n" (the approved plan's cursor, which a turn or Check me that moves it reports) / Wrap-up / "Wrapped up · read-only" |
 | `tutor-phase-stepper` | the first row of the conversation column (`learn/tutor/PhaseStepper.tsx`): the ordered Check-in · Plan · Learn · Wrap-up list (`<ol aria-label="Session progress">`); each `li` has `data-state` = done / current / todo and the current one has `aria-current="step"` |
 | `tutor-turn` | a `ChatPanel` tutor turn drawn on the page (`turnStyle="page"`, `PageTurn`: the tutor's mark and name over the text, no bubble); `data-visually-hidden` while unpainted |

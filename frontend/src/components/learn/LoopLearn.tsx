@@ -93,6 +93,7 @@ import { PhaseStepper } from "./tutor/PhaseStepper";
 import { TutorDrawer } from "./tutor/TutorDrawer";
 import { useTutorLayout } from "./tutor/useTutorLayout";
 import { useTutorCourses, useTutorLists } from "./tutor/useTutorLists";
+import { useSessionEdits } from "./tutor/useSessionEdits";
 import { SidebarGlyph } from "./tutor/TutorIcons";
 import { listedOpenTitle, mergeSessions, sessionTitle, sessionToLeave, type TutorSessionRow } from "./tutor/sessions";
 import tutorStyles from "./tutor/tutor.module.css";
@@ -980,6 +981,18 @@ export function LoopLearn() {
   const sessionRows = useMemo(
     () => mergeSessions(lists.recent, openSessions, courseId, openComplete), [lists.recent, openSessions, courseId, openComplete],
   );
+  // K31: rename and delete, from every session's list; a deleted session on
+  // screen (or read-only) is let go of, so nothing of it stays behind the list
+  const edits = useSessionEdits({
+    userId, toast, renameRecent: lists.renameRecent, dropRecent: lists.dropRecent, setOpenSessions,
+    onDeleted: useCallback((id: string) => {
+      if (id !== sessionRef.current && id !== readOnly?.id) return;
+      ++gen.current;
+      clearSessionView();
+      setSessionId(null);
+      sessionRef.current = null;
+    }, [readOnly, clearSessionView]),
+  });
 
   /** Show another course: its sessions load (and an open one resumes) behind the page. */
   const switchCourse = (v: string) => {
@@ -2348,6 +2361,8 @@ export function LoopLearn() {
         setFilter={setAllFilter}
         onRetry={lists.retryRecent}
         onOpen={openRow}
+        onRename={(row, topic) => void edits.rename(row, topic)}
+        onDelete={(row) => void edits.remove(row)}
       />
     </div>
   );
