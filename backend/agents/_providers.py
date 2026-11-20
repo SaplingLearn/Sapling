@@ -927,8 +927,14 @@ class _ResilientModelMixin:
             timeout = seconds  # GoogleModel accepts only a number
         return {**(model_settings or {}), "timeout": timeout}
 
-    def _site(self) -> _resilience.CallSite:
-        return _resilience.CallSite(self._res_provider, self.model_name, self._res_task)
+    def _site(self, model_settings=None) -> _resilience.CallSite:
+        # A Gemini Flex request (A23, background check-item drafting) feeds its
+        # own breaker: its expected throttling must not fail the standard tier.
+        tier = (model_settings or {}).get("service_tier")
+        flex = self._res_provider == "google" and tier == "flex"
+        return _resilience.CallSite(
+            self._res_provider, self.model_name, self._res_task, tier="flex" if flex else None
+        )
 
     # -- fallback ---------------------------------------------------------
 
@@ -979,7 +985,7 @@ class _ResilientModelMixin:
         settings = self._with_timeout(model_settings)
         try:
             return await _resilience.call_with_retries(
-                self._site(),
+                self._site(model_settings),
                 lambda: send(messages, settings, model_request_parameters),
                 deadline_s=deadline_for(self._res_task, model_settings) + _DEADLINE_SLACK_S,
             )
@@ -1020,7 +1026,7 @@ class _ResilientModelMixin:
                 # Streams get no total deadline — only time-to-first-chunk
                 # here, and the HTTP read timeout between chunks after it.
                 stream = await _resilience.call_with_retries(
-                    self._site(), _open, deadline_s=deadline_for(self._res_task, model_settings)
+                    self._site(model_settings), _open, deadline_s=deadline_for(self._res_task, model_settings)
                 )
             except Exception as exc:
                 fallback = await self._fallback_for(exc)

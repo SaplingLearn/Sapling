@@ -407,11 +407,23 @@ def reset_for_tests() -> None:
 
 @dataclass(frozen=True)
 class CallSite:
-    """Who is calling, for the breaker and the logs (never prompt content)."""
+    """Who is calling, for the breaker and the logs (never prompt content).
+
+    `tier` names a provider service tier whose throttling says nothing about
+    the provider's standard tier (Gemini Flex, A23: a 429/503 there is
+    expected under load). Such a call keeps its own breaker
+    (`<provider>:<tier>`), so background Flex drafting that is throttled
+    never opens the breaker every interactive call on the provider shares.
+    The outage drill still keys on `provider`."""
 
     provider: str
     model_name: str
     task: str | None
+    tier: str | None = None
+
+    @property
+    def breaker_key(self) -> str:
+        return f"{self.provider}:{self.tier}" if self.tier else self.provider
 
 
 async def call_with_retries(
@@ -427,7 +439,7 @@ async def call_with_retries(
     Raises the last attempt's error, or :class:`CircuitOpenError` when the
     breaker refuses an attempt (including a retry: a breaker that opened
     mid-call stops it there)."""
-    breaker = breaker_for(site.provider)
+    breaker = breaker_for(site.breaker_key)
     drilled = site.provider in await forced_outage()
     last_exc: Exception | None = None
     for index in range(RETRY_ATTEMPTS):
