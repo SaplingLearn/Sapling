@@ -1375,6 +1375,35 @@ def test_deep_caps_reach_the_tier_router(gate_on, seams):
     )
 
 
+def test_a_billed_tool_run_that_fails_otherwise_is_still_recorded(gate_on, seams):
+    """#866 Z51: a turn whose run fails with anything but UnexpectedModelBehavior
+    (a provider 5xx after the tool round, UsageLimitExceeded) already cost the
+    requests the provider answered; they reach llm_usage as an UnfinishedRun."""
+    from pydantic_ai.exceptions import ModelHTTPError
+    from pydantic_ai.usage import RunUsage
+
+    seams.store["doc"] = {"phase": "teach"}
+    agent = MagicMock()
+
+    async def _run(msg, usage: RunUsage, **kw):
+        usage.requests += 1  # the tool-call request was answered and billed
+        usage.input_tokens += 100
+        raise ModelHTTPError(status_code=503, model_name="m", body=None)
+
+    agent.run = _run
+    billed = []
+    with (
+        patch_loop("loop_tutor_agent", agent),
+        patch_loop("record_agent_usage", side_effect=lambda r, **k: billed.append(r) or r),
+    ):
+        r = client.post(
+            "/api/learn/loop/chat", json={"session_id": "s1", "user_id": "u1", "message": "hi"}
+        )
+    assert r.status_code >= 500
+    assert len(billed) == 1 and billed[0].usage().requests == 1
+    assert billed[0].usage().input_tokens == 100
+
+
 def test_a_tool_run_that_ends_without_a_turn_is_rescued_tool_less(gate_on, seams):
     """#646 on the structured turn (lane B's live finding): after a tool call
     gemini flash-lite answered with EMPTY responses, so the tool run ends in

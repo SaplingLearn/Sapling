@@ -512,6 +512,31 @@ def test_run_session_close_bills_a_failed_run(monkeypatch, session_id):
     assert metadata == {"feature": "session_close", "task": "session_close", "user_id": "u", "session_id": session_id}
 
 
+def test_a_close_cut_off_by_its_timeout_still_bills_what_it_spent(monkeypatch):
+    """#866 Z43/Z51: _model_close's wait_for cancels the run (CancelledError, a
+    BaseException) while a retry is in flight; the first, billed request still
+    reaches llm_usage, and the fallback close is stored."""
+    import agents.session_close as sc
+    from services.loop import closing
+
+    billed = []
+
+    class _BilledThenHangs:
+        async def run(self, *a, usage=None, **k):
+            usage.requests += 1
+            usage.output_tokens += 7
+            await asyncio.sleep(30)  # the output-validator retry, still in flight
+
+    _budget(monkeypatch, "normal")
+    monkeypatch.setattr(sc, "session_close_agent", _BilledThenHangs())
+    monkeypatch.setattr(sc, "record_agent_usage", lambda result, **kw: billed.append(result) or result)
+    monkeypatch.setattr(closing, "CLOSE_RUN_TIMEOUT_S", 0.05)
+    out = asyncio.run(closing._model_close(_draft(), user_id="u", request_id="r", session_id="s"))
+    assert out is None
+    assert len(billed) == 1 and isinstance(billed[0], sc.UnfinishedRun)
+    assert billed[0].usage().requests == 1 and billed[0].usage().output_tokens == 7
+
+
 def test_run_session_close_budget_read_failure_degrades(monkeypatch):
     import agents.session_close as sc
 

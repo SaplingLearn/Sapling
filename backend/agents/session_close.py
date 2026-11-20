@@ -247,6 +247,7 @@ async def run_session_close(
         learning_loop=True,
     )
     usage = RunUsage()
+    result = None
     try:
         # Spec §13 A20/A25, invariant 23: the budget check precedes the run in this body.
         if ai_budget.check(user_id, "close", close_band(draft)).level == "hard":
@@ -259,13 +260,16 @@ async def run_session_close(
             usage=usage,
         )
     except Exception as exc:  # honest degrade — the caller stores fallback_close
-        if usage.requests or usage.total_tokens:  # a failed run that was billed
+        logger.warning("session_close unavailable (%s); storing fallback close", type(exc).__name__)
+        return None
+    finally:
+        # A failed run that was billed — an exception, or the caller's timeout
+        # cancelling it mid-retry (CancelledError is a BaseException, #866 Z43)
+        if result is None and (usage.requests or usage.total_tokens):
             record_agent_usage(
                 UnfinishedRun(usage), feature="session_close", task="session_close",
                 user_id=user_id, session_id=session_id,
             )
-        logger.warning("session_close unavailable (%s); storing fallback close", type(exc).__name__)
-        return None
     record_agent_usage(result, feature="session_close", task="session_close",
                        user_id=user_id, session_id=session_id)
     return result.output
