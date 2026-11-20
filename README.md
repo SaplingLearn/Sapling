@@ -212,7 +212,7 @@ Copy the example files as described above. The job worker (`python -m worker`, f
 | `SESSION_SECRET` | Outside local dev | HMAC secret for session tokens (32+ bytes). Must match the frontend. |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | To sign in | Google OAuth client |
 | `GOOGLE_AUTH_REDIRECT_URI` | | Sign-in callback (default `http://localhost:5000/api/auth/google/callback`) |
-| `GOOGLE_REDIRECT_URI` | | Calendar callback (default `http://localhost:5000/api/calendar/callback`) |
+| `GOOGLE_REDIRECT_URI` | | Calendar callback override (defaults to `GOOGLE_AUTH_REDIRECT_URI`) |
 | `APP_ENV` | | `local` for development (relaxes `SESSION_SECRET`), `staging`, or `production` (default, fail-closed) |
 | `PORT` / `FRONTEND_URL` | | Backend port (default `5000`) and allowed CORS origin (default `http://localhost:3000`) |
 | `SUPABASE_DB_URL` | For migrations | Session-mode pooler URI (port 5432). Used only by `python -m db.migrate`. |

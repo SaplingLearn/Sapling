@@ -189,6 +189,10 @@ def google_callback(
     student cancels on its screen. That is a cancelled sign-in, not a bad
     request: it goes back through the sign-in error path as ``cancelled``
     (popup and same-tab alike), with nothing exchanged or written."""
+    if state and (_decode_state(state) or {}).get("action") == "calendar":
+        from routes.calendar_connect import calendar_callback
+
+        return calendar_callback(request, code=code, state=state, error=error)
     cookie_payload = _decode_oauth_cookie(request.cookies.get(OAUTH_STATE_COOKIE))
     code_verifier = cookie_payload.get("cv") if cookie_payload else None
     popup_id = _clean_popup_id(cookie_payload.get("popup_id")) if cookie_payload else None

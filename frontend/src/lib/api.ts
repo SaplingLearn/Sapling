@@ -630,7 +630,10 @@ export const deleteAssignment = (assignmentId: string, userId: string) =>
   );
 
 export const getCalendarStatus = (userId: string) =>
-  fetchJSON<{ connected: boolean; expires_at?: string }>(`/api/calendar/status/${userId}`);
+  fetchJSON<{ connected: boolean; expires_at?: string; events_enabled?: boolean }>(`/api/calendar/status/${userId}`);
+
+export const connectCalendarEvents = (userId: string) =>
+  fetchJSON<{ events_enabled: boolean }>(`/api/calendar/connect/${encodeURIComponent(userId)}`, { method: 'POST' });
 
 export const disconnectCalendar = (userId: string) =>
   fetchJSON<{ disconnected: boolean }>(`/api/calendar/disconnect/${userId}`, { method: 'DELETE' });
@@ -643,6 +646,9 @@ export const syncCalendar = (userId: string) =>
 
 export interface GoogleEvent {
   google_event_id: string;
+  calendar_id?: string;
+  calendar_name?: string;
+  primary_calendar?: boolean;
   title: string;
   description?: string;
   start_date: string;
@@ -654,9 +660,12 @@ export interface GoogleEvent {
   location?: string;
 }
 
-export const importGoogleEvents = (userId: string, daysAhead = 60) =>
+export const importGoogleEvents = (userId: string, daysAhead = 60, range?: { start: string; end: string }) =>
   fetchJSON<{ events: GoogleEvent[]; count: number }>(
-    `/api/calendar/import/${encodeURIComponent(userId)}?days_ahead=${daysAhead}`,
+    `/api/calendar/import/${encodeURIComponent(userId)}?${new URLSearchParams(range
+      ? { time_min: range.start, time_max: range.end }
+      : { days_ahead: String(daysAhead) })}`,
+    { cache: 'no-store' },
   );
 
 /** The Google Calendar consent flow: a backend route that redirects to Google,

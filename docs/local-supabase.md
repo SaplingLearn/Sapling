@@ -119,8 +119,9 @@ sign in. They're optional only for bringing the stack *up* — if you leave the
 `.env.local.example` placeholders in place, the stack still starts but clicking
 "sign in with Google" fails silently. The staging OAuth creds work here; point the
 redirect at `http://localhost:5000/api/auth/google/callback`. **One-time setup:**
-add that URI (and `http://localhost:5000/api/calendar/callback` for calendar) to
-the OAuth client's authorized redirect URIs in the Google Cloud console.
+add that URI to the OAuth client's authorized redirect URIs in the Google Cloud
+console. Calendar uses the same callback by default. If you set
+`GOOGLE_REDIRECT_URI`, register that URI as well.
 
 Two local-only conveniences make it "just work", both gated on `APP_ENV=local` so
 staging/prod are unaffected:

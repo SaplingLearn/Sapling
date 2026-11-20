@@ -235,6 +235,7 @@ def calendar_callback(
 
     row = {
         "user_id": user_id,
+        "calendar_events_enabled": True,
         "access_token": encrypt(creds.token, bind=bind("oauth_tokens", "access_token", user_id)),
         # expires_at is TIMESTAMPTZ (0024): None, not "", when absent.
         "expires_at": creds.expiry.isoformat() if creds.expiry else None,
