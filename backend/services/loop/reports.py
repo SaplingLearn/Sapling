@@ -122,7 +122,12 @@ def _posed_loop_item(body: LoopReportBody) -> CheckItem:
 
 def _served_review_item(body: LoopReportBody, now: datetime) -> CheckItem:
     """The review surface: today's review session (the student's, its course
-    one they are enrolled in) served this item."""
+    one they are enrolled in) served this item. #866 Z38: the item must be the
+    reviewed course's — a question_hash is only the prompt's hash, so another
+    course's item can share a served hash — and an id that names nothing is a
+    409 (withdrawn) only when this session served that id; otherwise every
+    refusal is the same 404, so the route says nothing about other courses'
+    item banks."""
     _review_course(body.user_id, body.course_id)
     if body.session_id != review.review_session_id(body.user_id, body.course_id, now):
         raise HTTPException(status_code=409, detail=_REVIEW_EXPIRED)  # a new UTC day began
@@ -130,11 +135,17 @@ def _served_review_item(body: LoopReportBody, now: datetime) -> CheckItem:
         view = review.peek_review_session(body.user_id, body.course_id, now)
     except PermissionError:
         raise HTTPException(status_code=403, detail="Session user mismatch") from None
+    not_served = HTTPException(status_code=404, detail=_REVIEW_CLAIM_DETAIL["not_served"])
     item = get_check_item(body.item_id)
     if item is None:
-        raise HTTPException(status_code=409, detail=_WITHDRAWN_ITEM)
+        opened = view.get("open") or {}
+        if any(isinstance(e, dict) and e.get("item_id") == body.item_id for e in opened.values()):
+            raise HTTPException(status_code=409, detail=_WITHDRAWN_ITEM)
+        raise not_served
+    if item.course_id != body.course_id:
+        raise not_served
     if item.question_hash not in ((view.get("review") or {}).get("served_hashes") or []):
-        raise HTTPException(status_code=404, detail=_REVIEW_CLAIM_DETAIL["not_served"])
+        raise not_served
     return item
 
 
