@@ -52,16 +52,54 @@ MODE_DISPLAY_NAMES = {
 }
 
 
-def _session_summary(session_id: str, started_at: str, ended_at: str | None = None) -> dict:
-    """The end-of-session summary: concepts touched (from the transcript's
-    graph_update_json) and minutes from start to ``ended_at`` (now if None).
-    Reads only — safe to recompute for a repeat end."""
+#: The `sessions` columns `_session_summary` reads its own concept from.
+_SESSION_CONCEPT_COLUMNS = "user_id,topic,offering_id"
+
+
+def _session_concept(session: dict | None) -> str | None:
+    """#866 K47: the concept a session was opened on — its topic, when that is
+    the name of one of the student's graph nodes (in the session's course when
+    it has one), as the picker and the map send it; the stored name. None for a
+    free topic, a course or a note's title, or a failed read (best effort: the
+    summary never fails an end)."""
+    topic = ((session or {}).get("topic") or "").strip()
+    user_id = (session or {}).get("user_id")
+    if not topic or not user_id:
+        return None
+    filters = {"user_id": f"eq.{user_id}", "concept_name": f"eq.{topic}"}
+    try:
+        course_id = offering_course_id(session.get("offering_id"))
+        if course_id:
+            filters["course_id"] = f"eq.{course_id}"
+        rows = table("graph_nodes").select("concept_name", filters=filters, limit=1)
+    except Exception:
+        logger.warning("session summary: the session's concept could not be read", exc_info=True)
+        return None
+    return (rows[0].get("concept_name") or None) if rows else None
+
+
+def _session_summary(
+    session_id: str, started_at: str, ended_at: str | None = None, *, session: dict | None = None,
+) -> dict:
+    """The end-of-session summary: the concepts it covered and minutes from
+    start to ``ended_at`` (now if None). Reads only — safe to recompute for a
+    repeat end.
+
+    Covered: the concept the session was opened on (`session`, its row), once
+    the student wrote in it, then every concept the transcript's
+    graph_update_json names. PKG-14b (spec §11.2) took away the tutor's mastery
+    tool, whose `updated_nodes` were most of that list; without the session's
+    own concept a loop-off student's summary was usually empty (#866 K47).
+    Rows written before PKG-14b still carry `updated_nodes`."""
     msgs = table("messages").select(
-        "graph_update_json",
+        "role,graph_update_json",
         filters={"session_id": f"eq.{session_id}"},
     )
 
-    concepts_covered = set()
+    covered: dict[str, None] = {}  # insertion-ordered, deduped
+    if any(msg.get("role") == "user" for msg in msgs):
+        if concept := _session_concept(session):
+            covered[concept] = None
     for msg in msgs:
         if msg["graph_update_json"]:
             try:
@@ -69,15 +107,15 @@ def _session_summary(session_id: str, started_at: str, ended_at: str | None = No
                 if isinstance(gu, str):
                     gu = json.loads(gu)
                 for upd in gu.get("updated_nodes", []):
-                    concepts_covered.add(upd["concept_name"])
+                    covered.setdefault(upd["concept_name"])
                 for nn in gu.get("new_nodes", []):
-                    concepts_covered.add(nn["concept_name"])
+                    covered.setdefault(nn["concept_name"])
             except Exception:
                 pass
 
     # PKG-14b (spec §11.2): the three always-empty lists are gone.
     return {
-        "concepts_covered": list(concepts_covered),
+        "concepts_covered": list(covered),
         "time_spent_minutes": _elapsed_minutes(started_at, until=ended_at),
     }
 
@@ -87,7 +125,7 @@ def _stored_session_summary(session_id: str) -> dict:
     call stored, or — if that call hasn't written it yet — the same summary
     recomputed up to the stored ended_at. Never writes."""
     rows = table("sessions").select(
-        "started_at,ended_at,summary_json",
+        f"started_at,ended_at,summary_json,{_SESSION_CONCEPT_COLUMNS}",
         filters={"id": f"eq.{session_id}"},
         limit=1,
     )
@@ -102,7 +140,7 @@ def _stored_session_summary(session_id: str) -> dict:
                 return summary
         except Exception:
             logger.warning("stored session summary unreadable; recomputing", exc_info=True)
-    return _session_summary(session_id, row.get("started_at") or "", row.get("ended_at"))
+    return _session_summary(session_id, row.get("started_at") or "", row.get("ended_at"), session=row)
 
 
 def end_session(body: EndSessionBody, request: Request, loop_handler=None):
@@ -140,7 +178,7 @@ def end_session(body: EndSessionBody, request: Request, loop_handler=None):
         return {"summary": empty}
 
     session_rows = table("sessions").select(
-        "user_id,started_at",
+        f"started_at,{_SESSION_CONCEPT_COLUMNS}",
         # a daily review session is never ended here: no XP, streak or summary (A73)
         filters={"id": f"eq.{body.session_id}", **NOT_REVIEW},
     )
@@ -181,7 +219,7 @@ def end_session(body: EndSessionBody, request: Request, loop_handler=None):
     # check below so that check sees today's advanced streak_count.
     touch_streak_safe(body.user_id)
 
-    summary = _session_summary(body.session_id, session["started_at"], ended_at)
+    summary = _session_summary(body.session_id, session["started_at"], ended_at, session=session)
     elapsed_minutes = summary["time_spent_minutes"]
     concepts_covered = summary["concepts_covered"]
 
