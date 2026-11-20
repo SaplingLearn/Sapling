@@ -96,6 +96,7 @@ from agents._providers import ANTHROPIC_MAX_TOKENS, model_for, settings_for_slot
 from agents.deps import SaplingDeps
 from agents.usage import record_agent_usage
 from services.ai_trace_privacy import content_free_tracer_provider
+from services.log_privacy import safe_exception_text
 from learning import answer_guard
 from learning.answer_guard import Refusal
 from learning.leak import detect_leak  # the one sanctioned PKG-06 import here (A38)
@@ -1115,7 +1116,8 @@ async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) ->
             message, deps, labels=labels, item=item, screen=screen, suspicious=suspicious,
         )
     except _GRADER_FAILURES as exc:
-        logger.warning("grader unavailable for item %s: %s", item.id, exc)
+        # #866 Z46: never str(exc) — UnexpectedModelBehavior's text carries the response body
+        logger.warning("grader unavailable for item %s: %s", item.id, safe_exception_text(exc))
         return _unavailable_after(exc)
     if screen.exempted and any(run.addresses_grader for run in runs):
         # A33 (ruling point 3; CONTINUE §4.1 (a)): the report refuses only beside
@@ -1219,7 +1221,9 @@ async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) ->
             # given nor recorded as an incorrect (an invariant-28 residual,
             # HANDOFF-a33 Known gaps)
             logger.warning(
-                "grader unavailable for item %s: the span check failed: %s", item.id, exc
+                "grader unavailable for item %s: the span check failed: %s",
+                item.id,
+                safe_exception_text(exc),
             )
             return _unavailable_after(exc)
         confirmed = parse_labelled(check.item_results, span_labels)
@@ -1248,7 +1252,9 @@ async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) ->
                 # as a failed span check: nothing for either outcome (invariant-28
                 # residual, HANDOFF-a33 Known gaps)
                 logger.warning(
-                    "grader unavailable for item %s: the context check failed: %s", item.id, exc
+                    "grader unavailable for item %s: the context check failed: %s",
+                    item.id,
+                    safe_exception_text(exc),
                 )
                 return _unavailable_after(exc)
             # fail closed: only an explicit "no" keeps the credit, so each entry's

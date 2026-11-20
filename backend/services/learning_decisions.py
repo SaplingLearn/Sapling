@@ -84,6 +84,7 @@ from learning.answer_guard import Refusal
 from learning.checks import RubricItem, WrongReason
 from learning.evidence import GraderBackend
 from services import ai_budget, events_service
+from services.log_privacy import safe_exception_text
 
 logger = logging.getLogger("sapling.decisions")
 
@@ -742,7 +743,8 @@ async def _run_decision(decision: str, state, deps):
             )
         if not isinstance(exc, _DECISION_FAILURES):
             raise
-        logger.warning("decision unavailable (%s): %s", decision, exc)
+        # #866 Z46: never str(exc) — UnexpectedModelBehavior's text carries the response body
+        logger.warning("decision unavailable (%s): %s", decision, safe_exception_text(exc))
         return None
     record_agent_usage(
         result,
