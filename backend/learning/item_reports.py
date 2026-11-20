@@ -43,7 +43,8 @@ from typing import NamedTuple
 
 from db.connection import page_all, pg_quote_value, rpc, table
 from db.scope import runs_as_service
-from learning.checks import held_flags
+from learning.checks import KEY_AUDIT_AMBIGUOUS, KEY_AUDIT_WRONG, held_flags
+from learning.item_audit import AMBIGUOUS, WRONG
 from learning.multi_concept import components_of
 from learning.params import ITEM_REPORT_QUARANTINE_MIN_REPORTERS, ITEM_REPORT_REASONS
 from services.timestamps import parse_ts
@@ -63,6 +64,11 @@ DECIDED_BY_REPORTS = "reports"
 DECIDED_BY_ADMIN = "admin"
 #: hashes per `in.(...)` read (a URL-length bound, check_item_service's batch)
 _HASH_BATCH = 100
+#: A124's key audit: one row per course item, the latest verdict (written by
+#: check_item_service.record_item_audit; read here by `audit_holds`).
+AUDITS = "check_item_audits"
+#: The key-hold code each non-"correct" verdict sets (record_item_audit's too).
+AUDIT_HOLD = {WRONG: KEY_AUDIT_WRONG, AMBIGUOUS: KEY_AUDIT_AMBIGUOUS}
 
 
 class StoreUnavailable(RuntimeError):
@@ -167,6 +173,59 @@ def review_statuses(course_id: str, hashes: Iterable[str]) -> dict[str, str]:
             if r.get("question_hash") and r.get("status") in (QUARANTINED, RETIRED)
         )
     return out
+
+
+@runs_as_service  # spec §13 A148: check_item_audits and check_item_reviews are service-only
+def audit_holds(course_id: str, hashes: Iterable[str]) -> dict[str, str]:
+    """PR #866 Z09: the key-hold code (`key_audit_wrong` / `key_audit_ambiguous`)
+    of each of `hashes` whose course item staff audited wrong or ambiguous
+    (A124's audit, check_item_audits: one row per course item, the latest
+    verdict) with no approval since — question_hash -> code. The drafting
+    write stores a new row of such a question under that hold, as
+    check_item_service.record_item_audit held the rows the verdict found and
+    as the database carries a staff hold onto every later row (A123). An
+    approval at or after the audit (`approved_at`, which outlives a later
+    quarantine) lifted it; a later "correct" verdict replaced it. Raises on a
+    failed read (the drafting write then drops the batch: fail closed)."""
+    keys = sorted({h for h in hashes if h})
+    found: dict[str, tuple[str, object]] = {}
+    for start in range(0, len(keys), _HASH_BATCH):
+        batch = keys[start : start + _HASH_BATCH]
+        rows = table(AUDITS).select(
+            "question_hash,verdict,audited_at",
+            filters={
+                "course_id": f"eq.{course_id}",
+                "verdict": f"in.({WRONG},{AMBIGUOUS})",
+                "question_hash": f"in.({','.join(pg_quote_value(h) for h in batch)})",
+            },
+        )
+        for row in rows or []:
+            code = AUDIT_HOLD.get(row.get("verdict"))
+            at = parse_ts(row.get("audited_at"))
+            if code and at is not None and row.get("question_hash") in batch:
+                found[row["question_hash"]] = (code, at)
+    if not found:
+        return {}
+    approved: dict = {}
+    held = sorted(found)
+    for start in range(0, len(held), _HASH_BATCH):
+        batch = held[start : start + _HASH_BATCH]
+        for row in table(REVIEWS).select(
+            "question_hash,approved_at",
+            filters={
+                "course_id": f"eq.{course_id}",
+                "approved_at": "not.is.null",
+                "question_hash": f"in.({','.join(pg_quote_value(h) for h in batch)})",
+            },
+        ) or []:
+            stamp = parse_ts(row.get("approved_at"))
+            if row.get("question_hash") in batch and stamp is not None:
+                approved[row["question_hash"]] = stamp
+    return {
+        h: code
+        for h, (code, at) in found.items()
+        if approved.get(h) is None or approved[h] < at
+    }
 
 
 @runs_as_service  # spec §13 A148: check_item_reports/reviews and their RPCs are service-only

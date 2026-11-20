@@ -2543,6 +2543,15 @@ class TestRankChunks:
 _LIVE_SOURCES = [{"id": "doc-1"}]
 
 
+def _inserted_ids(rows, *_a, ignore_duplicates=False, columns=None, **_k):
+    """The representation PostgREST returns for an ON CONFLICT DO NOTHING
+    insert of `rows` with nothing stored: every row, projected to `columns`."""
+    if not columns:
+        return []
+    keep = columns.split(",")
+    return [{c: r.get(c) for c in keep} for r in rows if isinstance(r, dict)]
+
+
 def _cached_tables(data: dict):
     mocks: dict = {}
 
@@ -2553,6 +2562,10 @@ def _cached_tables(data: dict):
             m.select.return_value = rows
             m.select_with_count.return_value = (rows, len(rows))  # db.connection.page_all
             m.upsert.return_value = []
+            if name == "check_items":
+                # Z09: a DO NOTHING insert into an empty table writes every row
+                # and returns each one's projected columns
+                m.upsert.side_effect = _inserted_ids
             m.delete.return_value = []
             mocks[name] = m
         return mocks[name]
@@ -2588,7 +2601,12 @@ class TestCreateItems:
         upsert = mocks["check_items"].upsert
         upsert.assert_called_once()
         rows, kwargs = upsert.call_args[0][0], upsert.call_args[1]
-        assert kwargs == {"on_conflict": "course_id,concept_key,question_hash"}
+        # Z09: an insert that never rewrites a stored row (ON CONFLICT DO NOTHING)
+        assert kwargs == {
+            "on_conflict": "course_id,concept_key,question_hash",
+            "ignore_duplicates": True,
+            "columns": "id",  # the rows the insert wrote, never the rows sent
+        }
         row = rows[0]
         assert (
             ids
@@ -4151,7 +4169,14 @@ class TestGenerate:
         monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", True)
         factory, mocks = _cached_tables({"check_items": []})
         mocks_t = factory("check_items")
-        mocks_t.upsert.side_effect = [RuntimeError("pg down"), []]
+        writes = iter([RuntimeError("pg down"), None])
+
+        def upsert(rows, *a, **k):
+            if (err := next(writes)) is not None:
+                raise err
+            return _inserted_ids(rows, *a, **k)
+
+        mocks_t.upsert.side_effect = upsert
 
         async def fake_draft(concepts, passages, *, deps, flex):
             return _drafts_for(*concepts)
@@ -4664,17 +4689,40 @@ class _ItemsTable:
         self.selects: list[dict] = []
         self.columns: list[str] = []  # each select's columns, in order
 
-    def upsert(self, rows, on_conflict=None):
+    def upsert(self, rows, on_conflict=None, ignore_duplicates=False, columns=None):
         self.upserts.append([dict(r) for r in rows])
+        written = []
         for row in rows:
+            if ignore_duplicates and row["id"] in self.rows:
+                continue  # ON CONFLICT DO NOTHING: a stored row is never rewritten
             self.rows[row["id"]] = dict(row)
-        return []
+            written.append(row)
+        # PostgREST's representation: only the rows written (DO NOTHING
+        # returns none for a skipped row), projected to `columns`
+        return _inserted_ids(written, columns=columns)
 
     def select(self, columns, filters=None, order=None, limit=None):
         self.selects.append(dict(filters or {}))
         self.columns.append(columns)
-        eq = {k: v[3:] for k, v in (filters or {}).items() if v.startswith("eq.")}
-        return [r for r in self.rows.values() if all(str(r.get(k)) == v for k, v in eq.items())]
+        return [
+            r for r in self.rows.values()
+            if all(self._matches(r.get(k), v) for k, v in (filters or {}).items())
+        ]
+
+    @staticmethod
+    def _matches(cell, value) -> bool:
+        """`eq.` and `is.null` as PostgREST reads them (a text[] literal, a
+        boolean); any other operator is not modelled and matches."""
+        if value == "is.null":
+            return cell is None
+        if not value.startswith("eq."):
+            return True
+        want = value[3:]
+        if isinstance(cell, bool):
+            return want == ("true" if cell else "false")
+        if isinstance(cell, list):
+            return want == "{" + ",".join(f'"{c}"' for c in cell) + "}"
+        return str(cell) == want
 
     def delete(self, filters=None):
         return []
@@ -4812,7 +4860,8 @@ class TestMcTopUp:
         out, items, topups, ev = self._run(monkeypatch, main, None)
         assert topups == [] and self._topup_events(ev) == []
         assert len(items.mc_reason("learning rate")) == 2 and out.items_created == 2
-        assert items.columns == ["id"], "only the A23 count: no top-up read at >= 2 this pass"
+        # the A23 count and the write's stored-id read (Z09): no top-up read at >= 2
+        assert items.columns == ["id", "id"], "no top-up read at >= 2 this pass"
 
     def test_items_stored_before_the_pass_count_toward_the_floor(self, monkeypatch):
         """The floor is what the concept ENDS the pass with: an mc_reason item

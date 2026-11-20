@@ -353,7 +353,8 @@ class TestTheHold:
             "base case" if retag else "recursion",
             (RUBRIC_UNASKED_DROPPED, *((CONCEPT_RETAGGED,) if retag else ())),
         )
-        factory, mocks = _cached_tables({})
+        # the re-key reads the row back as read first (Z35)
+        factory, mocks = _cached_tables({"check_items": [row]})
         with patch("services.check_item_service.table", side_effect=factory):
             svc.apply_item_alignment(row, item, result, at="2026-11-08T02:00:00+00:00")
         if retag:
@@ -1164,6 +1165,7 @@ class _Recorder:
         class _T:
             def update(self, row, filters=None, **kw):
                 rec.writes.append(("update", name, row, filters))
+                return [{"id": (filters or {}).get("id", "eq.")[3:]}]  # unchanged since read
 
             def upsert(self, *a, **k):  # pragma: no cover - would be a bug
                 rec.writes.append(("upsert", name, a))

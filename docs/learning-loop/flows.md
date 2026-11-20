@@ -50,7 +50,7 @@ sequenceDiagram
     S->>K: solve each item blind (no key, no rubric)
     K-->>S: answers → compare with key in code
     S->>S: agree → canonical_verified, disagree/unsolved → HELD
-    S->>DB: re-check sources, upsert check_items (encrypted)
+    S->>DB: re-check sources, insert new check_items (encrypted)
     S->>DB: documents.check_items_status = done / unavailable / failed
 ```
 
@@ -111,10 +111,14 @@ sequenceDiagram
    `key_disputed`, "not settled by the passages" with `key_unsolved`.
 8. **Store.** Just before writing, the sources are re-checked (a document
    deleted or withdrawn from sharing meanwhile drops the drafts). The row is
-   upserted on `(course_id, concept_key, question_hash)` with its text columns
-   encrypted; an item staff already retired is not re-stored, and one under a
-   report quarantine is stored held. A source withdrawn after the write
-   retires every item citing it (`retire_items_for_documents`).
+   inserted on `(course_id, concept_key, question_hash)` with its text columns
+   encrypted. A drafting write only adds rows: a draft whose row is already
+   stored is a repeat, never rewritten (its key, hold, audit verdict and
+   approval stand), and it is no success for the redraft ledger. An item
+   staff already retired is not re-stored; one under a report quarantine, or
+   whose key staff audited wrong or ambiguous with no approval since, is
+   stored held. A source withdrawn after the write retires every item citing
+   it (`retire_items_for_documents`).
 9. **Top-up (A37).** A concept left with fewer than two servable `mc_reason`
    items gets one focused call
    (`backend/agents/check_items_topup.py::draft_mc_topup`) through the same

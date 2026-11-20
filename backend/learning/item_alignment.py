@@ -21,7 +21,9 @@ tests, or "none" — and THIS module turns the answers into what is stored:
   never dropped;
 - no content criterion left → the item is rejected;
 - the tested concept is in scope and differs from the item's → re-tagged; the
-  answer "none", or a concept outside the scope → rejected;
+  answer "none", or a concept outside the scope → rejected; and so is a re-tag
+  onto a concept whose name is the item's final answer (A34's rule, which
+  validation applied only against the concept the item was drafted for);
 - no usable verdict (no answer for the item, a criterion left unanswered, or
   two answers that disagree) → `unverified`; the caller's rule decides (the
   draft path drops the item, the backfill leaves a stored one untouched).
@@ -38,7 +40,12 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from typing import NamedTuple
 
-from learning.checks import KEY_HOLD_FLAGS, PROVENANCE_FLAGS, STAFF_HOLD_FLAGS
+from learning.checks import (
+    KEY_HOLD_FLAGS,
+    PROVENANCE_FLAGS,
+    STAFF_HOLD_FLAGS,
+    final_answer_names_concept,
+)
 from learning.echoed_ids import echoed_id
 from learning.item_lint import LINT_FLAGS
 
@@ -55,6 +62,13 @@ NONE = "none"
 UNASKED_RUBRIC = "rubric: the question asks for none of the item's criteria (alignment check)"
 NO_CONCEPT = "concept: the question tests none of the listed course concepts (alignment check)"
 OUT_OF_SCOPE = "concept: the alignment check named a concept outside the course's list"
+#: A re-tag the item cannot take (Z10): its final answer is (part of) the name
+#: of the concept it tests, which A34 refuses for any item (`validate_draft`
+#: ran that rule only against the concept it was drafted for).
+ANSWER_NAMES_CONCEPT = (
+    "final_answer: the question tests a listed concept whose name is its final answer; "
+    "filed there it would block every hint (alignment check)"
+)
 UNVERIFIED = "unverified: the alignment check gave no complete verdict for this item"
 #: Spec §13 A141: a multi-concept draft one of whose components the question
 #: does not need (align_components).
@@ -66,6 +80,7 @@ REASON_CODES = {
     UNASKED_RUBRIC: "no_asked_criterion",
     NO_CONCEPT: "tests_no_concept",
     OUT_OF_SCOPE: "concept_out_of_scope",
+    ANSWER_NAMES_CONCEPT: "answer_names_concept",
     UNVERIFIED: "unverified",
     NOT_COMBINED: "not_combined",
 }
@@ -106,6 +121,40 @@ def _answer_key(answer: str) -> str:
     return concept_key(str(answer or "").strip().strip("\"'“”‘’").rstrip("."))
 
 
+def names_concept(answer, key: str) -> bool:
+    """Whether a concept answer names the concept keyed `key`: exactly as
+    written, or with surrounding quotes and a closing full stop forgiven on
+    BOTH sides (`_answer_key`). Both, because a concept's own name may begin
+    or end with a quote mark or end with a full stop ("'this' keyword",
+    "Pointers vs. references.") and its key keeps them, so a verifier that
+    copies such a name verbatim names it, and so does one that drops them."""
+    if not key:
+        return False
+    if concept_key(answer) == key:
+        return True
+    loose = _answer_key(answer)
+    return bool(loose) and loose == _answer_key(key)
+
+
+def _tested_key(answer, own_key: str, scope: Mapping[str, str]) -> str:
+    """The key of the concept the verifier's answer names: the item's own or a
+    listed one, matched by `names_concept` — the answer as written first, then
+    the item's own concept, then the one listed concept it names (two listed
+    concepts spelled alike once forgiven name neither). Otherwise the answer
+    in the forgiving spelling, which `align` then reads as "none" or as a
+    concept outside the list."""
+    raw = concept_key(answer)
+    if raw == own_key or raw in scope:
+        return raw
+    loose = _answer_key(answer)
+    if not loose or loose == NONE:
+        return loose
+    if names_concept(answer, own_key):
+        return own_key
+    named = [k for k in scope if names_concept(answer, k)]
+    return named[0] if len(named) == 1 else loose
+
+
 def collect(
     criteria: Iterable[tuple[str, str, bool]], concepts: Iterable[tuple[str, str]]
 ) -> dict[str, Verdict]:
@@ -141,22 +190,30 @@ def align(
     own_key: str,
     verdict: Verdict | None,
     scope: Mapping[str, str],
+    *,
+    final_answer: str | None = None,
 ) -> Alignment:
     """Apply one item's verdict. `criteria_count` is how many content criteria
     the item has (the reason criterion excluded), `own_key` its concept key,
     `scope` the course concepts it may belong to ({concept_key: name}). The
-    item's own concept is always in scope."""
+    item's own concept is always in scope. `final_answer` (the item's A34
+    final answer): a re-tag onto a concept whose name it is, is rejected
+    (ANSWER_NAMES_CONCEPT), as `validate_draft` rejects such a draft for the
+    concept it was written for — every hint naming the concept would read as
+    the answer."""
     ids = criterion_ids(criteria_count)
     if verdict is None or any(cid not in verdict.asked for cid in ids):
         return Alignment((), own_key, (), UNVERIFIED, unverified=True)
     keep = tuple(i for i, cid in enumerate(ids) if verdict.asked[cid])
     if not keep:
         return Alignment(keep, own_key, (), UNASKED_RUBRIC)
-    tested = _answer_key(verdict.concept)
+    tested = _tested_key(verdict.concept, own_key, scope)
     if not tested or tested == NONE:
         return Alignment(keep, own_key, (), NO_CONCEPT)
     if tested != own_key and tested not in scope:
         return Alignment(keep, own_key, (), OUT_OF_SCOPE)
+    if tested != own_key and final_answer_names_concept(final_answer, scope.get(tested, tested)):
+        return Alignment(keep, own_key, (), ANSWER_NAMES_CONCEPT)
     flags = []
     if len(keep) < criteria_count:
         flags.append(RUBRIC_UNASKED_DROPPED)

@@ -309,6 +309,33 @@ readiness record before merging. The ordered lists:
   `misconception_record`; either side of the code). Rolling back while a
   multi-concept grade checkpoint is in flight cannot replay it as written:
   roll forward, or drain checkpoints first.
+- **PR #866 review fixes:**
+  `backend/db/migrations/20261120055517_learning_check_items_question_hash.sql`
+  (Z36: an index led by `check_items.question_hash`, which the served-text
+  scan's read by hash needs; either side of the code; lock_timeout 5s, safe
+  to run again) and
+  `backend/db/migrations/20261120055827_learning_prequestion_guess_reseal.sql`
+  (Z15: the compare-and-swap that re-seals an append-only prequestion guess;
+  before `python -m db.backfill_encryption_aad --apply`, which probes it and
+  aborts without writing when it is missing; either side of the code).
+
+**Locks (PR #866 Z67).** Six early learning migrations validate a CHECK on
+populated tables under ACCESS EXCLUSIVE and set no lock_timeout of their own:
+`backend/db/migrations/20260927093149_learning_grader_backend.sql`,
+`backend/db/migrations/20260927182054_learning_mastery_event_seq.sql` and
+`backend/db/migrations/20261019010000_learning_planning_observation.sql`
+(node_mastery_events),
+`backend/db/migrations/20260929081946_learning_sessions_mode_review.sql` and
+`backend/db/migrations/20260929112944_learning_session_close.sql` (sessions),
+`backend/db/migrations/20260929111535_learning_fsrs_stability_positive.sql`
+(flashcards). Applied files are never edited, so `python -m db.migrate` (and
+`make promote`, which runs it) sets `lock_timeout` for its session
+(`MIGRATE_LOCK_TIMEOUT`, default `5s`; `0` disables it): a lock that does not
+come in time fails that file, rolled back with nothing recorded, instead of
+queueing every read and write of the table behind a waiting ALTER; run it
+again. The bound covers the wait only: each validating scan holds its lock
+until it finishes. Before the production promote, count the rows of
+node_mastery_events, sessions and flashcards, and run it in a quiet window.
 
 Exact wording, the consequences of a wrong order and the rollback notes for
 each are in the readiness record's rollout sections. The data model each

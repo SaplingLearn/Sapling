@@ -125,6 +125,8 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
     ("learning/item_reports.py", "record_report", "runs_as_service"): "check_item_reports/reviews + RPCs are service-only (A148)",
     ("learning/item_reports.py", "decide", "runs_as_service"): "check_item_reports/reviews + RPCs are service-only (A148)",
     ("learning/item_reports.py", "review_statuses", "runs_as_service"): "check_item_reports/reviews + RPCs are service-only (A148)",
+    ("learning/item_reports.py", "audit_holds", "runs_as_service"):
+        "PR #866 Z09: check_item_audits and check_item_reviews are service-only (A148); the drafting write reads them",
     ("learning/item_reports.py", "retired_items", "runs_as_service"): "check_item_reports/reviews + RPCs are service-only (A148)",
     ("learning/item_reports.py", "report_counts", "runs_as_service"): "check_item_reports/reviews + RPCs are service-only (A148)",
     ("learning/item_reports.py", "reviews", "runs_as_service"): "check_item_reports/reviews + RPCs are service-only (A148)",
@@ -143,6 +145,12 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
     ("services/quiz_learning.py", "_bank_keys", "runs_as_service"):
         "check_items is a service-only course asset (A148); the quiz plan reads its keys (A144)",
     ("services/check_item_service.py", "retire_items_for_uploader", "runs_as_service"): "check_items is a service-only course asset (A148)",
+    ("services/check_item_service.py", "generate_for_document", "runs_as_service"):
+        "PR #866 Z14: upload-time drafting is backend work on a course asset (check_items and its "
+        "bookkeeping are service-only, A148); it runs in the upload's post-roll and drafting pool",
+    ("services/check_item_service.py", "_write_drafting", "runs_as_service"):
+        "PR #866 Z66: documents.check_items_status/_at are backend bookkeeping, outside the "
+        "student's column UPDATE grant; written from the upload's post-roll and the drafting pool",
     # ── Services ──
     ("services/academics.py", "resolve_offering", "service_scope"): "on-demand course_offerings insert (catalog)",
     ("services/academics.py", "school_peer_user_ids", "runs_as_service"): "reads other students' enrollments",

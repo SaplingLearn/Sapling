@@ -46,7 +46,7 @@ import path from "node:path";
 
 import type { Page } from "@playwright/test";
 
-import { queryRaw } from "./support/db";
+import { queryRaw, setUserFlag } from "./support/db";
 import { expect, loopOffLane, test } from "./support/fixtures";
 import { mintStorageState } from "./support/session";
 import { BACKEND_URL, FRONTEND_URL, USER_ACTIVE } from "./support/stack";
@@ -365,4 +365,47 @@ test("with upload_prereq_edges on, an upload writes its prerequisite edge once (
   await expect.poll(uploadedFixtureCount, { timeout: 60_000 }).toBe(2);
   await expect(page.getByTestId("upload-modal-done")).toBeVisible({ timeout: 60_000 });
   expect(await scriptedPrerequisiteEdges()).toEqual(first);
+});
+
+/**
+ * PR #866 Z14 / Z66: with `db_user_scope=enforce` for the uploader (#115),
+ * every PostgREST call of the upload request goes out as the student, under
+ * the real RLS policies and grants. The drafting that the upload's post-roll
+ * runs reads and writes the loop's service-only tables (check_items and its
+ * bookkeeping, spec §13 A148) and the two drafting-status columns of
+ * `documents` the student may not UPDATE, so it must run as the service role.
+ * Before the fix the drafting reads 401/403'd as the student: no item was
+ * drafted and the status never reached `done`. The hermetic tests
+ * (tests/test_check_item_drafting_scope.py) mock the identity; this is the one
+ * check of the whole chain against the real grants.
+ */
+test("an upload by a student under db_user_scope=enforce drafts its check items (#866 Z14, Z66)", async ({
+  page,
+}) => {
+  test.skip(loopOffLane, "loop path: drafting runs only with the loop on for the uploader");
+  await expectFunctionMode();
+  await setUserFlag("db_user_scope", USER_ACTIVE, "enforce");
+
+  await uploadFixture(page);
+  const docs = (await queryRaw(
+    "SELECT id FROM documents WHERE file_name = $1 AND deleted_at IS NULL",
+    [FIXTURE_NAME],
+  )) as { id: string }[];
+  expect(docs).toHaveLength(1);
+  const docId = docs[0].id;
+
+  // The drafting ran to its end as the service role: the row records `done`
+  // and the document's concepts have items drafted from it.
+  const drafting = async () => {
+    const [row] = (await queryRaw(
+      `SELECT d.check_items_status AS status,
+              (SELECT count(*)::int FROM check_items i
+                WHERE d.id = ANY(i.source_document_ids)) AS items
+         FROM documents d
+        WHERE d.id = $1`,
+      [docId],
+    )) as { status: string | null; items: number }[];
+    return { status: row.status, drafted: row.items > 0 };
+  };
+  await expect.poll(drafting, { timeout: 30_000 }).toEqual({ status: "done", drafted: true });
 });
