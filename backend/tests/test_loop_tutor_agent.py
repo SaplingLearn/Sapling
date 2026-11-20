@@ -202,7 +202,9 @@ def test_phase_prefix_shape(phase, band):
     assert "no latex" in text.lower()
     assert "graded_check_tool" not in text
     if phase in ("hint", "feedback"):
-        assert f"[CHECK ITEM] (format: free)\n{_ITEM_PROMPT}" in text
+        # Z07: the stem is DATA under the heading (tests/test_loop_item_text_is_data.py)
+        assert "[CHECK ITEM] (format: free)\n[BEGIN UNTRUSTED CONTENT source=check_item]" in text
+        assert _ITEM_PROMPT in text
     else:
         assert "[CHECK ITEM]" not in text
     if phase == "feedback":

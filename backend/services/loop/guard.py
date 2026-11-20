@@ -80,7 +80,14 @@ def _guard_history(messages: list, *, nonce: str, withheld: str | None) -> list:
     turn's; and below H2 (`withheld` = the active item's prompt) any row that
     restates the item — its pose — is replaced by ITEM_WITHHELD. The learner
     brief (`_BriefRequest`, A19) is not the student's: it passes as built, and
-    is dropped for the turn when it restates the withheld item."""
+    is dropped for the turn when it restates the withheld item.
+
+    Z07: a tutor row can be code-served text no model wrote — a check pose, an
+    H2 passage from a classmate's upload, an H4 sibling or an H6 reference, all
+    verbatim — and the history sits outside the student's envelope, where the
+    system prompt reads every block as a control block. Every tutor row's
+    control tags are neutralised (its words kept): a model-written row has
+    none (`validate_turn` refuses them), so only code-served text changes."""
     out: list = []
     for m in messages:
         if isinstance(m, _BriefRequest):
@@ -96,17 +103,25 @@ def _guard_history(messages: list, *, nonce: str, withheld: str | None) -> list:
                     p = UserPromptPart(content=student_envelope(text, nonce=nonce))
                 parts.append(p)
             out.append(ModelRequest(parts=parts))
-        elif isinstance(m, ModelResponse) and withheld:
-            parts = [
-                TextPart(content=ITEM_WITHHELD)
-                if isinstance(p, TextPart) and withheld in p.content
-                else p
-                for p in m.parts
-            ]
-            out.append(ModelResponse(parts=parts))
+        elif isinstance(m, ModelResponse):
+            parts = [_guard_tutor_part(p, withheld) for p in m.parts]
+            changed = any(a is not b for a, b in zip(parts, m.parts))
+            out.append(ModelResponse(parts=parts) if changed else m)
         else:
             out.append(m)
     return out
+
+
+def _guard_tutor_part(part, withheld: str | None):
+    """One part of a tutor row as the model may see it: below H2 a row that
+    restates the withheld item is ITEM_WITHHELD (C1(b)); any other text has its
+    control tags neutralised (Z07). The same part object when nothing changes."""
+    if not isinstance(part, TextPart):
+        return part
+    if withheld and withheld in part.content:
+        return TextPart(content=ITEM_WITHHELD)
+    guarded = neutralise_control_tags(part.content)
+    return part if guarded == part.content else TextPart(content=guarded)
 
 
 # ── The turn ───────────────────────────────────────────────────────────────
