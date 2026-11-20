@@ -8,6 +8,8 @@ survive only there. No model runs (the probe opener is a template, A121).
 """
 from __future__ import annotations
 
+import uuid
+
 import pytest
 
 from tests.integration.conftest import COURSE_CS, USER_ACTIVE, USER_SECOND, _client_for
@@ -77,10 +79,17 @@ def test_a_loop_session_started_on_one_worker_is_answered_on_another(authed_clie
     _other_worker()
     status = authed_client.get(f"{LOOP}/status", params={"user_id": USER_ACTIVE, "session_id": sid})
     assert status.status_code == 200, status.text
-    other = _client_for(USER_SECOND).get(
-        f"{LOOP}/status", params={"user_id": USER_SECOND, "session_id": sid}
+    other_client = _client_for(USER_SECOND)
+    other = other_client.get(f"{LOOP}/status", params={"user_id": USER_SECOND, "session_id": sid})
+    # #866 Z41: another student's pending session answers exactly as an id that
+    # names nothing does (a fresh loop) — never a 404 that says it exists, and
+    # nothing of its document
+    unknown = other_client.get(
+        f"{LOOP}/status", params={"user_id": USER_SECOND, "session_id": str(uuid.uuid4())}
     )
-    assert other.status_code == 404
+    assert other.status_code == unknown.status_code == 200, other.text
+    strip = lambda b: {k: v for k, v in b.items() if k not in ("request_id", "session_id")}  # noqa: E731  (the ids echo the request)
+    assert strip(other.json()) == strip(unknown.json())
     assert _count(db_conn, "sessions", "id", sid) == 0, "a read never materialises"
 
     _other_worker()

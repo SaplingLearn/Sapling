@@ -1,5 +1,7 @@
 """Opt-in disposable-stack persistence, isolation and cascade checks."""
 import pytest
+
+from agents._resilience import SINGLE_ATTEMPT_SETTING
 from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
 
@@ -31,7 +33,9 @@ def test_checklist_is_encrypted_persistent_and_enrollment_scoped(db_conn, seeded
     with topic_checklist_agent.override(model=wrap_topic_checklist_model(FunctionModel(handler))):
         response = client.post(path + "/refresh", params={"semester": "Spring 2026"})
     assert response.status_code == 200, response.text
-    assert settings == [{"max_tokens": 8192, "timeout": 60.0}]
+    # the budgeted run's single-attempt key (#866 b1-budget review) reaches the
+    # function-mode seam; there is no resilience layer there to strip it
+    assert settings == [{"max_tokens": 8192, "timeout": 60.0, SINGLE_ATTEMPT_SETTING: True}]
     topic = response.json()["topics"][0]
     # Rich fixtures seed mastery scores, but do not seed study counters/dates.
     # A low score alone must not manufacture a completed study session.
