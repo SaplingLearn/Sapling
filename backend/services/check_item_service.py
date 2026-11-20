@@ -74,7 +74,7 @@ from collections import Counter, deque
 from collections.abc import Callable, Iterable, Iterator
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
-from typing import NamedTuple
+from typing import NamedTuple, cast
 
 import config
 import httpx
@@ -1126,7 +1126,7 @@ def store_lint_flags(flags: Iterable[str], item_ids: Iterable[str], *, read_flag
             )
             continue
         filters["lint_flags"] = (
-            "is.null" if read_flags is None else f"eq.{_pg_array(read_flags)}"
+            "is.null" if read_flags is None else f"eq.{_pg_array(cast(Iterable[str], read_flags))}"
         )
         rows = table(_TABLE).update({"lint_flags": list(flags)}, filters={**filters, "select": "id"})
         written += len(rows or [])
