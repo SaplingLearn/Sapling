@@ -538,8 +538,36 @@ def test_the_default_slot_hold_fits_the_daily_cap():
     import config
     from agents.topic_checklist import checklist_model_names
 
-    hold = budget.price_hold(checklist_model_names())
+    # what admit prices: the primary only (the budgeted run is single-attempt,
+    # so no fallback can serve it)
+    hold = budget.price_hold(checklist_model_names(with_fallback=False))
     assert hold.usd <= Decimal(str(config.STUDENT_DAILY_BUDGET_USD))
+
+
+def test_the_budgeted_run_is_single_attempt_and_its_hold_names_only_the_primary(monkeypatch):
+    """#866 (b1-budget review): retries and the cross-provider fallback inside
+    one dispatch were unheld. The budgeted run sends SINGLE_ATTEMPT_SETTING, so
+    its hold prices the slot's own model alone."""
+    import asyncio
+
+    from agents import topic_checklist as tc
+    from agents._resilience import SINGLE_ATTEMPT_SETTING
+    from services import topic_checklist_service as svc
+
+    monkeypatch.setenv("SAPLING_FLAG_LLM_FALLBACK", "on")
+    assert len(tc.checklist_model_names()) == 2  # primary + its fallback, by default
+    assert tc.checklist_model_names(with_fallback=False) == tc.checklist_model_names()[:1]
+
+    seen = {}
+
+    async def run(*a, **k):
+        seen.update(k)
+        raise RuntimeError("stop after the call")
+
+    monkeypatch.setattr(svc.topic_checklist_agent, "run", run)
+    generation = asyncio.run(svc._generate({"sources": []}, "u1", reservation=None))
+    assert generation.error is not None
+    assert seen["model_settings"] == {SINGLE_ATTEMPT_SETTING: True}
 
 
 def test_a_hold_above_the_daily_cap_is_a_policy_error_before_any_rpc(monkeypatch, caplog):

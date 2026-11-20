@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 import threading
+from typing import cast
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
@@ -15,6 +16,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RunUsage
 
 from agents import WORKER_LIMITS
+from agents._resilience import SINGLE_ATTEMPT_SETTING
 from agents._run import run_agent_sync
 from agents.topic_checklist import (
     CHECKLIST_LIMITS, PROMPT_VERSION, TopicOutline, checklist_model_names, normalized_name,
@@ -399,6 +401,11 @@ async def _generate(payload: dict, user_id: str, reservation: checklist_budget.R
         result = await asyncio.wait_for(topic_checklist_agent.run(
             json.dumps(payload), deps=payload, usage=usage, usage_limits=CHECKLIST_LIMITS,
             capabilities=[dispatches],
+            # #866 (b1-budget review): one HTTP attempt and no cross-provider
+            # fallback per dispatch, so every request this run sends is one the
+            # hold priced and the receipt counts; the run's own attempts
+            # (CHECKLIST_LIMITS) still apply
+            model_settings=cast(ModelSettings, {SINGLE_ATTEMPT_SETTING: True}),
         ), timeout=GENERATION_TIMEOUT_SECONDS)
         return ChecklistGeneration(usage, dispatches, result.output)
     except BaseException as error:
@@ -550,7 +557,7 @@ def refresh_checklist(
         # capacity check. Do not deny a now-free cross-worker hit via a stale
         # Python budget preflight first.
         reservation = checklist_budget.admit(
-            user_id, scope["enrollment_id"], snapshot["hash"], checklist_model_names())
+            user_id, scope["enrollment_id"], snapshot["hash"], checklist_model_names(with_fallback=False))
         if reservation is None:
             return present(scope, snapshot, _cache(scope), now)
         try:

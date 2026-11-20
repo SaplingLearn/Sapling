@@ -662,3 +662,46 @@ def test_function_mode_never_meets_the_resilience_layer(monkeypatch):
         assert asyncio.run(Agent(model).run("hi")).output == "scripted"
     finally:
         _providers.clear_function_handlers()
+
+
+# ── a single-attempt request (#866, the checklist's spend hold) ─────────────
+
+
+def test_a_single_attempt_request_makes_one_attempt_and_no_fallback(monkeypatch, _fresh_state):
+    """The topic checklist holds and receipts every request it dispatches, so
+    a retry or a fallback hidden inside one dispatch could bill unheld. A run
+    that sends SINGLE_ATTEMPT_SETTING makes exactly one attempt, falls back to
+    nothing even with llm_fallback on, and never forwards the key."""
+    seen_settings: list = []
+
+    def fn(messages, info):
+        seen_settings.append(dict(info.model_settings or {}))
+        raise _http(529)
+
+    fb_fn, fb_calls = _scripted("from gemini")
+    _use_fallback(monkeypatch, FunctionModel(fb_fn, model_name="gemini-2.5-flash-lite"))
+    monkeypatch.setenv("SAPLING_FLAG_LLM_FALLBACK", "on")
+    agent = Agent(_ResilientFn(fn))
+    with pytest.raises(ModelHTTPError):
+        asyncio.run(agent.run("hi", model_settings={_resilience.SINGLE_ATTEMPT_SETTING: True}))
+    assert len(seen_settings) == 1 and _fresh_state == []  # one attempt, no backoff
+    assert fb_calls["n"] == 0  # no fallback
+    assert _resilience.SINGLE_ATTEMPT_SETTING not in seen_settings[0]  # never sent on
+
+    # without the setting the same request retries and falls back, as before
+    seen_settings.clear()
+    assert asyncio.run(agent.run("hi")).output == "from gemini"
+    assert len(seen_settings) == _resilience.RETRY_ATTEMPTS and fb_calls["n"] == 1
+
+
+def test_a_single_attempt_stream_opens_once(monkeypatch, _fresh_state):
+    stream, calls = _scripted_stream(_http(529), ["ok"])
+    agent = Agent(_ResilientFn(stream_function=stream))
+
+    async def go():
+        async with agent.run_stream("hi", model_settings={_resilience.SINGLE_ATTEMPT_SETTING: True}) as r:
+            return await r.get_output()
+
+    with pytest.raises(ModelHTTPError):
+        asyncio.run(go())
+    assert calls["n"] == 1 and _fresh_state == []

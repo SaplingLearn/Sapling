@@ -980,15 +980,18 @@ class _ResilientModelMixin:
     async def request(self, messages, model_settings, model_request_parameters):
         await self._check_budget(messages)
         send = super().request  # type: ignore[misc]
+        single = _resilience.single_attempt(model_settings)
+        model_settings = _resilience.without_single_attempt(model_settings)
         settings = self._with_timeout(model_settings)
         try:
             return await _resilience.call_with_retries(
                 self._site(model_settings),
                 lambda: send(messages, settings, model_request_parameters),
                 deadline_s=deadline_for(self._res_task, model_settings) + _DEADLINE_SLACK_S,
+                attempts=1 if single else _resilience.RETRY_ATTEMPTS,
             )
         except Exception as exc:
-            fallback = await self._fallback_for(exc)
+            fallback = None if single else await self._fallback_for(exc)
             if fallback is None:
                 raise
             try:
@@ -1010,6 +1013,8 @@ class _ResilientModelMixin:
     ):
         await self._check_budget(messages)
         open_stream = super().request_stream  # type: ignore[misc]
+        single = _resilience.single_attempt(model_settings)
+        model_settings = _resilience.without_single_attempt(model_settings)
         settings = self._with_timeout(model_settings)
         async with AsyncExitStack() as stack:
 
@@ -1024,10 +1029,11 @@ class _ResilientModelMixin:
                 # Streams get no total deadline — only time-to-first-chunk
                 # here, and the HTTP read timeout between chunks after it.
                 stream = await _resilience.call_with_retries(
-                    self._site(model_settings), _open, deadline_s=deadline_for(self._res_task, model_settings)
+                    self._site(model_settings), _open, deadline_s=deadline_for(self._res_task, model_settings),
+                    attempts=1 if single else _resilience.RETRY_ATTEMPTS,
                 )
             except Exception as exc:
-                fallback = await self._fallback_for(exc)
+                fallback = None if single else await self._fallback_for(exc)
                 if fallback is None:
                     raise
                 try:

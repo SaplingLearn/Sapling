@@ -5,6 +5,8 @@ from uuid import uuid4
 
 import httpx
 import pytest
+
+from agents._resilience import SINGLE_ATTEMPT_SETTING
 from pydantic_ai import UnexpectedModelBehavior, UsageLimitExceeded
 from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
@@ -51,7 +53,13 @@ def test_native_settings_reach_actual_function_model_and_all_sixty_concise_topic
         return response(info, output(count=60))
     result = run(handler, reservation)
     assert result.error is None and len(result.outline.topics) == 60
-    assert observed == [{"max_tokens": CHECKLIST_MAX_OUTPUT_TOKENS, "timeout": CHECKLIST_REQUEST_TIMEOUT_SECONDS}]
+    # the budgeted run's single-attempt key reaches the function-mode seam (no
+    # resilience layer there to strip it; it sends nothing anywhere)
+    assert observed == [{
+        "max_tokens": CHECKLIST_MAX_OUTPUT_TOKENS,
+        "timeout": CHECKLIST_REQUEST_TIMEOUT_SECONDS,
+        SINGLE_ATTEMPT_SETTING: True,
+    }]
     assert CHECKLIST_MAX_OUTPUT_TOKENS == 8192 and CHECKLIST_REQUEST_TIMEOUT_SECONDS == 60
     assert svc.GENERATION_TIMEOUT_SECONDS == 60
     # Structural compatibility, not a Google tokenizer/invoice guarantee.

@@ -968,8 +968,9 @@ def test_a_learning_loop_refresh_runs_and_settles_on_the_real_claude_slot(state,
     assert [name for name, _ in rpcs] == [
         "checklist_budget_admit", "checklist_budget_start", "checklist_budget_reconcile"]
     admitted = rpcs[0][1]
-    hold = checklist_budget.price_hold(("claude-haiku-5-5", "gemini-2.5-flash"))
-    assert admitted["p_models"] == ["anthropic:claude-haiku-5-5", "gemini:gemini-2.5-flash"]
+    hold = checklist_budget.price_hold(("claude-haiku-5-5",))
+    # the budgeted run is single-attempt, so only the slot's own model can bill it
+    assert admitted["p_models"] == ["anthropic:claude-haiku-5-5"]
     assert admitted["p_held_usd"] == str(hold.usd) and admitted["p_held_tokens"] == 74_576
     bill = rpcs[2][1]["p_receipt"]
     assert (bill["model"], bill["provider"], bill["prompt_tokens"], bill["completion_tokens"]) == (

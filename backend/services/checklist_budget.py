@@ -3,10 +3,11 @@
 This is not a global spend cap: other features do not take the mutex. The hold
 is the worst-case price, from services/llm_pricing, of one policy run
 (`CHECKLIST_LIMITS`: 50,000 counted input tokens, three 8,192-token outputs) on
-any model that can serve it: the `topic_checklist` slot's model and its
-llm_fallback model (`agents.topic_checklist.checklist_model_names`). The
-reservation records those models, and settlement accepts a bill from one of
-them only. The fixed envelope uses the native counter's estimate, not an
+the one model that can serve it: the `topic_checklist` slot's model. The
+budgeted run is single-attempt (`agents._resilience.SINGLE_ATTEMPT_SETTING`:
+no retry and no llm_fallback hidden inside a dispatch, #866 b1-budget review),
+so `checklist_model_names(with_fallback=False)` is what the hold prices. The
+reservation records that model, and settlement accepts a bill from it only. The fixed envelope uses the native counter's estimate, not an
 invoice guarantee. Unknown started bills keep their hold in their original UTC
 dispatch windows. A new refresh after the two-minute grace can reserve
 *additional* capacity; it never restarts an old operation. No timer refunds a
