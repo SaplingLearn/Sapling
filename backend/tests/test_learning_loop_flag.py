@@ -250,6 +250,9 @@ UPLOADER_SITES = {
     ("services/documents/post_roll.py", "_stream_index_steps"),
     ("services/document_jobs.py", "_post_roll"),
     ("services/check_item_jobs.py", "_draft_document"),
+    # #866 K55/Z42: the upload-time prerequisite edges follow the uploader's
+    # gate (read where the upload post-rolls ask whether to draw them)
+    ("services/concept_prereqs.py", "upload_prereqs_on"),
 }
 
 

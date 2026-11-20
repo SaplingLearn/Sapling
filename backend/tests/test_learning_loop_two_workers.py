@@ -141,7 +141,7 @@ def test_a_quiz_ask_session_started_on_one_worker_continues_on_the_other(gate_on
     sid, greeting = r.json()["session_id"], r.json()["initial_message"]
     record.assert_called_once()  # the help row (A93) is durable before any text
     assert a.held() == {}, "flag on: nothing pending in worker A's memory"
-    doc = {**quiz_ask_state("node-1"), "open_question": True}
+    doc = quiz_ask_state("node-1")  # K39: a quiz-ask opener leaves no open question
     row = db.store(sid)
     assert row["state"] == "pending" and row["loop_state"] == doc
     cell = bind("messages", "content", sid)  # M13: sealed for the row it is copied into
@@ -410,5 +410,5 @@ def test_flag_off_keeps_the_loop_session_in_the_starting_workers_memory(
         assert tutor_pending._consume_pending(sid, UID) is True
     assert r.status_code == 200
     assert db.rpcs == [] and "tutor_pending_sessions" not in db.touched
-    assert db.rows["sessions"][0]["loop_state"] == {**quiz_ask_state("node-1"), "open_question": True}
+    assert db.rows["sessions"][0]["loop_state"] == quiz_ask_state("node-1")  # K39
     assert a.held() == {}, "materialised: the memory entry is gone"

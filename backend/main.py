@@ -582,7 +582,12 @@ app.include_router(learn.router,       prefix="/api/learn")
 # spec §13 A148) and every handler checks ownership in code (require_self /
 # the session's owner), which the cross-user matrix pins.
 # #866 Z37: hide_study 404s Study's paths of it (review queue, retention check).
-app.include_router(learn_loop.router, prefix="/api/learn/loop", dependencies=nav_feature_path_gate("/api/learn/loop") + _SVC)
+app.include_router(
+    learn_loop.router,
+    prefix="/api/learn/loop",
+    # the loop's gate first: off (kill switch or flag), no flag is read before its 404
+    dependencies=nav_feature_path_gate("/api/learn/loop", unless=learn_loop.loop_off_for_session) + _SVC,
+)
 app.include_router(quiz.router,        prefix="/api/quiz", dependencies=nav_feature_gate("/api/quiz"))
 app.include_router(calendar.router,    prefix="/api/calendar", dependencies=nav_feature_gate("/api/calendar"))
 # Social stays service role until step 2e: room_messages has no policies or

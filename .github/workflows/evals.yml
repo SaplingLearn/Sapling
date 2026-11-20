@@ -13,7 +13,9 @@ on:
     paths:
       - 'backend/agents/**'
       - 'backend/tests/evals/**'
+      - 'backend/services/abuse_limits.py'
       - 'backend/services/agent_events.py'
+      - 'backend/services/request_limits.py'
       - 'backend/routes/documents.py'
       # chat_tutor joined the harness (#149): its prompt assembly lives in
       # the learn route and its graph tools sit on graph_service.

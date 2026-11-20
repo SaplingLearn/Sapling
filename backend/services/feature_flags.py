@@ -1166,10 +1166,14 @@ NAV_FEATURE_PATHS: dict[str, dict[str, tuple[tuple[str, str], ...]]] = {
 }
 
 
-def require_feature_paths_visible(flag: str, prefix: str):
+def require_feature_paths_visible(flag: str, prefix: str, *, unless=None):
     """Router dependency for NAV_FEATURE_PATHS: 404 on the listed paths when
     the ``hide_<feature>`` flag hides the feature for the session user;
-    every other path of the router is untouched."""
+    every other path of the router is untouched. ``unless(request)`` stands
+    the gate aside when it answers True: the learning loop's router passes
+    "the loop is off for this request" (its own cached gate), so a loop-off
+    request gets the loop's 404 and this flag is never read first
+    (docs/learning-loop/invariants.md §9)."""
     gated = tuple(
         (method, re.compile(re.escape(prefix) + pattern + r"/?$"))
         for method, pattern in NAV_FEATURE_PATHS[flag][prefix]
@@ -1178,6 +1182,8 @@ def require_feature_paths_visible(flag: str, prefix: str):
     def _dependency(request: Request) -> None:
         path = request.url.path
         if not any((m == "*" or m == request.method) and rx.match(path) for m, rx in gated):
+            return  # not a gated path: no read of any kind
+        if unless is not None and unless(request):
             return
         from services.auth_guard import get_session_user_id
         try:
@@ -1189,14 +1195,14 @@ def require_feature_paths_visible(flag: str, prefix: str):
     return _dependency
 
 
-def nav_feature_path_gate(prefix: str) -> list:
+def nav_feature_path_gate(prefix: str, *, unless=None) -> list:
     """``include_router(dependencies=...)`` for a shared router: the
     ``require_feature_paths_visible`` gate of every flag that lists paths of
     ``prefix`` in NAV_FEATURE_PATHS."""
     from fastapi import Depends
 
     return [
-        Depends(require_feature_paths_visible(flag, prefix))
+        Depends(require_feature_paths_visible(flag, prefix, unless=unless))
         for flag, routers in NAV_FEATURE_PATHS.items()
         if prefix in routers
     ]

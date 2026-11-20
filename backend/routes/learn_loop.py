@@ -95,6 +95,14 @@ def _loop_gate_for_session(request: Request) -> bool | None:
 router = APIRouter()
 
 
+def loop_off_for_session(request: Request) -> bool:
+    """The loop is off for this request's session student (kill switch: no read
+    of any kind; flag: the one cached read). main.py passes it to Study's path
+    gate (#866 Z37) so a loop-off request gets the loop's own 404 before any
+    hide_study read (docs/learning-loop/invariants.md §9)."""
+    return _loop_gate_for_session(request) is False
+
+
 def _kill_switch_first(request: Request) -> None:
     """The loop-off 404 BEFORE the rate limit (spec §7: every loop route 404s when the
     loop is off). Route dependencies run in order and before the handler's `_gate`,

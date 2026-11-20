@@ -32,6 +32,7 @@ import pytest
 
 import config
 from learning import bkt
+from learning.params import BKT_L0
 from learning.evidence import flush_pending
 from services import course_context_service as ccs
 
@@ -230,6 +231,10 @@ def test_with_the_loop_on_no_flush_calls_the_model_not_even_on_a_tier_change(loo
     """The prose has no reader (A35), so with the loop on nothing pays for it:
     not on the answer path, and not off it. The numbers stay current."""
     db = _world_db()
+    # n1 stored at the BKT prior: since K03 the writer starts from the stored
+    # score, and from 0.2 two late wrong answers move the class average by less
+    # than its 4-decimal rounding — the trajectory this test was written on
+    db.one("graph_nodes", id="n1")["mastery_score"] = BKT_L0
     run = _agent()
     with _world(db, run) as atomic:
         for off in OFFERINGS:
