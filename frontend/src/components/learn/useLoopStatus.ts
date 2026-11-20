@@ -30,11 +30,14 @@ export type LoopStatus = boolean | "error" | null;
  *
  *  The `learning_loop` flag comes first: while the flags load the answer is
  *  unresolved, and a flag map read this visit that says "off" is the legacy
- *  tree with NO probe (a flag-off student calls no loop endpoint). A map
+ *  tree with NO probe (a flag-off student calls no loop endpoint). A
+ *  REMEMBERED "off" (the read failed, #771) is the legacy tree at once, as on
+ *  main, with the probe run in the background (`recheck`): the page goes to
+ *  the loop only if the server says it is active, and a failed probe leaves
+ *  the legacy tree alone rather than showing the retry state (#866 K49). A map
  *  without the key (flags unreadable and nothing remembered, or an older
- *  backend), or a REMEMBERED one (the read failed, #771), defers to the probe,
- *  which is the server's own answer — never a guess that could pair the legacy
- *  tree with a backend that delegates to the loop (#866 K49).
+ *  backend), or a remembered "on", defers to the blocking probe, which is the
+ *  server's own answer.
  *
  *  The server reads the gate per request, so a flag turned on after this tab
  *  read it (it re-reads every ACCOUNT_REFRESH_MS) is the same pairing. The
@@ -55,13 +58,20 @@ export function useLoopStatus(
   >(null);
   const { flags, ready: flagsReady, fresh } = useFlagMap();
   const loopFlag = flags[LEARNING_LOOP_FLAG];
-  const flagOff = fresh !== false && loopFlag !== undefined && loopFlag !== "on";
-  const probe = userReady && !!userId && flagsReady && !flagOff;
+  const saysOff = loopFlag !== undefined && loopFlag !== "on";
+  // A fresh "off" (read this visit) is final; a remembered one is a guess.
+  const flagOff = fresh !== false && saysOff;
+  const rememberedOff = fresh === false && saysOff;
+  const probe = userReady && !!userId && flagsReady && !saysOff;
   const [takeover, setTakeover] = useState<{ userId: string; flags: FlagMap } | null>(null);
   const recheck = useCallback(() => {
     if (!userId) return;
     getLoopStatus(userId).then((r) => { if (r.active) setTakeover({ userId, flags }); }, () => {});
   }, [userId, flags]);
+  // A remembered "off" renders legacy now and asks the server in the background.
+  useEffect(() => {
+    if (rememberedOff && userReady && flagsReady) recheck();
+  }, [rememberedOff, userReady, flagsReady, recheck]);
   // The flag map the probe overruled, or a newer one that does not say "off".
   const handedOver = takeover?.userId === userId && (takeover.flags === flags || !flagOff);
   useEffect(() => {
@@ -96,7 +106,7 @@ export function useLoopStatus(
   if (!userId) return { status: false, retry, recheck };
   if (handedOver) return { status: true, retry, recheck };
   if (!flagsReady) return { status: null, retry, recheck };
-  if (flagOff) return { status: false, retry, recheck };
+  if (saysOff) return { status: false, retry, recheck };
   const status =
     resolved?.userId === userId && resolved.attempt === attempt ? resolved.status : null;
   return { status, retry, recheck };

@@ -962,8 +962,10 @@ flowchart LR
   and the legacy screen renders only on a definite "inactive" answer; an
   error or timeout shows a retry state, never the legacy tree (a half-loop,
   half-legacy screen would grade nothing). A flag map without the key (flags
-  unreadable, nothing remembered), or a remembered one (the read failed),
-  defers to the probe. The server reads the gate per request and a tab
+  unreadable, nothing remembered), or a remembered "on", defers to the probe.
+  A remembered "off" (the read failed) renders the legacy screen at once, as
+  on main, and asks the probe in the background: the page goes to the loop
+  only on an "active" answer, and a failed probe leaves the legacy screen. The server reads the gate per request and a tab
   re-reads its flags each minute, so a flag turned on in between still shows
   the legacy screen: an answer only the loop gives there (a budget pause, a
   phase 409, a `phase` stream event) makes it ask the probe in the

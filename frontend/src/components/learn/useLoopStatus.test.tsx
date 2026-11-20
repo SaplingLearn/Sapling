@@ -125,14 +125,39 @@ describe("useLoopStatus", () => {
   // #866 K49: the tree must agree with the server's gate, which is read per
   // request; a stale client "off" paired the legacy tree with a backend that
   // delegates its calls to the loop ("finish the probe first", 409s).
-  it("a REMEMBERED 'off' (the flag read failed) is a guess: the probe decides", async () => {
+  it("a REMEMBERED 'off' (the flag read failed) is legacy at once, as on main; a background probe that finds the loop on hands over", async () => {
     flagState.value = { flags: { learning_loop: "off" }, ready: true, fresh: false };
-    getLoopStatus.mockResolvedValue({ active: true });
+    let answer: (v: { active: boolean }) => void = () => {};
+    getLoopStatus.mockImplementation(() => new Promise((r) => { answer = r; }));
+    const { result } = renderHook(() => useLoopStatus("u1", true));
+    expect(result.current.status).toBe(false); // never "Loading…" or the retry state
+    expect(getLoopStatus).toHaveBeenCalledTimes(1);
+    await act(async () => { await vi.advanceTimersByTimeAsync(LOOP_STATUS_TIMEOUT_MS * 2); });
+    expect(result.current.status).toBe(false); // no timeout turns it into an error
+    await act(async () => { answer({ active: true }); });
+    expect(result.current.status).toBe(true);
+  });
+
+  it("a REMEMBERED 'off' whose background probe fails, or says inactive, stays the legacy tree", async () => {
+    for (const outcome of [() => Promise.reject(new Error("down")), () => Promise.resolve({ active: false })]) {
+      getLoopStatus.mockReset();
+      getLoopStatus.mockImplementation(outcome);
+      flagState.value = { flags: { learning_loop: "off" }, ready: true, fresh: false };
+      const { result, unmount } = renderHook(() => useLoopStatus("u1", true));
+      await act(async () => { await vi.advanceTimersByTimeAsync(LOOP_STATUS_TIMEOUT_MS * 2); });
+      expect(getLoopStatus).toHaveBeenCalledTimes(1);
+      expect(result.current.status).toBe(false);
+      unmount();
+    }
+  });
+
+  it("a REMEMBERED 'on' still waits for the probe", async () => {
+    flagState.value = { flags: { learning_loop: "on" }, ready: true, fresh: false };
+    getLoopStatus.mockRejectedValue(new Error("down"));
     const { result } = renderHook(() => useLoopStatus("u1", true));
     expect(result.current.status).toBeNull();
     await act(async () => { await Promise.resolve(); });
-    expect(getLoopStatus).toHaveBeenCalledTimes(1);
-    expect(result.current.status).toBe(true);
+    expect(result.current.status).toBe("error");
   });
 
   it("recheck() with a fresh 'off' probes in the background: legacy meanwhile, the loop once it is on", async () => {
