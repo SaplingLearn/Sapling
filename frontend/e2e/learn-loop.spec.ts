@@ -559,6 +559,23 @@ test("loop user completes probe → plan → check (explicit submission) with a 
   expect(tiers.length).toBeGreaterThan(0);
   for (const t of tiers) expect(["lite", "standard", "deep", "none"]).toContain(t.tier);
 
+  // #866 K60: the session's tutor turns and its close record the session's
+  // course on their own usage rows, so deleting the session later cannot take
+  // their spend off the course in the admin cost-per-gain report.
+  const [{ course_id: sessionCourse }] = (await queryRaw(
+    `SELECT o.course_id FROM sessions s JOIN course_offerings o ON o.id = s.offering_id WHERE s.id = $1`,
+    [checkedSessionId],
+  )) as { course_id: string }[];
+  const loopUsage = async () => (await queryRaw(
+    `SELECT task, course_id FROM llm_usage WHERE session_id = $1
+        AND task IN ('loop_tutor_lite', 'loop_tutor', 'loop_tutor_deep', 'session_close')`,
+    [checkedSessionId],
+  )) as { task: string; course_id: string | null }[];
+  await expect.poll(async () => (await loopUsage()).some((u) => u.task === "session_close"), {
+    message: "the close's usage row is flushed",
+  }).toBe(true);
+  expect((await loopUsage()).filter((u) => u.course_id !== sessionCourse)).toEqual([]);
+
   // The learn_loop oracle over THIS walk's rows (before the next test's truncate):
   // non-vacuous by --expect-loop-activity; evidence + zpd.step for the graded step;
   // no pre-release final-answer text in the decrypted transcript.
