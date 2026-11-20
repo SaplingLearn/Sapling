@@ -32,8 +32,9 @@ vi.mock("@/context/UserContext", () => ({
 vi.mock("@/lib/useIsMobile", () => ({ useIsMobile: () => false }));
 // These pin the legacy tutor's session state: the learning loop's kill-switch
 // path (PKG-14b), which Learn renders when the loop status probe says inactive.
+const loopRecheck = vi.hoisted(() => vi.fn());
 vi.mock("../learn/useLoopStatus", () => ({
-  useLoopStatus: () => ({ status: false, retry: () => {} }),
+  useLoopStatus: () => ({ status: false, retry: () => {}, recheck: loopRecheck }),
 }));
 vi.mock("@/lib/useActiveSemester", () => ({
   useActiveSemester: () => ["", () => {}, true],
@@ -874,5 +875,78 @@ describe("crisis support", () => {
     } finally {
       fetchSpy.mockRestore();
     }
+  });
+});
+
+// ─────────── an answer only the learning loop gives (#866 K49) ───────────
+//
+// The server reads the learning_loop gate per request; this tab read its flags
+// up to a minute ago. While they disagree the legacy tree's calls are answered
+// by the loop: a budget pause, a phase 409 ("finish the probe first") or a
+// `phase` stream event. The legacy tree asks Learn to recheck (useLoopStatus
+// then hands the page to the loop).
+
+describe("an answer only the learning loop gives", () => {
+  const budgetPause = () =>
+    Object.assign(new Error(JSON.stringify({ detail: "ai budget reached" })), {
+      status: 429,
+      body: { detail: "ai budget reached", reset_at: null, scope: "rate_limit", session_capped: false },
+    });
+  const phaseRefusal = () =>
+    Object.assign(new Error(JSON.stringify({ detail: "finish the probe first" })), {
+      status: 409,
+      body: { detail: "finish the probe first" },
+    });
+
+  it("a turn the loop refused with its phase 409 asks Learn to recheck", async () => {
+    api.streamChat.mockRejectedValueOnce(phaseRefusal());
+    renderLearn();
+    await openSession("sess-a");
+    fireEvent.change(screen.getByTestId("tutor-input"), { target: { value: "my answer" } });
+    fireEvent.click(screen.getByTestId("tutor-send"));
+    await waitFor(() => expect(loopRecheck).toHaveBeenCalled());
+  });
+
+  it("the legacy tutor's own SESSION_ENDED 409 does not", async () => {
+    api.streamChat.mockRejectedValueOnce(sessionEnded());
+    renderLearn();
+    await openSession("sess-a");
+    fireEvent.change(screen.getByTestId("tutor-input"), { target: { value: "my answer" } });
+    fireEvent.click(screen.getByTestId("tutor-send"));
+    expect(await screen.findByTestId("tutor-session-ended")).toBeInTheDocument();
+    expect(loopRecheck).not.toHaveBeenCalled();
+  });
+
+  it("an ordinary failure does not either", async () => {
+    api.streamChat.mockRejectedValueOnce(new ChatStreamError("tutor down", undefined, false));
+    renderLearn();
+    await openSession("sess-a");
+    fireEvent.change(screen.getByTestId("tutor-input"), { target: { value: "my answer" } });
+    fireEvent.click(screen.getByTestId("tutor-send"));
+    await waitFor(() => expect(screen.getByTestId("tutor-input")).not.toBeDisabled());
+    expect(loopRecheck).not.toHaveBeenCalled();
+  });
+
+  it("a budget pause on a start asks Learn to recheck", async () => {
+    api.startSessionStream.mockRejectedValueOnce(budgetPause()); // a 429: no JSON rung
+    renderLearn();
+    await screen.findByTestId("tutor-session-resume-sess-a");
+    fireEvent.click(screen.getByTestId("tutor-topic-picker"));
+    fireEvent.click(await screen.findByRole("button", { name: /^Trees/ }));
+    fireEvent.click(screen.getByTestId("tutor-start"));
+    await waitFor(() => expect(loopRecheck).toHaveBeenCalled());
+  });
+
+  it("a start whose stream carries a loop phase hands over at once", async () => {
+    api.startSessionStream.mockImplementationOnce(async (...args: unknown[]) => {
+      (args[6] as { onPhase?: (phase: string) => void }).onPhase?.("probe");
+      return { session_id: "sess-loop", reply: "Let's check in." };
+    });
+    renderLearn();
+    await screen.findByTestId("tutor-session-resume-sess-a");
+    fireEvent.click(screen.getByTestId("tutor-topic-picker"));
+    fireEvent.click(await screen.findByRole("button", { name: /^Trees/ }));
+    fireEvent.click(screen.getByTestId("tutor-start"));
+    await waitFor(() => expect(loopRecheck).toHaveBeenCalled());
   });
 });

@@ -12,7 +12,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const getLoopStatus = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/api", () => ({ getLoopStatus }));
 // The student's flags: the `learning_loop` flag "on" unless a test says otherwise.
-const flagState = vi.hoisted(() => ({ value: { flags: { learning_loop: "on" } as Record<string, string>, ready: true } }));
+// `fresh` absent reads as a fresh map (FlagsContext always sets it).
+const flagState = vi.hoisted(() => ({
+  value: { flags: { learning_loop: "on" } as Record<string, string>, ready: true } as {
+    flags: Record<string, string>; ready: boolean; fresh?: boolean;
+  },
+}));
 vi.mock("@/context/FlagsContext", () => ({ useFlagMap: () => flagState.value }));
 
 import { LOOP_STATUS_TIMEOUT_MS, useLoopStatus } from "./useLoopStatus";
@@ -114,6 +119,71 @@ describe("useLoopStatus", () => {
     const { result } = renderHook(() => useLoopStatus("u1", true));
     await act(async () => { await Promise.resolve(); });
     expect(getLoopStatus).toHaveBeenCalledTimes(1);
+    expect(result.current.status).toBe(false);
+  });
+
+  // #866 K49: the tree must agree with the server's gate, which is read per
+  // request; a stale client "off" paired the legacy tree with a backend that
+  // delegates its calls to the loop ("finish the probe first", 409s).
+  it("a REMEMBERED 'off' (the flag read failed) is a guess: the probe decides", async () => {
+    flagState.value = { flags: { learning_loop: "off" }, ready: true, fresh: false };
+    getLoopStatus.mockResolvedValue({ active: true });
+    const { result } = renderHook(() => useLoopStatus("u1", true));
+    expect(result.current.status).toBeNull();
+    await act(async () => { await Promise.resolve(); });
+    expect(getLoopStatus).toHaveBeenCalledTimes(1);
+    expect(result.current.status).toBe(true);
+  });
+
+  it("recheck() with a fresh 'off' probes in the background: legacy meanwhile, the loop once it is on", async () => {
+    flagState.value = { flags: { learning_loop: "off" }, ready: true, fresh: true };
+    let answer: (v: { active: boolean }) => void = () => {};
+    getLoopStatus.mockImplementation(() => new Promise((r) => { answer = r; }));
+    const { result } = renderHook(() => useLoopStatus("u1", true));
+    expect(result.current.status).toBe(false);
+    expect(getLoopStatus).not.toHaveBeenCalled();
+    act(() => { result.current.recheck(); });
+    expect(getLoopStatus).toHaveBeenCalledTimes(1);
+    expect(result.current.status).toBe(false); // the legacy tree stays mounted while it asks
+    await act(async () => { answer({ active: true }); });
+    expect(result.current.status).toBe(true);
+  });
+
+  it("recheck() that finds the loop off, or cannot ask, leaves the legacy tree alone", async () => {
+    flagState.value = { flags: { learning_loop: "off" }, ready: true, fresh: true };
+    getLoopStatus.mockResolvedValueOnce({ active: false }).mockRejectedValueOnce(new Error("down"));
+    const { result } = renderHook(() => useLoopStatus("u1", true));
+    await act(async () => { result.current.recheck(); });
+    await act(async () => { result.current.recheck(); });
+    expect(getLoopStatus).toHaveBeenCalledTimes(2);
+    expect(result.current.status).toBe(false);
+  });
+
+  it("the hand-over holds until a newer flag read says off", async () => {
+    flagState.value = { flags: { learning_loop: "off" }, ready: true, fresh: true };
+    getLoopStatus.mockResolvedValueOnce({ active: true }).mockImplementation(never);
+    const { result, rerender } = renderHook(() => useLoopStatus("u1", true));
+    await act(async () => { result.current.recheck(); });
+    expect(result.current.status).toBe(true);
+    // the next minute's read agrees: still the loop while its own probe is in
+    // flight, so the page never drops to "Loading…" (no remount)
+    flagState.value = { flags: { learning_loop: "on" }, ready: true, fresh: true };
+    rerender();
+    expect(result.current.status).toBe(true);
+    // the owner turned it off again: the newer read decides
+    flagState.value = { flags: { learning_loop: "off" }, ready: true, fresh: true };
+    rerender();
+    expect(result.current.status).toBe(false);
+  });
+
+  it("a recheck answered for another user never applies", async () => {
+    flagState.value = { flags: { learning_loop: "off" }, ready: true, fresh: true };
+    let answer: (v: { active: boolean }) => void = () => {};
+    getLoopStatus.mockImplementation(() => new Promise((r) => { answer = r; }));
+    const { result, rerender } = renderHook(({ user }) => useLoopStatus(user, true), { initialProps: { user: "u1" } });
+    act(() => { result.current.recheck(); });
+    rerender({ user: "u2" });
+    await act(async () => { answer({ active: true }); });
     expect(result.current.status).toBe(false);
   });
 });

@@ -13,7 +13,8 @@
  */
 import { describe, it, expect } from "vitest";
 
-import { readResumeParam, removeInterruptedTurn } from "./Learn";
+import { readResumeParam } from "./Learn";
+import { removeInterruptedTurn } from "./learn/turns";
 import type { ChatMsg } from "../chat/ChatPanel";
 
 describe("readResumeParam (#164)", () => {

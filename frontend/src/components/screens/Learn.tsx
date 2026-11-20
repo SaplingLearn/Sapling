@@ -51,11 +51,12 @@ import {
   type GraphDelta,
 } from "@/lib/api";
 import { dropOptimisticConcept, reconcileNodes, retargetEdges } from "@/lib/graphOptimistic";
-import { humanizeError, isNotFound, readableError, statusOf } from "@/lib/errorMessage";
+import { humanizeError, isNotFound, readableError } from "@/lib/errorMessage";
 import { forgetEndedSession, noteLearningSession, rememberEndedSession, useFeedbackHold } from "@/lib/feedbackPacing";
 import type { GraphNode as ApiNode, GraphEdge as ApiEdge } from "@/lib/types";
 import { apiToGraphNode, type GraphNode, type GraphEdge } from "@/lib/data";
 import { focusCardDescription, focusCardTitle, sessionSubtitle } from "./learn/view";
+import { answeredByTheLoop, isSessionEndedError, removeInterruptedTurn } from "./learn/turns";
 
 function apiToGraphEdge(e: ApiEdge): GraphEdge {
   return {
@@ -322,36 +323,8 @@ export function applyGraphDeltaAssembly(
 // without importing this screen (PKG-13); re-exported for its callers.
 export { readResumeParam };
 
-// ADR 0020 Retry: drop the interrupted assistant bubble and — when it sits
-// directly before it — the user bubble of the same turn, so the re-send
-// (which appends a fresh user bubble) doesn't duplicate either. Pure and
-// exported for Learn.resume.test.ts.
-export function removeInterruptedTurn(
-  messages: ChatMsg[],
-  interruptedId: string,
-  retryText: string,
-): ChatMsg[] {
-  const i = messages.findIndex(m => m.id === interruptedId);
-  if (i === -1) return messages;
-  const next = [...messages.slice(0, i), ...messages.slice(i + 1)];
-  if (i > 0 && next[i - 1]?.role === "user" && next[i - 1].content === retryText) {
-    next.splice(i - 1, 1);
-  }
-  return next;
-}
-
-// A turn the server refused because the session is already over (#761 /
-// #762): a 409 whose envelope carries `error.code: "SESSION_ENDED"` —
-// `ApiError.code` off fetchJSON, the same `code` streamSSE attaches. A coded
-// error decides it by its code (a 409 with any OTHER code is an ordinary
-// error); only an error with no code at all — an older backend — falls back
-// to the bare 409.
-export const SESSION_ENDED_CODE = "SESSION_ENDED";
-export function isSessionEndedError(err: unknown): boolean {
-  const code = err !== null && typeof err === "object" ? (err as { code?: unknown }).code : undefined;
-  if (typeof code === "string") return code === SESSION_ENDED_CODE;
-  return statusOf(err) === 409;
-}
+// The ADR 0020 Retry's bubble surgery, the ended-session 409 (#761/#762) and
+// an answer only the learning loop gives (#866 K49): ./learn/turns.ts.
 
 export function Learn() {
   const { userId, userReady } = useUser();
@@ -361,7 +334,8 @@ export function Learn() {
   // false (the kill switch: {active: false} / the gate's 404) → legacy; any other
   // failure → a retry state, NEVER the legacy tree (the backend delegates the
   // legacy calls to the loop, so failing open would give a hybrid).
-  const { status: loop, retry } = useLoopStatus(userId, userReady);
+  // #866 K49: the legacy tree asks for `recheck` when an answer can only be the loop's.
+  const { status: loop, retry, recheck } = useLoopStatus(userId, userReady);
   if (loop === null) return <div style={{ padding: 40, color: "var(--text-dim)" }}>Loading…</div>;
   if (loop === "error") {
     return (
@@ -382,7 +356,7 @@ export function Learn() {
   }
   return (
     <Suspense fallback={<div style={{ padding: 40, color: "var(--text-dim)" }}>Loading…</div>}>
-      <LearnInner />
+      <LearnInner onLoopAnswer={recheck} />
     </Suspense>
   );
 }
@@ -392,7 +366,7 @@ type SearchParams = ReturnType<typeof useSearchParams>;
 type Router = ReturnType<typeof useRouter>;
 type Toast = ReturnType<typeof useToast>;
 
-function LearnInner() {
+function LearnInner({ onLoopAnswer }: { onLoopAnswer: () => void }) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { userId, userReady } = useUser();
@@ -412,7 +386,7 @@ function LearnInner() {
   const rail = useRailCollapse(isMobile);
   const session = useTutorSession({
     router, searchParams, userId, userReady, toast, prefs, sharedCtx, modelPref,
-    applyGraphDelta: data.applyGraphDelta, setFocusedNodeId,
+    applyGraphDelta: data.applyGraphDelta, setFocusedNodeId, onLoopAnswer,
   });
   const { sessionId, starting, summary, beginSession, handleResume } = session;
 
@@ -916,7 +890,7 @@ function startCards(intercept: (response: unknown) => boolean, fromNoteId: strin
   };
 }
 
-function useTutorSession({ router, searchParams, userId, userReady, toast, prefs, sharedCtx, modelPref, applyGraphDelta, setFocusedNodeId }: {
+function useTutorSession({ router, searchParams, userId, userReady, toast, prefs, sharedCtx, modelPref, applyGraphDelta, setFocusedNodeId, onLoopAnswer }: {
   router: Router;
   searchParams: SearchParams;
   userId: string;
@@ -927,8 +901,10 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
   modelPref: ModelPref;
   applyGraphDelta: (delta: GraphDelta) => void;
   setFocusedNodeId: (id: string | null) => void;
+  onLoopAnswer: () => void;
 }) {
   const { mode, setMode, topic, setTopic, topicDraft, setTopicDraft, selectedCourseId, setSelectedCourseId, fromNote } = prefs;
+  const loopSignal = useCallback((err: unknown) => { if (answeredByTheLoop(err)) onLoopAnswer(); }, [onLoopAnswer]); // #866 K49
   // docs/safety/crisis-support.md: a session start the crisis screen answered
   // (no session was opened) shows the card as a dialog over the picker; on a
   // note's title the card shows over the session that did start.
@@ -1094,6 +1070,7 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
             if (isCurrent()) setStreamingText(prev => (prev ?? "") + delta);
           },
           onGraphUpdate: applyGraphDelta,
+          onPhase: onLoopAnswer, // only the loop's streams send a phase (#866 K49)
           onProgress: (step) => {
             const label = tutorStepLabel(step);
             if (label && isCurrent()) setStreamingStatus(label);
@@ -1133,6 +1110,7 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
       setMessages([{ id: msgId(), role: "assistant", content: replyText }]);
     } catch (err) {
       if (!isCurrent()) return;
+      loopSignal(err);
       showErrorCard(err); // a refusal can carry the card
       toast.error(readableError(err, "Couldn't start session."));
       setMessages([]);
@@ -1290,6 +1268,7 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
             if (isCurrent()) setStreamingText(t => (t ?? "") + delta);
           },
           onGraphUpdate: applyGraphDelta,
+          onPhase: onLoopAnswer, // only the loop's streams send a phase (#866 K49)
           onProgress: (step) => {
             const label = tutorStepLabel(step);
             if (label && isCurrent()) setStreamingStatus(label);
@@ -1303,6 +1282,7 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
           appendInterrupted();
           return;
         }
+        loopSignal(err);
         if (isSessionEndedError(err)) {
           // 409: the session is over. Not a failure to retry — no JSON rung
           // (it would 409 too), no interrupted bubble.
@@ -1358,6 +1338,7 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
         setMessages(m => [...m, { id: msgId(), role: "assistant", content: res.reply || "", crisisSupport }]);
       }
     } catch (err) {
+      loopSignal(err);
       if (isSessionEndedError(err)) { endedTurn(); return; }
       // The Rung-3 JSON fallback itself failed — the ladder is exhausted.
       // ADR 0020 treats this like any mid-stream failure: interrupted bubble
@@ -1378,7 +1359,7 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
         streamAbort.current = null;
       }
     }
-  }, [sessionId, userId, mode, sharedCtx, modelPref, applyGraphDelta, toast]);
+  }, [sessionId, userId, mode, sharedCtx, modelPref, applyGraphDelta, toast, loopSignal, onLoopAnswer]);
 
   // ADR 0020 Retry: re-dispatch the interrupted turn's original text. Drop
   // the failed pair first (removeInterruptedTurn) so `send`'s own user-bubble
@@ -1426,6 +1407,7 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
     } catch (err) {
       if (!isCurrent()) return;
       setMessages(m => m.filter(x => x.id !== labelId));
+      loopSignal(err);
       if (isSessionEndedError(err)) { setSessionEnded(true); return; }
       toast.error(humanizeError(err, "Action failed."));
     } finally {

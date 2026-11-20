@@ -47,7 +47,9 @@ guard on notes and flashcards is off, their uploads draft no check items,
 and the frontend renders the legacy Learn screen and no review queue,
 retention check or retention badge. A flag-off student's frontend does not
 call the loop at all (`frontend/src/components/learn/useLoopStatus.ts`,
-`frontend/src/context/RetentionDueContext.tsx`). The switch is read at
+`frontend/src/context/RetentionDueContext.tsx`), unless its flag read failed
+(a remembered map defers to the status probe) or the legacy screen is
+answered by the loop because the flag turned on since the tab read it. The switch is read at
 process start, so a change needs a redeploy; the flag needs none. The legacy
 tutor that runs instead writes no mastery: quiz and flashcard evidence still
 flow through the single writer. The navigation flag `hide_tutor` is **not** a

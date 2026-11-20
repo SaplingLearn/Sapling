@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { useFlagMap } from "@/context/FlagsContext";
 import { getLoopStatus } from "@/lib/api";
+import type { FlagMap } from "@/lib/flags";
 import { LEARNING_LOOP_FLAG } from "@/lib/learningLoopFlag";
 
 /** How long Learn waits for the loop probe before showing the retry state †. */
@@ -28,15 +29,23 @@ export type LoopStatus = boolean | "error" | null;
  *  GET. A late definitive answer still wins over a timeout's `"error"`.
  *
  *  The `learning_loop` flag comes first: while the flags load the answer is
- *  unresolved, and a flag map that says "off" is the legacy tree with NO probe
- *  (a flag-off student calls no loop endpoint). A map without the key (flags
- *  unreadable and nothing remembered, or an older backend) defers to the probe,
+ *  unresolved, and a flag map read this visit that says "off" is the legacy
+ *  tree with NO probe (a flag-off student calls no loop endpoint). A map
+ *  without the key (flags unreadable and nothing remembered, or an older
+ *  backend), or a REMEMBERED one (the read failed, #771), defers to the probe,
  *  which is the server's own answer — never a guess that could pair the legacy
- *  tree with a backend that delegates to the loop. */
+ *  tree with a backend that delegates to the loop (#866 K49).
+ *
+ *  The server reads the gate per request, so a flag turned on after this tab
+ *  read it (it re-reads every ACCOUNT_REFRESH_MS) is the same pairing. The
+ *  legacy tree calls `recheck()` when an answer can only have come from the
+ *  loop: a background probe, with the legacy tree still mounted, that hands
+ *  the page to the loop if the server says so and changes nothing otherwise.
+ *  The hand-over holds until a newer flag read says "off". */
 export function useLoopStatus(
   userId: string,
   userReady: boolean,
-): { status: LoopStatus; retry: () => void } {
+): { status: LoopStatus; retry: () => void; recheck: () => void } {
   // Keyed on the user (and the attempt) the answer is for, so a user switch or
   // a retry reads as unresolved until its own probe answers (no setState in the
   // effect body).
@@ -44,10 +53,17 @@ export function useLoopStatus(
   const [resolved, setResolved] = useState<
     { userId: string; attempt: number; status: boolean | "error"; final: boolean } | null
   >(null);
-  const { flags, ready: flagsReady } = useFlagMap();
+  const { flags, ready: flagsReady, fresh } = useFlagMap();
   const loopFlag = flags[LEARNING_LOOP_FLAG];
-  const flagOff = loopFlag !== undefined && loopFlag !== "on";
+  const flagOff = fresh !== false && loopFlag !== undefined && loopFlag !== "on";
   const probe = userReady && !!userId && flagsReady && !flagOff;
+  const [takeover, setTakeover] = useState<{ userId: string; flags: FlagMap } | null>(null);
+  const recheck = useCallback(() => {
+    if (!userId) return;
+    getLoopStatus(userId).then((r) => { if (r.active) setTakeover({ userId, flags }); }, () => {});
+  }, [userId, flags]);
+  // The flag map the probe overruled, or a newer one that does not say "off".
+  const handedOver = takeover?.userId === userId && (takeover.flags === flags || !flagOff);
   useEffect(() => {
     if (!probe) return;
     let cancelled = false;
@@ -76,11 +92,12 @@ export function useLoopStatus(
     };
   }, [userId, probe, attempt]);
   const retry = useCallback(() => setAttempt((a) => a + 1), []);
-  if (!userReady) return { status: null, retry };
-  if (!userId) return { status: false, retry };
-  if (!flagsReady) return { status: null, retry };
-  if (flagOff) return { status: false, retry };
+  if (!userReady) return { status: null, retry, recheck };
+  if (!userId) return { status: false, retry, recheck };
+  if (handedOver) return { status: true, retry, recheck };
+  if (!flagsReady) return { status: null, retry, recheck };
+  if (flagOff) return { status: false, retry, recheck };
   const status =
     resolved?.userId === userId && resolved.attempt === attempt ? resolved.status : null;
-  return { status, retry };
+  return { status, retry, recheck };
 }
