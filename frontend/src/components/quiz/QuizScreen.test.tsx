@@ -46,6 +46,7 @@ const coreApi = vi.hoisted(() => ({
   getCourses: vi.fn(),
   getGraph: vi.fn(),
   fetchGamificationMe: vi.fn(),
+  getLoopStatus: vi.fn(),
 }));
 vi.mock("@/lib/api", async importActual => {
   const actual = await importActual<typeof import("@/lib/api")>();
@@ -178,6 +179,7 @@ beforeEach(() => {
   coreApi.getCourses.mockResolvedValue({ courses: COURSES });
   coreApi.getGraph.mockResolvedValue({ nodes: NODES, edges: [], stats: {} });
   coreApi.fetchGamificationMe.mockRejectedValue(new Error("not under test"));
+  coreApi.getLoopStatus.mockResolvedValue({ active: false });
 });
 
 afterEach(() => {
@@ -310,5 +312,33 @@ describe("QuizScreen — Done drops the deep link (#537)", () => {
     expect(navigations).toEqual([{ via: "push", url: "/tree?node=c1" }]);
     // …and the History API is NOT used to fake a cross-route move.
     expect(location.pathname).toBe("/quiz");
+  });
+});
+
+describe("QuizScreen — the stated confidence follows the learning loop (#866 K46)", () => {
+  /** Home → start: the first question on screen. */
+  async function openFirstQuestion(): Promise<void> {
+    render(
+      <ToastProvider>
+        <QuizScreen />
+      </ToastProvider>,
+    );
+    const start = await screen.findByTestId("quiz-start", undefined, { timeout: 3000 });
+    await act(async () => {
+      start.click();
+    });
+    await screen.findByTestId("quiz-answer-option-A", undefined, { timeout: 3000 });
+  }
+
+  it("asks nothing while the loop is off for the student: the pre-loop question screen", async () => {
+    await openFirstQuestion();
+    await waitFor(() => expect(coreApi.getLoopStatus).toHaveBeenCalledWith("u1"));
+    expect(screen.queryByTestId("quiz-confidence")).toBeNull();
+  });
+
+  it("asks 'How sure are you?' while the loop is on", async () => {
+    coreApi.getLoopStatus.mockResolvedValue({ active: true });
+    await openFirstQuestion();
+    expect(await screen.findByTestId("quiz-confidence")).toBeTruthy();
   });
 });

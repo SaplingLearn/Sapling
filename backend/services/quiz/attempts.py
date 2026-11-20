@@ -11,10 +11,12 @@ underscores included) are unchanged, and routes/quiz.py re-exports them.
 import logging
 from datetime import datetime, timedelta, timezone
 
+from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
 
 from db.connection import table
 from models import AnswerQuestionBody
+from services import quiz_learning
 from services.auth_guard import require_self, guard_off_loop
 from services.quiz.config import QUIZ_ATTEMPT_ABANDON_TTL_HOURS
 from services.quiz.errors import QuizAPIError, QuizErrorCode
@@ -265,6 +267,23 @@ def _insert_attempt(attempt_row: dict) -> None:
     table("quiz_attempts").insert(retry)
 
 
+async def _stated(body: AnswerQuestionBody, user_id: str, written: bool) -> float | None:
+    """The confidence an answer stores (learning-loop spec §13 A132), or None.
+
+    The stated confidence is the learning system's: the quiz asks for it only
+    while the loop is on for the student, and only then is it kept (owner
+    decision 2026-11-18, #866 K46: with the loop off the quiz is main's, which
+    stores none). The gate is read only when a level was sent, off the event
+    loop."""
+    if body.confidence is None:
+        return None
+    if not await run_in_threadpool(quiz_learning.stated_confidence_on, user_id):
+        return None
+    return stated_confidence(
+        body.confidence, idk=written and quiz_evidence.is_idk_answer(body.answer_text)
+    )
+
+
 async def answer_question(attempt_id: str, body: AnswerQuestionBody, request: Request):
     """#541 C1: grade one question server-side and record the response.
 
@@ -339,11 +358,8 @@ async def answer_question(attempt_id: str, body: AnswerQuestionBody, request: Re
             # Learning-loop spec §13 A132: the stated label's
             # STUDENT_CONFIDENCE_LEVELS value, or None for a skip; an idk
             # written answer states none (A127 (c)). Submit carries it onto
-            # the question's evidence.
-            "confidence": stated_confidence(
-                body.confidence,
-                idk=written and quiz_evidence.is_idk_answer(body.answer_text),
-            ),
+            # the question's evidence. Kept only with the loop on (K46).
+            "confidence": await _stated(body, attempt["user_id"], written),
         }
         if written:
             row["answer_text"] = encrypt_json(

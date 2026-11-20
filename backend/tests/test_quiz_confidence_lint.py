@@ -228,6 +228,18 @@ def test_a_skip_is_stored_as_absent_never_a_default():
     assert rows[0]["confidence"] is None
 
 
+@pytest.mark.kill_switch
+@pytest.mark.parametrize("label", list(LEVELS))
+def test_with_the_loop_off_a_stated_label_is_not_kept(label, loop_off_via):
+    """#866 K46: the stated confidence is the learning system's. With the loop
+    off for the student (the kill switch, or their flag off) the quiz is main's,
+    which keeps none: a label a client still sends is answered past and dropped,
+    so no confidence reaches the response row or, at submit, the evidence."""
+    r, rows = _answer({"question_index": 0, "selected_index": 0, "confidence": label})
+    assert r.status_code == 200, r.text
+    assert rows[0]["confidence"] is None
+
+
 @pytest.mark.parametrize("value", [0.8, 0.85, 1, "Sure", "very_sure", "", True])
 def test_anything_but_a_label_is_a_422_and_records_nothing(value):
     r, rows = _answer({"question_index": 0, "selected_index": 0, "confidence": value})

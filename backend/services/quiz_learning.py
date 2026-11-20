@@ -31,6 +31,7 @@ import httpx
 from db.connection import page_all, pg_quote_value, table
 from db.scope import runs_as_service
 from learning import item_keys, quiz_gates, quiz_plan
+from learning.gate import LEARNING_LOOP_FLAG
 from learning.gate import learning_loop_for_request
 from learning.evidence import PREREQ_RELATIONSHIP_TYPE
 from learning.learner_state import read_states
@@ -65,6 +66,15 @@ def quiz_flags(user_id: str | None, *keys: str) -> tuple[bool, ...]:
     if not learning_loop_for_request(user_id):
         return tuple(False for _ in keys)
     return tuple(flag_on(key, user_id) for key in keys)
+
+
+def stated_confidence_on(user_id: str | None) -> bool:
+    """A132's "How sure are you?" has no flag of its own: it is the learning
+    system's, asked for and kept only while the loop is on for the student
+    (owner decision 2026-11-18, #866 K46). `quiz_flags` on the loop's own flag:
+    the gate first, so the kill switch reads nothing."""
+    (on,) = quiz_flags(user_id, LEARNING_LOOP_FLAG)
+    return on
 
 
 #: The model slot every quiz check runs on (agents/_providers.py).

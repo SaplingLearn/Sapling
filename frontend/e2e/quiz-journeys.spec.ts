@@ -22,7 +22,8 @@
  *   stated confidence       "How sure are you?" rides each answer to the stored
  *                           response and the mastery evidence, survives a
  *                           leave-and-resume, and a skip stores none
- *                           (learning-loop spec §13 A132).
+ *                           (learning-loop spec §13 A132) — with the loop on;
+ *                           with it off the quiz asks none (#866 K46).
  *
  * ── THE GENERATION BUDGET (read before adding a test) ─────────────────────
  *
@@ -57,6 +58,7 @@ import { DISMISSED_KEY, STORAGE_KEY } from "@/lib/quiz/session";
 import type { AttemptsPage } from "@/lib/quiz/types";
 import { queryRaw } from "./support/db";
 import { expect, test } from "./support/fixtures";
+import { loopOffLane } from "./support/lane";
 import { USER_ACTIVE } from "./support/stack";
 import {
   CONCEPT_NAME,
@@ -902,6 +904,8 @@ function isAnswerPost(request: { method(): string; url(): string }): boolean {
 test("stated confidence: a level rides its answer to the response and the evidence, survives leave-and-resume, and a skip stores none", async ({
   page,
 }) => {
+  // The control is the learning system's (#866 K46): the default lane, where the loop is on.
+  test.skip(loopOffLane, "the loop off asks no confidence: the journey below");
   test.setTimeout(180_000);
   let answerPosts = 0;
   page.on("request", request => {
@@ -995,4 +999,37 @@ test("stated confidence: a level rides its answer to the response and the eviden
     null,
   ]);
   for (const e of evidence) expect(e.confidence).toBeNull();
+});
+
+test("stated confidence, loop off: the quiz asks none, sends none and stores none (#866 K46)", async ({ page }) => {
+  // Owner decision 2026-11-18: with the loop off the quiz is main's, which has
+  // no "How sure are you?" (it is A132's, the learning system's).
+  test.skip(!loopOffLane, "the pre-loop quiz: the kill-switch and flag-off lanes");
+  test.setTimeout(180_000);
+  const bodies: Record<string, unknown>[] = [];
+  page.on("request", request => {
+    if (isAnswerPost(request)) bodies.push(request.postDataJSON() as Record<string, unknown>);
+  });
+  await preAckDisclaimer(page);
+  await openQuizHome(page, TREE_ENTRY);
+  await startQuiz(page);
+  for (let n = 1; n <= QUIZ_LENGTH; n += 1) {
+    await expectOnQuestion(page, n);
+    await expect(page.getByTestId("quiz-confidence")).toHaveCount(0);
+    await chooseAndSubmit(page, CORRECT_LABELS[n - 1]);
+  }
+  await expectResults(page);
+  expect(bodies).toHaveLength(QUIZ_LENGTH);
+  for (const body of bodies) expect("confidence" in body).toBe(false);
+
+  const [{ id: attemptId }] = await appAttempts();
+  const responses = await queryRaw("SELECT confidence FROM quiz_responses WHERE attempt_id = $1", [attemptId]);
+  expect(responses).toHaveLength(QUIZ_LENGTH);
+  for (const r of responses) expect(r.confidence).toBeNull();
+  const evidence = await queryRaw(
+    "SELECT student_confidence FROM node_mastery_events WHERE node_id = $1 AND event_type = 'evidence'",
+    [NODE_ID],
+  );
+  expect(evidence).toHaveLength(QUIZ_LENGTH);
+  for (const e of evidence) expect(e.student_confidence).toBeNull();
 });
