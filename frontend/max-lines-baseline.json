@@ -1,7 +1,7 @@
 {
   "_comment": "File-size ratchet: the source files already over the max-lines limit (800 lines; blank lines and comments not counted), each with the line count it may not pass. Keyed by path relative to frontend/. Entries may only be lowered or deleted (npm run max-lines:shrink). eslint.config.mjs turns each entry into that file's own max-lines ceiling; scripts/max_lines_ratchet.test.ts enforces the rest.",
   "max-lines": {
-    "src/app/(shell)/notetaker/page.tsx": 1872,
+    "src/app/(shell)/notetaker/page.tsx": 1868,
     "src/components/Gradebook/GradescopeSyncModal.tsx": 1502,
     "src/components/graph/KnowledgeGraph2D.tsx": 1428,
     "src/components/learn/LoopLearn.tsx": 2044,

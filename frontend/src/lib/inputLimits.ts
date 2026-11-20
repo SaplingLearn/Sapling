@@ -15,6 +15,9 @@ export const NOTE_BODY_MAX = 200_000;
  *  prequestion answer or reason, a self-explanation (`GRADER_ANSWER_MAX_CHARS`,
  *  backend learning/params.py; #866 K34). */
 export const LOOP_ANSWER_MAX = 4000;
+/** A learning-loop goal's target concepts (`LoopGoal.target_node_ids`
+ *  max_length; a longer list is a 422). */
+export const LOOP_GOAL_MAX_TARGETS = 12;
 /** A profile bio (`BIO_MAX`). */
 export const BIO_MAX = 500;
 /** Feedback comments and issue-report descriptions (`LONG_TEXT_MAX`). */

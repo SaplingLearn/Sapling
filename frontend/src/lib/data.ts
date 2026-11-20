@@ -1,5 +1,6 @@
 import type { GraphNode as ApiNode } from "@/lib/types";
 import type { EnrolledCourse } from "@/lib/api";
+import { LOOP_GOAL_MAX_TARGETS } from "@/lib/inputLimits";
 
 export type Course = {
   id: string;
@@ -94,15 +95,20 @@ export function learnHrefForNode(
 // Send to tutor's link (#866 K05): the note's title and course, the note itself
 // (`note`), and its linked concepts (`concept`, comma-joined node ids), so the
 // learning loop's session is on what the note is about; the legacy Learn
-// screen ignores `concept`.
+// screen ignores `concept`. Only the concepts of the course the link names go
+// (the loop's goal refuses another course's), at most the goal's target cap,
+// in linked order: a note linked across courses or past the cap still starts.
 export function noteTutorHref(
   res: { topic?: string; course_id?: string | null },
   noteId: string,
-  conceptIds: string[],
+  concepts: { id: string; courseId: string | null }[],
 ): string {
   const href = `/learn?topic=${encodeURIComponent(res.topic ?? "")}&course=${encodeURIComponent(res.course_id ?? "")}`
     + `&note=${encodeURIComponent(noteId)}`;
-  return conceptIds.length > 0 ? `${href}&concept=${encodeURIComponent(conceptIds.join(","))}` : href;
+  const ids = res.course_id
+    ? concepts.filter((c) => c.courseId === res.course_id).map((c) => c.id).slice(0, LOOP_GOAL_MAX_TARGETS)
+    : [];
+  return ids.length > 0 ? `${href}&concept=${encodeURIComponent(ids.join(","))}` : href;
 }
 
 // Adapter from the backend `ApiNode` shape to the frontend `GraphNode`

@@ -53,12 +53,8 @@ type Course = {
   color: string;
 };
 
-type Concept = {
-  id: string;
-  name: string;
-  course: string;
-  mastery: Mastery;
-};
+// `courseId`: the concept's own course (#866 K05: Send to tutor's goal names only its note's course's)
+type Concept = { id: string; name: string; course: string; courseId: string | null; mastery: Mastery };
 
 type Note = {
   id: string;
@@ -123,6 +119,7 @@ function apiConceptToConcept(c: ApiLinkedConcept, courseCode: string): Concept {
     id: c.id,
     name: c.concept_name,
     course: courseCode,
+    courseId: c.course_id ?? null,
     mastery: normalizeMastery(c.mastery_tier),
   };
 }
@@ -442,7 +439,7 @@ function NotetakerScreen() {
         // `note` names the note, so a start on its title unchanged is screened
         // as the student's stored material, not as a topic they typed
         // (docs/safety/crisis-support.md): the card shows beside the session.
-        const open = () => router.push(noteTutorHref(res, noteId, active.linkedConcepts.map((c) => c.id))); // K05
+        const open = () => router.push(noteTutorHref(res, noteId, active.linkedConcepts)); // K05
         // Beside a result, the tutor opens once the card is closed, told the
         // card was shown so its start does not pop the same one up again; a
         // card that stands in for the result opens nothing.

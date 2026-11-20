@@ -202,8 +202,11 @@ describe("hashSeed", () => {
 });
 
 describe("noteTutorHref", () => {
+  const linked = (...ids: string[]) => ids.map((id) => ({ id, courseId: "c1" }));
+  const conceptOf = (href: string) => new URLSearchParams(href.split("?")[1]).get("concept");
+
   it("names the note's linked concepts, so the loop's session is on them (#866 K05)", () => {
-    const params = new URLSearchParams(noteTutorHref({ topic: "Week 3", course_id: "c1" }, "n1", ["k1", "k2"]).split("?")[1]);
+    const params = new URLSearchParams(noteTutorHref({ topic: "Week 3", course_id: "c1" }, "n1", linked("k1", "k2")).split("?")[1]);
     expect(params.get("concept")).toBe("k1,k2");
     expect(params.get("note")).toBe("n1");
     expect(params.get("course")).toBe("c1");
@@ -211,5 +214,19 @@ describe("noteTutorHref", () => {
 
   it("is main's link when the note has no linked concepts", () => {
     expect(noteTutorHref({ topic: "Week 3", course_id: "c1" }, "n1", [])).toBe("/learn?topic=Week%203&course=c1&note=n1");
+  });
+
+  it("names only the concepts of the course it opens, which the loop's goal accepts (#866 K05 review)", () => {
+    const concepts = [{ id: "k1", courseId: "c1" }, { id: "x1", courseId: "c2" }, { id: "x2", courseId: null }, { id: "k2", courseId: "c1" }];
+    expect(conceptOf(noteTutorHref({ topic: "Week 3", course_id: "c1" }, "n1", concepts))).toBe("k1,k2");
+    // linked only to another course's concepts: main's link, a whole-course session
+    expect(noteTutorHref({ topic: "Week 3", course_id: "c1" }, "n1", concepts.slice(1, 3))).toBe("/learn?topic=Week%203&course=c1&note=n1");
+    // a note with no course names none (the loop names the course on screen)
+    expect(conceptOf(noteTutorHref({ topic: "Week 3", course_id: null }, "n1", concepts))).toBeNull();
+  });
+
+  it("names at most the goal's 12 targets, in linked order (#866 K05 review)", () => {
+    const ids = Array.from({ length: 15 }, (_, i) => `k${i}`);
+    expect(conceptOf(noteTutorHref({ topic: "Week 3", course_id: "c1" }, "n1", linked(...ids)))).toBe(ids.slice(0, 12).join(","));
   });
 });
