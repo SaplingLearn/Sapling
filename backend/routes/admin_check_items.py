@@ -49,7 +49,9 @@ listed first, as `retire_pending`; held items next.
 
 Every endpoint calls `require_admin` first. Queue decisions run through
 learning.item_reports, under the same per-item database lock as the students'
-reports, and each emits an audit event.
+reports, and each emits an audit event. Every decision that changed something
+(an approval, a retire, an audit verdict — finished or not) is also a row in
+Admin → Audit log (`admin_audit_log`, #866 K59), like every other admin write.
 """
 
 from __future__ import annotations
@@ -76,6 +78,7 @@ from learning.params import (
     ITEM_STATS_LOW_DISCRIMINATION,
     ITEM_STATS_MIN_N,
 )
+from services.admin_audit import log_admin_action
 from services.auth_guard import get_session_user_id, require_admin, require_admin_recent
 from services.check_item_service import (
     audit_population,
@@ -102,6 +105,8 @@ QUEUE_PAGE = 100
 _APPROVED_EVENT = "learn.check_item_approved"
 _RETIRED_EVENT = "learn.check_item_retired"
 _NUMERIC = "numeric"
+#: admin_audit_log's target_type for a check-item decision (#866 K59)
+_AUDIT_TARGET = "check_item"
 
 
 def _item_text(item: CheckItem | None) -> dict:
@@ -164,6 +169,20 @@ def _stored(item_id: str) -> CheckItem:
     return item
 
 
+def _audit_log(admin: str, action: str, item_id: str, item: CheckItem, **payload) -> None:
+    """The decision in Admin → Audit log (#866 K59): who decided what on which
+    course question, and whether it finished. The course question names it —
+    a retire deletes the item's rows. Ids, enums and counts only, never the
+    question's text; `log_admin_action` never raises."""
+    log_admin_action(
+        actor_id=admin,
+        action=f"{_AUDIT_TARGET}.{action}",
+        target_type=_AUDIT_TARGET,
+        target_id=item_id,
+        payload={"course_id": item.course_id, "question_hash": item.question_hash, **payload},
+    )
+
+
 def _decide(item: CheckItem, status: str, admin: str) -> item_reports.Decision:
     try:
         return item_reports.decide(item.course_id, item.question_hash, status, reviewed_by=admin)
@@ -195,6 +214,7 @@ def approve(item_id: str, request: Request) -> dict:
         relint_course_item(item.course_id, item.question_hash)
     except Exception:
         logger.warning("check item key not confirmed (item %s)", item.id, exc_info=True)
+        _audit_log(admin, "approve", item_id, item, restored=restored, finished=False)
         raise HTTPException(
             status_code=503, detail="Approved, but its key was not confirmed yet; approve it again."
         ) from None
@@ -204,6 +224,7 @@ def approve(item_id: str, request: Request) -> dict:
         user_id=admin,
         payload={"course_id": item.course_id, "question_hash": item.question_hash, "restored": restored},
     )
+    _audit_log(admin, "approve", item_id, item, restored=restored, finished=True)
     return {"id": item_id, "status": item_reports.APPROVED, "restored": restored}
 
 
@@ -222,6 +243,8 @@ def retire(item_id: str, request: Request) -> dict:
         outcome = retire_course_item(item.course_id, item.question_hash)
     except Exception:
         logger.error("check item retire FAILED (item %s)", item.id, exc_info=True)
+        # decided all the same: nothing serves it and no new grade of it commits
+        _audit_log(admin, "retire", item_id, item, finished=False)
         raise HTTPException(
             status_code=503,
             detail="Retired, but its results were not all voided yet; retire it again.",
@@ -238,6 +261,10 @@ def retire(item_id: str, request: Request) -> dict:
             "students": outcome.students,
             "voided": outcome.voided,
         },
+    )
+    _audit_log(
+        admin, "retire", item_id, item,
+        finished=True, items=outcome.items, students=outcome.students, voided=outcome.voided,
     )
     return {
         "id": item_id,
@@ -334,13 +361,19 @@ def audit(item_id: str, body: AuditBody, request: Request) -> dict:
         require_admin_recent(request)
     admin = get_session_user_id(request)
     item = _stored(item_id)
+    # "correct" confirms the key; "wrong" / "ambiguous" hold it
+    holds = body.verdict != "correct"
     try:
         status = record_item_audit(item, body.verdict, auditor=admin)
     except Exception:
         logger.warning("check item audit not recorded (item %s)", item.id, exc_info=True)
+        # the verdict row is written before the item's rows: it may stand
+        _audit_log(admin, "audit", item_id, item, verdict=body.verdict, held=holds, finished=False)
         raise HTTPException(status_code=503, detail="Verdict not recorded; try again.") from None
-    # "correct" confirms the key; "wrong" / "ambiguous" hold it
-    return {"id": item_id, "verdict": body.verdict, "key_status": status, "held": body.verdict != "correct"}
+    _audit_log(
+        admin, "audit", item_id, item, verdict=body.verdict, key_status=status, held=holds, finished=True
+    )
+    return {"id": item_id, "verdict": body.verdict, "key_status": status, "held": holds}
 
 
 # ── empirical item statistics (A131) ─────────────────────────────────────────
