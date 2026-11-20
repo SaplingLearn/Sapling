@@ -1148,7 +1148,8 @@ test("budget cap: tutor chat pauses on /learn; review still serves and grades on
   // runs (spec §3.5: the probe keeps working at the hard level; grading has its own cap).
   await expect(banner).toBeVisible();
   await expect(page.getByTestId("loop-probe-item")).toBeVisible();
-  await expect(banner).toContainText("Practice and review keep working");
+  // #866 K35: a $ cap holds checks on novice-band concepts too (A20), and says so
+  await expect(banner).toContainText("Review keeps working, but checks on concepts you're just starting are paused too");
   await expect(banner).toContainText("Tutor chat paused until"); // the daily copy (A39: not session-capped)
   expect(await banner.getAttribute("data-reset-at")).toBeTruthy();
   await expect(page.getByTestId("loop-budget-study-link")).toHaveAttribute("href", "/study");
@@ -1180,6 +1181,72 @@ test("budget cap: tutor chat pauses on /learn; review still serves and grades on
   expect(Number(card[0].reps)).toBe(1);
   expect(new Date(card[0].due_at).getTime()).toBeGreaterThan(Date.now());
 
+  await context.close();
+});
+
+test("Study: a never-rated card is a new card, and the queue keeps the student's local day (#866 K14, K17)", async ({ browser }) => {
+  test.skip(loopOffLane, "loop path: default lane only");
+  // The capped user's one seeded card, never rated: due_at NULL enters the review
+  // pool (spec §13 A74) as a NEW card, not a review that is due.
+  await queryRaw(
+    `UPDATE flashcards SET due_at = NULL, fsrs_s = NULL, fsrs_d = NULL, reps = 0, last_reviewed_at = NULL WHERE id = $1`,
+    [CAPPED_CARD_ID],
+  );
+  const { context, page } = await signIn(browser, USER_CAPPED, "Casey Cap");
+  const served = page.waitForResponse((r) => new URL(r.url()).pathname === "/api/learn/loop/review/next");
+  await page.goto("/study");
+  const response = await served;
+  // K17: the review is keyed on the student's local day (JS getTimezoneOffset)
+  const offset = await page.evaluate(() => new Date().getTimezoneOffset());
+  expect(new URL(response.url()).searchParams.get("tz_offset_min")).toBe(String(offset));
+  const body = (await response.json()) as { new_total: number; item: { id: string; new?: boolean } | null };
+  expect(body.new_total).toBeGreaterThanOrEqual(1);
+  await expect(page.getByTestId("review-item")).toContainText(CAPPED_CARD_FRONT);
+  await expect(page.getByTestId("review-new-card")).toHaveText("New card");
+  await page.getByTestId("review-flip").click();
+  await page.getByTestId("review-rate-3").click();
+  await expect(page.getByTestId("review-hint")).toBeVisible();
+  await expect
+    .poll(async () => ((await queryRaw(`SELECT due_at FROM flashcards WHERE id = $1`, [CAPPED_CARD_ID])) as { due_at: string | null }[])[0].due_at, {
+      timeout: DB_POLL_TIMEOUT_MS,
+    })
+    .not.toBeNull();
+  await context.close();
+});
+
+test("Study: a check the grader could not grade moves on and comes back with what was typed (#866 K16)", async ({ browser }) => {
+  test.skip(loopOffLane, "loop path: default lane only");
+  const { context, page } = await signIn(browser, USER_CAPPED, "Casey Cap");
+  const check = {
+    kind: "check", id: "e2e-k16-check", cost_s: 45, sr: { stage: "acquire", correct: 0, target: 3 },
+    concept_name: "Binary Numbers", format: "free", difficulty: 1, prompt: "What is a bit?",
+  };
+  const card = { kind: "flashcard", id: "e2e-k16-card", cost_s: 15, sr: { stage: "acquire", correct: 0, target: 3 }, topic: "Bits", front: "One bit holds?", back: "0 or 1" };
+  // The server's order (fulfilled here, so the grader's answer can be pinned):
+  // the open check until its grade comes back unavailable, then the card, then
+  // the deferred check again. Keyed on what was answered, never on call count.
+  const answered = { check: false, card: false };
+  const nextBody = () => ({
+    item: answered.check && !answered.card ? card : check,
+    remaining_budget_s: 600, session_id: "e2e-k16", retention_target: 0.9, due_total: 2, new_total: 0, in_budget: 2,
+  });
+  await page.route("**/api/learn/loop/review/next*", (route) => route.fulfill({ json: nextBody() }));
+  await page.route("**/api/learn/loop/review/answer", async (route) => {
+    const kind = (route.request().postDataJSON() as { kind: string }).kind;
+    answered[kind === "check" ? "check" : "card"] = true;
+    const unavailable = kind === "check";
+    await route.fulfill({ json: { correct: unavailable ? null : true, hint: null, next_due_at: null, rating: unavailable ? null : 3, remaining_budget_s: 600, sr: {}, unavailable, refused: false } });
+  });
+  await page.goto("/study");
+  await page.getByRole("textbox", { name: "Your answer" }).fill("a binary digit");
+  await page.getByTestId("review-submit").click();
+  await expect(page.getByTestId("review-hint")).toContainText("comes back after the rest of today's review");
+  await page.getByTestId("review-next").click();
+  await expect(page.getByTestId("review-item")).toContainText("One bit holds?");
+  await page.getByTestId("review-flip").click();
+  await page.getByTestId("review-rate-3").click();
+  await page.getByTestId("review-next").click();
+  await expect(page.getByRole("textbox", { name: "Your answer" })).toHaveValue("a binary digit");
   await context.close();
 });
 
