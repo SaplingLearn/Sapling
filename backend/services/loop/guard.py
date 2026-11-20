@@ -85,9 +85,10 @@ def _guard_history(messages: list, *, nonce: str, withheld: str | None) -> list:
     Z07: a tutor row can be code-served text no model wrote — a check pose, an
     H2 passage from a classmate's upload, an H4 sibling or an H6 reference, all
     verbatim — and the history sits outside the student's envelope, where the
-    system prompt reads every block as a control block. Every tutor row's
-    control tags are neutralised (its words kept): a model-written row has
-    none (`validate_turn` refuses them), so only code-served text changes."""
+    system prompt reads every block as a control block. Every tutor row has its
+    tag-shaped runs neutralised as the student's rows do (its words kept). A
+    model-written row carries no control tag (`validate_turn` refuses them), so
+    what changes is code-served text and, rarely, a bracketed word of prose."""
     out: list = []
     for m in messages:
         if isinstance(m, _BriefRequest):
