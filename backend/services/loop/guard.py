@@ -105,7 +105,7 @@ def _guard_history(messages: list, *, nonce: str, withheld: str | None) -> list:
             out.append(ModelRequest(parts=parts))
         elif isinstance(m, ModelResponse):
             parts = [_guard_tutor_part(p, withheld) for p in m.parts]
-            changed = any(a is not b for a, b in zip(parts, m.parts))
+            changed = any(a is not b for a, b in zip(parts, m.parts, strict=True))
             out.append(ModelResponse(parts=parts) if changed else m)
         else:
             out.append(m)
