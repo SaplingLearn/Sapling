@@ -40,8 +40,11 @@ SAPLING_MODEL_MODE is not 'real' unless --function-mode. Needs the
 ENCRYPTION_KEY the rows were written under (the item text is decrypted in memory
 to check it) and migration 20261108051912_learning_item_alignment.sql applied.
 Every row is read and checked before anything is written (a write moves a row
-out of the `aligned_at IS NULL` paging). Exit 1 when any write failed or any
-item was left unchecked.
+out of the `aligned_at IS NULL` paging), and a rewrite or a re-key holds to
+the flags and key status the row had when it was read (PR #866 Z35): a row a
+staff decision changed during the check is not written and is counted
+"changed since read" for the next run. Exit 1 when any write failed, any item
+was left unchecked or any row changed since the read.
 """
 
 import argparse
@@ -175,7 +178,7 @@ def main(argv: list[str] | None = None) -> int:
     for item_id in retires:
         print(f"    retire {item_id}")
 
-    failed = written = 0
+    failed = written = changed = 0
     if args.apply:
         at = datetime.now(UTC).isoformat()
         if unchanged:
@@ -186,8 +189,13 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"  stamp failed for {len(unchanged)} row(s): {type(exc).__name__}")
         for row, item, result in rewrites:
             try:
-                apply_item_alignment(row, item, result, at=at)
-                written += 1
+                if apply_item_alignment(row, item, result, at=at) is None:
+                    # Z35: a staff decision landed during the check; left as
+                    # staff left it for the next run, which reads it afresh
+                    changed += 1
+                    print(f"    changed since read, not written: {item.id}")
+                else:
+                    written += 1
             except Exception as exc:  # noqa: BLE001
                 failed += 1
                 print(f"  write failed for {item.id}: {type(exc).__name__}")
@@ -198,8 +206,11 @@ def main(argv: list[str] | None = None) -> int:
             except Exception as exc:  # noqa: BLE001
                 failed += len(retires)
                 print(f"  retire failed for {len(retires)} row(s): {type(exc).__name__}")
-        print(f"Done: {written} row(s) written, {failed} failed, {unchecked} unchecked")
-    return 1 if failed or unchecked else 0
+        print(
+            f"Done: {written} row(s) written, {failed} failed, {unchecked} unchecked"
+            + (f", {changed} changed since read" if changed else "")
+        )
+    return 1 if failed or unchecked or changed else 0
 
 
 if __name__ == "__main__":

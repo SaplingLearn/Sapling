@@ -1069,7 +1069,11 @@ def test_backfill_dry_run_writes_nothing(backfill, monkeypatch, capsys):
 def test_backfill_apply_writes_each_flag_set_once(backfill, monkeypatch, capsys):
     monkeypatch.setattr(backfill, "items_to_lint", lambda course, *, relint: iter(_backfill_items()))
     writes = []
-    monkeypatch.setattr(backfill, "store_lint_flags", lambda flags, ids: writes.append((flags, list(ids))))
+    monkeypatch.setattr(
+        backfill,
+        "store_lint_flags",
+        lambda flags, ids, *, read_flags: writes.append((flags, list(ids))) or len(ids),
+    )
     assert backfill.main(["--apply", "--course", "c1", "--relint"]) == 0
     assert sorted(writes) == [((), ["i1"]), (("negative_stem",), ["i2"])]
     assert "Done: 2 row(s) written, 0 failed" in capsys.readouterr().out
@@ -1085,7 +1089,7 @@ def test_backfill_reads_everything_before_writing_and_exits_1_on_a_failure(backf
             log.append(("read", item.id))
             yield item
 
-    def store(flags, ids):
+    def store(flags, ids, *, read_flags):
         log.append(("write", tuple(ids)))
         raise RuntimeError("down")
 

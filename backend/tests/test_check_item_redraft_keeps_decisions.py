@@ -252,7 +252,10 @@ def test_an_alignment_rekey_onto_a_stored_row_keeps_that_row(monkeypatch):
     items = _ItemsTable([misfiled, target])
     deleted: list = []
     items.delete = lambda filters=None: deleted.append(filters) or [{"id": misfiled_id}]
-    stored_item = _item(id=misfiled_id, course_id=COURSE, concept_key="momentum", prompt=draft.prompt)
+    stored_item = _item(
+        id=misfiled_id, course_id=COURSE, concept_key="momentum", prompt=draft.prompt,
+        lint_flags=[], canonical_verified=True,  # as the backfill read the row
+    )
     with patch.object(svc, "table", side_effect=lambda n: items):
         new_id = svc.apply_item_alignment(
             dict(misfiled), stored_item, Alignment((0, 1), KEY, (CONCEPT_RETAGGED,)), at="2026-11-12T00:00:00Z"

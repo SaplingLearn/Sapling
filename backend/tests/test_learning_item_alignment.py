@@ -752,6 +752,11 @@ class _Recorder:
         class _T:
             def update(self, row, filters=None, **kw):
                 rec.writes.append(("update", name, row, filters))
+                return [{"id": (filters or {}).get("id", "eq.")[3:]}]  # unchanged since read
+
+            def select(self, columns, filters=None, **kw):
+                # Z35: a re-key reads its row back under the as-read filters
+                return [{"id": (filters or {}).get("id", "eq.")[3:]}]
 
             def upsert(self, rows, on_conflict=None, ignore_duplicates=False):
                 assert ignore_duplicates, "Z09: a re-key never rewrites a stored row"
@@ -834,8 +839,11 @@ class TestBackfill:
         code, rec = _run_backfill(
             backfill, monkeypatch, ["--apply", "--project", "proj-a"], verify=_verifier(decide)
         )
-        live = [w for w in rec.writes if w[0] == "update" and w[3] == {"id": "eq.i-live"}]
-        ((_, _, row, _),) = live
+        live = [w for w in rec.writes if w[0] == "update" and w[3]["id"] == "eq.i-live"]
+        ((_, _, row, filters),) = live
+        # Z35: the write holds to the flags and key status as read
+        assert filters == {"id": "eq.i-live", "lint_flags": "is.null", "canonical_verified": "eq.false",
+                           "select": "id"}
         assert set(row) == {"rubric_json", "lint_flags", "aligned_at"}
         assert row["lint_flags"] == [ia.RUBRIC_UNASKED_DROPPED]
         assert not [w for w in rec.writes if w[0] == "upsert"]

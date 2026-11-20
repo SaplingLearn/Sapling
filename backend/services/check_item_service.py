@@ -1073,6 +1073,27 @@ def items_to_lint(course_id: str | None = None, *, relint: bool = False) -> Iter
             yield items[0]
 
 
+def _pg_array(values: Iterable[str]) -> str:
+    """A text[] literal for a PostgREST filter value (codes: no quoting needed,
+    but quoted all the same)."""
+    return "{" + ",".join('"' + v.replace('"', "") + '"' for v in values) + "}"
+
+
+def as_read_filters(lint_flags, canonical_verified) -> dict[str, str]:
+    """Z35: PostgREST filters that hold a backfill's write to the row as it
+    was READ — its `lint_flags` and `canonical_verified`, the two columns a
+    staff decision moves (an audit verdict, an approval, a quarantine) and a
+    backfill rewrites as absolute values. A backfill reads every row, then
+    runs for minutes to hours; a write filtered this way meets no row when a
+    decision landed meanwhile, so it never overwrites one (the row is left
+    for the next run, which reads it afresh)."""
+    flags = "is.null" if lint_flags is None else f"eq.{_pg_array(lint_flags)}"
+    return {
+        "lint_flags": flags,
+        "canonical_verified": "eq.true" if canonical_verified else "eq.false",
+    }
+
+
 def lint_update(item: CheckItem) -> list[str] | None:
     """The item's lint flags as the write path would store them now, or None
     when they equal what is stored (nothing to write). The A119 alignment codes
@@ -1084,19 +1105,32 @@ def lint_update(item: CheckItem) -> list[str] | None:
     return None if item.lint_flags == flags else flags
 
 
-def store_lint_flags(flags: Iterable[str], item_ids: Iterable[str]) -> int:
+_ANY = object()
+
+
+def store_lint_flags(flags: Iterable[str], item_ids: Iterable[str], *, read_flags=_ANY) -> int:
     """Write one set of lint codes (a plaintext column) onto these items,
     _DOC_ID_BATCH ids per `in.(...)` update; returns how many ids were sent.
-    Raises on a failed write."""
+    With `read_flags` (the lint backfill, Z35: the flags these rows held when
+    it read them, None = never linted) only rows that still hold them are
+    written, and it returns how many were. Raises on a failed write."""
     ids = [i for i in dict.fromkeys(item_ids) if i]
+    guarded = read_flags is not _ANY
+    written = 0
     for start in range(0, len(ids), _DOC_ID_BATCH):
         batch = ids[start : start + _DOC_ID_BATCH]
-        table(_TABLE).update(
-            {"lint_flags": list(flags)},
-            filters={"id": "in.(" + ",".join(pg_quote_value(i) for i in batch) + ")"},
-            prefer_return_minimal=True,
+        filters = {"id": "in.(" + ",".join(pg_quote_value(i) for i in batch) + ")"}
+        if not guarded:
+            table(_TABLE).update(
+                {"lint_flags": list(flags)}, filters=filters, prefer_return_minimal=True
+            )
+            continue
+        filters["lint_flags"] = (
+            "is.null" if read_flags is None else f"eq.{_pg_array(read_flags)}"
         )
-    return len(ids)
+        rows = table(_TABLE).update({"lint_flags": list(flags)}, filters={**filters, "select": "id"})
+        written += len(rows or [])
+    return written if guarded else len(ids)
 
 
 def relint_course_item(course_id: str, question_hash: str) -> int:
@@ -1252,7 +1286,7 @@ def reseal_row_for_id(row: dict, old_id: str, new_id: str) -> None:
         row[column] = encrypt(plain, bind=bind(_TABLE, column, new_id))
 
 
-def apply_item_alignment(row: dict, item: CheckItem, result: Alignment, *, at: str) -> str:
+def apply_item_alignment(row: dict, item: CheckItem, result: Alignment, *, at: str) -> str | None:
     """Write what the check changed on one stored item: its rubric rebuilt
     from the kept criteria (checks.rubric_entries — numbered and closed with
     the reason criterion exactly as a fresh item's), its flags (the linter's
@@ -1266,9 +1300,16 @@ def apply_item_alignment(row: dict, item: CheckItem, result: Alignment, *, at: s
     under that key IS this question under the tested concept: it is kept as
     it is (ON CONFLICT DO NOTHING, Z09 — never its key, hold, audit verdict
     or approval rewritten by a model's re-tag) and the misfiled copy goes.
-    Evidence is never written. Returns the item's id after the write; raises
-    on a failed write (a re-run finishes a half-done re-key: the old row is
-    still unchecked)."""
+    Evidence is never written. Z35: both writes hold to the row as the
+    backfill read it (`as_read_filters`), so a staff decision recorded while
+    the check ran is never overwritten: the in-place update meets no row then,
+    and a re-key first re-reads the row under the same filters and moves
+    nothing when it changed; the moved row also takes any audit hold its
+    question carries (item_reports.audit_holds), as a drafted one does.
+    Returns the item's id after the write, None when the row changed since
+    the read (left for the next run); raises on a failed write (a re-run
+    finishes a half-done re-key: the old row is still unchecked)."""
+    as_read = as_read_filters(item.lint_flags, item.canonical_verified)
     criteria = content_criteria(item)
     update: dict = {
         "lint_flags": merge_flags(lint_check_item(item), kept_flags(item.lint_flags), result.flags),
@@ -1283,8 +1324,12 @@ def apply_item_alignment(row: dict, item: CheckItem, result: Alignment, *, at: s
         if rubric_text is not None:
             update["rubric_json"] = encrypt_if_present(
                 rubric_text, bind=bind(_TABLE, "rubric_json", item.id))
-        table(_TABLE).update(update, filters={"id": f"eq.{item.id}"}, prefer_return_minimal=True)
-        return item.id
+        written = table(_TABLE).update(
+            update, filters={"id": f"eq.{item.id}", **as_read, "select": "id"}
+        )
+        return item.id if written else None
+    if not table(_TABLE).select("id", filters={"id": f"eq.{item.id}", **as_read}, limit=1):
+        return None  # a decision landed since the read: the next run re-checks it
     new_id = item_id(item.course_id, result.concept_key, item.question_hash)
     columns = [*_COLUMNS.split(","), *_RETAG_CARRIED]
     moved = {c: row[c] for c in columns if c in row}
@@ -1296,6 +1341,9 @@ def apply_item_alignment(row: dict, item: CheckItem, result: Alignment, *, at: s
         update["rubric_json"] = encrypt_if_present(
             rubric_text, bind=bind(_TABLE, "rubric_json", new_id))
     moved.update(update, id=new_id, concept_key=result.concept_key)
+    _hold_as_decided(
+        moved, None, audit_holds(item.course_id, [item.question_hash]).get(item.question_hash)
+    )
     table(_TABLE).upsert([moved], on_conflict=_ON_CONFLICT, ignore_duplicates=True)
     retire_items_by_id([item.id])
     return new_id
@@ -1433,10 +1481,22 @@ def key_check_update(item: CheckItem, check: KeyCheck, *, at: str) -> dict:
     return update
 
 
-def apply_key_check(item: CheckItem, update: dict) -> None:
+def apply_key_check(item: CheckItem, update: dict) -> bool:
     """Write `key_check_update`'s columns onto one stored item (its plaintext
-    columns only). Raises on a failed write."""
-    table(_TABLE).update(update, filters={"id": f"eq.{item.id}"}, prefer_return_minimal=True)
+    columns only) — only while it still holds the flags and key status the
+    backfill read (Z35, `as_read_filters`): an audit verdict or an approval
+    recorded during the solve is never overwritten. True when it wrote; False
+    when the row changed since the read (or is gone): left for the next run.
+    Raises on a failed write."""
+    rows = table(_TABLE).update(
+        update,
+        filters={
+            "id": f"eq.{item.id}",
+            **as_read_filters(item.lint_flags, item.canonical_verified),
+            "select": "id",
+        },
+    )
+    return bool(rows)
 
 
 def audit_decided(item: CheckItem) -> bool:

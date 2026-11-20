@@ -574,7 +574,7 @@ def test_an_alignment_re_tag_carries_the_surface_descriptor():
         "surface_context": context,
     }
     retag = Alignment((0,), "base case", (CONCEPT_RETAGGED,))
-    factory, mocks = _cached_tables({})
+    factory, mocks = _cached_tables({"check_items": [row]})  # read back as read (Z35)
     with patch("services.check_item_service.table", side_effect=factory):
         svc.apply_item_alignment(row, item, retag, at="2026-11-08T02:00:00+00:00")
     ((moved,),) = mocks["check_items"].upsert.call_args[0][:1]
@@ -586,7 +586,7 @@ def test_an_alignment_re_tag_carries_the_surface_descriptor():
     ) == "e2e step sizes"
     # an item drafted before A140 moves without one, as before
     bare = _row(item) | {"key_checked_at": None, "aligned_at": None}
-    factory, mocks = _cached_tables({})
+    factory, mocks = _cached_tables({"check_items": [bare]})
     with patch("services.check_item_service.table", side_effect=factory):
         svc.apply_item_alignment(bare, item, retag, at="2026-11-08T02:00:00+00:00")
     ((moved,),) = mocks["check_items"].upsert.call_args[0][:1]

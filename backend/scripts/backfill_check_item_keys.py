@@ -43,8 +43,12 @@ SAPLING_MODEL_MODE is not 'real' unless --function-mode. Needs the
 ENCRYPTION_KEY the rows were written under (item and passage text is decrypted
 in memory to solve it) and migration 20261108073631_learning_item_keys.sql
 applied. Every row is read and checked before anything is written (a write
-moves a row out of the `key_checked_at IS NULL` paging). Exit 1 when any write
-failed or any item was left unchecked.
+moves a row out of the `key_checked_at IS NULL` paging), and each write holds
+to the flags and key status the row had when it was read (PR #866 Z35): a row
+an audit verdict or an approval changed during the solve is not written, so
+staff's word is never overwritten, and it is counted "changed since read" for
+the next run. Exit 1 when any write failed, any item was left unchecked or any
+row changed since the read.
 """
 
 import argparse
@@ -218,17 +222,25 @@ def main(argv: list[str] | None = None) -> int:
         if check is not None and not check.verified:
             print(f"    {check.flag} {item.id}")
 
-    failed = written = 0
+    failed = written = changed = 0
     if args.apply:
         for item, update in writes:
             try:
-                apply_key_check(item, update)
-                written += 1
+                if apply_key_check(item, update):
+                    written += 1
+                else:
+                    # Z35: an audit verdict or an approval landed during the
+                    # solve; the row is left as staff left it for the next run
+                    changed += 1
+                    print(f"    changed since read, not written: {item.id}")
             except Exception as exc:  # noqa: BLE001 — one failed write is reported, the rest still run
                 failed += 1
                 print(f"  write failed for {item.id}: {type(exc).__name__}")
-        print(f"Done: {written} row(s) written, {failed} failed, {sum(unchecked.values())} unchecked")
-    return 1 if failed or unchecked else 0
+        print(
+            f"Done: {written} row(s) written, {failed} failed, {sum(unchecked.values())} unchecked"
+            + (f", {changed} changed since read" if changed else "")
+        )
+    return 1 if failed or unchecked or changed else 0
 
 
 if __name__ == "__main__":

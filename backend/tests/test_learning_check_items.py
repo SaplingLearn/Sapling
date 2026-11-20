@@ -4676,8 +4676,25 @@ class _ItemsTable:
     def select(self, columns, filters=None, order=None, limit=None):
         self.selects.append(dict(filters or {}))
         self.columns.append(columns)
-        eq = {k: v[3:] for k, v in (filters or {}).items() if v.startswith("eq.")}
-        return [r for r in self.rows.values() if all(str(r.get(k)) == v for k, v in eq.items())]
+        return [
+            r for r in self.rows.values()
+            if all(self._matches(r.get(k), v) for k, v in (filters or {}).items())
+        ]
+
+    @staticmethod
+    def _matches(cell, value) -> bool:
+        """`eq.` and `is.null` as PostgREST reads them (a text[] literal, a
+        boolean); any other operator is not modelled and matches."""
+        if value == "is.null":
+            return cell is None
+        if not value.startswith("eq."):
+            return True
+        want = value[3:]
+        if isinstance(cell, bool):
+            return want == ("true" if cell else "false")
+        if isinstance(cell, list):
+            return want == "{" + ",".join(f'"{c}"' for c in cell) + "}"
+        return str(cell) == want
 
     def delete(self, filters=None):
         return []
