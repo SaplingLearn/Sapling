@@ -84,6 +84,7 @@ from learning.answer_guard import Refusal
 from learning.checks import RubricItem, WrongReason
 from learning.evidence import GraderBackend
 from services import ai_budget, events_service
+from services.log_privacy import safe_exception_text
 
 logger = logging.getLogger("sapling.decisions")
 
@@ -720,8 +721,9 @@ async def _run_decision(decision: str, state, deps):
     token cap is checked AFTER a response; a validation failure can follow a billed
     request): the §3.5 caps (STUDENT_DAILY_GRADES counts task="learning_decision") and the admin
     cost analytics read llm_usage only — the agents.grader._run_once posture."""
-    # spec §3.5: decisions count as grades (STUDENT_DAILY_GRADES); PKG-06b, invariant 23
-    if ai_budget.check(deps.user_id, "decision").level == "hard":
+    # spec §3.5: decisions count as grades (STUDENT_DAILY_GRADES); PKG-06b, invariant 23.
+    # #866 Z16: a paged llm_usage read on a cache miss, so off the event loop
+    if (await asyncio.to_thread(ai_budget.check, deps.user_id, "decision")).level == "hard":
         return BUDGET_CAPPED  # the callers' unavailable path runs, reason "budget"
     message, output_type = decision_request(decision, state)
     usage = RunUsage()
@@ -741,7 +743,8 @@ async def _run_decision(decision: str, state, deps):
             )
         if not isinstance(exc, _DECISION_FAILURES):
             raise
-        logger.warning("decision unavailable (%s): %s", decision, exc)
+        # #866 Z46: never str(exc) — UnexpectedModelBehavior's text carries the response body
+        logger.warning("decision unavailable (%s): %s", decision, safe_exception_text(exc))
         return None
     record_agent_usage(
         result,
@@ -931,8 +934,8 @@ async def _serve_jev(
     (task `decision`); a billed attempt that falls back, or one where the grader's prior
     would have answered for free, is `decision_jev_extra` ($ only) — so a decision never
     counts more grades under jev than under gemini."""
-    if ai_budget.check(deps.user_id, "decision").level == "hard":
-        return None, _REASON_BUDGET
+    if (await asyncio.to_thread(ai_budget.check, deps.user_id, "decision")).level == "hard":
+        return None, _REASON_BUDGET  # the read hops off the event loop (#866 Z16)
     out = await _call_jev(decision, state)
     reason = out.error_code
     if reason is None and out.confidence < JEV_MIN_CONFIDENCE:

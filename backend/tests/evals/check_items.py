@@ -5,7 +5,12 @@
 
 Cases are derived from fixtures/tutor_course.json (plaintext by design): for
 the first two documents, up to three concept_notes each → 6 cases, one concept
-per call (the standard tier; Flex is a serving choice, not a quality one).
+per call (the standard tier; Flex is a serving choice, not a quality one), and
+one call per document for all three concepts at once → 2 cases: production
+drafts CHECK_ITEM_CONCEPTS_PER_CALL concepts per call (27 items), the shape A38's
+split-and-retry exists for (#866 Z24; recorded in the A111 pass).
+ConceptsCovered scores that shape: every concept asked for gets a stored item
+and no item names a concept it was not asked for.
 Chunks are the document summary plus each concept_note description, ids
 "<document_id>:c<i>". Add cases when production produces a bad item; never
 edit an existing one to make it pass.
@@ -66,7 +71,12 @@ from learning.checks import (  # noqa: E402
     repair_draft,
     validate_draft,
 )
-from learning.params import CHECK_ITEM_MIN_RUBRIC, CHECK_ITEM_MIN_WRONG  # noqa: E402
+from learning.item_alignment import concept_key  # noqa: E402
+from learning.params import (  # noqa: E402
+    CHECK_ITEM_CONCEPTS_PER_CALL,
+    CHECK_ITEM_MIN_RUBRIC,
+    CHECK_ITEM_MIN_WRONG,
+)
 from _replay import (  # noqa: E402  (sibling, sys.path-injected)
     MODE,
     _run_with_retry,
@@ -81,8 +91,9 @@ from _replay import (  # noqa: E402  (sibling, sys.path-injected)
     schema_hash,
 )
 
-# (concept_name, ((chunk_id, chunk_text), ...)) — hashable so _INPUT_TO_NAME works.
-CheckItemsInput = tuple[str, tuple[tuple[str, str], ...]]
+# (concept name — or, for a multi-concept call, a tuple of names — and
+# ((chunk_id, chunk_text), ...)); hashable so _INPUT_TO_NAME works.
+CheckItemsInput = tuple[str | tuple[str, ...], tuple[tuple[str, str], ...]]
 
 _FIXTURE = Path(__file__).parent / "fixtures" / "tutor_course.json"
 _DOCS_PER_DATASET = 2
@@ -106,6 +117,14 @@ def _cases() -> list[Case[CheckItemsInput, CheckItemsOutput]]:
                     inputs=(name, tuple(chunks)),
                 )
             )
+    for doc in data["documents"][:_DOCS_PER_DATASET]:  # #866 Z24: production's call shape
+        chunks = [(f"{doc['document_id']}:c0", doc["summary"])] + [
+            (f"{doc['document_id']}:c{i + 1}", f"{n['name']}: {n['description']}")
+            for i, n in enumerate(doc["concept_notes"])
+        ]
+        names = tuple(n["name"] for n in doc["concept_notes"][:CHECK_ITEM_CONCEPTS_PER_CALL])
+        assert len(names) == CHECK_ITEM_CONCEPTS_PER_CALL
+        cases.append(Case(name=f"{doc['document_id']}__all_concepts", inputs=(names, tuple(chunks))))
     assert len(cases) <= _MAX_CASES
     return cases
 
@@ -271,9 +290,30 @@ class FinalAnswerValidEvaluator(Evaluator[CheckItemsInput, CheckItemsOutput]):
         return 1.0 if accepted and ok else 0.0
 
 
+def _asked(case_input) -> list[str]:
+    """The concept names a case's call asks for (one, or a multi-concept call's)."""
+    concept = case_input[0]
+    return [concept] if isinstance(concept, str) else list(concept)
+
+
+@dataclass
+class ConceptsCoveredEvaluator(Evaluator[CheckItemsInput, CheckItemsOutput]):
+    """#866 Z24: the share of the call's concepts that get a stored item; 0.0
+    when an item names a concept the call did not ask for (A38: production
+    splits and retries a call that leaves a concept out)."""
+
+    def evaluate(self, ctx: _Ctx) -> float:
+        asked = {concept_key(c) for c in _asked(ctx.inputs)}
+        stored = [i for i in ctx.output.items if _stored(i)]
+        named = {concept_key(i.concept) for i in stored}
+        if not stored or not named <= asked:
+            return 0.0
+        return len(named & asked) / len(asked)
+
+
 def _message(case_input: CheckItemsInput) -> str:
-    concept, chunks = case_input
-    return build_prompt([concept], [{"id": cid, "text": text} for cid, text in chunks])
+    _, chunks = case_input
+    return build_prompt(_asked(case_input), [{"id": cid, "text": text} for cid, text in chunks])
 
 
 def identity(case_input: CheckItemsInput) -> dict:
@@ -315,6 +355,7 @@ def make_dataset() -> Dataset[CheckItemsInput, CheckItemsOutput]:
             McOptionsValidEvaluator(),
             McCorrectNotLongestEvaluator(),
             FinalAnswerValidEvaluator(),
+            ConceptsCoveredEvaluator(),
         ],
     )
 

@@ -45,6 +45,10 @@ DATASETS = [
     # scores the loop tutor's ceiling; gated at 1.0.
     "loop_rung_judge",
     "check_items",
+    # #866 Z24/Z25: the drafting pipeline's own model steps (VARIANTS: the A119
+    # check, the A124 solve and key match, the A37 top-up, the A140 varied and
+    # A141 combination drafters), each on its own slot.
+    "check_item_gates",
     "grader",
     "decisions",
     # PKG-09: the session-close agent, gated on the SERVED close

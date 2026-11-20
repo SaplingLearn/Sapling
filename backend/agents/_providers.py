@@ -1535,19 +1535,26 @@ def provider_model(
     )
 
 
-@functools.lru_cache(maxsize=16)
+#: Room for every slot's model plus the per-request fast/smart overrides; an
+#: evicted model is only rebuilt on its next call (a memory bound, not policy).
+_SHARED_MODELS_MAX = 64
+
+
+@functools.lru_cache(maxsize=_SHARED_MODELS_MAX)
 def override_model(name: str, task: AgentTask) -> "Model":
     """`provider_model(name, task=task)`, built once per process and shared.
 
-    For the per-request fast/smart override (routes/learn.py, routes/quiz.py):
-    the browser sends a pref on EVERY tutor turn, and a fresh model per
-    request meant fresh provider httpx pools (a TLS handshake per turn) that
-    were never closed. The import-time agents already share one model for the
-    process; this gives the override path the same lifetime. Safe to share for
-    the same reason they are: the loop-safe mixin resolves a per-event-loop
-    provider at every `.client` read, and nothing mutates a built Model.
-    Deterministic in (name, task) — the env read happens in the caller — and
-    `clear_override_model_cache()` is the invalidation hook (#98).
+    Every real model a caller gets comes from here: the per-request fast/smart
+    override (routes/learn.py, routes/quiz.py) and `model_for` (#866 Z17).
+    The browser sends a pref on EVERY tutor turn, and the loop tutor's tier,
+    the grader's second opinion and the quiz's item checks resolve their slot
+    per RUN; a fresh model each time meant fresh provider httpx pools (a TLS
+    handshake per turn) that were never closed. Safe to share for the same
+    reason the import-time agents always shared theirs: the loop-safe mixin
+    resolves a per-event-loop provider at every `.client` read, and nothing
+    mutates a built Model. Deterministic in (name, task) — the env read happens
+    in the caller — and `clear_override_model_cache()` is the invalidation
+    hook (#98).
     """
     return provider_model(name, task=task)
 
@@ -1713,6 +1720,13 @@ def model_for(task: AgentTask) -> "Model":
     event loop it ends up running on. In function mode, returns a
     FunctionModel (see the seam notes above). An evidence slot resolved to a
     model outside its evaluated set is reported once (`note_slot_model`, A128).
+
+    A real model is built ONCE per (resolved name, task) and shared
+    (`override_model`, #866 Z17): the import-time agents and every per-run
+    caller (the loop tutor's tier, the grader's second opinion, the quiz's
+    item checks) reuse its per-loop provider pools instead of opening a new
+    TLS connection, and leaking its pools, on every run. An env flip resolves
+    another name, so another model.
     """
     global _BUILT_UNDER
     mode = _model_mode()
@@ -1721,7 +1735,7 @@ def model_for(task: AgentTask) -> "Model":
     if mode == "real":
         name = model_name_for(task)
         note_slot_model(task, name)
-        return provider_model(name, task=task)
+        return override_model(name, task)
     if mode == "function":
         return _function_model_for(task)
     if mode == "cassette":

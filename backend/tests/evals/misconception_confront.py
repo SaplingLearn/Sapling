@@ -94,6 +94,7 @@ from loop_tutor import (  # noqa: E402
     _released,
     _responses,
     prompt_hash_for,
+    recorded as recorded_space,
     routing_identity,
     schema_hash_for,
     served_texts,
@@ -244,6 +245,28 @@ CASES: list[Case[LoopInput, ConfrontReply]] = [
         },
     ),
     Case(
+        # spec §13 A122 (#866 Z23): a novice whose prerequisite is not known gets
+        # the worked example first — the confronting hint is the H4 example on
+        # an isomorph, in the worked-example-first band format
+        name="confront_hint_worked_first_novice_h4",
+        inputs=(
+            "hint",
+            "novice",
+            int(Rung.H4),
+            "[ACTION: The student asked for a hint. Give a small scaffold or clue without "
+            "giving away the answer.]",
+        ),
+        metadata={
+            "reference": "By the power rule the derivative of x^4 is 4x^3.",
+            "final_answer": "4x^3",
+            "trusted": True,
+            "attempt_first": False,
+            "item_prompt": "What is the derivative of x^4?",
+            "item_format": "free",
+            "misconception": _MIS_POWER,
+        },
+    ),
+    Case(
         name="confront_feedback_injected_misconception_text",
         inputs=(
             "feedback",
@@ -301,6 +324,7 @@ def assembled(case_input: LoopInput, v2: bool = V2) -> str:
         item_format=meta.get("item_format") if phase != "teach" else None,
         answer_released=_released(meta),
         verdict=meta.get("verdict"),
+        attempt_first=meta.get("attempt_first", True),  # A122 (#866 Z23)
         v2=v2,
         plan_reason=plan_reason,
     )
@@ -598,10 +622,30 @@ def make_dataset_for(slot: str, v2: bool = V2) -> Dataset[LoopInput, ConfrontRep
     )
 
 
-#: One dataset per slot a confronting turn is served on; run_all.py iterates these.
-VARIANTS = {
-    dataset_name(slot): (partial(make_dataset_for, slot), _run_for(slot)) for slot in CONFRONT_SLOTS
-}
+def _v2_recorded(slot: str) -> bool:
+    return recorded_space(_cassette_dataset(slot, True))
+
+
+def replay_variants(*, v2: bool = V2, recorded=_v2_recorded) -> dict:
+    """One dataset per slot a confronting turn is served on, in the run's
+    variant; a default run also replays every slot whose v2 cassettes are
+    recorded (#866 Z25), so CI keeps scoring the v2 prompt once it is."""
+    out = {
+        dataset_name(slot, v2): (partial(make_dataset_for, slot, v2), _run_for(slot, v2))
+        for slot in CONFRONT_SLOTS
+    }
+    if not v2:
+        for slot in CONFRONT_SLOTS:
+            if recorded(slot):
+                out[dataset_name(slot, True)] = (
+                    partial(make_dataset_for, slot, True),
+                    _run_for(slot, True),
+                )
+    return out
+
+
+#: run_all.py iterates these.
+VARIANTS = replay_variants()
 
 
 if __name__ == "__main__":

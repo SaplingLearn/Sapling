@@ -35,7 +35,7 @@ from services.academics import (
 from services.encryption import bind, decrypt_if_present, decrypt_json, encrypt_json
 from services.exam_proximity import is_assessment
 from services.request_limits import check_rate_limit
-from services import ai_budget, checklist_budget
+from services import ai_budget, checklist_budget, events_service
 from services.checklist_budget_run import ChecklistDispatches
 from services.checklist_receipt import prepare_checklist_receipt
 from services.request_context import current_request_id
@@ -453,6 +453,10 @@ def _finish_generation(generation: ChecklistGeneration, payload: dict) -> None:
             logger.warning("Checklist cancellation left usage pending reconciliation")
             raise generation.error
         raise
+    if receipt is not None:
+        # #866 Z54: the bill is now a committed llm_usage row; give it what every
+        # queued row gets (the llm_budget settle, the $ai_generation mirror)
+        events_service.note_written_llm_usage(receipt.to_row())
     if generation.error is not None:
         raise generation.error
 

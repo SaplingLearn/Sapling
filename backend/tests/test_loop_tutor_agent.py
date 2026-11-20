@@ -406,11 +406,11 @@ def _score(mod, evaluator, inputs, reply, **metadata):
     return evaluator.evaluate(ctx)
 
 
-def test_loop_eval_is_eight_cases_per_tier_slot():
+def test_loop_eval_is_ten_cases_per_tier_slot():
     from agents.loop_tutor import LOOP_TIER_SLOTS
 
     mod = _loop_eval_module()
-    assert len(mod.CASES) == 8
+    assert len(mod.CASES) == 10  # the series' 8 + the two A122 worked-first rows (#866 Z23)
     assert set(mod.VARIANTS) == set(LOOP_TIER_SLOTS.values())
     assert mod.SERVED_GATES == (
         "ServedAnswerLeak",

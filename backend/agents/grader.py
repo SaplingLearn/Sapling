@@ -72,16 +72,17 @@ per run, as the decision agent chooses its output.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import re
 import secrets
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Annotated, Literal, TypeVar, overload
 
 import httpx
 from google.genai.types import ThinkingConfig
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PrivateAttr, model_validator
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import Instrumentation
 from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UsageLimitExceeded
@@ -91,10 +92,12 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.usage import RunUsage
 
 from agents import GRADER_LIMITS
+from agents._bounded import clamp_unit, exceeds_unit
 from agents._providers import ANTHROPIC_MAX_TOKENS, model_for, settings_for_slot, slot_provider
 from agents.deps import SaplingDeps
 from agents.usage import record_agent_usage
 from services.ai_trace_privacy import content_free_tracer_provider
+from services.log_privacy import safe_exception_text
 from learning import answer_guard
 from learning.answer_guard import Refusal
 from learning.leak import detect_leak  # the one sanctioned PKG-06 import here (A38)
@@ -211,7 +214,9 @@ class GraderOutput(BaseModel):
             "item you answered no."
         )
     )
-    confidence: float = Field(
+    # #866 Z55: Claude cannot enforce ge/le at decode time; an overshoot is clamped
+    # locally (agents/_bounded.py), never a failed output that spends the one retry
+    confidence: Annotated[float, clamp_unit("grader confidence")] = Field(
         ge=0.0, le=1.0, description="Your confidence in the whole judgment, 0 to 1."
     )
     matched_wrong_key: str = Field(
@@ -229,6 +234,27 @@ class GraderOutput(BaseModel):
         json_schema_extra={"maxLength": GRADER_HINT_MAX_CHARS},
         description="A short hint for the tutor to adapt. Never the answer, never the reference.",
     )
+    # #866 review: the clamp above keeps a confidence past 1 from failing the
+    # output, but that number was no 0..1 confidence; it is noted here (never in
+    # the schema the model sees) so `trusted_confidence` reads it as none
+    _confidence_exceeded: bool = PrivateAttr(default=False)
+
+    @model_validator(mode="wrap")
+    @classmethod
+    def _note_confidence_past_one(cls, data, handler):
+        out = handler(data)
+        if isinstance(data, dict):
+            out._confidence_exceeded = exceeds_unit(data.get("confidence"))
+        return out
+
+
+def trusted_confidence(run: GraderOutput) -> float:
+    """The confidence `grade` trusts a run at (#866 review). A confidence the
+    model reported past 1 (clamped to 1.0 by `clamp_unit`) counts as 0.0, below
+    GRADER_SECOND_OPINION_CONFIDENCE: a first run asks for the second opinion,
+    and a second opinion's verdict is unavailable, never credited at the
+    maximum confidence a malformed number would otherwise claim."""
+    return 0.0 if run._confidence_exceeded else run.confidence
 
 
 class SpanVerdicts(BaseModel):
@@ -777,6 +803,17 @@ class _UnfinishedRun:
         return []
 
 
+_CheckT = TypeVar("_CheckT", SpanVerdicts, Withdrawals)
+
+
+@overload
+async def _run_once(
+    message: str, deps: SaplingDeps, *, second_opinion: bool = ..., output_type: None = None
+) -> GraderOutput: ...
+@overload
+async def _run_once(
+    message: str, deps: SaplingDeps, *, second_opinion: bool = ..., output_type: type[_CheckT]
+) -> _CheckT: ...
 async def _run_once(
     message: str,
     deps: SaplingDeps,
@@ -788,7 +825,9 @@ async def _run_once(
     (`second_opinion`). `output_type=SpanVerdicts` makes it the span check (round
     a33) and `Withdrawals` the context check (A33 finish): the same agent and
     prompt, its own output type, chosen per run."""
-    if ai_budget.check(deps.user_id, "grader").level == "hard":  # grade() maps it to budget
+    # grade() maps it to budget. #866 Z16: the read is a paged llm_usage scan on a
+    # cache miss, so it hops off the event loop, as every loop budget check does
+    if (await asyncio.to_thread(ai_budget.check, deps.user_id, "grader")).level == "hard":
         raise BudgetCapped("ai budget: grader cap reached")
     task = GRADER_SECOND_OPINION_SLOT if second_opinion else "grader"
     # Passed in, so a run that raises still says what the provider billed: the
@@ -861,7 +900,7 @@ def _needs_confirmation(
     is no verdict to confirm: the second opinion decides alone (§3.4 / A6)."""
     return (
         conflicted or ((suspicious or first.addresses_grader) and any(credited.values()))
-    ) and first.confidence >= GRADER_SECOND_OPINION_CONFIDENCE
+    ) and trusted_confidence(first) >= GRADER_SECOND_OPINION_CONFIDENCE
 
 
 def _supported_spans(
@@ -1020,7 +1059,9 @@ async def _graded_runs(message, deps: SaplingDeps, *, labels, item, screen, susp
         conflicted=_conflicted(runs[0], first, item),
     )
     if not refusing and (
-        invalid_primary or confirming or runs[0].confidence < GRADER_SECOND_OPINION_CONFIDENCE
+        invalid_primary
+        or confirming
+        or trusted_confidence(runs[0]) < GRADER_SECOND_OPINION_CONFIDENCE
     ):
         # spec §3.4: ONE second opinion, on the grader_second slot (A22)
         # A malformed returned primary is replaced, never confirmed or
@@ -1069,8 +1110,8 @@ async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) ->
 
     PKG-06b: the grader cap is checked first, before the message is built and before any
     run, so a capped attempt is unavailable whatever its outcome (spec §3.5, A22, inv 28)."""
-    # spec §3.5 grader cap (PKG-06b), invariant 28
-    if ai_budget.check(deps.user_id, "grader").level == "hard":
+    # spec §3.5 grader cap (PKG-06b), invariant 28; off the event loop (#866 Z16)
+    if (await asyncio.to_thread(ai_budget.check, deps.user_id, "grader")).level == "hard":
         return GradeResult(unavailable=True, budget_capped=True)
     if not item.rubric:
         # Nothing to judge: all_yes could never be true, so every answer would
@@ -1112,7 +1153,8 @@ async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) ->
             message, deps, labels=labels, item=item, screen=screen, suspicious=suspicious,
         )
     except _GRADER_FAILURES as exc:
-        logger.warning("grader unavailable for item %s: %s", item.id, exc)
+        # #866 Z46: never str(exc) — UnexpectedModelBehavior's text carries the response body
+        logger.warning("grader unavailable for item %s: %s", item.id, safe_exception_text(exc))
         return _unavailable_after(exc)
     if screen.exempted and any(run.addresses_grader for run in runs):
         # A33 (ruling point 3; CONTINUE §4.1 (a)): the report refuses only beside
@@ -1130,7 +1172,7 @@ async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) ->
             deps=deps,
         )
     out = runs[-1]
-    confidence = out.confidence
+    confidence = trusted_confidence(out)  # a confidence past 1 is none (#866 review)
     if confidence < GRADER_SECOND_OPINION_CONFIDENCE:
         why = (
             "the confirmation run was below the confidence floor"
@@ -1159,7 +1201,7 @@ async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) ->
         # A33: a confirmed item is credited only when both runs credit it;
         # disagreement → the lower verdict, at the lower of the two confidences
         results = {rid: ok and first[rid] for rid, ok in results.items()}
-        confidence = min(confidence, runs[0].confidence)
+        confidence = min(confidence, trusted_confidence(runs[0]))
     # Round a33 (the coordinator's ruling): every credited item stands on a quote
     # code verifies, confirmed by ONE span check that sees each such item with the
     # student's own words behind that quote and nothing else of the answer. It
@@ -1216,7 +1258,9 @@ async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) ->
             # given nor recorded as an incorrect (an invariant-28 residual,
             # HANDOFF-a33 Known gaps)
             logger.warning(
-                "grader unavailable for item %s: the span check failed: %s", item.id, exc
+                "grader unavailable for item %s: the span check failed: %s",
+                item.id,
+                safe_exception_text(exc),
             )
             return _unavailable_after(exc)
         confirmed = parse_labelled(check.item_results, span_labels)
@@ -1245,7 +1289,9 @@ async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) ->
                 # as a failed span check: nothing for either outcome (invariant-28
                 # residual, HANDOFF-a33 Known gaps)
                 logger.warning(
-                    "grader unavailable for item %s: the context check failed: %s", item.id, exc
+                    "grader unavailable for item %s: the context check failed: %s",
+                    item.id,
+                    safe_exception_text(exc),
                 )
                 return _unavailable_after(exc)
             # fail closed: only an explicit "no" keeps the credit, so each entry's

@@ -2014,6 +2014,15 @@ def _scope_name(scope: ast.AST) -> str:
     return "<lambda>" if isinstance(scope, ast.Lambda) else scope.name
 
 
+def _is_budget_check(expr: ast.expr) -> bool:
+    """`ai_budget.check`, called or handed to a thread hop."""
+    return (
+        isinstance(expr, ast.Attribute)
+        and expr.attr == "check"
+        and _last_name(expr.value) == "ai_budget"
+    )
+
+
 def _budget_scan(source: str, agents: set[str], label: str) -> tuple[int, list[str]]:
     """(run sites found, run sites with no earlier ``ai_budget.check(`` in the same scope).
     A run site is any load of ``<agent>.<run method>`` — called, or handed on uncalled (a
@@ -2036,10 +2045,12 @@ def _budget_scan(source: str, agents: set[str], label: str) -> tuple[int, list[s
                 _last_name(a) in agents for a in [*node.args, *(k.value for k in node.keywords)]
             ):
                 runs.append(node.lineno)
-            elif (
-                isinstance(node.func, ast.Attribute)
-                and node.func.attr == "check"
-                and _last_name(node.func.value) == "ai_budget"
+            elif _is_budget_check(node.func) or (
+                # #866 Z16: the same read hopped off the event loop
+                # (`await asyncio.to_thread(ai_budget.check, ...)`)
+                _last_name(node.func) in ("to_thread", "run_in_threadpool")
+                and node.args
+                and _is_budget_check(node.args[0])
             ):
                 checks.append(node.lineno)
         found += len(runs)
@@ -2065,6 +2076,12 @@ def test_inv_23_ai_budget_checked_before_every_run():
         "    async def g():\n        return await grader_agent.run('m')\n    return await g()\n"
     )
     assert _budget_scan(good, agents, "good") == (1, [])
+    # #866 Z16: the check hopped off the event loop is the same check
+    hop = (
+        "async def f(deps):\n    await asyncio.to_thread(ai_budget.check, deps.user_id, 'grader')\n"
+        "    return await grader_agent.run('m')\n"
+    )
+    assert _budget_scan(hop, agents, "hop") == (1, [])
     assert _budget_scan(late, agents, "late")[1] == ["late:f:2"]
     assert _budget_scan(nested, agents, "nested")[1] == ["nested:g:4"]
 

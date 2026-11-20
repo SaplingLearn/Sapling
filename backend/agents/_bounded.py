@@ -23,6 +23,7 @@ failure there.
 from __future__ import annotations
 
 import logging
+import math
 
 from pydantic import BeforeValidator
 
@@ -72,3 +73,41 @@ def clip_list(limit: int, field: str) -> BeforeValidator:
     Claude — and a surplus past it is dropped before Pydantic checks it, so it
     never burns an output retry. A `min_length` stays a real error."""
     return BeforeValidator(lambda v: clip_list_value(v, limit, field))
+
+
+def clamp_unit_value(value, field: str):
+    """A finite number past [0, 1] clamped into it, logged (#866 Z44/Z55); any
+    other value (in range, non-finite, not a number) passes through, so a
+    NaN or an infinity still fails the field's ge/le."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        return value
+    if 0.0 <= value <= 1.0:
+        return value
+    clamped = min(max(float(value), 0.0), 1.0)
+    logger.warning("clamped %s from %s to %s", field, value, clamped)
+    return clamped
+
+
+def exceeds_unit(value) -> bool:
+    """True for a finite number above 1, the value `clamp_unit_value` clamps DOWN
+    to 1.0 (#866 review). The clamp keeps the output valid, but the model's
+    number was not a 0..1 confidence (40 meant as 40%, or a stray 1.02), so a
+    caller that turns confidence into trust reads it as no confidence at all
+    rather than as the maximum. A value clamped up to 0.0 needs no such note:
+    0 already means no confidence."""
+    return (
+        not isinstance(value, bool)
+        and isinstance(value, (int, float))
+        and math.isfinite(value)
+        and value > 1.0
+    )
+
+
+def clamp_unit(field: str) -> BeforeValidator:
+    """`Annotated[float, clamp_unit("x")] = Field(ge=0.0, le=1.0, ...)`: the
+    numeric twin of `clip_prose`. The schema keeps its bound (decode-enforced on
+    Gemini, a description hint on Claude, whose strict JSON mode cannot enforce
+    minimum/maximum), and a finite overshoot (1.02, or 95 meant as a percent)
+    is clamped before Pydantic checks it, so it never fails the whole output and
+    burns an output retry."""
+    return BeforeValidator(lambda v: clamp_unit_value(v, field))

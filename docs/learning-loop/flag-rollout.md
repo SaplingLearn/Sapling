@@ -33,6 +33,11 @@ Several flags change a prompt or an output schema, so their eval datasets must b
 
 `SAPLING_EVAL_USAGE_LOG=<path>` records each run's token cost, so a recording also measures what the flag will cost.
 
+Some paths the loop serves with no flag of their own have cases written but not yet recorded; the same A111 pass records them, and until it does they are unevaluated:
+
+- **The check-item pipeline's own steps (A119, A124, A37).** Every drafting call of a learning-loop uploader runs the alignment check, the blind key solve and key match, and the mc_reason top-up below the floor; their verdicts decide which items are stored and which keys are verified. `tests/evals/check_item_gates.py` scores them (`check_items_verify`, `check_items_solve`, `check_items_topup`, each on its own slot), and `check_items` now also drafts production's three-concept call. They are replayed from the start, so they fail closed until recorded.
+- **The novice worked-example-first path (A122).** Every novice whose prerequisite is not known proficient (every concept without a prerequisite edge, so all of an upload-built graph while `upload_prereq_edges` is off) gets the worked-example-first band format on every teach, hint and feedback turn, and the H4 worked example as the first hint. `loop_tutor` scores it in `teach_novice_worked_first` and `hint_novice_worked_first_h4` (every tier), and `misconception_confront` in `confront_hint_worked_first_novice_h4`. Until they are recorded and pass, only the runtime leak guard stands between that path and a leaked answer.
+
 ## Recommended order
 
 1. **Read-only, no eval needed:** `quiz_concept_plan`, `quiz_results_routing`, `item_reports`.
@@ -67,17 +72,17 @@ Several flags change a prompt or an output schema, so their eval datasets must b
 
 ### loop_tutor_v2 (A121)
 - **Changes:** the tutor opens with a plain verdict on the student's reply, labels only new content "Key idea:", and names the plan's current concept and why.
-- **Before:** `loop_tutor` and `misconception_confront` re-recorded live under `LOOP_EVAL_VARIANT=v2` (their own cassettes), every served gate passing.
+- **Before:** `loop_tutor` and `misconception_confront` re-recorded live under `LOOP_EVAL_VARIANT=v2` (their own cassettes), every served gate passing. Once a v2 namespace is recorded, `run_all.py` (and CI) replays it beside the default one, so a later edit to a v2 prompt line fails like any regression.
 - **Watch:** `zpd.leak` events, tutor turn retries, session wrap-up ratings.
 
 ### segment_prequestion (A138)
 - **Changes:** each new concept opens with one ungraded guess at a vetted question; the answer and an explanation follow at once.
-- **Before:** the prequestion explaining path recorded live in the `loop_tutor` evals and passing.
+- **Before:** the prequestion explaining path recorded live and passing: `teach_explains_prequestion` in the `loop_tutor` flag-path datasets (`<slot>__flags`; `LOOP_EVAL_FLAGS=1 SAPLING_EVAL_MODE=record python tests/evals/loop_tutor.py`). They score the same served gates as the routing datasets but never decide which tier routes; `run_all.py` replays them once recorded.
 - **Watch:** `learn.prequestion` events (posed, skipped by reason, answered, superseded); a high `pool_for_checks` skip rate means courses need more items.
 
 ### self_explanation_prompts (A139)
 - **Changes:** after a worked example, a shown solution or a first unaided correct answer, the turn's question becomes a "why does this follow?" prompt with its own reply box. Replies are stored encrypted and never graded.
-- **Before:** that path recorded live in the `loop_tutor` evals.
+- **Before:** the acknowledging turn recorded live and passing: `teach_acknowledges_self_explanation` in the same `loop_tutor` flag-path datasets.
 - **Watch:** the admin report's `self_explanation` block: reply rate, and next-item success after a reply.
 
 ### quiz_planned_questions (A144)
@@ -97,17 +102,17 @@ Several flags change a prompt or an output schema, so their eval datasets must b
 
 ### varied_isomorphs (A140)
 - **Changes:** uploads draft each concept's items with varied scenarios and representations; picks prefer a surface the student hasn't met.
-- **Before:** the varied `check_items` dataset recorded live and passing. Takes effect per uploader on new uploads.
+- **Before:** `check_items_varied` (`tests/evals/check_item_gates.py`: the varied drafter on a three-concept call and the varied top-up) recorded live and passing. Takes effect per uploader on new uploads.
 - **Watch:** drafting failures; `backend/scripts/project_varied_practice_cost.py` for the cost.
 
 ### multi_concept_items (A141)
 - **Changes:** uploads also draft items combining a concept with its direct prerequisites; a proficient student gets one per session.
-- **Before:** the multi-concept dataset recorded live and passing.
+- **Before:** `check_items_combo` (`tests/evals/check_item_gates.py`: the combination drafter and its component check) recorded live and passing.
 - **Watch:** `learn.multi_concept_served`; drafting cost.
 
 ### upload_prereq_edges (A118)
 - **Changes:** uploads extract prerequisite relations and write them as graph edges, so propagation, prerequisite bands, wheelspin repair and plan order start acting on them.
-- **Before:** the concept-extraction eval re-checked with relations on; a manual look at the edges written for a few real uploads.
+- **Before:** `concept_extraction__relations` (`CONCEPT_EVAL_RELATIONS=1 python tests/evals/concept_extraction.py`: the relations variant, scored on the edges code would write) recorded live and passing; a manual look at the edges written for a few real uploads.
 - **Watch:** cycles broken and edges dropped per document (logged by `concept_prereqs.resolve_prerequisites`); plan order complaints.
 - **Roll back:** off stops new edges; edges already written stay. It acts only while the learning loop is on for the uploader, so the `LEARNING_LOOP_ENABLED` kill switch (or the uploader's `learning_loop` flag off) stops it too.
 
