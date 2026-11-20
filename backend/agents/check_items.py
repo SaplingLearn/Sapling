@@ -391,6 +391,13 @@ async def run_drafting(
             result = await agent.run(
                 prompt, deps=deps, model_settings=settings, usage=usage, **extra
             )
+        except asyncio.CancelledError:
+            # #866 Z13: cancelled by its caller's time bound (the quiz's checks
+            # run inside their generation's), a run still cost the requests the
+            # provider answered — recorded, then the cancellation goes on (as
+            # Z43/Z51 do for a cut-off loop turn).
+            _record_unfinished(usage, deps, feature, task)
+            raise
         except ModelHTTPError as exc:
             _record_unfinished(usage, deps, feature, task)
             if exc.status_code in _FLEX_RETRY_STATUS and attempt < attempts:

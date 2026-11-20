@@ -498,26 +498,54 @@ async def gate_questions(
             continue
         question[quiz_gates.GATE_KEY] = gate.stored()
         run.kept.append(question)
+    _log_gated(run, user_id=user_id, request_id=request_id, questions=len(questions), grounded=grounded)
+    return run
+
+
+def _log_gated(run: GateRun, *, user_id: str, request_id: str | None, questions: int,
+               grounded: bool, **extra) -> None:
+    """`quiz.items_gated`: one gate pass's codes (the yield and the cost per
+    kept question are measured from these before the flag goes on, A145 (g))."""
     events_service.log_event(
         "quiz.items_gated",
         category=events_service.SYSTEM_CATEGORY,
         user_id=user_id,
         request_id=request_id,
-        payload={"questions": len(questions), "grounded": grounded, **run.counts},
+        payload={"questions": questions, "grounded": grounded, **run.counts, **extra},
     )
+
+
+def unchecked_run(questions: Sequence[dict], *, user_id: str, request_id: str | None,
+                  grounded: bool) -> GateRun:
+    """A145 (f): a gate pass whose checks could not run at all — unavailable,
+    or cut at its generation's time bound (#866 Z13): every question is kept
+    as practice, never evidence, and the pass is counted like any other
+    (`unavailable` marks it), so the measured yield includes it."""
+    unchecked = quiz_gates.Gate(
+        quiz_gates.PRACTICE, quiz_gates.ALIGNMENT_UNVERIFIED, quiz_gates.KEY_UNVERIFIED
+    )
+    run = GateRun(kept=list(questions))
+    for question in questions:
+        question[quiz_gates.GATE_KEY] = unchecked.stored()
+    if questions:
+        run.counts = {code: len(questions) for code in (unchecked.status, unchecked.alignment, unchecked.key)}
+    _log_gated(run, user_id=user_id, request_id=request_id, questions=len(questions),
+               grounded=grounded, unavailable=True)
     return run
 
 
 async def keep_gated(gate, wire_questions: list[dict], start: int, material,
-                     filled_slots: set[int]) -> int:
+                     filled_slots: set[int], *, within_s: float) -> int:
     """A145 in routes/quiz.py's generation: check the questions a run added
     (`wire_questions` from `start`) with `gate`; a dropped one frees its plan
     slot. Keeps the survivors in place, in order, and returns how many were
-    dropped (the top-up asks again for them). No gate, or nothing new: 0."""
+    dropped (the top-up asks again for them). No gate, or nothing new: 0.
+    `within_s` is what the run left of its time bound (#866 Z13): the gate's
+    checks get no more."""
     fresh = wire_questions[start:]
     if gate is None or not fresh:
         return 0
-    run = await gate(fresh, material)
+    run = await gate(fresh, material, within_s)
     kept = {id(q) for q in run.kept}
     for q in fresh:
         if id(q) not in kept and isinstance(q.get("planned"), dict):

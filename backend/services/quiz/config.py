@@ -120,7 +120,9 @@ QUIZ_DAILY_SPEND_CAP_USD = 2.00
 
 # Wall-clock ceiling on one generation (agent run incl. its tool calls).
 # Past this the student is staring at a spinner and would rather be told to
-# try again; the request also stops holding a worker slot.
+# try again; the request also stops holding a worker slot. Under the item
+# gates (learning-loop spec §13 A145) the checks on a run's questions share
+# that run's bound (#866 Z13, generation.py `_time_left`).
 QUIZ_GENERATION_TIMEOUT_SEC = 90
 
 

@@ -392,8 +392,135 @@ def test_the_route_gate_hands_the_writer_model_to_the_checks():
         patch.object(ql, "gate_questions", side_effect=gate_questions),
     ):
         gate = quiz_route._item_gate("u", "c", "Recursion", "r", "claude-sonnet-5-5")
-        asyncio.run(gate([_wire(1)], material))
+        asyncio.run(gate([_wire(1)], material, 30.0))
     assert seen["writer_model"] == "claude-sonnet-5-5"
+
+
+# #866 Z13: the checks run inside their generation run's QUIZ_GENERATION_TIMEOUT_SEC
+
+
+def _hanging_gate_run(monkeypatch, *, bound: float, run_took: float | None = None, num_questions: int = 1):
+    """`_quiz_via_agent` with the real `_item_gate`, a writer that answers at
+    once and a check pass that never returns, under a `bound`-second
+    QUIZ_GENERATION_TIMEOUT_SEC; `run_took` makes the run's clock say it took
+    that long. Guarded: a generation still running 5 s in fails the test
+    instead of hanging it. Returns (questions, gated events, checks started)."""
+    from contextlib import ExitStack
+    from types import SimpleNamespace
+
+    from agents.quiz import Quiz, QuizQuestion
+    from services.quiz import generation as quiz_route
+    from tests.split_patches import patch_quiz
+    from tests.test_quiz_learning_flags_off import _context_patches
+
+    quiz = Quiz(questions=[
+        QuizQuestion(question=f"Question {n}?", type="multiple_choice", difficulty="easy",
+                     options=["one", "two", "three", "four"], correct_answer="two",
+                     explanation="x", concept="Recursion")
+        for n in range(1, num_questions + 1)
+    ])
+    started, events = [], []
+
+    async def writer(*a, **k):
+        return SimpleNamespace(output=quiz)
+
+    async def checks(questions, **kw):
+        started.append(len(questions))
+        await asyncio.sleep(3600)
+
+    def log_event(name, **kw):
+        events.append((name, kw.get("payload")))
+
+    with ExitStack() as stack:
+        _context_patches(stack, material=False, recent=False, exam_days=None)
+        stack.enter_context(patch_quiz("QUIZ_GENERATION_TIMEOUT_SEC", bound))
+        stack.enter_context(patch("services.quiz.generation.quiz_agent.run", new=writer))
+        stack.enter_context(patch("services.quiz.generation.record_agent_usage", side_effect=lambda r, **k: r))
+        stack.enter_context(patch("services.quiz.generation.served_model_name", return_value="m"))
+        stack.enter_context(patch.object(ql, "course_concept_names", return_value=["Recursion"]))
+        stack.enter_context(patch.object(ql, "gate_questions", side_effect=checks))
+        stack.enter_context(patch("services.events_service.log_event", side_effect=log_event))
+        if run_took is not None:
+            stack.enter_context(patch.object(quiz_route, "_clock", side_effect=[0.0, run_took]))
+        out = asyncio.run(asyncio.wait_for(
+            quiz_route._quiz_via_agent(
+                user_id="u", course_id="c", concept_node_id="n1", concept_name="Recursion",
+                num_questions=num_questions, difficulty="easy", use_shared_context=False,
+                request_id="r", has_graph=True,
+                gate=quiz_route._item_gate("u", "c", "Recursion", "r", "claude-haiku-5-5"),
+            ),
+            timeout=5,
+        ))
+    gated = [payload for name, payload in events if name == "quiz.items_gated"]
+    return out.questions, gated, started
+
+
+def test_a_check_pass_that_outlasts_its_runs_bound_is_cut_there_and_served_as_practice(monkeypatch):
+    """#866 Z13: the checks used to have no wall-clock bound of their own (three
+    120 s attempts on quiz_check, then the key match); now a pass still running
+    when its run's QUIZ_GENERATION_TIMEOUT_SEC is spent is cut, and its questions
+    are served as practice, as an outage's are (A145 (f)), and counted."""
+    questions, gated, started = _hanging_gate_run(monkeypatch, bound=0.3)
+    assert started == [1]  # the checks did start, inside the bound
+    assert [q["gate"] for q in questions] == [
+        {"status": "practice", "alignment": "alignment_unverified", "key": "key_unverified"}
+    ]
+    assert gated == [{"questions": 1, "grounded": False, "practice": 1, "alignment_unverified": 1,
+                      "key_unverified": 1, "unavailable": True}]
+
+
+def test_a_run_that_spent_its_bound_starts_no_checks(monkeypatch):
+    """The checks get only what their run left of the bound: none left, none
+    started (a call cut at once would still bill its input)."""
+    questions, gated, started = _hanging_gate_run(monkeypatch, bound=0.3, run_took=0.3)
+    assert started == []
+    assert questions[0]["gate"]["status"] == "practice"
+    assert gated[0]["unavailable"] is True
+
+
+def test_the_checks_get_what_their_run_left_of_its_bound():
+    from services.quiz import generation as quiz_route
+
+    seen = []
+
+    async def gate(questions, material, within_s):
+        seen.append(within_s)
+        return ql.GateRun(kept=list(questions))
+
+    wire = [_wire(1)]
+    with patch.object(quiz_route, "_clock", side_effect=[1000.0]):
+        left = quiz_route._time_left(1000.0 - 70.0)  # the run took 70 s of 90
+    assert left == pytest.approx(quiz_route.QUIZ_GENERATION_TIMEOUT_SEC - 70.0)
+    assert asyncio.run(ql.keep_gated(gate, wire, 0, None, set(), within_s=left)) == 0
+    assert seen == [left]
+
+
+def test_a_cancelled_check_run_still_records_what_it_billed():
+    """#866 Z13 (as Z43/Z51): a check cut at its bound is cancelled mid-run; the
+    request the provider already answered still reaches llm_usage."""
+    from agents import check_items
+    from agents.deps import SaplingDeps
+
+    billed = []
+
+    class _BilledThenHangs:
+        async def run(self, *a, usage=None, **k):
+            usage.requests += 1
+            usage.input_tokens += 40
+            await asyncio.sleep(3600)  # an output retry, still in flight
+
+    deps = SaplingDeps(user_id="u", course_id="c", supabase=None, request_id="r", feature="quiz")
+    with patch.object(check_items, "record_agent_usage", side_effect=lambda r, **k: billed.append((r, k))):
+        with pytest.raises(TimeoutError):
+            asyncio.run(asyncio.wait_for(
+                check_items.run_drafting(_BilledThenHangs(), "p", deps=deps, flex=False,
+                                         feature=ql.VERIFY_FEATURE, task="quiz_check"),
+                timeout=0.05,
+            ))
+    assert len(billed) == 1
+    run, kw = billed[0]
+    assert run.usage().requests == 1 and run.usage().input_tokens == 40
+    assert kw["feature"] == ql.VERIFY_FEATURE and kw["task"] == "quiz_check"
 
 
 def test_a_written_answer_the_grader_rejects_goes_to_one_key_match():
