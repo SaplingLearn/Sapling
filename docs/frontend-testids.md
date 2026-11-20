@@ -1012,7 +1012,7 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `tutor-home` | the Tutor home (T1): "What do you want to learn today?" — where `/learn` lands when the course has no open session (a `?topic=` link still starts one) |
 | `loop-start-guided` | the home's "Start a guided session": wraps up (`/close`) the open session on screen first, so sessions do not pile up open (a 409 there starts nothing), then starts one |
 | `tutor-home-continue` / `tutor-home-due` / `tutor-home-start-with` / `tutor-home-goal` | the home's suggestions: back to the open session; Study's due review; a session on the weakest concept (its goal, #866 K05); the goal editor (`data-view="goal"`), before anything starts — saving starts the session on that goal |
-| `tutor-course-page` | a course page (T2); `data-course-id`: its sessions, progress and material; `tutor-course-start` (TopBar) goes to the home |
+| `tutor-course-page` | a course page (T2); `data-course-id`: its sessions, progress and material; `tutor-course-start` (TopBar) goes to the home. Each skill meter in its progress (`Meter`, no testid: journeys select `[data-tier]` inside the page) carries `data-tier` = its concept's map tier (`unexplored` / `struggling` / `learning` / `mastered`, `nodeStyle.tierFor`, #866 K21) |
 | `tutor-all-sessions` | every session (T3), with a search and an All / In progress / Wrapped up filter |
 | `tutor-session-row-{sessionId}` | one session of every session's list: the button that opens it, then its Rename and Delete (#866 K31, as the legacy Learn screen's recent sessions) |
 | `tutor-session-rename-{sessionId}` / `tutor-session-name-{sessionId}` | Rename turns the row's name into the field `tutor-session-name-{sessionId}` (Enter or leaving it saves, Escape keeps the name) |
@@ -1049,7 +1049,7 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `loop-no-check-items` | "No check items for this course yet" (A23) |
 | `loop-tree-link` | link to `/tree` (`?node=<id>` once a `learner_state` event names the concept): the session panel's "Open map", or "Map" in the TopBar on a phone; absent while `hide_tree` hides the Tree |
 | `loop-rail` | the session panel, "Today's session" (wide screens only): the plan (the approved one from `/status` after a reload), a skill meter per concept, due review (`tutor-panel-review`) and the knowledge map; the tree link sits in the TopBar on narrow screens |
-| `loop-verdict` | wireframe T9: the graded check's verdict over the feedback; `data-verdict` = correct / not_yet / idk; a not_yet names the next concept ("Next up: …") when the grade moved the plan on |
+| `loop-verdict` | wireframe T9: the graded check's verdict over the feedback; `data-verdict` = correct / not_yet / idk; a not_yet names the next concept ("Next up: …") when the grade moved the plan on. On a correct verdict `data-credit` = `full` / `partial` / `none`, the weight the answer's evidence was journaled at (#866 K07; absent from an older server); a partial one names what reduced it (the response's `credit_reasons`: a hint, a same-session re-check, a low-confidence grade, a multi-concept item) |
 | `loop-close-new-session` | the wrap-up's "Start a new session" (to the Tutor home) |
 | `tutor-attach` | the composer's "+" next to Send: opens the Library to add material |
 | `loop-learner-state` | the current concept's belief; `data-node-id`, `data-p-known`, `data-band` (present, empty, before any event) |
@@ -1086,7 +1086,7 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `loop-attempt-submit` | submit the attempt to `/check/answer/stream` (never a chat turn, A16) |
 | `loop-attempt-idk` | "I don't know" in the attempt box (`idk: true`) |
 | `loop-hint-button` | request a hint: records the draft as an attempt (`/step/attempt`), moves the rung (`/hint`), then fetches the hint turn (`/action`) |
-| `loop-hint-denied` | denial line; `data-reason` = `no_genuine_attempt` / `dwell` / `ceiling` / `h6_gate` / `no_active_item` |
+| `loop-hint-denied` | denial line; `data-reason` = `no_genuine_attempt` / `too_soon` (a written attempt time alone kept from counting yet: /step/attempt's `wait_s`, #866 K32) / `dwell` / `ceiling` / `h6_gate` (never lifts on this item) / `h6_attempt` (an H6 gate another genuine try lifts: /hint's `lifts: "attempt"`) / `no_active_item` |
 | `loop-hint-reply` | the hint turn's text when allowed |
 | `loop-check-report` | "Report this question" on the check card, only while the `item_reports` flag is on (spec §13 A113, #695) — opens the reasons |
 | `loop-check-report-reasons` | the reasons group (`role="group"`): buttons only, no text box |
