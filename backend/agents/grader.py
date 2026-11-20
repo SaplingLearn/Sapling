@@ -72,6 +72,7 @@ per run, as the decision agent chooses its output.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import re
@@ -788,7 +789,9 @@ async def _run_once(
     (`second_opinion`). `output_type=SpanVerdicts` makes it the span check (round
     a33) and `Withdrawals` the context check (A33 finish): the same agent and
     prompt, its own output type, chosen per run."""
-    if ai_budget.check(deps.user_id, "grader").level == "hard":  # grade() maps it to budget
+    # grade() maps it to budget. #866 Z16: the read is a paged llm_usage scan on a
+    # cache miss, so it hops off the event loop, as every loop budget check does
+    if (await asyncio.to_thread(ai_budget.check, deps.user_id, "grader")).level == "hard":
         raise BudgetCapped("ai budget: grader cap reached")
     task = GRADER_SECOND_OPINION_SLOT if second_opinion else "grader"
     # Passed in, so a run that raises still says what the provider billed: the
@@ -1069,8 +1072,8 @@ async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) ->
 
     PKG-06b: the grader cap is checked first, before the message is built and before any
     run, so a capped attempt is unavailable whatever its outcome (spec §3.5, A22, inv 28)."""
-    # spec §3.5 grader cap (PKG-06b), invariant 28
-    if ai_budget.check(deps.user_id, "grader").level == "hard":
+    # spec §3.5 grader cap (PKG-06b), invariant 28; off the event loop (#866 Z16)
+    if (await asyncio.to_thread(ai_budget.check, deps.user_id, "grader")).level == "hard":
         return GradeResult(unavailable=True, budget_capped=True)
     if not item.rubric:
         # Nothing to judge: all_yes could never be true, so every answer would

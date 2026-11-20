@@ -27,6 +27,7 @@ from the loop route).
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import re
@@ -249,8 +250,10 @@ async def run_session_close(
     usage = RunUsage()
     result = None
     try:
-        # Spec §13 A20/A25, invariant 23: the budget check precedes the run in this body.
-        if ai_budget.check(user_id, "close", close_band(draft)).level == "hard":
+        # Spec §13 A20/A25, invariant 23: the budget check precedes the run in this body,
+        # off the event loop (#866 Z16: a paged llm_usage read on a cache miss).
+        budget = await asyncio.to_thread(ai_budget.check, user_id, "close", close_band(draft))
+        if budget.level == "hard":
             logger.info("session_close skipped at the hard budget level; storing fallback close")
             return None
         result = await session_close_agent.run(
