@@ -961,6 +961,21 @@ describe("LoopLearn — teach / check / feedback (A16, A46)", () => {
     expect(api.requestLoopHintTurn).toHaveBeenCalledWith("s2", "u1");
   });
 
+  it("K33: a hint turn's once-per-session materials note and learner state are applied", async () => {
+    api.postLoopAttempt.mockResolvedValue({ genuine: true, counted: true, attempts: 1, independent_s: 60 });
+    api.requestLoopHint.mockResolvedValue({ rung: 1, intent: "Orient." });
+    api.requestLoopHintTurn.mockResolvedValue(turn({
+      reply: "Look at when n reaches zero.", phase: "hint", materials_unavailable: true,
+      learner_state: [{ node_id: "n1", p_known: 0.42, band: "develop" }],
+    }));
+    await withCheckItem();
+    fireEvent.change(screen.getByTestId("loop-attempt-input"), { target: { value: "it keeps calling itself" } });
+    fireEvent.click(screen.getByTestId("loop-hint-button"));
+    await screen.findByTestId("loop-hint-reply");
+    expect(screen.getByTestId("loop-notices").textContent).toContain("course materials are temporarily unavailable");
+    expect(screen.getByTestId("loop-learner-state").getAttribute("data-p-known")).toBe("0.42");
+  });
+
   it("K09: while a hint loads, Submit and 'I don't know' wait for it (the rung is already charged)", async () => {
     const charged = deferred<unknown>();
     api.postLoopAttempt.mockResolvedValue({ genuine: true, counted: true, attempts: 1, independent_s: 60 });

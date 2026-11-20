@@ -75,7 +75,7 @@ import {
 import { useFlag } from "@/context/FlagsContext";
 import { useStudyNavShown } from "../useRetentionNav";
 import { forgetEndedSession, noteLearningSession, useFeedbackHold } from "@/lib/feedbackPacing";
-import { checkIsOpen, initialLoopState, reduceLoopEvent } from "./loopState";
+import { checkIsOpen, hintTurnEvents, initialLoopState, reduceLoopEvent } from "./loopState";
 import { hasDeepLink, readDeepLink } from "./deepLink";
 import styles from "./LoopLearn.module.css";
 import { GoalEditor, GoalProgressNote, ScopeSummary } from "./LearningScope";
@@ -1605,10 +1605,9 @@ export function LoopLearn() {
       // served hint turn closes an older prompt and may open a new one
       setSelfExplainSaved(false);
       setSelfExplain(t.self_explain ?? null);
-      if (t.phase) dispatch({ type: "phase", phase: t.phase });
-      if (t.budget?.level === "hard") {
-        dispatch({ type: "budget", level: "hard", resetAt: t.budget.reset_at, sessionCapped: t.budget.session_capped });
-      }
+      // K33: a hint turn is a served turn too — the once-per-session materials note, the focus concept
+      if (t.materials_unavailable) setMaterialsNote(true);
+      hintTurnEvents(t).forEach(dispatch);
     } catch (err) {
       if (ownsHint()) reportError(err, "Couldn't get a hint.");
     } finally {

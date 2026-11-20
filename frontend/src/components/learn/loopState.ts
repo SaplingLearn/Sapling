@@ -2,7 +2,7 @@
 // Every change comes from the SERVER — a route response, a stream event, a
 // listed session — so this reducer never advances the phase on its own (spec
 // §9: the ZPD gates are server-side). No React import.
-import type { LoopBudgetPause, LoopCheckItem, LoopLearnerState, LoopPhase } from "@/lib/api";
+import type { LoopBudgetPause, LoopCheckItem, LoopLearnerState, LoopPhase, LoopTurnResult } from "@/lib/api";
 
 export interface LoopUiState {
   phase: LoopPhase;
@@ -47,6 +47,17 @@ export function initialLoopState(): LoopUiState {
     focusNodeId: null,
     budgetPause: null,
   };
+}
+
+/** What a served hint turn (POST /action) changes here: its phase, its learner
+ *  state (#866 K33: the focus concept) and a hard budget notice. */
+export function hintTurnEvents(t: LoopTurnResult): LoopUiEvent[] {
+  const events: LoopUiEvent[] = t.phase ? [{ type: "phase", phase: t.phase }] : [];
+  for (const state of t.learner_state ?? []) events.push({ type: "learner_state", state });
+  if (t.budget?.level === "hard") {
+    events.push({ type: "budget", level: "hard", resetAt: t.budget.reset_at, sessionCapped: t.budget.session_capped });
+  }
+  return events;
 }
 
 export function reduceLoopEvent(state: LoopUiState, ev: LoopUiEvent): LoopUiState {
