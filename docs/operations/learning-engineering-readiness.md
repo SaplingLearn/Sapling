@@ -84,7 +84,13 @@ the kill switch open AND the account's `learning_loop` flag on (the flag ships
 off, so give the QA account a user rule on the admin Flags page first);
 `disabled` holds when either is off. Use a normally authenticated, approved
 staging QA account. The tool neither
-mints tokens nor calls test-login. The token file must be regular, owned by the
+mints tokens nor calls test-login. The token file holds the value of that
+browser session's `__Host-sapling_session` cookie (the plain `sapling_session`
+cookie on a loopback http stack); the tool presents it as
+`__Host-sapling_session`, the name every backend reads first. Never send it as
+the plain name to an https backend: there that name is only the legacy domain
+cookie, and a current session under it is refused with a 401. The token file
+must be regular, owned by the
 operator and mode 0600. Only the API origin receives its cookie. Redirects are
 rejected. HTTP is accepted only for explicit `--allow-loopback-http` targets.
 Every probe is a bounded GET; no model probe, grading, flag change, session

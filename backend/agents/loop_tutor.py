@@ -468,6 +468,21 @@ PREQUESTION_ITEM_HEADER = "[PREQUESTION ITEM]"
 #: every control tag neutralised — never in the trusted prefix.
 PREQUESTION_ANSWER_HEADER = "[PREQUESTION ANSWER]"
 PREQUESTION_ANSWER_SOURCE = "prequestion_answer"
+#: Z07: the source labels of the item text a block heading of the prefix
+#: introduces. A check item is model-drafted from classmates' uploads (A23) and
+#: served course-wide, so its stem and options are DATA under their trusted
+#: heading ([CHECK ITEM], [PREQUESTION ITEM]), never lines of the phase block.
+CHECK_ITEM_SOURCE = "check_item"
+PREQUESTION_ITEM_SOURCE = "prequestion_item"
+
+
+def item_text(text: str, *, source: str) -> str:
+    """Item text (a stem, its option lines) as DATA in the phase prefix (Z07):
+    an untrusted envelope with every control tag neutralised, so no drafted
+    byte opens a [VERDICT: …] or [LOOP PHASE: …] block or writes a line that
+    passes for the phase block's own (the confrontation line's and the
+    prequestion answer's treatment)."""
+    return wrap_untrusted(neutralise_control_tags(text), source=source)
 
 #: Spec §13 A139: the line of the first model turn after the student replied
 #: to a self-explanation prompt. The reply is diagnostic: acknowledged, never
@@ -483,11 +498,14 @@ SELF_EXPLAIN_ACK_LINE = (
 
 def prequestion_item_block(prompt: str, item_format: str, option_lines: Sequence[str] = ()) -> str:
     """The prequestion as posed (prompt, then its options as "A. text" lines)
-    for the explaining turn's prefix — item text, like a [CHECK ITEM] block."""
+    for the explaining turn's prefix — item text, like a [CHECK ITEM] block:
+    DATA under its heading (`item_text`, Z07)."""
     body = prompt.strip()
     if option_lines:
         body += "\n" + "\n".join(option_lines)
-    return f"{PREQUESTION_ITEM_HEADER} (format: {item_format})\n{body}"
+    return f"{PREQUESTION_ITEM_HEADER} (format: {item_format})\n" + item_text(
+        body, source=PREQUESTION_ITEM_SOURCE
+    )
 
 
 def prequestion_answer_block(answer: str) -> str:
@@ -690,8 +708,13 @@ def phase_prefix(
     `policy.attempt_first` (spec §13 A122): False selects the novice
     worked-example-first format, and is legal only in the novice band.
 
+    `item_prompt` (hint and feedback only) is the item's stem: DATA under the
+    [CHECK ITEM] heading, in an untrusted envelope with its control tags
+    neutralised (`item_text`, Z07), or ITEM_WITHHELD below H2 (A51 C1(b)).
+
     Spec §13 A121: `v2` selects the v2 variant
-    (`loop_tutor_v2` on); off, the prefix is exactly 7fa9cd0e's, so
+    (`loop_tutor_v2` on); off, the prefix is 7fa9cd0e's — but for Z07's
+    envelope around the [CHECK ITEM] stem — so
     `poses_check` changes nothing (the render drops the question instead).
     On: the flag-on feedback rule and H0 guide, `poses_check` (teach only)
     asks for an empty question, `answer_check` (teach only) adds the
@@ -788,7 +811,13 @@ def phase_prefix(
         lines.append(_ANSWER_RELEASED)
     if phase in _ITEM_PHASES:
         fmt = f" (format: {item_format})" if item_format else ""
-        shown = item_prompt if item_visible(rung, answer_released) else ITEM_WITHHELD
+        # Z07: the drafted stem is DATA under the trusted heading; withheld,
+        # the heading carries the server's own line
+        shown = (
+            item_text(item_prompt, source=CHECK_ITEM_SOURCE)
+            if item_prompt and item_visible(rung, answer_released)  # non-empty: checked above
+            else ITEM_WITHHELD
+        )
         lines.append(f"[CHECK ITEM]{fmt}\n{shown}")
     return "\n".join(lines)
 

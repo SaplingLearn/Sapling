@@ -2170,7 +2170,9 @@ export function LoopLearn() {
                 : "Ask your AI tutor anything…"
           }
           attachHref={libraryVisible ? "/library" : undefined}
-          turnStyle="page"
+          // Z08: code serves class material verbatim here (a check pose, an H2
+          // passage, a worked sibling, a reference): drawn inert, never a live link
+          turnStyle="page" markdown="inert"
           draftSeed={chatDraft.text}
           draftSeedKey={chatDraft.key}
         />

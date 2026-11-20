@@ -105,8 +105,11 @@ def learn_loop_findings(
 # The table-wide checks above pass on an empty stack. These tie the loop's
 # rows to the session documents that claim them:
 # (e) every check step a session GRADED has an evidence row for its hash
-#     (the loop's only evidence path, A16; one flush per grade);
-# (f) every step whose feedback turn RAN has a zpd.step event (spec §6);
+#     written BY THAT SESSION (the loop's only evidence path, A16; one flush
+#     per grade; the row's `session_id`) — never another session's row for
+#     the same item, which would hide a lost flush (Z47);
+# (f) every step whose feedback turn RAN has a zpd.step event (spec §6) of
+#     that session (the check-phase payload's `session_id`, A82);
 # (g) no assistant message of a loop session states a check item's final
 #     answer before THAT item was released (D7: per item, never per session) —
 #     a graded step whose verdict is not `correct` (the feedback reply then
@@ -130,7 +133,9 @@ def learn_loop_findings(
 #     fails closed. Each release opens only its own item's key;
 # (h) with `expect_activity` (the loop journey runs the oracle right after its
 #     walk, before the next test's truncate-and-reseed): no loop user, or no
-#     graded check step anywhere, is itself a finding.
+#     graded check step anywhere, is itself a finding. A loop user is a student
+#     with a loop session (`sessions` — never a settings row: the gate reads no
+#     column, and the retired build-phase staff/QA toggle is inert seed data, Z50).
 _RELEASE_RUNG = 6  # H6: the worked answer (learning.ladder.Rung.H6)
 
 
@@ -244,17 +249,19 @@ def _states_unreleased_check(text: str, needle: str, token_re, steps: dict, at) 
 
 def learn_loop_activity_findings(
     sessions: list[dict],
-    evidence_hashes: set[tuple[str, str]],
-    step_event_hashes: set[tuple[str, str]],
+    evidence_keys: set[tuple[str, str]],
+    step_event_keys: set[tuple[str, str]],
     messages: list[dict],
     sentinel: str,
-    loop_users: int,
     expect_activity: bool,
     prequestion_sentinel: str | None = None,
 ) -> list[Finding]:
-    """`sessions`: {id, user_id, loop_state} of every loop session; the hash
-    sets are (user_id, question_hash); `messages`: {session_id, at (epoch s),
-    content (PLAINTEXT)} — the assistant rows of those sessions."""
+    """`sessions`: {id, user_id, loop_state} of every loop session; the key
+    sets are (session_id, question_hash) — the session that wrote the evidence
+    row / emitted the check-phase zpd.step (Z47: never the user, or one
+    session's rows would vouch for another's lost ones); `messages`:
+    {session_id, at (epoch s), content (PLAINTEXT)} — the assistant rows of
+    those sessions."""
     findings: list[Finding] = []
     no_evidence, no_step, graded_any = [], [], False
     session_steps: dict[str, dict] = {}
@@ -267,17 +274,18 @@ def learn_loop_activity_findings(
             if step.get("graded_at") is None:
                 continue
             graded_any = True
-            if (s["user_id"], qh) not in evidence_hashes:
+            if (s["id"], qh) not in evidence_keys:
                 no_evidence.append([s["id"], qh])
-            if step.get("feedback_given") and (s["user_id"], qh) not in step_event_hashes:
+            if step.get("feedback_given") and (s["id"], qh) not in step_event_keys:
                 no_step.append([s["id"], qh])
     if no_evidence:
         findings.append(
             Finding(
                 oracle="learn_loop",
                 summary=(
-                    f"{len(no_evidence)} graded check step(s) have no evidence row for "
-                    "their question_hash — the grade never reached apply_graph_update?"
+                    f"{len(no_evidence)} graded check step(s) have no evidence row of "
+                    "their session for their question_hash — the grade never reached "
+                    "apply_graph_update?"
                 ),
                 evidence={"sample": no_evidence[:_SAMPLE]},
             )
@@ -286,7 +294,7 @@ def learn_loop_activity_findings(
         findings.append(
             Finding(
                 oracle="learn_loop",
-                summary=f"{len(no_step)} served feedback turn(s) have no zpd.step event",
+                summary=f"{len(no_step)} served feedback turn(s) have no zpd.step event of their session",
                 evidence={"sample": no_step[:_SAMPLE]},
             )
         )
@@ -336,7 +344,8 @@ def learn_loop_activity_findings(
                 )
             )
     if expect_activity:
-        if loop_users <= 0:
+        # Z50: the students who have a loop session, never a settings column
+        if not {s.get("user_id") for s in sessions} - {None, ""}:
             findings.append(
                 Finding(
                     oracle="learn_loop", summary="expected loop activity but no loop users exist"

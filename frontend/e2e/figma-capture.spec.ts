@@ -23,6 +23,7 @@ import { expect, test, type Browser, type Page } from "@playwright/test";
 
 import { RECIPES } from "./figma/recipes";
 import type { Persona } from "./figma/types";
+import { loopOffLane } from "./support/lane";
 import { mintStorageState } from "./support/session";
 import { FRONTEND_URL } from "./support/stack";
 
@@ -199,6 +200,9 @@ for (const c of CAPTURES) {
       FRONTEND_URL.includes("localhost") || FRONTEND_URL.includes("127.0.0.1"),
       `REFUSING: FRONTEND_URL ${FRONTEND_URL} is not local`,
     ).toBe(true);
+    // Z49: the recipes (the learn/* states are the legacy tutor's) and the
+    // showcase handlers cover production's default, the learning loop off.
+    expect(loopOffLane, "Figma captures run with the learning loop off: use scripts/figma-capture.sh").toBe(true);
     const recipe = RECIPES[c.state];
     test.skip(!recipe, "unknown recipe");
 

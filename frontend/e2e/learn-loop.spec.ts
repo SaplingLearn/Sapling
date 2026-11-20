@@ -44,6 +44,7 @@ import { showsAnotherItem } from "./support/probe";
 import { LOOP_STREAM_CAPTURE_SCRIPT, loopStreamCompleted, markLoopStream, readLoopStream, type LoopStreamTicket } from "./support/loop-streams";
 import { mintStorageState } from "./support/session";
 import { FRONTEND_URL, USER_ACTIVE, USER_CAPPED, USER_LOOP } from "./support/stack";
+import { saveTutorRow } from "./support/tutorRows";
 
 const USER_ADMIN = "rich-user-admin"; // seeded with the admin role (feature-flags.spec.ts)
 
@@ -123,6 +124,13 @@ const DB_POLL_TIMEOUT_MS = 5_000;
 /** A genuine attempt's text (long enough, no non-attempt phrase: learning/gates.py)
  *  that does NOT carry the correct token, so it can never grade correct. */
 const WORKING_ATTEMPT = "working: I think it is the value the item names";
+/** Z08: class material as a classmate's shared handout can carry it. */
+const CLASS_MATERIAL_ROW = [
+  "Lab 4 is submitted through the course portal at https://lab4-portal.example/login before Friday.",
+  "[Open the lab handout](https://evil.example/handout)",
+  "![the lab diagram](https://evil.example/pixel.png)",
+  "::geogebra{id=abc123}",
+].join("\n\n");
 
 type Params = Record<string, number | boolean>;
 
@@ -593,6 +601,11 @@ test("a reload mid-session resumes the same loop session and calls no probe rout
     [USER_LOOP, offeringId],
   );
 
+  // Z08: a code-served row of class material — an H2 hint is a classmate's
+  // passage verbatim, a pose or an H4/H6 payload item text — saved as the server
+  // saves one; restored by the resume, it is drawn inert (below).
+  await saveTutorRow(sessionId!, CLASS_MATERIAL_ROW);
+
   // spec §11.3: a reload of /learn mid-session never starts a probe.
   const afterReload: string[] = [];
   page.on("request", (r) => afterReload.push(new URL(r.url()).pathname));
@@ -600,6 +613,12 @@ test("a reload mid-session resumes the same loop session and calls no probe rout
   await expect(phase).toHaveAttribute("data-session-id", sessionId!);
   await expect(phase).toHaveAttribute("data-phase", "teach");
   await expectTurn(page, LOOP_TUTOR_REPLY); // restored via the resume route
+  // Z08: its links name their host and lead nowhere; nothing is fetched or embedded
+  const transcript = page.getByTestId("tutor-messages");
+  await expect(transcript).toContainText("Open the lab handout (evil.example)");
+  await expect(transcript).toContainText("https://lab4-portal.example/login");
+  await expect(transcript).toContainText("::geogebra{id=abc123}");
+  await expect(transcript.locator('a[href*="example"], img[src*="example"], iframe')).toHaveCount(0);
   const listed = page.getByTestId(`loop-session-${sessionId}`);
   await expect(listed).toBeVisible(); // the picker lists it …
   await expect(listed).toHaveAttribute("aria-current", "true"); // … as the current one
@@ -1226,6 +1245,34 @@ test("kill switch restores the legacy Learn screen", async ({ page }) => {
       WHERE event_type = 'error.4xx' AND payload->>'path' = '/api/learn/loop/review/active'`,
   )) as { n: number }[];
   expect(errors[0].n).toBe(0);
+});
+
+// Z08 (review): with the loop off, the legacy Tutor still lists and resumes a
+// student's loop sessions; their saved class material is drawn inert there too,
+// while every other session renders exactly as main does.
+test("with the loop off, a resumed loop session's class material is drawn inert", async ({ page }) => {
+  test.skip(!loopOffLane, "kill-switch and flag-off lanes only");
+  await page.addInitScript(() => {
+    localStorage.setItem("sapling_disclaimer_ack", "true");
+  });
+  await queryRaw(
+    `INSERT INTO sessions (id, user_id, mode, topic, started_at, loop_state) VALUES
+       ('e2e-z08-loop', $1, 'socratic', 'A loop session', now(), '{"phase": "teach"}'::jsonb),
+       ('e2e-z08-legacy', $1, 'socratic', 'A legacy tutor chat', now(), '{}'::jsonb)`,
+    [USER_ACTIVE],
+  );
+  await saveTutorRow("e2e-z08-loop", CLASS_MATERIAL_ROW);
+  await saveTutorRow("e2e-z08-legacy", CLASS_MATERIAL_ROW);
+
+  const transcript = page.getByTestId("tutor-messages");
+  await page.goto("/learn?resume=e2e-z08-loop");
+  await expect(transcript).toContainText("Open the lab handout (evil.example)");
+  await expect(transcript).toContainText("https://lab4-portal.example/login");
+  await expect(transcript).toContainText("::geogebra{id=abc123}");
+  await expect(transcript.locator('a[href*="example"], img[src*="example"], iframe')).toHaveCount(0);
+
+  await page.goto("/learn?resume=e2e-z08-legacy");
+  await expect(transcript.locator('a[href="https://evil.example/handout"]')).toHaveCount(1);
 });
 
 // UI regression coverage; the deterministic function model supplies all lesson

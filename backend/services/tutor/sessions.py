@@ -377,6 +377,7 @@ async def resume_session(session_id: str, request: Request):
                 "course_id": p.get("course_id"),
                 "started_at": now,
                 "ended_at": None,
+                "loop": bool(p.get("loop")),  # the loop opener's lazy payload says so
             },
             "messages": [
                 {
@@ -389,7 +390,7 @@ async def resume_session(session_id: str, request: Request):
         }
 
     session_rows = await table("sessions").aselect(
-        "id,user_id,topic,mode,started_at,ended_at,offering_id",
+        "id,user_id,topic,mode,started_at,ended_at,offering_id,loop_phase:loop_state->>phase",
         filters={"id": f"eq.{session_id}", **NOT_REVIEW},  # a review session is never resumed
     )
     if not session_rows:
@@ -398,6 +399,11 @@ async def resume_session(session_id: str, request: Request):
     # Expose the abstract course id (derived from the offering) for the
     # frontend, alongside the stored offering id.
     session = dict(session_rows[0])
+    # #866 Z08: a learning-loop session (its loop phase, as list_sessions
+    # reads it; the probe writes it before the first item is posed) holds
+    # code-served class material, so a client that resumes it with the loop
+    # off still draws its transcript inert. Every other session is unchanged.
+    session["loop"] = bool(session.pop("loop_phase", None))
     session["course_id"] = await run_in_threadpool(offering_course_id, session.get("offering_id"))
 
     msgs = await table("messages").aselect(

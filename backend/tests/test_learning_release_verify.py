@@ -626,7 +626,7 @@ def test_fetch_is_get_only_bounded_and_never_returns_raw_response(oversized, mon
     class Opener:
         def open(self, request, timeout):
             assert timeout == 3 and request.get_method() == "GET" and request.data is None
-            assert request.get_header("Cookie") == "sapling_session=PRIVATE.signature"
+            assert request.get_header("Cookie") == "__Host-sapling_session=PRIVATE.signature"
             requests.append(request)
             return Response()
 
@@ -641,6 +641,82 @@ def test_fetch_is_get_only_bounded_and_never_returns_raw_response(oversized, mon
             "https://api.example/api/health", timeout=3, token="PRIVATE.signature"
         ) == (200, {"status": "ok"})
     assert len(requests) == 1
+
+
+# ── Z31: the probe's cookie is one a deployed backend accepts ────────────────
+
+
+def test_the_presented_cookie_name_is_the_backends_host_only_name():
+    """Not imported by the script (services.session_tokens loads config, and so
+    .env, which the verifier never does): pinned here instead."""
+    from services.session_tokens import HOST_SESSION_COOKIE_NAME
+
+    assert verify.SESSION_COOKIE == HOST_SESSION_COOKIE_NAME
+
+
+def _session_the_bff_mints(secret: str) -> str:
+    """A current session as the frontend BFF mints it: with the host-only
+    claim (`"cookie": "host"`, frontend/src/lib/sessionToken.ts)."""
+    import base64
+    import hmac
+    import time
+
+    now = time.time()
+    payload = {"user_id": "user_qa", "exp": int(now) + 3600, "typ": "session",
+               "iat": now, "iat_precision": "ms", "cookie": "host"}
+    body = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
+    sig = hmac.new(secret.encode(), body.encode(), hashlib.sha256).digest()
+    return f"{body}.{base64.urlsafe_b64encode(sig).decode().rstrip('=')}"
+
+
+@pytest.mark.parametrize(
+    "base, secure",
+    [("https://api.staging.example", True), ("http://127.0.0.1:5102", False)],
+)
+def test_the_probe_cookie_authenticates_on_a_deployed_and_a_loopback_backend(
+    base, secure, monkeypatch
+):
+    """Z31: the --expect-loop probe sends the QA session the way the backend's
+    real guard reads it. A deployed backend (SECURE_COOKIES) reads the plain
+    `sapling_session` name only as the legacy Domain cookie and refuses any
+    session minted with the host-only claim under it (401), so the probe's
+    cookie must carry the `__Host-` name; a loopback http stack reads it too."""
+    from starlette.requests import Request as StarletteRequest
+
+    import config
+    from services import auth_guard
+
+    secret = "z31-release-verifier-secret-at-least-32-bytes"
+    monkeypatch.setattr(auth_guard, "SESSION_SECRET", secret)
+    monkeypatch.setattr(config, "SECURE_COOKIES", secure)
+    token = _session_the_bff_mints(secret)
+    sent = []
+
+    class Response:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            pass
+
+        def read(self, _limit):
+            return b'{"active": true}'
+
+    class Opener:
+        def open(self, request, timeout):
+            sent.append(request.get_header("Cookie"))
+            return Response()
+
+    monkeypatch.setattr(verify, "build_opener", lambda *handlers: Opener())
+    verify.fetch_json(base + "/api/learn/loop/status", timeout=3, token=token)
+    (cookie,) = sent
+    request = StarletteRequest({
+        "type": "http", "method": "GET", "path": "/api/learn/loop/status",
+        "headers": [(b"cookie", cookie.encode())], "query_string": b"",
+    })
+    assert auth_guard._real_decode_session(request)["user_id"] == "user_qa"
 
 
 def test_db_flags_without_explicit_action_do_not_create_a_misleading_default_success(capsys):

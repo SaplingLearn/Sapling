@@ -2621,10 +2621,13 @@ SEED = BACKEND / "db" / "seed_local_rich.py"
 LEARN_LOOP_SPEC_STUB_MARKER = "Contains no tests yet."
 
 # `/** Must match backend/agents/function_handlers_e2e.py::E2E_X */` followed by
-# `const NAME = "..." + "...";` — the house shape (tutor.spec.ts).
+# `const NAME = "..." + "...";` — the house shape (tutor.spec.ts). Z48: the
+# rest of the doc comment may follow the name ("E2E_X.", "E2E_X: why", a second
+# line), up to the comment's own close, and the const may be exported.
 _SYNC_RX = re.compile(
-    r"Must match backend/agents/function_handlers_e2e\.py::(E2E_[A-Z0-9_]+)\.?\s*\*/\s*"
-    r"const\s+\w+\s*=\s*((?:\"(?:[^\"\\]|\\.)*\"\s*\+?\s*)+);",
+    r"Must match backend/agents/function_handlers_e2e\.py::(E2E_[A-Z0-9_]+)(?![A-Z0-9_])"
+    r"(?:(?!\*/)[\s\S])*\*/\s*"
+    r"(?:export\s+)?const\s+\w+\s*=\s*((?:\"(?:[^\"\\]|\\.)*\"\s*\+?\s*)+);",
 )
 
 
@@ -2646,6 +2649,95 @@ def test_inv_13a_sync_scan_self_test():
     # tutor.spec.ts's shape ends the comment with a period
     dotted = src.replace("E2E_X_REPLY */", "E2E_X_REPLY. */")
     assert [n for n, _ in _SYNC_RX.findall(dotted)] == ["E2E_X_REPLY"]
+    # Z48: a doc comment that goes on past the name (learn-loop.spec.ts), a
+    # colon after it, and an exported const (support/quiz.ts) are read too —
+    # and the name is never cut short to make a match
+    for comment in (
+        "E2E_X_REPLY\n *  (spec §13 A138: the turn after the guess). */",
+        "E2E_X_REPLY: the seeded items' OWN key, never a check's. */",
+    ):
+        continued = src.replace("E2E_X_REPLY */", comment)
+        assert [(n, _ts_string(e)) for n, e in _SYNC_RX.findall(continued)] == [
+            ("E2E_X_REPLY", 'Key idea: a "b" c?')
+        ]
+    exported = src.replace("const X_REPLY", "export const X_REPLY")
+    assert [n for n, _ in _SYNC_RX.findall(exported)] == ["E2E_X_REPLY"]
+    # the comment ends at its own close: a later comment's const is not this name's
+    two = src.replace('const X_REPLY =', 'let y = 1; /** other */ const X_REPLY =')
+    assert _SYNC_RX.findall(two) == []
+
+
+#: Every handler constant an E2E file cites in the house comment
+#: (`Must match backend/agents/function_handlers_e2e.py::E2E_X`), whatever
+#: follows it: inv_13a compares each one, so a citation the scan cannot read
+#: fails here instead of passing unread (Z48).
+_CITED_RX = re.compile(r"Must match backend/agents/function_handlers_e2e\.py::(E2E_[A-Z0-9_]+)")
+
+
+def _e2e_sources():
+    """Every TypeScript file under frontend/e2e — the specs and their support
+    modules alike (Z48: support/ copies handler text too)."""
+    return [(p.relative_to(FRONTEND_E2E).as_posix(), p.read_text()) for p in sorted(FRONTEND_E2E.rglob("*.ts"))]
+
+
+#: Handler constants an E2E file copies in a shape other than a string literal
+#: (Z48): (file under frontend/e2e, handler constant, the TS const, its shape).
+#: "array": a JSON-shaped array literal (`[...]`, optionally `as const`);
+#: "template": an arrow function returning a template literal whose `${x}`
+#: holes are the handler format string's `{x}` fields.
+_STRUCTURED_COPIES = (
+    ("learn-varied-practice.spec.ts", "E2E_CHECK_ITEM_SURFACES", "E2E_SURFACES", "array"),
+    ("quiz-learning.spec.ts", "E2E_PLANNED_STEM", "plannedStem", "template"),
+    ("support/quizStack.ts", "E2E_QUIZ_CORRECT_LABELS", "CORRECT_LABELS", "array"),
+)
+
+
+def _ts_structured(src: str, const: str, kind: str):
+    import json
+
+    if kind == "array":
+        m = re.search(
+            rf"const\s+{re.escape(const)}\s*(?::[^=]+)?=\s*(\[[\s\S]*?\])\s*(?:as\s+const\s*)?;", src
+        )
+        return None if m is None else json.loads(re.sub(r",\s*\]", "]", m.group(1)))
+    m = re.search(rf"const\s+{re.escape(const)}\s*=\s*\([^)]*\)\s*=>\s*`([^`]*)`\s*;", src)
+    return None if m is None else re.sub(r"\$\{(\w+)\}", r"{\1}", m.group(1))
+
+
+def test_inv_13a_structured_copies_match_function_handlers():
+    """Z48: the copies inv_13a's string scan cannot read — the varied-practice
+    surfaces, the planned quiz stem and the quiz's correct labels — compared
+    one by one."""
+    import json
+    import sys
+
+    import agents._providers as providers
+
+    providers.clear_function_handlers()
+    sys.modules.pop("agents.function_handlers_e2e", None)
+    try:
+        handlers = importlib.import_module("agents.function_handlers_e2e")
+        sources = dict(_e2e_sources())
+        for rel, name, const, kind in _STRUCTURED_COPIES:
+            ts_value = _ts_structured(sources[rel], const, kind)
+            assert ts_value is not None, f"{rel}: no {kind} const {const} to compare with {name}"
+            want = getattr(handlers, name)
+            if kind == "array":
+                want = json.loads(json.dumps(want))  # tuples compare as the JSON arrays they are
+            assert ts_value == want, f"{rel}: {const} drifted from {name}"
+    finally:
+        providers.clear_function_handlers()
+        sys.modules.pop("agents.function_handlers_e2e", None)
+
+
+def test_inv_13a_every_cited_constant_is_compared():
+    scanned = {(rel, name) for rel, src in _e2e_sources() for name, _ in _SYNC_RX.findall(src)}
+    structured = {(rel, name) for rel, name, _const, _kind in _STRUCTURED_COPIES}
+    cited = {(rel, name) for rel, src in _e2e_sources() for name in _CITED_RX.findall(src)}
+    assert cited - scanned - structured == set(), (
+        "E2E files cite handler constants inv_13a never compares; give each the "
+        "house shape (a string literal) or a _STRUCTURED_COPIES entry"
+    )
 
 
 def test_inv_13a_spec_constants_match_function_handlers():
@@ -2658,9 +2750,9 @@ def test_inv_13a_spec_constants_match_function_handlers():
     try:
         handlers = importlib.import_module("agents.function_handlers_e2e")
         pairs = []
-        for spec in sorted(FRONTEND_E2E.glob("*.spec.ts")):
-            for name, expr in _SYNC_RX.findall(spec.read_text()):
-                pairs.append((spec.name, name, _ts_string(expr)))
+        for rel, src in _e2e_sources():  # Z48: the support modules as well as the specs
+            for name, expr in _SYNC_RX.findall(src):
+                pairs.append((rel, name, _ts_string(expr)))
         for spec, name, ts_value in pairs:
             assert hasattr(handlers, name), f"{spec} cites {name}, not in function_handlers_e2e"
             assert getattr(handlers, name) == ts_value, (
@@ -2690,6 +2782,65 @@ def test_inv_13b_seed_opts_in_exactly_the_loop_users():
         if "learning_loop_beta" in line
     ]
     assert hits == [], f"E2E journeys still depend on the retired toggle: {hits}"
+
+
+def test_inv_13b_no_oracle_reads_the_retired_toggle():
+    """Z50: nor may an oracle — the toggle measures nothing about who had the
+    loop on (the seed writes it as inert fixture data), so the learn_loop
+    oracle's loop users are the students with a loop session."""
+    oracles = BACKEND / "e2e_oracles"
+    hits = [
+        f"{p.relative_to(BACKEND)}:{i}"
+        for p in sorted(oracles.rglob("*.py"))
+        for i, line in enumerate(p.read_text().splitlines(), 1)
+        if "learning_loop_beta" in line
+    ]
+    assert hits == [], f"an oracle reads the retired toggle: {hits}"
+
+
+# ── Z49: the showcase lanes photograph production's default ──────────────────
+# scripts/e2e-up.sh switches the learning_loop flag on for every student unless
+# the caller exported a value, but the showcase drivers' recipes and their
+# handler module (agents/function_handlers_showcase.py) cover the app with the
+# loop OFF — production's default, the flag ships off. Each driver boots its
+# cycle in the flag-off lane.
+
+SHOWCASE_DRIVERS = ("gallery-shots.sh", "figma-capture.sh")
+
+
+@pytest.mark.parametrize("driver", SHOWCASE_DRIVERS)
+def test_z49_showcase_drivers_boot_their_stack_with_the_loop_off(driver, tmp_path):
+    """The real driver, run against a stub e2e-cycle.sh that records what the
+    cycle (e2e-up.sh, then Playwright) would inherit: the flag-off lane and
+    the showcase handlers."""
+    root = tmp_path / "repo"
+    (root / "scripts").mkdir(parents=True)
+    script = root / "scripts" / driver
+    script.write_text((BACKEND.parent / "scripts" / driver).read_text())
+    record = tmp_path / "booted.txt"
+    stub = root / "scripts" / "e2e-cycle.sh"
+    stub.write_text(
+        "#!/usr/bin/env bash\n"
+        f'printf "flag=%s\\nkill=%s\\nhandlers=%s\\n" "${{SAPLING_FLAG_LEARNING_LOOP-unset}}" '
+        f'"${{LEARNING_LOOP_ENABLED-unset}}" "${{SAPLING_FUNCTION_HANDLERS-unset}}" > "{record}"\n'
+    )
+    python = root / "backend" / "venv" / "bin" / "python"
+    python.parent.mkdir(parents=True)
+    python.write_text("#!/bin/sh\nexit 0\n")
+    for executable in (script, stub, python):
+        executable.chmod(0o755)
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in ("SAPLING_FLAG_LEARNING_LOOP", "LEARNING_LOOP_ENABLED", "E2E_SLOT_LOCKED")
+    }
+    subprocess.run(["bash", str(script)], cwd=root, env=env, capture_output=True, timeout=60)
+    booted = dict(line.split("=", 1) for line in record.read_text().splitlines())
+    assert booted == {
+        "flag": "off",  # the flag-off lane: frontend/e2e/support/lane.ts's loopOffLane
+        "kill": "unset",
+        "handlers": "agents.function_handlers_showcase",
+    }
 
 
 # ── PKG-14b: the evidence-only rule (spec §11) ──────────────────────────────

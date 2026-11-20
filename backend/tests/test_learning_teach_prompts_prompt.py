@@ -18,6 +18,7 @@ import agents.loop_tutor as lt
 from agents import function_handlers_e2e as fh
 from learning.ladder import Rung
 from learning.turn_shape import _CONTROL_TAG, TurnTemplate, render_partial, render_turn, validate_turn, turn_limits
+from services.prompt_safety import wrap_untrusted
 
 _TURN = {"key_idea": "A base case stops recursion.", "body": "It ends the calls.", "question": "Which input stops it?"}
 
@@ -35,7 +36,10 @@ def test_the_new_arguments_default_to_the_unchanged_prefix():
 
 def test_the_explaining_turn_carries_the_line_and_the_item_never_its_answer():
     block = lt.prequestion_item_block("Where does it go?", "mc_reason", ["A. a list", "B. the next slot"])
-    assert block == "[PREQUESTION ITEM] (format: mc_reason)\nWhere does it go?\nA. a list\nB. the next slot"
+    # Z07: the item as posed is DATA under its heading (tests/test_loop_item_text_is_data.py)
+    assert block == "[PREQUESTION ITEM] (format: mc_reason)\n" + wrap_untrusted(
+        "Where does it go?\nA. a list\nB. the next slot", source=lt.PREQUESTION_ITEM_SOURCE
+    )
     prefix = lt.phase_prefix(phase="teach", band="develop", ceiling=Rung.H3, prequestion_block=block)
     assert prefix.endswith(lt.PREQUESTION_LINE + "\n" + block)
     assert prefix.startswith(lt.phase_prefix(phase="teach", band="develop", ceiling=Rung.H3))

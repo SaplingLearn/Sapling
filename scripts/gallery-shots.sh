@@ -38,6 +38,13 @@ die() { echo "✗ $*" >&2; exit 1; }
 # SUPABASE_DB_URL / SUPABASE_URL, so the overlay lands in that slot's database.
 export SAPLING_MODEL_MODE=function
 export SAPLING_FUNCTION_HANDLERS=agents.function_handlers_showcase
+# The flag-off lane: production's default (the learning_loop flag ships off).
+# scripts/e2e-up.sh switches the flag on for every student unless the caller
+# exported a value, but the twelve recipes (frontend/e2e/gallery-shots.spec.ts;
+# shot-learn is the LEGACY tutor) and the showcase handler module cover the app
+# with the loop off — the module registers no learning-loop slot. Exported here
+# so the cycle's e2e-up.sh and Playwright (support/lane.ts) both see it.
+export SAPLING_FLAG_LEARNING_LOOP=off
 export GALLERY_OUT_DIR="$OUT_DIR"
 
 "$ROOT/scripts/e2e-cycle.sh" -- bash -c '

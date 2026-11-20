@@ -24,11 +24,12 @@ vi.mock("next/navigation", () => ({
 vi.mock("@/context/UserContext", () => ({ useUser: () => ({ userId: "u1", userReady: true, isAuthenticated: true }) }));
 const toast = vi.hoisted(() => ({ error: vi.fn(), success: vi.fn(), info: vi.fn(), warn: vi.fn(), show: vi.fn() }));
 vi.mock("../ToastProvider", () => ({ useToast: () => toast })); // useToast throws outside a provider
-// MarkdownChat is lazy (next/dynamic): render plain text so assertions see message content.
+// MarkdownChat is lazy (next/dynamic): render plain text so assertions see message content,
+// and the markdown profile it was given (Z08: the loop's transcript is drawn "inert").
 vi.mock("next/dynamic", () => ({
   default: () =>
-    function MarkdownStub({ children }: { children: React.ReactNode }) {
-      return <div>{children}</div>;
+    function MarkdownStub({ children, profile }: { children: React.ReactNode; profile?: string }) {
+      return <div data-markdown-profile={profile}>{children}</div>;
     },
 }));
 vi.mock("../graph/KnowledgeGraph", () => ({ KnowledgeGraph: () => <div data-testid="kg-stub" /> }));
@@ -959,6 +960,20 @@ describe("LoopLearn — teach / check / feedback (A16, A46)", () => {
     expect(api.postLoopAttempt).toHaveBeenCalledWith("s2", "u1", "qh7", "it keeps calling itself");
     expect(api.requestLoopHint).toHaveBeenCalledWith("s2", "u1", "qh7");
     expect(api.requestLoopHintTurn).toHaveBeenCalledWith("s2", "u1");
+  });
+
+  it("Z08: the transcript draws the pose and a hint passage inert — class material served verbatim never links out", async () => {
+    const passage = "Lab 4 is submitted at https://lab4-portal.example/login. [Open the handout](https://evil.example/h)";
+    api.postLoopAttempt.mockResolvedValue({ genuine: true, counted: true, attempts: 1, independent_s: 60 });
+    api.requestLoopHint.mockResolvedValue({ rung: 2, intent: "Concept pointer." });
+    api.requestLoopHintTurn.mockResolvedValue(turn({ reply: passage, phase: "hint" }));
+    await withCheckItem();
+    fireEvent.change(screen.getByTestId("loop-attempt-input"), { target: { value: "it keeps calling itself" } });
+    fireEvent.click(screen.getByTestId("loop-hint-button"));
+    await screen.findByTestId("loop-hint-reply");
+    for (const row of [logRow(passage), logRow(pose.prompt)]) {
+      expect(row.closest("[data-markdown-profile]")?.getAttribute("data-markdown-profile")).toBe("inert");
+    }
   });
 
   it("K09: while a hint loads, Submit and 'I don't know' wait for it (the rung is already charged)", async () => {

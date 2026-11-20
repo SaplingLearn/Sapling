@@ -31,6 +31,16 @@ from promotion.preflight import ledger_diff, ledger_exists, recorded_filenames  
 
 MAX_RESPONSE_BYTES = 128_000
 MAX_LOG_BYTES = 10_000_000
+#: The cookie name the authenticated probe presents the QA session under
+#: (sec2 M1). Every backend, https or loopback http, reads the host-only
+#: `__Host-sapling_session` first and never as the legacy Domain cookie; a
+#: deployed backend reads the plain `sapling_session` ONLY as that legacy
+#: cookie, and refuses there every session the BFF has minted since (they
+#: carry the `"cookie": "host"` claim) with a 401. Mirrors
+#: services/session_tokens.py::HOST_SESSION_COOKIE_NAME (pinned by
+#: tests/test_learning_release_verify.py) rather than importing it: that
+#: module loads config, and so .env, which this script never does.
+SESSION_COOKIE = "__Host-sapling_session"
 REQUIRED_COLUMNS = {
     "sessions": {
         "loop_state": "jsonb",
@@ -394,7 +404,7 @@ class _NoRedirect(HTTPRedirectHandler):
 def fetch_json(url: str, *, timeout: float, token: str | None = None) -> tuple[int, dict]:
     headers = {"Accept": "application/json"}
     if token:
-        headers["Cookie"] = f"sapling_session={token}"
+        headers["Cookie"] = f"{SESSION_COOKIE}={token}"
     request = Request(url, headers=headers, method="GET")
     try:
         response = build_opener(_NoRedirect()).open(request, timeout=timeout)

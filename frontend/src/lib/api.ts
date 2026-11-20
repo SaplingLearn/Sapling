@@ -641,7 +641,7 @@ export const renameSession = (sessionId: string, userId: string, topic: string) 
 
 export const resumeSession = (sessionId: string) =>
   fetchJSON<{
-    session: { id: string; user_id: string; topic: string; mode: string; course_id: string | null; started_at: string; ended_at: string | null };
+    session: { id: string; user_id: string; topic: string; mode: string; course_id: string | null; started_at: string; ended_at: string | null; loop?: boolean };
     messages: { id: string; role: string; content: string; created_at: string }[];
   }>(`/api/learn/sessions/${sessionId}/resume`);
 

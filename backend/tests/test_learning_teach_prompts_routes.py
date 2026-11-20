@@ -19,6 +19,7 @@ from agents.loop_tutor import PREQUESTION_LINE, SELF_EXPLAIN_ACK_LINE
 from learning import prequestion as pq
 from learning import self_explain as se
 from learning.checks import CheckItem, Option, RubricItem, WrongReason
+from services.prompt_safety import neutralise_control_tags
 from tests import test_learn_loop_routes as _routes
 from tests.test_learn_loop_routes import (
     HARD,
@@ -236,7 +237,9 @@ def test_a_guess_is_stored_revealed_and_explained_never_graded(gate_on, on):
     on.record_reveals.assert_called_once_with("u1", ["qh-pq"], session_id="s1", source="prequestion")
     # the explaining turn: the [PREQUESTION] line, the item as posed, its answer as data
     assert PREQUESTION_LINE in seen["msg"]
-    assert "[PREQUESTION ITEM] (format: mc_reason)\n" + PQ.prompt in seen["msg"]
+    # Z07: the item as posed is DATA under its heading (an untrusted envelope)
+    assert "[PREQUESTION ITEM] (format: mc_reason)\n[BEGIN UNTRUSTED CONTENT source=prequestion_item]" in seen["msg"]
+    assert neutralise_control_tags(PQ.prompt) in seen["msg"]  # its "[qh-pq]" opens no tag
     assert "B. the next free slot" in seen["msg"] and "[PREQUESTION ANSWER]" in seen["msg"]
     assert "source=prequestion_answer" in seen["msg"]
     # the cue is trusted route text; the student's guess is their saved row (enveloped history)
