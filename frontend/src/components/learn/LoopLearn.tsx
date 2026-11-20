@@ -1373,12 +1373,10 @@ export function LoopLearn() {
       },
     };
     try {
+      // K10: a result is the saved turn — Stop pressed after `done`, while its
+      // reply was still typing out, keeps it (the loop streams resolve with it)
       const res = await run(handlers);
       if (!ownsTurn()) return null;
-      if (controller.signal.aborted) {
-        if ((submission || feedbackStarted || recoveringFeedback) && sid) void reconcile(sid, g, epoch);
-        return null;
-      }
       // docs/safety/crisis-support.md: the card instead of a tutor turn — nothing
       // was graded or recorded, so phase, check item and learner state stay as
       // they were (an answered item stays posed)
@@ -1404,7 +1402,7 @@ export function LoopLearn() {
         setStreamingText(null);
       }
     }
-  }, [reconcile, invalidateHint, feedbackPending, applyServedTurn, failedTurn]);
+  }, [invalidateHint, feedbackPending, applyServedTurn, failedTurn]);
 
   const send = (text: string) => {
     // A budget pause does not stop a message: the server screens it for a crisis

@@ -1093,3 +1093,25 @@ describe("K11 — a refusal mid-stream is read as the refusal it is", () => {
     expect(toast.error).not.toHaveBeenCalled();
   });
 });
+
+describe("K10 — Stop while a saved reply types out keeps the saved turn", () => {
+  it("the activated check, the reply and the materials note stay after Stop; nothing is marked interrupted", async () => {
+    const gate = deferred<void>();
+    api.streamLoopChat.mockImplementation(async (_s: string, _u: string, _m: string, h: { onToken?: (d: string) => void; signal?: AbortSignal }) => {
+      h.onToken?.("Here is the idea");
+      await gate.promise; // done has arrived; the pacer is still revealing it
+      expect(h.signal?.aborted).toBe(true); // Stop was pressed meanwhile
+      return turn({ reply: "Here is the idea. Now try this one.", phase: "teach", check: pose, materials_unavailable: true });
+    });
+    await resumedTeach();
+    fireEvent.change(screen.getByTestId("tutor-input"), { target: { value: "explain it" } });
+    fireEvent.click(screen.getByTestId("tutor-send"));
+    fireEvent.click(await screen.findByTestId("tutor-stop"));
+    await act(async () => gate.resolve());
+    expect((await screen.findByTestId("loop-check-prompt")).getAttribute("data-question-hash")).toBe("qh7");
+    expect(screen.getByText("Here is the idea. Now try this one.")).toBeTruthy();
+    expect(screen.getByTestId("loop-notices").textContent).toContain("course materials are temporarily unavailable");
+    expect(screen.queryByTestId("tutor-interrupted")).toBeNull();
+    expect(screen.queryByTestId("tutor-retry")).toBeNull();
+  });
+});

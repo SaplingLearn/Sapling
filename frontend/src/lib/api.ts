@@ -480,6 +480,10 @@ async function consumeChatStream(
   path: string,
   payload: Record<string, unknown>,
   handlers: StreamChatHandlers,
+  /** #866 K10 (the loop routes): Stop pressed after `done` arrived — while the
+   *  saved reply is still typing out — resolves with it instead of rejecting:
+   *  the server sends `done` only after the turn is saved, so it is the result. */
+  { keepDoneOnStop = false }: { keepDoneOnStop?: boolean } = {},
 ): Promise<ChatResult> {
   const { signal } = handlers;
   const { streamSSE } = await import('./sse');
@@ -525,7 +529,7 @@ async function consumeChatStream(
   } finally {
     signal?.removeEventListener('abort', onAbort);
   }
-  signal?.throwIfAborted();
+  if (!keepDoneOnStop) signal?.throwIfAborted();
   return result;
 }
 
@@ -1502,9 +1506,12 @@ export const approveLoopPlan = (sessionId: string, userId: string, conceptIds: s
     ...(goalVersion !== undefined ? { goal_version: goalVersion } : {}),
   });
 
+/** #866 K10: a loop turn's `done` is its saved result, kept when Stop comes after it. */
+const LOOP_STREAM = { keepDoneOnStop: true };
+
 export const streamLoopChat = (sessionId: string, userId: string, message: string, handlers: StreamChatHandlers = {}) =>
   consumeChatStream(
-    '/api/learn/loop/chat/stream', { session_id: sessionId, user_id: userId, message }, handlers,
+    '/api/learn/loop/chat/stream', { session_id: sessionId, user_id: userId, message }, handlers, LOOP_STREAM,
   ) as Promise<LoopTurnResult>;
 
 /** The attempt box's ONLY submit path (spec §13 A16): an explicit answer, never a chat message. */
@@ -1513,7 +1520,7 @@ export const streamLoopCheckAnswer = (
 ) =>
   consumeChatStream('/api/learn/loop/check/answer/stream', {
     session_id: sessionId, user_id: userId, question_hash: questionHash, ...loopAnswerFields(a),
-  }, handlers) as Promise<LoopTurnResult>;
+  }, handlers, LOOP_STREAM) as Promise<LoopTurnResult>;
 
 /** Spec §13 A138: the guess at a segment's ungraded prequestion, then — in the
  *  same stream — its explanation turn (the answer first, from code). Nothing is
@@ -1533,7 +1540,7 @@ export const streamLoopPrequestionAnswer = (
         ? { option: guess.option, ...(guess.reason ? { reason: guess.reason } : {}) }
         : guess.answer !== undefined ? { answer: guess.answer } : {}),
     no_idea: guess.no_idea,
-  }, handlers) as Promise<LoopTurnResult>;
+  }, handlers, LOOP_STREAM) as Promise<LoopTurnResult>;
 
 /** Spec §13 A139: the student's reply to a self-explanation prompt, or a skip.
  *  Stored for diagnosis only — never graded, never evidence. */

@@ -1671,7 +1671,10 @@ describe("LoopLearn — session isolation and learning evidence", () => {
     expect(screen.queryByTestId("tutor-stop")).toBeNull();
   });
 
-  it("Stop rejects queued feedback even when the transport resolves instead of throwing", async () => {
+  // #866 K10: the loop streams resolve only with `done`, which the server sends
+  // after the turn is saved — so a result that lands after Stop is the saved
+  // turn and is kept; the events queued behind Stop are still dropped.
+  it("Stop keeps the saved feedback the transport resolves with, and drops the events queued behind it", async () => {
     let handlers: import("@/lib/api").StreamChatHandlers | undefined;
     let finish: (value: ReturnType<typeof turn>) => void = () => {};
     api.streamLoopCheckAnswer.mockImplementation((_s: string, _u: string, _q: string, _a: object, h: import("@/lib/api").StreamChatHandlers) => {
@@ -1686,11 +1689,12 @@ describe("LoopLearn — session isolation and learning evidence", () => {
     await act(async () => {
       handlers?.onToken?.("queued feedback");
       handlers?.onPhase?.("feedback");
-      finish(turn({ reply: "queued final feedback", phase: "feedback", graded: true }));
+      finish(turn({ reply: "saved final feedback", phase: "feedback", graded: true }));
     });
-    await waitFor(() => expect(api.getLoopSessionStatus).toHaveBeenCalledWith("s2", "u1"));
-    expect(screen.getByTestId("loop-check-prompt")).toBeTruthy();
-    expect(screen.queryByText(/queued feedback|queued final feedback/)).toBeNull();
+    expect(await screen.findByText("saved final feedback")).toBeTruthy();
+    expect(screen.queryByText("queued feedback")).toBeNull(); // the streamed tokens behind Stop
+    expect(screen.queryByTestId("loop-check-prompt")).toBeNull(); // graded: the box takes no more answers
+    expect(screen.queryByTestId("tutor-interrupted")).toBeNull();
     expect(toast.error).not.toHaveBeenCalled();
   });
 

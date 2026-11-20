@@ -179,6 +179,23 @@ describe('streamChat', () => {
     expect(tokens.join('')).toBe(BURST);
   });
 
+  it('a loop turn: Stop pressed after done, mid-reveal, resolves with the saved result (#866 K10)', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(burstThenDone(), { status: 200 }) as never);
+    const { streamLoopChat } = await import('./api');
+    const controller = new AbortController();
+    const tokens: string[] = [];
+    const result = await streamLoopChat('s1', 'u1', 'hi', {
+      onToken: (t) => {
+        tokens.push(t);
+        if (tokens.length === 1) controller.abort();
+      },
+      signal: controller.signal,
+    });
+    expect(controller.signal.aborted).toBe(true);
+    expect(result.reply).toBe(BURST);
+    expect(tokens.join('')).toBe(BURST);
+  });
+
   it('flushes queued text before rejecting on a mid-stream error (ADR 0020 partial)', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(
