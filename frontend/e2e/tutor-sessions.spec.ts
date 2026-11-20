@@ -130,7 +130,7 @@ test.describe("Tutor V2: a session on what the student chose", () => {
     const { context, page } = await signIn(browser);
     try {
       await page.addInitScript(() => localStorage.setItem("sapling_layout", "topnav")); // the card's layout
-      const loopStatus = page.waitForResponse((r) => r.url().includes("/api/learn/loop/status"));
+      const loopStatus = page.waitForResponse((r) => r.url().includes("/api/learn/loop/review/active")); // getLoopStatus's probe
       await page.goto("/dashboard");
       const item = page.getByTestId("dashboard-learn-next-item").first();
       await expect(item).toBeVisible();
