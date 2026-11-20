@@ -4,7 +4,10 @@
  * Ported verbatim from `Sapling Landing v4.dc.html`. This is not decorative
  * filler: Act I's projected 3D graph, explore mode, and the gallery all
  * render this same data. Seven units, 42 concepts (7 topics x 5 subs, plus
- * the 7 topic nodes themselves), each carrying a mastery tier and score.
+ * the 7 topic nodes themselves), each carrying a mastery tier and score. The
+ * tier is the one the app gives that score (lib/graph/nodeStyle.ts::tierFor:
+ * mastered from 0.95, learning from 0.30, struggling from 0.10), pinned by
+ * course.test.ts, so the demo never teaches a visitor other cut-offs.
  *
  * Node positions (`at`) are authored in the source's own 3D space and are
  * projected to screen space by the scroll engine — treat them as fixed
@@ -82,7 +85,7 @@ export const COURSE: Course = {
         {
           label: 'Binary search trees',
           tier: 'mastered',
-          mastery: 0.91,
+          mastery: 0.97,
           blurb: 'Ordered structure: everything left is smaller, everything right is larger.',
         },
         {
@@ -100,7 +103,7 @@ export const COURSE: Course = {
         {
           label: 'Traversals',
           tier: 'mastered',
-          mastery: 0.88,
+          mastery: 0.96,
           blurb: 'In-order, pre-order, post-order: each reads the same tree differently.',
         },
         {
@@ -121,13 +124,13 @@ export const COURSE: Course = {
         {
           label: 'BFS',
           tier: 'mastered',
-          mastery: 0.86,
+          mastery: 0.96,
           blurb: 'Level-by-level with a queue; shortest path on unweighted edges.',
         },
         {
           label: 'DFS',
           tier: 'mastered',
-          mastery: 0.82,
+          mastery: 0.95,
           blurb: 'Follow one path to exhaustion, by recursion or an explicit stack.',
         },
         {
@@ -153,20 +156,20 @@ export const COURSE: Course = {
     {
       label: 'Sorting',
       tier: 'mastered',
-      mastery: 0.79,
+      mastery: 0.95,
       at: [470, -130, 60],
       blurb: 'Comparison sorts, their trade-offs, and the n log n lower bound.',
       subs: [
         {
           label: 'Merge sort',
           tier: 'mastered',
-          mastery: 0.93,
+          mastery: 0.98,
           blurb: 'Divide, sort halves, merge: stable and reliably n log n.',
         },
         {
           label: 'Quick sort',
           tier: 'mastered',
-          mastery: 0.84,
+          mastery: 0.96,
           blurb: 'Partition around a pivot; fast in practice, quadratic in the worst case.',
         },
         {
@@ -184,7 +187,7 @@ export const COURSE: Course = {
         {
           label: 'Stability',
           tier: 'mastered',
-          mastery: 0.8,
+          mastery: 0.95,
           blurb: 'Whether equal keys keep their original relative order.',
         },
       ],
@@ -192,14 +195,14 @@ export const COURSE: Course = {
     {
       label: 'Recursion',
       tier: 'struggling',
-      mastery: 0.33,
+      mastery: 0.26,
       at: [-140, 300, 210],
       blurb: 'Your weakest unit. Base cases and stack depth account for most misses.',
       subs: [
         {
           label: 'Base cases',
           tier: 'struggling',
-          mastery: 0.31,
+          mastery: 0.25,
           blurb: 'The stopping condition; get it wrong and everything else is noise.',
         },
         {
@@ -238,7 +241,7 @@ export const COURSE: Course = {
         {
           label: 'Big-O notation',
           tier: 'mastered',
-          mastery: 0.9,
+          mastery: 0.97,
           blurb: 'Upper bound on growth, constants discarded.',
         },
         {
@@ -277,7 +280,7 @@ export const COURSE: Course = {
         {
           label: 'Hash maps',
           tier: 'mastered',
-          mastery: 0.87,
+          mastery: 0.96,
           blurb: 'Key to bucket in one step; the workhorse of the course.',
         },
         {
@@ -309,7 +312,7 @@ export const COURSE: Course = {
     {
       label: 'Dynamic programming',
       tier: 'struggling',
-      mastery: 0.36,
+      mastery: 0.29,
       at: [-300, 150, -260],
       blurb: 'Overlapping subproblems solved once. Most students fight the table, not the idea.',
       subs: [
@@ -378,7 +381,7 @@ export function nodeUses(node: GraphNode, degree: number): NodeUse[] {
       tag: 'QUIZ TARGETING',
       text:
         t === 'mastered'
-          ? 'Adaptive quizzes spend few questions here. It is already above the 0.75 mastery cut-off, so the generator spends them on weaker nodes.'
+          ? 'Adaptive quizzes spend few questions here. It is already above the 0.95 mastery cut-off, so the generator spends them on weaker nodes.'
           : 'POST /api/quiz/generate takes this node id. Every answer writes a mastery delta back onto it, which moves the ring you are looking at.',
     },
     {
@@ -389,7 +392,7 @@ export function nodeUses(node: GraphNode, degree: number): NodeUse[] {
           : 'Spaced repetition draws cards from the lowest-mastery linked concepts first, and at ' +
             Math.round(node.mastery * 100) +
             '% this sits ' +
-            (node.mastery < 0.45 ? 'near the front' : 'mid-queue') +
+            (t === 'struggling' ? 'near the front' : 'mid-queue') +
             '.',
     },
   ];
