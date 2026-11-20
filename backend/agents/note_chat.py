@@ -12,12 +12,14 @@ Tools (wire names — what the model sees):
   - apply_graph_update_tool (lets the agent mark new concepts while
     answering, the same way the course tutor does)
 
-Academic integrity (spec §13 A125): the prompt tells the model never to answer,
-solve or confirm a graded check question — defence in depth only. The
-guarantee is structural and lives in the route (routes/notes.py, through
+Academic integrity (spec §13 A125): for a learning-loop student the run's
+instructions tell the model never to answer, solve or confirm a graded check
+question — defence in depth only (`integrity_run_args`). The guarantee is
+structural and lives in the route (routes/notes.py, through
 services/integrity_guard.py): a message or note quoting one of the student's
 posed checks never reaches this agent, and a reply stating one's key is never
-served.
+served. With the loop off the guard is off (A125 (i)) and so is the rule: the
+request is the pre-loop app's, system prompt and all (#866 Z26).
 """
 from __future__ import annotations
 
@@ -45,15 +47,6 @@ _PROMPT = (
     # #150: this agent's tools return student-authored note/document text.
     + INJECTION_GUARD_PROMPT
     + "\n\n"
-    # spec §13 A125: defence in depth; the route's integrity guard is the guarantee.
-    "ACADEMIC INTEGRITY (non-negotiable): Sapling's learning sessions pose "
-    "graded check questions. When the student asks you to answer, solve or "
-    "check their answer to a quiz, check, test or homework question — pasted "
-    "into the chat or written in the note — do not give its answer, a worked "
-    "solution, or a yes/no on their answer. Say you can't answer graded "
-    "questions here and point them to that question's card in their learning "
-    "session, whose hints go one step at a time. You may explain the "
-    "underlying idea in general terms, without solving that question.\n\n"
     # sec2 M11: the model-side crisis backstop, flag or no flag.
     + MODEL_SAFETY_PROMPT
     + "\n\n"
@@ -62,6 +55,40 @@ _PROMPT = (
     "this is a sidecar chat, not a tutoring session."
 )
 _PROMPT_HASH = hashlib.sha256(_PROMPT.encode("utf-8")).hexdigest()[:12]
+
+#: Spec §13 A125 (g): defence in depth for the route's integrity guard, which is
+#: the guarantee. Part of the loop like the guard (A125 (i)), so it rides a run
+#: only when the route's gate is on (`integrity_run_args`): a loop-off student
+#: gets the pre-loop prompt, and is never sent to a learning-session card they
+#: do not have (#866 Z26).
+INTEGRITY_INSTRUCTIONS = (
+    "ACADEMIC INTEGRITY (non-negotiable): Sapling's learning sessions pose "
+    "graded check questions. When the student asks you to answer, solve or "
+    "check their answer to a quiz, check, test or homework question — pasted "
+    "into the chat or written in the note — do not give its answer, a worked "
+    "solution, or a yes/no on their answer. Say you can't answer graded "
+    "questions here and point them to that question's card in their learning "
+    "session, whose hints go one step at a time. You may explain the "
+    "underlying idea in general terms, without solving that question."
+)
+_INTEGRITY_PROMPT_HASH = hashlib.sha256(
+    f"{_PROMPT}\n\n{INTEGRITY_INSTRUCTIONS}".encode("utf-8")
+).hexdigest()[:12]
+
+
+def integrity_run_args(learning_loop: bool) -> dict:
+    """`note_chat_agent.run(..., **integrity_run_args(on))`, `on` being the
+    route-entry gate's answer for this student (learning/gate.py, read once).
+    Off: nothing — the agent's own system prompt and prompt version, the
+    request the pre-loop app sent. On: the integrity rule as the run's
+    instructions (after the unchanged system prompt) and that prompt's version
+    for the run's metadata (agents.loop_tutor.variant_run_args' pattern)."""
+    if not learning_loop:
+        return {}
+    return {
+        "instructions": INTEGRITY_INSTRUCTIONS,
+        "metadata": {"prompt_version": _INTEGRITY_PROMPT_HASH},
+    }
 
 
 note_chat_agent = Agent[SaplingDeps, str](
