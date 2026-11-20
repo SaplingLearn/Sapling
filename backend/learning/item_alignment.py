@@ -106,6 +106,40 @@ def _answer_key(answer: str) -> str:
     return concept_key(str(answer or "").strip().strip("\"'“”‘’").rstrip("."))
 
 
+def names_concept(answer, key: str) -> bool:
+    """Whether a concept answer names the concept keyed `key`: exactly as
+    written, or with surrounding quotes and a closing full stop forgiven on
+    BOTH sides (`_answer_key`). Both, because a concept's own name may begin
+    or end with a quote mark or end with a full stop ("'this' keyword",
+    "Pointers vs. references.") and its key keeps them, so a verifier that
+    copies such a name verbatim names it, and so does one that drops them."""
+    if not key:
+        return False
+    if concept_key(answer) == key:
+        return True
+    loose = _answer_key(answer)
+    return bool(loose) and loose == _answer_key(key)
+
+
+def _tested_key(answer, own_key: str, scope: Mapping[str, str]) -> str:
+    """The key of the concept the verifier's answer names: the item's own or a
+    listed one, matched by `names_concept` — the answer as written first, then
+    the item's own concept, then the one listed concept it names (two listed
+    concepts spelled alike once forgiven name neither). Otherwise the answer
+    in the forgiving spelling, which `align` then reads as "none" or as a
+    concept outside the list."""
+    raw = concept_key(answer)
+    if raw == own_key or raw in scope:
+        return raw
+    loose = _answer_key(answer)
+    if not loose or loose == NONE:
+        return loose
+    if names_concept(answer, own_key):
+        return own_key
+    named = [k for k in scope if names_concept(answer, k)]
+    return named[0] if len(named) == 1 else loose
+
+
 def collect(
     criteria: Iterable[tuple[str, str, bool]], concepts: Iterable[tuple[str, str]]
 ) -> dict[str, Verdict]:
@@ -152,7 +186,7 @@ def align(
     keep = tuple(i for i, cid in enumerate(ids) if verdict.asked[cid])
     if not keep:
         return Alignment(keep, own_key, (), UNASKED_RUBRIC)
-    tested = _answer_key(verdict.concept)
+    tested = _tested_key(verdict.concept, own_key, scope)
     if not tested or tested == NONE:
         return Alignment(keep, own_key, (), NO_CONCEPT)
     if tested != own_key and tested not in scope:

@@ -52,7 +52,7 @@ from dataclasses import dataclass
 
 from learning import item_keys
 from learning.echoed_ids import echoed_id
-from learning.item_alignment import NONE, concept_key
+from learning.item_alignment import NONE, concept_key, names_concept
 from learning.params import MISCONCEPTION_CONFIDENCE
 from learning.quiz_plan import is_key
 
@@ -157,7 +157,7 @@ def alignment_of(answer: str | None, target: str) -> str:
     if answer is None:
         return ALIGNMENT_UNVERIFIED
     key = _answer_key(answer)
-    if key and key == concept_key(target) and key != NONE:
+    if key and key != NONE and names_concept(answer, concept_key(target)):
         return ALIGNED
     return MISALIGNED
 
