@@ -9,6 +9,8 @@ Two things a MagicMock suite cannot see:
 """
 
 import uuid
+from contextlib import contextmanager
+from unittest.mock import patch
 from datetime import datetime, timezone
 
 import pytest
@@ -102,9 +104,23 @@ def test_the_metrics_script_reads_earnest_revise_from_real_events(db_conn):
     assert out["earnest_revise"] == EXPECTED
 
 
+@contextmanager
+def _as_admin():
+    """The admin check, passed in both places it runs: the handler's
+    `require_admin` and, once db_user_scope is past off, the router's
+    `db.scope.admin_service_route` (it re-checks admin through
+    services.auth_guard before running service-scoped). Patching only the
+    handler's left the enforce lane 401ing (#866 integration)."""
+    with (
+        patch_in(ADMIN_ANALYTICS_MODULES, "require_admin", return_value=None),
+        patch("services.auth_guard.require_admin", return_value=None),
+    ):
+        yield
+
+
 def test_the_admin_kpi_reads_earnest_revise_from_real_events(db_conn, client):
     _seed_steps(db_conn)
-    with patch_in(ADMIN_ANALYTICS_MODULES, "require_admin", return_value=None):
+    with _as_admin():
         r = client.get("/api/admin/analytics/learning-loop", params={"from": FROM, "to": TO})
     assert r.status_code == 200, r.text
     body = r.json()
@@ -113,7 +129,7 @@ def test_the_admin_kpi_reads_earnest_revise_from_real_events(db_conn, client):
 
 
 def test_an_empty_window_is_inconclusive_against_real_sql(client):
-    with patch_in(ADMIN_ANALYTICS_MODULES, "require_admin", return_value=None):
+    with _as_admin():
         body = client.get(
             "/api/admin/analytics/learning-loop", params={"from": FROM, "to": TO}
         ).json()

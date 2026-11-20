@@ -307,11 +307,12 @@ def test_a_replayed_submit_is_a_409_and_re_applies_no_mastery(
     # #553-shaped keyspace miss on the node lookup, would leave mastery at the
     # seeded value through both calls and pass while claiming to guard #129.
     # PKG-14b (spec §11.2): the quiz writes BKT evidence, not a flat delta —
-    # 1 correct then 2 wrong (question order) on channel mc, from the BKT prior
-    # (no learner_state row yet), computed with the library the route uses.
-    from learning import bkt, params
+    # 1 correct then 2 wrong (question order) on channel mc, from the node's
+    # stored score (no learner_state row yet, so BKT starts from it: #866 K03),
+    # computed with the library the route uses.
+    from learning import bkt
 
-    expected = params.BKT_L0
+    expected = SEEDED_MASTERY
     for correct in (True, False, False):
         expected = bkt.update(expected, "mc", correct)
     after_first = _mastery(db_conn)

@@ -116,7 +116,7 @@ def test_a_stored_loop_document_reaches_the_row_through_postgrest(db_conn):
     from services.tutor.pending import _consume_pending
 
     sid = str(uuid.uuid4())
-    doc = {**quiz_ask_state("node-1"), "open_question": True}
+    doc = quiz_ask_state("node-1")  # #866 K39: a quiz-ask opener leaves no open question
     ts.stash_pending(sid, {
         "user_id": USER_ACTIVE, "mode": "socratic", "topic": "Recursion", "course_id": COURSE_CS,
         "offering_id": "rich-off-cs101-f25", "use_shared_context": True,

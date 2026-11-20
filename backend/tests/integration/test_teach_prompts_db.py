@@ -68,7 +68,7 @@ def test_the_migration_runs_again_unchanged(db_conn):
         ).fetchall()
 
     before = shape(db_conn)
-    assert len(before) == 26
+    assert len(before) == 28  # + text_erased_at on each (#866 C8, 20261118195124)
     url = (os.getenv("SUPABASE_DB_URL") or "").strip()
     _require_local_db_url(url)
     with psycopg.connect(url, row_factory=dict_row) as conn:
