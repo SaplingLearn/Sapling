@@ -19,7 +19,7 @@ afterEach(cleanup);
 function home(busy: boolean, starting: boolean) {
   const noop = () => {};
   return render(
-    <TutorHome courseName="Intro CS" continueRow={null} dueCount={null} dueHref={null} startWith="Recursion"
+    <TutorHome courseName="Intro CS" continueRow={null} dueCount={null} dueHref={null} startWith={{ id: "n1", name: "Recursion" }}
       busy={busy} starting={starting} closesCurrent={null}
       onContinue={noop} onStart={noop} onStartWith={noop} onGoal={noop} />,
   );

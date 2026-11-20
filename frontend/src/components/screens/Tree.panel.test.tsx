@@ -232,7 +232,8 @@ describe("detail panel", () => {
     await selectNode(user, RECURSION);
 
     await user.click(screen.getByRole("button", { name: /learn this/i }));
-    expect(push).toHaveBeenCalledWith(`/learn?topic=Recursion&mode=socratic&course=${COURSE_ID}`);
+    // #866 K05: the concept names itself, so the loop's session is on it
+    expect(push).toHaveBeenCalledWith(`/learn?topic=Recursion&concept=${RECURSION}&mode=socratic&course=${COURSE_ID}`);
   });
 
   it("Learn this on a subject root opens the course without a topic", async () => {

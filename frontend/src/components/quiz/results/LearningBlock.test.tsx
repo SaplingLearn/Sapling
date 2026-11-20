@@ -74,7 +74,7 @@ describe("LearningBlock", () => {
     const review = screen.getByTestId("quiz-next-step-review");
     expect(review.getAttribute("href")).toBe("/study");
     expect(review.textContent).toBe("Review what's due (2)");
-    expect(screen.getByTestId("quiz-next-step-learn").getAttribute("href")).toBe("/learn?topic=Loops&course=cs111");
+    expect(screen.getByTestId("quiz-next-step-learn").getAttribute("href")).toBe("/learn?topic=Loops&concept=n2&course=cs111");
     expect(loop.calls.at(-1)).toEqual(["user_andres", true]);
   });
 
@@ -153,6 +153,11 @@ describe("the block's words", () => {
   });
 
   it("the Learn link omits a missing course", () => {
-    expect(learnHref({ concept_id: "x", concept_name: "Big O", course_id: null })).toBe("/learn?topic=Big+O");
+    expect(learnHref({ concept_id: "x", concept_name: "Big O", course_id: null })).toBe("/learn?topic=Big+O&concept=x");
+  });
+
+  it("the Learn link names its concept, so the session is on it (#866 K05)", () => {
+    const params = new URLSearchParams(learnHref({ concept_id: "n7", concept_name: "Big O", course_id: "c1" }).split("?")[1]);
+    expect([params.get("topic"), params.get("concept"), params.get("course")]).toEqual(["Big O", "n7", "c1"]);
   });
 });

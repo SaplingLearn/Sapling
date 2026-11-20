@@ -113,8 +113,8 @@ import { CheckCard } from "./CheckCard";
 import { LoopNotices } from "./LoopNotices";
 import { ReadOnlyTranscript } from "./ReadOnlyTranscript";
 import {
-  conceptAt, currentConcept, dueLink, findRow, isOpenPhase, nextAfterVerdict, panelPlanOf, phaseText, weakestConcept,
-  type ApprovedPlan,
+  conceptAt, conceptGoal, currentConcept, dueLink, findRow, isOpenPhase, linkGoal, nextAfterVerdict, panelPlanOf, phaseText,
+  weakestConcept, type ApprovedPlan,
 } from "./tutor/sessionView";
 
 // ── Copy ─────────────────────────────────────────────────────────────────
@@ -266,8 +266,9 @@ export function LoopLearn() {
   // composer: ChatPanel applies `text` whenever `key` changes.
   const [chatDraft, setChatDraft] = useState<{ text: string; key: number }>({ text: "", key: 0 });
 
-  // Goals are session-owned. New sessions start whole-course; typed topic text
-  // never silently selects targets, and nothing is inherited across courses.
+  // Goals are session-owned. New sessions start whole-course unless the student
+  // chose concepts: the goal editor, or a concept they clicked (K05: its node
+  // id, never typed text matched to a concept); nothing is inherited across courses.
   const [goal, setGoal] = useState<LoopGoal | null>(null);
   const [goalProgress, setGoalProgress] = useState<LoopGoalProgress | null>(null);
   const [practiceUnavailable, setPracticeUnavailable] = useState<string[]>([]);
@@ -911,9 +912,9 @@ export function LoopLearn() {
     } else if (list.length > 0) {
       await resume(list[0]);
     } else if (deepLink.topic && !topicStarted.current) {
-      // a "learn this" link from the map starts on its concept, once
+      // a "learn this" link from the map starts on its concept (its goal, K05), once
       topicStarted.current = true;
-      await newSession({ topic: deepLink.topic, mode: deepLink.mode });
+      await newSession({ topic: deepLink.topic, mode: deepLink.mode, goal: linkGoal(deepLink, courseId) });
     } else {
       // wireframe T1: nothing open in this course — the Tutor home, never a
       // probe the student did not ask for
@@ -1972,7 +1973,7 @@ export function LoopLearn() {
       }}
       topicOffer={topicOffer}
       topicStartDisabled={sessionTransitionBusy}
-      onTopicStart={() => void newSession({ closeCurrent: true, topic: topicOffer ?? undefined, mode: deepLink.mode })}
+      onTopicStart={() => void newSession({ closeCurrent: true, topic: topicOffer ?? undefined, mode: deepLink.mode, goal: linkGoal(deepLink, courseId) })}
     />
   );
   const notices = renderNotices();
@@ -2314,7 +2315,7 @@ export function LoopLearn() {
           closesCurrent={leaving ? sessionTitle(sessionRow ?? { topic: "" }, course ?? undefined) : listedOpenTitle(sessionId, openSessions, course ?? undefined)}
           onContinue={() => { if (openHere) openRow(openHere); }}
           onStart={() => void startGuided()}
-          onStartWith={(topic) => void startGuided({ topic })}
+          onStartWith={(c) => void startGuided({ topic: c.name, goal: conceptGoal(c.id) })}
           onGoal={showStartGoal}
         />
       </div>

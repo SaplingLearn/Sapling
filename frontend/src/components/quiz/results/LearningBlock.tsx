@@ -33,9 +33,11 @@ export { BAND_WORDS };
 
 const pct = (value: number) => Math.round(value * 100);
 
-/** Where "Practise X in Learn" goes: Learn opens a session on the concept. */
+/** Where "Practise X in Learn" goes: Learn opens a session on the concept (it
+ *  names its node, #866 K05, so the loop's session has it as its goal). */
 export function learnHref(learn: NonNullable<QuizLearning["learn"]>): string {
   const params = new URLSearchParams({ topic: learn.concept_name });
+  if (learn.concept_id) params.set("concept", learn.concept_id);
   if (learn.course_id) params.set("course", learn.course_id);
   return `/learn?${params.toString()}`;
 }

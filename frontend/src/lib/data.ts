@@ -77,12 +77,15 @@ export type GraphEdge = {
 // their own name as the topic. The course is passed as `course` — the param
 // the Learn screen reads (`searchParams.get("course")`); the earlier handlers
 // passed `course_id`, which Learn silently ignored, dropping course scope.
+// A concept node also names itself (`concept`, #866 K05): the learning loop's
+// Tutor starts a session on that concept; the legacy Learn screen ignores it.
 export function learnHrefForNode(
-  n: Pick<GraphNode, "name" | "course_id" | "is_subject_root">,
+  n: Pick<GraphNode, "id" | "name" | "course_id" | "is_subject_root">,
   mode = "socratic",
 ): string {
   const p = new URLSearchParams();
   if (!n.is_subject_root) p.set("topic", n.name);
+  if (!n.is_subject_root && n.id) p.set("concept", n.id);
   p.set("mode", mode);
   if (n.course_id) p.set("course", n.course_id);
   return `/learn?${p.toString()}`;

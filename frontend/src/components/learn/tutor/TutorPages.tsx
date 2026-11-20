@@ -71,8 +71,8 @@ export function TutorHome({
   dueCount: number | null;
   /** Where "Review what's due" goes; null while `hide_study` hides Study. */
   dueHref: string | null;
-  /** The weakest concept the map knows, offered as a first focus. */
-  startWith: string | null;
+  /** The weakest concept the map knows, offered as a first focus (#866 K05: a session on it). */
+  startWith: { id: string; name: string } | null;
   /** Every choice is disabled (a start, a list still loading, a pending grade). */
   busy: boolean;
   /** A start is in flight: only then does the CTA say "Starting…". */
@@ -81,7 +81,7 @@ export function TutorHome({
   closesCurrent: string | null;
   onContinue: () => void;
   onStart: () => void;
-  onStartWith: (concept: string) => void;
+  onStartWith: (concept: { id: string; name: string }) => void;
   onGoal: () => void;
 }) {
   const heading = useFocusHeading<HTMLHeadingElement>();
@@ -108,7 +108,7 @@ export function TutorHome({
         )}
         {startWith && (
           <button type="button" className={styles.pill} data-testid="tutor-home-start-with" onClick={() => onStartWith(startWith)} disabled={busy}>
-            Start with {startWith}
+            Start with {startWith.name}
           </button>
         )}
         <button type="button" className={styles.pill} data-testid="tutor-home-goal" onClick={onGoal} disabled={busy}>

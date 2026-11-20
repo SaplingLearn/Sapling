@@ -151,6 +151,13 @@ describe("learnHrefForNode", () => {
     expect(params.has("course_id")).toBe(false);
   });
 
+  it("names a concept node's id, so the loop's session is on it (#866 K05)", () => {
+    const params = new URLSearchParams(learnHrefForNode(makeGraphNode({ id: "n7", name: "Eigenvalues" })).split("?")[1]);
+    expect(params.get("concept")).toBe("n7");
+    const root = learnHrefForNode(makeGraphNode({ id: "r1", is_subject_root: true }));
+    expect(new URLSearchParams(root.split("?")[1]).has("concept")).toBe(false);
+  });
+
   it("omits the course param when the node has no course_id", () => {
     const href = learnHrefForNode(makeGraphNode({ course_id: "" }));
     const params = new URLSearchParams(href.split("?")[1]);

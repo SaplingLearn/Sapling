@@ -1,7 +1,7 @@
 // What the Tutor shows about the session on screen, from the loop's own
 // data (moved out of LoopLearn.tsx unchanged): the plan the panel lists, the
 // current concept, the phase line, and the home's first focus.
-import type { LoopPanelConcept, LoopPhase, LoopPlanConcept } from "@/lib/api";
+import type { LoopGoal, LoopPanelConcept, LoopPhase, LoopPlanConcept } from "@/lib/api";
 import type { GraphNode } from "@/lib/data";
 import { retentionHref } from "@/context/RetentionDueContext";
 import type { TutorSessionRow } from "./sessions";
@@ -67,10 +67,20 @@ export function phaseText(phase: LoopPhase, plan: LoopPanelConcept[] | null, foc
 }
 
 /** The concept T1 offers as a first focus: the weakest one not yet mastered. */
-export function weakestConcept(nodes: GraphNode[]): string | null {
+export function weakestConcept(nodes: GraphNode[]): { id: string; name: string } | null {
   const open = nodes.filter((n) => !n.is_subject_root && n.mastery_tier !== "mastered");
   open.sort((a, b) => a.mastery_score - b.mastery_score);
-  return open[0]?.name ?? null;
+  return open[0] ? { id: open[0].id, name: open[0].name } : null;
+}
+
+/** A session on one concept (#866 K05): its goal is that concept, confirmed by
+ *  the student's click on it — never a name matched to a concept. */
+export const conceptGoal = (id: string): LoopGoal => ({ text: "", target_node_ids: [id] });
+
+/** The goal a deep link asks for: its concept, when the link names the course
+ *  on screen (the server still checks the concept is that course's). */
+export function linkGoal(link: { concept: string; course: string }, courseId: string | null): LoopGoal | undefined {
+  return link.concept && link.course && link.course === courseId ? conceptGoal(link.concept) : undefined;
 }
 
 /** A session the "New session" button should wrap up first: one the student is in. */

@@ -1009,7 +1009,7 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `loop-new-session` | New session: opens the Tutor home (T1) and writes nothing; in the sidebar on wide screens, "+ New" in the TopBar on a phone |
 | `tutor-home` | the Tutor home (T1): "What do you want to learn today?" — where `/learn` lands when the course has no open session (a `?topic=` link still starts one) |
 | `loop-start-guided` | the home's "Start a guided session": wraps up (`/close`) the open session on screen first, so sessions do not pile up open (a 409 there starts nothing), then starts one |
-| `tutor-home-continue` / `tutor-home-due` / `tutor-home-start-with` / `tutor-home-goal` | the home's suggestions: back to the open session; Study's due review; a session titled after the weakest concept; the goal editor (`data-view="goal"`), before anything starts — saving starts the session on that goal |
+| `tutor-home-continue` / `tutor-home-due` / `tutor-home-start-with` / `tutor-home-goal` | the home's suggestions: back to the open session; Study's due review; a session on the weakest concept (its goal, #866 K05); the goal editor (`data-view="goal"`), before anything starts — saving starts the session on that goal |
 | `tutor-course-page` | a course page (T2); `data-course-id`: its sessions, progress and material; `tutor-course-start` (TopBar) goes to the home |
 | `tutor-all-sessions` | every session (T3), with a search and an All / In progress / Wrapped up filter |
 | `tutor-phase-line` | the TopBar's line under the title: Check-in / Plan · N concepts / "<concept> · concept i of n" (the approved plan's cursor, which a turn or Check me that moves it reports) / Wrap-up / "Wrapped up · read-only" |
@@ -1034,7 +1034,7 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `loop-start-error` | a new session could not start (a 429 or an error on `/start-session`) — never an empty probe |
 | `loop-start-retry` | retry the start |
 | `loop-start-crisis` | `/start-session` answered with the crisis-support card (no session was opened); the card's `crisis-support-dismiss` starts a fresh session on the course (docs/safety/crisis-support.md) |
-| `loop-topic-offer` | a `?topic=` deep link arrived while a session is open: the session resumed, the topic is offered |
+| `loop-topic-offer` | a `?topic=` deep link arrived while a session is open: the session resumed, the topic is offered (`loop-topic-start`; with the link's `?concept=` of the course on screen, a session on that concept) |
 | `loop-topic-start` | "Start a session on <topic>" (wraps up the open session first, like `loop-new-session`) |
 | `loop-readonly-transcript` | a `?resume=` session that is not an open loop session (a legacy one), shown read-only |
 | `loop-readonly-new-session` | "Start a new session" beside the read-only transcript |

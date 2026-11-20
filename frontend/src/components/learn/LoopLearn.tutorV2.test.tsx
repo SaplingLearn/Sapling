@@ -881,6 +881,61 @@ describe("K29 — an open session past the open list's cap is in progress and re
   });
 });
 
+describe("K05 — a link or button about one concept starts a session on that concept", () => {
+  const node = { id: "n1", concept_name: "Recursion", mastery_tier: "struggling", mastery_score: 0.2, is_subject_root: false, subject: "Intro CS", course_id: "c1" };
+  const onRecursion = { text: "", target_node_ids: ["n1"] };
+  beforeEach(() => {
+    api.getGraph.mockResolvedValue({ nodes: [node], edges: [], stats: {} });
+    api.startLoopSession.mockResolvedValue({ session_id: "s9", initial_message: OPENER, goal: onRecursion });
+    api.nextLoopProbe.mockResolvedValue(probeItem);
+  });
+
+  it("'Start with X' on the Tutor home starts a session whose goal is X", async () => {
+    api.listLoopSessionsFor.mockResolvedValue(listed([]));
+    render(<LoopLearn />);
+    fireEvent.click(await screen.findByTestId("tutor-home-start-with"));
+    await screen.findByTestId("loop-probe-item");
+    expect(api.startLoopSession).toHaveBeenCalledWith("u1", "c1", "Recursion", "", onRecursion, null);
+    expect(screen.getByTestId("loop-goal-summary").textContent).toContain("Recursion");
+  });
+
+  it("a map or quiz link (?concept= with its course) starts a session on its concept", async () => {
+    search.params = new URLSearchParams("topic=Recursion&concept=n1&course=c1&mode=socratic");
+    api.listLoopSessionsFor.mockResolvedValue(listed([]));
+    render(<LoopLearn />);
+    await screen.findByTestId("loop-probe-item");
+    expect(api.startLoopSession).toHaveBeenCalledWith("u1", "c1", "Recursion", "socratic", onRecursion, null);
+  });
+
+  it("a link with no course to scope the concept to still starts on the whole course", async () => {
+    search.params = new URLSearchParams("topic=Recursion&concept=n1");
+    api.listLoopSessionsFor.mockResolvedValue(listed([]));
+    render(<LoopLearn />);
+    await screen.findByTestId("loop-probe-item");
+    expect(api.startLoopSession).toHaveBeenCalledWith("u1", "c1", "Recursion", "", undefined, null);
+  });
+
+  it("'Start a session on X' while another session is open starts on X", async () => {
+    search.params = new URLSearchParams("topic=Recursion&concept=n1&course=c1");
+    api.closeLoopSession.mockResolvedValue({ close: closeRecord, model_written: false, close_phase: "teach" });
+    await resumedTeach("Sorting");
+    fireEvent.click(await screen.findByTestId("loop-topic-start"));
+    await waitFor(() => expect(api.startLoopSession).toHaveBeenCalledWith("u1", "c1", "Recursion", "", onRecursion, null));
+  });
+
+  it("a concept the course no longer has opens the goal editor with the reason, not a retry that fails again", async () => {
+    search.params = new URLSearchParams("topic=Recursion&concept=gone&course=c1");
+    api.listLoopSessionsFor.mockResolvedValue(listed([]));
+    const refused = "Choose target concepts from this course";
+    api.startLoopSession.mockRejectedValue(new ApiError(JSON.stringify({ detail: refused }), 422, { body: { detail: refused } }));
+    render(<LoopLearn />);
+    expect(await screen.findByTestId("loop-goal-save")).toBeTruthy();
+    expect(screen.getByRole("alert").textContent).toContain(refused);
+    expect(screen.queryByTestId("loop-start-error")).toBeNull();
+    expect(api.nextLoopProbe).not.toHaveBeenCalled();
+  });
+});
+
 describe("K30 — 'Set a goal' sets it before the session starts", () => {
   const node = { id: "n1", concept_name: "Recursion", mastery_tier: "struggling", mastery_score: 0.2, is_subject_root: false, subject: "Intro CS", course_id: "c1" };
   beforeEach(() => {
