@@ -14,6 +14,7 @@ import React from "react";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AnswerResult, GenerateResult, SubmitResult } from "@/lib/quiz/types";
+import { __resetLoopStatusMemoForTests } from "../learn/useLoopStatus";
 
 // ── next/navigation ────────────────────────────────────────────────────────
 let searchParams = new URLSearchParams();
@@ -119,6 +120,8 @@ const realReplaceState = window.history.replaceState.bind(window.history);
 const realPushState = window.history.pushState.bind(window.history);
 
 beforeEach(() => {
+  // A probe answer from an earlier test would be reused (#866 K46).
+  __resetLoopStatusMemoForTests();
   // Put jsdom where the student actually is. `exit` reads
   // `window.location.pathname` to tell "same route" from "real navigation", so a
   // test left on jsdom's default "/" would exercise the wrong branch. Done

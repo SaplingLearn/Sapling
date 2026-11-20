@@ -15,13 +15,19 @@ vi.mock("@/lib/api", () => ({ getLoopStatus }));
 const flagState = vi.hoisted(() => ({ value: { flags: { learning_loop: "on" } as Record<string, string>, ready: true } }));
 vi.mock("@/context/FlagsContext", () => ({ useFlagMap: () => flagState.value }));
 
-import { LOOP_STATUS_TIMEOUT_MS, useLoopStatus } from "./useLoopStatus";
+import {
+  LOOP_STATUS_REUSE_MS,
+  LOOP_STATUS_TIMEOUT_MS,
+  __resetLoopStatusMemoForTests,
+  useLoopStatus,
+} from "./useLoopStatus";
 
 const never = () => new Promise<{ active: boolean }>(() => {});
 
 beforeEach(() => {
   vi.useFakeTimers();
   getLoopStatus.mockReset();
+  __resetLoopStatusMemoForTests();
   flagState.value = { flags: { learning_loop: "on" }, ready: true };
 });
 afterEach(() => vi.useRealTimers());
@@ -114,6 +120,43 @@ describe("useLoopStatus", () => {
     const { result } = renderHook(() => useLoopStatus("u1", true));
     await act(async () => { await Promise.resolve(); });
     expect(getLoopStatus).toHaveBeenCalledTimes(1);
+    expect(result.current.status).toBe(false);
+  });
+
+  it("a screen that reuses asks nothing when a recent probe answered, and is resolved from its first render (#866 K46)", async () => {
+    getLoopStatus.mockResolvedValue({ active: true });
+    const learn = renderHook(() => useLoopStatus("u1", true));
+    await act(async () => { await Promise.resolve(); });
+    expect(learn.result.current.status).toBe(true);
+    learn.unmount();
+    const quiz = renderHook(() => useLoopStatus("u1", true, { reuse: true }));
+    expect(quiz.result.current.status).toBe(true);
+    await act(async () => { await vi.advanceTimersByTimeAsync(LOOP_STATUS_TIMEOUT_MS * 2); });
+    expect(getLoopStatus).toHaveBeenCalledTimes(1);
+  });
+
+  it("an old answer, another student's, or a screen that does not reuse, probes", async () => {
+    getLoopStatus.mockResolvedValue({ active: false });
+    renderHook(() => useLoopStatus("u1", true)).unmount();
+    await act(async () => { await Promise.resolve(); });
+    renderHook(() => useLoopStatus("u1", true));  // Learn always probes
+    renderHook(() => useLoopStatus("u2", true, { reuse: true }));
+    await act(async () => { await Promise.resolve(); });
+    expect(getLoopStatus).toHaveBeenCalledTimes(3);
+    await act(async () => { await vi.advanceTimersByTimeAsync(LOOP_STATUS_REUSE_MS); });
+    const stale = renderHook(() => useLoopStatus("u1", true, { reuse: true }));
+    expect(stale.result.current.status).toBeNull();
+    await act(async () => { await Promise.resolve(); });
+    expect(getLoopStatus).toHaveBeenCalledTimes(4);
+    expect(stale.result.current.status).toBe(false);
+  });
+
+  it("a reused answer never outranks a flag that says off", async () => {
+    getLoopStatus.mockResolvedValue({ active: true });
+    renderHook(() => useLoopStatus("u1", true)).unmount();
+    await act(async () => { await Promise.resolve(); });
+    flagState.value = { flags: { learning_loop: "off" }, ready: true };
+    const { result } = renderHook(() => useLoopStatus("u1", true, { reuse: true }));
     expect(result.current.status).toBe(false);
   });
 });

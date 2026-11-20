@@ -8,6 +8,24 @@ import { LEARNING_LOOP_FLAG } from "@/lib/learningLoopFlag";
 /** How long Learn waits for the loop probe before showing the retry state †. */
 export const LOOP_STATUS_TIMEOUT_MS = 2_500;
 
+/** How long a definitive probe answer is reused by a screen that opts in
+ *  (`{ reuse: true }`, the quiz, #866 K46): it then asks the server nothing
+ *  and shows its loop-only controls from the first render. Learn and Study
+ *  always probe, and every definitive answer refreshes the memo. */
+export const LOOP_STATUS_REUSE_MS = 5 * 60_000;
+
+/** The last definitive probe answer per user, and when it came. */
+const lastAnswer = new Map<string, { active: boolean; at: number }>();
+
+function reusableAnswer(userId: string): { userId: string; active: boolean } | null {
+  const hit = lastAnswer.get(userId);
+  return hit && Date.now() - hit.at < LOOP_STATUS_REUSE_MS ? { userId, active: hit.active } : null;
+}
+
+export function __resetLoopStatusMemoForTests(): void {
+  lastAnswer.clear();
+}
+
 /** Which Learn tree to render. `null` = unresolved; `true` = LoopLearn;
  *  `false` = the legacy tree (the student's `learning_loop` flag is "off", or
  *  the probe said so: the kill switch's `{active: false}`, or the gate's 404,
@@ -36,6 +54,7 @@ export type LoopStatus = boolean | "error" | null;
 export function useLoopStatus(
   userId: string,
   userReady: boolean,
+  { reuse = false }: { reuse?: boolean } = {},
 ): { status: LoopStatus; retry: () => void } {
   // Keyed on the user (and the attempt) the answer is for, so a user switch or
   // a retry reads as unresolved until its own probe answers (no setState in the
@@ -44,10 +63,13 @@ export function useLoopStatus(
   const [resolved, setResolved] = useState<
     { userId: string; attempt: number; status: boolean | "error"; final: boolean } | null
   >(null);
+  // A reusable answer is read once, when the screen mounts; a retry probes.
+  const [reused] = useState(() => (reuse ? reusableAnswer(userId) : null));
+  const reusing = reused !== null && reused.userId === userId && attempt === 0;
   const { flags, ready: flagsReady } = useFlagMap();
   const loopFlag = flags[LEARNING_LOOP_FLAG];
   const flagOff = loopFlag !== undefined && loopFlag !== "on";
-  const probe = userReady && !!userId && flagsReady && !flagOff;
+  const probe = userReady && !!userId && flagsReady && !flagOff && !reusing;
   useEffect(() => {
     if (!probe) return;
     let cancelled = false;
@@ -63,6 +85,7 @@ export function useLoopStatus(
       .then((r) => {
         if (cancelled) return;
         clearTimeout(timeout);
+        lastAnswer.set(userId, { active: Boolean(r.active), at: Date.now() });
         setResolved({ userId, attempt, status: Boolean(r.active), final: true });
       })
       .catch(() => {
@@ -80,6 +103,7 @@ export function useLoopStatus(
   if (!userId) return { status: false, retry };
   if (!flagsReady) return { status: null, retry };
   if (flagOff) return { status: false, retry };
+  if (reusing) return { status: reused.active, retry };
   const status =
     resolved?.userId === userId && resolved.attempt === attempt ? resolved.status : null;
   return { status, retry };

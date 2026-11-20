@@ -70,7 +70,9 @@ export function QuizScreen() {
   // Learning-loop spec §13 A132: the question screen asks "How sure are you?"
   // only while the loop is on for the student (#866 K46): the learning_loop flag
   // AND the loop status probe, so the kill switch's pre-loop quiz asks none.
-  const { status: loopActive } = useLoopStatus(userId ?? "", userReady);
+  // A recent answer (Learn's or Study's probe) is reused: no second probe, and
+  // the control is there from the first question.
+  const { status: loopActive } = useLoopStatus(userId ?? "", userReady, { reuse: true });
 
   // `?concept=<id>` / `?topic=<name>` resolved against the SCOPED graph, so a
   // link into a term the student isn't looking at reads as unresolved rather
