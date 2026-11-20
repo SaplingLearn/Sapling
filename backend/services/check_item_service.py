@@ -1281,7 +1281,7 @@ def _source_rows(document_ids: Iterable[str]) -> list[dict]:
         batch = ids[start : start + _DOC_ID_BATCH]
         rows.extend(
             table("documents").select(
-                "id,user_id,shareability,shareability_confidence,share_block_reason,extracted_text",
+                SOURCE_DOCUMENT_COLUMNS,
                 filters={
                     "id": "in.(" + ",".join(pg_quote_value(d) for d in batch) + ")",
                     "deleted_at": "is.null",
@@ -1529,6 +1529,17 @@ def chunks_for_document(document_id: str) -> list[dict]:
             chunk.get("chunk_text"), bind=bind("course_chunks", "chunk_text", chunk))
         out.append(chunk)
     return out
+
+
+#: The `documents` columns `source_chunks` reads (with `document_is_item_source`
+#: and A128's `index_status`). Every reader that hands a document row to it
+#: selects exactly these (Z11): a row read without `share_block_reason` loses
+#: the share screen's STORED verdict, so only a fresh screen of the text would
+#: decide, and a block stored at upload would not survive a later loosening of
+#: the screen's rules (services/share_screen.py: a stored reason always wins).
+SOURCE_DOCUMENT_COLUMNS = (
+    "id,user_id,shareability,shareability_confidence,share_block_reason,extracted_text,index_status"
+)
 
 
 def document_is_item_source(row: dict) -> bool:
@@ -3458,7 +3469,7 @@ def _generate_for_document(
     rows = table("documents").select(
         # index_status: A128 — an unindexed source drafts `unsourced` items
         # unless its indexing was skipped by design (`source_chunks`)
-        "id,user_id,shareability,shareability_confidence,share_block_reason,extracted_text,index_status",
+        SOURCE_DOCUMENT_COLUMNS,
         filters={"id": f"eq.{document_id}", "deleted_at": "is.null"},
         limit=1,
     )

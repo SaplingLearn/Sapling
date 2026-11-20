@@ -62,6 +62,7 @@ from learning.params import (  # noqa: E402
 from services.academics import course_offering_ids  # noqa: E402
 from services.chunk_visibility import COURSE_MATERIAL  # noqa: E402
 from services.check_item_service import (  # noqa: E402
+    SOURCE_DOCUMENT_COLUMNS,
     concept_key,
     count_items,
     coverage,
@@ -121,9 +122,10 @@ def _source_documents(offerings: list[str]) -> list[dict]:
     return list(
         page_all(
             table("documents"),
-            # index_status: an unindexed source drafts `unsourced` items unless
-            # its indexing was skipped by design (spec §13 A128, source_chunks)
-            "id,user_id,shareability,shareability_confidence,extracted_text,index_status",
+            # source_chunks' columns (Z11): share_block_reason carries the share
+            # screen's stored verdict, which a fresh screen must never loosen;
+            # index_status marks an unindexed source's items `unsourced` (A128)
+            SOURCE_DOCUMENT_COLUMNS,
             filters={
                 "offering_id": f"in.({','.join(pg_quote_value(o) for o in offerings)})",
                 "shareability": f"eq.{COURSE_MATERIAL}",
