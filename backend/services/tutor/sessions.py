@@ -62,17 +62,18 @@ def _session_concept(session: dict | None) -> str | None:
     it has one), as the picker and the map send it; the stored name. None for a
     free topic, a course or a note's title, or a failed read (best effort: the
     summary never fails an end)."""
-    topic = ((session or {}).get("topic") or "").strip()
-    user_id = (session or {}).get("user_id")
+    row = session or {}
+    topic = (row.get("topic") or "").strip()
+    user_id = row.get("user_id")
     if not topic or not user_id:
         return None
     filters = {"user_id": f"eq.{user_id}", "concept_name": f"eq.{topic}"}
     try:
-        course_id = offering_course_id(session.get("offering_id"))
+        course_id = offering_course_id(row.get("offering_id"))
         if course_id:
             filters["course_id"] = f"eq.{course_id}"
         rows = table("graph_nodes").select("concept_name", filters=filters, limit=1)
-    except Exception:
+    except Exception:  # noqa: BLE001 — best effort: an unread concept never fails the end
         logger.warning("session summary: the session's concept could not be read", exc_info=True)
         return None
     return (rows[0].get("concept_name") or None) if rows else None
