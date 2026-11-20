@@ -399,30 +399,41 @@ def test_the_route_gate_hands_the_writer_model_to_the_checks():
 # #866 Z13: the checks run inside their generation run's QUIZ_GENERATION_TIMEOUT_SEC
 
 
-def _hanging_gate_run(monkeypatch, *, bound: float, run_took: float | None = None, num_questions: int = 1):
+def _written(*stems: str, drifted: int = 0):
+    """A writer run's output: one multiple-choice question per stem, the last
+    `drifted` of them keyed to no option (dropped before the gate)."""
+    from agents.quiz import Quiz, QuizQuestion
+
+    return Quiz(questions=[
+        QuizQuestion(question=stem, type="multiple_choice", difficulty="easy",
+                     options=["one", "two", "three", "four"],
+                     correct_answer="NOPE" if i >= len(stems) - drifted else "two",
+                     explanation="x", concept="Recursion")
+        for i, stem in enumerate(stems)
+    ])
+
+
+def _hanging_gate_run(monkeypatch, *, bound: float, run_took: float | None = None, num_questions: int = 1,
+                      runs=None):
     """`_quiz_via_agent` with the real `_item_gate`, a writer that answers at
-    once and a check pass that never returns, under a `bound`-second
-    QUIZ_GENERATION_TIMEOUT_SEC; `run_took` makes the run's clock say it took
-    that long. Guarded: a generation still running 5 s in fails the test
-    instead of hanging it. Returns (questions, gated events, checks started)."""
+    once (`runs`, one output per run; one question by default) and a check
+    pass that never returns, under a `bound`-second QUIZ_GENERATION_TIMEOUT_SEC;
+    `run_took` makes the run's clock say it took that long. Guarded: a
+    generation still running 5 s in fails the test instead of hanging it.
+    Returns (questions, gated events, checks started, writer runs)."""
     from contextlib import ExitStack
     from types import SimpleNamespace
 
-    from agents.quiz import Quiz, QuizQuestion
     from services.quiz import generation as quiz_route
     from tests.split_patches import patch_quiz
     from tests.test_quiz_learning_flags_off import _context_patches
 
-    quiz = Quiz(questions=[
-        QuizQuestion(question=f"Question {n}?", type="multiple_choice", difficulty="easy",
-                     options=["one", "two", "three", "four"], correct_answer="two",
-                     explanation="x", concept="Recursion")
-        for n in range(1, num_questions + 1)
-    ])
-    started, events = [], []
+    outputs = list(runs or [_written(*(f"Question {n}?" for n in range(1, num_questions + 1)))])
+    started, events, calls = [], [], []
 
     async def writer(*a, **k):
-        return SimpleNamespace(output=quiz)
+        calls.append(1)
+        return SimpleNamespace(output=outputs[min(len(calls), len(outputs)) - 1])
 
     async def checks(questions, **kw):
         started.append(len(questions))
@@ -452,7 +463,7 @@ def _hanging_gate_run(monkeypatch, *, bound: float, run_took: float | None = Non
             timeout=5,
         ))
     gated = [payload for name, payload in events if name == "quiz.items_gated"]
-    return out.questions, gated, started
+    return out.questions, gated, started, len(calls)
 
 
 def test_a_check_pass_that_outlasts_its_runs_bound_is_cut_there_and_served_as_practice(monkeypatch):
@@ -460,7 +471,7 @@ def test_a_check_pass_that_outlasts_its_runs_bound_is_cut_there_and_served_as_pr
     120 s attempts on quiz_check, then the key match); now a pass still running
     when its run's QUIZ_GENERATION_TIMEOUT_SEC is spent is cut, and its questions
     are served as practice, as an outage's are (A145 (f)), and counted."""
-    questions, gated, started = _hanging_gate_run(monkeypatch, bound=0.3)
+    questions, gated, started, _ = _hanging_gate_run(monkeypatch, bound=0.3)
     assert started == [1]  # the checks did start, inside the bound
     assert [q["gate"] for q in questions] == [
         {"status": "practice", "alignment": "alignment_unverified", "key": "key_unverified"}
@@ -472,10 +483,45 @@ def test_a_check_pass_that_outlasts_its_runs_bound_is_cut_there_and_served_as_pr
 def test_a_run_that_spent_its_bound_starts_no_checks(monkeypatch):
     """The checks get only what their run left of the bound: none left, none
     started (a call cut at once would still bill its input)."""
-    questions, gated, started = _hanging_gate_run(monkeypatch, bound=0.3, run_took=0.3)
+    questions, gated, started, _ = _hanging_gate_run(monkeypatch, bound=0.3, run_took=0.3)
     assert started == []
     assert questions[0]["gate"]["status"] == "practice"
     assert gated[0]["unavailable"] is True
+
+
+def test_a_gated_generation_and_its_top_up_end_inside_the_clients_ceiling(monkeypatch):
+    """#866 K44: the client stops waiting on /generate after GENERATE_TIMEOUT_MS
+    (frontend lib/quiz/useQuizSession.ts), sized for at most two runs of
+    QUIZ_GENERATION_TIMEOUT_SEC (the run and one top-up). The item checks of
+    each run now fit inside those two bounds, so a gated generation whose top-up
+    runs and whose checks hang still ends inside them, before the client gives up."""
+    import time
+
+    bound = 0.3
+    began = time.monotonic()
+    questions, _, started, runs = _hanging_gate_run(
+        monkeypatch, bound=bound, num_questions=3,
+        runs=[_written("A?", "B?", "C?", drifted=2), _written("D?", "E?")],
+    )
+    elapsed = time.monotonic() - began
+    assert runs == 2 and started == [1, 2]  # the top-up ran, and both passes started
+    assert elapsed < 2 * bound + 0.25
+    assert [q["question"] for q in questions] == ["A?", "D?", "E?"]
+    assert {q["gate"]["status"] for q in questions} == {"practice"}
+
+
+def test_the_clients_generate_ceiling_covers_the_servers_two_bounded_runs():
+    """#866 K44: the client's ceiling is a backstop for a request the server has
+    lost, never a tighter budget than the server's own: it must exceed the two
+    bounded runs (each with its item checks) a generation can take."""
+    import pathlib
+    import re
+
+    from services.quiz.config import QUIZ_GENERATION_TIMEOUT_SEC
+
+    source = (pathlib.Path(__file__).resolve().parents[2] / "frontend/src/lib/quiz/useQuizSession.ts").read_text()
+    (ceiling_ms,) = re.findall(r"export const GENERATE_TIMEOUT_MS = ([\d_]+);", source)
+    assert int(ceiling_ms.replace("_", "")) / 1000 > 2 * QUIZ_GENERATION_TIMEOUT_SEC
 
 
 def test_the_checks_get_what_their_run_left_of_its_bound():
