@@ -101,6 +101,7 @@ import { ClosePanel } from "./ClosePanel";
 import { RatingPrompt } from "./RatingPrompt";
 import { claimWrapUpAsk, useWrapUpAsk } from "./WrapUpRating";
 import { checkMeNote } from "./checkNote";
+import { SESSION_CLOSED_DETAIL, sessionRefusal } from "./sessionErrors";
 import { withPlanHistory } from "./loopHistory";
 import { dropInterruptedTurn } from "./chatRetry";
 import { modalOpen } from "./modalOpen";
@@ -120,6 +121,8 @@ import {
 const PROBE_UNAVAILABLE_COPY = "Couldn't grade that one — here's another.";
 const PROBE_REFUSED_COPY = "Answer in your own words — that read as instructions to the grader.";
 const CLOSED_ELSEWHERE_COPY = "This session was closed — start a new one to keep learning.";
+/** K26: a request the session's phase refused (another tab or device moved it). */
+const MOVED_ELSEWHERE_COPY = "This session moved on in another tab — here's where it is now.";
 const CONTINUE_MESSAGE = "Let's continue.";
 const FEEDBACK_PENDING_DETAIL = "feedback pending; retry feedback before another check";
 const FEEDBACK_PENDING_COPY = "Your answer is recorded. Retry feedback before another check.";
@@ -141,8 +144,6 @@ const CLOSE_RETRY_COPY: Record<string, string> = {
   "a check is being graded; close again in a moment": "A check is still being graded — close again in a moment.",
   "session close in progress": "This session is already closing — try again in a moment.",
 };
-/** routes/learn_loop.py `_SESSION_CLOSED`: every teaching route after the close (A60). */
-const SESSION_CLOSED_DETAIL = "this session is closed";
 /** routes/learn_loop.py `_ALREADY_GRADED`: the submission was graded (maybe by an earlier request). */
 const ALREADY_GRADED_DETAIL = "already graded";
 /** POST /check/answer(/stream) 409s (#866 A1/A2): the check this answer was for
@@ -352,6 +353,10 @@ export function LoopLearn() {
   const topicStarted = useRef(false); // the deep link's ?topic= starts a session once
   const lastStart = useRef<{ topic?: string; mode?: string; goal?: boolean }>({}); // the start card's "Try again" repeats it
   const sessionRef = useRef<string | null>(null);
+  // K26: re-enter the session on screen as the server now has it (set below,
+  // once `resume` exists). One at a time.
+  const resyncRef = useRef<(sid: string) => void>(() => {});
+  const phaseRef = useRef<LoopPhase>("probe");
   const streamAbort = useRef<AbortController | null>(null);
   const turnEpoch = useRef(0); // a late recovery snapshot cannot undo a newer turn
   const countedAttempt = useRef<string | null>(null); // `${qh}:${text}` the server counted
@@ -387,6 +392,9 @@ export function LoopLearn() {
   useEffect(() => {
     sessionRef.current = sessionId;
   }, [sessionId]);
+  useEffect(() => {
+    phaseRef.current = state.phase;
+  }, [state.phase]);
 
   // The deep link is consumed at mount: drop it from the URL so a reload, or a
   // later session/course switch, never re-applies it (it was sticky).
@@ -514,8 +522,13 @@ export function LoopLearn() {
     }
     const { status, detail } = extractErrorDetail(err);
     const sid = sessionRef.current;
-    if (status === 409 && detail === SESSION_CLOSED_DETAIL && sid) {
+    const refusal = sessionRefusal(status, detail); // K26: closed (or gone), or moved
+    if (refusal === "closed" && sid) {
       void enterClosed(sid);
+      return;
+    }
+    if (refusal === "moved" && sid) {
+      resyncRef.current(sid); // one in flight already re-reads it
       return;
     }
     toast.error(humanizeError(err, fallback));
@@ -716,6 +729,16 @@ export function LoopLearn() {
       if (g === gen.current) setStarting(false);
     }
   }, [clearSessionView, nextProbe, loadPlan, loadLearningScope, toast]);
+  const resyncing = useRef(false);
+  useEffect(() => {
+    resyncRef.current = (sid: string) => {
+      if (resyncing.current || sid !== sessionRef.current) return;
+      resyncing.current = true;
+      toast.info(MOVED_ELSEWHERE_COPY);
+      const s = { session_id: sid, topic: "", started_at: "", phase: phaseRef.current };
+      void resume(s).finally(() => { resyncing.current = false; });
+    };
+  }, [resume, toast]);
 
   const openReadOnly = useCallback(async (id: string) => {
     const g = ++gen.current;
@@ -745,8 +768,8 @@ export function LoopLearn() {
       if (g0 !== gen.current) return false;
       setStarting(false);
       const { status, detail } = extractErrorDetail(err);
-      if (status === 409 && detail === SESSION_CLOSED_DETAIL) {
-        // already closed elsewhere: nothing to wrap up
+      if (sessionRefusal(status, detail) === "closed") {
+        // already closed elsewhere, or gone (K26): nothing to wrap up
       } else if (status === 409 && detail) {
         setCloseNote(CLOSE_RETRY_COPY[detail] ?? detail);
         return false;
@@ -1225,7 +1248,7 @@ export function LoopLearn() {
     onCheckClosed?: () => void;
   }) => {
     const { status, detail } = extractErrorDetail(err);
-    const closed = status === 409 && detail === SESSION_CLOSED_DETAIL; // reportError shows the close
+    const closed = sessionRefusal(status, detail) === "closed"; // reportError shows the close
     const checkClosed = checkClosedCopy(t.submission, status, detail);
     // ADR 0020: what streamed stays, marked interrupted; a chat message the tutor
     // never answered offers Retry (a pause gives it back through onPaused, a

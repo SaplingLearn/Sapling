@@ -796,3 +796,58 @@ describe("K08 — the current concept follows the plan cursor the server moved",
     expect(screen.getByTestId("tutor-phase-line").textContent).toBe("Recursion · concept 1 of 2");
   });
 });
+
+describe("K26 — a request the session's phase refuses re-reads where the session is", () => {
+  const phaseMoved = (detail: string) => new ApiError(JSON.stringify({ detail }), 409, { body: { detail } });
+
+  it("the plan of a session wrapped up in another tab shows its wrap-up, never 'phase is close'", async () => {
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "plan")]));
+    api.getLoopSessionStatus.mockResolvedValueOnce(status({ loop_phase: "plan", phase: "plan" }))
+      .mockResolvedValue(status({ loop_phase: "close", phase: "teach" }));
+    api.getLoopPlan.mockRejectedValue(phaseMoved("phase is close"));
+    api.closeLoopSession.mockResolvedValue({ close: closeRecord, model_written: false, close_phase: "plan" });
+    render(<LoopLearn />);
+    await waitFor(() => expect(screen.getByTestId("loop-phase").getAttribute("data-phase")).toBe("close"));
+    expect(api.closeLoopSession).toHaveBeenCalledWith("s2", "u1");
+    expect(toast.error).not.toHaveBeenCalled();
+    expect(api.getLoopPlan).toHaveBeenCalledTimes(1);
+  });
+
+  it("a check-in another tab finished goes to its plan instead of a retry that always fails", async () => {
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "probe")]));
+    api.getLoopSessionStatus.mockResolvedValueOnce(status({ loop_phase: "probe", phase: "probe" }))
+      .mockResolvedValue(status({ loop_phase: "plan", phase: "plan" }));
+    api.nextLoopProbe.mockRejectedValue(phaseMoved("phase is plan"));
+    api.getLoopPlan.mockResolvedValue({ concepts: [{ node_id: "n1", concept_name: "Recursion", kind: "new", p_known: 0.3 }], order: [] });
+    render(<LoopLearn />);
+    expect(await screen.findByTestId("loop-plan-concept-n1")).toBeTruthy();
+    expect(screen.queryByTestId("loop-probe-retry")).toBeNull();
+    expect(toast.error).not.toHaveBeenCalled();
+    expect(api.nextLoopProbe).toHaveBeenCalledTimes(1);
+  });
+
+  it("Check me on a session another device moved back to planning shows that plan", async () => {
+    api.getLoopSessionStatus.mockResolvedValueOnce(status())
+      .mockResolvedValue(status({ loop_phase: "plan", phase: "plan" }));
+    api.nextLoopCheck.mockRejectedValue(phaseMoved("finish the plan first"));
+    api.getLoopPlan.mockResolvedValue({ concepts: [{ node_id: "n3", concept_name: "Queues", kind: "new", p_known: 0.3 }], order: [] });
+    await resumedTeach();
+    fireEvent.click(await screen.findByTestId("loop-check-me"));
+    expect(await screen.findByTestId("loop-plan-concept-n3")).toBeTruthy();
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it("a start that wraps up a session the server no longer has goes ahead", async () => {
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "teach")]));
+    api.closeLoopSession.mockRejectedValue(new ApiError(JSON.stringify({ detail: "Session not found" }), 404, { body: { detail: "Session not found" } }));
+    api.startLoopSession.mockResolvedValue({ session_id: "s9", initial_message: OPENER });
+    api.nextLoopProbe.mockResolvedValue(probeItem);
+    render(<LoopLearn />);
+    await screen.findByText("welcome back");
+    fireEvent.click(screen.getByTestId("loop-new-session"));
+    fireEvent.click(await screen.findByTestId("loop-start-guided"));
+    await screen.findByTestId("loop-probe-item");
+    expect(api.startLoopSession).toHaveBeenCalledTimes(1);
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+});
