@@ -11,14 +11,14 @@
 // never as a chat turn (A16). Spec:
 // docs/superpowers/specs/2026-09-26-learning-loop-design.md §9, §11.3; routes:
 // backend/routes/learn_loop.py.
-import React, { useCallback, useEffect, useId, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { FullHeightScreen } from "../FullHeightScreen";
 import { DisclaimerModal } from "../DisclaimerModal";
 import { AIDisclaimerChip } from "../chat/AIDisclaimerChip";
-import { ChatPanel, PageTurn, type ChatMsg } from "../chat/ChatPanel";
+import { ChatPanel, type ChatMsg } from "../chat/ChatPanel";
 import { useToast } from "../ToastProvider";
 import { useUser } from "@/context/UserContext";
 import { useIsMobile } from "@/lib/useIsMobile";
@@ -72,7 +72,6 @@ import {
   type LoopSessionStatus,
   type LoopTurnResult,
   type StreamChatHandlers,
-  type StudentConfidence,
 } from "@/lib/api";
 import { useFlag } from "@/context/FlagsContext";
 import { useStudyNavShown } from "../useRetentionNav";
@@ -81,13 +80,9 @@ import { BudgetPausedBanner, tutorPauseMessage } from "./BudgetPausedBanner";
 import { checkIsOpen, initialLoopState, reduceLoopEvent } from "./loopState";
 import { hasDeepLink, readDeepLink } from "./deepLink";
 import styles from "./LoopLearn.module.css";
-import { DiagnosisSummary, GoalEditor } from "./LearningScope";
-import { planGoalReason, planKind } from "./planLabels";
-import { ReportQuestion } from "./ReportQuestion";
+import { GoalEditor } from "./LearningScope";
 import { CrisisSupportCard, useCrisisSupport } from "../safety/CrisisSupportCard";
 import { crisisSupportIn, crisisSupportInError, takeNoteCardShown, type CrisisSupport } from "@/lib/crisisSupport";
-import { ConfidenceControl } from "./ConfidenceControl";
-import { OptionList } from "./OptionList";
 import { PrequestionCard, renderGuess } from "./PrequestionCard";
 import { SelfExplainCard } from "./SelfExplainCard";
 import { retentionHref, useRetentionDue } from "@/context/RetentionDueContext";
@@ -111,6 +106,11 @@ import { checkMeNote, PREPARING_COPY } from "./checkNote";
 import { withPlanHistory } from "./loopHistory";
 import { dropInterruptedTurn } from "./chatRetry";
 import { modalOpen } from "./modalOpen";
+import { BAND_LABEL, type Draft, type HintView } from "./loopShared";
+import { VerdictBanner } from "./VerdictBanner";
+import { ProbePanel } from "./ProbePanel";
+import { PlanPanel } from "./PlanPanel";
+import { CheckCard } from "./CheckCard";
 
 // ── Copy ─────────────────────────────────────────────────────────────────
 const NO_CHECK_ITEMS_COPY =
@@ -139,15 +139,6 @@ const CHECK_OPEN_COMPOSER_COPY = "Answer the question above, ask for a hint, or 
 /** routes/learn_loop.py: the prompt was superseded (a later turn closed it). */
 const SELF_EXPLAIN_GONE_DETAIL = "no open self-explanation prompt";
 
-/** Plain-English lines for POST /hint's denial reasons (routes/learn_loop.py::hint). */
-const HINT_DENIED_COPY: Record<string, string> = {
-  no_genuine_attempt: "Give it a real try first — write what you think in the answer box, then ask again.",
-  dwell: "Stay with this step a little longer before the next hint.",
-  ceiling: "That's all the help this question allows right now. Give it your best answer — you'll see the full answer after.",
-  h6_gate: "The worked answer unlocks once you've tried the question yourself.",
-  no_active_item: "There's no open question to hint on right now.",
-};
-const HINT_DENIED_FALLBACK = "No hint right now — keep working on it.";
 
 /** 409s from POST /close while a claim is live (A60): the student retries. */
 const CLOSE_RETRY_COPY: Record<string, string> = {
@@ -176,20 +167,8 @@ function checkClosedCopy(submission: boolean, status: number | undefined, detail
 /** setTimeout's ceiling (2^31 − 1 ms): a later reset time is never armed early. */
 const MAX_TIMER_MS = 2_147_483_647;
 
-const BAND_LABEL: Record<string, string> = { novice: "Getting started", develop: "Developing", profic: "Proficient" };
 const TEACHING: readonly LoopPhase[] = ["teach", "check", "feedback"];
 
-const FIELD_STYLE: React.CSSProperties = {
-  width: "100%",
-  padding: "10px 12px",
-  fontSize: 14,
-  lineHeight: 1.45,
-  border: "1px solid var(--border)",
-  borderRadius: "var(--r-md)",
-  background: "var(--bg-input)",
-  resize: "vertical",
-  boxSizing: "border-box",
-};
 
 let msgSeq = 0;
 const msgId = (prefix: string) => `${prefix}-${Date.now()}-${++msgSeq}`;
@@ -198,9 +177,6 @@ const toChat = (rows: { id: string; role: string; content: string }[] | undefine
   (rows ?? [])
     .filter((m) => m.role === "user" || m.role === "assistant")
     .map((m) => ({ id: m.id, role: m.role as "user" | "assistant", content: m.content }));
-/** An answer being written. `confidence` (spec §13 A127) is the student's stated
- *  confidence — null until chosen, and a skip sends none. */
-type Draft = { answer: string; option: string; reason: string; confidence: StudentConfidence | null };
 const EMPTY_DRAFT: Draft = { answer: "", option: "", reason: "", confidence: null };
 
 /** The answer fields a draft submits: `confidence` only when chosen (A127). */
@@ -210,7 +186,6 @@ function draftAnswer(draft: Draft, format: string): LoopCheckAnswer {
     : { answer: draft.answer, idk: false };
   return draft.confidence ? { ...a, confidence: draft.confidence } : a;
 }
-type HintView = { denied: string } | { reply: string } | null;
 /** The Tutor's main column: a session (T4–T15), the Tutor home (T1), a course
  *  page (T2) or every session (T3). */
 type TutorView = "session" | "home" | "course" | "all";
@@ -225,9 +200,6 @@ const statusPhase = (st: LoopSessionStatus) => (st.loop_phase === "teach" ? st.p
 // input event arrives; React then flushes it inside that event, and the focus
 // change it makes dispatches a nested event that restores the controlled field
 // before its new value has rendered.
-/** Focus the first answer control of a check-in or check card: the textarea, or
- *  the options' tab stop (each is marked `data-answer-start`). */
-const focusAnswerStart = (card: HTMLElement | null) => card?.querySelector<HTMLElement>("[data-answer-start]")?.focus();
 /** Where focus goes once an action settles without new content of its own (see
  *  `focusAfter` in LoopLearn): after an answer (Continue, else the card's
  *  answer, else Check me), after a tutor turn (the chat composer), after Check
@@ -2585,457 +2557,3 @@ function isOpenPhase(phase: LoopPhase): boolean {
 }
 
 // ── Pieces ─────────────────────────────────────────────────────────────────
-
-
-const VERDICT_COPY: Record<string, { title: string; note: string }> = {
-  correct: { title: "Correct", note: "That answer counts toward this concept." },
-  not_yet: { title: "Not yet", note: "The tutor's reply above shows what to fix. Try another one on the same idea." },
-  idk: { title: "Not yet", note: "No problem — the tutor's reply above walks through it." },
-};
-
-/** Wireframe T9: the graded check's verdict, above the tutor's feedback. */
-function VerdictBanner({ verdict, concept }: { verdict: string; concept: string | null }) {
-  const copy = VERDICT_COPY[verdict] ?? VERDICT_COPY.not_yet;
-  const yes = verdict === "correct";
-  return (
-    <div data-testid="loop-verdict" data-verdict={verdict} className={`${yes ? tutorStyles.verdictYes : tutorStyles.verdictNo} fade-in`}>
-      {concept && <span className="label-micro">{concept} · check</span>}
-      <div style={{ font: "600 17px var(--font-display)", color: yes ? "var(--sap-600)" : "var(--warn)" }}>{copy.title}</div>
-      <div style={{ fontSize: 14 }}>{copy.note}</div>
-    </div>
-  );
-}
-
-/** One tutor turn outside the chat log (the check-in opener, the plan's intro),
- *  on the page as the conversation's turns are (`PageTurn`). */
-function TutorTurn({ children, testId }: { children: React.ReactNode; testId?: string }) {
-  return <PageTurn plain testId={testId}>{children}</PageTurn>;
-}
-
-function ProbePanel({
-  item, count, draft, setDraft, reference, note, busy, loadFailed, greeting, onSubmit, onIdk, onNext, onRetry,
-}: {
-  item: LoopProbeItem | null;
-  count: number;
-  draft: Draft;
-  setDraft: React.Dispatch<React.SetStateAction<Draft>>;
-  reference: string | null;
-  note: string | null;
-  busy: boolean;
-  /** The next item failed to load (not a pause): offer a retry, never an empty card. */
-  loadFailed: boolean;
-  /** The session opener: in the probe phase always a template — a welcome and
-   *  the check-in's intro, no teaching and no question (spec §13 A121). */
-  greeting: string | null;
-  onSubmit: () => void;
-  onIdk: () => void;
-  onNext: () => void;
-  onRetry: () => void;
-}) {
-  const mc = item?.format === "mc_reason";
-  // K02: an mc_reason answer needs its reason too (the grader judges it, never the option alone)
-  const canSubmit = !!item && !busy && (mc ? draft.option !== "" && draft.reason.trim() !== "" : draft.answer.trim() !== "");
-  const ids = useId();
-  const promptId = `${ids}-prompt`;
-  const headingId = `${ids}-question`;
-  const cardRef = useRef<HTMLElement>(null);
-  const referenceRef = useRef<HTMLDivElement>(null);
-  // spec §13 A135: a new question takes focus — its answer box, described by
-  // the question (or the options' tab stop, named by it) — so a screen reader
-  // reads the question and the student can answer at once.
-  const questionHash = item?.question_hash;
-  useLayoutEffect(() => {
-    if (!questionHash || modalOpen()) return;
-    focusAnswerStart(cardRef.current);
-  }, [questionHash]);
-  // ...and the answer shown after a miss takes focus, so it is read out.
-  useLayoutEffect(() => {
-    if (reference === null || modalOpen()) return;
-    referenceRef.current?.focus();
-  }, [reference]);
-  const referenceBlock = (
-    <div
-      ref={referenceRef}
-      tabIndex={-1}
-      data-testid="loop-probe-reference"
-      style={{
-        whiteSpace: "pre-wrap",
-        overflowWrap: "anywhere",
-        fontSize: 14,
-        ...(item ? { padding: "10px 14px", borderRadius: "var(--r-md)", background: "var(--bg-soft)" } : null),
-      }}
-    >
-      <div className="label-micro" style={{ marginBottom: 4 }}>Here&apos;s the answer</div>
-      {reference}
-    </div>
-  );
-  return (
-    <div style={{ flex: 1, overflowY: "auto" }}>
-      <div className={tutorStyles.col}>
-        <h2 className={tutorStyles.sr}>Quick check-in</h2>
-        <TutorTurn testId="loop-probe-greeting">
-          {greeting ?? "Let's start with a quick check-in so I know where you are. No hints here; it just shows me what to teach."}
-        </TutorTurn>
-        {/* The coverage summary reads the check-in's results: it shows on the plan,
-            once there is something to summarise, not over the first question. */}
-        {!item && busy && <div style={{ fontSize: 14, color: "var(--text-muted)" }}>Loading the next question…</div>}
-        {!item && reference !== null && (
-          <div className="card" style={{ padding: "var(--pad-xl)", display: "flex", flexDirection: "column", gap: 12 }}>
-            {referenceBlock}
-            <button data-testid="loop-probe-next" className="btn btn--primary" disabled={busy} onClick={onNext}>
-              Next
-            </button>
-          </div>
-        )}
-        {!item && !busy && loadFailed && (
-          <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 14, color: "var(--text-muted)" }}>
-            <span>The next question didn&apos;t load.</span>
-            <button data-testid="loop-probe-retry" className="btn btn--sm" onClick={onRetry}>
-              Try again
-            </button>
-          </div>
-        )}
-        {item && (
-          <section
-            ref={cardRef}
-            aria-labelledby={headingId}
-            data-testid="loop-probe-item"
-            data-question-hash={item.question_hash}
-            data-difficulty={item.difficulty}
-            className={`card ${tutorStyles.qcard}`}
-          >
-            <div className={tutorStyles.qhead}>
-              <h3 id={headingId} className={`label-micro ${tutorStyles.qlabel}`}>Check-in · Question {count + (reference === null ? 1 : 0)}</h3>
-              <span className="chip">No hints</span>
-            </div>
-            <p id={promptId} className={tutorStyles.q}>{item.prompt}</p>
-            {reference === null ? (
-              <>
-                {mc ? (
-                  <>
-                    <OptionList
-                      options={item.options ?? []}
-                      selected={draft.option}
-                      onSelect={(letter) => setDraft((d) => ({ ...d, option: letter }))}
-                      testIdPrefix="loop-probe-option"
-                      labelledBy={promptId}
-                      disabled={busy}
-                    />
-                    <label className={tutorStyles.fl} htmlFor={`${ids}-reason`} style={{ marginBottom: -8 }}>In one sentence: why?</label>
-                    <input
-                      id={`${ids}-reason`}
-                      data-testid="loop-probe-reason"
-                      style={FIELD_STYLE}
-                      placeholder="Because…"
-                      value={draft.reason}
-                      disabled={busy}
-                      onChange={(e) => {
-                        const reason = e.target.value;
-                        setDraft((d) => ({ ...d, reason }));
-                      }}
-                    />
-                  </>
-                ) : (
-                  <textarea
-                    data-testid="loop-probe-input"
-                    data-answer-start=""
-                    aria-label="Check-in answer"
-                    aria-describedby={promptId}
-                    style={FIELD_STYLE}
-                    rows={3}
-                    placeholder={item.format === "teachback" ? "Explain it in your own words" : "Your answer"}
-                    value={draft.answer}
-                    disabled={busy}
-                    onChange={(e) => {
-                      const answer = e.target.value;
-                      setDraft((d) => ({ ...d, answer }));
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && canSubmit) onSubmit();
-                    }}
-                  />
-                )}
-                <ConfidenceControl
-                  testIdPrefix="loop-probe-confidence"
-                  value={draft.confidence}
-                  onChange={(confidence) => setDraft((d) => ({ ...d, confidence }))}
-                  disabled={busy}
-                />
-                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                  <button data-testid="loop-probe-submit" className="btn btn--primary" disabled={!canSubmit} onClick={onSubmit}>
-                    {busy ? "Checking…" : "Submit answer"}
-                  </button>
-                  <button data-testid="loop-probe-idk" className="btn btn--ghost" disabled={busy} onClick={onIdk}>
-                    I don&apos;t know
-                  </button>
-                </div>
-              </>
-            ) : (
-              <>
-                {referenceBlock}
-                <button
-                  data-testid="loop-probe-next"
-                  className="btn btn--primary"
-                  style={{ alignSelf: "flex-start" }}
-                  disabled={busy}
-                  onClick={onNext}
-                >
-                  Next
-                </button>
-              </>
-            )}
-          </section>
-        )}
-        {note && <div role="status" style={{ fontSize: 13, color: "var(--text-muted)" }}>{note}</div>}
-      </div>
-    </div>
-  );
-}
-
-function PlanPanel({
-  plan, busy, loadFailed, onApprove, onRetry, diagnosis, names,
-}: {
-  diagnosis: LoopDiagnosis | null;
-  names: Map<string, string>;
-  plan: LoopPlanConcept[] | null;
-  busy: boolean;
-  loadFailed: boolean;
-  onApprove: () => void;
-  onRetry: () => void;
-}) {
-  // spec §13 A135: the plan replaces the check-in (or its retry), so its heading
-  // takes focus — read out, and the place Tab continues from.
-  const headingRef = useRef<HTMLHeadingElement>(null);
-  useLayoutEffect(() => {
-    if (!modalOpen()) headingRef.current?.focus();
-  }, []);
-  return (
-    <div style={{ flex: 1, overflowY: "auto" }}>
-      <div className={tutorStyles.col}>
-      <TutorTurn>Here&apos;s today&apos;s plan. Due reviews come first, then what&apos;s new, then related practice.</TutorTurn>
-      <section
-        aria-labelledby="loop-plan-heading"
-        className={`card ${tutorStyles.qcard}`}
-      >
-        <div className={tutorStyles.qhead}>
-          <h2 id="loop-plan-heading" ref={headingRef} tabIndex={-1} className={`label-micro ${tutorStyles.qlabel}`}>
-            Today&apos;s plan
-          </h2>
-        </div>
-        <DiagnosisSummary diagnosis={diagnosis} names={names} />
-        {plan === null && !loadFailed && <div style={{ fontSize: 14, color: "var(--text-muted)" }}>Building your plan…</div>}
-        {plan === null && loadFailed && (
-          <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 14, color: "var(--text-muted)" }}>
-            <span>Today&apos;s plan didn&apos;t load.</span>
-            <button data-testid="loop-plan-retry" className="btn btn--sm" onClick={onRetry}>
-              Try again
-            </button>
-          </div>
-        )}
-        {plan !== null && plan.length === 0 && (
-          <div style={{ fontSize: 14, color: "var(--text-muted)" }}>Nothing to plan right now — ask the tutor anything.</div>
-        )}
-        {plan && plan.length > 0 && (
-          <ol aria-label="Concepts in today's plan" style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 6 }}>
-            {plan.map((c, i) => {
-              const kind = planKind(c.kind);
-              const why = planGoalReason(c.reason);
-              return (
-                <li
-                  key={c.node_id}
-                  data-testid={`loop-plan-concept-${c.node_id}`}
-                  className={`${styles.planItem} ${tutorStyles.planRow} ${i === 0 ? tutorStyles.planCur : ""}`}
-                >
-                  <span className={tutorStyles.planBox} aria-hidden>{i + 1}</span>
-                  <span style={{ flex: "1 1 100px", minWidth: 0, overflowWrap: "anywhere", fontSize: 14, fontWeight: 500 }}>{c.concept_name || "Concept"}
-                    {why && <span data-testid={`loop-plan-reason-${c.node_id}`} className={tutorStyles.ps} style={{ display: "block", marginTop: 2, fontWeight: 400 }}>{why}</span>}
-                  </span>
-                  {c.band && <span className="chip">{BAND_LABEL[c.band] ?? c.band}</span>}
-                  {kind && <span data-testid={`loop-plan-kind-${c.node_id}`} className={kind.chip}>{kind.label}</span>}
-                </li>
-              );
-            })}
-          </ol>
-        )}
-        {plan && plan.length > 0 && (
-          <button
-            data-testid="loop-plan-approve"
-            className="btn btn--primary"
-            style={{ alignSelf: "flex-start" }}
-            disabled={busy}
-            onClick={onApprove}
-          >
-            <Icon name="sparkle" size={14} /> {busy ? "Saving…" : "Start learning"}
-          </button>
-        )}
-      </section>
-      </div>
-    </div>
-  );
-}
-
-function CheckCard({
-  item, conceptName, draft, setDraft, busy, hint, hintBusy, hintRetry, onSubmit, onIdk, onHint, onReport, selfExplain,
-}: {
-  item: LoopCheckItem;
-  /** The concept the check is on (the chip in the card's head). */
-  conceptName?: string | null;
-  draft: Draft;
-  setDraft: React.Dispatch<React.SetStateAction<Draft>>;
-  busy: boolean;
-  hint: HintView;
-  hintBusy: boolean;
-  hintRetry: boolean;
-  onSubmit: () => void;
-  onIdk: () => void;
-  onHint: () => void;
-  /** spec §13 A113: present while the `item_reports` flag is on. */
-  onReport?: (reason: LoopReportReason) => Promise<boolean>;
-  /** spec §13 A139: an open "why" prompt, rendered under the hint it follows. */
-  selfExplain?: React.ReactNode;
-}) {
-  const mc = item.format === "mc_reason";
-  // K02: an mc_reason answer needs its reason; K09: a loading hint (its rung already charged) is shown first
-  const canSubmit = !busy && !hintBusy && (mc ? draft.option !== "" && draft.reason.trim() !== "" : draft.answer.trim() !== "");
-  const ids = useId();
-  const headingId = `${ids}-heading`;
-  const promptId = `${ids}-prompt`;
-  const cardRef = useRef<HTMLElement>(null);
-  // spec §13 A135: a posed check takes focus — its answer box, described by the
-  // question (or the options' tab stop, named by it): a screen reader is told a
-  // question appeared, and the student can answer at once. The pose and the
-  // hint also stay in the conversation log (visually hidden while the card
-  // shows them), so they are announced as they arrive.
-  useLayoutEffect(() => {
-    if (modalOpen()) return;
-    focusAnswerStart(cardRef.current);
-  }, [item.question_hash]);
-  // While a hint loads the Hint button keeps focus (aria-disabled, not
-  // disabled: a disabled control drops focus to the page).
-  const hintUnavailable = hintBusy || busy;
-  return (
-    <section
-      ref={cardRef}
-      aria-labelledby={headingId}
-      className={`card ${tutorStyles.qcard}`}
-    >
-      <div
-        data-testid="loop-check-prompt"
-        data-question-hash={item.question_hash}
-        data-format={item.format}
-        style={{ display: "flex", flexDirection: "column", gap: 10 }}
-      >
-        <div className={tutorStyles.qhead}>
-          <h2 id={headingId} className={`label-micro ${tutorStyles.qlabel}`}>Check your understanding</h2>
-          {conceptName && <span className="chip">{conceptName}</span>}
-        </div>
-        <p id={promptId} className={tutorStyles.q}>{item.prompt}</p>
-      </div>
-      {mc ? (
-        <>
-          <OptionList
-            options={item.options ?? []}
-            selected={draft.option}
-            onSelect={(letter) => setDraft((d) => ({ ...d, option: letter }))}
-            testIdPrefix="loop-attempt-option"
-            labelledBy={promptId}
-            disabled={busy}
-          />
-          <label className={tutorStyles.fl} htmlFor={`${ids}-reason`} style={{ marginBottom: -8 }}>Your reasoning</label>
-          <input
-            id={`${ids}-reason`}
-            data-testid="loop-attempt-reason"
-            style={FIELD_STYLE}
-            placeholder="In one sentence: why?"
-            value={draft.reason}
-            disabled={busy}
-            onChange={(e) => {
-              const reason = e.target.value;
-              setDraft((d) => ({ ...d, reason }));
-            }}
-          />
-        </>
-      ) : (
-        <>
-        <label className={tutorStyles.fl} htmlFor={`${ids}-answer`} style={{ marginBottom: -8 }}>Your answer — this is what gets checked</label>
-        <textarea
-          id={`${ids}-answer`}
-          data-testid="loop-attempt-input"
-          data-answer-start=""
-          aria-describedby={promptId}
-          style={FIELD_STYLE}
-          rows={2}
-          placeholder={item.format === "teachback" ? "Explain it in your own words" : ""}
-          value={draft.answer}
-          disabled={busy}
-          onChange={(e) => {
-            const answer = e.target.value;
-            setDraft((d) => ({ ...d, answer }));
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && canSubmit) onSubmit();
-          }}
-        />
-        </>
-      )}
-      <ConfidenceControl
-        testIdPrefix="loop-check-confidence"
-        value={draft.confidence}
-        onChange={(confidence) => setDraft((d) => ({ ...d, confidence }))}
-        disabled={busy}
-      />
-      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-        <button data-testid="loop-attempt-submit" className="btn btn--primary" disabled={!canSubmit} onClick={onSubmit}>
-          Submit answer
-        </button>
-        <button
-          data-testid="loop-hint-button"
-          className="btn"
-          aria-disabled={hintUnavailable}
-          style={hintUnavailable ? { cursor: "not-allowed" } : undefined}
-          onClick={() => {
-            if (!hintUnavailable) onHint();
-          }}
-        >
-          <Icon name="sparkle" size={13} />{hintBusy ? "Hint…" : hintRetry ? "Retry earned hint" : "Hint"}
-        </button>
-        <button data-testid="loop-attempt-idk" className="btn btn--ghost" disabled={busy || hintBusy} onClick={onIdk}>
-          I don&apos;t know
-        </button>
-      </div>
-      {/* Always in the DOM, so a refusal is announced when it appears. */}
-      <div aria-live="polite">
-        {hint && "denied" in hint && (
-          <div
-            data-testid="loop-hint-denied"
-            data-reason={hint.denied}
-            role="status"
-            style={{ fontSize: 13, color: "var(--text-muted)" }}
-          >
-            {HINT_DENIED_COPY[hint.denied] ?? HINT_DENIED_FALLBACK}
-          </div>
-        )}
-      </div>
-      {hint && "reply" in hint && (
-        <div
-          data-testid="loop-hint-reply"
-          style={{
-            fontSize: 14,
-            padding: "10px 12px",
-            borderRadius: "var(--r-md)",
-            border: "1px solid var(--accent-border)",
-            background: "var(--accent-soft)",
-            whiteSpace: "pre-wrap",
-            display: "flex",
-            gap: 8,
-          }}
-        >
-          <span style={{ color: "var(--accent)", marginTop: 2 }} aria-hidden><Icon name="sparkle" size={13} /></span>
-          <span>{hint.reply}</span>
-        </div>
-      )}
-      {selfExplain}
-      {onReport && <ReportQuestion testIdPrefix="loop-check-report" disabled={busy} onReport={onReport} />}
-    </section>
-  );
-}
