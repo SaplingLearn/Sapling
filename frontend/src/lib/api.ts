@@ -18,6 +18,7 @@ import type {
 } from '@/lib/types';
 import { statusOf } from '@/lib/errorMessage';
 import type { WithCrisisSupport } from '@/lib/crisisSupport';
+import type { AdminFlag, FlagRule } from '@/lib/adminFlags';
 import { createStreamPacer, type StreamPacer } from '@/lib/streamPacer';
 import { REAUTH_REQUIRED, isReauthRequired, notifyReauthRequired } from '@/lib/reauth';
 import { ApiError, apiErrorOf, errorFieldsFrom, parseErrorBody } from '@/lib/apiError';
@@ -1919,17 +1920,8 @@ export const adminCreateRole = (payload: {
 export const adminDeleteRole = (roleId: string) =>
   fetchJSON<{ deleted: boolean }>(`/api/admin/roles/${encodeURIComponent(roleId)}`, { method: 'DELETE' });
 
-// Admin — feature flags (#620, ADR 0029)
-export type AdminFlagTarget = { target_type: 'user' | 'role'; target_id: string; label: string; variant: string };
-export type AdminFlag = {
-  key: string; description: string; variants: string[]; client_visible: boolean;
-  default_variant: string; rollout_percent: number; rollout_variant: string | null;
-  /** The variant SAPLING_FLAG_<KEY> forces on the server, or null. It wins
-   *  over every stored setting. */
-  env_override?: string | null;
-  updated_at: string | null; updated_by: string | null; updated_by_name: string | null;
-  targets: AdminFlagTarget[];
-};
+// Admin — feature flags (#620, ADR 0029); the shapes live in @/lib/adminFlags
+export type { AdminFlag, AdminFlagTarget, FlagRule } from '@/lib/adminFlags';
 
 export const adminListFlags = () => fetchJSON<{ flags: AdminFlag[] }>('/api/admin/flags');
 
@@ -1958,7 +1950,7 @@ export const adminDeleteFlagTarget = (key: string, type: 'user' | 'role', id: st
   );
 
 export const adminExplainFlag = (key: string, userId: string) =>
-  fetchJSON<{ variant: string; step: string; detail: string }>(
+  fetchJSON<FlagRule>(
     `/api/admin/flags/${encodeURIComponent(key)}/explain?user_id=${encodeURIComponent(userId)}`,
   );
 

@@ -589,7 +589,9 @@ baselined backlog — every button/input in them is tagged.
 | --- | --- |
 | `admin-tab-{tab}` | one tab-bar button per `Tab` value (`Admin.tsx`) |
 | `flag-row-{key}` | a flag's list row (grouped by nav section); click opens its right-hand panel |
-| `flag-state-{key}` | the row's current everyone-default in words (`Visible`/`Hidden` for a `hide_*` flag) |
+| `flag-state-{key}` | the row's current everyone-default in words (`Visible`/`Hidden` for a `hide_*` flag); for a learning-loop flag the server forces for everyone (#866 K24: the `LEARNING_LOOP_ENABLED` kill switch, a `SAPLING_FLAG_` override), that answer instead |
+| `flag-forced-{key}` | #866 K24: the chip beside it when the server decides above the stored settings — "Kill switch on", "Learning loop off" (the loop forced off by its env override) or "Set on the server" — its tooltip saying what every student gets and why; `flag-forced-note-{key}` is the same note in the panel's Everyone section |
+| `flag-requires-{key}` | #866 K24: "Needs Learning loop" on a flag that acts only where the student's `learning_loop` flag is on (`learning/gate.py::LOOP_FLAGS`) |
 | `flag-toggle-{key}` | the row's `role="switch"` (`ui/Switch.tsx`); checked = Visible for a hide flag. Opens the confirm dialog, never saves directly |
 | `flag-open-{key}` | the row's chevron button that opens the panel (the keyboard path to it) |
 | `flag-save-scope-{key}` | the plain-language scope of a pending default/rollout change (design spec §7) — in the row switch's confirm dialog, or in the panel's sticky footer while edits are staged |
@@ -611,7 +613,7 @@ baselined backlog — every button/input in them is tagged.
 | `flag-target-add-{key}` | "Add override" (`adminUpsertFlagTarget`) |
 | `flag-explain-input-{key}` | "Check a student" input — name/email search, or a raw user id + Enter (`adminExplainFlag`) |
 | `flag-explain-user-{key}-{userId}` | one student search result there; clicking it runs the check |
-| `flag-explain-result-{key}` | the answer in words, e.g. `Hidden: from the Admin role override` |
+| `flag-explain-result-{key}` | the answer in words, e.g. `Hidden: from the Admin role override`; a learning-loop flag answers under the loop's gate (#866 K24), e.g. `Off: the LEARNING_LOOP_ENABLED kill switch turns the learning loop off for everyone` or `Off: needs Learning loop, which is off for them — the default for everyone` |
 
 ### `admin-user`
 

@@ -29,11 +29,34 @@ per upload. The per-user settings column of the build phase stays retired
 
 from __future__ import annotations
 
+from typing import NamedTuple
+
 import config
-from services.feature_flags import env_override, flag_on
+from services.feature_flags import REGISTRY, Resolution, env_override, explain, flag_on
 
 #: The per-student flag (services/feature_flags.py REGISTRY).
 LEARNING_LOOP_FLAG = "learning_loop"
+
+#: The env kill switch, as the admin Flags page names it (config.py parses it).
+KILL_SWITCH = "LEARNING_LOOP_ENABLED"
+
+#: The flags that act only where the learning loop is on for the same student
+#: (#866 K24). Every reader of each sits behind the loop's route-entry gate (the
+#: loop routes 404 while it is off) or reads the gate first: the quiz flags
+#: (services/quiz_learning.py::quiz_flags), the upload's prerequisite edges
+#: (services/concept_prereqs.py::upload_prereqs_on) and the drafting flags of an
+#: upload the loop drafts for. So the kill switch, or the student's own
+#: `learning_loop` flag, turns each off whatever its own settings say, and the
+#: admin Flags page reports it that way (`served_flag`, `forced_for_everyone`).
+#: tests/test_admin_flags_loop_gate.py pins the set, and that every flag
+#: services/loop/ reads is in it. crisis_support is not: it serves the legacy
+#: tutor, notes and flashcards too.
+LOOP_FLAGS: frozenset[str] = frozenset({
+    "item_reports", "retention_due_badge", "probe_matched_pretest", "upload_prereq_edges",
+    "loop_tutor_v2", "help_gate_strict", "segment_prequestion", "self_explanation_prompts",
+    "varied_isomorphs", "multi_concept_items", "quiz_concept_plan", "quiz_planned_questions",
+    "quiz_item_gates", "quiz_misconceptions", "quiz_results_routing",
+})
 
 
 def learning_loop_active(user_id: str | None) -> bool:
@@ -76,3 +99,65 @@ def learning_loop_for_uploader(user_id: str | None) -> bool:
     model call. Items are course assets: a flag-on classmate's upload drafts
     the course's items, and the backfill drafts what flag-off uploads left."""
     return learning_loop_active(user_id)
+
+
+# ── the admin Flags page's view of the gate (#866 K24) ───────────────────────
+
+
+class ServedFlag(NamedTuple):
+    """A flag as a student is served it: the answer and the rule that decided
+    it, and — when that rule is the loop being off for them (step "requires")
+    — the `learning_loop` answer behind it."""
+
+    resolution: Resolution
+    master: Resolution | None = None
+
+
+def _off(key: str) -> str:
+    return REGISTRY[key].variants[0]
+
+
+def served_flag(key: str, user_id: str | None, *, fresh: bool = False) -> ServedFlag:
+    """Flag `key` as `user_id` is served it right now, and which rule decided
+    it: the admin Flags page's "Check a student". The loop's gate, in the
+    order the code reads it, over the flag's own resolution
+    (services/feature_flags.py::explain): for `learning_loop` and every
+    LOOP_FLAGS key the kill switch first (step "kill_switch", no read); then,
+    for a LOOP_FLAGS key, the student's `learning_loop` flag — off is step
+    "requires", that answer its `master`; then the flag's own rules. A flag
+    the loop does not gate is its own resolution, exactly as before. An admin
+    diagnostic, never a route-entry gate: no answer is carried anywhere."""
+    if key != LEARNING_LOOP_FLAG and key not in LOOP_FLAGS:
+        return ServedFlag(explain(key, user_id, fresh=fresh))
+    if not config.LEARNING_LOOP_ENABLED:
+        return ServedFlag(Resolution(_off(key), "kill_switch", KILL_SWITCH))
+    if key in LOOP_FLAGS:
+        master = explain(LEARNING_LOOP_FLAG, user_id, fresh=fresh)
+        if master.variant == _off(LEARNING_LOOP_FLAG):
+            return ServedFlag(Resolution(_off(key), "requires", LEARNING_LOOP_FLAG), master)
+        fresh = False  # that read refreshed the snapshot this one answers from
+    return ServedFlag(explain(key, user_id, fresh=fresh))
+
+
+def forced_for_everyone(key: str) -> ServedFlag | None:
+    """What EVERY student gets from flag `key` whatever its stored settings say
+    (overrides, rollout and default alike), and why; None when those settings
+    decide, student by student (the admin flag list's row state). The
+    environment only, no read: the kill switch over `learning_loop` and
+    LOOP_FLAGS; for a LOOP_FLAGS key, `learning_loop` forced off by its
+    SAPLING_FLAG_ override; then the flag's own override. A flag the loop does
+    not gate: None (its `env_override` is reported as before)."""
+    if key != LEARNING_LOOP_FLAG and key not in LOOP_FLAGS:
+        return None
+    if not config.LEARNING_LOOP_ENABLED:
+        return ServedFlag(Resolution(_off(key), "kill_switch", KILL_SWITCH))
+    master = env_override(LEARNING_LOOP_FLAG)
+    if key in LOOP_FLAGS and master == _off(LEARNING_LOOP_FLAG):
+        return ServedFlag(
+            Resolution(_off(key), "requires", LEARNING_LOOP_FLAG),
+            Resolution(master, "env_override", f"SAPLING_FLAG_{LEARNING_LOOP_FLAG.upper()}"),
+        )
+    own = env_override(key)
+    if own is not None:
+        return ServedFlag(Resolution(own, "env_override", f"SAPLING_FLAG_{key.upper()}"))
+    return None
