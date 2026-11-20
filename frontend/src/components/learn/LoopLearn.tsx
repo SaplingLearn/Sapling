@@ -391,6 +391,7 @@ export function LoopLearn() {
   const bootKey = useRef<string | null>(null);
   const resumePending = useRef(true); // the deep link's ?resume= is honoured once
   const topicStarted = useRef(false); // the deep link's ?topic= starts a session once
+  const lastStart = useRef<{ topic?: string; mode?: string; goal?: boolean }>({}); // the start card's "Try again" repeats it
   const sessionRef = useRef<string | null>(null);
   const streamAbort = useRef<AbortController | null>(null);
   const turnEpoch = useRef(0); // a late recovery snapshot cannot undo a newer turn
@@ -836,6 +837,7 @@ export function LoopLearn() {
     { closeCurrent = false, topic, mode }: { closeCurrent?: boolean; topic?: string; mode?: string } = {},
   ) => {
     if (!courseId || !userId || sessionTransitionBusy) return;
+    lastStart.current = { topic, mode };
     // An explicit start wins over a boot that has not listed the sessions yet.
     bootKey.current = `${userId}:${courseId}`;
     const leaving = sessionRef.current;
@@ -1017,8 +1019,10 @@ export function LoopLearn() {
   const startGuided = async (opts: { topic?: string; goal?: boolean } = {}) => {
     setView("session");
     await newSession({ closeCurrent: true, topic: opts.topic, mode: deepLink.mode });
+    lastStart.current.goal = opts.goal;
     if (opts.goal && mounted.current && sessionRef.current) { setGoalEditor(true); setGoalError(null); }
   };
+  const retryStart = () => (lastStart.current.goal ? startGuided(lastStart.current) : newSession(lastStart.current));
 
   // ── Probe ──────────────────────────────────────────────────────────────
   /** After a graded answer: the probe's last answer already moved the session
@@ -2295,12 +2299,7 @@ export function LoopLearn() {
           <p style={{ color: "var(--text-dim)", fontSize: 14, margin: "0 0 16px" }}>
             Nothing was started. Try again in a moment.
           </p>
-          <button
-            data-testid="loop-start-retry"
-            className="btn btn--primary"
-            disabled={starting}
-            onClick={() => void newSession({ topic: deepLink.topic, mode: deepLink.mode })}
-          >
+          <button data-testid="loop-start-retry" className="btn btn--primary" disabled={starting} onClick={() => void retryStart()}>
             Try again
           </button>
         </CenteredCard>

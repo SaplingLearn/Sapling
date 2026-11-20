@@ -645,3 +645,29 @@ describe("B4 — a replayed turn changes no state", () => {
     await waitFor(() => expect(screen.queryByText(/every concept in today's plan/)).toBeNull()); // a served turn clears it
   });
 });
+
+describe("Z58 — Try again after a failed start repeats that start", () => {
+  const node = { id: "n1", concept_name: "Recursion", mastery_tier: "struggling", mastery_score: 0.2, is_subject_root: false, subject: "Intro CS", course_id: "c1" };
+  beforeEach(() => {
+    api.listLoopSessionsFor.mockResolvedValue(listed([]));
+    api.getGraph.mockResolvedValue({ nodes: [node], edges: [], stats: {} });
+    api.startLoopSession.mockRejectedValueOnce(new ApiError("boom", 503)).mockResolvedValue({ session_id: "s9", initial_message: "" });
+    api.nextLoopProbe.mockResolvedValue(probeItem);
+  });
+
+  it("'Start with X' retries on X", async () => {
+    render(<LoopLearn />);
+    fireEvent.click(await screen.findByTestId("tutor-home-start-with"));
+    fireEvent.click(await screen.findByTestId("loop-start-retry"));
+    await screen.findByTestId("loop-probe-item");
+    expect(api.startLoopSession.mock.calls.map((c) => c[2])).toEqual(["Recursion", "Recursion"]);
+  });
+
+  it("'Set a goal' retries into the goal editor", async () => {
+    render(<LoopLearn />);
+    fireEvent.click(await screen.findByTestId("tutor-home-goal"));
+    fireEvent.click(await screen.findByTestId("loop-start-retry"));
+    expect(await screen.findByTestId("loop-goal-save")).toBeTruthy();
+    expect(api.startLoopSession).toHaveBeenCalledTimes(2);
+  });
+});
