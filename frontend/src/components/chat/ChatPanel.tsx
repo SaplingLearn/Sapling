@@ -8,6 +8,7 @@ import { Icon } from "../Icon";
 import { CHAT_MESSAGE_MAX } from "@/lib/inputLimits";
 import { CrisisSupportCard } from "../safety/CrisisSupportCard";
 import type { CrisisSupport } from "@/lib/crisisSupport";
+import type { MarkdownProfile } from "./inertMarkdown";
 
 // MarkdownChat statically imports mermaid, katex, highlight.js, and the
 // remark/rehype stack. Static-importing it from a client component still
@@ -115,6 +116,11 @@ interface ChatPanelProps {
    *  on the page under the tutor's mark (`PageTurn`; the Tutor V2 layout).
    *  The student's own messages are bubbles on the right either way. */
   turnStyle?: "bubble" | "page";
+  /** Which markdown a tutor turn may use (`inertMarkdown.tsx`). "rich" (the
+   *  default) for every host but the learning loop, whose transcript repeats
+   *  class material verbatim from code — a check pose, an H2 passage, a worked
+   *  sibling, a reference — and so is drawn "inert" (Z08). */
+  markdown?: MarkdownProfile;
 }
 
 export function ChatPanel({
@@ -134,6 +140,7 @@ export function ChatPanel({
   attachHref,
   footer,
   turnStyle = "bubble",
+  markdown = "rich",
 }: ChatPanelProps) {
   const onPage = turnStyle === "page";
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -191,7 +198,7 @@ export function ChatPanel({
           gap: 16,
         }}
       >
-        {messages.map(m => <Message key={m.id} m={m} onRetry={onRetry} onPage={onPage} />)}
+        {messages.map(m => <Message key={m.id} m={m} onRetry={onRetry} onPage={onPage} markdown={markdown} />)}
         {streamingText !== null && streamingText !== undefined && (
           // Reuse Message/MarkdownChat exactly as settled assistant messages
           // do, so a streaming reply never styles differently from a
@@ -205,6 +212,7 @@ export function ChatPanel({
           <Message
             key="streaming"
             onPage={onPage}
+            markdown={markdown}
             m={{
               id: "streaming",
               role: "assistant",
@@ -439,9 +447,9 @@ export function splitKeyIdea(content: string): TurnPart[] {
   return parts;
 }
 
-function AssistantBody({ content }: { content: string }) {
+function AssistantBody({ content, profile }: { content: string; profile: MarkdownProfile }) {
   const parts = splitKeyIdea(content);
-  if (!parts.some((p) => p.kind === "key")) return <MarkdownChat>{content}</MarkdownChat>;
+  if (!parts.some((p) => p.kind === "key")) return <MarkdownChat profile={profile}>{content}</MarkdownChat>;
   return (
     <>
       {parts.map((p, i) => p.kind === "key" ? (
@@ -449,10 +457,10 @@ function AssistantBody({ content }: { content: string }) {
           <span className="label-micro" style={{ display: "block", color: "var(--accent)", marginBottom: 2 }}>
             Key idea<span style={VISUALLY_HIDDEN}>: </span>
           </span>
-          <MarkdownChat>{p.text}</MarkdownChat>
+          <MarkdownChat profile={profile}>{p.text}</MarkdownChat>
         </div>
       ) : (
-        <MarkdownChat key={i}>{p.text}</MarkdownChat>
+        <MarkdownChat key={i} profile={profile}>{p.text}</MarkdownChat>
       ))}
     </>
   );
@@ -484,11 +492,14 @@ const Message = React.memo(function Message({
   m,
   onRetry,
   onPage,
+  markdown = "rich",
 }: {
   m: ChatMsg;
   onRetry?: (m: ChatMsg) => void;
   /** A tutor turn sits on the page (`PageTurn`) rather than in a bubble. */
   onPage?: boolean;
+  /** The markdown a tutor turn may use (ChatPanel's `markdown`). */
+  markdown?: MarkdownProfile;
 }) {
   const isUser = m.role === "user";
   if (m.crisisSupport && !isUser) {
@@ -512,7 +523,7 @@ const Message = React.memo(function Message({
         // ADR 0020: an interrupted turn keeps its partial text visible,
         // just dimmed — never blanked.
         <div style={m.interrupted ? { opacity: 0.7 } : undefined}>
-          {m.content ? <AssistantBody content={m.content} /> : null}
+          {m.content ? <AssistantBody content={m.content} profile={markdown} /> : null}
         </div>
       )}
       {m.interrupted && !isUser && (

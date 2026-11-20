@@ -19,6 +19,7 @@ import {
 } from "@/lib/markdownImages";
 import { MermaidBlock } from "./MermaidBlock";
 import { FunctionPlot } from "./FunctionPlot";
+import { INERT_COMPONENTS, type MarkdownProfile } from "./inertMarkdown";
 
 // Castel-style shortcuts. Tutor can write `\R` instead of `\mathbb{R}`.
 // Frozen: KaTeX writes every \gdef / \global definition into the macros object
@@ -426,21 +427,35 @@ const COMPONENTS: Components = {
 export const MarkdownChat = React.memo(function MarkdownChat({
   children,
   components,
+  profile = "rich",
 }: {
   children: string;
   components?: Components;
+  /** "inert" (Z08, `inertMarkdown.tsx`): text that may repeat class material
+   *  verbatim — no directive syntax, links as text naming their host, no
+   *  image fetched, nothing embedded, no diagram drawn. */
+  profile?: MarkdownProfile;
 }) {
+  const inert = profile === "inert";
   return (
     <div style={{ lineHeight: 1.55 }}>
       <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkMath, remarkDirective, remarkSaplingDirectives]}
+        remarkPlugins={
+          inert
+            ? [remarkGfm, remarkMath] // a "::geogebra{…}" line stays text
+            : [remarkGfm, remarkMath, remarkDirective, remarkSaplingDirectives]
+        }
         rehypePlugins={[
           // a fresh copy per render: this message's \gdef stays in this message (Z32)
           [rehypeKatex, { macros: { ...KATEX_MACROS }, strict: "ignore" }],
           rehypeExtractDiagramBlocks,
           [rehypeHighlight, { detect: true, ignoreMissing: true }],
         ]}
-        components={{ ...COMPONENTS, ...(components || {}) }}
+        components={
+          inert
+            ? { ...COMPONENTS, ...(components || {}), ...INERT_COMPONENTS }
+            : { ...COMPONENTS, ...(components || {}) }
+        }
       >
         {children}
       </ReactMarkdown>
