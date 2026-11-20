@@ -270,10 +270,10 @@ async def review_answer(body: ReviewAnswerBody, request: Request) -> dict:
         raise HTTPException(status_code=422, detail=str(exc)) from None
     # #866 K54: the item's own course's target (the Flashcards page's rating uses
     # the same), never the session scope's: Study reads its queue unscoped
-    retention = await asyncio.to_thread(
-        *((review.course_retention, body.user_id, check.course_id) if check is not None
-          else (review.card_retention, body.user_id, card_row))
-    )
+    if check is not None:
+        retention = await asyncio.to_thread(review.course_retention, body.user_id, check.course_id)
+    else:
+        retention = await asyncio.to_thread(review.card_retention, body.user_id, card_row or {})
     claim = str(uuid.uuid4())
     try:
         operation_id = await asyncio.to_thread(
