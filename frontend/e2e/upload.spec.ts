@@ -358,7 +358,13 @@ test("with upload_prereq_edges on, an upload writes its prerequisite edge once (
   await uploadFixture(page);
   const first = await scriptedPrerequisiteEdges();
   if (loopOffLane) {
-    // The loop is off for the uploader: the flag on, still no edge (K55).
+    // The loop is off for the uploader: the flag on, still no edge (K55) —
+    // between concepts the upload did write, so the empty answer is not vacuous.
+    const nodes = (await queryRaw(
+      "SELECT DISTINCT concept_name FROM graph_nodes WHERE user_id = $1 AND concept_name = ANY($2::text[])",
+      [USER_ACTIVE, SCRIPTED_CONCEPTS],
+    )) as { concept_name: string }[];
+    expect(nodes.map((n) => n.concept_name).sort()).toEqual([...SCRIPTED_CONCEPTS].sort());
     expect(first).toEqual([]);
     return;
   }
