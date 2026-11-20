@@ -1247,6 +1247,34 @@ test("kill switch restores the legacy Learn screen", async ({ page }) => {
   expect(errors[0].n).toBe(0);
 });
 
+// Z08 (review): with the loop off, the legacy Tutor still lists and resumes a
+// student's loop sessions; their saved class material is drawn inert there too,
+// while every other session renders exactly as main does.
+test("with the loop off, a resumed loop session's class material is drawn inert", async ({ page }) => {
+  test.skip(!loopOffLane, "kill-switch and flag-off lanes only");
+  await page.addInitScript(() => {
+    localStorage.setItem("sapling_disclaimer_ack", "true");
+  });
+  await queryRaw(
+    `INSERT INTO sessions (id, user_id, mode, topic, started_at, loop_state) VALUES
+       ('e2e-z08-loop', $1, 'socratic', 'A loop session', now(), '{"phase": "teach"}'::jsonb),
+       ('e2e-z08-legacy', $1, 'socratic', 'A legacy tutor chat', now(), '{}'::jsonb)`,
+    [USER_ACTIVE],
+  );
+  await saveTutorRow("e2e-z08-loop", CLASS_MATERIAL_ROW);
+  await saveTutorRow("e2e-z08-legacy", CLASS_MATERIAL_ROW);
+
+  const transcript = page.getByTestId("tutor-messages");
+  await page.goto("/learn?resume=e2e-z08-loop");
+  await expect(transcript).toContainText("Open the lab handout (evil.example)");
+  await expect(transcript).toContainText("https://lab4-portal.example/login");
+  await expect(transcript).toContainText("::geogebra{id=abc123}");
+  await expect(transcript.locator('a[href*="example"], img[src*="example"], iframe')).toHaveCount(0);
+
+  await page.goto("/learn?resume=e2e-z08-legacy");
+  await expect(transcript.locator('a[href="https://evil.example/handout"]')).toHaveCount(1);
+});
+
 // UI regression coverage; the deterministic function model supplies all lesson
 // and grading text. This exercises navigation/forms at a real phone width,
 // rather than inferring mobile usability from the component's desktop tests.

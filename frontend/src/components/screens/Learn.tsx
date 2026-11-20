@@ -56,6 +56,7 @@ import { forgetEndedSession, noteLearningSession, rememberEndedSession, useFeedb
 import type { GraphNode as ApiNode, GraphEdge as ApiEdge } from "@/lib/types";
 import { apiToGraphNode, type GraphNode, type GraphEdge } from "@/lib/data";
 import { focusCardDescription, focusCardTitle, sessionSubtitle } from "./learn/view";
+import { resumedTranscript, type MarkdownProfile } from "./learn/resumedTranscript";
 
 function apiToGraphEdge(e: ApiEdge): GraphEdge {
   return {
@@ -968,6 +969,9 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
   // The server answered 409 to a turn: this session is over (backend E1).
   // Cleared by `enterSession`, so it never follows the student elsewhere.
   const [sessionEnded, setSessionEnded] = useState(false);
+  // "inert" only while a resumed learning-loop session is on screen (Z08,
+  // learn/resumedTranscript.ts); `enterSession` puts it back to "rich".
+  const [transcriptMarkdown, setTranscriptMarkdown] = useState<MarkdownProfile>("rich");
   // Latest mode switch issued; an older one's failure must not roll back a
   // newer one.
   const modeSwitchSeqRef = useRef(0);
@@ -995,6 +999,7 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
     setResuming(false);
     setActionPending(false);
     setSessionEnded(false);
+    setTranscriptMarkdown("rich");
     setStreamingText(null);
     setStreamingStatus(null);
     return epoch;
@@ -1173,13 +1178,9 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
       setTopic(res.session.topic);
       setMode(normalizeMode(res.session.mode));
       setSelectedCourseId(res.session.course_id || "");
-      setMessages(
-        (res.messages ?? []).map(m => ({
-          id: msgId(),
-          role: m.role === "user" ? "user" : "assistant",
-          content: m.content,
-        })),
-      );
+      const transcript = resumedTranscript(res, msgId);
+      setMessages(transcript.messages);
+      setTranscriptMarkdown(transcript.markdown);
     } catch (err) {
       if (!isCurrent()) return;
       toast.error(readableError(err, "Resume failed."));
@@ -1510,7 +1511,7 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
 
   return {
     sessionId, messages, sending, starting, resuming, streamingText, streamingStatus, actionPending,
-    sessionEnded, summary, beginSession, handleStart, handleResume, send, handleRetry, handleAction,
+    sessionEnded, transcriptMarkdown, summary, beginSession, handleStart, handleResume, send, handleRetry, handleAction,
     handleModeSwitch, endConfirm, closeSummary, handleBackToLearn, stopStream,
     crisisDialog: crisis.dialog,
   };
@@ -1955,6 +1956,7 @@ function ChatColumn({ session, topic, mode, courseCode, sharedCtx, setSharedCtx,
         // the waiting bubble but no Stop.
         onStop={session.actionPending ? undefined : session.stopStream}
         onRetry={session.handleRetry}
+        markdown={session.transcriptMarkdown}
       />
     </div>
   );
