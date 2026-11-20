@@ -984,6 +984,8 @@ loop active (`GET /api/learn/loop/review/active` 200 — a gate-only probe; the 
 | `review-report-cancel` | closes the reasons without reporting |
 | `review-reported` | "Thanks — that question is reported…" above the next item |
 | `review-skipped` | "That question is no longer available, so it was skipped." — a 404 on `/review/answer` or `/report` moved on to the next item |
+| `review-new-day` | "A new review day began, so the queue reloaded. …" — an answer met `409 review session expired`: the review session is one per the student's LOCAL day (`tz_offset_min`), and today's queue serves the check again with what was typed (#866 K17) |
+| `review-not-reported` | a report met `409 review session expired` and today's queue does not serve the question again, so the report was not sent (said, never silently dropped; when the question is served again the report goes to today's session) (#866 K17) |
 | `review-load-error` / `review-load-retry` | `/review/next` failed: why, and "Try again" |
 
 ### `loop`

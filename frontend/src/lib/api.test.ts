@@ -450,20 +450,23 @@ describe('learning-loop review client (PKG-12)', () => {
     await expect(getLoopStatus('u1')).rejects.toBeInstanceOf(ApiError);
   });
 
-  it('getReviewNext / answerReview hit the loop review routes', async () => {
+  it('getReviewNext / answerReview hit the loop review routes, on the student\'s local day (#866 K17)', async () => {
     const fetchMock = vi.mocked(globalThis.fetch);
     fetchMock.mockImplementation(async () => ok({}));
+    // New York in September: 240 minutes behind UTC (JS getTimezoneOffset)
+    const tz = vi.spyOn(Date.prototype, 'getTimezoneOffset').mockReturnValue(240);
     await getReviewNext('u1', 'c1');
-    expect(fetchMock.mock.calls[0][0]).toBe('/api/learn/loop/review/next?user_id=u1&course_id=c1');
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/learn/loop/review/next?user_id=u1&course_id=c1&tz_offset_min=240');
     await getReviewNext('u1');
-    expect(fetchMock.mock.calls[1][0]).toBe('/api/learn/loop/review/next?user_id=u1');
+    expect(fetchMock.mock.calls[1][0]).toBe('/api/learn/loop/review/next?user_id=u1&tz_offset_min=240');
     const body = { user_id: 'u1', session_id: 's', kind: 'flashcard' as const, item_id: 'f1', rating: 3 };
     await answerReview(body);
     const [url, init] = fetchMock.mock.calls[2];
     expect(url).toBe('/api/learn/loop/review/answer');
     expect(init?.method).toBe('POST');
-    expect(JSON.parse(String(init?.body))).toEqual(body);
+    expect(JSON.parse(String(init?.body))).toEqual({ ...body, tz_offset_min: 240 });
     await getReviewSummary('u1', 'c1');
-    expect(fetchMock.mock.calls[3][0]).toBe('/api/learn/loop/review/summary?user_id=u1&course_id=c1');
+    expect(fetchMock.mock.calls[3][0]).toBe('/api/learn/loop/review/summary?user_id=u1&course_id=c1&tz_offset_min=240');
+    tz.mockRestore();
   });
 });

@@ -35,7 +35,8 @@ outcome (invariant 28). A flashcard goes through PKG-11's
 
 Successive relearning (spec §3.2 `SR_INITIAL_CRITERION`, `SR_RELEARN_SESSIONS`)
 lives in the review session's `sessions.loop_state` (a `sessions` row with
-mode 'review', one per user, course and UTC day): `loop_state["sr"][key]` holds
+mode 'review', one per user, course and the student's LOCAL day — #866 K17,
+`review_session_id`): `loop_state["sr"][key]` holds
 the session counters (`correct`/`target`/`served`) and HANDOFF-02's
 `fsrs.SuccessiveRelearning` machine (`relearning`), seeded from the stage
 derived off `learner_state.streak_unassisted` / the card's `reps`. Every
@@ -109,6 +110,7 @@ from services.events_service import log_event
 from services.exam_proximity import days_until_next_exam
 from services.graph_service import _normalize_concept, apply_graph_update
 from services.session_modes import REVIEW_MODE
+from services.study import local_date
 from services.timestamps import parse_ts
 
 logger = logging.getLogger("sapling.learning.review")
@@ -219,9 +221,15 @@ def sr_stage_for_flashcard(reps: int, last_rating: int | None) -> tuple[Stage, i
     return "done", SR_RELEARN_SESSION_TARGET
 
 
-def review_session_id(user_id: str, course_id: str | None, now: datetime) -> str:
-    """One review session per user, course and UTC day."""
-    day = now.date().isoformat()
+def review_session_id(
+    user_id: str, course_id: str | None, now: datetime, *, tz_offset_min: int = 0
+) -> str:
+    """One review session — and one REVIEW_DAILY_BUDGET_MIN budget — per user,
+    course and the student's LOCAL day (#866 K17): `tz_offset_min` is the
+    client's JS getTimezoneOffset, the Daily Goal panel's day
+    (`services.study.local_date`). In the UTC day the budget reset at 7-8 PM
+    on the US east coast. A client that sends no offset (0) keeps the UTC day."""
+    day = local_date(now, tz_offset_min).isoformat()
     return str(uuid.uuid5(uuid.NAMESPACE_URL, f"sapling:review:{user_id}:{course_id or '-'}:{day}"))
 
 
@@ -257,15 +265,16 @@ def _read_session(sid: str, user_id: str) -> list[dict]:
 
 
 def load_or_create_review_session(
-    user_id: str, course_id: str | None, now: datetime
+    user_id: str, course_id: str | None, now: datetime, *, tz_offset_min: int = 0
 ) -> tuple[str, dict]:
-    """(session id, {"sr": …, "review": …}) for today's review session.
+    """(session id, {"sr": …, "review": …}) for today's review session (the
+    student's local day, `review_session_id`).
 
     Insert-if-missing, never upsert (A11), mirroring routes/learn.py's lazy
     insert and its `session.started` event (topic as content=, never payload).
     A concurrent first poll that loses the insert re-reads the winner's row.
     """
-    sid = review_session_id(user_id, course_id, now)
+    sid = review_session_id(user_id, course_id, now, tz_offset_min=tz_offset_min)
     rows = _read_session(sid, user_id)
     if not rows:
         data: dict[str, Any] = {"id": sid, "user_id": user_id}
@@ -293,10 +302,14 @@ def load_or_create_review_session(
     return sid, _session_view(row.get("loop_state"))
 
 
-def peek_review_session(user_id: str, course_id: str | None, now: datetime) -> dict:
+def peek_review_session(
+    user_id: str, course_id: str | None, now: datetime, *, tz_offset_min: int = 0
+) -> dict:
     """Today's review-session view WITHOUT creating the row (a read-only
     surface such as `/review/summary` never inserts a session)."""
-    rows = _read_session(review_session_id(user_id, course_id, now), user_id)
+    rows = _read_session(
+        review_session_id(user_id, course_id, now, tz_offset_min=tz_offset_min), user_id
+    )
     if not rows:
         return _session_view()
     if rows[0].get("user_id") not in (None, user_id):

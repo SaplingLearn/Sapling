@@ -715,7 +715,8 @@ A76's re-check rule (see [§2](#2-a-session-probe--plan--teach--check--close)).
 
 The Study screen's **DueQueue** works through today's reviews, one item at a
 time, inside a daily review session (a `sessions` row with `mode='review'`,
-one per student, course and UTC day; it is not a tutor session, A73).
+one per student, course and the student's local day — the client's
+`tz_offset_min`, #866 K17; it is not a tutor session, A73).
 
 ```mermaid
 sequenceDiagram

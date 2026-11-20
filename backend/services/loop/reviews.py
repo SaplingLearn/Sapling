@@ -33,7 +33,8 @@ from services.loop.reveals import _ledger, _refloor, _reveal_floor
 # ── PKG-12: the daily review queue (spec §3.2, §3.5, §5; A16, A20, A22, A23, A33, A52) ──
 # Every review route is require_self + the gate (`_gate`, 404 when the loop is off,
 # before any read). The review session (a `sessions` row with mode 'review', one per
-# user, course and UTC day) is keyed on the requesting user, and a row of another
+# user, course and the student's local day — the client's `tz_offset_min`, #866 K17)
+# is keyed on the requesting user, and a row of another
 # student's is a 403. No review route gates on the tutor budget level: the only budget
 # reads are `pause_novice` (A20 — novice concepts pause, flashcards and the rest keep
 # working), the grader cap (#866 K16 — at STUDENT_DAILY_GRADES the queue holds its
@@ -122,9 +123,13 @@ def _review_course(user_id: str, course_id: str | None) -> None:
         raise HTTPException(status_code=404, detail="Course not found")
 
 
-def _review_session(user_id: str, course_id: str | None, now: datetime) -> tuple[str, dict]:
+def _review_session(
+    user_id: str, course_id: str | None, now: datetime, tz_offset_min: int = 0
+) -> tuple[str, dict]:
     try:
-        return review.load_or_create_review_session(user_id, course_id, now)
+        return review.load_or_create_review_session(
+            user_id, course_id, now, tz_offset_min=tz_offset_min
+        )
     except PermissionError:
         raise HTTPException(status_code=403, detail="Session user mismatch") from None
 
@@ -147,7 +152,7 @@ def _serve_review_item(user_id: str, item, loop_state: dict, session_id: str, no
 
 
 def review_next(
-    request: Request, user_id: str, course_id: str | None = None
+    request: Request, user_id: str, course_id: str | None = None, tz_offset_min: int = 0
 ) -> dict:
     """The next item of today's review queue (or null). A served item stays the
     answerable one until it is answered: a refresh re-serves it (no write, no
@@ -156,12 +161,13 @@ def review_next(
     `due_total` is everything due today; `in_budget` what the remaining budget
     covers (null item + due_total > 0 = the budget is spent, not caught up);
     `new_total` the never-rated cards among `due_total` (A74's pool: new
-    cards, not due reviews — #866 K14)."""
+    cards, not due reviews — #866 K14). `tz_offset_min` (the client's JS
+    getTimezoneOffset) names the student's day (#866 K17)."""
     _gate(user_id, request)
     enforce_abuse_limit(abuse_limits.LOOP_ACTION, user_id)  # audit Z02
     _review_course(user_id, course_id)
     now = _review_now()
-    sid, loop_state = _review_session(user_id, course_id, now)
+    sid, loop_state = _review_session(user_id, course_id, now, tz_offset_min)
     retention = review.review_retention(user_id, course_id)
     queue, stats = review.due_queue_with_stats(
         user_id,
@@ -232,9 +238,10 @@ async def review_answer(body: ReviewAnswerBody, request: Request) -> dict:
             raise ai_budget.AIBudgetExceeded(capped)
     await asyncio.to_thread(_review_course, body.user_id, body.course_id)
     now = _review_now()
-    if body.session_id != review.review_session_id(body.user_id, body.course_id, now):
-        raise HTTPException(status_code=409, detail=_REVIEW_EXPIRED)  # a new UTC day began
-    sid, loop_state = await asyncio.to_thread(_review_session, body.user_id, body.course_id, now)
+    tz = body.tz_offset_min  # #866 K17: the student's day, not the UTC one
+    if body.session_id != review.review_session_id(body.user_id, body.course_id, now, tz_offset_min=tz):
+        raise HTTPException(status_code=409, detail=_REVIEW_EXPIRED)  # the student's new day began
+    sid, loop_state = await asyncio.to_thread(_review_session, body.user_id, body.course_id, now, tz)
     check = card_row = deps = None
     if body.kind == "check":
         check = await asyncio.to_thread(get_check_item, body.item_id)
@@ -336,7 +343,7 @@ async def review_answer(body: ReviewAnswerBody, request: Request) -> dict:
 
 
 def review_summary(
-    request: Request, user_id: str, course_id: str | None = None
+    request: Request, user_id: str, course_id: str | None = None, tz_offset_min: int = 0
 ) -> dict:
     """Today's due counts, budget and retention target. Read-only: it never creates
     the review session. `paused_scope` / `paused_until` name the cap that holds
@@ -348,7 +355,9 @@ def review_summary(
     _review_course(user_id, course_id)
     now = _review_now()
     try:
-        loop_state = review.peek_review_session(user_id, course_id, now)
+        loop_state = review.peek_review_session(
+            user_id, course_id, now, tz_offset_min=tz_offset_min  # #866 K17
+        )
     except PermissionError:
         raise HTTPException(status_code=403, detail="Session user mismatch") from None
     body = review.summary(

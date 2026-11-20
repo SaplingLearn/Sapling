@@ -193,6 +193,8 @@ class LoopReportBody(BaseModel):
     question_hash: Optional[str] = Field(None, max_length=128)
     item_id: Optional[str] = Field(None, max_length=128)
     course_id: Optional[str] = Field(None, max_length=128)
+    # #866 K17: a review report's day is the student's local one (JS getTimezoneOffset)
+    tz_offset_min: int = 0
 
     @model_validator(mode="after")
     def _names_its_item(self) -> "LoopReportBody":
@@ -364,6 +366,9 @@ class ReviewAnswerBody(BaseModel):
     # spec §13 A127: a check's stated confidence (optional); a flashcard's own
     # self-rating already says how it went, so a flashcard body takes none
     confidence: Optional[StudentConfidence] = None
+    # #866 K17: JS getTimezoneOffset — the review session is the student's
+    # local day (clamped server-side; a client that sends none keeps the UTC day)
+    tz_offset_min: int = 0
 
     @model_validator(mode="after")
     def _answer_fits_kind(self):

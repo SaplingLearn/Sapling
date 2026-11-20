@@ -668,6 +668,48 @@ describe("DueQueue — a check that cannot be graded never pins the queue (#866 
   });
 });
 
+describe("DueQueue — the student's review day ends mid-answer (#866 K17)", () => {
+  const nextDay = (item: unknown) => ({ ...next(item), session_id: "sess-2" });
+
+  it("an answer sent after the day ended reloads today's queue, keeping what was typed", async () => {
+    mockNext.mockResolvedValueOnce(next(FREE)).mockResolvedValueOnce(nextDay(FREE));
+    mockAnswer.mockRejectedValueOnce(conflict("review session expired")).mockResolvedValueOnce(graded());
+    render(<DueQueue userId="u1" />);
+    await userEvent.type(await screen.findByTestId("review-answer-input"), "the base case");
+    await userEvent.click(screen.getByTestId("review-submit"));
+    expect((await screen.findByTestId("review-new-day")).textContent).toContain("A new review day began");
+    expect((screen.getByTestId("review-answer-input") as HTMLTextAreaElement).value).toBe("the base case");
+    await userEvent.click(screen.getByTestId("review-submit"));
+    await waitFor(() => expect(mockAnswer).toHaveBeenLastCalledWith(expect.objectContaining({ session_id: "sess-2" })));
+  });
+
+  it("a report sent after the day ended goes to today's session when the question is served again", async () => {
+    flags.item_reports = "on";
+    mockNext.mockResolvedValueOnce(next(FREE)).mockResolvedValueOnce(nextDay(FREE)).mockResolvedValueOnce(nextDay(MC));
+    mockReport.mockRejectedValueOnce(conflict("review session expired"))
+      .mockResolvedValueOnce({ reported: true, first: true, quarantined: false });
+    render(<DueQueue userId="u1" />);
+    await screen.findByTestId("review-item");
+    await userEvent.click(screen.getByTestId("review-report"));
+    await userEvent.click(screen.getByTestId("review-report-reason-unclear"));
+    expect(await screen.findByTestId("review-reported")).toBeTruthy();
+    expect(mockReport.mock.calls.map(([body]) => body.session_id)).toEqual(["sess-1", "sess-2"]);
+    expect(await screen.findByTestId("review-option-A")).toBeTruthy();
+  });
+
+  it("a report the new day cannot take says it was not sent — never silently dropped", async () => {
+    flags.item_reports = "on";
+    mockNext.mockResolvedValueOnce(next(FREE)).mockResolvedValueOnce(nextDay(CARD));
+    mockReport.mockRejectedValueOnce(conflict("review session expired"));
+    render(<DueQueue userId="u1" />);
+    await screen.findByTestId("review-item");
+    await userEvent.click(screen.getByTestId("review-report"));
+    await userEvent.click(screen.getByTestId("review-report-reason-unclear"));
+    expect((await screen.findByTestId("review-not-reported")).textContent).toContain("wasn't sent");
+    expect(mockReport).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("DueQueue — the answer boxes are visible fields (#866 Z29)", () => {
   // Tailwind's preflight strips every textarea's border, padding and fill: a box
   // with no style of its own is invisible, so each one carries the loop's field

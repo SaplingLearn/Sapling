@@ -396,6 +396,15 @@ describe('Report this question and the review queue (spec §13 A113)', () => {
     expect(initOf().method).toBe('POST');
     expect(bodyOf()).toEqual(loop);
   });
+  it("a review report names the student's local day (#866 K17)", async () => {
+    const { reportCheckItem } = await import('./api');
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(json({ reported: true, first: true, quarantined: false }));
+    const tz = vi.spyOn(Date.prototype, 'getTimezoneOffset').mockReturnValue(240);
+    const review = { surface: 'review', user_id: 'u', session_id: 's1', item_id: 'ci-1', reason: 'unclear' } as const;
+    await reportCheckItem(review);
+    expect(bodyOf()).toEqual({ ...review, tz_offset_min: 240 });
+    tz.mockRestore();
+  });
   it('the admin queue reads GET /queue and decides by item id', async () => {
     const { adminApproveCheckItem, adminCheckItemQueue, adminRetireCheckItem } = await import('./api');
     vi.spyOn(globalThis, 'fetch')

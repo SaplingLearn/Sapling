@@ -129,10 +129,11 @@ def _served_review_item(body: LoopReportBody, now: datetime) -> CheckItem:
     refusal is the same 404, so the route says nothing about other courses'
     item banks."""
     _review_course(body.user_id, body.course_id)
-    if body.session_id != review.review_session_id(body.user_id, body.course_id, now):
-        raise HTTPException(status_code=409, detail=_REVIEW_EXPIRED)  # a new UTC day began
+    tz = body.tz_offset_min  # #866 K17: the student's day, as /review/next keeps it
+    if body.session_id != review.review_session_id(body.user_id, body.course_id, now, tz_offset_min=tz):
+        raise HTTPException(status_code=409, detail=_REVIEW_EXPIRED)  # the student's new day began
     try:
-        view = review.peek_review_session(body.user_id, body.course_id, now)
+        view = review.peek_review_session(body.user_id, body.course_id, now, tz_offset_min=tz)
     except PermissionError:
         raise HTTPException(status_code=403, detail="Session user mismatch") from None
     not_served = HTTPException(status_code=404, detail=_REVIEW_CLAIM_DETAIL["not_served"])

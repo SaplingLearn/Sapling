@@ -1055,18 +1055,23 @@ const reviewQuery = (userId: string, courseId?: string) => {
   if (courseId) params.set('course_id', courseId);
   return params.toString();
 };
+/** #866 K17: the review queue keeps the student's LOCAL day (one session and one
+ *  daily budget per day), from JS getTimezoneOffset, as the Daily Goal panel does. */
+const localTzOffset = () => new Date().getTimezoneOffset();
+const reviewDayQuery = (userId: string, courseId?: string) =>
+  `${reviewQuery(userId, courseId)}&tz_offset_min=${localTzOffset()}`;
 
 export const getReviewNext = (userId: string, courseId?: string) =>
-  fetchJSON<ReviewNextResponse>(`/api/learn/loop/review/next?${reviewQuery(userId, courseId)}`);
+  fetchJSON<ReviewNextResponse>(`/api/learn/loop/review/next?${reviewDayQuery(userId, courseId)}`);
 
 export const answerReview = (body: ReviewAnswerBody) =>
   fetchJSON<ReviewAnswerResponse>('/api/learn/loop/review/answer', {
     method: 'POST',
-    body: JSON.stringify(body),
+    body: JSON.stringify({ ...body, tz_offset_min: localTzOffset() }),
   });
 
 export const getReviewSummary = (userId: string, courseId?: string) =>
-  fetchJSON<ReviewSummaryResponse>(`/api/learn/loop/review/summary?${reviewQuery(userId, courseId)}`);
+  fetchJSON<ReviewSummaryResponse>(`/api/learn/loop/review/summary?${reviewDayQuery(userId, courseId)}`);
 
 /** Is the learning loop on for this student? Probes GET /review/active — a
  *  gate-only route that builds nothing (PKG-07's /status needs a loop session id).
@@ -1539,7 +1544,8 @@ export type LoopReportBody =
  *  (spec §13 A123 — a report never deletes a question). */
 export interface LoopReportResult { reported: true; first: boolean; quarantined: boolean }
 export const reportCheckItem = (body: LoopReportBody) =>
-  loopPost<LoopReportResult>('/report', body);
+  // #866 K17: a review report names the student's day, as /review/next keeps it
+  loopPost<LoopReportResult>('/report', body.surface === 'review' ? { ...body, tz_offset_min: localTzOffset() } : body);
 
 export interface RetentionItem extends LoopCheckItem { node_id: string }
 export type RetentionAnswerResult = WithCrisisSupport & (

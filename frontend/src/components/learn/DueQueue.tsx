@@ -71,6 +71,9 @@ const FIELD_LABEL_STYLE: React.CSSProperties = { marginBottom: -4 };
 // on, so the panel re-polls.
 const RETRY_DETAIL = /retry/i;
 const GRADED_DETAIL = /already graded/i;
+// #866 K17: the student's review day ended between the serve and the answer (the
+// session is one per local day): today's queue serves the check again.
+const EXPIRED_DETAIL = /session expired/i;
 
 const RATINGS: { n: number; label: string }[] = [
   { n: 1, label: "forgot" },
@@ -131,8 +134,8 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
 
   /** Read the next item. `moved` says why the panel moved on, shown once the
    *  next item is in. */
-  const load = React.useCallback(async (moved: Notice | null = null) => {
-    if (!userId) return;
+  const load = React.useCallback(async (moved: Notice | null = null): Promise<ReviewNextResponse | null> => {
+    if (!userId) return null;
     const mine = ++seq.current;
     setBusy(true);
     setError(null);
@@ -141,7 +144,7 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
     void refreshSummary(mine);
     try {
       const r = await getReviewNext(userId, courseId);
-      if (mine !== seq.current) return;
+      if (mine !== seq.current) return null;
       setNext(r);
       const kept = r.item ? drafts.current.get(r.item.id) : undefined;
       setAnswer(kept?.answer ?? "");
@@ -152,13 +155,15 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
       setResult(null);
       setAlreadyGraded(false);
       setNotice(moved);
+      return r;
     } catch (err) {
-      if (mine !== seq.current) return;
+      if (mine !== seq.current) return null;
       if (!budgetPauseOf(err)) console.error("review next failed", err);
       setNext(null); // never leave a stale item on screen
       setError(loadFailureMessage(err));
       setLoadFailed(true);
       setNotice(moved); // a report that went through still did
+      return null;
     } finally {
       if (mine === seq.current) setBusy(false);
     }
@@ -236,27 +241,17 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
       setNext({ ...next, remaining_budget_s: r.remaining_budget_s });
     } catch (err) {
       if (mine !== seq.current) return;
-      const { status, detail } = extractErrorDetail(err);
-      const paused = budgetPauseOf(err);
-      if (paused) {
-        // the pause, not an error: the typed answer stays; flashcards keep working
-        setPause(paused);
-      } else if (status === 409 && detail && RETRY_DETAIL.test(detail)) {
-        // keep what the student typed and let them resend
-        setError("Something changed — try again.");
-      } else if (status === 409 && detail && GRADED_DETAIL.test(detail)) {
-        setAlreadyGraded(true);
-      } else if (status === 409) {
-        // not served or a new day began — the queue moved on
-        await load();
+      const failed = answerFailure(err);
+      if (failed.kind === "reload") {
+        if (failed.notice) focusNext.current = "item";
+        await load(failed.notice);
         return;
-      } else if (status === 404) {
-        // gone since it was served (withdrawn, held or deleted): every resend
-        // would 404 too, so skip it and say so
-        focusNext.current = "item";
-        await load("gone");
-        return;
-      } else {
+      }
+      // a pause, not an error: the typed answer stays; flashcards keep working
+      if (failed.kind === "pause") setPause(failed.pause);
+      else if (failed.kind === "retry") setError("Something changed — try again."); // keep the text
+      else if (failed.kind === "graded") setAlreadyGraded(true);
+      else {
         console.error("review answer failed", err);
         setError("Couldn't send that answer.");
       }
@@ -266,21 +261,31 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
 
   /** spec §13 A113: report the served check item; the queue then moves on (the
    *  server never serves it to this student again). */
-  const report = async (reason: LoopReportReason): Promise<boolean> => {
-    if (!next || !item || item.kind !== "check") return false;
+  const report = async (reason: LoopReportReason, sessionId = next?.session_id, again = false): Promise<boolean> => {
+    if (!sessionId || !item || item.kind !== "check") return false;
     const mine = seq.current;
     try {
       await reportCheckItem({
         surface: "review",
         user_id: userId,
-        session_id: next.session_id,
+        session_id: sessionId,
         item_id: item.id,
         course_id: courseId,
         reason,
       });
     } catch (err) {
       if (mine !== seq.current) return false;
-      const { status } = extractErrorDetail(err);
+      const { status, detail } = extractErrorDetail(err);
+      if (status === 409 && detail && EXPIRED_DETAIL.test(detail) && !again) {
+        // #866 K17: the student's new day began. A report binds to today's
+        // session's served item (A113): today's queue serves the question again
+        // (it was never answered), so the report goes there; else say so.
+        focusNext.current = "item";
+        const today = await load();
+        if (today?.item?.id === item.id) return report(reason, today.session_id, true);
+        if (today) setNotice("unreported");
+        return true;
+      }
       if (status === 409 || status === 404) {
         // 409: a new day began, or the item was withdrawn meanwhile — the queue
         // moved on. 404: it is no longer one this session served — skip it.
@@ -396,7 +401,7 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
 // same element tree the inline JSX produced (nothing remounts). ──────────────
 
 /** Why the panel moved past the last item (see the header). */
-type Notice = "reported" | "gone";
+type Notice = "reported" | "gone" | "newDay" | "unreported";
 
 /** What was typed for a check, kept while the queue is on other items (#866 K16). */
 type Draft = { answer: string; choice: string; reason: string; confidence: StudentConfidence | null };
@@ -404,15 +409,44 @@ type Draft = { answer: string; choice: string; reason: string; confidence: Stude
 const NOTICE_TEXT: Record<Notice, string> = {
   reported: "Thanks — that question is reported and won't be shown to you again.",
   gone: "That question is no longer available, so it was skipped.",
+  // #866 K17: the review day is the student's local day
+  newDay: "A new review day began, so the queue reloaded. Anything you had typed is still here.",
+  unreported: "A new review day began before your report was sent, and that question isn't in today's review, so the report wasn't sent.",
+};
+
+const NOTICE_TESTID: Record<Notice, string> = {
+  reported: "review-reported", gone: "review-skipped", newDay: "review-new-day", unreported: "review-not-reported",
 };
 
 function renderNotice(notice: Notice | null) {
   if (!notice) return null;
   return (
-    <div data-testid={`review-${notice === "gone" ? "skipped" : "reported"}`} role="status" style={{ fontSize: 13, color: "var(--text-muted)" }}>
+    <div data-testid={NOTICE_TESTID[notice]} role="status" style={{ fontSize: 13, color: "var(--text-muted)" }}>
       {NOTICE_TEXT[notice]}
     </div>
   );
+}
+
+/** What a failed /review/answer means for the panel (see RETRY_DETAIL above). */
+type AnswerFailure =
+  | { kind: "pause"; pause: LoopBudgetPause }
+  | { kind: "retry" | "graded" | "error" }
+  | { kind: "reload"; notice: Notice | null };
+
+function answerFailure(err: unknown): AnswerFailure {
+  const paused = budgetPauseOf(err);
+  if (paused) return { kind: "pause", pause: paused };
+  const { status, detail } = extractErrorDetail(err);
+  if (status === 409 && detail && RETRY_DETAIL.test(detail)) return { kind: "retry" };
+  if (status === 409 && detail && GRADED_DETAIL.test(detail)) return { kind: "graded" };
+  // #866 K17: the student's new day began — today's queue serves the check
+  // again, with what was typed (`drafts`)
+  if (status === 409 && detail && EXPIRED_DETAIL.test(detail)) return { kind: "reload", notice: "newDay" };
+  if (status === 409) return { kind: "reload", notice: null }; // not served: the queue moved on
+  // gone since it was served (withdrawn, held or deleted): every resend would
+  // 404 too, so skip it and say so
+  if (status === 404) return { kind: "reload", notice: "gone" };
+  return { kind: "error" };
 }
 
 /** Why the queue did not load, in words that match what still works: a budget

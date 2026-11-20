@@ -1893,7 +1893,7 @@ def test_review_summary_200_when_active(client, monkeypatch):
     loop is on for the student, the gate's 404 when it is off."""
     from learning import review
 
-    monkeypatch.setattr(review, "peek_review_session", lambda u, c, now: {"sr": {}, "review": {}})
+    monkeypatch.setattr(review, "peek_review_session", lambda u, c, now, **kw: {"sr": {}, "review": {}})
     monkeypatch.setattr(
         review, "summary", lambda u, c, now, **kw: {"due": {"flashcard": 0, "check": 0}}
     )
@@ -2021,7 +2021,7 @@ def test_review_next_skips_an_item_that_no_longer_loads(client, monkeypatch, sto
 def test_review_next_another_users_session_is_403(client, monkeypatch):
     from learning import review
 
-    def other(u, c, now):
+    def other(u, c, now, **kw):
         raise PermissionError("review session belongs to another user")
 
     monkeypatch.setattr(review, "load_or_create_review_session", other)
@@ -2458,7 +2458,7 @@ def test_review_summary_counts_by_kind(client, monkeypatch):
     from learning import review
 
     monkeypatch.setattr(
-        review, "peek_review_session", lambda u, c, now: {"sr": {}, "review": {"spent_s": 0}}
+        review, "peek_review_session", lambda u, c, now, **kw: {"sr": {}, "review": {"spent_s": 0}}
     )
     seen_kw = {}
 
@@ -2519,7 +2519,7 @@ def test_review_summary_names_the_cap_that_holds_paused_concepts(client, monkeyp
     from learning import review
 
     monkeypatch.setattr(
-        review, "peek_review_session", lambda u, c, now: {"sr": {}, "review": {"spent_s": 0}}
+        review, "peek_review_session", lambda u, c, now, **kw: {"sr": {}, "review": {"spent_s": 0}}
     )
     paused = {"n": 2}
     monkeypatch.setattr(review, "due_queue_with_stats", lambda u, c, now, **kw: (
@@ -3605,3 +3605,75 @@ def test_review_next_serves_the_rest_before_an_item_whose_grade_was_unavailable(
     with _loop():
         body = client.get(f"{REVIEW}/next?user_id={USER}").json()
     assert body["item"]["kind"] == "flashcard"
+
+
+# ── #866 K17: the review day is the student's local day ─────────────────────
+
+# 22:00 in New York (UTC-4 in September: getTimezoneOffset 240) is 02:00 UTC
+# the next day: the student's day is still Sep 26.
+_NY = 240
+_NY_LATE = datetime(2026, 9, 27, 2, 0, tzinfo=timezone.utc)
+_NY_MORNING = datetime(2026, 9, 26, 12, 0, tzinfo=timezone.utc)
+
+
+def test_review_session_id_follows_the_students_local_day():
+    """#866 K17: one review session (and one 12-minute budget) per LOCAL day:
+    the morning's session is still the one at 10 PM in New York, though the UTC
+    day turned over at 8 PM; the next local day starts a new one. A client
+    that sends no offset keeps the UTC day."""
+    from learning.review import review_session_id
+
+    morning = review_session_id(USER, None, _NY_MORNING, tz_offset_min=_NY)
+    assert review_session_id(USER, None, _NY_LATE, tz_offset_min=_NY) == morning
+    assert review_session_id(USER, None, _NY_LATE + timedelta(hours=3), tz_offset_min=_NY) != morning
+    assert review_session_id(USER, None, _NY_LATE) != morning  # the UTC day: Sep 27
+    assert review_session_id(USER, None, _NY_MORNING) == review_session_id(USER, None, _NY_MORNING, tz_offset_min=0)
+
+
+def test_the_review_routes_keep_the_students_local_day(client, monkeypatch, store):
+    """#866 K17: at 10 PM in New York /review/next and /review/summary read the
+    morning's session (its budget is not reset at 8 PM), and an answer sent
+    with that session and the offset is graded — never a 409 "review session
+    expired". Without the offset the server's day is the UTC one."""
+    from learning import review
+
+    setattr_loop(monkeypatch, "_review_now", lambda: _NY_LATE)
+    _session(monkeypatch, {"sr": {}, "review": {"spent_s": 300}})
+    monkeypatch.setattr(review, "due_queue_with_stats", lambda u, c, now, **kw: (
+        [], {"unservable": 0, "paused": 0, "due": {"flashcard": 0, "check": 0}, "in_budget": 0}))
+    monkeypatch.setattr(review, "review_retention", lambda u, c: params.FSRS_RETENTION_DEFAULT)
+    peeked = []
+    real_peek = review.peek_review_session
+    monkeypatch.setattr(review, "peek_review_session", lambda u, c, now, **kw: (
+        peeked.append(review.review_session_id(u, c, now, **kw)) or real_peek(u, c, now, **kw)))
+
+    async def fake_grade(user_id, item, **kw):
+        return review.ReviewOutcome(correct=True, sr={})
+
+    monkeypatch.setattr(review, "grade_review", fake_grade)
+    monkeypatch.setattr(review, "load_card", lambda u, cid: _card_row())
+    _opened(store, "fc:f1", "f1")
+    morning = review.review_session_id(USER, None, _NY_MORNING, tz_offset_min=_NY)
+    card = {"user_id": USER, "session_id": morning, "kind": "flashcard", "item_id": "f1", "rating": 3}
+    with _loop():
+        nxt = client.get(f"{REVIEW}/next?user_id={USER}&tz_offset_min={_NY}").json()
+        client.get(f"{REVIEW}/summary?user_id={USER}&tz_offset_min={_NY}")
+        utc = client.post(f"{REVIEW}/answer", json=card)
+        local = client.post(f"{REVIEW}/answer", json={**card, "tz_offset_min": _NY})
+    assert nxt["session_id"] == morning and peeked == [morning]
+    assert nxt["remaining_budget_s"] == params.REVIEW_DAILY_BUDGET_MIN * 60 - 300
+    assert utc.status_code == 409 and utc.json()["detail"] == "review session expired"
+    assert local.status_code == 200, local.text
+
+
+def test_a_review_report_keeps_the_students_local_day(client, store, review_report, monkeypatch):
+    """#866 K17: a report sent at 10 PM in New York with the morning's session
+    is recorded, not a silent 409."""
+    from learning import review
+
+    setattr_loop(monkeypatch, "_review_now", lambda: _NY_LATE)
+    morning = review.review_session_id(USER, COURSE, _NY_MORNING, tz_offset_min=_NY)
+    with _loop():
+        r = client.post("/api/learn/loop/report", json=_report(session_id=morning, tz_offset_min=_NY))
+    assert r.status_code == 200, r.text
+    assert len(review_report.calls) == 1
