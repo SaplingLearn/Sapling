@@ -1434,7 +1434,9 @@ export const listLoopSessions = async (userId: string, courseId: string): Promis
 /** An open loop session `?resume=` named, wherever it lives (another course,
  *  past the list limit): the listed shape plus its abstract course. */
 export interface LoopResumeSession extends LoopOpenSession { course_id: string }
-export interface LoopSessionList { sessions: LoopOpenSession[]; resume: LoopResumeSession | null }
+/** `complete` (#866 K29): the list holds every open session of the course — it
+ *  is the newest few, so false means an older open one is not in it. */
+export interface LoopSessionList { sessions: LoopOpenSession[]; resume: LoopResumeSession | null; complete: boolean }
 
 /** GET /sessions plus, for a `/learn?resume=<id>` deep link, that session when
  *  it is the student's open loop session in ANY course (null: a legacy or closed
@@ -1444,10 +1446,10 @@ export const listLoopSessionsFor = async (
 ): Promise<LoopSessionList> => {
   const params = new URLSearchParams({ user_id: userId, course_id: courseId });
   if (resumeId) params.set('resume', resumeId);
-  const r = await fetchJSON<{ sessions?: LoopOpenSession[]; resume?: LoopResumeSession | null }>(
+  const r = await fetchJSON<{ sessions?: LoopOpenSession[]; resume?: LoopResumeSession | null; complete?: boolean }>(
     `/api/learn/loop/sessions?${params}`,
   );
-  return { sessions: r.sessions ?? [], resume: r.resume ?? null };
+  return { sessions: r.sessions ?? [], resume: r.resume ?? null, complete: r.complete !== false };
 };
 
 /** GET /status for one session (read-only): where it stands and, while an item

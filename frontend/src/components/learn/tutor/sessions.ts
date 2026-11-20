@@ -45,12 +45,15 @@ export function shortWhen(iso: string, now: Date = new Date()): string {
  * Every session the Tutor lists: the loop's open sessions of the course on
  * screen (authoritative, and they include one just started) merged over the
  * student's recent sessions in every course. Newest first, review rows never
- * appear (the backend leaves them out).
+ * appear (the backend leaves them out). The open list is the course's newest
+ * open sessions, capped (#866 K29): unless it is `complete`, a session older
+ * than its oldest may be open and unlisted, so the recents decide that one.
  */
 export function mergeSessions(
   recent: Session[] | null,
   open: LoopOpenSession[] | null,
   courseId: string | null,
+  complete = true,
 ): TutorSessionRow[] {
   const rows = new Map<string, TutorSessionRow>();
   for (const s of recent ?? []) {
@@ -62,11 +65,13 @@ export function mergeSessions(
       open: !!s.loop_open,
     });
   }
-  // The course on screen: its open list decides which of its rows are open.
+  // The course on screen: its open list decides which of its rows are open —
+  // every one when the list is complete, else those it would have listed.
   if (open && courseId) {
     const openIds = new Set(open.map((s) => s.session_id));
+    const oldest = complete ? -Infinity : Math.min(...open.map((s) => Date.parse(s.started_at)).filter(Number.isFinite));
     for (const row of rows.values()) {
-      if (row.courseId === courseId && row.open && !openIds.has(row.id)) row.open = false;
+      if (row.courseId === courseId && row.open && !openIds.has(row.id) && Date.parse(row.startedAt) > oldest) row.open = false;
     }
     for (const s of open) {
       const prev = rows.get(s.session_id);

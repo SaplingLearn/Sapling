@@ -174,7 +174,7 @@ def test_unknown_offerings_are_a_503_never_an_empty_list(gate_on):
 def test_a_course_with_no_offering_reads_no_sessions(gate_on):
     db = _Db([_row("s1")], offerings=())
     r = _get(db)
-    assert r.status_code == 200 and r.json() == {"sessions": []} and db.reads("sessions") == []
+    assert r.status_code == 200 and r.json() == {"sessions": [], "complete": True} and db.reads("sessions") == []
 
 
 def test_another_students_sessions_are_refused_before_any_read():
@@ -214,7 +214,8 @@ def test_lists_open_loop_sessions_newest_first_in_one_read(gate_on):
         "loop_state": "neq.{}",
         "mode": "neq.review",
     }
-    assert call["order"] == "started_at.desc" and call["limit"] == services.loop.sessions.LOOP_OPEN_SESSIONS_LIMIT
+    # one row past the list's length: whether the list holds every open session (#866 K29)
+    assert call["order"] == "started_at.desc" and call["limit"] == services.loop.sessions.LOOP_OPEN_SESSIONS_LIMIT + 1
     # never reads the ciphertext (is.null only, invariant 9) nor model_pref (invariant 22);
     # close_phase is written WITH close_json (session_close.store_close), so an open row has none
     for col in ("close_json", "close_phase", "model_pref"):
@@ -309,7 +310,22 @@ def _get_resume(db, sid):
 
 def test_no_resume_param_keeps_the_response_shape(gate_on):
     r = _get(_Db([_row("s1")]))
-    assert set(r.json()) == {"sessions"}
+    assert set(r.json()) == {"sessions", "complete"}
+
+
+def test_the_list_says_whether_it_holds_every_open_session_of_the_course(gate_on):
+    """#866 K29: the list is the course's newest LOOP_OPEN_SESSIONS_LIMIT open
+    sessions. Past that, an open session is missing from it, so the Tutor must
+    not read "not listed" as "wrapped up": `complete` says whether it is the
+    whole set."""
+    limit = services.loop.sessions.LOOP_OPEN_SESSIONS_LIMIT
+    rows = [_row(f"s{i:02d}", started=f"2026-09-{i + 1:02d}T10:00:00Z") for i in range(limit + 1)]
+    rows.sort(key=lambda r: r["started_at"], reverse=True)
+    body = _get(_Db(rows)).json()
+    assert len(body["sessions"]) == limit and body["complete"] is False
+    assert "s00" not in [s["session_id"] for s in body["sessions"]]  # the oldest is past the list
+    body = _get(_Db(rows[:limit])).json()
+    assert len(body["sessions"]) == limit and body["complete"] is True
 
 
 def test_a_listed_resume_is_answered_from_the_list_with_no_second_read(gate_on):

@@ -191,7 +191,10 @@ def list_open_sessions(
 ) -> dict:
     """PKG-13 fix round: `resume` (the `/learn?resume=<id>` deep link) adds
     `"resume": {…, course_id} | null` — the named session when it is the
-    student's open loop session in ANY course, even past the list limit."""
+    student's open loop session in ANY course, even past the list limit.
+    #866 K29: `complete` says whether the list holds every open session of
+    the course (one row is read past the limit to tell); when it does not,
+    an older open session is missing from it, not wrapped up."""
     _gate(user_id, request)  # require_self, then the spec §7 404
     offering_ids = course_offering_ids(course_id)
     if offering_ids is None:
@@ -206,14 +209,16 @@ def list_open_sessions(
                 "offering_id": f"in.({','.join(offering_ids)})",
             },
             order="started_at.desc",
-            limit=LOOP_OPEN_SESSIONS_LIMIT,
+            limit=LOOP_OPEN_SESSIONS_LIMIT + 1,
         )
         if offering_ids
         else []
     ) or []
+    complete = len(rows) <= LOOP_OPEN_SESSIONS_LIMIT
+    rows = rows[:LOOP_OPEN_SESSIONS_LIMIT]
     sessions = [e for e in map(_open_session_entry, rows) if e is not None]
     if resume is None:
-        return {"sessions": sessions}
+        return {"sessions": sessions, "complete": complete}
     listed = next((s for s in sessions if s["session_id"] == resume), None)
     found = {**listed, "course_id": course_id} if listed else _resume_entry(user_id, resume)
-    return {"sessions": sessions, "resume": found}
+    return {"sessions": sessions, "complete": complete, "resume": found}

@@ -851,3 +851,29 @@ describe("K26 — a request the session's phase refuses re-reads where the sessi
     expect(toast.error).not.toHaveBeenCalled();
   });
 });
+
+describe("K29 — an open session past the open list's cap is in progress and resumes in its own course", () => {
+  it("lists it as in progress and resumes it, never read-only", async () => {
+    const today = new Date().toISOString();
+    const old = new Date(Date.now() - 9 * 86_400_000).toISOString();
+    api.getSessions.mockResolvedValue({ sessions: [
+      { id: "s2", topic: "t s2", mode: "socratic", course_id: "c1", started_at: today, ended_at: null, message_count: 3, is_active: true, loop_open: true },
+      { id: "old", topic: "Quiz ask", mode: "socratic", course_id: "c1", started_at: old, ended_at: null, message_count: 2, is_active: true, loop_open: true },
+    ] });
+    const resumeOld = { session_id: "old", topic: "Quiz ask", started_at: old, phase: "teach", course_id: "c1" };
+    api.listLoopSessionsFor.mockImplementation(async (_u: string, _c: string, wanted: string | null) => ({
+      sessions: [{ ...open("s2", "teach"), started_at: today }], resume: wanted === "old" ? resumeOld : null, complete: false,
+    }));
+    api.resumeSession.mockImplementation(async (id: string) => ({ session: { id }, messages: [{ id: `m-${id}`, role: "assistant", content: id === "old" ? "about the quiz" : "welcome back", created_at: "" }] }));
+    render(<LoopLearn />);
+    await screen.findByText("welcome back");
+    const row = await screen.findByTestId("loop-session-old");
+    expect(row.textContent).toContain("in progress");
+    fireEvent.click(row);
+    await screen.findByText("about the quiz");
+    expect(api.listLoopSessionsFor).toHaveBeenLastCalledWith("u1", "c1", "old");
+    expect(screen.getByTestId("loop-phase").getAttribute("data-session-id")).toBe("old");
+    expect(screen.queryByTestId("loop-readonly-transcript")).toBeNull();
+    expect(screen.getByTestId("loop-close-button")).toBeTruthy(); // it can be wrapped up from its own course
+  });
+});

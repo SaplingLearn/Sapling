@@ -251,6 +251,7 @@ export function LoopLearn() {
   const [courseId, setCourseId] = useState<string | null>(null);
   const listedCourses = useTutorCourses(courses, courseId, setCourseId);
   const [openSessions, setOpenSessions] = useState<LoopOpenSession[] | null>(null); // null = loading
+  const [openComplete, setOpenComplete] = useState(true); // K29: it lists every open session
   const [sessionsError, setSessionsError] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [readOnly, setReadOnly] = useState<{ id: string; topic: string; messages: ChatMsg[] } | null>(null);
@@ -875,6 +876,7 @@ export function LoopLearn() {
     const list = listed.sessions;
     setSessionsError(false);
     setOpenSessions(list);
+    setOpenComplete(listed.complete);
     const found = wanted ? listed.resume : null;
     if (found) {
       if (found.course_id !== courseId && courses?.some((c) => c.course_id === found.course_id)) {
@@ -883,7 +885,9 @@ export function LoopLearn() {
         setCourseId(found.course_id);
         let others: LoopOpenSession[] = [];
         try {
-          others = (await listLoopSessionsFor(userId, found.course_id, null)).sessions;
+          const other = await listLoopSessionsFor(userId, found.course_id, null);
+          others = other.sessions;
+          setOpenComplete(other.complete);
         } catch {
           // the picker is a convenience; the named session still resumes
         }
@@ -963,7 +967,9 @@ export function LoopLearn() {
   const lists = useTutorLists({
     userId, sessionId, sessionClosed: state.phase === "close", wantMaterials: view === "course", studyVisible,
   });
-  const sessionRows = useMemo(() => mergeSessions(lists.recent, openSessions, courseId), [lists.recent, openSessions, courseId]);
+  const sessionRows = useMemo(
+    () => mergeSessions(lists.recent, openSessions, courseId, openComplete), [lists.recent, openSessions, courseId, openComplete],
+  );
 
   /** Show another course: its sessions load (and an open one resumes) behind the page. */
   const switchCourse = (v: string) => {
@@ -997,7 +1003,14 @@ export function LoopLearn() {
     }
     const listed = openSessions?.find((s) => s.session_id === row.id);
     if (listed) void resume(listed);
+    else if (row.open) resumeUnlisted(row.id); // K29: past the open list's cap
     else void openReadOnly(row.id);
+  };
+  /** An open session the course's capped list left out: found by id, as a ?resume= link is. */
+  const resumeUnlisted = (id: string) => {
+    pendingResume.current = id;
+    resumePending.current = true;
+    void loadSessions();
   };
   /** T1's start: a new session (the open one on screen is wrapped up first). */
   const startGuided = async (opts: { topic?: string; goal?: boolean } = {}) => {
