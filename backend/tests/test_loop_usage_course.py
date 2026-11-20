@@ -107,6 +107,33 @@ def test_closing_a_session_hands_its_course_to_the_close_run(monkeypatch):
     assert seen == [("s1", "course-1")]
 
 
+def test_a_course_that_cannot_be_read_never_fails_the_close(monkeypatch):
+    """The course is a label on the usage row: a failed read names none, and
+    the model close still runs and is stored."""
+    from services.loop import closing
+    from tests.test_learning_close_brief import EVIDENCE_N1, UID, _close_out, _wire_close, client
+    from tests.split_patches import setattr_loop
+
+    tables, _, _ = _wire_close(monkeypatch, evidence=[EVIDENCE_N1], loop_state={"phase": "teach"})
+    tables.rows["sessions"][0]["offering_id"] = "off-1"
+
+    def down(offering):
+        raise RuntimeError("course_offerings unreachable")
+
+    monkeypatch.setattr(closing, "offering_course_id", down)
+    seen = []
+
+    async def run(draft, *, user_id, request_id, session_id=None, course_id=None):
+        seen.append((session_id, course_id))
+        return _close_out()
+
+    setattr_loop(monkeypatch, "run_session_close", run)
+    r = client.post("/api/learn/loop/close", json={"session_id": "s1", "user_id": UID})
+    assert r.status_code == 200, r.text
+    assert r.json()["model_written"] is True
+    assert seen == [("s1", None)]
+
+
 def test_a_decision_shadow_keeps_the_course(monkeypatch):
     """A Jev shadow outlives its request, so it keeps ids only — the course
     among them, which its billed row records (spec §13 A137)."""

@@ -313,6 +313,20 @@ async def _model_close(
         return None
 
 
+async def _session_course(session_id: str, offering_id: str | None) -> str | None:
+    """#866 K60: the abstract course the close's usage row names — its
+    session's offering's, as the cost report resolves a session. A label on a
+    usage row only: a failed read names none and the close goes on."""
+    if not offering_id:
+        return None
+    try:
+        return await asyncio.to_thread(offering_course_id, offering_id) or None  # #117: off the loop
+    except Exception:
+        logger.warning("close of %s: its course was not read; its usage row names none", session_id,
+                       exc_info=True)
+        return None
+
+
 def _reread_close(session_id: str) -> dict:
     rows = table("sessions").select(
         "id,close_json,close_phase", filters={"id": f"eq.{session_id}", **NOT_REVIEW}, limit=1
@@ -408,11 +422,10 @@ async def close_session(
                         limited = True
                 if not limited:
                     # #866 K60: the close's usage row names the session's course
-                    offering = rows[0].get("offering_id") or ""
-                    course = await asyncio.to_thread(offering_course_id, offering) if offering else ""
+                    course = await _session_course(session_id, rows[0].get("offering_id"))
                     out = await _model_close(
                         draft, user_id=user_id, request_id=request_id, session_id=session_id,
-                        course_id=course or None,
+                        course_id=course,
                     )
             record = (
                 served_close(out, draft, items)
