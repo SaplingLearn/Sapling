@@ -37,7 +37,7 @@ PINNED = (
 
 
 def test_exported_slot_overrides_never_reach_a_test():
-    assert len(EXPORTED) == 8
+    assert len(EXPORTED) == 7  # session_close left the set: re-recorded on Claude 2026-11-20
     run = subprocess.run(
         [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", *PINNED],
         cwd=BACKEND,

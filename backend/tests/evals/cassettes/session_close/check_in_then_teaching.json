@@ -1,0 +1,14 @@
+{
+  "input_sha256": "ab02025969936eccb09774aa2dc62d3ad343e5a8607b1605368754a595e8b979",
+  "model": "claude-haiku-5-5",
+  "output": {
+    "if_then_plan": "If you start the next session with a collision question, then before answering say aloud where the second key is stored and why the first key is not lost.",
+    "open_misconception_keys": [
+      "overwrites_on_collision"
+    ],
+    "self_eval_prompt": "Which step were you least sure of when you explained how chaining keeps both keys, and what made it feel uncertain to you?",
+    "summary": "This session checked how a hash table resolves collisions, with separate chaining as the focus, and the check-in found Open Addressing, Linear Probing and Tombstone Deletion as your starting points. Collision Resolution moved up from 0.20 to 0.32 during teaching, and your teach-back explained that each slot keeps a list so both keys stay findable. Open Addressing, Linear Probing and Tombstone Deletion remain unpracticed, and the belief that a second key overwrites the first is still open."
+  },
+  "prompt_hash": "fa130592ad53",
+  "schema_hash": "fcf1232c0ffe"
+}

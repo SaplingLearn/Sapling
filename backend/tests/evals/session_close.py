@@ -221,6 +221,17 @@ class ServedSecondPerson(Evaluator[CloseCase, CloseEvalOutput]):
 #: Word starts (\b: "again" is no "gain"); a direction word is a claim of a move.
 _UP_WORDS = re.compile(r"\b(progress|improv|increas|gain|moved up|went up)")
 _DOWN_WORDS = re.compile(r"\b(declin|decreas|dropped|moved down|went down|fell\b)")
+#: A negated direction claims no move ("moved down, so it is not progress" is
+#: faithful to a drop; the Claude close words it that way), so it is removed
+#: before the search.
+_NEGATED = re.compile(
+    r"\b(?:not|no|never|did not|didn't)\s+(?:yet\s+|any\s+)?"
+    r"(?:progress|improv|increas|gain|declin|decreas|drop)\w*"
+)
+
+
+def _claims(words: re.Pattern[str], text: str) -> bool:
+    return bool(words.search(_NEGATED.sub(" ", text)))
 
 
 @dataclass
@@ -238,8 +249,8 @@ class ServedDirectionFaithful(Evaluator[CloseCase, CloseEvalOutput]):
         text = ctx.output.served.summary.lower()
         if not moves:
             return 1.0
-        up_ok = 1 in moves or not _UP_WORDS.search(text)
-        down_ok = -1 in moves or not _DOWN_WORDS.search(text)
+        up_ok = 1 in moves or not _claims(_UP_WORDS, text)
+        down_ok = -1 in moves or not _claims(_DOWN_WORDS, text)
         return float(up_ok and down_ok)
 
 

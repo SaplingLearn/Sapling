@@ -427,7 +427,7 @@ _ANTHROPIC_EFFORT: dict[AgentTask, Literal["low", "medium", "high"]] = {
 #: `EVALUATED_MODELS`.
 LOOP_SLOTS_PENDING_CLAUDE_EVAL: frozenset[AgentTask] = frozenset({
     "check_items", "grader", "grader_second", "learning_decision",
-    "loop_tutor_lite", "loop_tutor", "loop_tutor_deep", "session_close",
+    "loop_tutor_lite", "loop_tutor", "loop_tutor_deep",
 })
 
 
@@ -466,7 +466,8 @@ EVALUATED_MODELS: dict[AgentTask, frozenset[str]] = {
     "loop_tutor_lite": frozenset({"gemini-2.5-flash-lite"}),
     "loop_tutor": frozenset({"gemini-2.5-flash"}),
     "loop_tutor_deep": frozenset({"gemini-2.5-pro"}),
-    "session_close": frozenset({"gemini-2.5-flash-lite"}),
+    # Re-recorded on claude-haiku-5-5, three runs (2026-11-20, #866).
+    "session_close": frozenset({"gemini-2.5-flash-lite", "claude-haiku-5-5"}),
 }
 
 #: Slots whose verdict must come from a DIFFERENT model than another slot's:

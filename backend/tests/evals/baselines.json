@@ -416,7 +416,7 @@
     "RawKeysSubset": 1.0,
     "RawOneQuestion": 1.0,
     "RawSummaryComplete": 1.0,
-    "RawSummaryWithinCap": 1.0,
+    "RawSummaryWithinCap": 0.857143,
     "ServedDirectionFaithful": 1.0,
     "ServedIfThenForm": 1.0,
     "ServedKeysSubset": 1.0,

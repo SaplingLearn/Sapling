@@ -66,7 +66,6 @@ SINGLE_RECORDING_FLOORS: dict[str, str] = {
     "check_items": "PKG-04/A37 recordings, one run each (Gemini; re-record pending)",
     "grader": "the A33-finish recording, one run (Gemini; re-record pending)",
     "decisions": "PKG-05b recording, one run (re-record pending)",
-    "session_close": "PKG-09 recording, one run (Gemini; re-record pending)",
     "loop_rung_judge": "a calibration of hand-written replies, gated at 1.0",
 }
 
