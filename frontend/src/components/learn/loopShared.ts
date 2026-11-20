@@ -1,6 +1,6 @@
 /** Pieces LoopLearn and its panels share (moved out of LoopLearn.tsx). */
 import type React from "react";
-import type { StudentConfidence } from "@/lib/api";
+import type { LoopHintResponse, StudentConfidence } from "@/lib/api";
 
 export const BAND_LABEL: Record<string, string> = { novice: "Getting started", develop: "Developing", profic: "Proficient" };
 
@@ -20,6 +20,16 @@ export const FIELD_STYLE: React.CSSProperties = {
  *  confidence — null until chosen, and a skip sends none. */
 export type Draft = { answer: string; option: string; reason: string; confidence: StudentConfidence | null };
 export type HintView = { denied: string } | { reply: string } | null;
+
+/** The denial a hint card words (#866 K32): POST /hint's reason, made precise by
+ *  what the server said — a written attempt that time alone kept from counting
+ *  (`wait_s` from /step/attempt) is "too_soon", never "write something"; an H6
+ *  gate another genuine try lifts is "h6_attempt"; any other H6 gate never lifts. */
+export function hintDenial(denied: string, lifts: LoopHintResponse["lifts"], attemptWaitS: number | undefined): string {
+  if (denied === "no_genuine_attempt" && attemptWaitS) return "too_soon";
+  if (denied === "h6_gate" && lifts === "attempt") return "h6_attempt";
+  return denied;
+}
 
 /** Focus the first answer control of a check-in or check card: the textarea, or
  *  the options' tab stop (each is marked `data-answer-start`). */

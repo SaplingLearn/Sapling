@@ -106,7 +106,7 @@ import { SESSION_CLOSED_DETAIL, sessionRefusal } from "./sessionErrors";
 import { withPlanHistory } from "./loopHistory";
 import { dropInterruptedTurn } from "./chatRetry";
 import { modalOpen } from "./modalOpen";
-import { BAND_LABEL, type Draft, type HintView } from "./loopShared";
+import { BAND_LABEL, hintDenial, type Draft, type HintView } from "./loopShared";
 import { VerdictBanner } from "./VerdictBanner";
 import { ProbePanel } from "./ProbePanel";
 import { PlanPanel } from "./PlanPanel";
@@ -1574,16 +1574,18 @@ export function LoopLearn() {
         : attempt.answer).trim();
       const grant = earnedHint.current;
       if (!grant || grant.sessionId !== sessionId || grant.questionHash !== qh) {
+        let waitS: number | undefined; // K32: time alone kept the draft from counting
         if (draft && countedAttempt.current !== `${qh}:${draft}`) {
           const recorded = await postLoopAttempt(sessionId, userId, qh, draft);
           if (!ownsHint()) return;
           if (interceptCrisis(recorded)) { setAttempt(EMPTY_DRAFT); return; } // no hint, nothing counted
           if (recorded.counted) countedAttempt.current = `${qh}:${draft}`;
+          waitS = recorded.wait_s;
         }
         const r = await requestLoopHint(sessionId, userId, qh);
         if (!ownsHint()) return;
         if (r.denied) {
-          setHint({ denied: r.denied });
+          setHint({ denied: hintDenial(r.denied, r.lifts, waitS) });
           return;
         }
         if (typeof r.rung === "number") {

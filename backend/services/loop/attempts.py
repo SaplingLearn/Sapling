@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import logging
+import math
 import re
 from dataclasses import dataclass
 from services.loop.errors import HTTPException
@@ -50,7 +51,7 @@ from services.loop.learner import (
     _seconds_since,
 )
 from services.loop.reveals import _ledger
-from services.loop.cursor import _h6_ok
+from services.loop.cursor import _h6_lifts_with_attempts, _h6_ok
 from services.loop.claims import _on_step, _record_attempt
 
 #: Every module of the package logs as the route always did (the ops-log
@@ -250,12 +251,36 @@ def step_attempt(body: LoopAttemptBody, request: Request) -> dict:
         strict=signals.strict,
         counted=bool(counted),
     )
+    wait = None if genuine else _time_still_needed(body.attempt_text, check, independent_s, signals,
+                                                   strict_on=strict_on, band=band, variant=variant)
     return {
         "genuine": genuine,
         "counted": bool(counted),
         "attempts": len(entry.get("attempted_at") or []),
         "independent_s": independent_s,
+        # #866 K32: present only when time alone kept a real attempt from counting
+        **({"wait_s": wait} if wait is not None else {}),
     }
+
+
+def _time_still_needed(
+    text: str, check, independent_s: float, signals: _AttemptSignals, *, strict_on: bool, band: str, variant: str
+) -> float | None:
+    """#866 K32: the seconds until an attempt that did not count WOULD count, when
+    only the independent-time gate held it back (§3.3: since the pose; A134's
+    strict rule also: since the latest help) — the text itself counts and, under
+    the strict rule, is new. None when something else is missing (the text, its
+    novelty), so the client never tells a student to wait for a try that time
+    would not make count."""
+    if not _genuine(text, math.inf, band, variant) or _addresses_grader(text, check):
+        return None
+    waits = [signals.required_s - independent_s]
+    if strict_on:
+        if not signals.novel:
+            return None
+        waits.append(signals.required_s - signals.alone_s)
+    wait = max(waits)
+    return round(wait, 1) if wait > 0 else None
 
 
 def _mark_earnest_blocked(session_id: str, qh: str, step: StepState, entry: dict) -> None:
@@ -357,7 +382,10 @@ def hint(body: LoopHintBody, request: Request) -> dict:
         return {"denied": "ceiling"}
     if next_rung == int(Rung.H6) and not _h6_ok(state, qh, entry, check):
         _mark_earnest_blocked(body.session_id, qh, step, entry)
-        return {"denied": "h6_gate"}
+        # #866 K32: `lifts` (present only then) — another genuine try opens it;
+        # otherwise the worked answer never unlocks on this item (A32)
+        lifts = _h6_lifts_with_attempts(state, qh, entry, check)
+        return {"denied": "h6_gate", **({"lifts": "attempt"} if lifts else {})}
     accepted: dict = {}
 
     def unlock(e: dict) -> None:

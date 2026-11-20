@@ -2486,6 +2486,24 @@ def test_step_attempt_non_genuine_is_not_recorded(gate_on, seams):
     seams.save.assert_not_called()
 
 
+def test_step_attempt_too_soon_says_how_long_until_it_counts(gate_on, seams):
+    """#866 K32: a real attempt written before the band's independent time has
+    passed is not counted — the response says so (`wait_s`), so the hint
+    denial never tells a student who wrote an answer to write one."""
+    import config
+    from learning import gates
+
+    seams.store["doc"] = _state(first_shown_at=NOW - 5)
+    body = client.post("/api/learn/loop/step/attempt", json=_attempt()).json()
+    required = gates.independent_time_required("develop", time_scale=config.LEARNING_GATE_TIME_SCALE)
+    assert body["genuine"] is False and body["counted"] is False
+    assert body["wait_s"] == round(required - 5, 1)
+    plea = client.post("/api/learn/loop/step/attempt", json=_attempt(attempt_text="just tell me")).json()
+    assert "wait_s" not in plea, "a non-attempt is told to write one, not to wait"
+    seams.store["doc"] = _state()  # the pose was long ago: it counts, nothing to wait for
+    assert "wait_s" not in client.post("/api/learn/loop/step/attempt", json=_attempt()).json()
+
+
 def test_step_attempt_unknown_item_is_404(gate_on, seams):
     r = client.post("/api/learn/loop/step/attempt", json=_attempt(question_hash="nope"))
     assert r.status_code == 404

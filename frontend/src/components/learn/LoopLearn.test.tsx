@@ -962,6 +962,32 @@ describe("LoopLearn — teach / check / feedback (A16, A46)", () => {
     expect(api.requestLoopHintTurn).toHaveBeenCalledWith("s2", "u1");
   });
 
+  it("K32: an answer the time gate alone kept from counting is told to wait, not to write one", async () => {
+    api.postLoopAttempt.mockResolvedValue({ genuine: false, counted: false, attempts: 0, independent_s: 10, wait_s: 35 });
+    api.requestLoopHint.mockResolvedValue({ denied: "no_genuine_attempt" });
+    await withCheckItem();
+    fireEvent.change(screen.getByTestId("loop-attempt-input"), { target: { value: "it keeps calling itself" } });
+    fireEvent.click(screen.getByTestId("loop-hint-button"));
+    const denied = await screen.findByTestId("loop-hint-denied");
+    expect(denied.getAttribute("data-reason")).toBe("too_soon");
+    expect(denied.textContent).not.toContain("write what you think");
+    expect(denied.textContent).toContain("a little longer");
+  });
+
+  it.each([
+    [{ denied: "h6_gate", lifts: "attempt" }, "h6_attempt", "after another real try"],
+    [{ denied: "h6_gate" }, "h6_gate", "isn't available for this question"],
+  ])("K32: the H6 denial %o promises the worked answer only when another try opens it", async (reply, reason, copy) => {
+    api.postLoopAttempt.mockResolvedValue({ genuine: true, counted: true, attempts: 2, independent_s: 600 });
+    api.requestLoopHint.mockResolvedValue(reply);
+    await withCheckItem();
+    fireEvent.change(screen.getByTestId("loop-attempt-input"), { target: { value: "it keeps calling itself" } });
+    fireEvent.click(screen.getByTestId("loop-hint-button"));
+    const denied = await screen.findByTestId("loop-hint-denied");
+    expect(denied.getAttribute("data-reason")).toBe(reason);
+    expect(denied.textContent).toContain(copy);
+  });
+
   it("K33: a hint turn's once-per-session materials note and learner state are applied", async () => {
     api.postLoopAttempt.mockResolvedValue({ genuine: true, counted: true, attempts: 1, independent_s: 60 });
     api.requestLoopHint.mockResolvedValue({ rung: 1, intent: "Orient." });

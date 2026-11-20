@@ -1368,8 +1368,10 @@ export interface LoopCheckNext extends LoopLearningScope, LoopPlanMoved {
 }
 /** POST /hint moves the rung only: `{denied}` or `{rung, intent}`; the hint TEXT
  *  is the next `[ACTION: hint]` turn (requestLoopHintTurn). */
-export interface LoopHintResponse { denied?: string; rung?: number; intent?: string }
-export interface LoopAttemptResult extends WithCrisisSupport { genuine: boolean; counted: boolean; attempts: number; independent_s: number }
+/** `lifts: 'attempt'` (#866 K32; an `h6_gate` denial only): another genuine try opens it. */
+export interface LoopHintResponse { denied?: string; rung?: number; intent?: string; lifts?: 'attempt' }
+/** `wait_s` (#866 K32): present when only the independent-time gate kept a real attempt from counting. */
+export interface LoopAttemptResult extends WithCrisisSupport { genuine: boolean; counted: boolean; attempts: number; independent_s: number; wait_s?: number }
 /** A60: `close_json` as stored — no student answer to `self_eval`/`if_then`. */
 /** Spec §13 A117 (backend learning/session_close.py::Baseline): where a concept's
  *  reported change starts. `pre_session` — the estimate it had before the session;

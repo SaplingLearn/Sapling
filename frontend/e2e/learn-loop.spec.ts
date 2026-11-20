@@ -301,11 +301,15 @@ test("loop user completes probe → plan → check (explicit submission) with a 
   // timer exists to skip it; the bound below is the UNSCALED gate, so the poll is
   // honest whatever the lane scale is.
   await page.getByTestId("loop-attempt-input").fill(WORKING_ATTEMPT);
+  // #866 K32: with an answer in the box, a denial is never "write what you think"
+  // — before the independent time it says to stay with the question (too_soon)
+  const deniedReasons: string[] = [];
   await expect
     .poll(
       async () => {
         await hintButton.click();
         await expect(hintButton).toBeEnabled();
+        if (await denied.isVisible()) deniedReasons.push((await denied.getAttribute("data-reason")) ?? "");
         return (await hintReply.isVisible()) ? ((await hintReply.textContent()) ?? "") : "";
       },
       {
@@ -314,6 +318,7 @@ test("loop user completes probe → plan → check (explicit submission) with a 
       },
     )
     .toContain(LOOP_HINT_BODY);
+  expect(deniedReasons).not.toContain("no_genuine_attempt");
   await expect(hintReply).toContainText(LOOP_HINT_QUESTION);
   const sessionRows = async () =>
     (await queryRaw(`SELECT id, loop_state FROM sessions WHERE user_id = $1 AND mode <> 'review'`, [
