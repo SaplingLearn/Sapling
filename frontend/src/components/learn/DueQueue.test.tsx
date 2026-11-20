@@ -326,6 +326,36 @@ describe("DueQueue", () => {
     expect(screen.queryByTestId("review-empty")).toBeNull();
   });
 
+  it("never-rated cards wait as new cards, not as due reviews (#866 K14)", async () => {
+    // 253 in the pool: 5 due reviews and 248 cards never rated (A74)
+    mockNext.mockResolvedValue({ ...next(null, 0, 253), new_total: 248 });
+    render(<DueQueue userId="u1" />);
+    const spent = await screen.findByTestId("review-budget-spent");
+    expect(spent.textContent).toContain("5 more due and 248 new cards");
+    expect(spent.textContent).not.toContain("253");
+  });
+
+  it("only new cards left: they wait, and nothing is called due (#866 K14)", async () => {
+    mockNext.mockResolvedValue({ ...next(null, 0, 1), new_total: 1 });
+    render(<DueQueue userId="u1" />);
+    const spent = await screen.findByTestId("review-budget-spent");
+    expect(spent.textContent).toContain("1 new card will wait for tomorrow");
+    expect(spent.textContent).not.toMatch(/due/);
+  });
+
+  it("a never-rated card is marked as a new card (#866 K14)", async () => {
+    mockNext.mockResolvedValue(next({ ...CARD, new: true }));
+    render(<DueQueue userId="u1" />);
+    expect((await screen.findByTestId("review-new-card")).textContent).toBe("New card");
+  });
+
+  it("a card due for review carries no new-card mark", async () => {
+    mockNext.mockResolvedValue(next(CARD));
+    render(<DueQueue userId="u1" />);
+    await screen.findByTestId("review-flip");
+    expect(screen.queryByTestId("review-new-card")).toBeNull();
+  });
+
   it("never attaches a late answer to a newer item", async () => {
     let resolveAnswer: (v: unknown) => void = () => {};
     mockNext.mockResolvedValueOnce(next(FREE)).mockResolvedValueOnce(next(CARD));

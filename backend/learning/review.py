@@ -798,11 +798,13 @@ def due_queue_with_stats(
     `varied` (spec §13 A140): the student's varied_isomorphs — the pick's
     cue-familiarity tie-break and the interleave's definitional-item rule.
 
-    stats = {"due": {"flashcard": n, "check": n}, "in_budget": n, "unservable": n,
-    "paused": n}: `due` counts everything due this session (a concept past the
-    budget is counted without its item read — its servability is unknown),
-    `in_budget` the queue, `unservable` the concepts examined that had no
-    servable item, `paused` the novice concepts held back (A20)."""
+    stats = {"due": {"flashcard": n, "check": n}, "new": n, "in_budget": n,
+    "unservable": n, "paused": n}: `due` counts everything due this session (a
+    concept past the budget is counted without its item read — its
+    servability is unknown), `new` the never-rated cards among `due`'s
+    flashcards (A74: in the pool, but new cards rather than due reviews —
+    #866 K14), `in_budget` the queue, `unservable` the concepts examined that
+    had no servable item, `paused` the novice concepts held back (A20)."""
     state = loop_state or {}
     sr = state.get("sr") or {}
     served_today = set((state.get("review") or {}).get("served_hashes") or [])
@@ -844,6 +846,7 @@ def due_queue_with_stats(
             queue.append(item)
             spent += item.cost_s
     stats["due"] = due
+    stats["new"] = sum(c.due_at is None for c in cards)  # #866 K14: never rated
     stats["in_budget"] = len(queue)
     if interleave:
         queue = _interleaved(user_id, queue, state, varied=varied)
@@ -894,8 +897,8 @@ def summary(
     retention: float | None = None,
 ) -> dict:
     """The `/review/summary` body (`paused` = novice concepts held back at the
-    tutor hard level; `due` everything due today, `in_budget` what today's
-    remaining budget covers)."""
+    tutor hard level; `due` everything due today, `new` the never-rated cards
+    among it (#866 K14), `in_budget` what today's remaining budget covers)."""
     _, stats = due_queue_with_stats(
         user_id,
         course_id,
@@ -908,6 +911,7 @@ def summary(
         retention = review_retention(user_id, course_id)
     return {
         "due": stats["due"],
+        "new": stats.get("new", 0),
         "in_budget": stats["in_budget"],
         "unservable": stats["unservable"],
         "paused": stats["paused"],
@@ -1186,6 +1190,8 @@ def serve(
             "sr": sr,
             "front": decrypt_if_present(row.get("front"), bind=bind("flashcards", "front", item.id)),
             "back": decrypt_if_present(row.get("back"), bind=bind("flashcards", "back", item.id)),
+            # #866 K14: a never-rated card is new (A74's pool), not a due review
+            **({"new": True} if item.due_at is None else {}),
         }
     payload = {
         "kind": "check",

@@ -133,7 +133,9 @@ def review_next(
     event) instead of choosing another — never item shopping. A new item is
     opened for answering and `review.served` follows the successful serve.
     `due_total` is everything due today; `in_budget` what the remaining budget
-    covers (null item + due_total > 0 = the budget is spent, not caught up)."""
+    covers (null item + due_total > 0 = the budget is spent, not caught up);
+    `new_total` the never-rated cards among `due_total` (A74's pool: new
+    cards, not due reviews — #866 K14)."""
     _gate(user_id, request)
     enforce_abuse_limit(abuse_limits.LOOP_ACTION, user_id)  # audit Z02
     _review_course(user_id, course_id)
@@ -173,6 +175,7 @@ def review_next(
         "session_id": sid,
         "retention_target": retention,
         "due_total": sum(due.values()),
+        "new_total": stats.get("new", 0),
         "in_budget": len(queue),
     }
 

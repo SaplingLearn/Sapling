@@ -31,6 +31,8 @@ export interface ReviewItemPayload {
   topic?: string | null;
   front?: string | null;
   back?: string | null;
+  /** #866 K14: a card never rated yet (A74's pool) — a new card, not a due review. */
+  new?: boolean;
 }
 export interface ReviewNextResponse {
   item: ReviewItemPayload | null;
@@ -40,6 +42,8 @@ export interface ReviewNextResponse {
   // everything due today; in_budget = what today's remaining budget covers. A null
   // item with due_total > 0 means the budget is spent, not that nothing is due.
   due_total: number;
+  /** #866 K14: the never-rated cards among `due_total` (new cards, not due reviews). */
+  new_total?: number;
   in_budget: number;
 }
 export interface ReviewAnswerBody {
@@ -69,6 +73,8 @@ export interface ReviewAnswerResponse extends WithCrisisSupport {
 }
 export interface ReviewSummaryResponse {
   due: { flashcard: number; check: number };
+  /** #866 K14: the never-rated cards among `due.flashcard`. */
+  new?: number;
   in_budget: number;
   unservable: number;
   /** Novice concepts held back at the tutor hard level (A20). */

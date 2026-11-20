@@ -455,13 +455,25 @@ function renderNothingServed(
   if (!next || item) return null;
   return next.due_total > 0 ? (
     <div ref={statusRef} tabIndex={-1} data-testid="review-budget-spent" style={{ fontSize: 14, color: "var(--text-muted)" }}>
-      That&apos;s today&apos;s review time. {next.due_total} more due — they&apos;ll wait for tomorrow.
+      That&apos;s today&apos;s review time. {stillWaiting(next)}
     </div>
   ) : (
     <div ref={statusRef} tabIndex={-1} data-testid="review-empty" style={{ fontSize: 14, color: "var(--text-muted)" }}>
       All caught up — nothing is due right now.
     </div>
   );
+}
+
+/** What waits for tomorrow once the day's review time is spent. #866 K14: the
+ *  never-rated cards in it (A74's pool) are new cards, not due reviews, so the
+ *  "due" count matches what the Flashcards page calls due. */
+function stillWaiting(next: ReviewNextResponse): string {
+  const fresh = Math.min(next.new_total ?? 0, next.due_total);
+  const due = next.due_total - fresh;
+  const cards = `${fresh} new ${fresh === 1 ? "card" : "cards"}`;
+  if (!fresh) return `${due} more due — they'll wait for tomorrow.`;
+  if (!due) return `${cards} will wait for tomorrow.`;
+  return `${due} more due and ${cards} — they'll wait for tomorrow.`;
 }
 
 function resultText(result: ReviewAnswerResponse): React.ReactNode {
@@ -595,7 +607,13 @@ function renderFlashcardItem({ item, flipped, backRef, flipRef, answered, busy, 
 }) {
   return (
     <>
-      {item.topic && <span className="chip" style={{ alignSelf: "flex-start" }}>{item.topic}</span>}
+      {(item.new || item.topic) && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+          {/* #866 K14: a never-rated card is a new card, not a review that is due */}
+          {item.new && <span data-testid="review-new-card" className="chip chip--accent">New card</span>}
+          {item.topic && <span className="chip">{item.topic}</span>}
+        </div>
+      )}
       <div style={{ fontSize: 15, whiteSpace: "pre-wrap" }}>{item.front}</div>
       {flipped ? (
         <>

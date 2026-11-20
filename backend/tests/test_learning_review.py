@@ -340,6 +340,36 @@ def test_due_queue_merges_orders_and_drops_not_due(monkeypatch):
     assert kwargs["filters"]["user_id"] == f"eq.{USER}"
 
 
+def test_never_scheduled_cards_are_new_cards_not_due_reviews(monkeypatch):
+    """#866 K14: a card never rated (`due_at` NULL) still enters the pool (A74),
+    last in DASH order (R = 1.0), but it is NEW, not a due review: the stats
+    count it under `new` as well as in `due` (A72's "everything due today"), so
+    Study can say "3 more due and 2 new cards" where the Flashcards page says
+    "3 due"; and its served payload says so."""
+    from learning import review
+
+    past = (NOW - timedelta(days=3)).isoformat()
+    factory, _ = _tables(
+        {
+            "flashcards": [
+                _card("f-due", past, reps=2, last_rating=3),
+                _card("f-new-1", None, fsrs_d=None, fsrs_s=None, due_at=None, last_reviewed_at=None),
+                _card("f-new-2", None, fsrs_d=None, fsrs_s=None, due_at=None, last_reviewed_at=None),
+            ],
+        }
+    )
+    monkeypatch.setattr(review, "table", factory)
+    queue, stats = review.due_queue_with_stats(USER, None, NOW)
+    assert [i.id for i in queue] == ["f-due", "f-new-1", "f-new-2"]
+    assert stats["due"] == {"flashcard": 3, "check": 0} and stats["new"] == 2
+    out = review.summary(USER, None, NOW, loop_state={}, retention=params.FSRS_RETENTION_DEFAULT)
+    assert out["due"] == {"flashcard": 3, "check": 0} and out["new"] == 2
+    monkeypatch.setattr(review, "decrypt_if_present", lambda v, **_: v)
+    new_card = review.serve(queue[1], card_row={"id": "f-new-1"}, loop_state={"sr": {}})
+    assert new_card["new"] is True
+    assert "new" not in review.serve(queue[0], card_row={"id": "f-due"}, loop_state={"sr": {}})
+
+
 def test_due_queue_keeps_course_cards_and_term_less_cards_only(monkeypatch):
     """get_flashcards' rule: a course keeps its enrolled offerings' cards and
     every term-less card; another course's card is not due here."""
@@ -1367,6 +1397,7 @@ def test_summary_counts_due_unservable_paused_and_budget(monkeypatch):
     )
     assert out == {
         "due": {"flashcard": 2, "check": 0},
+        "new": 0,
         "in_budget": 2,
         "unservable": 1,
         "paused": 1,
@@ -1919,6 +1950,21 @@ def test_review_next_serves_first_item_with_budget_and_events(client, monkeypatc
     assert store.calls == [_sid()] and store.state.extra["open"]["n-due"]["item_id"] == "ci-qh-1"
 
 
+def test_review_next_reports_new_cards_beside_the_due_total(client, monkeypatch):
+    """#866 K14: `due_total` stays everything due today (A72); `new_total` is the
+    never-rated cards among it, so a spent budget reads "N more due and M new
+    cards", never M brand-new cards as due reviews."""
+    from learning import review
+
+    _session(monkeypatch)
+    monkeypatch.setattr(review, "due_queue_with_stats", lambda u, c, now, **kw: (
+        [], {"unservable": 0, "paused": 0, "due": {"flashcard": 250, "check": 3}, "new": 248}))
+    monkeypatch.setattr(review, "review_retention", lambda u, c: params.FSRS_RETENTION_DEFAULT)
+    with _loop():
+        body = client.get(f"{REVIEW}/next?user_id={USER}").json()
+    assert (body["item"], body["due_total"], body["new_total"]) == (None, 253, 248)
+
+
 def test_review_next_passes_the_tutor_hard_level(client, monkeypatch):
     from learning import review
 
@@ -2433,6 +2479,7 @@ def test_review_summary_counts_by_kind(client, monkeypatch):
     assert seen_kw["pause_novice"]() is True
     assert r.json() == {
         "due": {"flashcard": 2, "check": 1},
+        "new": 0,
         "in_budget": 1,
         "unservable": 2,
         "paused": 1,
