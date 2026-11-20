@@ -846,16 +846,24 @@ def note_written_llm_usage(row: dict) -> None:
     """What `log_llm_usage` does after it queues a row, for a usage row its
     writer committed to llm_usage itself — the topic checklist's receipt, which
     `checklist_budget_reconcile` writes with the cache in one transaction
-    (#866 Z54). The row is never queued again. Never raises."""
-    if not _logging_enabled() or not isinstance(row, dict):
+    (#866 Z54). The row is never queued again. It lands whatever the logging
+    kill switch says, so the run's budget hold is always settled; the PostHog
+    mirror rides that switch, as log_llm_usage's does. Never raises."""
+    if not isinstance(row, dict):
         return
-    _after_llm_usage_recorded(row)
+    _settle_budget_hold(row.get("user_id"))
+    if _logging_enabled():
+        _mirror_ai_generation(row)
 
 
 def _after_llm_usage_recorded(row: dict) -> None:
-    """A row on its way into llm_usage (queued, or written by its writer):
-    settle the run's budget reservation and send the PostHog mirror. Never raises."""
-    user_id = row.get("user_id")
+    """A queued row on its way into llm_usage: settle the run's budget
+    reservation and send the PostHog mirror. Never raises."""
+    _settle_budget_hold(row.get("user_id"))
+    _mirror_ai_generation(row)
+
+
+def _settle_budget_hold(user_id: str | None) -> None:
     # The run's real usage is on its way into llm_usage: stop counting its
     # budget reservation once that has had time to land (sec2 M4).
     try:
@@ -864,9 +872,13 @@ def _after_llm_usage_recorded(row: dict) -> None:
         llm_budget.note_usage_recorded(user_id)
     except Exception:  # pragma: no cover - defensive
         logger.debug("log_llm_usage: budget settle slipped", exc_info=True)
+
+
+def _mirror_ai_generation(row: dict) -> None:
     # ADR 0028: the PostHog LLM-analytics mirror of the same row — a
     # privacy-mode $ai_generation (model, tokens, cost, trace id; never
     # content), behind the same kill switch, queued for the consent worker.
+    user_id = row.get("user_id")
     try:
         posthog_client.capture_ai_generation(
             user_id=user_id,

@@ -117,3 +117,15 @@ def test_log_llm_usage_keeps_its_follow_ups(follow_ups):
     assert follow_ups["queued"] == ["llm_usage"]
     assert follow_ups["settled"] == ["u1"]
     assert [m["model"] for m in follow_ups["mirrored"]] == ["claude-haiku-5-5"]
+
+
+def test_with_usage_logging_off_the_bill_still_settles_its_hold_but_sends_no_mirror(
+    monkeypatch, reservation, follow_ups
+):
+    """The receipt lands in llm_usage whatever EVENTS_LOGGING_ENABLED says (the
+    reconcile writes it), so its hold must stop counting; the PostHog mirror
+    rides the logging kill switch, as log_llm_usage's does."""
+    monkeypatch.setattr(events_service, "_logging_enabled", lambda: False)
+    monkeypatch.setattr(budget, "reconcile", lambda *a, **kw: {"state": "settled"})
+    svc._finish_generation(_generation(reservation), PAYLOAD)
+    assert follow_ups == {"settled": ["owner"], "mirrored": [], "queued": []}
