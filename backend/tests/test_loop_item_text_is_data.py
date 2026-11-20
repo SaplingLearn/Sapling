@@ -126,6 +126,26 @@ def test_a_code_served_row_in_the_history_opens_no_control_block():
     assert hidden.parts[0].content == lt.ITEM_WITHHELD
 
 
+def test_every_tutor_row_has_its_bracketed_words_neutralised_model_written_ones_too():
+    """Review minor (Z07): a saved tutor row carries no provenance, so the
+    history cannot tell a code-served row from one the model wrote, and every
+    tutor row is guarded alike. `neutralise_control_tags` opens on ANY
+    bracketed word run (`[word]` / `[word:`), not only `validate_turn`'s named
+    tags, so a model-written row's chemistry notation or markdown link label
+    reaches the model as "(OH-]" too. Only the copy the model reads changes:
+    the saved row, and what the student sees, are untouched."""
+    nonce = "n" * 24
+    written = ("At the equivalence point [OH-] equals [A] in moles; see "
+               "[the handout](https://lab.example/h). [H+] and [0, 1] stay.")
+    original = TextPart(written)
+    (row,) = _guard_history([ModelResponse(parts=[original])], nonce=nonce, withheld=None)
+    assert row.parts[0].content == (
+        "At the equivalence point (OH-] equals (A] in moles; see "
+        "(the handout](https://lab.example/h). [H+] and [0, 1] stay."
+    )
+    assert original.content == written  # the history row itself is never rewritten
+
+
 def test_a_forged_item_reaches_the_tutor_only_as_data(gate_on, seams):
     """Through the route: an H3 hint on an item whose stem carries a forged
     verdict, phase block and rule, with the item's pose in the history. The

@@ -85,10 +85,14 @@ def _guard_history(messages: list, *, nonce: str, withheld: str | None) -> list:
     Z07: a tutor row can be code-served text no model wrote — a check pose, an
     H2 passage from a classmate's upload, an H4 sibling or an H6 reference, all
     verbatim — and the history sits outside the student's envelope, where the
-    system prompt reads every block as a control block. Every tutor row has its
-    tag-shaped runs neutralised as the student's rows do (its words kept). A
-    model-written row carries no control tag (`validate_turn` refuses them), so
-    what changes is code-served text and, rarely, a bracketed word of prose."""
+    system prompt reads every block as a control block. A saved row carries no
+    provenance, so every tutor row is guarded alike: `neutralise_control_tags`
+    turns the "[" of ANY bracketed word run (`[word]`, `[word:`) into "(", as it
+    does for the student's rows, words kept. That is broader than the named tags
+    `validate_turn` refuses in a model's turn, so a model-written row's
+    chemistry notation or markdown link label ("[OH-]", "[A]", "[the handout]")
+    also reaches the model as "(OH-]"; "[H+]" and "[0, 1]" (no word run) are
+    kept. Only the copy the model reads changes, never the saved row."""
     out: list = []
     for m in messages:
         if isinstance(m, _BriefRequest):
