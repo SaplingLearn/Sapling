@@ -815,7 +815,7 @@ def phase_prefix(
         # the heading carries the server's own line
         shown = (
             item_text(item_prompt, source=CHECK_ITEM_SOURCE)
-            if item_visible(rung, answer_released)
+            if item_prompt and item_visible(rung, answer_released)  # non-empty: checked above
             else ITEM_WITHHELD
         )
         lines.append(f"[CHECK ITEM]{fmt}\n{shown}")
