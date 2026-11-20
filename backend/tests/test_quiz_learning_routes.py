@@ -631,6 +631,8 @@ def test_an_unreadable_queue_keeps_the_scheduled_count():
 def test_servable_due_count_reads_the_study_queues_own_session(monkeypatch):
     """The count is learning.review.summary's due checks for the course, over
     the cross-course session Study's queue serves from (course None)."""
+    import httpx
+
     from learning import review
 
     seen = {}
@@ -645,7 +647,7 @@ def test_servable_due_count_reads_the_study_queues_own_session(monkeypatch):
     assert ql._servable_due_count("u", "c1", NOW) == 4
     assert seen["peek"] == ("u", None, NOW)
     assert seen["summary"] == ("u", "c1", NOW, {"doc": 1})
-    monkeypatch.setattr(review, "summary", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("down")))
+    monkeypatch.setattr(review, "summary", lambda *a, **k: (_ for _ in ()).throw(httpx.ConnectError("down")))
     assert ql._servable_due_count("u", "c1", NOW) is None
 
 

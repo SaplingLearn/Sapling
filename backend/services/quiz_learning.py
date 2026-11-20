@@ -26,6 +26,8 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
+import httpx
+
 from db.connection import page_all, pg_quote_value, table
 from db.scope import runs_as_service
 from learning import item_keys, quiz_gates, quiz_plan
@@ -778,6 +780,7 @@ def _servable_due_count(user_id: str, course_id: str | None, now: datetime) -> i
     with no servable check item, or paused, is not counted). None on a failed
     read."""
     from learning import review
+    from services.ai_budget import AIBudgetUnavailable
 
     try:
         loop_state = review.peek_review_session(user_id, None, now)
@@ -786,7 +789,9 @@ def _servable_due_count(user_id: str, course_id: str | None, now: datetime) -> i
             loop_state=loop_state, pause_novice=lambda: _pause_novice(user_id),
         )
         return int((counts.get("due") or {}).get("check") or 0)
-    except Exception as exc:
+    # a failed PostgREST read, another student's session (PermissionError), a
+    # malformed learner row (ValueError), an unreadable budget
+    except (httpx.HTTPError, OSError, ValueError, AIBudgetUnavailable) as exc:
         logger.warning("quiz: review queue count unreadable: %s", type(exc).__name__)
         return None
 
