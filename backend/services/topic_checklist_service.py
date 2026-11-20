@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 
 from fastapi import HTTPException
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RunUsage
 
 from agents import WORKER_LIMITS
@@ -465,7 +466,7 @@ def _needs_generation(snapshot: dict, cache: dict | None) -> bool:
 _GEMINI_DEFAULT_MAX_OUTPUT_TOKENS = 65_536
 
 
-def _main_run_settings() -> dict:
+def _main_run_settings() -> ModelSettings:
     """The bounds main's checklist run had (#866 review of b1-budget, defect 3).
     Main's agent carried NO model_settings, so a request went out at the slot
     model's own ceiling and the resilience layer's per-slot timeout. The loop's
@@ -481,7 +482,7 @@ def _main_run_settings() -> dict:
         if slot_provider("topic_checklist") == "anthropic"
         else _GEMINI_DEFAULT_MAX_OUTPUT_TOKENS
     )
-    return {"max_tokens": ceiling, "timeout": timeout_for("topic_checklist")}
+    return ModelSettings(max_tokens=ceiling, timeout=timeout_for("topic_checklist"))
 
 
 async def _generate_unbudgeted(payload: dict, user_id: str) -> TopicOutline:
