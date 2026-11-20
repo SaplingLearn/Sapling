@@ -335,6 +335,28 @@ def test_the_breaker_opens_from_real_failing_calls(_fresh_state):
     assert calls["n"] == before
 
 
+def test_throttled_gemini_flex_calls_open_only_their_own_breaker(_fresh_state):
+    """Z18: background check-item drafting on Gemini's Flex tier (A23) expects
+    429/503s. They feed `google:flex`, never the `google` breaker every
+    standard-tier call shares, so a throttled Flex run cannot fail them."""
+    fn, calls = _scripted(_http(429, "gemini-2.5-flash-lite"))
+    flex = Agent(
+        _ResilientFn(fn, provider="google", task="check_items", model_name="gemini-2.5-flash-lite")
+    )
+    runs = -(-_resilience.BREAKER_FAILURE_THRESHOLD // _resilience.RETRY_ATTEMPTS)
+    for _ in range(runs):
+        with pytest.raises(ModelHTTPError):
+            asyncio.run(flex.run("hi", model_settings={"service_tier": "flex"}))
+    assert _resilience.breaker_for("google:flex").state == "open"
+    assert _resilience.breaker_for("google").state == "closed"
+    ok, _ = _scripted("fine")
+    standard = Agent(_ResilientFn(ok, provider="google", task="grader", model_name="gemini-2.5-flash"))
+    assert asyncio.run(standard.run("hi")).output == "fine"
+    # the tier key is Gemini's: an Anthropic call never splits off
+    site = _ResilientFn(fn)._site({"service_tier": "flex"})
+    assert site.breaker_key == "anthropic"
+
+
 def test_a_non_retryable_error_counts_as_the_provider_answering():
     b = _resilience.breaker_for("anthropic")
     for _ in range(_resilience.BREAKER_FAILURE_THRESHOLD - 1):

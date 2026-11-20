@@ -392,6 +392,30 @@ def count_tutor_call(user_id: str) -> int:
     return max(stored, local)
 
 
+def admit_counted_tutor_call(user_id: str, count: object) -> None:
+    """The admission half of the daily tutor-call cap (Z19): raise AIBudgetExceeded when the
+    call `count_tutor_call` just counted is past STUDENT_DAILY_TUTOR_CALLS. ``check`` reads the
+    count BEFORE a run and refuses at the cap, but a parallel burst all reads the same pre-burst
+    count; the increment is atomic, so the count it returns is this call's own place in the day,
+    and only the calls inside the cap run. Call it with that return value right after counting,
+    before the model run. A count that is not an int (no student) admits."""
+    if not user_id or isinstance(count, bool) or not isinstance(count, int):
+        return
+    if count <= config.STUDENT_DAILY_TUTOR_CALLS:
+        return
+    now = _utcnow()
+    _emit_capped(user_id, "daily_tutor_calls", "hard")
+    raise AIBudgetExceeded(
+        BudgetDecision(
+            level="hard",
+            tier_ceiling="none",
+            scope="daily_tutor_calls",
+            reset_at=_next_day(now),
+            pause_novice=True,
+        )
+    )
+
+
 def _tutor_calls_key(user_id: str, day: str) -> tuple[str, str, str] | None:
     rkey = current_request_key()
     return (rkey, user_id, day) if rkey else None

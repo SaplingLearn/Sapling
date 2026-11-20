@@ -3526,6 +3526,7 @@ class TestDraftItems:
 
         monkeypatch.setattr(ci, "_backoff", no_wait)
         monkeypatch.setattr(ci, "_flex_settings", lambda task="check_items": {"timeout": 123.0})
+        monkeypatch.setenv("SAPLING_MODEL_CHECK_ITEMS", "gemini-2.5-flash-lite")  # Flex is Gemini's
         seen = []
 
         def flaky(messages, info):
@@ -3562,6 +3563,7 @@ class TestDraftItems:
             return None
 
         monkeypatch.setattr(ci, "_backoff", no_wait)
+        monkeypatch.setenv("SAPLING_MODEL_CHECK_ITEMS", "gemini-2.5-flash-lite")  # Flex is Gemini's
         calls = []
 
         def busy(messages, info):
@@ -3581,6 +3583,36 @@ class TestDraftItems:
             raise ModelHTTPError(status_code=400, model_name="flex")
 
         with ci.check_items_agent.override(model=FunctionModel(bad_request)):
+            out = asyncio.run(
+                ci.draft_items(["A"], [{"id": "c1", "text": "t"}], deps=_agent_deps(), flex=True)
+            )
+        assert isinstance(out, ci.CheckItemsUnavailable) and len(calls) == 1
+
+    def test_on_a_claude_slot_flex_runs_once_so_one_throttle_cannot_open_the_breaker(
+        self, monkeypatch
+    ):
+        """Z18: Flex is a Gemini tier. On the claude-* default a 429 is the
+        model's own #119 retries to ride out; a second retry loop here made one
+        throttled drafting call 9 breaker failures (the threshold is 8) and
+        failed every interactive Claude slot for the cooldown."""
+        import asyncio
+
+        from agents import check_items as ci
+        from pydantic_ai.exceptions import ModelHTTPError
+        from pydantic_ai.models.function import FunctionModel
+
+        async def no_wait(attempt):
+            return None
+
+        monkeypatch.delenv("SAPLING_MODEL_CHECK_ITEMS", raising=False)
+        monkeypatch.setattr(ci, "_backoff", no_wait)
+        calls = []
+
+        def busy(messages, info):
+            calls.append(1)
+            raise ModelHTTPError(status_code=429, model_name="claude")
+
+        with ci.check_items_agent.override(model=FunctionModel(busy)):
             out = asyncio.run(
                 ci.draft_items(["A"], [{"id": "c1", "text": "t"}], deps=_agent_deps(), flex=True)
             )
@@ -3613,7 +3645,7 @@ class TestDraftItems:
             {"feature": "check_items", "task": "check_items", "user_id": None, "course_id": "course-1"},
         ]
 
-    def test_a_run_that_fails_after_billing_still_records_its_usage(self):
+    def test_a_run_that_fails_after_billing_still_records_its_usage(self, monkeypatch):
         """An empty draft list is an output error (items min_length=1, A37):
         pydantic-ai retries it CHECK_ITEM_OUTPUT_RETRIES times and then
         raises. Every one of those requests was billed, so the run lands in
@@ -3650,6 +3682,7 @@ class TestDraftItems:
         async def no_wait(attempt):
             return None
 
+        monkeypatch.setenv("SAPLING_MODEL_CHECK_ITEMS", "gemini-2.5-flash-lite")  # Flex is Gemini's
         calls = []
 
         def busy_then_ok(messages, info):
@@ -3881,6 +3914,7 @@ class TestMcTopUpAgent:
 
         monkeypatch.setattr(ci, "_backoff", no_wait)
         monkeypatch.setattr(ci, "_flex_settings", lambda task="check_items": {"timeout": 123.0})
+        monkeypatch.setenv("SAPLING_MODEL_CHECK_ITEMS", "gemini-2.5-flash-lite")  # Flex is Gemini's
         seen = []
 
         def flaky(messages, info):

@@ -25,12 +25,19 @@ Delivery is at least once. A re-run is safe: `index_document` claims the row
 already has its items. A drafting failure is logged and recorded on the
 document (`documents.check_items_status`) exactly where the in-process path
 records it; the job completes, as `document.process` completes on a
-pipeline failure — the nightly backfill (spec §11.7) drafts what a run left.
+pipeline failure. Nothing schedules a re-run of a `failed` or `unavailable`
+document: `scripts/backfill_check_items.py` (spec §11.7) drafts what a run
+left, run by hand (no job or workflow runs it).
 
 The per-user LLM budget (#119): the work is the uploader's (llm_usage rows are
 attributed to them, `acting_for`), and it is post-response background work, so
-the budget never refuses it (`llm_budget.background_work`) — as in-process,
-where it rides the upload request's own budget decision.
+the token budget never refuses a request mid-run (`llm_budget.background_work`)
+— as in-process, where it rides the upload request's own budget decision. The
+uploader's GENERATION budget (`ai_budget.check(..., "generation")`, a fresh
+read) is asked once per document before its drafting starts, on every path
+(`within_generation_budget`, Z20): a hard-capped student, or an unreadable
+ledger, drafts nothing — the document is indexed, its `pending` mark is taken
+back, and draft on enable claims it once the budget has room.
 
 The loop gate is the uploader's AT RUN TIME too: the job re-reads it
 (`learning_loop_for_uploader`) before drafting, so the env kill switch or the
@@ -51,7 +58,6 @@ and the drafting itself always off the request thread.
 """
 from __future__ import annotations
 
-import contextvars
 import functools
 import logging
 import threading
@@ -202,7 +208,7 @@ def _scan_due(user_id: str, course_id: str) -> bool:
         return True
 
 
-def _within_budget(user_id: str) -> bool:
+def within_generation_budget(user_id: str) -> bool:
     """The student's generation budget has room (the hard level, or a usage
     read that failed, schedules nothing: no evidence of room, no spend)."""
     try:
@@ -218,17 +224,20 @@ def _log_failure(doc_id: str, future: Future) -> None:
         logger.error("check items: draft on enable failed for doc %s", doc_id, exc_info=exc)
 
 
-def _draft_in_process(doc_id: str, user_id: str, course_id: str) -> Future:
+def _draft_in_process(doc_id: str, user_id: str, course_id: str) -> Future | None:
     """The fallback when the queue does not take a document: the same chain,
     on check_item_service's bounded drafting pool (never the request's thread
-    or the event loop); a failure is logged off the pool. A pool the app's
-    shutdown dropped leaves the mark to expire, and the next scan claims the
-    document again."""
-    from services.check_item_service import _draft_pool
+    or the event loop); a failure is logged off the pool. A drafting the app's
+    shutdown dropped has its mark taken back (`shutdown_draft_pool`), and the
+    next scan claims the document again."""
+    from services.check_item_service import clear_drafting, submit_drafting
 
-    future = _draft_pool().submit(
-        contextvars.copy_context().run, _draft_document, doc_id, user_id, course_id,
-    )
+    future = submit_drafting(user_id, doc_id, _draft_document, doc_id, user_id, course_id)
+    if future is None:
+        # Z21: the uploader already holds their places on the pool; the next
+        # scan claims this document again
+        clear_drafting(doc_id)
+        return None
     future.add_done_callback(functools.partial(_log_failure, doc_id))
     return future
 
@@ -251,7 +260,7 @@ def draft_missing_for_course(
     try:
         claimed = claim_undrafted_documents(
             user_id, course_id, limit=ENABLE_MAX_DOCS, offerings=offerings,
-            may_draft=lambda: _within_budget(user_id),
+            may_draft=lambda: within_generation_budget(user_id),
         )
     except _STORE_FAILURES as exc:
         logger.warning("check items: draft on enable could not scan course %s for %s (%s)",

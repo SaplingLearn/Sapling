@@ -31,7 +31,7 @@ from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RunUsage
 
-from agents._providers import AgentTask, model_for, settings_for_slot
+from agents._providers import AgentTask, model_for, settings_for_slot, slot_provider
 from agents.deps import SaplingDeps
 from agents.usage import UnfinishedRun, record_agent_usage
 from learning.checks import CheckItemDraft
@@ -371,14 +371,19 @@ async def run_drafting(
     the drafting agents; check_items_verify for the A119 alignment check).
     `flex=True` (background prefill) runs on the Flex tier and repeats the SAME
     run on a 429/503, up to CHECK_ITEM_FLEX_RETRIES times; `flex=False` runs
-    once on the standard tier. Returns the run's output; any failure returns
+    once on the standard tier. Flex is a Gemini tier: on a claude-* slot there
+    is no Flex throttling to ride out, so the run is made once (the model's own
+    #119 retries are the whole budget; a second retry loop here would only
+    multiply one throttled call's failures into the provider breaker every
+    interactive slot shares). Returns the run's output; any failure returns
     CheckItemsUnavailable — never raises — and records in llm_usage (`task`,
     `feature`) whatever the provider billed before it. Shared by draft_items,
     the A37 top-up and the A119 verifier. `model` (spec §13 A145) runs the
     agent on another slot's model — the quiz's checks, on `quiz_check` — and
     is passed to the run only when given, so every other run is unchanged."""
     settings = _flex_settings(task) if flex else None
-    attempts = CHECK_ITEM_FLEX_RETRIES + 1 if flex else 1
+    on_flex = flex and slot_provider(task) == "google"
+    attempts = CHECK_ITEM_FLEX_RETRIES + 1 if on_flex else 1
     extra = {} if model is None else {"model": model}
     for attempt in range(1, attempts + 1):
         usage = RunUsage()  # passed in, so a run that raises still says what it cost
