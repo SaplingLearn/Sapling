@@ -18,7 +18,7 @@ import {
   type StreamChatHandlers,
 } from "@/lib/api";
 import { readableError } from "@/lib/errorMessage";
-import { crisisSupportIn, type CrisisSupport } from "@/lib/crisisSupport";
+import { crisisSupportIn, type CrisisSupport, type WithCrisisSupport } from "@/lib/crisisSupport";
 
 /** The tutor mode a "why was I wrong" question wants. */
 export const TUTOR_MODE = "socratic";
@@ -30,14 +30,26 @@ export const ABORTED = Symbol("aborted");
  * docs/safety/crisis-support.md: the backend answered with the crisis-support
  * card instead of a session or a reply. The panel shows the card in the
  * thread; no session was opened and nothing of the turn was recorded.
+ *
+ * Or (#866 K12) the card came BESIDE a reply (`crisis_support_alongside`): the
+ * phrase was in the quiz question the first message quotes, not the student's
+ * own words, so the tutor answered too. `reply` is that answer.
  */
 export interface CrisisAnswer {
   crisis: CrisisSupport;
+  reply?: string;
 }
 
 function crisisAnswer(response: unknown): CrisisAnswer | null {
   const crisis = crisisSupportIn(response);
   return crisis ? { crisis } : null;
+}
+
+/** A chat turn's answer: the reply, or the card instead of it, or both. */
+function turnAnswer(res: { reply?: string } & WithCrisisSupport): string | CrisisAnswer {
+  const crisis = crisisSupportIn(res);
+  if (!crisis) return res.reply || "";
+  return res.crisis_support_alongside ? { crisis, reply: res.reply || "" } : { crisis };
 }
 
 /**
@@ -133,6 +145,8 @@ export interface ChatLeg {
   turnId: string;
   signal: AbortSignal;
   progress: TurnProgress;
+  /** The quiz question the message quotes: the seed turn's (#866 K12). */
+  quote?: QuizAskOrigin;
 }
 
 /**
@@ -149,7 +163,7 @@ export interface ChatLeg {
  * `BudgetPausedError`, never a JSON retry the budget would refuse again.
  */
 export async function chatWithFallback(
-  { sid, userId, message, turnId, signal, progress }: ChatLeg,
+  { sid, userId, message, turnId, signal, progress, quote }: ChatLeg,
   { onToken, onProgress, onRetract, onBudget }: Pick<StreamChatHandlers, "onToken" | "onProgress" | "onRetract" | "onBudget">,
   beforeFallback: () => void,
 ): Promise<string | typeof ABORTED | CrisisAnswer> {
@@ -166,16 +180,16 @@ export async function chatWithFallback(
         onBudget?.(notice);
       },
       signal,
-    }, turnId);
-    return crisisAnswer(res) ?? (res.reply || "");
+    }, turnId, quote);
+    return turnAnswer(res);
   } catch (err) {
     if (signal.aborted) return ABORTED;
     // the paused stream's end (no reply, no token): the pause, not a JSON retry
     if (progress.budget && !progress.sawToken && !budgetPauseOf(err)) throw new BudgetPausedError(progress.budget);
     if (progress.sawToken || !shouldFallBackToJson(err)) throw err;
     beforeFallback();
-    const res = await sendChat(sid, userId, message, TUTOR_MODE, true, undefined, turnId);
-    return crisisAnswer(res) ?? (res.reply || "");
+    const res = await sendChat(sid, userId, message, TUTOR_MODE, true, undefined, turnId, quote);
+    return turnAnswer(res);
   }
 }
 

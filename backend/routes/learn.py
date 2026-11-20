@@ -22,6 +22,7 @@ from services import crisis_support
 from models import StartSessionBody, ChatBody, EndSessionBody, ActionBody, ModeSwitchBody, RenameSessionBody
 from routes._docs import same_doc
 from services.auth_guard import get_session_user_id
+from services.quiz_ask import quoted_question_texts
 
 # ── Re-exports: every name that moved out of this file (#118) ────────────────
 from services.tutor.course import (  # noqa: F401  (re-export, #118)
@@ -144,6 +145,18 @@ async def _loop_for_async(user_id: str | None, name: str, request: Request):
     return await run_in_threadpool(_loop_for, user_id, name, request)
 
 
+def _quoting(body: ChatBody) -> dict:
+    """What a chat turn quotes, for its crisis screen (#866 K12): the quiz
+    question the Ask panel's first message names, read off the student's own
+    attempt (services/quiz_ask.py) on a match only; a Retry re-sends the same
+    message, so its card's event is recorded once a day per question."""
+    question = (body.quiz_attempt_id, body.quiz_question_index)
+    return {
+        "quoted": lambda: quoted_question_texts(body),
+        "once_a_day": ("quiz_ask", *question) if body.quiz_attempt_id else None,
+    }
+
+
 def _session_user_or_none(request: Request) -> str | None:
     try:
         return get_session_user_id(request)
@@ -178,20 +191,34 @@ async def start_session(body: StartSessionBody, request: Request):
 @same_doc(tutor_service.chat)
 async def chat(body: ChatBody, request: Request):
     # docs/safety/crisis-support.md: first, before every limit and budget; nothing of the turn is written
-    if crisis := await crisis_support.screen_async(request, body.user_id, "tutor_chat", body.message):
-        return crisis_support.turn_json(crisis)
-    return await tutor_service.chat(body, request, loop_handler=await _loop_for_async(body.user_id, "chat", request))
+    screened = await crisis_support.screen_quoting_async(
+        request, body.user_id, "tutor_chat", body.message, **_quoting(body),
+    )
+    if screened is not None and not isinstance(screened, crisis_support.ContentScreen):
+        return crisis_support.turn_json(screened)
+    turn = tutor_service.chat(body, request, loop_handler=await _loop_for_async(body.user_id, "chat", request))
+    if screened is not None:
+        # ...unless what matched is the quiz question the turn quotes (#866 K12): the card beside the reply
+        return await crisis_support.alongside(screened, turn)
+    return await turn
 
 
 @router.post("/chat/stream")
 @same_doc(tutor_service.chat_stream)
 async def chat_stream(body: ChatBody, request: Request):
     # docs/safety/crisis-support.md: first, before every limit and budget; nothing of the turn is written
-    if crisis := await crisis_support.screen_async(request, body.user_id, "tutor_chat", body.message):
-        return crisis_support.sse_response(crisis, request)
-    return await tutor_service.chat_stream(
+    screened = await crisis_support.screen_quoting_async(
+        request, body.user_id, "tutor_chat", body.message, **_quoting(body),
+    )
+    if screened is not None and not isinstance(screened, crisis_support.ContentScreen):
+        return crisis_support.sse_response(screened, request)
+    turn = tutor_service.chat_stream(
         body, request, loop_handler=await _loop_for_async(body.user_id, "chat_stream", request)
     )
+    if screened is not None:
+        # ...unless what matched is the quiz question the turn quotes (#866 K12): the card in `done`
+        return await crisis_support.alongside(screened, turn)
+    return await turn
 
 
 @router.post("/start-session/stream")

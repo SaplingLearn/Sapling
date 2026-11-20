@@ -282,6 +282,43 @@ async def screen_tutor_start_async(
     return support if version is None else ContentScreen(request, support)
 
 
+async def screen_quoting_async(
+    request: Request, user_id: str | None, surface: Surface, message: str | None,
+    *, quoted: Callable[[], Awaitable[list[str]]], once_a_day: tuple[Any, ...] | None = None,
+) -> CrisisSupport | ContentScreen | None:
+    """`screen_async` for a typed message that may QUOTE the student's stored
+    material (#866 K12: the quiz Ask panel's first message quotes the quiz
+    question, its explanation and the answer the student recorded): None to
+    carry on as before, a `CrisisSupport` to answer INSTEAD of the turn, or a
+    `ContentScreen` to run it with the card beside it (`alongside`).
+
+    `quoted()` — awaited on a match only, after the caller is authenticated
+    and the flag is on — answers the stored texts the message may quote, read
+    by the caller off the student's own records, never taken from the client.
+    Each one found in the message is stored material, screened as such (the
+    card beside the answer); the rest of the message, with a sentence break
+    where each quote was so no phrase spans one, is typed and blocks like any
+    typed message. A quote found nowhere leaves the message typed, as before.
+    The whole message's match decides nothing alone: a first-person frame
+    around a quoted word ("I chose B: suicide") is not the student speaking.
+    `once_a_day` names the material, for a client that re-sends it (Retry):
+    the card goes beside every answer and its event is recorded once a day."""
+    _check_surface(surface)
+    if await _match_async(request, user_id, (message,)) is None:
+        return None
+    if not await asyncio.to_thread(flag_on, FLAG, user_id):
+        return None
+    stored = sorted({t for t in await quoted() if t and t in (message or "")}, key=len, reverse=True)
+    typed = message or ""
+    for text in stored:  # longest first: a quote inside a longer one goes with it
+        typed = typed.replace(text, "\n.\n")
+    if crisis := await _screen_async(request, user_id, surface, (typed,)):
+        return crisis
+    return ContentScreen(
+        request, await _screen_async(request, user_id, surface, tuple(stored), once_a_day=once_a_day),
+    )
+
+
 def _check_surface(surface: str) -> None:
     if surface not in SURFACES:
         raise ValueError(f"unknown crisis-support surface {surface!r}")

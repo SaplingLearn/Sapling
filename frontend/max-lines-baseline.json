@@ -13,7 +13,7 @@
     "src/components/screens/Learn.tsx": 2154,
     "src/components/screens/Settings.tsx": 1127,
     "src/components/screens/Social.tsx": 1506,
-    "src/lib/api.ts": 2189,
+    "src/lib/api.ts": 2186,
     "src/lib/graph/radialLayout.ts": 1022,
     "src/lib/types.ts": 873
   }

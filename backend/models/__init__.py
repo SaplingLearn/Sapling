@@ -109,6 +109,20 @@ class ChatBody(BaseModel):
     # stored reply instead of running the turn twice. Optional: without it a
     # turn is not deduplicated across requests.
     turn_id: Optional[str] = Field(default=None, pattern=r"^[A-Za-z0-9_\-]{8,128}$")
+    # #866 K12 (docs/safety/crisis-support.md): the quiz Ask panel's first
+    # message QUOTES one quiz question (its stem, options, key and explanation,
+    # and the student's recorded answer), named as on the session start. The
+    # server reads that question off the student's own attempt; only text found
+    # there is screened as stored material (the card beside the reply). Never
+    # trusted on its own: everything else in the message is screened as typed.
+    quiz_attempt_id: Optional[Id] = None
+    quiz_question_index: Optional[int] = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def _quotes_a_whole_question(self) -> "ChatBody":
+        if (self.quiz_attempt_id is None) != (self.quiz_question_index is None):
+            raise ValueError("a quoted quiz question names its quiz_attempt_id and quiz_question_index")
+        return self
 
 
 class EndSessionBody(BaseModel):

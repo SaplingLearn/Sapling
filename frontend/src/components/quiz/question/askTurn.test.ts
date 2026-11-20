@@ -105,6 +105,7 @@ describe("chatWithFallback", () => {
     expect(api.streamChat).toHaveBeenCalledWith(
       "s1", "u", "Why?", "socratic", true, undefined,
       { onToken, onProgress, onRetract: undefined, onBudget: expect.any(Function), signal: l.signal }, "turn-1",
+      undefined, // a follow-up quotes no quiz question (#866 K12)
     );
   });
 
@@ -204,7 +205,26 @@ describe("chatWithFallback", () => {
       chatWithFallback(leg(), {}, () => order.push("beforeFallback")),
     ).resolves.toBe("");
     expect(order).toEqual(["beforeFallback", "sendChat"]);
-    expect(api.sendChat).toHaveBeenCalledWith("s1", "u", "Why?", "socratic", true, undefined, "turn-1");
+    expect(api.sendChat).toHaveBeenCalledWith("s1", "u", "Why?", "socratic", true, undefined, "turn-1", undefined);
+  });
+
+  it("names the quiz question the message quotes on both legs (#866 K12)", async () => {
+    const quote = { attemptId: "a1", questionIndex: 2 };
+    api.streamChat.mockRejectedValueOnce(new Error("stream died"));
+    api.sendChat.mockResolvedValueOnce({ reply: "Because." });
+    await expect(chatWithFallback(leg({ quote }), {}, vi.fn())).resolves.toBe("Because.");
+    expect(api.streamChat.mock.calls[0][8]).toEqual(quote);
+    expect(api.sendChat.mock.calls[0][7]).toEqual(quote);
+  });
+
+  it("a card beside the reply keeps the reply; a card instead of one has none (#866 K12)", async () => {
+    api.streamChat.mockResolvedValueOnce({ reply: "Because.", crisis_support: crisisFixture, crisis_support_alongside: true });
+    const beside = await chatWithFallback(leg(), {}, vi.fn());
+    expect(beside).toMatchObject({ reply: "Because.", crisis: { title: crisisFixture.title } });
+    api.streamChat.mockResolvedValueOnce({ reply: "the card as text", crisis_support: crisisFixture });
+    const instead = await chatWithFallback(leg(), {}, vi.fn());
+    expect(instead).toMatchObject({ crisis: { title: crisisFixture.title } });
+    expect(instead).not.toHaveProperty("reply");
   });
 });
 

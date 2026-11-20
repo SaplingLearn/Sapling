@@ -21,6 +21,7 @@ import type { WithCrisisSupport } from '@/lib/crisisSupport';
 import { createStreamPacer, type StreamPacer } from '@/lib/streamPacer';
 import { REAUTH_REQUIRED, isReauthRequired, notifyReauthRequired } from '@/lib/reauth';
 import { ApiError, apiErrorOf, errorFieldsFrom, parseErrorBody } from '@/lib/apiError';
+import { askOriginFields, quotedQuestionFields, type AskOrigin, type QuizAskOrigin } from '@/lib/askOrigin';
 
 export const API_URL = '';
 
@@ -247,29 +248,9 @@ export const deleteGraphNode = (userId: string, nodeId: string) =>
 // Learn
 export type ModelPref = 'smart' | 'fast';
 
-/**
- * PKG-14 (spec §13 A99): a session opened ABOUT one quiz question (the quiz's
- * "Ask about this" panel). The question is named by its attempt and index; the
- * server resolves its identity from the attempt row and records the help, so
- * quiz evidence on that question earns no unassisted credit. On the loop path
- * the session starts teaching the quiz's concept (no probe).
- */
-export interface QuizAskOrigin {
-  attemptId: string;
-  questionIndex: number;
-}
-
-/** #866 audit K01: a study guide's "Ask the tutor" (the rail's question box,
- *  a concept map's Ask). On the loop path the session skips the check-in and
- *  the plan and answers the question from the first turn, as a quiz ask does;
- *  the legacy path ignores it. */
-export type GuideAskOrigin = { guide: true };
-/** Where a tutor session was opened from, when it is not the Tutor itself. */
-export type AskOrigin = QuizAskOrigin | GuideAskOrigin;
-
-const askOriginFields = (origin?: AskOrigin) =>
-  !origin ? {} : 'guide' in origin ? { origin: 'guide_ask' as const }
-    : { origin: 'quiz_ask' as const, quiz_attempt_id: origin.attemptId, quiz_question_index: origin.questionIndex };
+// A session's origin (the quiz's and a study guide's Ask) and a chat turn's
+// quoted quiz question: their types and request fields live in ./askOrigin.
+export type { AskOrigin, GuideAskOrigin, QuizAskOrigin } from './askOrigin';
 
 export const startSession = (
   userId: string,
@@ -318,6 +299,8 @@ export const sendChat = (
   useSharedContext = true,
   modelPref?: ModelPref,
   turnId?: string,
+  /** The quiz question this message quotes (the Ask panel's first message, #866 K12). */
+  quote?: QuizAskOrigin,
 ) =>
   fetchJSON<{ reply: string; graph_update: any; mastery_changes: any[]; replayed?: boolean } & WithCrisisSupport>('/api/learn/chat', {
     method: 'POST',
@@ -329,6 +312,7 @@ export const sendChat = (
       use_shared_context: useSharedContext,
       ...(modelPref ? { model_pref: modelPref } : {}),
       ...(turnId ? { turn_id: turnId } : {}),
+      ...quotedQuestionFields(quote),
     }),
   });
 
@@ -524,6 +508,8 @@ export const streamChat = (
   modelPref?: ModelPref,
   handlers: StreamChatHandlers = {},
   turnId?: string,
+  /** The quiz question this message quotes (the Ask panel's first message, #866 K12). */
+  quote?: QuizAskOrigin,
 ): Promise<ChatResult> => {
   return consumeChatStream(
     '/api/learn/chat/stream',
@@ -535,6 +521,7 @@ export const streamChat = (
       use_shared_context: useSharedContext,
       ...(modelPref ? { model_pref: modelPref } : {}),
       ...(turnId ? { turn_id: turnId } : {}),
+      ...quotedQuestionFields(quote),
     },
     handlers,
   );
