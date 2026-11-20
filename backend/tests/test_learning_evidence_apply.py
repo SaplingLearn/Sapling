@@ -745,7 +745,10 @@ class TestApplyEvidence:
         assert set(first) == set(rows[1]), "every evidence row names the same columns"
         assert first["node_id"] == "n1" and first["channel"] == "free_response"
         assert first["correct"] is True and first["weight"] == 1.0
-        assert first["delta"] == pytest.approx(first["p_after"] - first["p_before"])
+        # #866 K19: the journal's delta is the change the mastery mirror made
+        # (n1 was stored at 0.5), not p_after - p_before (from the 0.35 prior)
+        assert first["delta"] == pytest.approx(first["p_after"] - 0.5)
+        assert rows[1]["delta"] == pytest.approx(rows[1]["p_after"] - first["p_after"])
         assert first["reason"] == "evidence:free_response"
         assert first["created_at"] == NOW.isoformat()
         assert first["check_item_id"] == "ci1" and first["confidence"] == 0.9
@@ -771,6 +774,28 @@ class TestApplyEvidence:
         assert upd["mastery_score"] == pytest.approx(row["p_after"])
         assert upd["mastery_tier"] == bkt.tier_for(row["p_after"])
         assert upd["times_studied"] == 2 and _ISO.fullmatch(upd["last_studied_at"])
+
+    def test_journal_delta_is_the_change_from_the_mastery_the_screens_showed(self):
+        """#866 K19: week_delta and the mastery events sum the journal's delta, so
+        it measures from the stored mirror the student saw: 0.0 on a concept the
+        map showed unstudied (not the 0.35 prior), and the undecayed score of a
+        concept whose estimate decayed (not the decayed p_before)."""
+        nodes = [dict(NODES[0], mastery_score=0.0), *NODES[1:]]
+        _, mocks, _ = _apply(
+            {"evidence": [{"node_id": "n1", "channel": "mc", "correct": True}]},
+            nodes=nodes, edges=[],
+        )
+        [row] = _event_rows(mocks)
+        assert row["p_before"] == pytest.approx(BKT_L0)
+        assert row["delta"] == pytest.approx(row["p_after"])
+        decayed = [dict(NODES[0], mastery_score=1.0), *NODES[1:]]
+        _, mocks, _ = _apply(
+            {"evidence": [{"node_id": "n1", "channel": "mc", "correct": True}]},
+            nodes=decayed, edges=[], states=[_state_row(node_id="n1", p_known=1.0)],
+        )
+        [row] = _event_rows(mocks)
+        assert row["p_before"] < 1.0 and row["p_after"] < 1.0
+        assert row["delta"] == pytest.approx(row["p_after"] - 1.0) and row["delta"] < 0
 
     def test_second_evidence_on_same_node_sees_first_posterior(self):
         _, mocks, _ = _apply(

@@ -317,21 +317,24 @@ def _help_floor(user_id: str, evidence: list[dict]) -> list[dict]:
     return evidence
 
 
-def _mastery_span(applied, default_before: float) -> tuple[float, float]:
-    """PKG-11: (first before, last after) over the changes the graph reported.
+def _mastery_span(applied, shown_before: float) -> tuple[float, float]:
+    """PKG-11: (before, last after) over the changes the graph reported.
 
     The loop path applies one evidence per question, so the attempt's
-    before/after snapshot spans the whole sequence. An unrecognisable
-    return degrades to "no change", as the legacy reduction does.
+    after is the last change's. "Before" is the mastery the screens showed
+    (the node's stored score), never the graph's first `before`: that is
+    the BKT p_before — the prior of an unmeasured concept or a decayed
+    estimate — which no screen showed (#866 K19; the study guide's answer
+    does the same). An unrecognisable return degrades to "no change", as
+    the legacy reduction does.
     """
     recognised = [
         c for c in (applied or [])
         if isinstance(c, dict) and c.get("after") is not None
     ]
     if not recognised:
-        return default_before, default_before
-    before = recognised[0].get("before", default_before)
-    return before, recognised[-1]["after"]
+        return shown_before, shown_before
+    return shown_before, recognised[-1]["after"]
 
 
 def _grade_submission(

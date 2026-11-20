@@ -1146,8 +1146,13 @@ def _calculate_evidence(user_id: str, evidences: list[Evidence], prepared, reten
         # A tagged grade needs durable readiness provenance before any scalar
         # or mirrored BKT mutation. A failed append cannot silently lose it.
         reason = f"evidence:{ev.channel}:idk" if ev.idk else f"evidence:{ev.channel}"
+        # #866 K19: `delta` (summed into week_delta and the mastery events) is
+        # the change the mastery mirror makes — from the score the screens
+        # showed, never from p_before (the prior of an unmeasured concept, or a
+        # decayed estimate no screen showed). p_before/p_after keep the BKT step.
+        shown_before = bkt.stored_score(row.get("mastery_score"))
         event_row = {
-            "id": prepared.event_id(seq), "node_id": row["id"], "delta": p_after - p_before,
+            "id": prepared.event_id(seq), "node_id": row["id"], "delta": p_after - shown_before,
             "reason": reason, "created_at": now_iso, "event_type": EVIDENCE_EVENT_TYPE,
             "channel": ev.channel, "correct": ev.correct, "weight": w,
             "assisted": ev.assisted, "max_rung": ev.max_rung,

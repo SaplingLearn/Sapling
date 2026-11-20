@@ -115,6 +115,23 @@ def test_submit_reports_p_delta_not_the_legacy_key():
     assert payload["p_delta"] == pytest.approx(0.01)
 
 
+def test_before_and_p_delta_start_from_the_mastery_the_screens_showed():
+    """#866 K19: the graph's change starts at the BKT p_before (the 0.35 prior of
+    an unmeasured concept, or a decayed estimate), but the student saw the stored
+    mastery (0.5 here). 'Before' and p_delta are measured from that, so '35% ->
+    97%' never reads on a concept the map showed at 50%."""
+    apply_mock = MagicMock(return_value=[{"before": 0.35, "after": 0.6}, {"before": 0.6, "after": 0.7}])
+    r, log_event = _submit(
+        apply_mock,
+        answers=[{"question_id": 1, "selected_label": "A"}, {"question_id": 2, "selected_label": "C"}],
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["mastery_before"] == pytest.approx(0.5)  # the node's stored score
+    assert body["mastery_after"] == pytest.approx(0.7)
+    assert body["p_delta"] == pytest.approx(0.2)
+
+
 # ── owner decision 2 (spec §13 A94, tightened by A100): quiz farming ─────────
 
 
