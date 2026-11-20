@@ -190,6 +190,23 @@ def test_a_void_of_the_only_answer_puts_a_stored_score_back(monkeypatch):
     assert db.journal[-1]["p_before"] == 0.82
 
 
+def test_a_void_of_the_only_answer_puts_a_never_studied_concept_back_off_the_map(monkeypatch):
+    """K22 on the void path: n-c and its prerequisite n-b were never studied
+    (map score 0). The only answer, a correct one on n-c, is voided: both are
+    back at 0, 'unexplored', and n-c's state is its starting state, as if the
+    answer had never been given."""
+    ops = [(3600.0, None, [_check("n-c", "q-broken", correct=True)])]
+    db, _ = run(monkeypatch, ops)
+    assert db.journal[0]["seeds"] == {"n-c": 0.0, "n-b": 0.0}
+    assert db.nodes["n-c"]["mastery_score"] > 0.0  # the answer put it on the map
+    db.retire(COURSE, "q-broken")
+    _void(qh="q-broken")
+    assert {k: db.state(USER, "n-c")[k] for k in PRIOR} == _start("n-c", 0.0)
+    for node in ("n-c", "n-b"):
+        assert db.nodes[node]["mastery_score"] == 0.0, node
+        assert db.nodes[node]["mastery_tier"] == "unexplored", node
+
+
 def test_the_writer_journals_each_starting_score_once(monkeypatch):
     """The first row to reach a node with no learner_state row carries its
     score (0 for a never-studied concept), own node or propagated neighbour;
