@@ -1620,14 +1620,30 @@ def test_plan_approve_accepts_a_reorder(probe):
     assert probe.store["doc"]["concept"] == "N2"
 
 
-@pytest.mark.parametrize("ids", [["ZZ"], [], ["R1", "R1"]])
-def test_plan_approve_rejects_ids_outside_proposal_and_empty(probe, ids):
+@pytest.mark.parametrize("ids", [[], ["R1", "R1"]])
+def test_plan_approve_rejects_empty_and_repeated_ids(probe, ids):
     _planning(probe, proposed=["R1", "N1"])
     r = client.post(
         f"{LOOP}/plan/approve", json={"session_id": "s1", "user_id": UID, "concept_ids": ids}
     )
     assert r.status_code == 422
     assert not _learn_events(probe) and probe.store["doc"]["phase"] == "plan"
+
+
+@pytest.mark.parametrize("ids", [["ZZ"], ["R1", "ZZ"]])
+def test_plan_approve_of_a_replaced_proposal_is_a_conflict_the_client_reloads(probe, ids):
+    """#866 K27: every GET /plan stores the proposal it shows, so another tab's
+    read can replace the one this client shows. Approving the old one is a 409
+    (the plan changed — the client re-reads it), never a 422 it can only
+    repeat; nothing is approved."""
+    _planning(probe, proposed=["R1", "N1"])
+    r = client.post(
+        f"{LOOP}/plan/approve", json={"session_id": "s1", "user_id": UID, "concept_ids": ids}
+    )
+    assert r.status_code == 409
+    assert r.json()["detail"] == "The plan changed; review the current plan"
+    assert not _learn_events(probe) and probe.store["doc"]["phase"] == "plan"
+    assert "approved" not in probe.store["doc"]["plan"]
 
 
 def test_plan_approve_wrong_phase_is_409(probe):
@@ -1846,7 +1862,7 @@ def test_plan_approve_rejected_stores_no_brief(probe):
             f"{LOOP}/plan/approve",
             json={"session_id": "s1", "user_id": UID, "concept_ids": ["ZZ"]},
         )
-    assert r.status_code == 422
+    assert r.status_code == 409  # #866 K27: not in the stored proposal
     store.assert_not_called()
 
 

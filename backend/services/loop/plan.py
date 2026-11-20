@@ -39,6 +39,9 @@ from services.loop.pose import _NO_POSE, _pose_prequestion, _posed_prequestion
 #: mirror and the tests key on this logger name).
 logger = logging.getLogger("routes.learn_loop")
 
+#: /plan/approve of concepts the stored proposal no longer holds (#866 K27).
+_PLAN_CHANGED = "The plan changed; review the current plan"
+
 
 def _goal_reason(node_id: str, scope: frozenset[str] | None, targets: frozenset[str]) -> dict:
     """`reason`: why a goal session plans the concept — the goal itself or a
@@ -138,10 +141,14 @@ def plan_approve(body: PlanApproveBody, request: Request) -> dict:
             if _goal_practice_unavailable(body.user_id, course_id, doc, chosen):
                 raise HTTPException(status_code=409, detail="Fresh practice is unavailable; review the current plan")
         proposed = plan_doc.get("proposed") or []
-        if len(set(chosen)) != len(chosen) or not set(chosen) <= set(proposed):
+        if len(set(chosen)) != len(chosen):
             raise HTTPException(
                 status_code=422, detail="concept_ids must be distinct ids from the proposed plan"
             )
+        if not set(chosen) <= set(proposed):
+            # #866 K27: every GET /plan stores the proposal it shows, so another
+            # tab's read may have replaced this one: the client re-reads the plan
+            raise HTTPException(status_code=409, detail=_PLAN_CHANGED)
         kinds = plan_doc.get("proposed_kinds") or {}
         lead = 0
         while lead < len(chosen) and kinds.get(chosen[lead]) == "review":
