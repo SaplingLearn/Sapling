@@ -89,6 +89,7 @@ from services.check_item_service import (
     get_check_item,
     item_rows_for,
     items_by_ids,
+    ItemAuditUnfinished,
     key_status,
     record_item_audit,
     relint_course_item,
@@ -365,10 +366,14 @@ def audit(item_id: str, body: AuditBody, request: Request) -> dict:
     holds = body.verdict != "correct"
     try:
         status = record_item_audit(item, body.verdict, auditor=admin)
+    except ItemAuditUnfinished as exc:
+        logger.warning("check item audit unfinished (item %s)", item.id, exc_info=True)
+        # the verdict row stands, the item's rows may not: logged, unfinished
+        _audit_log(admin, "audit", item_id, item, verdict=body.verdict, key_status=exc.key_status,
+                   held=holds, finished=False)
+        raise HTTPException(status_code=503, detail="Verdict not recorded; try again.") from None
     except Exception:
         logger.warning("check item audit not recorded (item %s)", item.id, exc_info=True)
-        # the verdict row is written before the item's rows: it may stand
-        _audit_log(admin, "audit", item_id, item, verdict=body.verdict, held=holds, finished=False)
         raise HTTPException(status_code=503, detail="Verdict not recorded; try again.") from None
     _audit_log(
         admin, "audit", item_id, item, verdict=body.verdict, key_status=status, held=holds, finished=True

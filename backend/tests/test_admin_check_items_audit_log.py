@@ -20,6 +20,7 @@ from fastapi.testclient import TestClient
 
 from learning import item_reports
 from services.check_item_service import RetireOutcome
+from tests.test_learning_item_keys import _AuditTables
 from tests.test_learning_item_quality import _stored
 
 ADMIN = "/api/admin/check-items"
@@ -136,17 +137,59 @@ def test_an_audit_verdict_is_in_the_audit_log(client, monkeypatch, verdict, stat
     assert client.audit == [_row("audit", verdict=verdict, key_status=status, held=held, finished=True)]
 
 
-def test_an_audit_verdict_not_recorded_is_in_the_audit_log_unfinished(client, monkeypatch):
-    """record_item_audit writes the verdict, then the item's rows: a failure
-    between them can leave the verdict recorded, so the attempt is logged."""
-    import routes.admin_check_items as admin
+class _FailingAuditTables(_AuditTables):
+    """The real record_item_audit's tables, failing at one call: `fail_at` is
+    ("select" | "upsert" | "update", table name)."""
 
-    def down(item, v, *, auditor):
-        raise RuntimeError("down")
+    def __init__(self, fail_at):
+        super().__init__()
+        self.fail_at = fail_at
 
-    monkeypatch.setattr(admin, "record_item_audit", down)
+    def __call__(self, name):
+        inner = super().__call__(name)
+        rec = self
+
+        class _T:
+            def __getattr__(self, verb):
+                def call(*a, **k):
+                    if (verb, name) == rec.fail_at:
+                        raise RuntimeError("down")
+                    return getattr(inner, verb)(*a, **k)
+
+                return call
+
+        return _T()
+
+
+@pytest.mark.parametrize(
+    "fail_at",
+    [("select", "check_item_audits"), ("upsert", "check_item_audits")],
+)
+def test_an_audit_verdict_the_store_did_not_record_writes_no_audit_row(client, monkeypatch, fail_at):
+    """A failure before the verdict row is written (its first read, the
+    upsert itself) recorded nothing: 503 and no audit-log row, so the log
+    never shows a hold that did not happen (#866 K59 review)."""
+    from services import check_item_service as svc
+
+    tables = _FailingAuditTables(fail_at)
+    monkeypatch.setattr(svc, "table", tables)
     assert client.post(f"{ADMIN}/i1/audit", json={"verdict": "ambiguous"}).status_code == 503
-    assert client.audit == [_row("audit", verdict="ambiguous", held=True, finished=False)]
+    assert not [c for c in tables.calls if c[0] in ("upsert", "update")]  # nothing written
+    assert client.audit == []
+
+
+def test_an_audit_verdict_recorded_but_not_applied_is_in_the_audit_log_unfinished(client, monkeypatch):
+    """record_item_audit writes the verdict, then the item's rows: a failure
+    on the item's rows leaves the verdict recorded, so the attempt is logged
+    unfinished, with the key status the verdict row carries."""
+    from services import check_item_service as svc
+
+    tables = _FailingAuditTables(("update", "check_items"))
+    monkeypatch.setattr(svc, "table", tables)
+    assert client.post(f"{ADMIN}/i1/audit", json={"verdict": "ambiguous"}).status_code == 503
+    assert [c[0] for c in tables.calls if c[1] == "check_item_audits"] == ["select", "upsert"]
+    status = svc.key_status(_stored("qh-1", id="i1"))
+    assert client.audit == [_row("audit", verdict="ambiguous", key_status=status, held=True, finished=False)]
 
 
 def test_the_audit_log_carries_no_question_text(client, monkeypatch):
