@@ -309,6 +309,11 @@ readiness record before merging. The ordered lists:
   `misconception_record`; either side of the code). Rolling back while a
   multi-concept grade checkpoint is in flight cannot replay it as written:
   roll forward, or drain checkpoints first.
+- **PR #866 review fixes:**
+  `backend/db/migrations/20261120055517_learning_check_items_question_hash.sql`
+  (Z36: an index led by `check_items.question_hash`, which the served-text
+  scan's read by hash needs; either side of the code; lock_timeout 5s, safe
+  to run again).
 
 Exact wording, the consequences of a wrong order and the rollback notes for
 each are in the readiness record's rollout sections. The data model each
