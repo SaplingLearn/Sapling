@@ -1439,11 +1439,16 @@ test("an answer waits for an earned hint in flight, and a graded check shows no 
     const delivered = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/learn/loop/action");
     release();
     await (await delivered).finished();
+    // The hint lands on the check it was earned for, while that check is open.
+    await expect(page.getByTestId("loop-check-prompt")).toBeVisible();
+    await expect(page.getByTestId("loop-hint-reply")).toBeVisible();
     await expect(page.getByTestId("loop-attempt-idk")).toBeEnabled();
     await page.getByTestId("loop-attempt-idk").click();
     await expect(page.getByTestId("loop-phase")).toHaveAttribute("data-phase", "feedback");
     await expect(page.getByTestId("loop-continue")).toBeVisible();
+    // The graded check is closed for good: neither it nor its hint comes back.
     await expect(page.getByTestId("loop-check-prompt")).toHaveCount(0);
+    await expect(page.getByTestId("loop-hint-reply")).toHaveCount(0);
   } finally {
     release();
     await context.close();
