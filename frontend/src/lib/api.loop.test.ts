@@ -69,14 +69,16 @@ describe('loop JSON clients (routes/learn_loop.py shapes; no model_pref, spec §
   it('listLoopSessionsFor passes ?resume= and returns the named session with its course', async () => {
     const sessions = [{ session_id: 's1', topic: 't', started_at: '2026-09-20T10:00:00Z', phase: 'teach' }];
     const resume = { session_id: 's9', topic: 'x', started_at: '2026-09-01T10:00:00Z', phase: 'check', course_id: 'c2' };
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(json({ sessions, resume }));
-    await expect(listLoopSessionsFor('u', 'c1', 's9')).resolves.toEqual({ sessions, resume });
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(json({ sessions, resume, complete: false }));
+    // #866 K29: `complete` false — the course has open sessions past the list
+    await expect(listLoopSessionsFor('u', 'c1', 's9')).resolves.toEqual({ sessions, resume, complete: false });
     expect(urlOf()).toContain('/api/learn/loop/sessions?user_id=u&course_id=c1&resume=s9');
   });
 
   it('listLoopSessionsFor without a resume id sends none and reads resume as null', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(json({ sessions: [] }));
-    await expect(listLoopSessionsFor('u', 'c1', null)).resolves.toEqual({ sessions: [], resume: null });
+    // a server before #866 K29 sends no `complete`: its list is read as the whole set
+    await expect(listLoopSessionsFor('u', 'c1', null)).resolves.toEqual({ sessions: [], resume: null, complete: true });
     expect(urlOf()).not.toContain('resume=');
   });
 
