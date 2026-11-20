@@ -338,6 +338,67 @@ def test_a_question_asked_about_earns_no_unassisted_credit_end_to_end():
     assert Evidence(**ev).weight == 0.0
 
 
+def test_an_ask_opened_after_the_answer_was_recorded_does_not_floor_it():
+    """#866 K20: 'Ask about this' appears only once an answer is recorded and
+    locked, so its help row always postdates the answer. The help floor reads
+    the ledger only up to each recorded answer's answered_at."""
+    from services.quiz.submission import _help_floor
+    from datetime import datetime, timezone
+
+    when = datetime(2026, 11, 18, 12, 0, tzinfo=timezone.utc)
+    calls = []
+
+    def fake(user_id, hashes, before=None):
+        calls.append(before)
+        return {h: 0 for h in hashes}
+
+    evs = [{"question_hash": "h1"}, {"question_hash": "h2"}]
+    with patch_quiz("max_help_many", side_effect=fake):
+        out = _help_floor("user_andres", evs, answered_at={"h1": when})
+    assert calls == [{"h1": when}]
+    assert "max_rung" not in out[0]
+
+
+def test_submit_cuts_the_help_floor_at_each_recorded_answer():
+    """The recorded responses' answered_at reaches the ledger read."""
+    asked, other = _hashes()
+    seen = []
+
+    def _max_help_many(user_id, hashes, before=None):
+        seen.append(before)
+        return {h: 0 for h in hashes}
+
+    apply_mock = MagicMock(return_value=[{"before": 0.5, "after": 0.6}])
+    base = _farm_tables(_Claims())
+    answered = "2026-11-18T12:00:00+00:00"
+
+    def factory(name):
+        if name != "quiz_responses":
+            return base(name)
+        h = MagicMock()
+        h.select.return_value = [
+            {"attempt_id": "quiz1", "question_index": 0, "selected_index": 0,
+             "answer_text": None, "confidence": None, "answered_at": answered},
+        ]
+        return h
+
+    with (
+        patch_quiz("table", side_effect=with_async_twins(factory)),
+        patch_quiz("apply_graph_update", new=apply_mock),
+        patch_quiz("max_help_many", side_effect=_max_help_many),
+        patch_quiz("get_quiz_context", return_value={}),
+        patch("services.quiz.submission.quiz_context_agent.run", new=_noop_ctx_agent()),
+        patch_quiz("save_quiz_context"),
+        patch("services.events_service.log_event"),
+    ):
+        r = client.post("/api/quiz/submit", json={"quiz_id": "quiz1", "answers": [
+            {"question_id": 2, "selected_label": "C"}]})
+    assert r.status_code == 200, r.text
+    (before,) = seen
+    assert set(before) == {asked}
+    assert before[asked] == datetime.fromisoformat(answered)
+
+
 def test_an_unreadable_help_ledger_fails_closed():
     apply_mock = MagicMock(return_value=[{"before": 0.5, "after": 0.5}])
     r = _submit_with(_farm_tables(_Claims()), apply_mock, help_fail=True)

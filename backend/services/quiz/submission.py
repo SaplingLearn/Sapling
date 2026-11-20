@@ -292,7 +292,9 @@ def _farm_guard(user_id: str, attempt_id: str, evidence: list[dict]) -> list[dic
     return out
 
 
-def _help_floor(user_id: str, evidence: list[dict]) -> list[dict]:
+def _help_floor(
+    user_id: str, evidence: list[dict], answered_at: dict[str, datetime] | None = None,
+) -> list[dict]:
     """Spec §13 A99: quiz evidence carries the help ledger's floor (A93). A
     question the student had help on — a quiz-ask session about it
     (services/quiz_ask.py, RUNG_NO_CREDIT_MIN), or any loop help on the same
@@ -300,12 +302,19 @@ def _help_floor(user_id: str, evidence: list[dict]) -> list[dict]:
     credit at RUNG_NO_CREDIT_MIN.. (`learning.evidence.evidence_weight`). One
     batched read (`help_ledger.max_help_many`); a failed read floors EVERY
     hashed question at RUNG_NO_CREDIT_MIN (fail closed). Hashless questions have
-    no ledger identity, so nothing can be recorded against them either."""
+    no ledger identity, so nothing can be recorded against them either.
+
+    `answered_at` (#866 K20): {hash: when its answer was recorded through
+    /answer}. Help on that hash recorded afterwards — "Ask about this" opens
+    only on an answer already locked — does not floor the answer it followed;
+    an answer known only from the submit payload has no time and keeps every
+    row (fail closed)."""
     hashes = [e["question_hash"] for e in evidence if e.get("question_hash")]
     if not hashes:
         return evidence
+    cutoffs = {h: answered_at[h] for h in hashes if answered_at and h in answered_at}
     try:
-        floors = max_help_many(user_id, hashes)
+        floors = max_help_many(user_id, hashes, **({"before": cutoffs} if cutoffs else {}))
     except Exception:
         logger.warning("quiz: help ledger unreadable; hashed questions carry no credit", exc_info=True)
         floors = dict.fromkeys(hashes, RUNG_NO_CREDIT_MIN)
@@ -337,10 +346,28 @@ def _mastery_span(applied, shown_before: float) -> tuple[float, float]:
     return shown_before, recognised[-1]["after"]
 
 
+def _answered_times(questions: list[dict], recorded_by_index: dict) -> dict[str, datetime]:
+    """#866 K20: {question_hash: when its response was recorded} for the
+    questions answered through /answer (an unreadable time is left out)."""
+    out: dict[str, datetime] = {}
+    for i, q in enumerate(questions):
+        raw = (recorded_by_index.get(i) or {}).get("answered_at")
+        qh = wire_question_hash(q) if isinstance(q, dict) else None
+        if not raw or not qh:
+            continue
+        try:
+            at = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        out[qh] = at if at.tzinfo else at.replace(tzinfo=timezone.utc)
+    return out
+
+
 def _grade_submission(
     body: SubmitQuizBody, questions: list[dict],
-) -> tuple[list[dict], list[dict], int, list[float | None]]:
-    """Grade a claimed attempt: (results, graded_answers, score, stated).
+) -> tuple[list[dict], list[dict], int, list[float | None], dict[str, datetime]]:
+    """Grade a claimed attempt: (results, graded_answers, score, stated,
+    answered_at) — `answered_at` per `_answered_times` (#866 K20).
 
     `stated[i]` is the confidence the student stated on question i's
     recorded response (learning-loop spec §13 A132), as the exact
@@ -354,7 +381,7 @@ def _grade_submission(
     # to close). Questions never answered through C1 fall back to the
     # submitted payload, so the current all-at-the-end client keeps working.
     recorded_rows = table("quiz_responses").select(
-        "attempt_id,question_index,selected_index,answer_text,confidence",
+        "attempt_id,question_index,selected_index,answer_text,confidence,answered_at",
         filters={"attempt_id": f"eq.{body.quiz_id}"},
     ) or []
     recorded_by_index = {r["question_index"]: r for r in recorded_rows}
@@ -418,7 +445,7 @@ def _grade_submission(
             "explanation": q.get("explanation", ""),
         })
 
-    return results, graded_answers, score, stated
+    return results, graded_answers, score, stated, _answered_times(questions, recorded_by_index)
 
 
 def _release_submit_claim(quiz_id: str, claim_stamp: str) -> None:
@@ -542,7 +569,7 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
         raise _already_completed()
 
     try:
-        results, graded_answers, score, stated = _grade_submission(body, questions)
+        results, graded_answers, score, stated, answered_at = _grade_submission(body, questions)
         total = len(questions)
         # The score lands FIRST and alone (#760): everything after it is
         # best-effort, so nothing after it can strand the attempt scoreless.
@@ -621,6 +648,7 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
                     _quiz_evidence(concept_node_id, questions, results, stated),
                 ),
             ),
+            answered_at,
         )
         # #849: the class-aggregate refresh this write triggers can make an LLM
         # call; it runs after the response, never inside the submit.
