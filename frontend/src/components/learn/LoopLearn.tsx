@@ -1661,7 +1661,7 @@ export function LoopLearn() {
   };
 
   const doClose = async () => {
-    if (!sessionId || closeBusy || pendingGrade) return;
+    if (!sessionId || closeBusy || pendingGrade || streamingText !== null) return;
     const g = gen.current;
     const sid = sessionId;
     setCloseBusy(true);
@@ -1849,7 +1849,7 @@ export function LoopLearn() {
           data-testid="loop-close-button"
           className="btn btn--sm"
           onClick={() => void doClose()}
-          disabled={closeBusy || !!pendingGrade}
+          disabled={closeBusy || !!pendingGrade || streaming}
           title="Wrap up this session"
         >
           {closeBusy ? "Wrapping up…" : "Wrap up"}

@@ -1095,6 +1095,32 @@ describe("LoopLearn — close (A60)", () => {
     expect(toast.error).not.toHaveBeenCalled();
     expect(screen.getByTestId("loop-phase").getAttribute("data-phase")).toBe("teach");
   });
+
+  it("Wrap up waits for an answer's feedback turn to finish, so the close never lands before that turn is saved", async () => {
+    // The feedback text shows while the stream is still open; the server saves the
+    // turn (on_complete) before `done`. A close in that window answered 409 "this
+    // session is closed" to the turn's save, and the turn was lost.
+    let finish: (v: unknown) => void = () => {};
+    api.streamLoopCheckAnswer.mockImplementation((_s: string, _u: string, _q: string, _a: object, h: { onPhase?: (p: string) => void; onToken?: (d: string) => void }) => {
+      h.onPhase?.("feedback");
+      h.onToken?.("Right: the base case stops it.");
+      return new Promise((resolve) => { finish = resolve; });
+    });
+    api.closeLoopSession.mockResolvedValue({ close, model_written: true, close_phase: "feedback" });
+    await withCheckItem();
+    fireEvent.change(screen.getByTestId("loop-attempt-input"), { target: { value: "n == 0" } });
+    fireEvent.click(screen.getByTestId("loop-attempt-submit"));
+    await screen.findByText("Right: the base case stops it.");
+    const wrapUp = screen.getByTestId("loop-close-button") as HTMLButtonElement;
+    expect(wrapUp.disabled).toBe(true);
+    fireEvent.click(wrapUp);
+    expect(api.closeLoopSession).not.toHaveBeenCalled();
+    await act(async () => { finish(turn({ reply: "Right: the base case stops it.", phase: "feedback", graded: true, verdict: "correct" })); });
+    await waitFor(() => expect((screen.getByTestId("loop-close-button") as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByTestId("loop-close-button"));
+    await screen.findByTestId("loop-close-summary");
+    expect(api.closeLoopSession).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("LoopLearn — PKG-13 fix round", () => {

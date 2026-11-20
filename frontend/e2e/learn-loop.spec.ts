@@ -1259,6 +1259,9 @@ test("phone learner can check in, answer a check and reach wrap-up without horiz
   await expect(phase).toHaveAttribute("data-phase", "feedback");
   await expect(page.getByTestId("loop-messages")).toContainText(LOOP_FEEDBACK_BODY);
   expect(await phase.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+  // Wrap up waits for the feedback turn's stream to end (the server saves the turn
+  // before `done`); a close inside that window lost the turn to a 409 (logscan)
+  await expect(page.getByTestId("loop-close-button")).toBeEnabled();
   await page.getByTestId("loop-close-button").click();
   await expect(page.getByTestId("loop-close-done")).toBeVisible();
   await expect(page.getByTestId("loop-close-study-link")).toHaveAttribute("href", "/study");
