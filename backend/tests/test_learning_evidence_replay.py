@@ -24,6 +24,7 @@ import pytest
 from evidence_journal_fakes import Clock, LearningJournalDB, _same_state, install
 from learning import evidence_replay
 from learning.evidence_replay import ReplayError, observation, replay
+from learning.bkt import tier_for_stored
 from learning.params import BKT_L0
 
 USER, COURSE = "u-replay", "c-replay"
@@ -31,9 +32,13 @@ NODES = ("n-a", "n-b", "n-c", "n-d", "n-e")
 CHANNELS = ("free_response", "mc_reasoned", "mc", "teachback_llm", "chat_turn")
 
 
-def _graph(db: LearningJournalDB) -> None:
+def _graph(db: LearningJournalDB, scores: dict | None = None) -> None:
     for node in NODES:
         db.add_node(USER, COURSE, node, name=f"Concept {node}")
+    for node, score in (scores or {}).items():
+        # a stored map score from before the loop: no learner_state row (A150)
+        db.nodes[node]["mastery_score"] = score
+        db.nodes[node]["mastery_tier"] = tier_for_stored(score)
     # a → b → c, a → d, d → e (prerequisite → dependent)
     for prereq, dependent in (("n-a", "n-b"), ("n-b", "n-c"), ("n-a", "n-d"), ("n-d", "n-e")):
         db.add_prereq(USER, prereq, dependent)
@@ -77,13 +82,19 @@ def history(seed: int, *, ops: int = 26, retention: bool = True, tagged: bool = 
     return out
 
 
-def run(monkeypatch, ops, *, skip=lambda ev: False):
+#: Stored map scores before any evidence (spec §13 A150): a pre-loop concept,
+#: one past the model's cap, a low one; n-c and n-e never studied (score 0).
+SCORES = {"n-a": 0.82, "n-b": 1.0, "n-d": 0.12}
+
+
+def run(monkeypatch, ops, *, skip=lambda ev: False, scores=None):
     """Drive the REAL single writer through `ops` on a fresh store; `skip`
-    leaves evidences out (the clock still runs through every operation)."""
+    leaves evidences out (the clock still runs through every operation);
+    `scores` are the nodes' stored map scores before the first evidence."""
     from services.graph_service import apply_graph_update
 
     db, clock = LearningJournalDB(), Clock()
-    _graph(db)
+    _graph(db, scores)
     install(monkeypatch, db, clock)
     for gap, retention, evs in ops:
         clock.advance(seconds=gap)
@@ -103,6 +114,7 @@ def _replay(db: LearningJournalDB, journal: list[dict]):
     return replay(
         [observation(r) for r in journal], user_id=USER,
         edges=db._course_edges(USER, COURSE), owned=set(NODES),
+        seeds=evidence_replay.journaled_seeds(journal),
     )
 
 
@@ -119,9 +131,10 @@ def _assert_replay_matches(db: LearningJournalDB, rep) -> None:
         assert rep.trace[row["id"]] == (row["p_before"], row["p_after"]), row["id"]
 
 
+@pytest.mark.parametrize("scores", [None, SCORES], ids=["never-studied", "stored-scores"])
 @pytest.mark.parametrize("seed", range(40))
-def test_replaying_the_journal_reproduces_the_incremental_writer_exactly(monkeypatch, seed):
-    db, _ = run(monkeypatch, history(seed))
+def test_replaying_the_journal_reproduces_the_incremental_writer_exactly(monkeypatch, seed, scores):
+    db, _ = run(monkeypatch, history(seed), scores=scores)
     journal = _journal(db)
     assert journal and all(r["retention"] is not None and r["propagated_to"] is not None for r in journal)
     _assert_replay_matches(db, _replay(db, journal))

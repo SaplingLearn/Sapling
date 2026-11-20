@@ -27,6 +27,14 @@ writer but the review used it); the propagation along the course's CURRENT
 prerequisite edges (the edges of its own time are not journaled). A row the
 replay cannot read faithfully raises ReplayError: a void then fails closed.
 
+§13 A150: a node with no learner_state row starts from its stored map score
+(learner_state.unmeasured_state), and the first row that reaches such a node
+journals that score (`seeds`). The replay starts every node from its journaled
+score — read from every row, void ones included (`journaled_seeds`) — so a
+void of the answer that first reached a node still starts the node where the
+writer did. A node no row ever seeded (journaled before A150) starts at the
+prior, as the writer then started it.
+
 No database, no model: data and arithmetic only.
 """
 
@@ -38,7 +46,7 @@ from datetime import datetime, timedelta
 
 from learning import bkt, fsrs
 from learning.evidence import Evidence, evidence_weight, is_strong_channel
-from learning.learner_state import LearnerState, _from_row, _parse_ts, state_row
+from learning.learner_state import LearnerState, _from_row, _parse_ts, state_row, unmeasured_state
 from learning.params import (
     BKT_L0,
     CHANNELS,
@@ -316,6 +324,30 @@ def observation(row: Mapping) -> Observation:
     )
 
 
+def journaled_seeds(rows: Iterable[Mapping]) -> dict[str, float]:
+    """Spec §13 A150: node id → the stored score the writer started the node
+    from, from the journal rows' `seeds` (in the journal's order; the earliest
+    wins). Every row counts, void ones included: the score is what the node
+    held before its first evidence, not part of the answer that carried it, so
+    a void of that answer leaves it the node's starting score. A seed that is
+    not a node id → a number in [0, 1] raises ReplayError (fail closed)."""
+    out: dict[str, float] = {}
+    for row in rows:
+        raw = row.get("seeds")
+        if raw is None:
+            continue
+        if not isinstance(raw, Mapping):
+            raise ReplayError("journal seeds unreadable")
+        for node_id, score in raw.items():
+            if not isinstance(node_id, str) or not node_id:
+                raise ReplayError("journal seeds unreadable")
+            value = _number(score)
+            if not 0.0 <= value <= 1.0:
+                raise ReplayError("journal seed out of range")
+            out.setdefault(node_id, value)
+    return out
+
+
 def operations(observations: Sequence[Observation]) -> list[list[Observation]]:
     """The journal in total order, cut into the writer's operations: one call
     journals its rows at one `now` (A36), so consecutive rows sharing a time
@@ -379,15 +411,19 @@ def replay(
     user_id: str,
     edges: Sequence[Mapping],
     owned,
+    seeds: Mapping[str, float] | None = None,
 ) -> Replayed:
     """Fold the observations (the journal's total order; void rows left out by
     the caller) through `observe` / `propagate` exactly as the writer did: each
     operation reads every state it touches at its own `now` from the row the
     previous operation stored (decay at read), keeps it in memory for the
-    rest of the operation, and stores it back. A row's propagation follows its
-    journaled `propagated_to`, else `edges` (the course's prerequisite edges);
-    nodes outside `owned` (gone since) are never touched. Pure."""
+    rest of the operation, and stores it back. A node with no stored row yet
+    starts from its `seeds` score (A150; `journaled_seeds`), else the prior. A
+    row's propagation follows its journaled `propagated_to`, else `edges` (the
+    course's prerequisite edges); nodes outside `owned` (gone since) are never
+    touched. Pure."""
     owned = frozenset(owned)
+    seeds = seeds or {}
     stored: dict[str, dict] = {}
     mirrors: dict[str, float] = {}
     touched: dict[str, datetime] = {}
@@ -400,7 +436,10 @@ def replay(
             st = working.get(node_id)
             if st is None:
                 row = stored.get(node_id)
-                st = _from_row(row, now) if row is not None else LearnerState(user_id=user_id, node_id=node_id)
+                st = (
+                    _from_row(row, now) if row is not None
+                    else unmeasured_state(user_id, node_id, seeds.get(node_id, 0.0))
+                )
                 working[node_id] = st
             return st
 

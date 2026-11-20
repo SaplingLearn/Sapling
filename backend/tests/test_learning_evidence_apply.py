@@ -753,7 +753,10 @@ class TestApplyEvidence:
             "confidence",
         ):
             assert col in first, col
-        assert set(first) == set(rows[1]), "every evidence row names the same columns"
+        # §13 A150: only the first row to reach a node with no learner_state
+        # row journals the score it started from; every other column is common
+        assert first["seeds"] == {"n1": 0.5} and "seeds" not in rows[1]
+        assert set(first) - {"seeds"} == set(rows[1]), "every evidence row names the same columns"
         assert first["node_id"] == "n1" and first["channel"] == "free_response"
         assert first["correct"] is True and first["weight"] == 1.0
         # #866 K19: the journal's delta is the change the mastery mirror made

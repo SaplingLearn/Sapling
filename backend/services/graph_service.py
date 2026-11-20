@@ -22,9 +22,8 @@ from learning.evidence import (
     evidence_weight,
     planning_observation,
 )
-from learning.learner_state import LearnerState, state_row
+from learning.learner_state import LearnerState, state_row, unmeasured_state
 from learning.params import (
-    BKT_P_MAX,
     EDGE_PREREQ_SOURCE_IS_PREREQ,
     FSRS_RETENTION_DEFAULT,
 )
@@ -1064,24 +1063,25 @@ def _apply_evidence(
     return changes, newly_committed
 
 
-def _unmeasured_state(user_id: str, node_id: str, row: dict) -> LearnerState:
-    """The state the writer starts from for a node with no learner_state row.
+def _start_unmeasured(user_id: str, node_id: str, row: dict, states: dict, seeds: dict) -> LearnerState:
+    """The state the writer starts from for a node with no learner_state row,
+    put in `states`.
 
-    #866 audit K03 (owner decision 2026-11-19, writer-only seed): a concept the
-    student already has mastery on — from before the learning loop, or from the
-    pre-loop quiz — starts BKT from that stored score, not the 0.35 prior, so
-    one graded answer moves it from what the screens showed (82% → a step, not
-    82% → 21%). A concept never studied (score 0, the map's "unexplored")
-    keeps the model's prior. The score is clamped to the model's range.
+    #866 audit K03, spec §13 A150 (owner decision 2026-11-19): a concept the
+    student already has mastery on — from before the learning loop, or from
+    the pre-loop quiz — starts BKT from that stored score, not the 0.35 prior,
+    so one graded answer moves it from what the screens showed (82% → a step,
+    not 82% → 21%). A concept never studied (score 0, the map's "unexplored")
+    keeps the model's prior. learner_state.unmeasured_state is the one rule.
 
-    Known gap (documented, owner-accepted): the A123 void replay
-    (`learning.evidence_replay.replay`) still starts such a node from the
-    prior, because the seed is not journaled; a staff void recompute of a
-    seeded node therefore lands where it would have without the seed."""
-    stored = bkt.stored_score(row.get("mastery_score"))
-    if stored <= 0.0:
-        return LearnerState(user_id=user_id, node_id=node_id)
-    return LearnerState(user_id=user_id, node_id=node_id, p_known=min(BKT_P_MAX, stored))
+    The stored score it started from goes into `seeds` (node id → score, 0 for
+    a never-studied concept): the first journal row that reaches the node
+    carries it (`node_mastery_events.seeds`), so the A123 void replay starts
+    the node from exactly the belief this write did."""
+    score = bkt.stored_score(row.get("mastery_score"))
+    st = states[node_id] = unmeasured_state(user_id, node_id, score)
+    seeds[node_id] = score
+    return st
 
 
 def _calculate_evidence(user_id: str, evidences: list[Evidence], prepared, retention) -> list[dict]:
@@ -1102,19 +1102,26 @@ def _calculate_evidence(user_id: str, evidences: list[Evidence], prepared, reten
     `propagate` — the same code the journal replay runs — and each row also
     journals what its replay needs beyond the observation: the FSRS
     `retention` it was scheduled at, its final `same_session_recheck` flag and
-    the nodes its propagation moved (`propagated_to`).
+    the nodes its propagation moved (`propagated_to`). §13 A150: the first row
+    to reach a node with no learner_state row journals the stored score it
+    started from (`seeds`).
     """
     by_id, now = prepared.nodes, prepared.now
     changes: list[dict] = []
     now_iso = now.isoformat()
     target_retention = FSRS_RETENTION_DEFAULT if retention is None else retention
     owned = [ev.node_id for ev in evidences if ev.node_id in by_id]
-    # One batched read; nodes with no row start at the prior. The cache means
+    # One batched read; nodes with no row start from their stored score
+    # (A150, else the prior). The cache means
     # a later evidence on the same node sees the earlier posterior (elapsed
     # time between the two is zero: they share `now`).
     states = prepared.states
+    # §13 A150: node id → the stored score a node with no learner_state row
+    # started from, until a journal row carries it (`seeds`).
+    seeds: dict[str, float] = {}
     for node_id in owned:
-        states.setdefault(node_id, _unmeasured_state(user_id, node_id, by_id[node_id]))
+        if node_id not in states:
+            _start_unmeasured(user_id, node_id, by_id[node_id], states, seeds)
     seen_checks: set[tuple[str, str]] = set()
     exposed_hashes: set[str] = set()
     seq = 0  # next evidence_seq: counts journaled rows only
@@ -1164,6 +1171,11 @@ def _calculate_evidence(user_id: str, evidences: list[Evidence], prepared, reten
         targets = evidence_replay.propagation_targets(
             ev.node_id, ev.correct, w, prepared.snapshot["edges"], by_id
         )
+        for target_id, *_ in targets:
+            if target_id not in states:
+                _start_unmeasured(user_id, target_id, by_id[target_id], states, seeds)
+        # §13 A150: the starting scores of the nodes this row is the first to reach
+        row_seeds = {n: seeds.pop(n) for n in (ev.node_id, *(t for t, *_ in targets)) if n in seeds}
 
         # A tagged grade needs durable readiness provenance before any scalar
         # or mirrored BKT mutation. A failed append cannot silently lose it.
@@ -1187,6 +1199,10 @@ def _calculate_evidence(user_id: str, evidences: list[Evidence], prepared, reten
             "same_session_recheck": ev.same_session_recheck,
             "propagated_to": [target_id for target_id, *_ in targets],
         }
+        if row_seeds:
+            # Spec §13 A150: what the replay starts these nodes from. Absent on
+            # a row that starts no node, so its plan is the row it was before.
+            event_row["seeds"] = row_seeds
         if ev.student_confidence is not None:
             # Spec §13 A127: the student's stated confidence, beside the
             # grader's `confidence` (never the same column). Absent when none
@@ -1221,10 +1237,7 @@ def _calculate_evidence(user_id: str, evidences: list[Evidence], prepared, reten
 
         for target_id, channel, target_correct, weight in targets:
             trow = by_id[target_id]
-            tst = states.get(target_id)
-            if tst is None:
-                tst = _unmeasured_state(user_id, target_id, trow)
-                states[target_id] = tst
+            tst = states[target_id]
             # tst.p_known stays the belief AT now (a later evidence in this
             # call reads it); the row is stored against the kept anchor.
             p_stored = evidence_replay.propagate(
@@ -1265,10 +1278,13 @@ def _calculate_void(user_id: str, course_id: str, question_hash: str, snapshot: 
     (learning.evidence_replay.moved_by) — at the state a replay of the course's
     NON-void journal (this item's rows and every earlier void left out) gives:
     the learner_state row the writer would have stored and the mirror it would
-    hold. A node no non-void row reaches any more is back at the BKT prior
-    (exactly what read_state answers for a node with no row), its row stamped
-    with the latest voided row that touched it, so the plan is a pure function
-    of the journal and a re-run writes nothing. Misconceptions: the open rows
+    hold. Every node starts from the stored score the writer journaled for it
+    (§13 A150, `seeds`, read from void rows too), else the BKT prior. A node no
+    non-void row reaches any more is back where it started: its starting state
+    (learner_state.unmeasured_state of that score, else the prior), its mirror
+    that state's belief; its row is stamped with the latest voided row that
+    touched it, so the plan is a pure function of the journal and a re-run
+    writes nothing. Misconceptions: the open rows
     every supporting attempt of which was graded against a retired item of
     the course (learning.evidence_void.closable_misconceptions)."""
     from learning.evidence_transaction import EvidenceVoidRefused, VoidPlan
@@ -1284,9 +1300,10 @@ def _calculate_void(user_id: str, course_id: str, question_hash: str, snapshot: 
         r for r in journal if r.get("question_hash") == question_hash and r.get("check_item_id")
     ]
     void_ids = {r["id"] for r in journal if r.get("void")} | {r["id"] for r in item_rows}
+    seeds = evidence_replay.journaled_seeds(journal)
     replayed = evidence_replay.replay(
         [evidence_replay.observation(r) for r in journal if r["id"] not in void_ids],
-        user_id=user_id, edges=edges, owned=owned,
+        user_id=user_id, edges=edges, owned=owned, seeds=seeds,
     )
     touched_by_void: dict[str, datetime] = {}
     for row in item_rows:
@@ -1300,7 +1317,8 @@ def _calculate_void(user_id: str, course_id: str, question_hash: str, snapshot: 
         if node_id in replayed.state_rows:
             row, belief = replayed.state_rows[node_id], replayed.mirrors[node_id]
         else:
-            row = state_row(LearnerState(user_id=user_id, node_id=node_id), touched_by_void[node_id])
+            start = unmeasured_state(user_id, node_id, seeds.get(node_id, 0.0))
+            row = state_row(start, touched_by_void[node_id])
             belief = row["p_known"]
         state_rows.append(row)
         mirrors.append({"id": node_id, "mastery_score": belief, "mastery_tier": bkt.tier_for(belief)})

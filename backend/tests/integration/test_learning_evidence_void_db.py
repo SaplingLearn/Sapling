@@ -137,6 +137,42 @@ def test_a_staff_retire_voids_the_items_evidence_and_recomputes_a_history_withou
         assert mirror == ref_mirror, key
 
 
+def test_a_void_starts_a_stored_score_from_its_journaled_seed(db_conn):
+    """Spec §13 A150 (migration 20261120070405): a and b hold pre-loop scores
+    and no learner_state row. The broken item's grade is the first to reach
+    both (b its own concept, a by propagation) and journals their seeds; the
+    void replays the rest of the history from those scores, exactly as a
+    student who never answered the broken item."""
+    from db.connection import table
+
+    bad, good = _qh("seed-bad"), _qh("seed-good")
+    mine, reference = _graph(USER_ACTIVE), _graph(USER_SECOND)
+    for nodes in (mine, reference):
+        for key, score in (("a", 0.82), ("b", 0.6)):
+            table("graph_nodes").update(
+                {"mastery_score": score, "mastery_tier": "learning"}, filters={"id": f"eq.{nodes[key]}"}
+            )
+    history = [(5, "b", bad, True), (30, "b", good, False), (80, "a", good + "-2", True)]
+    for hours, concept, qh, correct in history:
+        _grade(USER_ACTIVE, mine, hours, concept, qh, correct)
+        if qh != bad:
+            _grade(USER_SECOND, reference, hours, concept, qh, correct)
+    first = db_conn.execute(
+        "SELECT seeds FROM node_mastery_events WHERE node_id = %s AND question_hash = %s",
+        (mine["b"], bad),
+    ).fetchone()
+    assert first["seeds"] == {mine["b"]: 0.6, mine["a"]: 0.82}
+
+    _retire(bad)
+    got, want = _states(db_conn, USER_ACTIVE, mine), _states(db_conn, USER_SECOND, reference)
+    for key in mine:
+        (row, mirror), (ref_row, ref_mirror) = got[key], want[key]
+        if ref_row is None:  # c: never reached by a valid grade in either history
+            continue
+        assert {c: row[c] for c in STATE_COLUMNS} == {c: ref_row[c] for c in STATE_COLUMNS}, key
+        assert mirror == ref_mirror, key
+
+
 def test_re_running_a_void_writes_nothing_and_an_unretired_item_is_refused(db_conn):
     from learning.evidence_transaction import EvidenceVoidRefused, void_pending
     from services.graph_service import apply_graph_update
