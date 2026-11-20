@@ -57,6 +57,7 @@ from routes.study import router as study_router
 from services import ai_budget
 from services.quiz import config as quiz_config, errors as quiz_errors
 from services.feature_flags import nav_feature_gate, nav_feature_path_gate
+from learning.gate import loop_off_for_everyone
 from services.llm_budget import LLMBudgetExceeded
 from db.scope import (
     ScopeUnavailable,
@@ -585,8 +586,8 @@ app.include_router(learn.router,       prefix="/api/learn")
 app.include_router(
     learn_loop.router,
     prefix="/api/learn/loop",
-    # the loop's gate first: off (kill switch or flag), no flag is read before its 404
-    dependencies=nav_feature_path_gate("/api/learn/loop", unless=learn_loop.loop_off_for_session) + _SVC,
+    # off for everyone (kill switch, flag forced off): no flag is read before the loop's 404
+    dependencies=nav_feature_path_gate("/api/learn/loop", unless=loop_off_for_everyone) + _SVC,
 )
 app.include_router(quiz.router,        prefix="/api/quiz", dependencies=nav_feature_gate("/api/quiz"))
 app.include_router(calendar.router,    prefix="/api/calendar", dependencies=nav_feature_gate("/api/calendar"))

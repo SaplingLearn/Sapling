@@ -1169,10 +1169,10 @@ NAV_FEATURE_PATHS: dict[str, dict[str, tuple[tuple[str, str], ...]]] = {
 def require_feature_paths_visible(flag: str, prefix: str, *, unless=None):
     """Router dependency for NAV_FEATURE_PATHS: 404 on the listed paths when
     the ``hide_<feature>`` flag hides the feature for the session user;
-    every other path of the router is untouched. ``unless(request)`` stands
+    every other path of the router is untouched. ``unless()`` (no I/O) stands
     the gate aside when it answers True: the learning loop's router passes
-    "the loop is off for this request" (its own cached gate), so a loop-off
-    request gets the loop's 404 and this flag is never read first
+    `learning.gate.loop_off_for_everyone`, so a thrown kill switch or a
+    forced-off flag gets the loop's 404 with no flag read first
     (docs/learning-loop/invariants.md §9)."""
     gated = tuple(
         (method, re.compile(re.escape(prefix) + pattern + r"/?$"))
@@ -1183,7 +1183,7 @@ def require_feature_paths_visible(flag: str, prefix: str, *, unless=None):
         path = request.url.path
         if not any((m == "*" or m == request.method) and rx.match(path) for m, rx in gated):
             return  # not a gated path: no read of any kind
-        if unless is not None and unless(request):
+        if unless is not None and unless():
             return
         from services.auth_guard import get_session_user_id
         try:

@@ -30,7 +30,7 @@ per upload. The per-user settings column of the build phase stays retired
 from __future__ import annotations
 
 import config
-from services.feature_flags import flag_on
+from services.feature_flags import env_override, flag_on
 
 #: The per-student flag (services/feature_flags.py REGISTRY).
 LEARNING_LOOP_FLAG = "learning_loop"
@@ -43,6 +43,15 @@ def learning_loop_active(user_id: str | None) -> bool:
     if not config.LEARNING_LOOP_ENABLED:
         return False
     return bool(user_id) and flag_on(LEARNING_LOOP_FLAG, user_id)
+
+
+def loop_off_for_everyone() -> bool:
+    """The loop is off for every student with no read of any kind: the env kill
+    switch, or `SAPLING_FLAG_LEARNING_LOOP=off` (the flag forced off). For a
+    surface that runs BEFORE the loop's own route-entry gate and must not read
+    first (main.py's Study path gate, #866 Z37; invariants §9). It never names
+    a student and never carries an answer, so the route's gate still decides."""
+    return not config.LEARNING_LOOP_ENABLED or env_override(LEARNING_LOOP_FLAG) == "off"
 
 
 def learning_loop_for_request(user_id: str | None) -> bool:
