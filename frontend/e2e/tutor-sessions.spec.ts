@@ -177,3 +177,35 @@ test.describe("Tutor V2: a session on what the student chose", () => {
     }
   });
 });
+
+test.describe("Tutor V2: skill meters read as the map does", () => {
+  test.skip(loopOffLane, "loop path: default lane only");
+  test.setTimeout(JOURNEY_TIMEOUT_MS);
+
+  // K21: the course page's progress meters take the map's tier for each concept
+  // (mastered / learning / struggling / unexplored), never the retired 0.75 / 0.45 cuts.
+  test("K21: every progress meter on the course page names its concept's map tier", async ({ browser }) => {
+    const { context, page } = await signIn(browser);
+    try {
+      await page.goto("/learn");
+      await page.getByTestId(`tutor-course-${COURSE}`).click();
+      const coursePage = page.getByTestId("tutor-course-page");
+      await expect(coursePage).toBeVisible();
+      const meters = coursePage.locator("[data-tier]");
+      await expect(meters.first()).toBeVisible();
+      const rows = await queryRaw(
+        "SELECT concept_name, mastery_tier FROM graph_nodes WHERE user_id = $1 AND course_id = $2",
+        [USER_LOOP, COURSE],
+      );
+      const tierOf = new Map(rows.map((r) => [String(r.concept_name), String(r.mastery_tier)]));
+      const shown = await meters.evaluateAll((els) => els.map((el) => ({
+        name: el.querySelector("span")?.getAttribute("title") ?? "",
+        tier: el.getAttribute("data-tier") ?? "",
+      })));
+      expect(shown.length).toBeGreaterThan(0);
+      for (const { name, tier } of shown) expect(tier, name).toBe(tierOf.get(name));
+    } finally {
+      await context.close();
+    }
+  });
+});
