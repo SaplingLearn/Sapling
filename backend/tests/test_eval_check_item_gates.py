@@ -66,7 +66,7 @@ def test_the_default_path_steps_are_replayed_and_the_flagged_ones_once_recorded(
     assert set(g.DEFAULT_PATH) <= set(g.VARIANTS)  # fail closed until recorded
     assert set(g.replay_variants(recorded=lambda name: False)) == set(g.DEFAULT_PATH)
     assert set(g.replay_variants(recorded=lambda name: True)) == set(g.ALL_VARIANTS)
-    for name, (make, run) in g.ALL_VARIANTS.items():
+    for _name, (make, run) in g.ALL_VARIANTS.items():
         for case in make().cases:
             identity = run.identity(case)  # recorded under the step's own slot model
             assert identity["model"] and identity["prompt_hash"] and identity["input_sha256"]
