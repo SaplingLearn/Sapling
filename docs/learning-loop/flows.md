@@ -961,12 +961,20 @@ flowchart LR
   inertness scan in `backend/tests/test_learning_zpd_policy.py`).
   `backend/tests/test_learning_loop_flag.py` compares every loop route's
   answer under the two, and every `kill_switch` test runs both ways.
-- The frontend reads the flag first (`useLoopStatus`): "off" renders the
-  legacy screen with no probe. Otherwise the probe decides, and the legacy
-  screen renders only on a definite "inactive" answer; an error or timeout
-  shows a retry state, never the legacy tree (a half-loop, half-legacy screen
-  would grade nothing). A flag map without the key (flags unreadable, nothing
-  remembered) defers to the probe.
+- The frontend reads the flag first (`useLoopStatus`): an "off" read this
+  visit renders the legacy screen with no probe. Otherwise the probe decides,
+  and the legacy screen renders only on a definite "inactive" answer; an
+  error or timeout shows a retry state, never the legacy tree (a half-loop,
+  half-legacy screen would grade nothing). A flag map without the key (flags
+  unreadable, nothing remembered), or a remembered "on", defers to the probe.
+  A remembered "off" (the read failed) renders the legacy screen at once, as
+  on main, and asks the probe in the background: the page goes to the loop
+  only on an "active" answer, and a failed probe leaves the legacy screen. The server reads the gate per request and a tab
+  re-reads its flags each minute, so a flag turned on in between still shows
+  the legacy screen: an answer only the loop gives there (a budget pause, a
+  phase 409, a `phase` stream event) makes it ask the probe in the
+  background, and the page goes to the loop if the server says so (#866 K49,
+  `frontend/src/components/screens/learn/turns.ts`).
 - On again: the same sessions, goals and evidence are there; nothing is
   migrated either way. The drill — and what it does not prove — is in the
   readiness record, "Kill-switch and rollback drill".

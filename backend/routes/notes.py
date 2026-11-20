@@ -21,7 +21,7 @@ from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded
 
 from agents import ORCHESTRATOR_LIMITS, WORKER_LIMITS
 from agents.deps import SaplingDeps
-from agents.note_chat import note_chat_agent
+from agents.note_chat import integrity_run_args, note_chat_agent
 from agents.note_concepts import note_concepts_agent
 from agents.note_summary import note_summary_agent
 from agents.tools.graph import apply_concepts_to_graph
@@ -504,8 +504,8 @@ async def note_chat(note_id: str, body: NoteChatBody, request: Request):
         await aenforce_abuse_limit(abuse_limits.NOTE_AI_ACTION, body.user_id)
         # spec §13 A125: the message and the note the agent grounds in (deps.note, which
         # read_active_note serves) are checked before any model call; the reply after
-        guard = await open_note_guard(body.user_id, "note_chat", note_chat_texts(body.message, note),
-                                      active=await asyncio.to_thread(learning_loop_for_request, body.user_id))
+        active = await asyncio.to_thread(learning_loop_for_request, body.user_id)  # read once (Z26: the rule too)
+        guard = await open_note_guard(body.user_id, "note_chat", note_chat_texts(body.message, note), active=active)
         if guard.refused:
             return {"reply": integrity_guard.REFUSED_REPLY, "degraded": False, "integrity": "refused"}
         course_id = offering_course_id(note.get("offering_id"))
@@ -515,7 +515,7 @@ async def note_chat(note_id: str, body: NoteChatBody, request: Request):
         deps.concept_context = [body.message, note.get("title") or "", note.get("body") or ""]
         try:
             result = record_agent_usage(
-                await note_chat_agent.run(body.message, deps=deps, usage_limits=ORCHESTRATOR_LIMITS),
+                await note_chat_agent.run(body.message, deps=deps, usage_limits=ORCHESTRATOR_LIMITS, **integrity_run_args(active)),
                 feature="notes", task="note_chat", user_id=body.user_id,
             )
         except UsageLimitExceeded as e:

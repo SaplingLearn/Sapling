@@ -526,7 +526,11 @@ def _tutor_recency(user_id: str, scope: CourseScope, concept_name: str) -> _Tuto
     `messages` is session-scoped and carries no `user_id`, so ownership comes
     from the `sessions` read and the message read is bounded to the ids it
     returned. `content` is column-encrypted and never selected — the concept
-    lives in the plaintext `graph_update_json` the tutor's graph tools write.
+    lives in the plaintext `graph_update_json` the tutor's graph tools write,
+    and in a session's `topic`: a turn the student wrote in a session opened
+    on this concept is tutoring on it. PKG-14b (spec §11.2) took away the
+    tutor's mastery tool, whose `updated_nodes` named most of the concepts a
+    turn covered; without the topic this signal went quiet (#866 K47).
 
     `node_mastery_events` would be a cheaper primary read for this — indexed
     on `(node_id, created_at)`, no name matching, no offering dependency — but
@@ -542,7 +546,7 @@ def _tutor_recency(user_id: str, scope: CourseScope, concept_name: str) -> _Tuto
     cutoff = datetime.now(timezone.utc) - timedelta(days=_TUTOR_WINDOW_DAYS)
     try:
         sessions, total = table("sessions").select_with_count(
-            "id,started_at",
+            "id,started_at,topic",
             filters={
                 "user_id": f"eq.{user_id}",
                 "offering_id": f"in.({','.join(scope.offering_ids)})",
@@ -574,13 +578,17 @@ def _tutor_recency(user_id: str, scope: CourseScope, concept_name: str) -> _Tuto
     if not session_ids or not key:
         return _Tutor(sessions_14d=total)
 
+    # Sessions opened on this concept (#866 K47): the student's own turns there count too.
+    on_concept = [s["id"] for s in sessions if s.get("id") and _normalize(s.get("topic")) == key]
+    filters = {"session_id": f"in.({','.join(session_ids)})"}
+    if on_concept:
+        filters["or"] = f"(graph_update_json.not.is.null,and(role.eq.user,session_id.in.({','.join(on_concept)})))"
+    else:
+        filters["graph_update_json"] = "not.is.null"
     try:
         messages = table("messages").select(
-            "created_at,graph_update_json",
-            filters={
-                "session_id": f"in.({','.join(session_ids)})",
-                "graph_update_json": "not.is.null",
-            },
+            "created_at,graph_update_json,session_id,role",
+            filters=filters,
             order="created_at.desc",
             limit=_TUTOR_MESSAGE_SCAN,
         ) or []
@@ -591,7 +599,8 @@ def _tutor_recency(user_id: str, scope: CourseScope, concept_name: str) -> _Tuto
         return _Tutor(sessions_14d=total)
 
     for msg in messages:  # newest first — the first match is the most recent
-        if _touches_concept(msg.get("graph_update_json"), key):
+        own_turn = msg.get("role") == "user" and msg.get("session_id") in on_concept
+        if own_turn or _touches_concept(msg.get("graph_update_json"), key):
             return _Tutor(
                 sessions_14d=total,
                 concept_days_since=_days_since(msg.get("created_at")),

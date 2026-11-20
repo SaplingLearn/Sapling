@@ -489,7 +489,7 @@ def test_the_agent_reads_the_screened_note_snapshot(posed, records):
     mid-run cannot hand the model text the guard never saw."""
     seen = {}
 
-    async def run(message, *, deps, usage_limits):
+    async def run(message, *, deps, usage_limits, **run_args):
         seen["note"], seen["guard"] = deps.note, deps.integrity
         return SimpleNamespace(output="ok")
 
@@ -520,10 +520,14 @@ def test_the_agent_reads_the_screened_note_snapshot(posed, records):
 
 
 def test_note_chat_instructions_carry_the_integrity_rule():
-    from agents.note_chat import _PROMPT
+    """(g) defence in depth, on a loop run only (#866 Z26: the static system
+    prompt is the pre-loop one; tests/test_note_chat_loop_gate.py)."""
+    from agents.note_chat import _PROMPT, integrity_run_args
 
-    assert "ACADEMIC INTEGRITY" in _PROMPT
-    assert "learning session" in _PROMPT and "one step at a time" in _PROMPT
+    rule = integrity_run_args(True)["instructions"]
+    assert "ACADEMIC INTEGRITY" in rule
+    assert "learning session" in rule and "one step at a time" in rule
+    assert "ACADEMIC INTEGRITY" not in _PROMPT and integrity_run_args(False) == {}
 
 
 # ── summarize and extract-concepts ───────────────────────────────────────────

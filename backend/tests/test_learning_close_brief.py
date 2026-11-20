@@ -1895,7 +1895,8 @@ def test_end_session_flag_off_is_byte_identical(monkeypatch):
     assert {"concepts_covered", "time_spent_minutes"} <= set(r.json()["summary"])
     assert called == []
     selects = [c.args[0] for c in tables["sessions"].select.call_args_list]
-    assert selects == ["user_id", "user_id,started_at"]  # ownership first; no loop_state read
+    # ownership first; no loop_state read (the summary's own concept, #866 K47, reads legacy columns)
+    assert selects == ["user_id", "started_at,user_id,topic,offering_id"]
     updates = [c.args[0] for c in tables["sessions"].update.call_args_list]
     assert {"summary_json": "LEGACY"} in updates
     assert not any("close_json" in u for u in updates)

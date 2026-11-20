@@ -299,17 +299,8 @@ export const startSession = (
     }),
   });
 
-/**
- * One id per student turn (#761/#762), sent UNCHANGED on the stream, its
- * JSON fallback and any Retry of that turn: the backend dedupes the turn's
- * writes on it and replays an already-persisted reply (`replayed: true`)
- * instead of running the turn twice. Must match `^[A-Za-z0-9_\-]{8,128}$`.
- */
-export function newTurnId(): string {
-  const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
-  if (c?.randomUUID) return c.randomUUID();
-  return `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 12)}`;
-}
+// One id per student turn (#761/#762): lib/turnId.ts.
+export { newTurnId } from '@/lib/turnId';
 
 export const sendChat = (
   sessionId: string,
@@ -372,7 +363,11 @@ interface StreamEvent {
 export class ChatStreamError extends Error {
   requestId?: string;
   retryable: boolean;
-  constructor(message: string, requestId?: string, retryable = true) {
+  /** The `error` event's data, as an ApiError keeps its parsed body: a crisis
+   *  card a streamed start's error carries rides here (`crisisSupportInError`,
+   *  docs/safety/crisis-support.md; #866 K38). */
+  body?: Record<string, unknown> | null;
+  constructor(message: string, requestId?: string, retryable = true, body?: Record<string, unknown> | null) {
     // Keep the full id here (correlation needs an exact match); a caller
     // that wants a short display form truncates it itself, same as
     // DocumentUploadModal's "Reference: {id.slice(0, 8)}…" pattern.
@@ -380,6 +375,7 @@ export class ChatStreamError extends Error {
     this.name = 'ChatStreamError';
     this.requestId = requestId;
     this.retryable = retryable;
+    this.body = body;
   }
 }
 
@@ -437,7 +433,7 @@ function streamErrorOf(ev: StreamEvent): ChatStreamError {
   // Only an explicit false clears the flag — absent/other values keep
   // the default-true contract with older backends.
   const retryable = ev.data?.retryable !== false;
-  return new ChatStreamError(ev.message || 'The tutor was interrupted.', requestId, retryable);
+  return new ChatStreamError(ev.message || 'The tutor was interrupted.', requestId, retryable, ev.data);
 }
 
 type StreamEventHandler = (ev: StreamEvent, pacer: StreamPacer, h: StreamChatHandlers) => void;

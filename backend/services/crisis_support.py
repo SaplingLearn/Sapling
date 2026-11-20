@@ -487,7 +487,8 @@ async def alongside(
     """Await `action` (the route's own work, limits included) and attach the
     card `screen` found to whatever answer goes back: its result
     (`crisis_support` plus `ALONGSIDE`; for a stream, in its `done` event's
-    data), or the error it raises (a 429, a 413, a 500). An error is NOT
+    data, or in the `error` event the stream ends with instead), or the error
+    it raises (a 429, a 413, a 500). An error is NOT
     answered here: the card is left on the request's state and the exception
     re-raised, so it reaches the app's own handler (and, for an unexpected
     one, ServerErrorMiddleware, the server's error log and the trace) exactly
@@ -516,14 +517,24 @@ async def alongside(
     return {**result, "crisis_support": support.payload, ALONGSIDE: True}
 
 
+#: What `_stream_with_card` adds to a stream's terminal event: beside the turn
+#: on `done` (what consumeChatStream resolves the turn from); on an `error`
+#: the stream itself ends with, the key a JSON error answer carries it under
+#: (ErrorCardMiddleware), so a streamed refusal is never without the card
+#: either (#866 K38).
+_STREAM_CARD_KEYS = {"done": {ALONGSIDE: True}, "error": {}}
+
+
 async def _stream_with_card(events: Any, payload: dict[str, Any]):
-    """A tutor stream's events, its terminal `done` event's data carrying the
-    card beside the turn (what consumeChatStream resolves the turn from)."""
+    """A tutor stream's events, its terminal `done` or `error` event's data
+    carrying the card (`_STREAM_CARD_KEYS`); every other event as it came."""
     try:
         async for item in events:
-            if isinstance(item, dict) and item.get("event") == "done":
+            event_type = item.get("event") if isinstance(item, dict) else None
+            extra = _STREAM_CARD_KEYS.get(event_type) if isinstance(event_type, str) else None
+            if extra is not None:
                 event = json.loads(item["data"])
-                event["data"] = {**(event.get("data") or {}), "crisis_support": payload, ALONGSIDE: True}
+                event["data"] = {**(event.get("data") or {}), "crisis_support": payload, **extra}
                 item = {**item, "data": json.dumps(event)}
             yield item
     finally:
