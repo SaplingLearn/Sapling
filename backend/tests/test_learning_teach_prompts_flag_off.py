@@ -94,7 +94,13 @@ def _capture(seams, run) -> dict:
         "body": r.json(),
         "message": seen.get("msg"),
         "kwargs": _run_kwargs(seen.get("kw") or {}),
-        "saved": [list(c.args) + [sorted(c.kwargs.items())] for c in seams.save_msg.call_args_list],
+        # B4 (#866) passes `message_id` on every loop save; None is save_message's
+        # default (the plain insert f9eca612 made), so it is left out of the
+        # digest — a turn-derived id would still change it.
+        "saved": [
+            list(c.args) + [sorted((k, v) for k, v in c.kwargs.items() if not (k == "message_id" and v is None))]
+            for c in seams.save_msg.call_args_list
+        ],
         "doc": seams.store["doc"],
     }
 
