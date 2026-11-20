@@ -1,6 +1,7 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { getDocuments, getReviewSummary, getSessions, type Session } from "@/lib/api";
+import { courseInTerm, useActiveSemester, type TermScoped } from "@/lib/useActiveSemester";
 
 export type TutorMaterial = { id: string; file_name: string; category?: string | null; course_id?: string | null };
 
@@ -72,4 +73,30 @@ export function useTutorLists({ userId, sessionId, sessionClosed, wantMaterials,
     retryMaterials: materialsFailed ? () => setMaterialsFailed(false) : null,
     dueReviews: studyVisible ? dueReviews : null,
   };
+}
+
+/**
+ * The courses the Tutor lists, scoped like Learn, Study and Quiz (#866 audit
+ * Z65): the active semester's courses (`useActiveSemester`; every course when
+ * no semester is chosen, or when none is in the chosen one). When nothing has
+ * picked a course yet (no ?course= link), it opens on the first listed one
+ * once the semester has been read. The full enrolment stays the Tutor's own:
+ * a ?course= link and an open session in a past-term course still reach it.
+ */
+export function useTutorCourses<C extends TermScoped & { course_id: string }>(
+  courses: C[] | null,
+  courseId: string | null,
+  setCourseId: (id: string) => void,
+): C[] | null {
+  const [activeSemester, , semesterHydrated] = useActiveSemester();
+  const listed = useMemo(() => {
+    if (!courses || !activeSemester) return courses;
+    const inTerm = courses.filter((c) => courseInTerm(c, activeSemester));
+    return inTerm.length > 0 ? inTerm : courses;
+  }, [courses, activeSemester]);
+  useEffect(() => {
+    if (!semesterHydrated || courseId !== null || !listed?.length) return;
+    setCourseId(listed[0].course_id);
+  }, [semesterHydrated, courseId, listed, setCourseId]);
+  return listed;
 }

@@ -94,7 +94,7 @@ import { SessionMap } from "./tutor/SessionMap";
 import { PhaseStepper } from "./tutor/PhaseStepper";
 import { TutorDrawer } from "./tutor/TutorDrawer";
 import { useTutorLayout } from "./tutor/useTutorLayout";
-import { useTutorLists } from "./tutor/useTutorLists";
+import { useTutorCourses, useTutorLists } from "./tutor/useTutorLists";
 import { SidebarGlyph } from "./tutor/TutorIcons";
 import { listedOpenTitle, mergeSessions, sessionTitle, sessionToLeave, type TutorSessionRow } from "./tutor/sessions";
 import tutorStyles from "./tutor/tutor.module.css";
@@ -252,6 +252,7 @@ export function LoopLearn() {
   // Course + sessions
   const [courses, setCourses] = useState<EnrolledCourse[] | null>(null);
   const [courseId, setCourseId] = useState<string | null>(null);
+  const listedCourses = useTutorCourses(courses, courseId, setCourseId);
   const [openSessions, setOpenSessions] = useState<LoopOpenSession[] | null>(null); // null = loading
   const [sessionsError, setSessionsError] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -896,8 +897,7 @@ export function LoopLearn() {
       const list = r.courses ?? [];
       setCourses(list);
       // ?course= picks the course when the student is enrolled in it
-      const linked = list.find((c) => c.course_id === deepLink.course)?.course_id;
-      setCourseId((prev) => prev ?? linked ?? list[0]?.course_id ?? null);
+      setCourseId((prev) => prev ?? list.find((c) => c.course_id === deepLink.course)?.course_id ?? null); // else useTutorCourses picks
     } catch {
       if (mounted.current) setSessionsError(true);
     }
@@ -2461,7 +2461,7 @@ export function LoopLearn() {
 
   const renderSidebar = () => (
     <TutorSidebar
-      courses={courses}
+      courses={listedCourses}
       courseId={courseId}
       sessions={sessionRows}
       currentSessionId={inSession ? readOnly?.id ?? sessionId : null}
