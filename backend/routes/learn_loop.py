@@ -12,8 +12,11 @@ docstring OpenAPI publishes. The route-level dependencies stay here:
 `_kill_switch_first` (the spec §7 404 before anything else: the gate — the env
 kill switch, then the session student's `learning_loop` flag — resolved once,
 off the event loop, and carried to the handler) and `_screened` /
-`_RATE_LIMITED`. A test patch must target the module that LOOKS UP the name
-now (``patch_loop`` in ``tests/split_patches.py``).
+`_rate_limited` (each carries the abuse budget a turn, a start or a
+no-model write is charged, audit Z02; the routes without a dependency charge
+theirs inline, after their gate and any inline crisis screen). A test patch must
+target the module that LOOKS UP the name now (``patch_loop`` in
+``tests/split_patches.py``).
 """
 
 from __future__ import annotations
@@ -45,8 +48,9 @@ from models import (
 )
 from pydantic import ValidationError
 
-from services import crisis_support
+from services import abuse_limits, crisis_support
 from services.ai_budget import enforce_rate_limit
+from services.request_limits import AbuseLimit, aenforce_abuse_limit
 import services.loop as loop_service
 from routes._docs import same_doc
 from services.loop import _NOT_ENABLED
@@ -104,18 +108,39 @@ def _kill_switch_first(request: Request) -> None:
         raise HTTPException(status_code=404, detail=_NOT_ENABLED)
 
 
-_RATE_LIMITED = [Depends(_kill_switch_first), Depends(enforce_rate_limit)]
+def _charged(limit: AbuseLimit):
+    """The abuse budget `limit` (services/abuse_limits.py), charged to the
+    session student once `_kill_switch_first` has named them (audit Z02). The
+    A20 limiter counts llm_usage rows, so it never trips on a request that runs
+    no model; this is the atomic claim the legacy routes take before they
+    delegate here. With no session named, nothing is charged and the handler's
+    require_self answers."""
+
+    async def abuse_charge(request: Request) -> None:
+        carried = getattr(request.state, "learning_loop", None)
+        if isinstance(carried, tuple) and len(carried) == 2 and carried[0]:
+            await aenforce_abuse_limit(limit, carried[0])
+
+    abuse_charge.abuse_limit = limit  # type: ignore[attr-defined]  # read by the route pins
+    return Depends(abuse_charge)
 
 
-def _screened(surface: str, *fields: str, respond) -> list:
-    """`_RATE_LIMITED` for a route that takes student-written text: the crisis
-    screen sits between the kill switch and the rate limit
+def _rate_limited(limit: AbuseLimit) -> list:
+    """The kill switch, the abuse budget `limit`, then the A20 rate limit."""
+    return [Depends(_kill_switch_first), _charged(limit), Depends(enforce_rate_limit)]
+
+
+def _screened(surface: str, *fields: str, respond, limit: AbuseLimit = abuse_limits.TUTOR_TURN) -> list:
+    """`_rate_limited` for a route that takes student-written text: the crisis
+    screen sits between the kill switch and the limits
     (docs/safety/crisis-support.md). A crisis turn is answered with the card
-    before the limiter is even read, so it never meets a 429 and consumes no
-    unit; any other request meets the same two dependencies as before."""
+    before any limiter is read, so it never meets a 429 and consumes no unit;
+    any other request is charged one turn (`limit`), then meets the A20 rate
+    limit."""
     return [
         Depends(_kill_switch_first),
         crisis_support.screened(surface, *fields, respond=respond),
+        _charged(limit),
         Depends(enforce_rate_limit),
     ]
 
@@ -175,7 +200,12 @@ def _start_screened(respond) -> list:
             raise crisis_support.CrisisAnswered(respond(screened, request))
 
     crisis_screen.surface = "loop_start"  # type: ignore[attr-defined]  # read by the ordering tests
-    return [Depends(_kill_switch_first), Depends(crisis_screen), Depends(enforce_rate_limit)]
+    return [
+        Depends(_kill_switch_first),
+        Depends(crisis_screen),
+        _charged(abuse_limits.TUTOR_SESSION_START),
+        Depends(enforce_rate_limit),
+    ]
 
 
 async def _beside_note_card(request: Request, action):
@@ -238,19 +268,19 @@ async def check_answer_stream(body: LoopCheckAnswerBody, request: Request):
     return await loop_service.check_answer_stream(body, request)
 
 
-@router.post("/rating", dependencies=_RATE_LIMITED)
+@router.post("/rating", dependencies=_rate_limited(abuse_limits.LOOP_ACTION))
 @same_doc(loop_service.rating)
 def rating(body: LoopRatingBody, request: Request) -> dict:
     return loop_service.rating(body, request)
 
 
-@router.post("/report", dependencies=_RATE_LIMITED)
+@router.post("/report", dependencies=_rate_limited(abuse_limits.LOOP_ACTION))
 @same_doc(loop_service.report_item)
 def report_item(body: LoopReportBody, request: Request) -> dict:
     return loop_service.report_item(body, request)
 
 
-@router.post("/posttest/start", dependencies=_RATE_LIMITED)
+@router.post("/posttest/start", dependencies=_rate_limited(abuse_limits.LOOP_ACTION))
 @same_doc(loop_service.posttest_start)
 def posttest_start(body: PosttestStartBody, request: Request) -> dict:
     return loop_service.posttest_start(body, request)
@@ -300,7 +330,7 @@ def hint(body: LoopHintBody, request: Request) -> dict:
     return loop_service.hint(body, request)
 
 
-@router.post("/action", dependencies=_RATE_LIMITED)
+@router.post("/action", dependencies=_rate_limited(abuse_limits.TUTOR_TURN))
 @same_doc(loop_service.action)
 async def action(body: ActionBody, request: Request):
     return await loop_service.action(body, request)

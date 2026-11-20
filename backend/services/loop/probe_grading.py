@@ -9,6 +9,8 @@ import logging
 import uuid
 from datetime import datetime, timezone
 from services.loop.errors import HTTPException
+from services import abuse_limits
+from services.request_limits import aenforce_abuse_limit
 from starlette.requests import Request
 from agents.deps import SaplingDeps
 from agents.tools.check import CheckAnswer, GradeOutcome, grade_answer
@@ -359,6 +361,8 @@ async def probe_answer(body: ProbeAnswerBody, request: Request) -> dict:
         request, body.user_id, "loop_probe_answer", body.answer, body.reason
     ):
         return crisis_support.json_body(crisis, graded=False)
+    # audit Z02: one tutor turn, as every graded loop answer is charged
+    await aenforce_abuse_limit(abuse_limits.TUTOR_TURN, body.user_id)
     await asyncio.to_thread(ai_budget.enforce_rate_limit_for, body.user_id)  # #117
     await _consume_pending_off_loop(body.session_id, body.user_id)
     return await _agent_turn_or_http_error(

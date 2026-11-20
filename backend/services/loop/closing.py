@@ -10,6 +10,8 @@ import re
 import uuid
 from datetime import datetime, timezone
 from services.loop.errors import HTTPException
+from services import abuse_limits
+from services.request_limits import aenforce_abuse_limit
 from starlette.requests import Request
 from agents._run import run_agent_sync
 from agents.session_close import run_session_close, shape_close
@@ -451,6 +453,7 @@ async def close(body: CloseBody, request: Request) -> dict:
     if not body.user_id:
         body.user_id = await guard_off_loop(get_session_user_id, request)
     await _agate(body.user_id, request)
+    await aenforce_abuse_limit(abuse_limits.LOOP_ACTION, body.user_id)  # audit Z02
     seen: dict = {}
     closed = await close_session(
         body.session_id,

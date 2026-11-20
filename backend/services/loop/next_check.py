@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from services.loop.errors import HTTPException
+from services import abuse_limits
+from services.request_limits import enforce_abuse_limit
 from starlette.requests import Request
 from learning import grade_checkpoint
 from learning import prequestion as prequestion_rules
@@ -45,8 +47,10 @@ def check_next(body: LoopCheckNextBody, request: Request) -> dict:
     budget is read only for the novice pause (§3.5): a novice-band concept is
     not activated at the hard level. The activation is tried on a read copy
     first (the budget read is not a mutate's business), then applied to the
-    fresh document by one compare-and-set write."""
+    fresh document by one compare-and-set write. The loop-action budget
+    (audit Z02) bounds it: it serves and writes with no model."""
     _gate(body.user_id, request)
+    enforce_abuse_limit(abuse_limits.LOOP_ACTION, body.user_id)
     _consume_pending(body.session_id, body.user_id)
     _, course_id = _session_scope(body.session_id, body.user_id)
     state = _load_loop_state(body.session_id)

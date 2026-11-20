@@ -48,6 +48,12 @@ logger = logging.getLogger(__name__)
 
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024
 
+#: Card text (every front and back) one cleanup may send (audit Z01): the
+#: same bound as a pasted generate source. The model rewrites the whole deck
+#: in one reply, so a larger deck cannot come back anyway, and the integrity
+#: guard folds and indexes all of this text before any refusal.
+CLEANUP_MAX_CHARS = 200_000
+
 
 def _claim_rate_slot(user_id: str) -> None:
     """One slot of the user's import limiter, or ``RateLimited``."""
@@ -251,7 +257,10 @@ def import_cleanup(user_id: str, cards: list[dict], *, loop_on: bool = False) ->
     """The cards, rewritten by the flashcard agent. Spec §13 A125: the cards'
     own text is what this request sends the model (guarded); a cleaned card
     stating a posed check's key withholds the cleanup whole, and the student's
-    own cards come back as they sent them — a cleanup never loses a card."""
+    own cards come back as they sent them — a cleanup never loses a card.
+    A deck over ``CLEANUP_MAX_CHARS`` is a 413 before anything runs."""
+    if sum(len(c["front"]) + len(c["back"]) for c in cards) > CLEANUP_MAX_CHARS:
+        raise PayloadTooLarge("Too many cards to clean up at once. Clean up a smaller part of the deck.")
     _claim_rate_slot(user_id)
     guard = card_guard(user_id, [t for c in cards for t in (c["front"], c["back"])], active=loop_on)
     try:

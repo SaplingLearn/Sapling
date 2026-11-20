@@ -9,6 +9,8 @@ import logging
 import re
 from dataclasses import dataclass
 from services.loop.errors import HTTPException
+from services import abuse_limits
+from services.request_limits import enforce_abuse_limit
 from starlette.requests import Request
 import config
 from learning import answer_guard, arms, gates, ladder, policy, zpd_events
@@ -321,6 +323,7 @@ def hint(body: LoopHintBody, request: Request) -> dict:
     with no attempt and no dwell before it while policy.worked_example_rung
     grants it — the example comes FIRST; every later rung keeps the gate."""
     _gate(body.user_id, request)
+    enforce_abuse_limit(abuse_limits.LOOP_ACTION, body.user_id)  # audit Z02
     _session_scope(body.session_id, body.user_id)
     state = _load_loop_state(body.session_id)
     _require_teaching(state)

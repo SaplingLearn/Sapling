@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import logging
 from services.loop.errors import HTTPException
+from services import abuse_limits
+from services.request_limits import enforce_abuse_limit
 from starlette.requests import Request
 from learning.goals import goal_version, attempted_nodes, progress as goal_progress
 from learning.learner_brief import store_brief
@@ -110,6 +112,7 @@ def plan_approve(body: PlanApproveBody, request: Request) -> dict:
     the plan is saved the learner brief is built and stored once for the
     session; a brief failure never changes the response."""
     _gate(body.user_id, request)
+    enforce_abuse_limit(abuse_limits.LOOP_ACTION, body.user_id)  # audit Z02
     _, course_id = _session_scope(body.session_id, body.user_id)
     snapshot = _load_loop_state(body.session_id)
     view = _current_plan(snapshot, body.user_id, course_id) if snapshot.get("goal") else None
