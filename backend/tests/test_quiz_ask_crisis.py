@@ -10,7 +10,7 @@ re-sent the same message.
 
 The message names the question it quotes (`quiz_attempt_id`,
 `quiz_question_index`, as the session start does). Text of that question on the
-student's own attempt found in the message is stored
+student's own attempt that fills a whole field of the message is stored
 material: the turn runs and the card rides BESIDE the reply, its event once a
 day. Everything else in the message is typed and blocks as before — the answer
 the student WROTE ("I wrote: …") included, and a stored text found only inside
@@ -208,6 +208,30 @@ def test_a_written_answer_is_the_students_own_typed_text_and_blocks(path, flag, 
     tutor["chat"].assert_not_awaited()
     tutor["stream"].assert_not_awaited()
     assert "quiz_responses" not in stored["reads"]
+
+
+def test_a_short_key_inside_the_written_answer_does_not_cut_it_apart(flag, sink, stored, tutor):
+    """A one-word key ("die", the German article) is a quote only where it
+    fills a field ("The correct answer is: die"), never inside the student's
+    own sentence: removed there, "I want to die tonight" would no longer read
+    as what it says."""
+    flag("on")
+    german = {"id": 1, "type": "short_answer", "options": [], "correct_answer": "die",
+              "question": "Which article goes with Frau?", "explanation": "Frau is feminine."}
+    stored["state"]["question"] = german
+    r = client.post("/api/learn/chat", json=_turn(_written_seed(german, "honestly I want to die tonight")))
+    assert r.status_code == 200, r.text
+    assert r.json()["crisis_support"] == CARD and "crisis_support_alongside" not in r.json()
+    tutor["chat"].assert_not_awaited()
+
+
+def test_a_quote_counts_only_where_it_fills_a_field():
+    typed, quoted = crisis_support._quote_spans(
+        "Question: Which article goes with Frau?\nI wrote: I want to die tonight\nThe correct answer is: die",
+        ["die", "Which article goes with Frau?"],
+    )
+    assert quoted == ["Which article goes with Frau?", "die"]
+    assert "I want to die tonight" in typed and not typed.rstrip().endswith("die")
 
 
 def test_with_the_flag_off_the_seed_runs_as_before_and_nothing_is_read(flag, sink, stored, tutor):

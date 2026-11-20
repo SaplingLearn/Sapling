@@ -71,6 +71,7 @@ import hashlib
 import inspect
 import json
 import logging
+import re
 import threading
 import time
 import uuid
@@ -288,17 +289,20 @@ async def screen_quoting_async(
 ) -> CrisisSupport | ContentScreen | None:
     """`screen_async` for a typed message that may QUOTE the student's stored
     material (#866 K12: the quiz Ask panel's first message quotes the quiz
-    question, its explanation and the answer the student recorded): None to
+    question, its options, key and explanation): None to
     carry on as before, a `CrisisSupport` to answer INSTEAD of the turn, or a
     `ContentScreen` to run it with the card beside it (`alongside`).
 
     `quoted()` — awaited on a match only, after the caller is authenticated
     and the flag is on — answers the stored texts the message may quote, read
     by the caller off the student's own records, never taken from the client.
-    Each one found in the message is stored material, screened as such (the
-    card beside the answer); the rest of the message, with a sentence break
-    where each quote was so no phrase spans one, is typed and blocks like any
-    typed message. A quote found nowhere leaves the message typed, as before.
+    Each one that fills a whole field of the message (`_quote_spans`) is stored
+    material, screened as such (the card beside the answer); the rest of the
+    message, with a sentence break where each quote was so no phrase spans
+    one, is typed and blocks like any typed message. A stored text found only
+    INSIDE typed words (a one-word key in the student's own sentence) is not a
+    quote: removing it would cut the typed phrase apart. A quote found nowhere
+    leaves the message typed, as before.
     The whole message's match decides nothing alone: a first-person frame
     around a quoted word ("I chose B: suicide") is not the student speaking.
     `once_a_day` names the material, for a client that re-sends it (Retry):
@@ -308,15 +312,28 @@ async def screen_quoting_async(
         return None
     if not await asyncio.to_thread(flag_on, FLAG, user_id):
         return None
-    stored = sorted({t for t in await quoted() if t and t in (message or "")}, key=len, reverse=True)
-    typed = message or ""
-    for text in stored:  # longest first: a quote inside a longer one goes with it
-        typed = typed.replace(text, "\n.\n")
+    typed, stored = _quote_spans(message or "", await quoted())
     if crisis := await _screen_async(request, user_id, surface, (typed,)):
         return crisis
     return ContentScreen(
         request, await _screen_async(request, user_id, surface, tuple(stored), once_a_day=once_a_day),
     )
+
+
+def _quote_spans(message: str, quoted: list[str]) -> tuple[str, list[str]]:
+    """(the typed remainder, the stored texts quoted) of `message` (#866 K12).
+    A stored text is a quote only where it fills a whole field: it starts the
+    message or a line, or follows a label's ": " ("Question: …", "I chose B:
+    …"), and it runs to the end of its line (or of the message). Each such
+    span becomes a sentence break, longest text first, so a quote inside a
+    longer one goes with it."""
+    typed, stored = message, []
+    for text in sorted({t for t in quoted if t}, key=len, reverse=True):
+        field = re.compile(r"(?:^|(?<=\n)|(?<=: ))" + re.escape(text) + r"(?=\n|$)")
+        typed, found = field.subn("\n.\n", typed)
+        if found:
+            stored.append(text)
+    return typed, stored
 
 
 def _check_surface(surface: str) -> None:
