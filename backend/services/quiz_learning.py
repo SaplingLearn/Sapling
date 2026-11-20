@@ -763,6 +763,50 @@ def skill_snapshot(user_id: str, node_id: str, order: Sequence[str] | None = Non
     return SkillSnapshot(tuple(nodes), {n: (states[n].p_known if n in states else BKT_L0) for n in nodes})
 
 
+def _pause_novice(user_id: str) -> bool:
+    """Study's review queue holds novice concepts back at the tutor hard
+    level (A20) — the same read `services/loop/reviews.py` makes."""
+    from services import ai_budget
+
+    return bool(ai_budget.check(user_id, "tutor", "novice").pause_novice)
+
+
+def _servable_due_count(user_id: str, course_id: str | None, now: datetime) -> int | None:
+    """PR #866 K15: how many of the course's due concepts Study's review queue
+    can serve today — `learning.review.summary`'s due checks for the course,
+    over the cross-course session the Study queue serves from (so a concept
+    with no servable check item, or paused, is not counted). None on a failed
+    read."""
+    from learning import review
+
+    try:
+        loop_state = review.peek_review_session(user_id, None, now)
+        counts = review.summary(
+            user_id, course_id, now,
+            loop_state=loop_state, pause_novice=lambda: _pause_novice(user_id),
+        )
+        return int((counts.get("due") or {}).get("check") or 0)
+    except Exception as exc:
+        logger.warning("quiz: review queue count unreadable: %s", type(exc).__name__)
+        return None
+
+
+def _servable_step(step: quiz_plan.NextStep, user_id: str, course_id: str | None, now: datetime) -> quiz_plan.NextStep:
+    """The next step with its due count cut to what Study's queue can serve
+    (K15): 'Review what's due (N)' leads there, so N is what it will review;
+    nothing servable falls through to Learn. An unreadable queue keeps the
+    scheduled count."""
+    if step.kind != quiz_plan.NEXT_REVIEW:
+        return step
+    servable = _servable_due_count(user_id, course_id, now)
+    if servable is None or servable >= step.due_count:
+        return step
+    if servable:
+        return quiz_plan.NextStep(quiz_plan.NEXT_REVIEW, servable, step.learn_node_id)
+    learn = step.learn_node_id
+    return quiz_plan.NextStep(quiz_plan.NEXT_LEARN if learn else quiz_plan.NEXT_NONE, 0, learn)
+
+
 def results_block(
     user_id: str,
     node: Mapping,
@@ -797,7 +841,7 @@ def results_block(
     if after is None:
         return None
     changes = quiz_plan.skill_changes(before.p_known, after.p_known, before.order)
-    step = quiz_plan.next_step(states, edges, now)
+    step = _servable_step(quiz_plan.next_step(states, edges, now), user_id, course_id, now)
     own = next((s for s in states if s.node_id == node_id), None)
     learn = (
         {

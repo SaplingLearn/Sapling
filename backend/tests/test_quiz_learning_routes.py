@@ -574,6 +574,7 @@ def test_results_block_words_the_meters_the_due_count_and_the_next_step():
         patch.object(ql, "_nodes", return_value=nodes),
         patch.object(ql, "_concept_states", return_value=states),
         patch.object(ql, "_prereq_edges", return_value=[("parent", "n")]),
+        patch.object(ql, "_servable_due_count", return_value=1),
     ):
         block = ql.results_block("u", {"id": "n", "course_id": "c1", "concept_name": "Recursion"}, before, now=NOW)
     assert block["changes"] == [
@@ -583,6 +584,69 @@ def test_results_block_words_the_meters_the_due_count_and_the_next_step():
     assert block["review"] == {"due_count": 1, "next_due_at": (NOW + timedelta(days=3)).isoformat()}
     assert block["next_step"] == "review"
     assert block["learn"] == {"concept_id": "parent", "concept_name": "Functions", "course_id": "c1"}
+
+
+def _due_block(servable):
+    before = ql.SkillSnapshot(("n",), {"n": 0.35})
+    nodes = [ql._Node("n", "Recursion", "c1"), ql._Node("due", "Loops", "c1"), ql._Node("due2", "Arrays", "c1")]
+    gone = NOW - timedelta(hours=1)
+    states = [
+        quiz_plan.ConceptState("n", 0.40),
+        quiz_plan.ConceptState("due", 0.97, fsrs_s=3.0, fsrs_last_review_at=NOW - timedelta(days=4), fsrs_due_at=gone),
+        quiz_plan.ConceptState("due2", 0.97, fsrs_s=3.0, fsrs_last_review_at=NOW - timedelta(days=4), fsrs_due_at=gone),
+    ]
+    with (
+        patch.object(ql, "skill_snapshot", return_value=before),
+        patch.object(ql, "_nodes", return_value=nodes),
+        patch.object(ql, "_concept_states", return_value=states),
+        patch.object(ql, "_prereq_edges", return_value=[]),
+        patch.object(ql, "_servable_due_count", return_value=servable) as count,
+    ):
+        block = ql.results_block("u", {"id": "n", "course_id": "c1", "concept_name": "Recursion"}, before, now=NOW)
+    return block, count
+
+
+def test_the_due_count_is_what_the_study_queue_can_serve():
+    """PR #866 K15: 'Review what's due (N)' sends the student to Study's review
+    queue, so N is the course's due concepts that queue can serve (a servable
+    check item, not paused) — never an FSRS-due concept it would skip."""
+    block, count = _due_block(1)
+    assert count.call_args.args == ("u", "c1", NOW)
+    assert block["review"]["due_count"] == 1 and block["next_step"] == "review"
+
+
+def test_nothing_servable_offers_learn_not_an_empty_review():
+    """No servable item for any due concept (no check items yet): the results
+    never lead to a Study queue that says 'All caught up'."""
+    block, _ = _due_block(0)
+    assert block["review"]["due_count"] == 0
+    assert block["next_step"] == "learn" and block["learn"]["concept_id"] == "n"
+
+
+def test_an_unreadable_queue_keeps_the_scheduled_count():
+    block, _ = _due_block(None)
+    assert block["review"]["due_count"] == 2 and block["next_step"] == "review"
+
+
+def test_servable_due_count_reads_the_study_queues_own_session(monkeypatch):
+    """The count is learning.review.summary's due checks for the course, over
+    the cross-course session Study's queue serves from (course None)."""
+    from learning import review
+
+    seen = {}
+    monkeypatch.setattr(review, "peek_review_session", lambda uid, course, now: seen.setdefault("peek", (uid, course, now)) and {"doc": 1})
+
+    def summary(uid, course, now, *, loop_state, pause_novice):
+        seen["summary"] = (uid, course, now, loop_state)
+        return {"due": {"check": 4, "flashcard": 9}}
+
+    monkeypatch.setattr(review, "summary", summary)
+    monkeypatch.setattr(ql, "_pause_novice", lambda uid: False)
+    assert ql._servable_due_count("u", "c1", NOW) == 4
+    assert seen["peek"] == ("u", None, NOW)
+    assert seen["summary"] == ("u", "c1", NOW, {"doc": 1})
+    monkeypatch.setattr(review, "summary", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("down")))
+    assert ql._servable_due_count("u", "c1", NOW) is None
 
 
 def test_no_results_block_without_the_before_read():
