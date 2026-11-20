@@ -274,6 +274,12 @@ function QueueBody() {
       toast.success(message);
     } catch (err) {
       toast.error(humanizeError(err, action === "approve" ? "Couldn't approve it." : "Couldn't retire it."));
+      // #866 K58: a failed decision can still have changed the question — a
+      // retire is decided before its results are voided, so a 503 leaves it
+      // retire-pending and held, and it can no longer be approved. Show what
+      // the server holds now instead of the row as it was.
+      void load();
+      if (stats) void loadStats(stats.course_id);
     } finally {
       setBusyId(null);
     }
@@ -534,7 +540,8 @@ function QueueRow({
         {entry.retire_pending && <span className="chip chip--err">Retire not finished — retire again</span>}
         {entry.held && (
           <span className="chip chip--err" data-testid={`admin-items-held-${entry.id}`}>
-            Held — served to no one until approved
+            {/* a retired question is never approved: retiring again removes it */}
+            {entry.retire_pending ? "Held — served to no one" : "Held — served to no one until approved"}
           </span>
         )}
         {reasons.map((r) => (

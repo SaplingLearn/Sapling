@@ -292,6 +292,49 @@ describe("AdminCheckItems", () => {
     expect(api.adminCheckItemQueue).toHaveBeenCalledTimes(3);
   });
 
+  it("re-reads the queue after a failed retire, so the row shows it is retire-pending (#866 K58)", async () => {
+    // a 503 after the decision was recorded: the question is retire-pending
+    // and held on the server, and can no longer be approved
+    api.adminCheckItemQueue
+      .mockResolvedValueOnce(queue([entry()]))
+      .mockResolvedValueOnce(
+        queue([entry({ retire_pending: true, status: "retired", held: true, lint_flags: ["staff_retired"] })]),
+      );
+    api.adminRetireCheckItem.mockRejectedValue(new Error("Retired, but its results were not all voided yet; retire it again."));
+    render(<AdminCheckItems />);
+    const retire = await screen.findByTestId("admin-items-retire-i1");
+    fireEvent.click(retire);
+    fireEvent.click(retire);
+    await waitFor(() => expect(screen.getByTestId("admin-items-row-i1").textContent).toContain("Retire not finished"));
+    expect(toast.error).toHaveBeenCalled();
+    expect(api.adminCheckItemQueue).toHaveBeenCalledTimes(2);
+    expect(screen.queryByTestId("admin-items-approve-i1")).toBeNull();
+    // held, but never "until approved": a retired question cannot be approved
+    expect(screen.getByTestId("admin-items-held-i1").textContent).toBe("Held — served to no one");
+  });
+
+  it("re-reads the item statistics after a failed decision there too (#866 K58)", async () => {
+    api.adminCheckItemQueue.mockResolvedValue(queue([]));
+    const pending = entry({ id: "i7", question_hash: "qh7", retire_pending: true, status: "retired", held: true });
+    api.adminCheckItemStats
+      .mockResolvedValueOnce(statsReport())
+      .mockResolvedValueOnce(
+        statsReport({ flagged: [{ ...pending, stats: itemStats({ flags: ["negative_discrimination"] }) }] }),
+      );
+    api.adminRetireCheckItem.mockRejectedValue(new Error("503"));
+    render(<AdminCheckItems />);
+    await screen.findByTestId("admin-items-empty");
+    fireEvent.change(screen.getByTestId("admin-items-stats-course"), { target: { value: "c1" } });
+    fireEvent.click(screen.getByTestId("admin-items-stats-load"));
+    fireEvent.click(await screen.findByTestId("admin-items-filter-data"));
+    const retire = screen.getByTestId("admin-items-retire-i7");
+    fireEvent.click(retire);
+    fireEvent.click(retire);
+    await waitFor(() => expect(api.adminCheckItemStats).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByTestId("admin-items-approve-i7")).toBeNull());
+    expect(screen.getByTestId("admin-items-row-i7").textContent).toContain("Retire not finished");
+  });
+
   it("an unfinished retire can only be retired again", async () => {
     api.adminCheckItemQueue.mockResolvedValue(queue([entry({ retire_pending: true, status: "retired" })]));
     render(<AdminCheckItems />);
