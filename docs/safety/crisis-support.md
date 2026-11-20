@@ -155,7 +155,7 @@ PostHog, not to Logfire.
 
 | Surface (`event.payload.surface`) | Route(s) | Text screened | The card |
 |---|---|---|---|
-| `tutor_chat` | `POST /api/learn/chat`, `/chat/stream` | `message` | instead of a tutor turn (also the quiz's "Ask about this" panel and the study guide's "ask the tutor", which ride it) |
+| `tutor_chat` | `POST /api/learn/chat`, `/chat/stream` | `message` | instead of a tutor turn (also the quiz's "Ask about this" panel and the study guide's "ask the tutor", which ride it); beside the turn when what matched is the quiz question the panel's first message quotes (`quiz_attempt_id` + `quiz_question_index`, read off the student's own attempt: its stem, options, key and explanation, each only where it fills a whole field of the message; the answer the student wrote is their own typed text and still blocks; `crisis_support.screen_quoting_async`, #866 K12) |
 | `tutor_start` | `POST /api/learn/start-session`, `/start-session/stream` | `topic`, the learning loop's `goal.text` | instead of opening a session |
 | `loop_chat` | `POST /api/learn/loop/chat`, `/chat/stream` | `message` | instead of a loop tutor turn |
 | `loop_start` | `POST /api/learn/loop/start-session`, `/start-session/stream` | `topic`, `goal.text` | instead of opening a session |
@@ -235,7 +235,7 @@ never an integrity refusal.
 | Campus counseling, per school | `CAMPUS_COUNSELING` in that same copy file |
 | Screen, flag, event, response builders, the screen dependency (`screened`) | `backend/services/crisis_support.py` |
 | Screen-before-rate-limit wiring on the loop | `backend/routes/learn_loop.py::_screened` |
-| The screens | the first statement of each handler in `routes/learn.py`, `routes/notes.py`, `routes/flashcards.py` (the notes actions: right after the note read, `screen_content_async` + `alongside`; a tutor start on a note's title: `crisis_support.screen_tutor_start_async` (`tutor.note_title_version`) + `alongside`; a flashcard generation on a graph concept: `concept_topic.topic_is_graph_concept` + `alongside`) |
+| The screens | the first statement of each handler in `routes/learn.py`, `routes/notes.py`, `routes/flashcards.py` (the notes actions: right after the note read, `screen_content_async` + `alongside`; a tutor start on a note's title: `crisis_support.screen_tutor_start_async` (`tutor.note_title_version`) + `alongside`; a flashcard generation on a graph concept: `concept_topic.topic_is_graph_concept` + `alongside`; a tutor chat turn quoting a quiz question: `crisis_support.screen_quoting_async` (`quiz_ask.quoted_question_texts`) + `alongside`) |
 | Flag registration | `backend/services/feature_flags.py::REGISTRY["crisis_support"]` |
 | Event taxonomy / PostHog exclusion | `services/events_service.py::EVENT_TAXONOMY`, `services/posthog_client.py::_NOT_MIRRORED` |
 | The card | `frontend/src/components/safety/CrisisSupportCard.tsx`, `frontend/src/lib/crisisSupport.ts` |
@@ -421,8 +421,14 @@ points at it).
 - **False positives remain, and cost the most on typed text.** A literature
   or psychology question TYPED to the tutor that uses an explicit
   first-person phrase ("the speaker says 'I want to die'") gets the card
-  instead of an answer. So can a quiz option about suicide quoted in the
-  quiz's "Ask about this" opening message.
+  instead of an answer. A quiz question QUOTED in the quiz's "Ask about this"
+  opening message does not (#866 K12): that message names the question, the
+  server reads the question (stem, options, key, explanation) off their own
+  attempt, and a match inside that text, where it fills a whole field of the
+  message, shows the card beside the explanation, its event once a day per
+  question. The rest of the message — the answer the student wrote ("I
+  wrote: …") included, and a stored word found only inside it — and every
+  follow-up the student types, is typed text and blocks.
 - **A note's false positive costs the student nothing but the card.** A
   psychology or literature note that quotes a patient or a play ("a patient
   says 'I want to kill myself'", "Macbeth: 'I want to die'"), or names

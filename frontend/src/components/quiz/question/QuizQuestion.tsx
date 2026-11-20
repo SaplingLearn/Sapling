@@ -88,6 +88,13 @@ export interface QuizQuestionProps {
    * Optional so the current render keeps compiling until it reads this.
    */
   pending?: boolean;
+  /**
+   * Learning-loop spec §13 A132's "How sure are you?" is the learning system's:
+   * asked only while the loop is on for the student (`QuizScreen` reads the loop
+   * status). Off — the default — the question screen is the pre-loop one, and an
+   * answer states no confidence (#866 K46).
+   */
+  askConfidence?: boolean;
 }
 
 /** The header mark, at the size §3 pins for a `dot`. */
@@ -679,7 +686,8 @@ function QuestionAside({
 }
 
 /** Learning-loop spec §13 A132: A127's optional "How sure are you?" on every
- *  quiz question, either format. Choosing makes no request — the level rides
+ *  quiz question, either format, while the learning loop is on for the student
+ *  (`askConfidence`, #866 K46). Choosing makes no request — the level rides
  *  this question's `/answer` — and Submit never waits on it. Rendered in every
  *  live phase so nothing moves when the verdict lands; it stops taking changes
  *  once the answer is sent. */
@@ -727,6 +735,7 @@ export function QuizQuestion({
   userId,
   courseId,
   pending = false,
+  askConfidence = false,
 }: QuizQuestionProps) {
   const toast = useToast();
   const askRef = useRef<HTMLButtonElement>(null);
@@ -805,7 +814,9 @@ export function QuizQuestion({
         <div className="quiz-question__body" key={view.item?.question.id ?? cursor}>
           <QuestionPrompt item={view.item} format={view.format} />
           <AnswerField view={view} shown={shown} selectable={selectable} actions={actions} primary={primary} />
-          <QuestionConfidence confidenceRef={confidenceRef} item={view.item} selectable={selectable} actions={actions} />
+          {askConfidence && (
+            <QuestionConfidence confidenceRef={confidenceRef} item={view.item} selectable={selectable} actions={actions} />
+          )}
           <VerdictFeedback
             feedbackRef={feedbackRef}
             shown={shown}

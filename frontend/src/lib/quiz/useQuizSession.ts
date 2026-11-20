@@ -187,9 +187,11 @@ async function withNetworkRetry<T>(call: () => Promise<T>): Promise<T> {
  * connection, a wedged worker) left the skeleton up forever.
  *
  * Generation is bounded server-side per agent run (`QUIZ_GENERATION_TIMEOUT_SEC`,
- * 90s) and may run one top-up after the first, so the client allows both plus
+ * 90s; the item checks on a run's questions run inside that bound too, #866 K44)
+ * and may run one top-up after the first, so the client allows both plus
  * headroom — it is a backstop for a request the server has lost, never a
- * second, tighter budget. Submit is plain database work.
+ * second, tighter budget (backend tests/test_quiz_learning_routes.py pins it
+ * above the two bounds). Submit is plain database work.
  */
 export const GENERATE_TIMEOUT_MS = 200_000;
 export const SUBMIT_TIMEOUT_MS = 45_000;

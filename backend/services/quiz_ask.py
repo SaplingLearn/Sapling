@@ -25,6 +25,7 @@ the kill-switch path (`routes/learn.py`), so both lanes floor the quiz alike."""
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
 
@@ -131,3 +132,45 @@ def quiz_ask_session_ids(handle, *, to_iso: str) -> set[str]:
         )
         if r.get("id")
     }
+
+
+# ── #866 K12: the crisis screen of a chat turn that quotes the quiz question ──
+
+
+def _quoted_texts(user_id: str, attempt_id: str, question_index: int) -> list[str]:
+    """The quiz question's own text as stored on the student's attempt — its
+    stem, option texts (the chosen one among them), key, accepted answers and
+    explanation: what the Ask panel's first message quotes of the question.
+    Never the answer the student WROTE ("I wrote: …"): that is their own typed
+    text, screened as typed. [] for an attempt that is missing or another
+    student's, or no such question (the message is then screened as typed, as
+    before)."""
+    rows = table("quiz_attempts").select(
+        "user_id,questions_json", filters={"id": f"eq.{attempt_id}"}, limit=1
+    )
+    if not rows or rows[0].get("user_id") != user_id:
+        return []
+    questions = decrypt_json_column(
+        rows[0].get("questions_json"), bind=bind("quiz_attempts", "questions_json", attempt_id),
+    ) or []
+    if not isinstance(questions, list) or not 0 <= question_index < len(questions):
+        return []
+    question = questions[question_index]
+    if not isinstance(question, dict):
+        return []
+    options = [o for o in question.get("options") or [] if isinstance(o, dict)]
+    texts = [question.get("question"), *(o.get("text") for o in options),
+             question.get("correct_answer"), *(question.get("accepted_answers") or []),
+             question.get("explanation")]
+    return sorted({t.strip() for t in texts if isinstance(t, str) and t.strip()}, key=len, reverse=True)
+
+
+async def quoted_question_texts(body) -> list[str]:
+    """The stored text a chat turn quotes (#866 K12), for
+    `crisis_support.screen_quoting_async`: the quiz Ask panel's first message
+    names the quiz question it quotes (`ChatBody.quiz_attempt_id` and
+    `quiz_question_index`), and this reads that question off the student's own
+    attempt — never off the client. [] for a turn that names none."""
+    if body.quiz_attempt_id is None:
+        return []
+    return await asyncio.to_thread(_quoted_texts, body.user_id, body.quiz_attempt_id, body.quiz_question_index)

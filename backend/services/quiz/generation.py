@@ -45,7 +45,7 @@ from services.quiz.config import (
 from services.request_limits import aclaim_rate_limit
 from services import quiz_learning
 from services.quiz_learning import GenerationPlan
-from learning import quiz_evidence, quiz_gates
+from learning import quiz_evidence
 # fastapi's HTTPException, through the package's one fastapi seam (errors.py:
 # QuizAPIError IS an HTTPException, the #540 A3 envelope contract).
 from services.quiz.errors import HTTPException, QuizAPIError, QuizErrorCode
@@ -253,6 +253,21 @@ def _topup_format_rule(question_format: str) -> str:
     if question_format in WRITTEN_TYPES:
         return f"{question_format} only; {_WRITTEN_TOPUP_RULE}"
     return f"{_MCQ_TOPUP_RULE} And {_WRITTEN_TOPUP_RULE}"
+
+
+def _clock() -> float:
+    return asyncio.get_running_loop().time()
+
+
+def _time_left(began: float) -> float:
+    """What a generation run that started at `began` (`_clock()`) has left of
+    its QUIZ_GENERATION_TIMEOUT_SEC: the item checks on its questions run
+    inside it (learning-loop spec §13 A145, #866 Z13), so a gated generation
+    is bounded like an ungated one — two runs at most, which is what the
+    client's ceiling allows for (frontend lib/quiz/useQuizSession.ts
+    GENERATE_TIMEOUT_MS). A pass cut at the bound serves its questions as
+    practice."""
+    return QUIZ_GENERATION_TIMEOUT_SEC - (_clock() - began)
 
 
 def _quiz_user_message(
@@ -704,10 +719,14 @@ async def _quiz_via_agent(
             seen_hashes.add(qhash)
             wire_questions.append(mapped)
 
+    began = _clock()
     _absorb(*await _run(user_message, ORCHESTRATOR_LIMITS))
     # A145: check the questions each run adds; a dropped one counts as a drop
-    # (the top-up asks again) and frees its plan slot.
-    dropped += await quiz_learning.keep_gated(gate, wire_questions, 0, material, filled_slots)
+    # (the top-up asks again) and frees its plan slot. The checks run inside
+    # the run's own time bound (#866 Z13, `_time_left`).
+    dropped += await quiz_learning.keep_gated(
+        gate, wire_questions, 0, material, filled_slots, within_s=_time_left(began)
+    )
 
     # #543 E2: one bounded top-up when DRIFT cost us a big share of the
     # quiz. Gated on questions actually dropped (never on a clean short
@@ -734,10 +753,10 @@ async def _quiz_via_agent(
                 already=already,
             )
             try:
-                start = len(wire_questions)
+                start, began = len(wire_questions), _clock()
                 _absorb(*await _run(topup_msg, TOPUP_LIMITS))
                 dropped += await quiz_learning.keep_gated(
-                    gate, wire_questions, start, material, filled_slots
+                    gate, wire_questions, start, material, filled_slots, within_s=_time_left(began)
                 )
             except (Exception, asyncio.TimeoutError) as e:
                 # The request deliberately SUCCEEDS from here — serve the
@@ -791,29 +810,34 @@ def _item_gate(
     A124 blind solve against the course's concepts and the passages the
     questions were written from, on a model other than `writer_model` (the
     one that wrote them). It never fails the quiz: when the checks cannot run
-    at all, the run's questions are served as practice, never evidence."""
+    at all, the run's questions are served as practice, never evidence.
 
-    async def gate(questions: list[dict], material: CourseMaterial):
+    `within_s` is what the run left of its QUIZ_GENERATION_TIMEOUT_SEC
+    (#866 Z13): the checks finish inside it or are cut there, and a pass with
+    no time left never starts. Either way its questions are practice, like an
+    outage (A145 (f))."""
+
+    async def gate(questions: list[dict], material: CourseMaterial, within_s: float):
         try:
-            names = await asyncio.to_thread(quiz_learning.course_concept_names, user_id, course_id)
-            return await quiz_learning.gate_questions(
-                questions,
-                user_id=user_id,
-                course_id=course_id,
-                concept_name=concept_name,
-                concept_names=names,
-                passages=list(material.passages),
-                request_id=request_id,
-                writer_model=writer_model,
-            )
+            if within_s <= 0:
+                raise TimeoutError("the generation's time bound is spent")
+            async with asyncio.timeout(within_s):
+                names = await asyncio.to_thread(quiz_learning.course_concept_names, user_id, course_id)
+                return await quiz_learning.gate_questions(
+                    questions,
+                    user_id=user_id,
+                    course_id=course_id,
+                    concept_name=concept_name,
+                    concept_names=names,
+                    passages=list(material.passages),
+                    request_id=request_id,
+                    writer_model=writer_model,
+                )
         except Exception as exc:
             logger.warning("quiz: item gates unavailable (%s); serving as practice", type(exc).__name__)
-            unchecked = quiz_gates.Gate(
-                quiz_gates.PRACTICE, quiz_gates.ALIGNMENT_UNVERIFIED, quiz_gates.KEY_UNVERIFIED
-            ).stored()
-            for question in questions:
-                question[quiz_gates.GATE_KEY] = dict(unchecked)
-            return quiz_learning.GateRun(kept=list(questions))
+            return quiz_learning.unchecked_run(
+                questions, user_id=user_id, request_id=request_id, grounded=bool(material.passages),
+            )
 
     return gate
 

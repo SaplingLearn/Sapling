@@ -79,6 +79,16 @@
   margin: var(--quiz-results-gap-delta) 0 0;
 }
 
+/* #866 K40: why the mastery did not move, under the line that shows it. */
+.quiz-results__unchanged {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  margin: var(--quiz-results-gap-delta) 0 0;
+  max-width: var(--quiz-results-perfect-w);
+  text-align: center;
+  text-wrap: pretty;
+}
+
 /* The score rule: two plain text spans between two hairlines. Nothing is
    signalled by colour alone — this is a sentence, not a badge. */
 .quiz-results__rule {

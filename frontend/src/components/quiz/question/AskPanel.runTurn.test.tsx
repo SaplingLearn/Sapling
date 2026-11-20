@@ -212,6 +212,7 @@ describe("AskPanel runTurn — the chat leg", () => {
       true,
       undefined,
       turnId,
+      undefined, // no attempt, so the seed names no quiz question (#866 K12)
     ]);
     // streaming + status were cleared before the JSON leg.
     expect(screen.queryByText("Searching your course materials…")).toBeNull();

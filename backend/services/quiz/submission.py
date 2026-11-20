@@ -41,6 +41,7 @@ from services.gamification_service import me_snapshot
 from services.xp_service import XpAward, award_xp_safe
 from services.request_context import current_request_id
 from services.quiz.identity import wire_question_hash
+from services.quiz.unmoved import mastery_unmoved
 from services.quiz.attempts import (
     _already_completed,
     _attempt_not_found,
@@ -261,6 +262,11 @@ def _claim_quiz_evidence(user_id: str, attempt_id: str, hashes: list[str], now: 
 
 
 def _farm_guard(user_id: str, attempt_id: str, evidence: list[dict]) -> list[dict]:
+    """`_farm_guard_outcome`'s kept evidence alone."""
+    return _farm_guard_outcome(user_id, attempt_id, evidence)[0]
+
+
+def _farm_guard_outcome(user_id: str, attempt_id: str, evidence: list[dict]) -> tuple[list[dict], bool]:
     """Owner decision 2 (spec §13 A94, tightened by A100): quiz farming. A question
     counts at most ONCE per (student, question_hash) per rolling
     QUIZ_EVIDENCE_WINDOW_HOURS — decided by the guard's OWN claim journal
@@ -268,13 +274,14 @@ def _farm_guard(user_id: str, attempt_id: str, evidence: list[dict]) -> list[dic
     concurrent submit and a dropped evidence insert both stay closed. Within
     one attempt a repeated hash counts once; questions with no hash count ONCE
     per (student, node, attempt). A failed claim writes nothing (fail closed:
-    the score stands, mastery does not move)."""
+    the score stands, mastery does not move). Answers (kept, whether the claim
+    was answered): False only for that failed claim (#866 K40)."""
     hashes = [e["question_hash"] for e in evidence if e.get("question_hash")]
     try:
         claimed = _claim_quiz_evidence(user_id, attempt_id, hashes, datetime.now(timezone.utc))
     except Exception:
         logger.warning("quiz: evidence claim failed; the attempt moves nothing", exc_info=True)
-        return []
+        return [], False
     out: list[dict] = []
     used: set[str] = set()
     hashless_seen = False
@@ -289,7 +296,7 @@ def _farm_guard(user_id: str, attempt_id: str, evidence: list[dict]) -> list[dic
                 continue
             hashless_seen = True
         out.append(ev)
-    return out
+    return out, True
 
 
 def _help_floor(
@@ -633,23 +640,16 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
     # no XP). It is logged and emitted, and the attempt keeps NULL mastery
     # columns — history then shows no delta rather than one the graph never
     # took. A claim the farm guard took stays taken (fail closed).
+    # #866 K40: what each gate kept, so the results can say why nothing moved.
+    graded: list[dict] = []
+    checked: list[dict] = []
+    counted: list[dict] = []
+    claim_ok = True
     try:
-        evidence = _help_floor(
-            user_id,
-            _farm_guard(
-                user_id,
-                body.quiz_id,
-                _lint_gate(
-                    user_id,
-                    body.quiz_id,
-                    concept_node_id,
-                    questions,
-                    results,
-                    _quiz_evidence(concept_node_id, questions, results, stated),
-                ),
-            ),
-            answered_at,
-        )
+        graded = _quiz_evidence(concept_node_id, questions, results, stated)
+        checked = _lint_gate(user_id, body.quiz_id, concept_node_id, questions, results, graded)
+        counted, claim_ok = _farm_guard_outcome(user_id, body.quiz_id, checked)
+        evidence = _help_floor(user_id, counted, answered_at)
         # #849: the class-aggregate refresh this write triggers can make an LLM
         # call; it runs after the response, never inside the submit.
         applied = apply_graph_update(
@@ -674,6 +674,10 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
         mastery_written = True
         mastery_before, mastery_score_after = _mastery_span(applied, mastery_before)
     p_delta = mastery_score_after - mastery_before
+    unmoved = mastery_unmoved(
+        graded=len(graded), checked=len(checked), counted=len(counted), written=evidence,
+        stored=mastery_written and claim_ok,
+    )
 
     if mastery_written:
         try:
@@ -862,4 +866,7 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
         # half ALONE — see `_gamification_block` for why that half survives.
         "gamification": gamification,
         **({"learning": learning} if learning is not None else {}),
+        # #866 K40, additive: present only when no question could move the
+        # mastery, naming why (services/quiz/unmoved.py).
+        **({"mastery_unmoved": unmoved} if unmoved else {}),
     }

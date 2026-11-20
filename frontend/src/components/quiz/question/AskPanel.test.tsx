@@ -559,6 +559,39 @@ describe("AskPanel — crisis support (docs/safety/crisis-support.md)", () => {
     expect(await screen.findByTestId("crisis-support-card")).toBeTruthy();
   });
 
+  it("the seed names the quiz question it quotes; a follow-up names none; Retry of the seed names it again (#866 K12)", async () => {
+    const quizAsk = { attemptId: "attempt-9", questionIndex: 2 };
+    api.shouldFallBackToJson.mockReturnValue(false);
+    api.streamChat.mockRejectedValueOnce(new Error("stream died"));
+    renderPanel({ quizAsk });
+    const retry = await screen.findByTestId("quiz-ask-retry");
+    expect(api.streamChat.mock.calls[0][8]).toEqual(quizAsk);
+    await act(async () => {
+      fireEvent.click(retry);
+    });
+    await screen.findByText("The base case is the exit.");
+    expect(api.streamChat.mock.calls[1][8]).toEqual(quizAsk);
+    fireEvent.change(screen.getByTestId("quiz-ask-input"), { target: { value: "And why C?" } });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("quiz-ask-send"));
+    });
+    await waitFor(() => expect(api.streamChat).toHaveBeenCalledTimes(3));
+    expect(api.streamChat.mock.calls[2][8]).toBeUndefined();
+  });
+
+  it("a card beside the explanation shows both: the card, then the tutor's answer (#866 K12)", async () => {
+    // A nursing question quoting a patient's words: the card rides beside the reply.
+    api.streamChat.mockResolvedValueOnce({
+      reply: "Asking about the plan first tells you how close the danger is.",
+      crisis_support: crisisFixture,
+      crisis_support_alongside: true,
+    });
+    renderPanel({ quizAsk: { attemptId: "attempt-9", questionIndex: 2 } });
+    expect(await screen.findByTestId("crisis-support-card")).toHaveTextContent(crisisFixture.title);
+    expect(screen.getByText("Asking about the plan first tells you how close the danger is.")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
   it("a session start answered with the card opens no session and sends nothing", async () => {
     api.startSessionStream.mockResolvedValueOnce({ session_id: null, reply: "…", crisis_support: crisisFixture });
     renderPanel();

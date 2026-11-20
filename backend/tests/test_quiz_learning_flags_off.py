@@ -326,9 +326,10 @@ class _Tables:
         return mock
 
 
-def _flow(monkeypatch, *, question_format: str, difficulty: str = "adaptive") -> dict:
-    """/generate → /answer (each question, the first answered "Sure") → /submit
-    on the E2E quiz handler, every write and response recorded."""
+def _flow(monkeypatch, *, question_format: str, difficulty: str = "adaptive", state_confidence: bool = True) -> dict:
+    """/generate → /answer (each question, the first answered "Sure" unless
+    `state_confidence` is False) → /submit on the E2E quiz handler, every write
+    and response recorded."""
     from agents._providers import clear_function_handlers, model_for, register_function_handler
     from agents.function_handlers_e2e import _quiz_check_handler, _quiz_handler
     from agents.quiz import quiz_agent
@@ -401,7 +402,7 @@ def _flow(monkeypatch, *, question_format: str, difficulty: str = "adaptive") ->
             stored = tables.attempt["questions_json"]["enc"]
             for i, question in enumerate(stored):
                 body = {"question_index": i, "question_id": question["id"], "time_ms": 1000}
-                if i == 0:
+                if i == 0 and state_confidence:
                     body["confidence"] = "sure"
                 if question.get("type") in ("short_answer", "numeric", "symbolic"):
                     body["answer_text"] = question["correct_answer"] if i % 2 == 0 else "wrong"
@@ -466,13 +467,14 @@ def flags_off(request, monkeypatch):
     if request.param == "quiz_flags_off":
         for key in QUIZ_FLAGS:
             monkeypatch.setenv(f"SAPLING_FLAG_{key.upper()}", "off")
-        return
+        return request.param
     for key in QUIZ_FLAGS:
         monkeypatch.setenv(f"SAPLING_FLAG_{key.upper()}", "on")
     if request.param == "learning_loop_flag_off":
         monkeypatch.setenv("SAPLING_FLAG_LEARNING_LOOP", "off")
     else:
         monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", False)
+    return request.param
 
 
 @pytest.mark.parametrize("variant", sorted(REQUEST_VARIANTS))
@@ -492,4 +494,21 @@ def test_flag_off_quiz_prompt_version_is_50e9ded8s():
 @pytest.mark.parametrize("question_format", sorted(PRE_QUIZ_LEARNING_FLOWS))
 def test_flag_off_route_flow_is_byte_identical_to_50e9ded8(monkeypatch, flags_off, question_format):
     flow = _flow(monkeypatch, question_format=question_format)
-    assert _flow_digest(flow) == PRE_QUIZ_LEARNING_FLOWS[question_format]
+    if flags_off == "quiz_flags_off":
+        assert _flow_digest(flow) == PRE_QUIZ_LEARNING_FLOWS[question_format]
+        return
+    # #866 K46 (owner decision 2026-11-18: with the loop off the app is main's):
+    # A132's stated confidence is the learning system's, so with the loop off
+    # the quiz asks for none and keeps none. The "Sure" this client still sends
+    # is dropped: the flow is 50e9ded8's for a client that stated nothing.
+    (first,) = [w for w in flow["written"] if w[0] == "insert" and w[1] == "quiz_responses"][:1]
+    assert first[2]["confidence"] is None
+    assert not any("student_confidence" in e for call in flow["evidence"] for e in call["update"]["evidence"])
+    import config
+
+    monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", True)
+    monkeypatch.setenv("SAPLING_FLAG_LEARNING_LOOP", "on")
+    for key in QUIZ_FLAGS:
+        monkeypatch.setenv(f"SAPLING_FLAG_{key.upper()}", "off")
+    stated_nothing = _flow(monkeypatch, question_format=question_format, state_confidence=False)
+    assert _flow_digest(flow) == _flow_digest(stated_nothing)

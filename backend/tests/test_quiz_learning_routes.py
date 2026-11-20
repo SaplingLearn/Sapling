@@ -392,8 +392,181 @@ def test_the_route_gate_hands_the_writer_model_to_the_checks():
         patch.object(ql, "gate_questions", side_effect=gate_questions),
     ):
         gate = quiz_route._item_gate("u", "c", "Recursion", "r", "claude-sonnet-5-5")
-        asyncio.run(gate([_wire(1)], material))
+        asyncio.run(gate([_wire(1)], material, 30.0))
     assert seen["writer_model"] == "claude-sonnet-5-5"
+
+
+# #866 Z13: the checks run inside their generation run's QUIZ_GENERATION_TIMEOUT_SEC
+
+
+def _written(*stems: str, drifted: int = 0):
+    """A writer run's output: one multiple-choice question per stem, the last
+    `drifted` of them keyed to no option (dropped before the gate)."""
+    from agents.quiz import Quiz, QuizQuestion
+
+    return Quiz(questions=[
+        QuizQuestion(question=stem, type="multiple_choice", difficulty="easy",
+                     options=["one", "two", "three", "four"],
+                     correct_answer="NOPE" if i >= len(stems) - drifted else "two",
+                     explanation="x", concept="Recursion")
+        for i, stem in enumerate(stems)
+    ])
+
+
+def _hanging_gate_run(monkeypatch, *, bound: float, run_took: float | None = None, num_questions: int = 1,
+                      runs=None):
+    """`_quiz_via_agent` with the real `_item_gate`, a writer that answers at
+    once (`runs`, one output per run; one question by default) and a check
+    pass that never returns, under a `bound`-second QUIZ_GENERATION_TIMEOUT_SEC;
+    `run_took` makes the run's clock say it took that long. Guarded: a
+    generation still running 5 s in fails the test instead of hanging it.
+    Returns (questions, gated events, checks started, writer runs)."""
+    from contextlib import ExitStack
+    from types import SimpleNamespace
+
+    from services.quiz import generation as quiz_route
+    from tests.split_patches import patch_quiz
+    from tests.test_quiz_learning_flags_off import _context_patches
+
+    outputs = list(runs or [_written(*(f"Question {n}?" for n in range(1, num_questions + 1)))])
+    started, events, calls = [], [], []
+
+    async def writer(*a, **k):
+        calls.append(1)
+        return SimpleNamespace(output=outputs[min(len(calls), len(outputs)) - 1])
+
+    async def checks(questions, **kw):
+        started.append(len(questions))
+        await asyncio.sleep(3600)
+
+    def log_event(name, **kw):
+        events.append((name, kw.get("payload")))
+
+    with ExitStack() as stack:
+        _context_patches(stack, material=False, recent=False, exam_days=None)
+        stack.enter_context(patch_quiz("QUIZ_GENERATION_TIMEOUT_SEC", bound))
+        stack.enter_context(patch("services.quiz.generation.quiz_agent.run", new=writer))
+        stack.enter_context(patch("services.quiz.generation.record_agent_usage", side_effect=lambda r, **k: r))
+        stack.enter_context(patch("services.quiz.generation.served_model_name", return_value="m"))
+        stack.enter_context(patch.object(ql, "course_concept_names", return_value=["Recursion"]))
+        stack.enter_context(patch.object(ql, "gate_questions", side_effect=checks))
+        stack.enter_context(patch("services.events_service.log_event", side_effect=log_event))
+        if run_took is not None:
+            stack.enter_context(patch.object(quiz_route, "_clock", side_effect=[0.0, run_took]))
+        out = asyncio.run(asyncio.wait_for(
+            quiz_route._quiz_via_agent(
+                user_id="u", course_id="c", concept_node_id="n1", concept_name="Recursion",
+                num_questions=num_questions, difficulty="easy", use_shared_context=False,
+                request_id="r", has_graph=True,
+                gate=quiz_route._item_gate("u", "c", "Recursion", "r", "claude-haiku-5-5"),
+            ),
+            timeout=5,
+        ))
+    gated = [payload for name, payload in events if name == "quiz.items_gated"]
+    return out.questions, gated, started, len(calls)
+
+
+def test_a_check_pass_that_outlasts_its_runs_bound_is_cut_there_and_served_as_practice(monkeypatch):
+    """#866 Z13: the checks used to have no wall-clock bound of their own (three
+    120 s attempts on quiz_check, then the key match); now a pass still running
+    when its run's QUIZ_GENERATION_TIMEOUT_SEC is spent is cut, and its questions
+    are served as practice, as an outage's are (A145 (f)), and counted."""
+    questions, gated, started, _ = _hanging_gate_run(monkeypatch, bound=0.3)
+    assert started == [1]  # the checks did start, inside the bound
+    assert [q["gate"] for q in questions] == [
+        {"status": "practice", "alignment": "alignment_unverified", "key": "key_unverified"}
+    ]
+    assert gated == [{"questions": 1, "grounded": False, "practice": 1, "alignment_unverified": 1,
+                      "key_unverified": 1, "unavailable": True}]
+
+
+def test_a_run_that_spent_its_bound_starts_no_checks(monkeypatch):
+    """The checks get only what their run left of the bound: none left, none
+    started (a call cut at once would still bill its input)."""
+    questions, gated, started, _ = _hanging_gate_run(monkeypatch, bound=0.3, run_took=0.3)
+    assert started == []
+    assert questions[0]["gate"]["status"] == "practice"
+    assert gated[0]["unavailable"] is True
+
+
+def test_a_gated_generation_and_its_top_up_end_inside_the_clients_ceiling(monkeypatch):
+    """#866 K44: the client stops waiting on /generate after GENERATE_TIMEOUT_MS
+    (frontend lib/quiz/useQuizSession.ts), sized for at most two runs of
+    QUIZ_GENERATION_TIMEOUT_SEC (the run and one top-up). The item checks of
+    each run now fit inside those two bounds, so a gated generation whose top-up
+    runs and whose checks hang still ends inside them, before the client gives up."""
+    import time
+
+    bound = 0.3
+    began = time.monotonic()
+    questions, _, started, runs = _hanging_gate_run(
+        monkeypatch, bound=bound, num_questions=3,
+        runs=[_written("A?", "B?", "C?", drifted=2), _written("D?", "E?")],
+    )
+    elapsed = time.monotonic() - began
+    assert runs == 2 and started == [1, 2]  # the top-up ran, and both passes started
+    assert elapsed < 2 * bound + 0.25
+    assert [q["question"] for q in questions] == ["A?", "D?", "E?"]
+    assert {q["gate"]["status"] for q in questions} == {"practice"}
+
+
+def test_the_clients_generate_ceiling_covers_the_servers_two_bounded_runs():
+    """#866 K44: the client's ceiling is a backstop for a request the server has
+    lost, never a tighter budget than the server's own: it must exceed the two
+    bounded runs (each with its item checks) a generation can take."""
+    import pathlib
+    import re
+
+    from services.quiz.config import QUIZ_GENERATION_TIMEOUT_SEC
+
+    source = (pathlib.Path(__file__).resolve().parents[2] / "frontend/src/lib/quiz/useQuizSession.ts").read_text()
+    (ceiling_ms,) = re.findall(r"export const GENERATE_TIMEOUT_MS = ([\d_]+);", source)
+    assert int(ceiling_ms.replace("_", "")) / 1000 > 2 * QUIZ_GENERATION_TIMEOUT_SEC
+
+
+def test_the_checks_get_what_their_run_left_of_its_bound():
+    from services.quiz import generation as quiz_route
+
+    seen = []
+
+    async def gate(questions, material, within_s):
+        seen.append(within_s)
+        return ql.GateRun(kept=list(questions))
+
+    wire = [_wire(1)]
+    with patch.object(quiz_route, "_clock", side_effect=[1000.0]):
+        left = quiz_route._time_left(1000.0 - 70.0)  # the run took 70 s of 90
+    assert left == pytest.approx(quiz_route.QUIZ_GENERATION_TIMEOUT_SEC - 70.0)
+    assert asyncio.run(ql.keep_gated(gate, wire, 0, None, set(), within_s=left)) == 0
+    assert seen == [left]
+
+
+def test_a_cancelled_check_run_still_records_what_it_billed():
+    """#866 Z13 (as Z43/Z51): a check cut at its bound is cancelled mid-run; the
+    request the provider already answered still reaches llm_usage."""
+    from agents import check_items
+    from agents.deps import SaplingDeps
+
+    billed = []
+
+    class _BilledThenHangs:
+        async def run(self, *a, usage=None, **k):
+            usage.requests += 1
+            usage.input_tokens += 40
+            await asyncio.sleep(3600)  # an output retry, still in flight
+
+    deps = SaplingDeps(user_id="u", course_id="c", supabase=None, request_id="r", feature="quiz")
+    with patch.object(check_items, "record_agent_usage", side_effect=lambda r, **k: billed.append((r, k))):
+        with pytest.raises(TimeoutError):
+            asyncio.run(asyncio.wait_for(
+                check_items.run_drafting(_BilledThenHangs(), "p", deps=deps, flex=False,
+                                         feature=ql.VERIFY_FEATURE, task="quiz_check"),
+                timeout=0.05,
+            ))
+    assert len(billed) == 1
+    run, kw = billed[0]
+    assert run.usage().requests == 1 and run.usage().input_tokens == 40
+    assert kw["feature"] == ql.VERIFY_FEATURE and kw["task"] == "quiz_check"
 
 
 def test_a_written_answer_the_grader_rejects_goes_to_one_key_match():

@@ -31,6 +31,7 @@ import httpx
 from db.connection import page_all, pg_quote_value, table
 from db.scope import runs_as_service
 from learning import item_keys, quiz_gates, quiz_plan
+from learning.gate import LEARNING_LOOP_FLAG
 from learning.gate import learning_loop_for_request
 from learning.evidence import PREREQ_RELATIONSHIP_TYPE
 from learning.learner_state import read_states
@@ -65,6 +66,15 @@ def quiz_flags(user_id: str | None, *keys: str) -> tuple[bool, ...]:
     if not learning_loop_for_request(user_id):
         return tuple(False for _ in keys)
     return tuple(flag_on(key, user_id) for key in keys)
+
+
+def stated_confidence_on(user_id: str | None) -> bool:
+    """A132's "How sure are you?" has no flag of its own: it is the learning
+    system's, asked for and kept only while the loop is on for the student
+    (owner decision 2026-11-18, #866 K46). `quiz_flags` on the loop's own flag:
+    the gate first, so the kill switch reads nothing."""
+    (on,) = quiz_flags(user_id, LEARNING_LOOP_FLAG)
+    return on
 
 
 #: The model slot every quiz check runs on (agents/_providers.py).
@@ -498,26 +508,54 @@ async def gate_questions(
             continue
         question[quiz_gates.GATE_KEY] = gate.stored()
         run.kept.append(question)
+    _log_gated(run, user_id=user_id, request_id=request_id, questions=len(questions), grounded=grounded)
+    return run
+
+
+def _log_gated(run: GateRun, *, user_id: str, request_id: str | None, questions: int,
+               grounded: bool, **extra) -> None:
+    """`quiz.items_gated`: one gate pass's codes (the yield and the cost per
+    kept question are measured from these before the flag goes on, A145 (g))."""
     events_service.log_event(
         "quiz.items_gated",
         category=events_service.SYSTEM_CATEGORY,
         user_id=user_id,
         request_id=request_id,
-        payload={"questions": len(questions), "grounded": grounded, **run.counts},
+        payload={"questions": questions, "grounded": grounded, **run.counts, **extra},
     )
+
+
+def unchecked_run(questions: Sequence[dict], *, user_id: str, request_id: str | None,
+                  grounded: bool) -> GateRun:
+    """A145 (f): a gate pass whose checks could not run at all — unavailable,
+    or cut at its generation's time bound (#866 Z13): every question is kept
+    as practice, never evidence, and the pass is counted like any other
+    (`unavailable` marks it), so the measured yield includes it."""
+    unchecked = quiz_gates.Gate(
+        quiz_gates.PRACTICE, quiz_gates.ALIGNMENT_UNVERIFIED, quiz_gates.KEY_UNVERIFIED
+    )
+    run = GateRun(kept=list(questions))
+    for question in questions:
+        question[quiz_gates.GATE_KEY] = unchecked.stored()
+    if questions:
+        run.counts = {code: len(questions) for code in (unchecked.status, unchecked.alignment, unchecked.key)}
+    _log_gated(run, user_id=user_id, request_id=request_id, questions=len(questions),
+               grounded=grounded, unavailable=True)
     return run
 
 
 async def keep_gated(gate, wire_questions: list[dict], start: int, material,
-                     filled_slots: set[int]) -> int:
+                     filled_slots: set[int], *, within_s: float) -> int:
     """A145 in routes/quiz.py's generation: check the questions a run added
     (`wire_questions` from `start`) with `gate`; a dropped one frees its plan
     slot. Keeps the survivors in place, in order, and returns how many were
-    dropped (the top-up asks again for them). No gate, or nothing new: 0."""
+    dropped (the top-up asks again for them). No gate, or nothing new: 0.
+    `within_s` is what the run left of its time bound (#866 Z13): the gate's
+    checks get no more."""
     fresh = wire_questions[start:]
     if gate is None or not fresh:
         return 0
-    run = await gate(fresh, material)
+    run = await gate(fresh, material, within_s)
     kept = {id(q) for q in run.kept}
     for q in fresh:
         if id(q) not in kept and isinstance(q.get("planned"), dict):
@@ -862,8 +900,9 @@ def results_block(
             {
                 "concept_id": c.node_id,
                 "concept_name": names.get(c.node_id, ""),
-                "before": round(c.before, 4),
-                "after": round(c.after, 4),
+                # quiz_plan.shown_percent reads a change as the screen will
+                "before": round(c.before, quiz_plan.RESULTS_DECIMALS),
+                "after": round(c.after, quiz_plan.RESULTS_DECIMALS),
                 "band_before": c.band_before,
                 "band_after": c.band_after,
             }

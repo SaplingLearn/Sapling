@@ -35,6 +35,7 @@ Three choices live here, each behind its own flag:
 
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
@@ -268,17 +269,36 @@ class SkillChange:
     band_after: str
 
 
+#: The decimals a skill-meter value goes out with (services/quiz_learning.py
+#: results_block), which the results screen shows in whole percent.
+RESULTS_DECIMALS = 4
+
+
+def shown_percent(p: float) -> int:
+    """`p` as the results screen shows it: the value the response carries
+    (RESULTS_DECIMALS), in whole percent, half up — the client's Math.round
+    (frontend LearningBlock.tsx `pct`), on the same double."""
+    value = round(p, RESULTS_DECIMALS) * 100
+    whole = math.floor(value)
+    return int(whole) + (1 if value - whole >= 0.5 else 0)
+
+
 def skill_changes(
     before: Mapping[str, float], after: Mapping[str, float], order: Sequence[str]
 ) -> list[SkillChange]:
     """Every node in `order` whose decayed p_known moved by at least
-    QUIZ_RESULTS_MIN_CHANGE between the two reads, in `order`'s order (the
-    quizzed concept first). A node read on one side only is not listed."""
+    QUIZ_RESULTS_MIN_CHANGE between the two reads AND reads as moved in whole
+    percent (#866 K42: a change of half a point or more can still round to the
+    same percent, and "rose from 45% to 45%" says nothing moved), in `order`'s
+    order (the quizzed concept first). A node read on one side only is not
+    listed."""
     out = []
     for node in order:
         if node not in before or node not in after:
             continue
         if abs(after[node] - before[node]) < QUIZ_RESULTS_MIN_CHANGE:
+            continue
+        if shown_percent(after[node]) == shown_percent(before[node]):
             continue
         out.append(
             SkillChange(node, before[node], after[node], bkt.band(before[node]), bkt.band(after[node]))

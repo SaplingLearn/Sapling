@@ -28,7 +28,10 @@
  * the quiz's concept instead. And the server records the help on that
  * question, so answering it after the tutor explained it earns no unassisted
  * quiz credit. Under the kill switch the legacy tutor serves both calls; the
- * help is recorded the same way.
+ * help is recorded the same way. The seed message names the question as well
+ * (#866 K12): it QUOTES it, so a crisis phrase the question itself holds (a
+ * patient's words in a nursing question) shows the crisis card beside the
+ * explanation rather than in place of it (docs/safety/crisis-support.md).
  *
  * The session is LEFT OPEN on close (no `end-session`): it stays in the
  * tutor's session list, which is where a student who wants to keep going will
@@ -114,7 +117,8 @@ interface AskTurn {
   id: number;
   role: "user" | "assistant";
   text: string;
-  /** docs/safety/crisis-support.md: the crisis card instead of a tutor reply. */
+  /** docs/safety/crisis-support.md: the crisis card instead of a tutor reply
+   *  (`text` empty), or beside it (#866 K12: the question the seed quotes). */
   crisisSupport?: CrisisSupport;
   /** ADR 0020: the stream was cut off after producing this much. The partial
    *  stays in the thread, marked; Retry drops it and starts the answer over. */
@@ -185,6 +189,8 @@ export function AskPanel({
   // than answered twice.
   const lastMessageRef = useRef<string>("");
   const lastTurnIdRef = useRef<string>("");
+  // ...and whether it was the seed, which quotes the quiz question (#866 K12).
+  const lastQuotesRef = useRef(false);
   // The in-flight turn's text so far, readable by the close effect: closing
   // the sheet is this panel's Stop, and ADR 0020 keeps what was already shown.
   const partialRef = useRef("");
@@ -200,7 +206,7 @@ export function AskPanel({
   const nextId = () => ++idRef.current;
 
   const runTurn = useCallback(
-    async (message: string, turnId: string = newTurnId()) => {
+    async (message: string, turnId: string = newTurnId(), quotes = false) => {
       const token = ++runRef.current;
       // A new turn supersedes whatever was in flight; two streams writing into
       // the same partial-text state would interleave.
@@ -210,6 +216,7 @@ export function AskPanel({
       inFlightRef.current = true;
       lastMessageRef.current = message;
       lastTurnIdRef.current = turnId;
+      lastQuotesRef.current = quotes;
       setBusy(true);
       setError(null);
       setPause(null);
@@ -245,8 +252,12 @@ export function AskPanel({
           sessionIdRef.current = sid;
         }
 
+        // The seed names the quiz question it quotes (#866 K12): a crisis phrase
+        // the question holds then shows the card beside the explanation, not
+        // in place of it. A follow-up the student types quotes nothing.
+        const quote = quotes ? quizAskOrigin(askAttemptId, askQuestionIndex) : undefined;
         const reply = await chatWithFallback(
-          { sid, userId, message, turnId, signal: controller.signal, progress },
+          { sid, userId, message, turnId, signal: controller.signal, progress, quote },
           {
             onToken: delta => {
               // The pacer flushes its backlog after an abort; a closed or
@@ -286,7 +297,7 @@ export function AskPanel({
           ...t,
           typeof reply === "string"
             ? { id: nextId(), role: "assistant", text: reply }
-            : { id: nextId(), role: "assistant", text: "", crisisSupport: reply.crisis },
+            : { id: nextId(), role: "assistant", text: reply.reply ?? "", crisisSupport: reply.crisis },
         ]);
       } catch (err) {
         if (controller.signal.aborted || runRef.current !== token || !mountedRef.current) return;
@@ -333,7 +344,7 @@ export function AskPanel({
     setStreaming(null);
     setError(null);
     setDraft("");
-    void runTurn(seedMessage);
+    void runTurn(seedMessage, newTurnId(), true);
   }, [open, seedMessage, runTurn]);
 
   // Closing the sheet ends the turn it was showing — it is this panel's Stop.
@@ -406,7 +417,7 @@ export function AskPanel({
    */
   const retry = () => {
     setTurns(t => (t.length > 0 && t[t.length - 1].interrupted ? t.slice(0, -1) : t));
-    void runTurn(lastMessageRef.current, lastTurnIdRef.current);
+    void runTurn(lastMessageRef.current, lastTurnIdRef.current, lastQuotesRef.current);
   };
 
   const send = (e: React.FormEvent) => {
@@ -446,7 +457,15 @@ export function AskPanel({
         <div className="quiz-ask__thread" aria-live="polite">
           {turns.map(turn =>
             turn.crisisSupport ? (
-              <CrisisSupportCard key={turn.id} support={turn.crisisSupport} />
+              <React.Fragment key={turn.id}>
+                <CrisisSupportCard support={turn.crisisSupport} />
+                {/* #866 K12: beside a reply (the quoted question matched), the reply under it */}
+                {turn.text && (
+                  <div className="quiz-ask__turn--assistant">
+                    <MarkdownChat>{turn.text}</MarkdownChat>
+                  </div>
+                )}
+              </React.Fragment>
             ) : turn.role === "user" ? (
               <p key={turn.id} className="quiz-ask__turn--user">
                 {turn.text}

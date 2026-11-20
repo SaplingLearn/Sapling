@@ -325,7 +325,7 @@ journeys keep anchoring: `quiz-panel`, `quiz-start`,
 | `quiz-material-context` | reports whether retrieved course material, catalog context, or general knowledge was supplied |
 | `quiz-seg-format` | question-format selector; each option uses `quiz-seg-format-{value}` |
 | `quiz-answer-option-{label}` | one answer choice (`ui/AnswerOption`), suffixed with its label (`A`…) |
-| `quiz-confidence` | the optional "How sure are you?" radio group under the answer, on multiple-choice and written questions alike (`learn/ConfidenceControl`; learning-loop spec §13 A132) — no request of its own, the level rides the question's `/answer` |
+| `quiz-confidence` | the optional "How sure are you?" radio group under the answer, on multiple-choice and written questions alike (`learn/ConfidenceControl`; learning-loop spec §13 A132) — no request of its own, the level rides the question's `/answer`; shown only while the learning loop is on for the student (#866 K46) |
 | `quiz-confidence-{level}` | one level in it: `quiz-confidence-guessing` / `-fairly_sure` / `-sure` (`aria-checked`) |
 | `quiz-confidence-clear` | its "Clear", present once a level is chosen — takes the choice back (nothing is sent) |
 | `quiz-submit-answer` | the footer's primary button while the answer is unrevealed |
@@ -345,7 +345,8 @@ journeys keep anchoring: `quiz-panel`, `quiz-start`,
 | `quiz-results` | results root |
 | `quiz-results-graph` | the concept neighbourhood above the score (`graph/ConceptNeighbourhood`) |
 | `quiz-results-score` | the "{n} of {total} correct" line — a count, not a percentage |
-| `quiz-results-mastery` | the mastery delta line, "B% → A% · tier-before → tier-after" |
+| `quiz-results-mastery` | the mastery delta line, "B% → A% · tier-before → tier-after" ("B% → A%" alone while `quiz-results-learning` is shown: its levels are the screen's one scale, #866 K42) |
+| `quiz-results-unchanged` | why the mastery did not move, when the shown percent did not and submit's `mastery_unmoved` names why (a question counts once a day, one that failed its checks does not count, a right answer with help earns no credit, the write failed; a round of the last quiz's missed questions that was all counted already was practice) — absent when submit names no reason (evidence was written), and while `quiz-results-learning` is shown, whose `quiz-results-no-change` says it (#866 K40) |
 | `quiz-results-xp` | "+{Δ} XP · {streak}-day streak" — absent when either gamification read failed |
 | `quiz-results-perfect` | the line shown instead of the missed list on a clean sweep |
 | `quiz-results-learning` | the "Your skill meters" block (`results/LearningBlock`) — present only when the submit returned a `learning` block (`quiz_results_routing`, learning-loop spec §13 A147) |

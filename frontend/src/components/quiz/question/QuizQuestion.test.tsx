@@ -131,7 +131,7 @@ function makeActions(): QuizActions {
   };
 }
 
-function renderScreen(session: QuizSession, actions: QuizActions = makeActions()) {
+function renderScreen(session: QuizSession, actions: QuizActions = makeActions(), askConfidence = false) {
   const view = render(
     <QuizQuestion
       session={session}
@@ -140,6 +140,7 @@ function renderScreen(session: QuizSession, actions: QuizActions = makeActions()
       concept={CONCEPT}
       userId="user-1"
       courseId="course-cs101"
+      askConfidence={askConfidence}
     />,
   );
   return { ...view, actions };
@@ -193,7 +194,10 @@ describe("QuizQuestion — the question", () => {
     const session = makeSession({ items: [item(0, { question: { ...question(1), type, options: [] } })] });
     const view = renderScreen(session, actions);
     const input = screen.getByRole("textbox", { name: /^Your answer/ });
-    // No answer choices — the one radio group is the stated confidence (A132).
+    // No answer choices: with the loop off no radio group at all, as before the
+    // loop (#866 K46); with it on, the one radio group is the stated confidence (A132).
+    expect(screen.queryByRole("radiogroup")).not.toBeInTheDocument();
+    view.rerender(<QuizQuestion session={session} actions={actions} config={null} concept={CONCEPT} userId="user-1" courseId="course-cs101" askConfidence />);
     expect(screen.queryByRole("radiogroup", { name: "Answer choices" })).not.toBeInTheDocument();
     expect(screen.getByRole("radiogroup", { name: /How sure are you/ })).toBeInTheDocument();
     expect(screen.getByTestId("quiz-submit-answer")).toBeDisabled();
@@ -442,7 +446,7 @@ describe("QuizQuestion — stated confidence (learning-loop spec §13 A132)", ()
     ["multiple choice", () => item(0)],
     ["written", () => written()],
   ] as const)("offers the optional control on a %s question, with its own testids", (_kind, make) => {
-    renderScreen(makeSession({ items: [make()] }), withConfidence());
+    renderScreen(makeSession({ items: [make()] }), withConfidence(), true);
     const group = screen.getByTestId("quiz-confidence");
     expect(group).toHaveAttribute("role", "radiogroup");
     expect(group).toHaveAccessibleName(/How sure are you\? \(optional\)/);
@@ -455,7 +459,7 @@ describe("QuizQuestion — stated confidence (learning-loop spec §13 A132)", ()
 
   it("shows the current question's level and hands a choice to the hook — no request of its own", () => {
     const actions = withConfidence();
-    renderScreen(makeSession({ items: [item(0, { confidence: "fairly_sure" }), item(1), item(2)] }), actions);
+    renderScreen(makeSession({ items: [item(0, { confidence: "fairly_sure" }), item(1), item(2)] }), actions, true);
     expect(screen.getByTestId("quiz-confidence-fairly_sure")).toHaveAttribute("aria-checked", "true");
     fireEvent.click(screen.getByTestId("quiz-confidence-sure"));
     expect(actions.setConfidence).toHaveBeenLastCalledWith("sure");
@@ -467,7 +471,7 @@ describe("QuizQuestion — stated confidence (learning-loop spec §13 A132)", ()
 
   it("Submit never waits on it: a skipped control leaves Submit as the answer alone decides", () => {
     const actions = withConfidence();
-    renderScreen(makeSession({ items: [item(0, { selectedIndex: 1 }), item(1), item(2)] }), actions);
+    renderScreen(makeSession({ items: [item(0, { selectedIndex: 1 }), item(1), item(2)] }), actions, true);
     expect(screen.getByTestId("quiz-submit-answer")).toBeEnabled();
     fireEvent.click(screen.getByTestId("quiz-submit-answer"));
     expect(actions.submitAnswer).toHaveBeenCalledOnce();
@@ -475,10 +479,10 @@ describe("QuizQuestion — stated confidence (learning-loop spec §13 A132)", ()
 
   it("stops taking changes while the answer is in flight and once its verdict is showing", () => {
     const actions = withConfidence();
-    const view = renderScreen(makeSession({ items: [item(0, { selectedIndex: 1, confidence: "sure" })] }), actions);
+    const view = renderScreen(makeSession({ items: [item(0, { selectedIndex: 1, confidence: "sure" })] }), actions, true);
     view.rerender(
       <QuizQuestion session={makeSession({ items: [item(0, { selectedIndex: 1, confidence: "sure" })] })}
-        actions={actions} config={null} concept={CONCEPT} userId="user-1" courseId="course-cs101" pending />,
+        actions={actions} config={null} concept={CONCEPT} userId="user-1" courseId="course-cs101" pending askConfidence />,
     );
     expect(screen.getByTestId("quiz-confidence-guessing")).toBeDisabled();
     view.rerender(
@@ -490,7 +494,7 @@ describe("QuizQuestion — stated confidence (learning-loop spec §13 A132)", ()
             verdict: { isCorrect: true, correctIndex: 1, explanation: "Right." },
           })],
         })}
-        actions={actions} config={null} concept={CONCEPT} userId="user-1" courseId="course-cs101"
+        actions={actions} config={null} concept={CONCEPT} userId="user-1" courseId="course-cs101" askConfidence
       />,
     );
     // Still on screen (nothing moves when the verdict lands), showing the level sent.
@@ -501,7 +505,7 @@ describe("QuizQuestion — stated confidence (learning-loop spec §13 A132)", ()
 
   it("owns its keys: arrows move and choose, Enter chooses instead of submitting, a letter is no answer shortcut", () => {
     const actions = withConfidence();
-    renderScreen(makeSession({ items: [item(0, { selectedIndex: 1 }), item(1), item(2)] }), actions);
+    renderScreen(makeSession({ items: [item(0, { selectedIndex: 1 }), item(1), item(2)] }), actions, true);
     const guessing = screen.getByTestId("quiz-confidence-guessing");
 
     fireEvent.keyDown(guessing, { key: "ArrowRight" });
@@ -523,20 +527,31 @@ describe("QuizQuestion — stated confidence (learning-loop spec §13 A132)", ()
   });
 
   it("is one tab stop: the chosen level, else the first", () => {
-    const view = renderScreen(makeSession(), withConfidence());
+    const view = renderScreen(makeSession(), withConfidence(), true);
     const tabbable = () =>
       ["guessing", "fairly_sure", "sure"].filter(l => screen.getByTestId(`quiz-confidence-${l}`).tabIndex === 0);
     expect(tabbable()).toEqual(["guessing"]);
     view.rerender(
       <QuizQuestion session={makeSession({ items: [item(0, { confidence: "sure" }), item(1), item(2)] })}
-        actions={withConfidence()} config={null} concept={CONCEPT} userId="user-1" courseId="course-cs101" />,
+        actions={withConfidence()} config={null} concept={CONCEPT} userId="user-1" courseId="course-cs101" askConfidence />,
     );
     expect(tabbable()).toEqual(["sure"]);
   });
 
+  it("with the learning loop off it asks nothing: no control, and the letters are answer shortcuts again", () => {
+    // #866 K46: the control is the learning system's; off is the pre-loop screen.
+    const actions = withConfidence();
+    renderScreen(makeSession(), actions);
+    expect(screen.queryByTestId("quiz-confidence")).not.toBeInTheDocument();
+    expect(screen.queryByRole("radiogroup", { name: /How sure are you/ })).not.toBeInTheDocument();
+    fireEvent.keyDown(root(), { key: "b" });
+    expect(actions.select).toHaveBeenCalledWith(1);
+    expect(actions.setConfidence).not.toHaveBeenCalled();
+  });
+
   it("a written question's Enter still submits from its input", () => {
     const actions = withConfidence();
-    renderScreen(makeSession({ items: [written({ answerText: "base case", confidence: "guessing" })] }), actions);
+    renderScreen(makeSession({ items: [written({ answerText: "base case", confidence: "guessing" })] }), actions, true);
     fireEvent.keyDown(screen.getByRole("textbox", { name: /^Your answer/ }), { key: "Enter" });
     expect(actions.submitAnswer).toHaveBeenCalledOnce();
   });

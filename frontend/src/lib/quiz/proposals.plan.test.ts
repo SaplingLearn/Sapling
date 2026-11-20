@@ -136,4 +136,13 @@ describe("the plan's words", () => {
     expect(planReasonCopy("ready")).toMatch(/^Ready to learn/);
     expect(skillPercent(0.354)).toBe("35%");
   });
+
+  it("promises no check of the misconception the round may not target (#866 K43)", () => {
+    // The quiz targets a held misconception only with the server-only
+    // quiz_planned_questions on, in a multiple-choice or mixed round, and only
+    // when the writer tags a distractor that passes the checks: the card cannot
+    // know, so it says why the concept is proposed and promises nothing more.
+    expect(planReasonCopy("misconception")).toBe("You've mixed this one up before — worth practising again.");
+    expect(planReasonCopy("misconception")).not.toMatch(/checks?|this round/i);
+  });
 });
