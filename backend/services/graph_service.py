@@ -23,6 +23,7 @@ from learning.evidence import (
 )
 from learning.learner_state import LearnerState, state_row
 from learning.params import (
+    BKT_P_MAX,
     EDGE_PREREQ_SOURCE_IS_PREREQ,
     FSRS_RETENTION_DEFAULT,
 )
@@ -1062,6 +1063,26 @@ def _apply_evidence(
     return changes, newly_committed
 
 
+def _unmeasured_state(user_id: str, node_id: str, row: dict) -> LearnerState:
+    """The state the writer starts from for a node with no learner_state row.
+
+    #866 audit K03 (owner decision 2026-11-19, writer-only seed): a concept the
+    student already has mastery on — from before the learning loop, or from the
+    pre-loop quiz — starts BKT from that stored score, not the 0.35 prior, so
+    one graded answer moves it from what the screens showed (82% → a step, not
+    82% → 21%). A concept never studied (score 0, the map's "unexplored")
+    keeps the model's prior. The score is clamped to the model's range.
+
+    Known gap (documented, owner-accepted): the A123 void replay
+    (`learning.evidence_replay.replay`) still starts such a node from the
+    prior, because the seed is not journaled; a staff void recompute of a
+    seeded node therefore lands where it would have without the seed."""
+    stored = bkt.stored_score(row.get("mastery_score"))
+    if stored <= 0.0:
+        return LearnerState(user_id=user_id, node_id=node_id)
+    return LearnerState(user_id=user_id, node_id=node_id, p_known=min(BKT_P_MAX, stored))
+
+
 def _calculate_evidence(user_id: str, evidences: list[Evidence], prepared, retention) -> list[dict]:
     """The existing Python BKT/FSRS math, preparing rows without database I/O.
 
@@ -1092,7 +1113,7 @@ def _calculate_evidence(user_id: str, evidences: list[Evidence], prepared, reten
     # time between the two is zero: they share `now`).
     states = prepared.states
     for node_id in owned:
-        states.setdefault(node_id, LearnerState(user_id=user_id, node_id=node_id))
+        states.setdefault(node_id, _unmeasured_state(user_id, node_id, by_id[node_id]))
     seen_checks: set[tuple[str, str]] = set()
     exposed_hashes: set[str] = set()
     seq = 0  # next evidence_seq: counts journaled rows only
@@ -1201,9 +1222,7 @@ def _calculate_evidence(user_id: str, evidences: list[Evidence], prepared, reten
             trow = by_id[target_id]
             tst = states.get(target_id)
             if tst is None:
-                tst = LearnerState(
-                    user_id=user_id, node_id=target_id
-                )
+                tst = _unmeasured_state(user_id, target_id, trow)
                 states[target_id] = tst
             # tst.p_known stays the belief AT now (a later evidence in this
             # call reads it); the row is stored against the kept anchor.

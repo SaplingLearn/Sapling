@@ -636,6 +636,17 @@ EDGES = [
 ]
 
 
+#: NODES as concepts the student never studied (score 0): the writer starts
+#: them at the BKT prior. Tests of the prior arithmetic use these; a stored
+#: score > 0 seeds the writer instead (#866 audit K03).
+UNMEASURED = [dict(n, mastery_score=0.0) for n in NODES]
+
+
+def _apply_unmeasured(payload, **kwargs):
+    kwargs.setdefault("nodes", UNMEASURED)
+    return _apply(payload, **kwargs)
+
+
 def _apply(payload, nodes=NODES, edges=EDGES, states=(), now=None, **kwargs):
     """`kwargs` are apply_graph_update's keyword options (PKG-12: `retention`)."""
     from services.graph_service import apply_graph_update
@@ -757,7 +768,7 @@ class TestApplyEvidence:
     def test_correct_strong_evidence_raises_p_from_prior_and_mirrors_the_node(self):
         from learning import bkt
 
-        result, mocks, streak = _apply(
+        result, mocks, streak = _apply_unmeasured(
             {"evidence": [{"node_id": "n1", "channel": "free_response", "correct": True}]},
             edges=[],
         )
@@ -1069,11 +1080,58 @@ class TestApplyEvidence:
         )
         assert expected != fsrs.next_state(5.0, 10.0, fsrs.Rating.AGAIN, days)
 
-    def test_correct_propagates_to_prerequisite_parent_only(self):
+    def test_an_unmeasured_concept_starts_from_its_stored_mastery(self):
+        """#866 audit K03: a concept with mastery but no learner_state row (every
+        pre-loop concept) starts BKT from the stored score, so one wrong answer
+        steps down from what the screens showed (82%), never from the 0.35 prior
+        (82% -> 21%)."""
+        from learning import bkt
+
+        nodes = [dict(NODES[0], mastery_score=0.82), *NODES[1:]]
+        _, mocks, _ = _apply(
+            {"evidence": [{"node_id": "n1", "channel": "mc", "correct": False}]},
+            nodes=nodes, edges=[],
+        )
+        [row] = _event_rows(mocks)
+        assert row["p_before"] == pytest.approx(0.82)
+        assert row["p_after"] == pytest.approx(bkt.update(0.82, "mc", False))
+        assert row["delta"] == pytest.approx(row["p_after"] - 0.82)
+        mirror = dict(_node_updates(mocks))["eq.n1"]
+        assert mirror["mastery_score"] == pytest.approx(row["p_after"])
+        assert mirror["mastery_score"] > bkt.update(BKT_L0, "mc", False)
+
+    def test_a_propagated_neighbour_starts_from_its_stored_mastery(self):
+        """#866 audit K03: one-hop propagation seeds an unmeasured neighbour the
+        same way, so a prerequisite the map shows at 50% is nudged from 50%."""
         from learning import bkt
         from learning.evidence import PROPAGATION_CHANNEL
 
         _, mocks, _ = _apply(
+            {"evidence": [{"node_id": "n1", "channel": "free_response", "correct": True}]}
+        )
+        writes = {w["node_id"]: w for w in _state_writes(mocks)}
+        assert writes["n0"]["p_known"] == pytest.approx(
+            bkt.update(0.5, PROPAGATION_CHANNEL, True, weight=WEIGHT_PROPAGATION)
+        )
+
+    def test_a_stored_score_past_the_model_cap_is_clamped(self):
+        from learning import bkt
+        from learning.params import BKT_P_MAX
+
+        nodes = [dict(NODES[0], mastery_score=1.7), *NODES[1:]]
+        _, mocks, _ = _apply(
+            {"evidence": [{"node_id": "n1", "channel": "mc", "correct": True}]},
+            nodes=nodes, edges=[],
+        )
+        [row] = _event_rows(mocks)
+        assert row["p_before"] == pytest.approx(BKT_P_MAX)
+        assert row["p_after"] == pytest.approx(bkt.update(BKT_P_MAX, "mc", True))
+
+    def test_correct_propagates_to_prerequisite_parent_only(self):
+        from learning import bkt
+        from learning.evidence import PROPAGATION_CHANNEL
+
+        _, mocks, _ = _apply_unmeasured(
             {"evidence": [{"node_id": "n1", "channel": "free_response", "correct": True}]}
         )
         writes = {w["node_id"]: w for w in _state_writes(mocks)}
@@ -1096,7 +1154,7 @@ class TestApplyEvidence:
             assert f["user_id"] == "eq.u1" and f["relationship_type"] == "eq.prerequisite"
 
     def test_incorrect_propagates_to_dependent_child_only(self):
-        _, mocks, _ = _apply(
+        _, mocks, _ = _apply_unmeasured(
             {"evidence": [{"node_id": "n1", "channel": "free_response", "correct": False}]}
         )
         writes = {w["node_id"]: w for w in _state_writes(mocks)}
@@ -1241,7 +1299,7 @@ class TestApplyEvidence:
         from learning import bkt
         from learning.evidence import PROPAGATION_CHANNEL
 
-        _, mocks, _ = _apply(
+        _, mocks, _ = _apply_unmeasured(
             {
                 "evidence": [
                     {"node_id": "n1", "channel": "free_response", "correct": True, "max_rung": 2},
@@ -1254,7 +1312,7 @@ class TestApplyEvidence:
                 BKT_L0, PROPAGATION_CHANNEL, True, weight=WEIGHT_PROPAGATION * WEIGHT_ASSISTED
             )
         )
-        _, mocks, _ = _apply(
+        _, mocks, _ = _apply_unmeasured(
             {
                 "evidence": [
                     {
@@ -2090,7 +2148,7 @@ class TestEvidenceSeq:
 
         from learning.evidence import flush_pending
 
-        factory, mocks = _evidence_factory(NODES, [])
+        factory, mocks = _evidence_factory(UNMEASURED, [])
         deps = SimpleNamespace(
             user_id="u1",
             pending_evidence=[
