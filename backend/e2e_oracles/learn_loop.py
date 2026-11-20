@@ -133,7 +133,9 @@ def learn_loop_findings(
 #     fails closed. Each release opens only its own item's key;
 # (h) with `expect_activity` (the loop journey runs the oracle right after its
 #     walk, before the next test's truncate-and-reseed): no loop user, or no
-#     graded check step anywhere, is itself a finding.
+#     graded check step anywhere, is itself a finding. A loop user is a student
+#     with a loop session (`sessions` — never a settings row: the gate reads no
+#     column, and the retired build-phase staff/QA toggle is inert seed data, Z50).
 _RELEASE_RUNG = 6  # H6: the worked answer (learning.ladder.Rung.H6)
 
 
@@ -251,7 +253,6 @@ def learn_loop_activity_findings(
     step_event_keys: set[tuple[str, str]],
     messages: list[dict],
     sentinel: str,
-    loop_users: int,
     expect_activity: bool,
     prequestion_sentinel: str | None = None,
 ) -> list[Finding]:
@@ -343,7 +344,8 @@ def learn_loop_activity_findings(
                 )
             )
     if expect_activity:
-        if loop_users <= 0:
+        # Z50: the students who have a loop session, never a settings column
+        if not {s.get("user_id") for s in sessions} - {None, ""}:
             findings.append(
                 Finding(
                     oracle="learn_loop", summary="expected loop activity but no loop users exist"

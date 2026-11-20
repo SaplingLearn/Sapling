@@ -538,9 +538,9 @@ def _learn_loop_activity(conn, step_rows, args, learn_loop) -> list[Finding]:
     (non-empty loop_state, not a review session) with its document, the
     (session_id, question_hash) pairs that have an evidence row / a check-phase
     zpd.step event (Z47: the session that wrote each — a row without one, a
-    quiz answer's or a post-test's, vouches for no loop session), the
-    DECRYPTED assistant messages of those sessions, and the loop-user count.
-    The sentinel is E2E_LOOP_FINAL_ANSWER, read from the handler module's
+    quiz answer's or a post-test's, vouches for no loop session) and the
+    DECRYPTED assistant messages of those sessions; the loop users are the
+    sessions' students (Z50). The sentinel is E2E_LOOP_FINAL_ANSWER, read from the handler module's
     source (db.e2e_handler_constants) — never a second literal."""
     from db.e2e_handler_constants import read_constants
 
@@ -576,10 +576,6 @@ def _learn_loop_activity(conn, step_rows, args, learn_loop) -> list[Finding]:
             "AND s.mode IS DISTINCT FROM 'review'"
         ).fetchall()
     ]
-    loop_users = conn.execute(
-        "SELECT /* learn_loop:loop_users */ count(*) AS n FROM user_settings "
-        "WHERE learning_loop_beta IS TRUE"
-    ).fetchone()
     (sentinel, pq_sentinel) = read_constants("E2E_LOOP_FINAL_ANSWER", "E2E_LOOP_PREQUESTION_ANSWER")
     return learn_loop.learn_loop_activity_findings(
         [dict(s) for s in sessions],
@@ -587,7 +583,6 @@ def _learn_loop_activity(conn, step_rows, args, learn_loop) -> list[Finding]:
         stepped,
         messages,
         sentinel,
-        int((loop_users or {}).get("n") or 0),
         bool(getattr(args, "expect_loop_activity", False)),
         prequestion_sentinel=pq_sentinel,
     )

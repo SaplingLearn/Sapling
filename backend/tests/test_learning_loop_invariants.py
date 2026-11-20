@@ -2675,6 +2675,20 @@ def test_inv_13b_seed_opts_in_exactly_the_loop_users():
     assert hits == [], f"E2E journeys still depend on the retired toggle: {hits}"
 
 
+def test_inv_13b_no_oracle_reads_the_retired_toggle():
+    """Z50: nor may an oracle — the toggle measures nothing about who had the
+    loop on (the seed writes it as inert fixture data), so the learn_loop
+    oracle's loop users are the students with a loop session."""
+    oracles = BACKEND / "e2e_oracles"
+    hits = [
+        f"{p.relative_to(BACKEND)}:{i}"
+        for p in sorted(oracles.rglob("*.py"))
+        for i, line in enumerate(p.read_text().splitlines(), 1)
+        if "learning_loop_beta" in line
+    ]
+    assert hits == [], f"an oracle reads the retired toggle: {hits}"
+
+
 # ── PKG-14b: the evidence-only rule (spec §11) ──────────────────────────────
 
 LEGACY_MASTERY_SYMBOLS = ("mastery_delta", "MASTERY_DELTA_PER", "get_mastery_tier")

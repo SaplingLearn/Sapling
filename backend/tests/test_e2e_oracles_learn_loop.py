@@ -123,7 +123,6 @@ def _answers(*, tables=("learner_state",), states=(), scores=(), pairs=(), steps
         "learn_loop:sessions": [],
         "learn_loop:evidence_hashes": [],
         "learn_loop:messages": [],
-        "learn_loop:loop_users": [{"n": 0}],
         "information_schema.tables": [{"table_name": t} for t in tables],
         "FROM node_mastery_events": list(pairs),
         "FROM learner_state": list(states),
@@ -233,7 +232,6 @@ def _activity(**over):
         step_event_keys={("s1", "qh")},
         messages=[{"session_id": "s1", "at": 50.0, "content": "Key idea: bits."}],
         sentinel=SENTINEL,
-        loop_users=2,
         expect_activity=True,
     )
     kw.update(over)
@@ -364,7 +362,7 @@ def test_another_sessions_release_does_not_open_this_one():
 @pytest.mark.parametrize(
     "over, needle",
     [
-        ({"loop_users": 0}, "no loop users"),
+        ({"sessions": [], "messages": []}, "no loop users"),
         ({"sessions": [_session({})], "messages": []}, "no graded check"),
     ],
 )
@@ -377,6 +375,28 @@ def test_without_expect_activity_an_idle_stack_is_clean():
     kw = _activity(sessions=[], evidence_keys=set(), step_event_keys=set(), messages=[])
     kw["expect_activity"] = False
     assert learn_loop_activity_findings(**kw) == []
+
+
+def test_loop_users_are_the_students_with_a_loop_session_never_the_retired_toggle(monkeypatch):
+    """Z50: (h)'s "no loop users" half counts the students who have a loop
+    session (non-empty loop_state, not a review session). The gate never reads
+    `user_settings.learning_loop_beta` (PKG-14b) and the seed writes it as inert
+    fixture data, so a stack with the loop off for everyone still has two
+    rows there — and no loop user."""
+    conn = _Conn(
+        {
+            **_answers(steps=[]),
+            "learn_loop:sessions": [],
+            "learn_loop:evidence_hashes": [],
+            "learn_loop:messages": [],
+            "learn_loop:loop_users": [{"n": 2}],  # the retired toggle's rows
+            "event_type = 'zpd.step'": [],
+        }
+    )
+    monkeypatch.setattr(gather, "_db_conn", lambda: conn)
+    findings, _ = gather.run_learn_loop(SimpleNamespace(user="x", expect_loop_activity=True))
+    assert any("no loop users" in f.summary for f in findings)
+    assert not any("learning_loop_beta" in sql for sql, _ in conn.sql)
 
 
 def test_cli_accepts_expect_loop_activity():
@@ -395,7 +415,6 @@ def test_run_learn_loop_gathers_activity_and_decrypts_messages(monkeypatch):
             "learn_loop:sessions": [_session({"qh": _step()})],
             "learn_loop:evidence_hashes": [],  # the graded step's evidence is missing
             "learn_loop:messages": [{"session_id": "s1", "at": 150.0, "content": "ct"}],
-            "learn_loop:loop_users": [{"n": 2}],
             "event_type = 'zpd.step'": [
                 {
                     "user_id": "u",
@@ -432,7 +451,6 @@ def test_a_grade_in_one_session_never_vouches_for_the_same_item_in_another(monke
             ],
             "learn_loop:evidence_hashes": [{"user_id": "u", "session_id": "s1", "question_hash": "qh"}],
             "learn_loop:messages": [],
-            "learn_loop:loop_users": [{"n": 1}],
             "event_type = 'zpd.step'": [{"user_id": "u", "payload": step_payload}],
         }
     )
@@ -549,7 +567,6 @@ def test_run_learn_loop_marks_a_row_it_cannot_decrypt(monkeypatch):
                 {"session_id": "s1", "at": 150.0, "content": "enc2:0:bad"},
                 {"session_id": "s1", "at": 151.0, "content": "boom"},
             ],
-            "learn_loop:loop_users": [{"n": 2}],
             "event_type = 'zpd.step'": [
                 {"user_id": "u", "payload": {"p_known_before": 0.3, "p_known_after": 0.5,
                                              "question_hash": "qh", "phase": "check",
