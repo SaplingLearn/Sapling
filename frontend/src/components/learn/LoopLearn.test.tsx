@@ -472,6 +472,18 @@ describe("LoopLearn — probe and plan", () => {
     await waitFor(() => expect(api.answerLoopProbe).toHaveBeenCalledWith("s2", "u1", "qh", { option: "B", reason: "because", idk: false }));
   });
 
+  it("K02: an mc_reason probe item is not submittable until the reason is written (the grader judges it)", async () => {
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "probe", "2026-09-21T10:00:00Z")]));
+    api.nextLoopProbe.mockResolvedValue({ ...probeItem, format: "mc_reason", options: [{ letter: "A", text: "x" }, { letter: "B", text: "y" }] });
+    render(<LoopLearn />);
+    fireEvent.click(await screen.findByTestId("loop-probe-option-B"));
+    expect(screen.getByTestId("loop-probe-submit")).toBeDisabled();
+    fireEvent.change(screen.getByTestId("loop-probe-reason"), { target: { value: "   " } });
+    expect(screen.getByTestId("loop-probe-submit")).toBeDisabled();
+    fireEvent.change(screen.getByTestId("loop-probe-reason"), { target: { value: "because" } });
+    expect(screen.getByTestId("loop-probe-submit")).toBeEnabled();
+  });
+
   it("an ungradable probe answer is a muted line and the next item follows", async () => {
     api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "probe", "2026-09-21T10:00:00Z")]));
     api.nextLoopProbe.mockResolvedValue(probeItem);
@@ -841,6 +853,15 @@ describe("LoopLearn — teach / check / feedback (A16, A46)", () => {
     fireEvent.change(screen.getByTestId("loop-attempt-reason"), { target: { value: "since x" } });
     fireEvent.click(screen.getByTestId("loop-attempt-submit"));
     await waitFor(() => expect(api.streamLoopCheckAnswer).toHaveBeenCalledWith("s2", "u1", "qh7", { option: "A", reason: "since x", idk: false }, expect.any(Object)));
+  });
+
+  it("K02: an mc_reason check is not submittable until the reason is written, and the field says it is required", async () => {
+    await withCheckItem({ ...pose, format: "mc_reason", options: [{ letter: "A", text: "x" }, { letter: "B", text: "y" }] });
+    fireEvent.click(screen.getByTestId("loop-attempt-option-A"));
+    expect(screen.getByTestId("loop-attempt-submit")).toBeDisabled();
+    expect(screen.queryByText("Your reasoning (optional)")).toBeNull();
+    fireEvent.change(screen.getByTestId("loop-attempt-reason"), { target: { value: "since x" } });
+    expect(screen.getByTestId("loop-attempt-submit")).toBeEnabled();
   });
 
   it.each(["retry", "transform"])("A46: retract (%s) discards every streamed token; done.reply is final", async (reason) => {
@@ -2616,6 +2637,7 @@ describe("LoopLearn — keyboard and screen reader (spec §13 A135)", () => {
     fireEvent.keyDown(a, { key: "ArrowLeft" });
     expect(c).toHaveAttribute("aria-checked", "true");
     expect(screen.getAllByRole("radio", { checked: true }).filter((r) => group.contains(r))).toEqual([c]);
+    fireEvent.change(screen.getByTestId("loop-attempt-reason"), { target: { value: "base two" } });
     fireEvent.click(screen.getByTestId("loop-attempt-submit"));
     await waitFor(() => expect(api.streamLoopCheckAnswer).toHaveBeenCalled());
     expect(api.streamLoopCheckAnswer.mock.calls[0][3]).toMatchObject({ option: "C" });

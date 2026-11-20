@@ -208,6 +208,8 @@ function draftAnswer(draft: Draft, format: string): LoopCheckAnswer {
     : { answer: draft.answer, idk: false };
   return draft.confidence ? { ...a, confidence: draft.confidence } : a;
 }
+/** K02: an mc_reason answer needs its reason too: the grader judges it, never the option alone. */
+const draftComplete = (d: Draft, mc: boolean) => (mc ? d.option !== "" && d.reason.trim() !== "" : d.answer.trim() !== "");
 type HintView = { denied: string } | { reply: string } | null;
 /** The Tutor's main column: a session (T4–T15), the Tutor home (T1), a course
  *  page (T2) or every session (T3). */
@@ -2645,7 +2647,7 @@ function ProbePanel({
   onRetry: () => void;
 }) {
   const mc = item?.format === "mc_reason";
-  const canSubmit = !!item && !busy && (mc ? draft.option !== "" : draft.answer.trim() !== "");
+  const canSubmit = !!item && !busy && draftComplete(draft, mc);
   const ids = useId();
   const promptId = `${ids}-prompt`;
   const headingId = `${ids}-question`;
@@ -2906,7 +2908,7 @@ function CheckCard({
   selfExplain?: React.ReactNode;
 }) {
   const mc = item.format === "mc_reason";
-  const canSubmit = !busy && (mc ? draft.option !== "" : draft.answer.trim() !== "");
+  const canSubmit = !busy && draftComplete(draft, mc);
   const ids = useId();
   const headingId = `${ids}-heading`;
   const promptId = `${ids}-prompt`;
@@ -2951,7 +2953,7 @@ function CheckCard({
             labelledBy={promptId}
             disabled={busy}
           />
-          <label className={tutorStyles.fl} htmlFor={`${ids}-reason`} style={{ marginBottom: -8 }}>Your reasoning (optional)</label>
+          <label className={tutorStyles.fl} htmlFor={`${ids}-reason`} style={{ marginBottom: -8 }}>Your reasoning</label>
           <input
             id={`${ids}-reason`}
             data-testid="loop-attempt-reason"

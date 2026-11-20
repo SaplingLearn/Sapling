@@ -294,7 +294,7 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
   const retryable = result !== null && result.unavailable;
   const answered = alreadyGraded || (result !== null && !result.unavailable);
   const pausedConcepts = summary?.paused ?? 0;
-  const canSubmit = !busy && !answered && checkHasAnswer(item, choice, answer);
+  const canSubmit = !busy && !answered && checkHasAnswer(item, choice, reason, answer);
 
   return (
     <div
@@ -424,10 +424,12 @@ function loadFailureMessage(err: unknown): string {
 
 type ReviewItem = NonNullable<ReviewNextResponse["item"]>;
 
-/** A check has an answer to send: a chosen option, or a non-blank answer. */
-function checkHasAnswer(item: ReviewItem | null, choice: string, answer: string): boolean {
+/** A check has an answer to send: a chosen option with its reason (K02: the
+ *  grader judges the reason, so an option alone is never credited), or a
+ *  non-blank answer. */
+function checkHasAnswer(item: ReviewItem | null, choice: string, reason: string, answer: string): boolean {
   if (item?.kind !== "check") return false;
-  return item.format === "mc_reason" ? choice !== "" : answer.trim() !== "";
+  return item.format === "mc_reason" ? choice !== "" && reason.trim() !== "" : answer.trim() !== "";
 }
 
 function renderPauseBanner(pause: LoopBudgetPause | null, pausedConcepts: number) {
