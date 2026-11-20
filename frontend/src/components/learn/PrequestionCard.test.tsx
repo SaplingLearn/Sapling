@@ -40,6 +40,14 @@ function renderCard(pq: LoopPrequestion, over: { busy?: boolean } = {}) {
 }
 
 describe("PrequestionCard (spec §13 A138)", () => {
+  it("caps each answer field at the grader's limit (#866 K34)", () => {
+    renderCard(free);
+    expect(screen.getByTestId("loop-prequestion-input")).toHaveAttribute("maxLength", "4000");
+    cleanup();
+    renderCard(mc);
+    expect(screen.getByTestId("loop-prequestion-reason")).toHaveAttribute("maxLength", "4000");
+  });
+
   it("is a region named by its heading, says it is not scored, and carries the pose's attributes", () => {
     renderCard(mc);
     const region = screen.getByRole("region", { name: PREQUESTION_HEADING });

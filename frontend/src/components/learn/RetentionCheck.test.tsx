@@ -28,6 +28,7 @@ it("holds the shell's feedback prompts only while an opened check is in progress
   await open();
   await effectsFlushed();
   expect(feedbackHeld()).toBe(true);
+  expect(screen.getByTestId("retention-answer")).toHaveAttribute("maxLength", "4000"); // #866 K34: the grader's cap
   fireEvent.change(screen.getByTestId("retention-answer"), { target: { value: "My own remembered explanation" } });
   fireEvent.click(screen.getByTestId("retention-submit"));
   await screen.findByTestId("retention-result");

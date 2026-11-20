@@ -443,7 +443,8 @@ describe("LoopLearn — probe and plan", () => {
     api.nextLoopProbe.mockResolvedValue(probeItem);
     api.answerLoopProbe.mockResolvedValue({ graded: true, correct: false, p_known: 0.2, probe_done: false, novice_floor: false, reference_answer: "The case that stops recursion." });
     render(<LoopLearn />);
-    fireEvent.change(await screen.findByTestId("loop-probe-input"), { target: { value: "a loop" } });
+    expect(await screen.findByTestId("loop-probe-input")).toHaveAttribute("maxLength", "4000"); // #866 K34
+    fireEvent.change(screen.getByTestId("loop-probe-input"), { target: { value: "a loop" } });
     fireEvent.click(screen.getByTestId("loop-probe-submit"));
     expect((await screen.findByTestId("loop-probe-reference")).textContent).toContain("The case that stops recursion.");
     expect(api.answerLoopProbe).toHaveBeenCalledWith("s2", "u1", "qh", { answer: "a loop", idk: false });

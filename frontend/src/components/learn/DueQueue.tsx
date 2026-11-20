@@ -54,6 +54,7 @@ import { BudgetPausedBanner, formatResetAt } from "./BudgetPausedBanner";
 import { ConfidenceControl } from "./ConfidenceControl";
 import { ReportQuestion } from "./ReportQuestion";
 import { useCrisisSupport } from "../safety/CrisisSupportCard";
+import { LOOP_ANSWER_MAX } from "@/lib/inputLimits";
 
 // Review 409s (routes/learn_loop.py): "loop state changed, retry" — a concurrent write
 // won; it can come BEFORE the grade (nothing recorded) or AFTER it (the record lost its
@@ -521,6 +522,7 @@ function renderCheckAnswer({ item, promptId, choice, setChoice, reason, setReaso
         </div>
         <textarea
           data-testid="review-reason-input"
+          maxLength={LOOP_ANSWER_MAX}
           aria-label="Review reasoning"
           placeholder="In one sentence: why?"
           value={reason}
@@ -534,6 +536,7 @@ function renderCheckAnswer({ item, promptId, choice, setChoice, reason, setReaso
   return (
     <textarea
       data-testid="review-answer-input"
+      maxLength={LOOP_ANSWER_MAX}
       data-answer-start=""
       aria-label="Review answer"
       aria-describedby={promptId}

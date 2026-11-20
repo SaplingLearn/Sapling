@@ -1131,3 +1131,10 @@ describe("K52 — the prior is never shown as a measured skill", () => {
     expect(meter.parentElement?.textContent).not.toContain("35%");
   });
 });
+
+describe("K34 — the check's answer box stops at the grader's 4,000-character cap", () => {
+  it("the answer box carries the cap the server enforces", async () => {
+    await withCheckItem();
+    expect(screen.getByTestId("loop-attempt-input")).toHaveAttribute("maxLength", "4000");
+  });
+});

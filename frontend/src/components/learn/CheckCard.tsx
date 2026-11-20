@@ -8,6 +8,7 @@ import { Icon } from "../Icon";
 import tutorStyles from "./tutor/tutor.module.css";
 import { modalOpen } from "./modalOpen";
 import { type Draft, FIELD_STYLE, type HintView, focusAnswerStart } from "./loopShared";
+import { LOOP_ANSWER_MAX } from "@/lib/inputLimits";
 
 /** Plain-English lines for POST /hint's denial reasons (routes/learn_loop.py::hint). */
 const HINT_DENIED_COPY: Record<string, string> = {
@@ -90,6 +91,7 @@ export function CheckCard({
           <input
             id={`${ids}-reason`}
             data-testid="loop-attempt-reason"
+            maxLength={LOOP_ANSWER_MAX}
             style={FIELD_STYLE}
             placeholder="In one sentence: why?"
             value={draft.reason}
@@ -106,6 +108,7 @@ export function CheckCard({
         <textarea
           id={`${ids}-answer`}
           data-testid="loop-attempt-input"
+          maxLength={LOOP_ANSWER_MAX}
           data-answer-start=""
           aria-describedby={promptId}
           style={FIELD_STYLE}
