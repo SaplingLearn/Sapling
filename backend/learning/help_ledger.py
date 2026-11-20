@@ -139,15 +139,23 @@ def max_help(user_id: str, question_hash: str) -> int:
 
 
 @runs_as_service  # spec §13 A148: the help ledger (learning_reveals) is service-only; reached from quiz, notes and flashcards
-def max_help_many(user_id: str, question_hashes) -> dict[str, int]:
+def max_help_many(
+    user_id: str, question_hashes, *, before: dict[str, datetime] | None = None
+) -> dict[str, int]:
     """`max_help` for several items in ONE `in.(...)` read (spec §13 A99: the quiz
-    submit's help floor); every asked hash is a key (0 with no row). Raises."""
+    submit's help floor); every asked hash is a key (0 with no row). Raises.
+
+    `before` (#866 K20): {hash: when that answer was recorded}. A row on such a
+    hash recorded at or after that moment is help AFTER the answer (a quiz Ask
+    opened on an answer already locked) and floors nothing; a row with no
+    readable time still counts (fail closed)."""
     hashes = sorted({h for h in question_hashes or [] if h})
     out = dict.fromkeys(hashes, 0)
     if not hashes:
         return out
+    cutoffs = before or {}
     rows = table(_LEDGER).select(
-        "kind,rung,question_hash",
+        "kind,rung,question_hash,at",
         filters={
             "user_id": f"eq.{user_id}",
             "question_hash": f"in.({','.join(pg_quote_value(h) for h in hashes)})",
@@ -157,6 +165,9 @@ def max_help_many(user_id: str, question_hashes) -> dict[str, int]:
     for row in rows:
         qh = row.get("question_hash")
         if qh not in out:
+            continue
+        cutoff, at = cutoffs.get(qh), _ts(row.get("at"))
+        if cutoff is not None and at is not None and at >= cutoff:
             continue
         if row.get("kind") == "reveal":
             out[qh] = max(out[qh], RUNG_NO_CREDIT_MIN)

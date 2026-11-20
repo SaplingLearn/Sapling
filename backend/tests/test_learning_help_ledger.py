@@ -87,6 +87,30 @@ def test_max_help_is_the_highest_rung_and_a_reveal_counts_as_no_credit():
     assert filters == {"user_id": "eq.u1", "question_hash": "eq.qh", "kind": "in.(help,reveal)"}
 
 
+def test_max_help_many_before_counts_only_help_recorded_before_each_cutoff():
+    """#866 K20: `before` = {hash: when it was answered}. Help on a hash recorded
+    at or after that moment (a quiz Ask opened on an answer already locked) is
+    no part of that answer's floor; help before it, or on a hash with no
+    cutoff, still is."""
+    from datetime import datetime, timezone
+    from learning import help_ledger
+
+    answered = datetime(2026, 11, 18, 12, 0, tzinfo=timezone.utc)
+    handle = MagicMock()
+    handle.select.return_value = [
+        {"kind": "help", "rung": 6, "question_hash": "after", "at": "2026-11-18T12:00:05+00:00"},
+        {"kind": "help", "rung": 2, "question_hash": "after", "at": "2026-11-18T11:59:00+00:00"},
+        {"kind": "reveal", "rung": None, "question_hash": "same", "at": "2026-11-18T12:00:00+00:00"},
+        {"kind": "help", "rung": 6, "question_hash": "nocut", "at": "2026-11-18T12:30:00+00:00"},
+    ]
+    with patch("learning.help_ledger.table", return_value=handle):
+        out = help_ledger.max_help_many(
+            "u1", ["after", "same", "nocut"], before={"after": answered, "same": answered}
+        )
+    assert out == {"after": 2, "same": 0, "nocut": 6}
+    assert "at" in handle.select.call_args.args[0]
+
+
 def test_ungraded_posed_is_distinct_newest_first_and_bounded():
     from learning import help_ledger
 
