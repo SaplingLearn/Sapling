@@ -74,11 +74,14 @@ def test_a_staff_retire_recomputes_the_state_a_history_without_the_item_gives(mo
             assert db.nodes[node]["mastery_score"] == expected.nodes[node]["mastery_score"], node
         elif got is not None:
             # every evidence that reached it was void: back where it started
-            # (A150: its stored score, else the prior), the mirror its belief
-            start = _start(node, (scores or {}).get(node, 0.0))
+            # (A150: its stored score, else the prior), the mirror its belief —
+            # off the map again for a never-studied concept (K22)
+            score = (scores or {}).get(node, 0.0)
+            start = _start(node, score)
+            shown = start["p_known"] if score > 0 else 0.0
             assert {k: got[k] for k in PRIOR} == start, node
-            assert db.nodes[node]["mastery_score"] == start["p_known"]
-            assert db.nodes[node]["mastery_tier"] == tier_for_stored(start["p_known"])
+            assert db.nodes[node]["mastery_score"] == shown
+            assert db.nodes[node]["mastery_tier"] == tier_for_stored(shown)
 
 
 def test_re_running_a_void_writes_nothing(monkeypatch):

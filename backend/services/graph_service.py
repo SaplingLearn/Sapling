@@ -1090,7 +1090,7 @@ def _calculate_evidence(user_id: str, evidences: list[Evidence], prepared, reten
     Per evidence, in order: ownership → same-session recheck → weight →
     decayed read → bkt.update → counters → FSRS → learner_state → graph_nodes
     mirror → ONE journal row → one-hop propagation (learner_state + mirror
-    only). Propagated updates are derived from the journaled evidence, so
+    only; the mirror of a never-studied neighbour stays 0, #866 K22). Propagated updates are derived from the journaled evidence, so
     they are not journaled themselves. `by_id` is the user- and
     course-scoped existing_rows; a node outside it is never read or written.
 
@@ -1246,9 +1246,13 @@ def _calculate_evidence(user_id: str, evidences: list[Evidence], prepared, reten
             )
             prepared.state_rows[tst.node_id] = state_row(replace(tst, p_known=p_stored), now)
             tst.exists = True
-            mirror = {"mastery_score": tst.p_known, "mastery_tier": bkt.tier_for(tst.p_known)}
+            # #866 K22: a never-studied neighbour keeps its unexplored map score
+            shown = evidence_replay.propagated_mirror(
+                bkt.stored_score(trow.get("mastery_score")), tst.p_known
+            )
+            mirror = {"mastery_score": shown, "mastery_tier": bkt.tier_for(shown)}
             prepared.mirrors[target_id] = {**prepared.mirrors.get(target_id, {}), "id": target_id, **mirror}
-            trow["mastery_score"] = tst.p_known
+            trow["mastery_score"] = shown
     return changes
 
 
@@ -1282,7 +1286,8 @@ def _calculate_void(user_id: str, course_id: str, question_hash: str, snapshot: 
     (§13 A150, `seeds`, read from void rows too), else the BKT prior. A node no
     non-void row reaches any more is back where it started: its starting state
     (learner_state.unmeasured_state of that score, else the prior), its mirror
-    that state's belief; its row is stamped with the latest voided row that
+    that state's belief — 0 for a journaled never-studied concept (#866 K22,
+    evidence_replay.propagated_mirror); its row is stamped with the latest voided row that
     touched it, so the plan is a pure function of the journal and a re-run
     writes nothing. Misconceptions: the open rows
     every supporting attempt of which was graded against a retired item of
@@ -1319,7 +1324,11 @@ def _calculate_void(user_id: str, course_id: str, question_hash: str, snapshot: 
         else:
             start = unmeasured_state(user_id, node_id, seeds.get(node_id, 0.0))
             row = state_row(start, touched_by_void[node_id])
-            belief = row["p_known"]
+            # K22: a never-studied concept (score 0) is back off the map
+            belief = (
+                evidence_replay.propagated_mirror(seeds[node_id], row["p_known"])
+                if node_id in seeds else row["p_known"]
+            )
         state_rows.append(row)
         mirrors.append({"id": node_id, "mastery_score": belief, "mastery_tier": bkt.tier_for(belief)})
         changes.append({

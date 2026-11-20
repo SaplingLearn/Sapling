@@ -13,7 +13,11 @@ over already-gathered rows. Pure — stdlib only, no IO (e2e_oracles contract).
     LAST WRITE — the gatherer decays the stored value over (updated_at −
     last_evidence_at), because a propagation stores against the node's kept
     decay anchor (graph_service._keep_decay_anchor) while the mirror holds the
-    belief at the write.
+    belief at the write. One exception (#866 audit K22): a never-studied
+    concept (map score 0) whose state row has no observation of its own
+    (`opps` 0: only one-hop propagation reached it, or a void took back its
+    only answers) stays off the map by design — its mirror is 0, not the
+    propagated belief.
 (e)–(h) `learn_loop_activity_findings` (below): the rows the session documents
     claim exist, no pre-release final-answer leak in the transcript, and —
     under --expect-loop-activity — no vacuous pass.
@@ -48,6 +52,7 @@ def learn_loop_findings(
 ) -> list[Finding]:
     findings: list[Finding] = []
     state = {(r["user_id"], r["node_id"]): r["p_known"] for r in state_rows}
+    unobserved = {r["node_id"] for r in state_rows if r.get("opps") == 0}
 
     missing = sorted({(u, n) for u, n in evidence_pairs if (u, n) not in state})
     if missing:
@@ -90,6 +95,8 @@ def learn_loop_findings(
         if node not in p_by_node:
             continue
         score, p = row.get("mastery_score"), p_by_node[node]
+        if node in unobserved and score is not None and float(score) == 0.0:
+            continue  # K22: never studied, only propagated to — off the map
         if score is None or abs(float(score) - float(p)) > ORACLE_P_TOLERANCE:
             findings.append(
                 Finding(

@@ -190,6 +190,24 @@ def test_a_journaled_propagation_is_followed_not_the_edges_of_today(monkeypatch)
     assert "n-a" not in legacy.state_rows  # today's graph has no edge to follow
 
 
+def test_the_replay_keeps_a_never_studied_neighbours_map_score_where_the_writer_did(monkeypatch):
+    """#866 K22: the writer leaves a never-studied prerequisite at 0 on the map
+    when a correct answer propagates to it (its belief still moves), and puts
+    a studied one's belief there; the replay does the same from the journaled
+    seeds, so a void recompute never puts a concept the student never opened
+    on the map."""
+    ops = [
+        (60.0, None, [{"node_id": "n-b", "channel": "free_response", "correct": True}]),
+        (60.0, None, [{"node_id": "n-d", "channel": "free_response", "correct": True}]),
+    ]
+    db, _ = run(monkeypatch, ops, scores={"n-b": 0.6})
+    assert db.nodes["n-a"]["mastery_score"] == 0.0 and db.nodes["n-a"]["mastery_tier"] == "unexplored"
+    assert db.state(USER, "n-a")["p_known"] > BKT_L0
+    rep = _replay(db, _journal(db))
+    assert rep.mirrors["n-a"] == 0.0
+    _assert_replay_matches(db, rep)
+
+
 def test_a_row_the_replay_cannot_read_fails_closed():
     row = {
         "id": "e1", "node_id": "n", "created_at": "2026-09-01T09:00:00+00:00", "channel": "free_response",

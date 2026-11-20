@@ -217,6 +217,17 @@ def propagate(
     return p_stored
 
 
+def propagated_mirror(shown: float, p_known: float) -> float:
+    """The map score (graph_nodes.mastery_score) a propagated observation
+    leaves on its target, given the score the map `shown` before it (#866 audit
+    K22). A concept the map shows as never studied (0, "unexplored") keeps 0:
+    propagation moves its belief (learner_state, the planner's prerequisite
+    inference), never what every screen reads as "studied" — a concept the
+    student never opened is neither "learning" nor "slipping". Its own first
+    answer puts it on the map. Any other target shows its new belief."""
+    return p_known if shown > 0.0 else 0.0
+
+
 # ── reading the journal ────────────────────────────────────────────────────
 
 
@@ -425,6 +436,11 @@ def replay(
     owned = frozenset(owned)
     seeds = seeds or {}
     stored: dict[str, dict] = {}
+    # The map score each node shows (K22: a propagation leaves a never-studied
+    # node's at 0); None — a node no row seeded, journaled before A150 — is a
+    # score the replay cannot know, and its propagation moves the map, as the
+    # writer then did.
+    shown: dict[str, float | None] = {}
     mirrors: dict[str, float] = {}
     touched: dict[str, datetime] = {}
     trace: dict[str, tuple[float, float]] = {}
@@ -436,10 +452,11 @@ def replay(
             st = working.get(node_id)
             if st is None:
                 row = stored.get(node_id)
-                st = (
-                    _from_row(row, now) if row is not None
-                    else unmeasured_state(user_id, node_id, seeds.get(node_id, 0.0))
-                )
+                if row is not None:
+                    st = _from_row(row, now)
+                else:
+                    st = unmeasured_state(user_id, node_id, seeds.get(node_id, 0.0))
+                    shown[node_id] = seeds.get(node_id)
                 working[node_id] = st
             return st
 
@@ -453,7 +470,7 @@ def replay(
                 retention=ob.retention,
             )
             stored[ob.node_id] = state_row(st, now)
-            mirrors[ob.node_id] = st.p_known
+            mirrors[ob.node_id] = shown[ob.node_id] = st.p_known
             touched[ob.node_id] = now
             for target_id, channel, target_correct, target_weight in _targets(ob, edges, owned):
                 tst = load(target_id)
@@ -462,6 +479,9 @@ def replay(
                     source_weight=ob.weight, now=now,
                 )
                 stored[target_id] = state_row(replace(tst, p_known=p_stored), now)
-                mirrors[target_id] = tst.p_known
+                before = shown.get(target_id)
+                mirrors[target_id] = shown[target_id] = (
+                    tst.p_known if before is None else propagated_mirror(before, tst.p_known)
+                )
                 touched[target_id] = now
     return Replayed(state_rows=stored, mirrors=mirrors, touched_at=touched, trace=trace)

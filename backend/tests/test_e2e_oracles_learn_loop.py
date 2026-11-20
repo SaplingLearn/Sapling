@@ -88,6 +88,21 @@ def test_a_propagated_node_with_state_is_compared_too():
     assert len(f) == 1 and "n0" in f[0].summary
 
 
+def test_a_never_studied_node_only_propagated_to_stays_off_the_map():
+    """#866 K22: a state row with no observation of its own (opps 0) on a
+    concept the map shows at 0 is the writer's design, not a mirror drift; an
+    observed node at 0, or an unobserved one showing a score, is still judged."""
+    kw = _clean()
+    kw["state_rows"].append({"user_id": "u", "node_id": "n0", "p_known": 0.45, "opps": 0})
+    kw["node_scores"].append({"id": "n0", "mastery_score": 0.0})
+    assert learn_loop_findings(**kw) == []
+    kw["state_rows"][-1]["opps"] = 1
+    assert len(learn_loop_findings(**kw)) == 1
+    kw["state_rows"][-1]["opps"] = 0
+    kw["node_scores"][-1]["mastery_score"] = 0.3
+    assert len(learn_loop_findings(**kw)) == 1
+
+
 def test_cli_registers_learn_loop():
     from e2e_oracles import __main__ as cli
 
