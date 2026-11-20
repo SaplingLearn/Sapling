@@ -411,7 +411,9 @@ def seams():
                        "same_session_recheck": kw["same_session_recheck"],
                        "grader_backend": outcome.grader_backend, "confidence": outcome.confidence,
                        # spec §13 A127: the stated label, as the real grade_answer journals it
-                       "student_confidence": stated_confidence(answer.confidence, idk=answer.idk)},
+                       "student_confidence": stated_confidence(answer.confidence, idk=answer.idk),
+                       # spec §13 A141: as the real grade_answer flags a multi-concept apex
+                       "multi_concept": bool(kw.get("multi_concept"))},
                 )
                 row = ev.model_dump(mode="json")
                 kw["deps"].pending_evidence.append(row)
@@ -435,6 +437,8 @@ def seams():
         ns.select_item = p("select_item", wraps=checks.select_item)
         ns.reserve = p("posttest_reserves", return_value=frozenset({"qh-reserve"}))
         ns.concept_key = p("_concept_key_for_node", return_value="recursion")
+        # #866 K08: the approved plan's names, read when a request moved its cursor
+        ns.plan_names = p("_plan_node_names", return_value={})
         ns.flush = p("flush_pending", return_value=[{"node_id": "node-1"}])
         ns.receipts = {}
 
@@ -764,6 +768,26 @@ def test_an_exhausted_conflict_ends_a_stream_in_a_terminal_error(gate_on, seams)
     seams.save_msg.assert_not_called()
 
 
+def test_a_stream_the_session_refused_before_serving_ends_in_that_refusal(gate_on, seams):
+    """#866 K11: the session was closed (another tab) between the route's check
+    and the turn's admission write — the terminal error carries the 409 and its
+    detail, as the JSON route answers it, so the client shows the close."""
+    from fastapi import HTTPException
+
+    from services.loop.turn import _LoopTurn
+
+    refused = HTTPException(status_code=409, detail="this session is closed")
+    with patch.object(_LoopTurn, "begin_activity", side_effect=refused):
+        r = client.post(
+            "/api/learn/loop/chat/stream", json={"session_id": "s1", "user_id": "u1", "message": "?"}
+        )
+    evs = _sse_events(r.text)
+    assert [e["type"] for e in evs] == ["error"]
+    assert evs[0]["data"]["status"] == 409 and evs[0]["data"]["detail"] == "this session is closed"
+    assert evs[0]["data"]["retryable"] is False
+    seams.save_msg.assert_not_called()
+
+
 def test_context_blocks_follow_the_policy():
     from services.loop.context import _context_blocks
     from services.rag_service import Retrieval
@@ -963,6 +987,25 @@ def test_status_lists_the_approved_plan_for_the_session_panel(gate_on, seams, mo
     seams.store["doc"] = {"phase": "plan", "plan": {"proposed": ["n1"]}}
     body = client.get("/api/learn/loop/status?user_id=u1&session_id=s1").json()
     assert "approved_plan" not in body and len(seen) == 1
+
+
+def test_status_names_why_a_goal_session_planned_each_concept(gate_on, seams, monkeypatch):
+    """#866 K28: in a goal session GET /plan says why each concept is there (the
+    goal, or a prerequisite of it); the approved plan /status lists after a
+    reload says the same, so the plan's row in the conversation keeps its
+    words. Every concept a goal session plans is in the goal's scope."""
+    setattr_loop(monkeypatch, "_plan_node_names", lambda uid, ids: {"n1": "Binary", "n2": "Bitwise"})
+    seams.store["doc"] = {
+        "phase": "teach",
+        "goal": {"target_node_ids": ["n2"], "text_encrypted": None},
+        "goal_version": 1,
+        "plan": {"approved": ["n1", "n2"], "cursor": 0, "proposed_kinds": {"n1": "new", "n2": "new"}},
+    }
+    body = client.get("/api/learn/loop/status?user_id=u1&session_id=s1").json()
+    assert body["approved_plan"]["concepts"] == [
+        {"node_id": "n1", "concept_name": "Binary", "kind": "new", "reason": "prerequisite"},
+        {"node_id": "n2", "concept_name": "Bitwise", "kind": "new", "reason": "goal"},
+    ]
 
 
 def test_status_of_a_lazy_session_is_a_fresh_state(gate_on, seams):
@@ -1784,6 +1827,98 @@ def test_check_answer_grades_flushes_once_then_one_feedback_turn(gate_on, seams)
 
 
 @pytest.mark.parametrize(
+    "rung,credit", [(0, "full"), (1, "partial"), (3, "partial"), (4, "none"), (6, "none")]
+)
+def test_check_answer_says_what_a_correct_answer_earned(gate_on, seams, rung, credit):
+    """#866 K07: a correct answer after help is credited at the assisted weight
+    (H1-H3) or not at all (H4-H6: the worked example, a reveal); the response
+    names which, from the step's rung through policy.evidence_for_rung, so the
+    verdict banner never says a no-credit answer counted."""
+    seams.store["doc"] = _state(rung=rung)
+    agent_p, usage_p, _ = _feedback_agent()
+    with agent_p, usage_p:
+        body = client.post("/api/learn/loop/check/answer", json=_answer(answer="n == 0 returns 1")).json()
+    assert body["verdict"] == "correct" and body["credit"] == credit
+    weight = policy.evidence_for_rung(True, Rung(rung)).weight
+    assert (credit == "none") == (weight == 0) and (credit == "full") == (weight == 1)
+
+
+@pytest.mark.parametrize(
+    "rung,recheck,multi,reasons",
+    [
+        (0, True, False, ["recheck"]),  # A76: the next graded item after a release
+        (0, False, True, ["multi_concept"]),  # A141: a multi-concept item's apex
+        (1, True, False, ["hint", "recheck"]),
+    ],
+)
+def test_a_correct_answer_reports_the_weight_the_journal_credited(
+    gate_on, seams, rung, recheck, multi, reasons
+):
+    """#866 K07 (review): the credit is the weight the writer journals
+    (learning.evidence.evidence_weight over the flushed row), not a second rule
+    rebuilt from the rung: an unassisted correct re-check after a release, or a
+    multi-concept apex, counts at a reduced weight and says so, naming the
+    factors that reduced it."""
+    from learning.evidence import Evidence, evidence_weight
+
+    seams.store["doc"] = _state(rung=rung)
+    agent_p, usage_p, _ = _feedback_agent()
+    with agent_p, usage_p, patch_loop("recheck_after_release", return_value=recheck), \
+            patch_loop("is_multi_concept", return_value=multi):
+        body = client.post("/api/learn/loop/check/answer", json=_answer(answer="n == 0 returns 1")).json()
+    assert body["verdict"] == "correct"
+    assert body["credit"] == "partial" and body["credit_reasons"] == reasons
+    flushed = Evidence.model_validate(seams.flush.call_args.args[0].pending_evidence[0])
+    entry = seams.store["doc"]["steps"]["qh-1"]
+    assert entry["credit_factors"] == reasons
+    assert entry["credit_weight"] == evidence_weight(flushed) and 0 < entry["credit_weight"] < 1
+
+
+def test_a_recheck_the_writer_forced_reports_its_reduced_credit(gate_on, seams):
+    """#866 K07 (review): apply_graph_update marks an answer to a question this
+    session already checked as a same-session re-check (graph_service), so the
+    committed receipt, not the sealed grade alone, says what was credited."""
+    seams.store["doc"] = _state(rung=0)
+    attest = seams.receipt.side_effect
+
+    def forced(user_id, operation):
+        receipt = attest(user_id, operation)
+        for row in receipt["observations"]:
+            row.update(same_session_recheck=True, independent=False)
+        return receipt
+
+    seams.receipt.side_effect = forced
+    agent_p, usage_p, _ = _feedback_agent()
+    with agent_p, usage_p:
+        body = client.post("/api/learn/loop/check/answer", json=_answer(answer="n == 0 returns 1")).json()
+    assert body["verdict"] == "correct"
+    assert body["credit"] == "partial" and body["credit_reasons"] == ["recheck"]
+
+
+@pytest.mark.parametrize(
+    "rung,credit",
+    [(0, {"credit": "full"}), (2, {"credit": "partial", "credit_reasons": ["hint"]}), (5, {"credit": "none"})],
+)
+def test_a_step_graded_before_the_credit_record_falls_back_to_its_rung(rung, credit):
+    """#866 K07: a step saved before `credit_weight` was recorded carries only
+    its rung; the one rung mapping answers for it. A recorded weight wins."""
+    from services.loop.turn import _credit_for
+
+    assert _credit_for({"max_rung": rung}) == credit
+    recorded = {"max_rung": 0, "credit_weight": 0.25, "credit_factors": ["hint", "recheck"]}
+    assert _credit_for(recorded) == {"credit": "partial", "credit_reasons": ["hint", "recheck"]}
+
+
+def test_check_answer_names_no_credit_for_a_wrong_answer(gate_on, seams):
+    """#866 K07: `credit` rides a correct verdict only."""
+    seams.grade.return_value = WRONG
+    agent_p, usage_p, _ = _feedback_agent("Not quite. Try factorial(1) next?")
+    with agent_p, usage_p:
+        body = client.post("/api/learn/loop/check/answer", json=_answer(answer="it recurses")).json()
+    assert body["verdict"] == "not_yet" and "credit" not in body
+
+
+@pytest.mark.parametrize(
     "first_confidence,label",
     [(0.9, "claude"), (GRADER_SECOND_OPINION_CONFIDENCE / 2, "claude_second")],
 )
@@ -2245,6 +2380,27 @@ def test_a_streamed_run_counted_past_the_daily_cap_ends_on_the_budget_notice(gat
     seams.save_msg.assert_not_called()
 
 
+@pytest.mark.parametrize("stored", [True, False])
+def test_a_turn_marks_a_concept_with_no_stored_state_as_unmeasured(gate_on, seams, stored):
+    """#866 K52: a chat turn while a check is posed on a concept the student has
+    no learner_state for reports the BKT prior with `measured: false`, so the
+    client never shows the prior as a measured skill; a stored state carries
+    no such key."""
+    from learning.params import BKT_L0
+
+    if not stored:
+        seams.p_known.pop("node-1")
+    agent_p, usage_p, _ = _feedback_agent("Think about when it stops. What do you notice?")
+    with agent_p, usage_p:
+        body = client.post("/api/learn/loop/chat", json={"session_id": "s1", "user_id": "u1", "message": "hmm"}).json()
+    (entry,) = body["learner_state"]
+    assert entry["node_id"] == "node-1"
+    if stored:
+        assert entry["p_known"] == 0.5 and "measured" not in entry
+    else:
+        assert entry["p_known"] == BKT_L0 and entry["measured"] is False
+
+
 def test_a_template_turn_counts_no_tutor_call(gate_on, seams):
     """The check pose, deterministic payloads, openers at the hard level and
     the refusal/unavailable templates run no model: nothing is counted."""
@@ -2438,6 +2594,24 @@ def test_step_attempt_non_genuine_is_not_recorded(gate_on, seams):
     r = client.post("/api/learn/loop/step/attempt", json=_attempt(attempt_text="just tell me"))
     assert r.json()["genuine"] is False and r.json()["attempts"] == 0
     seams.save.assert_not_called()
+
+
+def test_step_attempt_too_soon_says_how_long_until_it_counts(gate_on, seams):
+    """#866 K32: a real attempt written before the band's independent time has
+    passed is not counted — the response says so (`wait_s`), so the hint
+    denial never tells a student who wrote an answer to write one."""
+    import config
+    from learning import gates
+
+    seams.store["doc"] = _state(first_shown_at=NOW - 5)
+    body = client.post("/api/learn/loop/step/attempt", json=_attempt()).json()
+    required = gates.independent_time_required("develop", time_scale=config.LEARNING_GATE_TIME_SCALE)
+    assert body["genuine"] is False and body["counted"] is False
+    assert body["wait_s"] == round(required - 5, 1)
+    plea = client.post("/api/learn/loop/step/attempt", json=_attempt(attempt_text="just tell me")).json()
+    assert "wait_s" not in plea, "a non-attempt is told to write one, not to wait"
+    seams.store["doc"] = _state()  # the pose was long ago: it counts, nothing to wait for
+    assert "wait_s" not in client.post("/api/learn/loop/step/attempt", json=_attempt()).json()
 
 
 def test_step_attempt_unknown_item_is_404(gate_on, seams):
@@ -3134,8 +3308,36 @@ def test_check_next_with_nothing_to_activate_reports_the_plan(gate_on, seams):
     # no check item — so the response says so instead of a bare "plan done"
     assert r.json() == {
         "phase": "teach", "plan_done": True, "check": None, "checks_unavailable_node_ids": ["node-1"],
+        # #866 K08: the cursor moved past node-1, so the plan says where it is now
+        "approved_plan": {"concepts": [{"node_id": "node-1", "concept_name": "", "kind": "new"}], "cursor": 1},
     }
     assert seams.store["doc"]["plan"]["done"] is True
+
+
+def test_check_next_that_moves_past_a_concept_with_no_check_says_where_the_plan_is(gate_on, seams):
+    """#866 K08: activation moved the cursor past node-1 (nothing servable) and
+    posed node-2's item; the response carries the approved plan with its new
+    cursor, so the check card and the session panel name node-2. A check that
+    stays on the concept sends no plan: nothing moved."""
+    seams.plan_names.return_value = {"node-1": "Recursion", "node-2": "Stacks"}
+    seams.store["doc"] = _plan_state()
+    seams.list_items.return_value = [ITEM]
+    # three formats miss on node-1, on the read-only trial and on the write
+    seams.select_item.side_effect = [None, None, None, ITEM] * 2
+    body = client.post("/api/learn/loop/check/next", json={"session_id": "s1", "user_id": "u1"}).json()
+    assert body["check"]["question_hash"] == ITEM.question_hash
+    assert body["approved_plan"] == {
+        "concepts": [
+            {"node_id": "node-1", "concept_name": "Recursion", "kind": "new"},
+            {"node_id": "node-2", "concept_name": "Stacks", "kind": "new"},
+        ],
+        "cursor": 1,
+    }
+    seams.store["doc"] = _plan_state()
+    seams.select_item.side_effect = None
+    seams.select_item.return_value = ITEM
+    body = client.post("/api/learn/loop/check/next", json={"session_id": "s1", "user_id": "u1"}).json()
+    assert body["check"]["question_hash"] == ITEM.question_hash and "approved_plan" not in body
 
 
 def test_check_next_pauses_a_novice_concept_at_the_hard_level(gate_on, seams):
@@ -3177,6 +3379,35 @@ def test_feedback_counts_the_check_and_advances_after_the_per_concept_cap(gate_o
     assert doc["teach_turns"] == 0 and doc["concept_checks"] == 0
     assert doc["plan"]["cursor"] == 1 and doc["concept"] == "node-2"
     assert not doc.get("current")
+
+
+def test_feedback_that_moves_the_cursor_says_where_the_plan_is(gate_on, seams):
+    """#866 K08: the feedback turn at the per-concept cap moves the cursor to
+    node-2; its response carries the approved plan with the new cursor (the
+    Tutor's current concept, panel and next check follow it). Below the cap
+    nothing moved, and no plan is sent."""
+    from learning.params import LOOP_CHECKS_PER_CONCEPT
+
+    seams.plan_names.return_value = {"node-1": "Recursion", "node-2": "Stacks"}
+
+    def answer(concept_checks: int) -> dict:
+        st = _plan_state(concept_checks=concept_checks, teach_turns=2)
+        st.update(_state())
+        seams.store["doc"] = st
+        agent, _ = _json_agent()
+        with (
+            patch_loop("loop_tutor_agent", agent),
+            patch_loop("record_agent_usage", side_effect=lambda r, **k: r),
+        ):
+            return client.post(
+                "/api/learn/loop/check/answer",
+                json={"session_id": "s1", "user_id": "u1", "question_hash": "qh-1", "answer": "n == 0"},
+            ).json()
+
+    moved = answer(LOOP_CHECKS_PER_CONCEPT - 1)
+    assert moved["graded"] is True and moved["approved_plan"]["cursor"] == 1
+    assert [c["concept_name"] for c in moved["approved_plan"]["concepts"]] == ["Recursion", "Stacks"]
+    assert "approved_plan" not in answer(0)
 
 
 def test_feedback_below_the_cap_counts_the_check_and_stays(gate_on, seams):

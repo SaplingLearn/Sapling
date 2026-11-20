@@ -194,6 +194,10 @@ class _StateConflict(HTTPException):
     on_complete guard, or the deterministic path's). An HTTPException so
     routes.learn._agent_turn_or_http_error passes it through."""
 
+    #: a lost race, not a refusal: inside a stream it stays the retryable
+    #: terminal error (services/chat_stream.py::refusal_event skips it, #866 K11)
+    retryable = True
+
     def __init__(self) -> None:
         super().__init__(status_code=409, detail=_STATE_CONFLICT)
 

@@ -35,7 +35,7 @@ from services.loop.state import (
 )
 from services.loop.learner import _band_for
 from services.loop.reveals import _ledger
-from services.loop.planning import _continue_goal, _preparing
+from services.loop.planning import _continue_goal, _moved_plan_view, _plan_position, _preparing
 from services.loop.pose import _superseded_prequestion, _without_claim
 from services.loop.practice import _activate_next_item, _pose_payload, _worked_example_owed
 from services.loop.claims import ABANDON_MOVED_PAST, _abandon_claimed, _grading_open
@@ -56,6 +56,7 @@ def check_next(body: LoopCheckNextBody, request: Request) -> dict:
     state = _load_loop_state(body.session_id)
     _require_teaching(state)
     _require_no_pending_feedback(state)
+    position = _plan_position(state)  # #866 K08: before the trial below moves it
     active = state.get("current")
     entry = (state.get("steps") or {}).get(active) if active else None
     now = _now_s()
@@ -143,6 +144,7 @@ def check_next(body: LoopCheckNextBody, request: Request) -> dict:
             out["practice_unavailable_node_ids"] = list(plan.get("practice_unavailable_node_ids") or [])
         out["checks_unavailable_node_ids"] = _checks_unavailable(saved)
         out.update(_preparing(body.user_id, course_id))  # A128
+        out.update(_moved_plan_view(body.user_id, position, saved))  # K08
         return out
     item = get_check_item(saved["steps"][qh]["check_item_id"])
     # A122: an item that opens on the worked example says so (the client asks for it)
@@ -153,7 +155,8 @@ def check_next(body: LoopCheckNextBody, request: Request) -> dict:
     if out.get("pq_superseded"):  # spec §13 A138
         node, rec = out["pq_superseded"]
         _superseded_prequestion(body.user_id, body.session_id, _request_id(request), node, rec, at=now)
-    return {"phase": "check", "check": pose}
+    # K08: an activation that moved past a concept with no check says where to
+    return {"phase": "check", "check": pose, **_moved_plan_view(body.user_id, position, saved)}
 
 
 def _checks_unavailable(state: dict) -> list[str]:

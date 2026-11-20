@@ -51,6 +51,12 @@ describe('reduceLoopEvent', () => {
     expect(reduceLoopEvent({ ...initialLoopState(), item }, { type: 'check', item: null }).item).toBeNull();
   });
 
+  it('an unmeasured learner_state (#866 K52) moves the focus but records no skill', () => {
+    const s = reduceLoopEvent(initialLoopState(), { type: 'learner_state', state: { node_id: 'n1', p_known: 0.35, band: 'develop', measured: false } });
+    expect(s.focusNodeId).toBe('n1');
+    expect(s.learnerState).toEqual({});
+  });
+
   it('learner_state is keyed by node_id, overwrites, and focuses the node', () => {
     let s = reduceLoopEvent(initialLoopState(), { type: 'learner_state', state: { node_id: 'n1', p_known: 0.4, band: 'develop' } });
     s = reduceLoopEvent(s, { type: 'learner_state', state: { node_id: 'n1', p_known: 0.6, band: 'develop' } });

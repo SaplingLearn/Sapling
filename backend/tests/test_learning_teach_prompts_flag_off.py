@@ -169,6 +169,27 @@ def test_flag_off_every_scenario_is_byte_identical_to_f9eca612(name, gate_on, se
             ],
             "cursor": 0,
         }
+    if name == "feedback_first_correct_ends_segment":
+        # #866 K08: a turn that moves the plan's cursor says where it is now, so
+        # the Tutor's current concept follows it. Like `approved_plan` on
+        # /status it does not depend on either flag: checked here, left out of
+        # the f9eca612 digest.
+        assert captured["body"].pop("approved_plan") == {
+            "concepts": [
+                {"node_id": "node-1", "concept_name": "", "kind": "new"},
+                {"node_id": "node-2", "concept_name": "", "kind": "new"},
+            ],
+            "cursor": 1,
+        }
+    # #866 K07 / K52 add flag-independent fields too: a correct check answer's
+    # `credit` (+ `credit_reasons`, and the step's `credit_weight` /
+    # `credit_factors`) and `measured: false` on a concept with no stored
+    # state. No scenario here grades a check through /check/answer or turns on
+    # an unmeasured concept, so none reaches the f9eca612 digest; this keeps
+    # a re-capture from baking one in unnoticed (pop and check it above first).
+    flat = json.dumps(captured, default=str)
+    for key in ("credit", "credit_reasons", "credit_weight", "credit_factors", "measured"):
+        assert f'"{key}"' not in flat, (name, key)
     digest = _digest(captured)
     if os.environ.get("TEACH_PROMPTS_CAPTURE"):
         print(f"\nCAPTURE {name} {digest}")

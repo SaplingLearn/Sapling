@@ -28,7 +28,7 @@ import type { GraphEdge as ApiEdge, GraphNode as ApiNode } from "@/lib/types";
 import {
   answerLoopProbe,
   approveLoopPlan,
-  budgetPauseOf,
+  loopPauseOf,
   closeLoopSession,
   getCourses,
   getGraph,
@@ -58,7 +58,6 @@ import {
   type LoopDiagnosis,
   type LoopLearningScope,
   type LoopOpenSession,
-  type LoopPanelConcept,
   type LoopPendingGrade,
   type LoopPhase,
   type LoopPlanConcept,
@@ -76,16 +75,15 @@ import {
 import { useFlag } from "@/context/FlagsContext";
 import { useStudyNavShown } from "../useRetentionNav";
 import { forgetEndedSession, noteLearningSession, useFeedbackHold } from "@/lib/feedbackPacing";
-import { BudgetPausedBanner, tutorPauseMessage } from "./BudgetPausedBanner";
-import { checkIsOpen, initialLoopState, reduceLoopEvent } from "./loopState";
+import { checkIsOpen, hintTurnEvents, initialLoopState, reduceLoopEvent } from "./loopState";
 import { hasDeepLink, readDeepLink } from "./deepLink";
 import styles from "./LoopLearn.module.css";
-import { GoalEditor } from "./LearningScope";
+import { GoalEditor, GoalProgressNote, ScopeSummary } from "./LearningScope";
 import { CrisisSupportCard, useCrisisSupport } from "../safety/CrisisSupportCard";
 import { crisisSupportIn, crisisSupportInError, takeNoteCardShown, type CrisisSupport } from "@/lib/crisisSupport";
 import { PrequestionCard, renderGuess } from "./PrequestionCard";
 import { SelfExplainCard } from "./SelfExplainCard";
-import { retentionHref, useRetentionDue } from "@/context/RetentionDueContext";
+import { useRetentionDue } from "@/context/RetentionDueContext";
 import { Icon } from "../Icon";
 import { TutorSidebar } from "./tutor/TutorSidebar";
 import { LoadFailed, TutorAllSessions, TutorCourse, TutorHome, type SessionFilter } from "./tutor/TutorPages";
@@ -95,6 +93,7 @@ import { PhaseStepper } from "./tutor/PhaseStepper";
 import { TutorDrawer } from "./tutor/TutorDrawer";
 import { useTutorLayout } from "./tutor/useTutorLayout";
 import { useTutorCourses, useTutorLists } from "./tutor/useTutorLists";
+import { useSessionEdits } from "./tutor/useSessionEdits";
 import { SidebarGlyph } from "./tutor/TutorIcons";
 import { listedOpenTitle, mergeSessions, sessionTitle, sessionToLeave, type TutorSessionRow } from "./tutor/sessions";
 import tutorStyles from "./tutor/tutor.module.css";
@@ -103,27 +102,28 @@ import { ClosePanel } from "./ClosePanel";
 import { RatingPrompt } from "./RatingPrompt";
 import { claimWrapUpAsk, useWrapUpAsk } from "./WrapUpRating";
 import { checkMeFailure, checkMeNote, FEEDBACK_PENDING_COPY, PREPARING_COPY } from "./checkNote";
+import { SESSION_CLOSED_DETAIL, sessionRefusal } from "./sessionErrors";
 import { withPlanHistory } from "./loopHistory";
 import { dropInterruptedTurn } from "./chatRetry";
 import { modalOpen } from "./modalOpen";
-import { BAND_LABEL, type Draft, type HintView } from "./loopShared";
+import { BAND_LABEL, hintDenial, type Draft, type HintView } from "./loopShared";
 import { VerdictBanner } from "./VerdictBanner";
 import { ProbePanel } from "./ProbePanel";
 import { PlanPanel } from "./PlanPanel";
 import { CheckCard } from "./CheckCard";
+import { LoopNotices } from "./LoopNotices";
+import { ReadOnlyTranscript } from "./ReadOnlyTranscript";
+import {
+  conceptAt, conceptGoal, currentConcept, dueLink, findRow, isOpenPhase, linkGoal, nextAfterVerdict, panelPlanOf, phaseText,
+  weakestConcept, type ApprovedPlan,
+} from "./tutor/sessionView";
 
 // ── Copy ─────────────────────────────────────────────────────────────────
-const NO_CHECK_ITEMS_COPY =
-  "No check items for this course yet. You can still learn with the tutor; nothing is graded until the course has items.";
-// spec §13 A128: the session's course-material retrieval failed (an outage, not
-// an empty result). Shown once per session, from the turn's response field —
-// never a prompt change.
-const MATERIALS_UNAVAILABLE_COPY =
-  "Your course materials are temporarily unavailable, so answers may be less specific to your class.";
-const NO_FRESH_PRACTICE_COPY = "Fresh practice questions are unavailable for these concepts in this session. You can review source material with the tutor; source review does not assess or complete your goal. Starting another session will not replenish these questions.";
 const PROBE_UNAVAILABLE_COPY = "Couldn't grade that one — here's another.";
 const PROBE_REFUSED_COPY = "Answer in your own words — that read as instructions to the grader.";
 const CLOSED_ELSEWHERE_COPY = "This session was closed — start a new one to keep learning.";
+/** K26: a request the session's phase refused (another tab or device moved it). */
+const MOVED_ELSEWHERE_COPY = "This session moved on in another tab — here's where it is now.";
 const CONTINUE_MESSAGE = "Let's continue.";
 // spec §13 A113 (#695): the check card's "Report this question" went through
 const REPORTED_COPY = "Thanks — that question is reported and won't be shown to you again. Use Check me for another.";
@@ -143,8 +143,6 @@ const CLOSE_RETRY_COPY: Record<string, string> = {
   "a check is being graded; close again in a moment": "A check is still being graded — close again in a moment.",
   "session close in progress": "This session is already closing — try again in a moment.",
 };
-/** routes/learn_loop.py `_SESSION_CLOSED`: every teaching route after the close (A60). */
-const SESSION_CLOSED_DETAIL = "this session is closed";
 /** routes/learn_loop.py `_ALREADY_GRADED`: the submission was graded (maybe by an earlier request). */
 const ALREADY_GRADED_DETAIL = "already graded";
 /** POST /check/answer(/stream) 409s (#866 A1/A2): the check this answer was for
@@ -185,8 +183,8 @@ function draftAnswer(draft: Draft, format: string): LoopCheckAnswer {
   return draft.confidence ? { ...a, confidence: draft.confidence } : a;
 }
 /** The Tutor's main column: a session (T4–T15), the Tutor home (T1), a course
- *  page (T2) or every session (T3). */
-type TutorView = "session" | "home" | "course" | "all";
+ *  page (T2), every session (T3), or the home's goal editor before a start (K30). */
+type TutorView = "session" | "home" | "course" | "all" | "goal";
 
 
 /** The phase GET /status reports for a document, in the UI's vocabulary. */
@@ -252,6 +250,7 @@ export function LoopLearn() {
   const [courseId, setCourseId] = useState<string | null>(null);
   const listedCourses = useTutorCourses(courses, courseId, setCourseId);
   const [openSessions, setOpenSessions] = useState<LoopOpenSession[] | null>(null); // null = loading
+  const [openComplete, setOpenComplete] = useState(true); // K29: it lists every open session
   const [sessionsError, setSessionsError] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [readOnly, setReadOnly] = useState<{ id: string; topic: string; messages: ChatMsg[] } | null>(null);
@@ -266,8 +265,9 @@ export function LoopLearn() {
   // composer: ChatPanel applies `text` whenever `key` changes.
   const [chatDraft, setChatDraft] = useState<{ text: string; key: number }>({ text: "", key: 0 });
 
-  // Goals are session-owned. New sessions start whole-course; typed topic text
-  // never silently selects targets, and nothing is inherited across courses.
+  // Goals are session-owned. New sessions start whole-course unless the student
+  // chose concepts: the goal editor, or a concept they clicked (K05: its node
+  // id, never typed text matched to a concept); nothing is inherited across courses.
   const [goal, setGoal] = useState<LoopGoal | null>(null);
   const [goalProgress, setGoalProgress] = useState<LoopGoalProgress | null>(null);
   const [practiceUnavailable, setPracticeUnavailable] = useState<string[]>([]);
@@ -278,6 +278,7 @@ export function LoopLearn() {
   const [goalEditor, setGoalEditor] = useState(false);
   const [goalBusy, setGoalBusy] = useState(false);
   const [goalError, setGoalError] = useState<string | null>(null);
+  const [startGoal, setStartGoal] = useState<LoopGoal | null>(null); // K30: the goal a start was refused on
   const goalButton = useRef<HTMLButtonElement>(null);
 
   // Probe
@@ -300,7 +301,7 @@ export function LoopLearn() {
   const [planGoalVersion, setPlanGoalVersion] = useState<number | undefined>(undefined);
   const [planJustApproved, setPlanJustApproved] = useState(false);
   // The approved plan as GET /status reports it: the session panel's list after a reload
-  const [approvedPlan, setApprovedPlan] = useState<{ concepts: LoopPanelConcept[]; cursor: number } | null>(null);
+  const [approvedPlan, setApprovedPlan] = useState<ApprovedPlan | null>(null);
 
   // Teach / check / feedback
   const [messages, setMessages] = useState<ChatMsg[]>([]);
@@ -317,7 +318,7 @@ export function LoopLearn() {
   // PKG-14: the session a graded check asked to rate (done.ask_rating); one click hides it
   const [askRating, setAskRating] = useState<string | null>(null);
   // Wireframe T9: the last graded check's verdict, shown over the feedback turn
-  const [verdict, setVerdict] = useState<{ verdict: string; nodeId: string | null } | null>(null);
+  const [verdict, setVerdict] = useState<{ verdict: string; nodeId: string | null; credit?: LoopTurnResult["credit"]; reasons?: LoopTurnResult["credit_reasons"] } | null>(null);
   // Spec §13 A138: the open segment-opening guess; A139: the open "why" prompt.
   // Both are server-driven: a served turn closes them and may open new ones.
   const [prequestion, setPrequestion] = useState<LoopPrequestion | null>(null);
@@ -352,8 +353,12 @@ export function LoopLearn() {
   const bootKey = useRef<string | null>(null);
   const resumePending = useRef(true); // the deep link's ?resume= is honoured once
   const topicStarted = useRef(false); // the deep link's ?topic= starts a session once
-  const lastStart = useRef<{ topic?: string; mode?: string; goal?: boolean }>({}); // the start card's "Try again" repeats it
+  const lastStart = useRef<{ topic?: string; mode?: string; goal?: LoopGoal }>({}); // the start card's "Try again" repeats it
   const sessionRef = useRef<string | null>(null);
+  // K26: re-enter the session on screen as the server now has it (set below,
+  // once `resume` exists). One at a time.
+  const resyncRef = useRef<(sid: string) => void>(() => {});
+  const phaseRef = useRef<LoopPhase>("probe");
   const streamAbort = useRef<AbortController | null>(null);
   const turnEpoch = useRef(0); // a late recovery snapshot cannot undo a newer turn
   const countedAttempt = useRef<string | null>(null); // `${qh}:${text}` the server counted
@@ -389,6 +394,9 @@ export function LoopLearn() {
   useEffect(() => {
     sessionRef.current = sessionId;
   }, [sessionId]);
+  useEffect(() => {
+    phaseRef.current = state.phase;
+  }, [state.phase]);
 
   // The deep link is consumed at mount: drop it from the URL so a reload, or a
   // later session/course switch, never re-applies it (it was sticky).
@@ -509,15 +517,20 @@ export function LoopLearn() {
   // ── Error routing: a budget 429 is the banner, a closed session is the
   // close, anything else a toast ─────────────────────────────────────────
   const reportError = useCallback((err: unknown, fallback: string) => {
-    const pause = budgetPauseOf(err);
+    const pause = loopPauseOf(err); // K11: the loop's tutor budget, or the daily AI limit
     if (pause) {
-      dispatch({ type: "budget", level: "hard", resetAt: pause.resetAt, sessionCapped: pause.sessionCapped, pauseNovice: pause.pauseNovice });
+      dispatch({ type: "budget", level: "hard", resetAt: pause.resetAt, sessionCapped: pause.sessionCapped, pauseNovice: pause.pauseNovice, aiLimit: pause.aiLimit });
       return;
     }
     const { status, detail } = extractErrorDetail(err);
     const sid = sessionRef.current;
-    if (status === 409 && detail === SESSION_CLOSED_DETAIL && sid) {
+    const refusal = sessionRefusal(status, detail); // K26: closed (or gone), or moved
+    if (refusal === "closed" && sid) {
       void enterClosed(sid);
+      return;
+    }
+    if (refusal === "moved" && sid) {
+      resyncRef.current(sid); // one in flight already re-reads it
       return;
     }
     toast.error(humanizeError(err, fallback));
@@ -718,6 +731,16 @@ export function LoopLearn() {
       if (g === gen.current) setStarting(false);
     }
   }, [clearSessionView, nextProbe, loadPlan, loadLearningScope, toast]);
+  const resyncing = useRef(false);
+  useEffect(() => {
+    resyncRef.current = (sid: string) => {
+      if (resyncing.current || sid !== sessionRef.current) return;
+      resyncing.current = true;
+      toast.info(MOVED_ELSEWHERE_COPY);
+      const s = { session_id: sid, topic: "", started_at: "", phase: phaseRef.current };
+      void resume(s).finally(() => { resyncing.current = false; });
+    };
+  }, [resume, toast]);
 
   const openReadOnly = useCallback(async (id: string) => {
     const g = ++gen.current;
@@ -747,8 +770,8 @@ export function LoopLearn() {
       if (g0 !== gen.current) return false;
       setStarting(false);
       const { status, detail } = extractErrorDetail(err);
-      if (status === 409 && detail === SESSION_CLOSED_DETAIL) {
-        // already closed elsewhere: nothing to wrap up
+      if (sessionRefusal(status, detail) === "closed") {
+        // already closed elsewhere, or gone (K26): nothing to wrap up
       } else if (status === 409 && detail) {
         setCloseNote(CLOSE_RETRY_COPY[detail] ?? detail);
         return false;
@@ -798,10 +821,10 @@ export function LoopLearn() {
    *  With none on screen (a read-only transcript), the course's listed open
    *  session is the one left (Z64: one open session per course). */
   const newSession = useCallback(async (
-    { closeCurrent = false, topic, mode }: { closeCurrent?: boolean; topic?: string; mode?: string } = {},
+    { closeCurrent = false, topic, mode, goal }: { closeCurrent?: boolean; topic?: string; mode?: string; goal?: LoopGoal } = {},
   ) => {
     if (!courseId || !userId || sessionTransitionBusy) return;
-    lastStart.current = { topic, mode };
+    lastStart.current = { topic, mode, goal };
     // An explicit start wins over a boot that has not listed the sessions yet.
     bootKey.current = `${userId}:${courseId}`;
     const leaving = closeCurrent ? sessionToLeave(sessionRef.current, isOpenPhase(state.phase), openSessions) : null;
@@ -816,7 +839,8 @@ export function LoopLearn() {
     const fromNoteId = deepLink.note && topic === deepLink.topic ? deepLink.note : null;
     const cardShown = !!fromNoteId && takeNoteCardShown(fromNoteId);
     try {
-      const r = await startLoopSession(userId, courseId, title, mode, undefined, fromNoteId);
+      // K05/K30: a session on chosen concepts starts on them (StartSessionBody.goal)
+      const r = await startLoopSession(userId, courseId, title, mode, goal, fromNoteId);
       if (g !== gen.current || !adoptStarted(r, cardShown)) return;
       await nextProbe(r.session_id, g);
       if (g !== gen.current) return;
@@ -829,6 +853,13 @@ export function LoopLearn() {
       // the student never gets a refusal without it, unless Send to tutor
       // just showed it for this note.
       if (!cardShown) interceptCrisis({ crisis_support: crisisSupportInError(err) });
+      if (goal && extractErrorDetail(err).status === 422) {
+        // K05/K30: a concept the course no longer has — choose again, never a retry that fails again
+        setStartGoal(goal);
+        setGoalError(humanizeError(err, "Confirm 1–12 concepts from this course."));
+        setView("goal");
+        return;
+      }
       setLoadError("start"); // never an empty probe: the start card offers a retry
       reportError(err, "Couldn't start a session.");
     } finally {
@@ -854,6 +885,7 @@ export function LoopLearn() {
     const list = listed.sessions;
     setSessionsError(false);
     setOpenSessions(list);
+    setOpenComplete(listed.complete);
     const found = wanted ? listed.resume : null;
     if (found) {
       if (found.course_id !== courseId && courses?.some((c) => c.course_id === found.course_id)) {
@@ -862,7 +894,9 @@ export function LoopLearn() {
         setCourseId(found.course_id);
         let others: LoopOpenSession[] = [];
         try {
-          others = (await listLoopSessionsFor(userId, found.course_id, null)).sessions;
+          const other = await listLoopSessionsFor(userId, found.course_id, null);
+          others = other.sessions;
+          setOpenComplete(other.complete);
         } catch {
           // the picker is a convenience; the named session still resumes
         }
@@ -877,9 +911,9 @@ export function LoopLearn() {
     } else if (list.length > 0) {
       await resume(list[0]);
     } else if (deepLink.topic && !topicStarted.current) {
-      // a "learn this" link from the map starts on its concept, once
+      // a "learn this" link from the map starts on its concept (its goal, K05), once
       topicStarted.current = true;
-      await newSession({ topic: deepLink.topic, mode: deepLink.mode });
+      await newSession({ topic: deepLink.topic, mode: deepLink.mode, goal: linkGoal(deepLink, courseId) });
     } else {
       // wireframe T1: nothing open in this course — the Tutor home, never a
       // probe the student did not ask for
@@ -942,7 +976,21 @@ export function LoopLearn() {
   const lists = useTutorLists({
     userId, sessionId, sessionClosed: state.phase === "close", wantMaterials: view === "course", studyVisible,
   });
-  const sessionRows = useMemo(() => mergeSessions(lists.recent, openSessions, courseId), [lists.recent, openSessions, courseId]);
+  const sessionRows = useMemo(
+    () => mergeSessions(lists.recent, openSessions, courseId, openComplete), [lists.recent, openSessions, courseId, openComplete],
+  );
+  // K31: rename and delete, from every session's list; a deleted session on
+  // screen (or read-only) is let go of, so nothing of it stays behind the list
+  const edits = useSessionEdits({
+    userId, toast, renameRecent: lists.renameRecent, dropRecent: lists.dropRecent, setOpenSessions,
+    onDeleted: useCallback((id: string) => {
+      if (id !== sessionRef.current && id !== readOnly?.id) return;
+      ++gen.current;
+      clearSessionView();
+      setSessionId(null);
+      sessionRef.current = null;
+    }, [readOnly, clearSessionView]),
+  });
 
   /** Show another course: its sessions load (and an open one resumes) behind the page. */
   const switchCourse = (v: string) => {
@@ -976,16 +1024,24 @@ export function LoopLearn() {
     }
     const listed = openSessions?.find((s) => s.session_id === row.id);
     if (listed) void resume(listed);
+    else if (row.open) resumeUnlisted(row.id); // K29: past the open list's cap
     else void openReadOnly(row.id);
   };
-  /** T1's start: a new session (the open one on screen is wrapped up first). */
-  const startGuided = async (opts: { topic?: string; goal?: boolean } = {}) => {
-    setView("session");
-    await newSession({ closeCurrent: true, topic: opts.topic, mode: deepLink.mode });
-    lastStart.current.goal = opts.goal;
-    if (opts.goal && mounted.current && sessionRef.current) { setGoalEditor(true); setGoalError(null); }
+  /** An open session the course's capped list left out: found by id, as a ?resume= link is. */
+  const resumeUnlisted = (id: string) => {
+    pendingResume.current = id;
+    resumePending.current = true;
+    void loadSessions();
   };
-  const retryStart = () => (lastStart.current.goal ? startGuided(lastStart.current) : newSession(lastStart.current));
+  /** T1's start: a new session (the open one on screen is wrapped up first),
+   *  on the concepts of `goal` when one was chosen (K05, K30). */
+  const startGuided = (opts: { topic?: string; goal?: LoopGoal } = {}) => {
+    setView("session");
+    return newSession({ closeCurrent: true, topic: opts.topic, mode: deepLink.mode, goal: opts.goal });
+  };
+  const retryStart = () => newSession(lastStart.current);
+  /** K30: the home's "Set a goal" sets it before anything starts or is posed. */
+  const showStartGoal = () => { setStartGoal(null); setGoalError(null); setView("goal"); };
 
   // ── Probe ──────────────────────────────────────────────────────────────
   /** After a graded answer: the probe's last answer already moved the session
@@ -1176,8 +1232,9 @@ export function LoopLearn() {
     // check or learner state. Its turn's state changes already happened, so
     // an absent field here is not a "clear": nothing else is applied.
     if (res.replayed) return;
+    if (res.approved_plan) setApprovedPlan(res.approved_plan); // K08: the server moved the plan's cursor
     if (submission && res.graded) {
-      setVerdict(res.verdict ? { verdict: res.verdict, nodeId: res.learner_state?.[0]?.node_id ?? state.focusNodeId } : null);
+      setVerdict(res.verdict ? { verdict: res.verdict, nodeId: res.learner_state?.[0]?.node_id ?? state.focusNodeId, credit: res.credit, reasons: res.credit_reasons } : null);
       setPendingGrade(null);
       // graded — correct, not yet, idk, or a refusal the server graded as idk:
       // the item takes no more answers
@@ -1226,12 +1283,12 @@ export function LoopLearn() {
     onCheckClosed?: () => void;
   }) => {
     const { status, detail } = extractErrorDetail(err);
-    const closed = status === 409 && detail === SESSION_CLOSED_DETAIL; // reportError shows the close
+    const closed = sessionRefusal(status, detail) === "closed"; // reportError shows the close
     const checkClosed = checkClosedCopy(t.submission, status, detail);
     // ADR 0020: what streamed stays, marked interrupted; a chat message the tutor
     // never answered offers Retry (a pause gives it back through onPaused, a
     // close has nothing to retry), and after an error it is back in the composer.
-    const retryText = t.hardSeen || budgetPauseOf(err) || closed ? undefined : t.retryText;
+    const retryText = t.hardSeen || loopPauseOf(err) || closed ? undefined : t.retryText;
     if (t.streamed || retryText) setMessages((prev) => [...prev, { ...asMsg("assistant", t.streamed), interrupted: true, retryText }]);
     if (retryText && !t.aborted) setChatDraft((d) => ({ text: retryText, key: d.key + 1 }));
     // The grade lands BEFORE the feedback stream starts: a submission that did
@@ -1249,7 +1306,7 @@ export function LoopLearn() {
       return;
     }
     if (t.submission && status === 409 && detail === ALREADY_GRADED_DETAIL) return;
-    if (budgetPauseOf(err)) t.onPaused?.(); // a 429: reportError shows the pause banner
+    if (loopPauseOf(err)) t.onPaused?.(); // a pause: reportError shows the pause banner
     reportError(err, "The tutor couldn't answer. Try again.");
   }, [reconcile, reportError, dropClosedCheck]);
 
@@ -1314,12 +1371,10 @@ export function LoopLearn() {
       },
     };
     try {
+      // K10: a result is the saved turn — Stop pressed after `done`, while its
+      // reply was still typing out, keeps it (the loop streams resolve with it)
       const res = await run(handlers);
       if (!ownsTurn()) return null;
-      if (controller.signal.aborted) {
-        if ((submission || feedbackStarted || recoveringFeedback) && sid) void reconcile(sid, g, epoch);
-        return null;
-      }
       // docs/safety/crisis-support.md: the card instead of a tutor turn — nothing
       // was graded or recorded, so phase, check item and learner state stay as
       // they were (an answered item stays posed)
@@ -1345,7 +1400,7 @@ export function LoopLearn() {
         setStreamingText(null);
       }
     }
-  }, [reconcile, invalidateHint, feedbackPending, applyServedTurn, failedTurn]);
+  }, [invalidateHint, feedbackPending, applyServedTurn, failedTurn]);
 
   const send = (text: string) => {
     // A budget pause does not stop a message: the server screens it for a crisis
@@ -1517,16 +1572,18 @@ export function LoopLearn() {
         : attempt.answer).trim();
       const grant = earnedHint.current;
       if (!grant || grant.sessionId !== sessionId || grant.questionHash !== qh) {
+        let waitS: number | undefined; // K32: time alone kept the draft from counting
         if (draft && countedAttempt.current !== `${qh}:${draft}`) {
           const recorded = await postLoopAttempt(sessionId, userId, qh, draft);
           if (!ownsHint()) return;
           if (interceptCrisis(recorded)) { setAttempt(EMPTY_DRAFT); return; } // no hint, nothing counted
           if (recorded.counted) countedAttempt.current = `${qh}:${draft}`;
+          waitS = recorded.wait_s;
         }
         const r = await requestLoopHint(sessionId, userId, qh);
         if (!ownsHint()) return;
         if (r.denied) {
-          setHint({ denied: r.denied });
+          setHint({ denied: hintDenial(r.denied, r.lifts, waitS) });
           return;
         }
         if (typeof r.rung === "number") {
@@ -1548,10 +1605,9 @@ export function LoopLearn() {
       // served hint turn closes an older prompt and may open a new one
       setSelfExplainSaved(false);
       setSelfExplain(t.self_explain ?? null);
-      if (t.phase) dispatch({ type: "phase", phase: t.phase });
-      if (t.budget?.level === "hard") {
-        dispatch({ type: "budget", level: "hard", resetAt: t.budget.reset_at, sessionCapped: t.budget.session_capped, pauseNovice: t.budget.pause_novice });
-      }
+      // K33: a hint turn is a served turn too — the once-per-session materials note, the focus concept
+      if (t.materials_unavailable) setMaterialsNote(true);
+      hintTurnEvents(t).forEach(dispatch);
     } catch (err) {
       if (ownsHint()) reportError(err, "Couldn't get a hint.");
     } finally {
@@ -1618,6 +1674,7 @@ export function LoopLearn() {
       const r = await nextLoopCheck(sessionId, userId);
       if (g !== gen.current || epoch !== turnEpoch.current) return;
       applyLearningScope(r);
+      if (r.approved_plan) setApprovedPlan(r.approved_plan); // K08: activation moved past a concept
       if (r.pending_grade) {
         setPendingGrade(r.pending_grade);
         dispatch({ type: "check", item: null });
@@ -1697,7 +1754,7 @@ export function LoopLearn() {
   const conceptNames = useMemo(() => {
     const names = new Map<string, string>();
     for (const n of graph.nodes) if (n.course_id === courseId) names.set(n.id, n.name);
-    for (const c of panelPlanOf(plan, approvedPlan) ?? []) if (c.concept_name) names.set(c.node_id, c.concept_name);
+    for (const c of [...(plan ?? []), ...(approvedPlan?.concepts ?? [])]) if (c.concept_name) names.set(c.node_id, c.concept_name);
     return names;
   }, [graph.nodes, plan, approvedPlan, courseId]);
   const railGraph = useMemo(() => {
@@ -1711,8 +1768,11 @@ export function LoopLearn() {
     return want ? railGraph.nodes.find((n) => n.name.toLowerCase() === want)?.id ?? null : null;
   }, [railGraph.nodes, deepLink]);
   const focusNodeId = state.focusNodeId ?? linkedNodeId;
+  // K08: the concept the session is on — the plan cursor the server moves
+  const currentNodeId = currentConcept(approvedPlan, focusNodeId);
+  const mapNodeId = currentNodeId ?? focusNodeId;
   const learner = state.focusNodeId ? state.learnerState[state.focusNodeId] : undefined;
-  const treeHref = focusNodeId ? `/tree?node=${encodeURIComponent(focusNodeId)}` : "/tree";
+  const treeHref = mapNodeId ? `/tree?node=${encodeURIComponent(mapNodeId)}` : "/tree";
   const teaching = TEACHING.includes(state.phase);
   const streaming = streamingText !== null;
   // The card shows the current pose and hint, so the log does not paint those
@@ -1723,7 +1783,7 @@ export function LoopLearn() {
   // adds no node, so nothing is announced twice.
   const logMessages = useMemo(() => {
     // U2: the opener's row shows the approved plan, never steps already done
-    const history = withPlanHistory(messages, panelPlanOf(plan, approvedPlan));
+    const history = withPlanHistory(messages, panelPlanOf(state.phase, plan, approvedPlan));
     const inCard = new Set<string>();
     if (item?.prompt) inCard.add(item.prompt);
     if (item && hint && "reply" in hint) inCard.add(hint.reply);
@@ -1732,7 +1792,7 @@ export function LoopLearn() {
     return inCard.size === 0
       ? history
       : history.map((m) => (m.role === "assistant" && inCard.has(m.content) ? { ...m, visuallyHidden: true } : m));
-  }, [messages, plan, approvedPlan, item, hint, prequestion]);
+  }, [messages, state.phase, plan, approvedPlan, item, hint, prequestion]);
 
   // spec §13 A135: apply `focusAfter` once the screen has settled — no reply
   // streaming, the target rendered and enabled. Only a lost focus (left on the
@@ -1792,15 +1852,15 @@ export function LoopLearn() {
   // the same element tree the inline JSX produced (nothing remounts).
   const inSession = view === "session";
   const sessionRow = findRow(sessionRows, sessionId);
-  const panelPlan = panelPlanOf(plan, approvedPlan);
+  const panelPlan = panelPlanOf(state.phase, plan, approvedPlan);
   /** The TopBar's line under the title: where the session is (no step pills). */
   const phaseLine = (): string => {
     if (readOnly) return "Wrapped up · read-only";
     if (!sessionId) return starting ? "Starting…" : "";
-    return phaseText(state.phase, panelPlan, focusNodeId ?? cursorNode(approvedPlan), conceptNames);
+    return phaseText(state.phase, panelPlan, currentNodeId, conceptNames);
   };
   const topTitle = (): string => {
-    if (view === "home") return "New session";
+    if (view === "home" || view === "goal") return "New session";
     if (view === "all") return "All sessions";
     if (view === "course") return course ? `${course.course_code ? `${course.course_code} · ` : ""}${course.course_name}` : "Course";
     if (readOnly) return readOnly.topic || "Earlier session";
@@ -1808,6 +1868,7 @@ export function LoopLearn() {
   };
   const topSub = (): string => {
     if (view === "home") return "Choose where to start.";
+    if (view === "goal") return "Choose what this session is for.";
     if (view === "all") return "Newest first.";
     if (view === "course") return "Sessions, material and progress.";
     return phaseLine();
@@ -1902,100 +1963,29 @@ export function LoopLearn() {
     crisisDialogSupport !== null,
     messages[messages.length - 1]?.crisisSupport != null,
   );
-  const showPreparing = noCheckItems === "preparing" && !crisisOnScreen;
-  const showMaterialsNote = materialsNote && !crisisOnScreen;
-  const hasNotices = anyOf(
-    !!paused, noCheckItems === "none", showPreparing, showMaterialsNote, !!topicOffer,
-    practiceUnavailable.length > 0,
-  );
-  // Always in the DOM (spec §13 A135): a notice is announced when it is added to
-  // this polite region; one inserted together with its own region is not
-  // reliably read out.
+  // a render call, not a component: React sees the tree the inline JSX produced
   const renderNotices = () => (
-    <div
-      aria-live="polite"
-      data-testid="loop-notices"
-      style={hasNotices ? { display: "flex", flexDirection: "column", gap: 8, padding: "12px 32px 0" } : undefined}
-    >
-      {paused && (
-        <BudgetPausedBanner
-          testId="loop-budget-paused"
-          resetAt={paused.resetAt}
-          sessionCapped={paused.sessionCapped}
-          message={tutorPauseMessage(paused.resetAt, paused.sessionCapped, paused.pauseNovice)}
-        >
-          {studyVisible && <>{" "}<Link data-testid="loop-budget-study-link" href="/study" style={{ color: "var(--accent)", fontWeight: 500 }}>
-            Review flashcards
-          </Link></>}
-        </BudgetPausedBanner>
-      )}
-      {noCheckItems === "none" && (
-        <div
-          data-testid="loop-no-check-items"
-          role="status"
-          style={{ padding: "10px 14px", borderRadius: "var(--r-md)", background: "var(--info-soft)", fontSize: 13 }}
-        >
-          {NO_CHECK_ITEMS_COPY}
-        </div>
-      )}
-      {showPreparing && (
-        <div
-          data-testid="loop-preparing-items"
-          role="status"
-          style={{ padding: "10px 14px", borderRadius: "var(--r-md)", background: "var(--info-soft)", fontSize: 13 }}
-        >
-          {PREPARING_COPY}
-        </div>
-      )}
-      {showMaterialsNote && (
-        <div
-          data-testid="loop-materials-unavailable"
-          role="status"
-          style={{ padding: "10px 14px", borderRadius: "var(--r-md)", background: "var(--info-soft)", fontSize: 13 }}
-        >
-          {MATERIALS_UNAVAILABLE_COPY}
-        </div>
-      )}
-      {practiceUnavailable.length > 0 && (
-        <div data-testid="loop-practice-unavailable" role="status"
-          style={{ padding: "10px 14px", borderRadius: "var(--r-md)", background: "var(--info-soft)", fontSize: 14, lineHeight: 1.5 }}>
-          <p style={{ margin: "0 0 6px" }}>{NO_FRESH_PRACTICE_COPY}</p>
-          <p style={{ margin: "0 0 8px", overflowWrap: "anywhere" }}>Practice unavailable: {practiceUnavailable.map((id) => conceptNames.get(id) ?? "A selected concept").join(", ")}.</p>
-          {exhaustedPracticeAttempt && <p style={{ margin: "0 0 8px" }}>This session already moved past those concepts. Once new questions are available, start a new session to practise them.</p>}
-          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-            {libraryVisible && <Link data-testid="loop-practice-sources" href="/library" className="btn btn--sm btn--ghost" style={{ minHeight: 44, flex: "1 1 130px", whiteSpace: "normal", justifyContent: "center", textAlign: "center" }}>Review source material</Link>}
-            {!exhaustedPracticeAttempt && (state.phase === "plan" || (teaching && !item && !feedbackPending)) && (
-              <button data-testid="loop-practice-refresh" type="button" className="btn btn--sm"
-                style={{ minHeight: 44, flex: "1 1 130px", whiteSpace: "normal" }} disabled={sessionTransitionBusy || streaming || checkBusy}
-                onClick={() => {
-                  if (!sessionId) return;
-                  if (state.phase === "plan") void loadPlan(sessionId, gen.current);
-                  else void checkMe();
-                }}>Check for fresh practice</button>
-            )}
-          </div>
-        </div>
-      )}
-      {topicOffer && (
-        // ?topic= while a session is open: resume won (a reload never starts a
-        // probe, §11.3); the link's concept is one click away, never automatic.
-        <div
-          data-testid="loop-topic-offer"
-          role="status"
-          style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", fontSize: 13 }}
-        >
-          <span style={{ color: "var(--text-dim)" }}>You picked “{topicOffer}”. This session is still open.</span>
-          <button
-            data-testid="loop-topic-start"
-            className="btn btn--sm"
-            disabled={sessionTransitionBusy}
-            onClick={() => void newSession({ closeCurrent: true, topic: topicOffer, mode: deepLink.mode })}
-          >
-            Start a session on {topicOffer}
-          </button>
-        </div>
-      )}
-    </div>
+    <LoopNotices
+      paused={paused}
+      studyVisible={studyVisible}
+      noCheckItems={noCheckItems}
+      preparing={noCheckItems === "preparing" && !crisisOnScreen}
+      materialsNote={materialsNote && !crisisOnScreen}
+      practiceUnavailable={practiceUnavailable}
+      names={conceptNames}
+      exhaustedPracticeAttempt={exhaustedPracticeAttempt}
+      libraryVisible={libraryVisible}
+      canRefreshPractice={state.phase === "plan" || (teaching && !item && !feedbackPending)}
+      refreshDisabled={sessionTransitionBusy || streaming || checkBusy}
+      onRefreshPractice={() => {
+        if (!sessionId) return;
+        if (state.phase === "plan") void loadPlan(sessionId, gen.current);
+        else void checkMe();
+      }}
+      topicOffer={topicOffer}
+      topicStartDisabled={sessionTransitionBusy}
+      onTopicStart={() => void newSession({ closeCurrent: true, topic: topicOffer ?? undefined, mode: deepLink.mode, goal: linkGoal(deepLink, courseId) })}
+    />
   );
   const notices = renderNotices();
 
@@ -2074,7 +2064,7 @@ export function LoopLearn() {
       {item ? (
         <CheckCard
           item={item}
-          conceptName={conceptAt(conceptNames, focusNodeId, approvedPlan)}
+          conceptName={conceptAt(conceptNames, currentNodeId, null)}
           draft={attempt}
           setDraft={setAttempt}
           busy={attemptBusy || streaming}
@@ -2122,7 +2112,8 @@ export function LoopLearn() {
       ) : (
         <>
           {state.phase === "feedback" && verdict && (
-            <VerdictBanner verdict={verdict.verdict} concept={conceptAt(conceptNames, verdict.nodeId, approvedPlan)} />
+            <VerdictBanner verdict={verdict.verdict} credit={verdict.credit} reasons={verdict.reasons} concept={conceptAt(conceptNames, verdict.nodeId, approvedPlan)}
+              next={nextAfterVerdict(approvedPlan, verdict.nodeId, conceptNames)} />
           )}
           {renderTeachActions(firstConcept)}
         </>
@@ -2165,7 +2156,7 @@ export function LoopLearn() {
             checkOpen ? CHECK_OPEN_COMPOSER_COPY : guessCardOpen
               ? PREQUESTION_COMPOSER_COPY
               : paused
-                ? "Tutor chat is paused — check answers still count."
+                ? paused.aiLimit ? "AI features are paused until today's limit resets." : "Tutor chat is paused — check answers still count."
                 : "Ask your AI tutor anything…"
           }
           attachHref={libraryVisible ? "/library" : undefined}
@@ -2204,48 +2195,8 @@ export function LoopLearn() {
         </CenteredCard>
       );
     } else if (readOnly) {
-      return (
-        <div style={{ flex: 1, overflowY: "auto", padding: "20px 32px" }}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-              <span className="chip">Read-only</span>
-              <span style={{ fontSize: 14, color: "var(--text-dim)" }}>
-                {readOnly.topic ? `“${readOnly.topic}” — ` : ""}an earlier session. Start a new one to keep learning.
-              </span>
-              <div style={{ flex: 1 }} />
-              <button data-testid="loop-readonly-new-session" className="btn btn--primary btn--sm" disabled={sessionTransitionBusy}
-                onClick={() => void newSession({ closeCurrent: true, mode: deepLink.mode })}>
-                Start a new session
-              </button>
-            </div>
-            <div
-              data-testid="loop-readonly-transcript"
-              className="card"
-              style={{ padding: "var(--pad-lg)", display: "flex", flexDirection: "column", gap: 12 }}
-            >
-              {readOnly.messages.length === 0 && (
-                <div style={{ fontSize: 13, color: "var(--text-muted)" }}>No messages in this session.</div>
-              )}
-              {readOnly.messages.map((m) => (
-                <div key={m.id} style={{ alignSelf: m.role === "user" ? "flex-end" : "flex-start", maxWidth: "85%" }}>
-                  <div className="label-micro" style={{ marginBottom: 2 }}>{m.role === "user" ? "You" : "Tutor"}</div>
-                  <div
-                    style={{
-                      whiteSpace: "pre-wrap",
-                      fontSize: 14,
-                      padding: "8px 12px",
-                      borderRadius: "var(--r-md)",
-                      background: m.role === "user" ? "var(--accent-soft)" : "var(--bg-soft)",
-                    }}
-                  >
-                    {m.content}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      );
+      return <ReadOnlyTranscript topic={readOnly.topic} messages={readOnly.messages} startDisabled={sessionTransitionBusy}
+        onStart={() => void newSession({ closeCurrent: true, mode: deepLink.mode })} />;
     } else if (startCrisis && !sessionId) {
       // "Back to studying" starts a session on the course itself: the deep-link
       // topic may be the very text the card answered.
@@ -2326,30 +2277,10 @@ export function LoopLearn() {
   };
   const body = renderBody();
 
-  const renderScopeSummary = () => (
-    <div className={styles.scopeSummary} data-testid="loop-goal-summary">
-      {scopeError ? <><span>Couldn&apos;t load this session&apos;s learning scope. </span>
-        <button type="button" data-testid="loop-goal-retry" className="btn btn--sm" onClick={() => void retryLearningScope()}>Retry learning scope</button></>
-        : !scopeReady ? "Loading learning scope…"
-          : goal ? <><strong>Goal: </strong>{goal.text || "Selected concepts"}<span> · {goal.target_node_ids.map((id) => conceptNames.get(id) ?? "Selected concept").join(", ")}</span></>
-            : "Scope: Explore the whole course"}
-    </div>
-  );
-  const renderGoalProgress = (progress: LoopGoalProgress) => (
-    <div data-testid="loop-goal-progress" role="status" className={styles.scopeSummary}>
-      {progress.status === "continue_available"
-        ? "The next step toward your goal is ready to review. Approve the new plan before continuing."
-        : progress.status === "needs_more_practice"
-          ? "Your goal still needs prerequisite practice. Review source material; more practice is needed before the goal can continue."
-          : "You finished the practice planned for this session. This does not establish mastery; check what you retain after time away."}
-      {progress.unresolved_prerequisite_ids.length > 0 && <span> Prerequisites needing practice: {progress.unresolved_prerequisite_ids.map((id) => conceptNames.get(id) ?? "A prerequisite").join(", ")}.</span>}
-      {progress.remaining_target_node_ids.length > 0 && <span> Goal concepts remaining: {progress.remaining_target_node_ids.map((id) => conceptNames.get(id) ?? "A selected concept").join(", ")}.</span>}
-    </div>
-  );
   /** Skill per concept in today's plan (else the concept being taught): the
    *  loop's own estimate when it has one, else the map's mastery. */
   const panelSkills = (): PanelConcept[] => {
-    const ids = panelPlan && panelPlan.length > 0 ? panelPlan.map((c) => c.node_id) : focusNodeId ? [focusNodeId] : [];
+    const ids = panelPlan && panelPlan.length > 0 ? panelPlan.map((c) => c.node_id) : mapNodeId ? [mapNodeId] : [];
     return ids.map((id) => {
       // measured only: the loop's estimate once this session observed the
       // concept, else the map's mastery. The plan's p_known for an untested
@@ -2364,7 +2295,7 @@ export function LoopLearn() {
   const renderRail = () => (
     <SessionPanel
       plan={state.phase === "plan" ? null : panelPlan}
-      currentNodeId={teaching ? focusNodeId ?? cursorNode(approvedPlan) : null}
+      currentNodeId={teaching ? currentNodeId : null}
       skills={panelSkills()}
       dueCount={lists.dueReviews}
       dueHref={dueHref}
@@ -2374,7 +2305,7 @@ export function LoopLearn() {
       showTreeLink={allOf(!isMobile, treeVisible)}
       onHide={layout.hidePanel}
       map={railGraph.nodes.length > 0 ? (
-        <SessionMap nodes={railGraph.nodes} edges={railGraph.edges} highlightId={focusNodeId ?? undefined} />
+        <SessionMap nodes={railGraph.nodes} edges={railGraph.edges} highlightId={mapNodeId ?? undefined} />
       ) : graphError ? <LoadFailed testId="tutor-map-error" what="your map" onRetry={() => void refreshGraph()} /> : (
         <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Concepts appear here as you learn.</div>
       )}
@@ -2397,8 +2328,8 @@ export function LoopLearn() {
           closesCurrent={leaving ? sessionTitle(sessionRow ?? { topic: "" }, course ?? undefined) : listedOpenTitle(sessionId, openSessions, course ?? undefined)}
           onContinue={() => { if (openHere) openRow(openHere); }}
           onStart={() => void startGuided()}
-          onStartWith={(topic) => void startGuided({ topic })}
-          onGoal={() => void startGuided({ goal: true })}
+          onStartWith={(c) => void startGuided({ topic: c.name, goal: conceptGoal(c.id) })}
+          onGoal={showStartGoal}
         />
       </div>
     );
@@ -2430,6 +2361,8 @@ export function LoopLearn() {
         setFilter={setAllFilter}
         onRetry={lists.retryRecent}
         onOpen={openRow}
+        onRename={(row, topic) => void edits.rename(row, topic)}
+        onDelete={(row) => void edits.remove(row)}
       />
     </div>
   );
@@ -2439,8 +2372,10 @@ export function LoopLearn() {
       <>
         {/* the conversation column's first row (design T4-T10, anatomy D) */}
         {live && <PhaseStepper phase={state.phase} />}
-        {live && state.phase !== "close" && renderScopeSummary()}
-        {goalProgress && goal && renderGoalProgress(goalProgress)}
+        {live && state.phase !== "close" && (
+          <ScopeSummary error={scopeError} ready={scopeReady} goal={goal} names={conceptNames} onRetry={() => void retryLearningScope()} />
+        )}
+        {goalProgress && goal && <GoalProgressNote progress={goalProgress} names={conceptNames} />}
         {notices}
         {allOf(!showPanel, live, !!learner) && (
           <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px clamp(16px, 4vw, 56px) 0" }}>
@@ -2451,10 +2386,17 @@ export function LoopLearn() {
       </>
     );
   };
+  /** K30: the home's goal editor — saving starts the session on that goal. */
+  const renderStartGoal = () => (
+    <GoalEditor key={`start:${courseId}`} goal={startGoal} nodes={railGraph.nodes.filter((node) => !node.is_subject_root)}
+      busy={starting} error={goalError} loadingNodes={graphLoading} nodesError={graphError} onRetryNodes={() => void refreshGraph()}
+      onSave={(next) => void startGuided({ goal: next ?? undefined })} onCancel={showHome} />
+  );
   /** The main column's page: T1 home, T2 course, T3 all sessions, else the session. */
   const renderPage = (): React.ReactNode => {
     const pageable = !sessionsError && !noCourses;
     if (view === "home" && pageable) return renderHome();
+    if (view === "goal" && pageable) return renderStartGoal();
     if (view === "course" && course) return renderCourse(course);
     if (view === "all") return renderAll();
     return renderSession();
@@ -2505,56 +2447,6 @@ export function LoopLearn() {
       </div>
     </FullHeightScreen>
   );
-}
-
-function dueLink(courseIds: string[]): string {
-  return courseIds.length > 0 ? retentionHref(courseIds) : "/study";
-}
-
-/** The plan the panel lists: the one on screen, else the approved one /status reported. */
-function panelPlanOf(plan: LoopPlanConcept[] | null, approved: { concepts: LoopPanelConcept[] } | null): LoopPanelConcept[] | null {
-  return plan ?? approved?.concepts ?? null;
-}
-
-/** The name of `id`, else of the approved plan's current concept. */
-function conceptAt(names: Map<string, string>, id: string | null, approved: { concepts: LoopPanelConcept[]; cursor: number } | null): string | null {
-  const at = id ?? cursorNode(approved);
-  return at ? names.get(at) ?? null : null;
-}
-
-/** The concept the approved plan's cursor is on (a resumed session's current one). */
-function cursorNode(p: { concepts: LoopPanelConcept[]; cursor: number } | null): string | null {
-  return p?.concepts[p.cursor]?.node_id ?? null;
-}
-
-function findRow(rows: TutorSessionRow[], id: string | null): TutorSessionRow | null {
-  return id ? rows.find((r) => r.id === id) ?? null : null;
-}
-
-/** Where an open session is, in words: "Check-in", "Plan · 3 concepts",
- *  "Recursion · concept 2 of 3", "Wrap-up". */
-function phaseText(phase: LoopPhase, plan: LoopPanelConcept[] | null, focus: string | null, names: Map<string, string>): string {
-  const n = plan?.length ?? 0;
-  if (phase === "probe") return "Check-in";
-  if (phase === "plan") return n ? `Plan · ${n} ${n === 1 ? "concept" : "concepts"}` : "Plan";
-  if (phase === "close") return "Wrap-up";
-  const name = focus ? names.get(focus) : undefined;
-  const at = plan && focus ? plan.findIndex((c) => c.node_id === focus) : -1;
-  if (name && at >= 0) return `${name} · concept ${at + 1} of ${n}`;
-  // an approved plan with no current concept: its cursor is past the end
-  return name ?? (n > 0 ? "Plan complete" : "Learning");
-}
-
-/** The concept T1 offers as a first focus: the weakest one not yet mastered. */
-function weakestConcept(nodes: GraphNode[]): string | null {
-  const open = nodes.filter((n) => !n.is_subject_root && n.mastery_tier !== "mastered");
-  open.sort((a, b) => a.mastery_score - b.mastery_score);
-  return open[0]?.name ?? null;
-}
-
-/** A session the "New session" button should wrap up first: one the student is in. */
-function isOpenPhase(phase: LoopPhase): boolean {
-  return phase !== "close";
 }
 
 // ── Pieces ─────────────────────────────────────────────────────────────────

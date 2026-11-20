@@ -71,8 +71,10 @@ export function formatResetAt(resetAt: string, now: Date = new Date()): string {
 
 /** The tutor-pause copy (spec §3.5, §13 A39). `pauseNovice` (#866 K35): the hard
  *  level holds checks on novice-band concepts too (A20), so "practice keeps
- *  working" would promise a "Check me" that cannot pose one. */
-export function tutorPauseMessage(resetAt: string | null, sessionCapped: boolean, pauseNovice = false): string {
+ *  working" would promise a "Check me" that cannot pose one. `aiLimit` (#866 K11):
+ *  the daily limit on every AI feature pauses checks too, so it never says practice works. */
+export function tutorPauseMessage(resetAt: string | null, sessionCapped: boolean, pauseNovice = false, aiLimit = false): string {
+  if (aiLimit) return `You've reached today's limit for AI features. It resets ${resetAt ? `at ${formatResetAt(resetAt)}` : "tomorrow"}.`;
   const when = sessionCapped ? " for this session" : resetAt ? ` until ${formatResetAt(resetAt)}` : " for now";
   const rest = pauseNovice
     ? "Review keeps working, but checks on concepts you're just starting are paused too."

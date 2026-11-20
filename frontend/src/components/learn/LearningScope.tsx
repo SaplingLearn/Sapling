@@ -1,9 +1,43 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
-import type { LoopDiagnosis, LoopGoal } from "@/lib/api";
+import type { LoopDiagnosis, LoopGoal, LoopGoalProgress } from "@/lib/api";
 import type { GraphNode } from "@/lib/data";
 import styles from "./LoopLearn.module.css";
+
+/** The session's learning scope under the stepper: its goal, or the whole course. */
+export function ScopeSummary({ error, ready, goal, names, onRetry }: {
+  error: boolean;
+  ready: boolean;
+  goal: LoopGoal | null;
+  names: Map<string, string>;
+  onRetry: () => void;
+}) {
+  return (
+    <div className={styles.scopeSummary} data-testid="loop-goal-summary">
+      {error ? <><span>Couldn&apos;t load this session&apos;s learning scope. </span>
+        <button type="button" data-testid="loop-goal-retry" className="btn btn--sm" onClick={onRetry}>Retry learning scope</button></>
+        : !ready ? "Loading learning scope…"
+          : goal ? <><strong>Goal: </strong>{goal.text || "Selected concepts"}<span> · {goal.target_node_ids.map((id) => names.get(id) ?? "Selected concept").join(", ")}</span></>
+            : "Scope: Explore the whole course"}
+    </div>
+  );
+}
+
+/** Where a goal session stands once its planned practice is done. */
+export function GoalProgressNote({ progress, names }: { progress: LoopGoalProgress; names: Map<string, string> }) {
+  return (
+    <div data-testid="loop-goal-progress" role="status" className={styles.scopeSummary}>
+      {progress.status === "continue_available"
+        ? "The next step toward your goal is ready to review. Approve the new plan before continuing."
+        : progress.status === "needs_more_practice"
+          ? "Your goal still needs prerequisite practice. Review source material; more practice is needed before the goal can continue."
+          : "You finished the practice planned for this session. This does not establish mastery; check what you retain after time away."}
+      {progress.unresolved_prerequisite_ids.length > 0 && <span> Prerequisites needing practice: {progress.unresolved_prerequisite_ids.map((id) => names.get(id) ?? "A prerequisite").join(", ")}.</span>}
+      {progress.remaining_target_node_ids.length > 0 && <span> Goal concepts remaining: {progress.remaining_target_node_ids.map((id) => names.get(id) ?? "A selected concept").join(", ")}.</span>}
+    </div>
+  );
+}
 
 export function GoalEditor({ goal, nodes, busy, error, onSave, onCancel, loadingNodes = false, nodesError = false, onRetryNodes }: {
   goal: LoopGoal | null;

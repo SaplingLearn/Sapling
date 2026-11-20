@@ -11,7 +11,13 @@ from agents.deps import SaplingDeps
 from agents.tools.check import CheckAnswer, GradeOutcome
 from learning import policy, zpd_events
 from learning import grade_checkpoint
-from learning.evidence import PlanningObservation, PlanningPersistenceUnavailable, flush_pending
+from learning.evidence import (
+    Evidence,
+    PlanningObservation,
+    PlanningPersistenceUnavailable,
+    flush_pending,
+    weight_factors,
+)
 from learning.evidence_transaction import (
     EvidenceItemRetired,
     EvidenceObservationSuperseded,
@@ -308,6 +314,19 @@ def _attested_observation(checkpoint, receipt, node_id) -> dict:
     return final
 
 
+def _credited(checkpoint, node_id: str, committed: dict) -> dict:
+    """#866 K07: what this grade was credited at — the weight the one writer
+    journaled for it (evidence_weight over the sealed evidence row, with the
+    writer's final same-session re-check flag from the committed receipt) and
+    the factors that reduced it (learning.evidence.weight_factors). Stored on
+    the graded step, so the feedback turn says what the journal holds, never a
+    second rule rebuilt from the rung."""
+    original = next(row for row in checkpoint.evidence if row["node_id"] == node_id)
+    recheck = bool(original.get("same_session_recheck") or committed.get("same_session_recheck"))
+    ev = Evidence.model_validate({**original, "same_session_recheck": recheck})
+    return {"credit_weight": ev.weight, "credit_factors": weight_factors(ev)}
+
+
 class _BandOutcome(NamedTuple):
     """One graded check's band-control verdict (spec §13 A122). `stored` is
     what the graded step keeps for its feedback turn to apply (ids, the enum,
@@ -461,6 +480,7 @@ def _finish_check_checkpoint(checkpoint, scope, request, *, loop_on, deps=None, 
     c = checkpoint.continuation
     graded, correct, genuine = copy.deepcopy(c["graded"]), c["correct"], c["genuine"]
     committed = _committed_grade_observation(checkpoint, receipt, graded["node_id"])
+    graded.update(_credited(checkpoint, graded["node_id"], committed))
     if graded.get("goal_observation") is not None:
         graded["goal_observation"].update(committed)
     now = graded["graded_at"]

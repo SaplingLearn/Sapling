@@ -134,6 +134,19 @@ class TestEvidenceWeight:
             WEIGHT_ASSISTED * WEIGHT_SAME_SESSION_RECHECK * WEIGHT_LOW_CONFIDENCE
         )
 
+    def test_weight_factors_name_exactly_what_reduced_the_weight(self):
+        """#866 K07: the factors a verdict reports are the ones evidence_weight
+        multiplied, in its order; none for full weight or a correct answer
+        after H4..H6 (weight 0 for the rung alone)."""
+        from learning.evidence import evidence_weight, weight_factors
+
+        ev = _ev(assisted=True, max_rung=1, same_session_recheck=True, confidence=0.1, multi_concept=True)
+        assert weight_factors(ev) == ["hint", "recheck", "low_confidence", "multi_concept"]
+        assert evidence_weight(ev) == pytest.approx(0.5 ** 4)
+        assert weight_factors(_ev()) == [] and evidence_weight(_ev()) == 1.0
+        assert weight_factors(_ev(max_rung=RUNG_NO_CREDIT_MIN, same_session_recheck=True)) == []
+        assert weight_factors(_ev(correct=False, assisted=True, max_rung=2)) == []
+
     def test_correct_after_worked_example_is_no_upward_evidence(self):
         from learning.evidence import evidence_weight
 

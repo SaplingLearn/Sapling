@@ -473,6 +473,8 @@ never collide in the DOM.
 | `dashboard-plan-quiz` / `dashboard-plan-first-session` / `dashboard-plan-due-{assignmentId}` | plan items other than the session resume |
 | `dashboard-action-start` / `dashboard-action-calendar` | the greeting row's Start learning / Calendar buttons |
 | `dashboard-course-rows` / `dashboard-mastery-tree` | the mastery card's per-course rows and its Open Tree link |
+| `dashboard-learn-next` / `dashboard-learn-next-tree` / `dashboard-study-room` | the top-nav layout's Learn next card (`dashboard/LearnNextCard.tsx`), its Tree → link and its Study room button |
+| `dashboard-learn-next-item` | one Learn next recommendation, repeated with **no suffix** (an older server names no concept); carries `data-node-id` when the recommendation names its concept. With the learning loop on it opens the Tutor on that concept (`?concept=&course=`, #866 K05), otherwise main's `?topic=&mode=socratic` link |
 | `dashboard-retention-due` / `dashboard-retention-open` | the "A retention check is due" notice (spec §13 A126; only while the shell's due read says so, behind the `retention_due_badge` flag) and its button to `/study?retention-course={courseId}` — a link, never an opened check |
 
 ### `calendar`
@@ -1026,7 +1028,7 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | --- | --- |
 | `loop-status-error` | PKG-14b (spec §11.2): `Learn()`'s retry state — the status probe failed (5xx, network, timeout); "Couldn't reach the tutor. Try again." Never the legacy tree |
 | `loop-status-retry` | its button — re-runs `GET /api/learn/loop/review/active` |
-| `loop-phase` | root container; `data-phase` = probe / plan / teach / check / feedback / close (server-driven); `data-session-id` (empty until a session exists); `data-view` = session / home / course / all (the Tutor shell's page, wireframes T1–T3) |
+| `loop-phase` | root container; `data-phase` = probe / plan / teach / check / feedback / close (server-driven); `data-session-id` (empty until a session exists); `data-view` = session / home / course / all / goal (the Tutor shell's page, wireframes T1–T3; `goal` is the home's goal editor before a session starts) |
 | `tutor-sidebar` | the Tutor's own sidebar (`learn/tutor/TutorSidebar.tsx`): New session, the session search, the courses and the recents; a drawer on a phone (`tutor-sidebar-show` opens it, `tutor-sidebar-hide` closes it) |
 | `tutor-session-search` | the sidebar's session search (`type="search"`) |
 | `tutor-course-{courseId}` | one course in the sidebar; a click opens its page (T2); `aria-current="true"` while that page shows |
@@ -1037,10 +1039,13 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `loop-new-session` | New session: opens the Tutor home (T1) and writes nothing; in the sidebar on wide screens, "+ New" in the TopBar on a phone |
 | `tutor-home` | the Tutor home (T1): "What do you want to learn today?" — where `/learn` lands when the course has no open session (a `?topic=` link still starts one) |
 | `loop-start-guided` | the home's "Start a guided session": wraps up (`/close`) the open session on screen first, so sessions do not pile up open (a 409 there starts nothing), then starts one |
-| `tutor-home-continue` / `tutor-home-due` / `tutor-home-start-with` / `tutor-home-goal` | the home's suggestions: back to the open session; Study's due review; a session titled after the weakest concept; a session that opens the goal editor |
-| `tutor-course-page` | a course page (T2); `data-course-id`: its sessions, progress and material; `tutor-course-start` (TopBar) goes to the home |
+| `tutor-home-continue` / `tutor-home-due` / `tutor-home-start-with` / `tutor-home-goal` | the home's suggestions: back to the open session; Study's due review; a session on the weakest concept (its goal, #866 K05); the goal editor (`data-view="goal"`), before anything starts — saving starts the session on that goal |
+| `tutor-course-page` | a course page (T2); `data-course-id`: its sessions, progress and material; `tutor-course-start` (TopBar) goes to the home. Each skill meter in its progress (`Meter`, no testid: journeys select `[data-tier]` inside the page) carries `data-tier` = its concept's map tier (`unexplored` / `struggling` / `learning` / `mastered`, `nodeStyle.tierFor`, #866 K21) |
 | `tutor-all-sessions` | every session (T3), with a search and an All / In progress / Wrapped up filter |
-| `tutor-phase-line` | the TopBar's line under the title: Check-in / Plan · N concepts / "<concept> · concept i of n" / Wrap-up / "Wrapped up · read-only" |
+| `tutor-session-row-{sessionId}` | one session of every session's list: the button that opens it, then its Rename and Delete (#866 K31, as the legacy Learn screen's recent sessions) |
+| `tutor-session-rename-{sessionId}` / `tutor-session-name-{sessionId}` | Rename turns the row's name into the field `tutor-session-name-{sessionId}` (Enter or leaving it saves, Escape keeps the name) |
+| `tutor-session-delete-{sessionId}` | Delete, then "Confirm delete" within 3 s; the session leaves every list, and the screen lets go of it if it was on screen |
+| `tutor-phase-line` | the TopBar's line under the title: Check-in / Plan · N concepts / "<concept> · concept i of n" (the approved plan's cursor, which a turn or Check me that moves it reports) / Wrap-up / "Wrapped up · read-only" |
 | `tutor-phase-stepper` | the first row of the conversation column (`learn/tutor/PhaseStepper.tsx`): the ordered Check-in · Plan · Learn · Wrap-up list (`<ol aria-label="Session progress">`); each `li` has `data-state` = done / current / todo and the current one has `aria-current="step"` |
 | `tutor-turn` | a `ChatPanel` tutor turn drawn on the page (`turnStyle="page"`, `PageTurn`: the tutor's mark and name over the text, no bubble); `data-visually-hidden` while unpainted |
 | `tutor-session-map` | the session panel's knowledge map (`learn/tutor/SessionMap.tsx`): fixed mastery colours, no zoom buttons; it frames its nodes until the student zooms or pans it, and re-frames on a double-click or a new node set |
@@ -1062,7 +1067,7 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `loop-start-error` | a new session could not start (a 429 or an error on `/start-session`) — never an empty probe |
 | `loop-start-retry` | retry the start |
 | `loop-start-crisis` | `/start-session` answered with the crisis-support card (no session was opened); the card's `crisis-support-dismiss` starts a fresh session on the course (docs/safety/crisis-support.md) |
-| `loop-topic-offer` | a `?topic=` deep link arrived while a session is open: the session resumed, the topic is offered |
+| `loop-topic-offer` | a `?topic=` deep link arrived while a session is open: the session resumed, the topic is offered (`loop-topic-start`; with the link's `?concept=` of the course on screen, a session on that concept) |
 | `loop-topic-start` | "Start a session on <topic>" (wraps up the open session first, like `loop-new-session`) |
 | `loop-readonly-transcript` | a `?resume=` session that is not an open loop session (a legacy one), shown read-only |
 | `loop-readonly-new-session` | "Start a new session" beside the read-only transcript |
@@ -1072,7 +1077,7 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `loop-no-check-items` | "No check items for this course yet" (A23) |
 | `loop-tree-link` | link to `/tree` (`?node=<id>` once a `learner_state` event names the concept): the session panel's "Open map", or "Map" in the TopBar on a phone; absent while `hide_tree` hides the Tree |
 | `loop-rail` | the session panel, "Today's session" (wide screens only): the plan (the approved one from `/status` after a reload), a skill meter per concept, due review (`tutor-panel-review`) and the knowledge map; the tree link sits in the TopBar on narrow screens |
-| `loop-verdict` | wireframe T9: the graded check's verdict over the feedback; `data-verdict` = correct / not_yet / idk |
+| `loop-verdict` | wireframe T9: the graded check's verdict over the feedback; `data-verdict` = correct / not_yet / idk; a not_yet names the next concept ("Next up: …") when the grade moved the plan on. On a correct verdict `data-credit` = `full` / `partial` / `none`, the weight the answer's evidence was journaled at (#866 K07; absent from an older server); a partial one names what reduced it (the response's `credit_reasons`: a hint, a same-session re-check, a low-confidence grade, a multi-concept item) |
 | `loop-close-new-session` | the wrap-up's "Start a new session" (to the Tutor home) |
 | `tutor-attach` | the composer's "+" next to Send: opens the Library to add material |
 | `loop-learner-state` | the current concept's belief; `data-node-id`, `data-p-known`, `data-band` (present, empty, before any event) |
@@ -1090,7 +1095,7 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `loop-probe-reference` | the answer shown after a wrong answer or idk (spec §3.3) |
 | `loop-probe-retry` | the next probe item failed to load — retry (`/probe/next`, same session) |
 | `loop-probe-next` | "Next" under the reference — the next probe item, or the plan after the probe's last answer |
-| `loop-plan-concept-{nodeId}` | one planned concept: its name, its one kind badge `loop-plan-kind-{nodeId}` (Due for review / New / Keep practicing / Related practice) and, in a goal session only, `loop-plan-reason-{nodeId}` (Your selected goal / Prerequisite for your goal); a band chip only when the response carries one |
+| `loop-plan-concept-{nodeId}` | one planned concept: its name, its one kind badge `loop-plan-kind-{nodeId}` (Due for review / New / Keep practicing / Related practice) and, in a goal session only, `loop-plan-reason-{nodeId}` (Your selected goal / Prerequisite for your goal), which /status's approved plan carries too |
 | `loop-plan-kind-{nodeId}` | that concept's kind badge (`learn/planLabels.ts::planKind`, from GET /plan `kind`: review / new / started / sibling); the session panel shows the same label under the concept's name |
 | `loop-plan-reason-{nodeId}` | why a goal session plans it (`planGoalReason`: `goal` / `prerequisite`); absent outside a goal session |
 | `loop-plan-retry` | the plan failed to load — retry (`GET /plan`) |
@@ -1109,7 +1114,7 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `loop-attempt-submit` | submit the attempt to `/check/answer/stream` (never a chat turn, A16) |
 | `loop-attempt-idk` | "I don't know" in the attempt box (`idk: true`) |
 | `loop-hint-button` | request a hint: records the draft as an attempt (`/step/attempt`), moves the rung (`/hint`), then fetches the hint turn (`/action`) |
-| `loop-hint-denied` | denial line; `data-reason` = `no_genuine_attempt` / `dwell` / `ceiling` / `h6_gate` / `no_active_item` |
+| `loop-hint-denied` | denial line; `data-reason` = `no_genuine_attempt` / `too_soon` (a written attempt time alone kept from counting yet: /step/attempt's `wait_s`, #866 K32) / `dwell` / `ceiling` / `h6_gate` (never lifts on this item) / `h6_attempt` (an H6 gate another genuine try lifts: /hint's `lifts: "attempt"`) / `no_active_item` |
 | `loop-hint-reply` | the hint turn's text when allowed |
 | `loop-check-report` | "Report this question" on the check card, only while the `item_reports` flag is on (spec §13 A113, #695) — opens the reasons |
 | `loop-check-report-reasons` | the reasons group (`role="group"`): buttons only, no text box |

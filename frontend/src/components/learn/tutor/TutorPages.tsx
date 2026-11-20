@@ -3,28 +3,35 @@ import React, { useLayoutEffect, useRef } from "react";
 import Link from "next/link";
 import type { EnrolledCourse } from "@/lib/api";
 import type { GraphNode } from "@/lib/data";
+import { MASTERY_PALETTE, TIER_LABEL, tierFor, type MasteryTier } from "@/lib/graph/nodeStyle";
 import { Icon } from "../../Icon";
 import { ChevRight } from "./TutorIcons";
 import { courseColor, sessionTitle, shortWhen, type TutorSessionRow } from "./sessions";
+import { ManagedSessionRow } from "./ManagedSessionRow";
 import styles from "./tutor.module.css";
 
-/** Mastery as the map colours it: mastered / in progress / needs work / not started. */
+/** The mastery tier a meter shows (#866 K21): the map's own tiers (`tierFor`, the
+ *  backend's cuts), so a meter, the map and its key never disagree. No score
+ *  reads as unexplored. */
+export function meterTier(score: number | null | undefined): MasteryTier {
+  return score == null ? "unexplored" : tierFor(score);
+}
+
+/** Mastery as the map colours it: its tier's colour from the map's palette. */
 export function masteryTone(score: number | null | undefined): string {
-  if (score == null) return "var(--state-neutral)";
-  if (score >= 0.75) return "var(--state-mastery)";
-  if (score >= 0.45) return "var(--state-progress)";
-  return "var(--state-struggle)";
+  return MASTERY_PALETTE[meterTier(score)];
 }
 
 export function Meter({ label, score, testId }: { label: string; score: number | null; testId?: string }) {
   const pct = score == null ? 0 : Math.round(Math.max(0, Math.min(1, score)) * 100);
   return (
-    <div className={styles.meter} data-testid={testId}>
+    <div className={styles.meter} data-testid={testId} data-tier={meterTier(score)}>
       <span title={label}>{label}</span>
       <span
         className={styles.bar}
         role="meter"
         aria-label={`${label} skill`}
+        aria-valuetext={`${score == null ? "No score" : `${pct}%`}, ${TIER_LABEL[meterTier(score)]}`}
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={pct}
@@ -71,8 +78,8 @@ export function TutorHome({
   dueCount: number | null;
   /** Where "Review what's due" goes; null while `hide_study` hides Study. */
   dueHref: string | null;
-  /** The weakest concept the map knows, offered as a first focus. */
-  startWith: string | null;
+  /** The weakest concept the map knows, offered as a first focus (#866 K05: a session on it). */
+  startWith: { id: string; name: string } | null;
   /** Every choice is disabled (a start, a list still loading, a pending grade). */
   busy: boolean;
   /** A start is in flight: only then does the CTA say "Starting…". */
@@ -81,7 +88,7 @@ export function TutorHome({
   closesCurrent: string | null;
   onContinue: () => void;
   onStart: () => void;
-  onStartWith: (concept: string) => void;
+  onStartWith: (concept: { id: string; name: string }) => void;
   onGoal: () => void;
 }) {
   const heading = useFocusHeading<HTMLHeadingElement>();
@@ -108,7 +115,7 @@ export function TutorHome({
         )}
         {startWith && (
           <button type="button" className={styles.pill} data-testid="tutor-home-start-with" onClick={() => onStartWith(startWith)} disabled={busy}>
-            Start with {startWith}
+            Start with {startWith.name}
           </button>
         )}
         <button type="button" className={styles.pill} data-testid="tutor-home-goal" onClick={onGoal} disabled={busy}>
@@ -272,7 +279,8 @@ export function TutorCourse({
 type Filter = "all" | "open" | "done";
 const FILTERS: [Filter, string][] = [["all", "All"], ["open", "In progress"], ["done", "Wrapped up"]];
 
-/** T3 · Every session, newest first, with search and a status filter. */
+/** T3 · Every session, newest first, with search and a status filter; each
+ *  can be renamed or deleted (#866 K31). */
 export function TutorAllSessions({
   sessions,
   courses,
@@ -282,6 +290,8 @@ export function TutorAllSessions({
   setFilter,
   onRetry,
   onOpen,
+  onRename,
+  onDelete,
 }: {
   sessions: TutorSessionRow[];
   courses: EnrolledCourse[];
@@ -292,6 +302,8 @@ export function TutorAllSessions({
   /** Present when the session list failed to load: the rows may be incomplete. */
   onRetry?: (() => void) | null;
   onOpen: (row: TutorSessionRow) => void;
+  onRename: (row: TutorSessionRow, topic: string) => void;
+  onDelete: (row: TutorSessionRow) => void;
 }) {
   const search = useFocusHeading<HTMLInputElement>();
   const byId = new Map(courses.map((c, i) => [c.course_id, { c, i }]));
@@ -317,18 +329,19 @@ export function TutorAllSessions({
       <section className="card">
         {rows.map((s) => {
           const entry = byId.get(s.courseId ?? "");
+          const title = sessionTitle(s, entry?.c);
           return (
-            <button key={s.id} type="button" className={styles.listRow} onClick={() => onOpen(s)}>
+            <ManagedSessionRow key={s.id} row={s} title={title} onOpen={onOpen} onRename={onRename} onDelete={onDelete}>
               <span className={styles.cdot} style={{ background: courseColor(entry?.c, entry?.i ?? 0) }} aria-hidden />
               <span className={styles.grow}>
-                <div className={styles.lt}>{sessionTitle(s, entry?.c)}</div>
+                <div className={styles.lt}>{title}</div>
                 <div className={styles.ls}>
                   {entry?.c.course_code && <span style={{ fontFamily: "var(--font-mono)" }}>{entry.c.course_code} · </span>}
                   {shortWhen(s.startedAt)}
                 </div>
               </span>
               <span className={s.open ? "chip chip--accent" : "chip"}>{s.open ? "In progress" : "Wrapped up"}</span>
-            </button>
+            </ManagedSessionRow>
           );
         })}
         {rows.length === 0 && !onRetry && (

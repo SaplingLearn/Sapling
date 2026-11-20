@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { getDocuments, getReviewSummary, getSessions, type Session } from "@/lib/api";
 import { courseInTerm, useActiveSemester, type TermScoped } from "@/lib/useActiveSemester";
 
@@ -65,8 +65,16 @@ export function useTutorLists({ userId, sessionId, sessionClosed, wantMaterials,
     return () => { cancelled = true; };
   }, [userId, studyVisible, sessionClosed]);
 
+  // #866 K31: a rename or a delete the student made here, before the next read
+  const renameRecent = useCallback((id: string, topic: string) => {
+    setRecent((prev) => prev && prev.map((s) => (s.id === id ? { ...s, topic } : s)));
+  }, []);
+  const dropRecent = useCallback((id: string) => setRecent((prev) => prev && prev.filter((s) => s.id !== id)), []);
+
   return {
     recent,
+    renameRecent,
+    dropRecent,
     /** Present while the last sessions read failed: try it again. */
     retryRecent: recentFailed ? () => setRecentTry((t) => t + 1) : null,
     materials,

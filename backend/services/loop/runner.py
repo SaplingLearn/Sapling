@@ -14,7 +14,7 @@ from services.tutor import _agent_turn_or_http_error
 from services import ai_budget
 from services.agent_events import SSE_CACHE_CONTROL, SaplingEvent, sapling_event_to_sse
 from services.ai_budget import AIBudgetExceeded
-from services.chat_stream import stream_structured_turn
+from services.chat_stream import refusal_event, stream_structured_turn
 
 from services.loop.state import _budget_event, _BudgetPaused
 from services.loop.continuation import _count_tutor_call, _loop_continuation_text, _requests_of
@@ -143,11 +143,14 @@ async def _stream_turn(turn: _LoopTurn):
             ai_budget.check, turn.user_id, "tutor", turn.band, **turn.budget_counters()
         )
         await asyncio.to_thread(turn.plan, decision)
-    except Exception:
-        # ADR 0024 honest degrade: nothing was shown or written — one terminal error
-        logger.exception("Loop turn could not be planned")
+    except Exception as exc:
+        # ADR 0024 honest degrade: nothing was shown or written — one terminal
+        # error: the refusal itself when the request was refused (#866 K11)
+        refused = refusal_event(exc, turn.request_id)
+        if refused is None:
+            logger.exception("Loop turn could not be planned")
         await asyncio.shield(asyncio.to_thread(turn.touch_served_at))
-        yield sapling_event_to_sse(_stream_error(turn, _STREAM_UNAVAILABLE))
+        yield sapling_event_to_sse(refused or _stream_error(turn, _STREAM_UNAVAILABLE))
         return
     for ev in turn.pre_events():
         yield sapling_event_to_sse(ev)
@@ -161,10 +164,11 @@ async def _stream_turn(turn: _LoopTurn):
     if turn.tier == "none":
         try:
             extra = await asyncio.to_thread(turn.complete, turn.text, {}, [])  # #117
-        except Exception:
+        except Exception as exc:
             # Behaviour 19: stream_agent_turn's on_complete guard, for the template path
             logger.warning("Deterministic loop turn failed to persist", exc_info=True)
-            yield sapling_event_to_sse(_stream_error(turn, _STREAM_INTERRUPTED))
+            refused = refusal_event(exc, turn.request_id)  # #866 K11
+            yield sapling_event_to_sse(refused or _stream_error(turn, _STREAM_INTERRUPTED))
             return
         data = {"graph_update": {}, "mastery_changes": [], **extra}
         for ev in _pre_done_events(data):

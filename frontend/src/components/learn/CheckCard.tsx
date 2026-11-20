@@ -8,13 +8,17 @@ import { Icon } from "../Icon";
 import tutorStyles from "./tutor/tutor.module.css";
 import { modalOpen } from "./modalOpen";
 import { type Draft, FIELD_STYLE, type HintView, focusAnswerStart } from "./loopShared";
+import { LOOP_ANSWER_MAX } from "@/lib/inputLimits";
 
 /** Plain-English lines for POST /hint's denial reasons (routes/learn_loop.py::hint). */
 const HINT_DENIED_COPY: Record<string, string> = {
   no_genuine_attempt: "Give it a real try first — write what you think in the answer box, then ask again.",
+  // #866 K32: the student wrote an answer; only time alone with the question is missing
+  too_soon: "Stay with the question a little longer on your own — what you wrote counts as a try then. Ask again in a moment.",
   dwell: "Stay with this step a little longer before the next hint.",
   ceiling: "That's all the help this question allows right now. Give it your best answer — you'll see the full answer after.",
-  h6_gate: "The worked answer unlocks once you've tried the question yourself.",
+  h6_gate: "The full worked answer isn't available for this question. Give it your best answer — you'll see the full answer after.",
+  h6_attempt: "The worked answer unlocks after another real try — write what you think in the answer box, then ask again.",
   no_active_item: "There's no open question to hint on right now.",
 };
 const HINT_DENIED_FALLBACK = "No hint right now — keep working on it.";
@@ -90,6 +94,7 @@ export function CheckCard({
           <input
             id={`${ids}-reason`}
             data-testid="loop-attempt-reason"
+            maxLength={LOOP_ANSWER_MAX}
             style={FIELD_STYLE}
             placeholder="In one sentence: why?"
             value={draft.reason}
@@ -106,6 +111,7 @@ export function CheckCard({
         <textarea
           id={`${ids}-answer`}
           data-testid="loop-attempt-input"
+          maxLength={LOOP_ANSWER_MAX}
           data-answer-start=""
           aria-describedby={promptId}
           style={FIELD_STYLE}

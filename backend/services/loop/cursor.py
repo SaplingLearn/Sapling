@@ -9,7 +9,7 @@ from learning.goals import attempted_nodes
 from learning.ladder import Rung
 from learning.leak import detect_leak
 from learning.misconceptions import set_confront
-from learning.params import LOOP_SOURCE_CHUNKS_MAX
+from learning.params import H6_MIN_GENUINE_ATTEMPTS, LOOP_SOURCE_CHUNKS_MAX
 from services.check_item_service import list_items
 from services.quiz_ask import QUIZ_ASK_ORIGIN
 from services.rag_service import chunks_for_ids
@@ -33,6 +33,21 @@ def _h6_ok(state: dict, qh: str | None, item_state: dict, check) -> bool:
     missing item fails closed). Ungraded alone never admits H6."""
     return gates.h6_allowed(
         _step_state(state, qh),
+        item_taught=bool((item_state or {}).get("taught")),
+        item_practice=qh is not None and state.get("current") == qh,
+        item_graded=check is None or bool(check.graded),
+    )
+
+
+def _h6_lifts_with_attempts(state: dict, qh: str | None, item_state: dict, check) -> bool:
+    """#866 K32: whether more genuine attempts are all the H6 gate still needs —
+    the item is taught, the active practice check, not graded coursework, not
+    exam mode — so its denial may promise the worked answer after another try.
+    Any other predicate never lifts on this item (A32), and saying so is honest."""
+    step = _step_state(state, qh)
+    step.genuine_attempts = max(step.genuine_attempts, H6_MIN_GENUINE_ATTEMPTS)
+    return gates.h6_allowed(
+        step,
         item_taught=bool((item_state or {}).get("taught")),
         item_practice=qh is not None and state.get("current") == qh,
         item_graded=check is None or bool(check.graded),

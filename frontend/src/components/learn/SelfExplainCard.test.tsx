@@ -9,6 +9,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { LoopSelfExplain } from "@/lib/api";
+import { LOOP_ANSWER_MAX } from "@/lib/inputLimits";
 import { SELF_EXPLAIN_HEADING, SelfExplainCard } from "./SelfExplainCard";
 
 afterEach(cleanup);
@@ -37,6 +38,7 @@ describe("SelfExplainCard (spec §13 A139)", () => {
     expect(region).toHaveAttribute("data-prompt-id", "se-1");
     expect(region.textContent).toContain("Not scored");
     expect(screen.getByTestId("loop-self-explain-prompt").textContent).toBe(prompt.prompt);
+    expect(screen.getByTestId("loop-self-explain-input")).toHaveAttribute("maxLength", String(LOOP_ANSWER_MAX)); // #866 K34
     expect(screen.getByRole("heading", { name: SELF_EXPLAIN_HEADING }).tagName).toBe("H2");
   });
 

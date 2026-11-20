@@ -1691,3 +1691,36 @@ def test_real_agent_stream_is_iterated_managed_and_closes_on_disconnect():
 
     asyncio.run(full())
     asyncio.run(disconnect())
+
+
+def test_refusal_event_carries_a_session_refusal_and_skips_everything_else():
+    """#866 K11: a 4xx a loop turn's step raised (the session closed in another
+    tab) is the terminal error with its status and detail, never retryable; a
+    5xx, a plain failure and a lost compare-and-set race keep their own ladder."""
+    from fastapi import HTTPException
+
+    from services.chat_stream import refusal_event
+    from services.loop.state import _StateConflict
+
+    ev = refusal_event(HTTPException(status_code=409, detail="this session is closed"), "r1")
+    assert ev.type == "error" and ev.message == "this session is closed"
+    assert ev.data == {"request_id": "r1", "retryable": False, "status": 409, "detail": "this session is closed"}
+    assert refusal_event(HTTPException(status_code=502, detail="x"), "r1") is None
+    assert refusal_event(RuntimeError("boom"), "r1") is None
+    assert refusal_event(_StateConflict(), "r1") is None
+
+
+def test_a_structured_turn_the_session_refused_on_save_ends_in_that_refusal():
+    """#866 K11: the turn's save found the session closed meanwhile — the
+    terminal error says so (status + detail), not "interrupted, retry"."""
+    from fastapi import HTTPException
+
+    model, _ = _streamed_model([_TURN])
+
+    def closed(reply, graph, mastery):
+        raise HTTPException(status_code=409, detail="this session is closed")
+
+    events = asyncio.run(collect_structured(_loop_agent(), _loop_deps(), model, closed))
+    last = events[-1]
+    assert last.type == "error" and last.data["status"] == 409
+    assert last.data["detail"] == "this session is closed" and last.data["retryable"] is False

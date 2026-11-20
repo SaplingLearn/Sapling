@@ -11,6 +11,7 @@ import { useFeedbackHold } from "@/lib/feedbackPacing";
 import styles from "./LoopLearn.module.css";
 import { useCrisisSupport } from "../safety/CrisisSupportCard";
 import { RetentionPauseBanner, retentionErrorText } from "./retentionPause";
+import { LOOP_ANSWER_MAX } from "@/lib/inputLimits";
 
 /** Spec §13 A126: how often and how long the page was hidden while one item
  *  was on screen. Telemetry for the outcome record — the server clamps it and
@@ -229,8 +230,8 @@ function RetentionSession({ userId, courseId }: { userId: string; courseId: stri
               <span>{option.letter}. {option.text}</span>
             </label>)}
           </fieldset>
-          <label>Your reasoning<input data-testid="retention-reason" value={reason} disabled={busy} onChange={(event) => setReason(event.target.value)} className={styles.scopeText} /></label>
-        </> : <label>Your answer<textarea data-testid="retention-answer" rows={3} value={answer} disabled={busy} onChange={(event) => setAnswer(event.target.value)} className={styles.scopeText} /></label>}
+          <label>Your reasoning<input data-testid="retention-reason" maxLength={LOOP_ANSWER_MAX} value={reason} disabled={busy} onChange={(event) => setReason(event.target.value)} className={styles.scopeText} /></label>
+        </> : <label>Your answer<textarea data-testid="retention-answer" maxLength={LOOP_ANSWER_MAX} rows={3} value={answer} disabled={busy} onChange={(event) => setAnswer(event.target.value)} className={styles.scopeText} /></label>}
         <div className={styles.scopeActions}>
           <button data-testid="retention-submit" type="submit" className="btn btn--sm btn--primary" disabled={!canSubmit}>Check answer</button>
           <button data-testid="retention-idk" type="button" className="btn btn--sm" disabled={busy} onClick={() => void submit(true)}>I don&apos;t know</button>

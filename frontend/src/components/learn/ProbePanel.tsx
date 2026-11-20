@@ -7,6 +7,7 @@ import tutorStyles from "./tutor/tutor.module.css";
 import { modalOpen } from "./modalOpen";
 import { type Draft, FIELD_STYLE, focusAnswerStart } from "./loopShared";
 import { TutorTurn } from "./TutorTurn";
+import { LOOP_ANSWER_MAX } from "@/lib/inputLimits";
 
 export function ProbePanel({
   item, count, draft, setDraft, reference, note, busy, loadFailed, greeting, onSubmit, onIdk, onNext, onRetry,
@@ -121,6 +122,7 @@ export function ProbePanel({
                     <input
                       id={`${ids}-reason`}
                       data-testid="loop-probe-reason"
+                      maxLength={LOOP_ANSWER_MAX}
                       style={FIELD_STYLE}
                       placeholder="Because…"
                       value={draft.reason}
@@ -134,6 +136,7 @@ export function ProbePanel({
                 ) : (
                   <textarea
                     data-testid="loop-probe-input"
+                    maxLength={LOOP_ANSWER_MAX}
                     data-answer-start=""
                     aria-label="Check-in answer"
                     aria-describedby={promptId}

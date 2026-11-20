@@ -444,7 +444,8 @@ describe("LoopLearn — probe and plan", () => {
     api.nextLoopProbe.mockResolvedValue(probeItem);
     api.answerLoopProbe.mockResolvedValue({ graded: true, correct: false, p_known: 0.2, probe_done: false, novice_floor: false, reference_answer: "The case that stops recursion." });
     render(<LoopLearn />);
-    fireEvent.change(await screen.findByTestId("loop-probe-input"), { target: { value: "a loop" } });
+    expect(await screen.findByTestId("loop-probe-input")).toHaveAttribute("maxLength", "4000"); // #866 K34
+    fireEvent.change(screen.getByTestId("loop-probe-input"), { target: { value: "a loop" } });
     fireEvent.click(screen.getByTestId("loop-probe-submit"));
     expect((await screen.findByTestId("loop-probe-reference")).textContent).toContain("The case that stops recursion.");
     expect(api.answerLoopProbe).toHaveBeenCalledWith("s2", "u1", "qh", { answer: "a loop", idk: false });
@@ -962,18 +963,45 @@ describe("LoopLearn — teach / check / feedback (A16, A46)", () => {
     expect(api.requestLoopHintTurn).toHaveBeenCalledWith("s2", "u1");
   });
 
-  it("Z08: the transcript draws the pose and a hint passage inert — class material served verbatim never links out", async () => {
-    const passage = "Lab 4 is submitted at https://lab4-portal.example/login. [Open the handout](https://evil.example/h)";
+  it("K32: an answer the time gate alone kept from counting is told to wait, not to write one", async () => {
+    api.postLoopAttempt.mockResolvedValue({ genuine: false, counted: false, attempts: 0, independent_s: 10, wait_s: 35 });
+    api.requestLoopHint.mockResolvedValue({ denied: "no_genuine_attempt" });
+    await withCheckItem();
+    fireEvent.change(screen.getByTestId("loop-attempt-input"), { target: { value: "it keeps calling itself" } });
+    fireEvent.click(screen.getByTestId("loop-hint-button"));
+    const denied = await screen.findByTestId("loop-hint-denied");
+    expect(denied.getAttribute("data-reason")).toBe("too_soon");
+    expect(denied.textContent).not.toContain("write what you think");
+    expect(denied.textContent).toContain("a little longer");
+  });
+
+  it.each([
+    [{ denied: "h6_gate", lifts: "attempt" }, "h6_attempt", "after another real try"],
+    [{ denied: "h6_gate" }, "h6_gate", "isn't available for this question"],
+  ])("K32: the H6 denial %o promises the worked answer only when another try opens it", async (reply, reason, copy) => {
+    api.postLoopAttempt.mockResolvedValue({ genuine: true, counted: true, attempts: 2, independent_s: 600 });
+    api.requestLoopHint.mockResolvedValue(reply);
+    await withCheckItem();
+    fireEvent.change(screen.getByTestId("loop-attempt-input"), { target: { value: "it keeps calling itself" } });
+    fireEvent.click(screen.getByTestId("loop-hint-button"));
+    const denied = await screen.findByTestId("loop-hint-denied");
+    expect(denied.getAttribute("data-reason")).toBe(reason);
+    expect(denied.textContent).toContain(copy);
+  });
+
+  it("K33: a hint turn's once-per-session materials note and learner state are applied", async () => {
     api.postLoopAttempt.mockResolvedValue({ genuine: true, counted: true, attempts: 1, independent_s: 60 });
-    api.requestLoopHint.mockResolvedValue({ rung: 2, intent: "Concept pointer." });
-    api.requestLoopHintTurn.mockResolvedValue(turn({ reply: passage, phase: "hint" }));
+    api.requestLoopHint.mockResolvedValue({ rung: 1, intent: "Orient." });
+    api.requestLoopHintTurn.mockResolvedValue(turn({
+      reply: "Look at when n reaches zero.", phase: "hint", materials_unavailable: true,
+      learner_state: [{ node_id: "n1", p_known: 0.42, band: "develop" }],
+    }));
     await withCheckItem();
     fireEvent.change(screen.getByTestId("loop-attempt-input"), { target: { value: "it keeps calling itself" } });
     fireEvent.click(screen.getByTestId("loop-hint-button"));
     await screen.findByTestId("loop-hint-reply");
-    for (const row of [logRow(passage), logRow(pose.prompt)]) {
-      expect(row.closest("[data-markdown-profile]")?.getAttribute("data-markdown-profile")).toBe("inert");
-    }
+    expect(screen.getByTestId("loop-notices").textContent).toContain("course materials are temporarily unavailable");
+    expect(screen.getByTestId("loop-learner-state").getAttribute("data-p-known")).toBe("0.42");
   });
 
   it("K09: while a hint loads, Submit and 'I don't know' wait for it (the rung is already charged)", async () => {
@@ -994,6 +1022,20 @@ describe("LoopLearn — teach / check / feedback (A16, A46)", () => {
     await act(async () => charged.resolve({ rung: 1, intent: "Orient." }));
     await screen.findByTestId("loop-hint-reply");
     expect(screen.getByTestId("loop-attempt-submit")).toBeEnabled();
+  });
+
+  it("Z08: the transcript draws the pose and a hint passage inert — class material served verbatim never links out", async () => {
+    const passage = "Lab 4 is submitted at https://lab4-portal.example/login. [Open the handout](https://evil.example/h)";
+    api.postLoopAttempt.mockResolvedValue({ genuine: true, counted: true, attempts: 1, independent_s: 60 });
+    api.requestLoopHint.mockResolvedValue({ rung: 2, intent: "Concept pointer." });
+    api.requestLoopHintTurn.mockResolvedValue(turn({ reply: passage, phase: "hint" }));
+    await withCheckItem();
+    fireEvent.change(screen.getByTestId("loop-attempt-input"), { target: { value: "it keeps calling itself" } });
+    fireEvent.click(screen.getByTestId("loop-hint-button"));
+    await screen.findByTestId("loop-hint-reply");
+    for (const row of [logRow(passage), logRow(pose.prompt)]) {
+      expect(row.closest("[data-markdown-profile]")?.getAttribute("data-markdown-profile")).toBe("inert");
+    }
   });
 
   it("an item that opens on its worked example asks for it at once, before any attempt (spec §13 A122)", async () => {
@@ -1725,7 +1767,10 @@ describe("LoopLearn — session isolation and learning evidence", () => {
     expect(screen.queryByTestId("tutor-stop")).toBeNull();
   });
 
-  it("Stop rejects queued feedback even when the transport resolves instead of throwing", async () => {
+  // #866 K10: the loop streams resolve only with `done`, which the server sends
+  // after the turn is saved — so a result that lands after Stop is the saved
+  // turn and is kept; the events queued behind Stop are still dropped.
+  it("Stop keeps the saved feedback the transport resolves with, and drops the events queued behind it", async () => {
     let handlers: import("@/lib/api").StreamChatHandlers | undefined;
     let finish: (value: ReturnType<typeof turn>) => void = () => {};
     api.streamLoopCheckAnswer.mockImplementation((_s: string, _u: string, _q: string, _a: object, h: import("@/lib/api").StreamChatHandlers) => {
@@ -1740,11 +1785,12 @@ describe("LoopLearn — session isolation and learning evidence", () => {
     await act(async () => {
       handlers?.onToken?.("queued feedback");
       handlers?.onPhase?.("feedback");
-      finish(turn({ reply: "queued final feedback", phase: "feedback", graded: true }));
+      finish(turn({ reply: "saved final feedback", phase: "feedback", graded: true }));
     });
-    await waitFor(() => expect(api.getLoopSessionStatus).toHaveBeenCalledWith("s2", "u1"));
-    expect(screen.getByTestId("loop-check-prompt")).toBeTruthy();
-    expect(screen.queryByText(/queued feedback|queued final feedback/)).toBeNull();
+    expect(await screen.findByText("saved final feedback")).toBeTruthy();
+    expect(screen.queryByText("queued feedback")).toBeNull(); // the streamed tokens behind Stop
+    expect(screen.queryByTestId("loop-check-prompt")).toBeNull(); // graded: the box takes no more answers
+    expect(screen.queryByTestId("tutor-interrupted")).toBeNull();
     expect(toast.error).not.toHaveBeenCalled();
   });
 

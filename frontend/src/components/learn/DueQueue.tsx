@@ -58,6 +58,7 @@ import { ReportQuestion } from "./ReportQuestion";
 import { answerPauseMessage, gradingPausedMessage, pausedConceptsMessage } from "./reviewPauseCopy";
 import tutorStyles from "./tutor/tutor.module.css";
 import { useCrisisSupport } from "../safety/CrisisSupportCard";
+import { LOOP_ANSWER_MAX } from "@/lib/inputLimits";
 
 // #866 Z29: Tailwind's preflight strips a textarea's border, padding and fill, so
 // each answer box takes the loop's field style and a visible label (as the
@@ -608,6 +609,7 @@ function renderCheckAnswer({ item, promptId, choice, setChoice, reason, setReaso
           id={`${promptId}-reason`}
           data-testid="review-reason-input"
           style={FIELD_STYLE}
+          maxLength={LOOP_ANSWER_MAX}
           placeholder="In one sentence: why?"
           value={reason}
           disabled={answered}
@@ -626,6 +628,7 @@ function renderCheckAnswer({ item, promptId, choice, setChoice, reason, setReaso
         data-answer-start=""
         aria-describedby={promptId}
         style={FIELD_STYLE}
+        maxLength={LOOP_ANSWER_MAX}
         value={answer}
         disabled={answered}
         onChange={(e) => setAnswer(e.target.value)}

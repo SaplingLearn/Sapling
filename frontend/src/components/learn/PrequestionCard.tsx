@@ -16,6 +16,7 @@ import React, { useId, useLayoutEffect, useRef, useState } from "react";
 
 import type { LoopPrequestion, LoopPrequestionGuess } from "@/lib/api";
 import { OptionList } from "./OptionList";
+import { LOOP_ANSWER_MAX } from "@/lib/inputLimits";
 
 const FIELD_STYLE: React.CSSProperties = {
   width: "100%",
@@ -136,6 +137,7 @@ export function PrequestionCard({
               />
               <input
                 data-testid="loop-prequestion-reason"
+                maxLength={LOOP_ANSWER_MAX}
                 aria-label="Why you think so (optional)"
                 style={FIELD_STYLE}
                 placeholder="Why? (optional)"
@@ -150,6 +152,7 @@ export function PrequestionCard({
           ) : (
             <textarea
               data-testid="loop-prequestion-input"
+              maxLength={LOOP_ANSWER_MAX}
               data-answer-start=""
               aria-label="Your guess"
               aria-describedby={promptId}

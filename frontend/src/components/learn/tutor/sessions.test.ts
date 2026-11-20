@@ -37,3 +37,25 @@ describe("mergeSessions", () => {
     expect(rows[rows.length - 1].id).toBe("c"); // newest first
   });
 });
+
+describe("mergeSessions — a capped open list (#866 K29)", () => {
+  const row = (id: string, daysAgo: number, loopOpen: boolean) => (
+    { id, topic: id, mode: "socratic", course_id: "c1", started_at: at(daysAgo), ended_at: null, message_count: 1, is_active: true, loop_open: loopOpen }
+  );
+  const listedOpen = (id: string, daysAgo: number) => ({ session_id: id, topic: id, started_at: at(daysAgo), phase: "teach" as const });
+
+  it("an open session older than an incomplete list's oldest stays open", () => {
+    const rows = mergeSessions([row("new", 0, true), row("old", 9, true)], [listedOpen("new", 0)], "c1", false);
+    expect(Object.fromEntries(rows.map((r) => [r.id, r.open]))).toEqual({ new: true, old: true });
+  });
+
+  it("an unlisted session newer than the list's oldest was wrapped up since the recents were read", () => {
+    const rows = mergeSessions([row("mid", 2, true), row("new", 0, true)], [listedOpen("new", 0), listedOpen("older", 5)], "c1", false);
+    expect(rows.find((r) => r.id === "mid")?.open).toBe(false);
+  });
+
+  it("a complete list decides every row of its course", () => {
+    const rows = mergeSessions([row("old", 9, true)], [listedOpen("new", 0)], "c1", true);
+    expect(rows.find((r) => r.id === "old")?.open).toBe(false);
+  });
+});

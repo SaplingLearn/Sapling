@@ -218,7 +218,7 @@ describe("QuizResults", () => {
     );
     expect(screen.getByTestId("quiz-next-step-learn")).toHaveAttribute(
       "href",
-      "/learn?topic=Recursion&course=cs101",
+      "/learn?topic=Recursion&concept=recursion&course=cs101",
     );
   });
 

@@ -14,6 +14,7 @@
 import React, { useEffect, useId, useState } from "react";
 
 import type { LoopSelfExplain } from "@/lib/api";
+import { LOOP_ANSWER_MAX } from "@/lib/inputLimits";
 
 const FIELD_STYLE: React.CSSProperties = {
   width: "100%",
@@ -98,6 +99,7 @@ export function SelfExplainCard({
       <textarea
         ref={inputRef}
         data-testid="loop-self-explain-input"
+        maxLength={LOOP_ANSWER_MAX}
         aria-label="Your explanation"
         aria-describedby={promptId}
         style={FIELD_STYLE}

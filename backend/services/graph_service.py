@@ -1690,7 +1690,9 @@ _RECOMMENDATION_READ = {
     "order": "mastery_score.asc",
     "limit": 5,
 }
-_RECOMMENDATION_COLUMNS = "concept_name,mastery_score,mastery_tier,course_id"
+#: `id` and `course_id` name the concept (#866 K05): the Dashboard's Learn next
+#: starts the learning loop's session on it, as the map's Learn link does.
+_RECOMMENDATION_COLUMNS = "id,concept_name,mastery_score,mastery_tier,course_id"
 
 
 def get_recommendations(user_id: str, semester: str | None = None) -> list:
@@ -1733,5 +1735,8 @@ def _recommendations_from(rows: list) -> list:
             reason = f"You're struggling here ({_whole_percent(r['mastery_score'])}%) — focus here to improve."
         else:
             reason = f"You're making progress ({_whole_percent(r['mastery_score'])}%) — keep going!"
-        recs.append({"concept_name": r["concept_name"], "reason": reason})
+        recs.append({
+            "concept_name": r["concept_name"], "reason": reason,
+            "node_id": r.get("id"), "course_id": r.get("course_id"),
+        })
     return recs

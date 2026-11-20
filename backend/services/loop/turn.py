@@ -126,7 +126,7 @@ from services.loop.guard import (
     _visible_text,
     with_confrontation,
 )
-from services.loop.planning import _plan_node_names, _with_goal_context
+from services.loop.planning import _moved_plan_view, _plan_node_names, _plan_position, _with_goal_context
 from services.loop.cursor import _auto_poses_checks, _h6_ok, _leak_checked_payload
 from services.loop.pose import (
     _emit_prequestion,
@@ -164,6 +164,27 @@ def _turn_row_ids(kind, session_id: str, body) -> tuple[str | None, str | None]:
         _turn_message_id(session_id, turn_id, "user"),
         _turn_message_id(session_id, turn_id, "assistant"),
     )
+
+
+def _credit_for(entry: dict) -> dict:
+    """#866 K07: what a CORRECT graded answer earned — the weight the writer
+    journaled for it, recorded on the graded step (`credit_weight`,
+    checkpoint._credited): "full", "partial" (with `credit_reasons`, the
+    learning.evidence.weight_factors that reduced it) or "none" (a correct
+    answer after H4-H6). A step graded before that record carries only its
+    `max_rung` (the A88/A93 floor included), read through the one rung mapping
+    (`policy.evidence_for_rung`). Never a model's word; the client words the
+    verdict banner from it."""
+    weight = entry.get("credit_weight")
+    if isinstance(weight, (int, float)) and not isinstance(weight, bool):
+        reasons = [f for f in entry.get("credit_factors") or [] if isinstance(f, str)]
+    else:
+        weight = policy.evidence_for_rung(True, Rung(int(entry.get("max_rung") or 0))).weight
+        reasons = ["hint"] if 0 < weight < 1 else []
+    credit = "none" if weight <= 0 else "partial" if weight < 1 else "full"
+    if credit == "partial" and reasons:
+        return {"credit": credit, "credit_reasons": reasons}
+    return {"credit": credit}
 
 
 class _LoopTurn:
@@ -235,6 +256,7 @@ class _LoopTurn:
         self.concept_node = self.node_id or self.state.get("concept")
         learner = _learner_state(self.user_id, self.concept_node)
         self.band, self.p_known = _band_of(learner)
+        self.measured = learner is not None  # #866 K52: no stored state = the prior, not a measurement
         self.variant = arms.variant_for(self.user_id, self.concept_node or "", self.arm)
         self.verdict = verdict or (
             self.entry.get("last_verdict") if self.phase == "feedback" else None
@@ -1106,6 +1128,9 @@ class _LoopTurn:
             "hint_offer": {"rung": offer_rung} if offer_rung is not None else None,
             "budget": _budget_data(self.planned) if self.planned.level == "hard" else None,
             "check": check,
+            # #866 K08: the approved plan, when this turn moved its cursor (a
+            # graded check's feedback, an activation past a concept with no check)
+            **_moved_plan_view(self.user_id, _plan_position(self.state), saved),
             **_materials_notice(out),
             **teach_prompts,
             # spec §13 A138: the answer route's turn (present only there)
@@ -1491,4 +1516,6 @@ class _LoopTurn:
         }
         if getattr(self, "ask_rating", False):  # PKG-14: present only when true, never false
             extra["ask_rating"] = True
+        if self.kind == "feedback" and self.verdict == "correct":
+            extra.update(_credit_for(self.entry))  # #866 K07
         return extra

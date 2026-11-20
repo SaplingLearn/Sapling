@@ -201,9 +201,10 @@ def test_a_rung_up_never_unlocks_h6_without_its_item_predicates(gate_on, seams):
     seams.p_known["node-1"] = 0.1
     seams.store["doc"] = routes._state(rung=5, attempts=1, attempted_at=[routes.T0 + 10], taught=True)
     seams.store["doc"]["band_ceiling"] = {"node-1": UP}
-    assert _hint() == {"denied": "h6_gate"}
+    # #866 K32: one more genuine try is all it needs — the denial says so
+    assert _hint() == {"denied": "h6_gate", "lifts": "attempt"}
     seams.store["doc"]["steps"]["qh-1"].update(attempts=2, taught=False)
-    assert _hint() == {"denied": "h6_gate"}
+    assert _hint() == {"denied": "h6_gate"}  # untaught: it never lifts on this item
     seams.store["doc"]["steps"]["qh-1"].update(taught=True)
     assert _hint() == {"rung": int(Rung.H6), "intent": intent(Rung.H6)}
 

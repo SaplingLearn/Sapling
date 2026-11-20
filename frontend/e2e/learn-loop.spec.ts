@@ -311,11 +311,15 @@ test("loop user completes probe → plan → check (explicit submission) with a 
   // timer exists to skip it; the bound below is the UNSCALED gate, so the poll is
   // honest whatever the lane scale is.
   await page.getByTestId("loop-attempt-input").fill(WORKING_ATTEMPT);
+  // #866 K32: with an answer in the box, a denial is never "write what you think"
+  // — before the independent time it says to stay with the question (too_soon)
+  const deniedReasons: string[] = [];
   await expect
     .poll(
       async () => {
         await hintButton.click();
         await expect(hintButton).toBeEnabled();
+        if (await denied.isVisible()) deniedReasons.push((await denied.getAttribute("data-reason")) ?? "");
         return (await hintReply.isVisible()) ? ((await hintReply.textContent()) ?? "") : "";
       },
       {
@@ -324,6 +328,7 @@ test("loop user completes probe → plan → check (explicit submission) with a 
       },
     )
     .toContain(LOOP_HINT_BODY);
+  expect(deniedReasons).not.toContain("no_genuine_attempt");
   await expect(hintReply).toContainText(LOOP_HINT_QUESTION);
   const sessionRows = async () =>
     (await queryRaw(`SELECT id, loop_state FROM sessions WHERE user_id = $1 AND mode <> 'review'`, [
@@ -372,6 +377,11 @@ test("loop user completes probe → plan → check (explicit submission) with a 
   expect(graded.refused).toBe(false);
   expect(graded.phase).toBe("feedback");
   await expect(phase).toHaveAttribute("data-phase", "feedback");
+  // #866 K07: a correct answer after the worked example earns nothing (weight 0,
+  // asserted on the journal below) — the verdict never says it counted
+  const verdictBanner = page.getByTestId("loop-verdict");
+  await expect(verdictBanner).toHaveAttribute("data-credit", "none");
+  await expect(verdictBanner).not.toContainText("That answer counts toward this concept.");
   await expect(page.getByTestId("loop-messages")).toContainText(LOOP_FEEDBACK_BODY);
   await expect(page.getByTestId("loop-messages")).toContainText(LOOP_FEEDBACK_QUESTION);
   await expect(page.getByTestId("tutor-stop")).toHaveCount(0);

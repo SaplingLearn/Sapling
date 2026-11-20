@@ -145,10 +145,12 @@ __all__ = [
     "GraderBackend",
     "MisconceptionVerdict",
     "StudentConfidence",
+    "WeightFactor",
     "evidence_weight",
     "flush_pending",
     "is_strong_channel",
     "stated_confidence",
+    "weight_factors",
 ]
 
 
@@ -294,15 +296,42 @@ def evidence_weight(ev: Evidence) -> float:
     if ev.correct and ev.max_rung >= RUNG_NO_CREDIT_MIN:
         return 0.0
     w = 1.0
-    if ev.correct and ev.assisted:
-        w *= WEIGHT_ASSISTED
-    if ev.same_session_recheck:
-        w *= WEIGHT_SAME_SESSION_RECHECK
-    if ev.confidence is not None and ev.confidence < GRADER_LOW_CONFIDENCE:
-        w *= WEIGHT_LOW_CONFIDENCE
-    if ev.multi_concept:
-        w *= WEIGHT_MULTI_CONCEPT
+    for factor in weight_factors(ev):
+        w *= _FACTOR_WEIGHT[factor]
     return w
+
+
+#: #866 K07: the §3.1 factors that reduce an observation's weight, by name —
+#: what a verdict says a correct answer counted only partly for.
+WeightFactor = Literal["hint", "recheck", "low_confidence", "multi_concept"]
+
+_FACTOR_WEIGHT: dict[str, float] = {
+    "hint": WEIGHT_ASSISTED,
+    "recheck": WEIGHT_SAME_SESSION_RECHECK,
+    "low_confidence": WEIGHT_LOW_CONFIDENCE,
+    "multi_concept": WEIGHT_MULTI_CONCEPT,
+}
+
+
+def weight_factors(ev: Evidence) -> list[WeightFactor]:
+    """The reduced-weight factors evidence_weight multiplies for `ev`, in its
+    order: a correct answer after H1..H3 (`hint`), a same-session re-check
+    (A76, `recheck`), a low-confidence grade (`low_confidence`) and a
+    multi-concept apex (A141, `multi_concept`). Empty for a full-weight
+    observation, and for a correct answer after H4..H6, whose weight is 0
+    for the rung alone (§3.3)."""
+    if ev.correct and ev.max_rung >= RUNG_NO_CREDIT_MIN:
+        return []
+    factors: list[WeightFactor] = []
+    if ev.correct and ev.assisted:
+        factors.append("hint")
+    if ev.same_session_recheck:
+        factors.append("recheck")
+    if ev.confidence is not None and ev.confidence < GRADER_LOW_CONFIDENCE:
+        factors.append("low_confidence")
+    if ev.multi_concept:
+        factors.append("multi_concept")
+    return factors
 
 
 def flush_pending(deps, course_id: str | None) -> list:

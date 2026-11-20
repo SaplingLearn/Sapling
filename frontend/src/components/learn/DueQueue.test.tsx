@@ -97,6 +97,7 @@ describe("DueQueue — no feedback survey over a review item (lib/feedbackPacing
     await screen.findByTestId("review-item");
     await effectsFlushed();
     expect(feedbackHeld()).toBe(true);
+    expect(screen.getByTestId("review-answer-input")).toHaveAttribute("maxLength", "4000"); // #866 K34: the grader's cap
     await userEvent.type(screen.getByTestId("review-answer-input"), "the base case");
     await userEvent.click(screen.getByTestId("review-submit"));
     await screen.findByTestId("review-hint");

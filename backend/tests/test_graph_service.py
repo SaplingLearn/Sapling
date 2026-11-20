@@ -1108,6 +1108,17 @@ class TestGetRecommendations:
             result = get_recommendations("u1")
         assert result == []
 
+    def test_each_recommendation_names_its_concept_and_course(self):
+        """#866 K05: Learn next starts the learning loop's session on the
+        concept, so a recommendation carries its node id and course."""
+        rows = [{"id": "n7", "concept_name": "Loops", "mastery_score": 0.5,
+                 "mastery_tier": "learning", "course_id": "c1"}]
+        mock = _simple_mock(rows)
+        with patch("services.graph_service.table", return_value=mock):
+            result = get_recommendations("u1")
+        assert result[0]["node_id"] == "n7" and result[0]["course_id"] == "c1"
+        assert mock.select.call_args.args[0].split(",")[0] == "id"
+
 
 # ── get_graph semester scoping ─────────────────────────────────────────────────
 

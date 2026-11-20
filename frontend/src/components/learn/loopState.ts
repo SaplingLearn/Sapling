@@ -2,7 +2,7 @@
 // Every change comes from the SERVER — a route response, a stream event, a
 // listed session — so this reducer never advances the phase on its own (spec
 // §9: the ZPD gates are server-side). No React import.
-import type { LoopBudgetPause, LoopCheckItem, LoopLearnerState, LoopPhase } from "@/lib/api";
+import type { LoopBudgetPause, LoopCheckItem, LoopLearnerState, LoopPhase, LoopTurnResult } from "@/lib/api";
 
 export interface LoopUiState {
   phase: LoopPhase;
@@ -22,7 +22,7 @@ export type LoopUiEvent =
   | { type: "phase"; phase: string }
   | { type: "check"; item: LoopCheckItem | null }
   | { type: "learner_state"; state: LoopLearnerState }
-  | { type: "budget"; level: string; resetAt: string | null; sessionCapped?: boolean; pauseNovice?: boolean }
+  | { type: "budget"; level: string; resetAt: string | null; sessionCapped?: boolean; pauseNovice?: boolean; aiLimit?: boolean }
   | { type: "budget_clear" }
   | { type: "reset" };
 
@@ -49,6 +49,25 @@ export function initialLoopState(): LoopUiState {
   };
 }
 
+/** What a served hint turn (POST /action) changes here: its phase, its learner
+ *  state (#866 K33: the focus concept) and a hard budget notice. */
+export function hintTurnEvents(t: LoopTurnResult): LoopUiEvent[] {
+  const events: LoopUiEvent[] = t.phase ? [{ type: "phase", phase: t.phase }] : [];
+  for (const state of t.learner_state ?? []) events.push({ type: "learner_state", state });
+  if (t.budget?.level === "hard") {
+    events.push({ type: "budget", level: "hard", resetAt: t.budget.reset_at, sessionCapped: t.budget.session_capped, pauseNovice: t.budget.pause_novice });
+  }
+  return events;
+}
+
+/** A turn's learner state: it focuses its concept and, when measured, records
+ *  the concept's skill. #866 K52: an unmeasured one (`measured: false`, the
+ *  prior) moves the focus only — the prior is never shown as a skill. */
+function withLearnerState(state: LoopUiState, ls: LoopLearnerState): LoopUiState {
+  if (ls.measured === false) return { ...state, focusNodeId: ls.node_id };
+  return { ...state, learnerState: { ...state.learnerState, [ls.node_id]: ls }, focusNodeId: ls.node_id };
+}
+
 export function reduceLoopEvent(state: LoopUiState, ev: LoopUiEvent): LoopUiState {
   switch (ev.type) {
     case "phase": {
@@ -70,17 +89,16 @@ export function reduceLoopEvent(state: LoopUiState, ev: LoopUiEvent): LoopUiStat
       };
     }
     case "learner_state":
-      return {
-        ...state,
-        learnerState: { ...state.learnerState, [ev.state.node_id]: ev.state },
-        focusNodeId: ev.state.node_id,
-      };
+      return withLearnerState(state, ev.state);
     case "budget":
       // soft = the invisible downgrade (spec §3.5): nothing renders
       if (ev.level !== "hard") return state;
       return {
         ...state,
-        budgetPause: { resetAt: ev.resetAt, sessionCapped: ev.sessionCapped === true, ...(ev.pauseNovice ? { pauseNovice: true } : {}) },
+        budgetPause: {
+          resetAt: ev.resetAt, sessionCapped: ev.sessionCapped === true,
+          ...(ev.pauseNovice ? { pauseNovice: true } : {}), ...(ev.aiLimit ? { aiLimit: true } : {}),
+        },
       };
     case "budget_clear":
       return state.budgetPause ? { ...state, budgetPause: null } : state;
