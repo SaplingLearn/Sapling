@@ -335,14 +335,14 @@ test("upload → SSE → document appears in library and Postgres", async ({
  * loop (propagation, bands, the planner's fringe) was inert on upload-built
  * graphs.
  */
-test("with upload_prereq_edges on, an upload writes its prerequisite edge once (A118)", async ({
+test("with upload_prereq_edges on, an upload writes its prerequisite edge once (A118), and none with the loop off", async ({
   browser,
   page,
 }) => {
   // #866 K55/Z42: A118 is a learning-loop amendment, so the edges follow the
   // uploader's loop gate — with the loop off (both off lanes) the upload is the
-  // pre-loop upload and writes no edge, whatever this flag says.
-  test.skip(loopOffLane, "loop path: the edges follow the uploader's learning-loop gate");
+  // pre-loop upload and writes no edge, whatever this flag says. Both halves
+  // run: the off lanes pin that the flag alone writes nothing.
   await expectFunctionMode();
 
   // Turn the flag on for this student through the API the /admin tab uses.
@@ -357,6 +357,17 @@ test("with upload_prereq_edges on, an upload writes its prerequisite edge once (
 
   await uploadFixture(page);
   const first = await scriptedPrerequisiteEdges();
+  if (loopOffLane) {
+    // The loop is off for the uploader: the flag on, still no edge (K55) —
+    // between concepts the upload did write, so the empty answer is not vacuous.
+    const nodes = (await queryRaw(
+      "SELECT DISTINCT concept_name FROM graph_nodes WHERE user_id = $1 AND concept_name = ANY($2::text[])",
+      [USER_ACTIVE, SCRIPTED_CONCEPTS],
+    )) as { concept_name: string }[];
+    expect(nodes.map((n) => n.concept_name).sort()).toEqual([...SCRIPTED_CONCEPTS].sort());
+    expect(first).toEqual([]);
+    return;
+  }
   expect(first.map((e) => [e.source, e.target])).toEqual(SCRIPTED_PREREQUISITES);
 
   // Re-analyze. The second documents row is persisted AFTER the graph phase

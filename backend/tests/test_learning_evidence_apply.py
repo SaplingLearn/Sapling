@@ -753,7 +753,10 @@ class TestApplyEvidence:
             "confidence",
         ):
             assert col in first, col
-        assert set(first) == set(rows[1]), "every evidence row names the same columns"
+        # §13 A150: only the first row to reach a node with no learner_state
+        # row journals the score it started from; every other column is common
+        assert first["seeds"] == {"n1": 0.5} and "seeds" not in rows[1]
+        assert set(first) - {"seeds"} == set(rows[1]), "every evidence row names the same columns"
         assert first["node_id"] == "n1" and first["channel"] == "free_response"
         assert first["correct"] is True and first["weight"] == 1.0
         # #866 K19: the journal's delta is the change the mastery mirror made
@@ -1160,6 +1163,45 @@ class TestApplyEvidence:
         writes = {w["node_id"]: w for w in _state_writes(mocks)}
         assert set(writes) == {"n1", "n2"}, "child n2 updated, parent n0 untouched"
         assert writes["n2"]["p_known"] < BKT_L0
+
+    def test_a_never_studied_neighbour_keeps_its_unexplored_map_score(self):
+        """#866 audit K22: propagation moves a never-studied concept's belief
+        (learner_state: the planner's prerequisite inference), never its map
+        score — so no screen calls a concept the student never opened
+        "learning" (a correct answer lifted a prerequisite 0 → 45%) or
+        "slipping" (a wrong one dropped a dependent 0 → 27%)."""
+        for correct, target in ((True, "n0"), (False, "n2")):
+            _, mocks, _ = _apply_unmeasured(
+                {"evidence": [{"node_id": "n1", "channel": "free_response", "correct": correct}]}
+            )
+            writes = {w["node_id"]: w for w in _state_writes(mocks)}
+            assert writes[target]["p_known"] != BKT_L0, "the learner model still moves"
+            updates = dict(_node_updates(mocks))
+            assert updates[f"eq.{target}"] == {"mastery_score": 0.0, "mastery_tier": "unexplored"}
+            assert updates["eq.n1"]["mastery_score"] == _event_rows(mocks)[0]["p_after"]
+
+    def test_a_neighbour_the_map_already_scores_moves_on_the_map(self):
+        """K22's line is the map score: a neighbour showing one (studied, or a
+        pre-loop score) shows the propagated belief, as before."""
+        _, mocks, _ = _apply({"evidence": [{"node_id": "n1", "channel": "free_response", "correct": True}]})
+        writes = {w["node_id"]: w for w in _state_writes(mocks)}
+        assert dict(_node_updates(mocks))["eq.n0"]["mastery_score"] == pytest.approx(writes["n0"]["p_known"])
+
+    def test_a_never_studied_concepts_first_answer_starts_from_its_propagated_belief(self):
+        """The held concept's learner_state row carries the inferred belief;
+        its own first answer starts there and puts it on the map (its delta
+        from the 0 the map showed, K19)."""
+        from learning import bkt
+
+        states = [_state_row(node_id="n0", p_known=0.45, last_evidence_at=NOW.isoformat())]
+        _, mocks, _ = _apply_unmeasured(
+            {"evidence": [{"node_id": "n0", "channel": "mc", "correct": True}]}, states=states, edges=[],
+        )
+        [row] = _event_rows(mocks)
+        assert row["p_before"] == pytest.approx(0.45) and "seeds" not in row
+        assert row["p_after"] == pytest.approx(bkt.update(0.45, "mc", True))
+        assert row["delta"] == pytest.approx(row["p_after"])
+        assert dict(_node_updates(mocks))["eq.n0"]["mastery_score"] == pytest.approx(row["p_after"])
 
     def test_propagation_updates_the_targets_decayed_state(self):
         from learning import bkt

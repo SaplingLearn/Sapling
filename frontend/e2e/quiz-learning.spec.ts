@@ -13,6 +13,8 @@
  *   a "Sure" wrong answer          on a verified question's tagged distractor
  *                                  records the misconception under the quiz
  *                                  item id.
+ *   every flag on, the loop off    (the kill-switch and flag-off lanes) the
+ *                                  plain quiz, its answers evidence (#884).
  *
  * Function mode: the planned writer, the concept check and the blind solve
  * answer from `backend/agents/function_handlers_e2e.py` (`_e2e_planned`,
@@ -44,8 +46,10 @@ import { USER_ACTIVE, USER_LOOP } from "./support/stack";
 
 // #884: every quiz learning flag needs the learning loop too
 // (services/quiz_learning.py::quiz_flags), and the loop is off in the
-// kill-switch and flag-off lanes, so these journeys run in the default lane.
-test.skip(loopOffLane, "the quiz learning flags need the learning loop: default lane only");
+// kill-switch and flag-off lanes, so the feature journeys run in the default
+// lane; the last journey pins the off half there (every flag on, the quiz
+// still the plain quiz).
+const LOOP_ON_ONLY = "the quiz learning flags need the learning loop: default lane only";
 
 const QUIZ_FLAGS = [
   "quiz_concept_plan",
@@ -117,6 +121,7 @@ async function signIn(browser: Browser, userId: string, name: string): Promise<P
 test("plan, planned, gated, routed: the learner model chooses, the gates verify, the results route on", async ({
   page,
 }) => {
+  test.skip(loopOffLane, LOOP_ON_ONLY);
   test.setTimeout(180_000);
   await flagsOn(USER_ACTIVE, ["quiz_concept_plan", "quiz_planned_questions", "quiz_item_gates", "quiz_results_routing"]);
   await preAckDisclaimer(page);
@@ -154,6 +159,7 @@ test("plan, planned, gated, routed: the learner model chooses, the gates verify,
 });
 
 test("a plain quiz under the gates is practice: served and scored, never evidence", async ({ page }) => {
+  test.skip(loopOffLane, LOOP_ON_ONLY);
   test.setTimeout(120_000);
   await flagsOn(USER_ACTIVE, ["quiz_item_gates"]);
   await preAckDisclaimer(page);
@@ -178,6 +184,7 @@ test("a plain quiz under the gates is practice: served and scored, never evidenc
 });
 
 test('a "Sure" wrong answer on a tagged distractor records the misconception', async ({ browser }) => {
+  test.skip(loopOffLane, LOOP_ON_ONLY);
   test.setTimeout(180_000);
   await flagsOn(USER_LOOP, QUIZ_FLAGS);
   const page = await signIn(browser, USER_LOOP, "Lou Loop");
@@ -205,4 +212,34 @@ test('a "Sure" wrong answer on a tagged distractor records the misconception', a
   const [recorded] = await eventPayloads(USER_LOOP, "quiz.misconception_recorded");
   expect(recorded).toMatchObject({ node_id: LOOP_NODE_ID, wrong_key: LOOP_KEY, count: 1 });
   await page.context().close();
+});
+
+test("with every quiz learning flag on and the loop off, the quiz is the plain quiz (#884)", async ({ page }) => {
+  // The off half of #884: the flags alone change nothing while the loop is
+  // off for the student — no plan line, the scripted (not the planned)
+  // questions, no gate pass, no learning block; the answers are still evidence.
+  test.skip(!loopOffLane, "loop-off lanes only: the default lane runs the feature journeys above");
+  test.setTimeout(120_000);
+  await flagsOn(USER_ACTIVE, QUIZ_FLAGS);
+  await preAckDisclaimer(page);
+  await openQuizHome(page, "/quiz");
+  await expect(page.getByTestId("quiz-plan-reason")).toHaveCount(0);
+
+  await openQuizHome(page, `/quiz?concept=${NODE_ID}`);
+  await startQuiz(page);
+  await answerAtEnd(page, CORRECT_LABELS.map((label, i) => ({ n: i + 1, label })));
+  await expectResults(page);
+  await expect(page.getByTestId("quiz-results-score")).toHaveText(`${QUIZ_LENGTH} of ${QUIZ_LENGTH} correct`, {
+    timeout: SUBMIT_TIMEOUT,
+  });
+  await expect(page.getByTestId("quiz-results-learning")).toHaveCount(0);
+  await expect(page.getByTestId("quiz-plan-reason")).toHaveCount(0);
+
+  expect(await eventPayloads(USER_ACTIVE, "quiz.items_gated")).toEqual([]);
+  expect(await eventPayloads(USER_ACTIVE, "quiz.evidence_excluded")).toEqual([]);
+  const evidence = await queryRaw(
+    "SELECT correct, channel FROM node_mastery_events WHERE node_id = $1 AND event_type = 'evidence' ORDER BY created_at, evidence_seq",
+    [NODE_ID],
+  );
+  expect(evidence.map(e => [e.correct, e.channel])).toEqual(Array(QUIZ_LENGTH).fill([true, "mc"]));
 });

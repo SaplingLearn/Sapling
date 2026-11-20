@@ -18,6 +18,7 @@ for real in tests/integration/test_learning_evidence_void_db.py).
 from __future__ import annotations
 
 from copy import deepcopy
+from datetime import datetime, timezone
 
 import pytest
 
@@ -26,7 +27,9 @@ from learning import evidence_void
 from learning.evidence import PlanningPersistenceUnavailable
 from learning.evidence_transaction import EvidenceItemRetired, EvidenceVoidRefused
 from learning.params import BKT_L0
-from test_learning_evidence_replay import COURSE, NODES, USER, history, run
+from learning.bkt import tier_for_stored
+from learning.learner_state import state_row, unmeasured_state
+from test_learning_evidence_replay import COURSE, NODES, SCORES, USER, history, run
 
 PRIOR = {
     "p_known": BKT_L0, "n_strong_unassisted": 0, "streak_unassisted": 0,
@@ -41,17 +44,25 @@ def _void(user=USER, course=COURSE, qh="q3"):
     return apply_graph_update(user, {"void_evidence": {"question_hash": qh}}, course)
 
 
+def _start(node: str, score: float) -> dict:
+    """The learner_state columns a node starts from (spec §13 A150)."""
+    row = state_row(unmeasured_state(USER, node, score), datetime.now(timezone.utc))
+    return {k: row[k] for k in PRIOR}
+
+
+@pytest.mark.parametrize("scores", [None, SCORES], ids=["never-studied", "stored-scores"])
 @pytest.mark.parametrize("seed", range(30))
-def test_a_staff_retire_recomputes_the_state_a_history_without_the_item_gives(monkeypatch, seed):
+def test_a_staff_retire_recomputes_the_state_a_history_without_the_item_gives(monkeypatch, seed, scores):
     ops = history(seed)
     qh = f"q{seed % 14}"
     voided = lambda ev: ev["question_hash"] == qh  # noqa: E731
-    db, _ = run(monkeypatch, ops)
+    db, _ = run(monkeypatch, ops, scores=scores)
     journal_before = deepcopy(db.journal)
     item_rows = [r for r in db.journal if r["question_hash"] == qh]
     db.retire(COURSE, qh)
     _void(qh=qh)
-    expected, _ = run(monkeypatch, ops, skip=voided)  # the from-scratch run without the item
+    # the from-scratch run without the item
+    expected, _ = run(monkeypatch, ops, skip=voided, scores=scores)
 
     assert db.journal == journal_before  # append-only: no journal row edited or removed
     assert sorted(db.voids) == sorted(r["id"] for r in item_rows)
@@ -62,10 +73,15 @@ def test_a_staff_retire_recomputes_the_state_a_history_without_the_item_gives(mo
             assert got is not None and _same_state(got, want), node
             assert db.nodes[node]["mastery_score"] == expected.nodes[node]["mastery_score"], node
         elif got is not None:
-            # every evidence that reached it was void: back at the BKT prior
-            assert {k: got[k] for k in PRIOR} == PRIOR, node
-            assert db.nodes[node]["mastery_score"] == BKT_L0
-            assert db.nodes[node]["mastery_tier"] == "learning"
+            # every evidence that reached it was void: back where it started
+            # (A150: its stored score, else the prior), the mirror its belief —
+            # off the map again for a never-studied concept (K22)
+            score = (scores or {}).get(node, 0.0)
+            start = _start(node, score)
+            shown = start["p_known"] if score > 0 else 0.0
+            assert {k: got[k] for k in PRIOR} == start, node
+            assert db.nodes[node]["mastery_score"] == shown
+            assert db.nodes[node]["mastery_tier"] == tier_for_stored(shown)
 
 
 def test_re_running_a_void_writes_nothing(monkeypatch):
@@ -85,6 +101,133 @@ def test_re_running_a_void_writes_nothing(monkeypatch):
     plans = [p for name, p in db.calls if name == "learning_evidence_void_commit"]
     assert plans[-1]["p_plan"] == {**plans[-2]["p_plan"], "states_expected": plans[-1]["p_plan"]["states_expected"],
                                    "nodes": plans[-1]["p_plan"]["nodes"]}  # same rows, fresh versions
+
+
+def _check(node, qh, correct=True, channel="free_response"):
+    return {"node_id": node, "channel": channel, "correct": correct,
+            "question_hash": qh, "check_item_id": f"ci-{qh}"}
+
+
+def _assert_as_without(db, expected, nodes):
+    for node in nodes:
+        assert _same_state(db.state(USER, node), expected.state(USER, node)), node
+        assert db.nodes[node]["mastery_score"] == expected.nodes[node]["mastery_score"], node
+
+
+def test_voiding_the_first_answer_on_a_stored_score_replays_from_that_score(monkeypatch):
+    """Spec §13 A150: n-a's 82% is its starting belief. The first answer on it
+    (the one that started it and journaled the seed) is voided; the replay of
+    the second starts from 82% exactly as a history without the first does —
+    not from the 0.35 prior."""
+    ops = [
+        (3600.0, None, [_check("n-a", "q-broken", correct=False)]),
+        (86_400.0, None, [_check("n-a", "q-ok", correct=True, channel="mc")]),
+    ]
+    db, _ = run(monkeypatch, ops, scores={"n-a": 0.82})
+    # the wrong answer also reached n-a's never-studied dependents
+    assert db.journal[0]["seeds"] == {"n-a": 0.82, "n-b": 0.0, "n-d": 0.0}
+    assert db.journal[1]["seeds"] is None
+    db.retire(COURSE, "q-broken")
+    _void(qh="q-broken")
+    expected, _ = run(monkeypatch, ops, skip=lambda ev: ev["question_hash"] == "q-broken",
+                      scores={"n-a": 0.82})
+    _assert_as_without(db, expected, ["n-a"])
+    [kept] = [r for r in expected.journal]
+    assert kept["p_before"] == pytest.approx(0.82)  # the history without starts from the score
+
+
+def test_voiding_the_answer_that_seeded_a_propagated_neighbour_replays_from_its_score(monkeypatch):
+    """The voided correct answer on n-b propagated to n-a (stored 60%) and
+    journaled n-a's seed on ITS row; a later valid answer on n-b propagates
+    to n-a again. The replay starts n-a from 60%, as a history without the
+    voided answer does."""
+    ops = [
+        (3600.0, None, [_check("n-b", "q-broken")]),
+        (86_400.0, None, [_check("n-b", "q-ok")]),
+    ]
+    scores = {"n-a": 0.6, "n-b": 0.4}
+    db, _ = run(monkeypatch, ops, scores=scores)
+    assert db.journal[0]["seeds"] == {"n-b": 0.4, "n-a": 0.6}
+    db.retire(COURSE, "q-broken")
+    _void(qh="q-broken")
+    expected, _ = run(monkeypatch, ops, skip=lambda ev: ev["question_hash"] == "q-broken",
+                      scores=scores)
+    _assert_as_without(db, expected, ["n-a", "n-b"])
+
+
+def test_a_never_studied_concept_still_starts_at_the_prior(monkeypatch):
+    from learning import bkt
+
+    ops = [
+        (3600.0, None, [_check("n-c", "q-broken", correct=False)]),
+        (86_400.0, None, [_check("n-c", "q-ok")]),
+    ]
+    db, _ = run(monkeypatch, ops)
+    assert db.journal[0]["seeds"] == {"n-c": 0.0}
+    assert db.journal[0]["p_before"] == BKT_L0
+    db.retire(COURSE, "q-broken")
+    _void(qh="q-broken")
+    expected, _ = run(monkeypatch, ops, skip=lambda ev: ev["question_hash"] == "q-broken")
+    _assert_as_without(db, expected, ["n-c"])
+    assert expected.journal[0]["p_before"] == BKT_L0
+    assert db.state(USER, "n-c")["p_known"] == bkt.update(BKT_L0, "free_response", True)
+
+
+def test_a_void_of_the_only_answer_puts_a_stored_score_back(monkeypatch):
+    """No non-void row reaches n-a any more: it is back at its starting state
+    and its 82% is back on the map, so the next answer starts from 82% as it
+    would have with the voided answer never given."""
+    from services.graph_service import apply_graph_update
+
+    ops = [(3600.0, None, [_check("n-a", "q-broken", correct=False)])]
+    db, _ = run(monkeypatch, ops, scores={"n-a": 0.82})
+    db.retire(COURSE, "q-broken")
+    _void(qh="q-broken")
+    assert {k: db.state(USER, "n-a")[k] for k in PRIOR} == _start("n-a", 0.82)
+    assert db.nodes["n-a"]["mastery_score"] == 0.82
+    assert db.nodes["n-a"]["mastery_tier"] == tier_for_stored(0.82)
+    apply_graph_update(USER, {"evidence": [_check("n-a", "q-next", channel="mc")]}, COURSE)
+    assert db.journal[-1]["p_before"] == 0.82
+
+
+def test_a_void_of_the_only_answer_puts_a_never_studied_concept_back_off_the_map(monkeypatch):
+    """K22 on the void path: n-c and its prerequisite n-b were never studied
+    (map score 0). The only answer, a correct one on n-c, is voided: both are
+    back at 0, 'unexplored', and n-c's state is its starting state, as if the
+    answer had never been given."""
+    ops = [(3600.0, None, [_check("n-c", "q-broken", correct=True)])]
+    db, _ = run(monkeypatch, ops)
+    assert db.journal[0]["seeds"] == {"n-c": 0.0, "n-b": 0.0}
+    assert db.nodes["n-c"]["mastery_score"] > 0.0  # the answer put it on the map
+    db.retire(COURSE, "q-broken")
+    _void(qh="q-broken")
+    assert {k: db.state(USER, "n-c")[k] for k in PRIOR} == _start("n-c", 0.0)
+    for node in ("n-c", "n-b"):
+        assert db.nodes[node]["mastery_score"] == 0.0, node
+        assert db.nodes[node]["mastery_tier"] == "unexplored", node
+
+
+def test_the_writer_journals_each_starting_score_once(monkeypatch):
+    """The first row to reach a node with no learner_state row carries its
+    score (0 for a never-studied concept), own node or propagated neighbour;
+    no later row repeats it."""
+    ops = [
+        (60.0, None, [_check("n-b", "q1"), _check("n-a", "q2"), _check("n-c", "q3", correct=False)]),
+        (60.0, None, [_check("n-b", "q4")]),
+    ]
+    db, _ = run(monkeypatch, ops, scores={"n-a": 0.82, "n-b": 1.0})
+    assert [r["seeds"] for r in db.journal] == [
+        {"n-b": 1.0, "n-a": 0.82}, None, {"n-c": 0.0}, None,
+    ]
+
+
+def test_a_journaled_seed_the_replay_cannot_read_fails_closed():
+    from learning.evidence_replay import ReplayError, journaled_seeds
+
+    assert journaled_seeds([{"seeds": None}, {"seeds": {"n": 0.5}}, {"seeds": {"n": 0.9}}]) == {"n": 0.5}
+    for broken in ("n", ["n"], {"": 0.5}, {"n": 1.5}, {"n": -0.1}, {"n": "0.5"}, {"n": True}):
+        with pytest.raises(ReplayError):
+            journaled_seeds([{"seeds": broken}])
 
 
 def test_voiding_a_correct_answer_takes_back_its_propagation(monkeypatch):

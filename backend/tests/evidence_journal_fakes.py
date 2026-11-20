@@ -1,6 +1,7 @@
 """An in-memory learning store behind the single graph writer's RPCs (spec §13
 A123 tests): the evidence snapshot/commit/receipt and the void
-pending/snapshot/commit, emulating migration 20261108072715's SQL — ownership,
+pending/snapshot/commit, emulating migration 20261108072715's SQL (and the
+journaled `seeds` of 20261120070405_learning_evidence_seeds.sql) — ownership,
 graph and learner_state versions bumped on every write, the topology compare,
 the staff-retire refusal under the item's lock, the void row-set checks, writes
 only where a value differs, misconception closure.
@@ -243,7 +244,7 @@ class LearningJournalDB:
             self._write_mirror(user, m)
         for e in plan["events"]:
             row = {k: deepcopy(v) for k, v in e.items()}
-            for key in ("retention", "same_session_recheck", "propagated_to", "planning_observation"):
+            for key in ("retention", "same_session_recheck", "propagated_to", "planning_observation", "seeds"):
                 row.setdefault(key, None)
             self.journal.append(row)
         receipt = {
@@ -286,7 +287,7 @@ class LearningJournalDB:
                 **{k: deepcopy(r.get(k)) for k in (
                     "id", "node_id", "created_at", "evidence_seq", "channel", "correct", "weight",
                     "assisted", "max_rung", "reason", "confidence", "session_id", "question_hash",
-                    "check_item_id", "same_session_recheck", "retention", "propagated_to")},
+                    "check_item_id", "same_session_recheck", "retention", "propagated_to", "seeds")},
                 "planning_recheck": obs.get("same_session_recheck") if isinstance(obs, dict) else None,
                 "void": r["id"] in self.voids,
             })

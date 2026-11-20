@@ -481,7 +481,7 @@ def run_learn_loop(args: argparse.Namespace) -> tuple[list[Finding], int]:
     ]
     states = []
     for r in conn.execute(
-        "SELECT user_id, node_id, p_known, fsrs_s, last_evidence_at, updated_at FROM learner_state"
+        "SELECT user_id, node_id, p_known, opps, fsrs_s, last_evidence_at, updated_at FROM learner_state"
     ).fetchall():
         # The belief at the row's last write (learner_state.read_states at
         # updated_at): what apply_graph_update wrote into the mirror.
@@ -493,6 +493,7 @@ def run_learn_loop(args: argparse.Namespace) -> tuple[list[Finding], int]:
                 "user_id": r["user_id"],
                 "node_id": r["node_id"],
                 "p_known": decayed_p(float(r["p_known"]), days, fsrs_s),
+                "opps": r.get("opps"),
             }
         )
     leaks = conn.execute(

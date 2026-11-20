@@ -46,6 +46,15 @@ def _learner_state(user_id: str, node_id: str | None) -> LearnerState | None:
     return read_states(user_id, [node_id]).get(node_id)
 
 
+def _measured(state: LearnerState | None) -> bool:
+    """Whether the student's belief on a concept is a measurement: an answer
+    on the concept itself was graded (opps > 0). A row that only propagation
+    from a neighbour wrote (spec §13 A150, #866 K22) holds a belief the policy
+    reads, but nothing the student did on this concept, so the meter never
+    shows it as their skill (#866 K52)."""
+    return state is not None and state.opps > 0
+
+
 def _band_of(state: LearnerState | None) -> tuple[str, float]:
     p = state.p_known if state is not None else BKT_L0
     return bkt_band(p), p

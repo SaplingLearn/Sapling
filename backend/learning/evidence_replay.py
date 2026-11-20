@@ -27,6 +27,14 @@ writer but the review used it); the propagation along the course's CURRENT
 prerequisite edges (the edges of its own time are not journaled). A row the
 replay cannot read faithfully raises ReplayError: a void then fails closed.
 
+§13 A150: a node with no learner_state row starts from its stored map score
+(learner_state.unmeasured_state), and the first row that reaches such a node
+journals that score (`seeds`). The replay starts every node from its journaled
+score — read from every row, void ones included (`journaled_seeds`) — so a
+void of the answer that first reached a node still starts the node where the
+writer did. A node no row ever seeded (journaled before A150) starts at the
+prior, as the writer then started it.
+
 No database, no model: data and arithmetic only.
 """
 
@@ -38,7 +46,7 @@ from datetime import datetime, timedelta
 
 from learning import bkt, fsrs
 from learning.evidence import Evidence, evidence_weight, is_strong_channel
-from learning.learner_state import LearnerState, _from_row, _parse_ts, state_row
+from learning.learner_state import LearnerState, _from_row, _parse_ts, state_row, unmeasured_state
 from learning.params import (
     BKT_L0,
     CHANNELS,
@@ -209,6 +217,17 @@ def propagate(
     return p_stored
 
 
+def propagated_mirror(shown: float, p_known: float) -> float:
+    """The map score (graph_nodes.mastery_score) a propagated observation
+    leaves on its target, given the score the map `shown` before it (#866 audit
+    K22). A concept the map shows as never studied (0, "unexplored") keeps 0:
+    propagation moves its belief (learner_state, the planner's prerequisite
+    inference), never what every screen reads as "studied" — a concept the
+    student never opened is neither "learning" nor "slipping". Its own first
+    answer puts it on the map. Any other target shows its new belief."""
+    return p_known if shown > 0.0 else 0.0
+
+
 # ── reading the journal ────────────────────────────────────────────────────
 
 
@@ -316,6 +335,30 @@ def observation(row: Mapping) -> Observation:
     )
 
 
+def journaled_seeds(rows: Iterable[Mapping]) -> dict[str, float]:
+    """Spec §13 A150: node id → the stored score the writer started the node
+    from, from the journal rows' `seeds` (in the journal's order; the earliest
+    wins). Every row counts, void ones included: the score is what the node
+    held before its first evidence, not part of the answer that carried it, so
+    a void of that answer leaves it the node's starting score. A seed that is
+    not a node id → a number in [0, 1] raises ReplayError (fail closed)."""
+    out: dict[str, float] = {}
+    for row in rows:
+        raw = row.get("seeds")
+        if raw is None:
+            continue
+        if not isinstance(raw, Mapping):
+            raise ReplayError("journal seeds unreadable")
+        for node_id, score in raw.items():
+            if not isinstance(node_id, str) or not node_id:
+                raise ReplayError("journal seeds unreadable")
+            value = _number(score)
+            if not 0.0 <= value <= 1.0:
+                raise ReplayError("journal seed out of range")
+            out.setdefault(node_id, value)
+    return out
+
+
 def operations(observations: Sequence[Observation]) -> list[list[Observation]]:
     """The journal in total order, cut into the writer's operations: one call
     journals its rows at one `now` (A36), so consecutive rows sharing a time
@@ -379,16 +422,25 @@ def replay(
     user_id: str,
     edges: Sequence[Mapping],
     owned,
+    seeds: Mapping[str, float] | None = None,
 ) -> Replayed:
     """Fold the observations (the journal's total order; void rows left out by
     the caller) through `observe` / `propagate` exactly as the writer did: each
     operation reads every state it touches at its own `now` from the row the
     previous operation stored (decay at read), keeps it in memory for the
-    rest of the operation, and stores it back. A row's propagation follows its
-    journaled `propagated_to`, else `edges` (the course's prerequisite edges);
-    nodes outside `owned` (gone since) are never touched. Pure."""
+    rest of the operation, and stores it back. A node with no stored row yet
+    starts from its `seeds` score (A150; `journaled_seeds`), else the prior. A
+    row's propagation follows its journaled `propagated_to`, else `edges` (the
+    course's prerequisite edges); nodes outside `owned` (gone since) are never
+    touched. Pure."""
     owned = frozenset(owned)
+    seeds = seeds or {}
     stored: dict[str, dict] = {}
+    # The map score each node shows (K22: a propagation leaves a never-studied
+    # node's at 0); None — a node no row seeded, journaled before A150 — is a
+    # score the replay cannot know, and its propagation moves the map, as the
+    # writer then did.
+    shown: dict[str, float | None] = {}
     mirrors: dict[str, float] = {}
     touched: dict[str, datetime] = {}
     trace: dict[str, tuple[float, float]] = {}
@@ -400,7 +452,11 @@ def replay(
             st = working.get(node_id)
             if st is None:
                 row = stored.get(node_id)
-                st = _from_row(row, now) if row is not None else LearnerState(user_id=user_id, node_id=node_id)
+                if row is not None:
+                    st = _from_row(row, now)
+                else:
+                    st = unmeasured_state(user_id, node_id, seeds.get(node_id, 0.0))
+                    shown[node_id] = seeds.get(node_id)
                 working[node_id] = st
             return st
 
@@ -414,7 +470,7 @@ def replay(
                 retention=ob.retention,
             )
             stored[ob.node_id] = state_row(st, now)
-            mirrors[ob.node_id] = st.p_known
+            mirrors[ob.node_id] = shown[ob.node_id] = st.p_known
             touched[ob.node_id] = now
             for target_id, channel, target_correct, target_weight in _targets(ob, edges, owned):
                 tst = load(target_id)
@@ -423,6 +479,9 @@ def replay(
                     source_weight=ob.weight, now=now,
                 )
                 stored[target_id] = state_row(replace(tst, p_known=p_stored), now)
-                mirrors[target_id] = tst.p_known
+                before = shown.get(target_id)
+                mirrors[target_id] = shown[target_id] = (
+                    tst.p_known if before is None else propagated_mirror(before, tst.p_known)
+                )
                 touched[target_id] = now
     return Replayed(state_rows=stored, mirrors=mirrors, touched_at=touched, trace=trace)

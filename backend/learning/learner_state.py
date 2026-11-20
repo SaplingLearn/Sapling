@@ -21,7 +21,7 @@ from datetime import datetime, timedelta, timezone
 from db.connection import page_all, table
 from db.scope import runs_as_service
 from learning import bkt
-from learning.params import BKT_L0
+from learning.params import BKT_L0, BKT_P_MAX
 
 LEARNER_STATE_COLUMNS = (
     "user_id,node_id,p_known,n_strong_unassisted,streak_unassisted,"
@@ -59,6 +59,19 @@ class LearnerState:
     exists: bool = False
     # Populated by the transactional snapshot, not inferred from updated_at.
     evidence_version: int = 0
+
+
+def unmeasured_state(user_id: str, node_id: str, stored_score: float) -> LearnerState:
+    """The state evidence starts from on a concept with no learner_state row
+    (spec §13 A150, #866 K03): a stored map score above 0 (`bkt.stored_score`
+    of `graph_nodes.mastery_score`) is the starting belief, clamped to
+    BKT_P_MAX; a never-studied concept (score 0) starts at the prior BKT_L0.
+    No decay anchor, no counters. The single writer starts a node from it and
+    journals the score (`node_mastery_events.seeds`); the A123 replay starts
+    the node from the journaled score through this same function."""
+    if stored_score <= 0.0:
+        return LearnerState(user_id=user_id, node_id=node_id)
+    return LearnerState(user_id=user_id, node_id=node_id, p_known=min(BKT_P_MAX, stored_score))
 
 
 def _aware(ts: datetime) -> datetime:

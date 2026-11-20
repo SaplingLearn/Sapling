@@ -106,6 +106,29 @@ REGISTRY: dict[tuple[str, int], dict[str, Change]] = {
                 "ev.multi_concept,",
             )
         ),
+        # A150: a node's starting score, admitted, checked, journaled
+        "20261120070405_learning_evidence_seeds.sql": Change(
+            requires=(
+                "'student_confidence',\n                'seeds',",
+                "jsonb_typeof(x->'seeds') NOT IN ('object','null')",
+                "EXISTS(SELECT 1 FROM learner_state l WHERE l.user_id=p_user_id AND l.node_id=t.key)",
+                "ev.seeds,",
+            )
+        ),
+    },
+    ("learning_evidence_void_snapshot", 3): {
+        # A123: the course's journal with each row's replay inputs and void flag
+        "20261108072715_learning_evidence_void.sql": Change(
+            requires=(
+                "'propagated_to',e.propagated_to",
+                "'void',(v.event_id IS NOT NULL)",
+                "'planning_recheck',e.planning_observation->'same_session_recheck'",
+            )
+        ),
+        # A150: each row's journaled starting scores
+        "20261120070405_learning_evidence_seeds.sql": Change(
+            requires=("'seeds',e.seeds", "SET extra_float_digits=3")
+        ),
     },
     ("check_item_report", 6): {
         # A113 — its signature, kept for a backend deployed before A123. Its

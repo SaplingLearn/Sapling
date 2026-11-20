@@ -1412,6 +1412,9 @@ test("phone learner can check in, answer a check and reach wrap-up without horiz
   await expect(phase).toHaveAttribute("data-phase", "feedback");
   await expect(page.getByTestId("loop-messages")).toContainText(LOOP_FEEDBACK_BODY);
   expect(await phase.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+  // Wrap up waits for the feedback turn's stream to end (the server saves the turn
+  // before `done`); a close inside that window lost the turn to a 409 (logscan)
+  await expect(page.getByTestId("loop-close-button")).toBeEnabled();
   await page.getByTestId("loop-close-button").click();
   await expect(page.getByTestId("loop-close-done")).toBeVisible();
   await expect(page.getByTestId("loop-close-study-link")).toHaveAttribute("href", "/study");
@@ -1592,11 +1595,16 @@ test("an answer waits for an earned hint in flight, and a graded check shows no 
     const delivered = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/learn/loop/action");
     release();
     await (await delivered).finished();
+    // The hint lands on the check it was earned for, while that check is open.
+    await expect(page.getByTestId("loop-check-prompt")).toBeVisible();
+    await expect(page.getByTestId("loop-hint-reply")).toBeVisible();
     await expect(page.getByTestId("loop-attempt-idk")).toBeEnabled();
     await page.getByTestId("loop-attempt-idk").click();
     await expect(page.getByTestId("loop-phase")).toHaveAttribute("data-phase", "feedback");
     await expect(page.getByTestId("loop-continue")).toBeVisible();
+    // The graded check is closed for good: neither it nor its hint comes back.
     await expect(page.getByTestId("loop-check-prompt")).toHaveCount(0);
+    await expect(page.getByTestId("loop-hint-reply")).toHaveCount(0);
   } finally {
     release();
     await context.close();

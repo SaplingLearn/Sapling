@@ -62,6 +62,9 @@ REQUIRED_COLUMNS = {
         # spec §13 A141: the row a multi-concept item graded says so (the item
         # statistics read it; learning_evidence_commit refuses the key without it)
         "multi_concept": "boolean",
+        # spec §13 A150: the stored scores the row started nodes from (the
+        # void replay reads them; learning_evidence_commit refuses the key without it)
+        "seeds": "jsonb",
     },
     # spec §13 A123: the append-only void record, the quarantine, misconception support
     "learning_evidence_voids": {

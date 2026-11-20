@@ -19,10 +19,10 @@ without a validated cut-point" (a candidate for an A/B test, not a research
 finding); "reopen" means the row changed a package that was already built;
 "owner decision" means the product owner decided it, not a reviewer.
 
-**Numbering.** Rows run from A1 to A149. **A56–A59 and A64–A69 were never
+**Numbering.** Rows run from A1 to A152. **A56–A59 and A64–A69 were never
 assigned** (packages built in parallel reserved number ranges; nothing in the
 repository cites those numbers; since A142 the spec's table says so where
-they would be). There are 139 rows, all indexed below. A143–A147 are one
+they would be). There are 142 rows, all indexed below. A143–A147 are one
 package, the quiz in the learning system (five flags, all off by default).
 
 **Status markers.** Most rows are in force. These are not, or not wholly:
@@ -62,7 +62,7 @@ files, which the row lists. A dash means the row has no code of its own.
 
 ## By theme
 
-### Evidence and the learner model (16)
+### Evidence and the learner model (17)
 
 | A | Area | Change | Main code |
 |---|---|---|---|
@@ -82,6 +82,7 @@ files, which the row lists. A dash means the row has no code of its own.
 | A132 | quiz | The quiz states a confidence, and a flawed quiz item is no evidence | `backend/learning/quiz_evidence.py::evidence_exclusion` |
 | A144 | quiz | The learner model chooses each quiz question's difficulty and misconception target; the model only writes it, behind `quiz_planned_questions` | `backend/learning/quiz_plan.py::question_specs` |
 | A146 | quiz | The quiz records a "Sure" wrong answer's tagged misconception and resolves one (A127), behind `quiz_misconceptions` | `backend/services/quiz_learning.py::misconceptions_after_submit` |
+| A150 | starting belief | A stored score is a concept's starting belief (supersedes HANDOFF-03), journaled so the void replay starts there too; a never-studied concept stays off the map when propagation reaches it | `backend/learning/learner_state.py::unmeasured_state` |
 
 ### Measurement and evaluation (16)
 
@@ -126,7 +127,7 @@ files, which the row lists. A dash means the row has no code of its own.
 | A141 | multi-concept | Multi-concept items, gated on proficiency in every component, one half-weight observation on the apex, behind the `multi_concept_items` flag | `backend/learning/multi_concept.py::gate_open` |
 | A145 | quiz gates | Quiz questions pass A119's concept check and A124's blind solve (on `quiz_check`, another model) before they can be evidence; a disputed one is never served, behind `quiz_item_gates` | `backend/learning/quiz_gates.py::decide` |
 
-### Teaching policy (31)
+### Teaching policy (32)
 
 | A | Area | Change | Main code |
 |---|---|---|---|
@@ -161,8 +162,9 @@ files, which the row lists. A dash means the row has no code of its own.
 | A139 | self-explanation | At a code-decided juncture the turn's question becomes "why does this follow?"; the reply is stored for diagnosis only, behind the `self_explanation_prompts` flag | `backend/learning/self_explain.py::juncture` |
 | A143 | quiz plan | The quiz home proposes concepts from the learner model (FSRS-due first, then open misconceptions, then the ready fringe), behind `quiz_concept_plan` | `backend/learning/quiz_plan.py::rank_concepts` |
 | A147 | quiz results | The quiz results show each skill meter that moved, what is due and the next step (review, or Learn), behind `quiz_results_routing` | `backend/services/quiz_learning.py::results_block` |
+| A152 | guide ask | A study guide's Ask opens a `guide_ask` session that teaches from the first turn (extends A99) | `backend/services/guide_ask.py::guide_ask_state` |
 
-### Safety and integrity (20)
+### Safety and integrity (21)
 
 | A | Area | Change | Main code |
 |---|---|---|---|
@@ -186,6 +188,7 @@ files, which the row lists. A dash means the row has no code of its own.
 | A104 | privacy | The Jev privacy gate is an allowlist of environments | `backend/agents/_jev.py::privacy_gate_open` |
 | A105 | reveals | The served scan: a word-token window, a whole final pass, fail-closed errors | `backend/learning/served_scan.py::ScanSet` |
 | A125 | outside surfaces | AI surfaces outside the loop never see a posed item and never state its key | `backend/services/integrity_guard.py::open_guard` |
+| A151 | help ledger | Help asked after a locked quiz answer does not floor that answer (amends A99) | `backend/services/quiz/submission.py::_help_floor` |
 
 ### Cost and model routing (16)
 
@@ -208,7 +211,7 @@ files, which the row lists. A dash means the row has no code of its own.
 | A111 | providers | The loop slots are Claude-ready; their defaults stay on Gemini until a live Claude eval passes | `backend/agents/_providers.py::LOOP_SLOTS_PENDING_CLAUDE_EVAL` |
 | A137 | cost | Cost readiness for the Claude move, and the loop's cost per learning gain | `backend/learning/cost_per_gain.py::cost_per_gain` |
 
-### Operations and process (22)
+### Operations and process (23)
 
 | A | Area | Change | Main code |
 |---|---|---|---|
@@ -379,6 +382,9 @@ files, which the row lists. A dash means the row has no code of its own.
 | A147 | Teaching policy | quiz results | The quiz results route into the learning system, behind `quiz_results_routing` |
 | A148 | Operations and process | main sync | The loop on main's hardening architecture (RLS posture, service scope, job queue, LLM budget, resilience) |
 | A149 | Operations and process | main port | The learning system on main's Phase 3/4 layout (async + stateless API, domain packages, import contracts) |
+| A150 | Evidence and the learner model | starting belief | A stored score is the starting belief, journaled for the void replay; a never-studied concept stays off the map |
+| A151 | Safety and integrity | help ledger | Help asked after a locked quiz answer does not floor that answer (amends A99) |
+| A152 | Teaching policy | guide ask | A study guide's Ask teaches from the first turn through `guide_ask` (extends A99) |
 
 ## Where the spec and the code disagree
 
@@ -414,31 +420,16 @@ not make on its own; what the code does meanwhile is stated with each:
    rule beside A13's retention target, or neither; that amendment updates the
    test.
 
-### Owner decisions from the #866 review (2026-11-19), to record in §13
+### Owner decisions from the #866 review (2026-11-19)
 
-Two changes to rules the spec states, decided by the owner during the #866
-integration. They are in the code and its tests; the spec rows still read
-the old way until they are recorded as amendments:
+The three changes the owner decided during the #866 integration are recorded
+in §13:
 
-- **A stored score is the starting belief (supersedes HANDOFF-03).** A
-  concept with no `learner_state` row starts BKT from its stored
-  `graph_nodes.mastery_score` when that is above 0, clamped to `BKT_P_MAX`;
-  a never-studied concept (score 0) keeps `BKT_L0`. Propagated neighbours
-  are seeded the same way. Known gap: the A123 void replay still starts such
-  a node from the prior, because the seed is not journaled
-  (`backend/services/graph_service.py::_unmeasured_state`; the tests in
-  `backend/tests/test_learning_evidence_apply.py` named `*stored_mastery*`).
-- **Help asked after a locked answer does not floor it (amends A99).**
-  "Ask about this" opens only on an answer already recorded, so the quiz's
-  help floor applies only to help recorded before the answer; the help row
-  still floors any later answer to the same question
-  (`backend/services/quiz/submission.py::_help_floor`, its `answered_at`
-  cutoffs; the E2E `expectAskedAnswerKeepsItsCredit`).
-- **A study guide's Ask teaches from the first turn (extends A99).** The
-  guide's rail question box and concept-map Ask open a `guide_ask` session:
-  `teach` on the asked concept when the student has it in the course, else an
-  open teaching session with no planned concept (the empty plan's shape); no
-  check-in, no segment prequestion, no open question on the greeting, and no
-  help row (a guide Ask is about no one graded question; the served-text scan
-  still records any check-item answer the tutor reveals)
-  (`backend/services/guide_ask.py`, `backend/tests/test_guide_ask_session.py`).
+- **A150**: a stored score is the starting belief (supersedes HANDOFF-03).
+  The seed is journaled (`node_mastery_events.seeds`), so the A123 void
+  replay starts a concept from it too; a never-studied concept stays off the
+  map when propagation reaches it (#866 K22).
+- **A151**: help asked after a locked quiz answer does not floor that answer
+  (amends A99).
+- **A152**: a study guide's Ask teaches from the first turn through a
+  `guide_ask` session (extends A99).
