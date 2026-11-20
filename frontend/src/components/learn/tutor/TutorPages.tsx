@@ -3,29 +3,35 @@ import React, { useLayoutEffect, useRef } from "react";
 import Link from "next/link";
 import type { EnrolledCourse } from "@/lib/api";
 import type { GraphNode } from "@/lib/data";
+import { MASTERY_PALETTE, TIER_LABEL, tierFor, type MasteryTier } from "@/lib/graph/nodeStyle";
 import { Icon } from "../../Icon";
 import { ChevRight } from "./TutorIcons";
 import { courseColor, sessionTitle, shortWhen, type TutorSessionRow } from "./sessions";
 import { ManagedSessionRow } from "./ManagedSessionRow";
 import styles from "./tutor.module.css";
 
-/** Mastery as the map colours it: mastered / in progress / needs work / not started. */
+/** The mastery tier a meter shows (#866 K21): the map's own tiers (`tierFor`, the
+ *  backend's cuts), so a meter, the map and its key never disagree. No score
+ *  reads as unexplored. */
+export function meterTier(score: number | null | undefined): MasteryTier {
+  return score == null ? "unexplored" : tierFor(score);
+}
+
+/** Mastery as the map colours it: its tier's colour from the map's palette. */
 export function masteryTone(score: number | null | undefined): string {
-  if (score == null) return "var(--state-neutral)";
-  if (score >= 0.75) return "var(--state-mastery)";
-  if (score >= 0.45) return "var(--state-progress)";
-  return "var(--state-struggle)";
+  return MASTERY_PALETTE[meterTier(score)];
 }
 
 export function Meter({ label, score, testId }: { label: string; score: number | null; testId?: string }) {
   const pct = score == null ? 0 : Math.round(Math.max(0, Math.min(1, score)) * 100);
   return (
-    <div className={styles.meter} data-testid={testId}>
+    <div className={styles.meter} data-testid={testId} data-tier={meterTier(score)}>
       <span title={label}>{label}</span>
       <span
         className={styles.bar}
         role="meter"
         aria-label={`${label} skill`}
+        aria-valuetext={`${score == null ? "No score" : `${pct}%`}, ${TIER_LABEL[meterTier(score)]}`}
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={pct}
