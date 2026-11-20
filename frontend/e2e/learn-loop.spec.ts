@@ -367,6 +367,11 @@ test("loop user completes probe → plan → check (explicit submission) with a 
   expect(graded.refused).toBe(false);
   expect(graded.phase).toBe("feedback");
   await expect(phase).toHaveAttribute("data-phase", "feedback");
+  // #866 K07: a correct answer after the worked example earns nothing (weight 0,
+  // asserted on the journal below) — the verdict never says it counted
+  const verdictBanner = page.getByTestId("loop-verdict");
+  await expect(verdictBanner).toHaveAttribute("data-credit", "none");
+  await expect(verdictBanner).not.toContainText("That answer counts toward this concept.");
   await expect(page.getByTestId("loop-messages")).toContainText(LOOP_FEEDBACK_BODY);
   await expect(page.getByTestId("loop-messages")).toContainText(LOOP_FEEDBACK_QUESTION);
   await expect(page.getByTestId("tutor-stop")).toHaveCount(0);
