@@ -495,6 +495,8 @@ A123_VOID = BACKEND / "db" / "migrations" / "20261108072715_learning_evidence_vo
 #: Spec §13 A141's review: the LAST definition of learning_evidence_commit, the
 #: reconcile's with the journal's multi_concept key.
 A141_REVIEW = BACKEND / "db" / "migrations" / "20261108205812_learning_varied_practice_review.sql"
+#: Spec §13 A150: the LAST definition, A141's review's with the journal's seeds key.
+A150_SEEDS = BACKEND / "db" / "migrations" / "20261120070405_learning_evidence_seeds.sql"
 
 
 def _commit_body(text: str) -> str:
@@ -507,9 +509,10 @@ def test_the_function_the_database_runs_is_a123s_plus_the_new_key():
     pre-A123 body (20261019141950) plus the key, which, applied after A123's,
     dropped A123's item lock and retired refusal. The reconcile's definition,
     with A127's three edits taken out, is byte-identical to A123's. The
-    function the database runs is A141's review's (20261108205812): with its
-    three edits taken out (the multi_concept key admitted, checked and
-    inserted), it is byte-identical to the reconcile's, and no later
+    function A141's review re-created (20261108205812), with its three edits
+    taken out (the multi_concept key admitted, checked and inserted), is
+    byte-identical to the reconcile's; the one the database runs is A150's
+    (20261120070405), A141's review's plus the seeds key, and no later
     migration re-creates it."""
     new = _commit_body(RECONCILE.read_text())
     new = new.replace(
@@ -546,13 +549,35 @@ def test_the_function_the_database_runs_is_a123s_plus_the_new_key():
         assert review.count(edited) == 1, edited
         review = review.replace(edited, original)
     assert review == _commit_body(RECONCILE.read_text())
+    # Spec §13 A150 re-creates it once more: with its three edits taken out
+    # (the seeds key admitted, checked and inserted), it is A141's review's.
+    seeds = _commit_body(A150_SEEDS.read_text())
+    for edited, original in (
+        (
+            "                'student_confidence',\n                'seeds',\n                'multi_concept'))",
+            "                'student_confidence',\n                'multi_concept'))",
+        ),
+        (
+            "           OR (x ? 'multi_concept' AND jsonb_typeof(x->'multi_concept') NOT IN ('boolean','null'))\n"
+            + seeds[seeds.index("           -- spec §13 A150: the starting scores") : seeds.index(") THEN\n            RAISE EXCEPTION 'Invalid transaction evidence'")]
+            + ") THEN",
+            "           OR (x ? 'multi_concept' AND jsonb_typeof(x->'multi_concept') NOT IN ('boolean','null')) THEN",
+        ),
+        ("            multi_concept,\n            seeds,\n", "            multi_concept,\n"),
+        ("            ev.multi_concept,\n            ev.seeds,\n", "            ev.multi_concept,\n"),
+    ):
+        assert seeds.count(edited) == 1, edited
+        seeds = seeds.replace(edited, original)
+    assert seeds == _commit_body(A141_REVIEW.read_text())
     later = [
         p.name
         for p in sorted((BACKEND / "db" / "migrations").glob("*.sql"))
         if p.name > RECONCILE.name
         and "CREATE OR REPLACE FUNCTION learning_evidence_commit" in p.read_text()
     ]
-    assert later == [A141_REVIEW.name], "a later migration re-creates the function: re-pin it here"
+    assert later == [A141_REVIEW.name, A150_SEEDS.name], (
+        "a later migration re-creates the function: re-pin it here"
+    )
 
 
 # ── 4. the resolution rule ──────────────────────────────────────────────────
