@@ -394,7 +394,8 @@ def _plan_node_names(user_id: str, node_ids: list[str]) -> dict[str, str]:
 def _plan_position(doc: dict) -> tuple[list, object]:
     """Where the approved plan stands: its concepts (band repair may insert
     one, spec §13 A122) and its cursor. Reads only."""
-    plan = doc.get("plan") if isinstance(doc.get("plan"), dict) else {}
+    raw = doc.get("plan")
+    plan = raw if isinstance(raw, dict) else {}
     return list(plan.get("approved") or []), plan.get("cursor")
 
 
