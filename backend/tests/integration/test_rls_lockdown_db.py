@@ -402,6 +402,7 @@ BACKEND_RPCS = frozenset({
     "claim_tutor_session",  # services/tutor_sessions.py (loop close of a pending session), 20261118052843
     "encryption_aad_swap",           # db/backfill_encryption_aad.py (sec2 M13, 20261116162200)
     "encryption_aad_swap_nested",    # db/backfill_encryption_aad.py (PR #866 C6, 20261118195701)
+    "learning_prequestion_guess_reseal",  # db/backfill_encryption_aad.py APPEND_ONLY_SWAPS (PR #866 Z15, 20261120055827)
     "enqueue_job",                   # services/jobs.py (#116)
     "fail_job",                      # services/jobs.py (#116)
     "heartbeat_job",                 # services/jobs.py (#116, 20261108213623)
@@ -474,8 +475,11 @@ def _existing_roles(db_conn, names) -> list[str]:
 def _backend_rpc_call_sites() -> set[str]:
     """Function names the backend passes to `rpc(...)`, by source scan.
 
-    Literal first arguments, plus a module-level `NAME = "fn"` constant used as
-    the argument (routes/internal_metrics.py's METRICS_RPC)."""
+    Literal first arguments, a module-level `NAME = "fn"` constant used as
+    the argument (routes/internal_metrics.py's METRICS_RPC), and the string
+    values of a module-level dict a variable argument is looked up in
+    (`fn = TABLE.get(...)` / `fn = TABLE[...]`, then `rpc(fn, ...)`:
+    db/backfill_encryption_aad.py's APPEND_ONLY_SWAPS)."""
     names: set[str] = set()
     for path in _BACKEND.rglob("*.py"):
         rel = path.relative_to(_BACKEND).parts
@@ -489,6 +493,11 @@ def _backend_rpc_call_sites() -> set[str]:
             m = re.search(rf"^{const}\s*=\s*[\"'](\w+)[\"']", src, re.MULTILINE)
             if m:
                 names.add(m.group(1))
+        for var in set(re.findall(r"\brpc\(\s*([a-z_]\w*)\s*,", src)):
+            for const in re.findall(rf"\b{var}\s*=\s*(_?[A-Z][A-Z0-9_]*)\s*(?:\.get\(|\[)", src):
+                body = re.search(rf"^{const}\b[^=\n]*=\s*\{{(.*?)^\}}", src, re.MULTILINE | re.DOTALL)
+                if body:
+                    names.update(re.findall(r":\s*[\"'](\w+)[\"']", body.group(1)))
     return names
 
 
