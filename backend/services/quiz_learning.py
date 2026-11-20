@@ -900,8 +900,9 @@ def results_block(
             {
                 "concept_id": c.node_id,
                 "concept_name": names.get(c.node_id, ""),
-                "before": round(c.before, 4),
-                "after": round(c.after, 4),
+                # quiz_plan.shown_percent reads a change as the screen will
+                "before": round(c.before, quiz_plan.RESULTS_DECIMALS),
+                "after": round(c.after, quiz_plan.RESULTS_DECIMALS),
                 "band_before": c.band_before,
                 "band_after": c.band_after,
             }

@@ -88,6 +88,23 @@ export function missedEyebrow(
   return "Focused on what you missed";
 }
 
+/**
+ * The line under the concept's name: the mastery before and after, and the
+ * tier move. With the learner model's block on the screen (A147,
+ * `quiz_results_routing`) its skill-meter levels ("still proficient") are the
+ * screen's one word for a level, so the tier move — the same belief cut at
+ * other points ("learning" up to 95%) — stays off this line (#866 K42).
+ */
+export function masteryLine(
+  before: number,
+  after: number,
+  tiers: { before: string; after: string },
+  learnerBlock: boolean,
+): string {
+  const numbers = `${pct(before)}% → ${pct(after)}%`;
+  return learnerBlock ? numbers : `${numbers} · ${tiers.before} → ${tiers.after}`;
+}
+
 export function QuizResults({
   session,
   actions,
@@ -172,7 +189,7 @@ export function QuizResults({
 
       <h2 className="h-serif quiz-results__name">{concept.name}</h2>
       <p className="quiz-results__delta" data-testid="quiz-results-mastery">
-        {pct(before)}% → {pct(after)}% · {tierBefore} → {tierAfter}
+        {masteryLine(before, after, { before: tierBefore, after: tierAfter }, Boolean(result.learning))}
       </p>
 
       <div className="quiz-results__rule">

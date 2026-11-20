@@ -195,6 +195,26 @@ def test_skill_changes_list_what_moved_quizzed_concept_first():
     ]
 
 
+def test_a_change_that_reads_as_no_change_in_whole_percent_is_not_listed():
+    """#866 K42: half a point or more can still round to the same whole percent
+    on the screen (44.51% -> 45.49% is "45% -> 45%"); a listed change always
+    reads as one, rounded as the client rounds (half up, on the 4-decimal value
+    the response carries)."""
+    changes = quiz_plan.skill_changes(
+        {"same": 0.4451, "up": 0.4449, "half": 0.4449},
+        {"same": 0.4549, "up": 0.4551, "half": 0.4500},
+        ["same", "up", "half"],
+    )
+    assert [c.node_id for c in changes] == ["up", "half"]
+    for c in changes:
+        assert quiz_plan.shown_percent(c.before) != quiz_plan.shown_percent(c.after)
+    # Math.round(value * 100) on the 4-decimal value the client parses: .5 rounds
+    # up (0.44499 goes out as 0.445, so it reads 45%), below it down
+    assert [quiz_plan.shown_percent(p) for p in (0.445, 0.44499, 0.44494, 0.0, 1.0, 0.99996)] == [
+        45, 45, 44, 0, 100, 100,
+    ]
+
+
 def test_the_next_step_is_review_when_anything_is_due():
     states = [
         _state("due", 0.96, due=NOW - timedelta(hours=2), s=3.0, last=NOW - timedelta(days=3)),

@@ -222,6 +222,29 @@ describe("QuizResults", () => {
     );
   });
 
+  it("names a level on one scale: with the learner model's block, the mastery line drops the tier move (#866 K42)", () => {
+    // The block says "still proficient" from 80%; the tier map says "learning"
+    // up to 95%. One screen, one belief: the block's levels are the scale.
+    renderResults({
+      result: {
+        ...RESULT,
+        mastery_before: 0.82,
+        mastery_after: 0.88,
+        learning: {
+          changes: [
+            { concept_id: "recursion", concept_name: "Recursion", before: 0.82, after: 0.88, band_before: "profic", band_after: "profic" },
+          ],
+          review: { due_count: 0, next_due_at: null },
+          next_step: "none",
+          learn: null,
+        },
+      },
+    });
+    expect(screen.getByTestId("quiz-results-mastery")).toHaveTextContent(/^82% → 88%$/);
+    expect(screen.getByTestId("quiz-results-mastery")).not.toHaveTextContent(/learning|struggling|mastered/);
+    expect(screen.getByTestId("quiz-results-change")).toHaveTextContent("Recursion: rose from 82% to 88% (still proficient)");
+  });
+
   it("shows the score, the mastery delta and the XP line", () => {
     renderResults();
     expect(screen.getByTestId("quiz-results-score")).toHaveTextContent("2 of 3 correct");
