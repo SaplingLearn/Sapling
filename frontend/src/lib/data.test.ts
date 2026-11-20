@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { apiToGraphNode, hashSeed, learnHrefForNode, paletteFor } from "./data";
+import { apiToGraphNode, hashSeed, learnHrefForNode, noteTutorHref, paletteFor } from "./data";
 import type { GraphNode as ApiNode } from "./types";
 import type { EnrolledCourse } from "./api";
 import type { GraphNode } from "./data";
@@ -198,5 +198,18 @@ describe("hashSeed", () => {
     expect(h).toBe(2180301217);
     expect(paletteFor("overflow10")).toBeDefined();
     expect(paletteFor("overflow10")).toMatch(/^#[0-9a-f]{6}$/);
+  });
+});
+
+describe("noteTutorHref", () => {
+  it("names the note's linked concepts, so the loop's session is on them (#866 K05)", () => {
+    const params = new URLSearchParams(noteTutorHref({ topic: "Week 3", course_id: "c1" }, "n1", ["k1", "k2"]).split("?")[1]);
+    expect(params.get("concept")).toBe("k1,k2");
+    expect(params.get("note")).toBe("n1");
+    expect(params.get("course")).toBe("c1");
+  });
+
+  it("is main's link when the note has no linked concepts", () => {
+    expect(noteTutorHref({ topic: "Week 3", course_id: "c1" }, "n1", [])).toBe("/learn?topic=Week%203&course=c1&note=n1");
   });
 });

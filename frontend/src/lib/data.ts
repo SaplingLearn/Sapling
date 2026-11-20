@@ -91,6 +91,20 @@ export function learnHrefForNode(
   return `/learn?${p.toString()}`;
 }
 
+// Send to tutor's link (#866 K05): the note's title and course, the note itself
+// (`note`), and its linked concepts (`concept`, comma-joined node ids), so the
+// learning loop's session is on what the note is about; the legacy Learn
+// screen ignores `concept`.
+export function noteTutorHref(
+  res: { topic?: string; course_id?: string | null },
+  noteId: string,
+  conceptIds: string[],
+): string {
+  const href = `/learn?topic=${encodeURIComponent(res.topic ?? "")}&course=${encodeURIComponent(res.course_id ?? "")}`
+    + `&note=${encodeURIComponent(noteId)}`;
+  return conceptIds.length > 0 ? `${href}&concept=${encodeURIComponent(conceptIds.join(","))}` : href;
+}
+
 // Adapter from the backend `ApiNode` shape to the frontend `GraphNode`
 // shape consumed by `KnowledgeGraph`. Hoisted here from Tree/Learn/
 // Dashboard so the three screens share a single source of truth.

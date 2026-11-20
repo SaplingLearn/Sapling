@@ -77,10 +77,12 @@ export function weakestConcept(nodes: GraphNode[]): { id: string; name: string }
  *  the student's click on it — never a name matched to a concept. */
 export const conceptGoal = (id: string): LoopGoal => ({ text: "", target_node_ids: [id] });
 
-/** The goal a deep link asks for: its concept, when the link names the course
- *  on screen (the server still checks the concept is that course's). */
+/** The goal a deep link asks for: its concepts, when the link names the course
+ *  on screen (the server still checks they are that course's). `concept` is one
+ *  node id, or several joined by commas (Send to tutor's linked concepts). */
 export function linkGoal(link: { concept: string; course: string }, courseId: string | null): LoopGoal | undefined {
-  return link.concept && link.course && link.course === courseId ? conceptGoal(link.concept) : undefined;
+  const ids = [...new Set(link.concept.split(",").map((id) => id.trim()).filter(Boolean))];
+  return ids.length > 0 && link.course && link.course === courseId ? { text: "", target_node_ids: ids } : undefined;
 }
 
 /** A session the "New session" button should wrap up first: one the student is in. */

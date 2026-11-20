@@ -4,7 +4,8 @@ import { readResumeParam } from "./resumeParam";
 /** The Learn deep links (Dashboard, Tree, notetaker, quiz): read ONCE at mount,
  *  so a consumed `?resume=` never re-applies on a session or course switch.
  *  `note`: Send to tutor's note, whose title is `topic`. `concept` (#866 K05):
- *  the node id of the concept a "learn this" link is about (`topic` is its name). */
+ *  the node id of the concept a "learn this" link is about (`topic` is its name),
+ *  or Send to tutor's linked concepts, comma-joined. */
 export type DeepLink = { resume: string | null; topic: string; course: string; mode: string; suggest: string; note: string; concept: string };
 export const readDeepLink = (p: { get(name: string): string | null }): DeepLink => ({
   resume: readResumeParam(p),

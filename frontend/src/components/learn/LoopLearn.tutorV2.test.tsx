@@ -907,6 +907,14 @@ describe("K05 — a link or button about one concept starts a session on that co
     expect(api.startLoopSession).toHaveBeenCalledWith("u1", "c1", "Recursion", "socratic", onRecursion, null);
   });
 
+  it("Send to tutor's link (its note's linked concepts) starts a session on all of them", async () => {
+    search.params = new URLSearchParams("topic=Week%203&course=c1&note=note1&concept=n1%2Cn2");
+    api.listLoopSessionsFor.mockResolvedValue(listed([]));
+    render(<LoopLearn />);
+    await screen.findByTestId("loop-probe-item");
+    expect(api.startLoopSession).toHaveBeenCalledWith("u1", "c1", "Week 3", "", { text: "", target_node_ids: ["n1", "n2"] }, "note1");
+  });
+
   it("a link with no course to scope the concept to still starts on the whole course", async () => {
     search.params = new URLSearchParams("topic=Recursion&concept=n1");
     api.listLoopSessionsFor.mockResolvedValue(listed([]));
