@@ -422,6 +422,33 @@ describe("DueQueue launch polish (PKG-13; spec §11.3, §3.5)", () => {
     expect((await screen.findByTestId("review-budget-paused")).textContent).toContain("1 concept paused");
   });
 
+  it("concepts held by the monthly cap say so, with the reset's date — never 'daily' (#866 K18)", async () => {
+    const until = "2026-12-01T00:00:00+00:00";
+    mockNext.mockResolvedValue(next(CARD));
+    mockSummary.mockResolvedValue(summary({ paused: 2, paused_scope: "monthly_usd", paused_until: until }));
+    render(<DueQueue userId="u1" courseId="c1" />);
+    const banner = await screen.findByTestId("review-budget-paused");
+    expect(banner.textContent).toContain("2 concepts paused until");
+    expect(banner.textContent).toContain(new Date(until).toLocaleString(undefined, { month: "short", day: "numeric" }));
+    expect(banner.textContent).toContain("when your monthly AI budget resets");
+    expect(banner.textContent).not.toMatch(/daily/i);
+    expect(banner.getAttribute("data-reset-at")).toBe(until);
+  });
+
+  it("an answer's rate-limit 429 says to send it again shortly — not that the tutor is paused (#866 K18)", async () => {
+    mockNext.mockResolvedValue(next(FREE));
+    mockAnswer.mockRejectedValue(new ApiError("ai budget reached", 429, {
+      body: { detail: "ai budget reached", reset_at: "2026-09-27T00:01:00Z", scope: "rate_limit", session_capped: false },
+    }));
+    render(<DueQueue userId="u1" courseId="c1" />);
+    await userEvent.type(await screen.findByTestId("review-answer-input"), "the base case");
+    await userEvent.click(screen.getByTestId("review-submit"));
+    const banner = await screen.findByTestId("review-budget-paused");
+    expect(banner.textContent).toContain("Too many AI requests in the last minute");
+    expect(banner.textContent).not.toContain("AI tutor paused");
+    expect((screen.getByTestId("review-answer-input") as HTMLTextAreaElement).value).toBe("the base case");
+  });
+
   it("a failed summary is ignored (it only feeds the banner)", async () => {
     mockNext.mockResolvedValue(next(null));
     mockSummary.mockRejectedValue(new Error("boom"));

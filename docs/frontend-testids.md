@@ -962,7 +962,7 @@ loop active (`GET /api/learn/loop/review/active` 200 — a gate-only probe; the 
 | `review-due-panel` | the "Due today" panel root |
 | `review-budget` | chip: minutes left of today's review budget |
 | `review-empty` | "All caught up — nothing is due right now." (no item and nothing due; never shown beside a stale item; makes no "due later" claim — `/review/summary` counts today, as of its read) |
-| `review-budget-paused` | the budget pause banner (PKG-13, spec §3.5): a review call answered 429 `ai budget reached` ("AI tutor paused until <time>. Flashcards and review keep working.") or `/review/summary` reports `paused` > 0 novice concepts ("<n> concept(s) paused until your daily AI budget resets. …"); `role="status"`, `data-reset-at`, `data-session-capped` |
+| `review-budget-paused` | the budget pause banner (PKG-13, spec §3.5): a review call answered 429 `ai budget reached` (by its `scope`: the per-minute rate limit says "Too many AI requests in the last minute. Send this answer again at <time>.") or `/review/summary` reports `paused` > 0 novice concepts ("<n> concept(s) paused until <reset>, when your monthly AI budget resets. …" — the cap its `paused_scope` names, the reset `paused_until`, dated when a week or more away; #866 K18); `role="status"`, `data-reset-at`, `data-session-capped` |
 | `review-budget-spent` | no item while items are still due — today's review budget is spent (shows how many remain) |
 | `review-item` | the served item (a check's prompt, or a flashcard's front/back) |
 | `review-answer-input` | free-response answer textarea (a `free` check) |

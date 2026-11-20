@@ -2424,6 +2424,9 @@ def test_review_summary_counts_by_kind(client, monkeypatch):
     monkeypatch.setattr(review, "due_queue_with_stats", fake_queue)
     monkeypatch.setattr(review, "review_retention", lambda u, c: params.FSRS_RETENTION_LARGE_SET)
     setattr_loop(monkeypatch, "_pause_novice", lambda user_id: True)  # A20
+    reset = datetime(2026, 9, 27, tzinfo=timezone.utc)
+    monkeypatch.setattr("services.ai_budget.check", lambda user_id, kind, band=None, **kw: _hard(
+        "daily_usd", reset))
     with _loop(), patch.object(review, "load_or_create_review_session", side_effect=AssertionError):
         r = client.get(f"{REVIEW}/summary?user_id={USER}&course_id={COURSE}")
     assert r.status_code == 200, r.text
@@ -2433,10 +2436,56 @@ def test_review_summary_counts_by_kind(client, monkeypatch):
         "in_budget": 1,
         "unservable": 2,
         "paused": 1,
+        "paused_scope": "daily_usd",
+        "paused_until": reset.isoformat(),
         "budget_min": params.REVIEW_DAILY_BUDGET_MIN,
         "remaining_budget_s": params.REVIEW_DAILY_BUDGET_MIN * 60,
         "retention_target": params.FSRS_RETENTION_LARGE_SET,
     }
+
+
+def _hard(scope, reset):
+    """A tutor hard-level decision that holds novice concepts (spec §3.5, A20)."""
+    from services.ai_budget import BudgetDecision
+
+    return BudgetDecision(
+        level="hard", tier_ceiling="none", scope=scope, reset_at=reset, pause_novice=True
+    )
+
+
+@pytest.mark.parametrize(
+    "scope,reset",
+    [
+        ("monthly_usd", datetime(2026, 10, 1, tzinfo=timezone.utc)),
+        ("daily_tutor_calls", datetime(2026, 9, 27, tzinfo=timezone.utc)),
+    ],
+)
+def test_review_summary_names_the_cap_that_holds_paused_concepts(client, monkeypatch, scope, reset):
+    """#866 K18: the summary says which cap holds the paused novice concepts and
+    when it lifts. At the monthly cap that is the 1st of next month, weeks away,
+    never "when the daily budget resets"; with nothing paused, nothing is said
+    (and the budget is not read for it)."""
+    from learning import review
+
+    monkeypatch.setattr(
+        review, "peek_review_session", lambda u, c, now: {"sr": {}, "review": {"spent_s": 0}}
+    )
+    paused = {"n": 2}
+    monkeypatch.setattr(review, "due_queue_with_stats", lambda u, c, now, **kw: (
+        [], {"unservable": 0, "paused": paused["n"], "due": {"flashcard": 0, "check": 0}, "in_budget": 0}))
+    monkeypatch.setattr(review, "review_retention", lambda u, c: params.FSRS_RETENTION_DEFAULT)
+    reads = []
+    monkeypatch.setattr("services.ai_budget.check", lambda user_id, kind, band=None, **kw: (
+        reads.append((kind, band)) or _hard(scope, reset)))
+    with _loop():
+        body = client.get(f"{REVIEW}/summary?user_id={USER}").json()
+    assert (body["paused"], body["paused_scope"], body["paused_until"]) == (2, scope, reset.isoformat())
+    assert reads == [("tutor", "novice")]
+    paused["n"], reads[:] = 0, []
+    with _loop():
+        body = client.get(f"{REVIEW}/summary?user_id={USER}").json()
+    assert (body["paused"], body["paused_scope"], body["paused_until"]) == (0, None, None)
+    assert reads == []
 
 
 # ── Fix round: stable open item, course scope, the cheap probe, event honesty ──

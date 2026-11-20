@@ -50,16 +50,22 @@ export function BudgetPausedBanner({
   );
 }
 
-/** "3:00 PM" when the reset is today, "Tue 3:00 PM" when it is not. */
+/** Whole local calendar days from `now`'s date to `at`'s. */
+const daysAhead = (at: Date, now: Date) =>
+  Math.round(
+    (new Date(at.getFullYear(), at.getMonth(), at.getDate()).getTime()
+      - new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()) / 86_400_000,
+  );
+
+/** "3:00 PM" when the reset is today, "Tue 3:00 PM" within the week, and
+ *  "Dec 1, 7:00 PM" further out (#866 K18: the monthly cap lifts on the 1st, and
+ *  a bare weekday weeks away read as this week's). */
 export function formatResetAt(resetAt: string, now: Date = new Date()): string {
   const at = new Date(resetAt);
   if (Number.isNaN(at.getTime())) return "later";
-  const sameDay = at.toDateString() === now.toDateString();
-  return at.toLocaleString(undefined, {
-    ...(sameDay ? {} : { weekday: "short" }),
-    hour: "numeric",
-    minute: "2-digit",
-  });
+  const days = daysAhead(at, now);
+  const day = days === 0 ? {} : days > 0 && days < 7 ? { weekday: "short" as const } : { month: "short" as const, day: "numeric" as const };
+  return at.toLocaleString(undefined, { ...day, hour: "numeric", minute: "2-digit" });
 }
 
 /** The tutor-pause copy (spec §3.5, §13 A39). */

@@ -54,6 +54,7 @@ import { BudgetPausedBanner, formatResetAt } from "./BudgetPausedBanner";
 import { ConfidenceControl } from "./ConfidenceControl";
 import { FIELD_STYLE } from "./loopShared";
 import { ReportQuestion } from "./ReportQuestion";
+import { answerPauseMessage, pausedConceptsMessage } from "./reviewPauseCopy";
 import tutorStyles from "./tutor/tutor.module.css";
 import { useCrisisSupport } from "../safety/CrisisSupportCard";
 
@@ -70,18 +71,6 @@ const FIELD_LABEL_STYLE: React.CSSProperties = { marginBottom: -4 };
 // on, so the panel re-polls.
 const RETRY_DETAIL = /retry/i;
 const GRADED_DETAIL = /already graded/i;
-
-/** A 429 "ai budget reached" on a review call (spec §3.5 / A20). */
-function answerPauseMessage(pause: LoopBudgetPause): string {
-  return pause.resetAt
-    ? `AI tutor paused until ${formatResetAt(pause.resetAt)}. Flashcards and review keep working.`
-    : "AI tutor paused for now. Flashcards and review keep working.";
-}
-
-/** Novice concepts paused at the tutor hard level (`/review/summary` `paused`). */
-function pausedConceptsMessage(n: number): string {
-  return `${n} ${n === 1 ? "concept" : "concepts"} paused until your daily AI budget resets. Flashcards and other reviews keep working.`;
-}
 
 const RATINGS: { n: number; label: string }[] = [
   { n: 1, label: "forgot" },
@@ -300,7 +289,6 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
   // After a refusal or an outage nothing was recorded: the item stays answerable.
   const retryable = result !== null && result.unavailable;
   const answered = alreadyGraded || (result !== null && !result.unavailable);
-  const pausedConcepts = summary?.paused ?? 0;
   const canSubmit = !busy && !answered && checkHasAnswer(item, choice, reason, answer);
 
   return (
@@ -322,7 +310,7 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
       </div>
 
       {/* Its "review keeps working" would contradict a queue that did not load. */}
-      {!loadFailed && renderPauseBanner(pause, pausedConcepts)}
+      {!loadFailed && renderPauseBanner(pause, summary)}
 
       {error && <div ref={errorRef} tabIndex={-1} role="alert" data-testid={loadFailed ? "review-load-error" : undefined} style={{ fontSize: 13, color: "var(--text-muted)" }}>{error}</div>}
       {loadFailed && (
@@ -439,7 +427,7 @@ function checkHasAnswer(item: ReviewItem | null, choice: string, reason: string,
   return item.format === "mc_reason" ? choice !== "" && reason.trim() !== "" : answer.trim() !== "";
 }
 
-function renderPauseBanner(pause: LoopBudgetPause | null, pausedConcepts: number) {
+function renderPauseBanner(pause: LoopBudgetPause | null, summary: ReviewSummaryResponse | null) {
   if (pause) {
     return (
       <BudgetPausedBanner
@@ -450,8 +438,10 @@ function renderPauseBanner(pause: LoopBudgetPause | null, pausedConcepts: number
       />
     );
   }
-  if (pausedConcepts > 0) {
-    return <BudgetPausedBanner testId="review-budget-paused" resetAt={null} message={pausedConceptsMessage(pausedConcepts)} />;
+  const paused = summary?.paused ?? 0;
+  if (paused > 0) {
+    const until = summary?.paused_until ?? null;
+    return <BudgetPausedBanner testId="review-budget-paused" resetAt={until} message={pausedConceptsMessage(paused, summary?.paused_scope, until)} />;
   }
   return null;
 }

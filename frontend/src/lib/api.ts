@@ -1324,7 +1324,8 @@ export interface LoopCheckAnswer {
   /** A127: sent only when chosen, and never with an idk (which states none). */
   confidence?: StudentConfidence | null;
 }
-export interface LoopBudgetPause { resetAt: string | null; sessionCapped: boolean }
+/** `scope`: the cap that paused (the 429's binding scope, #866 K18), when the body names one. */
+export interface LoopBudgetPause { resetAt: string | null; sessionCapped: boolean; scope?: string }
 
 const loopPost = <T>(path: string, body: Record<string, unknown>) =>
   fetchJSON<T>(`/api/learn/loop${path}`, { method: 'POST', body: JSON.stringify(body) });
@@ -1355,9 +1356,12 @@ export const budgetPauseOf = (err: unknown): LoopBudgetPause | null => {
   if (body === undefined && err instanceof Error) {
     try { body = JSON.parse(err.message); } catch { return null; }
   }
-  const b = body as { detail?: unknown; reset_at?: unknown; session_capped?: unknown } | null;
+  const b = body as { detail?: unknown; reset_at?: unknown; session_capped?: unknown; scope?: unknown } | null;
   if (!b || b.detail !== 'ai budget reached') return null;
-  return { resetAt: typeof b.reset_at === 'string' ? b.reset_at : null, sessionCapped: b.session_capped === true };
+  return {
+    resetAt: typeof b.reset_at === 'string' ? b.reset_at : null, sessionCapped: b.session_capped === true,
+    ...(typeof b.scope === 'string' ? { scope: b.scope } : {}),
+  };
 };
 
 /** The student's open loop sessions for a course, newest first (PKG-13's

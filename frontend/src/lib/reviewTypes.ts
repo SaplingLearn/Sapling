@@ -71,7 +71,12 @@ export interface ReviewSummaryResponse {
   due: { flashcard: number; check: number };
   in_budget: number;
   unservable: number;
+  /** Novice concepts held back at the tutor hard level (A20). */
   paused: number;
+  /** #866 K18: the cap that holds them (`monthly_usd`, `daily_usd`, …) and when it
+   *  lifts; null when nothing is paused. Absent from a server before the fix. */
+  paused_scope?: string | null;
+  paused_until?: string | null;
   budget_min: number;
   remaining_budget_s: number;
   retention_target: number;

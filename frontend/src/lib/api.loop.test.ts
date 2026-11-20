@@ -326,7 +326,11 @@ describe('budgetPauseOf (spec §3.5 / A20 429 body, A39 session_capped)', () => 
   });
   it('carries session_capped when the body says so', () => {
     const capped = { ...body, scope: 'session_requests', session_capped: true };
-    expect(budgetPauseOf(new ApiError('x', 429, { body: capped }))).toEqual({ resetAt: body.reset_at, sessionCapped: true });
+    expect(budgetPauseOf(new ApiError('x', 429, { body: capped }))).toEqual({ resetAt: body.reset_at, sessionCapped: true, scope: 'session_requests' });
+  });
+  it("keeps the cap's scope, so a monthly reset is never read as tonight's (#866 K18)", () => {
+    const monthly = { ...body, reset_at: '2026-12-01T00:00:00+00:00', scope: 'monthly_usd', session_capped: false };
+    expect(budgetPauseOf(new ApiError('x', 429, { body: monthly }))).toEqual({ resetAt: monthly.reset_at, sessionCapped: false, scope: 'monthly_usd' });
   });
   it('ignores other statuses and other 429s', () => {
     expect(budgetPauseOf(new ApiError('boom', 503, { body }))).toBeNull();

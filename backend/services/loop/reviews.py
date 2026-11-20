@@ -60,6 +60,24 @@ def _pause_novice(user_id: str) -> bool:
     return bool(ai_budget.check(user_id, "tutor", "novice").pause_novice)
 
 
+_NO_PAUSE = {"paused_scope": None, "paused_until": None}
+
+
+def _pause_scope(user_id: str, paused: int) -> dict:
+    """#866 K18: which cap holds the `paused` novice concepts and when it lifts —
+    the tutor budget's binding scope and reset (the decision `_pause_novice`
+    read, served from this request's budget cache). A monthly cap lifts on the
+    1st of next month, weeks away: Study says so instead of promising the daily
+    reset. Read only when something is paused."""
+    if not paused:
+        return dict(_NO_PAUSE)
+    decision = ai_budget.check(user_id, "tutor", "novice")
+    if not decision.pause_novice:
+        return dict(_NO_PAUSE)
+    reset = decision.reset_at
+    return {"paused_scope": decision.scope, "paused_until": reset.isoformat() if reset else None}
+
+
 def _review_deps(
     user_id: str, course_id: str | None, session_id: str, request_id: str, loop_on: bool
 ) -> SaplingDeps:
@@ -291,7 +309,8 @@ def review_summary(
     request: Request, user_id: str, course_id: str | None = None
 ) -> dict:
     """Today's due counts, budget and retention target. Read-only: it never creates
-    the review session."""
+    the review session. `paused_scope` / `paused_until` name the cap that holds
+    the `paused` novice concepts and when it lifts (#866 K18)."""
     _gate(user_id, request)
     enforce_abuse_limit(abuse_limits.LOOP_ACTION, user_id)  # audit Z02
     _review_course(user_id, course_id)
@@ -300,13 +319,15 @@ def review_summary(
         loop_state = review.peek_review_session(user_id, course_id, now)
     except PermissionError:
         raise HTTPException(status_code=403, detail="Session user mismatch") from None
-    return review.summary(
+    body = review.summary(
         user_id,
         course_id,
         now,
         loop_state=loop_state,
         pause_novice=lambda: _pause_novice(user_id),
     )
+    body.update(_pause_scope(user_id, body.get("paused") or 0))
+    return body
 
 
 def review_active(request: Request, user_id: str) -> dict:
