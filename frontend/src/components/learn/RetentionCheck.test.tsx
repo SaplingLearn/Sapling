@@ -356,3 +356,10 @@ it("the open control is a compact primary button until a set is open", async () 
   await open();
   expect(screen.getByTestId("retention-open").className).not.toContain("btn--primary");
 });
+
+it("the course picker is a visible field, like the answer boxes (#866 Z29)", () => {
+  // Tailwind's preflight strips a select's border and fill: it takes the
+  // answer boxes' field style (LoopLearn.module.css .scopeText).
+  render(<RetentionCheck userId="u1" courses={courses} />);
+  expect(screen.getByTestId("retention-course").className).toMatch(/scopeText/);
+});

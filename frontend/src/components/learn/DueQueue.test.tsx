@@ -537,6 +537,35 @@ describe("DueQueue — stated confidence (spec §13 A127)", () => {
   });
 });
 
+describe("DueQueue — the answer boxes are visible fields (#866 Z29)", () => {
+  // Tailwind's preflight strips every textarea's border, padding and fill: a box
+  // with no style of its own is invisible, so each one carries the loop's field
+  // style (FIELD_STYLE, as the loop's check card does) and a visible label.
+  const looksLikeAField = (box: HTMLElement) => {
+    expect(box.style.border).toBe("1px solid var(--border)");
+    expect(box.style.background).toBe("var(--bg-input)");
+    expect(box.style.padding).toBe("10px 12px");
+  };
+
+  it("a free check's answer box is styled and has a visible label", async () => {
+    mockNext.mockResolvedValue(next(FREE));
+    render(<DueQueue userId="u1" courseId="c1" />);
+    const box = await screen.findByLabelText("Your answer");
+    expect(box).toBe(screen.getByTestId("review-answer-input"));
+    expect(screen.getByText("Your answer").tagName).toBe("LABEL");
+    looksLikeAField(box);
+  });
+
+  it("an mc_reason check's reason box is styled and has a visible label", async () => {
+    mockNext.mockResolvedValue(next(MC));
+    render(<DueQueue userId="u1" courseId="c1" />);
+    const box = await screen.findByLabelText("Your reasoning");
+    expect(box).toBe(screen.getByTestId("review-reason-input"));
+    expect(screen.getByText("Your reasoning").tagName).toBe("LABEL");
+    looksLikeAField(box);
+  });
+});
+
 describe("DueQueue — keyboard and screen reader (spec §13 A135)", () => {
   it("the first load moves no focus: Study owns it when the page opens", async () => {
     mockNext.mockResolvedValue(next(FREE));
@@ -550,7 +579,7 @@ describe("DueQueue — keyboard and screen reader (spec §13 A135)", () => {
     mockNext.mockResolvedValueOnce(next(FREE)).mockResolvedValueOnce(next(MC));
     mockAnswer.mockResolvedValue(graded());
     render(<DueQueue userId="u1" courseId="c1" />);
-    expect(await screen.findByRole("textbox", { name: "Review answer" })).toHaveAccessibleDescription("What stops factorial(0)?");
+    expect(await screen.findByRole("textbox", { name: "Your answer" })).toHaveAccessibleDescription("What stops factorial(0)?");
     await userEvent.type(screen.getByTestId("review-answer-input"), "the base case");
     await userEvent.click(screen.getByTestId("review-submit"));
     await userEvent.click(await screen.findByTestId("review-next"));

@@ -52,8 +52,15 @@ import { extractErrorDetail } from "@/lib/errorMessage";
 import { useFeedbackHold } from "@/lib/feedbackPacing";
 import { BudgetPausedBanner, formatResetAt } from "./BudgetPausedBanner";
 import { ConfidenceControl } from "./ConfidenceControl";
+import { FIELD_STYLE } from "./loopShared";
 import { ReportQuestion } from "./ReportQuestion";
+import tutorStyles from "./tutor/tutor.module.css";
 import { useCrisisSupport } from "../safety/CrisisSupportCard";
+
+// #866 Z29: Tailwind's preflight strips a textarea's border, padding and fill, so
+// each answer box takes the loop's field style and a visible label (as the
+// loop's check card does); the label sits close to its box in the card's gap.
+const FIELD_LABEL_STYLE: React.CSSProperties = { marginBottom: -4 };
 
 // Review 409s (routes/learn_loop.py): "loop state changed, retry" — a concurrent write
 // won; it can come BEFORE the grade (nothing recorded) or AFTER it (the record lost its
@@ -519,9 +526,11 @@ function renderCheckAnswer({ item, promptId, choice, setChoice, reason, setReaso
             </label>
           ))}
         </div>
+        <label className={tutorStyles.fl} htmlFor={`${promptId}-reason`} style={FIELD_LABEL_STYLE}>Your reasoning</label>
         <textarea
+          id={`${promptId}-reason`}
           data-testid="review-reason-input"
-          aria-label="Review reasoning"
+          style={FIELD_STYLE}
           placeholder="In one sentence: why?"
           value={reason}
           disabled={answered}
@@ -532,17 +541,20 @@ function renderCheckAnswer({ item, promptId, choice, setChoice, reason, setReaso
     );
   }
   return (
-    <textarea
-      data-testid="review-answer-input"
-      data-answer-start=""
-      aria-label="Review answer"
-      aria-describedby={promptId}
-      placeholder="Your answer"
-      value={answer}
-      disabled={answered}
-      onChange={(e) => setAnswer(e.target.value)}
-      rows={3}
-    />
+    <>
+      <label className={tutorStyles.fl} htmlFor={`${promptId}-answer`} style={FIELD_LABEL_STYLE}>Your answer</label>
+      <textarea
+        id={`${promptId}-answer`}
+        data-testid="review-answer-input"
+        data-answer-start=""
+        aria-describedby={promptId}
+        style={FIELD_STYLE}
+        value={answer}
+        disabled={answered}
+        onChange={(e) => setAnswer(e.target.value)}
+        rows={3}
+      />
+    </>
   );
 }
 
