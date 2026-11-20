@@ -3,12 +3,14 @@
 import React, { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { useRetentionDue } from "@/context/RetentionDueContext";
 import {
-  answerRetentionCheck, markRetentionShown, startRetentionCheck, type EnrolledCourse, type RetentionItem,
+  answerRetentionCheck, budgetPauseOf, markRetentionShown, startRetentionCheck, type EnrolledCourse,
+  type LoopBudgetPause, type RetentionItem,
 } from "@/lib/api";
-import { extractErrorDetail, humanizeError } from "@/lib/errorMessage";
+import { extractErrorDetail } from "@/lib/errorMessage";
 import { useFeedbackHold } from "@/lib/feedbackPacing";
 import styles from "./LoopLearn.module.css";
 import { useCrisisSupport } from "../safety/CrisisSupportCard";
+import { RetentionPauseBanner, retentionErrorText } from "./retentionPause";
 
 /** Spec §13 A126: how often and how long the page was hidden while one item
  *  was on screen. Telemetry for the outcome record — the server clamps it and
@@ -83,6 +85,8 @@ function RetentionSession({ userId, courseId }: { userId: string; courseId: stri
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // #866 K13: a 429 "ai budget reached" — a pause until its reset, not an error
+  const [pause, setPause] = useState<LoopBudgetPause | null>(null);
   const [result, setResult] = useState<boolean | null>(null);
   // The last item could not be answered any more (a 404): it was skipped.
   const [skipped, setSkipped] = useState(false);
@@ -92,6 +96,7 @@ function RetentionSession({ userId, courseId }: { userId: string; courseId: stri
   const resultRef = useRef<HTMLParagraphElement>(null);
   const statusRef = useRef<HTMLParagraphElement>(null);
   const errorRef = useRef<HTMLParagraphElement>(null);
+  const pauseRef = useRef<HTMLDivElement>(null);
   const request = useRef(0);
   const visibility = useRef<Visibility>({ count: 0, hiddenMs: 0, hiddenSince: null });
   const { refresh: refreshDue } = useRetentionDue();
@@ -106,7 +111,7 @@ function RetentionSession({ userId, courseId }: { userId: string; courseId: stri
     const want = focusNext.current;
     if (!want || busy) return;
     if (document.querySelector('[aria-modal="true"]')) { focusNext.current = null; return; }
-    const target = errorRef.current ?? (want === "result" ? resultRef.current
+    const target = errorRef.current ?? pauseRef.current ?? (want === "result" ? resultRef.current
       : itemRef.current?.querySelector<HTMLElement>("textarea, input") ?? statusRef.current);
     if (!target) return;
     focusNext.current = null;
@@ -122,10 +127,13 @@ function RetentionSession({ userId, courseId }: { userId: string; courseId: stri
     try {
       const response = await startRetentionCheck(userId, courseId);
       if (!mounted.current || mine !== request.current) return;
-      setItems(response.items); setIndex(0); resetDraft();
+      setItems(response.items); setIndex(0); resetDraft(); setPause(null);
       refreshDue(); // opening changed what is due (A126)
     } catch (err) {
-      if (mounted.current && mine === request.current) setError(humanizeError(err, "Couldn't open retention checks. Try again."));
+      if (!mounted.current || mine !== request.current) return;
+      const paused = budgetPauseOf(err);
+      if (paused) setPause(paused);
+      else setError(retentionErrorText(err, "Couldn't open retention checks. Try again.", "Couldn't open retention checks right now. Try again in a moment."));
     } finally {
       if (mounted.current && mine === request.current) setBusy(false);
     }
@@ -168,7 +176,7 @@ function RetentionSession({ userId, courseId }: { userId: string; courseId: stri
         ...hiddenReport(visibility.current) });
       if (!mounted.current || mine !== request.current) return;
       if (crisis.intercept(response)) { setAnswer(""); setReason(""); return; } // nothing graded; still open
-      if ("correct" in response) { setResult(response.correct); refreshDue(); }
+      if ("correct" in response) { setResult(response.correct); setPause(null); refreshDue(); }
       else setError("Answer in your own words. Nothing was recorded; you can try again.");
     } catch (err) {
       if (!mounted.current || mine !== request.current) return;
@@ -179,7 +187,9 @@ function RetentionSession({ userId, courseId }: { userId: string; courseId: stri
       } else if (status === 409) {
         setItems(null);
         setError("This question is no longer open. Open eligible checks again to continue.");
-      } else setError(humanizeError(err, "Couldn't check your answer. Your work is still here; try again."));
+      } else if (budgetPauseOf(err)) setPause(budgetPauseOf(err)); // the typed answer stays
+      else setError(retentionErrorText(err, "Couldn't check your answer. Your work is still here; try again.",
+        "Couldn't check your answer right now, so nothing was recorded. Your work is still here; try again later."));
     } finally {
       if (mounted.current && mine === request.current) setBusy(false);
     }
@@ -200,6 +210,7 @@ function RetentionSession({ userId, courseId }: { userId: string; courseId: stri
       </div>
     </div>
     {error && <p ref={errorRef} tabIndex={-1} role="alert" style={{ margin: 0, fontSize: 13 }}>{error}</p>}
+    <RetentionPauseBanner pause={pause} focusRef={pauseRef} />
     {item && <div ref={itemRef} data-testid="retention-item" style={{ display: "flex", flexDirection: "column", gap: 8, minWidth: 0 }}>
       <p style={{ margin: 0, fontSize: 12 }}>Question {index + 1} of {items?.length}</p>
       <div>

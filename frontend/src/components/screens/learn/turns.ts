@@ -1,9 +1,10 @@
 /**
  * How the legacy tutor screen (Learn.tsx's LearnInner) reads a refused turn:
  * the ADR 0020 Retry's bubble surgery, the ended-session 409 (#761/#762), and
- * an answer only the learning loop gives (#866 K49).
+ * an answer only the learning loop gives (#866 K49, K13).
  */
 import type { ChatMsg } from "../../chat/ChatPanel";
+import { tutorPauseMessage } from "../../learn/BudgetPausedBanner";
 import { budgetPauseOf } from "@/lib/api";
 import { errorCodeOf, statusOf } from "@/lib/errorMessage";
 
@@ -51,4 +52,12 @@ export function isSessionEndedError(err: unknown): boolean {
 export function answeredByTheLoop(err: unknown): boolean {
   if (budgetPauseOf(err)) return true;
   return statusOf(err) === 409 && errorCodeOf(err) !== SESSION_ENDED_CODE;
+}
+
+/** A budget pause as the tutor's pause, with its reset time, instead of the
+ *  429's raw "ai budget reached" (#866 K13); any other error as `copy`. Only
+ *  the loop answers a pause, so with the loop off this is always `copy`. */
+export function pauseCopyOr(err: unknown, copy: string): string {
+  const pause = budgetPauseOf(err);
+  return pause ? tutorPauseMessage(pause.resetAt, pause.sessionCapped) : copy;
 }

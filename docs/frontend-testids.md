@@ -985,6 +985,25 @@ loop active (`GET /api/learn/loop/review/active` 200 — a gate-only probe; the 
 | `review-skipped` | "That question is no longer available, so it was skipped." — a 404 on `/review/answer` or `/report` moved on to the next item |
 | `review-load-error` / `review-load-retry` | `/review/next` failed: why, and "Try again" |
 
+### `retention`
+
+The delayed retention check (spec §13 A112, A126) on Study. Owner:
+`frontend/src/components/learn/RetentionCheck.tsx`, rendered by
+`screens/Study.tsx` beside the review queue while the loop is on.
+
+| testid | element |
+| --- | --- |
+| `retention-course` | the course select |
+| `retention-course-fallback` | the note that a deep-linked course (`?retention-course=`) is not one of the student's, so the first course shows instead |
+| `retention-open` | "Open eligible retention checks" — the only control that poses one |
+| `retention-budget-paused` | the budget pause banner (#866 K13): `/posttest/start` or `/posttest/answer` answered 429 `ai budget reached` ("AI checks are paused until <time>. Nothing was recorded; try again then."); `role="status"`, `data-reset-at`, `data-session-capped` |
+| `retention-empty` / `retention-finished` | no eligible check is open for the course / the opened set is done |
+| `retention-skipped` | "That question is no longer available, so it was skipped." — a 404 on an answer |
+| `retention-item` | the question on screen |
+| `retention-answer` / `retention-reason` | the free answer textarea / an `mc_reason` question's reason |
+| `retention-submit` / `retention-idk` | "Check answer" / "I don't know" |
+| `retention-result` / `retention-next` | the graded line / "Continue" |
+
 ### `loop`
 
 Added with the learning loop's student UI (PKG-13; spec §9, §11.3). Owner:

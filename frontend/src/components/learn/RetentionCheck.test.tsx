@@ -356,3 +356,66 @@ it("the open control is a compact primary button until a set is open", async () 
   await open();
   expect(screen.getByTestId("retention-open").className).not.toContain("btn--primary");
 });
+
+// #866 K13: the loop's 429 "ai budget reached" (its A20 rate limit on
+// /posttest/start and /answer) is a pause with a reset time, shown as the same
+// banner DueQueue shows above this card; a 503 reads as words, never the
+// server's internal "grader unavailable".
+const budgetPause = (resetAt: string | null) =>
+  new ApiError(JSON.stringify({ detail: "ai budget reached" }), 429, {
+    body: { detail: "ai budget reached", reset_at: resetAt, scope: "rate_limit", session_capped: false },
+  });
+
+it("a budget pause on Open shows the pause banner with its reset time, not the raw 429 (#866 K13)", async () => {
+  const resetAt = new Date(Date.now() + 45_000).toISOString();
+  api.startRetentionCheck.mockRejectedValueOnce(budgetPause(resetAt)).mockResolvedValueOnce({ items: [item] });
+  render(<RetentionCheck userId="u1" courses={courses} />);
+  fireEvent.click(screen.getByTestId("retention-open"));
+  const banner = await screen.findByTestId("retention-budget-paused");
+  expect(banner.getAttribute("data-reset-at")).toBe(resetAt);
+  expect(banner.textContent).toMatch(/paused until/);
+  expect(document.body.textContent).not.toMatch(/ai budget reached/);
+  expect(screen.queryByRole("alert")).toBeNull();
+  // the next open that gets through clears it
+  fireEvent.click(screen.getByTestId("retention-open"));
+  await screen.findByTestId("retention-item");
+  expect(screen.queryByTestId("retention-budget-paused")).toBeNull();
+});
+
+it("a budget pause on an answer keeps the typed answer and records nothing (#866 K13)", async () => {
+  api.startRetentionCheck.mockResolvedValue({ items: [item] });
+  api.answerRetentionCheck.mockRejectedValueOnce(budgetPause(null));
+  render(<RetentionCheck userId="u1" courses={courses} />); await open();
+  fireEvent.change(screen.getByTestId("retention-answer"), { target: { value: "kept" } });
+  fireEvent.click(screen.getByTestId("retention-submit"));
+  const banner = await screen.findByTestId("retention-budget-paused");
+  expect(banner.textContent).toMatch(/paused for now/);
+  expect(document.body.textContent).not.toMatch(/ai budget reached/);
+  expect((screen.getByTestId("retention-answer") as HTMLTextAreaElement).value).toBe("kept");
+  expect(screen.queryByTestId("retention-result")).toBeNull();
+});
+
+it.each([
+  ["grader unavailable"],
+  ["post-test unavailable; retry"],
+  ["Post-test evidence unavailable; retry the same answer"],
+])("a 503 (%s) on an answer reads as words and keeps the answer (#866 K13)", async (detail) => {
+  api.startRetentionCheck.mockResolvedValue({ items: [item] });
+  api.answerRetentionCheck.mockRejectedValueOnce(new ApiError(JSON.stringify({ detail }), 503, { body: { detail } }));
+  render(<RetentionCheck userId="u1" courses={courses} />); await open();
+  fireEvent.change(screen.getByTestId("retention-answer"), { target: { value: "kept" } });
+  fireEvent.click(screen.getByTestId("retention-submit"));
+  const alert = await screen.findByRole("alert");
+  expect(alert.textContent).toMatch(/nothing was recorded/i);
+  expect(alert.textContent).not.toContain(detail);
+  expect((screen.getByTestId("retention-answer") as HTMLTextAreaElement).value).toBe("kept");
+});
+
+it("a 503 on Open reads as words too (#866 K13)", async () => {
+  api.startRetentionCheck.mockRejectedValueOnce(new ApiError("{}", 503, { body: { detail: "post-test unavailable; retry" } }));
+  render(<RetentionCheck userId="u1" courses={courses} />);
+  fireEvent.click(screen.getByTestId("retention-open"));
+  const alert = await screen.findByRole("alert");
+  expect(alert.textContent).not.toMatch(/post-test unavailable/);
+  expect(alert.textContent).toMatch(/Couldn't open retention checks/);
+});

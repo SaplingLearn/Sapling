@@ -89,6 +89,7 @@ import crisisFixture from "@/test-utils/crisisSupport.json";
 import { ChatStreamError } from "@/lib/api";
 import { __resetFeedbackPacingForTests, currentLearningSession, feedbackHeld } from "@/lib/feedbackPacing";
 import { markNoteCardShown, takeNoteCardShown } from "@/lib/crisisSupport";
+import { tutorPauseMessage } from "../learn/BudgetPausedBanner";
 
 class StubResizeObserver {
   constructor(private cb: (entries: { contentRect: { width: number } }[]) => void) {}
@@ -935,6 +936,16 @@ describe("an answer only the learning loop gives", () => {
     fireEvent.click(await screen.findByRole("button", { name: /^Trees/ }));
     fireEvent.click(screen.getByTestId("tutor-start"));
     await waitFor(() => expect(loopRecheck).toHaveBeenCalled());
+  });
+
+  it("a budget pause reads as the tutor's pause with its reset, never the raw 'ai budget reached' (#866 K13)", async () => {
+    api.streamChat.mockRejectedValueOnce(budgetPause()); // a 429: no JSON rung
+    renderLearn();
+    await openSession("sess-a");
+    fireEvent.change(screen.getByTestId("tutor-input"), { target: { value: "my answer" } });
+    fireEvent.click(screen.getByTestId("tutor-send"));
+    expect(await screen.findByText(tutorPauseMessage(null, false))).toBeInTheDocument();
+    expect(screen.queryByText(/ai budget reached/)).toBeNull();
   });
 
   it("a start whose stream carries a loop phase hands over at once", async () => {

@@ -56,7 +56,7 @@ import { forgetEndedSession, noteLearningSession, rememberEndedSession, useFeedb
 import type { GraphNode as ApiNode, GraphEdge as ApiEdge } from "@/lib/types";
 import { apiToGraphNode, type GraphNode, type GraphEdge } from "@/lib/data";
 import { focusCardDescription, focusCardTitle, sessionSubtitle } from "./learn/view";
-import { answeredByTheLoop, isSessionEndedError, removeInterruptedTurn } from "./learn/turns";
+import { answeredByTheLoop, isSessionEndedError, pauseCopyOr, removeInterruptedTurn } from "./learn/turns";
 
 function apiToGraphEdge(e: ApiEdge): GraphEdge {
   return {
@@ -1112,7 +1112,7 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
       if (!isCurrent()) return;
       loopSignal(err);
       showErrorCard(err); // a refusal can carry the card
-      toast.error(readableError(err, "Couldn't start session."));
+      toast.error(pauseCopyOr(err, readableError(err, "Couldn't start session.")));
       setMessages([]);
     } finally {
       if (isCurrent()) {
@@ -1293,7 +1293,7 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
           // Rung 2: interrupted after producing text — surface it, never
           // silently re-run (the user already saw partial text). The error
           // detail goes to a toast; the transcript keeps the partial.
-          toast.error(readableError(err, "The tutor was interrupted."));
+          toast.error(pauseCopyOr(err, readableError(err, "The tutor was interrupted.")));
           appendInterrupted();
           return;
         }
@@ -1305,7 +1305,7 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
           // stays as an interrupted bubble, error detail in a toast, and
           // Retry is a deliberate user decision rather than a silent
           // re-run.
-          toast.error(readableError(err, "The tutor was interrupted."));
+          toast.error(pauseCopyOr(err, readableError(err, "The tutor was interrupted.")));
           appendInterrupted();
           return;
         }
@@ -1343,7 +1343,7 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
       // The Rung-3 JSON fallback itself failed — the ladder is exhausted.
       // ADR 0020 treats this like any mid-stream failure: interrupted bubble
       // + Retry, error detail in a toast rather than a fake assistant reply.
-      toast.error(readableError(err, "The tutor is unavailable."));
+      toast.error(pauseCopyOr(err, readableError(err, "The tutor is unavailable.")));
       appendInterrupted();
     } finally {
       // A superseded turn leaves `sending` alone: `enterSession` already
@@ -1409,7 +1409,7 @@ function useTutorSession({ router, searchParams, userId, userReady, toast, prefs
       setMessages(m => m.filter(x => x.id !== labelId));
       loopSignal(err);
       if (isSessionEndedError(err)) { setSessionEnded(true); return; }
-      toast.error(humanizeError(err, "Action failed."));
+      toast.error(pauseCopyOr(err, humanizeError(err, "Action failed.")));
     } finally {
       if (isCurrent()) {
         setSending(false);
