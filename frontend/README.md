@@ -8,7 +8,7 @@ Visual system: warm paper neutrals, botanical forest-green accent, serif (Spectr
 
 ```bash
 cd frontend
-npm install          # Node >= 20.9, npm >= 10.9 <11 — enforced, see below
+npm install          # Node >= 22.13, npm >= 10.9 <11 — enforced, see below
 npm run dev          # http://localhost:3000
 ```
 

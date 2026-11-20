@@ -33,7 +33,9 @@ run the security regression tests whenever upgrading lint tooling.
 compatible; the vulnerable CLI path is tested with a harmless metacharacter
 filename. See [GHSA-5j98-mcp5-4vw2](https://github.com/advisories/GHSA-5j98-mcp5-4vw2).
 
-All KaTeX consumers resolve to the direct patched `0.18.2` dependency for
+All KaTeX consumers resolve to the one direct `katex` dependency (`^0.18.11` in
+`package.json`, locked at `0.18.11`; the `"katex": "$katex"` override makes every
+parent use it) for
 [GHSA-238p-pmpm-9mq7](https://github.com/KaTeX/KaTeX/security/advisories/GHSA-238p-pmpm-9mq7).
 The parents' older ranges are overridden deliberately: their used public
 `renderToString` API remains supported. KaTeX's CSS and mhchem extension come from
@@ -41,5 +43,10 @@ that same package. Version 0.18 prefixes internal CSS classes; Sapling has no
 custom rules targeting those internal classes. Regression tests exercise real
 markdown, chemistry, diagrams, macros, MathML and polluted prototype rejection.
 
-KaTeX is pinned to 0.18.2: later 0.18.x releases bring commander 15 and raise
-the install-time Node minimum beyond Sapling's declared Node 20.9 support.
+KaTeX 0.18.11 brings commander 15, whose `engines` asks for Node 22.12 or later,
+and the rest of the locked tree (jsdom, vite, wrangler) needs Node 22.13 on the
+22 line. With `engine-strict=true` (`.npmrc`) an install on an older Node fails
+with `EBADENGINE`, so `package.json` declares `node >=22.13.0`, the floor the
+lock needs; CI, the Docker images and Cloudflare all build on Node 22.
+`scripts/node_engines.test.ts` fails when a dependency raises the floor past the
+declared one, and when this file names a KaTeX version the lock does not hold.
