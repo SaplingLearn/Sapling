@@ -34,6 +34,20 @@ TUTOR_SESSION_START = abuse_limit(
     detail="You've started a lot of tutor sessions in a short time.",
 )
 
+# ── Learning-loop tutor (routes/learn_loop.py, audit Z02) ───────────────────
+# The loop's own routes charge TUTOR_SESSION_START (its starts) and TUTOR_TURN
+# (every turn a student writes: chat, action, a check, probe, post-test or
+# prequestion answer, a step attempt, a self-explanation) exactly as the
+# legacy routes that delegate to them do. Its no-model writers share this one:
+# a hint, the next check, a rating, a report, a review card, the plan approval.
+
+#: The loop's no-model writes. A fast flashcard review is a card a second;
+#: 120 a minute is past that.
+LOOP_ACTION = abuse_limit(
+    "loop-action", limit=120, window_sec=_MINUTE,
+    detail="You're moving through the tutor faster than we can keep up.",
+)
+
 # ── Notes agent actions (routes/notes.py) ───────────────────────────────────
 
 #: summarize / extract-concepts / chat on a note share one budget: each is a

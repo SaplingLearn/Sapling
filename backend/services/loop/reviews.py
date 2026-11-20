@@ -7,6 +7,8 @@ import asyncio
 import uuid
 from datetime import datetime, timezone
 from services.loop.errors import HTTPException
+from services import abuse_limits
+from services.request_limits import aenforce_abuse_limit, enforce_abuse_limit
 from starlette.requests import Request
 from agents.deps import SaplingDeps
 from learning import review
@@ -115,6 +117,7 @@ def review_next(
     `due_total` is everything due today; `in_budget` what the remaining budget
     covers (null item + due_total > 0 = the budget is spent, not caught up)."""
     _gate(user_id, request)
+    enforce_abuse_limit(abuse_limits.LOOP_ACTION, user_id)  # audit Z02
     _review_course(user_id, course_id)
     now = _review_now()
     sid, loop_state = _review_session(user_id, course_id, now)
@@ -175,6 +178,7 @@ async def review_answer(body: ReviewAnswerBody, request: Request) -> dict:
         request, body.user_id, "loop_review_answer", body.answer, body.reason
     ):
         return crisis_support.json_body(crisis, correct=None, unavailable=True, refused=False)
+    await aenforce_abuse_limit(abuse_limits.LOOP_ACTION, body.user_id)  # audit Z02
     # #117: every sync PostgREST read and write below hops off the event loop
     if body.kind == "check":  # the one review body that runs a model (the grader)
         await asyncio.to_thread(ai_budget.enforce_rate_limit_for, body.user_id)
@@ -289,6 +293,7 @@ def review_summary(
     """Today's due counts, budget and retention target. Read-only: it never creates
     the review session."""
     _gate(user_id, request)
+    enforce_abuse_limit(abuse_limits.LOOP_ACTION, user_id)  # audit Z02
     _review_course(user_id, course_id)
     now = _review_now()
     try:
