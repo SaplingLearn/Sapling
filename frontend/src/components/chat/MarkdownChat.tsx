@@ -21,7 +21,10 @@ import { MermaidBlock } from "./MermaidBlock";
 import { FunctionPlot } from "./FunctionPlot";
 
 // Castel-style shortcuts. Tutor can write `\R` instead of `\mathbb{R}`.
-const KATEX_MACROS: Record<string, string> = {
+// Frozen: KaTeX writes every \gdef / \global definition into the macros object
+// it is handed, so each render gets its own copy (`MarkdownChat` below) — one
+// message can never redefine math for another (Z32).
+const KATEX_MACROS: Readonly<Record<string, string>> = Object.freeze({
   "\\R": "\\mathbb{R}",
   "\\Z": "\\mathbb{Z}",
   "\\N": "\\mathbb{N}",
@@ -43,7 +46,7 @@ const KATEX_MACROS: Record<string, string> = {
   "\\dx": "\\,dx",
   "\\dy": "\\,dy",
   "\\dt": "\\,dt",
-};
+});
 
 const CALLOUT_NAMES = new Set([
   "theorem",
@@ -432,7 +435,8 @@ export const MarkdownChat = React.memo(function MarkdownChat({
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkMath, remarkDirective, remarkSaplingDirectives]}
         rehypePlugins={[
-          [rehypeKatex, { macros: KATEX_MACROS, strict: "ignore" }],
+          // a fresh copy per render: this message's \gdef stays in this message (Z32)
+          [rehypeKatex, { macros: { ...KATEX_MACROS }, strict: "ignore" }],
           rehypeExtractDiagramBlocks,
           [rehypeHighlight, { detect: true, ignoreMissing: true }],
         ]}
