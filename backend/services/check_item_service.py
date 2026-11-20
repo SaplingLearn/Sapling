@@ -536,9 +536,12 @@ def _store_screened(
     decided = review_statuses(course_id, hashes) if hashes else {}
     audited = audit_holds(course_id, hashes) if hashes else {}
     exclude |= _stored_ids(b["id"] for _, b in built if isinstance(b, dict))
-    rows: list[dict] = []
+    # each row to insert and the _STORE_LOG kind it counts under, in draft order
+    rows: list[tuple[dict, str]] = []
     seen: set[str] = set()
-    mc_drops: list[str] = []
+    # an mc_reason draft's drop reason, or (its row id, its held reason) for a
+    # row whose insert decides it: kept in draft order (the top-up reads it)
+    mc_drops: list[str | tuple[str, str]] = []
     counts: Counter[str] = Counter()
     served = 0
     for entry, row in built:
@@ -569,31 +572,73 @@ def _store_screened(
             counts["surplus"] += 1
             continue
         seen.add(row["id"])
-        rows.append(row)
         if status == QUARANTINED:
-            counts["quarantined"] += 1
-            reason = _QUARANTINED
+            kind, reason = "quarantined", _QUARANTINED
         elif audit_code:
-            counts["audited"] += 1
-            reason = _AUDITED
+            kind, reason = "audited", _AUDITED
         elif held:
-            reason = entry.reasons
+            kind, reason = "", entry.reasons
         else:
             served += 1
-            reason = ""
-        if fmt == _MC_REASON and reason:
-            mc_drops.append(reason)
+            kind, reason = "", ""
+        rows.append((row, kind))
+        if fmt == _MC_REASON:
+            mc_drops.append((row["id"], reason))
+    # DO NOTHING on conflict (Z09): a row stored since the read above is never
+    # rewritten by a draft. What is counted as stored is what the insert says
+    # it wrote (its representation lists only the inserted rows), so a row a
+    # concurrent run stored first is a repeat here too, never a second success.
+    inserted = _insert_new([row for row, _ in rows])
+    stored: list[dict] = []
+    for row, kind in rows:
+        if row["id"] not in inserted:
+            counts["repeat"] += 1
+        else:
+            stored.append(row)
+            if kind:
+                counts[kind] += 1
     _log_store(counts, limit, course_id, concept_key)
-    if rows:
-        # DO NOTHING on conflict (Z09): a row stored since the read above is
-        # never rewritten by a draft
-        table(_TABLE).upsert(rows, on_conflict=_ON_CONFLICT, ignore_duplicates=True)
     return _ConceptWrite(
-        [r["id"] for r in rows],
-        {r["id"]: r["difficulty"] for r in rows if r["format"] == _MC_REASON and not _row_held(r)},
-        mc_drops,
+        [r["id"] for r in stored],
+        {
+            r["id"]: r["difficulty"]
+            for r in stored
+            if r["format"] == _MC_REASON and not _row_held(r)
+        },
+        _resolve_drops(mc_drops, inserted),
         unverified,
     )
+
+
+def _resolve_drops(drops: list[str | tuple[str, str]], inserted: set[str]) -> list[str]:
+    """`_store_screened`'s mc_reason drop reasons, in draft order: a row the
+    insert did not write is a repeat (Z09); a written row reports its held
+    reason, and a served one none."""
+    out: list[str] = []
+    for drop in drops:
+        if isinstance(drop, str):
+            out.append(drop)
+            continue
+        row_id, reason = drop
+        if row_id not in inserted:
+            out.append(_REPEAT)
+        elif reason:
+            out.append(reason)
+    return out
+
+
+def _insert_new(rows: list[dict]) -> set[str]:
+    """Z09: insert `rows` ON CONFLICT DO NOTHING in one call and return the ids
+    the insert wrote: a DO NOTHING conflict returns no representation for the
+    row it skipped, so a row stored since `_stored_ids`' read is not counted.
+    Raises on a PostgREST failure."""
+    if not rows:
+        return set()
+    out = table(_TABLE).upsert(
+        rows, on_conflict=_ON_CONFLICT, ignore_duplicates=True, columns="id"
+    )
+    sent = {r["id"] for r in rows}
+    return {r["id"] for r in out or [] if isinstance(r, dict) and r.get("id") in sent}
 
 
 def _row_held(row: dict) -> bool:

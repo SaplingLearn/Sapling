@@ -28,7 +28,14 @@ from learning.checks import (
     item_id,
     question_hash,
 )
-from tests.test_learning_check_items import _CHUNK, _ItemsTable, _cached_tables, _draft, _item
+from tests.test_learning_check_items import (
+    _CHUNK,
+    _ItemsTable,
+    _cached_tables,
+    _draft,
+    _item,
+    _mc_draft,
+)
 
 COURSE = "course-1"
 KEY = "learning rate"
@@ -234,6 +241,60 @@ def test_the_insert_never_rewrites_a_row_stored_after_the_read(monkeypatch):
 
     stored = items.rows[_row(draft)["id"]]
     assert stored["lint_flags"] == [KEY_AUDIT_WRONG] and stored["canonical_verified"] is False
+
+
+def _stored_by_a_racing_run(monkeypatch, items: _ItemsTable, *rows: dict) -> None:
+    """Another run stores `rows` after this write's stored-id read saw nothing
+    and before its insert (two classmates uploading the same lecture)."""
+    from services import check_item_service as svc
+
+    def read_then_race(ids):
+        for row in rows:
+            items.rows[row["id"]] = dict(row)
+        return set()
+
+    monkeypatch.setattr(svc, "_stored_ids", read_then_race)
+
+
+def test_a_row_a_racing_run_stored_first_is_no_success_of_this_pass(monkeypatch):
+    """The insert's DO NOTHING skips the row the racing run stored: what this
+    pass counts as stored is what its insert wrote, so the race is a repeat
+    here (A41's ledger), never a second success for the same row."""
+    draft = _draft()
+    items = _ItemsTable()
+    _stored_by_a_racing_run(monkeypatch, items, _row(draft, lint_flags=[], canonical_verified=True))
+
+    out, ledger = _run(monkeypatch, [draft], items=items)
+
+    assert _written_ids(items) == [_row(draft)["id"]]  # sent, and skipped by the insert
+    assert out.items_created == 0 and ledger == [("failed", KEY)]
+
+
+def test_a_raced_mc_row_counts_toward_no_floor_and_reports_a_repeat():
+    """A37: the mc_reason rows a concept can serve are the ones its insert
+    wrote; a raced one is reported to the top-up as a repeat, in draft order."""
+    from services import check_item_service as svc
+
+    raced, fresh = _mc_draft(), _mc_draft(prompt="Which quantity does momentum accumulate? Give your reason.")
+    items = _ItemsTable()
+    raced_row = _row(raced, lint_flags=[], canonical_verified=True)
+    stored_ids = lambda ids: items.rows.update({raced_row["id"]: dict(raced_row)}) or set()  # noqa: E731
+    screened = [
+        svc._Screened("mc_reason", None, "invalid: no options"),
+        svc._Screened("mc_reason", raced, aligned=True, verified=True, key_checked=True),
+        svc._Screened("mc_reason", fresh, aligned=True, verified=True, key_checked=True),
+    ]
+    factory, _ = _cached_tables({})
+    with (
+        patch.object(svc, "table", side_effect=lambda n: items if n == "check_items" else factory(n)),
+        patch("learning.item_reports.table", side_effect=factory),
+        patch.object(svc, "_stored_ids", side_effect=stored_ids),
+    ):
+        out = svc._store_screened(COURSE, KEY, "doc-1", screened, allowed_chunk_ids={_CHUNK["id"]})
+
+    fresh_id = _row(fresh)["id"]
+    assert out.ids == [fresh_id] and list(out.mc_reason) == [fresh_id]
+    assert out.mc_drops == ["invalid: no options", svc._REPEAT]
 
 
 def test_an_alignment_rekey_onto_a_stored_row_keeps_that_row(monkeypatch):

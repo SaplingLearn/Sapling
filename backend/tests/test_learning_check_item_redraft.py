@@ -65,9 +65,10 @@ class _Items:
     def select(self, columns, filters=None, **kw):
         return []
 
-    def upsert(self, rows, on_conflict=None, ignore_duplicates=False):
+    def upsert(self, rows, on_conflict=None, ignore_duplicates=False, columns=None):
         self.upserts.append(rows)
-        return []
+        # nothing stored: a DO NOTHING insert writes (and returns) every row
+        return [{"id": r["id"]} for r in rows] if columns else []
 
 
 class _Failures:
