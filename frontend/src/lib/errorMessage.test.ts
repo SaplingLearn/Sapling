@@ -112,6 +112,11 @@ describe('humanizeError — status mapping', () => {
     expect(humanizeError('HTTP 409', FALLBACK)).toMatch(/reload/i);
   });
 
+  it('maps 413 to too-large copy, never a Retry-bait "unavailable" (K48)', () => {
+    expect(humanizeError('HTTP 413', FALLBACK)).toMatch(/too long/i);
+    expect(readableError('HTTP 413', FALLBACK)).toMatch(/shorter/i);
+  });
+
   it('falls back for statuses with no dedicated copy', () => {
     expect(humanizeError('HTTP 418', FALLBACK)).toBe(FALLBACK);
     expect(humanizeError('HTTP 302', FALLBACK)).toBe(FALLBACK);

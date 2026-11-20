@@ -58,10 +58,12 @@ logger = logging.getLogger("routes.learn")
 # transient upstream trouble (→ 502, retry-friendly detail; a WARNING, not
 # an exception log — pages should fire on the bare-Exception 502 below,
 # which IS a bug).
+# At most 160 characters: the frontend shows a server detail only up to that
+# length (lib/errorMessage.ts MAX_DETAIL_LENGTH), so a longer one never
+# reaches the student (K48).
 _USAGE_LIMIT_DETAIL = (
-    "This turn exceeded the tutor's processing budget — the conversation or "
-    "message is too long to answer in one turn. Retrying the same message "
-    "will hit the same limit; try a shorter message or a fresh session."
+    "That message or conversation is too long for the tutor's processing "
+    "budget. Send a shorter message or start a fresh session."
 )
 _MODEL_TROUBLE_DETAIL = "The tutor had trouble answering that. Please try again."
 
