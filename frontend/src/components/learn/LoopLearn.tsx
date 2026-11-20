@@ -93,7 +93,7 @@ import { SelfExplainCard } from "./SelfExplainCard";
 import { retentionHref, useRetentionDue } from "@/context/RetentionDueContext";
 import { Icon } from "../Icon";
 import { TutorSidebar } from "./tutor/TutorSidebar";
-import { TutorAllSessions, TutorCourse, TutorHome, type SessionFilter } from "./tutor/TutorPages";
+import { LoadFailed, TutorAllSessions, TutorCourse, TutorHome, type SessionFilter } from "./tutor/TutorPages";
 import { SessionPanel, type PanelConcept } from "./tutor/SessionPanel";
 import { SessionMap } from "./tutor/SessionMap";
 import { PhaseStepper } from "./tutor/PhaseStepper";
@@ -2411,7 +2411,7 @@ export function LoopLearn() {
       onHide={layout.hidePanel}
       map={railGraph.nodes.length > 0 ? (
         <SessionMap nodes={railGraph.nodes} edges={railGraph.edges} highlightId={focusNodeId ?? undefined} />
-      ) : (
+      ) : graphError ? <LoadFailed testId="tutor-map-error" what="your map" onRetry={() => void refreshGraph()} /> : (
         <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Concepts appear here as you learn.</div>
       )}
     />
@@ -2449,7 +2449,7 @@ export function LoopLearn() {
         dueHref={dueHref}
         libraryHref={libraryVisible ? "/library" : null}
         onRetrySessions={lists.retryRecent}
-        onRetryMaterials={lists.retryMaterials}
+        onRetryMaterials={lists.retryMaterials} onRetryConcepts={graphError ? () => void refreshGraph() : null}
         onOpen={openRow}
         onAll={showAll}
       />

@@ -704,3 +704,22 @@ describe("Z64 — one open session per course, from the read-only view too", () 
     expect((await screen.findByTestId("tutor-home")).textContent).toContain("Starting wraps up “Sorting” first.");
   });
 });
+
+describe("Z63 — a failed map read says so, with a retry, never an empty map", () => {
+  it("the panel's map and the course page show the failure; Try again reads the map again", async () => {
+    api.getGraph.mockRejectedValueOnce(new ApiError("boom", 503))
+      .mockResolvedValue({ nodes: [{ id: "n1", concept_name: "Recursion", mastery_tier: "learning", mastery_score: 0.4, is_subject_root: false, subject: "Intro CS", course_id: "c1" }], edges: [], stats: {} });
+    await resumedTeach();
+    await screen.findByTestId("tutor-map-error"); // the session panel's map
+    expect(screen.queryByText("Concepts appear here as you learn.")).toBeNull();
+    fireEvent.click(screen.getByTestId("tutor-course-c1"));
+    const page = await screen.findByTestId("tutor-course-page");
+    const failed = within(page).getByTestId("tutor-course-concepts-error");
+    expect(page.textContent).not.toContain("0 concepts");
+    expect(page.textContent).not.toContain("Concepts appear here as you learn.");
+    fireEvent.click(within(failed).getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(within(page).queryByTestId("tutor-course-concepts-error")).toBeNull());
+    expect(api.getGraph).toHaveBeenCalledTimes(2);
+    expect(page.textContent).toContain("1 concept");
+  });
+});

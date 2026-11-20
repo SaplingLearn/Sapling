@@ -154,6 +154,12 @@ export function sessionsCount(n: number, failed: boolean): string {
   return n > 0 ? `At least ${n} ${noun}` : "Not loaded";
 }
 
+/** The course page's concept count; a failed map read is "Not loaded", never "0 concepts". */
+export function conceptsCount(n: number, failed: boolean): string {
+  if (failed && n === 0) return "Not loaded";
+  return `${n} ${n === 1 ? "concept" : "concepts"}`;
+}
+
 /** T2 · A course, like a Claude project: its sessions, progress and material. */
 export function TutorCourse({
   course,
@@ -164,6 +170,7 @@ export function TutorCourse({
   libraryHref,
   onRetrySessions,
   onRetryMaterials,
+  onRetryConcepts,
   onOpen,
   onAll,
 }: {
@@ -179,6 +186,8 @@ export function TutorCourse({
   onRetrySessions?: (() => void) | null;
   /** Present when the material failed to load (never "No material yet"). */
   onRetryMaterials?: (() => void) | null;
+  /** Present when the knowledge map failed to load (never "0 concepts", #866 Z63). */
+  onRetryConcepts?: (() => void) | null;
   onOpen: (row: TutorSessionRow) => void;
   onAll: () => void;
 }) {
@@ -216,13 +225,14 @@ export function TutorCourse({
           <div className={styles.cardHead}>
             <div>
               <span className="label-micro">Your progress</span>
-              <h3 ref={heading} tabIndex={-1} className="h-serif">{concepts.length} {concepts.length === 1 ? "concept" : "concepts"}</h3>
+              <h3 ref={heading} tabIndex={-1} className="h-serif">{conceptsCount(concepts.length, !!onRetryConcepts)}</h3>
             </div>
           </div>
           <div className={styles.cardPad}>
             {progress.length > 0
               ? progress.map((n) => <Meter key={n.id} label={n.name} score={n.mastery_tier === "unexplored" ? null : n.mastery_score} />)
-              : <p className={styles.ls} style={{ margin: 0 }}>Concepts appear here as you learn.</p>}
+              : !onRetryConcepts && <p className={styles.ls} style={{ margin: 0 }}>Concepts appear here as you learn.</p>}
+            {onRetryConcepts && <LoadFailed testId="tutor-course-concepts-error" what="your concepts" onRetry={onRetryConcepts} />}
             {dueHref && <Link href={dueHref} className="btn btn--sm" style={{ alignSelf: "flex-start" }}>Review what&apos;s due</Link>}
           </div>
         </section>
