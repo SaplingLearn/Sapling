@@ -154,7 +154,7 @@ PostHog, not to Logfire.
 
 | Surface (`event.payload.surface`) | Route(s) | Text screened | The card |
 |---|---|---|---|
-| `tutor_chat` | `POST /api/learn/chat`, `/chat/stream` | `message` | instead of a tutor turn (also the quiz's "Ask about this" panel and the study guide's "ask the tutor", which ride it); beside the turn when what matched is the quiz question the panel's first message quotes (`quiz_attempt_id` + `quiz_question_index`, read off the student's own attempt: its stem, options, key, explanation and the student's recorded answer; `crisis_support.screen_quoting_async`, #866 K12) |
+| `tutor_chat` | `POST /api/learn/chat`, `/chat/stream` | `message` | instead of a tutor turn (also the quiz's "Ask about this" panel and the study guide's "ask the tutor", which ride it); beside the turn when what matched is the quiz question the panel's first message quotes (`quiz_attempt_id` + `quiz_question_index`, read off the student's own attempt: its stem, options, key and explanation, each only where it fills a whole field of the message; the answer the student wrote is their own typed text and still blocks; `crisis_support.screen_quoting_async`, #866 K12) |
 | `tutor_start` | `POST /api/learn/start-session`, `/start-session/stream` | `topic`, the learning loop's `goal.text` | instead of opening a session |
 | `loop_chat` | `POST /api/learn/loop/chat`, `/chat/stream` | `message` | instead of a loop tutor turn |
 | `loop_start` | `POST /api/learn/loop/start-session`, `/start-session/stream` | `topic`, `goal.text` | instead of opening a session |
@@ -422,10 +422,12 @@ points at it).
   first-person phrase ("the speaker says 'I want to die'") gets the card
   instead of an answer. A quiz question QUOTED in the quiz's "Ask about this"
   opening message does not (#866 K12): that message names the question, the
-  server reads the question and the student's recorded answer off their own
-  attempt, and a match inside that text shows the card beside the
-  explanation, its event once a day per question. The rest of the message,
-  and every follow-up the student types, is typed text and blocks.
+  server reads the question (stem, options, key, explanation) off their own
+  attempt, and a match inside that text, where it fills a whole field of the
+  message, shows the card beside the explanation, its event once a day per
+  question. The rest of the message — the answer the student wrote ("I
+  wrote: …") included, and a stored word found only inside it — and every
+  follow-up the student types, is typed text and blocks.
 - **A note's false positive costs the student nothing but the card.** A
   psychology or literature note that quotes a patient or a play ("a patient
   says 'I want to kill myself'", "Macbeth: 'I want to die'"), or names
