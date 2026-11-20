@@ -2431,7 +2431,7 @@ export function LoopLearn() {
           dueCount={lists.dueReviews}
           dueHref={dueHref}
           startWith={weakestConcept(railGraph.nodes)}
-          busy={anyOf(!courseId, sessionTransitionBusy, openSessions === null)}
+          busy={anyOf(!courseId, sessionTransitionBusy, openSessions === null)} starting={starting}
           closesCurrent={leaving ? sessionTitle(sessionRow ?? { topic: "" }, course ?? undefined) : null}
           onContinue={() => { if (openHere) openRow(openHere); }}
           onStart={() => void startGuided()}

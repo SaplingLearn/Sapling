@@ -55,6 +55,7 @@ export function TutorHome({
   dueHref,
   startWith,
   busy,
+  starting,
   closesCurrent,
   onContinue,
   onStart,
@@ -72,7 +73,10 @@ export function TutorHome({
   dueHref: string | null;
   /** The weakest concept the map knows, offered as a first focus. */
   startWith: string | null;
+  /** Every choice is disabled (a start, a list still loading, a pending grade). */
   busy: boolean;
+  /** A start is in flight: only then does the CTA say "Starting…". */
+  starting: boolean;
   /** Starting wraps up the open session first (one open session per course). */
   closesCurrent: string | null;
   onContinue: () => void;
@@ -118,7 +122,7 @@ export function TutorHome({
         onClick={onStart}
         disabled={busy}
       >
-        <Icon name="sparkle" size={14} /> {busy ? "Starting…" : "Start a guided session"}
+        <Icon name="sparkle" size={14} /> {starting ? "Starting…" : "Start a guided session"}
       </button>
       {closesCurrent && (
         <p className={styles.ctaNote}>
