@@ -94,6 +94,7 @@ from loop_tutor import (  # noqa: E402
     _released,
     _responses,
     prompt_hash_for,
+    recorded as recorded_space,
     routing_identity,
     schema_hash_for,
     served_texts,
@@ -621,10 +622,30 @@ def make_dataset_for(slot: str, v2: bool = V2) -> Dataset[LoopInput, ConfrontRep
     )
 
 
-#: One dataset per slot a confronting turn is served on; run_all.py iterates these.
-VARIANTS = {
-    dataset_name(slot): (partial(make_dataset_for, slot), _run_for(slot)) for slot in CONFRONT_SLOTS
-}
+def _v2_recorded(slot: str) -> bool:
+    return recorded_space(_cassette_dataset(slot, True))
+
+
+def replay_variants(*, v2: bool = V2, recorded=_v2_recorded) -> dict:
+    """One dataset per slot a confronting turn is served on, in the run's
+    variant; a default run also replays every slot whose v2 cassettes are
+    recorded (#866 Z25), so CI keeps scoring the v2 prompt once it is."""
+    out = {
+        dataset_name(slot, v2): (partial(make_dataset_for, slot, v2), _run_for(slot, v2))
+        for slot in CONFRONT_SLOTS
+    }
+    if not v2:
+        for slot in CONFRONT_SLOTS:
+            if recorded(slot):
+                out[dataset_name(slot, True)] = (
+                    partial(make_dataset_for, slot, True),
+                    _run_for(slot, True),
+                )
+    return out
+
+
+#: run_all.py iterates these.
+VARIANTS = replay_variants()
 
 
 if __name__ == "__main__":

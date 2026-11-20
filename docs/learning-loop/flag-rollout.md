@@ -72,17 +72,17 @@ Some paths the loop serves with no flag of their own have cases written but not 
 
 ### loop_tutor_v2 (A121)
 - **Changes:** the tutor opens with a plain verdict on the student's reply, labels only new content "Key idea:", and names the plan's current concept and why.
-- **Before:** `loop_tutor` and `misconception_confront` re-recorded live under `LOOP_EVAL_VARIANT=v2` (their own cassettes), every served gate passing.
+- **Before:** `loop_tutor` and `misconception_confront` re-recorded live under `LOOP_EVAL_VARIANT=v2` (their own cassettes), every served gate passing. Once a v2 namespace is recorded, `run_all.py` (and CI) replays it beside the default one, so a later edit to a v2 prompt line fails like any regression.
 - **Watch:** `zpd.leak` events, tutor turn retries, session wrap-up ratings.
 
 ### segment_prequestion (A138)
 - **Changes:** each new concept opens with one ungraded guess at a vetted question; the answer and an explanation follow at once.
-- **Before:** the prequestion explaining path recorded live in the `loop_tutor` evals and passing.
+- **Before:** the prequestion explaining path recorded live and passing: `teach_explains_prequestion` in the `loop_tutor` flag-path datasets (`<slot>__flags`; `LOOP_EVAL_FLAGS=1 SAPLING_EVAL_MODE=record python tests/evals/loop_tutor.py`). They score the same served gates as the routing datasets but never decide which tier routes; `run_all.py` replays them once recorded.
 - **Watch:** `learn.prequestion` events (posed, skipped by reason, answered, superseded); a high `pool_for_checks` skip rate means courses need more items.
 
 ### self_explanation_prompts (A139)
 - **Changes:** after a worked example, a shown solution or a first unaided correct answer, the turn's question becomes a "why does this follow?" prompt with its own reply box. Replies are stored encrypted and never graded.
-- **Before:** that path recorded live in the `loop_tutor` evals.
+- **Before:** the acknowledging turn recorded live and passing: `teach_acknowledges_self_explanation` in the same `loop_tutor` flag-path datasets.
 - **Watch:** the admin report's `self_explanation` block: reply rate, and next-item success after a reply.
 
 ### quiz_planned_questions (A144)
@@ -102,17 +102,17 @@ Some paths the loop serves with no flag of their own have cases written but not 
 
 ### varied_isomorphs (A140)
 - **Changes:** uploads draft each concept's items with varied scenarios and representations; picks prefer a surface the student hasn't met.
-- **Before:** the varied `check_items` dataset recorded live and passing. Takes effect per uploader on new uploads.
+- **Before:** `check_items_varied` (`tests/evals/check_item_gates.py`: the varied drafter on a three-concept call and the varied top-up) recorded live and passing. Takes effect per uploader on new uploads.
 - **Watch:** drafting failures; `backend/scripts/project_varied_practice_cost.py` for the cost.
 
 ### multi_concept_items (A141)
 - **Changes:** uploads also draft items combining a concept with its direct prerequisites; a proficient student gets one per session.
-- **Before:** the multi-concept dataset recorded live and passing.
+- **Before:** `check_items_combo` (`tests/evals/check_item_gates.py`: the combination drafter and its component check) recorded live and passing.
 - **Watch:** `learn.multi_concept_served`; drafting cost.
 
 ### upload_prereq_edges (A118)
 - **Changes:** uploads extract prerequisite relations and write them as graph edges, so propagation, prerequisite bands, wheelspin repair and plan order start acting on them.
-- **Before:** the concept-extraction eval re-checked with relations on; a manual look at the edges written for a few real uploads.
+- **Before:** `concept_extraction__relations` (`CONCEPT_EVAL_RELATIONS=1 python tests/evals/concept_extraction.py`: the relations variant, scored on the edges code would write) recorded live and passing; a manual look at the edges written for a few real uploads.
 - **Watch:** cycles broken and edges dropped per document (logged by `concept_prereqs.resolve_prerequisites`); plan order complaints.
 - **Roll back:** off stops new edges; edges already written stay. It acts only while the learning loop is on for the uploader, so the `LEARNING_LOOP_ENABLED` kill switch (or the uploader's `learning_loop` flag off) stops it too.
 

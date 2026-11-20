@@ -1,8 +1,9 @@
 """The check-item pipeline's model steps have eval datasets (#866 Z24, Z25).
 
 Every learning-loop drafting call runs the A119 alignment check, the A124
-blind solve and key match, and (below the mc_reason floor) the A37 top-up.
-None had a dataset, and the check_items
+blind solve and key match, and (below the mc_reason floor) the A37 top-up;
+with `varied_isomorphs` / `multi_concept_items` on, the A140 varied and the
+A141 combination drafters and check. None had a dataset, and the check_items
 dataset drafted one concept per call where production drafts
 CHECK_ITEM_CONCEPTS_PER_CALL. `tests/evals/check_item_gates.py` adds one
 dataset per step and check_items.py the three-concept call; they are recorded
@@ -17,6 +18,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from agents.check_items_combo_verify import ComponentCheck, ComponentChecks
 from agents.check_items_key_match import KeyMatch, KeyMatches
 from agents.check_items_solve import Solution, Solutions
 from agents.check_items_verify import AlignmentChecks, ConceptCheck, CriterionCheck
@@ -39,7 +41,7 @@ def mods():
 
 
 def _case(mod, dataset: str, name: str):
-    make, _ = mod.VARIANTS[dataset]
+    make, _ = mod.ALL_VARIANTS[dataset]
     return next(c for c in make().cases if c.name == name)
 
 
@@ -58,11 +60,13 @@ def _alignment(rows: dict[str, tuple[dict[str, bool], str]]) -> AlignmentChecks:
     )
 
 
-def test_the_pipeline_steps_are_replayed_from_the_start(mods):
+def test_the_default_path_steps_are_replayed_and_the_flagged_ones_once_recorded(mods):
     g = mods.gates
     assert "check_item_gates" in mods.run_all.DATASETS
-    assert set(g.VARIANTS) == {"check_items_verify", "check_items_solve", "check_items_topup"}
-    for name, (make, run) in g.VARIANTS.items():
+    assert set(g.DEFAULT_PATH) <= set(g.VARIANTS)  # fail closed until recorded
+    assert set(g.replay_variants(recorded=lambda name: False)) == set(g.DEFAULT_PATH)
+    assert set(g.replay_variants(recorded=lambda name: True)) == set(g.ALL_VARIANTS)
+    for name, (make, run) in g.ALL_VARIANTS.items():
         for case in make().cases:
             identity = run.identity(case)  # recorded under the step's own slot model
             assert identity["model"] and identity["prompt_hash"] and identity["input_sha256"]
@@ -122,6 +126,23 @@ def test_the_blind_solve_and_key_match_are_scored_through_item_keys(mods):
     assert g.SolveAgreement().evaluate(_ctx(match, judged(want))) == 1.0
 
 
+def test_the_combination_check_is_scored_per_component(mods):
+    g = mods.gates
+    case = _case(g, "check_items_combo", "combo_verify_needed_and_setting_only")
+
+    def checks(k2_of_item_2: bool):
+        crit = [("1", "c1"), ("1", "c2"), ("2", "c1")]
+        comps = [("1", "k1", True), ("1", "k2", True), ("2", "k1", True), ("2", "k2", k2_of_item_2)]
+        return ComponentChecks(
+            criteria=[CriterionCheck(item=i, criterion=c, why="w", asked=True) for i, c in crit],
+            components=[ComponentCheck(item=i, component=k, why="w", required=r) for i, k, r in comps],
+        )
+
+    assert g.ComponentsRequired().evaluate(_ctx(case, checks(False))) == 1.0
+    assert g.ComponentsRequired().evaluate(_ctx(case, checks(True))) == 0.75  # setting judged needed
+    assert g.EveryItemAnswered().evaluate(_ctx(case, checks(False))) == 1.0
+
+
 def _draft(concept: str, *, difficulty=2, fmt="mc_reason", surface=("numeric", "a table")):
     return SimpleNamespace(
         concept=concept, difficulty=difficulty, format=fmt,
@@ -129,7 +150,7 @@ def _draft(concept: str, *, difficulty=2, fmt="mc_reason", surface=("numeric", "
     )
 
 
-def test_the_topup_contract(mods):
+def test_the_topup_and_varied_contracts(mods):
     g = mods.gates
     topup = _case(g, "check_items_topup", "topup_limits_after_dropped_drafts")
     ok = SimpleNamespace(items=[_draft("Limits", difficulty=2), _draft("Limits", difficulty=3)])
@@ -139,6 +160,14 @@ def test_the_topup_contract(mods):
     free = SimpleNamespace(items=[_draft("Limits", difficulty=2), _draft("Limits", difficulty=3, fmt="free")])
     assert g.TopupShape().evaluate(_ctx(topup, free)) == 0.0
 
+    varied = _case(g, "check_items_varied", "varied_calculus_three_concepts")
+    distinct = SimpleNamespace(items=[
+        _draft("Limits", surface=("numeric", "a table")),
+        _draft("Limits", surface=("applied", "a car's speed")),
+    ])
+    assert g.SurfacesVary().evaluate(_ctx(varied, distinct)) == 1.0
+    repeated = SimpleNamespace(items=[_draft("Limits"), _draft("Limits")])
+    assert g.SurfacesVary().evaluate(_ctx(varied, repeated)) == 0.0
 
 
 def test_check_items_drafts_production_three_concept_call(mods):

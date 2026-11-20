@@ -1,18 +1,23 @@
 """pydantic-evals datasets for the check-item pipeline's own model steps
-(#866 Z24; learning loop spec §13 A37, A119, A124).
+(#866 Z24, Z25; learning loop spec §13 A37, A119, A124, A140, A141).
 
 Every drafting call of a learning-loop uploader runs more model steps than the
 drafter (`check_items.py`): the A119 alignment check decides which criteria
 and which concept an item is stored under, the A124 blind solve (and the key
 match for a free-text pair code cannot settle) decides whether its key is
-verified, and the A37 mc_reason top-up refills a concept below the floor.
-Their verdicts decide what every student's evidence is graded against, and
-none had a dataset. One dataset per step, each on the slot the
+verified, and the A37 mc_reason top-up refills a concept below the floor. With
+`varied_isomorphs` on the drafter and the top-up are the A140 varied agents;
+with `multi_concept_items` on, the A141 combination drafter and its own check
+run too. Their verdicts decide what every student's evidence is graded
+against, and none had a dataset. One dataset per step, each on the slot the
 step runs on, each case built with production's own message builder:
 
     check_items_verify   the A119 check (check_items_verify slot)
     check_items_solve    the A124 blind solve and key match (check_items_solve slot)
     check_items_topup    the A37 mc_reason top-up (check_items slot)
+    check_items_varied   the A140 varied drafter and varied top-up (check_items slot)
+    check_items_combo    the A141 combination drafter (check_items slot) and its
+                         check (check_items_verify slot)
 
     cd backend
     SAPLING_EVAL_MODE=record python tests/evals/check_item_gates.py     # three runs: README
@@ -24,11 +29,13 @@ they were recorded under (`_replay.recorded_under`), so a changed prompt,
 schema, model or message never replays an old answer. Add a case when
 production surfaces a miss; never edit one to make it pass.
 
-The top-up is scored on what code would store — the check_items.py
-evaluators — plus its own contract (the count, format and difficulties asked
-for). The checks are scored by production's own reading of their answers:
-`item_alignment.align` for A119, `item_keys.compare` for the solve,
-`check_items_key_match.matches` for the key match.
+The drafting datasets score what code would store — the check_items.py
+evaluators, after `learning.surface.from_varied` for a varied draft — plus each
+step's own contract (the top-up's count, format and difficulties; a varied
+concept's distinct surfaces; a combination draft's label). The checks are
+scored by production's own reading of their answers: `item_alignment.align`
+for A119, `item_keys.compare` for the solve, `check_items_key_match.matches`
+for the key match, `item_alignment.collect_components` for A141.
 """
 
 from __future__ import annotations
@@ -48,6 +55,7 @@ from pydantic_evals.evaluators import Evaluator  # noqa: E402
 
 import check_items as plain  # noqa: E402  (sibling: the drafter's evaluators)
 from _replay import (  # noqa: E402
+    CASSETTE_DIR,
     ensure_utf8_output,
     evaluate_dataset,
     input_identity,
@@ -59,6 +67,19 @@ from _replay import (  # noqa: E402
 )
 from agents._providers import model_name_for  # noqa: E402
 from agents.check_items import CheckItemsOutput  # noqa: E402
+from agents.check_items_combo import (  # noqa: E402
+    _PROMPT_HASH as COMBO_PROMPT_HASH,
+    build_combo_prompt,
+    check_items_combo_agent,
+)
+from agents.check_items_combo_verify import (  # noqa: E402
+    _PROMPT_HASH as COMBO_VERIFY_PROMPT_HASH,
+    ComboVerifyItem,
+    ComponentChecks,
+    build_combo_verify_prompt,
+    check_items_combo_verify_agent,
+    component_verdicts,
+)
 from agents.check_items_key_match import (  # noqa: E402
     _PROMPT_HASH as MATCH_PROMPT_HASH,
     KeyMatches,
@@ -81,6 +102,16 @@ from agents.check_items_topup import (  # noqa: E402
     build_topup_prompt,
     check_items_topup_agent,
 )
+from agents.check_items_varied import (  # noqa: E402
+    _PROMPT_HASH as VARIED_PROMPT_HASH,
+    build_varied_prompt,
+    check_items_varied_agent,
+)
+from agents.check_items_varied_topup import (  # noqa: E402
+    _PROMPT_HASH as VARIED_TOPUP_PROMPT_HASH,
+    build_varied_topup_prompt,
+    check_items_varied_topup_agent,
+)
 from agents.check_items_verify import (  # noqa: E402
     _PROMPT_HASH as VERIFY_PROMPT_HASH,
     VERIFY_TASK,
@@ -95,6 +126,7 @@ from learning.item_alignment import (  # noqa: E402
     NONE,
     UNASKED_RUBRIC,
     align,
+    component_ids,
     concept_key,
 )
 from learning.item_keys import (  # noqa: E402
@@ -106,6 +138,8 @@ from learning.item_keys import (  # noqa: E402
     KeySubject,
     compare,
 )
+from learning.multi_concept import label as combo_label  # noqa: E402
+from learning.surface import VariedCheckItemsOutput, from_varied, surface_of  # noqa: E402
 
 #: Every dataset stays inside the eval-recording budget of the series.
 MAX_CASES = 8
@@ -344,8 +378,8 @@ class ConceptTested(Evaluator):
 
 @dataclass
 class EveryItemAnswered(Evaluator):
-    """Every item got one complete, consistent answer: an unanswered item is
-    held as unverified."""
+    """Every item (and, for a combination, every component) got one complete,
+    consistent answer: an unanswered item is held as unverified."""
 
     def evaluate(self, ctx) -> float:
         kind, meta, out = _kind(ctx), ctx.metadata, ctx.output
@@ -355,6 +389,8 @@ class EveryItemAnswered(Evaluator):
             return 1.0 if set(meta["expected"]) <= set(solutions(out)) else 0.0
         if kind == "match":
             return 1.0 if set(meta["expected"]) <= set(matches(out)) else 0.0
+        if kind == "combo_verify":
+            return 1.0 if set(meta["expected"]) <= set(component_verdicts(out)) else 0.0
         return 1.0
 
 
@@ -468,13 +504,15 @@ def make_solve_dataset() -> Dataset:
 
 
 class Drafts(BaseModel):
-    """What a drafting step stores from: `items`, the shape check_items.py's
-    evaluators read."""
+    """What a drafting step stores from: `items` (a varied draft as
+    `from_varied` reads it back), the shape check_items.py's evaluators read."""
 
     items: list
 
 
 def _as_drafts(out) -> Drafts:
+    if isinstance(out, VariedCheckItemsOutput):
+        return Drafts(items=[from_varied(d) for d in out.items])
     return Drafts(items=list(out.items))
 
 
@@ -498,7 +536,7 @@ class ScoredAsStored(Evaluator):
     inner: Evaluator
 
     def evaluate(self, ctx) -> float:
-        if _kind(ctx) != "topup":
+        if _kind(ctx) not in ("topup", "varied", "varied_topup", "combo"):
             return 1.0
         return self.inner.evaluate(_Ctx(ctx.inputs, _as_drafts(ctx.output), ctx.metadata))
 
@@ -518,12 +556,18 @@ class _Ctx:
 TOPUP = Step(check_items_topup_agent, CheckItemsOutput, TOPUP_PROMPT_HASH, "check_items")
 
 
-def _topup_case(name: str, doc: int, concept: str, difficulties: list[int], reasons: list[str]) -> Case:
+def _topup_case(name: str, doc: int, concept: str, difficulties: list[int], reasons: list[str],
+                *, varied: bool = False, used=()) -> Case:
     _, chunks = _course_doc(doc)
-    message = build_topup_prompt(
-        concept, _passages(chunks), difficulties=difficulties, drop_reasons=reasons
-    )
-    return _case(name, "topup", message, inputs=(concept, chunks),
+    if varied:
+        message = build_varied_topup_prompt(
+            concept, _passages(chunks), difficulties=difficulties, drop_reasons=reasons, used=used
+        )
+    else:
+        message = build_topup_prompt(
+            concept, _passages(chunks), difficulties=difficulties, drop_reasons=reasons
+        )
+    return _case(name, "varied_topup" if varied else "topup", message, inputs=(concept, chunks),
                  concepts=[concept], difficulties=difficulties)
 
 
@@ -540,7 +584,7 @@ class TopupShape(Evaluator):
     difficulty in order, on the one concept."""
 
     def evaluate(self, ctx) -> float:
-        if _kind(ctx) != "topup":
+        if _kind(ctx) not in ("topup", "varied_topup"):
             return 1.0
         items = _as_drafts(ctx.output).items
         want = ctx.metadata["difficulties"]
@@ -564,6 +608,147 @@ def make_topup_dataset() -> Dataset:
     return Dataset(name="check_items_topup", cases=TOPUP_CASES, evaluators=_drafting_evaluators(TopupShape()))
 
 
+# ── A140: the varied drafter and varied top-up (check_items slot) ───────────
+
+VARIED = Step(check_items_varied_agent, VariedCheckItemsOutput, VARIED_PROMPT_HASH, "check_items")
+VARIED_TOPUP = Step(
+    check_items_varied_topup_agent, VariedCheckItemsOutput, VARIED_TOPUP_PROMPT_HASH, "check_items"
+)
+
+
+def _varied_case(name: str, doc: int, used: dict | None = None) -> Case:
+    concepts, chunks = _course_doc(doc)
+    concepts = concepts[:3]  # one production call: CHECK_ITEM_CONCEPTS_PER_CALL concepts
+    message = build_varied_prompt(concepts, _passages(chunks), used or {})
+    return _case(name, "varied", message, inputs=(tuple(concepts), chunks), concepts=concepts)
+
+
+VARIED_CASES = [
+    _varied_case("varied_calculus_three_concepts", 0),
+    _varied_case(  # an upload after an earlier run: the stored surfaces are listed
+        "varied_recursion_with_stored_surfaces",
+        1,
+        {"Recursion": [("symbolic", "factorial function"), ("applied", "nested folders")]},
+    ),
+    _topup_case("varied_topup_limits", 0, "Limits", [2, 3], [UNASKED_RUBRIC], varied=True,
+                used=[("numeric", "table of values near 0")]),
+]
+
+
+@dataclass
+class SurfacesVary(Evaluator):
+    """A140: every drafted item states a surface, and within a concept no two
+    items share one (the varied prompt's whole point)."""
+
+    def evaluate(self, ctx) -> float:
+        if _kind(ctx) not in ("varied", "varied_topup"):
+            return 1.0
+        by_concept: dict[str, list] = {}
+        for item in _as_drafts(ctx.output).items:
+            surface = surface_of(item)
+            if surface is None:
+                return 0.0
+            by_concept.setdefault(concept_key(item.concept), []).append(surface)
+        if not by_concept:
+            return 0.0
+        return sum(len(set(s)) == len(s) for s in by_concept.values()) / len(by_concept)
+
+
+@dataclass
+class ConceptsCovered(Evaluator):
+    """check_items.py's ConceptsCovered on a multi-concept drafting call: every
+    requested concept (or combination) gets a stored item, none unasked."""
+
+    def evaluate(self, ctx) -> float:
+        if _kind(ctx) not in ("varied", "combo"):
+            return 1.0
+        return plain.ConceptsCoveredEvaluator().evaluate(
+            _Ctx(ctx.inputs, _as_drafts(ctx.output), ctx.metadata)
+        )
+
+
+def make_varied_dataset() -> Dataset:
+    return Dataset(
+        name="check_items_varied",
+        cases=VARIED_CASES,
+        evaluators=_drafting_evaluators(TopupShape(), SurfacesVary(), ConceptsCovered()),
+    )
+
+
+# ── A141: the combination drafter and its check ─────────────────────────────
+
+COMBO = Step(check_items_combo_agent, CheckItemsOutput, COMBO_PROMPT_HASH, "check_items")
+COMBO_VERIFY = Step(
+    check_items_combo_verify_agent, ComponentChecks, COMBO_VERIFY_PROMPT_HASH, VERIFY_TASK
+)
+
+_CALCULUS, _CALC_CHUNKS = _course_doc(0)  # Limits, Derivatives, Chain Rule
+_COMBOS = [combo_label(["Chain Rule", "Derivatives"]), combo_label(["Derivatives", "Limits"])]
+
+
+def _combo_verify_case(name: str, items: list[tuple[VerifyItem, tuple[str, ...], dict]]) -> Case:
+    """`items`: (the item, its components apex first, component id -> required)."""
+    message = build_combo_verify_prompt([ComboVerifyItem(item, comps) for item, comps, _ in items])
+    return _case(
+        name,
+        "combo_verify",
+        message,
+        expected={item.id: required for item, _, required in items},
+        criteria={item.id: len(item.criteria) for item, _, _ in items},
+    )
+
+
+COMBO_CASES = [
+    _case("combo_two_calculus_combinations", "combo",
+          build_combo_prompt(_COMBOS, _passages(_CALC_CHUNKS)),
+          inputs=(tuple(_COMBOS), _CALC_CHUNKS), concepts=_COMBOS),
+    _combo_verify_case(
+        "combo_verify_needed_and_setting_only",
+        [
+            (  # both concepts are steps of the answer
+                _vitem(1, "free", "Differentiate sin(x^2) and name the rule you used.",
+                       ("Gives 2x cos(x^2)", "Names the chain rule")),
+                ("Chain Rule", "Derivatives"),
+                {"k1": True, "k2": True},
+            ),
+            (  # Limits is only the setting: the answer never uses it
+                _vitem(2, "free",
+                       "A limit problem sheet asks for the derivative of 3x^2. What is it?",
+                       ("Gives 6x",)),
+                ("Derivatives", "Limits"),
+                {"k1": True, "k2": False},
+            ),
+        ],
+    ),
+]
+
+
+@dataclass
+class ComponentsRequired(Evaluator):
+    """A141: the share of components judged as the question needs them (an item
+    whose every component is needed is stored; one that names a setting-only
+    concept is rejected, never stored under a narrower tag)."""
+
+    def evaluate(self, ctx) -> float:
+        if _kind(ctx) != "combo_verify":
+            return 1.0
+        found = component_verdicts(ctx.output)
+        rows = []
+        for item_id, required in ctx.metadata["expected"].items():
+            verdict = found.get(item_id)
+            for kid in component_ids(len(required)):
+                rows.append(verdict is not None and verdict.required.get(kid) is required[kid])
+        return sum(rows) / len(rows) if rows else 0.0
+
+
+def make_combo_dataset() -> Dataset:
+    return Dataset(
+        name="check_items_combo",
+        cases=COMBO_CASES,
+        evaluators=_drafting_evaluators(ConceptsCovered(), ComponentsRequired(), EveryItemAnswered()),
+    )
+
+
 # ── the datasets ─────────────────────────────────────────────────────────────
 
 _STEPS = {
@@ -571,23 +756,56 @@ _STEPS = {
     "solve": SOLVE,
     "match": MATCH,
     "topup": TOPUP,
+    "varied": VARIED,
+    "varied_topup": VARIED_TOPUP,
+    "combo": COMBO,
+    "combo_verify": COMBO_VERIFY,
 }
 
-#: dataset name -> (make, run); run_all.py iterates these. They score the
-#: steps every learning-loop uploader's drafting runs, so they are replayed from
-#: the start: a missing recording fails CI (fail closed). Baselines key on the name.
-VARIANTS = {
+#: The steps every learning-loop uploader's drafting runs: always replayed, so
+#: a missing recording fails CI (fail closed, like any dataset in run_all.py).
+DEFAULT_PATH = ("check_items_verify", "check_items_solve", "check_items_topup")
+#: The flag-gated drafters (`varied_isomorphs`, `multi_concept_items`, both off):
+#: replayed once recorded, like `quiz_generation_planned` — the flag waits on
+#: the recording, and from then on CI keeps scoring its prompt.
+ONCE_RECORDED = ("check_items_varied", "check_items_combo")
+
+#: dataset name -> (make, run), every dataset (what a record run records).
+ALL_VARIANTS = {
     name: (make, _runner(name, make().cases, _STEPS))
     for name, make in (
         ("check_items_verify", make_verify_dataset),
         ("check_items_solve", make_solve_dataset),
         ("check_items_topup", make_topup_dataset),
+        ("check_items_varied", make_varied_dataset),
+        ("check_items_combo", make_combo_dataset),
     )
 }
-for _name, (_make, _run_fn) in VARIANTS.items():
+assert set(ALL_VARIANTS) == set(DEFAULT_PATH) | set(ONCE_RECORDED)
+for _name, (_make, _run_fn) in ALL_VARIANTS.items():
     _cases = _make().cases
     assert len(_cases) <= MAX_CASES, _name
     assert len({c.inputs for c in _cases}) == len(_cases), f"{_name}: inputs must be unique"
+
+
+def recorded(name: str) -> bool:
+    """Whether a dataset's cassette namespace holds recordings."""
+    folder = CASSETTE_DIR / name
+    return folder.is_dir() and any(folder.glob("*.json"))
+
+
+def replay_variants(*, recorded=recorded) -> dict:
+    """The datasets a replay scores: the default path always, a flag-gated
+    drafter once it is recorded. Baselines key on the dataset name."""
+    return {
+        name: pair
+        for name, pair in ALL_VARIANTS.items()
+        if name in DEFAULT_PATH or recorded(name)
+    }
+
+
+#: run_all.py iterates these.
+VARIANTS = replay_variants()
 
 
 if __name__ == "__main__":
@@ -596,7 +814,7 @@ if __name__ == "__main__":
     only = [s for s in (os.getenv("CHECK_ITEM_GATES_DATASETS") or "").split(",") if s]
     results = {
         name: evaluate_dataset(make, run, update=update)
-        for name, (make, run) in VARIANTS.items()
+        for name, (make, run) in ALL_VARIANTS.items()
         if not only or name in only
     }
     for name, ok in results.items():

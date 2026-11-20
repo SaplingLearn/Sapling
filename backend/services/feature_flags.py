@@ -226,7 +226,8 @@ REGISTRY: dict[str, FlagDef] = _registry(
             "reviews, concepts already proficient, exam mode, and when the "
             "question would leave the concept's checks short. On sends a changed "
             "tutor prompt on the explaining turn, so turn it on only after that "
-            "path is recorded live in the loop_tutor evals. Off: byte-identical "
+            "path is recorded live in the loop_tutor evals (its flag-path "
+            "datasets, <slot>__flags) and passes. Off: byte-identical "
             "to before A138.", False),
     # Learning loop spec §13 A139: self-explanation prompts — one interrogative
     # "why does this follow?" as a turn's question at a code-decided juncture.
@@ -240,7 +241,8 @@ REGISTRY: dict[str, FlagDef] = _registry(
             "concept per session) with its own reply box; the reply is stored for "
             "staff analysis and is never graded or used as evidence. The next "
             "tutor turn acknowledges a reply briefly, a changed prompt: turn it on "
-            "only after that path is recorded live in the loop_tutor evals. Off: "
+            "only after that path is recorded live in the loop_tutor evals (its "
+            "flag-path datasets, <slot>__flags) and passes. Off: "
             "byte-identical to before A139.", False),
     # Learning loop spec §13 A140: surface-varied isomorphs. Resolved ONCE per
     # drafting run for the uploader (services/check_item_service.py::
@@ -256,7 +258,7 @@ REGISTRY: dict[str, FlagDef] = _registry(
             "leave equal, one whose surface they have not met on the concept, and "
             "the review interleave never pairs recall-or-definition items. On sends "
             "a changed drafting prompt and output schema, so turn it on only after "
-            "the varied check_items eval dataset is recorded live and passes. Off: "
+            "the check_items_varied eval dataset is recorded live and passes. Off: "
             "drafting and every pick are byte-identical to before A140.", False),
     # Learning loop spec §13 A141: multi-concept items. Resolved ONCE per
     # drafting run for the uploader (the combination drafter, from the
@@ -269,8 +271,8 @@ REGISTRY: dict[str, FlagDef] = _registry(
             "on a concept whose every component they are proficient in (p >= 0.95 "
             "with a strong unassisted answer behind it) while its difficulty is at "
             "the top, and the answer is a half-weight observation on that concept. "
-            "On sends new drafting prompts, so turn it on only after the multi-"
-            "concept eval dataset is recorded live and passes. Off: drafting and "
+            "On sends new drafting prompts, so turn it on only after the "
+            "check_items_combo eval dataset is recorded live and passes. Off: drafting and "
             "every pick are byte-identical to before A141.", False),
     # Learning loop spec §13 A143-A147: the quiz in the learning system. Five
     # flags because each part rolls out on its own condition; all ship off and,

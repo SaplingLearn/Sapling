@@ -154,8 +154,8 @@ Offline (in `run_all.py` + CI): `document_classification`, `document_summary`,
 `decisions`, `session_close` and `misconception_confront` (two slots) — 255
 cassettes, judge cassettes included.
 
-Added by #866 (Z23, Z24), written as code and recorded in the A111 pass (three
-runs each, floors from their minimum); until then each fails closed:
+Added by #866 (Z23–Z25), written as code and recorded in the A111 pass (three
+runs each, floors from their minimum); until then each fails closed or waits:
 
 - **Replayed from the start** (they score paths the loop serves by default):
   `check_items`' two three-concept cases (production drafts
@@ -167,6 +167,17 @@ runs each, floors from their minimum); until then each fails closed:
   `check_items_topup` (the A37 mc_reason top-up), each on its own slot and
   scored by production's own reading of its answers (`item_alignment.align`,
   `item_keys.compare`, `check_items_key_match.matches`).
+- **Replayed once recorded** (they gate a flag that is off): the
+  `loop_tutor_v2` variant (`<slot>__v2`, `misconception_confront__<slot>__v2`),
+  the loop tutor's flag-path datasets (`<slot>__flags`, `LOOP_EVAL_FLAGS=1`:
+  the A138 prequestion explaining turn and the A139 self-explanation
+  acknowledgement, each with the history the route sends; never routing),
+  `check_items_varied` (A140), `check_items_combo` (A141, the combination
+  drafter and its component check) and `concept_extraction__relations`
+  (A118, `CONCEPT_EVAL_RELATIONS=1`, scored on the edges
+  `concept_prereqs.resolve_prerequisites` would write). A module's
+  `replay_variants()` adds a dataset to `run_all.py` the moment its cassette
+  namespace holds a recording, so from then on CI keeps scoring it.
 
 `check_items` (learning loop PKG-04, 6 cassettes) drafts one course concept's
 nine items per case from `fixtures/tutor_course.json` passages and scores them

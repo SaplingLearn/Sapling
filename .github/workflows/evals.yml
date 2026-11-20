@@ -66,6 +66,7 @@ on:
       - 'backend/services/check_item_service.py'
       - 'backend/services/chunk_visibility.py'
       - 'backend/services/chunker.py'
+      - 'backend/services/concept_prereqs.py'
       - 'backend/services/course_context_service.py'
       - 'backend/services/email_shape.py'
       - 'backend/services/email_variables.py'

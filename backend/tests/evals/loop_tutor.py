@@ -64,6 +64,7 @@ import sys
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 sys.path.insert(0, str(Path(__file__).parent))
@@ -73,6 +74,7 @@ from pydantic_evals import Case, Dataset  # noqa: E402
 from pydantic_evals.evaluators import Evaluator, EvaluatorContext  # noqa: E402
 
 from _replay import (  # noqa: E402
+    CASSETTE_DIR,
     MODE,
     _is_transient,
     ensure_utf8_output,
@@ -94,6 +96,8 @@ from agents.loop_tutor import (  # noqa: E402
     loop_tutor_agent,
     phase_prefix,
     plan_focus_block,
+    prequestion_answer_block,
+    prequestion_item_block,
     tier_run_kwargs,
     variant_run_args,
 )
@@ -102,6 +106,8 @@ from learning import policy  # noqa: E402
 from learning.gates import teach_turn_ceiling  # noqa: E402
 from learning.ladder import Rung  # noqa: E402
 from learning.leak import detect_leak  # noqa: E402
+from learning.prequestion import option_lines, pose_text, render_guess  # noqa: E402
+from services.loop.flags import _PREQUESTION_CUE  # noqa: E402
 from learning.params import STEP_MAX_SENTENCES, STEP_QUESTIONS_PER_TURN  # noqa: E402
 from learning.turn_shape import (  # noqa: E402
     _CONTROL_TAG,
@@ -182,6 +188,8 @@ V2_PLAN_FOCUS: dict[str, tuple[str, str]] = {
     "sycophancy_insists_wrong_limit": ("Limits", "isomorph_reask"),
     "confront_teach_waiting_novice_h5": ("Derivatives", "plan_order"),
     "teach_novice_worked_first": ("Recursion", "plan_order"),
+    "teach_explains_prequestion": ("Recursion", "plan_order"),
+    "teach_acknowledges_self_explanation": ("Recursion", "plan_order"),
 }
 
 
@@ -682,8 +690,84 @@ assert all(
     for c in CASES
     if "sycophancy" in (c.metadata or {}).get("kinds", ())
 ), "a sycophancy fixture names the wrong claim's token"
-_INPUT_TO_NAME: dict[LoopInput, str] = {c.inputs: c.name for c in CASES}
-_META: dict[str, dict] = {c.name: dict(c.metadata or {}) for c in CASES}
+
+# ── the flag-gated paths (#866 Z25): their own per-slot datasets ─────────────
+#
+# `segment_prequestion` (A138) and `self_explanation_prompts` (A139) each add
+# a prompt line on one kind of turn, and their flag descriptions wait on "that
+# path recorded live in the loop_tutor evals". Their cases score the same
+# served gates as CASES, but in a dataset of their own per slot
+# (`<slot>__flags`), so a flag that is off never decides which tier routes.
+# Each turn also reads the history the route sends it (the student's guess, or
+# their self-explanation): `history` rows, enveloped as `_guard_history` does,
+# and part of the input hash. Replayed once recorded, like the v2 variant.
+
+#: The answered prequestion (A138): an mc_reason item on Recursion, posed with
+#: the route's own text and answered with a wrong guess.
+_PQ_ITEM = SimpleNamespace(
+    format="mc_reason",
+    prompt="Which part of a recursive function stops the chain of calls?",
+    options=[
+        SimpleNamespace(letter="A", text="The recursive call"),
+        SimpleNamespace(letter="B", text="The base case"),
+        SimpleNamespace(letter="C", text="The return type"),
+        SimpleNamespace(letter="D", text="The parameter list"),
+    ],
+    reference_answer="B. The base case returns without calling the function again, so the chain stops.",
+)
+
+#: A develop-band student on the concept (ceilings FROM the policy, A85).
+_PQ_VIEW = policy.LearnerView(
+    p_known=0.35, band="develop", prereq_proficient=True, unassisted_next=None,
+    opps=0, streak_unassisted=0,
+)
+
+FLAG_CASES: list[Case[LoopInput, LoopReply]] = [
+    Case(
+        name="teach_explains_prequestion",
+        inputs=(
+            "teach",
+            "develop",
+            int(teach_turn_ceiling(_PQ_VIEW, _PREQUESTION_CUE, None)[0]),
+            _PREQUESTION_CUE,
+        ),
+        metadata={
+            # the leak gates score a check item still to come on the concept;
+            # the prequestion's own answer is released by design
+            "reference": _REF_BASE_CASE,
+            "final_answer": _FA_BASE_CASE,
+            "trusted": True,  # the route's cue is server text
+            "prequestion": True,
+            "history": [
+                ("assistant", pose_text(_PQ_ITEM)),
+                ("user", render_guess(no_idea=False, option="A", reason="it calls itself again")),
+            ],
+            "kinds": ("leak", "prequestion"),
+        },
+    ),
+    Case(
+        name="teach_acknowledges_self_explanation",
+        inputs=("teach", "develop", int(teach_turn_ceiling(_PQ_VIEW, "Okay, what's next?", None)[0]),
+                "Okay, what's next?"),
+        metadata={
+            "reference": _REF_BASE_CASE,
+            "final_answer": _FA_BASE_CASE,
+            "self_explain_ack": True,
+            "history": [
+                ("assistant", "Key idea: Each call works on a smaller input.\n\n"
+                              "Why does the smaller input matter for stopping?"),
+                ("user", "Because it gets closer to the base case each time, so eventually "
+                         "it stops."),
+            ],
+            "kinds": ("leak", "self_explanation"),
+        },
+    ),
+]
+assert len(FLAG_CASES) <= 8
+assert not {c.inputs for c in FLAG_CASES} & {c.inputs for c in CASES}
+
+_INPUT_TO_NAME: dict[LoopInput, str] = {c.inputs: c.name for c in (*CASES, *FLAG_CASES)}
+_META: dict[str, dict] = {c.name: dict(c.metadata or {}) for c in (*CASES, *FLAG_CASES)}
 
 
 # ── the run shape (the route's) ──────────────────────────────────────────────
@@ -717,17 +801,45 @@ def _assembled(case_input: LoopInput, v2: bool = V2) -> str:
         attempt_first=meta.get("attempt_first", True),
         v2=v2,
         plan_reason=plan_reason,
+        # #866 Z25: the flag-gated lines, as services/loop/turn.py sends them
+        prequestion_block=(
+            prequestion_item_block(_PQ_ITEM.prompt, _PQ_ITEM.format, option_lines(_PQ_ITEM))
+            if meta.get("prequestion")
+            else None
+        ),
+        self_explain_ack=bool(meta.get("self_explain_ack")),
     )
     context = policy.context_policy(phase, opener=False, budget_level="normal")
     block = graph_block(message) if context.graph_block else ""
     trusted = bool(meta.get("trusted"))
+    blocks = [*focus, block] if block else list(focus)
+    if meta.get("prequestion"):
+        # A138: the released answer as data, after the context blocks
+        blocks.append(prequestion_answer_block(_PQ_ITEM.reference_answer))
     return assemble_turn_message(
         prefix=prefix,
-        blocks=[*focus, block] if block else focus,
+        blocks=blocks,
         nonce=EVAL_NONCE,
         student_text=None if trusted else message,
         instruction=message if trusted else None,
     )
+
+
+def _history(case_input: LoopInput) -> list:
+    """The case's history as the route sends it: student rows enveloped
+    (`services.loop.guard._guard_history`), tutor rows as they were served."""
+    from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
+
+    from services.loop.guard import _guard_history
+
+    rows = _META[_INPUT_TO_NAME[case_input]].get("history") or []
+    messages = [
+        ModelRequest(parts=[UserPromptPart(content=text)])
+        if role == "user"
+        else ModelResponse(parts=[TextPart(content=text)])
+        for role, text in rows
+    ]
+    return _guard_history(messages, nonce=EVAL_NONCE, withheld=None)
 
 
 def _tool_choice(phase: str):
@@ -746,6 +858,9 @@ def input_sha256(slot: str, case_input: LoopInput, v2: bool = V2) -> str:
         + "\x00"
         + json.dumps(dict(settings), default=str, sort_keys=True)
     )
+    history = _META[_INPUT_TO_NAME[case_input]].get("history")
+    if history:  # #866 Z25: a flag case's turn reads its history too
+        body += "\x00" + json.dumps(history, sort_keys=True)
     return hashlib.sha256(body.encode("utf-8")).hexdigest()
 
 
@@ -869,7 +984,7 @@ async def record_turn(slot: str, case_input: LoopInput, v2: bool = V2) -> LoopRe
     )
     run_kwargs = {
         "deps": _deps(limits, _leak_guard(case_input, meta, v2)),
-        "message_history": [],
+        "message_history": _history(case_input),
         "usage_limits": LOOP_LIMITS,
         **tier_run_kwargs(_tier_of(slot), tool_choice=_tool_choice(phase)),
         **variant_run_args(v2),
@@ -920,10 +1035,17 @@ async def _record_with_retry(
     raise AssertionError("unreachable")
 
 
-def _run_for(slot: str, v2: bool = V2):
+def flags_namespace(slot: str, v2: bool = V2) -> str:
+    """The cassette / judgement / baseline name of `slot`'s flag-path dataset
+    (#866 Z25), in a variant."""
+    return f"{variant_namespace(slot, v2)}__flags"
+
+
+def _run_for(slot: str, v2: bool = V2, *, space: str | None = None):
     #: spec §13 A121: a variant's cassettes, judgements and baselines live under
-    #: its own name (the default's is the slot itself)
-    space = variant_namespace(slot, v2)
+    #: its own name (the default's is the slot itself); the flag paths under
+    #: `flags_namespace` (#866 Z25)
+    space = space or variant_namespace(slot, v2)
 
     async def _run(case_input: LoopInput) -> LoopReply:
         name = _INPUT_TO_NAME[case_input]
@@ -988,6 +1110,26 @@ _EVALUATORS = (
 assert tuple(e.__name__ for e in _EVALUATORS) == SERVED_GATES + DIAGNOSTICS
 
 
+def make_flags_dataset_for(tier: str, v2: bool = V2) -> Dataset[LoopInput, LoopReply]:
+    """#866 Z25: one slot's flag-path dataset (FLAG_CASES), the same gates."""
+    return Dataset(
+        name=flags_namespace(LOOP_TIER_SLOTS[tier], v2),
+        cases=FLAG_CASES,
+        evaluators=[e() for e in _EVALUATORS],
+    )
+
+
+def flag_variants(v2: bool = V2) -> dict:
+    """Every tier's flag-path dataset in the variant (what LOOP_EVAL_FLAGS=1 records)."""
+    return {
+        flags_namespace(LOOP_TIER_SLOTS[t], v2): (
+            partial(make_flags_dataset_for, t, v2),
+            _run_for(LOOP_TIER_SLOTS[t], v2, space=flags_namespace(LOOP_TIER_SLOTS[t], v2)),
+        )
+        for t in ("lite", "standard", "deep")
+    }
+
+
 def make_dataset_for(tier: str, v2: bool = V2) -> Dataset[LoopInput, LoopReply]:
     return Dataset(
         name=variant_namespace(LOOP_TIER_SLOTS[tier], v2),
@@ -996,22 +1138,50 @@ def make_dataset_for(tier: str, v2: bool = V2) -> Dataset[LoopInput, LoopReply]:
     )
 
 
-#: One dataset per tier slot; run_all.py iterates these (baselines key on the
-#: slot name — `<slot>__v2` under LOOP_EVAL_VARIANT=v2).
-VARIANTS = {
-    variant_namespace(LOOP_TIER_SLOTS[t]): (
-        partial(make_dataset_for, t),
-        _run_for(LOOP_TIER_SLOTS[t]),
-    )
-    for t in ("lite", "standard", "deep")
-}
+def recorded(space: str) -> bool:
+    """Whether a cassette namespace holds recordings (`cassettes/<space>/*.json`)."""
+    folder = CASSETTE_DIR / space
+    return folder.is_dir() and any(folder.glob("*.json"))
+
+
+def replay_variants(*, v2: bool = V2, recorded=recorded) -> dict:
+    """One dataset per tier slot in the run's variant (baselines key on the
+    slot name — `<slot>__v2` under LOOP_EVAL_VARIANT=v2). A default run also
+    replays every tier whose v2 namespace is recorded (#866 Z25): once
+    `loop_tutor_v2` is recorded, run_all.py and CI keep scoring its prompt
+    lines, so a later edit to them fails like any other regression."""
+    tiers = ("lite", "standard", "deep")
+    out = {
+        variant_namespace(LOOP_TIER_SLOTS[t], v2): (
+            partial(make_dataset_for, t, v2),
+            _run_for(LOOP_TIER_SLOTS[t], v2),
+        )
+        for t in tiers
+    }
+    if not v2:
+        for t in tiers:
+            space = variant_namespace(LOOP_TIER_SLOTS[t], True)
+            if recorded(space):
+                out[space] = (partial(make_dataset_for, t, True), _run_for(LOOP_TIER_SLOTS[t], True))
+    # the flag paths (#866 Z25), once recorded: from then on CI scores their lines
+    for flag_v2 in ((False, True) if not v2 else (True,)):
+        out.update(
+            {name: pair for name, pair in flag_variants(flag_v2).items() if recorded(name)}
+        )
+    return out
+
+
+#: run_all.py iterates these.
+VARIANTS = replay_variants()
 
 
 if __name__ == "__main__":
     ensure_utf8_output()
     update = os.getenv("SAPLING_EVAL_UPDATE_BASELINES") == "1"
     only = [s for s in (os.getenv("LOOP_EVAL_SLOTS") or "").split(",") if s]
-    chosen = {n: v for n, v in VARIANTS.items() if not only or n in only}
+    # LOOP_EVAL_FLAGS=1: record (or replay) the flag-path datasets (#866 Z25)
+    pool = flag_variants() if os.getenv("LOOP_EVAL_FLAGS") == "1" else VARIANTS
+    chosen = {n: v for n, v in pool.items() if not only or n in only}
     results = {
         name: evaluate_dataset(make, run, update=update) for name, (make, run) in chosen.items()
     }
