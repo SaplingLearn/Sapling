@@ -1557,3 +1557,18 @@ class TestAsyncReadTwins:
         async_reads = [c for c in async_calls.get("graph_nodes", []) if c[0] == "select"]
         assert async_reads == sync_reads
         assert bool(sync) == (semester is None or bool(allowed))
+
+
+def test_recommendation_percent_rounds_like_every_other_screen():
+    """K50 (#866 audit): the dashboard's "Learn next" reason prints the score
+    rounded half-up, as Tree and the quiz card do (Math.round), never
+    truncated: 0.8787 reads 88%, 0.29 reads 29%, 0.125 reads 13%."""
+    rows = [
+        {"concept_name": "A", "mastery_score": 0.8787, "mastery_tier": "learning"},
+        {"concept_name": "B", "mastery_score": 0.29, "mastery_tier": "struggling"},
+        {"concept_name": "C", "mastery_score": 0.125, "mastery_tier": "struggling"},
+    ]
+    reasons = [r["reason"] for r in gs._recommendations_from(rows)]
+    assert "(88%)" in reasons[0]
+    assert "(29%)" in reasons[1]
+    assert "(13%)" in reasons[2]

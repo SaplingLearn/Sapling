@@ -596,7 +596,12 @@ class TestChatViaAgent:
         ):
             r = self._post()
         assert r.status_code == 413
-        assert "budget" in r.json()["detail"]
+        detail = r.json()["detail"]
+        assert "budget" in detail
+        # K48 (#866 audit): the frontend shows a server detail only up to 160
+        # characters (lib/errorMessage.ts MAX_DETAIL_LENGTH); a longer one
+        # reads "The tutor is unavailable." and its remedy never reaches the student
+        assert len(detail) <= 160 and "try again" not in detail.lower()
         save.assert_not_called()
 
     def test_unexpected_exception_returns_502(self):

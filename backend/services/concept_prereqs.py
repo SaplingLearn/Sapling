@@ -83,6 +83,7 @@ from typing import TYPE_CHECKING
 from agents.concept_extraction import EXISTING_CONCEPTS_PROMPT_MAX
 from db.connection import page_all, table
 from learning.evidence import PREREQ_RELATIONSHIP_TYPE
+from learning.gate import learning_loop_for_uploader
 from learning.params import EDGE_PREREQ_SOURCE_IS_PREREQ
 from services.feature_flags import flag_on
 from services.graph_service import _normalize_concept, apply_graph_update
@@ -259,9 +260,16 @@ def upload_prereqs_on(user_id: str | None) -> bool:
     Resolved ONCE per upload, before extraction, by the upload route, which
     passes the answer down: it picks the extraction variant, the
     course-concepts read and the edge write, so one upload never sees two
-    answers. No student → off, whatever the stored default says. Blocking on
-    a cold flag cache: call it off the event loop."""
-    return bool(user_id) and flag_on(UPLOAD_PREREQ_EDGES_FLAG, user_id)
+    answers. No student → off, whatever the stored default says. The edges
+    reshape the learning dynamics (and the Study hub's roadmap order), so the
+    uploader's learning-loop gate comes first: loop off — the kill switch or
+    the student's flag — is the pre-loop upload and the flag is not read
+    (K55). Blocking on a cold flag cache: call it off the event loop."""
+    return (
+        bool(user_id)
+        and learning_loop_for_uploader(user_id)
+        and flag_on(UPLOAD_PREREQ_EDGES_FLAG, user_id)
+    )
 
 
 def course_concept_names(user_id: str, course_id: str | None) -> list[str]:

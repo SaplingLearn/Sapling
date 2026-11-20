@@ -223,6 +223,25 @@ class TestAttemptResume:
         assert r.json()["error"]["code"] == "QUIZ_ATTEMPT_NOT_RESUMABLE"
         assert "Av = lambda v" not in r.text
 
+    @pytest.mark.parametrize("closed", [
+        {"completed_at": "2026-08-12T01:00:00+00:00", "score": 1, "total": 1},
+        {"abandoned_at": "2026-08-12T01:00:00+00:00"},
+    ])
+    def test_closed_legacy_attempt_answers_not_resumable(self, closed):
+        """K41 (#866 audit): the documented contract is that a closed attempt
+        answers 200 resumable:false. A legacy-shaped row that is completed or
+        abandoned ships no questions anyway, so its shape is no reason for a
+        409 (the rich seed's legacy attempt 409'd on every quiz-home load)."""
+        legacy = _attempt_row(
+            questions_json=[{"q": "What defines an eigenvalue?", "a": "Av = lambda v"}], **closed,
+        )
+        with patch_quiz("table", side_effect=with_async_twins(self._factory(legacy))):
+            r = client.get("/api/quiz/attempts/quiz1")
+        assert r.status_code == 200
+        data = r.json()
+        assert data["resumable"] is False and data["questions"] == []
+        assert "Av = lambda v" not in r.text
+
     def test_abandoned_attempt_is_not_resumable(self):
         """A swept attempt must stop being offered — the config comment
         promises exactly this, and serving its questions while /answer and

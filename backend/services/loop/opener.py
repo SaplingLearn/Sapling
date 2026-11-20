@@ -167,11 +167,14 @@ class _LoopOpener(_LoopTurn):
         if self.reveal_fallback is not None:
             raise RuntimeError("the opener's reveals could not be recorded")  # never served unrecorded
         self._emit_reveal()
-        if self.tier != "none" and not self._probing():
-            # Spec §13 A121: a model opener (a quiz-ask session's first teach
-            # turn, A99) ends with the tutor's own question, as any served teach
-            # turn does, so the student's reply to it is judged like any other.
-            # A template opener asks nothing and leaves the key unset.
+        if self.tier != "none" and not self._probing() and self.quiz_ask is None:
+            # Spec §13 A121: a model opener ends with the tutor's own question,
+            # as any served teach turn does, so the student's reply to it is
+            # judged like any other. A template opener asks nothing and leaves
+            # the key unset. So does a quiz-ask session's opener (A99, K39): its
+            # one client, the quiz's Ask panel, never shows the greeting and
+            # sends the student's own question about the quiz item first — that
+            # message answers nothing the student saw.
             self.state[OPEN_QUESTION_KEY] = True
         notice: dict = {}
         # A128: no session row yet — the lazy document carries the note's key

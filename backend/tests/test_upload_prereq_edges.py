@@ -281,9 +281,25 @@ def flag_reads(monkeypatch):
     return reads
 
 
+def test_the_flag_is_off_while_the_learning_loop_is(monkeypatch, flag_reads):
+    """K55 (#866 audit): prerequisite edges reshape the learning dynamics
+    (and the loop-off Study hub's roadmap order), so they follow the
+    uploader's learning-loop gate too: loop off — the kill switch or the
+    student's flag — is the pre-loop upload, whatever this flag says, and
+    the flag is not even read."""
+    monkeypatch.setenv(FLAG_ENV, "on")
+    monkeypatch.setattr(cp, "learning_loop_for_uploader", lambda user_id: False)
+    assert cp.upload_prereqs_on("u1") is False
+    assert flag_reads == []
+    monkeypatch.setattr(cp, "learning_loop_for_uploader", lambda user_id: user_id == "u1")
+    assert cp.upload_prereqs_on("u1") is True
+    assert cp.upload_prereqs_on("u2") is False
+
+
 def test_the_flag_is_per_student_and_off_without_one(monkeypatch, flag_reads):
     from services import feature_flags as ff
 
+    monkeypatch.setattr(cp, "learning_loop_for_uploader", lambda user_id: True)
     monkeypatch.setenv(FLAG_ENV, "on")
     assert cp.upload_prereqs_on("u1") is True
     # No student is known: off, without even asking the flag store.

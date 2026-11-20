@@ -203,8 +203,11 @@ def test_the_loop_quiz_ask_session_starts_in_teach_on_the_quiz_concept(gate_on, 
     sid = r.json()["session_id"]
     assert order == ["help", "model"]  # recorded before any tutor text exists
     pending = PENDING_SESSIONS.pop(sid)
-    # spec §13 A121: the model opener ends with the tutor's own question
-    assert pending["loop_state"] == {**quiz_ask_state("node-1"), "open_question": True}
+    # K39 (#866 audit): the quiz-ask opener's question is never shown — the
+    # quiz's Ask panel hides the greeting and sends the student's own question
+    # as the first message — so that message is no reply to it: it is not
+    # graded as an answer check (no `open_question`)
+    assert pending["loop_state"] == quiz_ask_state("node-1")
     assert pending["loop_state"]["phase"] == "teach" and pending["loop_state"]["concept"] == "node-1"
     assert pending["course_id"] == "c-node"  # the quiz node's course, not the topic's guess
     # the opener's band is the quiz concept's (node-1, p_known 0.5), not the BKT prior's

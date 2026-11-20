@@ -155,7 +155,13 @@ async def get_attempt(attempt_id: str, request: Request):
     questions = decrypt_json_column(
         attempt["questions_json"], bind=bind("quiz_attempts", "questions_json", attempt_id),
     ) or []
-    if questions and not all(_is_wire_question(q) for q in questions):
+    # Only an in-progress attempt hands back questions: a completed or
+    # abandoned one would otherwise let a client keep answering (the write
+    # paths refuse it, but there's no reason to ship the payload at all).
+    resumable = status == "in_progress"
+    # A closed attempt ships no questions, so its stored shape is no reason to
+    # refuse it: it answers 200 resumable:false like any closed attempt (K41).
+    if resumable and questions and not all(_is_wire_question(q) for q in questions):
         # A stored shape this code doesn't recognise has no safe keyless
         # projection — passing it through would ship whatever key it holds
         # (legacy rows store the answer under `a`). Refuse the resume.
@@ -168,10 +174,6 @@ async def get_attempt(attempt_id: str, request: Request):
             code=QuizErrorCode.QUIZ_ATTEMPT_NOT_RESUMABLE,
             message="This quiz can't be resumed. Start a new one.",
         )
-    # Only an in-progress attempt hands back questions: a completed or
-    # abandoned one would otherwise let a client keep answering (the write
-    # paths refuse it, but there's no reason to ship the payload at all).
-    resumable = status == "in_progress"
     return {
         "quiz_id": attempt["id"],
         "status": status,
