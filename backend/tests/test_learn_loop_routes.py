@@ -2133,6 +2133,48 @@ def test_a_streamed_model_turn_counts_one_tutor_call(gate_on, seams):
     seams.ai_budget.count_tutor_call.assert_called_once_with("u1")
 
 
+def _over_the_daily_call_cap(seams):
+    """Z19: the atomic count put this run past STUDENT_DAILY_TUTOR_CALLS
+    although its pre-run `check` (read with the rest of a parallel burst) passed."""
+    from services.ai_budget import AIBudgetExceeded
+
+    capped = SimpleNamespace(**{**vars(HARD), "scope": "daily_tutor_calls"})
+    seams.ai_budget.count_tutor_call.return_value = 201
+    seams.ai_budget.admit_counted_tutor_call.side_effect = AIBudgetExceeded(capped)
+    return capped
+
+
+def test_a_json_run_counted_past_the_daily_cap_is_429_and_never_runs(gate_on, seams):
+    seams.store["doc"] = {"phase": "teach"}
+    _over_the_daily_call_cap(seams)
+    agent = MagicMock()
+    agent.run = AsyncMock(side_effect=AssertionError("no model past the cap"))
+    with patch_loop("loop_tutor_agent", agent):
+        r = client.post(
+            "/api/learn/loop/chat", json={"session_id": "s1", "user_id": "u1", "message": "hi"}
+        )
+    assert r.status_code == 429, r.text
+    assert r.json()["reset_at"] == RESET_ISO
+    seams.ai_budget.admit_counted_tutor_call.assert_called_once_with("u1", 201)
+    seams.save_msg.assert_not_called()
+
+
+def test_a_streamed_run_counted_past_the_daily_cap_ends_on_the_budget_notice(gate_on, seams):
+    seams.store["doc"] = {"phase": "teach"}
+    _over_the_daily_call_cap(seams)
+    never = MagicMock(side_effect=AssertionError("no model past the cap"))
+    with patch_loop("stream_structured_turn", never):
+        r = client.post(
+            "/api/learn/loop/chat/stream",
+            json={"session_id": "s1", "user_id": "u1", "message": "hi"},
+        )
+    evs = _sse_events(r.text)
+    assert evs[-1]["type"] == "budget", evs
+    assert evs[-1]["data"]["scope"] == "daily_tutor_calls"
+    never.assert_not_called()
+    seams.save_msg.assert_not_called()
+
+
 def test_a_template_turn_counts_no_tutor_call(gate_on, seams):
     """The check pose, deterministic payloads, openers at the hard level and
     the refusal/unavailable templates run no model: nothing is counted."""

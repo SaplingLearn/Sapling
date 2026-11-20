@@ -12,6 +12,7 @@ from agents import CONTINUATION_LIMITS
 from agents.usage import UnfinishedRun, record_agent_usage
 from services.tutor import _CONTINUATION_NUDGE, _CONTINUATION_RUN_KEYS
 from services import ai_budget
+from services.ai_budget import AIBudgetExceeded
 
 from services.loop.constants import (
     _FEEDBACK_ANSWER_LEAD,
@@ -90,6 +91,14 @@ def continuation_plan(*, assembled: str, run_kwargs: dict, messages: list) -> Co
     )
 
 
+def _count_tutor_call(user_id: str) -> None:
+    """Count one tutor model run (A39) and admit it (Z19): the atomic count is
+    this run's place in the student's day, so a parallel burst that passed
+    `ai_budget.check` together still runs no call past
+    STUDENT_DAILY_TUTOR_CALLS — the one past it raises AIBudgetExceeded."""
+    ai_budget.admit_counted_tutor_call(user_id, ai_budget.count_tutor_call(user_id))
+
+
 async def _loop_continuation_text(turn, messages: list) -> str | None:
     """The #646 twin of routes.learn._continuation_text for the STRUCTURED loop
     turn. Lane B's live finding: after a tool call gemini flash-lite answered
@@ -116,7 +125,10 @@ async def _loop_continuation_text(turn, messages: list) -> str | None:
     plan = continuation_plan(
         assembled=turn.assembled, run_kwargs=turn.run_kwargs, messages=messages
     )
-    await asyncio.to_thread(ai_budget.count_tutor_call, turn.user_id)  # #117
+    try:
+        await asyncio.to_thread(_count_tutor_call, turn.user_id)  # #117
+    except AIBudgetExceeded:
+        return None  # Z19: the day's cap was reached by a parallel run: no rescue
     usage = RunUsage()
     result = None
     try:

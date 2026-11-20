@@ -17,7 +17,7 @@ from services.ai_budget import AIBudgetExceeded
 from services.chat_stream import stream_structured_turn
 
 from services.loop.state import _budget_event, _BudgetPaused
-from services.loop.continuation import _loop_continuation_text, _requests_of
+from services.loop.continuation import _count_tutor_call, _loop_continuation_text, _requests_of
 from services.loop.turn import _LoopTurn
 
 #: Every module of the package logs as the route always did (the ops-log
@@ -59,7 +59,10 @@ async def _run_turn_json(turn: _LoopTurn) -> dict:
     try:
         reply = None
         usage = RunUsage()
-        await asyncio.to_thread(ai_budget.count_tutor_call, turn.user_id)
+        try:
+            await asyncio.to_thread(_count_tutor_call, turn.user_id)
+        except AIBudgetExceeded as exc:  # Z19: past the day's cap by a parallel run
+            raise _BudgetPaused(exc.decision) from None
         with capture_run_messages() as messages:
             try:
                 result = await turn.agent.run(turn.assembled, usage=usage, **turn.run_kwargs)
@@ -180,7 +183,12 @@ async def _stream_turn(turn: _LoopTurn):
             **(await asyncio.to_thread(turn.complete, reply, {}, [])),
         }
 
-    await asyncio.to_thread(ai_budget.count_tutor_call, turn.user_id)  # #117
+    try:
+        await asyncio.to_thread(_count_tutor_call, turn.user_id)  # #117
+    except AIBudgetExceeded as exc:  # Z19: past the day's cap by a parallel run
+        await asyncio.shield(asyncio.to_thread(turn.touch_served_at))
+        yield sapling_event_to_sse(_budget_event(exc.decision))
+        return
     shown = ""  # A88 (M1): the text the student has been shown
     scanned = ""  # the last `shown` whose scan returned (A105, review m3)
     attempts: list[str] = []  # A93 (M4): retracted attempts relayed but never scanned

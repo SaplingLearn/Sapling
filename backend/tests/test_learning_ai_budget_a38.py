@@ -239,6 +239,35 @@ def test_a_store_that_lost_increments_never_undercounts_this_process(store, monk
     assert ai_budget.check(UID, "tutor", "develop").scope == "daily_tutor_calls"
 
 
+def test_a_parallel_burst_admits_only_the_calls_inside_the_cap(store, events, monkeypatch):
+    """Z19: every request of a burst reads the same pre-burst count, so `check` passes them
+    all; the atomic increment orders them, and admission refuses each one past the cap."""
+    monkeypatch.setattr(config, "STUDENT_DAILY_TUTOR_CALLS", 3)
+    store([])
+    for _ in range(2):
+        ai_budget.count_tutor_call(UID)
+    burst = 5
+    assert all(ai_budget.check(UID, "tutor", "develop").level == "normal" for _ in range(burst))
+    admitted, refused = 0, []
+    for _ in range(burst):
+        count = ai_budget.count_tutor_call(UID)
+        try:
+            ai_budget.admit_counted_tutor_call(UID, count)
+            admitted += 1
+        except ai_budget.AIBudgetExceeded as exc:
+            refused.append(exc.decision)
+    assert admitted == 1, "only the third call of the day runs"
+    assert len(refused) == 4
+    d = refused[0]
+    assert (d.level, d.tier_ceiling, d.scope, d.pause_novice) == (
+        "hard", "none", "daily_tutor_calls", True
+    )
+    assert d.reset_at == datetime(2026, 9, 30, tzinfo=timezone.utc)
+    assert [kw["payload"]["scope"] for _, kw in events] == ["daily_tutor_calls"]
+    ai_budget.admit_counted_tutor_call("", 999)  # no student, no cap
+    ai_budget.admit_counted_tutor_call(UID, None)  # nothing counted, nothing refused
+
+
 def test_reset_for_tests_clears_the_fallback_counter(store):
     store([], fail=True)
     ai_budget.count_tutor_call(UID)
