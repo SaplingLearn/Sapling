@@ -10,6 +10,7 @@ import type {
   AdminAccountsMeta, AdminSeedAccountResult, AdminWipeAccountResult,
   AdminCopyAccountResult, AccountCopyDirection, AdminAccountSummary, AdminCopyPreview,
   Note, LinkedConcept,
+  Document as Doc, DocFolder, DocumentNotes, NotesChatTurn,
   GraphUpdate, MasteryChange,
   AnalyticsBucket, LlmCostGroupBy,
   UsageSummaryData, UsageByUserData, LlmCostData, ErrorsPageData,
@@ -922,6 +923,112 @@ export const scanCourseConcepts = (courseId: string, userId: string) =>
   fetchJSON<ScanConceptsResponse>(`/api/documents/course/${courseId}/scan-concepts`, {
     method: 'POST',
     body: JSON.stringify({ user_id: userId }),
+  });
+
+// Library: rename / re-file / re-categorise one document. Every field is
+// optional and the server writes only the ones present, so a rename never
+// disturbs the filing. `course_id` and `folder_id` accept an explicit null
+// ("No Course" / unfiled), which is why they are optional-but-nullable rather
+// than simply absent.
+export interface DocumentPatch {
+  file_name?: string;
+  category?: Doc['category'];
+  course_id?: string | null;
+  folder_id?: string | null;
+}
+
+export const updateDocument = (documentId: string, userId: string, patch: DocumentPatch) =>
+  fetchJSON<{ id: string }>(`/api/documents/doc/${documentId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ user_id: userId, ...patch }),
+  });
+
+// Trash. A delete has always been a soft delete (`documents.deleted_at`), so
+// this is a second read of the same table, plus the two ways out of it.
+export const getTrashedDocuments = (userId: string) =>
+  fetchJSON<{ documents: Doc[] }>(`/api/documents/user/${userId}/trash`);
+
+export const restoreDocument = (documentId: string, userId: string) =>
+  fetchJSON<{ restored: boolean }>(`/api/documents/doc/${documentId}/restore`, {
+    method: 'POST',
+    body: JSON.stringify({ user_id: userId }),
+  });
+
+/** Delete forever. Only ever valid for a document already in the Trash. */
+export const purgeDocument = (documentId: string, userId: string) =>
+  fetchJSON<{ deleted: boolean; purged: boolean }>(
+    `/api/documents/doc/${documentId}?hard=1&user_id=${encodeURIComponent(userId)}`,
+    { method: 'DELETE' },
+  );
+
+/**
+ * "New Document": an empty library document to write notes in. Unlike every
+ * other row it has no file behind it, so the server marks it un-indexable.
+ */
+export const createBlankDocument = (
+  userId: string,
+  input: { file_name?: string; course_id?: string | null; folder_id?: string | null },
+) =>
+  fetchJSON<Doc>('/api/documents/blank', {
+    method: 'POST',
+    body: JSON.stringify({ user_id: userId, ...input }),
+  });
+
+// Folders — a named box inside a course that holds documents.
+export const getFolders = (userId: string) =>
+  fetchJSON<{ folders: DocFolder[] }>(
+    `/api/documents/folders?user_id=${encodeURIComponent(userId)}`,
+  );
+
+export const createFolder = (userId: string, name: string, courseId: string | null) =>
+  fetchJSON<DocFolder>('/api/documents/folders', {
+    method: 'POST',
+    body: JSON.stringify({ user_id: userId, name, course_id: courseId }),
+  });
+
+export const renameFolder = (folderId: string, userId: string, name: string) =>
+  fetchJSON<DocFolder>(`/api/documents/folders/${folderId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ user_id: userId, name }),
+  });
+
+export const deleteFolder = (folderId: string, userId: string) =>
+  fetchJSON<{ deleted: boolean }>(
+    `/api/documents/folders/${folderId}?user_id=${encodeURIComponent(userId)}`,
+    { method: 'DELETE' },
+  );
+
+// The per-document notes page (/library/[docId]/notes).
+export const getDocumentNotes = (documentId: string, userId: string) =>
+  fetchJSON<DocumentNotes>(
+    `/api/documents/doc/${documentId}/notes?user_id=${encodeURIComponent(userId)}`,
+  );
+
+export const saveDocumentNotes = (
+  documentId: string,
+  userId: string,
+  patch: { title?: string; content?: string; final?: boolean },
+) =>
+  fetchJSON<DocumentNotes>(`/api/documents/doc/${documentId}/notes`, {
+    method: 'PUT',
+    body: JSON.stringify({ user_id: userId, ...patch }),
+  });
+
+/** Rebuild the notes from the source document, replacing the student's edits. */
+export const regenerateDocumentNotes = (documentId: string, userId: string) =>
+  fetchJSON<DocumentNotes>(`/api/documents/doc/${documentId}/notes/regenerate`, {
+    method: 'POST',
+    body: JSON.stringify({ user_id: userId }),
+  });
+
+export const askDocumentNotes = (
+  documentId: string,
+  userId: string,
+  body: { message: string; notes: string; quote?: string | null; history?: NotesChatTurn[] },
+) =>
+  fetchJSON<{ reply: string }>(`/api/documents/doc/${documentId}/notes/ask`, {
+    method: 'POST',
+    body: JSON.stringify({ user_id: userId, ...body }),
   });
 
 // Flashcards
