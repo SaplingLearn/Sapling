@@ -107,7 +107,6 @@ ENCRYPTED: dict[str, dict[str, str]] = {
     "topic_checklists": {"content": JSON},
     "documents": {"summary": TEXT, "concept_notes": JSON, "extracted_text": TEXT},
     "notes": {"title": TEXT, "body": TEXT, "last_summary": TEXT},
-    "document_notes": {"title": TEXT, "content": TEXT},
     "flashcards": {"front": TEXT, "back": TEXT},
     "sessions": {"summary_json": JSON},
     "messages": {"content": TEXT},
@@ -229,15 +228,8 @@ SPECS: tuple[_Spec, ...] = (
     _Spec("graph_nodes"),
     _Spec("graph_edges"),
     _Spec("node_mastery_events", key="node_id", parent="graph_nodes"),
-    # Before documents: documents.folder_id references document_folders.
-    # No 🔒 column (`name` is a plaintext label, like flashcard_sets.name);
-    # `course_id` is remapped (_COURSE_TABLES).
-    _Spec("document_folders"),
     # Before enrollments: enrollments.syllabus_doc_id references documents.
     _Spec("documents"),
-    # The editable notes page for a document; keyed BY the document, so it
-    # follows it. Row ids are preserved, so document_id travels unchanged.
-    _Spec("document_notes", order="document_id"),
     _Spec("enrollments"),
     _Spec("gradebook_categories", key="enrollment_id", parent="enrollments"),
     _Spec("assignments", key="enrollment_id", parent="enrollments"),
@@ -268,7 +260,7 @@ SPECS: tuple[_Spec, ...] = (
 _OFFERING_TABLES = ("documents", "enrollments", "notes", "flashcards", "sessions", "study_guides")
 
 # Tables whose rows carry an abstract `course_id` to remap (by course_code).
-_COURSE_TABLES = ("graph_nodes", "flashcard_sets", "document_folders")
+_COURSE_TABLES = ("graph_nodes", "flashcard_sets")
 
 USER_COUNTERS = (
     "total_xp", "level", "streak_count", "longest_streak", "onboarding_completed",

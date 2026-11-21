@@ -30,8 +30,9 @@ from pydantic_ai.exceptions import UsageLimitExceeded, UnexpectedModelBehavior
 
 from db.connection import table
 from services import events_service
-from services.academics import require_course_enrollment
+from services.academics import offering_course_id, require_course_enrollment
 from services.auth_guard import get_session_user_id, require_self, guard_off_loop
+from services.encryption import decrypt_if_present, decrypt_json
 from services.extraction_service import extract_text_from_file
 from services.agent_events import SSE_CACHE_CONTROL
 from services.request_context import current_request_id
@@ -73,18 +74,17 @@ from services.documents.post_roll import (  # noqa: F401  (re-export, #118)
 )
 from services.documents.scan import (  # noqa: F401  (re-export, #118)
     _course_label,
-    scan_for_document,
     _extend_concepts,
     _extend_via_agent,
     _scan_concepts_for_course,
     _scan_user_message,
 )
 from services.documents.library import (  # noqa: F401  (re-export, #118)
-    _courses_for_offerings, hard_delete_document, list_trashed_documents,
-    list_user_documents, restore_document, soft_delete_document, update_document_row,
+    _courses_for_offerings,
+    list_user_documents,
+    soft_delete_document,
+    update_document_row,
 )
-from services.documents import blank, folders as folders_service, library_api, notes_api
-from services.documents.page_count import page_count_of
 from services.documents.stream import upload_event_stream
 
 from agents.deps import SaplingDeps
@@ -103,8 +103,10 @@ ALLOWED_CONTENT_TYPES = {
     "application/vnd.openxmlformats-officedocument.presentationml.presentation",
 }
 
-#: Re-exported (#118): the validation moved to `services/documents/library_api.py`.
-VALID_CATEGORIES = library_api.VALID_CATEGORIES
+VALID_CATEGORIES = {
+    "syllabus", "lecture_notes", "slides", "reading",
+    "assignment", "study_guide", "other",
+}
 
 
 async def _validate_user(user_id: str) -> None:
@@ -149,48 +151,26 @@ async def _require_owned_document(document_id: str, user_id: str) -> None:
 
 
 @router.delete("/doc/{document_id}")
-async def delete_document(
-    document_id: str, request: Request, user_id: str | None = None, hard: int = 0,
-):
-    """Move a document to the Trash, or - with ``hard=1`` - delete it forever.
-
-    ``hard=1`` only ever applies to a document already in the Trash, so the
-    Library's own delete can never skip the grace period.
-    """
+async def delete_document(document_id: str, request: Request, user_id: str | None = None):
     user_id = await _session_or_self(user_id, request)
-    return await library_api.delete(
-        document_id, user_id, hard=bool(hard), owned_check=_require_owned_document)
-
-
-@router.get("/user/{user_id}/trash")
-async def list_trash(user_id: str, request: Request):
-    """The user's soft-deleted documents - the Library's Trash view."""
-    await guard_off_loop(require_self, user_id, request)
-    await _validate_user(user_id)
-    return {"documents": await list_trashed_documents(user_id)}
-
-
-@router.post("/doc/{document_id}/restore")
-async def restore_trashed_document(
-    document_id: str, request: Request, body: dict = Body(default={}),
-):
-    """Take a document back out of the Trash and re-index it."""
-    user_id = await _session_or_self(body.get("user_id"), request)
-    return await library_api.restore(document_id, user_id)
+    await _require_owned_document(document_id, user_id)
+    await soft_delete_document(document_id, user_id)
+    return {"deleted": True}
 
 
 @router.patch("/doc/{document_id}")
 async def update_document(document_id: str, request: Request, body: dict = Body(...)):
-    """Update the mutable fields on a document: its category, its name, the
-    course it belongs to, and the folder it is filed in.
-
-    A body that asks for nothing is a bad request whoever sent it, so it is
-    refused before the ownership read.
-    """
-    updates = library_api.validate_fields(body)
+    """Update mutable fields on a document (currently only category)."""
+    category = body.get("category")
+    if category and category not in VALID_CATEGORIES:
+        raise HTTPException(status_code=400, detail=f"Invalid category '{category}'.")
+    updates = {}
+    if category:
+        updates["category"] = category
+    if not updates:
+        raise HTTPException(status_code=400, detail="No valid fields to update.")
     user_id = await _session_or_self(body.get("user_id"), request)
     await _require_owned_document(document_id, user_id)
-    updates.update(await library_api.resolve_filing(user_id, body))
     return await update_document_row(document_id, user_id, updates)
 
 
@@ -381,7 +361,6 @@ async def upload_document_sync(
             filename=filename, result=result, request_id=request_id,
             course_id=course_id, char_count=len(extracted_text),
             extracted_text=extracted_text,
-            page_count=page_count_of(file_bytes, filename, file.content_type or ""),
         )
     except Exception:
         # #759/#116: a duplicate of this request saved it first (the unique
@@ -490,8 +469,43 @@ def scan_document_concepts(document_id: str, request: Request, body: dict = Body
         raise HTTPException(status_code=400, detail="user_id is required.")
     require_self(user_id, request)
     _validate_user_sync(user_id)
+
+    rows = table("documents").select(
+        "id,user_id,offering_id,file_name,summary,concept_notes",
+        filters={"id": f"eq.{document_id}", "user_id": f"eq.{user_id}", "deleted_at": "is.null"},
+        limit=1,
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    doc = rows[0]
+    # The document keys on the offering; the concept graph keys on the
+    # abstract course. Resolve offering → abstract course before scanning.
+    course_id = offering_course_id(doc.get("offering_id"))
+    if not course_id:
+        raise HTTPException(status_code=400, detail="Document is not associated with a course.")
+    # #115: the scan writes the course's graph and spends model quota, so —
+    # like /course/{id}/scan-concepts — the caller must still be enrolled in
+    # the course (a dropped course's document is readable, not scannable).
+    require_course_enrollment(user_id, course_id)
+
+    doc_summary = decrypt_if_present(doc.get("summary"))
+    notes_raw = doc.get("concept_notes")
+    if isinstance(notes_raw, str):
+        try:
+            doc_concept_notes = decrypt_json(notes_raw)
+        except Exception:
+            doc_concept_notes = []
+    else:
+        doc_concept_notes = notes_raw or []
+
     try:
-        return scan_for_document(user_id, document_id)
+        return _scan_concepts_for_course(
+            user_id,
+            course_id,
+            doc_filename=doc.get("file_name"),
+            doc_summary=doc_summary,
+            doc_concept_notes=doc_concept_notes
+        )
     except ConceptScanFailed as e:
         raise HTTPException(status_code=500, detail=e.detail)
 
@@ -510,88 +524,3 @@ def scan_course_concepts(course_id: str, request: Request, body: dict = Body(...
         return _scan_concepts_for_course(user_id, course_id)
     except ConceptScanFailed as e:
         raise HTTPException(status_code=500, detail=e.detail)
-
-
-@router.post("/blank")
-async def create_blank_document(request: Request, body: dict = Body(...)):
-    """Make an empty document to write notes in ("New Document")."""
-    user_id = await _session_or_self(body.get("user_id"), request)
-    return await blank.create_for_request(user_id, body)
-
-
-# -- folders ----------------------------------------------------------------
-
-
-@router.get("/folders")
-async def list_document_folders(request: Request, user_id: str | None = None):
-    """Every folder the user has, across all of their courses."""
-    user_id = await _session_or_self(user_id, request)
-    return {"folders": await folders_service.list_folders(user_id)}
-
-
-@router.post("/folders")
-async def create_document_folder(request: Request, body: dict = Body(...)):
-    """Make a folder. A blank name is the Library's normal first state, not an
-    error: it creates the folder and renames it in place."""
-    user_id = await _session_or_self(body.get("user_id"), request)
-    return await folders_service.create_for_request(
-        user_id, body.get("name"), body.get("course_id") or None)
-
-
-@router.patch("/folders/{folder_id}")
-async def rename_document_folder(folder_id: str, request: Request, body: dict = Body(...)):
-    user_id = await _session_or_self(body.get("user_id"), request)
-    return await folders_service.rename_for_request(folder_id, user_id, body.get("name"))
-
-
-@router.delete("/folders/{folder_id}")
-async def delete_document_folder(
-    folder_id: str, request: Request, user_id: str | None = None,
-):
-    """Delete a folder. Its documents stay in the Library, unfiled —
-    `documents.folder_id` is ON DELETE SET NULL."""
-    user_id = await _session_or_self(user_id, request)
-    await folders_service.delete_for_request(folder_id, user_id)
-    return {"deleted": True}
-
-
-# -- the document's editable notes page (/library/{id}/notes) ----------------
-#
-# The bodies live in services/documents/notes_api.py (#118): the agent runs,
-# the prompts and the generate-once rule are that module's business.
-
-
-@router.get("/doc/{document_id}/notes")
-async def get_document_notes(
-    document_id: str, request: Request, user_id: str | None = None,
-):
-    """The notes for a document, generated on the first read."""
-    user_id = await _session_or_self(user_id, request)
-    await _require_owned_document(document_id, user_id)
-    return await notes_api.read(document_id, user_id, _upload_request_id(request))
-
-
-@router.put("/doc/{document_id}/notes")
-async def save_document_notes(document_id: str, request: Request, body: dict = Body(...)):
-    """Save the notes. Called on the editor's autosave debounce."""
-    user_id = await _session_or_self(body.get("user_id"), request)
-    await _require_owned_document(document_id, user_id)
-    return await notes_api.save(document_id, user_id, body)
-
-
-@router.post("/doc/{document_id}/notes/regenerate")
-async def regenerate_document_notes(
-    document_id: str, request: Request, body: dict = Body(default={}),
-):
-    """Rebuild the notes from the source document, replacing the edits."""
-    user_id = await _session_or_self(body.get("user_id"), request)
-    await _require_owned_document(document_id, user_id)
-    return await notes_api.regenerate(document_id, user_id, _upload_request_id(request))
-
-
-@router.post("/doc/{document_id}/notes/ask")
-async def ask_document_notes(document_id: str, request: Request, body: dict = Body(...)):
-    """Ask Clov one question about the notes on screen."""
-    user_id = await _session_or_self(body.get("user_id"), request)
-    await _require_owned_document(document_id, user_id)
-    return await notes_api.ask(document_id, user_id, body, _upload_request_id(request))

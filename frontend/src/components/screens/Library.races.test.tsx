@@ -1,14 +1,14 @@
 // @vitest-environment jsdom
 /**
- * Library — the load-error state and the per-document concept scan (#769).
+ * Library — load-error state and per-document concept scan (#769).
  *
  *   1. A failed load is not an empty library: it renders an error state with
- *      a retry, never the empty-state copy.
- *   2. The "⋯" dialog is reused when the open document changes, so a scan
- *      started on doc A must not mark doc B "done". (The redesign moved the
- *      scan out of the detail panel and into that dialog; the guarantee is
- *      the same one, on the control that replaced it.)
+ *      a retry, never "Your library is quiet".
+ *   2. The detail panel is reused when the selected document changes in place
+ *      (reachable by keyboard behind the overlay), so a scan started on doc A
+ *      must not mark doc B "done".
  */
+
 import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, cleanup, act, fireEvent } from "@testing-library/react";
@@ -16,27 +16,21 @@ import { render, screen, cleanup, act, fireEvent } from "@testing-library/react"
 vi.mock("@/context/UserContext", () => ({
   useUser: () => ({ userId: "u1", userReady: true }),
 }));
-vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
-vi.mock("@/context/FlagsContext", () => ({
-  useFlagMap: () => ({ flags: {}, ready: true }),
+
+vi.mock("@/lib/useIsMobile", () => ({
+  useIsMobile: () => false,
+}));
+
+vi.mock("../DocumentUploadModal", () => ({
+  DocumentUploadModal: () => null,
 }));
 
 vi.mock("@/lib/api", () => ({
   getDocuments: vi.fn(),
-  getCourses: vi.fn(async () => ({ courses: [] })),
-  getFolders: vi.fn(async () => ({ folders: [] })),
-  getTrashedDocuments: vi.fn(async () => ({ documents: [] })),
   deleteDocument: vi.fn(),
-  restoreDocument: vi.fn(),
-  purgeDocument: vi.fn(),
-  updateDocument: vi.fn(),
-  createBlankDocument: vi.fn(),
-  createFolder: vi.fn(),
-  renameFolder: vi.fn(),
-  deleteFolder: vi.fn(),
+  getCourses: vi.fn(async () => ({ courses: [] })),
   scanDocumentConcepts: vi.fn(),
   scanCourseConcepts: vi.fn(),
-  uploadDocumentStream: vi.fn(),
 }));
 
 vi.mock("@/lib/studyGuide/api", () => ({
@@ -63,13 +57,6 @@ function renderLibrary() {
   );
 }
 
-/** Open a row's "⋯" dialog. The design positions it against the section. */
-function openRowMenu(id: string) {
-  const row = screen.getByTestId(`library-doc-${id}`);
-  const dots = row.querySelector('[aria-label="Details and actions"]') as HTMLElement;
-  fireEvent.click(dots);
-}
-
 beforeEach(() => {
   vi.spyOn(console, "error").mockImplementation(() => {});
 });
@@ -87,7 +74,7 @@ describe("Library load failure (#769)", () => {
     renderLibrary();
 
     expect(await screen.findByTestId("library-load-error")).toBeTruthy();
-    expect(screen.queryByTestId("library-empty")).toBeNull();
+    expect(screen.queryByText(/Your library is quiet/i)).toBeNull();
 
     mockedDocs.mockResolvedValueOnce({ documents: [doc("a", "alpha.pdf")] } as never);
     fireEvent.click(screen.getByTestId("library-load-retry"));
@@ -99,35 +86,27 @@ describe("Library load failure (#769)", () => {
     mockedDocs.mockResolvedValueOnce({ documents: [] } as never);
     renderLibrary();
 
-    expect(await screen.findByTestId("library-empty")).toBeTruthy();
+    expect(await screen.findByText(/Your library is quiet/i)).toBeTruthy();
     expect(screen.queryByTestId("library-load-error")).toBeNull();
   });
 });
 
 describe("Library concept scan belongs to the document it ran on (#769)", () => {
   it("a scan started on doc A doesn't mark doc B done", async () => {
-    mockedDocs.mockResolvedValue({
-      documents: [doc("a", "alpha.pdf"), doc("b", "beta.pdf")],
-    } as never);
-    let resolveScan!: (v: { added: number; existing: number; concepts: string[] }) => void;
+    mockedDocs.mockResolvedValue({ documents: [doc("a", "alpha.pdf"), doc("b", "beta.pdf")] } as never);
+    let resolveScan!: (v: { added: number; existing: number }) => void;
     mockedScan.mockReturnValueOnce(new Promise(r => { resolveScan = r; }) as never);
     renderLibrary();
 
-    await screen.findByTestId("library-doc-a");
-    openRowMenu("a");
+    fireEvent.click(await screen.findByTestId("library-doc-a"));
     fireEvent.click(screen.getByTestId("library-detail-scan"));
     expect(screen.getByTestId("library-detail-scan")).toHaveTextContent("Scanning");
 
-    // The same dialog, pointed at another document.
-    openRowMenu("b");
+    // Switch documents in place (the overlay doesn't stop keyboard focus).
     fireEvent.click(screen.getByTestId("library-doc-b"));
-    openRowMenu("b");
-    expect(screen.getByTestId("library-detail-scan"))
-      .toHaveTextContent("Scan to Knowledge Graph");
+    expect(screen.getByRole("heading", { name: "beta.pdf" })).toBeTruthy();
 
-    await act(async () => { resolveScan({ added: 3, existing: 1, concepts: [] }); });
-    // Still B's menu, still unscanned: A's result stayed with A.
-    expect(screen.getByTestId("library-detail-scan"))
-      .toHaveTextContent("Scan to Knowledge Graph");
+    await act(async () => { resolveScan({ added: 3, existing: 1 }); });
+    expect(screen.getByTestId("library-detail-scan")).toHaveTextContent(/^Scan$/);
   });
 });

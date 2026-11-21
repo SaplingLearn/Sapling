@@ -18,7 +18,6 @@ from agents.document import DocumentProcessingResult
 from services import document_jobs, document_pipeline, events_service
 from services.agent_events import SaplingEvent, sapling_event_to_sse
 from services.document_indexing import schedule_document_index
-from services.documents.page_count import page_count_of
 from services.documents.persistence import (
     _existing_doc_by_request_id,
     _graph_backstop,
@@ -268,7 +267,6 @@ async def upload_event_stream(
                 course_id=course_id,
                 char_count=len(extracted_text) if extracted_text is not None else None,
                 extracted_text=extracted_text,
-                page_count=page_count_of(file_bytes, filename, content_type or ""),
             )
             adopted = False
         except Exception:

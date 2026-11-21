@@ -80,10 +80,6 @@ EXPECTED_STRUCTURED_AGENTS = {
     "syllabus_extraction_agent",
 }
 EXPECTED_TEXT_AGENTS = {
-    # The notes page's two: one writes the editor's HTML (a document, not a
-    # record — a schema would only wrap the same string), the other is a chat.
-    "document_notes_agent",
-    "document_notes_chat_agent",
     "expository_agent",
     "health_probe_agent",
     "note_chat_agent",

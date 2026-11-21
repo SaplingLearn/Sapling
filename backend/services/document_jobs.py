@@ -80,7 +80,6 @@ from db.connection import table
 from db.scope import runs_as_service
 from services import jobs, llm_budget, staged_jobs
 from services.agent_events import SaplingEvent
-from services.documents.page_count import page_count_of
 from services.documents_read import saved_document
 from services.encryption import decrypt_bytes, decrypt_json, encrypt_bytes, encrypt_json
 from services.feature_flags import flag_on
@@ -945,8 +944,6 @@ def _process(row: dict, run: _Run) -> None:
                 user_id=user_id, offering_id=offering_id, filename=filename,
                 result=result, request_id=request_id, course_id=course_id,
                 char_count=len(text), extracted_text=text,
-                page_count=page_count_of(
-                    file_bytes, filename, row.get("content_type") or ""),
             )
             fresh = True
         except Exception:
