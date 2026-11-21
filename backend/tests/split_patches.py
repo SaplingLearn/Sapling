@@ -188,8 +188,13 @@ DOCUMENTS_MODULES = (
     "services.documents.persistence",
     "services.documents.post_roll",
     "services.documents.library",
+    "services.documents.library_api",
     "services.documents.scan",
     "services.documents.stream",
+    "services.documents.blank",
+    "services.documents.folders",
+    "services.documents.doc_notes",
+    "services.documents.notes_api",
 )
 
 

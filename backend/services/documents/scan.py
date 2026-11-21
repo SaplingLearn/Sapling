@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import uuid
 
+from fastapi import HTTPException
 from pydantic_ai.exceptions import UsageLimitExceeded, UnexpectedModelBehavior
 
 from agents import WORKER_LIMITS
@@ -18,7 +19,9 @@ from agents.concept_scan import concept_scan_agent
 from agents.deps import SaplingDeps
 from agents.usage import record_agent_usage
 from db.connection import table
+from services.academics import offering_course_id, require_course_enrollment
 from services.documents.errors import ConceptScanFailed
+from services.encryption import decrypt_if_present, decrypt_json
 from services.graph_service import apply_graph_update
 from services.request_context import current_request_id
 
@@ -198,3 +201,58 @@ def _scan_concepts_for_course(
         "added": max(0, len(after_rows) - before_count),
         "existing": len(existing_concepts),
     }
+
+
+def scan_for_document(user_id: str, document_id: str) -> dict:
+    """Extend a course's concept graph from one document's stored summary and
+    takeaways (the body behind `POST /doc/{id}/scan-concepts`, #118).
+
+    The caller has already established who is asking; this establishes that
+    the document is theirs, that it belongs to a course, and that they are
+    still enrolled in it — a dropped course's document is readable, but not
+    scannable (#115), because a scan writes that course's graph and spends
+    model quota against it.
+    """
+    rows = table("documents").select(
+        "id,user_id,offering_id,file_name,summary,concept_notes",
+        filters={
+            "id": f"eq.{document_id}",
+            "user_id": f"eq.{user_id}",
+            "deleted_at": "is.null",
+        },
+        limit=1,
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    doc = rows[0]
+
+    # The document keys on the offering; the concept graph keys on the
+    # abstract course. Resolve offering → abstract course before scanning.
+    course_id = offering_course_id(doc.get("offering_id"))
+    if not course_id:
+        raise HTTPException(
+            status_code=400, detail="Document is not associated with a course.")
+    require_course_enrollment(user_id, course_id)
+
+    notes_raw = doc.get("concept_notes")
+    if isinstance(notes_raw, str):
+        try:
+            concept_notes = decrypt_json(notes_raw)
+        except Exception:
+            # A corrupted row degrades to "no takeaways" rather than failing
+            # the scan: the summary alone is still a usable seed.
+            logger.warning(
+                "concept_notes decrypt failed for document %s; scanning without them",
+                document_id,
+            )
+            concept_notes = []
+    else:
+        concept_notes = notes_raw or []
+
+    return _scan_concepts_for_course(
+        user_id,
+        course_id,
+        doc_filename=doc.get("file_name"),
+        doc_summary=decrypt_if_present(doc.get("summary")),
+        doc_concept_notes=concept_notes,
+    )

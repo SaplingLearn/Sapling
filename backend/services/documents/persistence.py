@@ -93,6 +93,10 @@ _MISSING_COLUMN_MARKERS = ("PGRST204", "does not exist", "Could not find the")
 _DROPPABLE_COLUMNS = (
     "request_id", "shareability",
     "index_status", "index_attempts", "shareability_confidence",
+    # The Library redesign's column. Droppable for the same reason as the
+    # three above: a deploy that lands ahead of its migration must not fail
+    # every upload over a display-only field.
+    "page_count",
 )
 
 
@@ -153,6 +157,7 @@ def _persist_document(
     course_id: str | None = None,
     char_count: int | None = None,
     extracted_text: str | None = None,
+    page_count: int | None = None,
 ) -> tuple[str, dict]:
     """Insert a documents row from an orchestrator result.
 
@@ -165,6 +170,10 @@ def _persist_document(
     replay detection. ``course_id``/``char_count`` only feed the
     document.processed observability event (#117); they are not persisted
     on the row.
+
+    ``page_count`` IS persisted (the Library's Pages column); it is counted
+    from the uploaded bytes by `services/documents/page_count.py` and is None
+    whenever that cannot be known.
 
     ``extracted_text`` IS persisted, encrypted, and the row is enqueued for
     indexing (#482). The indexer used to write the text, which made the
@@ -196,6 +205,9 @@ def _persist_document(
         # would silently privatise it.
         "shareability_confidence": _stored_confidence(result.classification),
         "extracted_text": encrypt_if_present(extracted_text),
+        # The Library's Pages column; None when the format has no fixed
+        # pagination or the file would not parse (services/documents/page_count.py).
+        "page_count": page_count,
         "index_status": "pending",
         "index_attempts": 0,
         "summary": encrypt_if_present(summary),

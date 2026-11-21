@@ -1,0 +1,746 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script src="notes-graph.js?v=17"></script>
+<style>
+body { margin: 0; background: #FAF8F3; }
+a { color: #445D22; } a:hover { color: #597536; }
+@keyframes sapMenuOut{from{opacity:1;transform:none}to{opacity:0;transform:translateY(-4px) scale(0.97)}}
+@keyframes sapMenuIn{from{opacity:0;transform:translateY(-4px) scale(0.97)}to{opacity:1;transform:none}}
+@keyframes sapGraphIn{from{opacity:0;transform:translateY(-4px) scale(0.97)}to{opacity:1;transform:none}}
+@keyframes sapDot { 0%, 80%, 100% { opacity: 0.25; transform: translateY(0); } 40% { opacity: 1; transform: translateY(-3px); } }
+[data-notes] { outline: none; caret-color: #445D22; }
+[data-notes] h1 { font-family: 'Aleo', Georgia, serif; font-size: 36px; line-height: 1.15; font-weight: 600; letter-spacing: -0.02em; margin: 0 0 6px; color: #1A1814; text-wrap: balance; }
+[data-notes] h2 { font-family: 'Aleo', Georgia, serif; font-size: 26px; line-height: 1.25; font-weight: 600; letter-spacing: -0.01em; margin: 28px 0 8px; color: #1A1814; }
+[data-notes] h3 { font-family: 'SUSE', system-ui, sans-serif; font-size: 18px; font-weight: 700; margin: 20px 0 6px; color: #1A1814; }
+[data-notes] p { font-family: 'Aleo', Georgia, serif; font-size: 17px; line-height: 1.6; margin: 0 0 12px; color: #2A271F; text-wrap: pretty; }
+[data-notes] ul, [data-notes] ol { font-family: 'Aleo', Georgia, serif; font-size: 17px; line-height: 1.6; margin: 0 0 12px; padding-left: 24px; color: #2A271F; }
+[data-notes] li { margin: 0 0 3px; padding-left: 4px; }
+[data-notes] li::marker { color: #597536; }
+[data-notes] strong, [data-notes] b { font-weight: 700; color: #1A1814; }
+[data-notes] pre { font-family: 'IBM Plex Mono', monospace; font-size: 16px; margin: 2px 0 14px; padding: 10px 16px; border-radius: 10px; background: #EFEBE2; color: #2F4417; white-space: pre-wrap; }
+[data-notes] blockquote { margin: 2px 0 14px; padding: 10px 16px; border-radius: 10px; background: #EBF0E1; font-family: 'Aleo', Georgia, serif; font-size: 17px; line-height: 1.65; color: #2F4417; white-space: pre-wrap; }
+[data-notes] mark { background: #F6E7B0; color: inherit; border-radius: 2px; }
+[data-title]:empty::before { content: attr(data-placeholder); color: #B9B1A0; }
+[data-notes][contenteditable="false"] .blk-x, [data-notes][contenteditable="false"] .tbl-edit, [data-notes][contenteditable="false"] .g-edit, [data-notes][contenteditable="false"] .ch-add, [data-notes][contenteditable="false"] .tbl-bar:not(:has(.sbtn[data-act="open"])) { display: none !important; }
+[data-notes][contenteditable="false"] .math, [data-notes][contenteditable="false"] .imath { cursor: default; } [data-notes][contenteditable="false"] .math:hover, [data-notes][contenteditable="false"] .imath:hover { background: transparent; }
+[data-notes] .meta { font-family: 'SUSE', system-ui, sans-serif; font-size: 14px; color: #6F6857; margin: 0 0 18px; }
+[data-chatlist]::-webkit-scrollbar, [data-edscroll]::-webkit-scrollbar { width: 10px; }
+[data-chatlist]::-webkit-scrollbar-thumb, [data-edscroll]::-webkit-scrollbar-thumb { background: rgba(68,93,34,0.30); border-radius: 6px; border: 2px solid transparent; background-clip: padding-box; }
+[data-chatlist]::-webkit-scrollbar-button, [data-edscroll]::-webkit-scrollbar-button { display: none; }
+textarea::placeholder { color: #8A8372; }
+[data-notes] .blk { position: relative; margin: 6px 0 16px; padding: 14px 16px; border: 1px solid rgba(42,39,31,0.12); border-radius: 12px; background: #FDFCF9; font-family: 'SUSE', system-ui, sans-serif; font-size: 15px; color: #1A1814; }
+[data-notes] .blk-h { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; font-family: 'IBM Plex Mono', monospace; font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: #6F6857; user-select: none; }
+[data-notes] .blk-x { position: absolute; top: 8px; right: 8px; width: 26px; height: 26px; border: 0; border-radius: 7px; background: transparent; color: #8A8372; font-size: 16px; line-height: 1; cursor: pointer; opacity: 0; }
+[data-notes] .blk:hover .blk-x { opacity: 1; } [data-notes] .blk-x:hover { background: #F0ECE3; color: #A8443F; }
+[data-notes] .sbtn { white-space: nowrap; flex-shrink: 0; height: 30px; padding: 0 11px; border: 1px solid rgba(42,39,31,0.16); border-radius: 8px; background: #FFFFFF; color: #3F3B31; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+[data-notes] .sbtn:hover { background: #EEF3E6; border-color: #A9C48A; } [data-notes] .sbtn.on { background: #DCE8CE; border-color: #A9C48A; color: #2F4417; }
+[data-notes] .math { display: block; margin: 6px 0 16px; padding: 14px 18px; border-radius: 10px; text-align: center; font-size: 20px; color: #1A1814; cursor: pointer; user-select: none; transition: background 120ms; } [data-notes] .math:hover { background: #F4F1EA; } [data-notes] .math .katex-display { margin: 0; }
+[data-notes] .imath { display: inline-block; padding: 1px 4px; margin: 0 1px; border-radius: 5px; cursor: pointer; user-select: none; line-height: 1.2; transition: background 120ms; } [data-notes] .imath:hover { background: #EEF3E6; }
+[data-notes] .mslot { display: inline-block; min-width: 0.9em; min-height: 1em; box-sizing: border-box; border: 1.5px dashed #8FA873; border-radius: 3px; background: rgba(235,240,225,0.6); vertical-align: -0.15em; cursor: text; } [data-notes] .mslot:hover { border-color: #445D22; background: #DCE8CE; } [data-notes] .mslot-on { display: inline-block; min-width: 0.9em; min-height: 1em; padding: 0 2px; border: 1.5px solid #445D22; border-radius: 3px; background: #EBF0E1; box-shadow: 0 0 0 3px rgba(89,117,54,0.18); vertical-align: -0.15em; } [data-notes] .mslot-key { position: absolute; width: 1px; height: 1.2em; padding: 0; border: 0; opacity: 0; pointer-events: none; z-index: 21; }
+[data-notes] .m-on .mgrp { border-radius: 3px; box-shadow: inset 0 -1.5px 0 rgba(89,117,54,0.45); cursor: text; transition: background 120ms; } [data-notes] .m-on .mgrp:hover { background: rgba(220,232,206,0.7); } [data-notes] .imath:not(.m-on) .mgrp:hover, [data-notes] .math:not(.m-on) .mgrp:hover { background: rgba(220,232,206,0.55); border-radius: 3px; }
+[data-notes] .mcaret { display: inline-block; width: 0; border-left: 2px solid #445D22; margin: 0 -1px; animation: sapCaret 1s steps(1) infinite; } @keyframes sapCaret { 50% { border-color: transparent; } } [data-notes] .mq-row[hidden] { display: none; } [data-notes] .mq-syms.st { grid-template-columns: repeat(12, minmax(0, 1fr)); } [data-notes] .mq-lbl { font-family: 'IBM Plex Mono', monospace; font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: #6F6857; padding: 2px 2px 0; } [data-notes] .mq-foot { display: flex; align-items: center; gap: 6px; padding-top: 2px; } [data-notes] .mq-foot .mq-hint { flex: 1; } [data-notes] .mq-tex { white-space: nowrap; flex-shrink: 0; height: 30px; padding: 0 10px; border: 1px solid rgba(42,39,31,0.16); border-radius: 8px; background: #FFFFFF; color: #3F3B31; font-family: 'IBM Plex Mono', monospace; font-size: 12px; cursor: pointer; } [data-notes] .mq-tex.on { background: #DCE8CE; border-color: #A9C48A; color: #2F4417; } [data-notes] .mq-foot .mq-done { height: 30px; white-space: nowrap; flex-shrink: 0; }
+[data-notes] .mq-hint { font-size: 12px; color: #6F6857; padding: 0 2px; }
+[data-notes] .math.m-on, [data-notes] .imath.m-on { background: #EBF0E1; box-shadow: 0 0 0 2px rgba(89,117,54,0.35); } [data-notes] .m-empty { color: #A8A08E; }
+[data-notes] .katex { font-size: 1.5em; } [data-notes] .imath .katex { font-size: 1.5em; line-height: 1; } [data-notes] .math .katex { font-size: 1.9em; }
+[data-notes] .mq-pop.out { animation: sapMenuOut 130ms cubic-bezier(0.4, 0, 1, 1) both !important; pointer-events: none; }
+[data-notes] .mq-pop { animation: sapMenuIn 170ms cubic-bezier(0.2, 0.7, 0.2, 1) both; transform-origin: top center; position: absolute; z-index: 20; width: 520px; box-sizing: border-box; padding: 8px; display: flex; flex-direction: column; gap: 8px; background: #FDFCF9; border: 1px solid rgba(42,39,31,0.14); border-radius: 12px; box-shadow: 0 14px 36px rgba(25,37,11,0.16); font-family: 'SUSE', system-ui, sans-serif; user-select: none; }
+[data-notes] .mq-syms { display: grid; grid-template-columns: repeat(10, minmax(0, 1fr)); gap: 4px; } [data-notes] .mq-syms button { height: 44px; padding: 0; display: grid; place-items: center; border: 1px solid rgba(42,39,31,0.08); border-radius: 9px; background: #FFFFFF; font-family: 'KaTeX_Main', 'Aleo', Georgia, serif; font-size: 20px; color: #1A1814; cursor: pointer; overflow: hidden; } [data-notes] .mq-syms button .katex { font-size: 1em; } [data-notes] .mq-syms button:hover { background: #EEF3E6; }
+[data-notes] .mq-row { display: flex; gap: 6px; } [data-notes] .mq-in { flex: 1; min-width: 0; height: 36px; padding: 0 10px; border: 1px solid rgba(42,39,31,0.16); border-radius: 8px; background: #FFFFFF; font-family: 'IBM Plex Mono', monospace; font-size: 14px; color: #1A1814; outline: none; user-select: text; } [data-notes] .mq-in:focus { border-color: #597536; box-shadow: 0 0 0 3px rgba(89,117,54,0.15); }
+[data-notes] .mq-done { height: 36px; padding: 0 16px; border: 0; border-radius: 8px; background: #445D22; color: #FFFFFF; font-family: 'SUSE', system-ui, sans-serif; font-size: 13.5px; font-weight: 700; cursor: pointer; } [data-notes] .mq-done:hover { background: #3A501C; }
+[data-notes] code { padding: 1px 5px; border-radius: 5px; background: #F0ECE3; font-family: 'IBM Plex Mono', monospace; font-size: 0.9em; }
+[data-notes] .mx { display: flex; align-items: center; gap: 22px; flex-wrap: wrap; }
+[data-notes] .mx-grid { display: grid; gap: 6px; padding: 8px 12px; border-left: 2px solid #3F3B31; border-right: 2px solid #3F3B31; border-radius: 6px; }
+[data-notes] .mx-grid input { width: 54px; height: 38px; box-sizing: border-box; border: 1px solid rgba(42,39,31,0.16); border-radius: 8px; background: #FFFFFF; text-align: center; font-family: 'IBM Plex Mono', monospace; font-size: 15px; color: #1A1814; outline-color: #597536; }
+[data-notes] .mx-out { font-family: 'Aleo', serif; font-size: 22px; } [data-notes] .mx-out b { font-weight: 700; color: #2F4417; }
+[data-notes] .mx-note { font-size: 13px; color: #6F6857; margin-top: 4px; }
+[data-notes] table { width: 100%; border-collapse: separate; border-spacing: 0; margin: 0; font-size: 15px; border: 1px solid rgba(42,39,31,0.14); border-radius: 10px; overflow: hidden; }
+[data-notes] th, [data-notes] td { padding: 9px 12px; text-align: left; vertical-align: top; border-bottom: 1px solid rgba(42,39,31,0.10); border-right: 1px solid rgba(42,39,31,0.10); }
+[data-notes] th { background: #EFEBE2; font-weight: 700; color: #1A1814; } [data-notes] tr:last-child td { border-bottom: 0; } [data-notes] th:last-child, [data-notes] td:last-child { border-right: 0; }
+[data-notes] .tbl-bar { display: flex; gap: 6px; margin-top: 10px; user-select: none; }
+[data-notes] .blk[data-blk="table"] { padding: 36px 0 0; margin-top: -6px; border: 0; background: transparent; }
+[data-notes] .blk[data-blk="table"] > .blk-h { display: none; }
+[data-notes] .blk[data-blk="table"] > .blk-x { top: 0; right: 0; width: 28px; height: 28px; background: #FDFCF9; box-shadow: 0 1px 3px rgba(25,37,11,0.16), 0 0 0 1px rgba(42,39,31,0.10); opacity: 0; pointer-events: none; z-index: 2; }
+[data-notes] .blk[data-blk="table"] > .blk-x { display: none; }
+[data-notes] .blk[data-blk="table"] .tbl-done, [data-notes] .blk[data-blk="table"] .tbl-del { position: absolute; top: 0; height: 28px; padding: 0 12px; font-size: 13px; }
+[data-notes] .blk[data-blk="table"] .tbl-done { right: 0; } [data-notes] .blk[data-blk="table"] .tbl-del { right: 66px; }
+[data-notes] .blk[data-blk="table"] > .tbl-bar { display: none; }
+[data-notes] .blk[data-blk="table"][data-edit="1"] > .tbl-bar { display: flex; }
+[data-notes] .tbl-edit { position: absolute; top: 0; right: 0; z-index: 2; height: 28px; padding: 0 12px; border: 0; border-radius: 8px; background: #FDFCF9; box-shadow: 0 1px 3px rgba(25,37,11,0.16), 0 0 0 1px rgba(42,39,31,0.10); color: #2F4417; font-family: 'SUSE', system-ui, sans-serif; font-size: 13px; font-weight: 700; cursor: pointer; opacity: 0; transition: opacity 140ms; user-select: none; }
+[data-notes] .blk[data-blk="table"]:hover .tbl-edit { opacity: 1; } [data-notes] .tbl-edit:hover { background: #EBF0E1; }
+[data-notes] .blk[data-blk="table"][data-edit="1"] .tbl-edit { display: none; }
+[data-notes] .blk[data-blk="table"][data-edit="1"] table { box-shadow: 0 0 0 3px rgba(89,117,54,0.18); }
+[data-notes] .tbl-del { color: #A8443F !important; } [data-notes] .tbl-done { background: #445D22 !important; color: #FFFFFF !important; }
+[data-notes] ul.check { list-style: none; padding-left: 0; } [data-notes] ul.check li { display: flex; align-items: flex-start; gap: 10px; padding-left: 0; }
+[data-notes] ul.check li > .box { flex-shrink: 0; width: 20px; height: 20px; margin-top: 4px; box-sizing: border-box; border: 1.5px solid #8A8372; border-radius: 5px; display: grid; place-items: center; cursor: pointer; color: transparent; font-size: 13px; font-family: 'SUSE', sans-serif; font-weight: 800; user-select: none; }
+[data-notes] ul.check li[data-done="1"] > .box { background: #4E8A3A; border-color: #4E8A3A; color: #FFFFFF; } [data-notes] ul.check li[data-done="1"] > span:last-child { color: #8A8372; text-decoration: line-through; }
+[data-notes] .tg-head { display: flex; align-items: center; gap: 8px; } [data-notes] .tg-arrow { width: 26px; height: 26px; flex-shrink: 0; border: 0; border-radius: 7px; background: transparent; color: #445D22; cursor: pointer; font-size: 12px; transition: transform 150ms; user-select: none; }
+[data-notes] .tg-arrow:hover { background: #EEF3E6; } [data-notes] .blk[data-open="1"] .tg-arrow { transform: rotate(90deg); } [data-notes] .tg-title { flex: 1; font-weight: 700; font-size: 16px; outline: none; }
+[data-notes] .tg-body { display: none; margin: 8px 0 0 34px; } [data-notes] .blk[data-open="1"] .tg-body { display: block; }
+[data-notes] .qa-q { font-weight: 700; font-size: 16px; margin-bottom: 10px; outline: none; } [data-notes] .qa-a { display: none; margin-top: 10px; padding: 10px 12px; border-radius: 9px; background: #EBF0E1; color: #2F4417; outline: none; } [data-notes] .blk[data-open="1"] .qa-a { display: block; }
+[data-notes] .blk[data-blk="card"] { display: grid; max-width: 560px; margin: 14px auto 22px; padding: 0; border: 0; background: transparent; perspective: 1400px; }
+[data-notes] .blk[data-blk="card"] > .blk-h { display: none; }
+[data-notes] .blk[data-blk="card"] > .blk-x { top: 0; right: -44px; width: 32px; height: 32px; z-index: 3; }
+[data-notes] .fc-face { grid-area: 1 / 1; min-height: 240px; box-sizing: border-box; display: grid; place-items: center; padding: 40px 48px; border-radius: 18px; background: #FFFFFF; border: 1px solid rgba(42,39,31,0.10); box-shadow: 0 1px 2px rgba(25,37,11,0.06), 0 14px 34px rgba(25,37,11,0.10); text-align: center; text-wrap: pretty; font-family: 'Aleo', serif; font-size: 24px; line-height: 1.35; color: #1A1814; outline: none; backface-visibility: hidden; -webkit-backface-visibility: hidden; transform: rotateY(0deg); transition: transform 600ms cubic-bezier(0.3, 0.7, 0.2, 1); }
+[data-notes] .blk[data-blk="card"]:not([data-editing="1"]) .fc-face { cursor: pointer; caret-color: transparent; } [data-notes] .blk[data-blk="card"][data-editing="1"] .fc-face { cursor: text; box-shadow: 0 0 0 3px rgba(89,117,54,0.18), 0 14px 34px rgba(25,37,11,0.10); }
+[data-notes] .fc-back { background: #F4F8EE; color: #2F4417; transform: rotateY(180deg); }
+[data-notes] .blk[data-open="1"] .fc-front { transform: rotateY(-180deg); } [data-notes] .blk[data-open="1"] .fc-back { transform: rotateY(0deg); }
+[data-notes] .blk[data-blk="card"] > .tbl-bar { grid-row: 2; justify-content: center; margin: 14px 0 0; opacity: 0; transition: opacity 160ms; }
+[data-notes] .blk[data-blk="card"]:hover > .tbl-bar, [data-notes] .blk[data-blk="card"]:focus-within > .tbl-bar { opacity: 1; }
+[data-notes] .blk[data-blk="card"] > .tbl-bar .sbtn { height: 32px; padding: 0 14px; border-radius: 999px; background: #445D22; border-color: #445D22; color: #FFFFFF; font-weight: 700; } [data-notes] .blk[data-blk="card"] > .tbl-bar .sbtn:hover { background: #597536; border-color: #597536; }
+[data-notes] .plot-in { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; font-family: 'IBM Plex Mono', monospace; font-size: 15px; }
+[data-notes] .plot-in input { flex: 1; height: 36px; padding: 0 10px; border: 1px solid rgba(42,39,31,0.16); border-radius: 8px; background: #FFFFFF; font: inherit; color: #1A1814; outline-color: #597536; }
+[data-notes] .code-ed { margin: 0; padding: 14px 16px; min-height: 64px; border-radius: 8px; background: #1F2419; color: #E8EDE0; font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 14px; line-height: 1.6; white-space: pre-wrap; tab-size: 2; outline: none; caret-color: #C5D7B2; }
+[data-notes] .code-ed code { font: inherit; color: inherit; background: none; padding: 0; }
+[data-notes] .gx { padding: 12px; }
+[data-notes] .gx > .blk-x { top: 12px; right: 12px; width: 32px; height: 32px; display: grid; place-items: center; padding: 0; border-radius: 8px; background: transparent; color: #6F6857; font-size: 18px; line-height: 1; opacity: 1; }
+[data-notes] .gx > .blk-x:hover { background: #F6E3E1; color: #A8443F; }
+[data-notes] .gx[data-final="1"] > .blk-x { top: 6px; right: 0; opacity: 0; transition: opacity 140ms; } [data-notes] .gx[data-final="1"]:hover > .blk-x { opacity: 1; }
+[data-notes] .g-head { display: flex; align-items: center; gap: 8px; min-height: 38px; margin: 0 44px 12px 0; user-select: none; }
+[data-notes] .g-kinds { display: flex; gap: 2px; padding: 3px; border-radius: 10px; background: #F4F1EA; }
+[data-notes] .g-kinds button { display: inline-flex; align-items: center; gap: 7px; height: 32px; padding: 0 12px; border: 0; border-radius: 8px; background: transparent; font-family: 'SUSE', system-ui, sans-serif; font-size: 13.5px; font-weight: 600; color: #6F6857; cursor: pointer; transition: background 120ms, color 120ms; }
+[data-notes] .g-kinds button:hover { color: #1A1814; } [data-notes] .g-kinds button svg { width: 16px; height: 16px; flex-shrink: 0; }
+[data-notes] .g-kinds button.on { background: #FFFFFF; color: #2F4417; box-shadow: 0 1px 2px rgba(25,37,11,0.12); }
+[data-notes] .gx[data-final="1"] .g-kinds { visibility: hidden; }
+[data-notes] .g-sp { flex: 1; }
+[data-notes] .g-btn { display: inline-flex; align-items: center; justify-content: center; height: 32px; padding: 0 16px; border: 0; border-radius: 8px; line-height: 1; background: #445D22; color: #FFFFFF; font-family: 'SUSE', system-ui, sans-serif; font-size: 13.5px; font-weight: 700; cursor: pointer; }
+[data-notes] .g-btn:hover { background: #3A501C; }
+[data-notes] .g-edit { display: none; background: #F0ECE3; color: #2F4417; } [data-notes] .g-edit:hover { background: #E4DFD3; }
+[data-notes] .gx[data-final="1"] .g-done { display: none; } [data-notes] .gx[data-final="1"] .g-edit { display: inline-flex; opacity: 0; transition: opacity 140ms; } [data-notes] .gx[data-final="1"]:hover .g-edit { opacity: 1; }
+[data-notes] .g-body { display: grid; grid-template-columns: 236px minmax(0, 1fr); gap: 12px; align-items: start; }
+[data-notes] .gx[data-final="1"] .g-body { grid-template-columns: minmax(0, 1fr); }
+[data-notes] .gx[data-final="1"] .g-side, [data-notes] .gx[data-final="1"] .pl-zoom { display: none; }
+[data-notes] .gx[data-final="1"] { background: transparent; border-color: transparent; padding: 6px 0; }
+[data-notes] .gx[data-kind="fn"] .ch-side, [data-notes] .gx[data-kind="fn"] .ch-svg, [data-notes] .gx[data-kind="fn"] .ch-tip { display: none; }
+[data-notes] .gx:not([data-kind="fn"]) .fn-side, [data-notes] .gx:not([data-kind="fn"]) .pl-svg, [data-notes] .gx:not([data-kind="fn"]) .pl-zoom, [data-notes] .gx:not([data-kind="fn"]) .pl-legend { display: none; }
+[data-notes] .g-side, [data-notes] .fn-side, [data-notes] .ch-side { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+[data-notes] .pl-list, [data-notes] .ch-rows { display: flex; flex-direction: column; gap: 6px; }
+[data-notes] .pl-row, [data-notes] .ch-row { display: flex; align-items: center; gap: 6px; }
+[data-notes] .pl-row .pl-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; margin-left: 2px; }
+[data-notes] .pl-expr, [data-notes] .ch-row input, [data-notes] .ch-title { flex: 1; min-width: 0; height: 36px; padding: 0 10px; border: 1px solid rgba(42,39,31,0.14); border-radius: 8px; background: #FFFFFF; font-family: 'IBM Plex Mono', monospace; font-size: 14px; color: #1A1814; outline: none; box-sizing: border-box; }
+[data-notes] .pl-expr:focus, [data-notes] .ch-row input:focus, [data-notes] .ch-title:focus { border-color: #597536; box-shadow: 0 0 0 3px rgba(89,117,54,0.15); }
+[data-notes] .pl-row.bad .pl-expr { border-color: #A8443F; background: #FBF1F0; }
+[data-notes] .ch-title { flex: none; margin-bottom: 4px; font-family: 'SUSE', system-ui, sans-serif; font-weight: 700; }
+[data-notes] .ch-row .ch-v { flex: 0 0 68px; text-align: right; }
+[data-notes] .pl-del { width: 26px; height: 26px; flex-shrink: 0; border: 0; border-radius: 7px; background: transparent; color: #8A8372; font-size: 16px; line-height: 1; cursor: pointer; opacity: 0; transition: opacity 120ms; }
+[data-notes] .pl-row:hover .pl-del, [data-notes] .ch-row:hover .pl-del, [data-notes] .pl-del:focus { opacity: 1; } [data-notes] .pl-del:hover { background: #F0ECE3; color: #A8443F; }
+[data-notes] .g-link { align-self: flex-start; height: 30px; padding: 0 8px; margin-left: -2px; border: 0; border-radius: 7px; background: transparent; color: #445D22; font-family: 'SUSE', system-ui, sans-serif; font-size: 13.5px; font-weight: 700; cursor: pointer; }
+[data-notes] .g-link:hover { background: #EBF0E1; }
+[data-notes] .pl-sliders { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; } [data-notes] .pl-sliders:empty { display: none; }
+[data-notes] .pl-sl { display: grid; grid-template-columns: 16px minmax(0, 1fr) 38px; align-items: center; gap: 10px; padding: 6px 10px; border-radius: 8px; background: #F4F1EA; font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #1A1814; }
+[data-notes] .pl-sl input { width: 100%; accent-color: #445D22; margin: 0; } [data-notes] .pl-sl output { text-align: right; }
+[data-notes] .pl-canvas { position: relative; min-width: 0; }
+[data-notes] .pl-svg, [data-notes] .ch-svg { display: block; width: 100%; height: auto; border-radius: 10px; background: #FFFFFF; border: 1px solid rgba(42,39,31,0.10); touch-action: none; user-select: none; }
+[data-notes] .pl-svg { cursor: grab; } [data-notes] .gx.dragging .pl-svg, [data-notes] .gx.dragging .pl-svg * { cursor: grabbing !important; } [data-notes] .gx[data-final="1"] .pl-svg { cursor: crosshair; }
+[data-notes] .pl-vis { fill: none; stroke-width: 2.6; stroke-linejoin: round; stroke-linecap: round; transition: stroke-width 120ms; pointer-events: none; }
+[data-notes] .pl-hit { fill: none; stroke: transparent; stroke-width: 18; pointer-events: stroke; cursor: move; } [data-notes] .pl-hit-x { cursor: ew-resize; }
+[data-notes] .gx[data-final="0"] .pl-fg:hover .pl-vis { stroke-width: 4.5; } [data-notes] .gx[data-final="1"] .pl-hit { pointer-events: none; }
+[data-notes] .pl-pt { stroke: #FFFFFF; stroke-width: 2; transition: r 120ms; } [data-notes] .gx[data-final="0"] .pl-drag { cursor: move; } [data-notes] .gx[data-final="0"] .pl-drag:hover { r: 9px; }
+[data-notes] .pl-num { font-family: 'IBM Plex Mono', monospace; font-size: 11px; fill: #8A8372; } [data-notes] .pl-lab { font-family: 'SUSE', sans-serif; font-size: 13px; font-weight: 600; fill: #3F3B31; pointer-events: none; } [data-notes] .pl-tip { font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; fill: #FFFFFF; }
+[data-notes] .ch-ttl { font-family: 'Aleo', Georgia, serif; font-size: 19px; font-weight: 600; fill: #1A1814; } [data-notes] .ch-leg { font-family: 'SUSE', sans-serif; font-size: 14px; fill: #3F3B31; }
+[data-notes] .gx[data-final="0"] .ch-drag { cursor: ns-resize; } [data-notes] .gx[data-final="0"][data-kind="scatter"] .ch-drag { cursor: move; }
+[data-notes] .pie-h { fill: #FFFFFF; stroke: #1A1814; stroke-width: 2; opacity: 0; transition: opacity 140ms, r 140ms; cursor: grab !important; } [data-notes] .gx[data-final="0"]:hover .pie-h { opacity: 1; } [data-notes] .pie-h:hover { r: 10px; } [data-notes] .gx.dragging .pie-h { cursor: grabbing !important; } [data-notes] .gx[data-final="1"] .pie-h { display: none; }
+[data-notes] .ch-add { cursor: pointer; } [data-notes] .ch-add rect { fill: #F7F4EE; stroke: #B9B1A0; stroke-width: 1.5; stroke-dasharray: 5 4; transition: fill 120ms, stroke 120ms; } [data-notes] .ch-add text { font-family: 'SUSE', sans-serif; font-size: 22px; font-weight: 600; fill: #6F6857; pointer-events: none; } [data-notes] .ch-add:hover rect { fill: #EBF0E1; stroke: #597536; } [data-notes] .ch-add:hover text { fill: #2F4417; }
+[data-notes] .ch-grip { fill: #FFFFFF; stroke: #445D22; stroke-width: 1.5; opacity: 0; pointer-events: none; transition: opacity 140ms; } [data-notes] .gx[data-final="0"]:hover .ch-grip { opacity: 1; }
+[data-notes] .gx.dragging .ch-svg .ch-hit { opacity: 1 !important; }
+[data-notes] .ch-hit { transition: opacity 120ms; } [data-notes] .ch-svg:hover .ch-hit { opacity: 0.55; } [data-notes] .ch-svg .ch-hit:hover { opacity: 1; }
+[data-notes] .ch-tip { position: absolute; transform: translate(-50%, calc(-100% - 12px)); padding: 6px 10px; border-radius: 7px; background: rgba(26,24,20,0.9); color: #FFFFFF; font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; white-space: nowrap; pointer-events: none; opacity: 0; transition: opacity 120ms; }
+[data-notes] .pl-zoom { position: absolute; top: 10px; right: 10px; display: flex; flex-direction: column; border-radius: 9px; background: #FDFCF9; box-shadow: 0 1px 3px rgba(25,37,11,0.16), 0 0 0 1px rgba(42,39,31,0.10); overflow: hidden; }
+[data-notes] .pl-zoom button { width: 32px; height: 32px; border: 0; background: transparent; color: #3F3B31; font-size: 17px; line-height: 1; cursor: pointer; } [data-notes] .pl-zoom button + button { border-top: 1px solid rgba(42,39,31,0.08); } [data-notes] .pl-zoom button:hover { background: #F2F6EE; color: #2F4417; }
+[data-notes] .pl-legend { display: none; flex-wrap: wrap; gap: 6px 18px; margin-top: 10px; font-family: 'IBM Plex Mono', monospace; font-size: 13.5px; color: #1A1814; }
+[data-notes] .gx[data-kind="fn"][data-final="1"] .pl-legend { display: flex; } [data-notes] .pl-li { display: inline-flex; align-items: center; gap: 8px; } [data-notes] .pl-li .pl-dot { width: 10px; height: 10px; border-radius: 50%; } [data-notes] .pl-pv { color: #6F6857; }
+[data-notes] .chart-in { display: grid; grid-template-columns: 64px minmax(0, 1fr); align-items: center; gap: 8px 10px; margin-bottom: 12px; font-size: 13px; font-weight: 600; color: #6F6857; }
+[data-notes] .chart-in input { height: 34px; padding: 0 10px; border: 1px solid rgba(42,39,31,0.16); border-radius: 8px; background: #FFFFFF; font-family: 'IBM Plex Mono', monospace; font-size: 14px; color: #1A1814; outline-color: #597536; }
+[data-notes] .chart svg { display: block; width: 100%; height: auto; border-radius: 8px; background: #FFFFFF; border: 1px solid rgba(42,39,31,0.10); }
+[data-notes] .plot svg { display: block; width: 100%; height: auto; border-radius: 8px; background: #FFFFFF; border: 1px solid rgba(42,39,31,0.10); }
+[data-notes] hr { border: 0; height: 1px; background: rgba(42,39,31,0.10); margin: 22px 0; }
+@keyframes sapShimmer { 0% { background-position: -300px 0; } 100% { background-position: 300px 0; } }
+@keyframes sapSkelOut { from { opacity: 1; visibility: visible; } to { opacity: 0; visibility: hidden; } }
+
+@keyframes sapFadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+@keyframes sapSlideUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { * { animation-duration: 1ms !important; animation-delay: 0ms !important; } }
+</style>
+</helmet>
+<div style="position: fixed; inset: 0; background: #FAF8F3; overflow: hidden;">
+<div ref="{{ frameRef }}" style="position: absolute; left: {{ fitX }}; top: {{ fitY }}; transform: {{ fitT }}; transform-origin: 0 0; width: 1920px; height: 1080px; display: flex; background: #FAF8F3; color: #1A1814; font-family: 'SUSE', system-ui, sans-serif; font-size: 15px; line-height: 1.45; -webkit-font-smoothing: antialiased; overflow: hidden;">
+  <dc-import name="Sapling Sidebar" h="1080px" active="library" sidebar-bg="#DCE8CE" label-color="#3f3b31" label-hover-color="#1a1814" heading-color="#4A5A38" icon-color="#416207" label-weight="{{ 400 }}" icon-hover-color="#597536" active-icon-color="#416207" hover-bg="#EBF0E1" active-bg="#C9DCB2" active-label-color="#1a1814" divider-color="rgba(74,90,56,0.22)" rounded="{{ true }}" hint-size="200px,1080px"></dc-import>
+
+  <main style="position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column;">
+    <sc-if value="{{ booting }}" hint-placeholder-val="{{ true }}"><div aria-hidden="true" style="position: absolute; inset: 0; z-index: 40; background: #FAF8F3; display: flex; flex-direction: column; pointer-events: none; animation: sapSkelOut 260ms ease 720ms both;">
+  <div style="height: 76px; flex-shrink: 0; display: flex; align-items: center; gap: 16px; padding: 0 28px 0 32px;"><span style="display: block; width: 96px; height: 32px; border-radius: 10px; background: linear-gradient(90deg, #F2EFE8, #EAE5DB, #F2EFE8); background-size: 600px 100%; animation: sapShimmer 1.6s linear infinite;"></span><span style="display: block; width: 300px; height: 20px; border-radius: 8px; background: linear-gradient(90deg, #F2EFE8, #EAE5DB, #F2EFE8); background-size: 600px 100%; animation: sapShimmer 1.6s linear infinite;"></span><span style="flex: 1;"></span><span style="display: block; width: 160px; height: 36px; border-radius: 10px; background: linear-gradient(90deg, #F2EFE8, #EAE5DB, #F2EFE8); background-size: 600px 100%; animation: sapShimmer 1.6s linear infinite;"></span><span style="display: block; width: 120px; height: 36px; border-radius: 10px; background: linear-gradient(90deg, #F2EFE8, #EAE5DB, #F2EFE8); background-size: 600px 100%; animation: sapShimmer 1.6s linear infinite;"></span></div>
+  <div style="flex: 1; min-height: 0; display: flex;">
+    <div style="flex: 1; min-width: 0; padding: 12px 48px 0;"><div style="display: flex; justify-content: center; margin-bottom: 26px;"><span style="display: block; width: 560px; height: 46px; border-radius: 14px; background: linear-gradient(90deg, #F2EFE8, #EAE5DB, #F2EFE8); background-size: 600px 100%; animation: sapShimmer 1.6s linear infinite;"></span></div><div style="max-width: 944px; margin: 0 auto; display: flex; flex-direction: column; gap: 12px;"><span style="display: block; width: 52%; height: 38px; border-radius: 10px; background: linear-gradient(90deg, #F2EFE8, #EAE5DB, #F2EFE8); background-size: 600px 100%; animation: sapShimmer 1.6s linear infinite;"></span><span style="display: block; width: 26%; height: 14px; border-radius: 7px; margin-bottom: 18px; background: linear-gradient(90deg, #F2EFE8, #EAE5DB, #F2EFE8); background-size: 600px 100%; animation: sapShimmer 1.6s linear infinite;"></span><span style="display: block; width: 22%; height: 22px; border-radius: 8px; background: linear-gradient(90deg, #F2EFE8, #EAE5DB, #F2EFE8); background-size: 600px 100%; animation: sapShimmer 1.6s linear infinite;"></span><span style="display: block; width: 100%; height: 13px; border-radius: 6px; background: linear-gradient(90deg, #F2EFE8, #EAE5DB, #F2EFE8); background-size: 600px 100%; animation: sapShimmer 1.6s linear infinite;"></span><span style="display: block; width: 95%; height: 13px; border-radius: 6px; background: linear-gradient(90deg, #F2EFE8, #EAE5DB, #F2EFE8); background-size: 600px 100%; animation: sapShimmer 1.6s linear infinite;"></span><span style="display: block; width: 82%; height: 13px; border-radius: 6px; margin-bottom: 14px; background: linear-gradient(90deg, #F2EFE8, #EAE5DB, #F2EFE8); background-size: 600px 100%; animation: sapShimmer 1.6s linear infinite;"></span><span style="display: block; width: 100%; height: 170px; border-radius: 16px; margin-bottom: 14px; background: linear-gradient(90deg, #F2EFE8, #EAE5DB, #F2EFE8); background-size: 600px 100%; animation: sapShimmer 1.6s linear infinite;"></span><span style="display: block; width: 26%; height: 22px; border-radius: 8px; background: linear-gradient(90deg, #F2EFE8, #EAE5DB, #F2EFE8); background-size: 600px 100%; animation: sapShimmer 1.6s linear infinite;"></span><span style="display: block; width: 100%; height: 13px; border-radius: 6px; background: linear-gradient(90deg, #F2EFE8, #EAE5DB, #F2EFE8); background-size: 600px 100%; animation: sapShimmer 1.6s linear infinite;"></span><span style="display: block; width: 90%; height: 13px; border-radius: 6px; background: linear-gradient(90deg, #F2EFE8, #EAE5DB, #F2EFE8); background-size: 600px 100%; animation: sapShimmer 1.6s linear infinite;"></span><span style="display: block; width: 64%; height: 13px; border-radius: 6px; background: linear-gradient(90deg, #F2EFE8, #EAE5DB, #F2EFE8); background-size: 600px 100%; animation: sapShimmer 1.6s linear infinite;"></span></div></div>
+    <div style="width: 440px; flex-shrink: 0; border-left: 1px solid rgba(42,39,31,0.10); padding: 20px 24px; box-sizing: border-box; display: flex; flex-direction: column; gap: 14px;"><span style="display: block; width: 120px; height: 22px; border-radius: 8px; margin-bottom: 10px; background: linear-gradient(90deg, #F2EFE8, #EAE5DB, #F2EFE8); background-size: 600px 100%; animation: sapShimmer 1.6s linear infinite;"></span><span style="display: block; width: 80%; height: 72px; border-radius: 14px; background: linear-gradient(90deg, #F2EFE8, #EAE5DB, #F2EFE8); background-size: 600px 100%; animation: sapShimmer 1.6s linear infinite;"></span><span style="display: block; width: 60%; height: 48px; border-radius: 14px; align-self: flex-end; background: linear-gradient(90deg, #F2EFE8, #EAE5DB, #F2EFE8); background-size: 600px 100%; animation: sapShimmer 1.6s linear infinite;"></span><span style="display: block; width: 85%; height: 96px; border-radius: 14px; background: linear-gradient(90deg, #F2EFE8, #EAE5DB, #F2EFE8); background-size: 600px 100%; animation: sapShimmer 1.6s linear infinite;"></span><span style="flex: 1;"></span><span style="display: block; width: 100%; height: 52px; border-radius: 14px; margin-bottom: 20px; background: linear-gradient(90deg, #F2EFE8, #EAE5DB, #F2EFE8); background-size: 600px 100%; animation: sapShimmer 1.6s linear infinite;"></span></div>
+  </div>
+</div></sc-if>
+
+    <header style="animation: sapFadeIn 260ms cubic-bezier(0.2, 0.7, 0.2, 1) 820ms both; position: absolute; top: 0; left: 0; right: {{ hdrRight }}; z-index: 10; transition: right 380ms cubic-bezier(0.3, 0.7, 0.2, 1); height: 76px; flex-shrink: 0; display: flex; align-items: center; gap: 14px; padding: 0 28px 0 32px; background: transparent;">
+      <button onClick="{{ back }}" title="Back to Library" aria-label="Back to Library" style="width: 34px; height: 34px; flex-shrink: 0; margin: 0 -10px 0 -8px; display: grid; place-items: center; border: 0; border-radius: 9px; background: transparent; color: #445D22; cursor: pointer;" style-hover="background: #EEF3E6;"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 4L6 9l5 5"></path></svg></button>
+      <div ref="{{ leftGrpRef }}" style="position: relative; display: flex; align-items: center; min-width: 0; flex: 0 1 auto;">
+        <div style="display: flex; align-items: center; min-width: 0;">
+      <nav aria-label="Breadcrumb" style="flex: 0 1 auto; display: flex; align-items: center; gap: 10px; line-height: 1; min-width: 0; max-width: {{ navMax }}; height: 28px; text-shadow: 0 0 2px #FAF8F3, 0 0 8px #FAF8F3, 0 0 14px #FAF8F3, 0 0 22px #FAF8F3; font-size: 15px; color: #6F6857; white-space: nowrap;">
+        <span style="flex-shrink: 0; display: inline-flex; align-items: center; gap: 8px; line-height: 1;"><span style="display: block; flex-shrink: 0; width: 9px; height: 9px; border-radius: 50%; background: {{ courseColor }};"></span><span>{{ doc.course }}</span></span>
+        <span style="flex-shrink: 0;">/</span>
+        <span title="{{ docTitle }}" style="min-width: 0; color: #1A1814; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ docTitle }}</span>
+      </nav>
+        </div>
+        <span style="position: absolute; left: 0; top: calc(100% + 4px); display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; font-size: 14px; color: #6F6857; text-shadow: 0 0 2px #FAF8F3, 0 0 8px #FAF8F3, 0 0 14px #FAF8F3;"><svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7" fill="none" stroke="#597536" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg>{{ saved }}</span>
+      </div>
+      
+      <div style="flex: 1;"></div>
+      
+                    <div ref="{{ rightGrpRef }}" style="flex-shrink: 0; display: flex; align-items: center; gap: 6px; margin-left: 4px;">
+                <button onClick="{{ share }}" title="Share" aria-label="Share" style="min-width: 36px; justify-content: center; height: 36px; box-sizing: border-box; display: inline-flex; align-items: center; gap: 7px; padding: 0 {{ btnPad }}; transition: padding 380ms cubic-bezier(0.3, 0.7, 0.2, 1), background 120ms; border-radius: 10px; font: inherit; font-size: 14px; font-weight: 700; cursor: pointer; border: 1px solid rgba(42,39,31,0.14); background: #FFFFFF; color: #3F3B31;" style-hover="background: #F4F1EA;"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 10V2.5M5 5.5l3-3 3 3M3 9v3.5h10V9"></path></svg><sc-if value="{{ chatClosed }}" hint-placeholder-val="{{ false }}"><span>Share</span></sc-if></button>
+                <div style="position: relative;">
+                  <button onClick="{{ toggleDl }}" title="Download" aria-label="Download" aria-expanded="{{ dlOpen }}" style="min-width: 36px; justify-content: center; height: 36px; box-sizing: border-box; display: inline-flex; align-items: center; gap: 7px; padding: 0 {{ btnPad }}; transition: padding 380ms cubic-bezier(0.3, 0.7, 0.2, 1), background 120ms; border-radius: 10px; font: inherit; font-size: 14px; font-weight: 700; cursor: pointer; border: 1px solid rgba(42,39,31,0.14); background: #FFFFFF; color: #3F3B31;" style-hover="background: #F4F1EA;"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2.5V10M5 7l3 3 3-3M3 13.5h10"></path></svg><sc-if value="{{ chatClosed }}" hint-placeholder-val="{{ false }}"><span>Download</span></sc-if></button>
+                  <sc-if value="{{ dlOpen }}" hint-placeholder-val="{{ false }}">
+                    <div role="menu" style="position: absolute; top: 46px; right: 0; z-index: 12; width: 220px; padding: 6px; display: flex; flex-direction: column; background: #FDFCF9; border: 1px solid rgba(42,39,31,0.14); border-radius: 12px; box-shadow: 0 14px 36px rgba(25,37,11,0.16); transform-origin: top right; animation: {{ dlAnim }};">
+                      <sc-for list="{{ dlOpts }}" as="o" hint-placeholder-count="3"><button role="menuitem" onClick="{{ o.run }}" style="display: flex; align-items: center; justify-content: space-between; padding: 9px 10px; border: 0; border-radius: 8px; background: transparent; font: inherit; font-size: 14px; font-weight: 600; color: #1A1814; text-align: left; cursor: pointer;" style-hover="background: #F2F6EE;"><span>{{ o.label }}</span><span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; font-weight: 400; color: #8A8372;">{{ o.ext }}</span></button></sc-for>
+                    </div>
+                  </sc-if>
+                </div>
+                <sc-if value="{{ editing }}" hint-placeholder-val="{{ true }}"><button onClick="{{ toggleFinal }}" style="height: 36px; box-sizing: border-box; display: inline-flex; align-items: center; gap: 7px; padding: 0 14px; border-radius: 10px; font: inherit; font-size: 14px; font-weight: 700; cursor: pointer; border: 1px solid #445D22; background: #445D22; color: #FFFFFF;" style-hover="background: #597536; border-color: #597536;"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7"></path></svg>Finalize</button></sc-if>
+                <sc-if value="{{ isFinal }}" hint-placeholder-val="{{ false }}"><button onClick="{{ toggleFinal }}" style="height: 36px; box-sizing: border-box; display: inline-flex; align-items: center; gap: 7px; padding: 0 14px; border-radius: 10px; font: inherit; font-size: 14px; font-weight: 700; cursor: pointer; border: 1px solid rgba(42,39,31,0.14); background: #EBF0E1; color: #2F4417;" style-hover="background: #DCE8CE;"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.5 2.5l3 3-8 8H2.5v-3z"></path></svg>Edit</button></sc-if>
+              </div>
+    </header>
+    <div style="animation: sapFadeIn 220ms cubic-bezier(0.2, 0.7, 0.2, 1) 900ms both; position: absolute; top: {{ tbTop }}; left: {{ tbL }}; right: {{ tbR }}; display: flex; justify-content: center; z-index: 11; pointer-events: none; transition: top 380ms cubic-bezier(0.3, 0.7, 0.2, 1), left 380ms cubic-bezier(0.3, 0.7, 0.2, 1), right 380ms cubic-bezier(0.3, 0.7, 0.2, 1);">
+          <sc-if value="{{ editing }}" hint-placeholder-val="{{ true }}"><div role="toolbar" aria-label="Formatting" style="pointer-events: auto; display: flex; align-items: center; gap: 2px; padding: {{ tbOuterPad }}; transition: padding 380ms cubic-bezier(0.3, 0.7, 0.2, 1); background: #FDFCF9; border: 1px solid rgba(42,39,31,0.10); border-radius: 14px; box-shadow: 0 4px 16px rgba(25,37,11,0.07);">
+            <sc-for list="{{ toolsPre }}" as="tb" hint-placeholder-count="2">
+              <sc-if value="{{ tb.sep }}" hint-placeholder-val="{{ false }}"><span style="width: 1px; height: 22px; transition: margin 380ms cubic-bezier(0.3, 0.7, 0.2, 1); margin: 0 {{ sepM }}; background: rgba(42,39,31,0.12);"></span></sc-if>
+              <sc-if value="{{ tb.btn }}" hint-placeholder-val="{{ true }}">
+                <button onMouseDown="{{ tb.run }}" title="{{ tb.tip }}" aria-label="{{ tb.tip }}" aria-pressed="{{ tb.on }}" style="min-width: {{ tbBtn }}; height: {{ tbBtn }}; padding: 0 {{ tbPadX }}; transition: min-width 380ms cubic-bezier(0.3, 0.7, 0.2, 1), height 380ms cubic-bezier(0.3, 0.7, 0.2, 1), padding 380ms cubic-bezier(0.3, 0.7, 0.2, 1), background 120ms; box-sizing: border-box; display: grid; place-items: center; border: 0; border-radius: 8px; background: {{ tb.bg }}; color: {{ tb.fg }}; font-family: {{ tb.font }}; font-size: 16px; font-weight: {{ tb.weight }}; font-style: {{ tb.style }}; text-decoration: {{ tb.deco }}; cursor: pointer;" style-hover="background: #F0ECE3;">
+                  <sc-if value="{{ tb.hasIcon }}" hint-placeholder-val="{{ false }}"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{ tb.path }}"></path></svg></sc-if>
+                  <sc-if value="{{ tb.hasLabel }}" hint-placeholder-val="{{ true }}"><span>{{ tb.label }}</span></sc-if>
+                </button>
+              </sc-if>
+            </sc-for>
+            <span style="width: 1px; height: 22px; transition: margin 380ms cubic-bezier(0.3, 0.7, 0.2, 1); margin: 0 {{ sepM }}; background: rgba(42,39,31,0.12);"></span>
+            <div style="position: relative;">
+              <button onMouseDown="{{ toggleHead }}" aria-haspopup="listbox" aria-expanded="{{ headOpen }}" title="Text style" style="display: flex; align-items: center; justify-content: space-between; gap: 10px; width: {{ styleW }}; height: {{ tbBtn }}; transition: width 380ms cubic-bezier(0.3, 0.7, 0.2, 1), height 380ms cubic-bezier(0.3, 0.7, 0.2, 1), background 120ms; padding: 0 10px 0 12px; border: 0; border-radius: 9px; background: {{ headBg }}; color: #1A1814; font: inherit; font-size: 15px; font-weight: 500; cursor: pointer;" style-hover="background: #F0ECE3;"><span style="white-space: nowrap;">{{ headLabelShort }}</span><svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M3 4.5L6 7.5 9 4.5" fill="none" stroke="#6F6857" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></svg></button>
+              <sc-if value="{{ headOpen }}" hint-placeholder-val="{{ false }}">
+                <div role="listbox" style="position: absolute; top: 46px; left: 0; width: 220px; padding: 6px; display: flex; flex-direction: column; background: #FDFCF9; border: 1px solid rgba(42,39,31,0.14); border-radius: 12px; box-shadow: 0 14px 36px rgba(25,37,11,0.16); z-index: 10; transform-origin: top left; animation: {{ headAnim }};">
+                  <sc-for list="{{ heads }}" as="hd"><button role="option" aria-selected="{{ hd.on }}" onMouseDown="{{ hd.put }}" style="display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px; border: 0; border-radius: 8px; background: {{ hd.bg }}; color: #1A1814; font-family: {{ hd.font }}; font-size: {{ hd.size }}; font-weight: {{ hd.weight }}; text-align: left; cursor: pointer;" style-hover="background: #F2F6EE;"><span>{{ hd.label }}</span><sc-if value="{{ hd.on }}" hint-placeholder-val="{{ false }}"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M3 7.5l2.5 2.5L11 4.5" fill="none" stroke="#445D22" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path></svg></sc-if></button></sc-for>
+                </div>
+              </sc-if>
+            </div>
+            <span style="width: 1px; height: 22px; transition: margin 380ms cubic-bezier(0.3, 0.7, 0.2, 1); margin: 0 {{ sepM }}; background: rgba(42,39,31,0.12);"></span>
+            <sc-for list="{{ tools }}" as="tb" hint-placeholder-count="16">
+              <sc-if value="{{ tb.sep }}" hint-placeholder-val="{{ false }}"><span style="width: 1px; height: 22px; transition: margin 380ms cubic-bezier(0.3, 0.7, 0.2, 1); margin: 0 {{ sepM }}; background: rgba(42,39,31,0.12);"></span></sc-if>
+              <sc-if value="{{ tb.btn }}" hint-placeholder-val="{{ true }}">
+                <button onMouseDown="{{ tb.run }}" title="{{ tb.tip }}" aria-label="{{ tb.tip }}" aria-pressed="{{ tb.on }}" style="min-width: {{ tbBtn }}; height: {{ tbBtn }}; padding: 0 {{ tbPadX }}; transition: min-width 380ms cubic-bezier(0.3, 0.7, 0.2, 1), height 380ms cubic-bezier(0.3, 0.7, 0.2, 1), padding 380ms cubic-bezier(0.3, 0.7, 0.2, 1), background 120ms; box-sizing: border-box; display: grid; place-items: center; border: 0; border-radius: 8px; background: {{ tb.bg }}; color: {{ tb.fg }}; font-family: {{ tb.font }}; font-size: 16px; font-weight: {{ tb.weight }}; font-style: {{ tb.style }}; text-decoration: {{ tb.deco }}; cursor: pointer;" style-hover="background: #F0ECE3;">
+                  <sc-if value="{{ tb.hasIcon }}" hint-placeholder-val="{{ false }}"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{ tb.path }}"></path></svg></sc-if>
+                  <sc-if value="{{ tb.hasLabel }}" hint-placeholder-val="{{ true }}"><span>{{ tb.label }}</span></sc-if>
+                </button>
+              </sc-if>
+            </sc-for>
+            <sc-if value="{{ chatOpen }}" hint-placeholder-val="{{ false }}"><div style="position: relative;">
+              <button onMouseDown="{{ toggleAlign }}" title="Align" aria-label="Align" aria-expanded="{{ alignOpen }}" style="height: {{ tbBtn }}; display: flex; align-items: center; gap: 1px; padding: 0 3px 0 5px; border: 0; border-radius: 8px; background: {{ alignBg }}; color: #3F3B31; cursor: pointer; transition: width 380ms cubic-bezier(0.3, 0.7, 0.2, 1), min-width 380ms cubic-bezier(0.3, 0.7, 0.2, 1), height 380ms cubic-bezier(0.3, 0.7, 0.2, 1), padding 380ms cubic-bezier(0.3, 0.7, 0.2, 1), background 120ms;" style-hover="background: #F0ECE3;"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="{{ alignPath }}"></path></svg><svg width="10" height="10" viewBox="0 0 12 12" aria-hidden="true"><path d="M3 4.5L6 7.5 9 4.5" fill="none" stroke="#6F6857" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></svg></button>
+              <sc-if value="{{ alignOpen }}" hint-placeholder-val="{{ false }}">
+                <div role="menu" style="position: absolute; top: 40px; left: 50%; margin-left: -58px; z-index: 12; padding: 4px; display: flex; gap: 2px; background: #FDFCF9; border: 1px solid rgba(42,39,31,0.14); border-radius: 10px; box-shadow: 0 14px 36px rgba(25,37,11,0.16); transform-origin: top center; animation: {{ alignAnim }};">
+                  <sc-for list="{{ aligns }}" as="al" hint-placeholder-count="3"><button role="menuitem" onMouseDown="{{ al.run }}" title="{{ al.tip }}" aria-label="{{ al.tip }}" style="width: 34px; height: 32px; display: grid; place-items: center; border: 0; border-radius: 7px; background: {{ al.bg }}; color: #3F3B31; cursor: pointer;" style-hover="background: #F0ECE3;"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="{{ al.path }}"></path></svg></button></sc-for>
+                </div>
+              </sc-if>
+            </div></sc-if>
+            <span style="width: 1px; height: 22px; transition: margin 380ms cubic-bezier(0.3, 0.7, 0.2, 1); margin: 0 {{ sepM }}; background: rgba(42,39,31,0.12);"></span>
+            <button onMouseDown="{{ insEq }}" title="Equation" aria-label="Insert equation" style="min-width: {{ tbBtn }}; height: {{ tbBtn }}; padding: 0 {{ tbPadX }}; border: 0; border-radius: 8px; background: transparent; color: #3F3B31; font-family: 'Aleo', Georgia, serif; font-style: italic; font-size: 16px; cursor: pointer; transition: width 380ms cubic-bezier(0.3, 0.7, 0.2, 1), min-width 380ms cubic-bezier(0.3, 0.7, 0.2, 1), height 380ms cubic-bezier(0.3, 0.7, 0.2, 1), padding 380ms cubic-bezier(0.3, 0.7, 0.2, 1), background 120ms;" style-hover="background: #F0ECE3;">√x</button>
+            <div style="position: relative;">
+              <button onMouseDown="{{ toggleIns }}" aria-expanded="{{ insOpen }}" style="display: flex; align-items: center; gap: 6px; height: {{ tbBtn }}; margin-left: 4px; padding: 0 {{ insPadR }} 0 {{ insPadL }}; border: 0; border-radius: 9px; background: #445D22; color: #FFFFFF; font: inherit; font-size: 14px; font-weight: 700; cursor: pointer; transition: width 380ms cubic-bezier(0.3, 0.7, 0.2, 1), min-width 380ms cubic-bezier(0.3, 0.7, 0.2, 1), height 380ms cubic-bezier(0.3, 0.7, 0.2, 1), padding 380ms cubic-bezier(0.3, 0.7, 0.2, 1), background 120ms; transition: padding 380ms cubic-bezier(0.3, 0.7, 0.2, 1), height 380ms cubic-bezier(0.3, 0.7, 0.2, 1), background 120ms;" style-hover="background: #597536;"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M7 2v10M2 7h10" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path></svg><sc-if value="{{ chatClosed }}" hint-placeholder-val="{{ true }}"><span>Insert</span></sc-if></button>
+              <sc-if value="{{ insOpen }}" hint-placeholder-val="{{ false }}">
+                <div role="menu" style="position: absolute; top: 46px; right: 0; width: 330px; padding: 6px; display: flex; flex-direction: column; background: #FDFCF9; border: 1px solid rgba(42,39,31,0.14); border-radius: 14px; box-shadow: 0 14px 36px rgba(25,37,11,0.16); transform-origin: top right; animation: {{ insAnim }};">
+                  <div style="display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 2px; padding: 2px 0 6px; margin-bottom: 4px; border-bottom: 1px solid rgba(42,39,31,0.08);">
+                    <sc-for list="{{ graphKinds }}" as="gk" hint-placeholder-count="5"><button role="menuitem" onMouseDown="{{ gk.put }}" style="display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 8px 0 6px; border: 0; border-radius: 10px; background: transparent; font: inherit; font-size: 12px; font-weight: 600; color: #3F3B31; cursor: pointer;" style-hover="background: #F2F6EE;"><span style="width: 34px; height: 34px; border-radius: 9px; background: #EBF0E1; color: #2F4417; display: grid; place-items: center;"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{ gk.icon }}"></path></svg></span>{{ gk.label }}</button></sc-for>
+                  </div>
+                  <sc-for list="{{ blocks }}" as="bk"><button role="menuitem" onMouseDown="{{ bk.put }}" style="display: flex; align-items: center; gap: 12px; padding: 8px 10px; border: 0; border-radius: 10px; background: transparent; font: inherit; text-align: left; cursor: pointer;" style-hover="background: #F2F6EE;"><span style="width: 34px; height: 34px; flex-shrink: 0; border-radius: 9px; background: {{ bk.bg }}; color: {{ bk.fg }}; display: grid; place-items: center; font-family: 'Aleo', serif; font-size: 15px; font-weight: 700;">{{ bk.glyph }}</span><span style="display: flex; flex-direction: column;"><span style="font-size: 15px; font-weight: 700; color: #1A1814;">{{ bk.label }}</span><span style="font-size: 13px; color: #6F6857;">{{ bk.desc }}</span></span></button></sc-for>
+                </div>
+              </sc-if>
+            </div>
+          </div></sc-if>
+        </div>
+    
+    <div style="flex: 1; min-height: 0; display: flex;">
+      <section aria-label="Notes" style="position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column;">
+        
+        <div ref="{{ scrollRef }}" data-edscroll="" onScroll="{{ hideBubble }}" style="flex: 1; min-height: 0; overflow-y: auto;">
+          <div style="animation: sapSlideUp 420ms cubic-bezier(0.2, 0.7, 0.2, 1) 880ms both; max-width: 1040px; margin: 0 auto; padding: {{ edPadTop }} 48px 96px; transition: padding-top 380ms cubic-bezier(0.3, 0.7, 0.2, 1);">
+            <div style="display: flex; align-items: flex-start; gap: 20px; margin-bottom: 22px;">
+              <div style="flex: 1; min-width: 0;">
+                <div ref="{{ titleRef }}" data-title="" data-placeholder="Untitled" contentEditable="{{ edCE }}" spellCheck="false" onInput="{{ onTitle }}" onKeyDown="{{ titleKey }}" role="textbox" aria-label="Document title" style="font-family: 'Aleo', Georgia, serif; font-size: 40px; line-height: 1.12; font-weight: 600; letter-spacing: -0.02em; color: #1A1814; text-wrap: balance; outline: none; caret-color: #445D22;"></div>
+                <div style="display: flex; align-items: center; gap: 10px; margin-top: 10px; font-size: 14px; color: #6F6857;">
+                  <span style="display: inline-flex; align-items: center; gap: 7px;"><span style="width: 9px; height: 9px; border-radius: 50%; background: {{ courseColor }};"></span>{{ doc.course }}</span>
+                  <span>·</span><span>{{ editedLabel }}</span>
+                  <sc-if value="{{ isFinal }}" hint-placeholder-val="{{ false }}"><span style="display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 9px; border-radius: 999px; background: #EBF0E1; color: #2F4417; font-size: 12.5px; font-weight: 700;"><svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M3.5 5.5V4a2.5 2.5 0 0 1 5 0v1.5M2.5 5.5h7v5h-7z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"></path></svg>Final</span></sc-if>
+                </div>
+              </div>
+            </div>
+            <div ref="{{ edRef }}" data-notes="" contentEditable="{{ edCE }}" spellCheck="false" onInput="{{ onInput }}" onClick="{{ onEdClick }}" onMouseUp="{{ onMouseUp }}" onKeyUp="{{ onMouseUp }}" onKeyDown="{{ onEdKey }}" aria-label="Notes editor" style="min-height: 600px;"></div>
+          </div>
+        </div>
+        <sc-if value="{{ bubbleOn }}" hint-placeholder-val="{{ false }}">
+          <div onMouseDown="{{ keep }}" style="position: absolute; left: {{ bubbleX }}; top: {{ bubbleY }}; transform: translateX(-50%); z-index: 8; display: flex; align-items: center; gap: 2px; padding: 4px; border-radius: 12px; background: #1A1814; box-shadow: 0 10px 24px rgba(25,37,11,0.25);">
+            <button onClick="{{ askSel }}" style="display: flex; align-items: center; gap: 7px; height: 34px; padding: 0 12px 0 8px; border: 0; border-radius: 9px; background: transparent; color: #FFFFFF; font: inherit; font-size: 14px; font-weight: 700; cursor: pointer;" style-hover="background: rgba(255,255,255,0.12);"><svg width="16" height="16" viewBox="{{ tutor.vb }}" fill="#A9D18E" aria-hidden="true"><sc-for list="{{ tutor.d }}" as="p"><path d="{{ p }}"></path></sc-for></svg>Ask Clov</button>
+            <button onClick="{{ explainSel }}" style="height: 34px; padding: 0 12px; border: 0; border-radius: 9px; background: transparent; color: #FFFFFF; font: inherit; font-size: 14px; font-weight: 600; cursor: pointer;" style-hover="background: rgba(255,255,255,0.12);">Explain</button>
+            <button onClick="{{ improveSel }}" style="height: 34px; padding: 0 12px; border: 0; border-radius: 9px; background: transparent; color: #FFFFFF; font: inherit; font-size: 14px; font-weight: 600; cursor: pointer;" style-hover="background: rgba(255,255,255,0.12);">Improve Wording</button>
+            <span style="width: 1px; height: 20px; margin: 0 2px; background: rgba(255,255,255,0.2);"></span>
+            <button onClick="{{ markSel }}" title="Highlight" aria-label="Highlight" style="width: 34px; height: 34px; display: grid; place-items: center; border: 0; border-radius: 9px; background: transparent; cursor: pointer;" style-hover="background: rgba(255,255,255,0.12);"><span style="width: 16px; height: 16px; border-radius: 4px; background: #F6E7B0;"></span></button>
+          </div>
+        </sc-if>
+      </section>
+
+
+      <button onClick="{{ toggleChat }}" title="Ask Clov" aria-label="Show Ask Clov" aria-expanded="false" style="position: absolute; top: 86px; right: 20px; z-index: 6; width: 40px; height: 40px; display: grid; place-items: center; border: 0; border-radius: 50%; background: #EBF0E1; cursor: pointer; opacity: {{ clovBtnOp }}; pointer-events: {{ clovBtnPe }}; transform: scale({{ clovBtnScale }}); transition: opacity 200ms ease {{ clovBtnDelay }}, transform 260ms cubic-bezier(0.2, 0.7, 0.2, 1) {{ clovBtnDelay }}, background 120ms;" style-hover="background: #DCE8CE;"><svg width="22" height="22" viewBox="{{ tutor.vb }}" fill="#445D22" aria-hidden="true"><sc-for list="{{ tutor.d }}" as="p"><path d="{{ p }}"></path></sc-for></svg></button>
+      <aside aria-label="Ask Clov" aria-hidden="{{ chatClosed }}" style="animation: sapFadeIn 420ms cubic-bezier(0.2, 0.7, 0.2, 1) 920ms both; width: {{ chatW }}; flex-shrink: 0; overflow: hidden; border-left: 1px solid {{ chatBorder }}; background: #FDFCF9; transition: width 380ms cubic-bezier(0.3, 0.7, 0.2, 1), border-color 380ms;">
+      <div style="width: 440px; height: 100%; display: flex; flex-direction: column; opacity: {{ chatInnerOp }}; transition: opacity 220ms ease {{ chatInnerDelay }};">
+        <div style="height: 60px; flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; padding: 0 20px 0 12px;">
+          <div style="display: flex; align-items: center; gap: 6px;"><button onClick="{{ toggleChat }}" title="Hide Ask Clov" aria-label="Hide Ask Clov" aria-expanded="true" style="width: 36px; height: 36px; display: grid; place-items: center; border: 0; border-radius: 9px; background: transparent; color: #3F3B31; cursor: pointer;" style-hover="background: #EEF3E6; color: #445D22;"><svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="2.5" y="3" width="15" height="14" rx="2.5"></rect><path d="M12.5 3v14"></path><path d="M6 7.5L8.5 10 6 12.5" stroke-linecap="round" stroke-linejoin="round"></path></svg></button><span style="font-family: 'Aleo', serif; font-size: 20px; font-weight: 600;">Ask Clov</span></div>
+          <div style="display: flex; align-items: center; gap: 4px;">
+            <sc-if value="{{ hasMsgs }}" hint-placeholder-val="{{ false }}"><button onClick="{{ clearChat }}" style="height: 32px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: #6F6857; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;" style-hover="background: #F0ECE3; color: #1A1814;">New Chat</button></sc-if>
+            
+          </div>
+        </div>
+        <div ref="{{ listRef }}" data-chatlist="" style="flex: 1; min-height: 0; overflow-y: auto; padding: 4px 24px 16px; display: flex; flex-direction: column; gap: 18px;">
+          <sc-if value="{{ noMsgs }}" hint-placeholder-val="{{ true }}">
+            <div style="margin: auto 0; display: flex; flex-direction: column; align-items: center; gap: 14px; text-align: center;">
+              <span style="width: 64px; height: 64px; border-radius: 50%; background: #EBF0E1; display: grid; place-items: center;"><svg width="32" height="32" viewBox="{{ tutor.vb }}" fill="#445D22" aria-hidden="true"><sc-for list="{{ tutor.d }}" as="p"><path d="{{ p }}"></path></sc-for></svg></span>
+              <span style="font-family: 'Aleo', serif; font-size: 22px; font-weight: 600;">Hi, I'm Clov. How can I help?</span>
+              <span style="max-width: 320px; font-size: 14px; color: #6F6857; text-wrap: pretty;">Ask about anything in {{ doc.title }}, or select text in your notes to ask about that part.</span>
+              <div style="display: flex; flex-direction: column; align-items: stretch; gap: 8px; width: 100%; margin-top: 8px;">
+                <sc-for list="{{ suggestions }}" as="sg"><button onClick="{{ sg.go }}" style="display: flex; align-items: center; justify-content: space-between; gap: 10px; height: 46px; padding: 0 16px; border: 1px solid rgba(42,39,31,0.12); border-radius: 12px; background: #FFFFFF; color: #1A1814; font: inherit; font-size: 15px; font-weight: 600; text-align: left; cursor: pointer;" style-hover="border-color: #597536; background: #F7FAF3;"><span>{{ sg.label }}</span><svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M4 2l4 4-4 4" fill="none" stroke="#6F6857" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path></svg></button></sc-for>
+              </div>
+            </div>
+          </sc-if>
+          <sc-for list="{{ msgs }}" as="m">
+            <sc-if value="{{ m.isUser }}" hint-placeholder-val="{{ false }}">
+              <div style="align-self: flex-end; max-width: 86%; display: flex; flex-direction: column; align-items: flex-end; gap: 6px;">
+                <sc-if value="{{ m.hasQuote }}" hint-placeholder-val="{{ false }}"><span style="max-width: 100%; padding: 6px 10px; border-left: 3px solid #A9C48A; font-family: 'Aleo', serif; font-size: 14px; font-style: italic; color: #3F3B31; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;">{{ m.quote }}</span></sc-if>
+                <span style="padding: 10px 14px; border-radius: 14px 14px 4px 14px; background: #EBF0E1; color: #1A1814; font-size: 15px; white-space: pre-wrap; text-wrap: pretty;">{{ m.text }}</span>
+              </div>
+            </sc-if>
+            <sc-if value="{{ m.isAi }}" hint-placeholder-val="{{ false }}">
+              <div style="display: flex; gap: 12px; align-items: flex-start;">
+                <span style="width: 30px; height: 30px; flex-shrink: 0; border-radius: 50%; background: #EBF0E1; display: grid; place-items: center;"><svg width="16" height="16" viewBox="{{ tutor.vb }}" fill="#445D22" aria-hidden="true"><sc-for list="{{ tutor.d }}" as="p"><path d="{{ p }}"></path></sc-for></svg></span>
+                <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px;">
+                  <span style="font-size: 15px; line-height: 1.6; color: #1A1814; white-space: pre-wrap; text-wrap: pretty;">{{ m.text }}</span>
+                  <sc-if value="{{ m.canAct }}" hint-placeholder-val="{{ false }}">
+                    <div style="display: flex; gap: 6px;">
+                      <button onClick="{{ m.insert }}" style="display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; border: 1px solid #C9D9B4; border-radius: 9px; background: #F7FAF3; color: #445D22; font: inherit; font-size: 13px; font-weight: 700; cursor: pointer;" style-hover="background: #EBF0E1;">{{ m.insertLabel }}</button>
+                      <button onClick="{{ m.copy }}" style="height: 32px; padding: 0 12px; border: 0; border-radius: 9px; background: transparent; color: #6F6857; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;" style-hover="background: #F0ECE3; color: #1A1814;">{{ m.copyLabel }}</button>
+                    </div>
+                  </sc-if>
+                </div>
+              </div>
+            </sc-if>
+          </sc-for>
+          <sc-if value="{{ busy }}" hint-placeholder-val="{{ false }}">
+            <div style="display: flex; gap: 12px; align-items: center;"><span style="width: 30px; height: 30px; flex-shrink: 0; border-radius: 50%; background: #EBF0E1; display: grid; place-items: center;"><svg width="16" height="16" viewBox="{{ tutor.vb }}" fill="#445D22" aria-hidden="true"><sc-for list="{{ tutor.d }}" as="p"><path d="{{ p }}"></path></sc-for></svg></span>{{ typing }}</div>
+          </sc-if>
+        </div>
+        <div style="flex-shrink: 0; padding: 8px 20px 14px;">
+          <div style="display: flex; flex-direction: column; gap: 8px; padding: 6px 6px 6px 14px; border: 1px solid rgba(42,39,31,0.16); border-radius: 16px; background: #FFFFFF; box-shadow: 0 2px 8px rgba(25,37,11,0.05);">
+            <sc-if value="{{ hasQuote }}" hint-placeholder-val="{{ false }}">
+              <div style="display: flex; align-items: flex-start; gap: 8px; padding: 8px 10px; border-radius: 10px; background: #F4F1EA;">
+                <span style="flex: 1; min-width: 0; font-family: 'Aleo', serif; font-size: 14px; font-style: italic; color: #3F3B31; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;">{{ quote }}</span>
+                <button onClick="{{ clearQuote }}" aria-label="Remove selected text" style="width: 22px; height: 22px; flex-shrink: 0; display: grid; place-items: center; border: 0; border-radius: 6px; background: transparent; color: #6F6857; cursor: pointer;" style-hover="background: #E6E2D9;"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 2l6 6M8 2L2 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"></path></svg></button>
+              </div>
+            </sc-if>
+            <div style="display: flex; align-items: flex-end; gap: 10px;">
+              <textarea ref="{{ inRef }}" value="{{ input }}" onChange="{{ onType }}" onKeyDown="{{ onKey }}" rows="1" placeholder="{{ placeholder }}" aria-label="Ask Clov about your notes" style="flex: 1; min-width: 0; resize: none; border: 0; outline: none; background: transparent; font: inherit; font-size: 15px; line-height: 1.5; color: #1A1814; padding: 7px 0; max-height: 140px; field-sizing: content;"></textarea>
+              <button onClick="{{ send }}" aria-label="Send" style="width: 36px; height: 36px; flex-shrink: 0; display: grid; place-items: center; border: 0; border-radius: 12px; background: {{ sendBg }}; color: #FFFFFF; cursor: pointer;"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 13V3M3.5 7.5L8 3l4.5 4.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg></button>
+            </div>
+          </div>
+        </div>
+      </div>
+      </aside>
+    </div>
+  </main>
+
+  <sc-if value="{{ toastOn }}" hint-placeholder-val="{{ false }}">
+    <div role="status" style="position: absolute; left: 50%; bottom: 32px; transform: translateX(-50%); z-index: 30; padding: 12px 18px; border-radius: 12px; background: #1A1814; color: #FFFFFF; font-size: 15px; font-weight: 600; box-shadow: 0 10px 28px rgba(25,37,11,0.25);">{{ toast }}</div>
+  </sc-if>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+const TUTOR = {"vb":"0 0 25 25","d":["M24.72,11.96v-.02l.02-.11.02-.11c.01-.1,0-.21-.02-.33l-.04-.18-.03-.18c-.03-.13-.06-.25-.11-.37l-.12-.34c-.05-.11-.09-.22-.14-.34l-.07-.16-.07-.17c-.05-.11-.11-.23-.17-.33l-.1-.16-.09-.15c-.07-.11-.15-.21-.23-.3l-.12-.14-.12-.13c-.08-.09-.16-.18-.23-.27l-.12-.14-.11-.14c-.09-.11-.2-.2-.32-.26l-.16-.08-.17-.09c-.11-.05-.21-.1-.31-.16l-.16-.09-.16-.09c-.11-.06-.22-.11-.34-.16l-.17-.06-.17-.06c-.11-.04-.23-.08-.35-.12l-.17-.06-.17-.05c-.13-.04-.26-.07-.39-.08h-.18s-.18-.03-.18-.03c-.13-.01-.26,0-.39.02l-.19.02-.18.03c-.08.01-.16.01-.25.01,0-.08,0-.15.02-.23v-.18s.03-.18.03-.18c.01-.13.01-.26-.01-.39l-.02-.18-.03-.18c-.01-.13-.03-.25-.06-.37l-.03-.18-.04-.18c-.03-.12-.07-.25-.12-.37l-.07-.16-.07-.17c-.04-.11-.09-.22-.14-.33l-.07-.17-.07-.16c-.05-.12-.11-.23-.17-.34l-.1-.16-.09-.15c-.07-.11-.14-.21-.22-.31l-.12-.15-.11-.14c-.09-.1-.19-.19-.31-.26l-.15-.1-.16-.1c-.1-.06-.19-.13-.28-.2l-.14-.12-.15-.11c-.1-.08-.21-.15-.33-.21l-.17-.07-.16-.07c-.12-.06-.25-.1-.38-.12l-.18-.03-.18-.03c-.12-.02-.24-.04-.35-.06l-.18-.03-.18-.04c-.12-.02-.24-.04-.36-.06l-.18-.02-.18-.03c-.13-.02-.25-.03-.38-.02h-.18s-.19.02-.19.02c-.06,0-.11,0-.14.01-.02,0-.04,0-.05.01-.01,0-.02,0-.04.01,0,0-.02.01-.03.03-.01,0-.01.01-.03.01h-.21c-.08.01-.17.02-.3.02l-.18.02h-.18c-.13.02-.26.05-.38.1l-.17.06-.17.07c-.11.04-.22.09-.33.12l-.34.12c-.13.05-.24.1-.35.17l-.15.1-.16.09c-.11.07-.21.15-.3.24l-.13.12-.13.13c-.09.08-.18.17-.26.26l-.13.13-.12.13c-.09.09-.17.18-.24.28l-.11.15-.1.14c-.08.11-.14.22-.2.33l-.16.32c-.06.11-.11.23-.14.35l-.06.17-.05.18c-.04.11-.07.23-.09.35l-.04.18-.04.17c-.02.12-.04.24-.06.36l-.03.18-.03.18c-.02.13-.04.25-.04.38v.36c0,.11,0,.22,0,.33h-.05l-.18-.02-.18-.02c-.12-.02-.25-.02-.38-.02l-.36.02c-.13,0-.26.02-.39.06l-.17.05-.18.05c-.11.03-.22.05-.33.07l-.19.02-.18.02c-.14.02-.27.07-.39.14l-.15.11-.15.1c-.1.06-.2.12-.3.17l-.17.07-.17.08c-.12.06-.23.13-.33.22l-.13.12-.14.13c-.09.08-.18.17-.26.26l-.26.26c-.09.1-.16.2-.23.31l-.1.16-.09.15c-.07.11-.13.22-.18.33l-.08.17-.07.16c-.05.12-.1.23-.14.35l-.06.17-.07.17c-.04.12-.07.24-.1.37l-.03.17-.03.18c-.03.12-.05.25-.06.37l-.04.36c-.02.13-.02.26,0,.39v.18s.02.18.02.18c.01.12.01.24.01.35v.37c-.01.13,0,.26.04.39l.05.18.04.17c.04.13.08.24.12.36l.07.17.07.17c.04.11.09.22.15.33l.07.16.08.16c.05.11.1.22.16.33l.08.16.08.17c.05.12.13.23.21.33l.12.13.12.14c.09.1.18.19.28.27l.15.11.14.11c.1.08.2.15.3.22l.15.1.15.11c.1.07.22.13.33.18l.17.07.17.08c.11.04.22.09.33.14l.17.08.16.07c.13.06.26.09.4.1h.18s.18.02.18.02c.12,0,.25.01.37.01h.36c.12,0,.24,0,.36,0h.18s.18.01.18.01c.04.01.08.01.11.01v.09l-.02.36c-.01.13,0,.26.02.39l.03.18.03.18c.02.12.03.23.04.35v.18s.03.18.03.18c0,.13.03.26.06.38l.05.18.04.18c.04.13.09.25.16.36l.1.16.09.15c.07.11.13.21.18.31l.09.16.09.16c.06.12.13.22.22.32l.12.14.11.14c.09.1.18.19.27.27l.28.24c.1.08.2.16.31.22l.16.09.15.09c.11.06.21.12.32.18l.16.09.15.09c.12.07.24.12.37.15l.17.04.18.04c.12.03.24.06.35.08l.18.04.18.04c.12.03.24.04.37.05l.36.02c.12,0,.25,0,.37,0h.18s.18,0,.18,0c.13-.01.25-.01.37-.02h.36c.12-.02.24-.03.37-.04l.17-.03.18-.03c.13-.01.25-.04.37-.08l.17-.06.17-.06c.12-.04.23-.08.35-.12l.17-.07.17-.06c.12-.05.24-.11.34-.2l.14-.11.15-.11c.09-.08.19-.16.28-.24l.26-.24c.09-.08.18-.16.27-.25l.13-.12.14-.12c.09-.09.18-.2.24-.31l.1-.16.09-.15c.06-.11.13-.21.19-.32l.09-.15.09-.16c.07-.12.11-.24.14-.38l.04-.18.03-.18.06-.36.02-.18.03-.18c.01-.11.03-.23.05-.35v-.08c.04.09.07.18.11.27l.07.2.08.21c.05.14.09.28.14.41l.08.21.07.21c.05.13.08.26.09.4l.03.22.02.22c.02.15.04.3.08.45l.04.21.05.22c.03.13.05.27.05.41v.44c0,.16.02.3.09.42l.07.13.02.02v.02c0,.08.05.14.11.19h.01v.02h0c0,.08.05.11.06.12.02.01.04.01.05.02.01,0,.04,0,.06.01h.39s.66.01.66.01h.22s.22,0,.22,0c.15,0,.3,0,.45,0h.22s.22-.02.22-.02c.14-.01.29,0,.43.01l.22.02.22.02c.09.01.17,0,.25-.04.06-.03.09-.09.12-.15.1-.02.17-.1.17-.21,0-.04-.01-.11-.01-.16v-.04c.06-.14.08-.3.06-.46l-.02-.22-.02-.22c-.02-.15-.05-.3-.09-.45l-.06-.22-.06-.21c-.05-.14-.09-.28-.15-.42l-.08-.21-.08-.2c-.05-.14-.1-.27-.14-.41l-.06-.22-.07-.21c-.05-.15-.12-.29-.21-.43l-.12-.18-.13-.18c-.08-.13-.17-.25-.27-.36l-.15-.17-.15-.17c-.1-.12-.21-.22-.34-.32l-.18-.13-.17-.13c-.12-.1-.25-.18-.38-.26h-.02c.07-.03.15-.04.22-.08l.17-.08.16-.09c.1-.05.21-.1.32-.15l.16-.07.17-.07c.12-.04.23-.11.34-.18l.14-.11.15-.1c.1-.07.2-.15.29-.23l.14-.12.13-.12c.1-.08.19-.18.26-.28l.11-.14.11-.14c.08-.1.15-.19.23-.28l.12-.14.12-.14c.08-.1.16-.21.21-.33l.08-.16.08-.17c.06-.12.1-.24.12-.37l.04-.18.03-.18c.03-.12.05-.24.07-.36l.02-.18.03-.18c.02-.12.03-.24.04-.37v-.36c0-.12.02-.24.02-.36v-.18s.02-.18.02-.18v-.2s0-.02-.01-.04c0,0-.01-.01-.02-.02ZM15.5,12.34l-.1.05c-.08.04-.14.09-.21.15l-.08.08-.07.08s-.1.08-.15.11l-.1.05-.1.05c-.07.04-.13.08-.2.13l-.08.07-.09.07c-.06.04-.11.09-.17.14l-.08.07-.09.07c-.06.05-.11.1-.17.16l-.07.08-.08.08s-.1.11-.15.18l-.06.09-.06.09c-.05.06-.09.11-.13.17l-.07.09-.06.09c-.05.06-.09.13-.12.2l-.05.1-.05.1c-.02.06-.06.11-.1.16l-.14.16s-.03.05-.05.08c-.02-.06-.05-.11-.08-.17l-.06-.08-.07-.09c-.03-.06-.07-.11-.09-.17l-.04-.11-.05-.1c-.03-.08-.08-.15-.13-.22l-.07-.08-.07-.08c-.05-.06-.1-.12-.15-.17l-.08-.08-.08-.08c-.05-.06-.11-.11-.18-.16l-.09-.06-.09-.07c-.06-.04-.11-.08-.17-.12l-.08-.07-.09-.07s-.09-.08-.13-.14l-.07-.08-.07-.09c-.06-.07-.14-.12-.22-.16l-.1-.05-.1-.04c-.06-.03-.12-.06-.17-.1l-.18-.12c-.06-.05-.14-.09-.21-.12h-.02c.06-.05.12-.08.18-.11l.1-.05.09-.05c.08-.04.15-.09.21-.15l.08-.08.07-.08c.05-.05.1-.09.15-.12l.09-.05.1-.05c.06-.04.13-.08.19-.13l.09-.06.09-.06c.07-.05.13-.1.19-.16l.15-.15c.05-.06.1-.12.15-.17l.07-.09.07-.08c.05-.06.1-.12.14-.18l.06-.09.07-.09c.04-.06.08-.13.12-.19l.05-.1.06-.09c.03-.06.07-.11.11-.16l.07-.08.07-.09c.07-.07.11-.15.13-.24v-.02s.03.03.03.03l.05.09c.04.07.08.14.12.2l.06.09.07.08s.06.11.08.17l.04.11.04.1c.03.09.08.17.14.23l.07.08.08.08c.05.06.1.11.15.16l.08.08.07.08c.06.05.11.11.17.16l.08.07.08.07c.05.05.1.09.15.14l.07.09.08.08c.05.06.11.11.18.16l.09.06.09.06c.07.05.14.09.21.12l.09.05.1.05c.07.03.14.06.21.09l.1.05.1.04s.01.01.02.01l-.03.02Z"]};
+const FMT = { PDF: "#B4562C", PPTX: "#B8873F", DOCX: "#3E6E9E" };
+const CCOL = { CS101: "#B4562C", MATH210: "#445D22", BIO110: "#2E5F96", ENG150: "#7030A8", CHEM120: "#B8873F" };
+const DEMO = { id: "d2", title: "Determinants Lecture 7", course: "MATH210", type: "lecture", fmt: "PDF", pages: 18, added: "Nov 5",
+  summary: "Cofactor expansion, row operations, and why a zero determinant means a matrix has no inverse.",
+  concepts: ["Determinants", "Matrix multiplication", "Inverses"], page: { h: "Determinants", lines: ["det(A) measures how A scales area.", "Row swaps flip the sign."], code: "det(AB) = det(A)det(B)" } };
+const esc = (s) => String(s || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const TYPE_LABEL = { lecture: "Lecture Notes", guide: "Study Guide", assignment: "Assignment", slides: "Slides", reading: "Reading", lab: "Lab" };
+
+function makeNotes(d) {
+  const meta = `<p class="meta">${esc(d.course || "No course")} · Last edited ${esc(d.added || "today")}</p>`;
+  if (d.id === "d2") return `<h1>Determinants</h1>${meta}
+<p>This lecture introduces the determinant, a single number computed from a square matrix. It tells you how the matrix stretches space and whether the matrix can be undone. These notes cover what the determinant measures, three ways to compute it, how row operations change it, and its link to inverses.</p>
+<h2>1. What a Determinant Measures</h2>
+<p>For a 2×2 matrix, the determinant is the factor by which the matrix scales area. A determinant of 3 triples every area; a determinant of −2 doubles areas and flips orientation. A determinant of <strong>0</strong> means the matrix squashes the plane onto a line or a point.</p>
+<div class="math" contenteditable="false" data-tex="\\det(AB) = \\det(A)\\,\\det(B)"></div>
+${BLK.matrix(2)}
+<h2>2. Computing Determinants</h2>
+<ol><li><strong>2×2 formula:</strong> for rows (a, b) and (c, d), det = ad − bc.</li><li><strong>Cofactor expansion:</strong> pick a row or column, multiply each entry by its signed minor, and add the results. Choose the row with the most zeros.</li><li><strong>Row reduction:</strong> reduce to triangular form while tracking each row operation, then multiply the diagonal entries.</li></ol>
+<h2>3. Row Operations and the Determinant</h2>
+${BLK.table(["Row operation", "Effect on det(A)", "Example"], [["Swap two rows", "Flips the sign", "det = 5 becomes −5"], ["Multiply a row by k", "Multiplies by k", "Row × 3: det × 3"], ["Add a multiple of one row to another", "No change", "R2 − 2R1: det stays 5"]])}
+${BLK.toggle("Worked example: cofactor expansion on a 3×3", "Expand along the first row: det = 2·(3·1 − 2·1) − 0·(1·1 − 2·1) + 1·(1·1 − 3·1) = 2 − 2 = 0. The matrix is not invertible.")}
+<h2>4. Determinants and Inverses</h2>
+<p>A square matrix is invertible exactly when its determinant is not zero. If det(A) = 0, the columns are linearly dependent, so some direction is collapsed and cannot be recovered.</p>
+${BLK.qa("If det(A) = 4, what is det(2A) for a 3×3 matrix A?", "Each of the 3 rows is multiplied by 2, so det(2A) = 2³ · 4 = 32.")}
+<h2>Questions to Review</h2>
+${BLK.check(["Why does a row swap change the sign but not the size of the determinant?", "How would you use cofactor expansion on a 3×3 matrix with a row of zeros?", "What does det(A) = 0 tell you about the columns of A?"])}`;
+  const lines = (d.page && d.page.lines) || [], cs = d.concepts || [];
+  return `<h1>${esc(d.title)}</h1>${meta}
+<h2>Overview</h2><p>${esc(d.summary)}</p>
+${lines.length ? `<h2>Key Points</h2><ul>${lines.map((l) => `<li>${esc(l)}</li>`).join("")}</ul>` : ""}
+${d.page && d.page.code ? `<h2>Key Formula</h2><pre>${esc(d.page.code)}</pre>` : ""}
+${cs.length ? `<h2>Concepts Covered</h2>${BLK.table(["Concept", "What it means", "Where it appears"], cs.map((c) => [`<strong>${esc(c)}</strong>`, "", ""]))}` : ""}
+${cs.length ? BLK.qa(`In your own words, what is ${esc(cs[0].toLowerCase())}?`, "Write your answer here, then check it against the document.") : ""}
+<h2>Questions to Review</h2>${BLK.check((cs.length ? cs.slice(0, 3).map((c) => `How does ${esc(c.toLowerCase())} show up in this ${esc((TYPE_LABEL[d.type] || "document").toLowerCase())}?`) : ["What is the main idea of this document?"]))}`;
+}
+const X = '<button class="blk-x" contenteditable="false" data-act="del" title="Remove" aria-label="Remove block">×</button>';
+const H = (t) => `<div class="blk-h" contenteditable="false">${t}</div>`;
+const det = (m) => m.length === 4 ? m[0] * m[3] - m[1] * m[2] : m[0] * (m[4] * m[8] - m[5] * m[7]) - m[1] * (m[3] * m[8] - m[5] * m[6]) + m[2] * (m[3] * m[7] - m[4] * m[6]);
+const mxOut = (vals) => { const n = vals.map((v) => parseFloat(v)); if (n.some(isNaN)) return { o: "det = <b>?</b>", note: "Fill every entry." };
+  const d = Math.round(det(n) * 1000) / 1000; return { o: `det = <b>${d}</b>`, note: d === 0 ? "Zero determinant: not invertible, columns are dependent." : `Invertible. Scales area by ${Math.abs(d)}${d < 0 ? " and flips orientation" : ""}.` }; };
+const BLK = {
+  math: () => '<div class="math" contenteditable="false" data-tex="\\det(A - \\lambda I) = 0"></div><p><br></p>',
+  matrix: (n = 2, vals) => { vals = vals || (n === 2 ? ["3", "1", "2", "4"] : ["2", "0", "1", "1", "3", "2", "1", "1", "1"]); const o = mxOut(vals);
+    return `<div class="blk" contenteditable="false" data-blk="matrix" data-n="${n}">${X}${H("Matrix Calculator")}<div class="mx"><div class="mx-grid" style="grid-template-columns: repeat(${n}, auto);">${vals.map((v) => `<input type="text" inputmode="decimal" value="${v}" aria-label="Matrix entry">`).join("")}</div><div><div class="mx-out">${o.o}</div><div class="mx-note">${o.note}</div></div></div><div class="tbl-bar"><button class="sbtn ${n === 2 ? "on" : ""}" data-act="mx2">2 × 2</button><button class="sbtn ${n === 3 ? "on" : ""}" data-act="mx3">3 × 3</button></div></div><p><br></p>`; },
+  table: (head, rows) => { head = head || ["Term", "Meaning", "Example"]; rows = rows || [["", "", ""], ["", "", ""]];
+    return `<div class="blk" data-blk="table" data-edit="0">${X}<button class="tbl-edit" contenteditable="false" data-act="tedit">Edit</button><table><thead><tr>${head.map((h) => `<th>${h}</th>`).join("")}</tr></thead><tbody>${rows.map((r) => `<tr>${r.map((c) => `<td>${c || "<br>"}</td>`).join("")}</tr>`).join("")}</tbody></table><div class="tbl-bar" contenteditable="false"><button class="sbtn" data-act="row">+ Row</button><button class="sbtn" data-act="col">+ Column</button><button class="sbtn" data-act="delrow">− Row</button><button class="sbtn" data-act="delcol">− Column</button><span style="flex:1"></span><button class="sbtn tbl-del" data-act="del">Delete table</button><button class="sbtn tbl-done" data-act="tedit">Done</button></div></div><p><br></p>`; },
+  check: (items) => `<ul class="check">${(items || ["First thing to review", "Second thing to review"]).map((i) => `<li data-done="0"><span class="box" contenteditable="false" data-act="check">✓</span><span>${i}</span></li>`).join("")}</ul>`,
+  toggle: (title, body) => `<div class="blk" data-blk="toggle" data-open="1">${X}<div class="tg-head"><button class="tg-arrow" contenteditable="false" data-act="open" aria-label="Show or hide">▶</button><div class="tg-title">${title || "Worked example"}</div></div><div class="tg-body"><p>${body || "Write the steps here."}</p></div></div><p><br></p>`,
+  qa: (q, a) => `<div class="blk" data-blk="qa" data-open="0">${X}${H("Practice Question")}<div class="qa-q">${q || "Write a question to test yourself."}</div><div class="tbl-bar" contenteditable="false"><button class="sbtn" data-act="open">Show Answer</button></div><div class="qa-a">${a || "Write the answer here."}</div></div><p><br></p>`,
+  card: (f, b) => `<div class="blk" data-blk="card" data-open="0">${X}${H("Flashcard")}<div class="fc-face fc-front">${f || "Front"}</div><div class="fc-face fc-back">${b || "Back"}</div><div class="tbl-bar" contenteditable="false"><button class="sbtn" data-act="open">Flip Card</button></div></div><p><br></p>`,
+  plot: (expr) => `<div class="blk plot" contenteditable="false" data-blk="plot">${X}${H("Graph")}<div class="plot-in">y =<input type="text" value="${expr || "x^2 - 2*x - 3"}" aria-label="Function of x"></div>${plotSvg(expr || "x^2 - 2*x - 3")}</div><p><br></p>`,
+  chart: (kind) => { const D = { bar: ["Mon, Tue, Wed, Thu, Fri", "3, 5, 2, 6, 4", "Bar Chart"], line: ["Wk 1, Wk 2, Wk 3, Wk 4, Wk 5", "62, 70, 68, 81, 88", "Line Chart"], scatter: ["1, 2, 3, 4, 5, 6", "2, 4.5, 5, 7.5, 9, 11", "Scatter Plot"], pie: ["Lectures, Readings, Labs, Exams", "35, 25, 20, 20", "Pie Chart"] }[kind];
+    return `<div class="blk chart" contenteditable="false" data-blk="chart" data-kind="${kind}">${X}${H(D[2])}<div class="chart-in"><span>${kind === "scatter" ? "x values" : "Labels"}</span><input type="text" data-k="l" value="${D[0]}" aria-label="Labels"><span>${kind === "scatter" ? "y values" : "Values"}</span><input type="text" data-k="v" value="${D[1]}" aria-label="Values"></div>${chartSvg(kind, D[0], D[1])}</div><p><br></p>`; },
+  code: () => `<div class="blk code" data-blk="code">${X}${H("Code")}<pre class="code-ed" spellcheck="false"><code>// Type your code here\n</code></pre></div><p><br></p>`,
+  divider: () => "<hr><p><br></p>",
+};
+function chartSvg(kind, ls, vs) {
+  const W = 640, Ht = 260, P = { l: 44, r: 16, t: 16, b: 34 }, C = ["#445D22", "#B8873F", "#3E6F8A", "#A8456B", "#7B4B99", "#B4562C"];
+  const L = String(ls).split(",").map((s) => s.trim()).filter(Boolean), V = String(vs).split(",").map((s) => parseFloat(s));
+  const n = Math.min(L.length, V.length); if (!n || V.slice(0, n).some(isNaN)) return `<svg viewBox="0 0 ${W} ${Ht}"><text x="${W / 2}" y="${Ht / 2}" text-anchor="middle" font-family="SUSE" font-size="15" fill="#A8443F">Enter matching labels and numbers, separated by commas.</text></svg>`;
+  const v = V.slice(0, n), lab = L.slice(0, n), t = (x, y, s, a, c) => `<text x="${x}" y="${y}" text-anchor="${a || "middle"}" font-family="IBM Plex Mono" font-size="${s || 11}" fill="${c || "#8A8372"}">${String(lab[0] === undefined ? "" : s === -1 ? "" : "") }</text>`;
+  const txt = (x, y, str, a, c, s) => `<text x="${x}" y="${y}" text-anchor="${a || "middle"}" font-family="IBM Plex Mono" font-size="${s || 11}" fill="${c || "#8A8372"}">${String(str).replace(/</g, "&lt;")}</text>`;
+  if (kind === "pie") { const tot = v.reduce((a, b) => a + Math.max(0, b), 0) || 1; let a0 = -Math.PI / 2; const cx = 150, cy = Ht / 2, r = 100;
+    const sl = v.map((x, i) => { const a1 = a0 + Math.max(0, x) / tot * Math.PI * 2, big = a1 - a0 > Math.PI ? 1 : 0, p = `M${cx},${cy}L${(cx + r * Math.cos(a0)).toFixed(1)},${(cy + r * Math.sin(a0)).toFixed(1)}A${r},${r} 0 ${big} 1 ${(cx + r * Math.cos(a1)).toFixed(1)},${(cy + r * Math.sin(a1)).toFixed(1)}Z`; a0 = a1; return `<path d="${p}" fill="${C[i % C.length]}" stroke="#FFFFFF" stroke-width="2"/>`; }).join("");
+    const lg = lab.map((s, i) => `<rect x="300" y="${60 + i * 30}" width="12" height="12" rx="3" fill="${C[i % C.length]}"/>${txt(320, 71 + i * 30, `${s} · ${Math.round(Math.max(0, v[i]) / tot * 100)}%`, "start", "#3F3B31", 13)}`).join("");
+    return `<svg viewBox="0 0 ${W} ${Ht}">${sl}${lg}</svg>`; }
+  const xs = kind === "scatter" ? lab.map(parseFloat) : null; if (xs && xs.some(isNaN)) return chartSvg("bar", "", "");
+  let lo = Math.min(0, ...v), hi = Math.max(...v); if (hi === lo) hi = lo + 1; hi += (hi - lo) * 0.08;
+  const iw = W - P.l - P.r, ih = Ht - P.t - P.b, sy = (y) => P.t + ih - (y - lo) / (hi - lo) * ih;
+  const ticks = [0, 0.25, 0.5, 0.75, 1].map((k) => lo + (hi - lo) * k);
+  let g = ticks.map((y) => `<line x1="${P.l}" y1="${sy(y).toFixed(1)}" x2="${W - P.r}" y2="${sy(y).toFixed(1)}" stroke="#EFEBE2"/>${txt(P.l - 8, sy(y) + 4, +y.toFixed(1), "end")}`).join("") + `<line x1="${P.l}" y1="${sy(Math.max(lo, 0))}" x2="${W - P.r}" y2="${sy(Math.max(lo, 0))}" stroke="#8A8372"/>`;
+  if (kind === "scatter") { let xl = Math.min(...xs), xh = Math.max(...xs); if (xh === xl) xh = xl + 1; const sx = (x) => P.l + 10 + (x - xl) / (xh - xl) * (iw - 20);
+    g += xs.map((x) => txt(sx(x), Ht - 12, x)).join("") + xs.map((x, i) => `<circle cx="${sx(x).toFixed(1)}" cy="${sy(v[i]).toFixed(1)}" r="5.5" fill="#445D22" fill-opacity="0.85"/>`).join(""); return `<svg viewBox="0 0 ${W} ${Ht}">${g}</svg>`; }
+  const bw = iw / n, cxs = v.map((_, i) => P.l + bw * (i + 0.5));
+  g += lab.map((s, i) => txt(cxs[i], Ht - 12, s)).join("");
+  if (kind === "bar") g += v.map((y, i) => { const y0 = sy(Math.max(lo, 0)), y1 = sy(y), w = Math.min(56, bw * 0.6); return `<rect x="${(cxs[i] - w / 2).toFixed(1)}" y="${Math.min(y0, y1).toFixed(1)}" width="${w.toFixed(1)}" height="${Math.abs(y1 - y0).toFixed(1)}" rx="4" fill="#445D22"/>`; }).join("");
+  else { const d = v.map((y, i) => `${i ? "L" : "M"}${cxs[i].toFixed(1)},${sy(y).toFixed(1)}`).join(""); g += `<path d="${d}" fill="none" stroke="#445D22" stroke-width="2.5" stroke-linejoin="round"/>` + v.map((y, i) => `<circle cx="${cxs[i].toFixed(1)}" cy="${sy(y).toFixed(1)}" r="4" fill="#FFFFFF" stroke="#445D22" stroke-width="2"/>`).join(""); }
+  return `<svg viewBox="0 0 ${W} ${Ht}">${g}</svg>`;
+}
+function plotSvg(expr) {
+  const W = 640, Ht = 260, R = 6; let f; try { f = new Function("x", "with (Math) { return (" + String(expr).replace(/\^/g, "**") + "); }"); f(1); } catch (e) { f = null; }
+  const sx = (x) => (x + R) / (2 * R) * W, pts = []; let lo = Infinity, hi = -Infinity;
+  if (f) for (let i = 0; i <= 240; i++) { const x = -R + i * 2 * R / 240; let y; try { y = f(x); } catch (e) { y = NaN; } if (isFinite(y)) { pts.push([x, y]); lo = Math.min(lo, y); hi = Math.max(hi, y); } }
+  if (!pts.length) return `<svg viewBox="0 0 ${W} ${Ht}"><text x="${W / 2}" y="${Ht / 2}" text-anchor="middle" font-family="SUSE" font-size="15" fill="#A8443F">Can't graph that. Try something like 2*x + 1 or sin(x).</text></svg>`;
+  lo = Math.min(lo, -1); hi = Math.max(hi, 1); const pad = (hi - lo) * 0.08; lo -= pad; hi += pad;
+  const sy = (y) => Ht - (y - lo) / (hi - lo) * Ht;
+  const grid = [-6, -4, -2, 2, 4, 6].map((x) => `<line x1="${sx(x)}" y1="0" x2="${sx(x)}" y2="${Ht}" stroke="#EFEBE2"/><text x="${sx(x)}" y="${Math.min(Ht - 4, sy(0) + 16)}" text-anchor="middle" font-family="IBM Plex Mono" font-size="11" fill="#8A8372">${x}</text>`).join("");
+  const d = pts.map((p, i) => `${i ? "L" : "M"}${sx(p[0]).toFixed(1)},${sy(p[1]).toFixed(1)}`).join("");
+  return `<svg viewBox="0 0 ${W} ${Ht}">${grid}<line x1="0" y1="${sy(0)}" x2="${W}" y2="${sy(0)}" stroke="#8A8372"/><line x1="${sx(0)}" y1="0" x2="${sx(0)}" y2="${Ht}" stroke="#8A8372"/><path d="${d}" fill="none" stroke="#445D22" stroke-width="2.5" stroke-linejoin="round"/></svg>`;
+}
+function loadDoc() {
+  try { const s = sessionStorage.getItem("sapling:notesDoc"); if (s) return JSON.parse(s); } catch (e) {}
+  return DEMO;
+}
+const P = { ul: "M7 5h8M7 9h8M7 13h8M3.5 5h.01M3.5 9h.01M3.5 13h.01", ol: "M8 5h7M8 9h7M8 13h7M3 4l1-.5V7M3 10.5c.3-.6 1.7-.6 1.8.2.1.6-1.8 1.5-1.8 2.3h2", quote: "M4 6h3v3H5.5c0 1.5.5 2.5 1.5 3M11 6h3v3h-1.5c0 1.5.5 2.5 1.5 3", undo: "M6 4L3 7l3 3M3 7h7.5a4 4 0 0 1 0 8H8", redo: "M12 4l3 3-3 3M15 7H7.5a4 4 0 0 0 0 8H10", mark: "M10.5 3.5l4 4-6.5 6.5H4v-4zM3 16h12" };
+
+class Component extends DCLogic {
+  state = { chatClosed: (() => { try { return localStorage.getItem("sapling:clovClosed") === "1"; } catch (e) { return false; } })(), vw: window.innerWidth, vh: window.innerHeight, msgs: [], input: "", quote: null, busy: false, bubble: null, saved: "Saved", fmt: {}, toast: null, copied: null, dlOpen: false, title: null, edited: null, final: false };
+  doc = loadDoc();
+  frameRef = React.createRef(); leftGrpRef = React.createRef(); rightGrpRef = React.createRef(); titleRef = React.createRef(); edRef = React.createRef(); scrollRef = React.createRef(); listRef = React.createRef(); inRef = React.createRef();
+  key() { return "sapling:notes:v2:" + this.doc.id; }
+  componentDidMount() {
+    this._boot = setTimeout(() => this.setState({ booted: true }), 980);
+    this.onResize = () => this.setState({ vw: window.innerWidth, vh: window.innerHeight }); window.addEventListener("resize", this.onResize);
+    let html = null; try { html = localStorage.getItem(this.key()); } catch (e) {}
+    if (this.edRef.current) { this.edRef.current.innerHTML = html || makeNotes(this.doc); this.stripHead(); }
+    const ls = (k) => { try { return localStorage.getItem(k + this.doc.id); } catch (e) { return null; } };
+    const t0 = ls("sapling:title:") || this.doc.title || ""; setTimeout(() => { this.syncTitle(); this.measureTb(); }, 0); setTimeout(() => this.measureTb(), 1200);
+    this.setState({ title: t0, edited: +ls("sapling:edited:") || null, final: ls("sapling:final:") === "1" });
+    this._tick = setInterval(() => this.forceUpdate(), 30000);
+    const hook = () => { if (window.SapGraph && this.edRef.current) { window.SapGraph.attach(this.edRef.current, () => this.persist()); } else this._gh = setTimeout(hook, 60); }; hook();
+    this.onSel = () => {
+      const ed = this.edRef.current, s = window.getSelection(); if (!ed || !s || !s.rangeCount) return;
+      if (!ed.contains(s.anchorNode)) return;
+      this.lastRange = s.getRangeAt(0).cloneRange();
+      const q = (c) => { try { return document.queryCommandState(c); } catch (e) { return false; } };
+      let block = ""; try { block = String(document.queryCommandValue("formatBlock") || "").toLowerCase(); } catch (e) {}
+      const fmt = { bold: q("bold"), italic: q("italic"), underline: q("underline"), strikeThrough: q("strikeThrough"), justifyLeft: q("justifyLeft"), justifyCenter: q("justifyCenter"), justifyRight: q("justifyRight"), insertUnorderedList: q("insertUnorderedList"), insertOrderedList: q("insertOrderedList"), block };
+      if (JSON.stringify(fmt) !== JSON.stringify(this.state.fmt)) this.setState({ fmt });
+      if (s.isCollapsed && this.state.bubble) this.setState({ bubble: null });
+    };
+    document.addEventListener("selectionchange", this.onSel);
+  }
+  componentWillUnmount() { clearInterval(this._tick); window.removeEventListener("resize", this.onResize); document.removeEventListener("selectionchange", this.onSel); clearTimeout(this.saveT); clearTimeout(this.toastT); }
+  syncTitle() { const t = this.titleRef.current; if (t && document.activeElement !== t && this.state.title != null && t.textContent !== this.state.title) t.textContent = this.state.title; }
+  measureTb() { const L = this.leftGrpRef.current, R = this.rightGrpRef.current; if (!L || !R) return; const l = L.offsetLeft + L.offsetWidth + 16, rr = (this.state.chatClosed ? 0 : 440) + 28 + R.offsetWidth + 16; if (l !== this.state.tbL || rr !== this.state.tbR) this.setState({ tbL: l, tbR: rr }); }
+  componentDidUpdate(pp, ps) { this.syncTitle(); this.measureTb(); if (!ps || !ps.msgs || !this.state.msgs) return; if (ps.msgs.length !== this.state.msgs.length || ps.busy !== this.state.busy) { const l = this.listRef.current; if (l) l.scrollTop = l.scrollHeight; } }
+  flash(t) { clearTimeout(this.toastT); this.setState({ toast: t }); this.toastT = setTimeout(() => this.setState({ toast: null }), 2400); }
+  setState(u, cb) {
+    if (u && typeof u === "object") {
+      const s = this.state, K = ["headOpen", "insOpen", "dlOpen", "alignOpen"], closing = K.filter((k) => k in u && !u[k] && s[k] && !s[k + "Out"]);
+      if (closing.length) { u = { ...u }; closing.forEach((k) => { delete u[k]; u[k + "Out"] = true; this._mt = this._mt || {}; clearTimeout(this._mt[k]); this._mt[k] = setTimeout(() => super.setState({ [k]: false, [k + "Out"]: false }), 130); }); }
+      K.forEach((k) => { if (u[k] === true && s[k + "Out"]) { clearTimeout(this._mt && this._mt[k]); u = { ...u, [k + "Out"]: false }; } });
+    }
+    return super.setState(u, cb);
+  }
+  stripHead() { const ed = this.edRef.current; if (!ed) return; const f = ed.firstElementChild; if (f && f.tagName === "H1") f.remove(); const m = ed.querySelector(":scope > p.meta"); if (m) m.remove(); }
+  editedLabel() {
+    const t = this.state.edited; if (!t) return "Last edited " + (this.doc.added || "today");
+    const s = (Date.now() - t) / 1000, dt = new Date(t), now = new Date();
+    if (s < 60) return "Edited just now"; if (s < 3600) return `Edited ${Math.floor(s / 60)} min ago`;
+    const time = dt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    if (dt.toDateString() === now.toDateString()) return "Edited today at " + time;
+    return "Edited " + dt.toLocaleDateString([], { month: "short", day: "numeric" }) + " at " + time;
+  }
+  exportHTML() {
+    const ed = this.edRef.current, c = ed.cloneNode(true);
+    c.querySelectorAll(".blk-x, .tbl-bar, .tbl-edit, .g-head, .g-side, .pl-zoom, .ch-tip, .mq-pop, .ch-add, .ch-grip, .pie-h").forEach((n) => n.remove());
+    c.querySelectorAll("[contenteditable]").forEach((n) => n.removeAttribute("contenteditable"));
+    const t = esc(this.state.title || this.doc.title || "Notes");
+    return `<!doctype html><html><head><meta charset="utf-8"><title>${t}</title><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css"><style>body{font-family:Georgia,serif;max-width:760px;margin:48px auto;padding:0 24px;line-height:1.6;color:#1A1814}h1,h2,h3{line-height:1.2}table{border-collapse:collapse;width:100%}td,th{border:1px solid #DDD6C8;padding:6px 10px;text-align:left}pre{background:#1F2419;color:#E8EDE0;padding:14px;border-radius:8px;overflow:auto}.math{text-align:center;margin:12px 0}.blk{margin:16px 0}svg{max-width:100%;height:auto}.fc-back,.qa-a{border-top:1px dashed #CCC;padding-top:8px}.fc-face,.qa-a{display:block!important;transform:none!important}</style></head><body><h1>${t}</h1><p style="color:#6F6857">${esc(this.doc.course || "")} · ${esc(this.editedLabel())}</p>${c.innerHTML}</body></html>`;
+  }
+  exportMD() {
+    const ed = this.edRef.current, out = [];
+    const inl = (n) => [...n.childNodes].map((x) => x.nodeType === 3 ? x.data.replace(/\u200B/g, "") : x.classList && x.classList.contains("imath") ? "$" + x.getAttribute("data-tex") + "$" : x.tagName === "STRONG" || x.tagName === "B" ? "**" + inl(x) + "**" : x.tagName === "EM" || x.tagName === "I" ? "*" + inl(x) + "*" : x.tagName === "CODE" ? "`" + x.textContent + "`" : x.tagName === "A" ? "[" + inl(x) + "](" + x.getAttribute("href") + ")" : x.tagName === "BR" ? "" : inl(x)).join("");
+    out.push("# " + (this.state.title || this.doc.title || "Notes"));
+    [...ed.children].forEach((n) => {
+      const tg = n.tagName;
+      if (/^H[1-3]$/.test(tg)) out.push("#".repeat(+tg[1] + (tg === "H1" ? 1 : 0)) + " " + inl(n));
+      else if (tg === "P") { const s = inl(n).trim(); if (s) out.push(s); }
+      else if (tg === "UL" || tg === "OL") out.push([...n.children].map((li, i) => (tg === "OL" ? (i + 1) + ". " : n.classList.contains("check") ? (li.getAttribute("data-done") === "1" ? "- [x] " : "- [ ] ") : "- ") + inl(li).replace(/^✓/, "").trim()).join("\n"));
+      else if (tg === "BLOCKQUOTE") out.push("> " + inl(n));
+      else if (tg === "PRE") out.push("```\n" + n.textContent.trim() + "\n```");
+      else if (tg === "HR") out.push("---");
+      else if (n.classList.contains("math")) out.push("$$\n" + n.getAttribute("data-tex") + "\n$$");
+      else if (n.querySelector("table")) { const rows = [...n.querySelectorAll("tr")].map((tr) => "| " + [...tr.children].map((c) => inl(c).trim()).join(" | ") + " |"); if (rows.length) rows.splice(1, 0, "|" + " --- |".repeat(n.querySelectorAll("tr")[0].children.length)); out.push(rows.join("\n")); }
+      else { const s = n.innerText.replace(/[×✓]/g, "").trim(); if (s) out.push(s); }
+    });
+    return out.join("\n\n") + "\n";
+  }
+  download(name, text, type) { const b = new Blob([text], { type }), u = URL.createObjectURL(b), l = document.createElement("a"); l.href = u; l.download = name; document.body.appendChild(l); l.click(); l.remove(); setTimeout(() => URL.revokeObjectURL(u), 1000); }
+  persist() { const now = Date.now(); try { localStorage.setItem("sapling:edited:" + this.doc.id, String(now)); } catch (e) {} this.setState({ saved: "Saving…", edited: now }); clearTimeout(this.saveT); this.saveT = setTimeout(() => { try { localStorage.setItem(this.key(), this.edRef.current.innerHTML); } catch (e) {} this.setState({ saved: "Saved" }); }, 600); }
+  exec(cmd, val) { const ed = this.edRef.current; if (!ed) return; if (document.activeElement !== ed) { ed.focus(); if (this.lastRange) { const s = window.getSelection(); s.removeAllRanges(); s.addRange(this.lastRange); } } document.execCommand(cmd, false, val); this.persist(); this.onSel(); }
+  scale() { const fr = this.frameRef.current; return fr ? fr.getBoundingClientRect().width / 1920 : 1; }
+  showBubble() {
+    const s = window.getSelection(), ed = this.edRef.current, fr = this.frameRef.current;
+    if (!s || s.isCollapsed || !s.rangeCount || !ed || !ed.contains(s.anchorNode) || !fr) return;
+    const text = s.toString().trim(); if (text.length < 2) return;
+    const r = s.getRangeAt(0).getBoundingClientRect(), f = fr.getBoundingClientRect(), k = f.width / 1920;
+    const sec = ed.closest("section").getBoundingClientRect();
+    const x = Math.min(Math.max((r.left + r.width / 2 - sec.left) / k, 240), sec.width / k - 240);
+    const y = Math.max((r.top - sec.top) / k - 52, 70);
+    this.selText = text; this.selRange = s.getRangeAt(0).cloneRange();
+    this.setState({ bubble: { x, y } });
+  }
+  notesText() { const ed = this.edRef.current; return ed ? ed.innerText.slice(0, 7000) : ""; }
+  async ask(text, quote) {
+    if (!text.trim() || this.state.busy) return;
+    const msgs = [...this.state.msgs, { role: "user", text, quote }];
+    this.setState({ msgs, input: "", quote: null, busy: true, bubble: null, chatClosed: false });
+    const d = this.doc;
+    const history = msgs.slice(-6, -1).map((m) => `${m.role === "user" ? "Student" : "Tutor"}: ${m.text}`).join("\n");
+    const prompt = `You are Clov, Sapling's study tutor. A student is working in their notes document "${d.title}" (${d.course || "no course"}). Their current notes:\n"""\n${this.notesText()}\n"""\n${history ? `\nEarlier in this chat:\n${history}\n` : ""}${quote ? `\nThe student selected this passage from their notes:\n"${quote}"\n` : ""}\nStudent: ${text}\n\nReply as the tutor in plain text, under 140 words, no markdown symbols like # or **. Be concrete. If they ask how to edit or improve the notes, give the exact sentence or bullet they should add or change. If they ask you to rewrite something, reply with only the rewritten text.`;
+    let out;
+    try { out = window.claude && window.claude.complete ? await window.claude.complete(prompt) : "Clov isn't available in this preview. In the app, Clov answers questions about these notes."; }
+    catch (e) { out = "Something went wrong reaching Clov. Try again in a moment."; }
+    out = String(out).replace(/\*\*(.+?)\*\*/g, "$1").replace(/^#+\s*/gm, "").trim();
+    this.setState((s) => ({ msgs: [...s.msgs, { role: "ai", text: out, forRewrite: !!quote && /rewrite|improve|reword/i.test(text) }], busy: false }));
+  }
+  insert(m, i) {
+    const ed = this.edRef.current; if (!ed) return;
+    if (m.forRewrite && this.rewriteRange) {
+      ed.focus(); const s = window.getSelection(); s.removeAllRanges(); s.addRange(this.rewriteRange);
+      document.execCommand("insertText", false, m.text); this.rewriteRange = null; this.persist(); this.flash("Replaced the selected text"); return;
+    }
+    const bq = document.createElement("blockquote"); bq.textContent = m.text;
+    let anchor = this.lastRange && ed.contains(this.lastRange.startContainer) ? this.lastRange.startContainer : null;
+    while (anchor && anchor.parentNode !== ed) anchor = anchor.parentNode;
+    if (anchor) anchor.after(bq); else ed.appendChild(bq);
+    const sc = this.scrollRef.current; if (sc) sc.scrollTop = Math.max(0, bq.offsetTop - 160);
+    this.persist(); this.flash(anchor ? "Added to your notes below your cursor" : "Added to the end of your notes");
+  }
+  insertHTML(html) {
+    const ed = this.edRef.current; if (!ed) return;
+    const tmp = document.createElement("div"); tmp.innerHTML = html; const nodes = [...tmp.childNodes];
+    let anchor = this.lastRange && ed.contains(this.lastRange.startContainer) ? this.lastRange.startContainer : null;
+    while (anchor && anchor.parentNode !== ed) anchor = anchor.parentNode;
+    let ref = anchor ? anchor.nextSibling : null;
+    if (anchor && anchor.tagName === "P" && !anchor.textContent.trim()) { ref = anchor; }
+    nodes.forEach((n) => ed.insertBefore(n, ref));
+    if (window.SapGraph) window.SapGraph.refresh(ed);
+    if (anchor && anchor.tagName === "P" && !anchor.textContent.trim() && anchor !== nodes[nodes.length - 1]) anchor.remove();
+    const first = nodes.find((n) => n.nodeType === 1); const sc = this.scrollRef.current;
+    if (first && sc) sc.scrollTop = Math.max(0, first.offsetTop - 200);
+    this.setState({ insOpen: false }); this.persist();
+  }
+  onEdClick(e) {
+    const btn = e.target.closest && e.target.closest("[data-act]"); if (!btn) return;
+    const blk = btn.closest(".blk"), act = btn.getAttribute("data-act"); e.preventDefault();
+    if (act === "del" && blk && blk.dataset.blk === "table" && btn.classList.contains("blk-x")) { blk.dataset.edit = "0"; }
+    else if (act === "del" && blk) { const nx = blk.nextSibling; if (nx && nx.tagName === "P" && !nx.textContent.trim()) nx.remove(); blk.remove(); }
+    else if (act === "check") { const li = btn.closest("li"); li.setAttribute("data-done", li.getAttribute("data-done") === "1" ? "0" : "1"); }
+    else if (act === "open" && blk) { const o = blk.getAttribute("data-open") === "1" ? "0" : "1"; blk.setAttribute("data-open", o); if (blk.dataset.blk === "qa") btn.textContent = o === "1" ? "Hide Answer" : "Show Answer"; }
+    else if ((act === "mx2" || act === "mx3") && blk) { const tmp = document.createElement("div"); tmp.innerHTML = BLK.matrix(act === "mx2" ? 2 : 3); blk.replaceWith(tmp.firstChild); }
+    else if (act === "tedit" && blk) { blk.dataset.edit = blk.dataset.edit === "1" ? "0" : "1"; }
+    else if (act === "delrow" && blk) { const trs = blk.querySelectorAll("tbody tr"); if (trs.length > 1) trs[trs.length - 1].remove(); }
+    else if (act === "delcol" && blk) { if (blk.querySelectorAll("thead th").length > 1) blk.querySelectorAll("tr").forEach((tr) => tr.lastElementChild && tr.lastElementChild.remove()); }
+    else if (act === "row" && blk) { const tb = blk.querySelector("tbody"), n = blk.querySelectorAll("thead th").length, tr = document.createElement("tr"); tr.innerHTML = "<td><br></td>".repeat(n); tb.appendChild(tr); }
+    else if (act === "col" && blk) { blk.querySelector("thead tr").insertAdjacentHTML("beforeend", "<th>New column</th>"); blk.querySelectorAll("tbody tr").forEach((tr) => tr.insertAdjacentHTML("beforeend", "<td><br></td>")); }
+    else return;
+    this.persist();
+  }
+  onEdInput(e) {
+    const el = e.target;
+    if (el && el.tagName === "INPUT") {
+      el.setAttribute("value", el.value); const blk = el.closest(".blk");
+      if (blk && blk.dataset.blk === "matrix") { const o = mxOut([...blk.querySelectorAll(".mx-grid input")].map((i) => i.value)); blk.querySelector(".mx-out").innerHTML = o.o; blk.querySelector(".mx-note").textContent = o.note; }
+      if (blk && blk.dataset.blk === "chart") { const l = blk.querySelector('input[data-k="l"]').value, v = blk.querySelector('input[data-k="v"]').value; const tmp = document.createElement("div"); tmp.innerHTML = chartSvg(blk.dataset.kind, l, v); blk.querySelector("svg").replaceWith(tmp.firstChild); }
+      if (blk && blk.dataset.blk === "plot") { const old = blk.querySelector("svg"); const tmp = document.createElement("div"); tmp.innerHTML = plotSvg(el.value); old.replaceWith(tmp.firstChild); }
+    }
+    this.persist();
+  }
+  renderVals() {
+    const st = this.state, d = this.doc;
+    const f = /figma/.test(location.search) ? 1 : Math.min(st.vw / 1920, st.vh / 1080);
+    const fm = st.fmt || {};
+    const T = (tip, cmd, o) => ({ btn: true, sep: false, tip, on: !!o.on, bg: o.on ? "#DCE8CE" : "transparent", fg: o.on ? "#2F4417" : "#3F3B31", font: o.font || "inherit", weight: o.weight || 600, style: o.style || "normal", deco: o.deco || "none",
+      hasIcon: !!o.path, path: o.path || "", hasLabel: !o.path, label: o.label || "",
+      run: (e) => { e.preventDefault(); if (o.run) o.run(); else this.exec(cmd, o.val); } });
+    const sep = { sep: true, btn: false };
+    const blk = fm.block || "";
+    const selHTML = () => { const s = window.getSelection(); return s && s.rangeCount ? s.toString().replace(/&/g, "&amp;").replace(/</g, "&lt;") : ""; };
+    const restore = () => { const ed = this.edRef.current; if (!ed) return; if (document.activeElement !== ed) { ed.focus(); if (this.lastRange) { const s = window.getSelection(); s.removeAllRanges(); s.addRange(this.lastRange); } } };
+    const toolsPre = [T("Undo (Ctrl+Z)", "undo", { path: P.undo }), T("Redo (Ctrl+Y)", "redo", { path: P.redo })];
+    const tools = [
+      T("Bold (Ctrl+B)", "bold", { label: "B", on: fm.bold, weight: 700 }),
+      T("Italic (Ctrl+I)", "italic", { label: "I", on: fm.italic, style: "italic", font: "'Aleo', serif", weight: 400 }),
+      T("Underline (Ctrl+U)", "underline", { label: "U", on: fm.underline, deco: "underline", weight: 400 }),
+      T("Strikethrough", "strikeThrough", { label: "S", on: fm.strikeThrough, deco: "line-through", weight: 400 }),
+      T("Highlight", "hiliteColor", { path: P.mark, val: "#F6E7B0" }),
+      T("Inline code", "code", { path: "M6.5 5L2.5 9l4 4M11.5 5l4 4-4 4", run: () => { restore(); const t = selHTML(); document.execCommand("insertHTML", false, `<code>${t || "code"}</code>&#8203;`); this.persist(); } }),
+      T("Link (Ctrl+K)", "createLink", { path: "M7.5 10.5a3 3 0 0 0 4.2 0l2.6-2.6a3 3 0 0 0-4.2-4.2l-1 1M10.5 7.5a3 3 0 0 0-4.2 0l-2.6 2.6a3 3 0 0 0 4.2 4.2l1-1", run: () => { const u = window.prompt("Link URL"); if (u) this.exec("createLink", /^https?:|^mailto:/.test(u) ? u : "https://" + u); } }),
+      sep,
+      T("Bulleted list", "insertUnorderedList", { path: P.ul, on: fm.insertUnorderedList }),
+      T("Numbered list", "insertOrderedList", { path: P.ol, on: fm.insertOrderedList }),
+      T("Checklist", "check", { path: "M2.5 5l1.5 1.5L6.5 4M2.5 12l1.5 1.5L6.5 11M9 5.5h6.5M9 12.5h6.5", run: () => this.insertHTML(BLK.check()) }),
+      ...(st.chatClosed ? [sep,
+      T("Align left", "justifyLeft", { path: "M3 4.5h12M3 8h8M3 11.5h12M3 15h8", on: fm.justifyLeft }),
+      T("Align center", "justifyCenter", { path: "M3 4.5h12M5 8h8M3 11.5h12M5 15h8", on: fm.justifyCenter }),
+      T("Align right", "justifyRight", { path: "M3 4.5h12M7 8h8M3 11.5h12M7 15h8", on: fm.justifyRight })] : [sep]),
+    ];
+    const AL = [["Align left", "justifyLeft", "M3 4.5h12M3 8h8M3 11.5h12M3 15h8"], ["Align center", "justifyCenter", "M3 4.5h12M5 8h8M3 11.5h12M5 15h8"], ["Align right", "justifyRight", "M3 4.5h12M7 8h8M3 11.5h12M7 15h8"]];
+    const curAl = AL.find((x) => fm[x[1]]) || AL[0];
+    const HEADS = [["Normal text", "<p>", "p", "inherit", "15px", 400], ["Heading 1", "<h1>", "h1", "'Aleo', serif", "22px", 600], ["Heading 2", "<h2>", "h2", "'Aleo', serif", "19px", 600], ["Heading 3", "<h3>", "h3", "inherit", "16px", 700], ["Quote", "<blockquote>", "blockquote", "'Aleo', serif", "15px", 400]];
+    const curH = HEADS.find((h) => h[2] === blk) || HEADS[0];
+    Object.assign(this._hv = this._hv || {}, { headLabel: curH[0], headLabelShort: st.chatClosed ? curH[0] : ({ "Normal text": "Normal", "Heading 1": "H1", "Heading 2": "H2", "Heading 3": "H3" }[curH[0]] || curH[0]), headOpen: !!st.headOpen, headBg: st.headOpen ? "#F0ECE3" : "transparent",
+      toggleHead: (e) => { e.preventDefault(); this.setState({ headOpen: !st.headOpen, insOpen: false, symOpen: false, graphOpen: false }); },
+      heads: HEADS.map((h) => ({ label: h[0], font: h[3], size: h[4], weight: h[5], on: h === curH, bg: h === curH ? "#EBF0E1" : "transparent", put: (e) => { e.preventDefault(); this.exec("formatBlock", h[1]); this.setState({ headOpen: false }); } })) });
+    const sugg = ["Explain the difficult parts", "How can I improve these notes?", "What's missing from my notes?", "Quiz me on this"];
+    const _x = 0;
+    const typing = React.createElement("span", { style: { display: "inline-flex", gap: 5, padding: "8px 0" } },
+      [0, 1, 2].map((i) => React.createElement("span", { key: i, style: { width: 7, height: 7, borderRadius: "50%", background: "#597536", animation: `sapDot 1.2s ${i * 0.15}s infinite ease-in-out` } })));
+    const fileBase = (st.title || d.title || "Notes").replace(/[\\/:*?"<>|]+/g, "").trim() || "Notes";
+    return {
+      toolsPre,
+      ...Object.fromEntries(["head", "ins", "dl", "align"].map((k) => [k + "Anim", st[k + "OpenOut"] ? "sapMenuOut 130ms cubic-bezier(0.4, 0, 1, 1) both" : "sapMenuIn 170ms cubic-bezier(0.2, 0.7, 0.2, 1) both"])),
+      tbL: (st.tbL || 380) + "px", tbR: (st.tbR != null ? st.tbR : (st.chatClosed ? 230 : 600)) + "px",
+      tbTop: st.chatClosed ? "12px" : "18px", edPadTop: "112px", tbBtn: st.chatClosed ? "36px" : "30px", tbPadX: st.chatClosed ? "8px" : "5px", sepM: st.chatClosed ? "6px" : "3px", tbOuterPad: st.chatClosed ? "6px 8px" : "4px 5px", styleW: st.chatClosed ? "148px" : "108px", insPadR: st.chatClosed ? "14px" : "8px", insPadL: st.chatClosed ? "10px" : "8px", navMax: st.chatClosed ? "300px" : "220px",
+      hdrRight: st.chatClosed ? "0px" : "440px", btnPad: st.chatClosed ? "14px" : "0px",
+      alignOpen: !!st.alignOpen, alignBg: st.alignOpen ? "#F0ECE3" : "transparent", alignPath: curAl[2],
+      toggleAlign: (e) => { e.preventDefault(); this.setState({ alignOpen: !st.alignOpen, headOpen: false, insOpen: false }); },
+      aligns: AL.map((x) => ({ tip: x[0], path: x[2], bg: x === curAl ? "#DCE8CE" : "transparent", run: (e) => { e.preventDefault(); this.exec(x[1]); this.setState({ alignOpen: false }); } })),
+      editing: !st.final, isFinal: !!st.final, edCE: st.final ? "false" : "true", docTitle: st.title || d.title, editedLabel: this.editedLabel(), dlOpen: !!st.dlOpen,
+      onTitle: (e) => { const t = e.currentTarget.textContent; this.setState({ title: t }); try { localStorage.setItem("sapling:title:" + d.id, t); } catch (err) {} this.persist(); },
+      titleKey: (e) => { if (e.key === "Enter") { e.preventDefault(); const ed = this.edRef.current; if (ed) { ed.focus(); const r = document.createRange(); r.setStart(ed, 0); r.collapse(true); const s = window.getSelection(); s.removeAllRanges(); s.addRange(r); } } },
+      toggleFinal: () => { const f = !st.final; const ed = this.edRef.current; if (f && ed) { ed.querySelectorAll(".blk.gx").forEach((b) => b.setAttribute("data-final", "1")); ed.querySelectorAll('.blk[data-blk="table"]').forEach((b) => b.setAttribute("data-edit", "0")); try { localStorage.setItem("sapling:notes:v2:" + d.id, ed.innerHTML); } catch (e) {} } try { localStorage.setItem("sapling:final:" + d.id, f ? "1" : "0"); } catch (e) {} this.setState({ final: f, dlOpen: false, bubble: null }); this.flash(f ? "Finalized. Now read-only." : "Editing turned back on"); },
+      toggleDl: () => this.setState({ dlOpen: !st.dlOpen }),
+      dlOpts: [
+        { label: "Web page", ext: ".html", run: () => { this.setState({ dlOpen: false }); this.download(fileBase + ".html", this.exportHTML(), "text/html"); } },
+        { label: "Markdown", ext: ".md", run: () => { this.setState({ dlOpen: false }); this.download(fileBase + ".md", this.exportMD(), "text/markdown"); } },
+        { label: "PDF", ext: ".pdf", run: () => { this.setState({ dlOpen: false }); const w = window.open("", "_blank"); if (w) { w.document.write(this.exportHTML()); w.document.close(); setTimeout(() => { try { w.focus(); w.print(); } catch (e) {} }, 600); } else this.download(fileBase + ".html", this.exportHTML(), "text/html"); } },
+      ],
+      share: async () => { const url = location.href.split("#")[0] + "#doc=" + d.id; try { if (navigator.share) { await navigator.share({ title: st.title || d.title, url }); return; } } catch (e) { return; } try { await navigator.clipboard.writeText(url); this.flash("Link copied"); } catch (e) { this.flash("Couldn't copy the link"); } },
+      insEq: (e) => { e.preventDefault(); restore(); document.execCommand("insertHTML", false, '<span class="imath" contenteditable="false" data-tex="" data-new="1"></span>&#8203;'); const ed = this.edRef.current, el = ed && ed.querySelector('.imath[data-new="1"]'); if (el && window.SapGraph) { el.removeAttribute("data-new"); window.SapGraph.renderMath(el); window.SapGraph.openMath(el); } },
+      booting: !st.booted, ...this._hv, fitT: `scale(${f})`, fitX: Math.max(0, (st.vw - 1920 * f) / 2) + "px", fitY: Math.max(0, (st.vh - 1080 * f) / 2) + "px",
+      frameRef: this.frameRef, leftGrpRef: this.leftGrpRef, rightGrpRef: this.rightGrpRef, titleRef: this.titleRef, edRef: this.edRef, scrollRef: this.scrollRef, listRef: this.listRef, inRef: this.inRef,
+      doc: d, tutor: TUTOR, fmtColor: FMT[d.fmt] || "#8A8372", courseColor: CCOL[d.course] || "#8A8372", saved: st.saved, tools, typing,
+      back: () => { let back = null; try { back = sessionStorage.getItem("sapling:notesBack"); } catch (e) {} if (/Sapling%20App|Sapling App/.test(location.pathname) || window.__saplingApp || !back) { try { window.dispatchEvent(new CustomEvent("sapling:nav", { detail: "library" })); location.hash = "library"; } catch (e) {} } else location.href = back; },
+      regenerate: () => { const ed = this.edRef.current; if (!ed) return; const prev = ed.innerHTML; ed.innerHTML = makeNotes(d); this.stripHead(); try { localStorage.removeItem(this.key()); } catch (e) {} this.flash("Notes regenerated from " + d.title); this.prevHtml = prev; },
+      chatClosed: !!st.chatClosed, chatOpen: !st.chatClosed, chatW: st.chatClosed ? "0px" : "440px", chatBorder: st.chatClosed ? "transparent" : "rgba(42,39,31,0.10)", chatInnerOp: st.chatClosed ? 0 : 1, chatInnerDelay: st.chatClosed ? "0ms" : "160ms", clovBtnOp: st.chatClosed ? 1 : 0, clovBtnPe: st.chatClosed ? "auto" : "none", clovBtnScale: st.chatClosed ? 1 : 0.6, clovBtnDelay: st.chatClosed ? "240ms" : "0ms",
+      toggleChat: () => { const c = !st.chatClosed; try { localStorage.setItem("sapling:clovClosed", c ? "1" : "0"); } catch (e) {} this.setState({ chatClosed: c }); },
+      onEdKey: (e) => { if (e.key === "Tab" && e.target.closest && window.getSelection().anchorNode && window.getSelection().anchorNode.parentElement && window.getSelection().anchorNode.parentElement.closest(".code-ed")) { e.preventDefault(); document.execCommand("insertText", false, "  "); } },
+      onInput: (e) => this.onEdInput(e), onEdClick: (e) => this.onEdClick(e),
+      graphOpen: !!st.graphOpen, graphBg: st.graphOpen ? "#DCE8CE" : "#EBF0E1",
+      toggleGraph: (e) => { e.preventDefault(); this.setState({ graphOpen: !st.graphOpen, insOpen: false, symOpen: false, headOpen: false }); },
+      graphKinds: [
+        ["Function", "M2 15c3-1 4-10 7-10s4 9 7 10M2 9h14", () => window.SapGraph.plotHTML(X)],
+        ["Bar", "M3 15V9M7.5 15V4M12 15V7M16 15V11M1.5 15.5h15", () => window.SapGraph.chartHTML(X, "bar")],
+        ["Line", "M2 13l4-4 3 2 6-7M1.5 15.5h15", () => window.SapGraph.chartHTML(X, "line")],
+        ["Scatter", "M4 13h.01M7 9h.01M10 11h.01M13 5h.01M15 8h.01M1.5 15.5h15", () => window.SapGraph.chartHTML(X, "scatter")],
+        ["Pie", "M9 2a7 7 0 1 0 7 7H9z M11 1.5a6 6 0 0 1 5.5 5.5H11z", () => window.SapGraph.chartHTML(X, "pie")],
+      ].map(([label, icon, fn]) => ({ label, icon, put: (e) => { e.preventDefault(); this.setState({ insOpen: false }); this.insertHTML(fn()); } })),
+      insOpen: !!st.insOpen, symOpen: !!st.symOpen, symBg: st.symOpen ? "#DCE8CE" : "transparent",
+      toggleIns: (e) => { e.preventDefault(); this.setState({ insOpen: !st.insOpen, symOpen: false, headOpen: false, graphOpen: false }); },
+      toggleSym: (e) => { e.preventDefault(); this.setState({ symOpen: !st.symOpen, insOpen: false, headOpen: false, graphOpen: false }); },
+      symbols: ["²", "³", "√", "π", "θ", "λ", "Δ", "∑", "∫", "∞", "≈", "≠", "≤", "≥", "±", "×", "÷", "·", "→", "⇒", "∈", "∀", "∃", "α", "β", "μ", "σ", "∂", "ⁿ", "₁", "₂", "°"].map((s) => ({ s, put: (e) => { e.preventDefault(); this.exec("insertText", s); } })),
+      blocks: [
+        ["Math Equation", "A centered formula line", "∑", "#F4F1EA", "#1A1814", () => BLK.math()],
+        ["Matrix Calculator", "Live determinant, 2×2 or 3×3", "[ ]", "#EBF0E1", "#2F4417", () => BLK.matrix(2)],
+        ["Table", "Rows and columns you can extend", "▦", "#EFEBE2", "#3F3B31", () => BLK.table()],
+        ["Checklist", "Tick items off as you review", "✓", "#EBF0E1", "#2F4417", () => BLK.check()],
+        ["Toggle Section", "Hide worked examples until needed", "▸", "#F4F1EA", "#3F3B31", () => BLK.toggle()],
+        ["Practice Question", "Question with a hidden answer", "?", "#FBF1DC", "#8A6420", () => BLK.qa()],
+        ["Flashcard", "Front and back you can flip", "⇄", "#F6E3E1", "#8E2F29", () => BLK.card()],
+        ["Code Block", "Type or paste code", "{ }", "#EFEBE2", "#3F3B31", () => BLK.code()],
+        ["Divider", "Separate sections", "—", "#F4F1EA", "#6F6857", () => BLK.divider()],
+      ].map(([label, desc, glyph, bg, fg, fn]) => ({ label, desc, glyph, bg, fg, put: (e) => { e.preventDefault(); this.setState({ insOpen: false }); this.insertHTML(fn()); } })),
+      onMouseUp: () => setTimeout(() => this.showBubble(), 0),
+      hideBubble: () => { if (st.bubble) this.setState({ bubble: null }); },
+      keep: (e) => e.preventDefault(),
+      bubbleOn: !!st.bubble, bubbleX: st.bubble ? st.bubble.x + "px" : "0px", bubbleY: st.bubble ? st.bubble.y + "px" : "0px",
+      askSel: () => { this.setState({ quote: this.selText, bubble: null, chatClosed: false }); setTimeout(() => this.inRef.current && this.inRef.current.focus(), 0); },
+      explainSel: () => this.ask("Explain this in simpler terms.", this.selText),
+      improveSel: () => { this.rewriteRange = this.selRange; this.ask("Improve the wording of this passage. Rewrite it.", this.selText); },
+      markSel: () => { const ed = this.edRef.current; if (!ed || !this.selRange) return; ed.focus(); const s = window.getSelection(); s.removeAllRanges(); s.addRange(this.selRange); document.execCommand("hiliteColor", false, "#F6E7B0"); s.collapseToEnd(); this.setState({ bubble: null }); this.persist(); },
+      hasMsgs: st.msgs.length > 0, noMsgs: st.msgs.length === 0 && !st.busy, busy: st.busy,
+      clearChat: () => this.setState({ msgs: [], quote: null }),
+      suggestions: sugg.map((label) => ({ label, go: () => this.ask(label) })),
+      msgs: st.msgs.map((m, i) => ({ isUser: m.role === "user", isAi: m.role === "ai", text: m.text, quote: m.quote ? `“${m.quote}”` : "", hasQuote: !!m.quote,
+        canAct: m.role === "ai" && !/isn't available in this preview|went wrong reaching/.test(m.text), insertLabel: m.forRewrite ? "Replace Selection" : "Add to Notes", copyLabel: st.copied === i ? "Copied" : "Copy",
+        insert: () => this.insert(m, i), copy: () => { try { navigator.clipboard.writeText(m.text); } catch (e) {} this.setState({ copied: i }); setTimeout(() => this.setState({ copied: null }), 1500); } })),
+      hasQuote: !!st.quote, quote: st.quote ? `“${st.quote}”` : "", clearQuote: () => this.setState({ quote: null }),
+      input: st.input, onType: (e) => this.setState({ input: e.target.value }),
+      onKey: (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); this.ask(st.input, st.quote); } },
+      send: () => this.ask(st.input, st.quote), sendBg: st.input.trim() && !st.busy ? "#445D22" : "#B9C4A8",
+      placeholder: st.quote ? "Ask about the selected text…" : "Ask about these notes, or how to improve them…",
+      toastOn: !!st.toast, toast: st.toast || "",
+    };
+  }
+}
+</script>
+</body>
+</html>
