@@ -218,6 +218,9 @@ textarea::placeholder { color: #8A8372; }
 .sapHoverWarm:hover        { background: #F4F1EA !important; }
 .sapHoverWarmer:hover      { background: #F0ECE3 !important; }
 .sapHoverWarmest:hover     { background: #EDE9E0 !important; }
+/* The design pairs this one with an ink shift, not a background alone. */
+.sapHoverWarmerInk:hover   { background: #F0ECE3 !important; color: #1A1814 !important; }
+.sapHoverAsh:hover         { background: #E6E2D9 !important; }
 .sapHoverStone:hover       { background: #E4DFD3 !important; }
 .sapHoverCard:hover        { background: #F2EEE5 !important; }
 /* menu items and option rows */

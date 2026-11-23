@@ -166,7 +166,7 @@ function Message({
               }}
             >{m.forRewrite ? "Replace Selection" : "Add to Notes"}</button>
             <button
-              className="sapHoverWarmer"
+              className="sapHoverWarmerInk"
               onClick={() => onCopy(index, m.text)}
               style={{
                 height: 32, padding: "0 12px", border: 0, borderRadius: 9,
@@ -279,7 +279,7 @@ export function ClovPanel(props: ClovPanelProps) {
           </div>
           {messages.length > 0 && (
             <button
-              className="sapHoverWarmer"
+              className="sapHoverWarmerInk"
               onClick={onClear}
               style={{
                 height: 32, padding: "0 10px", border: 0, borderRadius: 8,
@@ -340,6 +340,7 @@ export function ClovPanel(props: ClovPanelProps) {
                   WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden",
                 }}>“{quote}”</span>
                 <button
+                  className="sapHoverAsh"
                   onClick={onClearQuote}
                   aria-label="Remove selected text"
                   style={{
