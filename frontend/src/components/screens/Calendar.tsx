@@ -14,10 +14,13 @@ import { TopBar } from "../TopBar";
 import { Icon } from "../Icon";
 import { GoogleCalendarActions, GoogleCalendarStatus } from "./CalendarGoogleControls";
 import { GoogleCalendarEvents } from "../GoogleCalendarEvents";
+import { CalendarCourseFilters, CalendarEventDialog, type CalendarEventDetail } from "./CalendarEventControls";
+import { dateKey, startOfWeekMon, MonthView, WeekView, DayView } from "./CalendarGrid";
+import styles from "./CalendarEvents.module.css";
 import { calendarRange, googleEventsByDate, linkedGoogleEvents } from "@/lib/googleCalendar";
 import { Toggle } from "@/components/ui";
 import { CustomSelect } from "../CustomSelect";
-import { DocumentUploadModal } from "../DocumentUploadModal";
+import { useIsNavHidden } from "@/lib/useNavHidden";
 import { CalendarMonthSkeleton } from "../Skeleton";
 import { useToast } from "../ToastProvider";
 import { useUser } from "@/context/UserContext";
@@ -43,15 +46,6 @@ import { CALENDAR_ERROR_PARAM, calendarConnectError } from "@/lib/calendarConnec
 
 type View = "month" | "week" | "day" | "table";
 
-const TYPE_COLOR: Record<string, string> = {
-  exam: "var(--c-rust)",
-  project: "var(--c-teal)",
-  homework: "var(--c-sage)",
-  quiz: "var(--warn)",
-  reading: "var(--c-plum)",
-  other: "var(--text-muted)",
-};
-
 const TYPE_OPTIONS = [
   { value: "homework", label: "Homework" },
   { value: "exam", label: "Exam" },
@@ -61,25 +55,9 @@ const TYPE_OPTIONS = [
   { value: "other", label: "Other" },
 ];
 
-function dateKey(d: Date) {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
-
-function dueLabel(date: string | null) {
-  if (!date) return { label: "no date", cls: "chip--info" };
-  const nowMs = now();
-  const due = new Date(date).getTime();
-  const diffMs = due - nowMs;
-  const diffHours = diffMs / (1000 * 60 * 60);
-  if (diffHours <= 0) return { label: "overdue", cls: "chip--err" };
-  if (diffHours <= 24) return { label: "due soon", cls: "chip--err" };
-  const days = Math.ceil(diffHours / 24);
-  if (days <= 3) return { label: `${days}d`, cls: "chip--warn" };
-  return { label: `${days}d`, cls: "chip--info" };
-}
-
 export function Calendar() {
   const router = useRouter();
+  const isNavHidden = useIsNavHidden();
   const search = useSearchParams();
   const toast = useToast();
   const { userId, userReady } = useUser();
@@ -90,12 +68,13 @@ export function Calendar() {
 
   const [assignments, setAssignments] = React.useState<Assignment[]>([]);
   const [courses, setCourses] = React.useState<EnrolledCourse[]>([]);
+  const [hiddenCourses, setHiddenCourses] = React.useState<Set<string>>(new Set());
+  const [eventDetail, setEventDetail] = React.useState<CalendarEventDetail | null>(null);
   const [view, setView] = React.useState<View>("month");
   const [cursor, setCursor] = React.useState(() => new Date(now()));
   const [googleConnected, setGoogleConnected] = React.useState(false);
   const [googleEventsEnabled, setGoogleEventsEnabled] = React.useState(false);
   const [changingGoogleEvents, setChangingGoogleEvents] = React.useState(false);
-  const [uploadOpen, setUploadOpen] = React.useState(false);
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
   const [googleEvents, setGoogleEvents] = React.useState<{ userId: string; range: string; events: GoogleEvent[] } | null>(null);
   const [googleError, setGoogleError] = React.useState<string | null>(null);
@@ -187,9 +166,13 @@ export function Calendar() {
     const d = new Date(now()); d.setHours(0, 0, 0, 0); return d;
   }, []);
 
+  const visibleAssignments = React.useMemo(
+    () => assignments.filter(a => !hiddenCourses.has(a.course_id || "")),
+    [assignments, hiddenCourses],
+  );
   const byDate = React.useMemo(() => {
     const map = new Map<string, Assignment[]>();
-    for (const a of assignments) {
+    for (const a of visibleAssignments) {
       // Gradebook/Gradescope items may have no due date; they only show in the list view.
       if (!a.due_date) continue;
       const k = a.due_date.slice(0, 10);
@@ -198,7 +181,17 @@ export function Calendar() {
       map.set(k, arr);
     }
     return map;
-  }, [assignments]);
+  }, [visibleAssignments]);
+
+  const toggleCourse = (courseId: string) => {
+    const next = new Set(hiddenCourses);
+    if (!next.delete(courseId)) {
+      next.add(courseId);
+      const hiddenIds = new Set(assignments.filter(a => (a.course_id || "") === courseId).map(a => a.id));
+      setSelected(previous => new Set([...previous].filter(id => !hiddenIds.has(id))));
+    }
+    setHiddenCourses(next);
+  };
 
   const connect = () => {
     if (!userId) return;
@@ -265,7 +258,7 @@ export function Calendar() {
   };
 
   const exportCsv = () => {
-    const ids = selected.size ? assignments.filter(a => selected.has(a.id)) : assignments;
+    const ids = selected.size ? visibleAssignments.filter(a => selected.has(a.id)) : visibleAssignments;
     if (ids.length === 0) {
       toast.warn("Nothing to export.");
       return;
@@ -303,7 +296,7 @@ export function Calendar() {
       {view !== "table" && (
         <>
           <button data-testid="calendar-prev" className="btn btn--sm" onClick={() => shift(setCursor, view, -1)}>
-            <Icon name="chev" size={12} /> Prev
+            <Icon name="chevron-left" size={12} /> Prev
           </button>
           <button data-testid="calendar-today" className="btn btn--sm" onClick={() => setCursor(new Date(now()))}>Today</button>
           <button data-testid="calendar-next" className="btn btn--sm" onClick={() => shift(setCursor, view, 1)}>
@@ -311,9 +304,9 @@ export function Calendar() {
           </button>
         </>
       )}
-      <button data-testid="calendar-import-syllabus" className="btn btn--sm" onClick={() => setUploadOpen(true)}>
+      {!isNavHidden("/library") && <button data-testid="calendar-import-syllabus" className="btn btn--sm" onClick={() => router.push("/library?upload=syllabus")}>
         <Icon name="upload" size={12} /> Import syllabus
-      </button>
+      </button>}
       <GoogleCalendarActions
         connected={googleConnected}
         eventsEnabled={googleEventsEnabled}
@@ -330,13 +323,21 @@ export function Calendar() {
   );
 
   const rangeLabel = formatRange(cursor, view);
+  const showAssignment = (event: Assignment) => setEventDetail({ kind: "assignment", event });
+  const showGoogleEvent = (event: GoogleEvent) => setEventDetail({ kind: "google", event });
+  const gridProps = { cursor, byDate, googleByDate, courses, onAssignment: showAssignment, onGoogleEvent: showGoogleEvent };
 
   return (
     <div>
       <TopBar
         title="Calendar"
-        subtitle={`${rangeLabel} · ${assignments.length} assignment${assignments.length === 1 ? "" : "s"}`}
+        subtitle={`${rangeLabel} · ${visibleAssignments.length} assignment${visibleAssignments.length === 1 ? "" : "s"}`}
         actions={topActions}
+      />
+
+      <CalendarCourseFilters
+        courses={courses} assignments={assignments} hidden={hiddenCourses}
+        onToggle={toggleCourse} onReset={() => setHiddenCourses(new Set())}
       />
 
       <GoogleCalendarStatus
@@ -366,14 +367,14 @@ export function Calendar() {
           ) : loadError ? (
             <LoadErrorBanner message={loadError} onRetry={retryLoad} />
           ) : view === "month" ? (
-            <MonthView cursor={cursor} byDate={byDate} googleByDate={googleByDate} today={today} courses={courses} />
+            <MonthView {...gridProps} today={today} onShowDay={date => { setCursor(date); setView("day"); }} />
           ) : view === "week" ? (
-            <WeekView cursor={cursor} byDate={byDate} googleByDate={googleByDate} today={today} courses={courses} />
+            <WeekView {...gridProps} today={today} />
           ) : view === "day" ? (
-            <DayView cursor={cursor} byDate={byDate} googleByDate={googleByDate} courses={courses} />
+            <DayView {...gridProps} />
           ) : (
             <AssignmentTable
-              assignments={assignments}
+              assignments={visibleAssignments}
               selected={selected}
               onSelectedChange={setSelected}
               onExport={exportCsv}
@@ -381,32 +382,19 @@ export function Calendar() {
               googleConnected={googleConnected}
               exporting={exportingGoogle || changingGoogleEvents}
               onGoogleExport={exportGoogle}
+              onAssignment={showAssignment}
             />
           )}
         </motion.div>
       </AnimatePresence>
 
-      <DocumentUploadModal
-        open={uploadOpen}
-        userId={userId}
-        courses={courses}
-        onClose={() => setUploadOpen(false)}
-        onComplete={async (items) => {
-          const hasSyllabus = items.some(it => it.category === "syllabus");
-          await load();
-          if (hasSyllabus) {
-            setTimeout(load, 1500);
-            toast.success("Syllabus processed — new assignments added.");
-          }
-        }}
-      />
-
       {view === "table" && googleConnected && googleEventsEnabled && (
         <section aria-label="Linked Google events" style={{ padding: "20px 32px" }}>
           <h2 className="h-serif">Google events · {cursor.getFullYear()}</h2>
-          <GoogleCalendarEvents events={linkedEvents} />
+          <GoogleCalendarEvents events={linkedEvents} onSelect={showGoogleEvent} />
         </section>
       )}
+      <CalendarEventDialog detail={eventDetail} onClose={() => setEventDetail(null)} />
     </div>
   );
 }
@@ -479,187 +467,8 @@ function formatRange(d: Date, view: View) {
   return "All assignments";
 }
 
-function startOfWeekMon(d: Date) {
-  const x = new Date(d);
-  x.setHours(0, 0, 0, 0);
-  const day = (x.getDay() + 6) % 7;
-  x.setDate(x.getDate() - day);
-  return x;
-}
-
-function MonthView({ cursor, byDate, googleByDate, today, courses }: { cursor: Date; byDate: Map<string, Assignment[]>; googleByDate: Map<string, GoogleEvent[]>; today: Date; courses: EnrolledCourse[] }) {
-  const first = new Date(cursor.getFullYear(), cursor.getMonth(), 1);
-  const start = startOfWeekMon(first);
-  const cells: Date[] = Array.from({ length: 42 }, (_, i) => {
-    const d = new Date(start);
-    d.setDate(start.getDate() + i);
-    return d;
-  });
-  const weekdays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-  const courseColor = new Map(courses.map(c => [c.course_id, c.color]));
-  return (
-    <div style={{ padding: "20px 32px" }}>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, marginBottom: 4 }}>
-        {weekdays.map(d => <div key={d} className="label-micro" style={{ padding: 6 }}>{d}</div>)}
-      </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4 }}>
-        {cells.map((d, i) => {
-          const key = dateKey(d);
-          const items = byDate.get(key) || [];
-          const inMonth = d.getMonth() === cursor.getMonth();
-          const isToday = d.getTime() === today.getTime();
-          return (
-            <div
-              key={i}
-              className="card"
-              style={{
-                padding: 8, minHeight: 96, display: "flex", flexDirection: "column", gap: 4,
-                opacity: inMonth ? 1 : 0.45,
-                background: isToday ? "var(--accent-soft)" : "var(--bg-panel)",
-                borderColor: isToday ? "var(--accent-border)" : "var(--border)",
-              }}
-            >
-              <div style={{ fontSize: 11, fontWeight: 600, color: isToday ? "var(--accent)" : "var(--text-dim)" }}>
-                {d.getDate()}
-              </div>
-              <GoogleCalendarEvents events={googleByDate.get(key) || []} compact />
-              {items.slice(0, 3).map(a => {
-                const color = TYPE_COLOR[a.assignment_type || "other"];
-                const dotColor = a.course_id ? courseColor.get(a.course_id) || color : color;
-                return (
-                  <div
-                    key={a.id}
-                    style={{
-                      fontSize: 10, padding: "3px 6px", borderRadius: "var(--r-xs)",
-                      background: "transparent", color: "var(--text)",
-                      display: "flex", alignItems: "center", gap: 5,
-                      overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                    }}
-                    title={a.title}
-                  >
-                    <span aria-hidden style={{
-                      width: 6, height: 6, borderRadius: "50%", background: dotColor, flexShrink: 0,
-                    }} />
-                    <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{a.title}</span>
-                  </div>
-                );
-              })}
-              {items.length > 3 && (
-                <div style={{ fontSize: 10, color: "var(--text-muted)" }}>+{items.length - 3} more</div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function WeekView({ cursor, byDate, googleByDate, today, courses }: { cursor: Date; byDate: Map<string, Assignment[]>; googleByDate: Map<string, GoogleEvent[]>; today: Date; courses: EnrolledCourse[] }) {
-  const start = startOfWeekMon(cursor);
-  const days = Array.from({ length: 7 }, (_, i) => {
-    const d = new Date(start); d.setDate(start.getDate() + i); return d;
-  });
-  const courseColor = new Map(courses.map(c => [c.course_id, c.color]));
-  return (
-    <div style={{ padding: "20px 32px" }}>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 8 }}>
-        {days.map((d, i) => {
-          const key = dateKey(d);
-          const items = byDate.get(key) || [];
-          const isToday = d.getTime() === today.getTime();
-          return (
-            <div
-              key={i}
-              className="card"
-              style={{
-                padding: 10, minHeight: 200,
-                background: isToday ? "var(--accent-soft)" : "var(--bg-panel)",
-                borderColor: isToday ? "var(--accent-border)" : "var(--border)",
-              }}
-            >
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8 }}>
-                <span className="h-serif" style={{ fontSize: 20 }}>{d.getDate()}</span>
-                <span className="label-micro">{d.toLocaleDateString("en-US", { weekday: "short" })}</span>
-              </div>
-              <GoogleCalendarEvents events={googleByDate.get(key) || []} compact />
-              {items.length === 0 && !googleByDate.get(key)?.length && <div style={{ fontSize: 11, color: "var(--text-muted)" }}>—</div>}
-              {items.map(a => {
-                const color = TYPE_COLOR[a.assignment_type || "other"];
-                const dotColor = a.course_id ? courseColor.get(a.course_id) || color : color;
-                return (
-                  <div
-                    key={a.id}
-                    style={{
-                      fontSize: 11, padding: "6px 0", marginBottom: 6,
-                      display: "flex", gap: 8, alignItems: "flex-start",
-                    }}
-                  >
-                    <span aria-hidden style={{
-                      width: 6, height: 6, borderRadius: "50%",
-                      background: dotColor, marginTop: 5, flexShrink: 0,
-                    }} />
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ fontWeight: 600, color: "var(--text)" }}>{a.title}</div>
-                      <div style={{ color: "var(--text-muted)", fontSize: 10 }}>
-                        {a.course_code || a.course_name}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function DayView({ cursor, byDate, googleByDate, courses }: { cursor: Date; byDate: Map<string, Assignment[]>; googleByDate: Map<string, GoogleEvent[]>; courses: EnrolledCourse[] }) {
-  const key = dateKey(cursor);
-  const items = byDate.get(key) || [];
-  const courseColor = new Map(courses.map(c => [c.course_id, c.color]));
-  return (
-    <div style={{ padding: "20px 32px", maxWidth: 720 }}>
-      <div className="h-serif" style={{ fontSize: 24, fontWeight: 500, marginBottom: 16 }}>
-        {cursor.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}
-      </div>
-      <GoogleCalendarEvents events={googleByDate.get(key) || []} />
-      {items.length === 0 && !googleByDate.get(key)?.length && (
-        <div className="card" style={{ padding: "var(--pad-lg)", textAlign: "center", color: "var(--text-muted)" }}>
-          Nothing scheduled.
-        </div>
-      )}
-      {items.map(a => {
-        const color = TYPE_COLOR[a.assignment_type || "other"];
-        const dotColor = a.course_id ? courseColor.get(a.course_id) || color : color;
-        const dl = dueLabel(a.due_date);
-        return (
-          <div key={a.id} className="card" style={{ padding: "var(--pad-lg)", marginBottom: 10, display: "flex", gap: 14, alignItems: "flex-start" }}>
-            <span aria-hidden style={{
-              width: 8, height: 8, borderRadius: "50%",
-              background: dotColor, marginTop: 8, flexShrink: 0,
-            }} />
-            <div style={{ flex: 1 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-                <strong>{a.title}</strong>
-                <span className={`chip ${dl.cls}`}>{dl.label}</span>
-              </div>
-              <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
-                {a.course_code || a.course_name || "—"} · {a.assignment_type || "task"}
-              </div>
-              {a.notes && <div style={{ fontSize: 12, color: "var(--text-dim)", marginTop: 6 }}>{a.notes}</div>}
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
 function AssignmentTable({
-  assignments, selected, onSelectedChange, onExport, onReload, googleConnected, exporting, onGoogleExport,
+  assignments, selected, onSelectedChange, onExport, onReload, googleConnected, exporting, onGoogleExport, onAssignment,
 }: {
   assignments: Assignment[];
   selected: Set<string>;
@@ -669,6 +478,7 @@ function AssignmentTable({
   googleConnected: boolean;
   exporting: boolean;
   onGoogleExport: (ids: string[]) => Promise<void>;
+  onAssignment: (assignment: Assignment) => void;
 }) {
   const toast = useToast();
   const { userId } = useUser();
@@ -834,7 +644,7 @@ function AssignmentTable({
                         style={{ padding: "4px 6px", border: "1px solid var(--border)", borderRadius: "var(--r-xs)", fontSize: 12, width: "100%" }}
                       />
                     ) : (
-                      <strong>{a.title}</strong>
+                      <button type="button" data-testid={`calendar-details-${a.id}`} className={styles.eventButton} onClick={() => onAssignment(a)}><strong>{a.title}</strong></button>
                     )}
                   </td>
                   <td style={{ padding: 10 }}>

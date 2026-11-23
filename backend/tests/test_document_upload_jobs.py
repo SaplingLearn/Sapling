@@ -317,6 +317,16 @@ def test_stream_emits_the_inline_event_sequence_however_polls_land(rows):
     assert events[-1].data == {"document_id": "doc-7"}
 
 
+def test_stream_reports_deadlines_saved_by_the_worker():
+    done = {"stage": "done", "document_id": "doc-7",
+            "progress": {**_FULL_PROGRESS, "calendar_deadlines_added": 2}}
+    stored = {"result": {"classification": {"category": "syllabus"}}}
+    with patch.object(dj, "read_status", side_effect=_rows(done)), \
+         patch.object(dj, "read_result", return_value=stored):
+        events = _run(_collect(dj.stream_events("up-1", request_id="rid", outcome=dj.Watch())))
+    assert events[-1].data == {"document_id": "doc-7", "calendar_deadlines_added": 2}
+
+
 def test_stream_maps_a_failed_upload_to_the_inline_error_tail():
     from routes.documents import UNREADABLE_DOCUMENT_DETAIL
 

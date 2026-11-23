@@ -155,6 +155,35 @@ describe("Calendar — Google connection feedback", () => {
   );
 });
 
+it("hands off syllabus import to the Library upload dialog", async () => {
+  render(<Calendar />);
+  await screen.findByText("Mon");
+  fireEvent.click(screen.getByRole("button", { name: "Import syllabus" }));
+  expect(nav.router.push).toHaveBeenCalledWith("/library?upload=syllabus");
+});
+
+it("filters assignments by course across views and opens assignment details from the table", async () => {
+  vi.spyOn(clock, "now").mockReturnValue(new Date(2026, 10, 2, 12).getTime());
+  vi.mocked(getAllAssignments).mockResolvedValueOnce({ assignments: [
+    { id: "a1", user_id: "u1", title: "Problem set", due_date: "2026-11-02", course_id: "c1", course_code: "CS101" },
+    { id: "a2", user_id: "u1", title: "Lab report", due_date: "2026-11-02", course_id: "c2", course_code: "BIO101", notes: "Include the raw measurements." },
+  ] });
+  render(<Calendar />);
+  expect(await screen.findByRole("button", { name: "Problem set" })).toBeVisible();
+  fireEvent.click(screen.getByRole("checkbox", { name: "CS101" }));
+  expect(screen.queryByText("Problem set")).toBeNull();
+  clickView("Table");
+  expect(screen.queryByText("Problem set")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Lab report" }));
+  const detail = await screen.findByRole("dialog", { name: "Lab report" });
+  expect(detail).toHaveTextContent("November 2, 2026");
+  expect(detail).toHaveTextContent("Include the raw measurements.");
+  fireEvent.keyDown(detail, { key: "Escape" });
+  expect(screen.queryByRole("dialog")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Show all courses" }));
+  expect(screen.getByRole("button", { name: "Problem set" })).toBeVisible();
+});
+
 describe("Calendar — month navigation", () => {
   it.each([
     [2026, 0, 31, "Next", "February 2026"],
@@ -245,6 +274,28 @@ describe("Calendar — linked Google events", () => {
     render(<Calendar />);
     await screen.findByText("0 Google events linked for this view.");
     expect(screen.getAllByText("Office hours")).toHaveLength(1);
+  });
+
+  it("opens linked Google event details and keeps them visible when filtering courses", async () => {
+    vi.spyOn(clock, "now").mockReturnValue(new Date(2026, 10, 2, 12).getTime());
+    vi.mocked(getCalendarStatus).mockResolvedValueOnce({ connected: true });
+    vi.mocked(getAllAssignments).mockResolvedValueOnce({ assignments: [{
+      id: "a1", user_id: "u1", title: "Problem set", due_date: "2026-11-02", course_id: "c1", course_code: "CS101",
+    }] });
+    vi.mocked(importGoogleEvents).mockResolvedValueOnce({ events: [{
+      ...event, calendar_name: "Campus", location: "Room 4",
+      description: "Bring your questions.", html_link: "https://calendar.google.com/calendar/event",
+    }], count: 1 });
+    render(<Calendar />);
+    await screen.findByRole("button", { name: "Office hours" });
+    fireEvent.click(screen.getByRole("checkbox", { name: "CS101" }));
+    expect(screen.queryByText("Problem set")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Office hours" }));
+    const detail = await screen.findByRole("dialog", { name: "Office hours" });
+    expect(detail).toHaveTextContent("Campus");
+    expect(detail).toHaveTextContent("Room 4");
+    expect(detail).toHaveTextContent("Bring your questions.");
+    expect(screen.getByRole("link", { name: "Open in Google Calendar" })).toBeInTheDocument();
   });
 
   it("ignores a late response for a month the user has left", async () => {
@@ -486,7 +537,7 @@ describe("Calendar — undated assignments", () => {
     clickView("Table");
     await screen.findByText("Essay");
     fireEvent.click(screen.getByTitle("Edit"));
-    expect(screen.getByText("ENG101")).toBeInTheDocument();
+    expect(screen.getByRole("cell", { name: "ENG101" })).toBeInTheDocument();
     // Only assignment type remains selectable; the course is enrollment-owned.
     expect(screen.getAllByTestId("custom-select")).toHaveLength(2);
     fireEvent.click(screen.getByRole("button", { name: "Save" }));

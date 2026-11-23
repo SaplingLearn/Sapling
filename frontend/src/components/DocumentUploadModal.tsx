@@ -54,6 +54,7 @@ interface UploadItem {
   error?: string;
   docId?: string;
   category?: string;
+  calendarDeadlinesAdded?: number | null;
   summary?: string;
   conceptNames?: string[];
   abort?: AbortController;
@@ -217,7 +218,7 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
       status: "uploading", abort: ac, progress: "Starting upload…",
       requestId, requestCourseId: item.courseId,
       error: undefined, docId: undefined, category: undefined,
-      summary: undefined, conceptNames: undefined,
+      summary: undefined, conceptNames: undefined, calendarDeadlinesAdded: undefined,
     } : i));
     const settle = (patch: Partial<UploadItem>) =>
       setItems(prev => prev.map(i => i.id === item.id ? { ...i, progress: undefined, ...patch } : i));
@@ -226,10 +227,15 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
       fd.append("file", item.file);
       fd.append("course_id", item.courseId);
       fd.append("user_id", userId);
+      let calendarDeadlinesAdded: number | null | undefined;
       const outcome = await uploadDocumentStream(fd, (ev: UploadEvent) => {
         // Terminal events are read off the resolved outcome below; the row
         // only mirrors the live message here (no toasts — one per failure).
-        if (ev.type === "status" && ev.step === "done") return;
+        if (ev.type === "status" && ev.step === "done") {
+          const count = (ev.data as { calendar_deadlines_added?: unknown } | undefined)?.calendar_deadlines_added;
+          if (typeof count === "number" || count === null) calendarDeadlinesAdded = count;
+          return;
+        }
         const evRid = (ev.data as { request_id?: unknown } | undefined)?.request_id;
         setItems(prev => prev.map(i => i.id === item.id ? {
           ...i,
@@ -243,6 +249,7 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
           status: "processed",
           docId: outcome.documentId,
           category: resp.classification?.category || "other",
+          calendarDeadlinesAdded,
           summary: resp.summary?.abstract || undefined,
           conceptNames: extractConceptNames(resp),
         });
@@ -354,6 +361,9 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
         </div>
 
         <div style={{ padding: 20, overflowY: "auto" }}>
+          <p style={{ margin: "0 0 12px", fontSize: 12, color: "var(--text-dim)" }}>
+            Upload a syllabus to add its dated assignments to Calendar for the selected course.
+          </p>
           <div
             data-testid="upload-modal-dropzone"
             onDragOver={e => { e.preventDefault(); setDragging(true); }}
@@ -511,6 +521,15 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
                     }}
                   >
                     {item.progress}
+                  </div>
+                )}
+                {item.status === "processed" && item.calendarDeadlinesAdded !== undefined && (
+                  <div role="status" style={{ fontSize: 12, color: "var(--text-dim)" }}>
+                    {item.calendarDeadlinesAdded === null
+                      ? "Syllabus saved. Calendar deadlines couldn’t be added. Re-analyze to retry."
+                      : item.calendarDeadlinesAdded === 0
+                        ? "Syllabus saved. No new deadlines were added to Calendar."
+                        : `${item.calendarDeadlinesAdded} new deadline${item.calendarDeadlinesAdded === 1 ? "" : "s"} added to Calendar.`}
                   </div>
                 )}
                 {item.summary && (

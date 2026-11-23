@@ -784,12 +784,13 @@ class TestUploadDocumentStreaming:
     seam so the test stays deterministic without hitting Gemini.
     """
 
-    def _mock_agent_runs(self, *, is_syllabus: bool = False):
+    def _mock_agent_runs(self, *, is_syllabus: bool = False, has_deadlines: bool = False):
         """Build a context-manager stack patching every agent the route calls."""
         from agents.classifier import DocumentClassification
         from agents.summary import Summary
         from agents.concept_extraction import Concept, ConceptList
-        from agents.syllabus_extraction import SyllabusAssignments
+        from datetime import date
+        from agents.syllabus_extraction import SyllabusAssignment, SyllabusAssignments
 
         cls = DocumentClassification(
             category="lecture_notes" if not is_syllabus else "syllabus",
@@ -804,7 +805,9 @@ class TestUploadDocumentStreaming:
         ])
         syllabus = SyllabusAssignments(
             course_title=None, instructor=None,
-            assignments=[], grading_categories=[],
+            assignments=[SyllabusAssignment(title="Problem Set", due_date=date(2026, 4, 1))]
+            if has_deadlines else [],
+            grading_categories=[],
         ) if is_syllabus else None
 
         cls_run = AsyncMock(return_value=SimpleNamespace(output=cls))
@@ -884,14 +887,16 @@ class TestUploadDocumentStreaming:
         assert tasks["index_document"] == (documents.schedule_document_index, "stream-1", "u1")
         assert "index_document_chunks" not in tasks
 
-    def test_includes_syllabus_event_when_is_syllabus(self):
-        """progress:extract message mentions syllabus when classifier flags it."""
-        cls_p, sum_p, cpt_p, syl_p, doc_p = self._mock_agent_runs(is_syllabus=True)
+    @pytest.mark.parametrize("deadlines_added", [0, 1])
+    def test_includes_syllabus_events_when_is_syllabus(self, deadlines_added):
+        cls_p, sum_p, cpt_p, syl_p, doc_p = self._mock_agent_runs(
+            is_syllabus=True, has_deadlines=bool(deadlines_added),
+        )
         with (
             _mock_validate_user(),
             patch_documents("extract_text_from_file", return_value=_doc_text("text")),
             cls_p, sum_p, cpt_p, syl_p, doc_p,
-            patch_documents("save_assignments_to_db"),
+            patch_documents("save_assignments_to_db", return_value=deadlines_added) as save,
             patch_documents("apply_graph_update"),
             patch_documents("table", return_value=fake_table()) as t,
             patch_documents("_spawn_post_roll"),
@@ -912,6 +917,12 @@ class TestUploadDocumentStreaming:
         ]
         assert len(extract_events) == 1
         assert "syllabus" in extract_events[0]["message"]
+        done = json.loads(events[-1]["data"])
+        assert done["data"]["calendar_deadlines_added"] == deadlines_added
+        if deadlines_added:
+            assert save.call_args.args[1][0]["course_id"] == "c-1"
+        else:
+            save.assert_not_called()
 
     def test_validation_error_returns_4xx_before_stream_opens(self):
         """File-type rejection should fail with HTTP 400, not enter the SSE loop."""

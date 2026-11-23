@@ -321,7 +321,7 @@ RESOURCE_EXPECT: dict[tuple[str, str], tuple[tuple[int, ...], str]] = {
     ("POST", "/api/gradebook/assignments"):
         ((400, 404), "400 'Category not in your gradebook' (404 if B has no current CS enrollment)"),
     ("POST", "/api/calendar/export"):
-        ((400, 401), "Google not configured (400) / B not connected (401), before any scoping"),
+        ((400, 409), "Google not configured (400) / B not connected (409), before any export"),
     # #115 course-keyed writes: B is not enrolled in A's course, so the
     # require_course_enrollment gate answers 404 before any work (before the
     # multipart OCR pipeline too, which is why the uploads are no longer

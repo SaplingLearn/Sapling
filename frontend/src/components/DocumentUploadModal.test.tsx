@@ -280,6 +280,22 @@ describe("DocumentUploadModal SSE error UX", () => {
   });
 });
 
+it.each([
+  [2, "2 new deadlines added to Calendar."],
+  [0, "Syllabus saved. No new deadlines were added to Calendar."],
+  [null, "Syllabus saved. Calendar deadlines couldn’t be added. Re-analyze to retry."],
+] as const)("reports the syllabus deadline save outcome %s", async (count, message) => {
+  mockedUpload.mockImplementationOnce(async (_fd, onEvent) => {
+    onEvent({ type: "status", step: "done", message: "Saved.", data: { calendar_deadlines_added: count } });
+    return { ...PROCESSED, result: { classification: { category: "syllabus" } } };
+  });
+  const user = userEvent.setup();
+  renderModal();
+  await addFile(user);
+  await user.click(screen.getByRole("button", { name: /start upload/i }));
+  expect(await screen.findByText(message)).toBeInTheDocument();
+});
+
 describe("DocumentUploadModal abort + close (#759)", () => {
   afterEach(() => {
     vi.useRealTimers();

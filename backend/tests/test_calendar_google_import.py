@@ -51,7 +51,8 @@ def test_import_reads_every_calendar_and_event_page_without_duplicates():
 ])
 def test_invalid_ranges_do_not_call_google(query):
     with patch.object(calendar, "_require_google_creds") as creds:
-        assert client.get(f"/api/calendar/import/u1?{query}").status_code == 400
+        response = client.get(f"/api/calendar/import/u1?{query}")
+        assert response.status_code == 400
     creds.assert_not_called()
 
 
@@ -83,12 +84,15 @@ def test_event_disconnect_and_reconnect_preserve_google_credentials():
     token_table.select.side_effect = lambda *args, **kwargs: [dict(row)]
     token_table.update.side_effect = lambda data, **kwargs: row.update(data) or [dict(row)]
     with patch.object(calendar, "table", return_value=token_table):
-        assert client.delete("/api/calendar/disconnect/u1").status_code == 200
+        disconnect_response = client.delete("/api/calendar/disconnect/u1")
+        assert disconnect_response.status_code == 200
         status = client.get("/api/calendar/status/u1").json()
         assert status["connected"] is True
         assert status["events_enabled"] is False
-        assert client.post("/api/calendar/connect/u1").status_code == 200
-        assert client.get("/api/calendar/status/u1").json()["events_enabled"] is True
+        connect_response = client.post("/api/calendar/connect/u1")
+        assert connect_response.status_code == 200
+        status = client.get("/api/calendar/status/u1").json()
+        assert status["events_enabled"] is True
     token_table.delete.assert_not_called()
     assert row["access_token"] == "encrypted-access"
     assert row["refresh_token"] == "encrypted-refresh"
@@ -100,7 +104,8 @@ def test_import_is_blocked_when_events_are_disconnected(monkeypatch):
     monkeypatch.setattr(calendar, "GOOGLE_AVAILABLE", True)
     monkeypatch.setattr(calendar, "GOOGLE_CLIENT_ID", "mock-id")
     with patch.object(calendar, "table", return_value=token_table), patch.object(calendar, "build") as build:
-        assert client.get(f"/api/calendar/import/u1?{RANGE}").status_code == 409
+        response = client.get(f"/api/calendar/import/u1?{RANGE}")
+        assert response.status_code == 409
     build.assert_not_called()
 
 

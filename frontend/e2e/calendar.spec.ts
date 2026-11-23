@@ -22,6 +22,15 @@ import { expect, test } from "./support/fixtures";
 
 const TITLE = "Undated participation";
 
+test("import syllabus opens the Library upload dialog", async ({ page }) => {
+  await page.goto("/calendar");
+  await page.getByRole("button", { name: "Import syllabus" }).click();
+  await expect(page).toHaveURL(/\/library$/);
+  await expect(page.getByTestId("upload-modal")).toBeVisible();
+  await page.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(page.getByTestId("upload-modal")).toHaveCount(0);
+});
+
 test("linked Google events appear in the calendar without duplicates after refreshing", async ({ page }) => {
   await page.clock.install({ time: new Date("2026-03-11T12:00:00Z") });
   await page.addInitScript(() => {
@@ -46,6 +55,10 @@ test("linked Google events appear in the calendar without duplicates after refre
   await page.goto("/calendar");
   await page.getByRole("button", { name: "Today", exact: true }).click();
   await expect(page.getByText(title, { exact: true })).toHaveCount(1);
+  await page.getByRole("button", { name: title, exact: true }).click();
+  const eventDetails = page.getByRole("dialog", { name: title });
+  await expect(eventDetails).toContainText("All day");
+  await eventDetails.getByRole("button", { name: "Close dialog" }).click();
   title = "Updated Google office hours";
   await page.getByRole("button", { name: "Refresh Google events" }).click();
   await expect(page.getByText(title, { exact: true })).toHaveCount(1);

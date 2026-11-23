@@ -78,8 +78,13 @@ class TestCalendarAuthUrl:
         assert result.status_code in (302, 307)
         assert "invalid_state" in result.headers["location"]
 
-    def test_redirects_to_google_and_sets_signed_state_cookie(self, monkeypatch):
+    @pytest.mark.parametrize("redirect_uri", [
+        "http://localhost:5000/api/auth/google/callback",
+        "http://localhost:5000/api/calendar/callback",
+    ])
+    def test_redirects_to_google_and_sets_signed_state_cookie(self, monkeypatch, redirect_uri):
         flow, _ = _mock_flow(monkeypatch)
+        monkeypatch.setattr(cal, "GOOGLE_REDIRECT_URI", redirect_uri)
         client = TestClient(_app)
         r = client.get(
             "/api/calendar/auth-url?user_id=user_a", follow_redirects=False
@@ -93,7 +98,7 @@ class TestCalendarAuthUrl:
         _, kwargs = flow.authorization_url.call_args
         assert kwargs.get("access_type") == "offline"
         assert kwargs.get("prompt") == "consent"
-        assert flow.redirect_uri == auth_module.GOOGLE_AUTH_REDIRECT_URI
+        assert flow.redirect_uri == redirect_uri
 
     def test_shared_signin_callback_routes_calendar_consent_to_calendar_only(self, monkeypatch):
         _mock_flow(monkeypatch)

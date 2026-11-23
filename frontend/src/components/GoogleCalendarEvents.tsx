@@ -1,11 +1,18 @@
 import type { GoogleEvent } from "@/lib/api";
 import { googleEventKey } from "@/lib/googleCalendar";
+import styles from "./screens/CalendarEvents.module.css";
 
-export function GoogleCalendarEvents({ events, compact = false }: { events: GoogleEvent[]; compact?: boolean }) {
+export function GoogleCalendarEvents({ events, compact = false, onSelect }: {
+  events: GoogleEvent[];
+  compact?: boolean;
+  onSelect?: (event: GoogleEvent) => void;
+}) {
   return <>{events.map(event => (
     <div key={googleEventKey(event)} style={{ padding: compact ? "4px 0" : "12px 0", borderLeft: "2px solid var(--c-teal)", paddingLeft: 8, marginBottom: 6, minWidth: 0 }}>
       <div style={{ fontSize: compact ? 11 : 13, fontWeight: 600, overflowWrap: "anywhere" }}>
-        {event.html_link?.startsWith("https://")
+        {onSelect
+          ? <button type="button" className={styles.eventButton} onClick={() => onSelect(event)}>{event.title}</button>
+          : event.html_link?.startsWith("https://")
           ? <a href={event.html_link} target="_blank" rel="noreferrer">{event.title}</a>
           : event.title}
       </div>
@@ -15,8 +22,8 @@ export function GoogleCalendarEvents({ events, compact = false }: { events: Goog
           ? event.start_date
           : new Date(event.start_datetime || "").toLocaleDateString("en-US")}`}
       </div>
-      {!compact && event.location && <div style={{ fontSize: 12 }}>{event.location}</div>}
-      {!compact && event.description && <p style={{ fontSize: 12, whiteSpace: "pre-wrap" }}>{event.description}</p>}
+      {!onSelect && !compact && event.location && <div style={{ fontSize: 12 }}>{event.location}</div>}
+      {!onSelect && !compact && event.description && <p style={{ fontSize: 12, whiteSpace: "pre-wrap" }}>{event.description}</p>}
     </div>
   ))}</>;
 }
