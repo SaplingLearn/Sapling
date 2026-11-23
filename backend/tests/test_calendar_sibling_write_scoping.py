@@ -70,6 +70,9 @@ class TestSiblingWriteScoping:
             r = client.post("/api/calendar/sync", json={"user_id": OWNER})
 
         assert r.status_code == 200
+        event = service.events.return_value.insert.call_args.kwargs["body"]
+        assert event["start"] == {"date": "2026-03-01"}
+        assert event["end"] == {"date": "2026-03-02"}
         update_filters = t.return_value.update.call_args.kwargs["filters"]
         # Write-back must scope by enrollment_id (not user_id, which no longer
         # exists on the assignments table) — same IDOR guarantee, new key.

@@ -9,6 +9,7 @@ ratchet, #118); calendar.py includes this router, so it keeps the
 
 import hmac as _hmac
 import secrets
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi import Request as FastAPIRequest
@@ -23,6 +24,7 @@ from config import (
 )
 from db.connection import table
 from db.scope import service_route
+from services import feature_flags
 from services.auth_guard import require_self
 from services.encryption import bind, encrypt
 # Reuse the sign-in flow's OAuth primitives (PKCE + HMAC-signed state cookie) as
@@ -30,6 +32,7 @@ from services.encryption import bind, encrypt
 # These are pure helpers with no request state, so importing them keeps the
 # calendar connect flow DRY without duplicating the security-critical bits.
 from services.auth.oauth_state import (
+    _clean_return_to,
     _consume_oauth_nonce,
     _google_client_config,
     _encode_state,
@@ -99,6 +102,7 @@ def calendar_auth_url(
     request: FastAPIRequest,
     user_id: str = Query(...),
     next_path: str | None = Query(None, alias="next"),
+    return_to: str | None = Query(None),
 ):
     """Begin the Google Calendar consent flow for the authenticated user.
 
@@ -118,6 +122,8 @@ def calendar_auth_url(
 
     code_verifier, code_challenge = _generate_pkce_pair()
     nonce = secrets.token_urlsafe(32)
+    origin = _clean_return_to(return_to) or FRONTEND_URL
+    relay = _encode_oauth_cookie({"n": f"calendar-relay:{nonce}", "rt": origin})
 
     flow = Flow.from_client_config(_calendar_client_config(), scopes=GOOGLE_SCOPES)
     flow.redirect_uri = GOOGLE_REDIRECT_URI
@@ -125,12 +131,12 @@ def calendar_auth_url(
         prompt="consent",             # force a refresh_token even on re-consent
         access_type="offline",        # so long-lived sync survives token expiry
         include_granted_scopes="true",
-        state=_encode_state({"action": "calendar", "n": nonce}),
+        state=_encode_state({"action": "calendar", "n": nonce, "relay": relay}),
         code_challenge=code_challenge,
         code_challenge_method="S256",
     )
 
-    cookie = {"n": nonce, "cv": code_verifier, "uid": user_id}
+    cookie = {"n": nonce, "cv": code_verifier, "uid": user_id, "rt": origin}
     clean_next = _clean_calendar_next(next_path)
     if clean_next:
         cookie["next"] = clean_next
@@ -146,6 +152,30 @@ def calendar_auth_url(
         path="/",
     )
     return resp
+
+
+def _relay_to_consent_host(state: dict, code: str | None, error: str | None) -> RedirectResponse | None:
+    # The app's host-only cookie is absent on a separate Google callback host.
+    # Forward only to an approved origin from state issued by calendar_auth_url.
+    relay = state.get("relay")
+    nonce = state.get("n")
+    if not isinstance(relay, str) or not isinstance(nonce, str) or not nonce:
+        return None
+    payload = _decode_oauth_cookie(relay)
+    if not payload or payload.get("n") != f"calendar-relay:{nonce}":
+        return None
+    origin = payload.get("rt")
+    if origin != FRONTEND_URL and not _clean_return_to(origin):
+        return None
+    params = {"state": _encode_state({"action": "calendar", "n": nonce})}
+    if error:
+        params["error"] = "access_denied"
+    elif code:
+        params["code"] = code
+    return RedirectResponse(
+        f"{origin}/api/calendar/callback?{urlencode(params)}",
+        headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"},
+    )
 
 
 # #115: Google's redirect carries no session; the user comes from the signed
@@ -165,13 +195,24 @@ def calendar_callback(
     ``calendar_error=<code>``: a failed connect keeps onboarding's hand-off
     (``next=/gradebook`` for Gradescope), and /calendar may be hidden
     (``hide_calendar``)."""
+    decoded_state = _decode_state(state) if state else {}
     cookie_payload = _decode_oauth_cookie(request.cookies.get(CALENDAR_OAUTH_STATE_COOKIE))
+    state_nonce = decoded_state.get("n")
+    cookie_nonce = cookie_payload.get("n") if cookie_payload else None
+    if cookie_nonce is None or cookie_nonce != state_nonce:
+        relay = _relay_to_consent_host(decoded_state, code, error)
+        if relay is not None:
+            return relay
+    origin = (_clean_return_to(cookie_payload.get("rt")) if cookie_payload else None) or FRONTEND_URL
     landing = (
         _clean_calendar_next(cookie_payload.get("next")) if cookie_payload else None
     ) or _CALENDAR_DEFAULT_NEXT
 
     def _finish(query: str) -> RedirectResponse:
-        resp = RedirectResponse(f"{FRONTEND_URL}{landing}?{query}")
+        resp = RedirectResponse(
+            f"{origin}{landing}?{query}",
+            headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"},
+        )
         resp.set_cookie(
             key=CALENDAR_OAUTH_STATE_COOKIE,
             value="",
@@ -194,15 +235,14 @@ def calendar_callback(
     # CSRF: the state nonce must match the one sealed in the signed cookie, and
     # the user_id is read from that cookie (not a request param) so tokens can
     # only ever bind to the session that initiated the connect.
-    state_nonce = (_decode_state(state) or {}).get("n") if state else None
-    cookie_nonce = cookie_payload.get("n") if cookie_payload else None
     user_id = cookie_payload.get("uid") if cookie_payload else None
     if (
         not cookie_payload
         or not cookie_nonce
-        or not state_nonce
+        or not isinstance(state_nonce, str)
+        or not state_nonce.isascii()
         or not user_id
-        or not _hmac.compare_digest(str(state_nonce), str(cookie_nonce))
+        or not _hmac.compare_digest(state_nonce, str(cookie_nonce))
     ):
         return _finish("calendar_error=invalid_state")
     # #756, as at sign-in: one callback per state. Consumed before the code
@@ -210,6 +250,8 @@ def calendar_callback(
     # same state) can never overwrite the student's stored tokens.
     if not _consume_oauth_nonce(str(cookie_nonce)):
         return _finish("calendar_error=invalid_state")
+    if feature_flags.flag_variant("hide_calendar", user_id) == "on":
+        return _finish("calendar_error=calendar_unavailable")
 
     # No scopes on the exchange Flow. include_granted_scopes makes Google
     # answer with every scope granted (sign-in's identity scopes too), and a
@@ -235,6 +277,7 @@ def calendar_callback(
 
     row = {
         "user_id": user_id,
+        "calendar_events_enabled": True,
         "access_token": encrypt(creds.token, bind=bind("oauth_tokens", "access_token", user_id)),
         # expires_at is TIMESTAMPTZ (0024): None, not "", when absent.
         "expires_at": creds.expiry.isoformat() if creds.expiry else None,

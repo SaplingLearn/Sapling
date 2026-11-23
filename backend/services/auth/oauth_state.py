@@ -171,7 +171,8 @@ def _encode_state(data: dict) -> str:
 def _decode_state(state: str) -> dict:
     try:
         payload = base64.urlsafe_b64decode(state.encode()).decode()
-        return json.loads(payload)
+        decoded = json.loads(payload)
+        return decoded if isinstance(decoded, dict) else {}
     except Exception:
         return {}
 

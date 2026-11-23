@@ -581,6 +581,10 @@ export const resumeSession = (sessionId: string) =>
 
 // Quiz lives in `lib/quiz/api.ts` — its own client over all six quiz endpoints.
 
+import type { GoogleEvent } from '@/lib/googleCalendar';
+export type { GoogleEvent } from '@/lib/googleCalendar';
+export { calendarAuthUrl } from '@/lib/calendarConnect';
+
 // Calendar
 export interface Assignment {
   id: string;
@@ -630,7 +634,10 @@ export const deleteAssignment = (assignmentId: string, userId: string) =>
   );
 
 export const getCalendarStatus = (userId: string) =>
-  fetchJSON<{ connected: boolean; expires_at?: string }>(`/api/calendar/status/${userId}`);
+  fetchJSON<{ connected: boolean; expires_at?: string; events_enabled?: boolean }>(`/api/calendar/status/${userId}`);
+
+export const connectCalendarEvents = (userId: string) =>
+  fetchJSON<{ events_enabled: boolean }>(`/api/calendar/connect/${encodeURIComponent(userId)}`, { method: 'POST' });
 
 export const disconnectCalendar = (userId: string) =>
   fetchJSON<{ disconnected: boolean }>(`/api/calendar/disconnect/${userId}`, { method: 'DELETE' });
@@ -641,32 +648,13 @@ export const syncCalendar = (userId: string) =>
     body: JSON.stringify({ user_id: userId }),
   });
 
-export interface GoogleEvent {
-  google_event_id: string;
-  title: string;
-  description?: string;
-  start_date: string;
-  end_date: string;
-  start_datetime?: string | null;
-  end_datetime?: string | null;
-  all_day: boolean;
-  html_link?: string;
-  location?: string;
-}
-
-export const importGoogleEvents = (userId: string, daysAhead = 60) =>
+export const importGoogleEvents = (userId: string, daysAhead = 60, range?: { start: string; end: string }) =>
   fetchJSON<{ events: GoogleEvent[]; count: number }>(
-    `/api/calendar/import/${encodeURIComponent(userId)}?days_ahead=${daysAhead}`,
+    `/api/calendar/import/${encodeURIComponent(userId)}?${new URLSearchParams(range
+      ? { time_min: range.start, time_max: range.end }
+      : { days_ahead: String(daysAhead) })}`,
+    { cache: 'no-store' },
   );
-
-/** The Google Calendar consent flow: a backend route that redirects to Google,
- * so open it with a full page load (`window.location`), never the in-app
- * router. `next` is where the callback lands after a successful connect; the
- * backend honours only its allowlist (/dashboard, /gradebook, /calendar). */
-export const calendarAuthUrl = (userId: string, next?: string) =>
-  `${API_URL}/api/calendar/auth-url?user_id=${encodeURIComponent(userId)}${
-    next ? `&next=${encodeURIComponent(next)}` : ''
-  }`;
 
 export const exportToGoogleCalendar = (userId: string, assignmentIds: string[]) =>
   fetchJSON<{ exported_count: number; skipped_count: number }>('/api/calendar/export', {

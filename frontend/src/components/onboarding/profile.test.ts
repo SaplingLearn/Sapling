@@ -99,9 +99,10 @@ describe('handoffFor', () => {
   it('goes to the dashboard, the gradebook, or Google Calendar consent (a full page load)', () => {
     expect(handoffFor('u1', {})).toEqual({ route: '/dashboard' });
     expect(handoffFor('u1', { gradescope: true })).toEqual({ route: '/gradebook' });
-    expect(handoffFor('u1', { gcal: true })).toEqual({ page: '/api/calendar/auth-url?user_id=u1' });
+    const returnTo = encodeURIComponent(window.location.origin);
+    expect(handoffFor('u1', { gcal: true })).toEqual({ page: `/api/calendar/auth-url?user_id=u1&return_to=${returnTo}` });
     expect(handoffFor('u 1', { gcal: true, gradescope: true })).toEqual({
-      page: '/api/calendar/auth-url?user_id=u%201&next=%2Fgradebook',
+      page: `/api/calendar/auth-url?user_id=u%201&next=%2Fgradebook&return_to=${returnTo}`,
     });
     expect(handoffFor('u1', { gcal: false, gradescope: false })).toEqual({ route: '/dashboard' });
   });
