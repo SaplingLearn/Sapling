@@ -248,7 +248,7 @@ async def upload_event_stream(
         # Synchronous PostgREST writes — threaded so they don't block
         # the event loop serving this (and every other) SSE stream
         # (#132 item 22; same pattern as the async-OCR extraction above).
-        await asyncio.to_thread(
+        calendar_receipt = await asyncio.to_thread(
             _save_orchestrator_syllabus,
             user_id=user_id, course_id=course_id,
             filename=filename, result=final_output,
@@ -329,5 +329,5 @@ async def upload_event_stream(
     yield sapling_event_to_sse(SaplingEvent(
         type="status", step="done",
         message="Saved.",
-        data={"document_id": doc_id},
+        data={"document_id": doc_id, **calendar_receipt},
     ))

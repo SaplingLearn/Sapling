@@ -732,8 +732,10 @@ async def stream_events(
             yield SaplingEvent(type="result", step="finalize", message="Processing complete.",
                                data=data)
             await asyncio.to_thread(clear_result, upload_id)
+            progress = row.get("progress") or {}
+            receipt = {key: progress[key] for key in ("calendar_deadlines_added",) if key in progress}
             yield SaplingEvent(type="status", step="done", message="Saved.",
-                               data={"document_id": row.get("document_id")})
+                               data={"document_id": row.get("document_id"), **receipt})
             return
 
 
@@ -945,8 +947,9 @@ def _process(row: dict, run: _Run) -> None:
 
     course_id = row["course_id"]
     offering_id = row["offering_id"]
-    docs._save_orchestrator_syllabus(user_id=user_id, course_id=course_id,
-                                     filename=filename, result=result)
+    calendar_receipt = docs._save_orchestrator_syllabus(
+        user_id=user_id, course_id=course_id, filename=filename, result=result,
+    )
     docs._graph_backstop(user_id=user_id, course_id=course_id,
                          filename=filename, result=result)
     try:
@@ -969,7 +972,7 @@ def _process(row: dict, run: _Run) -> None:
         return
 
     try:
-        _done(run, doc_id, stored)
+        _done(run, doc_id, stored, **calendar_receipt)
     except _Superseded:
         # The document is saved (a retry replays it); only the row's receipt
         # belongs to someone else now.

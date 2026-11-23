@@ -901,7 +901,8 @@ describe("Onboarding: Connect", () => {
     expect(screen.getByTestId("onboarding-consent").textContent).toContain("Google will ask for your permission");
     fireEvent.click(screen.getByTestId("onboarding-consent-continue"));
     fireEvent.click(continueBtn());
-    await waitFor(() => expect(assign).toHaveBeenCalledWith("/api/calendar/auth-url?user_id=user_a&next=%2Fgradebook"));
+    const returnTo = encodeURIComponent(window.location.origin);
+    await waitFor(() => expect(assign).toHaveBeenCalledWith(`/api/calendar/auth-url?user_id=user_a&next=%2Fgradebook&return_to=${returnTo}`));
     expect(replace).not.toHaveBeenCalled();
   });
 
@@ -913,7 +914,8 @@ describe("Onboarding: Connect", () => {
     render(<Onboarding />);
     await agreeToLegal();
     fireEvent.click(await screen.findByText("Finish"));
-    await waitFor(() => expect(assign).toHaveBeenCalledWith("/api/calendar/auth-url?user_id=user_a"));
+    const returnTo = encodeURIComponent(window.location.origin);
+    await waitFor(() => expect(assign).toHaveBeenCalledWith(`/api/calendar/auth-url?user_id=user_a&return_to=${returnTo}`));
   });
 
   it("Skip for now clears the choices and goes to the dashboard", async () => {

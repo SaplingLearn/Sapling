@@ -66,3 +66,11 @@ condition = "AND"
 paths = ['''^backend/tests/evals/cassettes/''']
 regexTarget = "line"
 regexes = ['''"wrong_key":''']
+
+[[allowlists]]
+description = "Historical false positive on Anthropic eval effort setting. The value low selects model effort."
+condition = "AND"
+commits = ["0517b4d5746c9550d9384449f3fc5c114700c3de"]
+paths = ['''^backend/tests/evals/_judge_model\.py$''']
+regexTarget = "line"
+regexes = ['''^\s*return model, AnthropicModelSettings\(max_tokens=ANTHROPIC_MAX_TOKENS, anthropic_effort="low"\)\s*$''']

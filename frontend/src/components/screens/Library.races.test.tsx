@@ -22,7 +22,7 @@ vi.mock("@/lib/useIsMobile", () => ({
 }));
 
 vi.mock("../DocumentUploadModal", () => ({
-  DocumentUploadModal: () => null,
+  DocumentUploadModal: ({ open }: { open: boolean }) => open ? <div data-testid="upload-modal" /> : null,
 }));
 
 vi.mock("@/lib/api", () => ({
@@ -63,9 +63,18 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  window.history.replaceState(null, "", "/");
   document.body.innerHTML = "";
   vi.restoreAllMocks();
   vi.clearAllMocks();
+});
+
+it("opens the upload dialog from Calendar and consumes the upload parameter", async () => {
+  window.history.replaceState(null, "", "/library?upload=syllabus&source=calendar");
+  mockedDocs.mockResolvedValueOnce({ documents: [] });
+  renderLibrary();
+  expect(await screen.findByTestId("upload-modal")).toBeInTheDocument();
+  expect(window.location.search).toBe("?source=calendar");
 });
 
 describe("Library load failure (#769)", () => {

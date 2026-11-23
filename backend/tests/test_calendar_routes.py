@@ -268,10 +268,13 @@ class TestSuggestStudyBlocks:
 # ── DELETE /api/calendar/disconnect/{user_id} ─────────────────────────────────
 
 class TestDisconnect:
-    def test_deletes_oauth_token_and_returns_disconnected(self):
+    def test_disables_events_and_preserves_oauth_token(self):
         with patch("routes.calendar.table") as t:
-            t.return_value.delete.return_value = []
             r = client.delete("/api/calendar/disconnect/user_andres")
+        t.return_value.update.assert_called_once_with(
+            {"calendar_events_enabled": False}, filters={"user_id": "eq.user_andres"},
+        )
+        t.return_value.delete.assert_not_called()
         assert r.status_code == 200
         assert r.json() == {"disconnected": True}
 

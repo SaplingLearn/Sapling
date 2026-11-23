@@ -68,8 +68,23 @@ def _mock_flow(monkeypatch, *, token="acc", refresh="ref", expiry=None,
 
 
 class TestCalendarAuthUrl:
-    def test_redirects_to_google_and_sets_signed_state_cookie(self, monkeypatch):
+    @pytest.mark.parametrize("value", [None, [], "calendar", 123])
+    def test_shared_callback_rejects_non_object_state(self, value):
+        app = FastAPI()
+        app.include_router(auth_module.router, prefix="/api/auth")
+        result = TestClient(app).get("/api/auth/google/callback", params={
+            "code": "mock-code", "state": auth_module._encode_state(value),
+        }, follow_redirects=False)
+        assert result.status_code in (302, 307)
+        assert "invalid_state" in result.headers["location"]
+
+    @pytest.mark.parametrize("redirect_uri", [
+        "http://localhost:5000/api/auth/google/callback",
+        "http://localhost:5000/api/calendar/callback",
+    ])
+    def test_redirects_to_google_and_sets_signed_state_cookie(self, monkeypatch, redirect_uri):
         flow, _ = _mock_flow(monkeypatch)
+        monkeypatch.setattr(cal, "GOOGLE_REDIRECT_URI", redirect_uri)
         client = TestClient(_app)
         r = client.get(
             "/api/calendar/auth-url?user_id=user_a", follow_redirects=False
@@ -83,6 +98,78 @@ class TestCalendarAuthUrl:
         _, kwargs = flow.authorization_url.call_args
         assert kwargs.get("access_type") == "offline"
         assert kwargs.get("prompt") == "consent"
+        assert flow.redirect_uri == redirect_uri
+
+    def test_shared_signin_callback_routes_calendar_consent_to_calendar_only(self, monkeypatch):
+        _mock_flow(monkeypatch)
+        app = FastAPI()
+        app.include_router(cal.router, prefix="/api/calendar")
+        app.include_router(auth_module.router, prefix="/api/auth")
+        client = TestClient(app)
+        started = client.get("/api/calendar/auth-url?user_id=user_a", follow_redirects=False)
+        payload = auth_module._decode_oauth_cookie(started.cookies[cal.CALENDAR_OAUTH_STATE_COOKIE])
+        state = auth_module._encode_state({"action": "calendar", "n": payload["n"]})
+        token_table = MagicMock()
+        monkeypatch.setattr(cal, "table", lambda name: token_table)
+        result = client.get("/api/auth/google/callback", params={"code": "mock-code", "state": state}, follow_redirects=False)
+        assert result.headers["location"].endswith("/calendar?connected=true")
+        assert token_table.upsert.call_args.args[0]["user_id"] == "user_a"
+        assert "sapling_session" not in result.cookies
+
+    def test_shared_callback_rejects_forged_calendar_state(self, monkeypatch):
+        flow, _ = _mock_flow(monkeypatch)
+        app = FastAPI()
+        app.include_router(cal.router, prefix="/api/calendar")
+        app.include_router(auth_module.router, prefix="/api/auth")
+        client = TestClient(app)
+        client.get("/api/calendar/auth-url?user_id=user_a", follow_redirects=False)
+        state = auth_module._encode_state({"action": "calendar", "n": "wrong-nonce"})
+        result = client.get("/api/auth/google/callback", params={"code": "mock-code", "state": state}, follow_redirects=False)
+        assert "calendar_error=invalid_state" in result.headers["location"]
+        flow.fetch_token.assert_not_called()
+
+    def test_shared_callback_honors_calendar_visibility_for_the_consent_user(self, monkeypatch):
+        flow, _ = _mock_flow(monkeypatch)
+        app = FastAPI()
+        app.include_router(cal.router, prefix="/api/calendar")
+        app.include_router(auth_module.router, prefix="/api/auth")
+        client = TestClient(app)
+        started = client.get("/api/calendar/auth-url?user_id=user_a&next=/dashboard", follow_redirects=False)
+        payload = auth_module._decode_oauth_cookie(started.cookies[cal.CALENDAR_OAUTH_STATE_COOKIE])
+        state = auth_module._encode_state({"action": "calendar", "n": payload["n"]})
+        flags = MagicMock(side_effect=lambda key, user_id: "on" if key == "hide_calendar" else "off")
+        monkeypatch.setattr("services.feature_flags.flag_variant", flags)
+        result = client.get("/api/auth/google/callback", params={"code": "mock-code", "state": state}, follow_redirects=False)
+        assert result.headers["location"].endswith("/dashboard?calendar_error=calendar_unavailable")
+        flags.assert_any_call("hide_calendar", "user_a")
+        flow.fetch_token.assert_not_called()
+
+    def test_google_callback_relays_to_the_host_with_the_state_cookie(self, monkeypatch):
+        flow, _ = _mock_flow(monkeypatch)
+        monkeypatch.setattr(cal, "FRONTEND_URL", "https://app.example.test")
+        monkeypatch.setattr(cal, "SECURE_COOKIES", True)
+        token_table = MagicMock()
+        monkeypatch.setattr(cal, "table", lambda name: token_table)
+        app = FastAPI()
+        app.include_router(cal.router, prefix="/api/calendar")
+        app.include_router(auth_module.router, prefix="/api/auth")
+        browser = TestClient(app, base_url="https://app.example.test")
+        browser.get("/api/calendar/auth-url?user_id=user_a&return_to=https://untrusted.example.test", follow_redirects=False)
+        state = flow.authorization_url.call_args.kwargs["state"]
+
+        relay = browser.get("https://api.example.test/api/auth/google/callback", params={
+            "code": "mock-code", "state": state,
+        }, follow_redirects=False)
+        assert relay.headers["location"].startswith("https://app.example.test/api/calendar/callback?")
+        assert relay.headers["referrer-policy"] == "no-referrer"
+        flow.fetch_token.assert_not_called()
+
+        no_cookie = TestClient(app).get(relay.headers["location"], follow_redirects=False)
+        assert no_cookie.headers["location"].endswith("/calendar?calendar_error=invalid_state")
+        token_table.upsert.assert_not_called()
+        finished = browser.get(relay.headers["location"], follow_redirects=False)
+        assert finished.headers["location"] == "https://app.example.test/calendar?connected=true"
+        assert token_table.upsert.call_args.args[0]["user_id"] == "user_a"
 
     def test_400_when_google_not_configured(self, monkeypatch):
         monkeypatch.setattr(cal, "GOOGLE_AVAILABLE", False, raising=False)

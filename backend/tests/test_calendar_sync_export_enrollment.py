@@ -60,3 +60,4 @@ class TestExportScoping:
         assert r.json() == {"exported_count": 1, "skipped_count": 1}
         insert.assert_called_once()
         assert insert.call_args.kwargs["body"]["start"] == {"date": "2026-03-20"}
+        assert insert.call_args.kwargs["body"]["end"] == {"date": "2026-03-21"}

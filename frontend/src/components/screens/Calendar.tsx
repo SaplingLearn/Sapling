@@ -12,19 +12,24 @@ import { IS_TEST_MODE } from "@/lib/testMode";
 if (IS_TEST_MODE) MotionGlobalConfig.skipAnimations = true;
 import { TopBar } from "../TopBar";
 import { Icon } from "../Icon";
-import { useScrollLock } from "@/lib/useScrollLock";
+import { GoogleCalendarActions, GoogleCalendarStatus } from "./CalendarGoogleControls";
+import { GoogleCalendarEvents } from "../GoogleCalendarEvents";
+import { CalendarCourseFilters, CalendarEventDialog, type CalendarEventDetail } from "./CalendarEventControls";
+import { dateKey, startOfWeekMon, MonthView, WeekView, DayView } from "./CalendarGrid";
+import styles from "./CalendarEvents.module.css";
+import { calendarRange, googleEventsByDate, linkedGoogleEvents } from "@/lib/googleCalendar";
 import { Toggle } from "@/components/ui";
 import { CustomSelect } from "../CustomSelect";
-import { DocumentUploadModal } from "../DocumentUploadModal";
+import { useIsNavHidden } from "@/lib/useNavHidden";
 import { CalendarMonthSkeleton } from "../Skeleton";
 import { useToast } from "../ToastProvider";
-import { useConfirm } from "@/lib/useConfirm";
 import { useUser } from "@/context/UserContext";
 import {
   getAllAssignments,
   getCourses,
   getCalendarStatus,
   disconnectCalendar,
+  connectCalendarEvents,
   syncCalendar,
   calendarAuthUrl,
   updateAssignment,
@@ -41,15 +46,6 @@ import { CALENDAR_ERROR_PARAM, calendarConnectError } from "@/lib/calendarConnec
 
 type View = "month" | "week" | "day" | "table";
 
-const TYPE_COLOR: Record<string, string> = {
-  exam: "var(--c-rust)",
-  project: "var(--c-teal)",
-  homework: "var(--c-sage)",
-  quiz: "var(--warn)",
-  reading: "var(--c-plum)",
-  other: "var(--text-muted)",
-};
-
 const TYPE_OPTIONS = [
   { value: "homework", label: "Homework" },
   { value: "exam", label: "Exam" },
@@ -59,25 +55,9 @@ const TYPE_OPTIONS = [
   { value: "other", label: "Other" },
 ];
 
-function dateKey(d: Date) {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
-
-function dueLabel(date: string | null) {
-  if (!date) return { label: "no date", cls: "chip--info" };
-  const nowMs = now();
-  const due = new Date(date).getTime();
-  const diffMs = due - nowMs;
-  const diffHours = diffMs / (1000 * 60 * 60);
-  if (diffHours <= 0) return { label: "overdue", cls: "chip--err" };
-  if (diffHours <= 24) return { label: "due soon", cls: "chip--err" };
-  const days = Math.ceil(diffHours / 24);
-  if (days <= 3) return { label: `${days}d`, cls: "chip--warn" };
-  return { label: `${days}d`, cls: "chip--info" };
-}
-
 export function Calendar() {
   const router = useRouter();
+  const isNavHidden = useIsNavHidden();
   const search = useSearchParams();
   const toast = useToast();
   const { userId, userReady } = useUser();
@@ -88,13 +68,20 @@ export function Calendar() {
 
   const [assignments, setAssignments] = React.useState<Assignment[]>([]);
   const [courses, setCourses] = React.useState<EnrolledCourse[]>([]);
+  const [hiddenCourses, setHiddenCourses] = React.useState<Set<string>>(new Set());
+  const [eventDetail, setEventDetail] = React.useState<CalendarEventDetail | null>(null);
   const [view, setView] = React.useState<View>("month");
   const [cursor, setCursor] = React.useState(() => new Date(now()));
   const [googleConnected, setGoogleConnected] = React.useState(false);
-  const [uploadOpen, setUploadOpen] = React.useState(false);
+  const [googleEventsEnabled, setGoogleEventsEnabled] = React.useState(false);
+  const [changingGoogleEvents, setChangingGoogleEvents] = React.useState(false);
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
-  const [googleEvents, setGoogleEvents] = React.useState<GoogleEvent[] | null>(null);
+  const [googleEvents, setGoogleEvents] = React.useState<{ userId: string; range: string; events: GoogleEvent[] } | null>(null);
+  const [googleError, setGoogleError] = React.useState<string | null>(null);
+  const [googleRefresh, setGoogleRefresh] = React.useState(0);
   const [importingGoogle, setImportingGoogle] = React.useState(false);
+  const [exportingGoogle, setExportingGoogle] = React.useState(false);
+  const exportInFlight = React.useRef(false);
   const [loading, setLoading] = React.useState(true);
   const [loadError, setLoadError] = React.useState<string | null>(null);
 
@@ -105,18 +92,23 @@ export function Calendar() {
   // banner (PR #463 review; same `error && !data` gating as the Gradebook
   // screen's ErrorBanner).
   const hasLoadedRef = React.useRef(false);
+  const eventsPreferenceGeneration = React.useRef(0);
 
   const load = React.useCallback(async () => {
     if (!userId) return;
+    const preferenceGeneration = eventsPreferenceGeneration.current;
     try {
       const [a, c, s] = await Promise.all([
         getAllAssignments(userId),
         getCourses(userId),
-        getCalendarStatus(userId).catch(() => ({ connected: false })),
+        getCalendarStatus(userId).catch(() => ({ connected: false, events_enabled: false })),
       ]);
       setAssignments(a.assignments || []);
       setCourses(c.courses || []);
       setGoogleConnected(Boolean(s.connected));
+      if (preferenceGeneration === eventsPreferenceGeneration.current) {
+        setGoogleEventsEnabled(Boolean(s.connected && (s.events_enabled ?? true)));
+      }
       setLoadError(null);
       hasLoadedRef.current = true;
     } catch (err) {
@@ -145,38 +137,42 @@ export function Calendar() {
     if (userReady && userId) load();
   }, [userReady, userId, load]);
 
-  // Clear ?connected=true after OAuth success.
+  const handledCallback = React.useRef<string | null>(null);
+  // Consume callback feedback once, including under Strict Mode effect replay.
   React.useEffect(() => {
-    if (search.get("connected") === "true") {
+    const error = search.get(CALENDAR_ERROR_PARAM);
+    const connected = search.get("connected") === "true";
+    if (!error && !connected) {
+      handledCallback.current = null;
+      return;
+    }
+    const callback = search.toString();
+    if (handledCallback.current === callback) return;
+    handledCallback.current = callback;
+    if (error) {
+      toast.error(calendarConnectError(error));
+    } else {
       toast.success("Google Calendar connected");
-      setGoogleConnected(true);
-      const next = new URLSearchParams(search.toString());
-      next.delete("connected");
-      const qs = next.toString();
-      router.replace(qs ? `/calendar?${qs}` : "/calendar");
       void load();
     }
-  }, [search, router, toast, load]);
-
-  // The consent flow came back without access (started here or from
-  // onboarding's Connect step): say why, then clear the code.
-  React.useEffect(() => {
-    const code = search.get(CALENDAR_ERROR_PARAM);
-    if (!code) return;
-    toast.error(calendarConnectError(code));
     const next = new URLSearchParams(search.toString());
+    next.delete("connected");
     next.delete(CALENDAR_ERROR_PARAM);
     const qs = next.toString();
     router.replace(qs ? `/calendar?${qs}` : "/calendar");
-  }, [search, router, toast]);
+  }, [search, router, toast, load]);
 
   const today = React.useMemo(() => {
     const d = new Date(now()); d.setHours(0, 0, 0, 0); return d;
   }, []);
 
+  const visibleAssignments = React.useMemo(
+    () => assignments.filter(a => !hiddenCourses.has(a.course_id || "")),
+    [assignments, hiddenCourses],
+  );
   const byDate = React.useMemo(() => {
     const map = new Map<string, Assignment[]>();
-    for (const a of assignments) {
+    for (const a of visibleAssignments) {
       // Gradebook/Gradescope items may have no due date; they only show in the list view.
       if (!a.due_date) continue;
       const k = a.due_date.slice(0, 10);
@@ -185,47 +181,84 @@ export function Calendar() {
       map.set(k, arr);
     }
     return map;
-  }, [assignments]);
+  }, [visibleAssignments]);
+
+  const toggleCourse = (courseId: string) => {
+    const next = new Set(hiddenCourses);
+    if (!next.delete(courseId)) {
+      next.add(courseId);
+      const hiddenIds = new Set(assignments.filter(a => (a.course_id || "") === courseId).map(a => a.id));
+      setSelected(previous => new Set([...previous].filter(id => !hiddenIds.has(id))));
+    }
+    setHiddenCourses(next);
+  };
 
   const connect = () => {
     if (!userId) return;
     window.location.href = calendarAuthUrl(userId);
   };
 
-  const doSync = async () => {
+  const exportGoogle = async (ids?: string[]) => {
+    if (!userId || exportInFlight.current) return;
+    exportInFlight.current = true;
+    setExportingGoogle(true);
     try {
-      const res = await syncCalendar(userId);
-      toast.success(`Synced ${res.synced_count} event${res.synced_count === 1 ? "" : "s"} to Google.`);
+      if (ids) {
+        const res = await exportToGoogleCalendar(userId, ids);
+        toast.success(`Exported ${res.exported_count}${res.skipped_count ? ` (${res.skipped_count} skipped)` : ""}.`);
+      } else {
+        const res = await syncCalendar(userId);
+        toast.success(`Exported ${res.synced_count} new event${res.synced_count === 1 ? "" : "s"} to Google.`);
+      }
+      await load();
     } catch (err) {
-      toast.error(humanizeError(err, "Couldn't sync your calendar. Try again."));
-    }
-  };
-
-  const doImport = async () => {
-    setImportingGoogle(true);
-    try {
-      const res = await importGoogleEvents(userId, 60);
-      setGoogleEvents(res.events || []);
-    } catch (err) {
-      toast.error(humanizeError(err, "Couldn't import those events."));
+      toast.error(`Export failed: ${humanizeError(err, "Please try again.")}`);
     } finally {
-      setImportingGoogle(false);
+      exportInFlight.current = false;
+      setExportingGoogle(false);
     }
   };
 
-  const doDisconnect = async () => {
+  const range = React.useMemo(() => calendarRange(cursor, view), [cursor, view]);
+  const rangeKey = `${range.start}/${range.end}`;
+  React.useEffect(() => {
+    if (!googleConnected || !googleEventsEnabled || !userId) return;
+    let active = true;
+    setImportingGoogle(true);
+    setGoogleError(null);
+    void importGoogleEvents(userId, 60, range).then(result => {
+      if (active) setGoogleEvents({ userId, range: rangeKey, events: result.events || [] });
+    }).catch(err => {
+      if (active) setGoogleError(humanizeError(err, "Couldn't load Google events. Refresh or reconnect Google."));
+    }).finally(() => { if (active) setImportingGoogle(false); });
+    return () => { active = false; };
+  }, [googleConnected, googleEventsEnabled, userId, range, rangeKey, googleRefresh]);
+  const linkedEvents = React.useMemo(() => linkedGoogleEvents(
+    googleConnected && googleEventsEnabled && googleEvents?.userId === userId && googleEvents.range === rangeKey ? googleEvents.events : [], assignments,
+  ), [googleConnected, googleEventsEnabled, googleEvents, rangeKey, assignments, userId]);
+  const googleByDate = React.useMemo(() => googleEventsByDate(linkedEvents, range), [linkedEvents, range]);
+
+  const toggleGoogleEvents = async () => {
+    if (changingGoogleEvents) return;
+    eventsPreferenceGeneration.current += 1;
+    setChangingGoogleEvents(true);
     try {
-      await disconnectCalendar(userId);
-      setGoogleConnected(false);
-      toast.success("Google Calendar disconnected.");
+      if (googleEventsEnabled) await disconnectCalendar(userId);
+      else await connectCalendarEvents(userId);
+      setGoogleEventsEnabled(!googleEventsEnabled);
+      setGoogleEvents(null);
+      setGoogleError(null);
+      toast.success(googleEventsEnabled ? "Google events disconnected. Your Google account stays connected." : "Google events reconnected.");
     } catch (err) {
-      toast.error(humanizeError(err, "Couldn't disconnect that calendar."));
+      toast.error(`Couldn't update Google events: ${humanizeError(err, "Please try again.")}`);
+    } finally {
+      eventsPreferenceGeneration.current += 1;
+      setChangingGoogleEvents(false);
     }
   };
-  const disconnectConfirm = useConfirm(doDisconnect);
 
   const exportCsv = () => {
-    const ids = selected.size ? assignments.filter(a => selected.has(a.id)) : assignments;
+    const ids = selected.size ? visibleAssignments.filter(a => selected.has(a.id)) : visibleAssignments;
     if (ids.length === 0) {
       toast.warn("Nothing to export.");
       return;
@@ -245,6 +278,8 @@ export function Calendar() {
     toast.success(`Exported ${ids.length} row${ids.length === 1 ? "" : "s"}.`);
   };
 
+  const refreshGoogleEvents = () => setGoogleRefresh(n => n + 1);
+
   const topActions = (
     <>
       <Toggle
@@ -260,50 +295,60 @@ export function Calendar() {
       />
       {view !== "table" && (
         <>
-          <button className="btn btn--sm" onClick={() => shift(setCursor, view, -1)}>
-            <Icon name="chev" size={12} /> Prev
+          <button data-testid="calendar-prev" className="btn btn--sm" onClick={() => shift(setCursor, view, -1)}>
+            <Icon name="chevron-left" size={12} /> Prev
           </button>
-          <button className="btn btn--sm" onClick={() => setCursor(new Date(now()))}>Today</button>
-          <button className="btn btn--sm" onClick={() => shift(setCursor, view, 1)}>
+          <button data-testid="calendar-today" className="btn btn--sm" onClick={() => setCursor(new Date(now()))}>Today</button>
+          <button data-testid="calendar-next" className="btn btn--sm" onClick={() => shift(setCursor, view, 1)}>
             Next <Icon name="chev" size={12} />
           </button>
         </>
       )}
-      <button className="btn btn--sm" onClick={() => setUploadOpen(true)}>
+      {!isNavHidden("/library") && <button data-testid="calendar-import-syllabus" className="btn btn--sm" onClick={() => router.push("/library?upload=syllabus")}>
         <Icon name="upload" size={12} /> Import syllabus
-      </button>
-      {googleConnected ? (
-        <>
-          <button className="btn btn--sm" onClick={doSync}>
-            <Icon name="send" size={12} /> Sync
-          </button>
-          <button className="btn btn--sm" onClick={doImport} disabled={importingGoogle}>
-            <Icon name="cal" size={12} /> {importingGoogle ? "Loading…" : "View Google events"}
-          </button>
-          <button
-            className="btn btn--sm"
-            onClick={disconnectConfirm.trigger}
-            style={disconnectConfirm.armed ? { background: "var(--err-soft)", color: "var(--err)" } : undefined}
-          >
-            {disconnectConfirm.armed ? "Click again" : "Disconnect"}
-          </button>
-        </>
-      ) : (
-        <button className="btn btn--sm btn--primary" onClick={connect}>
-          <Icon name="cal" size={12} /> Connect Google
-        </button>
-      )}
+      </button>}
+      <GoogleCalendarActions
+        connected={googleConnected}
+        eventsEnabled={googleEventsEnabled}
+        exporting={exportingGoogle}
+        updating={changingGoogleEvents}
+        importing={importingGoogle}
+        calendarUnavailable={loading || Boolean(loadError)}
+        onConnect={connect}
+        onExport={() => void exportGoogle()}
+        onRefresh={refreshGoogleEvents}
+        onToggle={toggleGoogleEvents}
+      />
     </>
   );
 
   const rangeLabel = formatRange(cursor, view);
+  const showAssignment = (event: Assignment) => setEventDetail({ kind: "assignment", event });
+  const showGoogleEvent = (event: GoogleEvent) => setEventDetail({ kind: "google", event });
+  const gridProps = { cursor, byDate, googleByDate, courses, onAssignment: showAssignment, onGoogleEvent: showGoogleEvent };
 
   return (
     <div>
       <TopBar
         title="Calendar"
-        subtitle={`${rangeLabel} · ${assignments.length} assignment${assignments.length === 1 ? "" : "s"}`}
+        subtitle={`${rangeLabel} · ${visibleAssignments.length} assignment${visibleAssignments.length === 1 ? "" : "s"}`}
         actions={topActions}
+      />
+
+      <CalendarCourseFilters
+        courses={courses} assignments={assignments} hidden={hiddenCourses}
+        onToggle={toggleCourse} onReset={() => setHiddenCourses(new Set())}
+      />
+
+      <GoogleCalendarStatus
+        connected={googleConnected}
+        eventsEnabled={googleEventsEnabled}
+        importing={importingGoogle}
+        error={googleError}
+        eventCount={linkedEvents.length}
+        isYearView={view === "table"}
+        onConnect={connect}
+        onRefresh={refreshGoogleEvents}
       />
 
       {/* Crossfade/slide the calendar body when the view (or load state)
@@ -322,46 +367,34 @@ export function Calendar() {
           ) : loadError ? (
             <LoadErrorBanner message={loadError} onRetry={retryLoad} />
           ) : view === "month" ? (
-            <MonthView cursor={cursor} byDate={byDate} today={today} courses={courses} />
+            <MonthView {...gridProps} today={today} onShowDay={date => { setCursor(date); setView("day"); }} />
           ) : view === "week" ? (
-            <WeekView cursor={cursor} byDate={byDate} today={today} courses={courses} />
+            <WeekView {...gridProps} today={today} />
           ) : view === "day" ? (
-            <DayView cursor={cursor} byDate={byDate} courses={courses} />
+            <DayView {...gridProps} />
           ) : (
             <AssignmentTable
-              assignments={assignments}
-              courses={courses}
+              assignments={visibleAssignments}
               selected={selected}
               onSelectedChange={setSelected}
               onExport={exportCsv}
               onReload={load}
               googleConnected={googleConnected}
+              exporting={exportingGoogle || changingGoogleEvents}
+              onGoogleExport={exportGoogle}
+              onAssignment={showAssignment}
             />
           )}
         </motion.div>
       </AnimatePresence>
 
-      <DocumentUploadModal
-        open={uploadOpen}
-        userId={userId}
-        courses={courses}
-        onClose={() => setUploadOpen(false)}
-        onComplete={async (items) => {
-          const hasSyllabus = items.some(it => it.category === "syllabus");
-          await load();
-          if (hasSyllabus) {
-            setTimeout(load, 1500);
-            toast.success("Syllabus processed — new assignments added.");
-          }
-        }}
-      />
-
-      {googleEvents !== null && (
-        <GoogleEventsModal
-          events={googleEvents}
-          onClose={() => setGoogleEvents(null)}
-        />
+      {view === "table" && googleConnected && googleEventsEnabled && (
+        <section aria-label="Linked Google events" style={{ padding: "20px 32px" }}>
+          <h2 className="h-serif">Google events · {cursor.getFullYear()}</h2>
+          <GoogleCalendarEvents events={linkedEvents} onSelect={showGoogleEvent} />
+        </section>
       )}
+      <CalendarEventDialog detail={eventDetail} onClose={() => setEventDetail(null)} />
     </div>
   );
 }
@@ -406,96 +439,16 @@ function LoadErrorBanner({ message, onRetry }: { message: string; onRetry: () =>
   );
 }
 
-function GoogleEventsModal({
-  events, onClose,
-}: {
-  events: GoogleEvent[];
-  onClose: () => void;
-}) {
-  // This modal only exists while it's open, so the lock is unconditional.
-  useScrollLock(true);
-
-  React.useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-    };
-  }, [onClose]);
-
-  return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      onClick={onClose}
-      style={{
-        position: "fixed", inset: 0, zIndex: 120,
-        background: "rgba(25, 37, 11,0.45)",
-        display: "flex", alignItems: "center", justifyContent: "center", padding: 24,
-      }}
-    >
-      <div
-        onClick={e => e.stopPropagation()}
-        style={{
-          background: "var(--bg)", borderRadius: "var(--r-lg)",
-          border: "1px solid var(--border)", maxWidth: 640, width: "100%",
-          maxHeight: "82vh", overflow: "auto",
-        }}
-      >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 20px", borderBottom: "1px solid var(--border)", position: "sticky", top: 0, background: "var(--bg)" }}>
-          <div className="label-micro">Upcoming Google Calendar events</div>
-          <button className="btn btn--sm btn--ghost" onClick={onClose} aria-label="Close">
-            <Icon name="x" size={12} /> Close
-          </button>
-        </div>
-        <div style={{ padding: 20 }}>
-          {events.length === 0 ? (
-            <div style={{ color: "var(--text-muted)", fontSize: 13, textAlign: "center", padding: 28 }}>
-              No upcoming events in the next 60 days.
-            </div>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {events.map(e => (
-                <div key={e.google_event_id} className="card" style={{ padding: 12 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10 }}>
-                    <div style={{ fontWeight: 600, fontSize: 13 }}>{e.title}</div>
-                    <span className="chip" style={{ fontSize: 10 }}>
-                      {e.all_day ? "All day" : e.start_datetime?.slice(11, 16) || ""}
-                    </span>
-                  </div>
-                  <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>
-                    {e.start_date} {e.end_date && e.end_date !== e.start_date ? `→ ${e.end_date}` : ""}
-                    {e.location ? ` · ${e.location}` : ""}
-                  </div>
-                  {e.description && (
-                    <div style={{ fontSize: 12, color: "var(--text-dim)", marginTop: 6, lineHeight: 1.5 }}>
-                      {e.description.length > 140 ? e.description.slice(0, 140) + "…" : e.description}
-                    </div>
-                  )}
-                  {e.html_link && (
-                    <a
-                      href={e.html_link}
-                      target="_blank"
-                      rel="noreferrer"
-                      style={{ fontSize: 11, color: "var(--accent)", marginTop: 6, display: "inline-block" }}
-                    >
-                      Open in Google Calendar →
-                    </a>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function shift(setCursor: React.Dispatch<React.SetStateAction<Date>>, view: View, dir: -1 | 1) {
   setCursor(prev => {
     const d = new Date(prev);
-    if (view === "month") d.setMonth(d.getMonth() + dir);
+    if (view === "month") {
+      const day = d.getDate();
+      d.setDate(1);
+      d.setMonth(d.getMonth() + dir);
+      const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+      d.setDate(Math.min(day, lastDay));
+    }
     else if (view === "week") d.setDate(d.getDate() + 7 * dir);
     else if (view === "day") d.setDate(d.getDate() + dir);
     return d;
@@ -514,199 +467,24 @@ function formatRange(d: Date, view: View) {
   return "All assignments";
 }
 
-function startOfWeekMon(d: Date) {
-  const x = new Date(d);
-  x.setHours(0, 0, 0, 0);
-  const day = (x.getDay() + 6) % 7;
-  x.setDate(x.getDate() - day);
-  return x;
-}
-
-function MonthView({ cursor, byDate, today, courses }: { cursor: Date; byDate: Map<string, Assignment[]>; today: Date; courses: EnrolledCourse[] }) {
-  const first = new Date(cursor.getFullYear(), cursor.getMonth(), 1);
-  const start = startOfWeekMon(first);
-  const cells: Date[] = Array.from({ length: 42 }, (_, i) => {
-    const d = new Date(start);
-    d.setDate(start.getDate() + i);
-    return d;
-  });
-  const weekdays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-  const courseColor = new Map(courses.map(c => [c.course_id, c.color]));
-  return (
-    <div style={{ padding: "20px 32px" }}>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, marginBottom: 4 }}>
-        {weekdays.map(d => <div key={d} className="label-micro" style={{ padding: 6 }}>{d}</div>)}
-      </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4 }}>
-        {cells.map((d, i) => {
-          const key = dateKey(d);
-          const items = byDate.get(key) || [];
-          const inMonth = d.getMonth() === cursor.getMonth();
-          const isToday = d.getTime() === today.getTime();
-          return (
-            <div
-              key={i}
-              className="card"
-              style={{
-                padding: 8, minHeight: 96, display: "flex", flexDirection: "column", gap: 4,
-                opacity: inMonth ? 1 : 0.45,
-                background: isToday ? "var(--accent-soft)" : "var(--bg-panel)",
-                borderColor: isToday ? "var(--accent-border)" : "var(--border)",
-              }}
-            >
-              <div style={{ fontSize: 11, fontWeight: 600, color: isToday ? "var(--accent)" : "var(--text-dim)" }}>
-                {d.getDate()}
-              </div>
-              {items.slice(0, 3).map(a => {
-                const color = TYPE_COLOR[a.assignment_type || "other"];
-                const dotColor = a.course_id ? courseColor.get(a.course_id) || color : color;
-                return (
-                  <div
-                    key={a.id}
-                    style={{
-                      fontSize: 10, padding: "3px 6px", borderRadius: "var(--r-xs)",
-                      background: "transparent", color: "var(--text)",
-                      display: "flex", alignItems: "center", gap: 5,
-                      overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                    }}
-                    title={a.title}
-                  >
-                    <span aria-hidden style={{
-                      width: 6, height: 6, borderRadius: "50%", background: dotColor, flexShrink: 0,
-                    }} />
-                    <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{a.title}</span>
-                  </div>
-                );
-              })}
-              {items.length > 3 && (
-                <div style={{ fontSize: 10, color: "var(--text-muted)" }}>+{items.length - 3} more</div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function WeekView({ cursor, byDate, today, courses }: { cursor: Date; byDate: Map<string, Assignment[]>; today: Date; courses: EnrolledCourse[] }) {
-  const start = startOfWeekMon(cursor);
-  const days = Array.from({ length: 7 }, (_, i) => {
-    const d = new Date(start); d.setDate(start.getDate() + i); return d;
-  });
-  const courseColor = new Map(courses.map(c => [c.course_id, c.color]));
-  return (
-    <div style={{ padding: "20px 32px" }}>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 8 }}>
-        {days.map((d, i) => {
-          const key = dateKey(d);
-          const items = byDate.get(key) || [];
-          const isToday = d.getTime() === today.getTime();
-          return (
-            <div
-              key={i}
-              className="card"
-              style={{
-                padding: 10, minHeight: 200,
-                background: isToday ? "var(--accent-soft)" : "var(--bg-panel)",
-                borderColor: isToday ? "var(--accent-border)" : "var(--border)",
-              }}
-            >
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8 }}>
-                <span className="h-serif" style={{ fontSize: 20 }}>{d.getDate()}</span>
-                <span className="label-micro">{d.toLocaleDateString("en-US", { weekday: "short" })}</span>
-              </div>
-              {items.length === 0 && <div style={{ fontSize: 11, color: "var(--text-muted)" }}>—</div>}
-              {items.map(a => {
-                const color = TYPE_COLOR[a.assignment_type || "other"];
-                const dotColor = a.course_id ? courseColor.get(a.course_id) || color : color;
-                return (
-                  <div
-                    key={a.id}
-                    style={{
-                      fontSize: 11, padding: "6px 0", marginBottom: 6,
-                      display: "flex", gap: 8, alignItems: "flex-start",
-                    }}
-                  >
-                    <span aria-hidden style={{
-                      width: 6, height: 6, borderRadius: "50%",
-                      background: dotColor, marginTop: 5, flexShrink: 0,
-                    }} />
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ fontWeight: 600, color: "var(--text)" }}>{a.title}</div>
-                      <div style={{ color: "var(--text-muted)", fontSize: 10 }}>
-                        {a.course_code || a.course_name}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function DayView({ cursor, byDate, courses }: { cursor: Date; byDate: Map<string, Assignment[]>; courses: EnrolledCourse[] }) {
-  const key = dateKey(cursor);
-  const items = byDate.get(key) || [];
-  const courseColor = new Map(courses.map(c => [c.course_id, c.color]));
-  return (
-    <div style={{ padding: "20px 32px", maxWidth: 720 }}>
-      <div className="h-serif" style={{ fontSize: 24, fontWeight: 500, marginBottom: 16 }}>
-        {cursor.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}
-      </div>
-      {items.length === 0 && (
-        <div className="card" style={{ padding: "var(--pad-lg)", textAlign: "center", color: "var(--text-muted)" }}>
-          Nothing scheduled.
-        </div>
-      )}
-      {items.map(a => {
-        const color = TYPE_COLOR[a.assignment_type || "other"];
-        const dotColor = a.course_id ? courseColor.get(a.course_id) || color : color;
-        const dl = dueLabel(a.due_date);
-        return (
-          <div key={a.id} className="card" style={{ padding: "var(--pad-lg)", marginBottom: 10, display: "flex", gap: 14, alignItems: "flex-start" }}>
-            <span aria-hidden style={{
-              width: 8, height: 8, borderRadius: "50%",
-              background: dotColor, marginTop: 8, flexShrink: 0,
-            }} />
-            <div style={{ flex: 1 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-                <strong>{a.title}</strong>
-                <span className={`chip ${dl.cls}`}>{dl.label}</span>
-              </div>
-              <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
-                {a.course_code || a.course_name || "—"} · {a.assignment_type || "task"}
-              </div>
-              {a.notes && <div style={{ fontSize: 12, color: "var(--text-dim)", marginTop: 6 }}>{a.notes}</div>}
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
 function AssignmentTable({
-  assignments, courses, selected, onSelectedChange, onExport, onReload, googleConnected,
+  assignments, selected, onSelectedChange, onExport, onReload, googleConnected, exporting, onGoogleExport, onAssignment,
 }: {
   assignments: Assignment[];
-  courses: EnrolledCourse[];
   selected: Set<string>;
   onSelectedChange: (s: Set<string>) => void;
   onExport: () => void;
   onReload: () => void | Promise<void>;
   googleConnected: boolean;
+  exporting: boolean;
+  onGoogleExport: (ids: string[]) => Promise<void>;
+  onAssignment: (assignment: Assignment) => void;
 }) {
   const toast = useToast();
   const { userId } = useUser();
   const [editing, setEditing] = React.useState<string | null>(null);
   const [draft, setDraft] = React.useState<Partial<Assignment>>({});
   const [saving, setSaving] = React.useState(false);
-  const [exporting, setExporting] = React.useState(false);
   const [deletingId, setDeletingId] = React.useState<string | null>(null);
   type SortKey = "due_date" | "title" | "course" | "type";
   const [sortKey, setSortKey] = React.useState<SortKey>("due_date");
@@ -762,23 +540,12 @@ function AssignmentTable({
       toast.warn("Select assignments first.");
       return;
     }
-    setExporting(true);
-    try {
-      const res = await exportToGoogleCalendar(userId, Array.from(selected));
-      toast.success(
-        `Exported ${res.exported_count}${res.skipped_count ? ` (${res.skipped_count} skipped)` : ""}.`
-      );
-      await onReload();
-    } catch (err) {
-      toast.error(humanizeError(err, "Couldn't export that. Try again."));
-    } finally {
-      setExporting(false);
-    }
+    await onGoogleExport(Array.from(selected));
   };
 
   const beginEdit = (a: Assignment) => {
     setEditing(a.id);
-    setDraft({ title: a.title, course_id: a.course_id, due_date: a.due_date, assignment_type: a.assignment_type || "", notes: a.notes || "" });
+    setDraft({ title: a.title, due_date: a.due_date, assignment_type: a.assignment_type || "" });
   };
   const cancel = () => { setEditing(null); setDraft({}); };
   const saveEdit = async () => {
@@ -787,11 +554,9 @@ function AssignmentTable({
     try {
       await updateAssignment(editing, userId, {
         title: draft.title,
-        course_id: draft.course_id ?? "",
         // An empty date input means "no date": send null, never "" (invalid for a DATE column).
         due_date: draft.due_date ? draft.due_date.slice(0, 10) : null,
         assignment_type: draft.assignment_type || undefined,
-        notes: draft.notes || undefined,
       });
       toast.success("Assignment updated.");
       await onReload();
@@ -824,6 +589,7 @@ function AssignmentTable({
             />
           </div>
           <button
+            data-testid="calendar-sort-direction"
             className="btn btn--sm btn--ghost"
             onClick={() => setSortDir(d => (d === "asc" ? "desc" : "asc"))}
             title={sortDir === "asc" ? "Ascending" : "Descending"}
@@ -832,11 +598,12 @@ function AssignmentTable({
             {sortDir === "asc" ? "↑" : "↓"}
           </button>
         </div>
-        <button className="btn btn--sm" onClick={onExport}>
+        <button data-testid="calendar-export-csv" className="btn btn--sm" onClick={onExport}>
           <Icon name="doc" size={12} /> Export CSV
         </button>
         {googleConnected && (
           <button
+            data-testid="calendar-export-selected-google"
             className="btn btn--sm"
             onClick={bulkExport}
             disabled={exporting || selected.size === 0}
@@ -851,7 +618,7 @@ function AssignmentTable({
           <thead>
             <tr style={{ background: "var(--bg-subtle)", textAlign: "left" }}>
               <th style={{ padding: 10, width: 32 }}>
-                <input type="checkbox" aria-label="Select all assignments" checked={selected.size === assignments.length && assignments.length > 0} onChange={toggleAll} />
+                <input data-testid="calendar-select-all" type="checkbox" aria-label="Select all assignments" checked={selected.size === assignments.length && assignments.length > 0} onChange={toggleAll} />
               </th>
               <th style={{ padding: 10 }}>Title</th>
               <th style={{ padding: 10 }}>Course</th>
@@ -866,31 +633,24 @@ function AssignmentTable({
               return (
                 <tr key={a.id} style={{ borderTop: i === 0 ? "none" : "1px solid var(--border)" }}>
                   <td style={{ padding: 10 }}>
-                    <input type="checkbox" aria-label={`Select ${a.title}`} checked={selected.has(a.id)} onChange={() => toggleOne(a.id)} />
+                    <input data-testid={`calendar-select-${a.id}`} type="checkbox" aria-label={`Select ${a.title}`} checked={selected.has(a.id)} onChange={() => toggleOne(a.id)} />
                   </td>
                   <td style={{ padding: 10 }}>
                     {editingThis ? (
                       <input
+                        data-testid={`calendar-title-${a.id}`}
                         value={draft.title || ""}
                         onChange={e => setDraft(d => ({ ...d, title: e.target.value }))}
                         style={{ padding: "4px 6px", border: "1px solid var(--border)", borderRadius: "var(--r-xs)", fontSize: 12, width: "100%" }}
                       />
                     ) : (
-                      <strong>{a.title}</strong>
+                      <button type="button" data-testid={`calendar-details-${a.id}`} className={styles.eventButton} onClick={() => onAssignment(a)}><strong>{a.title}</strong></button>
                     )}
                   </td>
                   <td style={{ padding: 10 }}>
-                    {editingThis ? (
-                      <CustomSelect
-                        size="sm"
-                        value={draft.course_id || ""}
-                        onChange={v => setDraft(d => ({ ...d, course_id: v }))}
-                        options={courses.map(c => ({ value: c.course_id, label: c.course_code || c.course_name }))}
-                        placeholder="—"
-                      />
-                    ) : (
-                      a.course_code || a.course_name || "—"
-                    )}
+                    <span title="Course is tied to this assignment's enrollment.">
+                      {a.course_code || a.course_name || "—"}
+                    </span>
                   </td>
                   <td style={{ padding: 10 }}>
                     {editingThis ? (
@@ -908,6 +668,7 @@ function AssignmentTable({
                   <td style={{ padding: 10 }}>
                     {editingThis ? (
                       <input
+                        data-testid={`calendar-date-${a.id}`}
                         type="date"
                         value={(draft.due_date || "").slice(0, 10)}
                         onChange={e => setDraft(d => ({ ...d, due_date: e.target.value }))}
@@ -920,17 +681,18 @@ function AssignmentTable({
                   <td style={{ padding: 10, display: "flex", gap: 4 }}>
                     {editingThis ? (
                       <>
-                        <button className="btn btn--sm btn--primary" onClick={saveEdit} disabled={saving}>
+                        <button data-testid={`calendar-save-${a.id}`} className="btn btn--sm btn--primary" onClick={saveEdit} disabled={saving}>
                           {saving ? "Saving…" : "Save"}
                         </button>
-                        <button className="btn btn--sm btn--ghost" onClick={cancel} disabled={saving}>Cancel</button>
+                        <button data-testid={`calendar-cancel-${a.id}`} className="btn btn--sm btn--ghost" onClick={cancel} disabled={saving}>Cancel</button>
                       </>
                     ) : (
                       <>
-                        <button className="btn btn--sm btn--ghost" onClick={() => beginEdit(a)} title="Edit">
+                        <button data-testid={`calendar-edit-${a.id}`} className="btn btn--sm btn--ghost" onClick={() => beginEdit(a)} title="Edit">
                           <Icon name="pencil" size={11} />
                         </button>
                         <button
+                          data-testid={`calendar-delete-${a.id}`}
                           className="btn btn--sm btn--ghost"
                           onClick={() => removeOne(a)}
                           disabled={deletingId === a.id}

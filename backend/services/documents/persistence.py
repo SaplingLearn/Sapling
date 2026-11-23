@@ -304,15 +304,16 @@ def _grading_categories_from(result: DocumentProcessingResult) -> list[dict]:
 
 
 def _save_orchestrator_syllabus(*, user_id: str, course_id: str, filename: str,
-                                result: DocumentProcessingResult) -> None:
+                                result: DocumentProcessingResult) -> dict[str, int | None]:
     """Map SyllabusAssignment -> legacy assignments shape and persist.
 
     Drops entries with due_date=None per the no-invent contract.
     Best-effort: any error is logged and swallowed.
     """
-    if not (result.classification.is_syllabus and result.syllabus
-            and result.syllabus.assignments):
-        return
+    if not result.classification.is_syllabus:
+        return {}
+    if not result.syllabus or not result.syllabus.assignments:
+        return {"calendar_deadlines_added": 0}
     legacy: list[dict] = []
     for a in result.syllabus.assignments:
         if a.due_date is None:
@@ -327,9 +328,11 @@ def _save_orchestrator_syllabus(*, user_id: str, course_id: str, filename: str,
         })
     if legacy:
         try:
-            save_assignments_to_db(user_id, legacy, source="syllabus")
+            return {"calendar_deadlines_added": save_assignments_to_db(user_id, legacy, source="syllabus")}
         except Exception:
             logger.exception("Assignment save failed for '%s' (best-effort)", filename)
+            return {"calendar_deadlines_added": None}
+    return {"calendar_deadlines_added": 0}
 
 
 def _graph_backstop(*, user_id: str, course_id: str, filename: str,

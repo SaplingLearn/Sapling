@@ -59,6 +59,13 @@ export function Library() {
   const [cat, setCat] = React.useState<Cat>("all");
   const [courseFilter, setCourseFilter] = React.useState<string>("all");
   const [uploadOpen, setUploadOpen] = React.useState(false);
+  React.useEffect(() => {
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("upload") !== "syllabus") return;
+    url.searchParams.delete("upload");
+    window.history.replaceState(null, "", url);
+    setUploadOpen(true);
+  }, []);
   const [detail, setDetail] = React.useState<Doc | null>(null);
   const [query, setQuery] = React.useState("");
   const [view, setView] = React.useState<View>("grid");
@@ -104,7 +111,7 @@ export function Library() {
 
   const load = React.useCallback(async () => {
     if (!userId) return;
-    // Reloads overlap (upload complete + the syllabus re-poll, delete):
+    // Reloads overlap (upload complete and delete):
     // the latest one owns the list (#769).
     const run = loadReq.begin();
     try {
@@ -474,15 +481,7 @@ export function Library() {
         userId={userId}
         courses={courses}
         onClose={() => setUploadOpen(false)}
-        onComplete={async (items) => {
-          const hasSyllabus = items.some(it => it.category === "syllabus");
-          await load();
-          if (hasSyllabus) {
-            // Brief delay for server-side ingestion races, then reload again.
-            setTimeout(load, 1500);
-            toast.info("Syllabus processed — new assignments will appear on the calendar.");
-          }
-        }}
+        onComplete={() => void load()}
       />
     </FullHeightScreen>
   );
