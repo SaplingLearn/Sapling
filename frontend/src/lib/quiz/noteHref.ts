@@ -5,5 +5,6 @@ export function quizHrefForNote(noteId: string, conceptNodeId: string): string {
   return buildQuizHref(
     { concept: conceptNodeId },
     { kind: "notes", returnTo: `/notetaker?note=${encodeURIComponent(noteId)}`, noteId },
+    { start: true },
   );
 }

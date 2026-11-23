@@ -396,6 +396,11 @@ def _is_achievement_xp(row: Any) -> bool:
 
 def _plain(table_name: str, row: dict) -> dict:
     """`row` with every 🔒 column strictly decrypted (and swept for strays)."""
+    if table_name == "notes":
+        # Account copies move editable text between environments. Original
+        # objects use environment-local storage and encryption keys.
+        row = {key: value for key, value in row.items()
+               if key not in {"original_filename", "original_type", "original_bytes"}}
     cols = ENCRYPTED.get(table_name, {})
     _assert_no_unlisted_ciphertext(table_name, row, cols)
     out = dict(row)

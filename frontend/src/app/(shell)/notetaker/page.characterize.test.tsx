@@ -313,6 +313,7 @@ describe("four-rail layout", () => {
   it("switching notes reuses the editor inputs (no remount) but starts a fresh chat thread", async () => {
     await renderPage();
     const title = titleInput();
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
     const body = bodyArea();
     const chat = screen.getByPlaceholderText("Ask a quick question…") as HTMLInputElement;
     fireEvent.change(chat, { target: { value: "draft question" } });

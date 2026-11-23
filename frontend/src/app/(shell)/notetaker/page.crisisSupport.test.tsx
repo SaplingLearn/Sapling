@@ -3,7 +3,7 @@
  * Notetaker AI actions and the crisis screen (docs/safety/crisis-support.md).
  * A crisis line the student TYPES into the notes chat is answered with the
  * card in its thread instead of a reply. A crisis line in the NOTE itself
- * never blocks: Summarize, Extract concepts, Send to tutor and the chat get
+ * never blocks: Summarize, Extract concepts and the chat get
  * their normal result with the card alongside it (`crisis_support_alongside`),
  * and an error answer (a 429) that carries the card shows it too.
  */
@@ -14,7 +14,7 @@ import { render, screen, cleanup, fireEvent, waitFor } from "@testing-library/re
 import { ApiError, type EnrolledCourse } from "@/lib/api";
 import type { Note as ApiNote } from "@/lib/types";
 import crisisFixture from "@/test-utils/crisisSupport.json";
-import { takeNoteCardShown, type CrisisSupport } from "@/lib/crisisSupport";
+import { type CrisisSupport } from "@/lib/crisisSupport";
 
 const { push, toastError } = vi.hoisted(() => ({ push: vi.fn(), toastError: vi.fn() }));
 
@@ -56,7 +56,6 @@ import {
   listNotes,
   noteChat,
   patchNote,
-  sendNoteToTutor,
   summarizeNote,
 } from "@/lib/api";
 
@@ -100,6 +99,7 @@ describe("notetaker — crisis support", () => {
   it("the notes chat shows the card in its thread, not as an AI message", async () => {
     vi.mocked(noteChat).mockResolvedValueOnce(CRISIS);
     await renderPage();
+    fireEvent.click(screen.getByRole("button", { name: "Ask Clov" }));
     const input = screen.getByPlaceholderText("Ask a quick question…");
     fireEvent.change(input, { target: { value: "i want to kill myself" } });
     fireEvent.keyDown(input, { key: "Enter" });
@@ -145,31 +145,10 @@ describe("notetaker — crisis support", () => {
     await waitFor(() => expect(vi.mocked(listNoteConcepts).mock.calls.length).toBeGreaterThan(reads));
   });
 
-  it("Send to tutor of a note that matched shows the card, then opens the tutor once it is closed", async () => {
-    vi.mocked(sendNoteToTutor).mockResolvedValueOnce({ topic: "Week 3", course_id: "c1", preface: "", ...ALONGSIDE });
-    await renderPage();
-    fireEvent.click(screen.getByRole("button", { name: "Send to tutor" }));
-    expect((await screen.findByRole("dialog")).textContent).toContain(crisisFixture.title);
-    expect(push).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByTestId("crisis-support-dismiss"));
-    // The note rides along, so starting on its title is not screened as typed.
-    await waitFor(() => expect(push).toHaveBeenCalledWith("/learn?topic=Week%203&course=c1&note=n1"));
-    // ...and the tutor's start knows this note's card was just shown, so the
-    // same card beside its session does not pop up again.
-    expect(takeNoteCardShown("n1")).toBe(true);
-  });
-
-  it("Send to tutor of an ordinary note opens the tutor on its title, naming the note", async () => {
-    vi.mocked(sendNoteToTutor).mockResolvedValueOnce({ topic: "Week 3", course_id: "c1", preface: "" });
-    await renderPage();
-    fireEvent.click(screen.getByRole("button", { name: "Send to tutor" }));
-    await waitFor(() => expect(push).toHaveBeenCalledWith("/learn?topic=Week%203&course=c1&note=n1"));
-    expect(takeNoteCardShown("n1")).toBe(false); // no card was shown
-  });
-
   it("the notes chat on a note that matched shows the card AND the reply", async () => {
     vi.mocked(noteChat).mockResolvedValueOnce({ reply: "A base case stops the recursion.", ...ALONGSIDE });
     await renderPage();
+    fireEvent.click(screen.getByRole("button", { name: "Ask Clov" }));
     const input = screen.getByPlaceholderText("Ask a quick question…");
     fireEvent.change(input, { target: { value: "what is a base case?" } });
     fireEvent.keyDown(input, { key: "Enter" });
@@ -177,13 +156,4 @@ describe("notetaker — crisis support", () => {
     expect(screen.getByText("A base case stops the recursion.")).toBeTruthy();
   });
 
-  it("a blocked action (no result, the card only) still does none of its own work", async () => {
-    vi.mocked(sendNoteToTutor).mockResolvedValueOnce(CRISIS);
-    await renderPage();
-    fireEvent.click(screen.getByRole("button", { name: "Send to tutor" }));
-    expect((await screen.findByRole("dialog")).textContent).toContain(crisisFixture.title);
-    fireEvent.click(screen.getByTestId("crisis-support-dismiss"));
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect(push).not.toHaveBeenCalled();
-  });
 });

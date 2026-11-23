@@ -90,6 +90,7 @@ UPLOAD_PATHS = frozenset({
     "/api/extract/image",
     "/api/extract/pdf",
     "/api/issue-reports/screenshot",
+    "/api/notes/import",
 })
 
 #: Above the flashcard importer's ~6.7 MB base64 payload.
@@ -178,6 +179,8 @@ class BodySizeLimitMiddleware:
             content_type = Headers(scope=scope).get("content-type", "")
             if content_type.lower().startswith("multipart/form-data"):
                 if _has_valid_session(scope):
+                    if path == "/api/notes/import":
+                        return min(self.multipart_max_bytes, 3 * 1024 * 1024)
                     return self.multipart_max_bytes
                 return self.anonymous_multipart_max_bytes
         return self.json_max_bytes

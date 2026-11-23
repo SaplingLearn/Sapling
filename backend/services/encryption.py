@@ -211,7 +211,7 @@ ENCRYPTED_COLUMNS: tuple[ColumnSpec, ...] = tuple([
     ColumnSpec("sessions", "summary_json", JSON),
     # Documents and notes.
     *_cols("documents", {"summary": TEXT, "concept_notes": JSON, "extracted_text": TEXT}),
-    *_cols("notes", {"title": TEXT, "body": TEXT, "last_summary": TEXT}),
+    *_cols("notes", {"title": TEXT, "body": TEXT, "last_summary": TEXT, "original_filename": TEXT}),
     *_cols("document_uploads", {"file_data": BYTES, "result": JSON}),
     # Content-addressed id (a hash of the plaintext), known before encryption
     # and stable across the shared dedupe upsert.

@@ -32,7 +32,7 @@ from services.encryption import (
 
 _SELECT_COLS = (
     "id,user_id,offering_id,title,body,tags,"
-    "last_summary,last_summary_at,created_at,updated_at"
+    "last_summary,last_summary_at,created_at,updated_at,original_filename,original_type"
 )
 
 
@@ -46,6 +46,13 @@ def _decrypt_row(row: dict) -> dict:
     out["body"] = decrypt_if_present(out.get("body"), bind=bind("notes", "body", row)) or ""
     out["last_summary"] = decrypt_if_present(
         out.get("last_summary"), bind=bind("notes", "last_summary", row))
+    if out.get("original_filename"):
+        out["original_filename"] = decrypt_if_present(
+            out["original_filename"], bind=bind("notes", "original_filename", row))
+    else:
+        out.pop("original_filename", None)
+        out.pop("original_type", None)
+    out.pop("original_bytes", None)
     out["tags"] = list(out.get("tags") or [])
     return out
 
@@ -56,8 +63,11 @@ async def create_note(
     title: str = "",
     body: str = "",
     tags: list[str] | None = None,
+    *,
+    note_id: str | None = None,
+    original: tuple[str, str, int] | None = None,
 ) -> dict:
-    note_id = str(uuid.uuid4())
+    note_id = note_id or str(uuid.uuid4())
     now = _now_iso()
     row = {
         "id": note_id,
@@ -69,6 +79,14 @@ async def create_note(
         "created_at": now,
         "updated_at": now,
     }
+
+    if original:
+        filename, content_type, size = original
+        row.update(
+            original_filename=encrypt_if_present(filename, bind=bind("notes", "original_filename", note_id)),
+            original_type=content_type,
+            original_bytes=size,
+        )
 
     def _insert() -> None:
         table("notes").insert(row)

@@ -1,5 +1,6 @@
 "use client";
 import React, { Suspense } from "react";
+import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Icon } from "@/components/Icon";
 import { useUser } from "@/context/UserContext";
@@ -13,8 +14,8 @@ import {
   summarizeNote,
   extractNoteConcepts,
   generateQuizFromNote,
-  sendNoteToTutor,
   noteChat,
+  noteOriginalHref,
   getCourses,
   getGraph,
   type EnrolledCourse,
@@ -27,11 +28,12 @@ import type {
 import { now } from "@/lib/testMode";
 import { useToast } from "@/components/ToastProvider";
 import { humanizeError } from "@/lib/errorMessage";
+import { codeEdit, overlapsNoteBlock } from "@/lib/notes/codeEditing";
 import { quizHrefForNote } from "@/lib/quiz/noteHref";
 import { useNoteAutosave, type AutosaveStatus } from "@/lib/notes/useNoteAutosave";
 import { CHAT_MESSAGE_MAX, NOTE_BODY_MAX, NOTE_TITLE_MAX } from "@/lib/inputLimits";
 import { CrisisSupportCard, useCrisisSupport } from "@/components/safety/CrisisSupportCard";
-import { crisisSupportIn, crisisSupportInError, markNoteCardShown, type CrisisSupport } from "@/lib/crisisSupport";
+import { crisisSupportIn, crisisSupportInError, type CrisisSupport } from "@/lib/crisisSupport";
 import {
   layoutRowStyle,
   notesListRailStyle,
@@ -40,9 +42,14 @@ import {
   chatRailStyle,
 } from "@/lib/notes/notetakerLayout";
 
+const NoteMarkdown = dynamic(
+  () => import("@/components/chat/MarkdownChat").then((module) => module.MarkdownChat),
+  { ssr: false, loading: () => <p role="status">Loading preview…</p> },
+);
+
 type Mastery = "mastered" | "learning" | "struggling" | "unexplored";
 
-type NoteAction = "delete" | "summarize" | "extract" | "quiz" | "tutor";
+type NoteAction = "delete" | "summarize" | "extract" | "quiz";
 
 type Course = {
   id: string;
@@ -67,6 +74,7 @@ type Note = {
   tags: string[];
   linkedConcepts: Concept[];
   lastSummary: string | null;
+  originalFilename?: string | null;
 };
 
 const MASTERY_COLOR: Record<Mastery, string> = {
@@ -113,6 +121,7 @@ function apiNoteToNote(n: ApiNote): Note {
     tags: n.tags || [],
     linkedConcepts: [],
     lastSummary: n.last_summary || null,
+    originalFilename: n.original_filename,
   };
 }
 
@@ -153,6 +162,7 @@ function NotetakerScreen() {
   const [activeId, setActiveId] = React.useState<string | null>(null);
   const [query, setQuery] = React.useState("");
   const [courseFilter, setCourseFilter] = React.useState<string | null>(null);
+  const editorRef = React.useRef<HTMLTextAreaElement>(null);
   const [fullscreen, setFullscreen] = React.useState(false);
   const [pickerOpen, setPickerOpen] = React.useState(false);
   const [conceptPickerOpen, setConceptPickerOpen] = React.useState(false);
@@ -419,39 +429,15 @@ function NotetakerScreen() {
     await runAction(noteId, "quiz", async () => {
       if (!(await saveBeforeAgent(noteId))) return;
       try {
-        const { concept_node_id } = await generateQuizFromNote(noteId, userId);
-        router.push(quizHrefForNote(noteId, concept_node_id));
+        const result = await generateQuizFromNote(noteId, userId);
+        const openQuiz = () => {
+          if (result.concept_node_id) router.push(quizHrefForNote(noteId, result.concept_node_id));
+        };
+        if (!crisis.intercept(result, result.crisis_support_alongside ? openQuiz : undefined)) openQuiz();
       } catch (e) {
         console.error("Quiz failed", e);
-        toast.error(humanizeError(e, "Couldn't generate a quiz from this note."));
-      }
-    });
-  };
-
-  const onSendToTutor = async () => {
-    if (!active || !userId) return;
-    const noteId = active.id;
-    await runAction(noteId, "tutor", async () => {
-      if (!(await saveBeforeAgent(noteId))) return;
-      try {
-        const res = await sendNoteToTutor(noteId, userId);
-        // `note` names the note, so a start on its title unchanged is screened
-        // as the student's stored material, not as a topic they typed
-        // (docs/safety/crisis-support.md): the card shows beside the session.
-        const open = () => router.push(
-          `/learn?topic=${encodeURIComponent(res.topic ?? "")}&course=${encodeURIComponent(res.course_id ?? "")}`
-            + `&note=${encodeURIComponent(noteId)}`,
-        );
-        // Beside a result, the tutor opens once the card is closed, told the
-        // card was shown so its start does not pop the same one up again; a
-        // card that stands in for the result opens nothing.
-        const openAfterCard = () => { markNoteCardShown(noteId); open(); };
-        if (crisis.intercept(res, res.crisis_support_alongside ? openAfterCard : undefined)) return;
-        open();
-      } catch (e) {
-        console.error("Send to tutor failed", e);
         crisis.intercept({ crisis_support: crisisSupportInError(e) });
-        toast.error(humanizeError(e, "Couldn't send this note to the tutor."));
+        toast.error(humanizeError(e, "Couldn't generate a quiz from this note."));
       }
     });
   };
@@ -567,6 +553,7 @@ function NotetakerScreen() {
           <div style={editorFrameStyle(fullscreen)}>
             <NoteEditor
               note={active}
+              editorRef={editorRef}
               onChange={updateActive}
               saveStatus={saveStatus}
               onRetrySave={retrySave}
@@ -584,7 +571,7 @@ function NotetakerScreen() {
             onSummarize={onSummarize}
             onExtract={onExtract}
             onGenerateQuiz={onGenerateQuiz}
-            onSendToTutor={onSendToTutor}
+            onAskClov={() => setFullscreen(true)}
             onOpenConceptPicker={() => setConceptPickerOpen(true)}
             onUnlinkConcept={onUnlinkConcept}
             onAddTag={onAddTag}
@@ -593,9 +580,18 @@ function NotetakerScreen() {
           />
         </div>
 
-        <div style={chatRailStyle(fullscreen)} aria-hidden={!fullscreen}>
+        <div style={chatRailStyle(fullscreen)} aria-hidden={!fullscreen} inert={!fullscreen}>
           {/* Keyed per note: switching notes starts a fresh thread + composer. */}
-          <AIChatPanel key={active.id} noteId={active.id} userId={userId} />
+          <AIChatPanel
+            key={active.id}
+            noteId={active.id}
+            userId={userId}
+            fullscreen={fullscreen}
+            beforeSend={() => saveBeforeAgent(active.id)}
+            documentBody={active.originalFilename ? active.body : undefined}
+            editorRef={editorRef}
+            onRewrite={(body) => updateActive({ body })}
+          />
         </div>
       </div>
 
@@ -940,6 +936,7 @@ function CourseFilterChip({
 
 function NoteEditor({
   note,
+  editorRef,
   onChange,
   saveStatus,
   onRetrySave,
@@ -947,12 +944,53 @@ function NoteEditor({
   onToggleFullscreen,
 }: {
   note: Note;
+  editorRef: React.RefObject<HTMLTextAreaElement | null>;
   onChange: (patch: Partial<Note>) => void;
   saveStatus: AutosaveStatus;
   onRetrySave: () => void;
   fullscreen: boolean;
   onToggleFullscreen: () => void;
 }) {
+  const [preview, setPreview] = React.useState(true);
+  const pendingSelection = React.useRef<{
+    start: number;
+    end: number;
+    restoreScroll?: { top: number; left: number };
+  } | null>(null);
+  React.useLayoutEffect(() => {
+    const selection = pendingSelection.current;
+    pendingSelection.current = null;
+    const editor = editorRef.current;
+    if (!selection || !editor) return;
+    if (selection.restoreScroll) editor.focus({ preventScroll: true });
+    editor.setSelectionRange(selection.start, selection.end);
+    if (selection.restoreScroll) {
+      editor.scrollTop = selection.restoreScroll.top;
+      editor.scrollLeft = selection.restoreScroll.left;
+    }
+  }, [editorRef, note.body]);
+
+  function insertBlock(open: string, close: string, placeholder: string) {
+    const editor = editorRef.current;
+    if (!editor) return;
+    const { selectionStart: start, selectionEnd: end } = editor;
+    if (overlapsNoteBlock(note.body, start, end)) return;
+    const selected = note.body.slice(start, end) || placeholder;
+    const before = note.body.slice(0, start);
+    const after = note.body.slice(end);
+    const prefix = before && !before.endsWith("\n") ? "\n" : "";
+    const suffix = after && !after.startsWith("\n") ? "\n" : "";
+    const next = before + prefix + open + selected + close + suffix + after;
+    if (next.length > NOTE_BODY_MAX) return;
+    const selection = start + prefix.length + open.length;
+    pendingSelection.current = {
+      start: selection,
+      end: selection + selected.length,
+      restoreScroll: { top: editor.scrollTop, left: editor.scrollLeft },
+    };
+    onChange({ body: next });
+  }
+
   const surfaceTransition =
     "background var(--dur-slow) var(--ease), border-color var(--dur-slow) var(--ease), box-shadow var(--dur-slow) var(--ease), border-radius var(--dur-slow) var(--ease)";
 
@@ -1005,6 +1043,11 @@ function NoteEditor({
             transition: "font-size var(--dur-slow) var(--ease)",
           }}
         />
+        {note.originalFilename && (
+          <a className="btn btn--ghost btn--sm" href={noteOriginalHref(note.id)}>
+            Download original
+          </a>
+        )}
         <button
           type="button"
           className="btn btn--ghost btn--sm"
@@ -1017,33 +1060,75 @@ function NoteEditor({
       </div>
 
       <div
+        role="group"
+        aria-label="Note formatting"
+        style={{ display: "flex", flexWrap: "wrap", gap: 4, padding: fullscreen ? "4px 56px" : "4px 22px" }}
+      >
+        <button type="button" className="btn btn--ghost btn--sm" onClick={() => setPreview(!preview)}>
+          {preview ? "Edit" : "Preview"}
+        </button>
+        {!preview && (
+          <>
+            <button type="button" className="btn btn--ghost btn--sm" onClick={() => insertBlock("```\n", "\n```", "code")}>
+              Code block
+            </button>
+            <button type="button" className="btn btn--ghost btn--sm" onClick={() => insertBlock("$$\n", "\n$$", "x^2")}>
+              Math block
+            </button>
+          </>
+        )}
+      </div>
+      <div
         style={{
+          display: "flex",
+          flexDirection: "column",
           flex: 1,
           minHeight: 0,
-          overflowY: "auto",
-          padding: fullscreen ? "24px 56px" : "20px 28px",
-          transition: "padding var(--dur-slow) var(--ease)",
+          padding: fullscreen ? "16px 56px" : "12px 28px",
+          overflow: preview ? "auto" : "hidden",
         }}
       >
-        <textarea
-          value={note.body}
-          maxLength={NOTE_BODY_MAX}
-          onChange={(e) => onChange({ body: e.target.value })}
-          placeholder="Start writing — Sapling will pick up concepts as you go."
-          className="body-serif"
-          style={{
-            width: "100%",
-            minHeight: fullscreen ? "calc(100vh - 280px)" : 320,
-            border: "none",
-            resize: "none",
-            background: "transparent",
-            fontSize: fullscreen ? 14 : 15,
-            lineHeight: 1.7,
-            color: "var(--text)",
-            fontFamily: "var(--font-serif)",
-            transition: "font-size var(--dur-slow) var(--ease)",
-          }}
-        />
+        {preview ? (
+          <div aria-label="Note preview" style={{ overflowWrap: "anywhere" }}>
+            {note.body.trim() ? <NoteMarkdown>{note.body}</NoteMarkdown> : <p>Write something to preview your note.</p>}
+          </div>
+        ) : (
+          <textarea
+            ref={editorRef}
+            aria-label="Document text"
+            value={note.body}
+            maxLength={NOTE_BODY_MAX}
+            onChange={(e) => onChange({ body: e.target.value })}
+            onKeyDown={(event) => {
+              if (event.nativeEvent.isComposing || event.ctrlKey || event.metaKey || event.altKey) return;
+              if (event.key.length !== 1 && event.key !== "Tab") return;
+              const editor = event.currentTarget;
+              const next = codeEdit(note.body, editor.selectionStart, editor.selectionEnd, event.key, event.shiftKey);
+              if (!next || next.body.length > NOTE_BODY_MAX) return;
+              event.preventDefault();
+              if (next.body === note.body) {
+                editor.setSelectionRange(next.start, next.end);
+              } else {
+                pendingSelection.current = next;
+                onChange({ body: next.body });
+              }
+            }}
+            placeholder="Start writing — Sapling will pick up concepts as you go."
+            className="body-serif"
+            style={{
+              flex: 1,
+              minHeight: 0,
+              width: "100%",
+              border: "none",
+              resize: "none",
+              background: "transparent",
+              fontSize: fullscreen ? 14 : 15,
+              lineHeight: 1.7,
+              color: "var(--text)",
+              fontFamily: "var(--font-serif)",
+            }}
+          />
+        )}
       </div>
 
       <div
@@ -1112,7 +1197,7 @@ function NoteDetail({
   onSummarize,
   onExtract,
   onGenerateQuiz,
-  onSendToTutor,
+  onAskClov,
   onOpenConceptPicker,
   onUnlinkConcept,
   onAddTag,
@@ -1125,7 +1210,7 @@ function NoteDetail({
   onSummarize: () => void;
   onExtract: () => void;
   onGenerateQuiz: () => void;
-  onSendToTutor: () => void;
+  onAskClov: () => void;
   onOpenConceptPicker: () => void;
   onUnlinkConcept: (id: string) => void;
   onAddTag: (tag: string) => void;
@@ -1334,7 +1419,7 @@ function NoteDetail({
             type="button"
             className="btn btn--ghost"
             onClick={onGenerateQuiz}
-            disabled={busy !== null || note.linkedConcepts.length === 0}
+            disabled={busy !== null || (!note.body.trim() && note.linkedConcepts.length === 0)}
             style={{ justifyContent: "flex-start", textAlign: "left" }}
           >
             <Icon name="flask" size={13} />{" "}
@@ -1343,12 +1428,12 @@ function NoteDetail({
           <button
             type="button"
             className="btn btn--ghost"
-            onClick={onSendToTutor}
-            disabled={busy !== null}
+            onClick={onAskClov}
+            aria-label="Ask Clov"
+            title="Open fullscreen chat about this document"
             style={{ justifyContent: "flex-start", textAlign: "left" }}
           >
-            <Icon name="bolt" size={13} />{" "}
-            {busy === "tutor" ? "Opening tutor…" : "Send to tutor"}
+            <Icon name="sparkle" size={13} /> Ask Clov
           </button>
         </div>
         {note.lastSummary && (
@@ -1775,14 +1860,34 @@ function ConceptPickerModal({
   );
 }
 
-type ChatMessage = { role: "user" | "ai"; text: string; crisis?: CrisisSupport };
+type RewriteSelection = { body: string; start: number; end: number };
 
-function AIChatPanel({ noteId, userId }: { noteId: string; userId: string }) {
+type ChatMessage = {
+  role: "user" | "ai";
+  text: string;
+  crisis?: CrisisSupport;
+  rewrite?: RewriteSelection;
+};
+
+function AIChatPanel({ noteId, userId, fullscreen, beforeSend, documentBody, editorRef, onRewrite }: {
+  noteId: string;
+  userId: string;
+  fullscreen: boolean;
+  beforeSend: () => Promise<boolean>;
+  documentBody?: string;
+  editorRef: React.RefObject<HTMLTextAreaElement | null>;
+  onRewrite: (body: string) => void;
+}) {
   const [messages, setMessages] = React.useState<ChatMessage[]>([]);
   const [input, setInput] = React.useState("");
   const [sending, setSending] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const scrollRef = React.useRef<HTMLDivElement>(null);
+  const composerRef = React.useRef<HTMLInputElement>(null);
+
+  React.useEffect(() => {
+    if (fullscreen) composerRef.current?.focus();
+  }, [fullscreen]);
 
   // Stale-reply guard (#768). The parent keys this panel on the note id, so a
   // note switch mounts a fresh thread; this ref additionally pins which note a
@@ -1804,8 +1909,8 @@ function AIChatPanel({ noteId, userId }: { noteId: string; userId: string }) {
     });
   }, [messages, error]);
 
-  const send = async () => {
-    const text = input.trim();
+  const send = async (question = input.trim(), rewrite?: RewriteSelection) => {
+    const text = question.trim();
     if (!text || sending || !userId) return;
     const sentFor = noteId;
     setMessages((prev) => [...prev, { role: "user", text }]);
@@ -1813,12 +1918,26 @@ function AIChatPanel({ noteId, userId }: { noteId: string; userId: string }) {
     setError(null);
     setSending(true);
     try {
-      const res = await noteChat(sentFor, userId, text);
+      if (!(await beforeSend())) throw new Error("Save failed");
+      if (currentNoteRef.current !== sentFor) return;
+      const history = messages.filter((message) => !message.crisis && message.text)
+        .slice(-6)
+        .map((message) => ({
+          role: message.role === "ai" ? "assistant" as const : "user" as const,
+          text: message.text.slice(0, 2000),
+        }));
+      const res = documentBody === undefined && history.length === 0
+        ? await noteChat(sentFor, userId, text)
+        : await noteChat(sentFor, userId, text, history, rewrite?.body.slice(rewrite.start, rewrite.end));
       if (currentNoteRef.current !== sentFor) return;
       // docs/safety/crisis-support.md: the card instead of a reply (a typed
       // crisis message), or beside the reply (the note itself matched).
       const crisis = crisisSupportIn(res);
-      const reply: ChatMessage = { role: "ai", text: res.reply };
+      const reply: ChatMessage = {
+        role: "ai",
+        text: res.reply,
+        rewrite: res.reply?.trim() && !res.degraded && !crisis ? rewrite : undefined,
+      };
       setMessages((prev) => [
         ...prev,
         ...(crisis ? [{ role: "ai" as const, text: "", crisis }] : []),
@@ -1836,7 +1955,7 @@ function AIChatPanel({ noteId, userId }: { noteId: string; userId: string }) {
         return crisis ? [...kept, { role: "ai", text: "", crisis }] : kept;
       });
       setInput((cur) => (cur ? cur : text));
-      setError("Sorry — something went wrong. Try again?");
+      setError(humanizeError(e, "Sorry — something went wrong. Try again?"));
     } finally {
       if (currentNoteRef.current === sentFor) setSending(false);
     }
@@ -1865,7 +1984,7 @@ function AIChatPanel({ noteId, userId }: { noteId: string; userId: string }) {
         }}
       >
         <Icon name="sparkle" size={13} />
-        <span className="label-micro">Quick questions</span>
+        <span className="label-micro">Ask Clov about this document</span>
       </div>
 
       <div
@@ -1888,8 +2007,9 @@ function AIChatPanel({ noteId, userId }: { noteId: string; userId: string }) {
               lineHeight: 1.6,
             }}
           >
-            Ask Sapling anything about what you&apos;re writing — clarify a concept,
-            check a definition, or surface related ideas.
+            {documentBody === undefined
+              ? "Ask Clov to explain a concept, summarize what you wrote, or suggest changes."
+              : "Ask Clov to explain this document, find next steps, or rewrite a selected passage."}
           </div>
         ) : (
           messages.map((m, i) => m.crisis ? (
@@ -1911,6 +2031,21 @@ function AIChatPanel({ noteId, userId }: { noteId: string; userId: string }) {
               }}
             >
               {m.text}
+              {m.rewrite && (() => {
+                const { body, start, end } = m.rewrite;
+                const replacement = body.slice(0, start) + m.text.trim() + body.slice(end);
+                return (
+                  <button
+                    type="button"
+                    className="btn btn--ghost btn--sm"
+                    disabled={documentBody !== body || replacement.length > NOTE_BODY_MAX}
+                    onClick={() => onRewrite(replacement)}
+                    style={{ display: "block", marginTop: 6 }}
+                  >
+                    {documentBody === body ? "Apply rewrite" : "Document changed"}
+                  </button>
+                );
+              })()}
             </div>
           ))
         )}
@@ -1948,6 +2083,35 @@ function AIChatPanel({ noteId, userId }: { noteId: string; userId: string }) {
         )}
       </div>
 
+      {documentBody !== undefined && (
+        <div style={{ display: "flex", gap: 4, flexWrap: "wrap", padding: "0 10px 8px" }}>
+          <button type="button" className="btn btn--ghost btn--sm" disabled={sending}
+            onClick={() => void send("List concrete next steps or deadlines stated in this document. Quote the wording that supports each one. If there are none, say so.")}>
+            Find next steps
+          </button>
+          <button type="button" className="btn btn--ghost btn--sm" disabled={sending}
+            onClick={() => {
+              const editor = editorRef.current;
+              if (!editor) {
+                setError("Switch to Edit and select a passage to rewrite.");
+                return;
+              }
+              const start = editor.selectionStart;
+              const end = editor.selectionEnd;
+              const passage = documentBody.slice(start, end);
+              if (!passage.trim() || passage.length > 4000) {
+                setError("Select a passage of up to 4,000 characters in the editor.");
+                return;
+              }
+              void send(
+                "Rewrite the selected passage for clarity. Preserve its facts and meaning. Return only the replacement text in plain text.",
+                { body: documentBody, start, end },
+              );
+            }}>
+            Rewrite selection
+          </button>
+        </div>
+      )}
       <div
         style={{
           padding: 10,
@@ -1966,6 +2130,8 @@ function AIChatPanel({ noteId, userId }: { noteId: string; userId: string }) {
               send();
             }
           }}
+          ref={composerRef}
+          aria-label="Ask Clov about this document"
           placeholder="Ask a quick question…"
           disabled={sending}
           style={{
@@ -1982,7 +2148,7 @@ function AIChatPanel({ noteId, userId }: { noteId: string; userId: string }) {
         />
         <button
           type="button"
-          onClick={send}
+          onClick={() => void send()}
           className="btn btn--sm btn--primary"
           disabled={!input.trim() || sending}
           style={{ flexShrink: 0 }}

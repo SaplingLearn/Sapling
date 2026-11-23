@@ -12,7 +12,7 @@
  *
  * Renders the real page (mirrors `page.testmode.test.tsx`'s mocking strategy)
  * rather than only unit-testing `quizHrefForNote` in isolation, since the
- * disabled-until-linked gating and the `?note=` mount behaviour both live in
+ * unlinked-note quiz flow and the `?note=` mount behaviour both live in
  * the component itself.
  */
 
@@ -46,7 +46,7 @@ vi.mock("@/components/Icon", () => ({
 vi.mock("@/lib/api", () => ({
   listNotes: vi.fn(),
   createNote: vi.fn(),
-  patchNote: vi.fn(),
+  patchNote: vi.fn(async () => ({})),
   deleteNote: vi.fn(),
   listNoteConcepts: vi.fn(),
   linkNoteConcept: vi.fn(),
@@ -135,12 +135,12 @@ afterEach(() => {
 describe("quizHrefForNote (pure)", () => {
   it("carries the concept, the notes source and a return path that reopens the note", () => {
     const href = quizHrefForNote("n1", "concept-1");
-    expect(href).toBe("/quiz?concept=concept-1&from=notes&return=%2Fnotetaker%3Fnote%3Dn1&note=n1");
+    expect(href).toBe("/quiz?concept=concept-1&from=notes&return=%2Fnotetaker%3Fnote%3Dn1&note=n1&start=1");
   });
 });
 
 describe("Generate quiz button", () => {
-  it("stays disabled until the active note has a linked concept", async () => {
+  it("starts a quiz from a written note without pre-linked concepts", async () => {
     render(<NotetakerPage />);
     await screen.findByPlaceholderText("Untitled note");
 
@@ -150,7 +150,10 @@ describe("Generate quiz button", () => {
 
     // Switch to n2 ("Loops"), which has no linked concepts.
     fireEvent.click(screen.getByText("Loops"));
-    await waitFor(() => expect(button).toBeDisabled());
+    await waitFor(() => expect(button).not.toBeDisabled());
+    fireEvent.click(button);
+    await waitFor(() => expect(mockedGenerateQuiz).toHaveBeenCalledWith("n2", "u1"));
+    await waitFor(() => expect(push).toHaveBeenCalledWith(expect.stringContaining("start=1")));
   });
 
   it("pushes a deep link with concept=, from=notes, note=<id> and an encoded return= reopening the note", async () => {
@@ -192,5 +195,69 @@ describe("?note=<id> reopens a specific note on mount", () => {
       const title = await screen.findByPlaceholderText("Untitled note");
       expect((title as HTMLInputElement).value).toBe("Recursion");
     });
+  });
+});
+
+describe("note formatting", () => {
+  it.each([["Code block", "code"], ["Math block", "x^2"]])(
+    "keeps the editor scroll position and selects the %s placeholder",
+    async (button, placeholder) => {
+      render(<NotetakerPage />);
+      fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+      const editor = screen.getByRole("textbox", { name: "Document text" }) as HTMLTextAreaElement;
+      fireEvent.change(editor, { target: { value: "Note text\n".repeat(200) } });
+      editor.setSelectionRange(200, 200);
+      editor.scrollTop = 250;
+      editor.scrollLeft = 12;
+
+      const select = editor.setSelectionRange.bind(editor);
+      const selection = vi.spyOn(editor, "setSelectionRange").mockImplementation((start, end) => {
+        select(start, end);
+        editor.scrollTop = 4000;
+        editor.scrollLeft = 0;
+      });
+      try {
+        fireEvent.click(screen.getByRole("button", { name: button }));
+        expect(editor).toHaveFocus();
+        expect(editor.value.slice(editor.selectionStart, editor.selectionEnd)).toBe(placeholder);
+        expect(editor.scrollTop).toBe(250);
+        expect(editor.scrollLeft).toBe(12);
+      } finally {
+        selection.mockRestore();
+      }
+    },
+  );
+
+  it("inserts a fenced code block and renders it and LaTeX in Preview", { timeout: 15_000 }, async () => {
+    render(<NotetakerPage />);
+    const edit = await screen.findByRole("button", { name: "Edit" });
+    expect(screen.queryByRole("button", { name: "Preview" })).toBeNull();
+    expect(screen.getByLabelText("Note preview")).toBeInTheDocument();
+    fireEvent.click(edit);
+    expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
+    const editor = await screen.findByRole("textbox", { name: "Document text" }) as HTMLTextAreaElement;
+    fireEvent.change(editor, { target: { value: "const result = 2;" } });
+    editor.setSelectionRange(0, editor.value.length);
+    fireEvent.click(screen.getByRole("button", { name: "Code block" }));
+    const fenced = "```\nconst result = 2;\n```";
+    expect(editor).toHaveValue(fenced);
+    fireEvent.change(editor, { target: { value: fenced + "\n\n$$\nx^2\n$$" } });
+    editor.setSelectionRange(fenced.indexOf("const"), fenced.indexOf("const"));
+    fireEvent.keyDown(editor, { key: "(" });
+    expect(editor.value).toContain("()const");
+    expect(editor.selectionStart).toBe(fenced.indexOf("const") + 1);
+    fireEvent.keyDown(editor, { key: ")" });
+    expect(editor.selectionStart).toBe(fenced.indexOf("const") + 2);
+    fireEvent.keyDown(editor, { key: "Tab" });
+    expect(editor.value).toContain("()  const");
+    fireEvent.change(editor, { target: { value: fenced + "\n\n$$\nx^2\n$$" } });
+    fireEvent.click(screen.getByRole("button", { name: "Preview" }));
+    const preview = screen.getByLabelText("Note preview");
+    await waitFor(() => {
+      expect(preview.querySelector("pre code")).toHaveTextContent("const result = 2;");
+      expect(preview.querySelector(".katex-display")).toBeInTheDocument();
+    }, { timeout: 10_000 });
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    expect(screen.getByRole("textbox", { name: "Document text" })).toHaveValue(fenced + "\n\n$$\nx^2\n$$");
   });
 });

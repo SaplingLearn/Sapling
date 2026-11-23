@@ -27,6 +27,7 @@ vi.mock("../DocumentUploadModal", () => ({
 
 vi.mock("@/lib/api", () => ({
   getDocuments: vi.fn(),
+  listNotes: vi.fn(async () => ({ notes: [] })),
   deleteDocument: vi.fn(),
   getCourses: vi.fn(async () => ({ courses: [] })),
   scanDocumentConcepts: vi.fn(),

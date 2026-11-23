@@ -1990,6 +1990,17 @@ export const createNote = (
     body: JSON.stringify({ user_id: userId, course_id: courseId, title, body, tags }),
   });
 
+export const importEditableDocument = (userId: string, courseId: string, file: File) => {
+  const body = new FormData();
+  body.set('user_id', userId);
+  body.set('course_id', courseId);
+  body.set('file', file);
+  return fetchJSON<Note>('/api/notes/import', { method: 'POST', headers: {}, body });
+};
+
+export const noteOriginalHref = (noteId: string) =>
+  `${API_URL}/api/notes/${encodeURIComponent(noteId)}/original`;
+
 export const getNote = (noteId: string, userId: string) =>
   fetchJSON<Note>(`/api/notes/${noteId}?user_id=${encodeURIComponent(userId)}`);
 
@@ -2043,10 +2054,16 @@ export const extractNoteConcepts = (noteId: string, userId: string) =>
     { method: 'POST', body: JSON.stringify({ user_id: userId }) },
   );
 
-export const noteChat = (noteId: string, userId: string, message: string) =>
-  fetchJSON<{ reply: string } & WithCrisisSupport>(`/api/notes/${noteId}/chat`, {
+export const noteChat = (
+  noteId: string,
+  userId: string,
+  message: string,
+  history?: { role: 'user' | 'assistant'; text: string }[],
+  rewriteSelection?: string,
+) =>
+  fetchJSON<{ reply: string; degraded?: boolean } & WithCrisisSupport>(`/api/notes/${noteId}/chat`, {
     method: 'POST',
-    body: JSON.stringify({ user_id: userId, message }),
+    body: JSON.stringify({ user_id: userId, message, history, rewrite_selection: rewriteSelection }),
   });
 
 export const sendNoteToTutor = (noteId: string, userId: string) =>
@@ -2056,7 +2073,7 @@ export const sendNoteToTutor = (noteId: string, userId: string) =>
   );
 
 export const generateQuizFromNote = (noteId: string, userId: string) =>
-  fetchJSON<{ concept_node_id: string; concept_name: string }>(
+  fetchJSON<{ concept_node_id?: string; concept_name?: string } & WithCrisisSupport>(
     `/api/notes/${noteId}/generate-quiz`,
     { method: 'POST', body: JSON.stringify({ user_id: userId }) },
   );

@@ -7,12 +7,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
 
-from fastapi import APIRouter, HTTPException, Request
-from typing import Annotated
+import httpx
+
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
-from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded
+from starlette.responses import Response
+from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior, UsageLimitExceeded
 
 from agents import ORCHESTRATOR_LIMITS, WORKER_LIMITS
 from agents.deps import SaplingDeps
@@ -21,7 +25,7 @@ from agents.note_concepts import note_concepts_agent
 from agents.note_summary import note_summary_agent
 from agents.tools.graph import apply_concepts_to_graph
 from agents.usage import record_agent_usage
-from db.connection import table
+from db.connection import pg_quote_value, table
 from models import CHAT_MESSAGE_MAX, Id
 from services import crisis_support, events_service
 from services.academics import (
@@ -30,7 +34,11 @@ from services.academics import (
 )
 from services.auth_guard import get_session_user_id, require_self, guard_off_loop
 from services import abuse_limits
-from services.request_limits import aenforce_abuse_limit
+from services.request_limits import aenforce_abuse_limit, read_within_limit
+from services import note_originals
+from services.extraction_service import extract_text_from_file
+from services.upload_validation import DOCX, PDF, matching_type
+from services.prompt_safety import wrap_untrusted
 from services.notes_service import (
     create_note,
     delete_note,
@@ -60,6 +68,14 @@ _CHAT_DEGRADED_REPLY = (
 )
 
 
+def _provider_unavailable(exc: ModelHTTPError, action: str) -> HTTPException:
+    logger.warning(
+        "Note AI provider rejected %s: model=%s status=%s",
+        action, exc.model_name, exc.status_code,
+    )
+    return HTTPException(status_code=503, detail="Clov is unavailable. Try again later.")
+
+
 async def _run_note_worker(agent, user_prompt: str, deps: SaplingDeps, *, action: str):
     """Run a single-shot note worker under WORKER_LIMITS (#329).
 
@@ -69,6 +85,8 @@ async def _run_note_worker(agent, user_prompt: str, deps: SaplingDeps, *, action
     """
     try:
         return await agent.run(user_prompt, deps=deps, usage_limits=WORKER_LIMITS)
+    except ModelHTTPError as exc:
+        raise _provider_unavailable(exc, action) from None
     except UsageLimitExceeded as e:
         # Deterministic budget exhaustion — a 413 with no "try again" wording,
         # since retrying the same (too-long) note trips the same limit.
@@ -252,6 +270,79 @@ async def create(body: CreateNoteBody, request: Request):
     return note
 
 
+@router.post("/import", status_code=201)
+async def import_document(
+    request: Request,
+    user_id: Annotated[Id, Form()],
+    course_id: Annotated[Id, Form()],
+    file: Annotated[UploadFile, File()],
+):
+    await guard_off_loop(require_self, user_id, request)
+    await aenforce_abuse_limit(abuse_limits.DOCUMENT_UPLOAD, user_id)
+    offering_id = await asyncio.to_thread(require_course_enrollment, user_id, course_id)
+    filename = (file.filename or "").replace(chr(92), "/").rsplit("/", 1)[-1].strip()
+    if not filename or len(filename) > NOTE_TITLE_MAX or any(ord(char) < 32 for char in filename):
+        raise HTTPException(status_code=422, detail="Choose a file with a valid filename.")
+    contents = await read_within_limit(file, note_originals.MAX_IMPORT_BYTES)
+    content_type = matching_type(filename, contents, {PDF, DOCX})
+    if not content_type:
+        raise HTTPException(status_code=415, detail="Choose a valid PDF or Word (.docx) file.")
+    try:
+        extracted = await asyncio.to_thread(extract_text_from_file, contents, filename, content_type)
+    except Exception as exc:
+        logger.warning("Editable document extraction failed", exc_info=True)
+        raise HTTPException(status_code=422, detail="Couldn't read this PDF or Word document.") from exc
+    text = (extracted or "").replace(chr(0), "").strip()
+    if not text:
+        raise HTTPException(status_code=422, detail="No readable text was found in this document.")
+    # The browser's textarea limit counts UTF-16 code units.
+    if len(text.encode("utf-16-le")) // 2 > NOTE_BODY_MAX:
+        raise HTTPException(status_code=413, detail="This document has too much text for one editable copy.")
+
+    note_id = str(uuid.uuid4())
+    stored = False
+    try:
+        size = await asyncio.to_thread(note_originals.store_original, user_id, note_id, contents)
+        stored = True
+        note = await create_note(
+            user_id=user_id, offering_id=offering_id, title=filename, body=text,
+            note_id=note_id, original=(filename, content_type, size),
+        )
+    except httpx.HTTPError as exc:
+        # The insert can commit even if its response is lost. Check ownership
+        # before removing the object in that case.
+        note = None
+        if stored and (not isinstance(exc, httpx.HTTPStatusError) or exc.response.status_code >= 500):
+            try:
+                note = await get_note(note_id=note_id, user_id=user_id)
+            except httpx.HTTPError as lookup_error:
+                logger.exception("Could not confirm imported note %s", note_id)
+                raise HTTPException(status_code=502, detail="Check your Library before retrying.") from lookup_error
+        if note is None:
+            try:
+                await asyncio.to_thread(note_originals.remove_originals, user_id, [note_id])
+            except (httpx.HTTPError, RuntimeError):
+                logger.exception("Could not clean up failed note original %s", note_id)
+            if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 413:
+                raise HTTPException(status_code=413, detail="Original file storage quota reached.") from exc
+            raise HTTPException(status_code=502, detail="Couldn't save the imported document. Try again.") from exc
+    note.update(await _course_meta(offering_id, {}))
+    return note
+
+
+@router.get("/{note_id}/original", response_class=Response)
+async def original_document(note_id: str, request: Request):
+    user_id = await guard_off_loop(get_session_user_id, request)
+    await aenforce_abuse_limit(abuse_limits.NOTE_LOOKUP, user_id)
+    note = await get_note(note_id=note_id, user_id=user_id)
+    if not note or not note.get("original_filename"):
+        raise HTTPException(status_code=404, detail="Original file not found.")
+    try:
+        return await asyncio.to_thread(note_originals.download_original, note)
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail="Couldn't download the original file. Try again.") from exc
+
+
 @router.get("/{note_id}")
 async def read(note_id: str, request: Request, user_id: str):
     await guard_off_loop(require_self, user_id, request)
@@ -294,6 +385,12 @@ async def patch(note_id: str, body: UpdateNoteBody, request: Request):
 @router.delete("/{note_id}")
 async def remove(note_id: str, request: Request, user_id: str):
     await guard_off_loop(require_self, user_id, request)
+    note = await get_note(note_id=note_id, user_id=user_id)
+    if note and note.get("original_filename"):
+        try:
+            await asyncio.to_thread(note_originals.remove_originals, user_id, [note_id])
+        except (httpx.HTTPError, RuntimeError) as exc:
+            raise HTTPException(status_code=502, detail="Couldn't remove the original file. Try again.") from exc
     await delete_note(note_id=note_id, user_id=user_id)
     return {"deleted": True}
 
@@ -358,7 +455,7 @@ async def _lookup_concept_nodes_by_name(
     import asyncio as _asyncio
     if not names:
         return []
-    in_clause = "in.(" + ",".join(names) + ")"
+    in_clause = "in.(" + ",".join(pg_quote_value(name) for name in names) + ")"
     filters = {"user_id": f"eq.{user_id}", "concept_name": in_clause}
     if course_id:
         filters["course_id"] = f"eq.{course_id}"
@@ -444,31 +541,41 @@ async def extract_concepts(
         request, body.user_id, "note_extract_concepts", *_note_texts(note)
     )
 
-    async def action() -> dict:
-        await aenforce_abuse_limit(abuse_limits.NOTE_AI_ACTION, body.user_id)
-        user_prompt = _note_user_prompt(note)
-        # Concepts land in the abstract-course graph; resolve offering → course.
-        course_id = offering_course_id(note.get("offering_id"))
-        deps = _deps_for(body.user_id, course_id, note_id)
-        result = record_agent_usage(
-            await _run_note_worker(note_concepts_agent, user_prompt, deps, action="concept extraction"),
-            feature="notes", task="note_concepts", user_id=body.user_id,
-        )
-        names = [n.strip() for n in (result.output.concepts or []) if n and n.strip()]
-        await apply_concepts_to_graph(user_id=body.user_id, course_id=course_id, concept_names=names)
-        nodes = await _lookup_concept_nodes_by_name(user_id=body.user_id, course_id=course_id, names=names)
-        # Both sides are already proven the student's: get_note above is
-        # user-scoped and the lookup filters graph_nodes by user_id, so one bulk
-        # idempotent write replaces link_concept's per-node re-checks.
-        linked = await link_prechecked_concepts(note_id=note_id, node_ids=[n["id"] for n in nodes])
-        return {"concepts": names, "linked": linked}
+    return await crisis_support.alongside(
+        screen, _extract_and_link_note_concepts(note, note_id, body.user_id)
+    )
 
-    return await crisis_support.alongside(screen, action())
+
+async def _extract_and_link_note_concepts(note: dict, note_id: str, user_id: str) -> dict:
+    await aenforce_abuse_limit(abuse_limits.NOTE_AI_ACTION, user_id)
+    user_prompt = _note_user_prompt(note)
+    # Concepts land in the abstract-course graph; resolve offering → course.
+    course_id = offering_course_id(note.get("offering_id"))
+    deps = _deps_for(user_id, course_id, note_id)
+    result = record_agent_usage(
+        await _run_note_worker(note_concepts_agent, user_prompt, deps, action="concept extraction"),
+        feature="notes", task="note_concepts", user_id=user_id,
+    )
+    names = [n.strip() for n in (result.output.concepts or []) if n and n.strip()]
+    await apply_concepts_to_graph(user_id=user_id, course_id=course_id, concept_names=names)
+    nodes = await _lookup_concept_nodes_by_name(user_id=user_id, course_id=course_id, names=names)
+    # Both sides are already proven the student's: get_note above is
+    # user-scoped and the lookup filters graph_nodes by user_id, so one bulk
+    # idempotent write replaces link_concept's per-node re-checks.
+    linked = await link_prechecked_concepts(note_id=note_id, node_ids=[n["id"] for n in nodes])
+    return {"concepts": names, "linked": linked}
+
+
+class NoteChatTurn(BaseModel):
+    role: Literal["user", "assistant"]
+    text: str = Field(max_length=2000)
 
 
 class NoteChatBody(BaseModel):
     user_id: Id
     message: str = Field(max_length=CHAT_MESSAGE_MAX)
+    history: list[NoteChatTurn] = Field(default_factory=list, max_length=6)
+    rewrite_selection: str | None = Field(default=None, max_length=4000)
 
 
 @router.post("/{note_id}/chat")
@@ -480,6 +587,8 @@ async def note_chat(note_id: str, body: NoteChatBody, request: Request):
     note = await get_note(note_id=note_id, user_id=body.user_id)
     if not note:
         raise HTTPException(status_code=404, detail="Note not found.")
+    if body.rewrite_selection and body.rewrite_selection not in (note.get("body") or ""):
+        raise HTTPException(status_code=409, detail="The document changed. Select the passage again.")
     # ...the note the chat agent reads never blocks: a match shows the card alongside
     # Re-read every turn: the card goes beside each answer, the event once a
     # day per note version.
@@ -495,11 +604,22 @@ async def note_chat(note_id: str, body: NoteChatBody, request: Request):
         # M7: a concept the chat adds must come from the message or the note
         # (the agent's read tools add what they return).
         deps.concept_context = [body.message, note.get("title") or "", note.get("body") or ""]
+        prompt = body.message
+        if body.rewrite_selection:
+            prompt += "\n\n" + wrap_untrusted(body.rewrite_selection, source="selected document passage")
+        if body.history:
+            transcript = "\n".join(f"{turn.role}: {turn.text}" for turn in body.history)
+            prompt = (
+                wrap_untrusted(transcript, source="previous document chat turns")
+                + "\n\nCurrent question:\n" + prompt
+            )
         try:
             result = record_agent_usage(
-                await note_chat_agent.run(body.message, deps=deps, usage_limits=ORCHESTRATOR_LIMITS),
+                await note_chat_agent.run(prompt, deps=deps, usage_limits=ORCHESTRATOR_LIMITS),
                 feature="notes", task="note_chat", user_id=body.user_id,
             )
+        except ModelHTTPError as exc:
+            raise _provider_unavailable(exc, "chat") from None
         except UsageLimitExceeded as e:
             # Only a real budget trip reaches the in-band degrade, so the budget
             # wording in _CHAT_DEGRADED_REPLY is accurate. Retrying is safe with no
@@ -557,24 +677,34 @@ async def send_to_tutor(
 async def generate_quiz_from_note(
     note_id: str, body: AgentActionBody, request: Request
 ):
-    # No NOTE_AI_ACTION unit: this picks a linked concept and runs no model.
-    # The quiz itself is generated (and limited) by /api/quiz/generate. The
-    # cheap note budget bounds it, charged before any read (no crisis screen
-    # here, so nothing has to come first).
     await guard_off_loop(require_self, body.user_id, request)
     await aenforce_abuse_limit(abuse_limits.NOTE_LOOKUP, body.user_id)
     note = await get_note(note_id=note_id, user_id=body.user_id)
     if not note:
         raise HTTPException(status_code=404, detail="Note not found.")
     linked = await list_linked_concepts(note_id=note_id, user_id=body.user_id)
-    if not linked:
-        raise HTTPException(
-            status_code=400,
-            detail="Link at least one concept before generating a quiz.",
-        )
-    # Lowest mastery wins so the quiz targets the weakest spot.
-    chosen = min(linked, key=lambda c: float(c.get("mastery_score") or 0.0))
+    if linked:
+        return _quiz_concept(linked)
+    if not (note.get("body") or "").strip():
+        raise HTTPException(status_code=400, detail="Write something in this note to generate a quiz.")
+
+    screen = await crisis_support.screen_content_async(
+        request, body.user_id, "note_extract_concepts", *_note_texts(note)
+    )
+
+    async def action() -> dict:
+        await _extract_and_link_note_concepts(note, note_id, body.user_id)
+        concepts = await list_linked_concepts(note_id=note_id, user_id=body.user_id)
+        if not concepts:
+            raise HTTPException(status_code=422, detail="Add more detail to find a concept for this quiz.")
+        return _quiz_concept(concepts)
+
+    return await crisis_support.alongside(screen, action())
+
+
+def _quiz_concept(linked: list[dict]) -> dict:
+    chosen = min(linked, key=lambda concept: float(concept.get("mastery_score") or 0.0))
     return {
-        "concept_node_id": chosen.get("id"),
-        "concept_name": chosen.get("concept_name"),
+        "concept_node_id": chosen["id"],
+        "concept_name": chosen["concept_name"],
     }

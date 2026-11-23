@@ -1533,6 +1533,7 @@ export const RECIPES_STUDY: RecipeBook = {
     run: async (page) => {
       await holdOn(page, "PATCH", /^\/api\/notes\/[^/]+$/);
       await openNote(page);
+      await page.getByRole("button", { name: "Edit", exact: true }).click();
       await noteBody(page).press("End");
       await noteBody(page).pressSequentially(" Strings are immutable.");
       await expect(page.getByText("Saving…")).toBeVisible({ timeout: 10_000 });
@@ -1543,6 +1544,7 @@ export const RECIPES_STUDY: RecipeBook = {
     run: async (page) => {
       await json(page, "PATCH", /^\/api\/notes\/[^/]+$/, { id: NOTE_CS });
       await openNote(page);
+      await page.getByRole("button", { name: "Edit", exact: true }).click();
       await noteBody(page).press("End");
       await noteBody(page).pressSequentially(" Strings are immutable.");
       await expect(page.getByText("Saved · just now")).toBeVisible({ timeout: 10_000 });
@@ -1554,7 +1556,7 @@ export const RECIPES_STUDY: RecipeBook = {
       await json(page, "GET", noteConcepts(), { concepts: [] });
       await openNote(page);
       await expect(page.getByText("No concepts linked yet.", { exact: false })).toBeVisible();
-      await expect(page.getByRole("button", { name: "Generate quiz" })).toBeDisabled();
+      await expect(page.getByRole("button", { name: "Generate quiz" })).toBeEnabled();
     },
   },
 

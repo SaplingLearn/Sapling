@@ -58,6 +58,8 @@ def _match(row, col, cond):
         return cur is not None and str(cur) != val
     if op == "is":
         return cur is None if val == "null" else str(cur).lower() == val
+    if op == "not":
+        return not _match(row, col, val)
     if op == "in":
         return str(cur) in {_unquote(v) for v in val.strip("()").split(",")}
     raise AssertionError(f"filter op {op!r} not modelled")

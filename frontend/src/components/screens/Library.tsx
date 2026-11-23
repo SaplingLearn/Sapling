@@ -21,6 +21,7 @@ import { useIsMobile } from "@/lib/useIsMobile";
 import { useScrollLock } from "@/lib/useScrollLock";
 import { useLatestRequest } from "@/lib/useLatestRequest";
 import { useUser } from "@/context/UserContext";
+import { useFlagMap } from "@/context/FlagsContext";
 import {
   getDocuments,
   deleteDocument,
@@ -34,6 +35,7 @@ import { LibraryGuides } from "../studyGuide/home/LibraryGuides";
 import { libraryGuides } from "../studyGuide/home/guidesModel";
 import { useLibraryGuides } from "../studyGuide/home/useLibraryGuides";
 import { humanizeError } from "@/lib/errorMessage";
+import { LibraryEditableDocuments } from "./LibraryEditableDocuments";
 
 const catColor: Record<Doc["category"], string> = {
   lecture_notes: "var(--c-sage)",
@@ -52,6 +54,7 @@ export function Library() {
   const toast = useToast();
   const isMobile = useIsMobile();
   const { userId, userReady } = useUser();
+  const { flags, ready: flagsReady } = useFlagMap();
   const [documents, setDocuments] = React.useState<Doc[]>([]);
   const [courses, setCourses] = React.useState<EnrolledCourse[]>([]);
   // Every guide the student has; the ones saved to the Library show here.
@@ -253,6 +256,7 @@ export function Library() {
               view === "grid" ? <LibraryGridSkeleton /> : <LibraryListSkeleton />
             ) : (
               <>
+            {userId && flagsReady && flags.hide_notetaker !== "on" && <LibraryEditableDocuments key={userId} userId={userId} courses={courses} courseFilter={courseFilter} query={query} />}
             {loadError && documents.length === 0 && (
               <div data-testid="library-load-error" role="alert" style={{ textAlign: "center", padding: "60px 20px", color: "var(--text-muted)", maxWidth: 440, margin: "0 auto" }}>
                 <div className="h-serif" style={{ fontSize: 22, color: "var(--text)" }}>Couldn&apos;t load your library</div>

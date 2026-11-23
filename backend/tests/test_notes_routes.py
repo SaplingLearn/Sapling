@@ -290,7 +290,10 @@ class TestDeleteNote:
         called = {}
         async def fake_delete(note_id, user_id):
             called["args"] = (note_id, user_id)
-        with patch("routes.notes.delete_note", side_effect=fake_delete):
+        with (
+            patch("routes.notes.get_note", return_value=None),
+            patch("routes.notes.delete_note", side_effect=fake_delete),
+        ):
             r = client.delete("/api/notes/n1?user_id=u1")
         assert r.status_code == 200
         assert r.json() == {"deleted": True}
@@ -700,6 +703,19 @@ class TestGenerateQuizFromNote:
         # handles quiz state.
         assert r.json() == {"concept_node_id": "g2", "concept_name": "Hard"}
 
+    def test_extracts_concepts_for_a_written_note_without_links(self, client):
+        with (
+            patch("routes.notes.get_note", side_effect=fake_get_note(body="Arrays store ordered items.")),
+            patch("routes.notes.list_linked_concepts", side_effect=[
+                [], [{"id": "arrays", "concept_name": "Arrays", "mastery_score": 0}],
+            ]),
+            patch("routes.notes._extract_and_link_note_concepts") as extract,
+        ):
+            response = client.post("/api/notes/n1/generate-quiz", json={"user_id": "u1"})
+        assert response.status_code == 200
+        assert response.json()["concept_node_id"] == "arrays"
+        extract.assert_awaited_once()
+
     def test_returns_400_when_no_linked_concepts(self, client):
         async def fake_get_note(note_id, user_id):
             return {"id": note_id, "user_id": user_id, "course_id": "c1",
@@ -715,3 +731,71 @@ class TestGenerateQuizFromNote:
                 json={"user_id": "u1"},
             )
         assert r.status_code == 400
+
+
+def test_import_saves_editable_text_and_preserves_original(client):
+    raw = b"%PDF-1.7\noriginal bytes"
+    with (
+        patch("routes.notes.require_course_enrollment", return_value="off1"),
+        patch("routes.notes.extract_text_from_file", return_value="Editable syllabus"),
+        patch("routes.notes.note_originals.store_original", return_value=100) as store,
+        patch("routes.notes.create_note", return_value={"id": "n1"}) as create,
+        patch("routes.notes._course_meta", return_value={"course_id": "c1"}),
+    ):
+        response = client.post(
+            "/api/notes/import", data={"user_id": "u1", "course_id": "c1"},
+            files={"file": ("Syllabus.pdf", raw, "application/pdf")},
+        )
+    assert response.status_code == 201
+    assert response.json()["course_id"] == "c1"
+    assert store.call_args.args == ("u1", create.call_args.kwargs["note_id"], raw)
+    assert create.call_args.kwargs["body"] == "Editable syllabus"
+    assert create.call_args.kwargs["original"] == ("Syllabus.pdf", "application/pdf", 100)
+
+
+def test_original_download_requires_owned_note(client):
+    with (
+        patch("routes.notes.get_session_user_id", return_value="u1"),
+        patch("routes.notes.get_note", return_value=None) as get,
+        patch("routes.notes.note_originals.download_original") as download,
+    ):
+        response = client.get("/api/notes/other-users-note/original")
+    assert response.status_code == 404
+    get.assert_awaited_once_with(note_id="other-users-note", user_id="u1")
+    download.assert_not_called()
+
+
+def test_rewrite_rejects_a_stale_selection(client):
+    with (
+        patch("routes.notes.get_note", side_effect=fake_get_note(body="Updated text")),
+        patch("routes.notes.note_chat_agent") as agent,
+    ):
+        response = client.post(
+            "/api/notes/n1/chat",
+            json={"user_id": "u1", "message": "Rewrite this", "rewrite_selection": "Old text"},
+        )
+    assert response.status_code == 409
+    agent.run.assert_not_called()
+
+@pytest.mark.parametrize(
+    ("endpoint", "agent_name", "payload"),
+    [
+        ("summarize", "note_summary_agent", {}),
+        ("extract-concepts", "note_concepts_agent", {}),
+        ("chat", "note_chat_agent", {"message": "What is ATP?"}),
+    ],
+)
+def test_provider_authentication_failure_returns_actionable_error(client, endpoint, agent_name, payload):
+    from unittest.mock import AsyncMock
+    from pydantic_ai.exceptions import ModelHTTPError
+
+    failure = ModelHTTPError(status_code=401, model_name="test-model", body="private provider response")
+    with (
+        patch("routes.notes.get_note", side_effect=fake_get_note()),
+        patch("routes.notes.offering_course_id", return_value="course1"),
+        patch(f"routes.notes.{agent_name}.run", new=AsyncMock(side_effect=failure)),
+    ):
+        response = client.post(f"/api/notes/n1/{endpoint}", json={"user_id": "u1", **payload})
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Clov is unavailable. Try again later."
+    assert "private provider response" not in response.text

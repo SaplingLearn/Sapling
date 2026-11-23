@@ -47,6 +47,9 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
+from itertools import batched
+
+import httpx
 
 from db.connection import page_all, pg_quote_value, table
 from services import chunk_visibility
@@ -252,6 +255,18 @@ def _wipe_documents(user_id: str) -> dict[str, int]:
     return counts
 
 
+def _wipe_note_originals(user_id: str) -> None:
+    from services.note_originals import remove_originals
+
+    filters = {"user_id": f"eq.{user_id}", "original_bytes": "not.is.null"}
+    rows = page_all(table("notes"), "id", filters=filters, order="id")
+    try:
+        for batch in batched(rows, 100):
+            remove_originals(user_id, [row["id"] for row in batch])
+    except (httpx.HTTPError, RuntimeError) as exc:
+        raise AccountWipeIncomplete("Could not complete note original cleanup") from exc
+
+
 def wipe_account_data(user_id: str) -> dict[str, int]:
     """Delete `user_id`'s account data and reset its counters; keep the account.
 
@@ -269,6 +284,7 @@ def wipe_account_data(user_id: str) -> dict[str, int]:
     # order also never leaves an enrollment pointing at a deleted document.
     counts["enrollments"] = _delete_owned("enrollments", user_id)
     counts.update(_wipe_documents(user_id))
+    _wipe_note_originals(user_id)
     for name, key in _USER_TABLES:
         counts[name] = _delete_owned(name, user_id, key)
 

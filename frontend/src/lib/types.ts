@@ -625,6 +625,7 @@ export interface LinkedConcept {
 }
 
 export interface Note {
+  original_filename?: string | null;
   id: string;
   user_id: string;
   course_id: string;

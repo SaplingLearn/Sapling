@@ -337,19 +337,10 @@ test("Ask about this seeds the tutor, streams, and leaves the attempt intact", a
 });
 
 // ───────────────────────────────────────────────────────────────────────────
-// 4. The notetaker gate
+// 4. Generate a quiz directly from an unlinked note
 // ───────────────────────────────────────────────────────────────────────────
 
-/**
- * "Generate quiz" on a note is disabled until the note has a linked concept
- * (`routes/notes.py` 400s otherwise), and #537 kept that gate while rewriting
- * where the button LANDS: a `from=notes` deep link with a `return` that reopens
- * this note, and a results exit labelled "Back to your note".
- *
- * The seeded notes have no concept links, so the disabled state is the starting
- * state rather than something this journey has to manufacture.
- */
-test("the note's Generate quiz gate holds, and the round trip reopens the note", async ({
+test("Generate quiz starts from an unlinked note and the round trip reopens it", async ({
   page,
 }) => {
   test.setTimeout(240_000);
@@ -364,33 +355,17 @@ test("the note's Generate quiz gate holds, and the round trip reopens the note",
 
   const generate = page.getByRole("button", { name: "Generate quiz" });
   await expect(page.getByText("No concepts linked yet.")).toBeVisible();
-  await expect(generate).toBeDisabled();
-
-  // Link one concept through the real picker.
-  await page.getByRole("button", { name: "Link concept" }).click();
-  const picker = page.getByRole("dialog").filter({ hasText: "Pick a concept to link" });
-  await expect(picker).toBeVisible();
-  await picker.getByRole("button", { name: new RegExp(`^${NODE_RECURSION_NAME}\\b`) }).click();
-  await expect(picker).toHaveCount(0);
-  await expect(page.getByLabel(`Unlink ${NODE_RECURSION_NAME}`)).toBeVisible();
-
   await expect(generate).toBeEnabled();
   await generate.click();
 
   // §6: concept id (not a name), the origin, and the way back to THIS note.
   await expect(page).toHaveURL(/\/quiz\?/, { timeout: 30_000 });
   const entry = new URL(page.url()).searchParams;
-  expect(entry.get("concept")).toBe(NODE_RECURSION);
+  expect(entry.get("concept")).toBeTruthy();
   expect(entry.get("from")).toBe("notes");
   expect(entry.get("note")).toBe(NOTE_CS_WEEK1);
   expect(entry.get("return")).toBe(`/notetaker?note=${NOTE_CS_WEEK1}`);
 
-  const proposal = page.getByTestId("quiz-proposal");
-  await expect(proposal).toBeVisible({ timeout: 30_000 });
-  await expect(proposal).toContainText(NODE_RECURSION_NAME);
-  await expect(proposal).toContainText("From your note");
-
-  await page.getByTestId("quiz-start").click();
   await answerAtEnd(page, CORRECT_LABELS);
   await expect(page.getByTestId("quiz-results")).toBeVisible({ timeout: 60_000 });
 

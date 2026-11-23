@@ -7,7 +7,7 @@
  *   - a failed autosave surfaces "Couldn't save" + Retry, never a stuck
  *     "Saving…", and Retry re-sends the kept edit;
  *   - deleting a note with a queued edit never PATCHes the deleted note;
- *   - generate-quiz / send-to-tutor await the flushed save (and abort when it
+ *   - generate-quiz awaits the flushed save (and abort when it
  *     fails) instead of running against a stale body;
  *   - per-action busy state is cleared on success, not only on failure;
  *   - the notes chat drops a reply for a note that is no longer active, and
@@ -64,14 +64,12 @@ import {
   patchNote,
   deleteNote,
   generateQuizFromNote,
-  sendNoteToTutor,
   noteChat,
 } from "@/lib/api";
 
 const mockedPatch = vi.mocked(patchNote);
 const mockedDelete = vi.mocked(deleteNote);
 const mockedQuiz = vi.mocked(generateQuizFromNote);
-const mockedTutor = vi.mocked(sendNoteToTutor);
 const mockedChat = vi.mocked(noteChat);
 
 const COURSE: EnrolledCourse = {
@@ -129,7 +127,6 @@ beforeEach(() => {
   }));
   mockedPatch.mockResolvedValue({} as ApiNote);
   mockedQuiz.mockResolvedValue({ concept_node_id: "concept-1", concept_name: "Recursion" });
-  mockedTutor.mockResolvedValue({ topic: "Recursion", course_id: "c1", preface: "" });
   vi.spyOn(console, "error").mockImplementation(() => {});
 });
 
@@ -142,6 +139,7 @@ afterEach(() => {
 async function renderPage() {
   render(<NotetakerPage />);
   await screen.findByPlaceholderText("Untitled note");
+  fireEvent.click(screen.getByRole("button", { name: "Edit" }));
 }
 
 const body = () =>
@@ -197,7 +195,7 @@ describe("deleting a note with a queued edit", () => {
   });
 });
 
-describe("generate quiz / send to tutor wait for the save", () => {
+describe("generate quiz and in-document chat", () => {
   it("generate quiz runs only after the latest body has landed", async () => {
     const save = deferred<ApiNote>();
     mockedPatch.mockReturnValueOnce(save.promise);
@@ -234,18 +232,11 @@ describe("generate quiz / send to tutor wait for the save", () => {
     );
   });
 
-  it("send to tutor runs only after the latest body has landed", async () => {
-    const save = deferred<ApiNote>();
-    mockedPatch.mockReturnValueOnce(save.promise);
+  it("Ask Clov opens fullscreen and focuses chat without leaving the note", async () => {
     await renderPage();
-
-    fireEvent.change(body(), { target: { value: "fresh body" } });
-    fireEvent.click(screen.getByRole("button", { name: "Send to tutor" }));
-
-    await waitFor(() => expect(mockedPatch).toHaveBeenCalledTimes(1));
-    expect(mockedTutor).not.toHaveBeenCalled();
-    await act(async () => save.resolve({} as ApiNote));
-    await waitFor(() => expect(mockedTutor).toHaveBeenCalledWith("n1", "u1"));
+    fireEvent.click(screen.getByRole("button", { name: "Ask Clov" }));
+    expect(screen.getByRole("textbox", { name: "Ask Clov about this document" })).toHaveFocus();
+    expect(push).not.toHaveBeenCalled();
   });
 });
 
@@ -257,19 +248,9 @@ describe("per-action busy state", () => {
     fireEvent.click(quiz);
     await waitFor(() => expect(push).toHaveBeenCalledTimes(1));
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Send to tutor" })).not.toBeDisabled(),
+      expect(screen.getByRole("button", { name: "Ask Clov" })).not.toBeDisabled(),
     );
     expect(screen.queryByText("Building quiz…")).toBeNull();
-  });
-
-  it("is cleared after a successful send to tutor", async () => {
-    await renderPage();
-    fireEvent.click(screen.getByRole("button", { name: "Send to tutor" }));
-    await waitFor(() => expect(push).toHaveBeenCalledTimes(1));
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Summarize note" })).not.toBeDisabled(),
-    );
-    expect(screen.queryByText("Opening tutor…")).toBeNull();
   });
 
   it("an action running on one note does not lock or relabel another note's actions", async () => {
