@@ -53,9 +53,15 @@ def test_the_loop_tutor_dataset_scores_a_worked_first_teach_turn_and_its_h4_hint
     for case in lt.CASES:
         if case not in cases.values():
             assert NOVICE_WORKED_FIRST_FORMAT not in lt._assembled(case.inputs)
-    # in every tier's dataset, so the routing gates score it
-    for _slot, (make, _run) in lt.VARIANTS.items():
-        assert {c.name for c in cases.values()} <= {c.name for c in make().cases}
+    # in every tier's dataset (and its recorded __v2 variant), so the routing
+    # gates score it; the flag-path and pedagogy datasets run their own cases
+    tier_sets = [
+        name for name in lt.VARIANTS if not name.endswith(("__flags", "__pedagogy"))
+    ]
+    assert set(lt.LOOP_TIER_SLOTS.values()) <= set(tier_sets)
+    for name in tier_sets:
+        make, _run = lt.VARIANTS[name]
+        assert {c.name for c in cases.values()} <= {c.name for c in make().cases}, name
 
 
 def test_the_confront_dataset_scores_a_worked_first_confronting_hint(evals):
