@@ -82,7 +82,7 @@ def _sanitize_label(raw: dict[str, Any]) -> dict[str, Any] | None:
     if not spots or not labels or len(spots) != len(labels):
         return None
     spot_ids = {s["id"] for s in spots}
-    if any(l["id"] in spot_ids for l in labels):
+    if any(label["id"] in spot_ids for label in labels):
         return None
     return {"kind": "label", "spots": spots, "labels": labels}
 
