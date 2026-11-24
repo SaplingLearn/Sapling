@@ -1299,6 +1299,64 @@
   display: none;
 }
 
+/* W7.2 Explain (7.16): tall prose + optional rubric. */
+.quiz-explain {
+  display: grid;
+  gap: var(--pad-md);
+  width: 100%;
+  min-width: 0;
+  flex-shrink: 0;
+}
+
+.quiz-explain__input {
+  width: 100%;
+  min-height: 150px;
+  resize: vertical;
+  font-family: var(--font-reading, inherit);
+  font-size: var(--fs-md);
+  line-height: 1.5;
+}
+
+.quiz-explain__input:disabled {
+  cursor: default;
+}
+
+.quiz-explain[data-verdict="correct"] .quiz-explain__input {
+  border-color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 8%, var(--bg-panel));
+}
+
+.quiz-explain[data-verdict="incorrect"] .quiz-explain__input {
+  border-color: var(--err);
+  background: color-mix(in srgb, var(--err) 8%, var(--bg-panel));
+}
+
+.quiz-explain__rubric {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 6px;
+}
+
+.quiz-explain__rubric-row {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  font-size: var(--fs-sm);
+  color: var(--text);
+}
+
+.quiz-explain__rubric-row--right {
+  border-color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 10%, var(--bg-panel));
+}
+
+.quiz-explain__rubric-row--wrong {
+  border-color: var(--err);
+  background: color-mix(in srgb, var(--err) 10%, var(--bg-panel));
+}
+
 /* W7.2 Dialogue (7.17): partner thread + composer. */
 .quiz-dialogue {
   display: grid;

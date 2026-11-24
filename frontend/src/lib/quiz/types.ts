@@ -173,13 +173,26 @@ export interface DialogueInteraction {
   maxReplies?: number;
 }
 
+/**
+ * W7.2 Explain (design kit 7.16) — multi-line explanation on short_answer.
+ * Optional rubric lines are display-only until richer grading lands; mic is
+ * refused (W6). Answer is the typed prose as `answerText`.
+ */
+export interface ExplainInteraction {
+  kind: "explain";
+  placeholder?: string;
+  /** Criteria shown under the field (informational; not scored client-side). */
+  rubric?: string[];
+}
+
 export type QuestionInteraction =
   | SortInteraction
   | SequenceInteraction
   | LabelInteraction
   | BuildInteraction
   | CompareInteraction
-  | DialogueInteraction;
+  | DialogueInteraction
+  | ExplainInteraction;
 
 export interface WireQuestion {
   material_context?: "course_material" | "catalog" | "general";

@@ -366,7 +366,7 @@ Update `docs/learning-loop/amendments.md` with a short “Alvar trilogy: adopted
 | Task | Type | Effort | Acceptance |
 |---|---|---|---|
 | W7.1 Port shell tokens + session chrome into `quiz/` (TopBar focus mode, meta row with blob concept pill, progress, XP/streak only if product keeps gamification) | ui | L | Visual match to Shell frames; a11y; no new color system |
-| W7.2 Port question-type kit (7.1–7.18) behind real attempt JSON; **MC / short / numeric / algebra first**, interactive types phased | ui | XL | **Shipped stubs:** Sort (7.1), Label (7.4), Sequence (7.2), Build (W7.2d), Compare (W7.2e), Dialogue (W7.2f / 7.17). Generation emit + richer grading still later; each stub round-trips fixture → Check → short_answer wire |
+| W7.2 Port question-type kit (7.1–7.18) behind real attempt JSON; **MC / short / numeric / algebra first**, interactive types phased | ui | XL | **Shipped stubs:** Sort (7.1), Label (7.4), Sequence (7.2), Build (W7.2d), Compare (W7.2e), Dialogue (W7.2f / 7.17), Explain (W7.2g / 7.16). Generation emit + richer grading still later; each stub round-trips fixture → Check → short_answer wire |
 | W7.3 **Hook generation to loop algorithm:** home/launcher consumes `GET /api/quiz/plan` when `quiz_concept_plan` on; Adjust/Start pass planned concept ids; generation path uses `quiz_planned_questions` + gates when on | integrate | M | E2E `quiz-learning.spec.ts` + new launcher journeys; flag-off = pre-loop quiz |
 | W7.4 Confidence / wager UI maps to existing stated-confidence API (A132) — do not invent a second confidence store; align “Certain / Fairly sure / Unsure” with `guessing` / `fairly_sure` / `sure` | integrate | S | Pins in quiz-journeys confidence test |
 | W7.5 Hint / skip / study-guide drawer: hints must not become answer leaks (same Bastani rule as Tutor); study-guide drawer deep-links concept; Skip respects attempt rules | integrate | M | No mastery from hint-only; E2E |
@@ -499,11 +499,11 @@ Use this as the merge/readiness checklist. Every row must be **Done (A+)**, **N/
 - [x] Teach-prose grounding chrome (W4.3) — `materials_grounded` label  
 - [x] Key-verified chrome (W4.4) — `key_verified` on pose when `canonical_verified` (no SVG / no new LLM)  
 - [ ] Item verification **population-on** (W5.E3 — code ready; operator enable)  
-- [ ] Tutor v2 on (W5.E2 — HOLD until W0.3b / deep-only dogfood)
+- [ ] Tutor v2 on (W5.E2 — operator; W0.3b + W0.5 clear; population HOLD)
 
 ### V3
-- [ ] Segment predict→reveal on (W5.E2 — operator after W0.5)  
-- [ ] Self-explain on (W5.E2 — operator after W0.5)  
+- [ ] Segment predict→reveal on (W5.E2 — operator; W0.5 clear)  
+- [ ] Self-explain on (W5.E2 — operator; W0.5 clear)  
 - [x] Reason-before-submit (W2.3) — see [w2-reason-before-submit.md](./w2-reason-before-submit.md)  
 - [x] Low-trust routing hint only (W2.4) — see [w2-next-probe-hint.md](./w2-next-probe-hint.md)  
 - [ ] Varied isomorphs on (W5.E4)  
@@ -521,7 +521,7 @@ Use this as the merge/readiness checklist. Every row must be **Done (A+)**, **N/
 - [x] Hub / Guide / Settings designed + shipped (W7.D2 / W7.9)  
 - [x] Launcher + Map designed + shipped (W7.D3 / W7.10)  
 - [x] Quiz shell in production (W7.1)  
-- [x] Core types + Sort/Label/Sequence/Build/Compare/Dialogue stubs (W7.2)  
+- [x] Core types + Sort/Label/Sequence/Build/Compare/Dialogue/Explain stubs (W7.2)  
 - [x] Launcher/home ↔ plan (W7.3) · Confidence A132 (W7.4) · Hint scaffold (W7.5)  
 - [x] Prereq banner (W7.6) · Summary CTAs (W7.7) · Practice/Exam Twin (W7.8)  
 - [x] Kill legacy quiz chrome (W7.11) — SessionTop is the attempt path; `quiz_shell_v2` never needed; home/results TopBar intentional  
@@ -679,8 +679,9 @@ Ordered. **Operator-only** rows are not agent work. Adjust this table if scope s
 | 10 | **W7.11** | Retire legacy quiz chrome | **done** (doc) | SessionTop already default on attempts; `quiz_shell_v2` never wired; port-map + plan aligned; home/results TopBar stays intentional |
 | 11 | **W7.2e** | Compare kit stub (after Build) | **done** | Encode/decode + UI + vitest + testids; short_answer wire (`kind: "compare"`) |
 | 12 | **W7.2f** | Dialogue kit stub (design 7.17, after Compare) | **done** | Encode/decode + UI + vitest + testids; short_answer wire (`kind: "dialogue"`) |
+| 13 | **W7.2g** | Explain kit stub (design 7.16) | **done** | Tall prose + optional rubric display + vitest + testids; short_answer wire (`kind: "explain"`); mic refused (W6) |
 
-**Day 9 progress:** #1–8 + #10–12 **done** · #9 operator HOLD (only remaining Day 9 row).
+**Day 9 progress:** #1–8 + #10–13 **done** · #9 operator HOLD (only remaining Day 9 row).
 
 ---
 

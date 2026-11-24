@@ -22,6 +22,10 @@ import {
   isDialogueComplete,
 } from "@/lib/quiz/dialogueInteraction";
 import {
+  asExplainInteraction,
+  isExplainComplete,
+} from "@/lib/quiz/explainInteraction";
+import {
   asLabelInteraction,
   decodeLabelAnswer,
   isLabelComplete,
@@ -73,6 +77,8 @@ function kitHasAnswer(item: QuizItem | undefined): boolean | null {
   if (compare) return isCompareComplete(compare, item?.answerText);
   const dialogue = asDialogueInteraction(interaction);
   if (dialogue) return isDialogueComplete(dialogue, item?.answerText);
+  const explain = asExplainInteraction(interaction);
+  if (explain) return isExplainComplete(item?.answerText);
   return null;
 }
 
@@ -156,6 +162,7 @@ export function scaffoldHint({
   build,
   compare,
   dialogue,
+  explain,
 }: {
   conceptName: string;
   conceptTested?: string | null;
@@ -166,6 +173,7 @@ export function scaffoldHint({
   build?: boolean;
   compare?: boolean;
   dialogue?: boolean;
+  explain?: boolean;
 }): ScaffoldHint {
   const focus = (conceptTested?.trim() || conceptName.trim() || "this concept");
   const showRubric =
@@ -175,11 +183,12 @@ export function scaffoldHint({
     Boolean(build) ||
     Boolean(compare) ||
     Boolean(dialogue) ||
+    Boolean(explain) ||
     (format != null && format !== "multiple_choice");
   return {
     focus,
     rubric: showRubric
-      ? formatHint(format, { sort, sequence, label, build, compare, dialogue })
+      ? formatHint(format, { sort, sequence, label, build, compare, dialogue, explain })
       : null,
     note: "Scaffolding only — never the answer. Open Study guide for course cards (keys stay hidden).",
   };
@@ -331,6 +340,7 @@ export function formatHint(
     build?: boolean;
     compare?: boolean;
     dialogue?: boolean;
+    explain?: boolean;
   },
 ): string {
   if (opts?.sort) {
@@ -350,6 +360,9 @@ export function formatHint(
   }
   if (opts?.dialogue) {
     return "Reply to your partner. After your first message they follow up. Check unlocks once you have sent enough replies.";
+  }
+  if (opts?.explain) {
+    return "Write a short explanation in your own words. Check unlocks once the box is not empty.";
   }
   if (type === "symbolic") {
     return "Enter an expression using single-letter variables, + − * / ^ and parentheses, with whole-number powers from −8 to 8. For example, 2(x + 1) and 2x + 2 are equivalent wherever both are defined. Functions and equations are not supported.";

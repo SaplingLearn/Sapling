@@ -29,11 +29,11 @@
  * answer key; Bastani ladder deferred); Skip wires to GO_TO; Study guide opens
  * a leak-safe drawer scaffold. No wager.
  * W7.2 kit: Sort (7.1) + Sequence (7.2) + Label (7.4) + Build (~7.x) +
- * Compare + Dialogue (7.17) stubs on short_answer + disposition.
+ * Compare + Dialogue (7.17) + Explain (7.16) stubs on short_answer + disposition.
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { BookOpen, ChevronLeft, ChevronRight, Columns2, Hash, Layers, Library, ListChecks, ListOrdered, MessagesSquare, PenLine, Puzzle, Sigma, Sparkles, Tag, X } from "lucide-react";
+import { BookOpen, ChevronLeft, ChevronRight, Columns2, Hash, Layers, Library, ListChecks, ListOrdered, MessagesSquare, PenLine, Puzzle, Sigma, Sparkles, Tag, TextAlignStart, X } from "lucide-react";
 import { AnswerOption, Badge, Button, Chip, ProgressDots } from "@/components/ui";
 import { ConceptNode } from "@/components/graph/ConceptNode";
 import { ConfidenceControl } from "@/components/learn/ConfidenceControl";
@@ -46,6 +46,7 @@ import { buildQuizHref } from "@/lib/quiz/source";
 import { asBuildInteraction } from "@/lib/quiz/buildInteraction";
 import { asCompareInteraction } from "@/lib/quiz/compareInteraction";
 import { asDialogueInteraction } from "@/lib/quiz/dialogueInteraction";
+import { asExplainInteraction } from "@/lib/quiz/explainInteraction";
 import { asLabelInteraction } from "@/lib/quiz/labelInteraction";
 import { asSequenceInteraction } from "@/lib/quiz/sequenceInteraction";
 import { asSortInteraction } from "@/lib/quiz/sortInteraction";
@@ -56,6 +57,7 @@ import { WrittenAnswer, type WrittenType } from "./WrittenAnswer";
 import { BuildAnswer } from "./BuildAnswer";
 import { CompareAnswer } from "./CompareAnswer";
 import { DialogueAnswer } from "./DialogueAnswer";
+import { ExplainAnswer } from "./ExplainAnswer";
 import { LabelAnswer } from "./LabelAnswer";
 import { SequenceAnswer } from "./SequenceAnswer";
 import { SortAnswer } from "./SortAnswer";
@@ -177,6 +179,7 @@ const FORMAT_TAG: Record<string, { label: string; Icon: typeof ListChecks }> = {
   build: { label: "Build", Icon: Puzzle },
   compare: { label: "Compare", Icon: Columns2 },
   dialogue: { label: "Dialogue", Icon: MessagesSquare },
+  explain: { label: "Explain", Icon: TextAlignStart },
 };
 
 /** Where the question's grounding came from, said plainly. */
@@ -945,6 +948,32 @@ function CompareField(props: AnswerFieldProps) {
   );
 }
 
+
+/** W7.2 Explain (7.16): tall prose; Check uses short_answer text. */
+function ExplainField(props: AnswerFieldProps) {
+  const { view, shown, selectable, actions } = props;
+  const explain = asExplainInteraction(view.item?.question.interaction);
+  if (!explain) return <WrittenField {...props} />;
+  return (
+    <div
+      className="quiz-question__written quiz-question__written--explain"
+      data-marked={shown ? "true" : undefined}
+    >
+      <ExplainAnswer
+        interaction={explain}
+        value={view.item?.answerText ?? ""}
+        disabled={!selectable}
+        expected={shown?.correctAnswer ?? null}
+        verdict={outcomeOf(shown) ?? null}
+        onChange={text => actions.write?.(text)}
+      />
+      <p className="quiz-question__format-hint" id="quiz-format-hint" data-testid="quiz-format-hint">
+        {formatHint("short_answer", { explain: true })}
+      </p>
+    </div>
+  );
+}
+
 /** W7.2 Dialogue (7.17): partner thread + replies; Check uses encoded short_answer text. */
 function DialogueField(props: AnswerFieldProps) {
   const { view, shown, selectable, actions } = props;
@@ -979,6 +1008,7 @@ function kitField(props: AnswerFieldProps): React.JSX.Element | null {
   if (asBuildInteraction(interaction)) return <BuildField {...props} />;
   if (asCompareInteraction(interaction)) return <CompareField {...props} />;
   if (asDialogueInteraction(interaction)) return <DialogueField {...props} />;
+  if (asExplainInteraction(interaction)) return <ExplainField {...props} />;
   return null;
 }
 
@@ -1232,6 +1262,7 @@ export function QuizQuestion({
   const buildInteraction = asBuildInteraction(kitInteraction);
   const compareInteraction = asCompareInteraction(kitInteraction);
   const dialogueInteraction = asDialogueInteraction(kitInteraction);
+  const explainInteraction = asExplainInteraction(kitInteraction);
   const scaffold = scaffoldHint({
     conceptName: concept.name,
     conceptTested: view.item?.question.concept_tested,
@@ -1242,6 +1273,7 @@ export function QuizQuestion({
     build: Boolean(buildInteraction),
     compare: Boolean(compareInteraction),
     dialogue: Boolean(dialogueInteraction),
+    explain: Boolean(explainInteraction),
   });
   const openGuide = useCallback(() => {
     setAskForCursor(null);
@@ -1291,7 +1323,9 @@ export function QuizQuestion({
             ? "compare"
             : dialogueInteraction
               ? "dialogue"
-              : view.format;
+              : explainInteraction
+                ? "explain"
+                : view.format;
   const header = (
     <QuestionHeader
       concept={concept}

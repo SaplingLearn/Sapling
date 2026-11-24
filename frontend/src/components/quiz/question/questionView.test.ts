@@ -170,6 +170,13 @@ describe("itemView", () => {
     ).toBe(true);
   });
 
+  it("W7.2 Explain: hasAnswer when prose is non-empty", () => {
+    const interaction = { kind: "explain" as const, placeholder: "Type your explanation" };
+    const explainQ = question({ type: "short_answer", options: [], interaction });
+    expect(itemView(item({ question: explainQ, answerText: "" })).hasAnswer).toBe(false);
+    expect(itemView(item({ question: explainQ, answerText: "  Because free fall.  " })).hasAnswer).toBe(true);
+  });
+
   it("survives no item at all", () => {
     expect(itemView(undefined)).toMatchObject({
       item: undefined,
@@ -268,6 +275,8 @@ describe("W7.5 hint / skip slots", () => {
     expect(compare.rubric).toMatch(/^Read both sides/);
     const dialogue = scaffoldHint({ conceptName: "Free fall", format: "short_answer", dialogue: true });
     expect(dialogue.rubric).toMatch(/^Reply to your partner/);
+    const explain = scaffoldHint({ conceptName: "Orbits", format: "short_answer", explain: true });
+    expect(explain.rubric).toMatch(/^Write a short explanation/);
   });
 
   it("enables Hint in Practice and refuses it in Exam Twin", () => {
@@ -375,6 +384,7 @@ describe("the verdict's words", () => {
     expect(formatHint("short_answer", { build: true })).toMatch(/^Select a part/);
     expect(formatHint("short_answer", { compare: true })).toMatch(/^Read both sides/);
     expect(formatHint("short_answer", { dialogue: true })).toMatch(/^Reply to your partner/);
+    expect(formatHint("short_answer", { explain: true })).toMatch(/^Write a short explanation/);
   });
 
   it("ends the key with exactly one full stop", () => {

@@ -533,4 +533,43 @@ describe("W7.2 core types under SessionTop", () => {
     fireEvent.click(screen.getByTestId("quiz-dialogue-send"));
     expect(actions.write).toHaveBeenCalledWith("Same acceleration without air resistance.");
   });
+
+  it("Explain (W7.2 / 7.16): tall prose; Check waits for non-empty text", () => {
+    const interaction = {
+      kind: "explain" as const,
+      placeholder: "Type your explanation",
+      rubric: ["Free fall", "Sideways speed"],
+    };
+    const { actions } = renderScreen(
+      makeSession({
+        items: [
+          item(0, {
+            question: {
+              id: 1,
+              question: "Explain why astronauts feel weightless.",
+              type: "short_answer",
+              options: [],
+              difficulty: "medium",
+              interaction,
+            },
+          }),
+          item(1),
+          item(2),
+        ],
+      }),
+    );
+
+    expect(screen.getByTestId("quiz-session-top")).toBeInTheDocument();
+    const tag = screen.getByTestId("quiz-format-tag");
+    expect(tag).toHaveAttribute("data-format", "explain");
+    expect(tag).toHaveTextContent("Explain");
+    expect(screen.getByTestId("quiz-explain")).toBeInTheDocument();
+    expect(screen.getByTestId("quiz-format-hint")).toHaveTextContent(/Write a short explanation/);
+    expect(screen.getByTestId("quiz-submit-answer")).toBeDisabled();
+
+    fireEvent.change(screen.getByTestId("quiz-explain-input"), {
+      target: { value: "They fall together around Earth." },
+    });
+    expect(actions.write).toHaveBeenCalledWith("They fall together around Earth.");
+  });
 });
