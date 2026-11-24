@@ -11,9 +11,16 @@ Sapling has two E2E chapters, and they answer different questions.
 |---|---|---|
 | What it is | Scripted, deterministic journeys | LLM-driven exploration |
 | Where it lives | `frontend/e2e/*.spec.ts` (Playwright) | `scripts/explore.sh`, `.claude/skills/explore/`, `backend/e2e_oracles/` |
-| Gates CI? | Yes — `.github/workflows/e2e.yml`, main-only | Never |
+| Gates CI? | Yes — `.github/workflows/e2e.yml`, main-only (matrix: default / kill-switch / flag-off) | Never |
 | Runs when | Every push to main | On demand, local-only (`make explore` / `/explore`) |
 | Judge | Fixed assertions + `support/db.ts` raw SQL | The e2e oracles (`backend/e2e_oracles`) or a reproducible captured failure |
+
+Chapter 1's learning-loop lanes (PKG-14b): `make e2e` (default),
+`LEARNING_LOOP_ENABLED=false make e2e` (kill-switch),
+`SAPLING_FLAG_LEARNING_LOOP=off make e2e` (flag-off). Held stack:
+export the same env before `make e2e-up` and Playwright
+(`frontend/e2e/support/lane.ts`). Operator checklist:
+[learning-loop/w0-flag-enable-checklist.md](learning-loop/w0-flag-enable-checklist.md).
 
 Chapter 2 exists because a scripted suite only ever re-checks what someone
 already thought to assert. An LLM with a real browser will click things,

@@ -372,25 +372,24 @@ readiness record, "Safe additional verifier".
 | **Integration** (real local Postgres) | SQL functions, locks, races, migration replay, the evidence transaction, voids, post-test claims, recovery | `supabase start`; `cd backend && SUPABASE_DB_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres python -m db.migrate`; then `SAPLING_MODEL_MODE=function SAPLING_FUNCTION_HANDLERS=agents.function_handlers_e2e RUN_INTEGRATION=1 python -m pytest -m integration -q` | `.github/workflows/integration.yml`, every PR and push to main |
 | **Eval replay** | Recorded model outputs still pass every evaluator against current prompts and schemas (a changed prompt makes a recording stale) | `cd backend && python tests/evals/run_all.py` (one dataset: `python tests/evals/loop_tutor.py`) | `.github/workflows/evals.yml`, PRs touching `backend/agents/**`, `backend/tests/evals/**`, `backend/learning/**`, `backend/routes/learn_loop.py`, the learning decision seam and the few services the datasets read (A142) |
 | **Eval record** (live, billable, owner-run) | Re-records cassettes against live models | `SAPLING_EVAL_MODE=record python tests/evals/run_all.py`, then `SAPLING_EVAL_UPDATE_BASELINES=1 python tests/evals/run_all.py`; commit cassettes and `baselines.json` together | none |
-| **E2E default lane** | The browser journey on function-mode models: probe → plan → check → hint → feedback → close, resume, budget pause, review, retention check, recovery; with each wave-4 flag turned on for a seeded student, the prequestion and self-explanation journeys (`frontend/e2e/learn-loop.spec.ts`) and varied and multi-concept practice (`frontend/e2e/learn-varied-practice.spec.ts`) | see the stack below; `cd frontend && npx playwright test e2e/learn-loop.spec.ts e2e/learn-varied-practice.spec.ts` | `.github/workflows/e2e.yml`, push to main and manual (not a PR gate) |
-| **E2E kill-switch lane** | The legacy Learn screen and tutor return when the loop is off (a flag-off student gets the same app: the unit lane runs every kill-switch test both ways, `backend/tests/conftest.py::LOOP_OFF_VIA`, and `backend/tests/test_learning_loop_flag.py` compares every loop route's answer) | the same, with `LEARNING_LOOP_ENABLED=false` exported in the same shell for the stack and Playwright | `e2e.yml` matrix `lane: kill-switch` |
-| **Accessibility and keyboard** | WCAG 2.1 A/AA scans of every student surface; a keyboard-only loop journey (A135) | `cd frontend && npx playwright test e2e/a11y.spec.ts e2e/learn-keyboard.spec.ts` | inside `e2e.yml` |
-| **Oracles** | Database-level judges after a run: evidence without learner state, any `zpd.leak`, mirror drift, a graded step without evidence, a seeded answer served before release, and more | `cd backend && venv/bin/python -m e2e_oracles` (`--check learn_loop` for the loop judge) | inside `e2e.yml`, both lanes |
+| **E2E default lane** | The browser journey on function-mode models: probe → plan → check → hint → feedback → close, resume, budget pause, review, retention check, recovery; with each wave-4 flag turned on for a seeded student, the prequestion and self-explanation journeys (`frontend/e2e/learn-loop.spec.ts`) and varied and multi-concept practice (`frontend/e2e/learn-varied-practice.spec.ts`) | `make e2e` (full suite + oracles in a free slot); held stack: `make e2e-up` then `cd frontend && npx playwright test` (or a subset) then `source .e2e/env.sh && cd backend && venv/bin/python -m e2e_oracles` then `make e2e-down`. `e2e-up` defaults `SAPLING_FLAG_LEARNING_LOOP=on`. | `.github/workflows/e2e.yml` matrix `lane: default` |
+| **E2E kill-switch lane** | The legacy Learn screen and tutor return when `LEARNING_LOOP_ENABLED` is thrown (`false`/`0`/`off`/`no`); `/api/learn/loop/*` 404s | Same as default, with `LEARNING_LOOP_ENABLED=false` exported in the **same shell** for the stack and Playwright: `LEARNING_LOOP_ENABLED=false make e2e` (or that export before `make e2e-up` + Playwright). Keep it out of `backend/.env`. | `e2e.yml` matrix `lane: kill-switch` |
+| **E2E flag-off lane** | Production's default: kill switch unset, every student's `learning_loop` flag forced off (`SAPLING_FLAG_LEARNING_LOOP=off`); same pre-loop app as the kill switch for each student (`frontend/e2e/support/lane.ts::loopOffLane`) | `SAPLING_FLAG_LEARNING_LOOP=off make e2e` (or that export before held `make e2e-up` + Playwright). Showcase drivers boot this lane. | `e2e.yml` matrix `lane: flag-off` |
+| **Accessibility and keyboard** | WCAG 2.1 A/AA scans of every student surface; a keyboard-only loop journey (A135) | `cd frontend && npx playwright test e2e/a11y.spec.ts e2e/learn-keyboard.spec.ts` (on a held default-lane stack) | inside `e2e.yml` |
+| **Oracles** | Database-level judges after a run: evidence without learner state, any `zpd.leak`, mirror drift, a graded step without evidence, a seeded answer served before release, and more | `source .e2e/env.sh && cd backend && venv/bin/python -m e2e_oracles` (`--check learn_loop` for the loop judge) | inside `e2e.yml`, all three lanes |
 | **Live opt-in** | A few billable schema checks; none exercises a loop slot | `RUN_LIVE_QUIZ=1`, `RUN_LIVE_TOPIC_CHECKLIST=1`, `RUN_LIVE_TUTOR_TOOLS=1`, `RUN_LIVE_STREAM_RUNGS=1`, `RUN_LIVE_OCR=1`, `RUN_LIVE_OCR_PIPELINE=1` with real keys | none |
 | **Learning-trial analysis** | The trial's analysis code on synthetic data | `cd backend && python -m learning_trial power --fast` | via the unit lane |
 
 What no lane proves: that a real provider's output is as good as the recorded
 one (replay is frozen; eight loop slots were recorded on Gemini), that a
 hosted deploy and a rolling restart behave, or that students learn. The
-readiness record lists what still needs owner infrastructure. The wave-4
-flag-on prompts — the prequestion's explaining turn, the self-explanation
-acknowledgement, the varied drafter and top-up, the combination drafter and
-its alignment check — have **no live recording yet**; they run only in
-function mode and the offline tests until the owner approves the spend, and
-each flag waits on its recording. The same holds for the quiz's planned
-writer (`backend/tests/evals/quiz_generation_planned.py`, cases and
-evaluators ready, no cassette) and for the A119/A124 agents on quiz
-questions on `quiz_check` (`backend/tests/evals/quiz_item_gates.py`). The quiz journeys with the quiz flags on are in
+readiness record lists what still needs owner infrastructure. As of W0.1–W0.3 on #866, the flag-path and gate recordings that block
+`segment_prequestion` / `self_explanation_prompts` / varied / combo / item
+gates are in tree (`flag-rollout.md` "shared blocker"); enable is still
+operator-only (self-target first — [w0-flag-enable-checklist.md](w0-flag-enable-checklist.md)).
+The quiz's planned writer (`backend/tests/evals/quiz_generation_planned.py`)
+and remaining quiz-pack enables still follow their own "Before" lines in
+`flag-rollout.md`. The quiz journeys with the quiz flags on are in
 `frontend/e2e/quiz-learning.spec.ts`; the flag-off pins are
 `backend/tests/test_quiz_learning_flags_off.py`.
 
@@ -437,37 +436,31 @@ bills embeddings, drafting, grading and tutoring.
 
 ### The local E2E stack
 
-`make e2e-up` boots a deterministic stack (local Supabase, backend without
-reload on :5000, the test-profile frontend on :3000, the rich seed) and
-`make e2e-down` tears it down. It does **not** set function mode itself:
-export `SAPLING_MODEL_MODE=function SAPLING_FUNCTION_HANDLERS=agents.function_handlers_e2e`
-first, or the stack calls live models. `scripts/e2e-up.sh` exports
-`LEARNING_GATE_TIME_SCALE=0.01`, zero flag-cache TTLs, blank PostHog
-tokens and `SAPLING_FLAG_LEARNING_LOOP=on` (the loop for every student, in
-both lanes; a value you export wins), and switches on no other loop flag.
-
-The stack is a machine singleton. Hold one `flock` on
-`/tmp/claude-<uid>/sapling-e2e-stack.lock` around the whole
-up → test → oracles → down cycle, with the teardown inside the same lock (a
-separately locked teardown deadlocks: the detached servers inherit the lock):
+Local E2E runs in numbered **slots** (`scripts/lib/e2e-slot.sh`), never on the
+dev app's `:3000`/`:5000`. Prefer a full cycle:
 
 ```sh
-mkdir -p /tmp/claude-$(id -u)
-flock /tmp/claude-$(id -u)/sapling-e2e-stack.lock bash -c '
-  trap "make e2e-down" EXIT
-  export SAPLING_MODEL_MODE=function SAPLING_FUNCTION_HANDLERS=agents.function_handlers_e2e
-  make e2e-up || exit 1
-  (cd frontend && npx playwright test e2e/learn-loop.spec.ts); rc=$?
-  (cd backend && venv/bin/python -m e2e_oracles) || rc=1
-  exit $rc
-'
+make e2e                          # default lane: up → Playwright suite + oracles → down
+LEARNING_LOOP_ENABLED=false make e2e
+SAPLING_FLAG_LEARNING_LOOP=off make e2e
 ```
 
-For the kill-switch lane add `export LEARNING_LOOP_ENABLED=false` before
-`make e2e-up` (and keep it out of the backend's `.env` file: `scripts/e2e-up.sh` refuses
-to start when that file names the variable). The run's global setup checks
-that the lane and the stack agree. `flock` is not part of macOS; install it
-separately. The full E2E guide is [docs/e2e-exploration.md](../e2e-exploration.md).
+Or hold a stack for interactive Playwright (`make e2e-up` → test →
+`make e2e-down`). Export lane env in the same shell for both halves
+(`frontend/e2e/support/lane.ts`; `global-setup.ts` asserts agreement). Do not
+put `LEARNING_LOOP_ENABLED` in `backend/.env` (`scripts/e2e-up.sh` refuses).
+
+`scripts/e2e-up.sh` exports `LEARNING_GATE_TIME_SCALE=0.01`, zero flag-cache
+TTLs, blank PostHog tokens, and defaults `SAPLING_FLAG_LEARNING_LOOP=on`
+(override with `=off` for the flag-off lane). It switches on no other loop
+flag. A held stack does not set function mode itself — export
+`SAPLING_MODEL_MODE=function SAPLING_FUNCTION_HANDLERS=agents.function_handlers_e2e`
+first, or the stack calls live models. Cycles via `scripts/e2e-cycle.sh` /
+`make e2e` apply the seam for you.
+
+Operator enable order and a pasteable PR test-plan block:
+[w0-flag-enable-checklist.md](w0-flag-enable-checklist.md). Full slot / explore
+guide: [docs/e2e-exploration.md](../e2e-exploration.md).
 
 ## Observability
 

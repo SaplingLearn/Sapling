@@ -158,6 +158,7 @@ same calls run against fixed, deterministic handlers.
 | [invariants.md](invariants.md) | the rules you must not break, why, and which test enforces each |
 | [operations.md](operations.md) | flags, model slots and cost, migrations and their rollout order, the release verifier, every test lane with its command, running locally with real models |
 | [flag-rollout.md](flag-rollout.md) | turning on each learning-loop flag: what it changes, what must be true first, rollout steps, what to watch, rollback |
+| [w0-flag-enable-checklist.md](w0-flag-enable-checklist.md) | W0.4 / W5 operator checklist: self-target order, three E2E lane commands, PR test-plan snippet (defaults stay off) |
 | [amendments.md](amendments.md) | one line per §13 amendment, by theme and in order, with the code to read |
 | [glossary.md](glossary.md) | a spec term in plain words, and its name in the code |
 | [contributing.md](contributing.md) | the checklist for changing the loop safely |
