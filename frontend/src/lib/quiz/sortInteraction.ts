@@ -1,8 +1,9 @@
 /**
  * W7.2 Sort (kit 7.1) — placement ↔ `answerText` for a short_answer wire.
  *
- * DISPLAY + SESSION STATE ONLY. Generation does not emit `interaction` yet;
- * grading still uses the short-answer path on whatever string Check sends.
+ * DISPLAY + SESSION STATE ONLY. Wire may carry `interaction` when generation
+ * attaches it (docs/learning-loop/w7-generation-emit.md); prompt emit later.
+ * Grading still uses the short-answer path on whatever string Check sends.
  * Encode is stable so a fixture key can match, and decode restores the tray
  * when the student pages back to an unanswered draft.
  */

@@ -47,7 +47,7 @@ Shared primitives (handoff “ui/” under quiz): live in `frontend/src/componen
 |---|---|---|
 | Core | MC / short / numeric / algebra on SessionTop | **done** |
 | Interactive stubs | Sort…Rank + Connect match + concept-map | **twelve stubs + Connect map mode done** |
-| Later | Generation emits `interaction`; richer per-criterion grading | deferred |
+| Later | Generation emits `interaction` | **partial** — sanitize + wire attach ([`w7-generation-emit.md`](./w7-generation-emit.md)); prompt/planned emit + richer grading still deferred |
 
 Stubs use `short_answer` wire + client `interaction`; generation does not emit kit payloads yet. Do not block shell chrome on full 7.1–7.18 parity.
 
