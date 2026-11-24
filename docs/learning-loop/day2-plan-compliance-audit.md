@@ -1,5 +1,8 @@
 # Day 1–2 plan compliance audit
 
+> **2026-11-24 update:** W0.1–W0.3 Claude evals recorded on `#866`; `LOOP_SLOTS_PENDING_CLAUDE_EVAL` empty; deep+lite `__v2` served gates clear. Day2 rows that said “blocked on Anthropic key” are obsolete — see `alvar-trilogy-implementation-plan.md` W0 readiness and `w0-flag-enable-checklist.md`.
+
+
 **Against:** [`alvar-trilogy-implementation-plan.md`](alvar-trilogy-implementation-plan.md)  
 **Date:** 2026-11-23  
 **Method:** Re-read acceptance rows; inspect landed code/docs; run focused unit tests. Not a substitute for W0 Claude evals or E2E.
