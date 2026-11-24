@@ -34,12 +34,17 @@ from db.connection import table
 from services import events_service
 from services.academics import require_course_enrollment
 from services.auth_guard import get_session_user_id, require_self, guard_off_loop
+# Still re-exported here even though `_extract_text_or_422` moved to
+# `services/documents/upload.py`: `tests/split_patches.py::patch_documents`
+# patches a name across every documents module, and the moved helper looks
+# it up in its new home (#118).
+from services.extraction_service import extract_text_from_file  # noqa: F401  (re-export, #118)
 from services.agent_events import SSE_CACHE_CONTROL
 from services.request_context import current_request_id
 from services import abuse_limits
 from services.request_limits import aenforce_abuse_limit, enforce_abuse_limit, read_within_limit
 from services.upload_validation import DOCX, PDF, PPTX, extension_of, matching_type, too_large_detail
-from models import ScanConceptsBody
+from models import ScanConceptsBody, UpdateDocumentBody
 from services.durable import workflow_id
 from services.document_indexing import schedule_document_index
 from services import document_jobs
@@ -186,17 +191,20 @@ async def restore_trashed_document(
 
 
 @router.patch("/doc/{document_id}")
-async def update_document(document_id: str, request: Request, body: dict = Body(...)):
+async def update_document(document_id: str, request: Request, body: UpdateDocumentBody):
     """Update the mutable fields on a document: its category, its name, the
     course it belongs to, and the folder it is filed in.
 
     A body that asks for nothing is a bad request whoever sent it, so it is
-    refused before the ownership read.
+    refused before the ownership read. The model bounds every field, so an
+    overlong one is a 422 before this runs at all; `model_fields_set` keeps the
+    difference between "sent as null" (clear it) and "absent" (leave it).
     """
-    updates = library_api.validate_fields(body)
-    user_id = await _session_or_self(body.get("user_id"), request)
+    sent = {k: getattr(body, k) for k in body.model_fields_set}
+    updates = library_api.validate_fields(sent)
+    user_id = await _session_or_self(body.user_id, request)
     await _require_owned_document(document_id, user_id)
-    updates.update(await library_api.resolve_filing(user_id, body))
+    updates.update(await library_api.resolve_filing(user_id, sent))
     return await update_document_row(document_id, user_id, updates)
 
 

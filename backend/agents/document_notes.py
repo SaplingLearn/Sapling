@@ -8,10 +8,12 @@ Two single-shot, tool-less agents:
 * ``document_notes_chat_agent`` is Clov, the sidecar that answers questions
   about the notes the student is looking at.
 
-Both ride existing model slots (``note_summary`` / ``note_chat``) rather than
-adding new ones: they are the same shape of work as the notetaker's, on a
-different surface, and the registry in ``agents/_providers.py`` carries model,
-effort, budget and cache settings per slot.
+Both have their own model slots (``document_notes`` / ``document_notes_chat``)
+carrying the same model and effort as the notetaker's. They cannot SHARE the
+notetaker's slots: the function-mode seam keys its handler on the slot, and
+``note_summary``'s handler answers with a schema, where these two answer in
+free text — a str-output agent handed a structured handler raises before it
+returns anything (verified 2026-11-23).
 """
 from __future__ import annotations
 
@@ -73,7 +75,7 @@ _NOTES_PROMPT = (
 _NOTES_HASH = hashlib.sha256(_NOTES_PROMPT.encode("utf-8")).hexdigest()[:12]
 
 document_notes_agent = Agent[SaplingDeps, str](
-    model=model_for("note_summary"),
+    model=model_for("document_notes"),
     deps_type=SaplingDeps,
     output_type=str,
     # No `retries=`: a free-text agent has no output schema to validate
@@ -101,7 +103,7 @@ _CHAT_PROMPT = (
 _CHAT_HASH = hashlib.sha256(_CHAT_PROMPT.encode("utf-8")).hexdigest()[:12]
 
 document_notes_chat_agent = Agent[SaplingDeps, str](
-    model=model_for("note_chat"),
+    model=model_for("document_notes_chat"),
     deps_type=SaplingDeps,
     output_type=str,
     system_prompt=_CHAT_PROMPT,

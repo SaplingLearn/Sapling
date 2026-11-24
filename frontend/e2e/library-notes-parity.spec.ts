@@ -160,14 +160,15 @@ test.describe("Library + Notes match the design handoff in a browser", () => {
     }
 
     // 3. And a hover has to actually repaint. One element is enough to prove
-    //    the mechanism; the rest is the CSSOM assertion above.
-    const menu = page.getByTestId("library-doc-menu").first();
-    if (await menu.count()) {
-      await expect(menu).toBeVisible();
-      await menu.hover();
-      await expect(menu, "the row menu button repaints on hover")
-        .toHaveCSS("background-color", rgb("#E4DFD3"));
-    }
+    //    the mechanism; the rest is the CSSOM assertion above. The row's
+    //    "Details and actions" button is the `.sapHoverStone` instance that is
+    //    always on screen — `library-doc-menu` is the dialog it opens, not a
+    //    hover target.
+    const menuButton = page.getByRole("button", { name: "Details and actions" }).first();
+    await expect(menuButton).toBeVisible();
+    await menuButton.hover();
+    await expect(menuButton, "the row's menu button repaints on hover")
+      .toHaveCSS("background-color", rgb("#E4DFD3"));
   });
 
   test("the Notes page carries the handoff's own values", async ({ page }) => {
@@ -176,7 +177,11 @@ test.describe("Library + Notes match the design handoff in a browser", () => {
 
     // Open the seeded document's notes. Double-click is the row's open
     // gesture, the same one the design gives it.
-    const row = page.locator('[data-testid^="library-doc-"]').first();
+    // `library-doc-menu` shares the prefix, so exclude it: a row is
+    // `library-doc-{id}`.
+    const row = page
+      .locator('[data-testid^="library-doc-"]:not([data-testid="library-doc-menu"])')
+      .first();
     await expect(row).toBeVisible();
     await row.dblclick();
 
