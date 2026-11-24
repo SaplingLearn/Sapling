@@ -5,7 +5,8 @@ import {
   askSeedFor,
   canGoTo,
   canNavigate,
-  HINT_SLOT_DISABLED,
+  hintSlotState,
+  scaffoldHint,
   skipSlotState,
   conceptLabel,
   correctOption,
@@ -104,6 +105,23 @@ describe("itemView", () => {
     expect(itemView(item({ question: sortQ, answerText: "A=one;B=two" })).hasAnswer).toBe(true);
   });
 
+  it("W7.2 Label: hasAnswer only when every label is placed", () => {
+    const interaction = {
+      kind: "label" as const,
+      spots: [
+        { id: "1", label: "1" },
+        { id: "2", label: "2" },
+      ],
+      labels: [
+        { id: "aorta", label: "Aorta" },
+        { id: "pa", label: "Pulmonary artery" },
+      ],
+    };
+    const labelQ = question({ type: "short_answer", options: [], interaction });
+    expect(itemView(item({ question: labelQ, answerText: "1=aorta;2=" })).hasAnswer).toBe(false);
+    expect(itemView(item({ question: labelQ, answerText: "1=aorta;2=pa" })).hasAnswer).toBe(true);
+  });
+
   it("survives no item at all", () => {
     expect(itemView(undefined)).toMatchObject({
       item: undefined,
@@ -177,9 +195,32 @@ describe("the pager", () => {
 });
 
 describe("W7.5 hint / skip slots", () => {
-  it("keeps Hint disabled with an honest leak-safe reason", () => {
-    expect(HINT_SLOT_DISABLED.enabled).toBe(false);
-    expect(HINT_SLOT_DISABLED.title).toMatch(/reveal the answer/i);
+  it("builds scaffolding from concept + rubric already on the question", () => {
+    const mc = scaffoldHint({ conceptName: "Recursion", conceptTested: "Base cases", format: "multiple_choice" });
+    expect(mc.focus).toBe("Base cases");
+    expect(mc.rubric).toBeNull();
+    expect(mc.note).toMatch(/never the answer/i);
+
+    const written = scaffoldHint({ conceptName: "Recursion", format: "numeric" });
+    expect(written.focus).toBe("Recursion");
+    expect(written.rubric).toMatch(/^Enter only the number/);
+
+    const sort = scaffoldHint({ conceptName: "Recursion", format: "short_answer", sort: true });
+    expect(sort.rubric).toMatch(/^Select an item/);
+
+    const label = scaffoldHint({ conceptName: "Anatomy", format: "short_answer", label: true });
+    expect(label.rubric).toMatch(/^Select a label/);
+  });
+
+  it("enables Hint in Practice and refuses it in Exam Twin", () => {
+    expect(hintSlotState({ phase: "active", busy: false, sessionMode: "practice", hasItem: true }).enabled).toBe(true);
+    expect(hintSlotState({ phase: "active", busy: false, sessionMode: "exam_twin", hasItem: true })).toEqual({
+      enabled: false,
+      title: expect.stringMatching(/Exam Twin/i),
+    });
+    expect(hintSlotState({ phase: "generating", busy: false, sessionMode: "practice", hasItem: true }).enabled).toBe(false);
+    expect(hintSlotState({ phase: "active", busy: true, sessionMode: "practice", hasItem: true }).enabled).toBe(false);
+    expect(hintSlotState({ phase: "active", busy: false, sessionMode: "practice", hasItem: false }).enabled).toBe(false);
   });
 
   it("enables Skip to the next unanswered index without mastery", () => {
@@ -271,6 +312,7 @@ describe("the verdict's words", () => {
     expect(formatHint("short_answer")).toBe("Write a brief answer. Capitalization and extra spacing do not affect your score.");
     expect(formatHint(undefined)).toBe(formatHint("short_answer"));
     expect(formatHint("short_answer", { sort: true })).toMatch(/^Select an item/);
+    expect(formatHint("short_answer", { label: true })).toMatch(/^Select a label/);
   });
 
   it("ends the key with exactly one full stop", () => {

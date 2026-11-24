@@ -9,6 +9,11 @@
 import type { AnswerState } from "@/components/ui";
 import { isUnanswered } from "@/lib/quiz/machine";
 import {
+  asLabelInteraction,
+  decodeLabelAnswer,
+  isLabelComplete,
+} from "@/lib/quiz/labelInteraction";
+import {
   asSortInteraction,
   decodeSortAnswer,
   isSortComplete,
@@ -33,13 +38,21 @@ export interface ItemView {
   verdict: Verdict | null;
 }
 
+/** Kit placements that gate Check the same way a non-blank written answer does. */
+function kitHasAnswer(item: QuizItem | undefined): boolean | null {
+  const interaction = item?.question.interaction;
+  const sort = asSortInteraction(interaction);
+  if (sort) return isSortComplete(sort, decodeSortAnswer(sort, item?.answerText));
+  const label = asLabelInteraction(interaction);
+  if (label) return isLabelComplete(label, decodeLabelAnswer(label, item?.answerText));
+  return null;
+}
+
 export function itemView(item: QuizItem | undefined): ItemView {
   const written = isWrittenType(item?.question.type);
   const selectedIndex = item?.selectedIndex ?? null;
-  const sort = written ? asSortInteraction(item?.question.interaction) : null;
-  const hasWritten = sort
-    ? isSortComplete(sort, decodeSortAnswer(sort, item?.answerText))
-    : Boolean(item?.answerText?.trim());
+  const kit = written ? kitHasAnswer(item) : null;
+  const hasWritten = kit ?? Boolean(item?.answerText?.trim());
   return {
     item,
     options: item?.question.options ?? [],
@@ -87,15 +100,69 @@ export function canGoTo(index: number, cursor: number, total: number, navigable:
 }
 
 /**
- * W7.5: there is no quiz hint API, and the existing Ask panel seeds the tutor
- * with the correct answer — so a pre-check Hint would leak. Keep the slot
- * visible but disabled with an honest reason (title + tooltip).
+ * W7.5 client-side Hint (option b): surface rubric-safe scaffolding already
+ * on the question — concept focus + answer-format rules. No LLM, no answer
+ * key, no Ask seed, no loop `/hint` session.
+ *
+ * Full Bastani H-ladder (loop `POST /hint` + leak-cut `/action`) stays
+ * deferred: that API requires a learning-loop session and `learning_loop`,
+ * and the quiz Ask panel seeds the correct answer so it cannot be the pre-
+ * check Hint. See `docs/learning-loop/w7-5-hint-scaffold.md`.
  */
-export const HINT_SLOT_DISABLED = {
-  enabled: false as const,
-  title:
-    "Hints aren't available during a quiz — they would reveal the answer. Use Ask about this after you check.",
+export type ScaffoldHint = {
+  /** Concept the item is already tagged with (meta / `concept_tested`). */
+  focus: string;
+  /** Grader acceptance rules already shown for written/Sort; null on MC. */
+  rubric: string | null;
+  /** Fixed copy: never names the answer. */
+  note: string;
 };
+
+export function scaffoldHint({
+  conceptName,
+  conceptTested,
+  format,
+  sort,
+  label,
+}: {
+  conceptName: string;
+  conceptTested?: string | null;
+  format: QuestionType | undefined;
+  sort?: boolean;
+  label?: boolean;
+}): ScaffoldHint {
+  const focus = (conceptTested?.trim() || conceptName.trim() || "this concept");
+  const showRubric = Boolean(sort) || Boolean(label) || (format != null && format !== "multiple_choice");
+  return {
+    focus,
+    rubric: showRubric ? formatHint(format, { sort, label }) : null,
+    note: "Scaffolding only — never the answer. Open Study guide for course cards (keys stay hidden).",
+  };
+}
+
+/** Hint is on in Practice when a live item is open; Exam Twin stays tool-light. */
+export function hintSlotState({
+  phase,
+  busy,
+  sessionMode,
+  hasItem,
+}: {
+  phase: Phase;
+  busy: boolean;
+  sessionMode?: "practice" | "exam_twin" | null;
+  hasItem: boolean;
+}): { enabled: boolean; title: string } {
+  if ((sessionMode ?? "practice") === "exam_twin") {
+    return { enabled: false, title: "Hints are off in Exam Twin" };
+  }
+  if (!hasItem || busy || (phase !== "active" && phase !== "answered")) {
+    return { enabled: false, title: "Can't show a hint right now" };
+  }
+  return {
+    enabled: true,
+    title: "Show scaffolding already on this question (not the answer)",
+  };
+}
 
 /**
  * W7.5 Skip: advance via `GO_TO` without recording an answer. Unanswered items
@@ -210,9 +277,15 @@ export function nextOptionIndex(selectedIndex: number | null, step: 1 | -1, coun
 }
 
 /** The grading rules shown under a written answer, per format. */
-export function formatHint(type: QuestionType | undefined, opts?: { sort?: boolean }): string {
+export function formatHint(
+  type: QuestionType | undefined,
+  opts?: { sort?: boolean; label?: boolean },
+): string {
   if (opts?.sort) {
     return "Select an item, then tap a bucket to place it. Tap a placed item to return it to the tray. Check unlocks once every item is sorted.";
+  }
+  if (opts?.label) {
+    return "Select a label, then tap a numbered region to place it. Tap a placed label to return it to the tray. Check unlocks once every region is labelled.";
   }
   if (type === "symbolic") {
     return "Enter an expression using single-letter variables, + − * / ^ and parentheses, with whole-number powers from −8 to 8. For example, 2(x + 1) and 2x + 2 are equivalent wherever both are defined. Functions and equations are not supported.";

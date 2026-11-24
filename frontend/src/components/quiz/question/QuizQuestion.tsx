@@ -25,13 +25,14 @@
  * concept-pill meta row, and an action bar with Hint / Study guide / Skip
  * beside Check. W7.D1: Check / progress / pager = brand forest; `--quiz-accent`
  * is course identity on the concept pill only. No XP in the session top.
- * W7.5: Hint stays disabled (no leak-safe quiz hint API); Skip wires to GO_TO;
- * Study guide opens a leak-safe drawer scaffold. No wager.
- * W7.2 kit: Sort (7.1) click-to-bucket stub on short_answer + interaction.
+ * W7.5: Hint shows client-side scaffolding already on the question (no LLM /
+ * answer key; Bastani ladder deferred); Skip wires to GO_TO; Study guide opens
+ * a leak-safe drawer scaffold. No wager.
+ * W7.2 kit: Sort (7.1) + Label (7.4) click-to-assign stubs on short_answer + interaction.
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { BookOpen, ChevronLeft, ChevronRight, Hash, Layers, Library, ListChecks, PenLine, Sigma, Sparkles, X } from "lucide-react";
+import { BookOpen, ChevronLeft, ChevronRight, Hash, Layers, Library, ListChecks, PenLine, Sigma, Sparkles, Tag, X } from "lucide-react";
 import { AnswerOption, Badge, Button, Chip, ProgressDots } from "@/components/ui";
 import { ConceptNode } from "@/components/graph/ConceptNode";
 import { ConfidenceControl } from "@/components/learn/ConfidenceControl";
@@ -41,11 +42,13 @@ import { useFlag } from "@/context/FlagsContext";
 import { learnHrefForNode } from "@/lib/data";
 import type { QuizActions } from "@/lib/quiz/useQuizSession";
 import { buildQuizHref } from "@/lib/quiz/source";
+import { asLabelInteraction } from "@/lib/quiz/labelInteraction";
 import { asSortInteraction } from "@/lib/quiz/sortInteraction";
 import type { Phase, QuestionType, QuizConfig, QuizItem, QuizPrereqBanner, QuizSession } from "@/lib/quiz/types";
 import { isUnanswered } from "@/lib/quiz/machine";
 import { expressionParts, superscriptParts, type ExpressionPart } from "@/lib/quiz/answerFormats";
 import { WrittenAnswer, type WrittenType } from "./WrittenAnswer";
+import { LabelAnswer } from "./LabelAnswer";
 import { SortAnswer } from "./SortAnswer";
 import { AskPanel } from "./AskPanel";
 import { StudyGuideDrawer } from "./StudyGuideDrawer";
@@ -60,7 +63,7 @@ import {
   everyAnswered,
   formatHint,
   generatingDetail,
-  HINT_SLOT_DISABLED,
+  hintSlotState,
   itemView,
   missLine,
   nextOptionIndex,
@@ -68,11 +71,13 @@ import {
   optionStatus,
   outcomeOf,
   primaryButton,
+  scaffoldHint,
   skipSlotState,
   verdictShown,
   type ItemView,
   type PrimaryAction,
   type PrimaryButton,
+  type ScaffoldHint,
   type Verdict,
 } from "./questionView";
 import "./question.css";
@@ -149,14 +154,15 @@ function isTypingTarget(target: EventTarget | null): boolean {
 }
 
 /** What each format is called on screen — the same names the Format setting
- *  uses, so "Algebra" in the settings is "Algebra" on the question. Sort is
- *  kit-only (W7.2): still a short_answer on the wire. */
+ *  uses, so "Algebra" in the settings is "Algebra" on the question. Sort /
+ *  Label are kit-only (W7.2): still a short_answer on the wire. */
 const FORMAT_TAG: Record<string, { label: string; Icon: typeof ListChecks }> = {
   multiple_choice: { label: "Multiple choice", Icon: ListChecks },
   short_answer: { label: "Short answer", Icon: PenLine },
   numeric: { label: "Numeric", Icon: Hash },
   symbolic: { label: "Algebra", Icon: Sigma },
   sort: { label: "Sort", Icon: Layers },
+  label: { label: "Label", Icon: Tag },
 };
 
 /** Where the question's grounding came from, said plainly. */
@@ -265,6 +271,8 @@ interface RootKeyContext {
   actions: QuizActions;
   confidenceRef: React.RefObject<HTMLDivElement | null>;
   onOpenGuide: () => void;
+  onToggleHint: () => void;
+  hintEnabled: boolean;
 }
 
 /** The sheet and the dialog own the keyboard while they are open — and both
@@ -315,6 +323,9 @@ function handleRootKey(e: React.KeyboardEvent, ctx: RootKeyContext) {
   else if (e.key === "g" || e.key === "G") {
     e.preventDefault();
     ctx.onOpenGuide();
+  } else if ((e.key === "h" || e.key === "H") && ctx.hintEnabled) {
+    e.preventDefault();
+    ctx.onToggleHint();
   } else if (ctx.selectable) selectByShortcut(e, ctx);
 }
 
@@ -568,12 +579,16 @@ function QuestionPager({
 }
 
 /**
- * Action bar (W7.1 + W7.5): Hint (disabled, honest reason) · Study guide ·
+ * Action bar (W7.1 + W7.5): Hint (client scaffolding) · Study guide ·
  * pager · Skip (GO_TO ahead, no mastery) · Check. No wager.
  */
 function QuestionFooter({
   pager,
   primary,
+  hint,
+  hintOpen,
+  onToggleHint,
+  hintRef,
   skip,
   onSkip,
   onOpenGuide,
@@ -581,6 +596,10 @@ function QuestionFooter({
 }: {
   pager: React.ReactNode;
   primary?: Primary;
+  hint: ReturnType<typeof hintSlotState>;
+  hintOpen: boolean;
+  onToggleHint: () => void;
+  hintRef: React.RefObject<HTMLButtonElement | null>;
   skip: ReturnType<typeof skipSlotState>;
   onSkip: () => void;
   onOpenGuide: () => void;
@@ -591,12 +610,16 @@ function QuestionFooter({
       <div className="quiz-question__actions-start">
         <button
           type="button"
+          ref={hintRef}
           className="quiz-question__action-btn"
           data-testid="quiz-hint-slot"
-          title={HINT_SLOT_DISABLED.title}
+          title={hint.title}
           aria-label="Hint"
-          aria-disabled="true"
-          disabled
+          aria-expanded={hintOpen}
+          aria-controls="quiz-hint-panel"
+          aria-disabled={!hint.enabled}
+          disabled={!hint.enabled}
+          onClick={onToggleHint}
         >
           Hint
         </button>
@@ -808,16 +831,47 @@ function SortField(props: AnswerFieldProps) {
   );
 }
 
+/** W7.2 Label (7.4): tray + spots; Check uses encoded short_answer text. */
+function LabelField(props: AnswerFieldProps) {
+  const { view, shown, selectable, actions } = props;
+  const label = asLabelInteraction(view.item?.question.interaction);
+  if (!label) return <WrittenField {...props} />;
+  return (
+    <div
+      className="quiz-question__written quiz-question__written--label"
+      data-marked={shown ? "true" : undefined}
+    >
+      <LabelAnswer
+        interaction={label}
+        value={view.item?.answerText ?? ""}
+        disabled={!selectable}
+        expected={shown?.correctAnswer ?? null}
+        verdict={outcomeOf(shown) ?? null}
+        onChange={text => actions.write?.(text)}
+      />
+      <p className="quiz-question__format-hint" id="quiz-format-hint" data-testid="quiz-format-hint">
+        {formatHint("short_answer", { label: true })}
+      </p>
+    </div>
+  );
+}
+
+function kitField(props: AnswerFieldProps): React.JSX.Element | null {
+  if (props.view.format !== "short_answer") return null;
+  const interaction = props.view.item?.question.interaction;
+  if (asSortInteraction(interaction)) return <SortField {...props} />;
+  if (asLabelInteraction(interaction)) return <LabelField {...props} />;
+  return null;
+}
+
 function AnswerFieldFor(props: AnswerFieldProps) {
-  const sort = props.view.format === "short_answer"
-    ? asSortInteraction(props.view.item?.question.interaction)
-    : null;
-  if (sort) return <SortField {...props} />;
+  const kit = kitField(props);
+  if (kit) return kit;
   const Field = ANSWER_FIELDS[props.view.format];
   return <Field {...props} />;
 }
 
-/** One answer field per wire format. Sort mounts via AnswerFieldFor. */
+/** One answer field per wire format. Sort / Label mount via AnswerFieldFor. */
 const ANSWER_FIELDS: Record<QuestionType, (props: AnswerFieldProps) => React.JSX.Element> = {
   multiple_choice: ChoiceAnswer,
   short_answer: WrittenField,
@@ -880,6 +934,36 @@ function VerdictFeedback({
     >
       {shown && <VerdictReading verdict={shown} format={format} correctLabel={correctLabel} />}
     </div>
+  );
+}
+
+/** W7.5: client scaffolding only — concept focus + format rules already on the item. */
+function HintPanel({ hint, onOpenGuide }: { hint: ScaffoldHint; onOpenGuide: () => void }) {
+  return (
+    <aside
+      id="quiz-hint-panel"
+      className="card quiz-question__hint-panel"
+      data-testid="quiz-hint-panel"
+      aria-label="Question scaffolding"
+    >
+      <p className="quiz-question__hint-panel-focus body-serif">
+        Focus on <strong>{hint.focus}</strong> — answer from that idea.
+      </p>
+      {hint.rubric && (
+        <p className="quiz-question__hint-panel-rubric" data-testid="quiz-hint-rubric">
+          {hint.rubric}
+        </p>
+      )}
+      <p className="quiz-question__hint-panel-note">{hint.note}</p>
+      <Button
+        variant="link"
+        size="sm"
+        data-testid="quiz-hint-open-guide"
+        onClick={onOpenGuide}
+      >
+        Open Study guide
+      </Button>
+    </aside>
   );
 }
 
@@ -976,6 +1060,7 @@ export function QuizQuestion({
   const toast = useToast();
   const askRef = useRef<HTMLButtonElement>(null);
   const guideRef = useRef<HTMLButtonElement>(null);
+  const hintRef = useRef<HTMLButtonElement>(null);
   const confidenceRef = useRef<HTMLDivElement>(null);
 
   /**
@@ -985,6 +1070,7 @@ export function QuizQuestion({
    */
   const [askForCursor, setAskForCursor] = useState<number | null>(null);
   const [guideOpen, setGuideOpen] = useState(false);
+  const [hintOpen, setHintOpen] = useState(false);
 
   const { phase, cursor, items } = session;
   const view = itemView(items[cursor]);
@@ -1005,6 +1091,7 @@ export function QuizQuestion({
   const selectable = phase === "active" && !busy;
   const difficulty = difficultyLabel(view.item, session);
   const quizLength = total || session.config.count;
+  const sessionMode = session.config.sessionMode ?? "practice";
   const skip = skipSlotState({
     phase,
     busy,
@@ -1012,14 +1099,45 @@ export function QuizQuestion({
     total,
     hasVerdict: view.verdict != null,
   });
+  const hint = hintSlotState({
+    phase,
+    busy,
+    sessionMode,
+    hasItem: Boolean(view.item),
+  });
+  const kitInteraction = view.format === "short_answer"
+    ? view.item?.question.interaction
+    : undefined;
+  const sortInteraction = asSortInteraction(kitInteraction);
+  const labelInteraction = asLabelInteraction(kitInteraction);
+  const scaffold = scaffoldHint({
+    conceptName: concept.name,
+    conceptTested: view.item?.question.concept_tested,
+    format: view.format,
+    sort: Boolean(sortInteraction),
+    label: Boolean(labelInteraction),
+  });
   const openGuide = useCallback(() => {
     setAskForCursor(null);
+    setHintOpen(false);
     setGuideOpen(true);
   }, []);
+  const onToggleHint = useCallback(() => {
+    if (!hint.enabled) return;
+    setAskForCursor(null);
+    setGuideOpen(false);
+    setHintOpen(open => !open);
+  }, [hint.enabled]);
   const onSkip = useCallback(() => {
     if (skip.targetIndex == null) return;
     actions.goTo?.(skip.targetIndex);
   }, [actions, skip.targetIndex]);
+
+  // A new item closes scaffolding so focus/rubric from the previous stem
+  // cannot linger beside a different question.
+  useEffect(() => {
+    setHintOpen(false);
+  }, [cursor]);
 
   const { rootRef, feedbackRef } = useQuestionFocus(phase, cursor, view.written, showVerdict);
   useShortQuizToast(session, total, toast);
@@ -1035,10 +1153,11 @@ export function QuizQuestion({
       quizLength={quizLength}
     />
   );
-  const sortInteraction = view.format === "short_answer"
-    ? asSortInteraction(view.item?.question.interaction)
-    : null;
-  const formatTagKey = sortInteraction ? "sort" : view.format;
+  const formatTagKey = sortInteraction
+    ? "sort"
+    : labelInteraction
+      ? "label"
+      : view.format;
   const header = (
     <QuestionHeader
       concept={concept}
@@ -1054,6 +1173,10 @@ export function QuizQuestion({
     <QuestionFooter
       pager={pager}
       primary={phase === "generating" ? undefined : primary}
+      hint={hint}
+      hintOpen={hintOpen && hint.enabled}
+      onToggleHint={onToggleHint}
+      hintRef={hintRef}
       skip={skip}
       onSkip={onSkip}
       onOpenGuide={openGuide}
@@ -1099,6 +1222,8 @@ export function QuizQuestion({
       actions,
       confidenceRef,
       onOpenGuide: openGuide,
+      onToggleHint,
+      hintEnabled: hint.enabled,
     });
 
   return (
@@ -1123,6 +1248,9 @@ export function QuizQuestion({
           {askConfidence && (
             <QuestionConfidence confidenceRef={confidenceRef} item={view.item} selectable={selectable} actions={actions} />
           )}
+          {hintOpen && hint.enabled && (
+            <HintPanel hint={scaffold} onOpenGuide={openGuide} />
+          )}
           <VerdictFeedback
             feedbackRef={feedbackRef}
             shown={shown}
@@ -1133,10 +1261,11 @@ export function QuizQuestion({
             flagged={view.item?.flagged ?? false}
             onFlag={() => flagItem(view.item, actions, toast)}
             // W7.8: Exam Twin is tool-light — Ask is refused server-side too.
-            canAsk={phase === "answered" && (session.config.sessionMode ?? "practice") !== "exam_twin"}
+            canAsk={phase === "answered" && sessionMode !== "exam_twin"}
             askRef={askRef}
             onAsk={() => {
               setGuideOpen(false);
+              setHintOpen(false);
               setAskForCursor(cursor);
             }}
           />

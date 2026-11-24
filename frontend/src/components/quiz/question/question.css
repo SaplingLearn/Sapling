@@ -13,7 +13,7 @@
  * W7.1 shell (Quiz Shell.dc.html + w7-design-decisions.md): session top omits
  * XP/streak/? (XP only on results); open question body (no stem card); meta
  * row = concept pill + mastery tier chip; action bar Hint / Study guide / Skip
- * (W7.5: Hint disabled leak-safe; Skip = GO_TO; guide drawer scaffold).
+ * (W7.5: Hint = client scaffolding panel; Skip = GO_TO; guide drawer scaffold).
  */
 
 .quiz-question {
@@ -383,6 +383,30 @@
   flex-direction: column;
   gap: 6px;
   padding: var(--pad-md) var(--pad-lg);
+}
+
+/* W7.5 Hint panel: interaction card (same budget as verdict / leave). */
+.quiz-question__hint-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: var(--pad-md);
+  padding: var(--pad-md) var(--pad-lg);
+}
+
+.quiz-question__hint-panel-focus {
+  margin: 0;
+  font-size: var(--fs-lg);
+  color: var(--text);
+}
+
+.quiz-question__hint-panel-rubric,
+.quiz-question__hint-panel-note {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-muted, var(--muted));
+  line-height: 1.45;
 }
 
 .quiz-question__verdict-line {
@@ -1268,8 +1292,139 @@
 }
 
 .quiz-question__written[data-marked] .quiz-sort__tray,
+.quiz-question__written[data-marked] .quiz-label__tray,
 .quiz-question__written[data-marked] .quiz-question__format-hint {
   display: none;
+}
+
+/* W7.2 Label (kit 7.4): numbered spots + Labels tray (click-to-assign stub). */
+.quiz-label {
+  display: grid;
+  gap: var(--pad-lg);
+  width: 100%;
+  min-width: 0;
+  flex-shrink: 0;
+}
+
+.quiz-label__tray {
+  display: grid;
+  gap: var(--pad-sm);
+}
+
+.quiz-label__tray-label,
+.quiz-label__spot-num {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.quiz-label__spot-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 8px;
+  border: 1.5px solid var(--border);
+  border-radius: 999px;
+  font-family: var(--font-mono, var(--font-sans));
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.quiz-label__tray-empty,
+.quiz-label__spot-hint {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+}
+
+.quiz-label__spots {
+  display: grid;
+  gap: var(--pad-md);
+  align-items: stretch;
+}
+
+.quiz-label__spot {
+  display: grid;
+  grid-template-rows: auto auto;
+  gap: var(--pad-sm);
+  min-height: 96px;
+  padding: var(--pad-md);
+  border: 1.5px dashed var(--border);
+  border-radius: var(--r-md);
+  background: transparent;
+}
+
+.quiz-label__spot--target {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.quiz-label__spot-hit {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+
+.quiz-label__spot-hit:disabled {
+  cursor: default;
+}
+
+.quiz-label__cards {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.quiz-label__card {
+  display: inline-flex;
+  align-items: center;
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg-panel);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: var(--fs-md);
+  line-height: 1.3;
+  cursor: pointer;
+  text-align: left;
+}
+
+.quiz-label__card:disabled {
+  cursor: default;
+}
+
+.quiz-label__card--lift {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+  transform: rotate(-1deg);
+}
+
+.quiz-label__card--right {
+  border-color: var(--positive);
+  background: color-mix(in srgb, var(--positive) 12%, var(--bg-panel));
+  box-shadow: inset 0 0 0 1px var(--positive);
+}
+
+.quiz-label__card--wrong {
+  border-color: var(--err);
+  background: color-mix(in srgb, var(--err) 10%, var(--bg-panel));
+  box-shadow: inset 0 0 0 1px var(--err);
 }
 
 /* Phones: a smaller stem, and the header wraps rather than squeezes. */

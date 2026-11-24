@@ -61,9 +61,10 @@ export function isWrittenType(type: string | null | undefined): boolean {
 }
 
 /**
- * W7.2 interactive kit (phased): Sort (design 7.1). Optional on a
- * `short_answer` wire question — generation does not emit it yet. The UI
- * serialises placements into `answerText` via `lib/quiz/sortInteraction`.
+ * W7.2 interactive kit (phased): Sort (design 7.1) and Label (design 7.4).
+ * Optional on a `short_answer` wire question — generation does not emit them
+ * yet. The UI serialises placements into `answerText` via
+ * `lib/quiz/sortInteraction` / `lib/quiz/labelInteraction`.
  */
 export interface SortInteractionItem {
   id: string;
@@ -76,7 +77,26 @@ export interface SortInteraction {
   items: SortInteractionItem[];
 }
 
-export type QuestionInteraction = SortInteraction;
+/** One numbered region on the diagram stub (design kit spot). */
+export interface LabelInteractionSpot {
+  id: string;
+  /** Caption on the pin (often "1"… or a short name). */
+  label: string;
+}
+
+/** One tray card the student assigns to a spot. */
+export interface LabelInteractionItem {
+  id: string;
+  label: string;
+}
+
+export interface LabelInteraction {
+  kind: "label";
+  spots: LabelInteractionSpot[];
+  labels: LabelInteractionItem[];
+}
+
+export type QuestionInteraction = SortInteraction | LabelInteraction;
 
 export interface WireQuestion {
   material_context?: "course_material" | "catalog" | "general";

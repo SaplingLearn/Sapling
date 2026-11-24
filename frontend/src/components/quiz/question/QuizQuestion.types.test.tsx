@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 /**
  * W7.2: core question types (MC / short / numeric / algebra) under the focus
- * SessionTop shell, plus the Sort (7.1) kit stub on short_answer+interaction.
+ * SessionTop shell, plus Sort (7.1) / Label (7.4) kit stubs on short_answer+interaction.
  * Later interactive types (label / dialogue…) stay phased.
  */
 
@@ -319,5 +319,49 @@ describe("W7.2 core types under SessionTop", () => {
     fireEvent.click(screen.getByTestId("quiz-sort-item-e-coli"));
     fireEvent.click(screen.getByRole("button", { name: "Place in Prokaryote" }));
     expect(actions.write).toHaveBeenCalledWith("Prokaryote=e-coli;Eukaryote=");
+  });
+
+  it("Label (7.4): spots/tray under SessionTop; Check waits for a full placement", () => {
+    const interaction = {
+      kind: "label" as const,
+      spots: [
+        { id: "1", label: "1" },
+        { id: "2", label: "2" },
+      ],
+      labels: [
+        { id: "aorta", label: "Aorta" },
+        { id: "pa", label: "Pulmonary artery" },
+      ],
+    };
+    const { actions } = renderScreen(
+      makeSession({
+        items: [
+          item(0, {
+            question: {
+              id: 1,
+              question: "Label the parts of the heart.",
+              type: "short_answer",
+              options: [],
+              difficulty: "medium",
+              interaction,
+            },
+          }),
+          item(1),
+          item(2),
+        ],
+      }),
+    );
+
+    expect(screen.getByTestId("quiz-session-top")).toBeInTheDocument();
+    const tag = screen.getByTestId("quiz-format-tag");
+    expect(tag).toHaveAttribute("data-format", "label");
+    expect(tag).toHaveTextContent("Label");
+    expect(screen.getByTestId("quiz-label")).toBeInTheDocument();
+    expect(screen.getByTestId("quiz-format-hint")).toHaveTextContent(/Select a label/);
+    expect(screen.getByTestId("quiz-submit-answer")).toBeDisabled();
+
+    fireEvent.click(screen.getByTestId("quiz-label-item-aorta"));
+    fireEvent.click(screen.getByRole("button", { name: "Place on 1" }));
+    expect(actions.write).toHaveBeenCalledWith("1=aorta;2=");
   });
 });
