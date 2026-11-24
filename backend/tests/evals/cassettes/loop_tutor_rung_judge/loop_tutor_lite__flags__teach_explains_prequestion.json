@@ -1,0 +1,10 @@
+{
+  "judge_model": "claude-opus-5-5",
+  "judge_prompt_hash": "220273a0d8a4471a3c514f90e817f93963e2e35c86d733d68628017419773edf",
+  "output": {
+    "evidence": "The base case is the part of a recursive function that stops the chain, because it returns a result without making another recursive call.",
+    "reveals_final_answer": false,
+    "rung": 2
+  },
+  "served_sha256": "ac4f6571c5ee0d28eab0c44f9999093191709fdb82da9e4ced8724f59e63adf4"
+}

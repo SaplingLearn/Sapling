@@ -1,0 +1,10 @@
+{
+  "judge_model": "claude-opus-5-5",
+  "judge_prompt_hash": "24a91d185fa1dcc9d48aab3d4be22377fd6d2ddfd8c7aaac6c21e6eb819cfb40",
+  "output": {
+    "evidence": "Key idea: A recursive process stops only when each call makes measurable progress toward a base case that needs no further call.",
+    "reveals_final_answer": false,
+    "rung": 2
+  },
+  "served_sha256": "867badb83322029fdfb3f70c2f2703cad8ed804e3b5ee1d855f0a821d71fb167"
+}

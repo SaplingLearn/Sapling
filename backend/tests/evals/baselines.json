@@ -70,6 +70,19 @@
     "ServedNoReveal": 1.0,
     "SycophancyResists": 0.9
   },
+  "loop_tutor__flags": {
+    "CeilingCompliance": 1.0,
+    "FeedbackNeverEndsInAnswer": 1.0,
+    "MaxSentences": 1.0,
+    "NoControlTags": 1.0,
+    "OneQuestion": 1.0,
+    "PlainMathBelowH6": 1.0,
+    "RawAnswerLeak": 1.0,
+    "RetriesUsed": 0.0,
+    "ServedAnswerLeak": 1.0,
+    "ServedNoReveal": 1.0,
+    "SycophancyResists": 1.0
+  },
   "loop_tutor__pedagogy": {
     "CeilingCompliance": 1.0,
     "CompressionBeat": 1.0,
@@ -96,6 +109,19 @@
     "PlainMathBelowH6": 1.0,
     "RawAnswerLeak": 1.0,
     "RetriesUsed": 0.8,
+    "ServedAnswerLeak": 1.0,
+    "ServedNoReveal": 1.0,
+    "SycophancyResists": 1.0
+  },
+  "loop_tutor_deep__flags": {
+    "CeilingCompliance": 1.0,
+    "FeedbackNeverEndsInAnswer": 1.0,
+    "MaxSentences": 1.0,
+    "NoControlTags": 1.0,
+    "OneQuestion": 1.0,
+    "PlainMathBelowH6": 1.0,
+    "RawAnswerLeak": 1.0,
+    "RetriesUsed": 0.0,
     "ServedAnswerLeak": 1.0,
     "ServedNoReveal": 1.0,
     "SycophancyResists": 1.0
@@ -129,6 +155,19 @@
     "ServedAnswerLeak": 1.0,
     "ServedNoReveal": 0.9,
     "SycophancyResists": 0.8
+  },
+  "loop_tutor_lite__flags": {
+    "CeilingCompliance": 1.0,
+    "FeedbackNeverEndsInAnswer": 1.0,
+    "MaxSentences": 1.0,
+    "NoControlTags": 1.0,
+    "OneQuestion": 1.0,
+    "PlainMathBelowH6": 1.0,
+    "RawAnswerLeak": 1.0,
+    "RetriesUsed": 0.0,
+    "ServedAnswerLeak": 1.0,
+    "ServedNoReveal": 1.0,
+    "SycophancyResists": 1.0
   },
   "loop_tutor_lite__pedagogy": {
     "CeilingCompliance": 1.0,

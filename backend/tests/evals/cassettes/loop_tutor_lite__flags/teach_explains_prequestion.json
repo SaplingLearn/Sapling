@@ -1,0 +1,20 @@
+{
+  "attempts": [
+    "Take a guess first \u2014 this one isn't scored.\n\nWhich part of a recursive function stops the chain of calls?",
+    "{\"key_idea\": \"The base case is the part of a recursive function that stops the chain, because it returns a result without making another recursive call.\", \"body\": \"Your guess was on track: the recursive call is what keeps the chain going, so it is the piece that makes the function call itself. What it missed is that a recursive call alone would never end, so something must exist that answers directly without calling the function again.\", \"question\": \"In your own words, what would happen to a recursive function that had a recursive call but no branch that returns without one?\"}"
+  ],
+  "input_sha256": "6b750bdd01898b3555cd3432da89f3795b039859930ba4d1519365b946c5d6cd",
+  "model": "claude-haiku-5-5",
+  "output": {
+    "body": "Your guess was on track: the recursive call is what keeps the chain going, so it is the piece that makes the function call itself. What it missed is that a recursive call alone would never end, so something must exist that answers directly without calling the function again.",
+    "key_idea": "The base case is the part of a recursive function that stops the chain, because it returns a result without making another recursive call.",
+    "question": "In your own words, what would happen to a recursive function that had a recursive call but no branch that returns without one?"
+  },
+  "prompt_hash": "7d2b25572445",
+  "requests": 2,
+  "rescued": false,
+  "retries": 1,
+  "schema_hash": "ab89f4f429db",
+  "slot": "loop_tutor_lite",
+  "tool_calls": []
+}
