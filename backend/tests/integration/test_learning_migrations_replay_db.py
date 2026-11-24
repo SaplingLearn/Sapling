@@ -17,7 +17,7 @@ Run inside the B6 flock'd cycle with RUN_INTEGRATION=1.
 
 from __future__ import annotations
 
-from db.migration_units import MIGRATION_UNITS
+from db.migration_units import MIGRATION_UNITS, MIGRATIONS_DIR, split_units, unit_names
 import os
 import uuid
 from pathlib import Path
@@ -59,11 +59,19 @@ def _column(conn, table: str, column: str):
 def test_the_pkg14_migrations_are_applied_in_filename_order(db_conn):
     names = [_file(s).name for s in PKG14_MIGRATIONS]
     assert names == sorted(names)
+    # #866 (9f5c0111) consolidated these into one migration file: the runner
+    # applies its units in place, in filename order, in one transaction, and
+    # the ledger records the FILE (db/migration_units.py).
+    assert [n for n in unit_names() if n in names] == names
+    holders = sorted(
+        p.name for p in MIGRATIONS_DIR.glob("*.sql") if any(u in names for u, _ in split_units(p))
+    )
+    assert holders
     rows = db_conn.execute(
-        "SELECT filename FROM schema_migrations WHERE filename = ANY(%s) ORDER BY applied_at, filename",
-        (names,),
+        "SELECT filename FROM schema_migrations WHERE filename = ANY(%s) ORDER BY filename",
+        (holders,),
     ).fetchall()
-    assert [r["filename"] for r in rows] == names
+    assert [r["filename"] for r in rows] == holders
 
 
 def test_the_pkg14_schema_has_the_declared_shape(db_conn):
