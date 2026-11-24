@@ -34,8 +34,6 @@
  */
 
 import { handoffPracticeDueHref } from "@/lib/learningHandoffs";
-import { buildQuizHref } from "@/lib/quiz/source";
-import { studyHref } from "@/lib/toolHrefs";
 
 export type Status = "mastered" | "progress" | "review" | "new";
 export type AssessType = "Exam" | "Quiz" | "Homework";

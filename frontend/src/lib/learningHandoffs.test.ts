@@ -41,9 +41,9 @@ describe("href builders", () => {
     );
   });
 
-  it("Practice what's due prefers the lead due id, else course+start", () => {
+  it("Practice what's due feeds due[] as a scope=due queue, else course+start (W3.3c)", () => {
     expect(handoffPracticeDueHref("c1", ["arr", "loop"])).toBe(
-      "/quiz?concept=arr&from=link&return=%2Fstudy%3Fcourse%3Dc1&start=1",
+      "/quiz?scope=due&queue=arr%2Cloop&from=link&return=%2Fstudy%3Fcourse%3Dc1&start=1",
     );
     expect(handoffPracticeDueHref("c1", [])).toBe(
       "/quiz?course=c1&from=link&return=%2Fstudy%3Fcourse%3Dc1&start=1",

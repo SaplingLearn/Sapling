@@ -510,7 +510,7 @@ Use this as the merge/readiness checklist. Every row must be **Done (A+)**, **N/
 - [ ] Segment predict→reveal on (W5.E2)  
 - [ ] Self-explain on (W5.E2)  
 - [x] Reason-before-submit (W2.3) — see [w2-reason-before-submit.md](./w2-reason-before-submit.md)  
-- [x] Low-trust routing hint only (W2.4) — helper + `next_probe_hint` flag + call site; plaintext not threaded yet — see [w2-next-probe-hint.md](./w2-next-probe-hint.md)  
+- [x] Low-trust routing hint only (W2.4) — helper + decrypt wire + `next_probe_hint` flag; see [w2-next-probe-hint.md](./w2-next-probe-hint.md)  
 
 - [ ] Varied isomorphs on (W5.E4)  
 - [ ] Multi-concept on (W5.E4)  

@@ -107,7 +107,7 @@ Ship order matches integrity: **ground + show trust before generate.**
 | Piece | Proposal |
 |---|---|
 | Grounded teach mode | Optional: teach `body` must cite retrieved chunk ids; contradiction → rewrite or withhold (fail closed to text / skip figure) |
-| UI chips | “Grounded in your materials” when cites present; “Key verified” when posed check passed item gates (reuse quiz/check_items status — do not invent a second verifier) |
+| UI chips | “Grounded in your materials” when cites present; “Key verified” when posed check passed item gates (reuse quiz/check_items status — do not invent a second verifier). **Shipped:** W4.3 `materials_grounded` (teach/opener); W4.4 `key_verified` on `_pose_payload` when `check_items.canonical_verified` (CheckCard `loop-key-verified`). Servable ≠ verified — chrome keys only on the confirmed-key flag. |
 | Flag | e.g. `loop_grounded_teach` (default off); chrome can ship earlier read-only for already-verified items |
 | Eval needs | New cases: cite present when materials returned; withhold/rewrite on planted contradiction; no leak regression on H ladder; cost budget logged |
 | E2E | Chip testids; flag-off = no chrome / no cite requirement |
