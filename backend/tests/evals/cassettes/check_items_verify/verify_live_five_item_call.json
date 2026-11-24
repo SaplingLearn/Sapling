@@ -1,0 +1,87 @@
+{
+  "output": {
+    "concepts": [
+      {
+        "asks": "what a hash function maps a key to",
+        "concept": "Hash Function",
+        "item": "ITEM 1"
+      },
+      {
+        "asks": "explain how separate chaining stores colliding keys",
+        "concept": "Separate Chaining",
+        "item": "ITEM 2"
+      },
+      {
+        "asks": "explain why tombstones replace emptied deleted slots",
+        "concept": "Tombstone Deletion",
+        "item": "ITEM 3"
+      },
+      {
+        "asks": "maximum comparisons for binary search on 16 values",
+        "concept": "none",
+        "item": "ITEM 4"
+      },
+      {
+        "asks": "compute the load factor of a table",
+        "concept": "Load Factor",
+        "item": "ITEM 5"
+      }
+    ],
+    "criteria": [
+      {
+        "asked": true,
+        "criterion": "c1",
+        "item": "ITEM 1",
+        "why": "Question asks what the function maps a key to; bucket index is that answer"
+      },
+      {
+        "asked": true,
+        "criterion": "c1",
+        "item": "ITEM 2",
+        "why": "Asks how two keys are stored in same bucket; both kept in list is asked"
+      },
+      {
+        "asked": false,
+        "criterion": "c2",
+        "item": "ITEM 2",
+        "why": "Asks how keys are stored, not how lookup walks the list"
+      },
+      {
+        "asked": true,
+        "criterion": "c1",
+        "item": "ITEM 3",
+        "why": "Asks why tombstone instead of emptying; ending probe early answers this"
+      },
+      {
+        "asked": false,
+        "criterion": "c2",
+        "item": "ITEM 3",
+        "why": "Asks about tombstone purpose; resizing when tombstones pile up is not asked"
+      },
+      {
+        "asked": true,
+        "criterion": "c1",
+        "item": "ITEM 4",
+        "why": "Asks how many comparisons at most; halving count gives that worst case"
+      },
+      {
+        "asked": true,
+        "criterion": "c1",
+        "item": "ITEM 5",
+        "why": "Asks for the load factor; the division 12/16 is the working leading to it"
+      },
+      {
+        "asked": true,
+        "criterion": "c2",
+        "item": "ITEM 5",
+        "why": "Asks for the load factor; the value 0.75 is the answer itself"
+      }
+    ]
+  },
+  "recorded_under": {
+    "input_sha256": "d69645d7edb97ac7b8ecc3870a82c2f5fe5729a5d8a9b3ddb4bb10a6ac9eea5d",
+    "model": "claude-haiku-5-5",
+    "prompt_hash": "d9233c2230b2",
+    "schema_hash": "647aab01084a"
+  }
+}

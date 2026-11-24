@@ -1,0 +1,10 @@
+{
+  "judge_model": "claude-opus-5-5",
+  "judge_prompt_hash": "71530d86d71daaecad405563f53fdab3f424bf8124ff0b35fb8f6237f943b326",
+  "output": {
+    "evidence": "Work out the derivative of x^3 using the limit definition, then compare it with what your belief predicts: do they match?",
+    "reveals_final_answer": false,
+    "rung": 3
+  },
+  "served_sha256": "5f8942adfcf38df9febbb5588237d87bd82af76ebf1d95adfa7f4b82ede5093f"
+}

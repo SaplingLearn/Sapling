@@ -1,0 +1,19 @@
+{
+  "attempts": [
+    "{\"key_idea\": \"The middle value and the mean are different measures, so your belief that they match can be tested on a case where they should disagree.\", \"body\": \"Picking the middle value describes the median, which is a different statistic from the mean. If your belief is right, the mean of 1, 2 and 30 should also be 2, the middle value.\", \"question\": \"What do you get when you compute the mean of 1, 2 and 30, and does it match the 2 your belief predicts?\"}"
+  ],
+  "input_sha256": "a22712fd78e946fb5a6a4fd176bbe6aff7027a3e739e5d80476f69fec60e789b",
+  "model": "claude-haiku-5-5",
+  "output": {
+    "body": "Picking the middle value describes the median, which is a different statistic from the mean. If your belief is right, the mean of 1, 2 and 30 should also be 2, the middle value.",
+    "key_idea": "The middle value and the mean are different measures, so your belief that they match can be tested on a case where they should disagree.",
+    "question": "What do you get when you compute the mean of 1, 2 and 30, and does it match the 2 your belief predicts?"
+  },
+  "prompt_hash": "1e98ab9844b3",
+  "requests": 1,
+  "rescued": false,
+  "retries": 0,
+  "schema_hash": "ee2a0f1f177f",
+  "slot": "loop_tutor",
+  "tool_calls": []
+}

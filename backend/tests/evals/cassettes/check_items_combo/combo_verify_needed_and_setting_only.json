@@ -1,0 +1,56 @@
+{
+  "output": {
+    "components": [
+      {
+        "component": "k1",
+        "item": "1",
+        "required": true,
+        "why": "Naming and applying the chain rule is the key step of differentiating sin(x^2)."
+      },
+      {
+        "component": "k2",
+        "item": "1",
+        "required": true,
+        "why": "Differentiating sin and x^2 is needed to compute the result."
+      },
+      {
+        "component": "k1",
+        "item": "2",
+        "required": true,
+        "why": "Power rule differentiation of 3x^2 gives the answer 6x."
+      },
+      {
+        "component": "k2",
+        "item": "2",
+        "required": false,
+        "why": "Limits are only the setting of the sheet; no step of finding 6x uses them."
+      }
+    ],
+    "criteria": [
+      {
+        "asked": true,
+        "criterion": "c1",
+        "item": "1",
+        "why": "Question asks to differentiate sin(x^2); answer 2x cos(x^2) is the result asked."
+      },
+      {
+        "asked": true,
+        "criterion": "c2",
+        "item": "1",
+        "why": "Question asks to name the rule used, so naming the chain rule is asked."
+      },
+      {
+        "asked": true,
+        "criterion": "c1",
+        "item": "2",
+        "why": "Question asks for the derivative of 3x^2, so giving 6x is asked."
+      }
+    ]
+  },
+  "recorded_under": {
+    "input_sha256": "6d55516717b195e45d0726138f44d4856668b1d29708b2c7d5410306198612d6",
+    "model": "claude-haiku-5-5",
+    "prompt_hash": "205ab2bf8e5d",
+    "schema_hash": "682a07e0edc7"
+  }
+}

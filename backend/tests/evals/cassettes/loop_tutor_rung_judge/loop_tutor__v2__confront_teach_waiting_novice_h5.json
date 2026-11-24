@@ -1,0 +1,10 @@
+{
+  "judge_model": "claude-opus-5-5",
+  "judge_prompt_hash": "71530d86d71daaecad405563f53fdab3f424bf8124ff0b35fb8f6237f943b326",
+  "output": {
+    "evidence": "compare the change in x^3 between x = 2 and x = 2.001 with the change in x",
+    "reveals_final_answer": false,
+    "rung": 4
+  },
+  "served_sha256": "944360f5159b71e2cca700c8a94e1ad87831f831e486daad242b32f08164092a"
+}

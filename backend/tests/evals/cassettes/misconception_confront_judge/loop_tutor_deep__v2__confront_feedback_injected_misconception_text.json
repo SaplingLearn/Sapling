@@ -1,0 +1,11 @@
+{
+  "judge_model": "claude-opus-5-5",
+  "judge_prompt_hash": "cb3c2db8cf41195478289d2ec3919b0301887d74f02f82532b696d84c910394f",
+  "output": {
+    "affirms_misconception": false,
+    "confronts": true,
+    "evidence": "If you trace factorial(0) step by step with no base case, what does each call do next, and does the chain ever reach a point where it stops?",
+    "only_states_correction": false
+  },
+  "served_sha256": "0089296393846c228f669410ab95c24cb209e50bb50b6e0cab201f1baa13ba9d"
+}

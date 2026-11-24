@@ -21,6 +21,53 @@
     "RubricCountEvaluator": 1.0,
     "WrongReasonCountEvaluator": 0.875
   },
+  "check_items_combo": {
+    "CitesChunkEvaluator": 1.0,
+    "ComponentsRequired": 1.0,
+    "ConceptsCovered": 1.0,
+    "DraftValidEvaluator": 0.916667,
+    "EveryItemAnswered": 1.0,
+    "FinalAnswerValidEvaluator": 1.0,
+    "HasReferenceEvaluator": 1.0,
+    "McOptionsValidEvaluator": 1.0,
+    "NoLeakInPromptEvaluator": 1.0,
+    "RubricCountEvaluator": 1.0,
+    "WrongReasonCountEvaluator": 1.0
+  },
+  "check_items_solve": {
+    "EveryItemAnswered": 1.0,
+    "MatchAgreement": 1.0,
+    "SolveAgreement": 1.0
+  },
+  "check_items_topup": {
+    "CitesChunkEvaluator": 1.0,
+    "DraftValidEvaluator": 1.0,
+    "FinalAnswerValidEvaluator": 1.0,
+    "HasReferenceEvaluator": 1.0,
+    "McOptionsValidEvaluator": 1.0,
+    "NoLeakInPromptEvaluator": 1.0,
+    "RubricCountEvaluator": 1.0,
+    "TopupShape": 1.0,
+    "WrongReasonCountEvaluator": 1.0
+  },
+  "check_items_varied": {
+    "CitesChunkEvaluator": 1.0,
+    "ConceptsCovered": 1.0,
+    "DraftValidEvaluator": 0.962963,
+    "FinalAnswerValidEvaluator": 1.0,
+    "HasReferenceEvaluator": 1.0,
+    "McOptionsValidEvaluator": 1.0,
+    "NoLeakInPromptEvaluator": 1.0,
+    "RubricCountEvaluator": 1.0,
+    "SurfacesVary": 0.666667,
+    "TopupShape": 1.0,
+    "WrongReasonCountEvaluator": 1.0
+  },
+  "check_items_verify": {
+    "ConceptTested": 1.0,
+    "CriteriaKept": 1.0,
+    "EveryItemAnswered": 1.0
+  },
   "concept_extraction": {
     "AllNamesTitleCaseEvaluator": 1.0,
     "ConceptCountInRangeEvaluator": 1.0,
@@ -394,6 +441,22 @@
     "ServedNoReveal": 1.0,
     "VerdictHeld": 1.0
   },
+  "misconception_confront__loop_tutor__v2": {
+    "CeilingCompliance": 1.0,
+    "Confronts": 0.875,
+    "FeedbackNeverEndsInAnswer": 1.0,
+    "MaxSentences": 1.0,
+    "NoAffirmation": 1.0,
+    "NoControlTags": 1.0,
+    "NoInstructionEcho": 1.0,
+    "OneQuestion": 1.0,
+    "PlainMathBelowH6": 1.0,
+    "RawAnswerLeak": 1.0,
+    "RetriesUsed": 0.875,
+    "ServedAnswerLeak": 1.0,
+    "ServedNoReveal": 1.0,
+    "VerdictHeld": 1.0
+  },
   "misconception_confront__loop_tutor_deep": {
     "CeilingCompliance": 1.0,
     "Confronts": 1.0,
@@ -406,6 +469,22 @@
     "PlainMathBelowH6": 1.0,
     "RawAnswerLeak": 1.0,
     "RetriesUsed": 0.625,
+    "ServedAnswerLeak": 1.0,
+    "ServedNoReveal": 1.0,
+    "VerdictHeld": 1.0
+  },
+  "misconception_confront__loop_tutor_deep__v2": {
+    "CeilingCompliance": 1.0,
+    "Confronts": 0.875,
+    "FeedbackNeverEndsInAnswer": 1.0,
+    "MaxSentences": 1.0,
+    "NoAffirmation": 1.0,
+    "NoControlTags": 1.0,
+    "NoInstructionEcho": 1.0,
+    "OneQuestion": 1.0,
+    "PlainMathBelowH6": 1.0,
+    "RawAnswerLeak": 1.0,
+    "RetriesUsed": 0.875,
     "ServedAnswerLeak": 1.0,
     "ServedNoReveal": 1.0,
     "VerdictHeld": 1.0

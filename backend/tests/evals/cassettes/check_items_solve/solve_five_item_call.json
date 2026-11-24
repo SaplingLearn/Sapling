@@ -1,0 +1,42 @@
+{
+  "output": {
+    "solutions": [
+      {
+        "answer": "A",
+        "basis": "Load factor is entries divided by buckets: 12/16 = 0.75 (chunk h1).",
+        "item": "1",
+        "solvable": true
+      },
+      {
+        "answer": "C",
+        "basis": "Separate chaining keeps a linked list in each bucket (chunk h2).",
+        "item": "2",
+        "solvable": true
+      },
+      {
+        "answer": "0.75",
+        "basis": "Load factor is entries divided by buckets: 6/8 = 0.75 (chunk h1).",
+        "item": "3",
+        "solvable": true
+      },
+      {
+        "answer": "",
+        "basis": "The passages give no date for when hash tables were first described.",
+        "item": "4",
+        "solvable": false
+      },
+      {
+        "answer": "a linked list",
+        "basis": "Separate chaining keeps a linked list in each bucket (chunk h2).",
+        "item": "5",
+        "solvable": true
+      }
+    ]
+  },
+  "recorded_under": {
+    "input_sha256": "c0b494229f3095e1095b405079be984a2e360954f3533f4f42daa12f0b46298d",
+    "model": "claude-haiku-5-5",
+    "prompt_hash": "19ee320924d8",
+    "schema_hash": "5199c7c5d799"
+  }
+}

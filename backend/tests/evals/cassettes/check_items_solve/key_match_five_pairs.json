@@ -1,0 +1,37 @@
+{
+  "output": {
+    "matches": [
+      {
+        "item": "1",
+        "same": true,
+        "why": "Both say a linked list/list of hashed entries; same concept."
+      },
+      {
+        "item": "2",
+        "same": false,
+        "why": "Derivative 2x versus antiderivative-like x^2/2; different answers."
+      },
+      {
+        "item": "3",
+        "same": true,
+        "why": "0.75 and three quarters are the same value."
+      },
+      {
+        "item": "4",
+        "same": false,
+        "why": "Separate chaining versus open addressing; different strategies."
+      },
+      {
+        "item": "5",
+        "same": true,
+        "why": "Both name the base case returning 1; same claim."
+      }
+    ]
+  },
+  "recorded_under": {
+    "input_sha256": "4abdd42ec39c735fccee2f36ccb14a26888dbdaf69e9692cb66e07b4627f1237",
+    "model": "claude-haiku-5-5",
+    "prompt_hash": "efd254b879eb",
+    "schema_hash": "ad24d404441a"
+  }
+}
