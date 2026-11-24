@@ -613,7 +613,7 @@ Five concurrent tracks kicked off from this plan. **No flag enables** until W0 e
 
 | Track | Scope |
 |---|---|
-| W7.2 | Core types on new shell: MC / short / numeric / algebra polish (not 7.1–7.18 kit) | **done** (first slice: SessionTop + testids/a11y/layout; interactive kit phased) |
+| W7.2 | Core types on new shell: MC / short / numeric / algebra polish (not 7.1–7.18 kit) — **done** (first slice: SessionTop + testids/a11y/layout; interactive kit phased) |
 | W4.4 | Key-verified chrome when blind-key/verify already succeeded (no SVG agent) | **done** (`key_verified` ← `canonical_verified` on pose) |
 | W2.4b | Decrypt reasoning → `next_probe_hint` prefer (flagged; never mastery) | **done** → [`w2-next-probe-hint.md`](w2-next-probe-hint.md) |
 | W3.3c | Practice cue stream: multi-due quiz queue from `learner_next` |
