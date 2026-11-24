@@ -29,7 +29,7 @@
  * answer key; Bastani ladder deferred); Skip wires to GO_TO; Study guide opens
  * a leak-safe drawer scaffold. No wager.
  * W7.2 kit: Sort (7.1) + Sequence (7.2) + Label (7.4) + Build (~7.x) +
- * Compare click-to-assign stubs on short_answer + interaction.
+ * Compare + Dialogue (7.17) stubs on short_answer + disposition.
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";

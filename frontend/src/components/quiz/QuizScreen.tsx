@@ -224,7 +224,7 @@ export function QuizScreen() {
   const focusSession = QUESTION_PHASES.has(session.phase);
 
   return (
-    <FullHeightScreen className={`quiz-root${focusSession ? " quiz-root--session" : ""}`} style={rootStyle}>
+    <FullHeightScreen className="quiz-root" style={rootStyle}>
       <DisclaimerModal />
       {/* Focus session owns its chrome inside QuizQuestion; everywhere else
           the page still names itself and offers the way back to Study. */}

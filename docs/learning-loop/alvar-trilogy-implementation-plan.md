@@ -375,7 +375,7 @@ Update `docs/learning-loop/amendments.md` with a short “Alvar trilogy: adopted
 | W7.8 Practice vs Exam Twin: Practice = learning evidence path (gates/misconceptions as flagged); Exam Twin = timed, post-test-like (tool-light) — **must not** double-count daily evidence | product + backend | L | Spec + invariants; oracle |
 | W7.9 Hub / Guide / Settings additions (spec 8–9): Focus list “Start next session” → launcher or due review; Guide “Quiz this concept” / struggle marker; Settings Quiz section for length/wager defaults | ui | M | Hide-flag safe (`hide_study` etc.) |
 | W7.10 Launcher Map view = Knowledge Tree graph component (covered vs understood encoding from W3.2 when ready) | ui | M | Same `ConceptNode` / mastery palette |
-| W7.11 Kill legacy quiz chrome once parity: home/question/results replaced or behind short-lived flag `quiz_shell_v2` | chore | M | Default lane E2E green; flag-off lane if needed |
+| W7.11 Kill legacy quiz chrome once parity: home/question/results replaced or behind short-lived flag `quiz_shell_v2` | chore | M | **Superseded:** W7.1 shipped SessionTop on all attempt phases with no `quiz_shell_v2` (flag never wired). Home/results intentionally keep app TopBar (W7.D1). Remaining = doc/CSS cleanup + optional Playwright `quiz-session-top` pin; not a second UI tree to delete |
 
 **Hard wiring rules for W7**
 
@@ -455,7 +455,7 @@ W0 (Claude evals + master flag)
 | Evals | Claude live record 3×; flag and v2 namespaces |
 | E2E default | Existing learn-loop / varied / quiz-learning / confidence / retention |
 | E2E new | Safe-anchor journey; plan DAG; reason-before-submit; practice mode; visual serve; **quiz shell** (launcher → session → summary → Tree/Study/Tutor); Library→Tree→Quiz handoff |
-| E2E off lanes | Kill-switch + flag-off remain green (including pre-loop quiz chrome until W7.11) |
+| E2E off lanes | Kill-switch + flag-off remain green (`learning_loop` off strips confidence / loop surfaces — same SessionTop chrome) |
 | Oracles | `learn_loop` with `--expect-loop-activity` on main journey |
 | Design QA | Browser pass on W7.D1 pages; single-frame captures only (handoff gotcha) |
 | Product | Learning-gain / post-test funnel before declaring outcome A+ |
@@ -524,7 +524,7 @@ Use this as the merge/readiness checklist. Every row must be **Done (A+)**, **N/
 - [x] Core types + Sort/Label/Sequence/Build/Compare/Dialogue stubs (W7.2)  
 - [x] Launcher/home ↔ plan (W7.3) · Confidence A132 (W7.4) · Hint scaffold (W7.5)  
 - [x] Prereq banner (W7.6) · Summary CTAs (W7.7) · Practice/Exam Twin (W7.8)  
-- [ ] Kill legacy quiz chrome (W7.11) — after interactive kit parity + E2E  
+- [x] Kill legacy quiz chrome (W7.11) — SessionTop is the attempt path; `quiz_shell_v2` never needed; home/results TopBar intentional  
 - [x] Library / Tree / Study / learner_next spine (W8.1–W8.4, W8.6–W8.7)  
 - [x] Cross-link copy system (W8.5) — [`w3-handoffs.md`](w3-handoffs.md)  
 
@@ -676,11 +676,11 @@ Ordered. **Operator-only** rows are not agent work. Adjust this table if scope s
 | 7 | **W7.2d** | Build kit stub (after Sequence) | **done** | Encode/decode + UI + vitest + testids; short_answer wire (`kind: "build"`) |
 | 8 | **W0.5** | Three E2E lanes on PR head | **done** | Same as #3 — checklist marked green on tip |
 | 9 | **W5 / W0.4** | Flag self→class→% enable | **operator** | Admin Flags only; see checklist |
-| 10 | **W7.11** | Retire legacy quiz chrome | **chore** | After interactive kit parity + E2E |
+| 10 | **W7.11** | Retire legacy quiz chrome | **done** (doc) | SessionTop already default on attempts; `quiz_shell_v2` never wired; port-map + plan aligned; home/results TopBar stays intentional |
 | 11 | **W7.2e** | Compare kit stub (after Build) | **done** | Encode/decode + UI + vitest + testids; short_answer wire (`kind: "compare"`) |
 | 12 | **W7.2f** | Dialogue kit stub (design 7.17, after Compare) | **done** | Encode/decode + UI + vitest + testids; short_answer wire (`kind: "dialogue"`) |
 
-**Day 9 progress:** #1–8 + #11–12 **done** · #9 operator HOLD · #10 W7.11 chore still open.
+**Day 9 progress:** #1–8 + #10–12 **done** · #9 operator HOLD (only remaining Day 9 row).
 
 ---
 

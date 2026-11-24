@@ -78,6 +78,7 @@
    `.quiz-col` itself and the padding lives on `.quiz-body--*`, where it is on a
    different element for the same reason. */
 .quiz-body--home { padding: 0; display: block; }
+/* Error phase only — live attempts use `.quiz-body--session` (no body pad). */
 .quiz-body--question { padding: var(--quiz-pad-question); }
 .quiz-body--results { padding: var(--quiz-pad-results); }
 
