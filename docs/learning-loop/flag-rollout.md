@@ -28,17 +28,11 @@ Per-student flags are resolved once per request (or once per quiz generation and
 
 ### The shared blocker: live eval recordings
 
-Several flags change a prompt or an output schema, so their eval datasets must be recorded live and pass before the flag goes on (`backend/tests/evals/README.md`; record with `SAPLING_EVAL_MODE=record`, three recordings for a floor). Two facts gate every such recording today:
+Several flags change a prompt or an output schema, so their eval datasets must be recorded live and pass before the flag goes on (`backend/tests/evals/README.md`; record with `SAPLING_EVAL_MODE=record`, three recordings for a floor).
 
-- The loop slots (`check_items`, `grader`, `grader_second`, `learning_decision`, `loop_tutor*`) default to Claude since 2026-11-19, but their Claude eval pass has not run (`session_close` was re-recorded on Claude Haiku, three runs, on 2026-11-20 and left the set): they stay in `agents/_providers.py::LOOP_SLOTS_PENDING_CLAUDE_EVAL` and the boot guard warns `pending_claude_eval` for each. Record each dataset live on Claude (an `ANTHROPIC_API_KEY`), pass its gates, then add the model to `EVALUATED_MODELS` and remove the slot from the pending set in one change (A111).
-- The loop tutor's rung judge and the misconception confront judge default to `claude-opus-5-5` (`RUNG_JUDGE_MODEL` / `CONFRONT_JUDGE_MODEL`, env-overridable; `backend/tests/evals/_judge_model.py`). Their committed judgements were recorded on Gemini, so they are re-recorded with the datasets.
+**As of 2026-11-24 (A111 on #866):** `LOOP_SLOTS_PENDING_CLAUDE_EVAL` is empty. Default-path Claude cassettes + floors landed for `loop_tutor*`, confront, grader, check_items, decisions; plus `__pedagogy`, `__flags`, `__v2`, and `check_item_gates` (verify/solve/topup/varied/combo). Only `deep` is routable on Claude. `loop_tutor_v2` enable still waits on deep `__v2` clearing every served gate at 1.0 across three runs (SycophancyResists currently floors at 0.9).
 
 `SAPLING_EVAL_USAGE_LOG=<path>` records each run's token cost, so a recording also measures what the flag will cost.
-
-Some paths the loop serves with no flag of their own have cases written but not yet recorded; the same A111 pass records them, and until it does they are unevaluated:
-
-- **The check-item pipeline's own steps (A119, A124, A37).** Every drafting call of a learning-loop uploader runs the alignment check, the blind key solve and key match, and the mc_reason top-up below the floor; their verdicts decide which items are stored and which keys are verified. `tests/evals/check_item_gates.py` scores them (`check_items_verify`, `check_items_solve`, `check_items_topup`, each on its own slot), and `check_items` now also drafts production's three-concept call. They are replayed from the start, so they fail closed until recorded.
-- **The novice worked-example-first path (A122).** Every novice whose prerequisite is not known proficient (every concept without a prerequisite edge, so all of an upload-built graph while `upload_prereq_edges` is off) gets the worked-example-first band format on every teach, hint and feedback turn, and the H4 worked example as the first hint. `loop_tutor` scores it in `teach_novice_worked_first` and `hint_novice_worked_first_h4` (every tier), and `misconception_confront` in `confront_hint_worked_first_novice_h4`. Until they are recorded and pass, only the runtime leak guard stands between that path and a leaked answer.
 
 ## Recommended order
 

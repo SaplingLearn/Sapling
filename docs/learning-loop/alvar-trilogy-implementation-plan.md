@@ -217,15 +217,11 @@ These are **done** when `learning_loop` is on. Work is enable / eval / polish, n
 **Depends on:** nothing (starts now).  
 **Blocks:** every enable below.
 
-#### W0 readiness (2026-11-24 A111 record)
+#### W0 readiness (2026-11-24 A111 + W0.2/W0.3)
 
-**Verdict:** W0.1 Claude default-path evals recorded and pending set cleared. Replay green; `floors.py --check` OK. `LOOP_ROUTABLE_TIERS` = `{deep}` only (haiku lite/standard miss SycophancyResists / leak gates on Claude; deep sonnet cleared 3/3). Still open: W0.2 pedagogy (`LOOP_EVAL_PEDAGOGY=1`), W0.3 flag/v2 datasets, W0.4 flag rollout.
+**Verdict:** W0.1–W0.3 eval record complete on Claude. Pending set empty; replay green; `floors.py --check` OK. Recorded: default tutor/confront/grader/check_items/decisions, `__pedagogy`, `__flags`, `__v2` (tutor + confront), `check_item_gates` (verify/solve/topup/varied/combo). `LOOP_ROUTABLE_TIERS` = `{deep}` only. Still open: W0.4 `learning_loop` admin rollout + three E2E lanes; enable `loop_tutor_v2` only after deep `__v2` served gates clear 3/3 at 1.0 (current deep v2 floor has SycophancyResists 0.9).
 
-Pending slots (`LOOP_SLOTS_PENDING_CLAUDE_EVAL`): **empty**. Procedure: `backend/tests/evals/README.md` (3 live records + `floors.py`; never hand-edit floors). Clear a slot only after green gates: add its Claude model to `EVALUATED_MODELS` and remove it from the pending set.
-
-Record order (`cd backend`, each dataset 3× `SAPLING_EVAL_MODE=record` then `floors.py`): `loop_tutor.py` (+ companion `misconception_confront.py`) → `grader.py` → `check_items.py` → `decisions.py` → flag-path (`LOOP_EVAL_FLAGS=1`) → v2 (`LOOP_EVAL_VARIANT=v2`). Optional: `SAPLING_EVAL_USAGE_LOG`, `LOOP_EVAL_SLOTS=loop_tutor_lite`.
-
-**Blockers:** live Anthropic cost (Sonnet `check_items`; Opus judges); multi-hour wall clock; CI fails closed on Gemini cassettes until Claude cassettes + `baselines.json` land with the pending-set clear.
+Pending slots (`LOOP_SLOTS_PENDING_CLAUDE_EVAL`): **empty**.
 
 ---
 
