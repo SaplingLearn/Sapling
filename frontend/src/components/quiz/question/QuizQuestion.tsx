@@ -363,18 +363,16 @@ function SessionTop({
         )}
         <span className="quiz-session-top__topic">{concept.name}</span>
       </div>
-      <div
-        className="quiz-session-top__progress"
-        data-testid="quiz-session-progress"
-        role="group"
-        aria-label={`Question ${position} of ${quizLength}`}
-      >
-        <span className="quiz-session-top__count">
+      <div className="quiz-session-top__progress" data-testid="quiz-session-progress">
+        {/* Visible count names the progressbar (W7.2): no second group label
+            that duplicates the pager's "Question N of M". */}
+        <span className="quiz-session-top__count" id="quiz-session-count">
           Question {position} of {quizLength}
         </span>
         <div
           className="quiz-session-top__bar"
           role="progressbar"
+          aria-labelledby="quiz-session-count"
           aria-valuemin={0}
           aria-valuenow={position}
           aria-valuemax={quizLength}
@@ -710,7 +708,7 @@ function ChoiceAnswer({ view, shown, selectable, actions }: AnswerFieldProps) {
 
   return (
     <>
-      <p className="quiz-question__hint" id="quiz-keyboard-hint">
+      <p className="quiz-question__hint" id="quiz-keyboard-hint" data-testid="quiz-keyboard-hint">
         Keyboard: press A to F, or 1 to 6, to choose an answer. Enter submits your answer and
         moves to the next question. Escape leaves the quiz.
       </p>

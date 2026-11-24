@@ -327,11 +327,16 @@
 
 /* ── Options ────────────────────────────────────────────────────────── */
 
-/* A stack of tiles; each brings its own border. */
+/* A stack of tiles; each brings its own border. flex-shrink:0 so SessionTop
+   + the pinned action bar cannot collapse the choices (W7.2; same contract
+   as confidence in W7.4). */
 .quiz-question__options {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  flex-shrink: 0;
+  min-width: 0;
+  width: 100%;
 }
 
 /* Learning-loop spec §13 A132 / W7.4: the optional stated-confidence row
@@ -918,9 +923,14 @@
   border: 0;
 }
 
+/* W7.2: written surfaces (short / numeric / algebra) keep their height under
+   SessionTop + pinned footer — keys and format hint must stay reachable. */
 .quiz-question__written {
   display: grid;
   gap: var(--pad-md);
+  flex-shrink: 0;
+  min-width: 0;
+  width: 100%;
 }
 
 /* Once the answer is marked, the symbol keys and the entry rules have done

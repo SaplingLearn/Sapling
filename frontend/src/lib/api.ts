@@ -1155,6 +1155,10 @@ export interface LoopCheckItem {
    *  prerequisite) and it is still owed — ask for it at once: /hint grants H4
    *  with no attempt first, the hint turn serves it. Present only when true. */
   worked_first?: boolean;
+  /** W4.4: the bank already confirmed this item's key (canonical_verified /
+   *  blind-key or audit). Present only when true — calm "Key verified" chrome
+   *  on the check card; never invented client-side. */
+  key_verified?: boolean;
 }
 export interface LoopProbeItem extends LoopCheckItem {
   check_item_id: string;

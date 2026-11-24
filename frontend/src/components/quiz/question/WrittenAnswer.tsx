@@ -310,7 +310,12 @@ export function WrittenAnswer({
   const showsReading = Boolean(reading) && !verdict;
 
   return (
-    <div className="quiz-written" data-format={type} data-verdict={verdict ?? undefined}>
+    <div
+      className="quiz-written"
+      data-testid="quiz-written"
+      data-format={type}
+      data-verdict={verdict ?? undefined}
+    >
       <div className="quiz-written__field">
         <input
           ref={inputRef}

@@ -33,6 +33,7 @@
  *    percentage points.
  */
 
+import { handoffPracticeDueHref } from "@/lib/learningHandoffs";
 import { buildQuizHref } from "@/lib/quiz/source";
 import { studyHref } from "@/lib/toolHrefs";
 
@@ -486,31 +487,22 @@ export function dueReviewsFromNext(
 }
 
 /**
- * W8.3b / W3.3b: Quiz Practice deep link for Due Reviews (and wrap-up).
- * Lead id from the same learner-next `due[]` the rail lists (`buildQuizHref`
- * takes one concept). Null when the bucket is empty unless
- * `courseStartIfEmpty` — then course+start (wrap-up when due ids are unknown).
- * Flashcards stay the primary Hub CTA.
+ * W8.3b / W3.3c: Quiz Practice deep link for Due Reviews (and wrap-up).
+ * Same learner-next `due[]` the rail lists, as a multi-concept `scope=due`
+ * queue when the session supports it (`queueStartRequest`). Null when the
+ * bucket is empty unless `courseStartIfEmpty` — then course+start (wrap-up
+ * when due ids are unknown). Flashcards stay the primary Hub CTA.
  */
 export function dueReviewsQuizHref(
   courseId: string,
   dueConceptIds: readonly string[],
   opts: { courseStartIfEmpty?: boolean } = {},
 ): string | null {
-  const concept = dueConceptIds[0];
-  if (concept) {
-    return buildQuizHref(
-      { concept },
-      { kind: "link", returnTo: studyHref(courseId) },
-      { start: true },
-    );
+  if (dueConceptIds.some((id) => id.trim())) {
+    return handoffPracticeDueHref(courseId, dueConceptIds);
   }
   if (opts.courseStartIfEmpty) {
-    return buildQuizHref(
-      { course: courseId },
-      { kind: "link", returnTo: studyHref(courseId) },
-      { start: true },
-    );
+    return handoffPracticeDueHref(courseId, []);
   }
   return null;
 }

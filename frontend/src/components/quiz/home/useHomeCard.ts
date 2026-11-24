@@ -15,6 +15,7 @@ import { useToast } from "@/components/ToastProvider";
 import type { SessionConfig } from "@/lib/quiz/machine";
 import { entrySelection, type Candidate } from "@/lib/quiz/proposals";
 import type { EntryRequest } from "@/lib/quiz/source";
+import { practiceDueQueue } from "@/lib/quiz/source";
 import type { QuizSession } from "@/lib/quiz/types";
 import type { QuizHome as QuizHomeData } from "@/lib/quiz/useQuizHome";
 import type { QuizActions } from "@/lib/quiz/useQuizSession";
@@ -77,9 +78,14 @@ function useArrival(home: QuizHomeData, entry: EntryRequest) {
     ),
     [entry.course, home.nodes, home.planned, home.candidates, home.courseCandidates],
   );
-  // The tier ranking's due queue, or with `quiz_concept_plan` the learner
-  // model's (spec §13 A143): the hook decides, so the card and the queue agree.
-  const dueQueue = home.dueQueue;
+  // W3.3c: Practice deep links pass learner_next due[] as `entry.queue` under
+  // `scope=due`. Otherwise the tier ranking / plan due set (spec §13 A143).
+  const dueQueue = React.useMemo(() => {
+    if (entry.scope === "due" && entry.queue?.length) {
+      return practiceDueQueue(entry.queue);
+    }
+    return home.dueQueue;
+  }, [entry.scope, entry.queue, home.dueQueue]);
   const arrival: Arrival = {
     conceptId: selection.conceptId,
     course: entry.course,

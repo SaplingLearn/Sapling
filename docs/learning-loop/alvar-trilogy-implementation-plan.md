@@ -614,7 +614,7 @@ Five concurrent tracks kicked off from this plan. **No flag enables** until W0 e
 |---|---|
 | W7.2 | Core types on new shell: MC / short / numeric / algebra polish (not 7.1–7.18 kit) |
 | W4.4 | Key-verified chrome when blind-key/verify already succeeded (no SVG agent) |
-| W2.4b | Decrypt reasoning → `next_probe_hint` prefer (flagged; never mastery) |
+| W2.4b | Decrypt reasoning → `next_probe_hint` prefer (flagged; never mastery) | **done** → [`w2-next-probe-hint.md`](w2-next-probe-hint.md) |
 | W3.3c | Practice cue stream: multi-due quiz queue from `learner_next` |
 | W8.7 verify | Confirm Dashboard Learn-next + document retention vs FSRS due | **done** (Learn-next = `getStudyNext`/`learner_next` when `learning_loop`+`quiz_concept_plan`; A126 badge = `GET /posttest/due`, not FSRS) |
 
@@ -628,7 +628,7 @@ Five concurrent tracks kicked off from this plan. **No flag enables** until W0 e
 | W3.4 | Learn ↔ Study ↔ Quiz handoff copy + deep links | **done** → [`w3-handoffs.md`](w3-handoffs.md) |
 | W7.D3 | Launcher + Map design brief | **done** → [`w7-d3-launcher-map.md`](w7-d3-launcher-map.md) |
 | W7.5 | Wire Hint/Skip slots + leak-safe study-guide drawer scaffold | **done** (Skip + drawer; Hint disabled) |
-| W2.4 | Low-trust next-probe hint from reasoning (flagged; never mastery) | **done** (`next_probe_hint` off; decrypt wire later) → [`w2-next-probe-hint.md`](w2-next-probe-hint.md) |
+| W2.4 | Low-trust next-probe hint from reasoning (flagged; never mastery) | **done** (`next_probe_hint` off; W2.4b decrypt wire) → [`w2-next-probe-hint.md`](w2-next-probe-hint.md) |
 
 **Skipped this wave (need key / evals):** W0, W5.*, W1 cassette scoring, W4 SVG agent.
 

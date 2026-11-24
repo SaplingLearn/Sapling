@@ -3358,6 +3358,21 @@ def test_mc_reason_pose_serves_the_stored_options_unmarked(seams):
     assert "correct_option" not in json.dumps(pose) and "wrong_key" not in json.dumps(pose)
 
 
+def test_pose_payload_key_verified_only_when_canonical_verified(seams):
+    """W4.4: pose carries key_verified only when the bank already confirmed
+    the key — present-only twin of materials_grounded; never invents chrome."""
+    from services.loop.practice import _pose_payload
+
+    plain = _pose_payload(ITEM)
+    assert "key_verified" not in plain
+
+    verified = _pose_payload(ITEM.model_copy(update={"canonical_verified": True}))
+    assert verified["key_verified"] is True
+    # Still a lean pose: no internal gate / audit fields leak.
+    blob = json.dumps(verified)
+    assert "canonical_verified" not in blob and "gate" not in blob
+
+
 def test_check_next_activates_and_is_idempotent(gate_on, seams):
     seams.store["doc"] = _plan_state()
     seams.list_items.return_value = [ITEM]

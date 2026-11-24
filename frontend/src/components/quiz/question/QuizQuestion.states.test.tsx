@@ -235,6 +235,7 @@ describe("QuizQuestion — generating", () => {
     expect(screen.queryByTestId("quiz-format-tag")).toBeNull();
     expect(screen.queryByTestId("quiz-panel")).toBeNull();
     expect(screen.getByTestId("quiz-progress")).toHaveAttribute("aria-label", "Question 1 of 3");
+    expect(screen.getByRole("progressbar", { name: "Question 1 of 3" })).toBeInTheDocument();
     expect(screen.getByTestId("quiz-prev-question")).toBeDisabled();
     expect(screen.getByTestId("quiz-next-question")).toBeDisabled();
   });

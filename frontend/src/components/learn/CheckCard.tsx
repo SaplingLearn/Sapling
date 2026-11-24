@@ -79,6 +79,22 @@ export function CheckCard({
           {conceptName && <span className="chip">{conceptName}</span>}
         </div>
         <p id={promptId} className={tutorStyles.q}>{item.prompt}</p>
+        {/* W4.4: calm trust chrome only when the pose carries key_verified
+            (server: check_items.canonical_verified). Pairs with W4.3's
+            materials_grounded on teach turns — separate surfaces, no clutter. */}
+        {item.key_verified && (
+          <div
+            data-testid="loop-key-verified"
+            role="status"
+            style={{
+              fontFamily: "var(--font-sans)",
+              fontSize: 12,
+              color: "var(--text-muted)",
+            }}
+          >
+            Key verified
+          </div>
+        )}
       </div>
       {mc ? (
         <>

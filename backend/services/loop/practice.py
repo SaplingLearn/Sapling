@@ -413,7 +413,9 @@ def _pose_payload(item, *, worked_first: bool = False) -> dict:
     wrong_key). Never the reference. `worked_first` (spec §13 A122): the item
     opens on the worked example and it has not been unlocked yet — the client
     asks for it at once (/hint grants H4 with no attempt before it, the hint
-    turn serves it); the key is present only when true."""
+    turn serves it); the key is present only when true. W4.4: `key_verified`
+    is present only when `canonical_verified` (blind-key / audit already
+    confirmed the key) — calm chrome only; never invent a second verifier."""
     options = None
     if item.format == "mc_reason" and item.options:
         options = [{"letter": o.letter, "text": o.text} for o in item.options]
@@ -426,6 +428,8 @@ def _pose_payload(item, *, worked_first: bool = False) -> dict:
     }
     if worked_first:
         pose["worked_first"] = True
+    if item.canonical_verified:
+        pose["key_verified"] = True  # W4.4: present only when true
     return pose
 
 

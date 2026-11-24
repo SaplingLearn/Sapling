@@ -6,11 +6,12 @@
  * Learn query params — no second planner. Callers pass hide_* visibility and
  * omit a null / filtered CTA (NavFeatureGate would only bounce to /dashboard).
  *
- * W3.3b: "Practice what's due" is the Quiz cue-stream entry (due lead id, else
- * course+start) — never a second Learn teach path.
+ * W3.3b/c: "Practice what's due" is the Quiz cue-stream entry (`scope=due` +
+ * learner_next due[] queue when known, else course+start) — never a second
+ * Learn teach path.
  */
 
-import { buildQuizHref } from "@/lib/quiz/source";
+import { buildQuizHref, practiceDueQueue } from "@/lib/quiz/source";
 import { studyHref } from "@/lib/toolHrefs";
 
 /** Canonical CTA labels (W8.5 phrasing + "quiz this concept" + Practice). */
@@ -90,17 +91,22 @@ export function handoffQuizCourseHref(
 }
 
 /**
- * W3.3b Practice entry: lead due concept + `start=1`, else course queue +
- * `start=1`. Same shape as Hub `dueReviewsQuizHref` (W8.3b), with the empty-due
- * fallback wrap-up needs when it has no due ids yet.
+ * W3.3c Practice entry: `scope=due` + learner_next `due[]` as the session
+ * queue (`queueStartRequest`) + `start=1`, else course queue + `start=1`.
+ * Same shape as Hub `dueReviewsQuizHref`, with the empty-due fallback wrap-up
+ * needs when it has no due ids yet.
  */
 export function handoffPracticeDueHref(
   courseId: string,
   dueConceptIds: readonly string[] = [],
 ): string {
-  const concept = dueConceptIds.find((id) => id.trim());
-  if (concept) {
-    return handoffQuizConceptHref(concept, { courseId });
+  const queue = practiceDueQueue(dueConceptIds);
+  if (queue.length > 0) {
+    return buildQuizHref(
+      { scope: "due", queue },
+      { kind: "link", returnTo: studyHref(courseId) },
+      { start: true },
+    );
   }
   return handoffQuizCourseHref(courseId, { start: true });
 }
@@ -118,7 +124,7 @@ export function handoffTreeHref(opts: {
 
 /**
  * Wrap-up / close CTAs. Study stays the Hub handoff; Practice is the Quiz cue
- * stream (due lead or course+start) when Study and Quiz are both visible;
+ * stream (due[] queue or course+start) when Study and Quiz are both visible;
  * "Quiz this concept" only when a measured concept id is known. Retention +
  * "Start a new session" stay beside these in ClosePanel.
  */
