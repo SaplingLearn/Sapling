@@ -192,7 +192,7 @@ every name.
   the rebuild's source — the latter because a menu, modal, Trash view or
   skeleton is not mounted in a single render. It knows that a transition list
   means the same thing in any order, and that `SQUEEZE` expands to the design's
-  380ms easing. 318 Library and 275 Notes declarations, all accounted for.
+  380ms easing. 319 Library and 275 Notes declarations, all accounted for.
 
 ### The two deliberate deviations
 

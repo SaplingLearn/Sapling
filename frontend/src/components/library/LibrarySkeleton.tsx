@@ -97,12 +97,22 @@ function SkeletonCard() {
 export function LibrarySkeleton({ view }: { view: "list" | "panel" }) {
   return (
     <div aria-hidden="true" data-testid="library-skeleton" style={ROOT}>
-      <div style={{ display: "flex", alignItems: "flex-end", gap: 16, marginBottom: 24 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 24 }}>
         <div style={{ display: "flex", flexDirection: "column", gap: 14, flexShrink: 0 }}>
-          <Bar width={136} height={40} radius={10} />
-          <Bar width={132} height={48} radius={12} />
+          <Bar width={124} height={40} radius={10} style={{ flexShrink: 0 }} />
         </div>
-        <Bar width="100%" height={48} radius={12} style={{ flex: 1, maxWidth: 840 }} />
+        <Bar
+          width="100%"
+          height={48}
+          radius={12}
+          style={{ flex: 1, minWidth: 0, maxWidth: 840, marginLeft: 24 }}
+        />
+        <Bar
+          width={136}
+          height={48}
+          radius={12}
+          style={{ flexShrink: 0, marginLeft: "auto" }}
+        />
       </div>
 
       <div style={{

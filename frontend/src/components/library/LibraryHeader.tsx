@@ -58,7 +58,7 @@ export function LibraryHeader(props: LibraryHeaderProps) {
       gridColumn: 1,
       gridRow: 1,
       display: "flex",
-      alignItems: "flex-end",
+      alignItems: "center",
       gap: 16,
       marginBottom: 24,
     }}>
@@ -73,99 +73,13 @@ export function LibraryHeader(props: LibraryHeaderProps) {
           flexShrink: 0,
         }}>Library</h1>
 
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <div style={{ position: "relative", flexShrink: 0, display: "flex" }}>
-            <button
-              data-testid="library-upload"
-              className="sapHoverForest"
-              onClick={() => onMenu(menu === "upload" ? null : "upload")}
-              aria-haspopup="menu"
-              aria-expanded={menu === "upload"}
-              disabled={!canUpload}
-              title={canUpload ? "Upload documents" : "Enroll in a course first"}
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 8,
-                height: 48,
-                padding: "0 14px 0 16px",
-                border: 0,
-                background: "#445D22",
-                color: "#FFFFFF",
-                borderRadius: 12,
-                font: "inherit",
-                fontSize: 15,
-                fontWeight: 700,
-                cursor: canUpload ? "pointer" : "not-allowed",
-                opacity: canUpload ? 1 : 0.55,
-              }}
-            >
-              <Glyph name="upload" size={16} />
-              Upload
-              <span style={{
-                width: 1, height: 22, margin: "0 2px 0 6px", background: "rgba(255,255,255,0.3)",
-              }} />
-              <Glyph name="chevronDown" size={11} />
-            </button>
-
-            <input
-              ref={fileRef}
-              type="file"
-              multiple
-              accept=".pdf,.pptx,.docx"
-              onChange={e => {
-                const files = [...(e.target.files || [])];
-                if (files.length) onFiles(files);
-              }}
-              style={{ display: "none" }}
-            />
-
-            {menu === "upload" && (
-              <>
-                <MenuScrim onClick={() => onMenu(null)} />
-                <div role="menu" style={{
-                  position: "absolute", left: 0, top: 54, zIndex: 31, width: 236,
-                  transformOrigin: "top left", animation: menuAnim, ...MENU_SURFACE,
-                }}>
-                  <button
-                    role="menuitem"
-                    className="sapHoverMenu"
-                    onClick={() => {
-                      onMenu(null);
-                      const el = fileRef.current;
-                      if (el) { el.value = ""; el.click(); }
-                    }}
-                    style={MENU_ITEM}
-                  >
-                    <Glyph name="upload" size={16} fill="#445D22" />
-                    Upload Documents
-                  </button>
-                  <MenuDivider />
-                  <button role="menuitem" className="sapHoverMenu" onClick={onNewDocument} style={MENU_ITEM}>
-                    <svg
-                      width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#445D22"
-                      strokeWidth="1.8" strokeLinejoin="round" aria-hidden="true"
-                    >
-                      <path d="M6 3h8l4 4v14H6z" />
-                      <path d="M14 3v4h4" />
-                    </svg>
-                    New Document
-                  </button>
-                  <button role="menuitem" className="sapHoverMenu" onClick={onNewFolder} style={MENU_ITEM}>
-                    <FolderIcon size={16} />
-                    New Folder
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
       </div>
 
       <label style={{
         flex: 1,
         minWidth: 0,
         maxWidth: 840,
+        marginLeft: 24,
         display: "flex",
         alignItems: "center",
         gap: 10,
@@ -329,6 +243,96 @@ export function LibraryHeader(props: LibraryHeaderProps) {
           }}>/</span>
         )}
       </label>
+        <div style={{
+          display: "flex", alignItems: "center", gap: 10,
+          flexShrink: 0, marginLeft: "auto",
+        }}>
+          <div style={{ position: "relative", flexShrink: 0, display: "flex" }}>
+            <button
+              data-testid="library-upload"
+              className="sapHoverForest"
+              onClick={() => onMenu(menu === "upload" ? null : "upload")}
+              aria-haspopup="menu"
+              aria-expanded={menu === "upload"}
+              disabled={!canUpload}
+              title={canUpload ? "Upload documents" : "Enroll in a course first"}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 8,
+                height: 48,
+                padding: "0 14px 0 16px",
+                border: 0,
+                background: "#445D22",
+                color: "#FFFFFF",
+                borderRadius: 12,
+                font: "inherit",
+                fontSize: 15,
+                fontWeight: 700,
+                cursor: canUpload ? "pointer" : "not-allowed",
+                opacity: canUpload ? 1 : 0.55,
+              }}
+            >
+              <Glyph name="upload" size={16} />
+              Upload
+              <span style={{
+                width: 1, height: 22, margin: "0 2px 0 6px", background: "rgba(255,255,255,0.3)",
+              }} />
+              <Glyph name="chevronDown" size={11} />
+            </button>
+
+            <input
+              ref={fileRef}
+              type="file"
+              multiple
+              accept=".pdf,.pptx,.docx"
+              onChange={e => {
+                const files = [...(e.target.files || [])];
+                if (files.length) onFiles(files);
+              }}
+              style={{ display: "none" }}
+            />
+
+            {menu === "upload" && (
+              <>
+                <MenuScrim onClick={() => onMenu(null)} />
+                <div role="menu" style={{
+                  position: "absolute", left: 0, top: 54, zIndex: 31, width: 236,
+                  transformOrigin: "top left", animation: menuAnim, ...MENU_SURFACE,
+                }}>
+                  <button
+                    role="menuitem"
+                    className="sapHoverMenu"
+                    onClick={() => {
+                      onMenu(null);
+                      const el = fileRef.current;
+                      if (el) { el.value = ""; el.click(); }
+                    }}
+                    style={MENU_ITEM}
+                  >
+                    <Glyph name="upload" size={16} fill="#445D22" />
+                    Upload Documents
+                  </button>
+                  <MenuDivider />
+                  <button role="menuitem" className="sapHoverMenu" onClick={onNewDocument} style={MENU_ITEM}>
+                    <svg
+                      width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#445D22"
+                      strokeWidth="1.8" strokeLinejoin="round" aria-hidden="true"
+                    >
+                      <path d="M6 3h8l4 4v14H6z" />
+                      <path d="M14 3v4h4" />
+                    </svg>
+                    New Document
+                  </button>
+                  <button role="menuitem" className="sapHoverMenu" onClick={onNewFolder} style={MENU_ITEM}>
+                    <FolderIcon size={16} />
+                    New Folder
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
     </header>
   );
 }
