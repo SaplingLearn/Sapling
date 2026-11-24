@@ -1,6 +1,6 @@
 # W4 spike — Visual / SVG / demo pipeline & teach-prose trust
 
-**Status:** spike + **W4.1a stub shipped** (pose `figure.withheld` + CheckCard chrome; no SVG agent). Stage 1 remainder = load `surface_representation` on request-path decrypt (W4.1b).  
+**Status:** spike + **W4.1a/b shipped** (pose `figure.withheld` + CheckCard chrome; request-path `_COLUMNS`/`_row_to_item` load `surface_representation` fail-closed; no SVG agent). Stage 1 remainder = grounded teach figure *slots* (typed JSON), not raw SVG.  
 
 **Plan rows:** Alvar trilogy W4 / claims **AC**, **AD**, **AE**, **L**, **AR**  
 **Branch context:** `feat/learning-loop-reland`  

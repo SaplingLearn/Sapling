@@ -877,10 +877,11 @@ class TestBackfill:
             every = mocks["check_items"].select_with_count.call_args
         assert unchecked.kwargs["filters"] == {"course_id": "eq.c1", "aligned_at": "is.null"}
         assert every.kwargs["filters"] == {}
-        # A124 and A140: a re-key carries the key check's time and the surface
-        assert unchecked.args[0].endswith(
-            ",aligned_at,key_checked_at,surface_representation,surface_context"
-        )
+        # A124 + A140: re-key carries key_checked_at + surface_context;
+        # surface_representation rides _COLUMNS (W4.1b).
+        cols = unchecked.args[0].split(",")
+        assert cols[-3:] == ["aligned_at", "key_checked_at", "surface_context"]
+        assert "surface_representation" in cols
 
 
 # ── the slot, the agent, the migration ──────────────────────────────────────

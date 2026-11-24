@@ -177,6 +177,7 @@ from learning.params import (
     MULTI_CONCEPT_COMBOS_PER_CALL,
     MULTI_CONCEPT_DIFFICULTY,
     MULTI_CONCEPT_ITEMS_PER_COMBO,
+    SURFACE_REPRESENTATIONS,
 )
 from services.academics import course_offering_ids
 from services.chunk_visibility import COURSE_MATERIAL, SHARED, _share_flags, decide_visibility
@@ -206,22 +207,24 @@ _COLUMNS = (
     "id,course_id,concept_key,document_id,format,difficulty,prompt,reference_answer,"
     "rubric_json,common_wrong_json,options_json,correct_option,answer_kind,"
     "canonical_answer,tolerance,canonical_verified,stepwise,source_chunk_ids,"
-    "source_document_ids,question_hash,graded,created_at,final_answer,lint_flags"
+    "source_document_ids,question_hash,graded,created_at,final_answer,lint_flags,"
+    "surface_representation"
 )
 #: The plaintext columns the A113 review queue lists an item by (never text);
 #: canonical_verified says whether a key-hold code still holds it (A124).
 _QUEUE_COLUMNS = (
     "id,course_id,concept_key,question_hash,format,difficulty,lint_flags,canonical_verified"
 )
-#: What the A119 alignment backfill reads: every column, when the alignment
-#: check last passed the row (NULL = never) and when the A124 key check did (a
-#: re-key carries it), and the A140 surface descriptor (a re-key carries it
-#: too). Only the backfills read them, so the request path's reads never
-#: depend on the A119, A124 or A140 migrations.
-_ALIGN_COLUMNS = _COLUMNS + ",aligned_at,key_checked_at,surface_representation,surface_context"
+#: What the A119 alignment backfill reads: every request-path column, when the
+#: alignment check last passed the row (NULL = never), when the A124 key check
+#: did (a re-key carries it), and the encrypted A140 surface_context (a re-key
+#: carries it too). surface_representation rides _COLUMNS (W4.1b pose chrome);
+#: surface_context stays backfill/familiarity-only (ciphertext; concept_surfaces
+#: decrypts it). aligned_at / key_checked_at stay off the request path.
+_ALIGN_COLUMNS = _COLUMNS + ",aligned_at,key_checked_at,surface_context"
 #: What a re-tag copies besides _COLUMNS: the A124 key check's time and the
-#: A140 surface descriptor (its context still ciphertext), as stored.
-_RETAG_CARRIED = ("key_checked_at", "surface_representation", "surface_context")
+#: A140 surface_context (still ciphertext; representation rides _COLUMNS).
+_RETAG_CARRIED = ("key_checked_at", "surface_context")
 #: What the A124 key backfill reads: every column, and when the key check last
 #: ran on the row (NULL = never).
 _KEY_COLUMNS = _COLUMNS + ",key_checked_at"
@@ -757,6 +760,11 @@ def _hydrate(model, entries, column: str, item_id_: str):
         return None
 
 
+def _surface_representation(value) -> str | None:
+    """A140 / W4.1b: closed enum only; unknown or missing → None (no figure)."""
+    return value if value in SURFACE_REPRESENTATIONS else None
+
+
 def _row_to_item(row: dict) -> CheckItem:
     """The single decrypt boundary for check_items rows."""
     rid = row.get("id")
@@ -795,6 +803,9 @@ def _row_to_item(row: dict) -> CheckItem:
         question_hash=row.get("question_hash"),
         graded=bool(row.get("graded")),
         created_at=row.get("created_at"),
+        # A140 / W4.1b: plaintext enum for pose figure chrome; fail-closed.
+        # surface_context stays off CheckItem (ciphertext; concept_surfaces).
+        surface_representation=_surface_representation(row.get("surface_representation")),
         # A34: None on a legacy row — checks.is_servable keeps it from being served.
         final_answer=opened("final_answer"),
         # A113: None on a row the linter has not read yet (plaintext codes).

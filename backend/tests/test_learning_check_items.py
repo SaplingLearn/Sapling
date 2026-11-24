@@ -2889,6 +2889,34 @@ class TestReadItems:
         assert call[1]["filters"] == {"id": "eq.i1"} and call[1]["limit"] == 1
         assert set(call[0][0].split(",")) == set(svc._COLUMNS.split(","))
 
+    def test_row_to_item_loads_surface_representation_fail_closed(self):
+        """W4.1b: request-path decrypt selects surface_representation; unknown
+        or missing → None (no figure chrome). surface_context stays off CheckItem."""
+        from services import check_item_service as svc
+        from services.loop.practice import _pose_payload
+
+        assert "surface_representation" in svc._COLUMNS.split(",")
+        assert "surface_context" not in svc._COLUMNS.split(",")
+        assert {"surface_representation", "surface_context"} <= set(
+            svc._ALIGN_COLUMNS.split(",")
+        )
+
+        plain = svc._row_to_item(self._stored_row())
+        assert plain.surface_representation is None
+        assert "figure" not in _pose_payload(plain)
+
+        visual = svc._row_to_item(dict(self._stored_row(), surface_representation="visual"))
+        assert visual.surface_representation == "visual"
+        assert _pose_payload(visual)["figure"] == {"status": "withheld"}
+
+        numeric = svc._row_to_item(dict(self._stored_row(), surface_representation="numeric"))
+        assert numeric.surface_representation == "numeric"
+        assert "figure" not in _pose_payload(numeric)
+
+        bogus = svc._row_to_item(dict(self._stored_row(), surface_representation="cartoon"))
+        assert bogus.surface_representation is None
+        assert "figure" not in _pose_payload(bogus)
+
     def test_get_check_item_missing_or_unreadable_is_none(self):
         from services import check_item_service as svc
 

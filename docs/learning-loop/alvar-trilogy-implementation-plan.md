@@ -276,7 +276,7 @@ Pending slots (`LOOP_SLOTS_PENDING_CLAUDE_EVAL`): **empty**.
 | W3.2 **Covered vs understood** on SessionMap: dual encoding (seen/revealed or “practiced” vs `p_known` / band) | ui | M | Legend + testids; E2E |
 | W3.3 **Practice mode** entry from Study / wrap-up: cue-demand stream using due + unfamiliar surfaces + multi-concept when open; not a second Learn teach | ui + services | L | Journeys; oracles |
 | W3.4 Clear Learn → Study → Quiz handoffs so “one interface” feels true (K) | ui | M | Copy + deep links; hide-flag safe |
-| W3.5 Learner-constructed mini map activity (evidence-backed graph use from Q6): occasional “connect these ideas” generative task | new_feature | M | **Phased:** (a) spike doc + fixture UI on Learn wrap-up; (b) optional graded *structure* check that never writes edges into mastery. Never auto-extract propositions |
+| W3.5 Learner-constructed mini map activity (evidence-backed graph use from Q6): occasional “connect these ideas” generative task | new_feature | M | **Phased:** (a) spike + wrap-up stub — [`w3-5-learner-minimap-spike.md`](w3-5-learner-minimap-spike.md); (b) optional graded *structure* check that never writes edges into mastery. Never auto-extract propositions |
 
 ---
 
@@ -514,7 +514,8 @@ Use this as the merge/readiness checklist. Every row must be **Done (A+)**, **N/
 - [x] Practice mode (W3.3) — entry + multi-due cue stream; richer stream later  
 - [x] Covered vs understood map (W3.2) — practiced outline + mastery fill  
 - [ ] Real visuals Stage A figure slot (W4.1) — Stage B SVG verify deferred  
-- [ ] Learner mini-map activity (W3.5) — spike then stub  
+- [x] Learner mini-map activity (W3.5a) — spike + wrap-up stub → [`w3-5-learner-minimap-spike.md`](w3-5-learner-minimap-spike.md); full graded structure (b) later  
+
 - [x] N/A logged: per-step predict, text→mastery, proposition ontology, editable prompts, mic (W6)
 
 ### Quiz design system + coherence
@@ -671,15 +672,15 @@ Ordered. **Operator-only** rows are not agent work. Adjust this table if scope s
 | 1 | **W7.2c** | Sequence kit stub on focus shell (after Sort/Label) | **done** | Encode/decode + UI + vitest + testids; short_answer wire |
 | 2 | **W0.3b** | Harden standard `__v2` sycophancy (prompt-only) + re-record haiku `__v2` | **partial** | `SycophancyResists` → **1.0** on lite/standard/deep `__v2` after prompt harden + re-record (`c41a3c1994a6`). Standard still **ServedAnswerLeak 0.9** → keep `loop_tutor_v2` HOLD / deep-routed dogfood until leak clears ×3 |
 | 3 | **W0.5** | Run / document three E2E lanes on PR head | **measure** | Checklist boxes in [`w0-flag-enable-checklist.md`](w0-flag-enable-checklist.md) |
-| 4 | **W4.1a** | Check `figure` withheld slot (no SVG agent) | **done** (stub) | Pose `figure:{status:withheld}` when `surface_representation=visual`; CheckCard `loop-figure-withheld`. **W4.1b:** load surface on request-path decrypt |
-| 5 | **W4.1b** | Load `surface_representation` on request-path check decrypt | **build** | `_COLUMNS` + `_decrypt_row` so visual items serve withheld figure in prod |
-| 6 | **W3.5a** | Learner mini-map spike + optional wrap-up stub | **build** | Doc + fixture UI; never writes mastery edges |
+| 4 | **W4.1a** | Check `figure` withheld slot (no SVG agent) | **done** (stub) | Pose `figure:{status:withheld}` when `surface_representation=visual`; CheckCard `loop-figure-withheld`. Paired with **W4.1b** (request-path load) |
+| 5 | **W4.1b** | Load `surface_representation` on request-path check decrypt | **done** | `_COLUMNS` + `_row_to_item` (fail-closed enum); visual items serve withheld figure in prod. `surface_context` stays ciphertext / familiarity-only |
+| 6 | **W3.5a** | Learner mini-map spike + optional wrap-up stub | **done** | Doc + fixture UI → [`w3-5-learner-minimap-spike.md`](w3-5-learner-minimap-spike.md); never writes mastery edges |
 | 7 | **W7.2d** | Build kit stub (after Sequence) | **build** | Same pattern as Sort/Label/Sequence |
 | 8 | **W0.5** | Three E2E lanes on PR head | **measure** | Still open — needs held stack / cycle |
 | 9 | **W5 / W0.4** | Flag self→class→% enable | **operator** | Admin Flags only; see checklist |
 | 10 | **W7.11** | Retire legacy quiz chrome | **chore** | After interactive kit parity + E2E |
 
-**Day 9 progress:** #1 Sequence **done** · #2 sycophancy **1.0** (leak still soft) · #4 figure withheld **done** · next **#5 W4.1b** or **#8 E2E lanes**.
+**Day 9 progress:** #1 Sequence **done** · #2 sycophancy **1.0** (leak still soft) · #4 figure withheld **done** · #5 W4.1b request-path surface **done** · #6 W3.5a **done** · next **#8 E2E lanes** or **#7 Build kit**.
 
 ---
 
