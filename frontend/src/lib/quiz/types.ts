@@ -263,13 +263,18 @@ export interface ConnectInteractionNode {
 }
 
 /**
- * W7.2 Connect (7.3 match) — pair every left node to one right node.
- * Encode: `left=right;…`. Concept-map mode deferred.
+ * W7.2 Connect — `mode: "match"` (7.3, default) left↔right pairs, or
+ * `mode: "map"` undirected edges among `nodes` (concept-map).
+ * Match encode: `left=right;…`. Map encode: sorted undirected `a=b;…`.
  */
 export interface ConnectInteraction {
   kind: "connect";
+  /** Default `"match"` when omitted. */
+  mode?: "match" | "map";
   left: ConnectInteractionNode[];
   right: ConnectInteractionNode[];
+  /** Concept-map chips; required when `mode === "map"` (≥3). */
+  nodes?: ConnectInteractionNode[];
   note?: string;
 }
 

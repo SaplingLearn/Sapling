@@ -1,17 +1,23 @@
 "use client";
 
 /**
- * W7.2 Connect (design kit 7.3 match) — click left then right to pair.
+ * W7.2 Connect — match (7.3) or concept-map mode.
  */
 
 import React, { useMemo, useState } from "react";
 import type { ConnectInteraction } from "@/lib/quiz/types";
 import {
   decodeConnectAnswer,
+  decodeConnectMapAnswer,
   encodeConnectAnswer,
+  encodeConnectMapAnswer,
   isConnectComplete,
+  isConnectMap,
+  isConnectMapComplete,
   pairConnect,
+  toggleConnectMapEdge,
   type ConnectAssignment,
+  type ConnectMapEdge,
 } from "@/lib/quiz/connectInteraction";
 
 export interface ConnectAnswerProps {
@@ -39,7 +45,7 @@ function leftTone(
   return selected ? "lift" : assign[leftId] ? "lift" : "plain";
 }
 
-export function ConnectAnswer({
+function MatchConnect({
   interaction,
   value,
   disabled,
@@ -91,6 +97,7 @@ export function ConnectAnswer({
     <div
       className="quiz-connect"
       data-testid="quiz-connect"
+      data-mode="match"
       data-complete={complete ? "true" : "false"}
       data-verdict={verdict || undefined}
     >
@@ -145,4 +152,130 @@ export function ConnectAnswer({
       </div>
     </div>
   );
+}
+
+function MapConnect({
+  interaction,
+  value,
+  disabled,
+  expected,
+  verdict,
+  onChange,
+}: ConnectAnswerProps) {
+  const nodes = interaction.nodes ?? [];
+  const edges = useMemo(
+    () => decodeConnectMapAnswer(interaction, value),
+    [interaction, value],
+  );
+  const expectedEdges = useMemo(
+    () => (expected ? decodeConnectMapAnswer(interaction, expected) : null),
+    [interaction, expected],
+  );
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const complete = isConnectMapComplete(interaction, edges);
+  const done = Boolean(verdict);
+
+  const commit = (next: ConnectMapEdge[]) => {
+    onChange(encodeConnectMapAnswer(next));
+  };
+
+  const labelOf = (id: string) => nodes.find(n => n.id === id)?.label ?? id;
+
+  const onNode = (id: string) => {
+    if (disabled || done) return;
+    if (selectedId == null) {
+      setSelectedId(id);
+      return;
+    }
+    if (selectedId === id) {
+      setSelectedId(null);
+      return;
+    }
+    commit(toggleConnectMapEdge(edges, selectedId, id));
+    setSelectedId(null);
+  };
+
+  const removeEdge = (a: string, b: string) => {
+    if (disabled || done) return;
+    commit(toggleConnectMapEdge(edges, a, b));
+  };
+
+  const edgeTone = (e: ConnectMapEdge): "plain" | "right" | "wrong" => {
+    if (!verdict || !expectedEdges) return "plain";
+    const k = `${e.a}=${e.b}`;
+    const ok = expectedEdges.some(x => `${x.a}=${x.b}` === k);
+    return ok ? "right" : "wrong";
+  };
+
+  return (
+    <div
+      className="quiz-connect quiz-connect--map"
+      data-testid="quiz-connect"
+      data-mode="map"
+      data-complete={complete ? "true" : "false"}
+      data-verdict={verdict || undefined}
+    >
+      {interaction.note ? (
+        <p className="quiz-connect__note label-micro" data-testid="quiz-connect-note">
+          {interaction.note}
+        </p>
+      ) : (
+        <p className="quiz-connect__note label-micro">
+          Tap two concepts to link them. Link every concept at least once.
+        </p>
+      )}
+
+      <div className="quiz-connect__map-nodes" data-testid="quiz-connect-map-nodes">
+        {nodes.map(n => (
+          <button
+            key={n.id}
+            type="button"
+            className={`quiz-connect__node quiz-connect__node--${selectedId === n.id ? "lift" : "plain"}`}
+            data-testid={`quiz-connect-node-${n.id}`}
+            aria-pressed={selectedId === n.id}
+            disabled={disabled || done}
+            onClick={() => onNode(n.id)}
+          >
+            {n.label}
+          </button>
+        ))}
+      </div>
+
+      <ul className="quiz-connect__map-edges" data-testid="quiz-connect-map-edges">
+        {edges.length === 0 ? (
+          <li className="quiz-connect__map-empty label-micro">No links yet.</li>
+        ) : (
+          edges.map(e => (
+            <li
+              key={`${e.a}-${e.b}`}
+              className={`quiz-connect__map-edge quiz-connect__map-edge--${edgeTone(e)}`}
+              data-testid={`quiz-connect-edge-${e.a}-${e.b}`}
+            >
+              <span>
+                {labelOf(e.a)} — {labelOf(e.b)}
+              </span>
+              {!done && !disabled ? (
+                <button
+                  type="button"
+                  className="quiz-connect__map-remove"
+                  data-testid={`quiz-connect-remove-${e.a}-${e.b}`}
+                  aria-label={`Remove link between ${labelOf(e.a)} and ${labelOf(e.b)}`}
+                  onClick={() => removeEdge(e.a, e.b)}
+                >
+                  Remove
+                </button>
+              ) : null}
+            </li>
+          ))
+        )}
+      </ul>
+    </div>
+  );
+}
+
+export function ConnectAnswer(props: ConnectAnswerProps) {
+  if (isConnectMap(props.interaction)) {
+    return <MapConnect {...props} />;
+  }
+  return <MatchConnect {...props} />;
 }

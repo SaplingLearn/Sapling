@@ -1320,7 +1320,7 @@
 
 
 
-/* W7.2 Connect (7.3 match): left/right pairing. */
+/* W7.2 Connect: match (7.3) or concept-map mode. */
 .quiz-connect {
   display: grid;
   gap: var(--pad-md);
@@ -1375,6 +1375,54 @@
 }
 .quiz-connect__pair {
   color: var(--text-muted);
+}
+.quiz-connect__map-nodes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.quiz-connect__map-nodes .quiz-connect__node {
+  width: auto;
+  min-width: 7rem;
+}
+.quiz-connect__map-edges {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.quiz-connect__map-empty {
+  color: var(--text-muted);
+}
+.quiz-connect__map-edge {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--pad-sm);
+  min-height: 36px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg-soft);
+  font-size: var(--fs-sm);
+}
+.quiz-connect__map-edge--right {
+  border-color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 10%, var(--bg-soft));
+}
+.quiz-connect__map-edge--wrong {
+  border-color: var(--err);
+  background: color-mix(in srgb, var(--err) 10%, var(--bg-soft));
+}
+.quiz-connect__map-remove {
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: var(--fs-sm);
+  cursor: pointer;
+  text-decoration: underline;
 }
 @media (max-width: 560px) {
   .quiz-connect__columns { grid-template-columns: 1fr; }

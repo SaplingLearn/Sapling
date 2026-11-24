@@ -375,7 +375,9 @@ journeys keep anchoring: `quiz-panel`, `quiz-start`,
 | `quiz-rank` | W7.2 Rank (7.15): interaction root; mounts when `kind === "rank"` |
 | `quiz-rank-hint` / `quiz-rank-slots` / `quiz-rank-slot-{i}` | hint, ordered slots |
 | `quiz-rank-tray` / `quiz-rank-item-{id}` / `quiz-rank-why` | items tray / card / why textarea |
-| `quiz-connect` | W7.2 Connect (7.3 match): interaction root; mounts when `kind === "connect"` |
+| `quiz-connect` | W7.2 Connect: interaction root (`data-mode` = `match` \| `map`); mounts when `kind === "connect"` |
+| `quiz-connect-map-nodes` / `quiz-connect-node-{id}` | Concept-map mode: concept chips |
+| `quiz-connect-map-edges` / `quiz-connect-edge-{a}-{b}` / `quiz-connect-remove-{a}-{b}` | Concept-map mode: undirected edge list + remove |
 | `quiz-connect-note` / `quiz-connect-columns` | optional note / two-column layout |
 | `quiz-connect-left` / `quiz-connect-left-{id}` | left column / one left node (`data-paired`) |
 | `quiz-connect-right` / `quiz-connect-right-{id}` | right column / one right node (`data-taken`) |

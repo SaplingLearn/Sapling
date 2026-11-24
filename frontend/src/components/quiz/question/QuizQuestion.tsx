@@ -999,7 +999,7 @@ function CompareField(props: AnswerFieldProps) {
 
 
 
-/** W7.2 Connect (7.3): pair left to right. */
+/** W7.2 Connect: match (7.3) or concept-map mode. */
 function ConnectField(props: AnswerFieldProps) {
   const { view, shown, selectable, actions } = props;
   const connect = asConnectInteraction(view.item?.question.interaction);

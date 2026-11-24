@@ -15,7 +15,7 @@ Goal: map handoff artifacts → production files, name the **first slice (W7.1�
 |---|---|---|---|
 | `Quiz Component Library.dc.html` | 1 | `frontend/src/components/quiz/quiz.css` + shared `components/ui/*` (`AnswerOption`, `ProgressDots`, `Chip`, …) + `components/graph/ConceptNode.tsx` / `lib/graph/nodeStyle.ts` | Tokens already live in `app/globals.css`. Empty states → `home/HomeStates.tsx`. Mastery blobs → existing `ConceptNode`, not plant-stage strings. |
 | `Quiz Shell.dc.html` | 2–3 | `QuizScreen.tsx`, `question/QuizQuestion.tsx`, `question/question.css`, `question/LeaveDialog.tsx`, `question/AskPanel.tsx` | **Shipped:** attempt phases use `SessionTop` + `data-quiz-session` (SideNav hidden). Home / results / error keep app `TopBar` + Study back link (W7.D1). Hint / Skip / Study guide / prereq banner live; Returning + exam-distance pips live ([`w7-meta-chips.md`](./w7-meta-chips.md)); wager still deferred. |
-| `Quiz Components 7.1–7.18*.dc.html` + `quiz-kit.js` / `quiz-data-*.js` | 4–5 | `question/*Answer.tsx` + `lib/quiz/*Interaction.ts` (Sort/Label/Sequence/Build/Compare/Dialogue) + core MC/written | Kit stubs on `short_answer` wire; generation does not emit `interaction` yet. Demo prompts remain **UI fixtures only**. |
+| `Quiz Components 7.1–7.18*.dc.html` + `quiz-kit.js` / `quiz-data-*.js` | 4–5 | `question/*Answer.tsx` + `lib/quiz/*Interaction.ts` (Sort…Connect match/map) + core MC/written | Kit stubs on `short_answer` wire; generation does not emit `interaction` yet. Demo prompts remain **UI fixtures only**. |
 | `Quiz Session.dc.html` | 6–7 | `QuizScreen.tsx` phases + `home/` start path + `results/QuizResults.tsx` (+ `LearningBlock.tsx`) | Practice / Exam Twin start, leave, generating skeleton, summary. Generating already exists as a question phase. |
 | Study Hub / Guide / Settings recreations | 8–9 | `components/study/**`, `components/studyGuide/**`, `components/screens/Settings.tsx` | Port on **copies** of design files; production edits go to these React trees. Hub Quiz button → launcher (W7.9). |
 | Launcher (not built in handoff) | 10 | Evolve `home/QuizHome.tsx` (+ Map = `KnowledgeGraph2D` / `ConceptNode`, same as Tree) | Concept list + Map. Reuse plan ranking, do not fork. |
@@ -46,7 +46,7 @@ Shared primitives (handoff “ui/” under quiz): live in `frontend/src/componen
 | Phase | Types | Status |
 |---|---|---|
 | Core | MC / short / numeric / algebra on SessionTop | **done** |
-| Interactive stubs | Sort…Rank + Connect (7.3 match) | **twelve stubs done** (concept-map Connect mode deferred) |
+| Interactive stubs | Sort…Rank + Connect match + concept-map | **twelve stubs + Connect map mode done** |
 | Later | Generation emits `interaction`; richer per-criterion grading | deferred |
 
 Stubs use `short_answer` wire + client `interaction`; generation does not emit kit payloads yet. Do not block shell chrome on full 7.1–7.18 parity.

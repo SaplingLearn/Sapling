@@ -366,7 +366,7 @@ Update `docs/learning-loop/amendments.md` with a short “Alvar trilogy: adopted
 | Task | Type | Effort | Acceptance |
 |---|---|---|---|
 | W7.1 Port shell tokens + session chrome into `quiz/` (TopBar focus mode, meta row with blob concept pill, progress, XP/streak only if product keeps gamification) | ui | L | Visual match to Shell frames; a11y; no new color system |
-| W7.2 Port question-type kit (7.1–7.18) behind real attempt JSON; **MC / short / numeric / algebra first**, interactive types phased | ui | XL | **Shipped stubs:** Sort, Label, Sequence, Build, Compare, Dialogue, Explain, Highlight, Calculate, Position, Rank, Connect (7.3 match). Concept-map Connect + generation emit + richer grading later |
+| W7.2 Port question-type kit (7.1–7.18) behind real attempt JSON; **MC / short / numeric / algebra first**, interactive types phased | ui | XL | **Shipped stubs:** Sort, Label, Sequence, Build, Compare, Dialogue, Explain, Highlight, Calculate, Position, Rank, Connect match + concept-map (`mode: "map"`). Generation emit + richer grading later |
 | W7.3 **Hook generation to loop algorithm:** home/launcher consumes `GET /api/quiz/plan` when `quiz_concept_plan` on; Adjust/Start pass planned concept ids; generation path uses `quiz_planned_questions` + gates when on | integrate | M | E2E `quiz-learning.spec.ts` + new launcher journeys; flag-off = pre-loop quiz |
 | W7.4 Confidence / wager UI maps to existing stated-confidence API (A132) — do not invent a second confidence store; align “Certain / Fairly sure / Unsure” with `guessing` / `fairly_sure` / `sure` | integrate | S | Pins in quiz-journeys confidence test |
 | W7.5 Hint / skip / study-guide drawer: hints must not become answer leaks (same Bastani rule as Tutor); study-guide drawer deep-links concept; Skip respects attempt rules | integrate | M | No mastery from hint-only; E2E |
@@ -521,7 +521,7 @@ Use this as the merge/readiness checklist. Every row must be **Done (A+)**, **N/
 - [x] Hub / Guide / Settings designed + shipped (W7.D2 / W7.9)  
 - [x] Launcher + Map designed + shipped (W7.D3 / W7.10)  
 - [x] Quiz shell in production (W7.1)  
-- [x] Core types + interactive kit stubs incl. Connect match (W7.2) — generation emit / concept-map later  
+- [x] Core types + interactive kit stubs incl. Connect match + concept-map (W7.2) — generation emit later  
 - [x] Launcher/home ↔ plan (W7.3) · Confidence A132 (W7.4) · Hint scaffold (W7.5)  
 - [x] Prereq banner (W7.6) · Summary CTAs (W7.7) · Practice/Exam Twin (W7.8)  
 - [x] Kill legacy quiz chrome (W7.11) — SessionTop is the attempt path; `quiz_shell_v2` never needed; home/results TopBar intentional  
@@ -684,10 +684,11 @@ Ordered. **Operator-only** rows are not agent work. Adjust this table if scope s
 | 15 | **W7.2i** | Calculate kit stub (design 7.13) | **done** | Value + unit encode `value\|unit` + vitest + testids; working-steps deferred |
 | 16 | **W7.2j** | Position kit stub (design 7.12) | **done** | Markers on scale stops + vitest + testids; `kind: "position"` |
 | 17 | **W7.2k** | Rank kit stub (design 7.15) | **done** | Order + why encode + vitest + testids; `kind: "rank"` |
-| 18 | **W7.2l** | Connect kit stub (design 7.3 match) | **done** | Left→right pairing + vitest + testids; `kind: "connect"`; concept-map mode deferred |
+| 18 | **W7.2l** | Connect kit stub (design 7.3 match) | **done** | Left→right pairing + vitest + testids; `kind: "connect"` |
 | 19 | **W7 meta** | Returning + exam-distance chips | **done** | Formula [`w7-meta-chips.md`](w7-meta-chips.md); `metaChips.ts` + QuestionHeader; Bloom skill / wager still deferred |
+| 20 | **W7.2l-map** | Connect concept-map mode | **done** | `mode: "map"` + undirected edges + vitest + testids; generation emit still deferred |
 
-**Day 9 progress:** #1–8 + #10–19 **done** · #9 operator HOLD (only remaining Day 9 row).
+**Day 9 progress:** #1–8 + #10–20 **done** · #9 operator HOLD (only remaining Day 9 row).
 
 ---
 
