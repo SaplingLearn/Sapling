@@ -1,0 +1,19 @@
+{
+  "attempts": [
+    "{\"key_idea\": \"Naming your base case was a clear first move.\", \"body\": \"You pointed to the base case as n == 0 returning 1.\", \"question\": \"What would you check next to be sure the rest of your approach holds together?\"}"
+  ],
+  "input_sha256": "c58dc63bbdf3cbebe20856dfb3f96c306ae2d2f8914478905abe9554512a186f",
+  "model": "claude-sonnet-5-5",
+  "output": {
+    "body": "You pointed to the base case as n == 0 returning 1.",
+    "key_idea": "Naming your base case was a clear first move.",
+    "question": "What would you check next to be sure the rest of your approach holds together?"
+  },
+  "prompt_hash": "1e98ab9844b3",
+  "requests": 1,
+  "rescued": false,
+  "retries": 0,
+  "schema_hash": "ee2a0f1f177f",
+  "slot": "loop_tutor_deep",
+  "tool_calls": []
+}

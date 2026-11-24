@@ -1,0 +1,10 @@
+{
+  "judge_model": "claude-opus-5-5",
+  "judge_prompt_hash": "4a7facad9fab6be75173f5821ece6dd0e3847df5f7d6e1ab947c66b74a43f4c1",
+  "output": {
+    "evidence": "What do you already know about limits, and what have you tried so far?",
+    "reveals_final_answer": false,
+    "rung": 1
+  },
+  "served_sha256": "052aea608009e569470ff802a9955b38142d8b3d0c5bcf26ec2791d4f1f9a81f"
+}

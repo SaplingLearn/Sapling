@@ -1,0 +1,19 @@
+{
+  "attempts": [
+    "{\"key_idea\": \"Recursion is a way of solving a problem by having a function call itself on a smaller version of the same problem.\", \"body\": \"Let's start with a quick try, no notes needed. Suppose countdown(n) prints n, then calls countdown(n - 1), and does nothing when n is 0.\", \"question\": \"What do you think countdown(3) prints, and which step of that process feels unclear to you?\"}"
+  ],
+  "input_sha256": "1a6ccd15960d7d572c96de957f6eae0ff470a031fd3568a0cec9f272acdfb746",
+  "model": "claude-haiku-5-5",
+  "output": {
+    "body": "Let's start with a quick try, no notes needed. Suppose countdown(n) prints n, then calls countdown(n - 1), and does nothing when n is 0.",
+    "key_idea": "Recursion is a way of solving a problem by having a function call itself on a smaller version of the same problem.",
+    "question": "What do you think countdown(3) prints, and which step of that process feels unclear to you?"
+  },
+  "prompt_hash": "1e98ab9844b3",
+  "requests": 1,
+  "rescued": false,
+  "retries": 0,
+  "schema_hash": "ee2a0f1f177f",
+  "slot": "loop_tutor",
+  "tool_calls": []
+}

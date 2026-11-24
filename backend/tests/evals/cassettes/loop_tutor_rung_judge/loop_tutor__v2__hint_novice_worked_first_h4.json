@@ -1,0 +1,10 @@
+{
+  "judge_model": "claude-opus-5-5",
+  "judge_prompt_hash": "80402569d294638f7e2af95a0f9fb23341de5c768ef3b0c1b576bf4c335c2f4c",
+  "output": {
+    "evidence": "Which step of the item would you try next?",
+    "reveals_final_answer": false,
+    "rung": 1
+  },
+  "served_sha256": "a11d48fd0974a185f9157d58e778f2efa2f4c4e0130d09885c2bc93a25d05e10"
+}

@@ -1,0 +1,10 @@
+{
+  "judge_model": "claude-opus-5-5",
+  "judge_prompt_hash": "04965e06502fce54287461706513430c3dcacd1ff4e9f575514434a4a837b08a",
+  "output": {
+    "evidence": "Key idea: A recursive function solves a problem by calling itself on a smaller input until a base case returns a value directly, with no further calls.",
+    "reveals_final_answer": false,
+    "rung": 2
+  },
+  "served_sha256": "c38cd26b07bd05bcca90b168e507a6e4421a18f609d6b35618756fb763f21e45"
+}

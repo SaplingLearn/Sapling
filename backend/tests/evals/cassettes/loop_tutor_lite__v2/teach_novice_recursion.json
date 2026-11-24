@@ -1,0 +1,19 @@
+{
+  "attempts": [
+    "{\"key_idea\": \"A recursive function solves a problem by calling itself on a smaller input until a base case returns a value directly, with no further calls.\", \"body\": \"Try this before I explain anything: count(1) returns 1, and for any n above 1, count(n) returns 1 plus count(n minus 1). Work out count(3) by writing down each call it makes, and don't worry about getting it perfect.\", \"question\": \"What value do you get for count(3), and which smaller call does it have to wait on before it can finish?\"}"
+  ],
+  "input_sha256": "1a6ccd15960d7d572c96de957f6eae0ff470a031fd3568a0cec9f272acdfb746",
+  "model": "claude-haiku-5-5",
+  "output": {
+    "body": "Try this before I explain anything: count(1) returns 1, and for any n above 1, count(n) returns 1 plus count(n minus 1). Work out count(3) by writing down each call it makes, and don't worry about getting it perfect.",
+    "key_idea": "A recursive function solves a problem by calling itself on a smaller input until a base case returns a value directly, with no further calls.",
+    "question": "What value do you get for count(3), and which smaller call does it have to wait on before it can finish?"
+  },
+  "prompt_hash": "1e98ab9844b3",
+  "requests": 1,
+  "rescued": false,
+  "retries": 0,
+  "schema_hash": "ee2a0f1f177f",
+  "slot": "loop_tutor_lite",
+  "tool_calls": []
+}

@@ -1,0 +1,19 @@
+{
+  "attempts": [
+    "{\"key_idea\": \"Start by pinning down what the check item is asking you to produce.\", \"body\": \"You asked for a hint, so let's begin with your own thinking rather than a new idea from me.\", \"question\": \"What is the first thing you need to figure out before you attempt the item?\"}"
+  ],
+  "input_sha256": "a223d9787536083e662accb290741c8dedf27ba661214abdbca0142b8f3dd1d0",
+  "model": "claude-haiku-5-5",
+  "output": {
+    "body": "You asked for a hint, so let's begin with your own thinking rather than a new idea from me.",
+    "key_idea": "Start by pinning down what the check item is asking you to produce.",
+    "question": "What is the first thing you need to figure out before you attempt the item?"
+  },
+  "prompt_hash": "1e98ab9844b3",
+  "requests": 1,
+  "rescued": false,
+  "retries": 0,
+  "schema_hash": "ee2a0f1f177f",
+  "slot": "loop_tutor_lite",
+  "tool_calls": []
+}

@@ -1,0 +1,19 @@
+{
+  "attempts": [
+    "{\"key_idea\": \"A recursive function only terminates if some input returns a value without calling itself, and that input is the stopping point.\", \"body\": \"Take sum_to(n) = n + sum_to(n-1), with sum_to(0) = 0. Tracing sum_to(2): it calls sum_to(1), which calls sum_to(0), and sum_to(0) returns 0 directly, so the chain of calls unwinds to 2 + 1 + 0 = 3. Without that direct-return case, the calls would keep going to n-1, -2, -3 and never finish.\", \"question\": \"In factorial(n), which input returns a value without calling factorial again, and what does the chain look like when it reaches that input?\"}"
+  ],
+  "input_sha256": "78b8a97ede546da8ca6d3349c7a261196577cd93fde52115743a9f77fe7a482b",
+  "model": "claude-haiku-5-5",
+  "output": {
+    "body": "Take sum_to(n) = n + sum_to(n-1), with sum_to(0) = 0. Tracing sum_to(2): it calls sum_to(1), which calls sum_to(0), and sum_to(0) returns 0 directly, so the chain of calls unwinds to 2 + 1 + 0 = 3. Without that direct-return case, the calls would keep going to n-1, -2, -3 and never finish.",
+    "key_idea": "A recursive function only terminates if some input returns a value without calling itself, and that input is the stopping point.",
+    "question": "In factorial(n), which input returns a value without calling factorial again, and what does the chain look like when it reaches that input?"
+  },
+  "prompt_hash": "1e98ab9844b3",
+  "requests": 1,
+  "rescued": false,
+  "retries": 0,
+  "schema_hash": "ee2a0f1f177f",
+  "slot": "loop_tutor_lite",
+  "tool_calls": []
+}

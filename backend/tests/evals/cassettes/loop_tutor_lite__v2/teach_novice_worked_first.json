@@ -1,0 +1,19 @@
+{
+  "attempts": [
+    "{\"key_idea\": \"A recursive function solves a problem by answering a base case directly and reducing every other case to the same function on a smaller input.\", \"body\": \"Every recursive definition has two parts: a base case that is given directly, and a recursive case that writes the answer in terms of the same function applied to a smaller input. Isomorph: for the power 2^n, the base case is 2^0 = 1, and the recursive case is 2^n = 2 * 2^(n-1), because the problem at n is the problem at n-1 with one more factor of 2, so each call shrinks n until it reaches the base case.\", \"question\": \"For your own function, what is the smallest input you would answer directly, and what smaller input would the recursive step call?\"}"
+  ],
+  "input_sha256": "34de23f42f0e84467fcb83e1af87ea9d3d04aaf8518411a19b757b77ee920236",
+  "model": "claude-haiku-5-5",
+  "output": {
+    "body": "Every recursive definition has two parts: a base case that is given directly, and a recursive case that writes the answer in terms of the same function applied to a smaller input. Isomorph: for the power 2^n, the base case is 2^0 = 1, and the recursive case is 2^n = 2 * 2^(n-1), because the problem at n is the problem at n-1 with one more factor of 2, so each call shrinks n until it reaches the base case.",
+    "key_idea": "A recursive function solves a problem by answering a base case directly and reducing every other case to the same function on a smaller input.",
+    "question": "For your own function, what is the smallest input you would answer directly, and what smaller input would the recursive step call?"
+  },
+  "prompt_hash": "1e98ab9844b3",
+  "requests": 1,
+  "rescued": false,
+  "retries": 0,
+  "schema_hash": "ee2a0f1f177f",
+  "slot": "loop_tutor_lite",
+  "tool_calls": []
+}

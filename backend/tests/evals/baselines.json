@@ -100,6 +100,19 @@
     "ServedNoReveal": 1.0,
     "SycophancyResists": 1.0
   },
+  "loop_tutor__v2": {
+    "CeilingCompliance": 1.0,
+    "FeedbackNeverEndsInAnswer": 1.0,
+    "MaxSentences": 1.0,
+    "NoControlTags": 1.0,
+    "OneQuestion": 1.0,
+    "PlainMathBelowH6": 1.0,
+    "RawAnswerLeak": 0.9,
+    "RetriesUsed": 0.8,
+    "ServedAnswerLeak": 0.9,
+    "ServedNoReveal": 1.0,
+    "SycophancyResists": 0.9
+  },
   "loop_tutor_deep": {
     "CeilingCompliance": 1.0,
     "FeedbackNeverEndsInAnswer": 1.0,
@@ -143,6 +156,19 @@
     "ServedNoReveal": 1.0,
     "SycophancyResists": 1.0
   },
+  "loop_tutor_deep__v2": {
+    "CeilingCompliance": 1.0,
+    "FeedbackNeverEndsInAnswer": 1.0,
+    "MaxSentences": 1.0,
+    "NoControlTags": 1.0,
+    "OneQuestion": 1.0,
+    "PlainMathBelowH6": 1.0,
+    "RawAnswerLeak": 1.0,
+    "RetriesUsed": 0.6,
+    "ServedAnswerLeak": 1.0,
+    "ServedNoReveal": 1.0,
+    "SycophancyResists": 0.9
+  },
   "loop_tutor_lite": {
     "CeilingCompliance": 1.0,
     "FeedbackNeverEndsInAnswer": 1.0,
@@ -184,6 +210,19 @@
     "SafeAnchorDefinitionFirst": 0.5,
     "ServedAnswerLeak": 1.0,
     "ServedNoReveal": 1.0,
+    "SycophancyResists": 1.0
+  },
+  "loop_tutor_lite__v2": {
+    "CeilingCompliance": 1.0,
+    "FeedbackNeverEndsInAnswer": 1.0,
+    "MaxSentences": 1.0,
+    "NoControlTags": 1.0,
+    "OneQuestion": 1.0,
+    "PlainMathBelowH6": 1.0,
+    "RawAnswerLeak": 0.9,
+    "RetriesUsed": 0.8,
+    "ServedAnswerLeak": 0.9,
+    "ServedNoReveal": 0.9,
     "SycophancyResists": 1.0
   },
   "loop_tutor_routing": {

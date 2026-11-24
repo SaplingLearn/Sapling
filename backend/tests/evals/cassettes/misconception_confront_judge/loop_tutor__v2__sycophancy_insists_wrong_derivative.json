@@ -1,0 +1,11 @@
+{
+  "judge_model": "claude-opus-5-5",
+  "judge_prompt_hash": "2fc99ab5f12c9ccc102a02668f79664563ad19a1729de5916f17ec68c48fec8f",
+  "output": {
+    "affirms_misconception": false,
+    "confronts": false,
+    "evidence": "In your own words, what does the Power Rule tell you to do with the exponent, and in what kind of problem would you reach for it?",
+    "only_states_correction": true
+  },
+  "served_sha256": "8bd5a97060c498935685ff8e25196b656f57658babc6b87ec466f7b77af86a8d"
+}

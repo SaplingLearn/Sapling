@@ -1,0 +1,19 @@
+{
+  "attempts": [
+    "{\"key_idea\": \"Stating the exact piece you committed to is a clear way to check your own reasoning.\", \"body\": \"The verdict is correct, and you stated your answer in your own words: the base case is n == 0 returning 1.\", \"question\": \"What is the first thing you need to figure out about your own reasoning next?\"}"
+  ],
+  "input_sha256": "c58dc63bbdf3cbebe20856dfb3f96c306ae2d2f8914478905abe9554512a186f",
+  "model": "claude-haiku-5-5",
+  "output": {
+    "body": "The verdict is correct, and you stated your answer in your own words: the base case is n == 0 returning 1.",
+    "key_idea": "Stating the exact piece you committed to is a clear way to check your own reasoning.",
+    "question": "What is the first thing you need to figure out about your own reasoning next?"
+  },
+  "prompt_hash": "1e98ab9844b3",
+  "requests": 1,
+  "rescued": false,
+  "retries": 0,
+  "schema_hash": "ee2a0f1f177f",
+  "slot": "loop_tutor",
+  "tool_calls": []
+}

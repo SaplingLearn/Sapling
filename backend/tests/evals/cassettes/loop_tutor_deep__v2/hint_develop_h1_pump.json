@@ -1,0 +1,19 @@
+{
+  "attempts": [
+    "{\"key_idea\": \"Start by pinning down what the question is actually asking you to do.\", \"body\": \"Take a moment to look at the item again in your own words.\", \"question\": \"What is the first thing you need to figure out before you can answer it?\"}"
+  ],
+  "input_sha256": "a223d9787536083e662accb290741c8dedf27ba661214abdbca0142b8f3dd1d0",
+  "model": "claude-sonnet-5-5",
+  "output": {
+    "body": "Take a moment to look at the item again in your own words.",
+    "key_idea": "Start by pinning down what the question is actually asking you to do.",
+    "question": "What is the first thing you need to figure out before you can answer it?"
+  },
+  "prompt_hash": "1e98ab9844b3",
+  "requests": 1,
+  "rescued": false,
+  "retries": 0,
+  "schema_hash": "ee2a0f1f177f",
+  "slot": "loop_tutor_deep",
+  "tool_calls": []
+}

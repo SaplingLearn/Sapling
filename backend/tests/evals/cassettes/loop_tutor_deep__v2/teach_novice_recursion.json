@@ -1,0 +1,19 @@
+{
+  "attempts": [
+    "{\"key_idea\": \"Recursion means solving a problem by reducing it to a smaller copy of the same problem, plus a base case where the answer is known outright and the reduction stops.\", \"body\": \"Here is a worked example on a different problem: the sum of 1 to n, called sum(n). Base case: sum(1) = 1, because there is nothing smaller to reduce. Recursive step: sum(n) = n + sum(n-1), which gives sum(4) = 4 + sum(3) = 4 + 3 + sum(2) = 4 + 3 + 2 + sum(1), and sum(1) is the base case.\", \"question\": \"Using the same structure for the product 1*2*...*n, called fact(n), what would you write as the base case, fact(1) = ?\"}"
+  ],
+  "input_sha256": "1a6ccd15960d7d572c96de957f6eae0ff470a031fd3568a0cec9f272acdfb746",
+  "model": "claude-sonnet-5-5",
+  "output": {
+    "body": "Here is a worked example on a different problem: the sum of 1 to n, called sum(n). Base case: sum(1) = 1, because there is nothing smaller to reduce. Recursive step: sum(n) = n + sum(n-1), which gives sum(4) = 4 + sum(3) = 4 + 3 + sum(2) = 4 + 3 + 2 + sum(1), and sum(1) is the base case.",
+    "key_idea": "Recursion means solving a problem by reducing it to a smaller copy of the same problem, plus a base case where the answer is known outright and the reduction stops.",
+    "question": "Using the same structure for the product 1*2*...*n, called fact(n), what would you write as the base case, fact(1) = ?"
+  },
+  "prompt_hash": "1e98ab9844b3",
+  "requests": 1,
+  "rescued": false,
+  "retries": 0,
+  "schema_hash": "ee2a0f1f177f",
+  "slot": "loop_tutor_deep",
+  "tool_calls": []
+}

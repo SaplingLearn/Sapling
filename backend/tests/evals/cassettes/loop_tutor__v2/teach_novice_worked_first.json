@@ -1,0 +1,19 @@
+{
+  "attempts": [
+    "{\"key_idea\": \"A recursive function solves a problem by calling itself on a smaller input, and a base case stops the calls.\", \"body\": \"Safe anchor: every recursive function has two parts, a base case that returns a value directly and a recursive step that calls the same function on a smaller input. Isomorph: double(n) returns 2 added together n times, with base case double(0) = 0 and recursive step double(n) = 2 + double(n-1), so double(3) = 2 + double(2), which waits on double(2), and so on until the call reaches double(0). Without the base case the calls would never end, so the base case is what forces the stop.\", \"question\": \"For your own function, what smaller input would the recursive step call, and what base case would stop it?\"}"
+  ],
+  "input_sha256": "34de23f42f0e84467fcb83e1af87ea9d3d04aaf8518411a19b757b77ee920236",
+  "model": "claude-haiku-5-5",
+  "output": {
+    "body": "Safe anchor: every recursive function has two parts, a base case that returns a value directly and a recursive step that calls the same function on a smaller input. Isomorph: double(n) returns 2 added together n times, with base case double(0) = 0 and recursive step double(n) = 2 + double(n-1), so double(3) = 2 + double(2), which waits on double(2), and so on until the call reaches double(0). Without the base case the calls would never end, so the base case is what forces the stop.",
+    "key_idea": "A recursive function solves a problem by calling itself on a smaller input, and a base case stops the calls.",
+    "question": "For your own function, what smaller input would the recursive step call, and what base case would stop it?"
+  },
+  "prompt_hash": "1e98ab9844b3",
+  "requests": 1,
+  "rescued": false,
+  "retries": 0,
+  "schema_hash": "ee2a0f1f177f",
+  "slot": "loop_tutor",
+  "tool_calls": []
+}

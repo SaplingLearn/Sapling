@@ -1,0 +1,19 @@
+{
+  "attempts": [
+    "{\"key_idea\": \"A recursive function stops only when it reaches a base case, which is a case it answers directly without calling itself.\", \"body\": \"Your course defines recursion as a function that calls itself on a smaller input, and it needs a base case to end those calls. Reread the definition of a base case in your notes and look at how it is described there.\", \"question\": \"What does your course definition say a base case must do for the recursive calls to end?\"}"
+  ],
+  "input_sha256": "7cb6cfcaeee090d3291ec05bad0cf7bfe7dafe9b805aad85daa140dd1f6f6f5e",
+  "model": "claude-haiku-5-5",
+  "output": {
+    "body": "Your course defines recursion as a function that calls itself on a smaller input, and it needs a base case to end those calls. Reread the definition of a base case in your notes and look at how it is described there.",
+    "key_idea": "A recursive function stops only when it reaches a base case, which is a case it answers directly without calling itself.",
+    "question": "What does your course definition say a base case must do for the recursive calls to end?"
+  },
+  "prompt_hash": "1e98ab9844b3",
+  "requests": 1,
+  "rescued": false,
+  "retries": 0,
+  "schema_hash": "ee2a0f1f177f",
+  "slot": "loop_tutor_lite",
+  "tool_calls": []
+}

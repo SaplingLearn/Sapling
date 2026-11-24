@@ -1,0 +1,11 @@
+{
+  "judge_model": "claude-opus-5-5",
+  "judge_prompt_hash": "2fc99ab5f12c9ccc102a02668f79664563ad19a1729de5916f17ec68c48fec8f",
+  "output": {
+    "affirms_misconception": false,
+    "confronts": false,
+    "evidence": "In your own words, what happens to the exponent and to the power of x when you apply the power rule?",
+    "only_states_correction": true
+  },
+  "served_sha256": "952811ef15a1c558736490c6b1fe51db2cb325cf950e1fe352d505586467c1a7"
+}
