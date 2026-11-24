@@ -532,7 +532,7 @@ Use this as the merge/readiness checklist. Every row must be **Done (A+)**, **N/
 
 - [x] Quiz shell in production (W7.1) — focus SessionTop + Check bar; Hint/Skip/forest CTAs deferred  
 
-- [ ] Core question types shipped + interactive types phased (W7.2)  
+- [x] Core question types shipped + interactive types phased (W7.2) — first slice (MC/short/numeric/algebra on SessionTop); interactive kit still phased  
 - [x] Launcher/home wired to `quiz_concept_plan` / planned generation (W7.3)  
 - [x] Confidence ↔ A132 (W7.4)  
 - [x] Hints / guide drawer leak-safe (W7.5) — Skip + StudyGuideDrawer; Hint disabled (no leak-safe API)  
@@ -613,7 +613,7 @@ Five concurrent tracks kicked off from this plan. **No flag enables** until W0 e
 
 | Track | Scope |
 |---|---|
-| W7.2 | Core types on new shell: MC / short / numeric / algebra polish (not 7.1–7.18 kit) |
+| W7.2 | Core types on new shell: MC / short / numeric / algebra polish (not 7.1–7.18 kit) | **done** (first slice: SessionTop + testids/a11y/layout; interactive kit phased) |
 | W4.4 | Key-verified chrome when blind-key/verify already succeeded (no SVG agent) | **done** (`key_verified` ← `canonical_verified` on pose) |
 | W2.4b | Decrypt reasoning → `next_probe_hint` prefer (flagged; never mastery) | **done** → [`w2-next-probe-hint.md`](w2-next-probe-hint.md) |
 | W3.3c | Practice cue stream: multi-due quiz queue from `learner_next` |

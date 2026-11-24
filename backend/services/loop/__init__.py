@@ -89,7 +89,8 @@ Modules, lowest first (each imports only the ones above it):
 - ``pose``: The segment prequestion's pose (A138), the self-explanation
   prompts (A139) and the teach-prompt juncture they open.
 - ``practice``: The next check (spec §10): band control (A122), the target
-  difficulty, worked examples, the isomorph re-ask and `_activate_next_item`.
+  difficulty, worked examples, the isomorph re-ask, `_activate_next_item`,
+  and W4.4 `key_verified` on `_pose_payload` when `canonical_verified`.
 - ``turn``: `_LoopTurn`: one loop turn, shared by the JSON and streamed run
   sites (phase, band and ceiling before the budget read; plan; complete).
 - ``opener``: `_LoopOpener`: the session opener (A27, A121) and the quiz-ask

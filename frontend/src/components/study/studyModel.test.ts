@@ -216,10 +216,10 @@ describe("readiness and queue", () => {
     expect(due.map(x => x.t.id)).toEqual(["c", "b"]);
   });
 
-  it("dueReviewsQuizHref deep-links the lead due concept (W8.3b)", () => {
+  it("dueReviewsQuizHref deep-links the due[] queue (W8.3b / W3.3c)", () => {
     expect(dueReviewsQuizHref("c1", [])).toBeNull();
     expect(dueReviewsQuizHref("c1", ["arr", "loop"])).toBe(
-      "/quiz?concept=arr&from=link&return=%2Fstudy%3Fcourse%3Dc1&start=1",
+      "/quiz?scope=due&queue=arr%2Cloop&from=link&return=%2Fstudy%3Fcourse%3Dc1&start=1",
     );
   });
 

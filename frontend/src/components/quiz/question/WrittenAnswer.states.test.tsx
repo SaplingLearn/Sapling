@@ -98,6 +98,7 @@ describe("WrittenAnswer — the field and its keys", () => {
     expect(input()).toHaveAttribute("aria-labelledby", "lab stem");
     expect(input()).toHaveAttribute("maxlength", "2000");
     expect(input()).toHaveAttribute("autocomplete", "off");
+    expect(screen.getByTestId("quiz-written")).toHaveAttribute("data-format", type);
     expect(container.querySelector(".quiz-written")).toHaveAttribute("data-format", type);
   });
 

@@ -1736,6 +1736,27 @@ describe("QuizHome — arriving to start (`?start=1`)", () => {
     expect(config.count).toBe(QUEUE_COUNT);
   });
 
+  it("starts a scope=due Practice cue stream with the entry queue (W3.3c)", () => {
+    window.history.replaceState(null, "", "/quiz?scope=due&queue=determinants,recursion&from=link&start=1");
+    const { actions } = mount({
+      entry: entry({
+        scope: "due",
+        queue: ["determinants", "recursion"],
+        start: true,
+        source: { kind: "link", returnTo: "/study?course=c-math" },
+      }),
+    });
+    expect(startCalls(actions)).toHaveLength(1);
+    const [request, config] = startCalls(actions)[0];
+    expect(request).toEqual({
+      intent: "review",
+      scope: { kind: "due", queue: ["determinants", "recursion"] },
+      conceptId: "determinants",
+      courseId: "c-math",
+    });
+    expect(config.count).toBe(QUEUE_COUNT);
+  });
+
   it("drops the marker from the URL once it has acted", () => {
     window.history.replaceState(null, "", "/quiz?concept=base-cases&from=link&start=1");
     mount({ entry: entry({ concept: "base-cases", start: true, source: { kind: "link" } }) });

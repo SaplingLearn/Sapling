@@ -1320,7 +1320,7 @@ describe("StudyHub shows only what its data backs", () => {
     expect(within(dueDlg).getByTestId("due-reviews-quiz").textContent).toBe("Practice what's due");
     fireEvent.click(within(dueDlg).getByTestId("due-reviews-quiz"));
     expect(push).toHaveBeenLastCalledWith(
-      "/quiz?concept=arr&from=link&return=%2Fstudy%3Fcourse%3Dc1&start=1",
+      "/quiz?scope=due&queue=arr&from=link&return=%2Fstudy%3Fcourse%3Dc1&start=1",
     );
   });
 

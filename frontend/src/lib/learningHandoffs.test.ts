@@ -80,14 +80,14 @@ describe("closeHandoffCtas", () => {
     ]);
   });
 
-  it("Practice uses the lead due id when provided", () => {
+  it("Practice uses the due[] queue when provided (W3.3c)", () => {
     const practice = closeHandoffCtas({
       courseId: "c1",
       dueConceptIds: ["arr", "loop"],
       visibility: ALL_ON,
     }).find((l) => l.testId === "loop-close-practice-link");
     expect(practice?.href).toBe(
-      "/quiz?concept=arr&from=link&return=%2Fstudy%3Fcourse%3Dc1&start=1",
+      "/quiz?scope=due&queue=arr%2Cloop&from=link&return=%2Fstudy%3Fcourse%3Dc1&start=1",
     );
   });
 

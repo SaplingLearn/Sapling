@@ -321,10 +321,15 @@ journeys keep anchoring: `quiz-panel`, `quiz-start`,
 | `quiz-cancel-generate` | its "Cancel" — aborts the generation and returns to quiz home (#760) |
 | `quiz-panel` | question root (`phase: active \| answered`) |
 | `quiz-progress` | the question rail's progress dots (`ui/ProgressDots`) |
-| `quiz-answer-options` | answer radiogroup |
+| `quiz-question-meta` | W7.1 meta row (concept pill, tier chip, format tag, difficulty) |
+| `quiz-format-tag` | W7.2: which core format this question is (`data-format` = `multiple_choice` / `short_answer` / `numeric` / `symbolic`); label matches Settings Format |
+| `quiz-action-bar` | W7.1 footer: Hint / Study guide / pager / Skip / Check |
+| `quiz-answer-options` | answer radiogroup (multiple choice) |
+| `quiz-keyboard-hint` | W7.2: sr-only MC keyboard map (`A`–`F` / `1`–`6`, Enter, Escape); describes `quiz-answer-options` |
+| `quiz-written` | W7.2: written answer surface root (`WrittenAnswer`); `data-format` = `short_answer` / `numeric` / `symbolic` |
 | `quiz-written-answer` | the single-line written-answer input (`WrittenAnswer`) for short answers, numeric answers and algebra; Enter submits |
 | `quiz-format-hint` | the visible answer-format rules for a written question (what the grader accepts); describes the written-answer input |
-| `quiz-key-{id}` | a symbol key under a numeric (`minus`/`fraction`/`percent`/`exponent`) or algebra (`squared`/`power`/`brackets`/`times`/`divide`/`minus`) input; inserts at the cursor |
+| `quiz-key-{id}` | a symbol key under a numeric (`minus`/`fraction`/`percent`/`exponent`/`space`) or algebra (`squared`/`power`/`brackets`/`plus`/`minus`/`times`/`divide`, plus `more` toggle and `digit-*`/`point` behind it) input; inserts at the cursor |
 | `quiz-written-readback` | the live read-back under a numeric or algebra input ("Reads as 0.75", the superscript preview, or why it can't be graded); `data-ok` says which |
 | `quiz-material-context` | reports whether retrieved course material, catalog context, or general knowledge was supplied |
 | `quiz-seg-format` | question-format selector; each option uses `quiz-seg-format-{value}` |

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildQuizHref, isSafeReturnPath, parseEntry } from "./source";
+import { buildQuizHref, isSafeReturnPath, parseEntry, practiceDueQueue } from "./source";
 
 function parse(query: string) {
   return parseEntry(new URLSearchParams(query));
@@ -30,6 +30,12 @@ describe("parseEntry — targets", () => {
   it("reads the due scope and ignores any other scope value", () => {
     expect(parse("scope=due&from=dashboard").scope).toBe("due");
     expect(parse("scope=everything").scope).toBeUndefined();
+  });
+
+  it("reads an explicit due cue-stream queue only with scope=due (W3.3c)", () => {
+    expect(parse("scope=due&queue=arr%2Cloop%2Carr&from=link").queue).toEqual(["arr", "loop"]);
+    expect(parse("queue=arr,loop&from=link").queue).toBeUndefined();
+    expect(parse("scope=due&queue=%20%2C%20&from=link").queue).toBeUndefined();
   });
 
   it("reads an attempt to resume", () => {
@@ -124,6 +130,21 @@ describe("buildQuizHref", () => {
   it("builds the review-everything-due link", () => {
     expect(buildQuizHref({ scope: "due" }, { kind: "dashboard", returnTo: "/dashboard" }))
       .toBe("/quiz?scope=due&from=dashboard&return=%2Fdashboard");
+  });
+
+  it("builds a Practice due cue-stream with an explicit queue (W3.3c)", () => {
+    expect(
+      buildQuizHref(
+        { scope: "due", queue: ["arr", "loop", "arr"] },
+        { kind: "link", returnTo: "/study?course=c1" },
+        { start: true },
+      ),
+    ).toBe("/quiz?scope=due&queue=arr%2Cloop&from=link&return=%2Fstudy%3Fcourse%3Dc1&start=1");
+  });
+
+  it("practiceDueQueue trims, dedupes, and caps at QUEUE_MAX", () => {
+    expect(practiceDueQueue(["  a ", "b", "a", "", "c"])).toEqual(["a", "b", "c"]);
+    expect(practiceDueQueue(["1", "2", "3", "4", "5", "6"])).toEqual(["1", "2", "3", "4", "5"]);
   });
 
   it("builds the notetaker link, note id included", () => {

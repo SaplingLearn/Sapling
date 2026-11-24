@@ -110,11 +110,14 @@ describe("courseQueueFor (a ?course= arrival's queue)", () => {
 });
 
 describe("entryKeyFor / pickedIdFor", () => {
-  it("keys an entry on its four arrival fields", () => {
-    expect(entryKeyFor({ source: { kind: "nav" } })).toBe("|||");
+  it("keys an entry on its arrival fields including an explicit due queue", () => {
+    expect(entryKeyFor({ source: { kind: "nav" } })).toBe("||||");
     expect(entryKeyFor({ concept: "a", topic: "b", course: "c", scope: "due", source: { kind: "nav" } })).toBe(
-      "a|b|c|due",
+      "a|b|c|due|",
     );
+    expect(
+      entryKeyFor({ scope: "due", queue: ["arr", "loop"], source: { kind: "link" } }),
+    ).toBe("|||due|arr,loop");
   });
 
   it("keeps a pick only for its own arrival and a concept that still exists", () => {
