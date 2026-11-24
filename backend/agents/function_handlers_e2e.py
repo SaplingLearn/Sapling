@@ -214,6 +214,8 @@ register_function_handler("quiz", _quiz_handler)
 # so a target on it tags the first distractor — the one a journey picks). A
 # written item (FORMAT short_answer, or mixed: even slots) answers
 # E2E_CHECK_ITEM_FINAL_ANSWER too, so the solve agrees with it in code.
+# Opt-in `KIT: sort` (first written slot only): Sort interaction +
+# E2E_KIT_SORT_ANSWER; stem carries `[e2e-kit-sort]` so quiz_check solve agrees.
 # Contract: tests/test_e2e_function_handlers.py. Keep in sync.
 
 E2E_PLANNED_STEM = "E2E planned question {n} [e2e-function-model][{concept}]: what does the learning rate control?"
@@ -222,9 +224,28 @@ E2E_PLANNED_WRITTEN_STEM = (
     "rate controls."
 )
 E2E_PLANNED_EXPLANATION = "Scripted planned fixture: the learning rate sets the size of each update step."
+# W7 kit Sort fixture — opt-in via `KIT: sort` in the planned write prompt.
+# First written slot only; quiz_check solve returns E2E_KIT_SORT_ANSWER when the
+# stem carries `[e2e-kit-sort]`. See docs/learning-loop/w7-generation-emit.md.
+E2E_KIT_SORT_MARKER = "[e2e-kit-sort]"
+E2E_KIT_SORT_ANSWER = "Prokaryote=ecoli;Eukaryote=yeast"
+E2E_KIT_SORT_INTERACTION = {
+    "kind": "sort",
+    "buckets": ["Prokaryote", "Eukaryote"],
+    "items": [
+        {"id": "ecoli", "label": "E. coli"},
+        {"id": "yeast", "label": "Yeast"},
+    ],
+}
+E2E_KIT_SORT_STEM = (
+    "E2E planned Sort question {n} [e2e-function-model][{concept}] " + E2E_KIT_SORT_MARKER
+    + ": sort each organism into its domain."
+)
+E2E_KIT_SORT_EXPLANATION = "Scripted Sort fixture: E. coli is prokaryote; yeast is eukaryote."
 _PLANNED_SLOT_RE = re.compile(r"^QUESTION (\d+): difficulty (\w+)\.(?: TARGET: ([a-z0-9_]+))?", re.M)
 _PLANNED_CONCEPT_RE = re.compile(r"^CONCEPT: (.+)$", re.M)
 _PLANNED_FORMAT_RE = re.compile(r"^FORMAT: (\w+)$", re.M)
+_PLANNED_KIT_RE = re.compile(r"^KIT: (sort)\s*$", re.M)
 
 
 def _e2e_planned(prompt: str) -> list[dict]:
@@ -232,13 +253,30 @@ def _e2e_planned(prompt: str) -> list[dict]:
     concept = concept_m.group(1).strip() if concept_m else "Recursion"
     fmt_m = _PLANNED_FORMAT_RE.search(prompt)
     fmt = fmt_m.group(1) if fmt_m else "multiple_choice"
+    kit_m = _PLANNED_KIT_RE.search(prompt)
+    kit = kit_m.group(1) if kit_m else None
     listed = set(re.findall(r"^- ([a-z0-9_]+): ", prompt, re.M))
     distractors = E2E_CHECK_ITEM_OPTIONS[1:]
     items = []
+    kit_sort_used = False
     for slot_text, _difficulty, target in _PLANNED_SLOT_RE.findall(prompt):
         n = int(slot_text)
         written = fmt in ("short_answer", "numeric", "symbolic") or (fmt == "mixed" and n % 2 == 0)
         if written:
+            if kit == "sort" and not kit_sort_used:
+                kit_sort_used = True
+                items.append({
+                    "slot": n,
+                    "question": E2E_KIT_SORT_STEM.format(n=n, concept=concept),
+                    "type": "short_answer",
+                    "options": [],
+                    "option_misconceptions": [],
+                    "accepted_answers": [E2E_KIT_SORT_ANSWER],
+                    "correct_answer": E2E_KIT_SORT_ANSWER,
+                    "explanation": E2E_KIT_SORT_EXPLANATION,
+                    "interaction": dict(E2E_KIT_SORT_INTERACTION),
+                })
+                continue
             items.append({
                 "slot": n,
                 "question": E2E_PLANNED_WRITTEN_STEM.format(n=n, concept=concept),
@@ -795,7 +833,11 @@ def _e2e_solution(item: str, block: str) -> dict:
             "",
         )
     elif wants == "short" and _E2E_CONCEPT_RE.search(block):
-        answer = E2E_CHECK_ITEM_FINAL_ANSWER
+        # W7 kit Sort: stem marker wins over the default written key.
+        if E2E_KIT_SORT_MARKER in block:
+            answer = E2E_KIT_SORT_ANSWER
+        else:
+            answer = E2E_CHECK_ITEM_FINAL_ANSWER
     return {"item": item, "basis": E2E_SOLVE_BASIS, "solvable": bool(answer), "answer": answer}
 
 

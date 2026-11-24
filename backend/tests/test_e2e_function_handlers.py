@@ -363,6 +363,54 @@ def test_the_planned_quiz_handler_writes_short_answers_the_solve_agrees_with(mon
     assert _agent_question_to_wire(quiz_planned_to_plain(written), 1) is not None
 
 
+def test_the_planned_quiz_handler_emits_kit_sort_when_prompted(monkeypatch):
+    """W7: `KIT: sort` stamps Sort interaction on the first written slot only."""
+    from agents.function_handlers_e2e import (
+        E2E_KIT_SORT_ANSWER,
+        E2E_KIT_SORT_MARKER,
+        E2E_CHECK_ITEM_FINAL_ANSWER,
+    )
+    from agents.quiz_planned import quiz_planned_agent
+    from services.quiz.interaction import attach_interaction
+
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
+    prompt = (
+        "[WRITE QUIZ]\nCONCEPT: Cells\nFORMAT: short_answer\nKIT: sort\n"
+        "QUESTION 1: difficulty medium.\nQUESTION 2: difficulty medium.\n"
+    )
+    with quiz_planned_agent.override(model=model_for("quiz")):
+        items = quiz_planned_agent.run_sync(prompt, deps=_deps()).output.questions
+    assert len(items) == 2
+    first, second = items
+    assert first.interaction is not None and first.interaction["kind"] == "sort"
+    assert first.correct_answer == E2E_KIT_SORT_ANSWER
+    assert E2E_KIT_SORT_MARKER in first.question
+    assert second.interaction is None
+    assert second.correct_answer == E2E_CHECK_ITEM_FINAL_ANSWER
+    wire = _agent_question_to_wire(quiz_planned_to_plain(first), 1)
+    assert wire is not None
+    attach_interaction(wire, first.interaction)
+    assert wire["interaction"]["kind"] == "sort"
+
+
+def test_quiz_check_solve_returns_kit_sort_answer():
+    """W7: `[e2e-kit-sort]` in a short-answer solve block yields the Sort key."""
+    from agents.function_handlers_e2e import (
+        E2E_KIT_SORT_ANSWER,
+        E2E_KIT_SORT_MARKER,
+        _e2e_solution,
+    )
+
+    block = (
+        f"STEM: sort organisms [e2e-function-model][Cells] {E2E_KIT_SORT_MARKER}\n"
+        "ANSWER: short\n"
+    )
+    row = _e2e_solution("q1", block)
+    assert row["solvable"] is True
+    assert row["answer"] == E2E_KIT_SORT_ANSWER
+
+
 def test_the_quiz_check_handler_answers_the_checks_and_aligns_an_unmarked_question(monkeypatch):
     """Spec §13 A145: one handler for the quiz_check slot — the concept check
     (a marked question tests its marker's concept, an unmarked one the first
