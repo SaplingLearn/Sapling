@@ -10,7 +10,6 @@ import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 import type { QuizActions } from "@/lib/quiz/useQuizSession";
 import type { QuizItem, QuizSession, WireQuestion } from "@/lib/quiz/types";
 import { QuizQuestion, type QuizConceptSummary } from "./QuizQuestion";
-import { HINT_SLOT_DISABLED } from "./questionView";
 
 const toastApi = vi.hoisted(() => ({
   show: vi.fn(),
@@ -136,11 +135,60 @@ describe("W7.5 action-bar slots", () => {
   });
   afterEach(cleanup);
 
-  it("keeps Hint disabled with the leak-safe title", () => {
+  it("opens client scaffolding without naming the answer", () => {
     renderScreen(makeSession());
     const hint = screen.getByTestId("quiz-hint-slot");
+    expect(hint).not.toBeDisabled();
+    expect(hint).toHaveAttribute("title", expect.stringMatching(/scaffolding/i));
+    expect(screen.queryByTestId("quiz-hint-panel")).not.toBeInTheDocument();
+
+    fireEvent.click(hint);
+    const panel = screen.getByTestId("quiz-hint-panel");
+    expect(panel).toHaveTextContent(/Focus on Recursion/i);
+    expect(panel).toHaveTextContent(/never the answer/i);
+    expect(panel).not.toHaveTextContent(/\b(a|b|c|d)\b.*correct/i);
+    expect(screen.queryByTestId("quiz-hint-rubric")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("quiz-hint-open-guide"));
+    expect(screen.getByTestId("guide-drawer-stub")).toBeInTheDocument();
+    expect(screen.queryByTestId("quiz-hint-panel")).not.toBeInTheDocument();
+  });
+
+  it("surfaces written format rules as rubric scaffolding", () => {
+    renderScreen(
+      makeSession({
+        items: [
+          item(0, {
+            question: {
+              id: 1,
+              question: "Compute",
+              options: [],
+              difficulty: "medium",
+              type: "numeric",
+              concept_tested: "Derivatives",
+            },
+          }),
+          item(1),
+          item(2),
+        ],
+      }),
+    );
+    fireEvent.click(screen.getByTestId("quiz-hint-slot"));
+    expect(screen.getByTestId("quiz-hint-panel")).toHaveTextContent(/Focus on Derivatives/i);
+    expect(screen.getByTestId("quiz-hint-rubric")).toHaveTextContent(/Enter only the number/);
+  });
+
+  it("disables Hint in Exam Twin", () => {
+    renderScreen(
+      makeSession({
+        config: { count: 3, difficulty: "medium", feedback: "as-you-go", sessionMode: "exam_twin" },
+      }),
+    );
+    const hint = screen.getByTestId("quiz-hint-slot");
     expect(hint).toBeDisabled();
-    expect(hint).toHaveAttribute("title", HINT_SLOT_DISABLED.title);
+    expect(hint).toHaveAttribute("title", expect.stringMatching(/Exam Twin/i));
+    fireEvent.click(hint);
+    expect(screen.queryByTestId("quiz-hint-panel")).not.toBeInTheDocument();
   });
 
   it("enables Skip and advances without answering (no mastery path)", () => {
