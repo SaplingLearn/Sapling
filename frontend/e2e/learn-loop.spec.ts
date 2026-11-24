@@ -1029,8 +1029,10 @@ test("spec §13 A138 (segment_prequestion on): a new segment opens on an ungrade
     await walkProbeAndPlan(page, P, false);
     // After the check-in, so it still asks only the seeded free-text items: a
     // fresh multiple-choice pool the segment's guess can draw from while the
-    // segment's checks keep theirs.
+    // segment's checks keep theirs. Close-beat free/teachback refill so the
+    // post-guess Check me still has a generative item (probe keeps one reserve).
     await seedTeachPromptItems();
+    await seedCloseBeatItems();
     const phase = page.getByTestId("loop-phase");
     await page.getByTestId("loop-plan-approve").click();
     await expect(phase).toHaveAttribute("data-phase", "teach");
@@ -1105,7 +1107,11 @@ test("spec §13 A138 (segment_prequestion on): a new segment opens on an ungrade
     expect(doc.prequestion[doc.concept]).toMatchObject({ status: "resolved", question_hash: guessHash });
 
     // The segment's checks never serve the guessed item.
+    await expect(page.getByTestId("loop-check-me")).toBeEnabled();
+    const checkNext = page.waitForResponse((r) => new URL(r.url()).pathname === "/api/learn/loop/check/next");
     await page.getByTestId("loop-check-me").click();
+    const next = await (await checkNext).json();
+    expect(next.check, JSON.stringify(next)).toBeTruthy();
     const check = page.getByTestId("loop-check-prompt");
     await expect(check).toBeVisible();
     expect(await check.getAttribute("data-question-hash")).not.toBe(guessHash);

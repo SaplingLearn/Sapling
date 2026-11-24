@@ -18,7 +18,7 @@ Child flags only act where `learning_loop` is on for that student (`learning/gat
 | 5 | `crisis_support` (optional here) | Copy review (`docs/safety/crisis-support.md`) | Safety; not eval-gated |
 | 6 | `segment_prequestion` | `__flags` recorded + replaying (`teach_explains_prequestion`) | W0.3 done; self-target only |
 | 7 | `self_explanation_prompts` | Same `__flags` (`teach_acknowledges_self_explanation`) | W0.3 done; self-target only |
-| — | **`loop_tutor_v2` — HOLD** | Lite/standard/deep `__v2` served gates **1.0** ×3 floors applied (`baselines.json`) | HOLD for W0.5 E2E lanes green; deep-routed dogfood OK (`LOOP_ROUTABLE_TIERS={deep}`) |
+| — | **`loop_tutor_v2` — HOLD** | Lite/standard/deep `__v2` served gates **1.0** ×3 floors applied; W0.5 three lanes green | Self-target dogfood OK; population enable still operator-only (`LOOP_ROUTABLE_TIERS={deep}` for deep-routed) |
 | 8 | Quiz / drafting pack (later W5.E3–E4) | Planned / gates / varied / combo / relations evals | After E1–E2 dogfood; still self/class only |
 | 9 | **`learning_loop` population** | Three E2E lanes green (below); self/class dogfood OK | Last: class targets → `%` rollout → `default_variant: "on"` |
 
@@ -51,13 +51,13 @@ CI matrix: `.github/workflows/e2e.yml` (`lane: [default, kill-switch, flag-off]`
 
 ### W0.5 lane status on PR head (2026-11-24)
 
-Measure/document only — **no** `REGISTRY` / population defaults flipped. `build:test` TS blocker fixed (`a9fdfec1`). Focused **default** cycle re-ran (slot 2): **28 passed / 3 failed** on learn-loop (budget + phone close Study hrefs expected bare `/study` but product is course-scoped; generative-core starved after one practice-reserve check). Fixes on tip: E2E href regex + `seedCloseBeatItems`. Re-run lanes below; use `set -o pipefail` if teeing the log (plain `| tee` masks Playwright non-zero).
+Measure/document only — **no** `REGISTRY` / population defaults flipped. Tip includes ×3 `__v2` floors, Study href regex, `seedCloseBeatItems` (practice-reserve refill), probe-poll margin, A138 post-guess Check me seed. Use `set -o pipefail` if teeing the log (plain `| tee` masks Playwright non-zero).
 
 | Lane | Result | Notes |
 |---|---|---|
-| **Default** | **Near green** — 30/31 then A138 probe-poll flake fixed; targeted A138/A139/main green | Full re-run still owed (kill-switch / flag-off too). Logs: `.e2e/w0.5-default-rerun3.log`, `.e2e/w0.5-a138-rerun.log`. |
-| **Kill-switch** | **SKIP** (await full default green) | Same commands below. |
-| **Flag-off** | **SKIP** (await full default green) | Same. |
+| **Default** | **GREEN** — 31 passed / 7 skipped | `.e2e/w0.5-default-rerun5.log` |
+| **Kill-switch** | **GREEN** — 6 passed / 32 skipped | `.e2e/w0.5-kill-switch.log` |
+| **Flag-off** | **GREEN** — 5 passed / 33 skipped | `.e2e/w0.5-flag-off-rerun.log` (first pass: mid-suite re-seed 503 flake) |
 
 **Operator re-run (after TS green; PATH needs bash 5 for `mapfile`):**
 
@@ -87,11 +87,11 @@ If slot 1 stays held elsewhere, omit `--slot` (cycle picks 2/3) or pass `--slot 
 ### W0.4 / W5 flag enable (operator; defaults stay off)
 
 - [ ] Self-target only: `learning_loop` → read-only (`quiz_concept_plan`, `quiz_results_routing`, `item_reports`, `next_probe_hint`) → `__flags` prompts (`segment_prequestion`, `self_explanation_prompts`)
-- [ ] `loop_tutor_v2` not enabled for population (served gates 1.0 on latest 1-run; ×3 floors / E2E still open)
+- [ ] `loop_tutor_v2` not enabled for population (×3 `__v2` served floors 1.0 applied; enable is still operator/self-target only)
 - [ ] No `REGISTRY` / everyone `default_variant: "on"` for `learning_loop` or prompt-change flags
-- [ ] E2E default lane green (`make e2e` or held `make e2e-up` + Playwright + oracles) — **2026-11-24 `56f4ac8e`: blocked — `frontend` `build:test` TS fail (Playwright not reached); see w0-flag-enable-checklist.md W0.5**
-- [ ] E2E kill-switch lane green (`LEARNING_LOOP_ENABLED=false make e2e`) — **skipped same build blocker**
-- [ ] E2E flag-off lane green (`SAPLING_FLAG_LEARNING_LOOP=off make e2e`) — **skipped same build blocker**
+- [x] E2E default lane green (focused learn-loop+tutor) — **2026-11-24 tip: 31 passed / 7 skipped**
+- [x] E2E kill-switch lane green — **6 passed / 32 skipped**
+- [x] E2E flag-off lane green — **5 passed / 33 skipped**
 - [ ] Rollout watches from `docs/learning-loop/flag-rollout.md` per flag
 ```
 
@@ -99,4 +99,4 @@ If slot 1 stays held elsewhere, omit `--slot` (cycle picks 2/3) or pass `--slot 
 
 - Turn `learning_loop` (or any prompt-change flag) on for everyone
 - Change `backend/services/feature_flags.py::REGISTRY` defaults
-- Re-record evals or run `make e2e-up` (operator / CI when slots free; W0.5 attempted a cycle — build failed before Playwright)
+- Flip `loop_tutor_v2` for population (W0.5 E2E clear; enable remains operator/self-target)
