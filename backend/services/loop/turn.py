@@ -198,6 +198,11 @@ class _LoopTurn:
     reference answer is an attribute of this object only.
     """
 
+    # Set by services/loop/grading.py on a graded turn only; read with getattr
+    # so an unset one means "absent" (PKG-14 ask_rating, W2.5 dwell).
+    ask_rating: bool
+    feedback_dwell_ms: int | None
+
     def __init__(
         self,
         *,

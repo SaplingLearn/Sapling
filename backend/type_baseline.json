@@ -137,7 +137,6 @@
   "services/loop/checkpoint.py::reportArgumentType": 2,
   "services/loop/closing.py::reportArgumentType": 5,
   "services/loop/continuation.py::reportOptionalMemberAccess": 1,
-  "services/loop/grading.py::reportAttributeAccessIssue": 1,
   "services/loop/history.py::reportOptionalMemberAccess": 1,
   "services/loop/learner.py::reportArgumentType": 3,
   "services/loop/next_check.py::reportOptionalMemberAccess": 5,

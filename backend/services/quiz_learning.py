@@ -282,7 +282,7 @@ def prereq_guidance(user_id: str, requested_node_id: str, course_id: str | None)
                 "redirected": preferred != requested_node_id,
             },
         )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — best-effort guidance: never fail the generate
         logger.warning("quiz: prereq guidance unreadable: %s", type(exc).__name__)
         return None
 
