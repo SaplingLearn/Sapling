@@ -29,11 +29,11 @@
  * answer key; Bastani ladder deferred); Skip wires to GO_TO; Study guide opens
  * a leak-safe drawer scaffold. No wager.
  * W7.2 kit: Sort (7.1) + Sequence (7.2) + Label (7.4) + Build (~7.x) +
- * Compare + Dialogue (7.17) + Explain (7.16) stubs on short_answer + disposition.
+ * Compare + Dialogue + Explain + Highlight + Calculate stubs on short_answer.
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { BookOpen, ChevronLeft, ChevronRight, Columns2, Hash, Layers, Library, ListChecks, ListOrdered, MessagesSquare, PenLine, Puzzle, Sigma, Sparkles, Tag, TextAlignStart, X } from "lucide-react";
+import { BookOpen, ChevronLeft, ChevronRight, Columns2, Hash, Highlighter, Layers, Library, ListChecks, ListOrdered, MessagesSquare, PenLine, Puzzle, Sigma, Sparkles, Tag, TextAlignStart, Calculator, X } from "lucide-react";
 import { AnswerOption, Badge, Button, Chip, ProgressDots } from "@/components/ui";
 import { ConceptNode } from "@/components/graph/ConceptNode";
 import { ConfidenceControl } from "@/components/learn/ConfidenceControl";
@@ -47,6 +47,8 @@ import { asBuildInteraction } from "@/lib/quiz/buildInteraction";
 import { asCompareInteraction } from "@/lib/quiz/compareInteraction";
 import { asDialogueInteraction } from "@/lib/quiz/dialogueInteraction";
 import { asExplainInteraction } from "@/lib/quiz/explainInteraction";
+import { asHighlightInteraction } from "@/lib/quiz/highlightInteraction";
+import { asCalculateInteraction } from "@/lib/quiz/calculateInteraction";
 import { asLabelInteraction } from "@/lib/quiz/labelInteraction";
 import { asSequenceInteraction } from "@/lib/quiz/sequenceInteraction";
 import { asSortInteraction } from "@/lib/quiz/sortInteraction";
@@ -58,6 +60,8 @@ import { BuildAnswer } from "./BuildAnswer";
 import { CompareAnswer } from "./CompareAnswer";
 import { DialogueAnswer } from "./DialogueAnswer";
 import { ExplainAnswer } from "./ExplainAnswer";
+import { HighlightAnswer } from "./HighlightAnswer";
+import { CalculateAnswer } from "./CalculateAnswer";
 import { LabelAnswer } from "./LabelAnswer";
 import { SequenceAnswer } from "./SequenceAnswer";
 import { SortAnswer } from "./SortAnswer";
@@ -180,6 +184,8 @@ const FORMAT_TAG: Record<string, { label: string; Icon: typeof ListChecks }> = {
   compare: { label: "Compare", Icon: Columns2 },
   dialogue: { label: "Dialogue", Icon: MessagesSquare },
   explain: { label: "Explain", Icon: TextAlignStart },
+  highlight: { label: "Highlight", Icon: Highlighter },
+  calculate: { label: "Calculate", Icon: Calculator },
 };
 
 /** Where the question's grounding came from, said plainly. */
@@ -949,6 +955,57 @@ function CompareField(props: AnswerFieldProps) {
 }
 
 
+
+/** W7.2 Highlight (7.10): toggle passages; Check uses encoded short_answer text. */
+function HighlightField(props: AnswerFieldProps) {
+  const { view, shown, selectable, actions } = props;
+  const highlight = asHighlightInteraction(view.item?.question.interaction);
+  if (!highlight) return <WrittenField {...props} />;
+  return (
+    <div
+      className="quiz-question__written quiz-question__written--highlight"
+      data-marked={shown ? "true" : undefined}
+    >
+      <HighlightAnswer
+        interaction={highlight}
+        value={view.item?.answerText ?? ""}
+        disabled={!selectable}
+        expected={shown?.correctAnswer ?? null}
+        verdict={outcomeOf(shown) ?? null}
+        onChange={text => actions.write?.(text)}
+      />
+      <p className="quiz-question__format-hint" id="quiz-format-hint" data-testid="quiz-format-hint">
+        {formatHint("short_answer", { highlight: true })}
+      </p>
+    </div>
+  );
+}
+
+/** W7.2 Calculate (7.13): value + unit; Check uses encoded short_answer text. */
+function CalculateField(props: AnswerFieldProps) {
+  const { view, shown, selectable, actions } = props;
+  const calculate = asCalculateInteraction(view.item?.question.interaction);
+  if (!calculate) return <WrittenField {...props} />;
+  return (
+    <div
+      className="quiz-question__written quiz-question__written--calculate"
+      data-marked={shown ? "true" : undefined}
+    >
+      <CalculateAnswer
+        interaction={calculate}
+        value={view.item?.answerText ?? ""}
+        disabled={!selectable}
+        expected={shown?.correctAnswer ?? null}
+        verdict={outcomeOf(shown) ?? null}
+        onChange={text => actions.write?.(text)}
+      />
+      <p className="quiz-question__format-hint" id="quiz-format-hint" data-testid="quiz-format-hint">
+        {formatHint("short_answer", { calculate: true })}
+      </p>
+    </div>
+  );
+}
+
 /** W7.2 Explain (7.16): tall prose; Check uses short_answer text. */
 function ExplainField(props: AnswerFieldProps) {
   const { view, shown, selectable, actions } = props;
@@ -1009,6 +1066,8 @@ function kitField(props: AnswerFieldProps): React.JSX.Element | null {
   if (asCompareInteraction(interaction)) return <CompareField {...props} />;
   if (asDialogueInteraction(interaction)) return <DialogueField {...props} />;
   if (asExplainInteraction(interaction)) return <ExplainField {...props} />;
+  if (asHighlightInteraction(interaction)) return <HighlightField {...props} />;
+  if (asCalculateInteraction(interaction)) return <CalculateField {...props} />;
   return null;
 }
 
@@ -1263,6 +1322,8 @@ export function QuizQuestion({
   const compareInteraction = asCompareInteraction(kitInteraction);
   const dialogueInteraction = asDialogueInteraction(kitInteraction);
   const explainInteraction = asExplainInteraction(kitInteraction);
+  const highlightInteraction = asHighlightInteraction(kitInteraction);
+  const calculateInteraction = asCalculateInteraction(kitInteraction);
   const scaffold = scaffoldHint({
     conceptName: concept.name,
     conceptTested: view.item?.question.concept_tested,
@@ -1274,6 +1335,8 @@ export function QuizQuestion({
     compare: Boolean(compareInteraction),
     dialogue: Boolean(dialogueInteraction),
     explain: Boolean(explainInteraction),
+    highlight: Boolean(highlightInteraction),
+    calculate: Boolean(calculateInteraction),
   });
   const openGuide = useCallback(() => {
     setAskForCursor(null);
@@ -1325,7 +1388,11 @@ export function QuizQuestion({
               ? "dialogue"
               : explainInteraction
                 ? "explain"
-                : view.format;
+                : highlightInteraction
+                  ? "highlight"
+                  : calculateInteraction
+                    ? "calculate"
+                    : view.format;
   const header = (
     <QuestionHeader
       concept={concept}

@@ -1299,6 +1299,104 @@
   display: none;
 }
 
+/* W7.2 Highlight (7.10): toggleable passages. */
+.quiz-highlight {
+  display: grid;
+  gap: var(--pad-md);
+  width: 100%;
+  min-width: 0;
+  flex-shrink: 0;
+}
+
+.quiz-highlight__note {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.quiz-highlight__passages {
+  display: grid;
+  gap: 6px;
+}
+
+.quiz-highlight__row {
+  display: block;
+  width: 100%;
+  text-align: left;
+  min-height: 40px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg-panel);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-md);
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.quiz-highlight__row:disabled {
+  cursor: default;
+}
+
+.quiz-highlight__row--lift {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg-panel));
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.quiz-highlight__row--right {
+  border-color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 10%, var(--bg-panel));
+  box-shadow: inset 0 0 0 1px var(--ok);
+}
+
+.quiz-highlight__row--wrong {
+  border-color: var(--err);
+  background: color-mix(in srgb, var(--err) 10%, var(--bg-panel));
+  box-shadow: inset 0 0 0 1px var(--err);
+}
+
+/* W7.2 Calculate (7.13): value + unit. */
+.quiz-calculate {
+  display: grid;
+  gap: var(--pad-md);
+  width: 100%;
+  min-width: 0;
+  flex-shrink: 0;
+}
+
+.quiz-calculate__fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 0.8fr);
+  gap: var(--pad-sm);
+}
+
+.quiz-calculate__value,
+.quiz-calculate__unit {
+  width: 100%;
+  min-height: 48px;
+  font-family: var(--font-reading, inherit);
+  font-size: var(--fs-lg);
+}
+
+.quiz-calculate[data-verdict="correct"] .quiz-calculate__value,
+.quiz-calculate[data-verdict="correct"] .quiz-calculate__unit {
+  border-color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 8%, var(--bg-panel));
+}
+
+.quiz-calculate[data-verdict="incorrect"] .quiz-calculate__value,
+.quiz-calculate[data-verdict="incorrect"] .quiz-calculate__unit {
+  border-color: var(--err);
+  background: color-mix(in srgb, var(--err) 8%, var(--bg-panel));
+}
+
+@media (max-width: 560px) {
+  .quiz-calculate__fields {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* W7.2 Explain (7.16): tall prose + optional rubric. */
 .quiz-explain {
   display: grid;

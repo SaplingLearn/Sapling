@@ -572,4 +572,66 @@ describe("W7.2 core types under SessionTop", () => {
     });
     expect(actions.write).toHaveBeenCalledWith("They fall together around Earth.");
   });
+
+  it("Highlight (W7.2 / 7.10): toggle passages; Check waits for a selection", () => {
+    const interaction = {
+      kind: "highlight" as const,
+      passages: [
+        { id: "l0", label: "Line zero" },
+        { id: "l5", label: "Line five" },
+      ],
+    };
+    const { actions } = renderScreen(
+      makeSession({
+        items: [
+          item(0, {
+            question: {
+              id: 1,
+              question: "Highlight the claim.",
+              type: "short_answer",
+              options: [],
+              difficulty: "medium",
+              interaction,
+            },
+          }),
+          item(1),
+          item(2),
+        ],
+      }),
+    );
+
+    expect(screen.getByTestId("quiz-format-tag")).toHaveAttribute("data-format", "highlight");
+    expect(screen.getByTestId("quiz-highlight")).toBeInTheDocument();
+    expect(screen.getByTestId("quiz-submit-answer")).toBeDisabled();
+    fireEvent.click(screen.getByTestId("quiz-highlight-row-l5"));
+    expect(actions.write).toHaveBeenCalledWith("l5");
+  });
+
+  it("Calculate (W7.2 / 7.13): value + unit; Check waits for both", () => {
+    const interaction = { kind: "calculate" as const, unitLabel: "Units" };
+    const { actions } = renderScreen(
+      makeSession({
+        items: [
+          item(0, {
+            question: {
+              id: 1,
+              question: "What is the final speed?",
+              type: "short_answer",
+              options: [],
+              difficulty: "medium",
+              interaction,
+            },
+          }),
+          item(1),
+          item(2),
+        ],
+      }),
+    );
+
+    expect(screen.getByTestId("quiz-format-tag")).toHaveAttribute("data-format", "calculate");
+    expect(screen.getByTestId("quiz-calculate")).toBeInTheDocument();
+    expect(screen.getByTestId("quiz-submit-answer")).toBeDisabled();
+    fireEvent.change(screen.getByTestId("quiz-calculate-value"), { target: { value: "12" } });
+    expect(actions.write).toHaveBeenCalledWith("12|");
+  });
 });

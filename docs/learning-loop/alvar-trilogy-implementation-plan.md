@@ -298,9 +298,9 @@ Order follows `flag-rollout.md`, tightened for Alvar A+.
 
 | Phase | Flags | Gate |
 |---|---|---|
-| **E0** | `learning_loop` rollout | W0.1–W0.3 **done**; still need three E2E lanes + operator self→class→% ([`w0-flag-enable-checklist.md`](w0-flag-enable-checklist.md)) |
+| **E0** | `learning_loop` rollout | W0.1–W0.3 + W0.5 **done**; **operator** self→class→% only ([`w0-flag-enable-checklist.md`](w0-flag-enable-checklist.md)) |
 | **E1** (read-only / safety) | `quiz_concept_plan`, `quiz_results_routing`, `item_reports`, then `crisis_support` | Code ready; **operator self-target**; crisis copy review |
-| **E2** (prompt / Alvar sensing) | `loop_tutor_v2`, `segment_prequestion`, `self_explanation_prompts` | `__flags` recorded; **`loop_tutor_v2` HOLD** until standard `__v2` clears *or* deep-only dogfood documented |
+| **E2** (prompt / Alvar sensing) | `loop_tutor_v2`, `segment_prequestion`, `self_explanation_prompts` | `__flags` + ×3 `__v2` floors **done**; population enable still **operator HOLD** |
 | **E3** (quiz learning) | `quiz_planned_questions` → `quiz_item_gates` → `quiz_misconceptions` | Planned/gates evals; after E1–E2 dogfood |
 | **E4** (drafting / Alvar dials) | `varied_isomorphs`, `upload_prereq_edges`, then `multi_concept_items` | Varied/combo/relations evals |
 | **E5** (trial measurement) | `help_gate_strict`, `probe_matched_pretest`, `retention_due_badge` | Trial boundary only |
@@ -366,7 +366,7 @@ Update `docs/learning-loop/amendments.md` with a short “Alvar trilogy: adopted
 | Task | Type | Effort | Acceptance |
 |---|---|---|---|
 | W7.1 Port shell tokens + session chrome into `quiz/` (TopBar focus mode, meta row with blob concept pill, progress, XP/streak only if product keeps gamification) | ui | L | Visual match to Shell frames; a11y; no new color system |
-| W7.2 Port question-type kit (7.1–7.18) behind real attempt JSON; **MC / short / numeric / algebra first**, interactive types phased | ui | XL | **Shipped stubs:** Sort (7.1), Label (7.4), Sequence (7.2), Build (W7.2d), Compare (W7.2e), Dialogue (W7.2f / 7.17), Explain (W7.2g / 7.16). Generation emit + richer grading still later; each stub round-trips fixture → Check → short_answer wire |
+| W7.2 Port question-type kit (7.1–7.18) behind real attempt JSON; **MC / short / numeric / algebra first**, interactive types phased | ui | XL | **Shipped stubs:** Sort, Label, Sequence, Build, Compare, Dialogue (7.17), Explain (7.16), Highlight (7.10), Calculate (7.13). Still open: Position / Rank / Connect. Generation emit + richer grading later |
 | W7.3 **Hook generation to loop algorithm:** home/launcher consumes `GET /api/quiz/plan` when `quiz_concept_plan` on; Adjust/Start pass planned concept ids; generation path uses `quiz_planned_questions` + gates when on | integrate | M | E2E `quiz-learning.spec.ts` + new launcher journeys; flag-off = pre-loop quiz |
 | W7.4 Confidence / wager UI maps to existing stated-confidence API (A132) — do not invent a second confidence store; align “Certain / Fairly sure / Unsure” with `guessing` / `fairly_sure` / `sure` | integrate | S | Pins in quiz-journeys confidence test |
 | W7.5 Hint / skip / study-guide drawer: hints must not become answer leaks (same Bastani rule as Tutor); study-guide drawer deep-links concept; Skip respects attempt rules | integrate | M | No mastery from hint-only; E2E |
@@ -521,7 +521,7 @@ Use this as the merge/readiness checklist. Every row must be **Done (A+)**, **N/
 - [x] Hub / Guide / Settings designed + shipped (W7.D2 / W7.9)  
 - [x] Launcher + Map designed + shipped (W7.D3 / W7.10)  
 - [x] Quiz shell in production (W7.1)  
-- [x] Core types + Sort/Label/Sequence/Build/Compare/Dialogue/Explain stubs (W7.2)  
+- [x] Core types + Sort/Label/Sequence/Build/Compare/Dialogue/Explain/Highlight/Calculate stubs (W7.2) — Position/Rank/Connect later  
 - [x] Launcher/home ↔ plan (W7.3) · Confidence A132 (W7.4) · Hint scaffold (W7.5)  
 - [x] Prereq banner (W7.6) · Summary CTAs (W7.7) · Practice/Exam Twin (W7.8)  
 - [x] Kill legacy quiz chrome (W7.11) — SessionTop is the attempt path; `quiz_shell_v2` never needed; home/results TopBar intentional  
@@ -680,8 +680,10 @@ Ordered. **Operator-only** rows are not agent work. Adjust this table if scope s
 | 11 | **W7.2e** | Compare kit stub (after Build) | **done** | Encode/decode + UI + vitest + testids; short_answer wire (`kind: "compare"`) |
 | 12 | **W7.2f** | Dialogue kit stub (design 7.17, after Compare) | **done** | Encode/decode + UI + vitest + testids; short_answer wire (`kind: "dialogue"`) |
 | 13 | **W7.2g** | Explain kit stub (design 7.16) | **done** | Tall prose + optional rubric display + vitest + testids; short_answer wire (`kind: "explain"`); mic refused (W6) |
+| 14 | **W7.2h** | Highlight kit stub (design 7.10) | **done** | Toggle passages + vitest + testids; short_answer wire (`kind: "highlight"`) |
+| 15 | **W7.2i** | Calculate kit stub (design 7.13) | **done** | Value + unit encode `value\|unit` + vitest + testids; working-steps deferred |
 
-**Day 9 progress:** #1–8 + #10–13 **done** · #9 operator HOLD (only remaining Day 9 row).
+**Day 9 progress:** #1–8 + #10–15 **done** · #9 operator HOLD (only remaining Day 9 row).
 
 ---
 

@@ -177,6 +177,26 @@ describe("itemView", () => {
     expect(itemView(item({ question: explainQ, answerText: "  Because free fall.  " })).hasAnswer).toBe(true);
   });
 
+  it("W7.2 Highlight: hasAnswer once a passage is selected", () => {
+    const interaction = {
+      kind: "highlight" as const,
+      passages: [
+        { id: "l0", label: "Line zero" },
+        { id: "l5", label: "Line five" },
+      ],
+    };
+    const highlightQ = question({ type: "short_answer", options: [], interaction });
+    expect(itemView(item({ question: highlightQ, answerText: "" })).hasAnswer).toBe(false);
+    expect(itemView(item({ question: highlightQ, answerText: "l5" })).hasAnswer).toBe(true);
+  });
+
+  it("W7.2 Calculate: hasAnswer when value and unit are both set", () => {
+    const interaction = { kind: "calculate" as const };
+    const calculateQ = question({ type: "short_answer", options: [], interaction });
+    expect(itemView(item({ question: calculateQ, answerText: "12|" })).hasAnswer).toBe(false);
+    expect(itemView(item({ question: calculateQ, answerText: "12|m/s" })).hasAnswer).toBe(true);
+  });
+
   it("survives no item at all", () => {
     expect(itemView(undefined)).toMatchObject({
       item: undefined,
@@ -277,6 +297,10 @@ describe("W7.5 hint / skip slots", () => {
     expect(dialogue.rubric).toMatch(/^Reply to your partner/);
     const explain = scaffoldHint({ conceptName: "Orbits", format: "short_answer", explain: true });
     expect(explain.rubric).toMatch(/^Write a short explanation/);
+    const highlight = scaffoldHint({ conceptName: "Sonnets", format: "short_answer", highlight: true });
+    expect(highlight.rubric).toMatch(/^Tap passages/);
+    const calculate = scaffoldHint({ conceptName: "Kinematics", format: "short_answer", calculate: true });
+    expect(calculate.rubric).toMatch(/^Enter the number/);
   });
 
   it("enables Hint in Practice and refuses it in Exam Twin", () => {
@@ -385,6 +409,8 @@ describe("the verdict's words", () => {
     expect(formatHint("short_answer", { compare: true })).toMatch(/^Read both sides/);
     expect(formatHint("short_answer", { dialogue: true })).toMatch(/^Reply to your partner/);
     expect(formatHint("short_answer", { explain: true })).toMatch(/^Write a short explanation/);
+    expect(formatHint("short_answer", { highlight: true })).toMatch(/^Tap passages/);
+    expect(formatHint("short_answer", { calculate: true })).toMatch(/^Enter the number/);
   });
 
   it("ends the key with exactly one full stop", () => {

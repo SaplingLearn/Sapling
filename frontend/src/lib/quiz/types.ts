@@ -185,6 +185,36 @@ export interface ExplainInteraction {
   rubric?: string[];
 }
 
+/** One clickable passage / value in a Highlight (design kit 7.10). */
+export interface HighlightInteractionPassage {
+  id: string;
+  label: string;
+}
+
+/**
+ * W7.2 Highlight (7.10) — toggle one or more passages; answer is selected ids.
+ */
+export interface HighlightInteraction {
+  kind: "highlight";
+  passages: HighlightInteractionPassage[];
+  /** Optional instruction above the list. */
+  note?: string;
+  /** Selections required before Check (default 1). */
+  minSelected?: number;
+}
+
+/**
+ * W7.2 Calculate (7.13) — numeric value + unit on short_answer.
+ * Working steps stay deferred; answer encodes as `value|unit`.
+ */
+export interface CalculateInteraction {
+  kind: "calculate";
+  /** Unit field placeholder (default "Units"). */
+  unitLabel?: string;
+  /** Value field placeholder. */
+  placeholder?: string;
+}
+
 export type QuestionInteraction =
   | SortInteraction
   | SequenceInteraction
@@ -192,7 +222,9 @@ export type QuestionInteraction =
   | BuildInteraction
   | CompareInteraction
   | DialogueInteraction
-  | ExplainInteraction;
+  | ExplainInteraction
+  | HighlightInteraction
+  | CalculateInteraction;
 
 export interface WireQuestion {
   material_context?: "course_material" | "catalog" | "general";
