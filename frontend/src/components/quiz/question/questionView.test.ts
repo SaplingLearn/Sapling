@@ -90,6 +90,20 @@ describe("itemView", () => {
     expect(numeric(" 4 ").hasAnswer).toBe(true);
   });
 
+  it("W7.2 Sort: hasAnswer only when every item is placed", () => {
+    const interaction = {
+      kind: "sort" as const,
+      buckets: ["A", "B"],
+      items: [
+        { id: "one", label: "One" },
+        { id: "two", label: "Two" },
+      ],
+    };
+    const sortQ = question({ type: "short_answer", options: [], interaction });
+    expect(itemView(item({ question: sortQ, answerText: "A=one;B=" })).hasAnswer).toBe(false);
+    expect(itemView(item({ question: sortQ, answerText: "A=one;B=two" })).hasAnswer).toBe(true);
+  });
+
   it("survives no item at all", () => {
     expect(itemView(undefined)).toMatchObject({
       item: undefined,
@@ -256,6 +270,7 @@ describe("the verdict's words", () => {
     expect(formatHint("numeric")).toMatch(/^Enter only the number, without units/);
     expect(formatHint("short_answer")).toBe("Write a brief answer. Capitalization and extra spacing do not affect your score.");
     expect(formatHint(undefined)).toBe(formatHint("short_answer"));
+    expect(formatHint("short_answer", { sort: true })).toMatch(/^Select an item/);
   });
 
   it("ends the key with exactly one full stop", () => {

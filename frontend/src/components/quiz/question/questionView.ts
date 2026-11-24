@@ -8,6 +8,11 @@
 
 import type { AnswerState } from "@/components/ui";
 import { isUnanswered } from "@/lib/quiz/machine";
+import {
+  asSortInteraction,
+  decodeSortAnswer,
+  isSortComplete,
+} from "@/lib/quiz/sortInteraction";
 import type { Phase, QuestionType, QuizItem, QuizSession, WireOption } from "@/lib/quiz/types";
 import { isWrittenType } from "@/lib/quiz/types";
 import type { AskSeed } from "./AskPanel";
@@ -31,13 +36,17 @@ export interface ItemView {
 export function itemView(item: QuizItem | undefined): ItemView {
   const written = isWrittenType(item?.question.type);
   const selectedIndex = item?.selectedIndex ?? null;
+  const sort = written ? asSortInteraction(item?.question.interaction) : null;
+  const hasWritten = sort
+    ? isSortComplete(sort, decodeSortAnswer(sort, item?.answerText))
+    : Boolean(item?.answerText?.trim());
   return {
     item,
     options: item?.question.options ?? [],
     selectedIndex,
     written,
     format: written ? (item?.question.type as QuestionType) : "multiple_choice",
-    hasAnswer: written ? Boolean(item?.answerText?.trim()) : selectedIndex !== null,
+    hasAnswer: written ? hasWritten : selectedIndex !== null,
     verdict: item?.verdict ?? null,
   };
 }
@@ -201,7 +210,10 @@ export function nextOptionIndex(selectedIndex: number | null, step: 1 | -1, coun
 }
 
 /** The grading rules shown under a written answer, per format. */
-export function formatHint(type: QuestionType | undefined): string {
+export function formatHint(type: QuestionType | undefined, opts?: { sort?: boolean }): string {
+  if (opts?.sort) {
+    return "Select an item, then tap a bucket to place it. Tap a placed item to return it to the tray. Check unlocks once every item is sorted.";
+  }
   if (type === "symbolic") {
     return "Enter an expression using single-letter variables, + − * / ^ and parentheses, with whole-number powers from −8 to 8. For example, 2(x + 1) and 2x + 2 are equivalent wherever both are defined. Functions and equations are not supported.";
   }

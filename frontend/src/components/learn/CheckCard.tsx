@@ -9,6 +9,11 @@ import tutorStyles from "./tutor/tutor.module.css";
 import { modalOpen } from "./modalOpen";
 import { type Draft, FIELD_STYLE, type HintView, focusAnswerStart } from "./loopShared";
 import { LOOP_ANSWER_MAX } from "@/lib/inputLimits";
+import {
+  KEY_VERIFIED_HINT,
+  KEY_VERIFIED_LABEL,
+  TRUST_CHROME_STYLE,
+} from "@/lib/loopTrustChrome";
 
 /** Plain-English lines for POST /hint's denial reasons (routes/learn_loop.py::hint). */
 const HINT_DENIED_COPY: Record<string, string> = {
@@ -81,18 +86,17 @@ export function CheckCard({
         <p id={promptId} className={tutorStyles.q}>{item.prompt}</p>
         {/* W4.4: calm trust chrome only when the pose carries key_verified
             (server: check_items.canonical_verified). Pairs with W4.3's
-            materials_grounded on teach turns — separate surfaces, no clutter. */}
+            materials_grounded on teach turns — separate surfaces, no clutter.
+            Tooltip explains independent key check (not "trust the AI"). */}
         {item.key_verified && (
           <div
             data-testid="loop-key-verified"
             role="status"
-            style={{
-              fontFamily: "var(--font-sans)",
-              fontSize: 12,
-              color: "var(--text-muted)",
-            }}
+            title={KEY_VERIFIED_HINT}
+            aria-label={`${KEY_VERIFIED_LABEL}. ${KEY_VERIFIED_HINT}`}
+            style={TRUST_CHROME_STYLE}
           >
-            Key verified
+            {KEY_VERIFIED_LABEL}
           </div>
         )}
       </div>

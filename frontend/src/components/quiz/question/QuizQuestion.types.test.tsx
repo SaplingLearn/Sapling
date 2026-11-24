@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 /**
- * W7.2 first slice: each core question type (MC / short / numeric / algebra)
- * under the focus SessionTop shell — layout hooks, a11y names, and testids.
- * Interactive kit types (sort / label / dialogue…) are out of scope.
+ * W7.2: core question types (MC / short / numeric / algebra) under the focus
+ * SessionTop shell, plus the Sort (7.1) kit stub on short_answer+interaction.
+ * Later interactive types (label / dialogue…) stay phased.
  */
 
 import React from "react";
@@ -278,5 +278,46 @@ describe("W7.2 core types under SessionTop", () => {
       expect(rule, sel).not.toBeNull();
       expect(rule![1]).toMatch(/flex-shrink:\s*0/);
     }
+  });
+
+  it("Sort (7.1): tray/buckets under SessionTop; Check waits for a full placement", () => {
+    const interaction = {
+      kind: "sort" as const,
+      buckets: ["Prokaryote", "Eukaryote"],
+      items: [
+        { id: "e-coli", label: "E. coli" },
+        { id: "yeast", label: "Yeast" },
+      ],
+    };
+    const { actions } = renderScreen(
+      makeSession({
+        items: [
+          item(0, {
+            question: {
+              id: 1,
+              question: "Sort these into Prokaryote or Eukaryote.",
+              type: "short_answer",
+              options: [],
+              difficulty: "medium",
+              interaction,
+            },
+          }),
+          item(1),
+          item(2),
+        ],
+      }),
+    );
+
+    expect(screen.getByTestId("quiz-session-top")).toBeInTheDocument();
+    const tag = screen.getByTestId("quiz-format-tag");
+    expect(tag).toHaveAttribute("data-format", "sort");
+    expect(tag).toHaveTextContent("Sort");
+    expect(screen.getByTestId("quiz-sort")).toBeInTheDocument();
+    expect(screen.getByTestId("quiz-format-hint")).toHaveTextContent(/Select an item/);
+    expect(screen.getByTestId("quiz-submit-answer")).toBeDisabled();
+
+    fireEvent.click(screen.getByTestId("quiz-sort-item-e-coli"));
+    fireEvent.click(screen.getByRole("button", { name: "Place in Prokaryote" }));
+    expect(actions.write).toHaveBeenCalledWith("Prokaryote=e-coli;Eukaryote=");
   });
 });

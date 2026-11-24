@@ -27,10 +27,11 @@
  * is course identity on the concept pill only. No XP in the session top.
  * W7.5: Hint stays disabled (no leak-safe quiz hint API); Skip wires to GO_TO;
  * Study guide opens a leak-safe drawer scaffold. No wager.
+ * W7.2 kit: Sort (7.1) click-to-bucket stub on short_answer + interaction.
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { BookOpen, ChevronLeft, ChevronRight, Hash, Library, ListChecks, PenLine, Sigma, Sparkles, X } from "lucide-react";
+import { BookOpen, ChevronLeft, ChevronRight, Hash, Layers, Library, ListChecks, PenLine, Sigma, Sparkles, X } from "lucide-react";
 import { AnswerOption, Badge, Button, Chip, ProgressDots } from "@/components/ui";
 import { ConceptNode } from "@/components/graph/ConceptNode";
 import { ConfidenceControl } from "@/components/learn/ConfidenceControl";
@@ -40,10 +41,12 @@ import { useFlag } from "@/context/FlagsContext";
 import { learnHrefForNode } from "@/lib/data";
 import type { QuizActions } from "@/lib/quiz/useQuizSession";
 import { buildQuizHref } from "@/lib/quiz/source";
+import { asSortInteraction } from "@/lib/quiz/sortInteraction";
 import type { Phase, QuestionType, QuizConfig, QuizItem, QuizPrereqBanner, QuizSession } from "@/lib/quiz/types";
 import { isUnanswered } from "@/lib/quiz/machine";
 import { expressionParts, superscriptParts, type ExpressionPart } from "@/lib/quiz/answerFormats";
 import { WrittenAnswer, type WrittenType } from "./WrittenAnswer";
+import { SortAnswer } from "./SortAnswer";
 import { AskPanel } from "./AskPanel";
 import { StudyGuideDrawer } from "./StudyGuideDrawer";
 import { LeaveDialog } from "./LeaveDialog";
@@ -146,12 +149,14 @@ function isTypingTarget(target: EventTarget | null): boolean {
 }
 
 /** What each format is called on screen — the same names the Format setting
- *  uses, so "Algebra" in the settings is "Algebra" on the question. */
+ *  uses, so "Algebra" in the settings is "Algebra" on the question. Sort is
+ *  kit-only (W7.2): still a short_answer on the wire. */
 const FORMAT_TAG: Record<string, { label: string; Icon: typeof ListChecks }> = {
   multiple_choice: { label: "Multiple choice", Icon: ListChecks },
   short_answer: { label: "Short answer", Icon: PenLine },
   numeric: { label: "Numeric", Icon: Hash },
   symbolic: { label: "Algebra", Icon: Sigma },
+  sort: { label: "Sort", Icon: Layers },
 };
 
 /** Where the question's grounding came from, said plainly. */
@@ -390,15 +395,18 @@ function SessionTop({
 function QuestionHeader({
   concept,
   format,
+  formatTagKey,
   showFormat,
   difficulty,
 }: {
   concept: QuizConceptSummary;
   format: QuestionType;
+  /** Kit display key when it differs from the wire format (Sort → short_answer). */
+  formatTagKey: string;
   showFormat: boolean;
   difficulty: string;
 }) {
-  const formatTag = FORMAT_TAG[format] ?? FORMAT_TAG.multiple_choice;
+  const formatTag = FORMAT_TAG[formatTagKey] ?? FORMAT_TAG[format] ?? FORMAT_TAG.multiple_choice;
   // A blank accent would reach `shadeFor` as an unparseable colour and pass
   // straight through; the CSS variable degrades to the app accent instead.
   const accent = concept.color || "var(--quiz-accent, var(--accent))";
@@ -422,7 +430,7 @@ function QuestionHeader({
       )}
       <span className="quiz-question__header-gap" />
       {showFormat && (
-        <span className="quiz-question__format" data-testid="quiz-format-tag" data-format={format}>
+        <span className="quiz-question__format" data-testid="quiz-format-tag" data-format={formatTagKey}>
           <formatTag.Icon size={13} strokeWidth={2} aria-hidden="true" />
           {formatTag.label}
         </span>
@@ -775,7 +783,41 @@ function WrittenField({ view, shown, selectable, actions, primary }: AnswerField
   );
 }
 
-/** One answer field per format. */
+/** W7.2 Sort (7.1): tray + buckets; Check uses encoded short_answer text. */
+function SortField(props: AnswerFieldProps) {
+  const { view, shown, selectable, actions } = props;
+  const sort = asSortInteraction(view.item?.question.interaction);
+  if (!sort) return <WrittenField {...props} />;
+  return (
+    <div
+      className="quiz-question__written quiz-question__written--sort"
+      data-marked={shown ? "true" : undefined}
+    >
+      <SortAnswer
+        interaction={sort}
+        value={view.item?.answerText ?? ""}
+        disabled={!selectable}
+        expected={shown?.correctAnswer ?? null}
+        verdict={outcomeOf(shown) ?? null}
+        onChange={text => actions.write?.(text)}
+      />
+      <p className="quiz-question__format-hint" id="quiz-format-hint" data-testid="quiz-format-hint">
+        {formatHint("short_answer", { sort: true })}
+      </p>
+    </div>
+  );
+}
+
+function AnswerFieldFor(props: AnswerFieldProps) {
+  const sort = props.view.format === "short_answer"
+    ? asSortInteraction(props.view.item?.question.interaction)
+    : null;
+  if (sort) return <SortField {...props} />;
+  const Field = ANSWER_FIELDS[props.view.format];
+  return <Field {...props} />;
+}
+
+/** One answer field per wire format. Sort mounts via AnswerFieldFor. */
 const ANSWER_FIELDS: Record<QuestionType, (props: AnswerFieldProps) => React.JSX.Element> = {
   multiple_choice: ChoiceAnswer,
   short_answer: WrittenField,
@@ -993,8 +1035,18 @@ export function QuizQuestion({
       quizLength={quizLength}
     />
   );
+  const sortInteraction = view.format === "short_answer"
+    ? asSortInteraction(view.item?.question.interaction)
+    : null;
+  const formatTagKey = sortInteraction ? "sort" : view.format;
   const header = (
-    <QuestionHeader concept={concept} format={view.format} showFormat={phase !== "generating" && Boolean(view.item)} difficulty={difficulty} />
+    <QuestionHeader
+      concept={concept}
+      format={view.format}
+      formatTagKey={formatTagKey}
+      showFormat={phase !== "generating" && Boolean(view.item)}
+      difficulty={difficulty}
+    />
   );
   const prereqBanner = session.prereq ? <PrereqBanner banner={session.prereq} /> : null;
   const pager = <QuestionPager session={session} actions={actions} busy={busy} quizLength={quizLength} />;
@@ -1036,7 +1088,6 @@ export function QuizQuestion({
   // ── active | answered | confirm-leave | submitting ───────────────────
 
   const shown = showVerdict ? view.verdict : null;
-  const AnswerField = ANSWER_FIELDS[view.format];
   const onRootKeyDown = (e: React.KeyboardEvent) =>
     handleRootKey(e, {
       askOpen,
@@ -1068,7 +1119,7 @@ export function QuizQuestion({
             entrance — from the generating panel, from Next, from the pager. */}
         <div className="quiz-question__body" key={view.item?.question.id ?? cursor}>
           <QuestionPrompt item={view.item} format={view.format} />
-          <AnswerField view={view} shown={shown} selectable={selectable} actions={actions} primary={primary} />
+          <AnswerFieldFor view={view} shown={shown} selectable={selectable} actions={actions} primary={primary} />
           {askConfidence && (
             <QuestionConfidence confidenceRef={confidenceRef} item={view.item} selectable={selectable} actions={actions} />
           )}

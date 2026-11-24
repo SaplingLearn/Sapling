@@ -60,6 +60,24 @@ export function isWrittenType(type: string | null | undefined): boolean {
   return typeof type === "string" && WRITTEN_TYPES.has(type);
 }
 
+/**
+ * W7.2 interactive kit (phased): Sort (design 7.1). Optional on a
+ * `short_answer` wire question — generation does not emit it yet. The UI
+ * serialises placements into `answerText` via `lib/quiz/sortInteraction`.
+ */
+export interface SortInteractionItem {
+  id: string;
+  label: string;
+}
+
+export interface SortInteraction {
+  kind: "sort";
+  buckets: string[];
+  items: SortInteractionItem[];
+}
+
+export type QuestionInteraction = SortInteraction;
+
 export interface WireQuestion {
   material_context?: "course_material" | "catalog" | "general";
   type?: QuestionType;
@@ -68,6 +86,8 @@ export interface WireQuestion {
   options: WireOption[];
   concept_tested?: string;
   difficulty: string;
+  /** W7.2 kit stub — ignored unless `kind` is recognised client-side. */
+  interaction?: QuestionInteraction;
 }
 
 /**

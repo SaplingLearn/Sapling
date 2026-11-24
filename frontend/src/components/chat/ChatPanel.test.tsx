@@ -18,6 +18,7 @@ import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 import { ChatPanel, tutorStepLabel, type ChatMsg } from "./ChatPanel";
 import crisisFixture from "@/test-utils/crisisSupport.json";
 import { crisisSupportOf } from "@/lib/crisisSupport";
+import { MATERIALS_GROUNDED_HINT, MATERIALS_GROUNDED_LABEL } from "@/lib/loopTrustChrome";
 
 vi.mock("../Icon", () => ({ Icon: () => null }));
 // MarkdownChat is lazy-loaded via next/dynamic (heavy markdown stack); render
@@ -102,7 +103,10 @@ describe("ChatPanel interrupted-turn treatment (ADR 0020)", () => {
         onSend={noop}
       />,
     );
-    expect(screen.getByTestId("loop-materials-grounded").textContent).toBe("Grounded in your materials");
+    const chrome = screen.getByTestId("loop-materials-grounded");
+    expect(chrome.textContent).toBe(MATERIALS_GROUNDED_LABEL);
+    expect(chrome).toHaveAttribute("title", MATERIALS_GROUNDED_HINT);
+    expect(chrome.getAttribute("aria-label")).toContain(MATERIALS_GROUNDED_HINT);
   });
 
   it("W4.3: no grounded chrome unless materialsGrounded is set", () => {

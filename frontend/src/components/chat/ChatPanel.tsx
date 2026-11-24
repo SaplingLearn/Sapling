@@ -9,6 +9,11 @@ import { CHAT_MESSAGE_MAX } from "@/lib/inputLimits";
 import { CrisisSupportCard } from "../safety/CrisisSupportCard";
 import type { CrisisSupport } from "@/lib/crisisSupport";
 import type { MarkdownProfile } from "./inertMarkdown";
+import {
+  MATERIALS_GROUNDED_HINT,
+  MATERIALS_GROUNDED_LABEL,
+  TRUST_CHROME_STYLE,
+} from "@/lib/loopTrustChrome";
 
 // MarkdownChat statically imports mermaid, katex, highlight.js, and the
 // remark/rehype stack. Static-importing it from a client component still
@@ -559,14 +564,14 @@ const Message = React.memo(function Message({
         <div
           data-testid="loop-materials-grounded"
           role="status"
+          title={MATERIALS_GROUNDED_HINT}
+          aria-label={`${MATERIALS_GROUNDED_LABEL}. ${MATERIALS_GROUNDED_HINT}`}
           style={{
             marginTop: m.content ? 8 : 0,
-            fontFamily: "var(--font-sans)",
-            fontSize: 12,
-            color: "var(--text-muted)",
+            ...TRUST_CHROME_STYLE,
           }}
         >
-          Grounded in your materials
+          {MATERIALS_GROUNDED_LABEL}
         </div>
       )}
     </>

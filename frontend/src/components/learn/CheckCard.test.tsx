@@ -9,6 +9,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { LoopCheckItem } from "@/lib/api";
+import { KEY_VERIFIED_HINT, KEY_VERIFIED_LABEL } from "@/lib/loopTrustChrome";
 import { CheckCard } from "./CheckCard";
 import { type Draft } from "./loopShared";
 
@@ -57,8 +58,10 @@ describe("CheckCard W4.4 key-verified chrome", () => {
   it("shows Key verified when the pose carries key_verified", () => {
     renderCard({ ...baseItem, key_verified: true });
     const chrome = screen.getByTestId("loop-key-verified");
-    expect(chrome.textContent).toBe("Key verified");
+    expect(chrome.textContent).toBe(KEY_VERIFIED_LABEL);
     expect(chrome).toHaveAttribute("role", "status");
+    expect(chrome).toHaveAttribute("title", KEY_VERIFIED_HINT);
+    expect(chrome.getAttribute("aria-label")).toContain(KEY_VERIFIED_HINT);
   });
 
   it("omits chrome without key_verified (never invents trust)", () => {

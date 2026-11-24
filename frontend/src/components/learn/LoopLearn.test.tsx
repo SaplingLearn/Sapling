@@ -57,6 +57,12 @@ vi.mock("@/context/FlagsContext", () => ({
 
 import { ApiError } from "@/lib/api";
 import {
+  KEY_VERIFIED_HINT,
+  KEY_VERIFIED_LABEL,
+  MATERIALS_GROUNDED_HINT,
+  MATERIALS_GROUNDED_LABEL,
+} from "@/lib/loopTrustChrome";
+import {
   __resetFeedbackPacingForTests,
   currentLearningSession,
   ENDED_SESSION_KEY,
@@ -721,7 +727,8 @@ describe("LoopLearn — A26", () => {
     fireEvent.click(screen.getByTestId("tutor-send"));
     await screen.findByText("From your lecture notes…");
     const chrome = await screen.findByTestId("loop-materials-grounded");
-    expect(chrome.textContent).toBe("Grounded in your materials");
+    expect(chrome.textContent).toBe(MATERIALS_GROUNDED_LABEL);
+    expect(chrome).toHaveAttribute("title", MATERIALS_GROUNDED_HINT);
     expect(screen.queryByTestId("loop-materials-unavailable")).toBeNull();
   });
 
@@ -765,7 +772,8 @@ describe("LoopLearn — A26", () => {
   it("W4.4: a posed check with key_verified shows calm Key verified chrome", async () => {
     await withCheckItem({ ...pose, key_verified: true });
     const chrome = screen.getByTestId("loop-key-verified");
-    expect(chrome.textContent).toBe("Key verified");
+    expect(chrome.textContent).toBe(KEY_VERIFIED_LABEL);
+    expect(chrome).toHaveAttribute("title", KEY_VERIFIED_HINT);
     expect(screen.queryByTestId("loop-materials-grounded")).toBeNull(); // separate surface
   });
 

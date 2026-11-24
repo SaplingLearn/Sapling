@@ -322,13 +322,18 @@ journeys keep anchoring: `quiz-panel`, `quiz-start`,
 | `quiz-panel` | question root (`phase: active \| answered`) |
 | `quiz-progress` | the question rail's progress dots (`ui/ProgressDots`) |
 | `quiz-question-meta` | W7.1 meta row (concept pill, tier chip, format tag, difficulty) |
-| `quiz-format-tag` | W7.2: which core format this question is (`data-format` = `multiple_choice` / `short_answer` / `numeric` / `symbolic`); label matches Settings Format |
+| `quiz-format-tag` | W7.2: which format this question shows (`data-format` = `multiple_choice` / `short_answer` / `numeric` / `symbolic` / `sort`); core labels match Settings Format; `sort` is kit 7.1 (still `short_answer` on the wire) |
 | `quiz-action-bar` | W7.1 footer: Hint / Study guide / pager / Skip / Check |
 | `quiz-answer-options` | answer radiogroup (multiple choice) |
 | `quiz-keyboard-hint` | W7.2: sr-only MC keyboard map (`A`–`F` / `1`–`6`, Enter, Escape); describes `quiz-answer-options` |
 | `quiz-written` | W7.2: written answer surface root (`WrittenAnswer`); `data-format` = `short_answer` / `numeric` / `symbolic` |
 | `quiz-written-answer` | the single-line written-answer input (`WrittenAnswer`) for short answers, numeric answers and algebra; Enter submits |
-| `quiz-format-hint` | the visible answer-format rules for a written question (what the grader accepts); describes the written-answer input |
+| `quiz-format-hint` | the visible answer-format rules for a written question (what the grader accepts); describes the written-answer input; Sort uses placement copy |
+| `quiz-sort` | W7.2 kit 7.1: Sort interaction root (`data-complete`, optional `data-verdict`); mounts when `question.interaction.kind === "sort"` on a short_answer item |
+| `quiz-sort-tray` / `quiz-sort-tray-empty` | unassigned Items tray, or “Every item is sorted.” when empty |
+| `quiz-sort-buckets` | bucket grid |
+| `quiz-sort-bucket-{index}` | one bucket (`data-bucket` = name); place via “Place in {name}” |
+| `quiz-sort-item-{id}` | one sortable card (tray or bucket); `aria-pressed` while selected in the tray |
 | `quiz-key-{id}` | a symbol key under a numeric (`minus`/`fraction`/`percent`/`exponent`/`space`) or algebra (`squared`/`power`/`brackets`/`plus`/`minus`/`times`/`divide`, plus `more` toggle and `digit-*`/`point` behind it) input; inserts at the cursor |
 | `quiz-written-readback` | the live read-back under a numeric or algebra input ("Reads as 0.75", the superscript preview, or why it can't be graded); `data-ok` says which |
 | `quiz-material-context` | reports whether retrieved course material, catalog context, or general knowledge was supplied |
@@ -1138,8 +1143,8 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `loop-teach-start` | "Start with <first plan concept>" — sends that as the first chat turn (shown until the student has chatted) |
 | `loop-check-me` | "Check me": posts `/check/next` when no item is current (A27) |
 | `loop-check-prompt` | the current check pose (`check.prompt`, A17/A27); `data-question-hash`, `data-format` |
-| `loop-materials-grounded` | W4.3: calm "Grounded in your materials" status under a teach/opener assistant turn when the server sent `materials_grounded: true` (passages in the prompt); absent otherwise — never a cite list |
-| `loop-key-verified` | W4.4: calm "Key verified" status on the check card when the pose carries `key_verified: true` (`check_items.canonical_verified`); absent otherwise — never invented client-side |
+| `loop-materials-grounded` | W4.3: calm "Grounded in your materials" status under a teach/opener assistant turn when the server sent `materials_grounded: true` (passages in the prompt); `title` / `aria-label` explain course-material grounding (never a cite list) |
+| `loop-key-verified` | W4.4: calm "Key verified" status on the check card when the pose carries `key_verified: true` (`check_items.canonical_verified`); `title` / `aria-label` explain independent key check (not AI vouching); absent otherwise — never invented client-side |
 | `loop-attempt-input` | free/teachback attempt textarea |
 | `loop-attempt-options` | the attempt box's options radio group, as `loop-probe-options` |
 | `loop-attempt-option-{letter}` | one served `mc_reason` option in the attempt box |
