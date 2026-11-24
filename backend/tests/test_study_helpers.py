@@ -11,6 +11,7 @@ import pytest
 
 import services.study as study
 from services.study import daily, goal
+from services.study import next as study_next
 from services.study.daily import Window
 
 UTC = timezone.utc
@@ -395,11 +396,13 @@ def test_set_daily_goal_lets_a_failed_write_fail():
 def test_package_exports_its_public_api():
     assert sorted(study.__all__) == [
         "DEFAULT_GOAL_MIN", "MAX_GOAL_MIN", "MIN_GOAL_MIN",
-        "clamp_tz_offset", "get_daily", "local_date", "read_daily_goal", "set_daily_goal",
+        "clamp_tz_offset", "get_daily", "get_next", "local_date", "read_daily_goal",
+        "set_daily_goal",
     ]
     assert study.get_daily is daily.get_daily
     assert study.local_date is daily.local_date  # #866 K17: Study's review queue keeps this day
     assert study.set_daily_goal is goal.set_daily_goal
+    assert study.get_next is study_next.get_next  # W8.3: Focus / Quick Reviews
     assert Window.__module__ == "services.study.daily"
 
 

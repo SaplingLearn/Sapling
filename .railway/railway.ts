@@ -169,6 +169,7 @@ const FLAG_KILL_SWITCHES = [
   "help_gate_strict",
   "segment_prequestion",
   "self_explanation_prompts",
+  "next_probe_hint",
   "varied_isomorphs",
   "multi_concept_items",
   // the quiz in the learning system (A143-A147)

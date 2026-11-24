@@ -1818,6 +1818,7 @@ def test_an_empty_proposal_opens_teaching(probe, states):
         "order": list(P.PLAN_ORDER),
         "empty": True,
         "phase": "teach",
+        "prereq_edges": [],
     }
     doc = probe.store["doc"]
     assert doc["phase"] == "teach" and doc["plan"]["approved"] == []

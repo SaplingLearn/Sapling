@@ -866,7 +866,7 @@ def hypercorrection_feedback_dwell_ms(
     if float(student_confidence) < params.MISCONCEPTION_CONFIDENCE:
         return 0
     seconds = params.gate_seconds("GATE_HYPERCORRECTION_FEEDBACK_DWELL_S", time_scale)
-    return int(round(seconds * 1000))
+    return int(round(seconds * params.MS_PER_SECOND))
 
 
 # ── within-student arms (PKG-14; spec §3.3, §10 rung 2) ─────────────────────

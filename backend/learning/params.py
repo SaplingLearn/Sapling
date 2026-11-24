@@ -117,6 +117,7 @@ GATE_RUNG_DWELL_MIN_S = 8  # †
 # (Butterfield & Metcalfe hypercorrection). Same cut as the hint-rung dwell;
 # A/B candidate. Scaled by LEARNING_GATE_TIME_SCALE via gate_seconds.
 GATE_HYPERCORRECTION_FEEDBACK_DWELL_S = 8  # †
+MS_PER_SECOND = 1000  # a unit conversion, not a tunable
 H6_MIN_GENUINE_ATTEMPTS = 2
 OFFER_BANDS = frozenset({"novice"})
 BAND_WINDOW = 8

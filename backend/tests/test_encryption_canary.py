@@ -279,6 +279,7 @@ WRITE_SCRIPTS = [
     "scripts/dedupe_course_chunks.py",
     "scripts/move_unapproved_users_to_waitlist.py",
     "scripts/retire_gradescope_passwords.py",
+    "scripts/seed_learning_close_beat.py",
     "scripts/seed_learning_goal_journey.py",
     "scripts/seed_learning_teach_prompts.py",
 ]

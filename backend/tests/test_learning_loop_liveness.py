@@ -39,7 +39,7 @@ def submit(answer="The base case returns 1"):
     ))
 
 
-def _qh2(user_id, course_id, st, *, now):
+def _qh2(user_id, course_id, st, *, now, session_id=None):
     """`_activate_next_item` standing in for the next servable item, qh-2."""
     st["current"] = "qh-2"
     st.setdefault("steps", {})["qh-2"] = routes._step(first_shown_at=now)

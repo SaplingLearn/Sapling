@@ -37,7 +37,7 @@ Reuse: graph chrome patterns (testid, a11y, no raw script). Do **not** overload 
 | Typed blocks (`ChartBlock`, `FormulaBlock`, `ConceptMapBlock`, …) | `backend/models/study_guide.py` | Structured, bounded output — not free SVG |
 | Markup + `[S1]` citations | `services/study_guides/markup.py` | Cite-or-drop pattern for prose |
 | Verify before save | `services/study_guides/verify.py` | Chart numbers must appear in cited sources or chart is forced `illustrative` (no axis numbers) |
-| Deterministic chart SVG | `frontend/.../studyGuide/reader/blocks/ChartSvg.tsx` | Server-shaped data → safe SVG; no model-authored `<script>` |
+| Deterministic chart SVG | `frontend/src/components/studyGuide/reader/blocks/ChartSvg.tsx` | Server-shaped data → safe SVG; no model-authored `<script>` |
 | Agents | `agents/study_guide.py` + slots `study_guide` in `_providers.py` | Separate product surface; hide-flaged; not LoopLearn |
 
 **Reuse for W4:** citation grammar, fail-closed verify, “illustrative vs sourced” honesty, deterministic render from typed data.

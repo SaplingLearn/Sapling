@@ -324,6 +324,23 @@ def _topup_message(*, user_message: str, plan, missing: int, question_format: st
     return topup_msg
 
 
+def _difficulty_clause(difficulty: str, num_questions: int) -> str:
+    """The run message's difficulty sentence."""
+    if difficulty == "adaptive":
+        # #540 A1: no target difficulty — the agent picks the whole mix
+        # from mastery + recent accuracy (ADAPTIVE MODE in the system
+        # prompt). Every emitted question still carries a concrete
+        # easy|medium|hard; the route reports the overall pick back to
+        # the client as `resolved_difficulty`.
+        return (
+            f"Generate {num_questions} questions in ADAPTIVE MODE: you "
+            f"choose each question's difficulty (easy, medium, or hard) "
+            f"from the student's mastery and recent accuracy, per the "
+            f"adaptive-mode rules in your system prompt."
+        )
+    return f"Generate {num_questions} {difficulty} questions for the student."
+
+
 async def _quiz_via_agent(
     *,
     user_id: str,
@@ -391,22 +408,7 @@ async def _quiz_via_agent(
     # Keep this message routing-only; the workflow + adaptive rules
     # live in the system prompt. We just hand the agent the inputs it
     # needs and trust the prompt to drive tool calls.
-    if difficulty == "adaptive":
-        # #540 A1: no target difficulty — the agent picks the whole mix
-        # from mastery + recent accuracy (ADAPTIVE MODE in the system
-        # prompt). Every emitted question still carries a concrete
-        # easy|medium|hard; the route reports the overall pick back to
-        # the client as `resolved_difficulty`.
-        difficulty_clause = (
-            f"Generate {num_questions} questions in ADAPTIVE MODE: you "
-            f"choose each question's difficulty (easy, medium, or hard) "
-            f"from the student's mastery and recent accuracy, per the "
-            f"adaptive-mode rules in your system prompt."
-        )
-    else:
-        difficulty_clause = (
-            f"Generate {num_questions} {difficulty} questions for the student."
-        )
+    difficulty_clause = _difficulty_clause(difficulty, num_questions)
 
     # ONE resolution of the two things the legs below share. Four of them want
     # the same two answers — grounding wants this course's `course_code`, the

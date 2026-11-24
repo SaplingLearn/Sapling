@@ -46,12 +46,16 @@ _UUID = uuid.UUID("12345678-1234-5678-1234-567812345678")
 #: re-captured for #866 Z07: the check item's text now reaches the tutor inside
 #: the untrusted-content envelope (agents/loop_tutor.py), with either flag. The
 #: three requests differ from f9eca612 by exactly those three envelope lines.
+#: All five model-run scenarios were re-captured again for 877d968b (the Alvar
+#: teach pedagogy, docs/learning-loop/alvar-trilogy-implementation-plan.md): the
+#: loop's own teach wording changed, independent of both flags. The teach phase
+#: rule and the developing band format line are the only other differences.
 F9ECA612 = {
-    "teach_chat": "3f17df906cffeec34019aa73653978d647098522b1a6b67d5352a060b9a5971f",
-    "teach_chat_poses_check": "6ad0dad50ef12447650a802bb8d94b7d6529e611027627428c8f9702f22cf641",
-    "hint_h4": "d0594a68976790ce8a8f673fb04b91e20a9f74582ca3c56cfa861183dca18fc7",
-    "feedback_first_correct_ends_segment": "ae2416d8bea48a6ded1880304a0ea3ec66767376aa146aba6daefdc846957d23",
-    "feedback_released": "221283ef6d48d2270c5c963c9fecbee5f414ba271abd9e08d6489ba7a48bdf59",
+    "teach_chat": "cc30f866d54e51ddfd9255feb86c821cfd32f264e454293ca725b8aa1fa5977d",
+    "teach_chat_poses_check": "333cc4672ed548cc58d7af4323ada5729de4fee823f4e15f12b4fd3e7a828e85",
+    "hint_h4": "375ce264bc8af7e3c629b35c2a250c74a06ebc99a72bec06bce89ade08877d1c",
+    "feedback_first_correct_ends_segment": "0c33be0c5fb957d07abbd5bc49afe115e994ac6a4fb9896aed262806ee943c49",
+    "feedback_released": "a7f7e5b1646d72c1b5318ca63a66594033ff18d55f1ba51be2e59e719ef9f0e7",
     "plan_approve": "44a84b5ad5b1d9597e2f0eafe636b7d67315a6ee0ea995abe210f135e6448521",
     "status": "2c1e614faaeddec44561d80d2e8b59df9219f51790cd1cde81865fff0813c1b2",
     "check_next": "311f203195565a1f7763b80af61f459c060e3e136b37e2764868bacedef8fcb8",

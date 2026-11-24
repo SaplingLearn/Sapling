@@ -414,7 +414,7 @@ def test_a_turn_served_with_its_question_never_poses_a_check(gate_on, seams):
     real = services.loop.practice._activate_next_item
     calls = []
 
-    def flaky(user_id, course_id, state, *, now):
+    def flaky(user_id, course_id, state, *, now, session_id=None):
         calls.append(state is seams.store["doc"])
         return None if len(calls) == 1 else real(user_id, course_id, state, now=now)
 
@@ -434,7 +434,7 @@ def test_a_planned_check_that_cannot_be_posed_leaves_no_open_question_flag(gate_
     real = services.loop.practice._activate_next_item
     calls = []
 
-    def gone(user_id, course_id, state, *, now):
+    def gone(user_id, course_id, state, *, now, session_id=None):
         calls.append(1)
         return real(user_id, course_id, state, now=now) if len(calls) == 1 else None
 
