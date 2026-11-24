@@ -8,16 +8,17 @@ import copy
 import logging
 import uuid
 from datetime import datetime, timezone
+import config
 from services.loop.errors import HTTPException
 from services import abuse_limits
 from services.request_limits import aenforce_abuse_limit
 from starlette.requests import Request
 from agents.deps import SaplingDeps
 from agents.tools.check import CheckAnswer, GradeOutcome, grade_answer
-from learning import grade_checkpoint
+from learning import grade_checkpoint, policy
 from learning.claim_deadline import GradeDeadlineExceeded, within_grade_deadline
 from learning import probe as probe_policy
-from learning.evidence import PlanningPersistenceUnavailable
+from learning.evidence import PlanningPersistenceUnavailable, stated_confidence
 from learning.goals import goal_version
 from learning.misconceptions import carry, recheck_after_release
 from learning.loop_state_store import seen_hashes
@@ -347,6 +348,20 @@ def _finish_probe_checkpoint(checkpoint, request, *, loop_on, deps=None):
     }
     if reference is not None:
         response["reference_answer"] = reference
+    # W2.5: high-confidence wrong → Next holds while the reference is on screen
+    answer = checkpoint.continuation.get("answer") or {}
+    obs = checkpoint.continuation.get("observation") or {}
+    idk = bool(obs.get("idk"))
+    dwell = policy.hypercorrection_feedback_dwell_ms(
+        correct=bool(checkpoint.continuation["correct"]),
+        student_confidence=stated_confidence(
+            answer.get("confidence") if isinstance(answer, dict) else None, idk=idk
+        ),
+        idk=idk,
+        time_scale=config.LEARNING_GATE_TIME_SCALE,
+    )
+    if dwell > 0:
+        response["feedback_dwell_ms"] = dwell
     return response
 
 

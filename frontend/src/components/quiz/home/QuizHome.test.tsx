@@ -164,6 +164,7 @@ function session(over: Partial<QuizSession> = {}): QuizSession {
     deliveredShort: false,
     sourceAttemptId: null,
     reserved: null,
+    prereq: null,
     ...over,
   };
 }
@@ -741,6 +742,72 @@ describe("QuizHome — the live neighbourhood", () => {
   });
 });
 
+describe("QuizHome — List | Map browse (W7.10)", () => {
+  it("defaults to List with the topic list and neighbourhood", () => {
+    mount();
+    expect(screen.getByTestId("quiz-browse")).toBeInTheDocument();
+    expect(screen.getByTestId("quiz-browse-list")).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByTestId("quiz-pick-list")).toBeInTheDocument();
+    expect(screen.getByTestId("quiz-neighbourhood")).toBeInTheDocument();
+    expect(screen.queryByTestId("quiz-launcher-map")).toBeNull();
+  });
+
+  it("Map replaces the topic list, hides the neighbourhood, and keeps the same lead Start", () => {
+    const { actions } = mount();
+    fireEvent.click(screen.getByTestId("quiz-browse-map"));
+
+    expect(screen.getByTestId("quiz-browse-map")).toHaveAttribute("aria-checked", "true");
+    expect(screen.queryByTestId("quiz-pick-list")).toBeNull();
+    expect(screen.queryByTestId("quiz-topic-search")).toBeNull();
+    expect(screen.queryByTestId("quiz-neighbourhood")).toBeNull();
+    expect(screen.getByTestId("quiz-launcher-map")).toBeInTheDocument();
+    expect(screen.getByTestId("quiz-proposal-name")).toHaveTextContent("Recursion");
+    expect(screen.getByTestId("quiz-start")).toBeInTheDocument();
+
+    // Start still owns generation — Map mode does not auto-start.
+    expect(actions.start).not.toHaveBeenCalled();
+  });
+
+  it("Map node click chooses the lead concept and does not start", () => {
+    const { actions, onPickedChange } = mount();
+    fireEvent.click(screen.getByTestId("quiz-browse-map"));
+
+    const map = screen.getByTestId("quiz-launcher-map");
+    const activate = (id: string) =>
+      map.querySelector(`[data-node-id='${id}'] [data-testid='graph-node-activate']`) as HTMLElement;
+    fireEvent.click(activate("determinants"));
+
+    expect(screen.getByTestId("quiz-proposal-name")).toHaveTextContent("Determinants");
+    expect(screen.getByTestId("quiz-pick-reset")).toBeInTheDocument();
+    expect(onPickedChange).toHaveBeenLastCalledWith("determinants");
+    expect(actions.start).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByTestId("quiz-start"));
+    expect(actions.start).toHaveBeenCalledWith(
+      {
+        intent: "practice",
+        scope: { kind: "concept", conceptId: "determinants" },
+        conceptId: "determinants",
+        courseId: "c-math",
+      },
+      SESSION_CONFIG,
+    );
+  });
+
+  it("course pills still filter the Map to real student nodes", () => {
+    mount();
+    fireEvent.click(screen.getByTestId("quiz-browse-map"));
+    fireEvent.click(screen.getByTestId("quiz-course-c-math"));
+
+    const map = screen.getByTestId("quiz-launcher-map");
+    const ids = Array.from(map.querySelectorAll("[data-testid='graph-node-item']")).map(li =>
+      li.getAttribute("data-node-id"),
+    );
+    expect(ids).toEqual(expect.arrayContaining(["eigenvalues", "matrices", "determinants"]));
+    expect(ids).not.toEqual(expect.arrayContaining(["recursion", "base-cases"]));
+  });
+});
+
 describe("QuizHome — the adjust dialog", () => {
   it("marks the link active while open and writes the choices back on Done", () => {
     const { actions } = mount();
@@ -1029,10 +1096,16 @@ describe("QuizHome — the states with no proposal", () => {
 
 function homeDom(): string {
   // A string edit rather than a clone: jsdom cannot clone some inline styles.
+  // Strip KnowledgeGraph2D output (neighbourhood + launcher Map) — simulation
+  // layout is not this screen's contract.
   return screen
     .getByTestId("quiz-home")
     .outerHTML.replace(
       /(data-testid="quiz-neighbourhood">)[\s\S]*?(<\/div><div class="quiz-home__actions">)/,
+      "$1$2",
+    )
+    .replace(
+      /(data-testid="quiz-launcher-map"[^>]*>)[\s\S]*?(<\/div><\/section>)/,
       "$1$2",
     );
 }
@@ -1334,6 +1407,7 @@ describe("QuizHome — characterization: behaviour", () => {
       count: 4,
       difficulty: "gentle",
       feedback: "at-end",
+      sessionMode: "practice",
     });
     expect(actions.configure).toHaveBeenLastCalledWith(false);
     expect(screen.queryByTestId("quiz-adjust-dialog")).toBeNull();
@@ -1350,11 +1424,12 @@ describe("QuizHome — characterization: behaviour", () => {
     mount({ session: session({ config: { ...SESSION_CONFIG, questionFormat: "multiple_choice" } }) });
     fireEvent.click(screen.getByTestId("quiz-adjust"));
     fireEvent.click(screen.getByTestId("quiz-adjust-start"));
-    // The dialog's draft re-seeds from the three scalar values only.
+    // The dialog's draft re-seeds from the scalar Adjust edits only (not Format).
     expect(JSON.parse(window.localStorage.getItem("sapling_quiz_prefs") ?? "null")).toEqual({
       count: 2,
       difficulty: "gentle",
       feedback: "at-end",
+      sessionMode: "practice",
     });
   });
 
@@ -1542,6 +1617,80 @@ describe("QuizHome with the learner model's plan (quiz_concept_plan)", () => {
     mount({ home: planned(), entry: entry({ scope: "due" }) });
     expect(screen.getByTestId("quiz-proposal-name")).toHaveTextContent("Review everything due");
     expect(screen.getByText(/starting with the 1 most overdue/)).toBeInTheDocument();
+  });
+
+  it("Start generates on the plan's first concept, not the tier primary", () => {
+    // Tier primary would be determinants (mastery 0.05); the plan leads with matrices.
+    const { actions } = mount({ home: planned() });
+    fireEvent.click(screen.getByTestId("quiz-start"));
+    expect(actions.start).toHaveBeenCalledWith(
+      {
+        intent: "practice",
+        scope: { kind: "concept", conceptId: "matrices" },
+        conceptId: "matrices",
+        courseId: "c-math",
+      },
+      SESSION_CONFIG,
+    );
+  });
+
+  it("Adjust Start keeps the plan's concept and only changes session config", () => {
+    const { actions } = mount({ home: planned() });
+    fireEvent.click(screen.getByTestId("quiz-adjust"));
+    expect(screen.getByTestId("quiz-adjust-dialog")).toHaveTextContent("Matrices · MATH210");
+    fireEvent.click(within(screen.getByTestId("quiz-adjust-dialog")).getByTestId("quiz-seg-count-4"));
+    fireEvent.click(screen.getByTestId("quiz-adjust-start"));
+    expect(actions.start).toHaveBeenCalledWith(
+      {
+        intent: "practice",
+        scope: { kind: "concept", conceptId: "matrices" },
+        conceptId: "matrices",
+        courseId: "c-math",
+      },
+      { count: 4, difficulty: "gentle", feedback: "at-end" },
+    );
+  });
+
+  it("Start on a planned ?course= queues the course in plan order", () => {
+    // Tier weakest-first for c-cs is tail → recursion → stack → base-cases;
+    // the plan for this course is base-cases first (misconception).
+    const candidates = rankFromPlan(PLAN, NODES, COURSES, []);
+    const { actions } = mount({
+      home: {
+        ...planned(),
+        courseCandidates: candidates.filter(c => c.node.course_id === "c-cs"),
+        cardConceptId: "base-cases",
+      },
+      entry: entry({ course: "c-cs", source: { kind: "dashboard" } }),
+    });
+    fireEvent.click(screen.getByTestId("quiz-start"));
+    expect(actions.start).toHaveBeenCalledWith(
+      {
+        intent: "practice",
+        scope: { kind: "course", courseId: "c-cs", queue: ["base-cases"] },
+        conceptId: "base-cases",
+        courseId: "c-cs",
+      },
+      { ...SESSION_CONFIG, count: QUEUE_COUNT },
+    );
+  });
+
+  it("Adjust Start on a planned due queue keeps overdue-first order", () => {
+    const { actions } = mount({
+      home: planned(),
+      entry: entry({ scope: "due", source: { kind: "dashboard" } }),
+    });
+    fireEvent.click(screen.getByTestId("quiz-adjust"));
+    fireEvent.click(screen.getByTestId("quiz-adjust-start"));
+    expect(actions.start).toHaveBeenCalledWith(
+      {
+        intent: "review",
+        scope: { kind: "due", queue: ["matrices"] },
+        conceptId: "matrices",
+        courseId: "c-math",
+      },
+      { ...SESSION_CONFIG, count: QUEUE_COUNT },
+    );
   });
 
   it("explains nothing on the tier ranking's card", () => {

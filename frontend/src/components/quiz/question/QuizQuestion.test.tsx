@@ -103,6 +103,7 @@ function makeSession(over: Partial<QuizSession> = {}): QuizSession {
     deliveredShort: false,
     sourceAttemptId: null,
     reserved: null,
+    prereq: null,
     ...over,
   };
 }
@@ -258,7 +259,12 @@ describe("QuizQuestion — the question", () => {
       expect(screen.getByTestId(`quiz-answer-option-${label}`)).toBeInTheDocument();
     }
     expect(screen.getByTestId("quiz-progress")).toHaveAttribute("aria-label", "Question 2 of 3");
-    expect(screen.getByText("Recursion · CS101")).toBeInTheDocument();
+    expect(screen.getByTestId("quiz-session-top")).toHaveTextContent("CS101");
+    expect(screen.getByTestId("quiz-session-top")).toHaveTextContent("Recursion");
+    expect(screen.getByTestId("quiz-tier-chip")).toHaveTextContent("Struggling");
+    expect(screen.getByTestId("quiz-session-progress")).toHaveAttribute("aria-label", "Question 2 of 3");
+    expect(screen.getByTestId("quiz-hint-slot")).toBeInTheDocument();
+    expect(screen.getByTestId("quiz-skip-slot")).toBeInTheDocument();
     expect(screen.getByText("MEDIUM")).toBeInTheDocument();
   });
 
@@ -457,6 +463,34 @@ describe("QuizQuestion — stated confidence (learning-loop spec §13 A132)", ()
     expect(screen.queryByTestId("quiz-confidence-clear")).not.toBeInTheDocument();
   });
 
+  /** W7.4: SessionTop chrome must not drop or relocate A132; kit "Certain /
+   *  Unsure" wager stays mapped to CheckCard's Guessing / Fairly sure / Sure. */
+  it("keeps A132 under the answer beside SessionTop (CheckCard levels, no XP wager)", () => {
+    renderScreen(makeSession({ items: [item(0), item(1), item(2)] }), withConfidence(), true);
+
+    const panel = screen.getByTestId("quiz-panel");
+    const top = screen.getByTestId("quiz-session-top");
+    const options = screen.getByTestId("quiz-answer-options");
+    const confidence = screen.getByTestId("quiz-confidence");
+    const feedback = panel.querySelector(".quiz-question__feedback");
+    const actionBar = screen.getByTestId("quiz-action-bar");
+
+    expect(panel).toContainElement(top);
+    expect(panel).toContainElement(confidence);
+    // SessionTop is chrome only — confidence stays in the question body.
+    expect(top.contains(confidence)).toBe(false);
+    expect(actionBar.contains(confidence)).toBe(false);
+    expect(options.compareDocumentPosition(confidence) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(feedback).not.toBeNull();
+    expect(confidence.compareDocumentPosition(feedback!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    // Same labels as CheckCard / ConfidenceControl — not the kit Certain/Unsure wager copy.
+    expect(screen.getByTestId("quiz-confidence-guessing")).toHaveTextContent("Guessing");
+    expect(screen.getByTestId("quiz-confidence-fairly_sure")).toHaveTextContent("Fairly sure");
+    expect(screen.getByTestId("quiz-confidence-sure")).toHaveTextContent("Sure");
+    expect(panel.textContent ?? "").not.toMatch(/\bCertain\b|\bUnsure\b|\+\d+\s*\/\s*[−\-]\d+|wager/i);
+  });
+
   it("shows the current question's level and hands a choice to the hook — no request of its own", () => {
     const actions = withConfidence();
     renderScreen(makeSession({ items: [item(0, { confidence: "fairly_sure" }), item(1), item(2)] }), actions, true);
@@ -609,7 +643,7 @@ describe("QuizQuestion — the verdict", () => {
 
   it("switches the one footer button's label and testid in place", () => {
     const { rerender } = renderScreen(makeSession());
-    expect(screen.getByTestId("quiz-submit-answer")).toHaveTextContent("Submit");
+    expect(screen.getByTestId("quiz-submit-answer")).toHaveTextContent("Check");
     expect(screen.getByTestId("quiz-submit-answer")).toBeDisabled();
     expect(screen.queryByTestId("quiz-next")).toBeNull();
 
@@ -957,6 +991,50 @@ describe("QuizQuestion — each format looks like itself", () => {
         verdict: { isCorrect: true, correctIndex: -1, explanation: "", correctAnswer: "base case" } })] }));
     expect(document.querySelector(".quiz-written__field .quiz-written__status")).toHaveTextContent("Correct");
     expect(screen.getByTestId("quiz-verdict-outcome")).toHaveTextContent("Correct.");
+  });
+
+  it("shows the W7.6 prereq banner with a Learn CTA when generate redirected", () => {
+    renderScreen(makeSession({
+      conceptId: "foundation",
+      prereq: {
+        prereq_id: "foundation",
+        prereq_name: "Foundations",
+        dependent_id: "blocked",
+        dependent_name: "Matrices",
+        course_id: "course-cs101",
+        redirected: true,
+      },
+    }));
+    const banner = screen.getByTestId("quiz-prereq-banner");
+    expect(banner).toHaveAttribute("data-redirected", "true");
+    expect(banner).toHaveTextContent("Starting with Foundations — Matrices needs it first.");
+    expect(screen.getByTestId("quiz-prereq-learn")).toHaveAttribute(
+      "href",
+      "/learn?topic=Foundations&concept=foundation&mode=socratic&course=course-cs101",
+    );
+    // Already posing the prereq — no Quiz CTA that would restart the same quiz.
+    expect(screen.queryByTestId("quiz-prereq-quiz")).toBeNull();
+  });
+
+  it("offers Quiz + Learn on the weak prereq when the banner did not redirect", () => {
+    renderScreen(makeSession({
+      prereq: {
+        prereq_id: "foundation",
+        prereq_name: "Foundations",
+        dependent_id: CONCEPT.id,
+        dependent_name: CONCEPT.name,
+        course_id: "course-cs101",
+        redirected: false,
+      },
+    }));
+    expect(screen.getByTestId("quiz-prereq-banner")).toHaveTextContent(
+      "Foundations isn't solid yet — Recursion builds on it.",
+    );
+    expect(screen.getByTestId("quiz-prereq-quiz")).toHaveAttribute(
+      "href",
+      expect.stringContaining("concept=foundation"),
+    );
+    expect(screen.getByTestId("quiz-prereq-learn")).toBeInTheDocument();
   });
 
 });

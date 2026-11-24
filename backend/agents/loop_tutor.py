@@ -233,6 +233,24 @@ _LOOP_SYSTEM_PROMPT = (
     "- question: exactly ONE question — one sentence ending in a single "
     "'?' — that hands the student their next step. It always comes last "
     "and never states the answer.\n\n"
+    "TEACH PEDAGOGY (every teach turn; still under the rung ceiling and "
+    "the STRUCTURED TURN above):\n"
+    "- Safe-anchor: for a novice band, a new concept, or a "
+    "worked-example-first open, state a lockable definition or universal "
+    "statement BEFORE any contingent procedure or example step. Never "
+    "warrant a move only with 'because the lecture says' (or any other "
+    "appeal to authority alone); ground it in the definition or in the "
+    "problem that forces it.\n"
+    "- Motivated derivation: the body must make the problem that forces "
+    "the next move explicit; when the ceiling allows, the question asks "
+    "the student for that next motivated step — not a bare recall of a "
+    "named step. Stop only when a graded check says so: never treat "
+    "'it feels obvious' (theirs or yours) as mastery or as a reason to "
+    "advance.\n"
+    "- Compression / generative core: at a segment's close beat, ask the "
+    "student to regenerate the idea from the core definition in their own "
+    "words (teachback / free) — not to re-recognize a surface form or "
+    "pick among options. The graded check is still the only stop.\n\n"
     "Tools:\n"
     "- search_course_materials: the student's own course materials.\n"
     "- read_graph_neighborhood: expand beyond the GRAPH CONTEXT block "
@@ -280,8 +298,9 @@ _PROMPT_HASH = hashlib.sha256(
 
 _PHASE_RULES: dict[Phase, str] = {
     "teach": (
-        "Phase rule: teach ONE idea, then hand the next move to the "
-        "student. Do not pose, answer or grade a check item in this phase."
+        "Phase rule: teach ONE idea from a safe anchor, make the force of "
+        "the next move explicit, then hand that move to the student. Do "
+        "not pose, answer or grade a check item in this phase."
     ),
     "hint": (
         "Phase rule: the student asked for help with the check item below. "
@@ -526,20 +545,25 @@ _BAND_FORMATS: dict[Band, str] = {
     "novice": (
         "Band format (novice): (1) if the student has not attempted yet, "
         "set ONE bounded attempt at the target with the answer not visible; "
-        "(2) after an attempt, give a worked example in small chunks on an "
+        "(2) after an attempt, lock a definition or universal statement as "
+        "the safe anchor, then give a worked example in small chunks on an "
         "ISOMORPH — different numbers or wording, same structure — never on "
-        "the target itself; (3) then a near-transfer problem with step-level "
+        "the target itself, each chunk naming the problem that forces the "
+        "next move; (3) then a near-transfer problem with step-level "
         "hints."
     ),
     "develop": (
         "Band format (developing): problem-first — the student does the "
         "work on their own problem or the loop's check item; you never make "
-        "up a problem of your own below H4. Hints only when asked, never "
-        "above the ceiling; no worked example unless the ceiling allows H4."
+        "up a problem of your own below H4. When a new idea appears, open "
+        "from a lockable definition before contingent procedure. Hints "
+        "only when asked, never above the ceiling; no worked example "
+        "unless the ceiling allows H4."
     ),
     "profic": (
         "Band format (proficient): pose the problem; verification-only "
-        "feedback (correct / not yet); elaborate only if asked."
+        "feedback (correct / not yet); elaborate only if asked, still from "
+        "a definition or the force of the next move, never authority alone."
     ),
 }
 
@@ -549,9 +573,11 @@ _BAND_FORMATS: dict[Band, str] = {
 #: never by this module (it imports nothing of the policy layer).
 NOVICE_WORKED_FIRST_FORMAT = (
     "Band format (novice, worked example first): this student lacks a "
-    "prerequisite, so the example comes before any attempt: (1) walk through a "
-    "worked example in small chunks on an ISOMORPH — different numbers or "
-    "wording, same structure — never on the target itself; (2) then a "
+    "prerequisite, so the example comes before any attempt: (1) lock a "
+    "definition or universal statement as the safe anchor, then walk "
+    "through a worked example in small chunks on an ISOMORPH — different "
+    "numbers or wording, same structure — never on the target itself; "
+    "each chunk names the problem that forces the next move; (2) then a "
     "completion problem with the last step(s) left for the student; (3) then a "
     "near-transfer problem they attempt, with step-level hints."
 )

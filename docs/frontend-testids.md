@@ -302,17 +302,21 @@ journeys keep anchoring: `quiz-panel`, `quiz-start`,
 | `quiz-review-due` | "Or review everything due · …" link under the card's Start / Adjust (absent on a due card) |
 | `quiz-pick-list` | the topic list beside the proposal (accessible name "Choose a topic"; groups headed by the course name) — every in-scope concept, grouped by course, weakest first; capped to the proposal's height and scrolled inside; leaves out the concept already on the card unless a search names it |
 | `quiz-pick-{nodeId}` | one concept row in that list — clicking it makes that concept the card (no dialog); the row the old card's concept returns to carries `data-returned` for a moment |
-| `quiz-topic-search` | the search pill in the toolbar above that list — filters by concept name or course code; Escape clears |
-| `quiz-course-all` / `quiz-course-{courseId}` | the course pills in that toolbar (`aria-pressed`); only drawn for 2+ courses |
+| `quiz-topic-search` | the search pill in the toolbar above that list — filters by concept name or course code; Escape clears; List mode only |
+| `quiz-course-all` / `quiz-course-{courseId}` | the course pills in that toolbar (`aria-pressed`); only drawn for 2+ courses; filter List and Map |
+| `quiz-browse` / `quiz-browse-list` / `quiz-browse-map` | List \| Map segmented control on the topics/Map pane (W7.10); Map replaces the topic list with `quiz-launcher-map` |
+| `quiz-launcher-map` | course-scoped full graph in Map mode (`KnowledgeGraph2D`; `graph-*` ids apply); node activate → choose, not start |
+| `quiz-launcher-map-empty` | honest empty copy when the course filter has no nodes (no ghost MATH 151) |
 | `quiz-topic-search-empty` | "No concepts match …" when the search finds nothing |
-| `quiz-neighbourhood` | the live neighbourhood window under the proposal (`KnowledgeGraph2D` inside; its own `graph-*` ids apply) |
+| `quiz-neighbourhood` | the live neighbourhood window under the proposal in List mode (`KnowledgeGraph2D` inside; its own `graph-*` ids apply); hidden in Map mode |
 | `quiz-empty-state` | the home's empty states (`ui/EmptyState`) — no courses, empty tree, or nothing left to propose; they are alternatives, so only one ever mounts |
 | `quiz-home-error` | the home's load-failure card |
 | `quiz-home-retry` | "Retry" inside it |
 | `quiz-adjust-dialog` | "Adjust this quiz" dialog |
 | `quiz-adjust-done` | its "Done" — keeps the settings without starting |
 | `quiz-adjust-start` | its "Start · {count} {difficulty}" — saves and starts in one |
-| `quiz-seg-count` / `quiz-seg-difficulty` / `quiz-seg-feedback` | the three `ui/SegmentedControl`s both dialogs share; each option is `${testid}-${value}` |
+| `quiz-seg-session-mode` / `quiz-seg-count` / `quiz-seg-difficulty` / `quiz-seg-feedback` | the `ui/SegmentedControl`s both dialogs share (Mode = Practice / Exam Twin, W7.8); each option is `${testid}-${value}` |
+| `quiz-exam-twin-note` | Adjust / Settings note when Mode is Exam Twin (score-only, no Ask) |
 | `quiz-generating` | the skeleton question screen while a quiz is being written |
 | `quiz-cancel-generate` | its "Cancel" — aborts the generation and returns to quiz home (#760) |
 | `quiz-panel` | question root (`phase: active \| answered`) |
@@ -333,7 +337,16 @@ journeys keep anchoring: `quiz-panel`, `quiz-start`,
 | `quiz-review-verdict` | "Correct." / "Not quite." banner |
 | `quiz-flag` | "This question is confusing" (toggles, `aria-pressed`; persists nothing) |
 | `quiz-ask` | "Ask about this" — opens the tutor sheet |
-| `quiz-leave` | "Leave" |
+| `quiz-leave` | "Leave" (W7.1 session top uses this as the X control) |
+| `quiz-session-top` | W7.1: 64px focus-session top bar (course/topic, N-of-M, leave) |
+| `quiz-session-progress` | W7.1: “Question N of M” + progress in `quiz-session-top` |
+| `quiz-hint-slot` | W7.5: Hint control — disabled (no leak-safe quiz hint API); honest `title` |
+| `quiz-skip-slot` | W7.5: Skip — enabled when `GO_TO` ahead is allowed (no mastery until answered); else disabled with reason in `title` |
+| `quiz-guide-slot` | W7.5: opens the leak-safe study-guide drawer scaffold |
+| `quiz-guide-drawer` / `quiz-guide-drawer-close` | W7.5: study-guide `Sheet` (cards + concept Ask; no answer key) |
+| `quiz-guide-open-home` / `quiz-guide-list` / `quiz-guide-card-{id}` / `quiz-guide-empty` | W7.5: drawer guide links (list cards only, never detail keys) |
+| `quiz-guide-ask-input` / `quiz-guide-ask-send` / `quiz-guide-ask-retry` | W7.5: concept Ask in the drawer (`guide_ask`; no quiz seed) |
+| `quiz-tier-chip` | W7.1: mastery tier chip in the question meta row |
 | `quiz-cancel-submit` | "Cancel" in place of Leave while scoring (`phase: submitting`) — aborts the submit and returns to the final verdict (#760) |
 | `quiz-leave-dialog` / `quiz-leave-cancel` / `quiz-leave-confirm` | the leave confirmation |
 | `quiz-ask-panel` | the tutor sheet (`ui/Sheet`) |
@@ -353,8 +366,10 @@ journeys keep anchoring: `quiz-panel`, `quiz-start`,
 | `quiz-results-change` | one skill meter that moved: "{concept}: rose from B% to A% (still / now {band})" — the quizzed concept and the prerequisites and dependents its answers reached |
 | `quiz-results-no-change` | the line shown instead when no meter moved |
 | `quiz-results-due` | how many concepts are due for review, and when this concept comes back |
-| `quiz-next-step-review` | "Review what's due ({n})" — Study's review queue; only when the server's next step is review and the learning loop is on for the student |
-| `quiz-next-step-learn` | "Practise {concept} in Learn" — the weakest concept the student is ready for, a deep link that opens a Learn session on it |
+| `quiz-learning-next` | the "Next:" CTA row inside the learning block (W7.7) — Study review / Learn / Tree links that survive the matching `hide_*` flags |
+| `quiz-next-step-review` | "Due on Study ({n})" — Study hub (`studyHref` / W3.4); only when the server's next step is review and the learning loop is on; omitted while `hide_study` |
+| `quiz-next-step-learn` | "Continue learning: {concept}" — Tutor deep link on the weakest ready concept; omitted while `hide_tutor` |
+| `quiz-next-step-tree` | "See on your map" — Tree on the quizzed concept; omitted while `hide_tree` |
 | `quiz-missed-list` | the "to look at" section |
 | `quiz-missed-{questionId}` | one missed item |
 | `quiz-missed-explain-{questionId}` | its "Show explanation" disclosure |
@@ -368,6 +383,8 @@ journeys keep anchoring: `quiz-panel`, `quiz-start`,
 | `quiz-error-retry` / `quiz-error-back` | its "Try again" and "Back" |
 | `tree-node-recent-quizzes` | the tree node panel's "Recent quizzes" block (`screens/Tree.tsx`) |
 | `tree-node-recent-quiz-{attemptId}` | one row in it, suffixed with the attempt's `quiz_id` per the stable-domain-id rule |
+| `tree-node-actions` | W8.2: Teach / Quiz / Cards / Guide action menu on the selected node panel |
+| `tree-node-action-teach` / `tree-node-action-quiz` / `tree-node-action-cards` / `tree-node-action-guide` | one action link; Cards/Guide only when `learning_loop` is on and Study is shown |
 
 The last three carry another surface's prefix because they render in that
 surface's file. They are listed here because they are quiz entry points, and a
@@ -838,6 +855,11 @@ Added with the upload → SSE → library journey (#387).
 | `library-detail-close` | detail panel × close |
 | `library-detail-scan` | detail panel "Scan" / "Re-scan" concept-scan button |
 | `library-detail-delete` | detail panel "Delete document" (click-twice confirm) |
+| `library-next` | W8.1: Tree / Quiz CTA block on the document detail panel (`library/LibraryNextCtas.tsx`) |
+| `library-next-status` | drafting/ready status line inside `library-next` (loop on) |
+| `library-next-tree` / `library-next-quiz` | Open Tree / Quiz these concepts links |
+| `upload-next` | same CTA block on upload success (`DocumentUploadModal`; `testIdPrefix="upload-next"`) |
+| `upload-next-status` / `upload-next-tree` / `upload-next-quiz` | upload-success twins of the library-next ids |
 | `library-concepts-toggle-all` | detail panel "Expand all" / "Collapse all" |
 | `library-concept-toggle-{idx}` | one concept accordion toggle (render index) |
 | `library-load-error` | load-failure notice (#769): the full error state when nothing has loaded, or an inline banner over the last-loaded list |
@@ -881,7 +903,8 @@ content carries (`s1`, `s1-i2`, ...); a block's id is its item id.
 | `guide-step-next-{blockId}` | a worked example's "Show first step" / "Show next step" |
 | `guide-step-reset-{blockId}` | a worked example's "Start over" |
 | `guide-concept-{blockId}-{idx}` | one concept-map tile (render index; `aria-pressed` while its tutor prompts are open) |
-| `guide-concept-prompt-{blockId}-{idx}` | one tutor prompt for the selected tile (render index: 0 simpler, 1 example, 2 quiz me) |
+| `guide-concept-quiz-{blockId}` | "Quiz this concept" deep link (`topic` + `start=1`, return to the guide; absent under `hide_quiz`) |
+| `guide-concept-prompt-{blockId}-{idx}` | one tutor Ask prompt for the selected tile (render index: 0 simpler, 1 example — Quiz is the tool link above) |
 | `guide-concept-close-{blockId}` | closes the tutor prompts |
 | `guide-check-option-{blockId}-{optionId}` | one answer of a check-yourself question (`optionId` is `a`..`d`; `aria-checked` on the picked one, right or wrong) |
 | `guide-check-result-{blockId}` | the result line after an answer: correct or not, the explanation, and the mastery change when there was one |
@@ -1008,7 +1031,7 @@ The delayed retention check (spec §13 A112, A126) on Study. Owner:
 | `retention-course-fallback` | the note that a deep-linked course (`?retention-course=`) is not one of the student's, so the first course shows instead |
 | `retention-open` | "Open eligible retention checks" — the only control that poses one |
 | `retention-budget-paused` | the budget pause banner (#866 K13): `/posttest/start` or `/posttest/answer` answered 429 `ai budget reached` ("AI checks are paused until <time>. Nothing was recorded; try again then."); `role="status"`, `data-reset-at`, `data-session-capped` |
-| `retention-empty` / `retention-finished` | no eligible check is open for the course / the opened set is done |
+| `retention-empty` / `retention-finished` | no eligible check is open for the course / the opened set is done; W3.4 cross-links `retention-study-link` / `retention-tutor-link` (and `retention-finished-{study\|tutor}-link`) when Study / Tutor are visible |
 | `retention-skipped` | "That question is no longer available, so it was skipped." — a 404 on an answer |
 | `retention-item` | the question on screen |
 | `retention-answer` / `retention-reason` | the free answer textarea / an `mc_reason` question's reason |
@@ -1049,7 +1072,9 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `tutor-phase-stepper` | the first row of the conversation column (`learn/tutor/PhaseStepper.tsx`): the ordered Check-in · Plan · Learn · Wrap-up list (`<ol aria-label="Session progress">`); each `li` has `data-state` = done / current / todo and the current one has `aria-current="step"` |
 | `tutor-turn` | a `ChatPanel` tutor turn drawn on the page (`turnStyle="page"`, `PageTurn`: the tutor's mark and name over the text, no bubble); `data-visually-hidden` while unpainted |
 | `tutor-session-map` | the session panel's knowledge map (`learn/tutor/SessionMap.tsx`): fixed mastery colours, no zoom buttons; it frames its nodes until the student zooms or pans it, and re-frames on a double-click or a new node set |
-| `tutor-map-key` | the map's key under it: a list of the four mastery tiers, in the colours the map paints with |
+| `tutor-map-key` | the map's key under it: four mastery tier swatches plus the W3.2 “Practiced” outline row |
+| `tutor-map-key-practiced` | legend row: solid outline = practiced this session (orthogonal to mastery fill) |
+| `tutor-map-practiced-{nodeId}` | solid practiced outline on a concept in the session map (`KnowledgeGraph2D`) |
 | `tutor-map-error` | in place of the session panel's map when the knowledge map failed to load: "Couldn't load …" with Try again (#866 Z63) |
 | `tutor-panel-due-count` | the session panel's count of reviews due (`GET /review/summary`: flashcards plus checks, all courses); absent while `hide_study` hides Study |
 | `tutor-drawer` / `tutor-drawer-scrim` | on a phone, the sidebar or session panel as a modal drawer (`learn/tutor/TutorDrawer.tsx`, `role="dialog"`, `aria-modal`) and its scrim (a click closes it) |
@@ -1076,7 +1101,7 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `loop-budget-study-link` | link to `/study?mode=cards` inside the banner |
 | `loop-no-check-items` | "No check items for this course yet" (A23) |
 | `loop-tree-link` | link to `/tree` (`?node=<id>` once a `learner_state` event names the concept): the session panel's "Open map", or "Map" in the TopBar on a phone; absent while `hide_tree` hides the Tree |
-| `loop-rail` | the session panel, "Today's session" (wide screens only): the plan (the approved one from `/status` after a reload), a skill meter per concept, due review (`tutor-panel-review`) and the knowledge map; the tree link sits in the TopBar on narrow screens |
+| `loop-rail` | the session panel, "Today's session" (wide screens only): the plan (the approved one from `/status` after a reload), optional `session-plan-deps` when kept `prereq_edges` are non-empty, a skill meter per concept, due review (`tutor-panel-review`) and the knowledge map; the tree link sits in the TopBar on narrow screens |
 | `loop-verdict` | wireframe T9: the graded check's verdict over the feedback; `data-verdict` = correct / not_yet / idk; a not_yet names the next concept ("Next up: …") when the grade moved the plan on. On a correct verdict `data-credit` = `full` / `partial` / `none`, the weight the answer's evidence was journaled at (#866 K07; absent from an older server); a partial one names what reduced it (the response's `credit_reasons`: a hint, a same-session re-check, a low-confidence grade, a multi-concept item) |
 | `loop-close-new-session` | the wrap-up's "Start a new session" (to the Tutor home) |
 | `tutor-attach` | the composer's "+" next to Send: opens the Library to add material |
@@ -1099,6 +1124,10 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `loop-plan-kind-{nodeId}` | that concept's kind badge (`learn/planLabels.ts::planKind`, from GET /plan `kind`: review / new / started / sibling); the session panel shows the same label under the concept's name |
 | `loop-plan-reason-{nodeId}` | why a goal session plans it (`planGoalReason`: `goal` / `prerequisite`); absent outside a goal session |
 | `loop-plan-retry` | the plan failed to load — retry (`GET /plan`) |
+| `loop-plan-deps` | W3.1: PlanPanel compact “How these connect” under the numbered plan; present only when GET /plan `prereq_edges` is non-empty |
+| `loop-plan-dep-{prereqId}-{dependentId}` | one prerequisite → dependent line in `loop-plan-deps` (concept names from the plan / names map) |
+| `session-plan-deps` | W3.1b: SessionPanel twin of `loop-plan-deps` (same `PlanDeps` markup, `session-plan` prefix); under the rail’s Plan list when LoopLearn’s kept `prereq_edges` is non-empty; omitted when empty or while phase is `plan` (rail plan is hidden) |
+| `session-plan-dep-{prereqId}-{dependentId}` | one prerequisite → dependent line in `session-plan-deps` (same name resolution as PlanPanel) |
 | `loop-plan-approve` | approve the plan (`/plan/approve`, the proposed ids in order) |
 | `loop-messages` | the teach/check/feedback chat container (wraps `ChatPanel`) |
 | `loop-teach-start` | "Start with <first plan concept>" — sends that as the first chat turn (shown until the student has chatted) |
@@ -1135,7 +1164,8 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `loop-self-explain-send` | "Send": posts `/self-explain` with the reply — stored for diagnosis only, never graded |
 | `loop-self-explain-skip` | "Skip": posts `/self-explain` with `skip: true` |
 | `loop-self-explain-saved` | "Saved — thanks." in a polite live region that is always on the page (cleared by the next turn) |
-| `loop-continue` | "Continue" after feedback — sends the next chat turn |
+| `loop-continue` | "Continue" after feedback — sends the next chat turn; disabled while `loop-feedback-dwell` is showing (W2.5 hypercorrection) |
+| `loop-feedback-dwell` | W2.5 status line while Continue / probe Next / review Next waits after a high-confidence wrong (`feedback_dwell_ms` from the grade) |
 | `loop-rating` | PKG-14: the perceived-difficulty prompt, shown when a graded check's `done` carries `ask_rating` (every `ZPD_RATING_EVERY_N_CHECKS` checks); hidden after one click |
 | `loop-rating-{too_easy,appropriate,too_hard}` | its three buttons — `POST /api/learn/loop/rating` |
 | `loop-close-button` | end the session (`/close`; teach/check/feedback only) |
@@ -1148,7 +1178,13 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `loop-close-rating-send` | sends the rating, chips and note as ONE session feedback row |
 | `loop-close-rating-sent` | the thanks line once the feedback is sent |
 | `loop-close-done` | the closed state ("Session closed." + a link to the review queue); also a session found closed elsewhere (a 409 `this session is closed`) whose stored close could not be read |
-| `loop-close-study-link` | the "Review what's due" link inside `loop-close-done` (`/study?mode=cards`) |
+| `loop-close-study-link` | W3.4 "Due on Study" inside `loop-close-done` (`/study?course=` when known); omitted while `hide_study` |
+| `loop-close-practice-link` | W3.3b "Practice what's due" → Quiz on lead due id (or course+`start=1`); omitted while `hide_quiz` or `hide_study` |
+| `loop-close-quiz-link` | W3.4 "Quiz this concept" on a wrap-up concept that went down (else the first); omitted while `hide_quiz` or with no concept id |
+| `loop-close-tree-link` | W3.4 "See on your map" (`/tree?course=`); omitted while `hide_tree` |
+| `loop-practice-study-link` / `loop-practice-quiz-link` | practice-unavailable notice → Due on Study / Quiz this concept |
+| `due-reviews-quiz` | Study Hub Due Reviews secondary CTA; label "Practice what's due" (W3.3b); omitted while `hide_quiz` / flags off |
+| `focus-learn` | Study Hub Focus "Continue in Tutor"; omitted while `hide_tutor` |
 
 `loop-hint-offer` was removed in the PKG-13 fix round: PKG-07 sends `hint_offer`
 on the FEEDBACK turn, after the item closed, so the affordance (inside the check
@@ -1224,6 +1260,8 @@ no analytics).
 | testid | element |
 | --- | --- |
 | `settings-tab-${tab}` | the tab rail buttons — `tab` is the fixed tab key: `profile` / `cosmetics` / `preferences` / `notifications` / `data` |
+| `settings-quiz-prefs` | Preferences → Quiz block (Length / Difficulty / Answers / Format ↔ `lib/quiz/prefs.ts`; absent under `hide_quiz`) |
+| `settings-quiz-length` / `settings-quiz-difficulty` / `settings-quiz-answers` / `settings-quiz-format` | CustomSelect triggers for those rows (`-option-<value>` on each open option) |
 | `settings-analytics` | the Data tab's "Product analytics" card root (its description lists everything PostHog receives: pageviews, product events, AI-generation records, server error reports — all keyed to the Sapling account ID) |
 | `settings-analytics-toggle` | its switch (the shared `Toggle`: `role="switch"` + `aria-checked`) — shows and PATCHes the account's `analytics_opt_out`, which governs both the browser's pageviews and the backend's PostHog mirror (opt-out stops capture first, opt-in saves first). Usable whenever the account answer has loaded — also in a build that sends no pageviews (no key, local mode, the E2E/test build), with the `product_analytics` flag off, and under Do Not Track / GPC. **Disabled** only until that answer has loaded (or after a failed read) and while a save is in flight |
 | `settings-analytics-note` | the status line under it ("Loading your saved setting…" / "We couldn't load your saved setting…" / "No choice is saved to your account yet…" / "On — saved to your account…" (+ DNT/GPC or "Page views couldn't start in this browser…" variants) / "Off — saved to your account…" / "Off in this browser for this visit only…") |

@@ -174,11 +174,15 @@ async def get_attempt(attempt_id: str, request: Request):
             code=QuizErrorCode.QUIZ_ATTEMPT_NOT_RESUMABLE,
             message="This quiz can't be resumed. Start a new one.",
         )
+    from learning import quiz_session_mode
+
     return {
         "quiz_id": attempt["id"],
         "status": status,
         "resumable": resumable,
         "difficulty": attempt.get("difficulty"),
+        # W7.8: resume keeps Practice / Exam Twin framing (Ask hide, results).
+        "session_mode": quiz_session_mode.parse(attempt.get("session_mode")),
         "concept_node_id": attempt.get("concept_node_id"),
         "questions": _strip_answer_key(questions) if resumable else [],
         "responses": responses,

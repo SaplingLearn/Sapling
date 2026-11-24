@@ -10,9 +10,11 @@
  *   quiz history ....... listAttempts                        useStudyRecords
  *   study guides ....... listGuides                          useStudyRecords
  *   daily minutes/goal . getStudyDaily / setStudyDailyGoal   useStudyRecords
+ *   learner-next ....... getStudyNext (W8.3, flag-gated)     useStudyNext
  *   course outline ..... getTopicChecklist (+ refresh)       useCourseOutline
  */
 import React from "react";
+import { useFlag } from "@/context/FlagsContext";
 import {
   getAllAssignments,
   getFlashcards,
@@ -20,9 +22,10 @@ import {
   type Assignment,
 } from "@/lib/api";
 import { humanizeError } from "@/lib/errorMessage";
+import { LEARNING_LOOP_FLAG } from "@/lib/learningLoopFlag";
 import { listAttempts } from "@/lib/quiz/api";
 import type { AttemptSummary } from "@/lib/quiz/types";
-import { getStudyDaily, setStudyDailyGoal, type StudyDaily } from "@/lib/studyApi";
+import { getStudyDaily, getStudyNext, setStudyDailyGoal, type StudyDaily, type StudyNext } from "@/lib/studyApi";
 import { listGuides } from "@/lib/studyGuide/api";
 import type { GuideCard } from "@/lib/studyGuide/types";
 import { getTopicChecklist, refreshTopicChecklist, type ChecklistTopic } from "@/lib/topicChecklistApi";
@@ -247,4 +250,37 @@ export function useCourseOutline(
   // another key is not shown: the course in hand has none yet.
   const ready = key !== "" && shown.key === key;
   return { outline: ready ? shown.topics : NO_OUTLINE.topics, ready, reload };
+}
+
+/**
+ * W8.3: learner-next for Hub Focus / Quick Reviews. Asked only when both
+ * `learning_loop` and `quiz_concept_plan` are on (same sibling gate as the
+ * quiz home). `null` while flags are off, still loading, or the read failed —
+ * the hub keeps its graph-tier ranking.
+ */
+export function useStudyNext(userId: string, courseId: string): StudyNext | null {
+  const loopOn = useFlag(LEARNING_LOOP_FLAG) === "on";
+  const planOn = useFlag("quiz_concept_plan") === "on";
+  const enabled = loopOn && planOn;
+  const [next, setNext] = React.useState<StudyNext | null>(null);
+
+  React.useEffect(() => {
+    if (!userId || !courseId || !enabled) {
+      setNext(null);
+      return;
+    }
+    let live = true;
+    // Drop the previous course's buckets until this read settles.
+    setNext(null);
+    getStudyNext(userId, courseId)
+      .then(r => { if (live) setNext(r); })
+      .catch(err => {
+        if (!live) return;
+        console.error("study next load failed", err);
+        setNext(null);
+      });
+    return () => { live = false; };
+  }, [userId, courseId, enabled]);
+
+  return enabled ? next : null;
 }

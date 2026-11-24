@@ -344,4 +344,38 @@ describe("QuizScreen — the stated confidence follows the learning loop (#866 K
     await openFirstQuestion();
     expect(await screen.findByTestId("quiz-confidence")).toBeTruthy();
   });
+
+  it("W7.4: SessionTop and A132 confidence coexist when the loop is on", async () => {
+    coreApi.getLoopStatus.mockResolvedValue({ active: true });
+    await openFirstQuestion();
+    const top = await screen.findByTestId("quiz-session-top");
+    const confidence = await screen.findByTestId("quiz-confidence");
+    expect(document.querySelector("[data-quiz-session]")).not.toBeNull();
+    expect(top.contains(confidence)).toBe(false);
+    expect(screen.getByTestId("quiz-panel")).toContainElement(confidence);
+  });
+});
+
+describe("QuizScreen — W7.1 focus session chrome", () => {
+  it("marks the live attempt for nav hide and mounts session top, not the page TopBar", async () => {
+    render(
+      <ToastProvider>
+        <QuizScreen />
+      </ToastProvider>,
+    );
+    // Home keeps the ordinary page chrome.
+    expect(await screen.findByTestId("quiz-home", undefined, { timeout: 3000 })).toBeTruthy();
+    expect(document.querySelector("[data-quiz-session]")).toBeNull();
+    expect(screen.getByRole("heading", { name: "Quiz" })).toBeInTheDocument();
+
+    await act(async () => {
+      screen.getByTestId("quiz-start").click();
+    });
+    await screen.findByTestId("quiz-answer-option-A", undefined, { timeout: 3000 });
+
+    expect(document.querySelector("[data-quiz-session]")).not.toBeNull();
+    expect(screen.getByTestId("quiz-session-top")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Quiz" })).toBeNull();
+    expect(screen.getByTestId("quiz-leave")).toHaveAttribute("aria-label", "Leave session");
+  });
 });

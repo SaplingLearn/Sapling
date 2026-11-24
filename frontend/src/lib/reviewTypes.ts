@@ -70,6 +70,8 @@ export interface ReviewAnswerResponse extends WithCrisisSupport {
   // A33: the answer read as instructions to the grader — ask for it in the
   // student's own words (nothing was recorded; the item stays answerable)
   refused: boolean;
+  /** W2.5: ms Next must wait after high-confidence wrong feedback (present only then). */
+  feedback_dwell_ms?: number;
 }
 export interface ReviewSummaryResponse {
   due: { flashcard: number; check: number };

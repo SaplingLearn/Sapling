@@ -10,6 +10,7 @@ import { useGraphSize } from "../graph/useGraphSize";
 import { CoursesKey, courseProgressFor, type CourseProgressEntry } from "../graph/CoursesKey";
 import { ManageCoursesModal } from "../ManageCoursesModal";
 import { DashboardSkeleton } from "../Skeleton";
+import { useFlag } from "@/context/FlagsContext";
 import { useUser } from "@/context/UserContext";
 import { retentionHref } from "@/context/RetentionDueContext";
 import { useRetentionNavDue } from "../useRetentionNav";
@@ -29,6 +30,9 @@ import {
   type Session,
   type Assignment,
 } from "@/lib/api";
+import { LEARNING_LOOP_FLAG } from "@/lib/learningLoopFlag";
+import { recommendationsFromNext } from "@/lib/learnerNext";
+import { getStudyNext } from "@/lib/studyApi";
 import type { GraphNode as ApiNode, GraphEdge as ApiEdge } from "@/lib/types";
 import { apiToGraphNode, learnHrefForNode, type GraphNode, type GraphEdge } from "@/lib/data";
 import { IS_TEST_MODE, now } from "@/lib/testMode";
@@ -223,7 +227,29 @@ function getWeekDays(today: Date) {
 
 type Navigate = (href: string) => void;
 
-function fetchDashboard(userId: string, activeSemester: string) {
+/** W8.7: Learn-next from learner_next when both loop + plan flags are on;
+ *  otherwise the graph mastery-tier recommendations (flag-off path). */
+async function fetchLearnNext(
+  userId: string,
+  activeSemester: string,
+  useLearnerNext: boolean,
+): Promise<Recommendation[]> {
+  if (useLearnerNext) {
+    try {
+      return recommendationsFromNext(await getStudyNext(userId));
+    } catch {
+      return [];
+    }
+  }
+  try {
+    const r = await getRecommendations(userId, activeSemester || undefined);
+    return r.recommendations || [];
+  } catch {
+    return [];
+  }
+}
+
+function fetchDashboard(userId: string, activeSemester: string, useLearnerNext: boolean) {
   // Empty `activeSemester` means "All semesters" — the DEFAULT — so the
   // fetch goes out unscoped. Scoping is opt-in: it only applies once the
   // user picks a term in the Courses & Semesters hub (nothing auto-resolves
@@ -234,7 +260,7 @@ function fetchDashboard(userId: string, activeSemester: string) {
     getCourses(userId),
     getUpcomingAssignments(userId),
     getSessions(userId, 10),
-    getRecommendations(userId, activeSemester || undefined).catch(() => ({ recommendations: [] })),
+    fetchLearnNext(userId, activeSemester, useLearnerNext),
   ]);
 }
 
@@ -253,7 +279,7 @@ type DashboardSetters = {
 
 /** Writes one load's replies into state, in the order load() always has. */
 function applyDashboardResult(
-  [graphRes, coursesRes, assignsRes, sessionsRes, recsRes]: DashboardFetch,
+  [graphRes, coursesRes, assignsRes, sessionsRes, recommendations]: DashboardFetch,
   set: DashboardSetters,
 ) {
   const cs = coursesRes.courses || [];
@@ -267,7 +293,7 @@ function applyDashboardResult(
   // so the urgency chips can never compute from new Date(null) (1970).
   set.setAssignments((assignsRes.assignments || []).filter(hasDueDate));
   set.setSessions(sessionsRes.sessions || []);
-  set.setRecommendations(recsRes.recommendations || []);
+  set.setRecommendations(recommendations);
   set.setActiveDays(activeDaysFrom(gNodes));
 }
 
@@ -281,6 +307,9 @@ function useDashboardData({
   activeSemester: string;
   semesterHydrated: boolean;
 }) {
+  // Same sibling gate as Study Hub Focus / GET /api/study/{id}/next (W8.3).
+  const useLearnerNext =
+    useFlag(LEARNING_LOOP_FLAG) === "on" && useFlag("quiz_concept_plan") === "on";
   const [nodes, setNodes] = React.useState<GraphNode[]>([]);
   const [edges, setEdges] = React.useState<GraphEdge[]>([]);
   const [stats, setStats] = React.useState<DashboardStats>({
@@ -314,7 +343,7 @@ function useDashboardData({
     setLoading(true);
     setLoadError(null);
     try {
-      const res = await fetchDashboard(userId, activeSemester);
+      const res = await fetchDashboard(userId, activeSemester, useLearnerNext);
       if (!run.isCurrent()) return;
       applyDashboardResult(res, {
         setCourses, setNodes, setEdges, setStats, setAssignments, setSessions, setRecommendations, setActiveDays,
@@ -326,7 +355,7 @@ function useDashboardData({
     } finally {
       if (run.isCurrent()) setLoading(false);
     }
-  }, [userId, activeSemester, loadReq]);
+  }, [userId, activeSemester, loadReq, useLearnerNext]);
 
   React.useEffect(() => {
     if (!userReady || !userId) return;

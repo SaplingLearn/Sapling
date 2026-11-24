@@ -257,7 +257,9 @@ test("a session: the stepper follows the phase, one label per planned concept, t
   await expect(rail.locator('svg[data-color-mode="mastery"]')).toHaveCount(1);
   await expect(rail.getByTestId("graph-color-toggle")).toHaveCount(0);
   await expect(rail.getByTestId("graph-zoom-controls")).toHaveCount(0);
-  await expect(rail.getByTestId("tutor-map-key").locator("li")).toHaveCount(4);
+  // Four mastery tiers + W3.2 practiced (outline) row.
+  await expect(rail.getByTestId("tutor-map-key").locator("li")).toHaveCount(5);
+  await expect(rail.getByTestId("tutor-map-key-practiced")).toBeVisible();
   await expect
     .poll(async () => {
       const box = (await map.boundingBox())!;

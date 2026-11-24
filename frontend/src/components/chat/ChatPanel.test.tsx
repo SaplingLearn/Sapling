@@ -95,6 +95,26 @@ describe("ChatPanel interrupted-turn treatment (ADR 0020)", () => {
     expect(screen.queryByTestId("tutor-retry")).toBeNull();
   });
 
+  it("W4.3: materialsGrounded paints calm chrome without a cite list", () => {
+    render(
+      <ChatPanel
+        messages={[{ id: "m-g", role: "assistant", content: "From lecture 3.", materialsGrounded: true }]}
+        onSend={noop}
+      />,
+    );
+    expect(screen.getByTestId("loop-materials-grounded").textContent).toBe("Grounded in your materials");
+  });
+
+  it("W4.3: no grounded chrome unless materialsGrounded is set", () => {
+    render(
+      <ChatPanel
+        messages={[{ id: "m-plain", role: "assistant", content: "A general reply." }]}
+        onSend={noop}
+      />,
+    );
+    expect(screen.queryByTestId("loop-materials-grounded")).toBeNull();
+  });
+
   it("omits Retry when no handler is wired (marker still shows)", () => {
     render(<ChatPanel messages={[interruptedMsg()]} onSend={noop} />);
     expect(screen.getByTestId("tutor-interrupted")).toBeTruthy();

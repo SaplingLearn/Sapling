@@ -1,12 +1,48 @@
 "use client";
-import React, { useLayoutEffect, useRef } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import Link from "next/link";
 import type { LoopCloseBaseline, LoopCloseConcept, LoopCloseResponse } from "@/lib/api";
+import { useUser } from "@/context/UserContext";
+import { useFlag } from "@/context/FlagsContext";
+import {
+  closeHandoffCtas,
+  type HandoffVisibility,
+} from "@/lib/learningHandoffs";
+import { getStudyNext } from "@/lib/studyApi";
 import { retentionHref } from "@/context/RetentionDueContext";
 import { CenteredCard } from "./CenteredCard";
 import { modalOpen } from "./modalOpen";
 import { WrapUpRating } from "./WrapUpRating";
 import tutorStyles from "./tutor/tutor.module.css";
+
+/**
+ * W3.3b: learner-next due ids for Practice what's due on wrap-up. Empty while
+ * flags off / unread / failed — closeHandoffCtas then uses course+start.
+ */
+function usePracticeDueIds(courseId: string | null, enabled: boolean): readonly string[] {
+  const { userId } = useUser();
+  const loopOn = useFlag("learning_loop") === "on";
+  const planOn = useFlag("quiz_concept_plan") === "on";
+  const [ids, setIds] = useState<readonly string[]>([]);
+  useEffect(() => {
+    if (!enabled || !courseId || !userId || !loopOn || !planOn) {
+      setIds([]);
+      return;
+    }
+    let live = true;
+    getStudyNext(userId, courseId)
+      .then((r) => {
+        if (live) setIds(r.due.map((c) => c.node_id));
+      })
+      .catch(() => {
+        if (live) setIds([]);
+      });
+    return () => {
+      live = false;
+    };
+  }, [enabled, courseId, userId, loopOn, planOn]);
+  return ids;
+}
 
 /** Spec §13 A117: how one concept reads on the wrap-up. A concept first measured
  *  this session (`check_in` / `teaching`) starts at that measurement — it is a
@@ -32,6 +68,12 @@ export function closeConceptView(c: LoopCloseConcept): {
   const since = baseline === "check_in" ? "the check-in" : "its first check";
   const label = dir === "up" ? `stronger since ${since}` : `lower since ${since} — worth another look`;
   return { baseline, dir, arrow: dir === "up" ? "↑" : "↓", label };
+}
+
+/** Prefer a concept that went down ("worth another look"), else the first. */
+export function closeQuizConceptId(concepts: LoopCloseConcept[]): string | null {
+  const down = concepts.find((c) => closeConceptView(c).dir === "down");
+  return (down ?? concepts[0])?.node_id ?? null;
 }
 
 /** "What moved": each concept's change, or — with nothing measured — what
@@ -81,14 +123,45 @@ function MovedCard({ concepts, names }: { concepts: LoopCloseConcept[]; names: M
   );
 }
 
+function CloseHandoffLinks({
+  courseId,
+  quizConceptId,
+  visibility,
+}: {
+  courseId: string | null;
+  quizConceptId?: string | null;
+  visibility: HandoffVisibility;
+}) {
+  const dueConceptIds = usePracticeDueIds(
+    courseId,
+    visibility.study && visibility.quiz,
+  );
+  const links = closeHandoffCtas({ courseId, quizConceptId, dueConceptIds, visibility });
+  if (links.length === 0) return null;
+  return (
+    <>
+      {links.map((link) => (
+        <Link
+          key={link.testId}
+          data-testid={link.testId}
+          href={link.href}
+          className="btn"
+        >
+          {link.label}
+        </Link>
+      ))}
+    </>
+  );
+}
+
 /**
- * Wireframe T10, the wrap-up (A60). Its links to Study (the reviews and the
- * retention check) show only while Study is visible: with `hide_study` on,
- * NavFeatureGate would send them to the dashboard. "How was that session?" is
- * asked here (`rating`), never after the student has left.
+ * Wireframe T10, the wrap-up (A60). Cross-links to Study / Quiz / Tree use the
+ * W3.4 handoff copy and hide when the matching `hide_*` flag is on
+ * (NavFeatureGate would only send them to the dashboard). "How was that
+ * session?" is asked here (`rating`), never after the student has left.
  */
 export function ClosePanel({
-  close, note, names, courseId, onNew, studyVisible, rating,
+  close, note, names, courseId, onNew, visibility, rating,
 }: {
   /** Wireframe T10: back to the Tutor home to start the next session. */
   onNew?: () => void;
@@ -97,8 +170,8 @@ export function ClosePanel({
   note: string | null;
   names: Map<string, string>;
   courseId: string | null;
-  /** False while the `hide_study` flag hides Study. */
-  studyVisible: boolean;
+  /** hide_study / hide_quiz / hide_tree (and tutor unused here). */
+  visibility: HandoffVisibility;
   /** The session the wrap-up asks to rate (`claimWrapUpAsk`), else null. */
   rating: { sessionId: string; topic?: string } | null;
 }) {
@@ -118,15 +191,14 @@ export function ClosePanel({
     return (
       <CenteredCard testId="loop-close-done">
         <p ref={setFocusTarget} tabIndex={-1} style={{ margin: "0 0 12px", fontSize: 14, color: "var(--text-dim)" }}>{note}</p>
-        {studyVisible && (
-          <Link data-testid="loop-close-study-link" href="/study" style={{ color: "var(--accent)" }}>
-            Review what&apos;s due
-          </Link>
-        )}
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <CloseHandoffLinks courseId={courseId} visibility={visibility} />
+        </div>
       </CenteredCard>
     );
   }
   const rec = close.close;
+  const quizConceptId = closeQuizConceptId(rec.concepts);
   return (
     <div style={{ flex: 1, overflowY: "auto" }}>
       <div className={tutorStyles.col}>
@@ -167,14 +239,14 @@ export function ClosePanel({
           style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", fontSize: 14, color: "var(--text-dim)" }}
         >
           <span style={{ flex: 1, minWidth: 120 }}>Session closed.</span>
-          {studyVisible && courseId && <Link data-testid="loop-close-retention-link" href={retentionHref([courseId])} className="btn">
+          {visibility.study && courseId && <Link data-testid="loop-close-retention-link" href={retentionHref([courseId])} className="btn">
             Check retention after time away
           </Link>}
-          {studyVisible && (
-            <Link data-testid="loop-close-study-link" href="/study" className="btn">
-              Review what&apos;s due
-            </Link>
-          )}
+          <CloseHandoffLinks
+            courseId={courseId}
+            quizConceptId={quizConceptId}
+            visibility={visibility}
+          />
           {onNew && (
             <button type="button" data-testid="loop-close-new-session" className="btn btn--primary" onClick={onNew}>
               Start a new session

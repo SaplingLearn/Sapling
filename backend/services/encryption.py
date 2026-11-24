@@ -316,11 +316,14 @@ def claim_binding(claim: str) -> Binding:
 #: in every table that holds the column (db/backfill_encryption_aad.py
 #: NESTED_HOLDERS) and the account bundle re-keys them (NESTED_ENCRYPTED), so a
 #: new path here is covered by both.
-#: sessions.loop_state carries the student's goal text (ADR 0033) and a step's
-#: or probe's sealed grade checkpoint (ADR 0038), both keyed on the session.
+#: sessions.loop_state carries the student's goal text (ADR 0033), a step's
+#: or probe's sealed grade checkpoint (ADR 0038), and a free/teachback check's
+#: optional reason-before-submit prose (W2.3; never evidence), all keyed on
+#: the session.
 NESTED_CIPHERTEXTS: frozenset[tuple[str, str, str]] = frozenset({
     ("sessions", "loop_state", "goal.text_encrypted"),
     ("sessions", "loop_state", "grade_checkpoint"),
+    ("sessions", "loop_state", "reasoning_encrypted"),
 })
 
 

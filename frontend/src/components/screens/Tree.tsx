@@ -17,11 +17,13 @@ import { CoursesKey, courseProgressFor } from "../graph/CoursesKey";
 import { useToast } from "../ToastProvider";
 import { useConfirm, type ConfirmHandle } from "@/lib/useConfirm";
 import type { GraphNode as ApiNode, GraphEdge as ApiEdge } from "@/lib/types";
-import { apiToGraphNode, learnHrefForNode, type GraphNode, type GraphEdge } from "@/lib/data";
-import { buildQuizHref } from "@/lib/quiz/source";
+import { useFlag } from "@/context/FlagsContext";
+import { apiToGraphNode, type GraphNode, type GraphEdge } from "@/lib/data";
+import { LEARNING_LOOP_FLAG } from "@/lib/learningLoopFlag";
 import { listAttempts } from "@/lib/quiz/api";
 import { relativeStudied } from "@/lib/quiz/relativeTime";
 import type { AttemptSummary } from "@/lib/quiz/types";
+import { treeNodeActions, type TreeNodeAction } from "@/lib/treeNodeActions";
 import { deleteButtonStyle, highlightIdFor, selectedCourseIdOf } from "./treeHelpers";
 
 type Tier = "all" | "mastered" | "learning" | "struggling" | "unexplored";
@@ -68,6 +70,8 @@ export function Tree() {
   // fuzzier twin (a concept NAME) and is untouched by this; they are written by
   // different callers and are not expected together.
   const focusNodeId = search.get("node");
+  // `?course=<id>` — Library W8.1b handoff: centre the map on that course.
+  const focusCourseId = search.get("course");
 
   const [courseFilter, setCourseFilter] = React.useState<string>("all");
   // The "My courses" key and the graph, wired together: hovering a course row
@@ -102,7 +106,11 @@ export function Tree() {
   const [savingConcept, setSavingConcept] = React.useState(false);
 
   const toast = useToast();
-
+  // W8.2: Cards + Guide join Teach/Quiz when the loop is on; hide_* still
+  // suppress destinations the nav already gates.
+  const loopOn = useFlag(LEARNING_LOOP_FLAG) === "on";
+  const quizShown = useFlag("hide_quiz") !== "on";
+  const studyShown = useFlag("hide_study") !== "on";
 
   const load = React.useCallback(async () => {
     if (!userId) return;
@@ -258,6 +266,19 @@ export function Tree() {
     setNewConceptName("");
   };
 
+  // `?course=<id>` focus (W8.1b): same once-per-value rule as `?node=`. An
+  // unknown / unenrolled id is ignored so a stale Library link still lands on
+  // an ordinary tree. Applied after courses load — the key only needs enrollments.
+  const courseFocusApplied = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    if (!focusCourseId || !courses.length) return;
+    if (courseFocusApplied.current === focusCourseId) return;
+    if (!courses.some((c) => c.course_id === focusCourseId)) return;
+    courseFocusApplied.current = focusCourseId;
+    setCourseFilter(focusCourseId);
+    setZoomRequest((r) => ({ courseId: focusCourseId, seq: (r?.seq ?? 0) + 1 }));
+  }, [focusCourseId, courses]);
+
   const filteredNodes = React.useMemo(() => {
     const q = query.trim().toLowerCase();
     return nodes.filter(n => {
@@ -296,33 +317,12 @@ export function Tree() {
     return n?.id;
   }, [suggest, nodes]);
 
-  const onLearn = (n: GraphNode) => router.push(learnHrefForNode(n));
-
-  // Quick quiz (#537 §6). Two things changed from the `?topic=<name>` link this
-  // replaces. First, a concept is addressed by ID: a name is only unique within
-  // a course, so the fuzzy link could seed the wrong node. Second, the link now
-  // carries where it came from, which is what lets every quiz exit come BACK
-  // here — to this node's open panel — instead of the hardcoded `/learn` that
-  // #537 found on every exit.
-  //
-  // Subject-root (course) nodes still have no single topic (the #319 fix), but
-  // "open the bare picker" is no longer the only honest answer: the quiz home
-  // takes an abstract `course` and proposes within it. The root carries that id
-  // directly (`graph_service.py` synthesizes `subject_root__{course_id}` with
-  // `course_id` set); the id is only unpicked as a belt-and-braces fallback.
-  const onQuiz = (n: GraphNode) => {
-    if (n.is_subject_root) {
-      const courseId = n.course_id || n.id.replace(/^subject_root__/, "");
-      router.push(buildQuizHref({ course: courseId }, { kind: "tree", returnTo: "/tree" }));
-      return;
-    }
-    router.push(
-      buildQuizHref(
-        { concept: n.id },
-        { kind: "tree", returnTo: `/tree?node=${encodeURIComponent(n.id)}`, conceptId: n.id },
-      ),
-    );
-  };
+  const nodeActions = React.useMemo(
+    () => (selected
+      ? treeNodeActions(selected, { loopOn, quizShown, studyShown })
+      : []),
+    [selected, loopOn, quizShown, studyShown],
+  );
 
   const del = useConfirm(async () => {
     if (!userId || !selected) return;
@@ -343,9 +343,9 @@ export function Tree() {
       attempts={attempts}
       recentQuizzes={recentQuizzes}
       sessions={sessionsForSelected}
+      actions={nodeActions}
       onClose={() => setSelected(null)}
-      onLearn={onLearn}
-      onQuiz={onQuiz}
+      onAction={(href) => router.push(href)}
       onOpenSession={(id) => router.push(`/learn?resume=${encodeURIComponent(id)}`)}
     />
   );
@@ -595,17 +595,24 @@ function AddConceptControl({
 
 /** The selected node's detail panel: the desktop `<aside>` and the mobile
  *  bottom sheet render the same content. */
+const ACTION_ICON: Record<TreeNodeAction["key"], string> = {
+  teach: "brain",
+  quiz: "bolt",
+  cards: "book",
+  guide: "doc",
+};
+
 function NodeDetailPanel({
-  node, del, attempts, recentQuizzes, sessions, onClose, onLearn, onQuiz, onOpenSession,
+  node, del, attempts, recentQuizzes, sessions, actions, onClose, onAction, onOpenSession,
 }: {
   node: GraphNode;
   del: ConfirmHandle;
   attempts: AttemptSummary[] | null;
   recentQuizzes: AttemptSummary[];
   sessions: Session[];
+  actions: TreeNodeAction[];
   onClose: () => void;
-  onLearn: (n: GraphNode) => void;
-  onQuiz: (n: GraphNode) => void;
+  onAction: (href: string) => void;
   onOpenSession: (sessionId: string) => void;
 }) {
   return (
@@ -622,7 +629,7 @@ function NodeDetailPanel({
           className="btn btn--ghost btn--sm"
           onClick={onClose}
           aria-label="Close detail panel"
-          style={{ flexShrink: 0, marginRight: -6, width: 28, height: 28, padding: 0, justifyContent: "center" }}
+          style={{ flexShrink: 0, marginRight: -6, width: 28, height: 28, padding: 0, placeContent: "center" }}
         >
           <Icon name="x" size={14} />
         </button>
@@ -650,12 +657,30 @@ function NodeDetailPanel({
           {node.last_studied_at ? new Date(node.last_studied_at).toLocaleString() : "never"}
         </div>
       </div>
-      <button className="btn btn--primary" style={{ width: "100%" }} onClick={() => onLearn(node)}>
-        <Icon name="brain" size={14} /> Learn this
-      </button>
-      <button className="btn" style={{ width: "100%", marginTop: 8 }} onClick={() => onQuiz(node)}>
-        <Icon name="bolt" size={14} /> Quick quiz
-      </button>
+      {/* W8.2: one action menu — Teach / Quiz (+ Cards / Guide when the loop is on). */}
+      <nav
+        aria-label={`Study ${node.name}`}
+        data-testid="tree-node-actions"
+        style={{
+          display: "grid",
+          gridTemplateColumns: actions.length > 2 ? "1fr 1fr" : "1fr",
+          gap: 8,
+          marginBottom: 4,
+        }}
+      >
+        {actions.map(ac => (
+          <button
+            key={ac.key}
+            type="button"
+            className={ac.primary ? "btn btn--primary" : "btn"}
+            data-testid={`tree-node-action-${ac.key}`}
+            style={{ width: "100%" }}
+            onClick={() => onAction(ac.href)}
+          >
+            <Icon name={ACTION_ICON[ac.key]} size={14} /> {ac.label}
+          </button>
+        ))}
+      </nav>
       {!node.is_subject_root && (
         <button
           onClick={del.trigger}
@@ -711,7 +736,7 @@ function RecentQuizzes({
       {attempts === null ? (
         <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Loading…</div>
       ) : recentQuizzes.length === 0 ? (
-        // No second CTA here on purpose: "Quick quiz" is a few pixels up
+        // No second CTA here on purpose: the Quiz action is a few pixels up
         // and is the action this empty state would ask for.
         <div style={{ fontSize: 12, color: "var(--text-muted)" }}>No quizzes yet</div>
       ) : (

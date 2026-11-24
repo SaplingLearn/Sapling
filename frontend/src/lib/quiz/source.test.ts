@@ -139,6 +139,19 @@ describe("buildQuizHref", () => {
     expect(buildQuizHref({ attempt: "a-1" }, { kind: "quiz" })).toBe("/quiz?attempt=a-1&from=quiz");
   });
 
+  it("builds a topic (concept name) deep link, behind concept id", () => {
+    expect(
+      buildQuizHref(
+        { topic: "Recursion" },
+        { kind: "link", returnTo: "/study/guide/g1" },
+        { start: true },
+      ),
+    ).toBe("/quiz?topic=Recursion&from=link&return=%2Fstudy%2Fguide%2Fg1&start=1");
+    // concept id wins when both are present
+    expect(buildQuizHref({ concept: "n1", topic: "Recursion" }, { kind: "link" }))
+      .toBe("/quiz?concept=n1&from=link");
+  });
+
   it("refuses to encode an off-origin return", () => {
     const href = buildQuizHref({ concept: "c1" }, { kind: "tree", returnTo: "https://evil.com" });
     expect(href).toBe("/quiz?concept=c1&from=tree");

@@ -1,13 +1,17 @@
 "use client";
 
 import React, { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useRetentionDue } from "@/context/RetentionDueContext";
+import { useFlag } from "@/context/FlagsContext";
+import { useStudyNavShown } from "@/components/useRetentionNav";
 import {
   answerRetentionCheck, budgetPauseOf, markRetentionShown, startRetentionCheck, type EnrolledCourse,
   type LoopBudgetPause, type RetentionItem,
 } from "@/lib/api";
 import { extractErrorDetail } from "@/lib/errorMessage";
 import { useFeedbackHold } from "@/lib/feedbackPacing";
+import { retentionEmptyHandoffCtas } from "@/lib/learningHandoffs";
 import styles from "./LoopLearn.module.css";
 import { useCrisisSupport } from "../safety/CrisisSupportCard";
 import { RetentionPauseBanner, retentionErrorText } from "./retentionPause";
@@ -80,6 +84,12 @@ const STATUS_LINE: React.CSSProperties = { margin: "10px 0 0", fontSize: 13 };
 function RetentionSession({ userId, courseId }: { userId: string; courseId: string }) {
   // docs/safety/crisis-support.md: an answer the crisis screen answered
   const crisis = useCrisisSupport();
+  const studyShown = useStudyNavShown();
+  const tutorShown = useFlag("hide_tutor") !== "on";
+  const emptyHandoffs = retentionEmptyHandoffCtas({
+    courseId: courseId || null,
+    visibility: { study: studyShown, tutor: tutorShown },
+  });
   const [items, setItems] = useState<RetentionItem[] | null>(null);
   const [index, setIndex] = useState(0);
   const [answer, setAnswer] = useState("");
@@ -96,7 +106,7 @@ function RetentionSession({ userId, courseId }: { userId: string; courseId: stri
   const focusNext = useRef<FocusTarget | null>(null);
   const itemRef = useRef<HTMLDivElement>(null);
   const resultRef = useRef<HTMLParagraphElement>(null);
-  const statusRef = useRef<HTMLParagraphElement>(null);
+  const statusRef = useRef<HTMLElement>(null);
   const errorRef = useRef<HTMLParagraphElement>(null);
   const pauseRef = useRef<HTMLDivElement>(null);
   const request = useRef(0);
@@ -207,8 +217,34 @@ function RetentionSession({ userId, courseId }: { userId: string; courseId: stri
       {/* Always in the DOM, so each status line is announced when it appears. */}
       <div aria-live="polite">
         {skipped && <p data-testid="retention-skipped" style={STATUS_LINE}>That question is no longer available, so it was skipped.</p>}
-        {items?.length === 0 && <p ref={statusRef} tabIndex={-1} data-testid="retention-empty" style={STATUS_LINE}>No eligible unseen retention checks are available for this course. Checks open at fixed times after you first study a concept; you may need more time or new check material.</p>}
-        {items && items.length > 0 && !item && <p ref={statusRef} tabIndex={-1} data-testid="retention-finished" style={STATUS_LINE}>This set is finished. A few answers do not establish mastery; keep checking what you retain over time.</p>}
+        {items?.length === 0 && (
+          <div ref={statusRef} tabIndex={-1} data-testid="retention-empty" style={STATUS_LINE}>
+            <p style={{ margin: 0 }}>No eligible unseen retention checks are available for this course. Checks open at fixed times after you first study a concept; you may need more time or new check material.</p>
+            {emptyHandoffs.length > 0 && (
+              <p style={{ margin: "8px 0 0", display: "flex", flexWrap: "wrap", gap: 10 }}>
+                {emptyHandoffs.map((link) => (
+                  <Link key={link.testId} data-testid={link.testId} href={link.href} style={{ color: "var(--accent)", fontWeight: 500 }}>
+                    {link.label}
+                  </Link>
+                ))}
+              </p>
+            )}
+          </div>
+        )}
+        {items && items.length > 0 && !item && (
+          <div ref={statusRef} tabIndex={-1} data-testid="retention-finished" style={STATUS_LINE}>
+            <p style={{ margin: 0 }}>This set is finished. A few answers do not establish mastery; keep checking what you retain over time.</p>
+            {emptyHandoffs.length > 0 && (
+              <p style={{ margin: "8px 0 0", display: "flex", flexWrap: "wrap", gap: 10 }}>
+                {emptyHandoffs.map((link) => (
+                  <Link key={`fin-${link.testId}`} data-testid={`retention-finished-${link.key}-link`} href={link.href} style={{ color: "var(--accent)", fontWeight: 500 }}>
+                    {link.label}
+                  </Link>
+                ))}
+              </p>
+            )}
+          </div>
+        )}
       </div>
     </div>
     {error && <p ref={errorRef} tabIndex={-1} role="alert" style={{ margin: 0, fontSize: 13 }}>{error}</p>}

@@ -10,8 +10,11 @@
  * than one: with a single course it would label the whole column with the
  * obvious.
  *
- * Within a course the order is weakest first, the same order the proposal is
- * ranked by, so the top of the list is what the student most likely wants.
+ * Within a course the order is weakest first by the measure each row shows
+ * (`shownMastery`: the plan's skill meter when `quiz_concept_plan` proposes
+ * the concept, else the graph's mastery) — browse by how far along, while the
+ * proposal card and Start/Adjust queues follow the plan's due → misconception
+ * → ready ranking.
  *
  * Each row is a real `<button>`, and picking it makes that concept the card
  * beside the list rather than starting a quiz:

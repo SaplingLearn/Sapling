@@ -1,25 +1,25 @@
 """The quiz's choices, made by the learner model in code (spec §13 A143,
 A144, A147).
 
-Pure: imports only learning.bkt, learning.fsrs, learning.planner and
+Pure: imports only learning.bkt, learning.learner_next, learning.planner and
 learning.params (all pure), so it is listed in
 tests/test_learning_loop_invariants.py::PURE_MODULES. The service
 (services/quiz_learning.py) reads the student's state and hands it in; the
-quiz route acts on the answers.
+quiz route acts on the answers. Shared Hub / Dashboard buckets live in
+learning.learner_next (W8.6); this module caps them for the quiz home.
 
 Three choices live here, each behind its own flag:
 
 - **Which concepts the quiz proposes** (A143, flag `quiz_concept_plan`):
-  `rank_concepts` orders the student's concepts the way the loop's planner
-  does — due reviews first (FSRS due date passed; the DASH overdue triage of
-  `fsrs.order_due`), then concepts with an open misconception, then the outer
-  fringe (`planner.outer_fringe`: below proficiency, every prerequisite
-  proficient), in the planner's own order. A concept whose prerequisites are
-  not proficient is not proposed (its weakest prerequisite is, in the
-  fringe), and a proficient concept that is not due is left until it is.
-  The response bound (QUIZ_PLAN_MAX_CONCEPTS) applies per course, so a plan
-  over every course never drops one course's concepts because the others
-  filled the list.
+  `rank_concepts` orders via `learner_next` — due reviews first (FSRS due
+  date passed; the DASH overdue triage of `fsrs.order_due`), then concepts
+  with an open misconception, then the outer fringe (`planner.outer_fringe`:
+  below proficiency, every prerequisite proficient), in the planner's own
+  order. A concept whose prerequisites are not proficient is not proposed
+  (its weakest prerequisite is, in the fringe), and a proficient concept
+  that is not due is left until it is. The response bound
+  (QUIZ_PLAN_MAX_CONCEPTS) applies per course, so a plan over every course
+  never drops one course's concepts because the others filled the list.
 - **What each question asks for** (A144, flag `quiz_planned_questions`):
   `question_specs` gives every question its difficulty and at most one
   misconception to target. An explicit difficulty the student asked for is
@@ -31,6 +31,9 @@ Three choices live here, each behind its own flag:
   `skill_changes` lists what moved, in plain words; `next_step` routes the
   student to the review queue when something is due, else to the weakest
   concept they are ready to learn.
+- **Which concept to pose when a pick is blocked** (W7.6, flag
+  `quiz_concept_plan`): `prefer_pose` uses the same fringe readiness cut
+  (`prerequisite_ready` / BKT_PROFICIENT) — not a second planner.
 """
 
 from __future__ import annotations
@@ -41,8 +44,20 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 
-from learning import bkt, fsrs, planner
+from learning import bkt, planner
+from learning.learner_next import (  # noqa: F401 — ConceptState/DUE/… re-exported
+    ConceptState,
+    DUE,
+    MISCONCEPTION,
+    READY,
+    REASONS,
+    learner_next,
+)
+from learning.learner_next import NextConcept as PlannedConcept
+from learning.learner_next import is_due as _due
 from learning.params import (
+    BKT_L0,
+    BKT_PROFICIENT,
     LOOP_CHECK_DIFFICULTY_BY_BAND,
     MISCONCEPTION_KEY_MAX_CHARS,
     QUIZ_DIFFICULTY_NAMES,
@@ -167,39 +182,8 @@ def question_specs(
 
 
 # ── A143: which concepts the quiz proposes ─────────────────────────────────
-
-#: Why a concept is proposed, in proposal order.
-DUE = "due"
-MISCONCEPTION = "misconception"
-READY = "ready"
-REASONS = (DUE, MISCONCEPTION, READY)
-
-
-@dataclass(frozen=True)
-class ConceptState:
-    """One concept of the student's, as the plan reads it."""
-
-    node_id: str
-    p_known: float  # decayed at read
-    fsrs_s: float | None = None
-    fsrs_last_review_at: datetime | None = None
-    fsrs_due_at: datetime | None = None
-    open_misconceptions: int = 0
-    course_id: str | None = None  # the cap's bucket (None: one shared bucket)
-
-
-@dataclass(frozen=True)
-class PlannedConcept:
-    node_id: str
-    reason: str
-    p_known: float
-    band: str
-    due_at: datetime | None
-    open_misconceptions: int
-
-
-def _due(state: ConceptState, now: datetime) -> bool:
-    return state.fsrs_due_at is not None and state.fsrs_due_at <= now
+# ConceptState / DUE / MISCONCEPTION / READY / PlannedConcept (= NextConcept)
+# and the uncapped buckets come from learning.learner_next (W8.6).
 
 
 def rank_concepts(
@@ -211,37 +195,11 @@ def rank_concepts(
     `prereq_edges` are (prerequisite, dependent) pairs among the states'
     nodes. At most QUIZ_PLAN_MAX_CONCEPTS per course (`ConceptState.course_id`;
     states without one share one bucket), each course's own first ones."""
+    nxt = learner_next(states, prereq_edges, now)
     by_id = {s.node_id: s for s in states}
-    due_rows = [
-        {
-            "node_id": s.node_id,
-            "fsrs_s": s.fsrs_s,
-            "fsrs_last_review_at": s.fsrs_last_review_at,
-        }
-        for s in sorted(states, key=lambda s: s.node_id)
-        if _due(s, now)
-    ]
-    order: list[tuple[str, str]] = [(row["node_id"], DUE) for row in fsrs.order_due(due_rows, now)]
-    listed = {node for node, _ in order}
-    for s in sorted(
-        (s for s in states if s.open_misconceptions > 0 and s.node_id not in listed),
-        key=lambda s: (-s.open_misconceptions, s.p_known, s.node_id),
-    ):
-        order.append((s.node_id, MISCONCEPTION))
-        listed.add(s.node_id)
-    fringe = planner.outer_fringe({s.node_id: s.p_known for s in states}, prereq_edges)
-    order.extend((node, READY) for node in fringe if node not in listed)
-    return [
-        PlannedConcept(
-            node_id=node,
-            reason=reason,
-            p_known=by_id[node].p_known,
-            band=bkt.band(by_id[node].p_known),
-            due_at=by_id[node].fsrs_due_at,
-            open_misconceptions=by_id[node].open_misconceptions,
-        )
-        for node, reason in _capped_per_course(order, by_id)
-    ]
+    by_next = {c.node_id: c for c in nxt.ordered}
+    order = [(c.node_id, c.reason) for c in nxt.ordered]
+    return [by_next[node] for node, _reason in _capped_per_course(order, by_id)]
 
 
 def _capped_per_course(
@@ -328,6 +286,40 @@ def weakest_ready(
     if not fringe:
         return None
     return min(fringe, key=lambda n: (p_known[n], n))
+
+
+def prefer_pose(
+    node_id: str,
+    p_known: Mapping[str, float],
+    prereq_edges: Iterable[tuple[str, str]],
+) -> str | None:
+    """W7.6: when `node_id` is not prerequisite-ready, the parent the quiz
+    should pose instead — the weakest direct parent below BKT_PROFICIENT
+    (ties by node id).
+
+    Same fringe story as the home plan: `outer_fringe` / `rank_concepts` never
+    propose a blocked dependent (its weak parent sits on the fringe instead).
+    This is that preference at generate time for a deep-linked or picked
+    concept the plan would not have offered. Empty edges → None (every node
+    is vacuously ready; upload graphs without `upload_prereq_edges` stay
+    inert). A ready concept → None."""
+    states = {n: float(p) for n, p in p_known.items()}
+    if node_id not in states:
+        states[node_id] = BKT_L0
+    edges = [(s, t) for s, t in prereq_edges if s != t]
+    if node_id in planner.prerequisite_ready(states, edges):
+        return None
+    parent_p: dict[str, float] = {}
+    for src, tgt in edges:
+        if tgt != node_id or src not in states:
+            continue
+        prev = parent_p.get(src)
+        if prev is None or states[src] < prev:
+            parent_p[src] = states[src]
+    weak = [n for n, p in parent_p.items() if p < BKT_PROFICIENT]
+    if not weak:
+        return None
+    return min(weak, key=lambda n: (parent_p[n], n))
 
 
 def next_step(

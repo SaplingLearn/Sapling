@@ -60,17 +60,29 @@ class QuizAskTarget:
     course_id: str  # the quiz node's own course (A106: never the client's)
 
 
+_EXAM_TWIN_TOOLS = (
+    "Exam Twin mode is tool-light — Ask about this isn't available on this quiz."
+)
+
+
 def resolve_quiz_ask(user_id: str, attempt_id: str, question_index: int) -> QuizAskTarget:
     """The question's identity and concept from the attempt row the student owns.
     404 for an attempt that is missing, another student's, or has no such
-    question (or a question with no identity); 422 for a concept node with no
-    course (A106); a failed read raises (the route's
-    error mapping makes it a 5xx — never an unrecorded session)."""
+    question (or a question with no identity); 409 when the attempt is Exam
+    Twin (W7.8: tool-light — Ask would floor help and break the dress
+    rehearsal); 422 for a concept node with no course (A106); a failed read
+    raises (the route's error mapping makes it a 5xx — never an unrecorded
+    session)."""
+    from learning import quiz_session_mode
+
     rows = table("quiz_attempts").select(
-        "user_id,concept_node_id,questions_json", filters={"id": f"eq.{attempt_id}"}, limit=1
+        "user_id,concept_node_id,questions_json,session_mode",
+        filters={"id": f"eq.{attempt_id}"}, limit=1,
     )
     if not rows or rows[0].get("user_id") != user_id:
         raise HTTPException(status_code=404, detail=_NOT_FOUND)
+    if not quiz_session_mode.allows_tools(quiz_session_mode.parse(rows[0].get("session_mode"))):
+        raise HTTPException(status_code=409, detail=_EXAM_TWIN_TOOLS)
     questions = decrypt_json_column(
         rows[0].get("questions_json"), bind=bind("quiz_attempts", "questions_json", attempt_id),
     ) or []

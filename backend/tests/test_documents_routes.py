@@ -18,7 +18,7 @@ from fastapi.testclient import TestClient
 from pydantic_ai.exceptions import UsageLimitExceeded, UnexpectedModelBehavior
 
 from main import app
-from tests.db_fakes import fake_table
+from tests.db_fakes import fake_table, with_async_twins
 from tests.split_patches import patch_documents
 from tests.upload_fixtures import docx_bytes, pptx_bytes
 
@@ -200,6 +200,49 @@ class TestListDocuments:
         body = {d["id"]: d for d in r.json()["documents"]}
         assert body["d-good"]["concept_notes"] == [{"name": "Concept A", "description": "d"}]
         assert body["d-bad"]["concept_notes"] == []
+
+    def test_concept_notes_carry_graph_node_ids_when_names_match(self):
+        """W8.1c: list stamps concept_notes.node_id from graph_nodes by
+        (course_id, normalized name) so Library can pass conceptIds into
+        libraryNext. One graph_nodes read; unmatched names stay names-only."""
+        docs = [
+            {
+                "id": "d1", "user_id": "u1", "offering_id": "off-1",
+                "file_name": "a.pdf", "category": "lecture_notes",
+                "concept_notes": [
+                    {"name": "Recursion", "description": "d"},
+                    {"name": "Missing", "description": "x"},
+                ],
+            },
+        ]
+        graph_rows = [
+            {"id": "node-rec", "concept_name": "recursion", "course_id": "course-A"},
+            {"id": "node-other", "concept_name": "Recursion", "course_id": "course-B"},
+        ]
+
+        def tables(name):
+            m = fake_table()
+            if name == "documents":
+                m.select.return_value = docs
+            elif name == "graph_nodes":
+                m.select.return_value = graph_rows
+            else:
+                m.select.return_value = []
+            return m
+
+        with (
+            _mock_validate_user(),
+            patch_documents("table", side_effect=with_async_twins(tables)),
+            patch_documents("offering_course_id", return_value="course-A"),
+        ):
+            r = client.get("/api/documents/user/u1")
+
+        assert r.status_code == 200
+        notes = r.json()["documents"][0]["concept_notes"]
+        assert notes[0] == {
+            "name": "Recursion", "description": "d", "node_id": "node-rec",
+        }
+        assert notes[1] == {"name": "Missing", "description": "x"}
 
 # ── DELETE /api/documents/doc/{document_id} ──────────────────────────────────
 

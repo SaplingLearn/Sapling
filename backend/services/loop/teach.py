@@ -81,6 +81,8 @@ async def start_session(body: StartSessionBody, request: Request):
         out["budget"] = result["budget"]
     if result.get("materials_unavailable"):
         out["materials_unavailable"] = True  # A128: present only when true
+    if result.get("materials_grounded"):
+        out["materials_grounded"] = True  # W4.3: present only when true
     return out
 
 

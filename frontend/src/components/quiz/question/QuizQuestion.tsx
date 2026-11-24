@@ -18,34 +18,46 @@
  * verdict line reserves its height, every answer row reserves the ✓/✕ slot and
  * the 2px selection bar, the flag link is always rendered (R-11), and the
  * footer's primary button is ONE element whose label and testid swap in place
- * (Submit → Next → See results → Scoring…). A quiz that jumps under the cursor
- * between "choose" and "submit" is how you mis-click an answer.
+ * (Check → Next → See results → Scoring…). A quiz that jumps under the cursor
+ * between "choose" and "check" is how you mis-click an answer.
+ *
+ * W7.1 session chrome: SessionTop (leave + course/topic + Question N of M),
+ * concept-pill meta row, and an action bar with Hint / Study guide / Skip
+ * beside Check. W7.D1: Check / progress / pager = brand forest; `--quiz-accent`
+ * is course identity on the concept pill only. No XP in the session top.
+ * W7.5: Hint stays disabled (no leak-safe quiz hint API); Skip wires to GO_TO;
+ * Study guide opens a leak-safe drawer scaffold. No wager.
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { BookOpen, ChevronLeft, ChevronRight, Hash, Library, ListChecks, PenLine, Sigma, Sparkles } from "lucide-react";
-import { AnswerOption, Badge, Button, ProgressDots } from "@/components/ui";
+import { BookOpen, ChevronLeft, ChevronRight, Hash, Library, ListChecks, PenLine, Sigma, Sparkles, X } from "lucide-react";
+import { AnswerOption, Badge, Button, Chip, ProgressDots } from "@/components/ui";
 import { ConceptNode } from "@/components/graph/ConceptNode";
 import { ConfidenceControl } from "@/components/learn/ConfidenceControl";
+import { AIDisclaimerChip } from "@/components/chat/AIDisclaimerChip";
 import { useToast } from "@/components/ToastProvider";
+import { useFlag } from "@/context/FlagsContext";
+import { learnHrefForNode } from "@/lib/data";
 import type { QuizActions } from "@/lib/quiz/useQuizSession";
-import type { Phase, QuestionType, QuizConfig, QuizItem, QuizSession } from "@/lib/quiz/types";
+import { buildQuizHref } from "@/lib/quiz/source";
+import type { Phase, QuestionType, QuizConfig, QuizItem, QuizPrereqBanner, QuizSession } from "@/lib/quiz/types";
 import { isUnanswered } from "@/lib/quiz/machine";
 import { expressionParts, superscriptParts, type ExpressionPart } from "@/lib/quiz/answerFormats";
 import { WrittenAnswer, type WrittenType } from "./WrittenAnswer";
 import { AskPanel } from "./AskPanel";
+import { StudyGuideDrawer } from "./StudyGuideDrawer";
 import { LeaveDialog } from "./LeaveDialog";
 import {
   arrowStep,
   askSeedFor,
   canGoTo,
   canNavigate,
-  conceptLabel,
   correctOption,
   difficultyLabel,
   everyAnswered,
   formatHint,
   generatingDetail,
+  HINT_SLOT_DISABLED,
   itemView,
   missLine,
   nextOptionIndex,
@@ -53,6 +65,7 @@ import {
   optionStatus,
   outcomeOf,
   primaryButton,
+  skipSlotState,
   verdictShown,
   type ItemView,
   type PrimaryAction,
@@ -60,6 +73,15 @@ import {
   type Verdict,
 } from "./questionView";
 import "./question.css";
+
+/** Mastery tier labels already on `QuizConceptSummary` — the meta chip source
+ *  until a skill field exists on the summary. */
+const TIER_CHIP: Record<string, string> = {
+  mastered: "Mastered",
+  learning: "Learning",
+  struggling: "Struggling",
+  unexplored: "Unexplored",
+};
 
 export interface QuizConceptSummary {
   id: string;
@@ -230,18 +252,20 @@ function usePrimary({
 
 interface RootKeyContext {
   askOpen: boolean;
+  guideOpen: boolean;
   phase: Phase;
   primary: Primary;
   selectable: boolean;
   optionCount: number;
   actions: QuizActions;
   confidenceRef: React.RefObject<HTMLDivElement | null>;
+  onOpenGuide: () => void;
 }
 
 /** The sheet and the dialog own the keyboard while they are open — and both
  *  are portals, whose events still bubble through the React tree to here. */
-function keyboardIsElsewhere(e: React.KeyboardEvent, { askOpen, phase }: RootKeyContext): boolean {
-  if (askOpen || phase === "confirm-leave") return true;
+function keyboardIsElsewhere(e: React.KeyboardEvent, { askOpen, guideOpen, phase }: RootKeyContext): boolean {
+  if (askOpen || guideOpen || phase === "confirm-leave") return true;
   if (e.metaKey || e.ctrlKey || e.altKey) return true;
   return isTypingTarget(e.target);
 }
@@ -283,10 +307,87 @@ function handleRootKey(e: React.KeyboardEvent, ctx: RootKeyContext) {
   if (keyboardIsElsewhere(e, ctx) || confidenceOwnsKey(e, ctx)) return;
   if (e.key === "Escape") leaveOnEscape(e, ctx);
   else if (e.key === "Enter") activateOnEnter(e, ctx);
-  else if (ctx.selectable) selectByShortcut(e, ctx);
+  else if (e.key === "g" || e.key === "G") {
+    e.preventDefault();
+    ctx.onOpenGuide();
+  } else if (ctx.selectable) selectByShortcut(e, ctx);
 }
 
 // ── Pieces shared by the generating and the live render ────────────────
+
+/** The way off the screen, per phase: Cancel while generating (#760: a
+ *  generation that never answers must not be a dead end) and while scoring
+ *  (#760: Leave is refused mid-score, since the attempt is live, so this is
+ *  the way off "Scoring…" — back onto the final verdict, from where See
+ *  results and Leave both work again); Leave everywhere else. */
+function exitButtonFor(phase: Phase): { testid: string; label: string; leaves: boolean } {
+  if (phase === "generating") return { testid: "quiz-cancel-generate", label: "Cancel", leaves: false };
+  if (phase === "submitting") return { testid: "quiz-cancel-submit", label: "Cancel", leaves: false };
+  return { testid: "quiz-leave", label: "Leave", leaves: true };
+}
+
+/**
+ * 64px focus-session top bar (W7.1): leave / cancel on the left, course +
+ * topic, centred "Question N of M" with a forest progress fill, disclaimer
+ * on the right. XP and streak stay on results — never in this bar (W7.D1).
+ */
+function SessionTop({
+  phase,
+  actions,
+  concept,
+  position,
+  quizLength,
+}: {
+  phase: Phase;
+  actions: QuizActions;
+  concept: QuizConceptSummary;
+  position: number;
+  quizLength: number;
+}) {
+  const exit = exitButtonFor(phase);
+  const pct = quizLength > 0 ? Math.min(100, Math.max(0, (position / quizLength) * 100)) : 0;
+  return (
+    <header className="quiz-session-top" data-testid="quiz-session-top">
+      <div className="quiz-session-top__start">
+        <button
+          type="button"
+          className="quiz-session-top__leave"
+          data-testid={exit.testid}
+          aria-label={exit.leaves ? "Leave session" : exit.label}
+          onClick={() => (exit.leaves ? actions.requestLeave() : actions.cancel())}
+        >
+          <X size={14} strokeWidth={2} aria-hidden="true" />
+        </button>
+        {concept.courseCode && (
+          <span className="quiz-session-top__course">{concept.courseCode}</span>
+        )}
+        <span className="quiz-session-top__topic">{concept.name}</span>
+      </div>
+      <div
+        className="quiz-session-top__progress"
+        data-testid="quiz-session-progress"
+        role="group"
+        aria-label={`Question ${position} of ${quizLength}`}
+      >
+        <span className="quiz-session-top__count">
+          Question {position} of {quizLength}
+        </span>
+        <div
+          className="quiz-session-top__bar"
+          role="progressbar"
+          aria-valuemin={0}
+          aria-valuenow={position}
+          aria-valuemax={quizLength}
+        >
+          <span className="quiz-session-top__fill" style={{ width: `${pct}%` }} />
+        </div>
+      </div>
+      <div className="quiz-session-top__end">
+        <AIDisclaimerChip />
+      </div>
+    </header>
+  );
+}
 
 function QuestionHeader({
   concept,
@@ -303,18 +404,24 @@ function QuestionHeader({
   // A blank accent would reach `shadeFor` as an unparseable colour and pass
   // straight through; the CSS variable degrades to the app accent instead.
   const accent = concept.color || "var(--quiz-accent, var(--accent))";
+  const tierLabel = TIER_CHIP[concept.tier];
   return (
-    <div className="quiz-question__header">
-      <ConceptNode
-        size={HEADER_DOT}
-        mastery={concept.mastery}
-        tier={concept.tier}
-        courseColor={accent}
-        nodeId={concept.id || concept.name}
-      />
-      <span className="quiz-question__concept">
-        {conceptLabel(concept)}
+    <div className="quiz-question__header" data-testid="quiz-question-meta">
+      <span className="quiz-question__concept-pill">
+        <ConceptNode
+          size={HEADER_DOT}
+          mastery={concept.mastery}
+          tier={concept.tier}
+          courseColor={accent}
+          nodeId={concept.id || concept.name}
+        />
+        <span className="quiz-question__concept">
+          {concept.name}
+        </span>
       </span>
+      {tierLabel && (
+        <Chip data-testid="quiz-tier-chip">{tierLabel}</Chip>
+      )}
       <span className="quiz-question__header-gap" />
       {showFormat && (
         <span className="quiz-question__format" data-testid="quiz-format-tag" data-format={format}>
@@ -323,6 +430,64 @@ function QuestionHeader({
         </span>
       )}
       {difficulty && <Badge bg="var(--bg-soft)">{difficulty}</Badge>}
+    </div>
+  );
+}
+
+/**
+ * W7.6: when generate preferred a weak prerequisite (fringe readiness), say
+ * so and offer Learn / Quiz on that parent. Hide links a nav flag would only
+ * bounce. Twin of Study's gap sentence, not a second planner.
+ */
+function PrereqBanner({ banner }: { banner: QuizPrereqBanner }) {
+  const tutorShown = useFlag("hide_tutor") !== "on";
+  const quizShown = useFlag("hide_quiz") !== "on";
+  const learnHref = tutorShown
+    ? learnHrefForNode({
+      id: banner.prereq_id,
+      name: banner.prereq_name,
+      course_id: banner.course_id ?? "",
+      is_subject_root: false,
+    })
+    : null;
+  // Quiz the prereq when we did NOT already redirect onto it (otherwise the
+  // student is already in that quiz). When redirected, offer the dependent
+  // only as Learn — re-quizzing the blocked concept mid-session fights the
+  // fringe preference.
+  const quizHref = !banner.redirected && quizShown
+    ? buildQuizHref(
+      { concept: banner.prereq_id },
+      { kind: "quiz" },
+      { start: true },
+    )
+    : null;
+  const copy = banner.redirected
+    ? `Starting with ${banner.prereq_name} — ${banner.dependent_name} needs it first.`
+    : `${banner.prereq_name} isn't solid yet — ${banner.dependent_name} builds on it.`;
+  return (
+    <div
+      className="quiz-prereq-banner"
+      role="status"
+      data-testid="quiz-prereq-banner"
+      data-redirected={banner.redirected ? "true" : "false"}
+      data-prereq={banner.prereq_id}
+      data-dependent={banner.dependent_id}
+    >
+      <p className="quiz-prereq-banner__copy">{copy}</p>
+      {(learnHref || quizHref) && (
+        <div className="quiz-prereq-banner__actions">
+          {learnHref && (
+            <a className="btn btn--primary" href={learnHref} data-testid="quiz-prereq-learn">
+              Learn {banner.prereq_name}
+            </a>
+          )}
+          {quizHref && (
+            <a className="btn" href={quizHref} data-testid="quiz-prereq-quiz">
+              Quiz {banner.prereq_name}
+            </a>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -396,46 +561,77 @@ function QuestionPager({
   );
 }
 
-/** The way off the screen, per phase: Cancel while generating (#760: a
- *  generation that never answers must not be a dead end) and while scoring
- *  (#760: Leave is refused mid-score, since the attempt is live, so this is
- *  the way off "Scoring…" — back onto the final verdict, from where See
- *  results and Leave both work again); Leave everywhere else. */
-function exitButtonFor(phase: Phase): { testid: string; label: string; leaves: boolean } {
-  if (phase === "generating") return { testid: "quiz-cancel-generate", label: "Cancel", leaves: false };
-  if (phase === "submitting") return { testid: "quiz-cancel-submit", label: "Cancel", leaves: false };
-  return { testid: "quiz-leave", label: "Leave", leaves: true };
-}
-
+/**
+ * Action bar (W7.1 + W7.5): Hint (disabled, honest reason) · Study guide ·
+ * pager · Skip (GO_TO ahead, no mastery) · Check. No wager.
+ */
 function QuestionFooter({
-  phase,
-  actions,
   pager,
   primary,
+  skip,
+  onSkip,
+  onOpenGuide,
+  guideRef,
 }: {
-  phase: Phase;
-  actions: QuizActions;
   pager: React.ReactNode;
   primary?: Primary;
+  skip: ReturnType<typeof skipSlotState>;
+  onSkip: () => void;
+  onOpenGuide: () => void;
+  guideRef: React.RefObject<HTMLButtonElement | null>;
 }) {
-  const exit = exitButtonFor(phase);
   return (
-    <div className="quiz-question__footer">
-      <Button data-testid={exit.testid} onClick={() => (exit.leaves ? actions.requestLeave() : actions.cancel())}>
-        {exit.label}
-      </Button>
-      {pager}
-      {primary && (
-        <Button
-          variant="primary"
-          data-testid={primary.testid}
-          aria-disabled={!primary.enabled}
-          disabled={!primary.enabled}
-          onClick={primary.activate}
+    <div className="quiz-question__footer" data-testid="quiz-action-bar">
+      <div className="quiz-question__actions-start">
+        <button
+          type="button"
+          className="quiz-question__action-btn"
+          data-testid="quiz-hint-slot"
+          title={HINT_SLOT_DISABLED.title}
+          aria-label="Hint"
+          aria-disabled="true"
+          disabled
         >
-          {primary.label}
-        </Button>
-      )}
+          Hint
+        </button>
+        <button
+          type="button"
+          ref={guideRef}
+          className="quiz-question__action-btn"
+          data-testid="quiz-guide-slot"
+          title="Open study guide (answers stay hidden)"
+          aria-label="Study guide"
+          onClick={onOpenGuide}
+        >
+          Study guide
+        </button>
+      </div>
+      {pager}
+      <div className="quiz-question__actions-end">
+        <button
+          type="button"
+          className="quiz-question__action-btn"
+          data-testid="quiz-skip-slot"
+          title={skip.title}
+          aria-label="Skip"
+          aria-disabled={!skip.enabled}
+          disabled={!skip.enabled}
+          onClick={onSkip}
+        >
+          Skip
+        </button>
+        {primary && (
+          <Button
+            variant="primary"
+            data-testid={primary.testid}
+            aria-disabled={!primary.enabled}
+            disabled={!primary.enabled}
+            onClick={primary.activate}
+          >
+            {primary.label}
+          </Button>
+        )}
+      </div>
     </div>
   );
 }
@@ -685,12 +881,12 @@ function QuestionAside({
   );
 }
 
-/** Learning-loop spec §13 A132: A127's optional "How sure are you?" on every
- *  quiz question, either format, while the learning loop is on for the student
- *  (`askConfidence`, #866 K46). Choosing makes no request — the level rides
- *  this question's `/answer` — and Submit never waits on it. Rendered in every
- *  live phase so nothing moves when the verdict lands; it stops taking changes
- *  once the answer is sent. */
+/** Learning-loop spec §13 A132 / W7.4: A127's optional "How sure are you?" on
+ *  every quiz question (shared `ConfidenceControl` with CheckCard — Guessing /
+ *  Fairly sure / Sure), while the learning loop is on (`askConfidence`, #866
+ *  K46). Kit "Certain / Unsure" wager maps here; no second store, no XP stakes.
+ *  Choosing makes no request — the level rides `/answer` — and Check never
+ *  waits on it. Stays under the answer (not SessionTop); disabled once sent. */
 function QuestionConfidence({
   confidenceRef,
   item,
@@ -739,6 +935,7 @@ export function QuizQuestion({
 }: QuizQuestionProps) {
   const toast = useToast();
   const askRef = useRef<HTMLButtonElement>(null);
+  const guideRef = useRef<HTMLButtonElement>(null);
   const confidenceRef = useRef<HTMLDivElement>(null);
 
   /**
@@ -747,6 +944,7 @@ export function QuizQuestion({
    * and carrying it across would be answering the wrong question.
    */
   const [askForCursor, setAskForCursor] = useState<number | null>(null);
+  const [guideOpen, setGuideOpen] = useState(false);
 
   const { phase, cursor, items } = session;
   const view = itemView(items[cursor]);
@@ -767,25 +965,72 @@ export function QuizQuestion({
   const selectable = phase === "active" && !busy;
   const difficulty = difficultyLabel(view.item, session);
   const quizLength = total || session.config.count;
+  const skip = skipSlotState({
+    phase,
+    busy,
+    cursor,
+    total,
+    hasVerdict: view.verdict != null,
+  });
+  const openGuide = useCallback(() => {
+    setAskForCursor(null);
+    setGuideOpen(true);
+  }, []);
+  const onSkip = useCallback(() => {
+    if (skip.targetIndex == null) return;
+    actions.goTo?.(skip.targetIndex);
+  }, [actions, skip.targetIndex]);
 
   const { rootRef, feedbackRef } = useQuestionFocus(phase, cursor, view.written, showVerdict);
   useShortQuizToast(session, total, toast);
   const primary = usePrimary({ actions, busy, items, phase, hasAnswer: view.hasAnswer, showVerdict });
 
+  const position = Math.min(cursor + 1, quizLength) || 1;
+  const sessionTop = (
+    <SessionTop
+      phase={phase}
+      actions={actions}
+      concept={concept}
+      position={position}
+      quizLength={quizLength}
+    />
+  );
   const header = (
     <QuestionHeader concept={concept} format={view.format} showFormat={phase !== "generating" && Boolean(view.item)} difficulty={difficulty} />
   );
+  const prereqBanner = session.prereq ? <PrereqBanner banner={session.prereq} /> : null;
   const pager = <QuestionPager session={session} actions={actions} busy={busy} quizLength={quizLength} />;
+  const footer = (
+    <QuestionFooter
+      pager={pager}
+      primary={phase === "generating" ? undefined : primary}
+      skip={skip}
+      onSkip={onSkip}
+      onOpenGuide={openGuide}
+      guideRef={guideRef}
+    />
+  );
 
   if (phase === "generating") {
     return (
       <div className="quiz-question" data-testid="quiz-generating">
+        {sessionTop}
         <div className="quiz-question__col">
           {header}
+          {prereqBanner}
           <GeneratingStatus quizLength={quizLength} conceptName={concept.name} difficulty={difficulty} />
           <div className="quiz-question__grow" />
-          <QuestionFooter phase={phase} actions={actions} pager={pager} />
+          {footer}
         </div>
+        <StudyGuideDrawer
+          open={guideOpen}
+          onClose={() => setGuideOpen(false)}
+          userId={userId}
+          conceptName={concept.name}
+          courseId={courseId}
+          courseLabel={concept.courseCode || undefined}
+          returnFocusTo={guideRef}
+        />
       </div>
     );
   }
@@ -795,7 +1040,17 @@ export function QuizQuestion({
   const shown = showVerdict ? view.verdict : null;
   const AnswerField = ANSWER_FIELDS[view.format];
   const onRootKeyDown = (e: React.KeyboardEvent) =>
-    handleRootKey(e, { askOpen, phase, primary, selectable, optionCount: view.options.length, actions, confidenceRef });
+    handleRootKey(e, {
+      askOpen,
+      guideOpen,
+      phase,
+      primary,
+      selectable,
+      optionCount: view.options.length,
+      actions,
+      confidenceRef,
+      onOpenGuide: openGuide,
+    });
 
   return (
     <div
@@ -806,8 +1061,10 @@ export function QuizQuestion({
       tabIndex={-1}
       onKeyDown={onRootKeyDown}
     >
+      {sessionTop}
       <div className="quiz-question__col">
         {header}
+        {prereqBanner}
 
         {/* Keyed on the question, so each one arrives with the same short
             entrance — from the generating panel, from Next, from the pager. */}
@@ -826,15 +1083,19 @@ export function QuizQuestion({
           <QuestionAside
             flagged={view.item?.flagged ?? false}
             onFlag={() => flagItem(view.item, actions, toast)}
-            canAsk={phase === "answered"}
+            // W7.8: Exam Twin is tool-light — Ask is refused server-side too.
+            canAsk={phase === "answered" && (session.config.sessionMode ?? "practice") !== "exam_twin"}
             askRef={askRef}
-            onAsk={() => setAskForCursor(cursor)}
+            onAsk={() => {
+              setGuideOpen(false);
+              setAskForCursor(cursor);
+            }}
           />
         </div>
 
         <div className="quiz-question__grow" />
 
-        <QuestionFooter phase={phase} actions={actions} pager={pager} primary={primary} />
+        {footer}
       </div>
 
       <LeaveDialog
@@ -853,6 +1114,16 @@ export function QuizQuestion({
         seed={askSeedFor(view)}
         quizAsk={quizAskFor(session.attemptId, view.item)}
         returnFocusTo={askRef}
+      />
+
+      <StudyGuideDrawer
+        open={guideOpen}
+        onClose={() => setGuideOpen(false)}
+        userId={userId}
+        conceptName={concept.name}
+        courseId={courseId}
+        courseLabel={concept.courseCode || undefined}
+        returnFocusTo={guideRef}
       />
     </div>
   );

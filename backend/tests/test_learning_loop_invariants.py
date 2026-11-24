@@ -50,7 +50,10 @@ PURE_MODULES = (
     "multi_concept.py",  # A141: combination identity, the gate and the session dial (keys/states in)
     "multi_concept_report.py",  # A141: served and outcomes per course (rows in, report out)
     "quiz_plan.py",  # A143/A144/A147: the quiz's learner-model choices (states in, choices out)
+    "learner_next.py",  # W8.6: due / misconception / ready buckets (states in, buckets out)
+    "next_probe_hint.py",  # W2.4: low-trust next-check preference (prose + candidates in, hash out)
     "quiz_gates.py",  # A145/A146: the quiz item gates and misconception rules (answers in, decisions out)
+    "quiz_session_mode.py",  # W7.8: Practice vs Exam Twin evidence rules (mode in, decisions out)
 )
 FORBIDDEN_IMPORT_ROOTS = ("agents", "pydantic_ai", "google", "db")
 # spec §8.6: every series AgentTask literal (the test iterates the ones that exist)
@@ -2876,3 +2879,80 @@ def test_inv_21_no_legacy_mastery_writers():
                 if sym in line:
                     hits.append(f"{rel}:{i}: {sym}")
     assert hits == [], "legacy mastery writers survive cutover:\n" + "\n".join(hits)
+
+
+# ── W2.3: reason-before-submit never writes mastery ─────────────────────────
+#: Bans shared with tests/test_learning_check_reason.py::test_module_never_touches_mastery_or_grader.
+#: check_reason.py stays OUT of PURE_MODULES — it imports encryption for nested seal.
+REASON_NEVER_MASTERY = (
+    "apply_graph_update",
+    "flush_pending",
+    "grade_answer",
+    "p_known",
+    "pending_evidence",
+    "CheckAnswer",
+    "graph_service",
+    "node_mastery",
+)
+
+
+def test_inv_31_reason_before_submit_never_writes_mastery():
+    """W2.3: optional free/teachback reasoning is diagnostic only — sealed on
+    the step, never evidence, never a mastery input. Complements the unit bans
+    in test_learning_check_reason; do not list check_reason in PURE_MODULES
+    (it imports encryption)."""
+    assert "check_reason.py" not in PURE_MODULES, (
+        "check_reason imports encryption — keep it out of PURE_MODULES"
+    )
+    store = (LEARNING / "check_reason.py").read_text()
+    for banned in REASON_NEVER_MASTERY:
+        assert banned not in store, f"check_reason.py must not mention {banned}"
+    # Grading stash path: seal under the claim, never feed reasoning to CheckAnswer.
+    grading = (LOOP_PACKAGE / "grading.py").read_text()
+    assert "check_reason.stash_on_step" in grading, (
+        "grading.py must stash reasoning through check_reason.stash_on_step"
+    )
+    assert not re.search(
+        r"CheckAnswer\s*\([^)]*\breasoning\s*=", grading, re.DOTALL
+    ), "CheckAnswer must not take reasoning= (grader sees answer + rubric only)"
+    assert not re.search(
+        r"grade_answer\s*\([^)]*\breasoning\s*=", grading, re.DOTALL
+    ), "grade_answer must not take reasoning="
+
+
+# ── W2.4: next-probe hint never writes mastery ──────────────────────────────
+
+
+def test_inv_32_next_probe_hint_never_writes_mastery():
+    """W2.4 / W2.4b: reason/self-explain prose may only choose which eligible
+    check to pose next — never apply_graph_update / never p_known. Pure helper
+    is in PURE_MODULES; the flag-gated call site decrypts reasoning_encrypted
+    under the session bind when on, then prefer()s — still never mastery."""
+    assert "next_probe_hint.py" in PURE_MODULES
+    pure = (LEARNING / "next_probe_hint.py").read_text()
+    gate = (LOOP_PACKAGE / "next_probe_hint.py").read_text()
+    practice = (LOOP_PACKAGE / "practice.py").read_text()
+    for banned in REASON_NEVER_MASTERY:
+        assert banned not in pure, f"learning/next_probe_hint.py must not mention {banned}"
+        assert banned not in gate, f"services/loop/next_probe_hint.py must not mention {banned}"
+    assert "preferred_next_question_hash" in practice, (
+        "practice._activate_next_item must call the gated hint entry"
+    )
+    assert "session_id=session_id" in practice, (
+        "activation must thread session_id so W2.4b can open reasoning_encrypted"
+    )
+    assert "check_reason.latest_plaintext" in gate, (
+        "gate must open sealed reasoning via check_reason.latest_plaintext"
+    )
+    assert "apply_graph_update" not in practice, (
+        "activation must not call apply_graph_update (hint is routing only)"
+    )
+    # Flag key registered and loop-gated; default remains off.
+    flags = (BACKEND / "services" / "feature_flags.py").read_text()
+    assert 'FlagDef("next_probe_hint"' in flags
+    assert re.search(
+        r'FlagDef\(\s*"next_probe_hint".*?False\s*\)',
+        flags,
+        re.DOTALL,
+    ), "next_probe_hint must stay client-invisible / default-off (FlagDef … False)"
+    assert "next_probe_hint" in (LEARNING / "gate.py").read_text()

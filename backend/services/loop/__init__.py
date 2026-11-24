@@ -69,8 +69,8 @@ Modules, lowest first (each imports only the ones above it):
   graph node, the BKT band, prerequisites, the learner view the policy reads,
   the genuine attempt rule and the band ceiling.
 - ``context``: A planned turn's context (spec §3.4): the course, catalog,
-  retrieval and graph blocks, the A128 materials notice, and
-  `_prepare_loop_run`.
+  retrieval and graph blocks, the A128 materials notice, the W4.3
+  materials_grounded signal, and `_prepare_loop_run`.
 - ``continuation``: The #646 rescue: the tool-less continuation that finishes
   a run that ended without a structured turn, and the run's request count.
 - ``served``: Served text (A38, A84): the leak rung, the ladder's fallback

@@ -60,6 +60,34 @@ the code, and left the two owner questions at the end of this page.
 "Main code" is the single best place to start reading; most rows touch more
 files, which the row lists. A dash means the row has no code of its own.
 
+## Alvar trilogy: adopted / narrowed / refused
+
+The three Eero Alvar videos shaped the loop's session machine and practice
+dials. Sapling keeps graded-only belief and Bastani-style withholding, so
+some harness claims were taken whole, some narrowed to an evidence-aligned
+substitute, and some refused. The research binding is
+[`docs/research/learning-loop/notes/direction/design_choices.md`](../research/learning-loop/notes/direction/design_choices.md)
+(Q1–Q6); the build scoreboard is
+[`docs/learning-loop/alvar-trilogy-implementation-plan.md`](alvar-trilogy-implementation-plan.md)
+(workstream W6).
+
+| Stance | Claim | Sapling | Points at |
+|---|---|---|---|
+| Adopted | Probe → plan → teach ⇄ check | Session machine when `learning_loop` is on | Plan §2.2 B–F, G; this guide "A session" |
+| Adopted | ZPD help ladder (H0–H6) + attempt gates | Code-owned ceiling; never from free text | Plan §2.2 H–I; A32, A122, A134 |
+| Adopted | Segment prequestion | A138, flag `segment_prequestion` | design_choices Q1; plan U / W2.1 |
+| Adopted | Self-explanation prompts | A139, flag `self_explanation_prompts` (diagnosis only) | design_choices Q2; plan V / W2.2 |
+| Adopted | Varied isomorphs + cue-familiarity dial | A140, flag `varied_isomorphs` | Plan P, R / W5.E4 |
+| Adopted | Multi-concept / combine-ideas dial | A141, flag `multi_concept_items` | Plan Q / W5.E4 |
+| Adopted | Quiz in the learning system | A143–A147 (five flags, all off by default) | Plan §2.4 quiz; this guide "The quiz" |
+| Narrowed | Thinking fields | Reason-before-submit / self-explain text may hint the next probe; never mastery | design_choices Q2–Q3; plan S, W / W2.3–W2.4; [w2-reason-before-submit.md](./w2-reason-before-submit.md) (W2.3); [w2-next-probe-hint.md](./w2-next-probe-hint.md) (W2.4 helper + `next_probe_hint` flag) |
+| Narrowed | Predict before explain | Segment-level prequestion only — not before every reasoning step | design_choices Q1; plan U vs U2 |
+| Narrowed | Persistent knowledge graphs | Concept + prerequisite graph (and optional learner-built map); not proposition / reasoning-chain ontology as mastery | design_choices Q6; plan X, Y / W3.5 |
+| Refused | "Feels obviously true" as a stop rule | Stop = graded check only (Alvar V1 pedagogy) | design_choices Q5; plan W1 / W6 |
+| Refused | Free-text → mastery | Chat and think-aloud never write `p_known` | design_choices Q3; plan G, W |
+| Refused | Student-editable teaching prompts | Staff / flag variants only if ever | Plan AN / W6 |
+| Refused | Mic dictation / think-while-reading | Blocked by Permissions-Policy; typed later only if product decides | Plan AO / W6 |
+
 ## By theme
 
 ### Evidence and the learner model (17)

@@ -875,3 +875,144 @@ def test_developing_band_is_problem_first_without_inventing_problems():
     assert "problem of your own" in _BAND_FORMATS["develop"]
     assert "check item" in _BAND_FORMATS["develop"]
     assert "not about this item" in CEILING_GUIDE[2]
+
+
+def test_teach_pedagogy_pins_safe_anchor_and_motivated_derivation():
+    """W1.1 / W1.2 / W1.3 / W1.4: Alvar V1 pedagogy rides the system prompt and
+    the novice / worked-first band copy; stop remains graded check, never fluency."""
+    from agents.loop_tutor import (
+        NOVICE_WORKED_FIRST_FORMAT,
+        _BAND_FORMATS,
+        _LOOP_SYSTEM_PROMPT,
+        _PHASE_RULES,
+    )
+
+    assert "TEACH PEDAGOGY" in _LOOP_SYSTEM_PROMPT
+    assert "Safe-anchor" in _LOOP_SYSTEM_PROMPT
+    assert "lockable definition or universal statement" in _LOOP_SYSTEM_PROMPT
+    assert "because the lecture says" in _LOOP_SYSTEM_PROMPT
+    assert "Motivated derivation" in _LOOP_SYSTEM_PROMPT
+    assert "problem that forces the next move" in _LOOP_SYSTEM_PROMPT
+    assert "Compression / generative core" in _LOOP_SYSTEM_PROMPT
+    assert "regenerate the idea from the core definition" in _LOOP_SYSTEM_PROMPT
+    assert "re-recognize a surface" in _LOOP_SYSTEM_PROMPT
+    assert "feels obvious" in _LOOP_SYSTEM_PROMPT
+    assert "graded check" in _LOOP_SYSTEM_PROMPT
+    assert "safe anchor" in _PHASE_RULES["teach"]
+    assert "safe anchor" in _BAND_FORMATS["novice"]
+    assert "forces the next move" in _BAND_FORMATS["novice"]
+    assert "safe anchor" in NOVICE_WORKED_FIRST_FORMAT
+    assert "forces the next move" in NOVICE_WORKED_FIRST_FORMAT
+    assert "lockable definition" in _BAND_FORMATS["develop"]
+    assert "authority alone" in _BAND_FORMATS["profic"]
+
+
+def test_w1_pedagogy_eval_cases_are_listed_without_cassettes():
+    """Plan W1.1–W1.3 acceptance: named pedagogy cases exist and join replay
+    only once W0 records `<slot>__pedagogy` (never routing until then)."""
+    from agents.loop_tutor import LOOP_TIER_SLOTS
+
+    mod = _loop_eval_module()
+    names = {c.name for c in mod.PEDAGOGY_CASES}
+    assert names == {
+        "teach_safe_anchor_novice_open",
+        "teach_safe_anchor_lecture_says",
+        "teach_motivated_step_develop",
+        "teach_generative_core_close",
+    }
+    assert not names & {c.name for c in mod.CASES}
+    assert not names & {c.name for c in mod.FLAG_CASES}
+    for case in mod.PEDAGOGY_CASES:
+        assert case.metadata["final_answer"] and case.metadata["reference"]
+        assert case.inputs[0] == "teach"
+        assert case.name in mod.V2_PLAN_FOCUS
+    ped = mod.pedagogy_variants(False)
+    assert set(ped) == {
+        mod.pedagogy_namespace(s, False) for s in LOOP_TIER_SLOTS.values()
+    }
+    assert not set(ped) & set(mod.replay_variants(recorded=lambda _s: False))
+    assert set(ped) <= set(mod.replay_variants(recorded=lambda _s: True))
+    ds = mod.make_pedagogy_dataset_for("standard", False)
+    assert tuple(type(e).__name__ for e in ds.evaluators) == (
+        mod.SERVED_GATES + mod.DIAGNOSTICS + mod.PEDAGOGY_GATES
+    )
+
+
+def test_w1_pedagogy_judges_score_served_rubrics():
+    """Deterministic W1 judges: authority-only warrants fail; definition-first
+    / motivated step / compression beat pass or fail on rubric strings."""
+    mod = _loop_eval_module()
+    teach = ("teach", "novice", 5, "m")
+    safe = {"kinds": ("safe_anchor",)}
+    motivated = {"kinds": ("motivated_step",)}
+    generative = {"kinds": ("generative_core",)}
+
+    locked = (
+        "Key idea: A base case is when the function stops calling itself.\n\n"
+        "By definition it returns directly.\n\n"
+        "What input makes that happen?"
+    )
+    lecture_only = (
+        "Key idea: Do what the slides show.\n\n"
+        "First, follow these steps because the lecture says so.\n\n"
+        "What is step two?"
+    )
+    procedure_first = (
+        "Key idea: Start coding.\n\n"
+        "First, plug in n equals 0, then write the recursive call.\n\n"
+        "What comes next?"
+    )
+    assert _score(mod, mod.NoAuthorityOnlyWarrant(), teach, _reply(mod, locked), **safe) == 1.0
+    assert (
+        _score(mod, mod.NoAuthorityOnlyWarrant(), teach, _reply(mod, lecture_only), **safe) == 0.0
+    )
+    assert (
+        _score(mod, mod.SafeAnchorDefinitionFirst(), teach, _reply(mod, locked), **safe) == 1.0
+    )
+    assert (
+        _score(
+            mod, mod.SafeAnchorDefinitionFirst(), teach, _reply(mod, procedure_first), **safe
+        )
+        == 0.0
+    )
+    # vacuous on non-safe_anchor cases
+    assert (
+        _score(mod, mod.NoAuthorityOnlyWarrant(), teach, _reply(mod, lecture_only)) == 1.0
+    )
+
+    good_step = (
+        "Key idea: Smaller input.\n\n"
+        "Without a smaller call the chain never reaches the base, so that forces "
+        "the next move.\n\n"
+        "What do you write for the recursive call next?"
+    )
+    bare_recall = (
+        "Key idea: Recursion.\n\n"
+        "It calls itself.\n\n"
+        "What is the name of the base case?"
+    )
+    assert (
+        _score(mod, mod.MotivatedDerivation(), teach, _reply(mod, good_step), **motivated)
+        == 1.0
+    )
+    assert (
+        _score(mod, mod.MotivatedDerivation(), teach, _reply(mod, bare_recall), **motivated)
+        == 0.0
+    )
+
+    regen = (
+        "Key idea: Rebuild it.\n\n"
+        "Hold the definition in mind.\n\n"
+        "In your own words, explain the core idea from the definition?"
+    )
+    surface = (
+        "Key idea: Pick one.\n\n"
+        "Look at the options.\n\n"
+        "Which of the following matches the surface form?"
+    )
+    assert (
+        _score(mod, mod.CompressionBeat(), teach, _reply(mod, regen), **generative) == 1.0
+    )
+    assert (
+        _score(mod, mod.CompressionBeat(), teach, _reply(mod, surface), **generative) == 0.0
+    )

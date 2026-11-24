@@ -36,6 +36,8 @@ class _Submission:
     verdict: str | None = None
     refused: bool = False  # A33: refused, or the idk its CHECK_REFUSALS_AS_IDK-th refusal became
     ask_rating: bool = False  # PKG-14: this graded check brought the counter to the rating cadence
+    # W2.5: ms Continue must wait after high-confidence wrong feedback (0 = none)
+    feedback_dwell_ms: int = 0
 
 
 def _is_idk_phrase(text: str) -> bool:

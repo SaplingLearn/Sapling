@@ -110,14 +110,16 @@ export function parseEntry(params: URLSearchParams): EntryRequest {
 }
 
 /** The href every inbound caller links to (§6). Exactly one target field is
- *  meaningful; the rest are ignored in the order below. */
+ *  meaningful; the rest are ignored in the order below. `topic` is a concept
+ *  NAME (fuzzy resolve); prefer `concept` (node id) when the caller has one. */
 export function buildQuizHref(
-  target: { concept?: string; course?: string; scope?: "due"; attempt?: string },
+  target: { concept?: string; topic?: string; course?: string; scope?: "due"; attempt?: string },
   source: QuizSource,
   opts: { start?: boolean } = {},
 ): string {
   const params = new URLSearchParams();
   if (target.concept) params.set("concept", target.concept);
+  else if (target.topic) params.set("topic", target.topic);
   else if (target.course) params.set("course", target.course);
   else if (target.scope) params.set("scope", target.scope);
   else if (target.attempt) params.set("attempt", target.attempt);

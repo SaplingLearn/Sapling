@@ -47,7 +47,7 @@ function written(id: number): WireQuestion {
   return { id, type: "short_answer", question: `W${id}?`, options: [], difficulty: "easy" };
 }
 
-function generated(questions: WireQuestion[]): GenerateResult {
+function generated(questions: WireQuestion[], over: Partial<GenerateResult> = {}): GenerateResult {
   return {
     quiz_id: "attempt-1",
     questions,
@@ -55,6 +55,7 @@ function generated(questions: WireQuestion[]): GenerateResult {
     resolved_difficulty: "medium",
     requested_count: questions.length,
     delivered_count: questions.length,
+    ...over,
   };
 }
 
@@ -510,6 +511,29 @@ describe("field-level transitions", () => {
     });
   });
 
+  it("GENERATED follows a W7.6 prereq redirect and keeps the banner", () => {
+    const generating = reduce(home(), {
+      type: "START",
+      start: start({ conceptId: "blocked" }),
+      config: home().config,
+    });
+    const banner = {
+      prereq_id: "foundation",
+      prereq_name: "Foundations",
+      dependent_id: "blocked",
+      dependent_name: "Matrices",
+      course_id: "c1",
+      redirected: true,
+    };
+    const s = reduce(generating, {
+      type: "GENERATED",
+      result: generated([mc(1)], { concept_node_id: "foundation", prereq: banner }),
+    });
+    expect(s.conceptId).toBe("foundation");
+    expect(s.prereq).toEqual(banner);
+    expect(s.phase).toBe("active");
+  });
+
   it("WRITE keeps the first 2000 characters, and only on an open written item", () => {
     const s = active([written(1), mc(2)]);
     const long = reduce(s, { type: "WRITE", text: "x".repeat(2100) });
@@ -618,6 +642,7 @@ describe("field-level transitions", () => {
       xp: null,
       deliveredShort: false,
       reserved: null,
+      prereq: null,
     });
   });
 
@@ -653,6 +678,7 @@ describe("field-level transitions", () => {
       deliveredShort: false,
       sourceAttemptId: null,
       reserved: null,
+      prereq: null,
     });
   });
 
@@ -663,7 +689,7 @@ describe("field-level transitions", () => {
       reserved: { reservedCount: 1, regeneratedCount: 0 },
     };
     expect(reduce(generating, { type: "CANCEL" })).toEqual({
-      ...generating, phase: "home", error: null, sourceAttemptId: null, reserved: null,
+      ...generating, phase: "home", error: null, sourceAttemptId: null, reserved: null, prereq: null,
     });
     const submitting = { ...active(), phase: "submitting" as const, error: NETWORK };
     expect(reduce(submitting, { type: "CANCEL" })).toEqual({ ...submitting, phase: "active", error: null });
@@ -726,6 +752,7 @@ describe("RESUME (resumeFrom)", () => {
       deliveredShort: false,
       sourceAttemptId: null,
       reserved: null,
+      prereq: null,
     });
   });
 

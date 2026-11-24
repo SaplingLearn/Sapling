@@ -58,4 +58,14 @@ describe("SessionMap", () => {
       wheelZoom: "pinch",
     });
   });
+
+  it("forwards practicedNodeIds as practicedIds (W3.2 covered outline)", () => {
+    const practiced = new Set(["a", "b"]);
+    render(<SessionMap nodes={[]} edges={[]} highlightId="a" practicedNodeIds={practiced} />);
+    act(() => observed!(264));
+    expect(seen.props.at(-1)).toMatchObject({
+      highlightId: "a",
+      practicedIds: practiced,
+    });
+  });
 });

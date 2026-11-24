@@ -6,14 +6,15 @@ from __future__ import annotations
 import asyncio
 import uuid
 from datetime import datetime, timezone
+import config
 from services.loop.errors import HTTPException
 from services import abuse_limits
 from services.request_limits import aenforce_abuse_limit, enforce_abuse_limit
 from starlette.requests import Request
 from agents.deps import SaplingDeps
-from learning import review
+from learning import review, policy
 from learning.claim_deadline import GradeDeadlineExceeded
-from learning.evidence import PlanningPersistenceUnavailable
+from learning.evidence import PlanningPersistenceUnavailable, stated_confidence
 from learning.evidence_transaction import EvidenceItemRetired
 from learning.loop_state_store import LoopStateConflict
 from services.loop.posed import _ts
@@ -333,7 +334,7 @@ async def review_answer(body: ReviewAnswerBody, request: Request) -> dict:
         raise _StateConflict() from None
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None
-    return {
+    body_out = {
         "correct": outcome.correct,
         "hint": outcome.hint,
         "next_due_at": outcome.next_due_at,
@@ -343,6 +344,16 @@ async def review_answer(body: ReviewAnswerBody, request: Request) -> dict:
         "unavailable": outcome.unavailable,
         "refused": outcome.refused,
     }
+    # W2.5: high-confidence wrong on a check → Next holds for corrective feedback
+    if check is not None and outcome.correct is False and not outcome.unavailable:
+        dwell = policy.hypercorrection_feedback_dwell_ms(
+            correct=False,
+            student_confidence=stated_confidence(body.confidence),
+            time_scale=config.LEARNING_GATE_TIME_SCALE,
+        )
+        if dwell > 0:
+            body_out["feedback_dwell_ms"] = dwell
+    return body_out
 
 
 def review_summary(

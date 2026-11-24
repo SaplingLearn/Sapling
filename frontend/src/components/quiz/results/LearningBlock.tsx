@@ -2,22 +2,24 @@
 
 /**
  * What the quiz did to the learner model, and where to go next (learning-loop
- * spec §13 A147, flag `quiz_results_routing`).
+ * spec §13 A147 / W7.7, flag `quiz_results_routing`).
  *
  * Rendered only when the submit reply carries a `learning` block. Three parts,
  * in plain words:
  *   - each skill meter that moved — the quizzed concept, and the prerequisites
  *     and dependents its answers reached through the learner model;
  *   - what is due for review, and when this concept is next due;
- *   - the next step the server chose: review what is due (Study's review
- *     queue), or practise the weakest concept the student is ready for in
- *     Learn (a deep link that opens a session on it).
+ *   - the next steps on the same learner-model spine as Tree / Study / Tutor:
+ *     review what is due (Study), practise the weakest ready concept (Learn),
+ *     and see the quizzed concept on the Tree.
  *
- * The review queue lives only where the learning loop is on, so a "review"
- * step is offered only when the loop status probe says it is; otherwise the
- * Learn step stands in. A step whose page a hide flag hides (`hide_study`,
- * `hide_tutor`) is never offered: NavFeatureGate would only bounce it to
- * /dashboard. Nothing here moves a meter or writes anything.
+ * Hrefs reuse `studyHref`, `learnHrefForNode`, and `treeReturnTo` — no forked
+ * ranking. The review queue lives only where the learning loop is on, so a
+ * "review" step is offered only when the loop status probe says it is;
+ * otherwise the Learn step stands in. A step whose page a hide flag hides
+ * (`hide_study`, `hide_tutor`, `hide_tree`) is never offered: NavFeatureGate
+ * would only bounce it to /dashboard. Nothing here moves a meter or writes
+ * anything.
  */
 
 import React from "react";
@@ -25,6 +27,12 @@ import { useLoopStatus } from "@/components/learn/useLoopStatus";
 import { useStudyNavShown } from "@/components/useRetentionNav";
 import { useFlag } from "@/context/FlagsContext";
 import { useUser } from "@/context/UserContext";
+import {
+  HANDOFF_COPY,
+  handoffLearnHref,
+  handoffStudyHref,
+  handoffTreeHref,
+} from "@/lib/learningHandoffs";
 import { BAND_WORDS } from "@/lib/quiz/proposals";
 import type { QuizLearning } from "@/lib/quiz/types";
 
@@ -33,17 +41,24 @@ export { BAND_WORDS };
 
 const pct = (value: number) => Math.round(value * 100);
 
-/** Where "Practise X in Learn" goes: Learn opens a session on the concept (it
- *  names its node, #866 K05, so the loop's session has it as its goal). */
+/** Where "Continue learning" goes: Learn opens a session on the concept (#866 K05). */
 export function learnHref(learn: NonNullable<QuizLearning["learn"]>): string {
-  const params = new URLSearchParams({ topic: learn.concept_name });
-  if (learn.concept_id) params.set("concept", learn.concept_id);
-  if (learn.course_id) params.set("course", learn.course_id);
-  return `/learn?${params.toString()}`;
+  return handoffLearnHref({
+    conceptId: learn.concept_id,
+    conceptName: learn.concept_name,
+    courseId: learn.course_id,
+  });
 }
 
-/** The Study hub hosts the daily review queue (above the hub while the loop is on). */
-export const REVIEW_HREF = "/study";
+/** Study hub for the quizzed course — same builder Study / Dashboard use. */
+export function reviewHref(courseId?: string | null): string {
+  return handoffStudyHref(courseId);
+}
+
+/** Tree opened on the quizzed concept (W3.4 / W8.5 "See on your map"). */
+export function conceptTreeHref(conceptId: string): string {
+  return handoffTreeHref({ nodeId: conceptId });
+}
 
 /** "in 3 days", "tomorrow", "today" — the nearest whole number of days from
  *  now; a time already past is today. */
@@ -69,9 +84,15 @@ export function changeLine(change: QuizLearning["changes"][number]): string {
 export function LearningBlock({
   learning,
   conceptName,
+  conceptId,
+  courseId,
 }: {
   learning: QuizLearning;
   conceptName: string;
+  /** Quizzed concept id — Tree deep link. */
+  conceptId: string;
+  /** Quizzed course — Study hub deep link when known. */
+  courseId?: string | null;
 }) {
   const { userId, userReady } = useUser();
   // Probed only when the server suggests the review queue: that is the one
@@ -80,9 +101,12 @@ export function LearningBlock({
   const { status: loopActive } = useLoopStatus(userId, userReady && wantsReview);
   const studyShown = useStudyNavShown();
   const tutorShown = useFlag("hide_tutor") !== "on";
+  const treeShown = useFlag("hide_tree") !== "on";
   const reviewOffered = wantsReview && loopActive === true && studyShown;
   const learn = tutorShown ? learning.learn : null;
+  const treeHref = treeShown && conceptId ? conceptTreeHref(conceptId) : null;
   const nextDue = dueIn(learning.review.next_due_at);
+  const hasNext = reviewOffered || Boolean(learn) || Boolean(treeHref);
 
   return (
     <section className="quiz-learning" data-testid="quiz-results-learning" aria-label="What changed">
@@ -109,12 +133,16 @@ export function LearningBlock({
         {nextDue ? ` ${conceptName} comes back for review ${nextDue}.` : ""}
       </p>
 
-      {(reviewOffered || learn) && (
-        <div className="quiz-learning__next">
+      {hasNext && (
+        <div className="quiz-learning__next" data-testid="quiz-learning-next">
           <span className="quiz-learning__next-label">Next:</span>
           {reviewOffered ? (
-            <a className="btn btn--primary" href={REVIEW_HREF} data-testid="quiz-next-step-review">
-              Review what&apos;s due ({learning.review.due_count})
+            <a
+              className="btn btn--primary"
+              href={reviewHref(courseId)}
+              data-testid="quiz-next-step-review"
+            >
+              {HANDOFF_COPY.dueOnStudyCounted(learning.review.due_count)}
             </a>
           ) : null}
           {learn && (
@@ -123,7 +151,16 @@ export function LearningBlock({
               href={learnHref(learn)}
               data-testid="quiz-next-step-learn"
             >
-              Practise {learn.concept_name} in Learn
+              {HANDOFF_COPY.continueLearning(learn.concept_name)}
+            </a>
+          )}
+          {treeHref && (
+            <a
+              className={reviewOffered || learn ? "btn" : "btn btn--primary"}
+              href={treeHref}
+              data-testid="quiz-next-step-tree"
+            >
+              {HANDOFF_COPY.seeOnMap}
             </a>
           )}
         </div>

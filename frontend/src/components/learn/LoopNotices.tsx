@@ -5,6 +5,11 @@
 import React from "react";
 import Link from "next/link";
 import type { LoopBudgetPause } from "@/lib/api";
+import {
+  HANDOFF_COPY,
+  handoffStudyHref,
+  practiceUnavailableHandoffCtas,
+} from "@/lib/learningHandoffs";
 import { BudgetPausedBanner, tutorPauseMessage } from "./BudgetPausedBanner";
 import { PREPARING_COPY } from "./checkNote";
 
@@ -20,11 +25,14 @@ const NO_FRESH_PRACTICE_COPY = "Fresh practice questions are unavailable for the
 const NOTE_STYLE: React.CSSProperties = { padding: "10px 14px", borderRadius: "var(--r-md)", background: "var(--info-soft)", fontSize: 13 };
 
 export function LoopNotices({
-  paused, studyVisible, noCheckItems, preparing, materialsNote, practiceUnavailable, names, exhaustedPracticeAttempt,
+  paused, studyVisible, quizVisible, courseId, noCheckItems, preparing, materialsNote, practiceUnavailable, names, exhaustedPracticeAttempt,
   libraryVisible, canRefreshPractice, refreshDisabled, onRefreshPractice, topicOffer, topicStartDisabled, onTopicStart,
 }: {
   paused: LoopBudgetPause | null;
   studyVisible: boolean;
+  /** False while `hide_quiz` hides Quiz. */
+  quizVisible: boolean;
+  courseId: string | null;
   noCheckItems: "none" | "preparing" | null;
   /** The A128 "preparing" note, unless a crisis-support card is on screen. */
   preparing: boolean;
@@ -43,6 +51,11 @@ export function LoopNotices({
   onTopicStart: () => void;
 }) {
   const hasNotices = !!paused || noCheckItems === "none" || preparing || materialsNote || !!topicOffer || practiceUnavailable.length > 0;
+  const practiceHandoffs = practiceUnavailableHandoffCtas({
+    courseId,
+    conceptIds: practiceUnavailable,
+    visibility: { study: studyVisible, quiz: quizVisible },
+  });
   // Always in the DOM (spec §13 A135): a notice is announced when it is added to
   // this polite region; one inserted together with its own region is not
   // reliably read out.
@@ -59,8 +72,8 @@ export function LoopNotices({
           sessionCapped={paused.sessionCapped}
           message={tutorPauseMessage(paused.resetAt, paused.sessionCapped, paused.pauseNovice, paused.aiLimit)}
         >
-          {studyVisible && <>{" "}<Link data-testid="loop-budget-study-link" href="/study" style={{ color: "var(--accent)", fontWeight: 500 }}>
-            Review flashcards
+          {studyVisible && <>{" "}<Link data-testid="loop-budget-study-link" href={handoffStudyHref(courseId)} style={{ color: "var(--accent)", fontWeight: 500 }}>
+            {HANDOFF_COPY.reviewFlashcards}
           </Link></>}
         </BudgetPausedBanner>
       )}
@@ -87,6 +100,17 @@ export function LoopNotices({
           {exhaustedPracticeAttempt && <p style={{ margin: "0 0 8px" }}>This session already moved past those concepts. Once new questions are available, start a new session to practise them.</p>}
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
             {libraryVisible && <Link data-testid="loop-practice-sources" href="/library" className="btn btn--sm btn--ghost" style={{ minHeight: 44, flex: "1 1 130px", whiteSpace: "normal", justifyContent: "center", textAlign: "center" }}>Review source material</Link>}
+            {practiceHandoffs.map((link) => (
+              <Link
+                key={link.testId}
+                data-testid={link.testId}
+                href={link.href}
+                className="btn btn--sm"
+                style={{ minHeight: 44, flex: "1 1 130px", whiteSpace: "normal", justifyContent: "center", textAlign: "center" }}
+              >
+                {link.label}
+              </Link>
+            ))}
             {!exhaustedPracticeAttempt && canRefreshPractice && (
               <button data-testid="loop-practice-refresh" type="button" className="btn btn--sm"
                 style={{ minHeight: 44, flex: "1 1 130px", whiteSpace: "normal" }} disabled={refreshDisabled}

@@ -4,8 +4,10 @@ import { useUser } from "@/context/UserContext";
 import { useLoopStatus } from "@/components/learn/useLoopStatus";
 import { learnHrefForNode } from "@/lib/data";
 
-/** One GET /api/graph/{user}/recommendations entry. `node_id` and `course_id`
- *  name the concept (#866 K05); an older server sends neither. */
+/** One Learn-next row: graph `/recommendations` (flag-off) or a learner-next
+ *  concept from `GET /api/study/{id}/next` (W8.7; learning_loop +
+ *  quiz_concept_plan). `node_id` and `course_id` name the concept (#866 K05);
+ *  an older server / legacy row may send neither. */
 export type Recommendation = { concept_name: string; reason?: string; node_id?: string | null; course_id?: string | null };
 
 /** Where a Learn next recommendation opens the Tutor. With the learning loop on

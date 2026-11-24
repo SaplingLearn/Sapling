@@ -2085,3 +2085,65 @@ test("a new goal session respects an earlier helped prerequisite miss even when 
     expect(rows[0]).toMatchObject({ planning_observation: failure.planning_observation });
   } finally { await context.close(); }
 });
+
+/** W2.3: optional “show your reasoning” on free/teachback — visible, not required,
+ *  and submit still grades the answer. Default lane only (learning_loop on). */
+test("reason-before-submit: free/teachback shows optional reasoning and submit still works", async ({ browser }) => {
+  test.skip(loopOffLane, "loop path: default lane only");
+  test.setTimeout(LOOP_JOURNEY_TIMEOUT_MS);
+  const P = await learningParams(["PROBE_SESSION_CAP"]);
+  const { context, page } = await signIn(browser, USER_LOOP, "Lou Loop");
+  try {
+    await openLearn(page);
+    const phase = page.getByTestId("loop-phase");
+    await walkProbeAndPlan(page, P);
+    await firstTeachTurn(page);
+    const posed = page.waitForResponse((r) => new URL(r.url()).pathname === "/api/learn/loop/check/next");
+    await page.getByTestId("loop-check-me").click();
+    const check = page.getByTestId("loop-check-prompt");
+    await expect(check).toBeVisible();
+    const format = await check.getAttribute("data-format");
+    expect(["free", "teachback"]).toContain(format);
+    await expect(page.getByTestId("loop-attempt-reasoning")).toBeVisible();
+    if ((await (await posed).json()).check?.worked_first) {
+      await expect(page.getByTestId("loop-hint-reply")).toBeVisible();
+      await expect(page.getByTestId("loop-hint-button")).toBeEnabled();
+    }
+    const submitted = page.waitForRequest((r) => r.url().includes("/api/learn/loop/check/answer"));
+    await page.getByTestId("loop-attempt-input").fill(`working: ${GRADER_CORRECT_TOKEN}`);
+    await page.getByTestId("loop-attempt-reasoning").fill("base case stops the recursion");
+    await page.getByTestId("loop-attempt-submit").click();
+    const body = JSON.parse((await submitted).postData() ?? "{}");
+    expect(body).toMatchObject({
+      answer: `working: ${GRADER_CORRECT_TOKEN}`,
+      reasoning: "base case stops the recursion",
+      idk: false,
+    });
+    await expect(phase).toHaveAttribute("data-phase", "feedback");
+    await expect(page.getByTestId("loop-messages")).toContainText(LOOP_FEEDBACK_BODY);
+  } finally {
+    await context.close();
+  }
+});
+
+/** W3.1b stub: PlanPanel lists prereq_edges among proposed concepts when the
+ *  seed plan carries any. Skip cleanly when this walk's plan has none. */
+test("plan shows loop-plan-deps when prereq edges exist among proposed concepts", async ({ browser }) => {
+  test.skip(loopOffLane, "loop path: default lane only");
+  test.setTimeout(LOOP_JOURNEY_TIMEOUT_MS);
+  const P = await learningParams(["PROBE_SESSION_CAP"]);
+  const { context, page } = await signIn(browser, USER_LOOP, "Lou Loop");
+  try {
+    await openLearn(page);
+    await walkProbeAndPlan(page, P, /* approve */ false);
+    await expect(page.getByTestId("loop-phase")).toHaveAttribute("data-phase", "plan");
+    const deps = page.getByTestId("loop-plan-deps");
+    if ((await deps.count()) === 0) {
+      test.skip(true, "no prereq edges among proposed concepts in this seed plan");
+    }
+    await expect(deps).toBeVisible();
+    await expect(page.locator("[data-testid^='loop-plan-dep-']").first()).toBeVisible();
+  } finally {
+    await context.close();
+  }
+});

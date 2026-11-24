@@ -103,6 +103,64 @@ describe("KnowledgeGraph2D — the highlight ring", () => {
   });
 });
 
+describe("KnowledgeGraph2D — the practiced outline (W3.2)", () => {
+  it("draws no practiced ring when practicedIds is omitted or empty", () => {
+    const { container } = render(<KnowledgeGraph2D nodes={NODES} edges={EDGES} width={600} height={480} />);
+    expect(container.querySelector('[data-testid^="tutor-map-practiced-"]')).toBeNull();
+    cleanup();
+    const empty = render(
+      <KnowledgeGraph2D nodes={NODES} edges={EDGES} width={600} height={480} practicedIds={[]} />,
+    );
+    expect(empty.container.querySelector('[data-testid^="tutor-map-practiced-"]')).toBeNull();
+  });
+
+  it("rings each practiced concept with a solid outline (not dashed, not pulsing)", () => {
+    const { container } = render(
+      <KnowledgeGraph2D
+        nodes={NODES}
+        edges={EDGES}
+        width={600}
+        height={480}
+        practicedIds={new Set(["a", "c"])}
+        highlightId="b"
+      />,
+    );
+    expect(container.querySelectorAll('[data-testid^="tutor-map-practiced-"]')).toHaveLength(2);
+    const ringA = container.querySelector('[data-testid="tutor-map-practiced-a"]')!;
+    expect(group(container, "a").contains(ringA)).toBe(true);
+    expect(group(container, "b").querySelector('[data-testid^="tutor-map-practiced-"]')).toBeNull();
+    const r = Number(mark(container, "a").getAttribute("data-r"));
+    expect(ringA.tagName.toLowerCase()).toBe("path");
+    expect(ringA).toHaveAttribute("d", nodeBlobPath("a", r + 5, wobbleFor(r)));
+    expect(ringA).toHaveAttribute("fill", "none");
+    expect(ringA).toHaveAttribute("stroke", "var(--text)");
+    expect(ringA.getAttribute("stroke-dasharray")).toBeNull();
+    expect(ringA.querySelector("animate, animateTransform")).toBeNull();
+    // Hub roots never get a practiced outline even if listed.
+    cleanup();
+    const withHub = render(
+      <KnowledgeGraph2D nodes={NODES} edges={EDGES} width={600} height={480} practicedIds={["hub", "b"]} />,
+    );
+    expect(withHub.container.querySelector('[data-testid="tutor-map-practiced-hub"]')).toBeNull();
+    expect(withHub.container.querySelector('[data-testid="tutor-map-practiced-b"]')).not.toBeNull();
+  });
+
+  it("keeps practiced and highlight rings independent on the same node", () => {
+    const { container } = render(
+      <KnowledgeGraph2D
+        nodes={NODES}
+        edges={EDGES}
+        width={600}
+        height={480}
+        practicedIds={["b"]}
+        highlightId="b"
+      />,
+    );
+    expect(group(container, "b").querySelector('[data-testid="graph-node-highlight"]')).not.toBeNull();
+    expect(group(container, "b").querySelector('[data-testid="tutor-map-practiced-b"]')).not.toBeNull();
+  });
+});
+
 describe("KnowledgeGraph2D — the comparison ring", () => {
   const COMPARISON = [{ name: " phonemes ", mastery_score: 0.6 }, { name: "CAS LX 250", mastery_score: 1 }];
 

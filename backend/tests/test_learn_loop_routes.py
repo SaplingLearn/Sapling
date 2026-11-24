@@ -1827,6 +1827,61 @@ def test_check_answer_grades_flushes_once_then_one_feedback_turn(gate_on, seams)
     assert seams.save_msg.call_args_list[0].args[2] == "n == 0 returns 1"
 
 
+def test_w23_reasoning_never_reaches_grader_or_extra_mastery(gate_on, seams):
+    """W2.3: optional free/teachback reasoning is sealed on the step, never
+    evidence. Grader inputs stay answer (+ mc reason) only; one flush only —
+    no mastery mutation from the reasoning field."""
+    from learning import check_reason
+    from services.encryption import decrypt_if_present, nested_bind
+
+    prose = "I reasoned about the base case stopping recursion"
+    agent_p, usage_p, _ = _feedback_agent()
+    with agent_p, usage_p:
+        r = client.post(
+            "/api/learn/loop/check/answer",
+            json=_answer(answer="n == 0 returns 1", reasoning=prose),
+        )
+    assert r.status_code == 200 and r.json()["graded"] is True
+    seams.grade.assert_awaited_once()
+    graded_answer = seams.grade.call_args.args[1]
+    assert graded_answer.answer_text == "n == 0 returns 1"
+    assert graded_answer.reason in (None, "")
+    assert not hasattr(graded_answer, "reasoning") or not graded_answer.reasoning
+    # One evidence flush — same as an answer without reasoning (no second bump).
+    seams.flush.assert_called_once()
+    entry = seams.store["doc"]["steps"]["qh-1"]
+    assert prose not in json.dumps(entry)
+    sealed = entry[check_reason.KEY]
+    assert decrypt_if_present(
+        sealed,
+        bind=nested_bind("sessions", "loop_state", check_reason.KEY, "s1"),
+    ) == prose
+
+
+def test_w23_reasoning_ignored_on_mc_reason(gate_on, seams):
+    """mc_reason keeps graded ``reason``; optional ``reasoning`` is stripped."""
+    from learning import check_reason
+
+    seams.item.return_value = MC_ITEM
+    seams.store["doc"]["steps"]["qh-1"]["check_item_id"] = MC_ITEM.id
+    agent_p, usage_p, _ = _feedback_agent()
+    with agent_p, usage_p:
+        r = client.post(
+            "/api/learn/loop/check/answer",
+            json=_answer(
+                option="A",
+                reason="because the base case",
+                reasoning="should never be stored or graded",
+            ),
+        )
+    assert r.status_code == 200
+    graded_answer = seams.grade.call_args.args[1]
+    assert graded_answer.selected_option == "A"
+    assert graded_answer.reason == "because the base case"
+    assert check_reason.KEY not in seams.store["doc"]["steps"]["qh-1"]
+    seams.flush.assert_called_once()
+
+
 @pytest.mark.parametrize(
     "rung,credit", [(0, "full"), (1, "partial"), (3, "partial"), (4, "none"), (6, "none")]
 )
@@ -3184,7 +3239,9 @@ def test_activation_rotates_formats_by_the_concepts_checks(seams):
     st = _plan_state(concept_checks=1, plan={"approved": ["node-1"], "cursor": 0})
     assert _activate_next_item("u1", "c1", st, now=NOW) is None
     formats = [c.kwargs["format"] for c in seams.select_item.call_args_list]
-    assert formats == ["teachback", "mc_reason", "free"]
+    # concept_checks=1 is the segment-close activation: rotation starts on
+    # teachback, then W1.3 pulls free ahead of mc_reason
+    assert formats == ["teachback", "free", "mc_reason"]
 
 
 def test_activation_advances_the_cursor_when_a_concept_has_nothing_left(seams):

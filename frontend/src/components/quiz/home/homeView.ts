@@ -88,7 +88,10 @@ export function courseQueueFor(
   course: string | undefined,
 ): string[] {
   if (!course) return [];
-  return home.planned
+  // `planned` covers the all-courses plan; `courseCandidates` covers a
+  // course-scoped plan that survived when the global read failed.
+  const usePlan = home.planned || (home.courseCandidates != null && home.courseCandidates.length > 0);
+  return usePlan
     ? plannedCourseQueue(home.candidates, home.courseCandidates, home.nodes, course)
     : queueFor("course", home.nodes, course);
 }
@@ -256,6 +259,7 @@ export function prefsFor(cfg: SessionConfig): QuizPrefs {
     count: cfg.count,
     difficulty: cfg.difficulty,
     feedback: cfg.feedback,
+    sessionMode: cfg.sessionMode ?? "practice",
     ...(cfg.questionFormat ? { questionFormat: cfg.questionFormat } : {}),
   };
 }

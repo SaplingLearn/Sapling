@@ -12,7 +12,7 @@ from services.loop.errors import HTTPException
 from starlette.requests import Request
 from agents.deps import SaplingDeps
 from agents.tools.check import CHANNEL_FOR_FORMAT, CheckAnswer, grade_answer
-from learning import arms, gates, policy
+from learning import arms, check_reason, gates, policy
 from learning import grade_checkpoint
 from learning.claim_deadline import GradeDeadlineExceeded, within_grade_deadline
 from learning.multi_concept import is_multi_concept
@@ -149,6 +149,19 @@ async def _grade_submission(
     )
     claim = str(uuid.uuid4())
     await asyncio.to_thread(_claim_grading, body.session_id, qh, claim, now)
+    # W2.3: optional free/teachback reasoning — sealed on the step under the
+    # claim, never passed to CheckAnswer / grade_answer (not evidence).
+    if check_reason.normalize(item.format, body.reasoning):
+        def _stash_reasoning(e: dict) -> None:
+            check_reason.stash_on_step(
+                e, body.session_id, format=item.format, reasoning=body.reasoning
+            )
+
+        await asyncio.to_thread(
+            _update_loop_state,
+            body.session_id,
+            _under_claim(qh, claim, _stash_reasoning, release=False),
+        )
     checkpointed = False
     # spec §13 A141: a multi-concept item's answer is a partial observation on
     # its apex (node_id above); the keyword is passed only for one
@@ -318,6 +331,7 @@ def _submission_turn(
         refused=sub.refused,
     )
     turn.ask_rating = sub.ask_rating
+    turn.feedback_dwell_ms = sub.feedback_dwell_ms  # W2.5
     return turn
 
 

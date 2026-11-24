@@ -244,6 +244,18 @@ REGISTRY: dict[str, FlagDef] = _registry(
             "only after that path is recorded live in the loop_tutor evals (its "
             "flag-path datasets, <slot>__flags) and passes. Off: "
             "byte-identical to before A139.", False),
+    # Plan W2.4: low-trust next-probe hint from reason / self-explain text.
+    # Resolved per activation for the student by
+    # services/loop/next_probe_hint.py::_next_probe_hint_on. Server-only.
+    # May only choose which eligible check to pose next — never mastery.
+    # Off: activation is byte-identical to before W2.4.
+    FlagDef("next_probe_hint", ("off", "on"),
+            "Low-trust next-probe hint (W2.4): when a student has left "
+            "reason-before-submit or self-explain prose, prefer among already-"
+            "eligible check items the one whose stem overlaps that text "
+            "(deterministic keyword overlap). Diagnosis / routing only — never "
+            "evidence, never a mastery bump. Off: check activation is unchanged.",
+            False),
     # Learning loop spec §13 A140: surface-varied isomorphs. Resolved ONCE per
     # drafting run for the uploader (services/check_item_service.py::
     # drafting_flags: the varied drafter and its structured surface

@@ -147,7 +147,12 @@ export interface RoomMessageRow {
 export interface ConceptNote {
   name: string;
   description: string;
+  /** Graph node id when the list response matched this name (W8.1c). */
+  node_id?: string | null;
 }
+
+/** A128 drafting bookkeeping on `documents` (Library W8.1). */
+export type CheckItemsStatus = 'pending' | 'done' | 'failed' | 'unavailable';
 
 export interface Document {
   id: string;
@@ -159,6 +164,8 @@ export interface Document {
   concept_notes: ConceptNote[] | null;
   created_at: string;
   processed_at: string | null;
+  /** Where check-item drafting is; null when the loop never drafted this row. */
+  check_items_status?: CheckItemsStatus | null;
 }
 
 export type RarityTier = 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary';

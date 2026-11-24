@@ -3,12 +3,16 @@
 /**
  * Quiz home (§5 B1) — `phase: home | configuring`.
  *
+ * // W7.D3 / W7.10: home IS the launcher — List + Map over the same grid
+ * // (docs/learning-loop/w7-d3-launcher-map.md). Map uses Tree's KnowledgeGraph2D;
+ * // node click → choose only (Start stays on the lead). No second ranking.
+ *
  * Two columns. On the left, one proposal you can start in a single click,
- * with its neighbourhood on the tree drawn underneath. On the right, "Choose a
- * topic": the whole due set as one row, then every concept on the tree. The
- * old screen opened on an empty course/concept dropdown and asked the student
- * to know what they wanted; this one arrives with an answer and keeps every
- * alternative in view.
+ * with its neighbourhood on the tree drawn underneath (List mode). On the
+ * right, "Choose a topic": List (course pills + search + rows) or Map (full
+ * course graph). The old screen opened on an empty course/concept dropdown
+ * and asked the student to know what they wanted; this one arrives with an
+ * answer and keeps every alternative in view.
  *
  * Everything on it is derived, never invented: the ranking is
  * `lib/quiz/proposals` (a cited mirror of `graph_service.get_recommendations`,
@@ -36,7 +40,7 @@ import { usePrefersReducedMotion } from "@/lib/usePrefersReducedMotion";
 import { AdjustDialog } from "./AdjustDialog";
 import { ResumeStrip, homeColumns, masteredState, stateBody } from "./HomeStates";
 import { ProposalCard } from "./ProposalCard";
-import { TopicsColumn } from "./TopicsColumn";
+import { TopicsColumn, type BrowseMode } from "./TopicsColumn";
 import { accentStyle } from "./accent";
 import { adjustSubtitle, effectiveConfigFor, homeViewFor, prefsFor } from "./homeView";
 import { useHomeCard, useTopicFilter } from "./useHomeCard";
@@ -57,6 +61,8 @@ export interface QuizHomeProps {
 export function QuizHome({ home, config, entry, session, actions, onPickedChange }: QuizHomeProps) {
   const reducedMotion = usePrefersReducedMotion();
   const [adjustOpen, setAdjustOpen] = React.useState(false);
+  /** List (default) | Map — same lead; side pane swaps (W7.10). */
+  const [browseMode, setBrowseMode] = React.useState<BrowseMode>("list");
   const proposal = useHomeCard({ home, entry, session, actions, onPickedChange, reducedMotion });
   const topics = useTopicFilter(home.byCourse, proposal.mode, proposal.card);
 
@@ -158,6 +164,7 @@ export function QuizHome({ home, config, entry, session, actions, onPickedChange
       onReviewDue={() =>
         proposal.startQueue("due", proposal.dueQueue, effectiveConfigFor(true, session.config))
       }
+      showNeighbourhood={browseMode === "list"}
     />
   ) : (
     masteredState()
@@ -176,6 +183,11 @@ export function QuizHome({ home, config, entry, session, actions, onPickedChange
       onIntent={home.prefetchDescription}
       returnedId={proposal.returnedId}
       planOf={planOf}
+      browseMode={browseMode}
+      onBrowseMode={setBrowseMode}
+      mapNodes={viewNodes}
+      mapEdges={home.edges}
+      highlightId={proposal.card?.node.id ?? null}
     />
   );
 

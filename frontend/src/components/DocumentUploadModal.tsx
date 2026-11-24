@@ -12,12 +12,18 @@ import {
   updateDocumentCategory,
   addCourse,
   onboardingCoursesSearch,
+  getGraph,
   type EnrolledCourse,
   type OnboardingCourse,
   type UploadEvent,
   type UploadResultData,
 } from "@/lib/api";
 import { humanizeError } from "@/lib/errorMessage";
+import { useFlagMap } from "@/context/FlagsContext";
+import { LEARNING_LOOP_FLAG } from "@/lib/learningLoopFlag";
+import { conceptIdsFromNames, libraryNext } from "@/lib/libraryNext";
+import { useIsNavHidden } from "@/lib/useNavHidden";
+import { LibraryNextCtas } from "@/components/library/LibraryNextCtas";
 
 const MAX_FILES = 5;
 const MAX_SIZE = 100 * 1024 * 1024;
@@ -56,6 +62,8 @@ interface UploadItem {
   category?: string;
   summary?: string;
   conceptNames?: string[];
+  /** Graph node ids resolved from concept names after upload (W8.1c). */
+  conceptIds?: string[];
   abort?: AbortController;
   /** Latest progress message from the SSE stream (visible while uploading). */
   progress?: string;
@@ -83,6 +91,9 @@ interface Props {
 /** The slice of a course the per-file dropdown + inline-add flow need. */
 type CourseOption = Pick<EnrolledCourse, "course_id" | "course_code" | "course_name">;
 
+/** Wire node fields used for upload name→id (W8.1c). */
+type GraphWireNode = { id?: string; concept_name?: string; course_id?: string | null };
+
 const CATEGORY_OPTIONS = [
   { value: "syllabus", label: "Syllabus" },
   { value: "lecture_notes", label: "Lecture notes" },
@@ -95,6 +106,11 @@ const CATEGORY_OPTIONS = [
 
 export function DocumentUploadModal({ open, userId, courses, onClose, onComplete }: Props) {
   const toast = useToast();
+  const { flags } = useFlagMap();
+  const isNavHidden = useIsNavHidden();
+  const loopOn = flags[LEARNING_LOOP_FLAG] === "on";
+  const treeHidden = isNavHidden("/tree");
+  const quizHidden = isNavHidden("/quiz");
   const [mounted, setMounted] = React.useState(false);
   const [items, setItems] = React.useState<UploadItem[]>([]);
   const [dragging, setDragging] = React.useState(false);
@@ -105,6 +121,10 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
   // the parent only refreshes via onComplete (fired at done/close), so a
   // just-added course must be merged locally to be selectable right away.
   const [extraCourses, setExtraCourses] = React.useState<CourseOption[]>([]);
+  // getGraph nodes for name→id on processed rows (W8.1c). Loaded once per
+  // open session when the first upload finishes with concept names.
+  const [graphNodes, setGraphNodes] = React.useState<GraphWireNode[]>([]);
+  const graphLoadRef = React.useRef<Promise<GraphWireNode[]> | null>(null);
 
   // Every in-flight upload's controller, so any route that closes the modal
   // — including the parent flipping `open` itself — aborts them (#759).
@@ -126,8 +146,28 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
       setCourseQuery("");
       setCourseResults([]);
       setExtraCourses([]);
+      setGraphNodes([]);
+      graphLoadRef.current = null;
     }
   }, [open, abortAll]);
+
+  const ensureGraphNodes = React.useCallback((): Promise<GraphWireNode[]> => {
+    if (graphNodes.length > 0) return Promise.resolve(graphNodes);
+    if (!graphLoadRef.current) {
+      graphLoadRef.current = getGraph(userId)
+        .then((g) => {
+          const nodes: GraphWireNode[] = Array.isArray(g?.nodes) ? g.nodes : [];
+          setGraphNodes(nodes);
+          return nodes;
+        })
+        .catch(() => {
+          // Course-scoped Quiz fallback still works without ids.
+          graphLoadRef.current = null;
+          return [] as GraphWireNode[];
+        });
+    }
+    return graphLoadRef.current;
+  }, [graphNodes, userId]);
 
   // Latest query wins (#769): an older in-flight search must not land after
   // a newer one and replace its results.
@@ -217,7 +257,7 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
       status: "uploading", abort: ac, progress: "Starting upload…",
       requestId, requestCourseId: item.courseId,
       error: undefined, docId: undefined, category: undefined,
-      summary: undefined, conceptNames: undefined,
+      summary: undefined, conceptNames: undefined, conceptIds: undefined,
     } : i));
     const settle = (patch: Partial<UploadItem>) =>
       setItems(prev => prev.map(i => i.id === item.id ? { ...i, progress: undefined, ...patch } : i));
@@ -239,12 +279,19 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
       }, ac.signal, requestId);
       if (outcome.kind === "processed") {
         const resp = outcome.result;
+        const conceptNames = extractConceptNames(resp);
+        let conceptIds: string[] | undefined;
+        if (conceptNames.length > 0) {
+          const nodes = await ensureGraphNodes();
+          conceptIds = conceptIdsFromNames(conceptNames, nodes, item.courseId);
+        }
         settle({
           status: "processed",
           docId: outcome.documentId,
           category: resp.classification?.category || "other",
           summary: resp.summary?.abstract || undefined,
-          conceptNames: extractConceptNames(resp),
+          conceptNames,
+          conceptIds,
         });
       } else {
         // The server's error is the row's error, shown once (#759) — also
@@ -522,6 +569,21 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
                       <span key={t} className="chip chip--accent">{t}</span>
                     ))}
                   </div>
+                )}
+                {item.status === "processed" && (
+                  <LibraryNextCtas
+                    testIdPrefix={`upload-next-${idx}`}
+                    next={libraryNext({
+                      courseId: item.courseId || null,
+                      conceptIds: item.conceptIds,
+                      conceptCount: item.conceptNames?.length ?? 0,
+                      checkItemsStatus: null,
+                      loopOn,
+                      treeHidden,
+                      quizHidden,
+                      justUploaded: true,
+                    })}
+                  />
                 )}
                 {item.error && (
                   <div style={{ fontSize: 11, color: "var(--err)" }}>{item.error}</div>

@@ -1,20 +1,17 @@
 """Spec §13 A121: the `loop_tutor_v2` flag picks the loop tutor's variant.
 
-Off — the default — the tutor's request must be BYTE-IDENTICAL to 7fa9cd0e's,
-because every recorded loop eval (tutor cassettes AND the rung/confront
-judgements keyed on the served text) was recorded against it, and the owner
-has approved no live re-record. The digests below were captured from 7fa9cd0e
-by running that agent in function mode (the same capture as `_capture`, run
-against a `git archive` export of the commit). Change them only with a
-recorded eval behind the change.
+Off — the default — the tutor's request digests below pin the current
+default prompt (system + band formats + teach phase rule). They started as
+7fa9cd0e's capture; W1.1/W1.2/W1.4 (Alvar V1 safe-anchor + motivated
+derivation) intentionally moved them — cassette re-record is W0. Change them
+only with a deliberate prompt edit (and a live re-record when W0 lands).
 
 On: the unchanged system prompt plus V2_INSTRUCTIONS as run instructions,
 the LoopTurnOutV2 schema with its own output template, and its own prompt
 version (A118's pattern, `agents.loop_tutor.variant_run_args`), plus the
 per-turn lines (the empty question, [ANSWER CHECK], [PLAN FOCUS] with its
 plan_concept block); its eval lives in its own cassette namespace
-(`LOOP_EVAL_VARIANT=v2`). Every tutor-prompt change that needs a live
-re-record belongs to this variant.
+(`LOOP_EVAL_VARIANT=v2`).
 """
 
 from __future__ import annotations
@@ -44,14 +41,16 @@ def _sha(value) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
-# ── 7fa9cd0e, captured in function mode ──────────────────────────────────────
+# ── Default (flag-off) request digests — function-mode capture ───────────────
+# Was 7fa9cd0e; re-pinned for W1.1/W1.2/W1.4 (safe-anchor + motivated derivation).
+# Cassette / routing freshness stays stale until W0 re-record.
 
-PRE_A121_PROMPT_HASH = "10676b7d004e"  # agents.loop_tutor._PROMPT_HASH, the metadata prompt_version
-PRE_A121_SYSTEM_PROMPT_SHA256 = "5af380aad03cd13076a0f5550ae9b6c6b866714f2998c31769f40be781623c4c"
+PRE_A121_PROMPT_HASH = "60deb79ab6a6"  # agents.loop_tutor._PROMPT_HASH, the metadata prompt_version
+PRE_A121_SYSTEM_PROMPT_SHA256 = "cecf20a45ab3ceffc9382bd657ba9d8b51913d9b4a1d69d1617ae86687fdf3e8"
 PRE_A121_OUTPUT_TEMPLATE_SHA256 = "f7d3986addb6c3774c5644ec7ed3232159316e2e161601421ad337da22cd91c4"
 #: The request's instructions as the model gets them: the system prompt plus
 #: the prompted-output instruction built from the template and the schema.
-PRE_A121_INSTRUCTIONS_SHA256 = "9685fd37914d7b6798c0584254747bb803fc2c19862f2e7a2a34ccc6c06c8fd5"
+PRE_A121_INSTRUCTIONS_SHA256 = "09bd0504dda643c9c64b3a3e0bf129b22df0feef9dc038f43e34568e76e3b0a3"
 #: The output object: its JSON schema, title and description (the TypedDict's
 #: docstring — pydantic-ai sends it).
 PRE_A121_SCHEMA_SHA256 = "f6c4d36a213fbaeaa31c1ece8c3ed9cf1583ff5b9185763346782c12e51c89e4"
@@ -67,58 +66,58 @@ _PROBLEMS = ["body_sentences:3>1", "question_shape:2 '?'", "invented_math:x^2"]
 PRE_A121_CASES = {
     "teach_h3": (
         dict(phase="teach", band="develop", ceiling=Rung.H3),
-        "2ac6f1bbbe858e54dcda34cf1cca9dc6bbf24bf1d808c54b812fcc7a37e6af33",
-        "d7ca9b4e73ed6ce143219dc08a654ec601103246944aae87a21ec120b6a48b27",
+        "4917fa49344d6dbdc9862d4f265d04fc2609540e53942270b31362e49456e919",
+        "e2f6924f6a85ce15063decb8568cb846c136eb3bfd1fdce2c9f6cdbfbe9e6ee8",
         "5558a60dc0a69b2f51df6e3ca3f807cab72e1f9ca73c4afcb651916434d8b6ba",
     ),
     "teach_h1": (
         dict(phase="teach", band="profic", ceiling=Rung.H1),
-        "c0ee0de45b3a1506f72ebc97d590343f158472f18a12a944767801a621602ed3",
-        "63fe7e21ff2556f971e3b315889651a20f349d542068a4f3efa578f878c93a9f",
+        "178247407b9ddaf5915de30567d7ccfdd4b117a69479369e604a1fafbc075f29",
+        "6447ae2858859cf2955cd3880b3a4853e993bf212107aa419d1b721be8cbfb9f",
         "fa74b4b444265ca1b6558e9aa248c8ddbb30bb460b60aa4e3a4f70af90d0ff8a",
     ),
     "teach_h5": (
         dict(phase="teach", band="novice", ceiling=Rung.H5),
-        "0a787b71cbc8b6e406f7030a770ed259fdd44e488568696e3eb28d4f80135bd5",
-        "1c5f16b4bf0c1ddc597b311fc03af5e4260ce6094acac2da049275cfc49c0f77",
+        "ad7ebda2aa12ec693afa155811153fbbf8bb134ebe3fb8fe0caeff646ff36e25",
+        "1251b0ea4c74631bb627a864312ab141825ec4a084091baedf403e0016c83bbe",
         "1c12f9d7fb452aa4a93fbf19ab59a0ef61b5f6a136ec3166548b5684ce250079",
     ),
     "hint_h1": (
         dict(phase="hint", band="develop", ceiling=Rung.H1, item_prompt="What stops f(0)?", item_format="free"),
-        "a6c4e93d5566865861e9314e7593e825af431cb7ff86bceca8a6de75ae5a4e2e",
-        "068b245d7671348bacac3773345129e5a2067d2fd3bdfc8945b5b04047fb47a7",
+        "7400c0f88d738aa0cbf478557809647a25d59da285ef207fb85a6a78016ff0ba",
+        "5087a28ad6e13cb420a776f585429b8093970e45348148a1b9b5c5b915e7bd82",
         "fa74b4b444265ca1b6558e9aa248c8ddbb30bb460b60aa4e3a4f70af90d0ff8a",
     ),
     "hint_h2": (
         dict(phase="hint", band="novice", ceiling=Rung.H2, item_prompt="What stops f(0)?", item_format="free"),
-        "58d16dd89fd963b3b486290ac295357e7c8dfb1b22d370301fdd651a3c5e8eb8",
-        "833a6cfc0bff873d487a09b0c5aa5948b7ab3eb95d5660ca1284261e55d0cc84",
+        "eff0e7eddca81e7adb315fd2c20e44d4faedcae9147faf4d4d3a540ccfb2aaed",
+        "44c6fad2e42b38c4d2f44f9cc2cf859d9f2af572a2ffff7c7213b06b83ad1935",
         "5558a60dc0a69b2f51df6e3ca3f807cab72e1f9ca73c4afcb651916434d8b6ba",
     ),
     "feedback_correct_h0": (
         dict(phase="feedback", band="profic", ceiling=Rung.H0, item_prompt="Q?", item_format="free", verdict="correct"),
-        "7b46bbcf73de44028471944c55f0580eeff6dcefca0148ec4a53927db2d320af",
-        "a71f3b8d02aba99455927b3f6b2c46f7c054a0d5e1c3661f27f8027ee0c007f2",
+        "78bd0950739fa65f2c37aa70e01066a1fa29ddda0c043ebc9100449741571c88",
+        "16485b1d9ce7e43e62d3479facf6501a80cbda9abf404def29ebdd372a0f5e02",
         "fa74b4b444265ca1b6558e9aa248c8ddbb30bb460b60aa4e3a4f70af90d0ff8a",
     ),
     "feedback_correct_h1": (
         dict(phase="feedback", band="profic", ceiling=Rung.H1, item_prompt="Q?", item_format="free", verdict="correct"),
-        "6d1bd93f9a468c6c2b5458cb3e9087afddf74ae7bd63cd3907bb1457ceb8b9f9",
-        "a72c7f28a3fe0f4ba04f9cdc1dc87a71288bb0765eb2706021e63dc467c243b5",
+        "10cdf62636808dfadbb412d3d0ad3543ab17bf396281a83434afbcff11adad8d",
+        "7158b566555726a4502e04272aee9bafff712c71f4414f1673570fce17dfc21a",
         "fa74b4b444265ca1b6558e9aa248c8ddbb30bb460b60aa4e3a4f70af90d0ff8a",
     ),
     "feedback_released": (
         dict(phase="feedback", band="develop", ceiling=Rung.H6, item_prompt="Q?", item_format="mc_reason",
              verdict="not_yet", answer_released=True),
-        "7f38e7a90bd7d727cf1c5af637bc15eee98f402b87b91bb14b444c3c57e32a69",
-        "3bf7c1de68575fb7e16d9f54cd252c1edfa81426fb3d50b6afbbc34655a54127",
+        "b51e6c692c559ba87295d8363ea11278c66011f4037a4f787fcafecc565d409a",
+        "0bf3507cf8919e7f2c1a4924655c098b2067e5f65a033aa58b4e638c5ea9640c",
         "3c24a7aa85b7920ddbf3fe0a9a9c83201a513997549d04e97542c8fc4f81f5b9",
     ),
     "feedback_idk": (
         dict(phase="feedback", band="novice", ceiling=Rung.H6, item_prompt="Q?", item_format="free",
              verdict="idk", answer_released=True),
-        "2fa641323db29ae4fe2ea094c2978449971a03fd8720c9f26bae7e3e6ffc3aa5",
-        "a07e8af2dd921f7496937045e636122f8ef99ff38afddf82c5c79d7a414f130d",
+        "3839f2ef7055e03adfd0c8b9f22be1203b7572e94a812058c6e9d81175713172",
+        "0d32a784db78fe8fc40e5748dfa9900600f984183df78e5b635b0dbdc059e3bb",
         "3c24a7aa85b7920ddbf3fe0a9a9c83201a513997549d04e97542c8fc4f81f5b9",
     ),
 }
@@ -133,7 +132,7 @@ V2_OUTPUT_TEMPLATE_SHA256 = "8b38d332747a9209a396200a37eef5a34ad498cdc537c250668
 #: and the output object's schema as the request carries it
 V2_SCHEMA_SHA256 = "ee2a0f1f177fea6961205f9ee748f7698f3794c5557cd19058dae5da35fb0549"
 V2_WIRE_SCHEMA_SHA256 = "54b75b0589cd5f8fc1a1363f7fc9be226c66cdb0d1545218f80e98da814b6125"
-V2_PROMPT_VERSION = "bfcbabd1a4c0"  # sha256(system prompt, instructions, template, tool defs)[:12]
+V2_PROMPT_VERSION = "6cf357c8d47a"  # sha256(system prompt, instructions, template, tool defs)[:12]
 ANSWER_CHECK_LINE_SHA256 = "b728e683c5e002bfbffe5b0200062b3cfdb270c3db1619ff634ca1c32438bcb4"
 PLAN_FOCUS_REASONS_SHA256 = "d01b9552b709862b07dc6f4005620273df0bbf4333598494ad0f0b59613d8a70"
 

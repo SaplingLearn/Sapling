@@ -112,6 +112,11 @@ FLASHCARD_RATING_TO_FSRS: dict[int, int] = {1: 1, 2: 2, 3: 3}
 GATE_INDEPENDENT_MIN_S = 45  # †
 GATE_INDEPENDENT_MIN_S_NOVICE = 90  # †
 GATE_RUNG_DWELL_MIN_S = 8  # †
+# † W2.5 / Alvar sensing: after a high-confidence wrong answer, Continue / Next
+# holds for this long so the student attends to corrective feedback
+# (Butterfield & Metcalfe hypercorrection). Same cut as the hint-rung dwell;
+# A/B candidate. Scaled by LEARNING_GATE_TIME_SCALE via gate_seconds.
+GATE_HYPERCORRECTION_FEEDBACK_DWELL_S = 8  # †
 H6_MIN_GENUINE_ATTEMPTS = 2
 OFFER_BANDS = frozenset({"novice"})
 BAND_WINDOW = 8
@@ -284,6 +289,10 @@ LEAK_PROVENANCE_MIN_TOKENS = 3
 # † served mode: how far before a hit (characters) answer position is read
 LEAK_POSITION_WINDOW_CHARS = 60
 CHECK_ITEM_FORMATS = ("free", "teachback", "mc_reason")
+# W1.3 / Alvar V1 compression: formats that ask the student to regenerate from
+# a core definition (not re-recognize a surface option). Segment-close
+# activation prefers these (learning.policy.practice_formats).
+GENERATIVE_CORE_FORMATS = ("free", "teachback")
 CHECK_ITEM_DIFFICULTIES = (1, 2, 3)
 # PKG-08 † — engineering choices with no validated cut-point (spec §13 A6 values).
 # Difficulty shifts p_known before the §3.1 observation likelihood; LLM-generated

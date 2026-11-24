@@ -22,7 +22,7 @@ from services.quiz_ask import QUIZ_ASK_ORIGIN, open_quiz_ask
 from services.loop.constants import _LOOP_OPENER_TEMPLATE
 from services.loop.flags import OPEN_QUESTION_KEY
 from services.loop.state import _arm_for, _budget_data, _loop_phase, _now_s, _request_id
-from services.loop.context import _materials_notice, _note_retrieval_failure
+from services.loop.context import _materials_grounded, _materials_notice, _note_retrieval_failure
 from services.loop.planning import (
     _plan_states,
     _probe_course_has_items,
@@ -215,4 +215,5 @@ class _LoopOpener(_LoopTurn):
             "phase": self.phase,
             "budget": _budget_data(self.planned) if self.planned.level == "hard" else None,
             **_materials_notice(notice),
+            **_materials_grounded({"materials_grounded": self.materials_grounded}),
         }

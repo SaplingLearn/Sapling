@@ -13,6 +13,7 @@
  *   flashcards ......... getFlashcards
  *   study guides ....... listGuides
  *   daily minutes/goal . getStudyDaily / setStudyDailyGoal (routes/study.py)
+ *   learner-next ....... getStudyNext (W8.3; learning_loop + quiz_concept_plan)
  *   roadmap categories . getTopicChecklist, and refreshTopicChecklist when the
  *                        course has no current outline (routes/topic_checklist.py)
  *   exam coverage ...... the same checklist (a topic's assessment_ids + node_id)
@@ -24,6 +25,7 @@ import React from "react";
 import { useFlagMap } from "@/context/FlagsContext";
 import { useUser } from "@/context/UserContext";
 import type { EnrolledCourse } from "@/lib/api";
+import type { StudyNext } from "@/lib/studyApi";
 import type { ChecklistTopic } from "@/lib/topicChecklistApi";
 import { StudyHubSkeleton } from "../Skeleton";
 import { DailyGoalCard } from "./DailyGoalCard";
@@ -43,7 +45,7 @@ import { useDatesEditor, useSelectAddedExam } from "./useDatesEditor";
 import { useFlip } from "./useFlip";
 import { COURSE_PICKED, examPicked, useHubState, type HubState, type SetHub } from "./useHubState";
 import { useHubView } from "./useHubView";
-import { useConceptGraph, useCourseOutline, useStudyRecords, type StudyGraph, type StudyRecords } from "./useStudyData";
+import { useConceptGraph, useCourseOutline, useStudyNext, useStudyRecords, type StudyGraph, type StudyRecords } from "./useStudyData";
 import { useToolNav } from "./useToolNav";
 
 export interface StudyHubProps {
@@ -69,6 +71,7 @@ export function StudyHub({ courses, coursesReady = true, semester, semesterReady
   // shown only once the flags are in and it is not hidden.
   const { flags, ready: flagsReady } = useFlagMap();
   const quizShown = flagsReady && flags.hide_quiz !== "on";
+  const tutorShown = flagsReady && flags.hide_tutor !== "on";
   const { userId } = useUser();
   const today = React.useMemo(() => todayProp ?? new Date(), [todayProp]);
 
@@ -83,6 +86,7 @@ export function StudyHub({ courses, coursesReady = true, semester, semesterReady
     set(COURSE_PICKED);
   };
   const { outline, ready: outlineReady, reload: reloadOutline } = useCourseOutline(userId, course?.course_id || "", semester, semesterReady);
+  const learnerNext = useStudyNext(userId, course?.course_id || "");
 
   // The hub paints nothing real until it knows the student's courses AND has
   // their concepts: without this it rendered the "Add a course" empty state,
@@ -93,8 +97,9 @@ export function StudyHub({ courses, coursesReady = true, semester, semesterReady
 
   return (
     <HubPage courses={courses} course={course} onPickCourse={pickCourse} userId={userId} today={today} isMobile={isMobile} quizShown={quizShown}
+      tutorShown={tutorShown}
       graph={graph} cards={cards} records={records} outline={outline} outlineReady={outlineReady} reloadOutline={reloadOutline}
-      st={st} set={set} closeTileMenu={closeTileMenu} reviews={reviews} />
+      learnerNext={learnerNext} st={st} set={set} closeTileMenu={closeTileMenu} reviews={reviews} />
   );
 }
 
@@ -125,6 +130,7 @@ function HubPage(props: {
   today: Date;
   isMobile: boolean;
   quizShown: boolean;
+  tutorShown: boolean;
   graph: StudyGraph;
   cards: FlashcardRow[];
   records: StudyRecords;
@@ -133,14 +139,20 @@ function HubPage(props: {
   outlineReady: boolean;
   /** Re-reads a course's outline after its exams changed. */
   reloadOutline: (courseId: string) => void;
+  /** W8.3 learner-next; null while flags off or the read has not settled. */
+  learnerNext: StudyNext | null;
   st: HubState;
   set: SetHub;
   closeTileMenu: (conceptId: string) => void;
   reviews?: React.ReactNode;
 }) {
-  const { course, userId, today, isMobile, quizShown, records, st, set } = props;
+  const { course, userId, today, isMobile, quizShown, tutorShown, records, st, set } = props;
   const cid = course.course_id;
-  const view = useHubView({ course, graph: props.graph, cards: props.cards, records, outline: props.outline, outlineReady: props.outlineReady, st, today });
+  const view = useHubView({
+    course, graph: props.graph, cards: props.cards, records,
+    outline: props.outline, outlineReady: props.outlineReady, st, today,
+    learnerNext: props.learnerNext,
+  });
   const nav = useToolNav(cid);
   const editor = useDatesEditor({
     userId, courseId: cid, list: view.list, today,
@@ -163,6 +175,11 @@ function HubPage(props: {
     if (view.byId.has(id)) set({ topic: id, recentOpen: false });
   };
   const startReviews = () => nav.leaveTo(nav.cardsHref(view.reviews.map(x => x.t.name)));
+  // W8.3b: Due Reviews offer Quiz beside Flashcards when learner-next is on
+  // and quiz is shown. Flag-off / hide_quiz keeps the single Flashcards CTA.
+  const startDueQuiz = view.reviewsQuizHref && quizShown
+    ? () => nav.leaveTo(view.reviewsQuizHref!)
+    : null;
   const { focus } = view;
   // A change of exam moves the band and the Up Next block to their new state
   // (the roadmap below does the same, on the same clock: ./hubMotion.ts).
@@ -189,7 +206,7 @@ function HubPage(props: {
             selectedId={view.sel?.id ?? null} level={st.lvl} onSelect={id => set({ topic: id })} onLevel={lvl => set({ lvl })} />
           {focus
             ? <FocusCard concept={focus} upNext={focus.id === view.rec?.id} masteredExam={view.masteredExam} prereqs={view.focusPrereqs}
-                cardCount={cardsFor(view.cardCount, focus.name)} quizShown={quizShown} nav={nav} />
+                cardCount={cardsFor(view.cardCount, focus.name)} quizShown={quizShown} tutorShown={tutorShown} nav={nav} />
             : <FocusEmpty hasConcepts={view.topics.length > 0} pending={view.scopePending} />}
         </section>
 
@@ -207,7 +224,7 @@ function HubPage(props: {
         <aside aria-label="Activity" className={s.areaRail} style={{ display: "flex", flexDirection: "column" }}>
           <section aria-label="Daily goal" style={{ display: "flex", flexDirection: "column", gap: 12, paddingBottom: 24 }}>
             <DailyGoalCard daily={records.daily} onSave={records.saveGoal} />
-            <QuickReviews reviews={view.reviews} courseLabel={view.label} onStart={startReviews} />
+            <QuickReviews reviews={view.reviews} courseLabel={view.label} fsrsDue={view.reviewsFsrsDue} onStart={startReviews} onQuiz={startDueQuiz} />
           </section>
           <RecentActivity rows={view.recent} onPickConcept={pickConcept} onShowAll={() => set({ recentOpen: true })} />
         </aside>

@@ -50,6 +50,9 @@ it("never creates a pose on mount/course change and honestly renders no eligible
   expect(await screen.findByTestId("retention-empty")).toBeTruthy();
   expect(api.startRetentionCheck).toHaveBeenCalledWith("u1", "c1");
   expect(screen.getByTestId("retention-empty").textContent).toContain("eligible unseen");
+  // W3.4: empty state cross-links Study + Tutor (hide_* default off in unit).
+  expect(screen.getByTestId("retention-study-link").getAttribute("href")).toBe("/study?course=c1");
+  expect(screen.getByTestId("retention-tutor-link").getAttribute("href")).toBe("/learn?mode=socratic&course=c1");
 });
 
 it("ignores a response from the course the learner left", async () => {

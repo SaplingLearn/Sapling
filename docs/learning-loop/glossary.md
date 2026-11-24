@@ -5,6 +5,26 @@ area; within a group, the order follows the order you meet them. "Spec" is
 [the learning-loop design spec](../superpowers/specs/2026-09-26-learning-loop-design.md);
 "A*n*" is a row of its §13 amendments table (index: [amendments.md](amendments.md)).
 
+## Alvar V1 pedagogy
+
+From the first Alvar video (safe anchors → motivated edges → understanding as
+structure), as Sapling teaches it — not as a fluency stop rule:
+
+- **Safe-anchor.** For a novice or a new concept, open on a lockable definition
+  or universal statement before contingent procedure; "because the lecture
+  says" is never the only warrant.
+- **Motivated derivation.** Each teach body makes the problem that forces the
+  next move explicit; the turn's question asks for that next step when the
+  ceiling allows.
+- **Compression / generative core.** At segment close, prefer a teachback or
+  free check that asks the student to regenerate the idea from the core
+  definition — not MC surface recognition (`practice_formats`; W1.3).
+- **Graded-check stop.** A segment moves on when the student passes a graded
+  check, not when the step "feels obviously true" (design_choices Q5 forbids
+  that stop; see [amendments.md](amendments.md#alvar-trilogy-adopted--narrowed--refused)
+  and [alvar-trilogy-implementation-plan.md](alvar-trilogy-implementation-plan.md)
+  W1).
+
 ## The learner model
 
 | Spec term | Plain words | Code |
@@ -31,7 +51,8 @@ area; within a group, the order follows the order you meet them. "Spec" is
 | Single writer | The one function allowed to write the graph and learner tables. | `backend/services/graph_service.py::apply_graph_update` |
 | Operation receipt | The record that one evidence batch committed as a whole, so a retry after an ambiguous failure never double-counts (ADR 0037). | `backend/learning/evidence_transaction.py::commit_evidence_transaction` |
 | Snapshot | The owner- and course-scoped read the writer plans from: nodes, learner rows, prerequisite edges and prior exposures, with row versions checked at commit. | `backend/learning/evidence_transaction.py::EvidencePlan` |
-| Stated confidence | The student's own 3-point confidence on a graded answer, stored as `student_confidence`; never a weight, A127. Distinct from the grader's `confidence`. | `backend/learning/evidence.py::stated_confidence` |
+| Stated confidence | The student's own 3-point confidence on a graded answer, stored as `student_confidence`; never a weight, A127/A132. Distinct from the grader's `confidence`. | `backend/learning/evidence.py::stated_confidence` |
+| Hypercorrection dwell | After a high-confidence ("Sure") wrong answer, Continue / Next holds for `GATE_HYPERCORRECTION_FEEDBACK_DWELL_S` (scaled) so the student attends to corrective feedback. Diagnosis / attention only — never mastery weight. W2.5. | `backend/learning/policy.py::hypercorrection_feedback_dwell_ms` |
 
 ## Check items
 
@@ -181,6 +202,7 @@ area; within a group, the order follows the order you meet them. "Spec" is
 | Gate (quiz) | A generated quiz question's verdict from the loop's concept check and blind key solve: verified (evidence), practice (served, never evidence) or dropped (never served), A145. | `backend/learning/quiz_gates.py::decide` |
 | `quiz_check` | The model slot the quiz's checks run on, which must differ from the quiz writer's, A145. | `backend/services/quiz_learning.py::checks_independent` |
 | Learning block | The quiz results' account of what changed: the skill meters that moved, what is due, the next step, A147. | `backend/services/quiz_learning.py::results_block` |
+| Practice / Exam Twin | Quiz session modes (W7.8): Practice writes mastery through the A132/A145 path; Exam Twin is score-only and tool-light and never claims the farm window. | `backend/learning/quiz_session_mode.py` |
 
 ## Models, cost and modes
 

@@ -822,6 +822,53 @@ def next_isomorph(item: ItemLike, items: Sequence[ItemLike]) -> ItemLike | None:
     return None
 
 
+def practice_formats(concept_checks: int) -> tuple[str, ...]:
+    """Format preference for the next activated check (PKG-07 / W1.3).
+
+    Rotates through `CHECK_ITEM_FORMATS` by how many checks this concept has
+    already graded in the session. On the segment-closing activation (the last
+    check before `LOOP_CHECKS_PER_CONCEPT` advances the cursor), generative
+    formats (`GENERATIVE_CORE_FORMATS`: free / teachback) are pulled ahead of
+    `mc_reason` so the close beat asks the student to regenerate the idea from
+    the core definition, not re-recognize a surface option. Still a graded
+    check only — never a fluency / "feels obvious" stop. Pure.
+    """
+    n = max(0, int(concept_checks))
+    formats = params.CHECK_ITEM_FORMATS
+    rotation = n % len(formats)
+    rotated = formats[rotation:] + formats[:rotation]
+    if n < params.LOOP_CHECKS_PER_CONCEPT - 1:
+        return rotated
+    generative = params.GENERATIVE_CORE_FORMATS
+    preferred = tuple(f for f in rotated if f in generative)
+    rest = tuple(f for f in rotated if f not in generative)
+    return preferred + rest
+
+
+def hypercorrection_feedback_dwell_ms(
+    *,
+    correct: bool,
+    student_confidence: float | None,
+    idk: bool = False,
+    time_scale: float = 1.0,
+) -> int:
+    """Milliseconds Continue / Next must wait after feedback (W2.5).
+
+    High stated confidence (≥ `MISCONCEPTION_CONFIDENCE`, the "Sure" band) on a
+    wrong answer → dwell so the student attends to corrective feedback
+    (Butterfield & Metcalfe hypercorrection). Diagnosis / attention only —
+    never a mastery weight, never a hint gate (ZPD lever brief). Idk, correct,
+    missing confidence, or low/mid confidence → 0. Pure; `time_scale` is A5's
+    `LEARNING_GATE_TIME_SCALE` (callers pass it; this module never reads config).
+    """
+    if idk or correct or student_confidence is None:
+        return 0
+    if float(student_confidence) < params.MISCONCEPTION_CONFIDENCE:
+        return 0
+    seconds = params.gate_seconds("GATE_HYPERCORRECTION_FEEDBACK_DWELL_S", time_scale)
+    return int(round(seconds * 1000))
+
+
 # ── within-student arms (PKG-14; spec §3.3, §10 rung 2) ─────────────────────
 # `variant_for` (ids + the arm label in, variant out) lives in learning/arms.py:
 # invariant 4 holds this module to typed, text-free parameters.

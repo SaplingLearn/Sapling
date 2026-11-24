@@ -127,6 +127,22 @@ export function CheckCard({
             if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && canSubmit) onSubmit();
           }}
         />
+        {/* W2.3: optional; never graded / never mastery — answer box above is what gets checked */}
+        <label className={tutorStyles.fl} htmlFor={`${ids}-reasoning`} style={{ marginBottom: -8 }}>Your reasoning (optional)</label>
+        <textarea
+          id={`${ids}-reasoning`}
+          data-testid="loop-attempt-reasoning"
+          maxLength={LOOP_ANSWER_MAX}
+          style={FIELD_STYLE}
+          rows={2}
+          placeholder="Show your thinking — not graded"
+          value={draft.reasoning}
+          disabled={busy}
+          onChange={(e) => {
+            const reasoning = e.target.value;
+            setDraft((d) => ({ ...d, reasoning }));
+          }}
+        />
         </>
       )}
       <ConfidenceControl

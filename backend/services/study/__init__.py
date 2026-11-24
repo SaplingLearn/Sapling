@@ -7,10 +7,13 @@ is the HTTP layer over these.
   the day Study's review queue keeps too (#866 K17).
 - ``goal``: the student's daily goal on ``user_settings.daily_goal_minutes``
   (``read_daily_goal`` / ``set_daily_goal``) and its bounds.
+- ``next``: ``get_next``, the learner-next buckets for Focus / Quick Reviews
+  (W8.3; gated on ``learning_loop`` + ``quiz_concept_plan``).
 
-There is no ``errors.py``: neither handler has a failure of its own to
-report. The goal's range is the route's body validation, and both routes are
-behind ``require_self``.
+There is no ``errors.py``: the daily/goal handlers have no failure of their
+own to report (the goal's range is the route's body validation). ``get_next``
+raises FastAPI ``HTTPException`` (404 off, 503 on a failed state read). All
+routes are behind ``require_self``.
 
 The rest of the Study page lives in its own packages and routes
 (``services/flashcards/``, ``routes/study_guide.py``,
@@ -24,6 +27,7 @@ from services.study.goal import (
     read_daily_goal,
     set_daily_goal,
 )
+from services.study.next import get_next
 
 __all__ = [
     "DEFAULT_GOAL_MIN",
@@ -31,6 +35,7 @@ __all__ = [
     "MIN_GOAL_MIN",
     "clamp_tz_offset",
     "get_daily",
+    "get_next",
     "local_date",
     "read_daily_goal",
     "set_daily_goal",

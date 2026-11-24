@@ -124,6 +124,7 @@ function session(over: Partial<QuizSession> = {}): QuizSession {
     deliveredShort: false,
     sourceAttemptId: null,
     reserved: null,
+    prereq: null,
     ...over,
   };
 }
@@ -218,7 +219,11 @@ describe("QuizResults", () => {
     );
     expect(screen.getByTestId("quiz-next-step-learn")).toHaveAttribute(
       "href",
-      "/learn?topic=Recursion&concept=recursion&course=cs101",
+      "/learn?topic=Recursion&concept=recursion&mode=socratic&course=cs101",
+    );
+    expect(screen.getByTestId("quiz-next-step-tree")).toHaveAttribute(
+      "href",
+      "/tree?node=recursion",
     );
   });
 

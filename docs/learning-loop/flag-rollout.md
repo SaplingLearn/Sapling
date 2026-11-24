@@ -87,6 +87,12 @@ Some paths the loop serves with no flag of their own have cases written but not 
 - **Before:** the acknowledging turn recorded live and passing: `teach_acknowledges_self_explanation` in the same `loop_tutor` flag-path datasets.
 - **Watch:** the admin report's `self_explanation` block: reply rate, and next-item success after a reply.
 
+### next_probe_hint (W2.4)
+- **Changes:** when reason-before-submit / self-explain plaintext is available, activation may prefer an already-eligible check whose stem overlaps that text (deterministic keywords). Never mastery.
+- **Before:** nothing eval-gated (no prompt change). Prefer after W2.3 storage is in use and a decrypt path into activation exists; until then the call site is a no-op even when on (no plaintext threaded). See [w2-next-probe-hint.md](w2-next-probe-hint.md).
+- **Watch:** activation still respects exclusions / post-test reserves; no `apply_graph_update` from this path.
+- **Roll back:** off restores ordinary `select_item` preference.
+
 ### quiz_planned_questions (A144)
 - **Changes:** the learner model sets each quiz question's difficulty and the misconception a distractor targets; the model only writes them.
 - **Before:** `quiz_generation_planned` recorded live and passing.

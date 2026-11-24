@@ -61,6 +61,7 @@ import {
   type LoopPendingGrade,
   type LoopPhase,
   type LoopPlanConcept,
+  type LoopPlanPrereqEdge,
   type LoopPrequestion,
   type LoopPrequestionGuess,
   type LoopProbeItem,
@@ -75,6 +76,7 @@ import {
 import { useFlag } from "@/context/FlagsContext";
 import { useStudyNavShown } from "../useRetentionNav";
 import { forgetEndedSession, noteLearningSession, useFeedbackHold } from "@/lib/feedbackPacing";
+import { HYPERCORRECTION_DWELL_COPY, useHypercorrectionDwell } from "@/lib/hypercorrectionDwell";
 import { checkIsOpen, hintTurnEvents, initialLoopState, reduceLoopEvent } from "./loopState";
 import { hasDeepLink, readDeepLink } from "./deepLink";
 import styles from "./LoopLearn.module.css";
@@ -168,18 +170,28 @@ const TEACHING: readonly LoopPhase[] = ["teach", "check", "feedback"];
 
 let msgSeq = 0;
 const msgId = (prefix: string) => `${prefix}-${Date.now()}-${++msgSeq}`;
-const asMsg = (role: "user" | "assistant", content: string): ChatMsg => ({ id: msgId(role), role, content });
+const asMsg = (role: "user" | "assistant", content: string, extra?: Partial<ChatMsg>): ChatMsg => ({
+  id: msgId(role), role, content, ...extra,
+});
+/** W4.3: calm grounded chrome only when the server says passages were in the prompt. */
+const groundedExtra = (res: { materials_grounded?: boolean }): Partial<ChatMsg> =>
+  res.materials_grounded ? { materialsGrounded: true } : {};
 const toChat = (rows: { id: string; role: string; content: string }[] | undefined): ChatMsg[] =>
   (rows ?? [])
     .filter((m) => m.role === "user" || m.role === "assistant")
     .map((m) => ({ id: m.id, role: m.role as "user" | "assistant", content: m.content }));
-const EMPTY_DRAFT: Draft = { answer: "", option: "", reason: "", confidence: null };
+const EMPTY_DRAFT: Draft = { answer: "", option: "", reason: "", reasoning: "", confidence: null };
 
-/** The answer fields a draft submits: `confidence` only when chosen (A127). */
+/** The answer fields a draft submits: `confidence` only when chosen (A127).
+ *  Free/teachback may include optional `reasoning` (W2.3; never evidence). */
 function draftAnswer(draft: Draft, format: string): LoopCheckAnswer {
   const a: LoopCheckAnswer = format === "mc_reason"
     ? { option: draft.option, reason: draft.reason, idk: false }
-    : { answer: draft.answer, idk: false };
+    : {
+      answer: draft.answer,
+      idk: false,
+      ...(draft.reasoning.trim() ? { reasoning: draft.reasoning.trim() } : {}),
+    };
   return draft.confidence ? { ...a, confidence: draft.confidence } : a;
 }
 /** The Tutor's main column: a session (T4–T15), the Tutor home (T1), a course
@@ -242,6 +254,13 @@ export function LoopLearn() {
   const studyVisible = useStudyNavShown();
   const libraryVisible = useFlag("hide_library") !== "on";
   const treeVisible = useFlag("hide_tree") !== "on";
+  const quizVisible = useFlag("hide_quiz") !== "on";
+  const handoffVisibility = {
+    study: studyVisible,
+    tutor: true, // this screen is Tutor; hide_tutor would not render LoopLearn
+    quiz: quizVisible,
+    tree: treeVisible,
+  };
   // A session picked in another course: resumed once that course's sessions list.
   const pendingResume = useRef<string | null>(null);
 
@@ -296,6 +315,8 @@ export function LoopLearn() {
 
   // Plan
   const [plan, setPlan] = useState<LoopPlanConcept[] | null>(null);
+  // W3.1: GET /plan prereq pairs — kept through approve for SessionPanel
+  const [planPrereqEdges, setPlanPrereqEdges] = useState<LoopPlanPrereqEdge[]>([]);
   const [planBusy, setPlanBusy] = useState(false);
   const [planLoading, setPlanLoading] = useState(false);
   const [planGoalVersion, setPlanGoalVersion] = useState<number | undefined>(undefined);
@@ -319,6 +340,9 @@ export function LoopLearn() {
   const [askRating, setAskRating] = useState<string | null>(null);
   // Wireframe T9: the last graded check's verdict, shown over the feedback turn
   const [verdict, setVerdict] = useState<{ verdict: string; nodeId: string | null; credit?: LoopTurnResult["credit"]; reasons?: LoopTurnResult["credit_reasons"] } | null>(null);
+  // W2.5: ms Continue / probe Next holds after high-confidence wrong (server-scaled)
+  const [feedbackDwellMs, setFeedbackDwellMs] = useState<number | null>(null);
+  const hypercorrectionHold = useHypercorrectionDwell(feedbackDwellMs);
   // Spec §13 A138: the open segment-opening guess; A139: the open "why" prompt.
   // Both are server-driven: a served turn closes them and may open new ones.
   const [prequestion, setPrequestion] = useState<LoopPrequestion | null>(null);
@@ -600,6 +624,7 @@ export function LoopLearn() {
     setNoCheckItems(null);
     setMaterialsNote(false);
     setPlan(null);
+    setPlanPrereqEdges([]);
     setPlanJustApproved(false);
     setApprovedPlan(null);
     setPlanGoalVersion(undefined);
@@ -633,6 +658,7 @@ export function LoopLearn() {
     setPlanLoading(true);
     setLoadError(null);
     setPlan(null);
+    setPlanPrereqEdges([]);
     setPlanGoalVersion(undefined);
     try {
       const r = await getLoopPlan(sid, userId);
@@ -642,6 +668,7 @@ export function LoopLearn() {
       setScopeError(false);
       setPlanGoalVersion(r.goal_version);
       setPlan(r.concepts ?? []);
+      setPlanPrereqEdges(r.prereq_edges ?? []);
       if (r.phase) dispatch({ type: "phase", phase: r.phase }); // an empty plan teaches at once
     } catch (err) {
       if (g !== gen.current) return;
@@ -796,7 +823,7 @@ export function LoopLearn() {
     sessionRef.current = r.session_id;
     applyLearningScope(r);
     setScopeReady(true);
-    if (r.initial_message) setMessages([asMsg("assistant", r.initial_message)]);
+    if (r.initial_message) setMessages([asMsg("assistant", r.initial_message, groundedExtra(r))]);
     if (r.materials_unavailable) setMaterialsNote(true); // A128: the opener's retrieval failed
     if (r.budget?.level === "hard") {
       // A27: a capped student still gets the template opener and the probe
@@ -1047,8 +1074,9 @@ export function LoopLearn() {
   /** After a graded answer: the probe's last answer already moved the session
    *  to `plan` (a /probe/next now would 409), otherwise the next item. */
   const advanceProbe = async (done: boolean, g: number) => {
-    if (!sessionId) return;
+    if (!sessionId || hypercorrectionHold) return;
     setProbeReference(null);
+    setFeedbackDwellMs(null);
     if (done) {
       setProbeItem(null);
       dispatch({ type: "phase", phase: "plan" });
@@ -1067,6 +1095,7 @@ export function LoopLearn() {
       if (r.probe_done) setProbeFinished(true);
       if (r.reference_answer) {
         setProbeReference(r.reference_answer);
+        setFeedbackDwellMs(r.feedback_dwell_ms && r.feedback_dwell_ms > 0 ? r.feedback_dwell_ms : null);
         return;
       }
       await advanceProbe(r.probe_done, g);
@@ -1132,6 +1161,7 @@ export function LoopLearn() {
       setProbeFinished(false);
       setNoCheckItems(null);
       setPlan(null);
+      setPlanPrereqEdges([]);
       setPlanGoalVersion(undefined);
       setLoadError(null);
       dispatch({ type: "phase", phase: response.phase });
@@ -1193,6 +1223,7 @@ export function LoopLearn() {
       if (g !== gen.current) return;
       if (extractErrorDetail(err).status === 409) {
         setPlan(null);
+        setPlanPrereqEdges([]);
         setLoadError("plan");
         await retryLearningScope();
       }
@@ -1226,7 +1257,7 @@ export function LoopLearn() {
   ) => {
     // done.reply is always the final, leak-stripped text (A46) — never the tokens
     const text = res.reply ?? streamed;
-    if (text) setMessages((prev) => [...prev, asMsg("assistant", text)]);
+    if (text) setMessages((prev) => [...prev, asMsg("assistant", text, groundedExtra(res))]);
     // #761 (B4): a replay re-sends a reply the server already persisted —
     // {reply, graph_update, mastery_changes: [], replayed: true}, no phase,
     // check or learner state. Its turn's state changes already happened, so
@@ -1235,6 +1266,7 @@ export function LoopLearn() {
     if (res.approved_plan) setApprovedPlan(res.approved_plan); // K08: the server moved the plan's cursor
     if (submission && res.graded) {
       setVerdict(res.verdict ? { verdict: res.verdict, nodeId: res.learner_state?.[0]?.node_id ?? state.focusNodeId, credit: res.credit, reasons: res.credit_reasons } : null);
+      setFeedbackDwellMs(res.feedback_dwell_ms && res.feedback_dwell_ms > 0 ? res.feedback_dwell_ms : null);
       setPendingGrade(null);
       // graded — correct, not yet, idk, or a refusal the server graded as idk:
       // the item takes no more answers
@@ -1600,7 +1632,7 @@ export function LoopLearn() {
       // In the card while the item is current; the log hides this row until then
       // (the server saved it as an assistant row, so a reload shows it there).
       setHint({ reply: t.reply });
-      setMessages((prev) => [...prev, asMsg("assistant", t.reply)]);
+      setMessages((prev) => [...prev, asMsg("assistant", t.reply, groundedExtra(t))]);
       // spec §13 A139: a worked example or a shown solution asks "why" — a
       // served hint turn closes an older prompt and may open a new one
       setSelfExplainSaved(false);
@@ -1689,6 +1721,7 @@ export function LoopLearn() {
         invalidateHint();
         dispatch({ type: "check", item: null });
         setPlan(null);
+        setPlanPrereqEdges([]);
         setPlanGoalVersion(undefined);
         dispatch({ type: "phase", phase: "plan" });
         await loadPlan(sessionId, g);
@@ -1772,6 +1805,11 @@ export function LoopLearn() {
   const currentNodeId = currentConcept(approvedPlan, focusNodeId);
   const mapNodeId = currentNodeId ?? focusNodeId;
   const learner = state.focusNodeId ? state.learnerState[state.focusNodeId] : undefined;
+  // W3.2: practiced = measured learner_state keys (session covered outline).
+  const practicedNodeIds = useMemo(
+    () => new Set(Object.keys(state.learnerState)),
+    [state.learnerState],
+  );
   const treeHref = mapNodeId ? `/tree?node=${encodeURIComponent(mapNodeId)}` : "/tree";
   const teaching = TEACHING.includes(state.phase);
   const streaming = streamingText !== null;
@@ -1968,6 +2006,8 @@ export function LoopLearn() {
     <LoopNotices
       paused={paused}
       studyVisible={studyVisible}
+      quizVisible={quizVisible}
+      courseId={courseId}
       noCheckItems={noCheckItems}
       preparing={noCheckItems === "preparing" && !crisisOnScreen}
       materialsNote={materialsNote && !crisisOnScreen}
@@ -2014,18 +2054,26 @@ export function LoopLearn() {
           ref={continueRef}
           data-testid="loop-continue"
           className="btn btn--primary"
-          onClick={() => send(CONTINUE_MESSAGE)}
-          disabled={!!paused || streaming || starting || scopeLoading}
+          onClick={() => {
+            setFeedbackDwellMs(null);
+            send(CONTINUE_MESSAGE);
+          }}
+          disabled={!!paused || streaming || starting || scopeLoading || hypercorrectionHold}
         >
           {feedbackPending ? "Retry feedback" : "Continue"}
         </button>
+      )}
+      {state.phase === "feedback" && hypercorrectionHold && (
+        <span role="status" data-testid="loop-feedback-dwell" style={{ fontSize: 13, color: "var(--text-muted)" }}>
+          {HYPERCORRECTION_DWELL_COPY}
+        </span>
       )}
       <button
         ref={checkMeRef}
         data-testid="loop-check-me"
         className={state.phase === "feedback" ? "btn" : "btn btn--primary"}
         onClick={() => void checkMe()}
-        disabled={checkBusy || streaming || feedbackPending || starting || scopeLoading}
+        disabled={checkBusy || streaming || feedbackPending || starting || scopeLoading || hypercorrectionHold}
         title={feedbackPending ? FEEDBACK_PENDING_COPY : "Get a question on this concept"}
       >
         Check me
@@ -2249,6 +2297,7 @@ export function LoopLearn() {
           reference={probeReference}
           note={probeNote}
           busy={probeBusy}
+          nextHeld={hypercorrectionHold}
           loadFailed={loadError === "probe"}
           greeting={messages.find((m) => m.role === "assistant")?.content ?? null}
           onSubmit={() => void submitProbe(false)}
@@ -2263,6 +2312,7 @@ export function LoopLearn() {
           diagnosis={diagnosis}
           names={conceptNames}
           plan={plan}
+          prereqEdges={planPrereqEdges}
           busy={planBusy}
           loadFailed={loadError === "plan"}
           onApprove={() => void approvePlan()}
@@ -2271,7 +2321,7 @@ export function LoopLearn() {
       );
     } else if (state.phase === "close") {
       return <ClosePanel close={close} note={closeNote} names={conceptNames} courseId={courseId} onNew={showHome}
-        studyVisible={studyVisible} rating={wrapUpAsk?.sessionId === sessionId ? wrapUpAsk : null} />;
+        visibility={handoffVisibility} rating={wrapUpAsk?.sessionId === sessionId ? wrapUpAsk : null} />;
     }
     return renderTeach();
   };
@@ -2295,6 +2345,8 @@ export function LoopLearn() {
   const renderRail = () => (
     <SessionPanel
       plan={state.phase === "plan" ? null : panelPlan}
+      prereqEdges={planPrereqEdges}
+      names={conceptNames}
       currentNodeId={teaching ? currentNodeId : null}
       skills={panelSkills()}
       dueCount={lists.dueReviews}
@@ -2305,7 +2357,12 @@ export function LoopLearn() {
       showTreeLink={allOf(!isMobile, treeVisible)}
       onHide={layout.hidePanel}
       map={railGraph.nodes.length > 0 ? (
-        <SessionMap nodes={railGraph.nodes} edges={railGraph.edges} highlightId={mapNodeId ?? undefined} />
+        <SessionMap
+          nodes={railGraph.nodes}
+          edges={railGraph.edges}
+          highlightId={mapNodeId ?? undefined}
+          practicedNodeIds={practicedNodeIds}
+        />
       ) : graphError ? <LoadFailed testId="tutor-map-error" what="your map" onRetry={() => void refreshGraph()} /> : (
         <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Concepts appear here as you learn.</div>
       )}

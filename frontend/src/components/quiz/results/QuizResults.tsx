@@ -125,6 +125,7 @@ const UNMOVED_WHY: Record<Exclude<MasteryUnmovedReason, "write_failed">, string>
   already_counted: "a question counts toward it once a day",
   not_verified: "a question that didn't pass its checks doesn't count",
   helped: "a right answer you had help with earns no credit",
+  exam_twin: "Exam Twin records your score only",
 };
 
 /**
@@ -140,6 +141,9 @@ export function unchangedNote(session: QuizSession, learnerBlock: boolean): stri
   const reasons = session.result?.mastery_unmoved ?? [];
   if (learnerBlock || reasons.length === 0) return null;
   if (reasons.includes("write_failed")) return "Your score is saved, but your mastery couldn't be updated this time.";
+  if (reasons.length === 1 && reasons[0] === "exam_twin") {
+    return "Exam Twin mode records your score only — it doesn't change your mastery.";
+  }
   const reserved = session.reserved;
   const repractice = session.scope.kind === "missed" && reserved && reserved.reservedCount > 0 && reserved.regeneratedCount === 0;
   if (repractice && reasons.length === 1 && reasons[0] === "already_counted") {
@@ -257,7 +261,14 @@ export function QuizResults({
 
       {/* Spec §13 A147: the learner model's account of this quiz — only when
           the submit reply carries one (`quiz_results_routing`). */}
-      {result.learning && <LearningBlock learning={result.learning} conceptName={concept.name} />}
+      {result.learning && (
+        <LearningBlock
+          learning={result.learning}
+          conceptName={concept.name}
+          conceptId={concept.id}
+          courseId={session.courseId}
+        />
+      )}
 
       {isPerfect ? (
         <p className="quiz-results__perfect" data-testid="quiz-results-perfect">

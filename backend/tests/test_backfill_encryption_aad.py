@@ -245,7 +245,10 @@ def test_every_nested_ciphertext_has_a_holder_and_is_a_target():
     }
     # selectable by column, or one path by its name
     assert {s.name for s in bf._targets(["sessions"], ["loop_state"])} == {
-        "loop_state#goal.text_encrypted", "loop_state#grade_checkpoint"}
+        "loop_state#goal.text_encrypted",
+        "loop_state#grade_checkpoint",
+        "loop_state#reasoning_encrypted",
+    }
     (one,) = bf._targets(["sessions"], ["loop_state#grade_checkpoint"])
     assert one.path == "grade_checkpoint"
 

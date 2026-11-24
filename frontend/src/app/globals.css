@@ -733,8 +733,9 @@ body { font-size: 14px; line-height: 1.5; }
    declared once below and referenced, never inlined at a call site.
 
    Course accent: screens set `--quiz-accent` on their root from the active
-   course colour. Everything here falls back to `--accent`, so a primitive
-   used outside the quiz still looks right.
+   course colour (identity only — W7.D1: chrome/CTAs stay `--brand-forest` /
+   `--accent`; see docs/learning-loop/w7-design-decisions.md). Everything here
+   falls back to `--accent`, so a primitive used outside the quiz still looks right.
    ══════════════════════════════════════════════════════════════════ */
 
 :root {

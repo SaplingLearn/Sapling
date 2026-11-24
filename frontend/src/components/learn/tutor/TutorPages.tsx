@@ -76,7 +76,7 @@ export function TutorHome({
   continueTitle?: string;
   /** Reviews due now in every course (the review queue's count); null: unknown. */
   dueCount: number | null;
-  /** Where "Review what's due" goes; null while `hide_study` hides Study. */
+  /** Where "Due on Study" goes; null while `hide_study` hides Study. */
   dueHref: string | null;
   /** The weakest concept the map knows, offered as a first focus (#866 K05: a session on it). */
   startWith: { id: string; name: string } | null;
@@ -110,7 +110,7 @@ export function TutorHome({
         )}
         {dueHref && (dueCount ?? 0) > 0 && (
           <Link className={styles.pill} data-testid="tutor-home-due" href={dueHref}>
-            Review what&apos;s due · {dueCount}
+            Due on Study · {dueCount}
           </Link>
         )}
         {startWith && (

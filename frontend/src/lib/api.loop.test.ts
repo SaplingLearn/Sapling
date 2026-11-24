@@ -293,6 +293,22 @@ describe('streamLoopCheckAnswer (spec §13 A16: explicit submissions only)', () 
     await streamLoopCheckAnswer('s', 'u', 'qh', { option: 'B', reason: 'slope is constant', idk: false });
     expect(bodyOf()).toEqual({ session_id: 's', user_id: 'u', question_hash: 'qh', option: 'B', reason: 'slope is constant', idk: false });
   });
+  // W2.3: optional free/teachback reasoning — never graded; omitted when empty
+  it('posts optional reasoning with a free answer', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(sseBody([done])));
+    await streamLoopCheckAnswer('s', 'u', 'qh', {
+      answer: 'my answer', idk: false, reasoning: '  because the base case  ',
+    });
+    expect(bodyOf()).toEqual({
+      session_id: 's', user_id: 'u', question_hash: 'qh',
+      answer: 'my answer', idk: false, reasoning: 'because the base case',
+    });
+  });
+  it('omits empty reasoning', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(sseBody([done])));
+    await streamLoopCheckAnswer('s', 'u', 'qh', { answer: 'my answer', idk: false, reasoning: '   ' });
+    expect(bodyOf()).not.toHaveProperty('reasoning');
+  });
   it('idk posts idk: true and no answer text', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(sseBody([done])));
     await streamLoopCheckAnswer('s', 'u', 'qh', { idk: true });

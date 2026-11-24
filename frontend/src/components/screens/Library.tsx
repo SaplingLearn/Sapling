@@ -21,6 +21,7 @@ import { useIsMobile } from "@/lib/useIsMobile";
 import { useScrollLock } from "@/lib/useScrollLock";
 import { useLatestRequest } from "@/lib/useLatestRequest";
 import { useUser } from "@/context/UserContext";
+import { useFlagMap } from "@/context/FlagsContext";
 import {
   getDocuments,
   deleteDocument,
@@ -33,6 +34,10 @@ import type { Document as Doc, ConceptNote } from "@/lib/types";
 import { LibraryGuides } from "../studyGuide/home/LibraryGuides";
 import { libraryGuides } from "../studyGuide/home/guidesModel";
 import { useLibraryGuides } from "../studyGuide/home/useLibraryGuides";
+import { LibraryNextCtas } from "../library/LibraryNextCtas";
+import { conceptIdsFromNotes, libraryNext } from "@/lib/libraryNext";
+import { LEARNING_LOOP_FLAG } from "@/lib/learningLoopFlag";
+import { useIsNavHidden } from "@/lib/useNavHidden";
 import { humanizeError } from "@/lib/errorMessage";
 
 const catColor: Record<Doc["category"], string> = {
@@ -530,6 +535,8 @@ function DetailPanel({
 }) {
   const { userId } = useUser();
   const toast = useToast();
+  const { flags } = useFlagMap();
+  const isNavHidden = useIsNavHidden();
   const [scanState, setScanState] = React.useState<"idle" | "scanning" | "done">("idle");
   const [scanResult, setScanResult] = React.useState<{ added: number; existing: number } | null>(null);
   // The panel is reused across documents, so a scan started on doc A must not
@@ -542,6 +549,17 @@ function DetailPanel({
     setScanState("idle");
     setScanResult(null);
   }, [doc.id, scanReq]);
+
+  const conceptCount = doc.concept_notes?.length ?? 0;
+  const next = libraryNext({
+    courseId: doc.course_id,
+    conceptIds: conceptIdsFromNotes(doc.concept_notes),
+    conceptCount,
+    checkItemsStatus: doc.check_items_status ?? null,
+    loopOn: flags[LEARNING_LOOP_FLAG] === "on",
+    treeHidden: isNavHidden("/tree"),
+    quizHidden: isNavHidden("/quiz"),
+  });
 
   const runScan = async () => {
     const run = scanReq.begin();
@@ -604,8 +622,10 @@ function DetailPanel({
         <ConceptList notes={doc.concept_notes} />
       )}
 
+      <LibraryNextCtas next={next} />
+
       <div style={{
-        marginBottom: 10, padding: 12, borderRadius: "var(--r-sm)",
+        marginTop: 10, marginBottom: 10, padding: 12, borderRadius: "var(--r-sm)",
         border: "1px solid var(--border)", background: "var(--bg-panel)",
       }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>

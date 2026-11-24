@@ -153,6 +153,7 @@ same calls run against fixed, deterministic handlers.
 |---|---|
 | [architecture.md](architecture.md) | the module map: what each file in `backend/learning/`, the loop routes, the agents, the services and the frontend do, and how they connect |
 | [flows.md](flows.md) | what happens over time: upload to servable item, a session step by step, grading and the evidence write, review, the post-test, voids, the kill switch |
+| [w3-handoffs.md](w3-handoffs.md) | W3.4 / W8.5: Learn ↔ Study ↔ Quiz CTA copy + deep links (`learningHandoffs.ts`); hide_* safe |
 | [data-model.md](data-model.md) | every learning table and SQL function: columns, what is append-only, what is encrypted, who writes it |
 | [invariants.md](invariants.md) | the rules you must not break, why, and which test enforces each |
 | [operations.md](operations.md) | flags, model slots and cost, migrations and their rollout order, the release verifier, every test lane with its command, running locally with real models |
@@ -160,6 +161,15 @@ same calls run against fixed, deterministic handlers.
 | [amendments.md](amendments.md) | one line per §13 amendment, by theme and in order, with the code to read |
 | [glossary.md](glossary.md) | a spec term in plain words, and its name in the code |
 | [contributing.md](contributing.md) | the checklist for changing the loop safely |
+
+**See also.** The Alvar trilogy → Sapling A+ scoreboard and backlog:
+[alvar-trilogy-implementation-plan.md](alvar-trilogy-implementation-plan.md)
+(adopted / narrowed / refused claims are indexed in
+[amendments.md](amendments.md#alvar-trilogy-adopted--narrowed--refused)).
+W2.3 reason-before-submit (encrypted, never evidence):
+[w2-reason-before-submit.md](w2-reason-before-submit.md).
+W2.4 low-trust next-probe hint (flagged; never mastery):
+[w2-next-probe-hint.md](w2-next-probe-hint.md).
 
 ## Sources of truth
 
@@ -220,4 +230,7 @@ and byte-identical while off
 - A147, `quiz_results_routing`: the results show each skill meter that moved,
   what is due, and the next step (the review queue, or Learn).
 
-The quiz serves no check item and is never a post-test.
+The quiz serves no check item and is never a post-test. **Practice vs Exam
+Twin** (W7.8): Practice is the learning evidence path above; Exam Twin is
+score-only and tool-light and never claims the farm window —
+[`w7-practice-exam-twin.md`](w7-practice-exam-twin.md).

@@ -269,7 +269,11 @@ class LoopHintBody(BaseModel):
 class LoopCheckAnswerBody(BaseModel):
     """PKG-07 /api/learn/loop/check/answer(/stream) — an explicit answer
     submission, the ONLY loop-chat evidence path (spec A16). Unknown fields are
-    a 422 (spec §13 A127)."""
+    a 422 (spec §13 A127).
+
+    ``reasoning`` (W2.3): optional free/teachback "show your reasoning" prose.
+    Stored encrypted on the step; never graded and never evidence. Ignored on
+    ``mc_reason`` (that format's graded one-sentence field is ``reason``)."""
     model_config = ConfigDict(extra="forbid")
 
     session_id: str
@@ -278,6 +282,7 @@ class LoopCheckAnswerBody(BaseModel):
     answer: str = Field("", max_length=GRADER_ANSWER_MAX_CHARS)
     option: Optional[str] = Field(None, max_length=GRADER_ANSWER_MAX_CHARS)
     reason: str = Field("", max_length=GRADER_ANSWER_MAX_CHARS)
+    reasoning: str = Field("", max_length=GRADER_ANSWER_MAX_CHARS)
     idk: bool = False
     confidence: Optional[StudentConfidence] = None  # spec §13 A127; ignored on an idk
 
@@ -414,6 +419,11 @@ class GenerateQuizBody(BaseModel):
     # through to whatever SAPLING_MODEL_QUIZ resolves to (default
     # gemini-2.5-flash-lite per ADR 0008).
     model_pref: Optional[Literal["fast", "smart"]] = None
+    # W7.8: Practice (learning evidence path) vs Exam Twin (score-only,
+    # tool-light). Default practice keeps every pre-W7.8 caller byte-identical
+    # on the evidence path. Stored on the attempt; submit trusts the row, not
+    # a later client flip. See learning/quiz_session_mode.py.
+    session_mode: Literal["practice", "exam_twin"] = "practice"
     # G5 (#537): "practise the ones you missed" — the attempt whose missed
     # questions should be RE-SERVED verbatim instead of regenerated. The
     # server derives which items those were from that attempt's own

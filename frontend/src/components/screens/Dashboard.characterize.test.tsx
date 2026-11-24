@@ -26,6 +26,13 @@ vi.mock("@/context/UserContext", () => ({
   useUser: () => ({ userId: "u1", userReady: true, userName: "Ada Lovelace" }),
 }));
 
+// W8.7: Learn-next source flips when learning_loop + quiz_concept_plan are on.
+const flagState = vi.hoisted(() => ({ flags: {} as Record<string, string> }));
+vi.mock("@/context/FlagsContext", async (original) => ({
+  ...await original<typeof import("@/context/FlagsContext")>(),
+  useFlag: (key: string) => flagState.flags[key] ?? "off",
+}));
+
 vi.mock("@/lib/useIsMobile", () => ({ useIsMobile: vi.fn(() => false) }));
 const layoutState = vi.hoisted(() => ({ pref: "topnav" }));
 vi.mock("@/lib/useLayoutPref", () => ({ useLayoutPref: () => [layoutState.pref, vi.fn()] }));
@@ -63,6 +70,15 @@ vi.mock("@/lib/api", () => ({
   fetchActivity: vi.fn(),
   fetchGamificationMe: vi.fn(),
 }));
+vi.mock("@/lib/studyApi", () => ({
+  getStudyNext: vi.fn(),
+  getStudyDaily: vi.fn(),
+  setStudyDailyGoal: vi.fn(),
+}));
+// LearnNextCard probes loop status when a row names node_id + course_id (#866 K05).
+vi.mock("@/components/learn/useLoopStatus", () => ({
+  useLoopStatus: () => ({ status: true, retry: () => {} }),
+}));
 
 import { Dashboard } from "./Dashboard";
 import {
@@ -74,6 +90,7 @@ import {
   getSessions,
   getUpcomingAssignments,
 } from "@/lib/api";
+import { getStudyNext } from "@/lib/studyApi";
 import { useIsMobile } from "@/lib/useIsMobile";
 
 // Wed 4 Mar 2026, 12:00 local.
@@ -122,6 +139,7 @@ const fullscreenGraph = () => [...kg.renders].reverse().find((p) => !("onHoverCo
 
 beforeEach(() => {
   layoutState.pref = "topnav";
+  flagState.flags = {};
   searchParams = new URLSearchParams();
   kg.renders = [];
   modal.last = null;
@@ -140,6 +158,7 @@ beforeEach(() => {
   vi.mocked(getUpcomingAssignments).mockResolvedValue({ assignments: [] });
   vi.mocked(getSessions).mockResolvedValue({ sessions: [] });
   vi.mocked(getRecommendations).mockResolvedValue({ recommendations: [] });
+  vi.mocked(getStudyNext).mockResolvedValue({ due: [], misconceptions: [], ready: [] });
   vi.mocked(fetchActivity).mockResolvedValue({ week: [] } as never);
   vi.mocked(fetchGamificationMe).mockResolvedValue(null as never);
 });
@@ -261,6 +280,41 @@ describe("Dashboard load → screen", () => {
     render(<Dashboard />);
     expect(await screen.findByText("Nothing suggested yet — start a session.")).toBeInTheDocument();
     expect(screen.queryByText("Couldn't load dashboard")).toBeNull();
+  });
+
+  it("with learning_loop + quiz_concept_plan, Learn next follows learner-next due/ready", async () => {
+    flagState.flags = { learning_loop: "on", quiz_concept_plan: "on" };
+    const planned = (node_id: string, concept_name: string, reason: "due" | "ready") => ({
+      node_id, concept_name, course_id: "c-CS-101", reason, p_known: 0.4, band: "develop" as const,
+      due_at: reason === "due" ? "2026-03-01T00:00:00Z" : null, open_misconceptions: 0,
+    });
+    vi.mocked(getStudyNext).mockResolvedValue({
+      due: [planned("n-due", "Arrays", "due")],
+      misconceptions: [],
+      ready: [planned("n-ready", "Graphs", "ready"), planned("n2", "Heaps", "ready")],
+    });
+    render(<Dashboard />);
+    expect(await screen.findByText("Arrays")).toBeInTheDocument();
+    expect(screen.getByText(/due for review/i)).toBeInTheDocument();
+    expect(screen.getByText("Graphs")).toBeInTheDocument();
+    expect(screen.getByText("Heaps")).toBeInTheDocument();
+    await waitFor(() => expect(getStudyNext).toHaveBeenCalledWith("u1"));
+    expect(getRecommendations).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByText("Arrays"));
+    const href = push.mock.calls[0][0] as string;
+    expect(href).toContain("concept=n-due");
+    expect(href).toContain("course=c-CS-101");
+  });
+
+  it("never asks study next while learning_loop or quiz_concept_plan is off", async () => {
+    flagState.flags = { learning_loop: "on" }; // plan sibling still off
+    vi.mocked(getRecommendations).mockResolvedValue({
+      recommendations: [{ concept_name: "Legacy Rec" }],
+    });
+    render(<Dashboard />);
+    expect(await screen.findByText("Legacy Rec")).toBeInTheDocument();
+    expect(getStudyNext).not.toHaveBeenCalled();
+    expect(getRecommendations).toHaveBeenCalled();
   });
 });
 

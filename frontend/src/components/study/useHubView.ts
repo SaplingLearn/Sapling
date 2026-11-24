@@ -22,10 +22,14 @@ import {
   upcomingOf,
   type FlashcardRow,
 } from "./hubModel";
+import type { StudyNext } from "@/lib/studyApi";
 import {
   categoriesFromChecklist,
   conceptsForCourse,
+  dueReviewsFromNext,
+  dueReviewsQuizHref,
   examQueue,
+  examQueueFromNext,
   examScope,
   quickReviews,
   readiness,
@@ -44,8 +48,14 @@ export function useHubView(input: {
   outlineReady: boolean;
   st: HubState;
   today: Date;
+  /**
+   * W8.3: learner-next buckets when `learning_loop` + `quiz_concept_plan`
+   * are on. `null` = flags off or the read failed → graph-tier Focus /
+   * Quick Reviews. Settled empty buckets still mean the loop is on.
+   */
+  learnerNext?: StudyNext | null;
 }) {
-  const { course, graph, cards, records, outline, outlineReady, st, today } = input;
+  const { course, graph, cards, records, outline, outlineReady, st, today, learnerNext = null } = input;
   const { assignments, attempts, guides } = records;
   const cid = course.course_id;
   const label = courseLabel(course);
@@ -70,10 +80,18 @@ export function useHubView(input: {
   // to <exam> yet." and then jumping when the outline lands.
   const scopePending = !outlineReady && exam !== null;
   const scope = React.useMemo(() => examScope(topics, outline, exam), [topics, outline, exam]);
-  const upNext = React.useMemo(
-    () => (scopePending ? { queue: [], fallback: false } : examQueue(topics, scope)),
-    [scopePending, topics, scope],
-  );
+  const upNext = React.useMemo(() => {
+    if (scopePending) return { queue: [], fallback: false };
+    if (learnerNext) {
+      const ordered = [
+        ...learnerNext.due,
+        ...learnerNext.misconceptions,
+        ...learnerNext.ready,
+      ].map(c => c.node_id);
+      return examQueueFromNext(topics, scope, ordered);
+    }
+    return examQueue(topics, scope);
+  }, [scopePending, topics, scope, learnerNext]);
   const marks = conceptMarks(byId, upNext.queue[0] || null, st.topic, st.hover);
   const band = React.useMemo(() => {
     const full = readinessBand(topics, outline, exam, label, today);
@@ -81,7 +99,18 @@ export function useHubView(input: {
   }, [scopePending, topics, outline, exam, label, today]);
 
   // Reviews are picked over the whole course, whichever exam is selected.
-  const reviews = React.useMemo(() => quickReviews(topics, today), [topics, today]);
+  // With learner-next on, Quick Reviews is the FSRS-due set (same as quiz plan).
+  const reviews = React.useMemo(() => {
+    if (learnerNext) {
+      return dueReviewsFromNext(topics, learnerNext.due.map(c => c.node_id), today);
+    }
+    return quickReviews(topics, today);
+  }, [topics, today, learnerNext]);
+  // W8.3b: Quiz CTA only when Due Reviews is the FSRS-due set (flag-on).
+  const reviewsQuizHref = React.useMemo(() => {
+    if (!learnerNext) return null;
+    return dueReviewsQuizHref(cid, reviews.map(x => x.t.id));
+  }, [learnerNext, cid, reviews]);
   const recent = React.useMemo(
     () => recentActivity({ attempts, cards, guides, topics, course, today }),
     [attempts, cards, guides, topics, course, today],
@@ -98,6 +127,10 @@ export function useHubView(input: {
     cardCount,
     columns: roadmapColumns(topics, { ...marks, lvl: st.lvl, covered: scope?.ids }, cid, st.openCols),
     reviews,
+    /** True when Quick Reviews is the FSRS-due set from learner-next. */
+    reviewsFsrsDue: learnerNext != null,
+    /** W8.3b: Quiz deep link for Due Reviews; null while flags off / empty. */
+    reviewsQuizHref,
     recent,
   };
 }

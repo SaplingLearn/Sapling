@@ -853,6 +853,7 @@ async def _generate_or_502(
     slot: float | None,
     plan: GenerationPlan | None = None,
     gate=None,
+    concept_node_id: str | None = None,
 ) -> GeneratedQuiz:
     """Run generation, or raise the error the client contract calls for.
 
@@ -860,8 +861,10 @@ async def _generate_or_502(
     G5 recovered part of the quiz from a previous attempt. `slot` is the
     rate-limit slot this request claimed, refunded on every failure exit.
     `plan` and `gate` are the learning-loop spec §13 A144/A145 hooks (None
-    while their flags are off).
+    while their flags are off). `concept_node_id` is the posed concept (W7.6
+    may prefer a weak prerequisite over `body.concept_node_id`).
     """
+    posed = concept_node_id or body.concept_node_id
     try:
         # Each agent run inside is individually bounded by
         # QUIZ_GENERATION_TIMEOUT_SEC (see _run) — cancelling the whole
@@ -870,7 +873,7 @@ async def _generate_or_502(
         return await _quiz_via_agent(
             user_id=body.user_id,
             course_id=course_id,
-            concept_node_id=body.concept_node_id,
+            concept_node_id=posed,
             concept_name=concept_name,
             num_questions=count,
             difficulty=body.difficulty,
@@ -977,6 +980,10 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
     node = node_rows[0]
     course_id = node.get("course_id") or None
     concept_name = node.get("concept_name") or ""
+    # The attempt is written under the posed concept; W7.6 may rewrite this
+    # to a weak prerequisite when `quiz_concept_plan` is on.
+    concept_node_id = body.concept_node_id
+    prereq_banner: dict | None = None
 
     # Unify with the middleware-stamped request ID so agent traces and any
     # downstream error payloads share the same correlation key.
@@ -1061,22 +1068,48 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
     # for the lookup on a path that makes no model call, purely to fill a
     # column nothing reads back on the request path, is the trade not taken.
     exam_days_away = None
-    # Learning-loop spec §13 A144/A145: each flag resolved ONCE for this
-    # request, for the student, and its answer carried down; each needs the
-    # learning loop on for the student too (quiz_learning.quiz_flags). Off (the
-    # default), nothing below changes.
-    planned_on, gates_on = await run_in_threadpool(
+    # Learning-loop spec §13 A143/A144/A145 + W7.6: each flag resolved ONCE
+    # for this request, for the student, and its answer carried down; each
+    # needs the learning loop on for the student too (quiz_learning.quiz_flags).
+    # Off (the default), nothing below changes.
+    concept_plan_on, planned_on, gates_on = await run_in_threadpool(
         quiz_learning.quiz_flags,
         body.user_id,
+        quiz_learning.CONCEPT_PLAN_FLAG,
         quiz_learning.PLANNED_QUESTIONS_FLAG,
         quiz_learning.ITEM_GATES_FLAG,
     )
+    if concept_plan_on and reserved is None:
+        # W7.6: same fringe/repair preference as Learn — pose the weak
+        # prerequisite instead of a blocked dependent. Empty edges → no-op.
+        # Practise-missed keeps the source concept (those items belong there).
+        guidance = await run_in_threadpool(
+            quiz_learning.prereq_guidance,
+            body.user_id,
+            body.concept_node_id,
+            course_id,
+        )
+        if guidance is not None and guidance.pose_node_id != concept_node_id:
+            pose_rows = await table("graph_nodes").aselect(
+                "*",
+                filters={
+                    "id": f"eq.{guidance.pose_node_id}",
+                    "user_id": f"eq.{body.user_id}",
+                },
+            )
+            if pose_rows:
+                node = pose_rows[0]
+                concept_node_id = guidance.pose_node_id
+                course_id = node.get("course_id") or course_id
+                concept_name = node.get("concept_name") or concept_name
+        if guidance is not None:
+            prereq_banner = guidance.banner
     if missing > 0:
         plan = (
             await run_in_threadpool(
                 quiz_learning.generation_plan,
                 body.user_id,
-                body.concept_node_id,
+                concept_node_id,
                 course_id=course_id,
                 concept_name=concept_name,
                 count=missing,
@@ -1107,6 +1140,7 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
                     if gates_on
                     else None
                 ),
+                concept_node_id=concept_node_id,
             )
         except QuizAPIError:
             if not recovered:
@@ -1151,15 +1185,23 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
     _renumber(questions)
     _lint_questions(questions)
 
+    from learning import quiz_session_mode
+
+    session_mode = quiz_session_mode.parse(body.session_mode)
     quiz_id = str(uuid.uuid4())
     attempt_row = {
         "id": quiz_id,
         "user_id": body.user_id,
-        "concept_node_id": body.concept_node_id,
+        "concept_node_id": concept_node_id,
         "difficulty": body.difficulty,
         "questions_json": encrypt_json(
             questions, bind=bind("quiz_attempts", "questions_json", quiz_id)),
     }
+    # W7.8: only stamp Exam Twin on the row. Practice is the column DEFAULT
+    # (and parse(None)), so omitting it keeps flags-off generate digests
+    # byte-identical to pre-W7.8 and survives a pre-migration schema cache.
+    if session_mode != quiz_session_mode.PRACTICE:
+        attempt_row["session_mode"] = session_mode
     # H3/#555: recorded so the question "do deadline-aware quizzes perform
     # differently?" is answerable later. Omitted when unknown rather than
     # written as an explicit null, mirroring apply_graph_update's rule: an
@@ -1202,9 +1244,16 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
         request_id=request_id,
         payload={
             "quiz_id": quiz_id,
-            "concept_node_id": body.concept_node_id,
+            "concept_node_id": concept_node_id,
             "num_questions": len(questions),
             "difficulty": body.difficulty,
+            # W7.8: only when Exam Twin — Practice is the pre-W7.8 default and
+            # must not move flags-off event digests.
+            **(
+                {"session_mode": session_mode}
+                if session_mode != quiz_session_mode.PRACTICE
+                else {}
+            ),
             # F6: the prompt's composition, carried on the event that
             # already shares a request_id with this generation's llm_usage
             # row — so prompt_tokens becomes attributable to sections
@@ -1237,6 +1286,22 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
         # requested.
         "requested_count": body.num_questions,
         "delivered_count": len(questions),
+        # W7.8: echoed only for Exam Twin so Practice generate digests stay
+        # byte-identical (client already knows Practice is the default).
+        **(
+            {"session_mode": session_mode}
+            if session_mode != quiz_session_mode.PRACTICE
+            else {}
+        ),
+        # W7.6: additive under quiz_concept_plan only — flags-off digests stay
+        # byte-identical. `concept_node_id` when the pose redirected to a
+        # weak prerequisite; `prereq` is the session banner block.
+        **(
+            {"concept_node_id": concept_node_id}
+            if concept_node_id != body.concept_node_id
+            else {}
+        ),
+        **({"prereq": prereq_banner} if prereq_banner else {}),
         # G5 (#537): present whenever the request named a source attempt, and
         # then always — so the three outcomes stay distinguishable and the
         # client can label each honestly: re-served everything

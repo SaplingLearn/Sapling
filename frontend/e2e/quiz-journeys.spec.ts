@@ -390,7 +390,7 @@ test("leave-and-return: leaving saves the attempt, lands on the entry source, an
 
   // Back where the link came from — the tree, focused on the concept (§6/C1).
   await expectLocation(page, TREE_RETURN);
-  await expect(page.getByRole("button", { name: "Quick quiz" })).toBeVisible({
+  await expect(page.getByTestId("tree-node-action-quiz")).toBeVisible({
     timeout: SUBMIT_TIMEOUT,
   });
   await expect(page.getByRole("heading", { level: 2, name: CONCEPT_NAME }).first()).toBeVisible();
@@ -694,7 +694,7 @@ test("entry points: each link shape arrives in the state it promised", async ({ 
   // (a) The tree's node panel — driven through the real page and the real
   //     link, so `Tree.tsx::onQuiz`'s href is under test too (§6).
   await page.goto(`/tree?node=${NODE_ID}`);
-  await page.getByRole("button", { name: "Quick quiz" }).click();
+  await page.getByTestId("tree-node-action-quiz").click();
   const arrived = new URLSearchParams(
     (await locationContaining(page, `concept=${NODE_ID}`)).split("?")[1] ?? "",
   );

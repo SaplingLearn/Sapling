@@ -1,8 +1,9 @@
 "use client";
 import React from "react";
 import Link from "next/link";
-import type { LoopPanelConcept } from "@/lib/api";
+import type { LoopPanelConcept, LoopPlanPrereqEdge } from "@/lib/api";
 import { MASTERY_PALETTE, TIER_LABEL, type MasteryTier } from "@/lib/graph/nodeStyle";
+import { PlanDeps } from "../PlanDeps";
 import { planKind } from "../planLabels";
 import { SidebarGlyph } from "./TutorIcons";
 import { Meter } from "./TutorPages";
@@ -29,6 +30,8 @@ export function dueCountText(count: number | null): string {
  */
 export function SessionPanel({
   plan,
+  prereqEdges = [],
+  names,
   currentNodeId,
   skills,
   dueCount,
@@ -41,11 +44,15 @@ export function SessionPanel({
   onHide,
 }: {
   plan: LoopPanelConcept[] | null;
+  /** W3.1: kept GET /plan `prereq_edges` after approve (SessionPanel twin of PlanPanel). */
+  prereqEdges?: LoopPlanPrereqEdge[];
+  /** Concept id → display name (plan rows + graph); used for edge endpoints. */
+  names?: Map<string, string>;
   currentNodeId: string | null;
   skills: PanelConcept[];
   /** Reviews due now in every course (the review queue's count); null: unknown. */
   dueCount: number | null;
-  /** Where "Review what's due" goes; null while `hide_study` hides Study. */
+  /** Where "Due on Study" goes; null while `hide_study` hides Study. */
   dueHref: string | null;
   learnerChip: React.ReactNode;
   /** The chip has a concept to show (else it keeps its place off screen). */
@@ -87,6 +94,12 @@ export function SessionPanel({
                 );
               })}
             </ol>
+            <PlanDeps
+              edges={prereqEdges}
+              plan={plan}
+              names={names ?? new Map()}
+              testIdPrefix="session-plan"
+            />
           </section>
         )}
         {skills.length > 0 && (
@@ -103,7 +116,7 @@ export function SessionPanel({
                 {dueCountText(dueCount)}
               </span>
               <Link href={dueHref} className="btn btn--sm" style={{ alignSelf: "flex-start" }} data-testid="tutor-panel-review">
-                Review what&apos;s due
+                Due on Study
               </Link>
             </div>
           </section>
@@ -113,13 +126,17 @@ export function SessionPanel({
             <span id="tutor-panel-map" className="label-micro">Knowledge map</span>
             {showTreeLink && (
               <Link data-testid="loop-tree-link" href={treeHref} className={styles.textLink} style={{ fontSize: 12 }}>
-                Open map
+                See on your map
               </Link>
             )}
           </div>
           {map}
           <ul className={styles.legend} aria-label="Map key" data-testid="tutor-map-key">
             {MAP_TIERS.map((t) => <li key={t}><i style={{ background: MASTERY_PALETTE[t] }} />{TIER_LABEL[t]}</li>)}
+            <li data-testid="tutor-map-key-practiced">
+              <i className={styles.legendOutline} aria-hidden />
+              Practiced
+            </li>
           </ul>
         </section>
       </div>

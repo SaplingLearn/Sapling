@@ -1,8 +1,9 @@
 "use client";
 import { useLayoutEffect, useRef } from "react";
-import { type LoopDiagnosis, type LoopPlanConcept } from "@/lib/api";
+import { type LoopDiagnosis, type LoopPlanConcept, type LoopPlanPrereqEdge } from "@/lib/api";
 import styles from "./LoopLearn.module.css";
 import { DiagnosisSummary } from "./LearningScope";
+import { PlanDeps } from "./PlanDeps";
 import { planGoalReason, planKind } from "./planLabels";
 import { Icon } from "../Icon";
 import tutorStyles from "./tutor/tutor.module.css";
@@ -10,11 +11,13 @@ import { modalOpen } from "./modalOpen";
 import { TutorTurn } from "./TutorTurn";
 
 export function PlanPanel({
-  plan, busy, loadFailed, onApprove, onRetry, diagnosis, names,
+  plan, prereqEdges = [], busy, loadFailed, onApprove, onRetry, diagnosis, names,
 }: {
   diagnosis: LoopDiagnosis | null;
   names: Map<string, string>;
   plan: LoopPlanConcept[] | null;
+  /** W3.1: planner prereq pairs among today's proposal ∪ goal targets. */
+  prereqEdges?: LoopPlanPrereqEdge[];
   busy: boolean;
   loadFailed: boolean;
   onApprove: () => void;
@@ -72,6 +75,9 @@ export function PlanPanel({
               );
             })}
           </ol>
+        )}
+        {plan && plan.length > 0 && (
+          <PlanDeps edges={prereqEdges} plan={plan} names={names} testIdPrefix="loop-plan" />
         )}
         {plan && plan.length > 0 && (
           <button

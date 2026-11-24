@@ -48,6 +48,10 @@ def _context_blocks(
         rag = format_rag_context(got.chunks)
         if rag:
             blocks.append(rag)
+            # W4.3: course passages reached the prompt — chrome may say so
+            # (never invents cites; present only when true).
+            if out is not None:
+                out["materials_grounded"] = True
     if context.source_chunks and item is not None:
         ids = list(item.source_chunk_ids or [])[: context.source_chunks]
         rows = chunks_for_ids(ids, user_id=user_id) if ids else []
@@ -55,6 +59,8 @@ def _context_blocks(
         wrapped = wrap_untrusted(text, source=_SOURCE_LABEL)
         if wrapped:
             blocks.append(_SOURCE_HEADER + wrapped)
+            if out is not None:
+                out["materials_grounded"] = True
     if context.graph_block and course_id:
         graph = build_graph_context_block(user_id, course_id, user_message)
         if graph:
@@ -100,6 +106,14 @@ def _materials_notice(out: dict) -> dict:
     """The turn response's A128 key: `materials_unavailable: true` on the ONE
     turn that serves the session's note, absent on every other (never false)."""
     return {"materials_unavailable": True} if out.get("materials_notice") else {}
+
+
+def _materials_grounded(out: dict) -> dict:
+    """W4.3: `materials_grounded: true` when this turn's prompt included
+    retrieved course passages (RAG or check-item source chunks). Present only
+    when true — the UI's calm 'Grounded in your materials' chrome; never a
+    cite list and never claimed without a block."""
+    return {"materials_grounded": True} if out.get("materials_grounded") else {}
 
 
 def _take_retrieval_mark(state: dict, concept_node: str) -> bool:

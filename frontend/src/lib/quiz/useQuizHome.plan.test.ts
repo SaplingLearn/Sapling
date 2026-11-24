@@ -142,6 +142,26 @@ describe("useQuizHome with the learner model's plan", () => {
     expect(result.current.cardConceptId).toBe("ready");
   });
 
+  it("keeps a course plan when the all-courses plan fails, so ?course= still queues in plan order", async () => {
+    quizApi.getQuizPlan.mockImplementation(async (_user: string, course?: string) => {
+      if (!course) throw new Error("503");
+      return {
+        concepts: [
+          { node_id: "ready", concept_name: "ready", course_id: "course-a", reason: "ready", p_known: 0.4, band: "develop", due_at: null, open_misconceptions: 0 },
+          { node_id: "due-a", concept_name: "due-a", course_id: "course-a", reason: "due", p_known: 0.92, band: "profic", due_at: null, open_misconceptions: 0 },
+        ],
+      };
+    });
+    const { result } = renderHook(() =>
+      useQuizHome("user_andres", "", { course: "course-a", source: { kind: "link" } }),
+    );
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    // Global failed → not a planned home for primary/due; course queue still plan-ordered.
+    expect(result.current.planned).toBe(false);
+    expect(result.current.courseCandidates?.map(c => c.node.id)).toEqual(["ready", "due-a"]);
+    expect(result.current.cardConceptId).toBe("ready");
+  });
+
   it("a course the plan proposes nothing in falls back to the tier ranking", async () => {
     quizApi.getQuizPlan.mockResolvedValue({ concepts: [] });
     const { result } = renderHook(() => useQuizHome("user_andres", "", { course: "course-a", source: { kind: "link" } }));

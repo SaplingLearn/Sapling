@@ -5,9 +5,15 @@
  * else, so no rule carries a bare measurement that a retune would have to
  * hunt for. Values come from `<!-- ═══ QUESTION ═══ -->` in the prototype.
  *
- * The course accent arrives as `--quiz-accent`, bound on the screen root by
- * `QuizScreen`; everything reads it through `var(--quiz-accent, var(--accent))`
- * so an unset accent degrades to the app's own.
+ * `--quiz-accent` arrives from `QuizScreen` as the active course colour
+ * (W7.D1 identity only: concept pill / blob tint). Session chrome — top
+ * progress fill, generating bar, pager dots, answer selection tone, Check —
+ * paints with `--brand-forest` / `--accent`, never the course tint.
+ *
+ * W7.1 shell (Quiz Shell.dc.html + w7-design-decisions.md): session top omits
+ * XP/streak/? (XP only on results); open question body (no stem card); meta
+ * row = concept pill + mastery tier chip; action bar Hint / Study guide / Skip
+ * (W7.5: Hint disabled leak-safe; Skip = GO_TO; guide drawer scaffold).
  */
 
 .quiz-question {
@@ -24,8 +30,12 @@
   --quiz-q-key-h: 30px;
   --quiz-q-key-min-w: 40px;
   --quiz-q-key-gap: 6px;
+  --quiz-session-h: 64px;      /* W7.1 focus-session top */
+  --quiz-meta-h: 52px;
+  --quiz-action-slot-w: 88px;  /* reserved Hint / Skip width */
 
   display: flex;
+  flex-direction: column;
   align-items: stretch;
   /* The footer sits at the bottom of the viewport, not under the stem: the
      column below grows into whatever height is going. */
@@ -33,6 +43,122 @@
   /* The root is a programmatic focus target for the keyboard map (it is
      `tabIndex={-1}`, never in the tab order), so it must not paint a ring. */
   outline: none;
+}
+
+/* ── Session top (W7.1) ─────────────────────────────────────────────── */
+
+.quiz-session-top {
+  height: var(--quiz-session-h);
+  flex-shrink: 0;
+  display: grid;
+  grid-template-columns: 1fr minmax(160px, 360px) 1fr;
+  align-items: center;
+  gap: var(--pad-md);
+  padding: 0 var(--pad-lg);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.quiz-session-top__start,
+.quiz-session-top__end {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+
+.quiz-session-top__end {
+  justify-content: flex-end;
+}
+
+.quiz-session-top__leave {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.quiz-session-top__leave:hover {
+  background: var(--bg-soft);
+  color: var(--text);
+}
+
+.quiz-session-top__leave:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.quiz-session-top__course {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.quiz-session-top__topic {
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.quiz-session-top__progress {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+}
+
+.quiz-session-top__count {
+  font-size: var(--fs-sm);
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.quiz-session-top__bar {
+  width: 100%;
+  height: 6px;
+  border-radius: var(--r-full);
+  background: var(--bg-soft);
+  overflow: hidden;
+}
+
+.quiz-session-top__fill {
+  display: block;
+  height: 100%;
+  border-radius: var(--r-full);
+  /* W7.D1: progress chrome = brand forest, not course --quiz-accent. */
+  background: var(--brand-forest, var(--accent));
+  transition: width var(--dur) var(--ease);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .quiz-session-top__fill { transition: none; }
+}
+
+@media (max-width: 640px) {
+  .quiz-session-top {
+    grid-template-columns: 1fr auto;
+    grid-template-rows: auto auto;
+    height: auto;
+    min-height: var(--quiz-session-h);
+    padding: var(--pad-sm) var(--pad-md);
+    gap: var(--pad-sm);
+  }
+  .quiz-session-top__progress {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+  .quiz-session-top__topic { max-width: 40vw; }
 }
 
 /* The ONE rule here that names a class from the shared `quiz.css`: the
@@ -47,23 +173,43 @@
 .quiz-question__col {
   flex: 1;
   min-width: 0;
+  width: 100%;
   max-width: var(--quiz-col-question);
   margin: 0 auto;
   display: flex;
   flex-direction: column;
+  /* Page padding used to live on `.quiz-body--question`; the focus session
+     zeroes that so SessionTop can bleed, so the column restores the inset. */
+  padding: var(--quiz-pad-question);
+  box-sizing: border-box;
 }
 
-/* ── Header ─────────────────────────────────────────────────────────── */
+/* ── Header / meta row (W7.1) ───────────────────────────────────────── */
 
 .quiz-question__header {
   display: flex;
   align-items: center;
-  gap: var(--pad-sm);
+  gap: 10px;
+  min-height: var(--quiz-meta-h);
+}
+
+.quiz-question__concept-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 28px;
+  padding: 0 12px 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-full);
+  background: var(--bg-panel);
+  min-width: 0;
+  max-width: 100%;
 }
 
 .quiz-question__concept {
-  font-size: var(--fs-md);
-  color: var(--text-dim);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text);
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -72,6 +218,36 @@
 
 .quiz-question__header-gap {
   flex: 1;
+}
+
+/* W7.6: weak-prerequisite banner under the meta row. */
+.quiz-prereq-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--pad-sm) var(--pad-md);
+  margin: var(--pad-sm) 0 0;
+  padding: var(--pad-sm) var(--pad-md);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--bg-soft);
+}
+
+.quiz-prereq-banner__copy {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--text);
+  line-height: 1.4;
+  min-width: 0;
+  flex: 1 1 12rem;
+}
+
+.quiz-prereq-banner__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--pad-sm);
+  flex-shrink: 0;
 }
 
 /* The question pager: ‹ 1 2 3 4 5 ›. */
@@ -105,8 +281,9 @@
   gap: 6px;
   padding: 3px 10px 3px 8px;
   border-radius: var(--r-full);
-  background: color-mix(in srgb, var(--quiz-accent, var(--accent)) 10%, var(--bg-panel));
-  color: color-mix(in srgb, var(--quiz-accent, var(--accent)) 75%, var(--text));
+  /* Format chip is not course identity — keep it on the brand accent. */
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-panel));
+  color: color-mix(in srgb, var(--accent) 75%, var(--text));
   font-size: var(--fs-sm);
   font-weight: 600;
   white-space: nowrap;
@@ -157,10 +334,15 @@
   gap: 12px;
 }
 
-/* Learning-loop spec §13 A132: the optional stated-confidence row (the shared
-   `learn/ConfidenceControl`), under the answer and above the verdict line. */
+/* Learning-loop spec §13 A132 / W7.4: the optional stated-confidence row
+   (shared `learn/ConfidenceControl`, same as CheckCard — Guessing / Fairly
+   sure / Sure → guessing / fairly_sure / sure). Lives under the answer and
+   above the verdict, not in SessionTop or as a kit XP wager. flex-shrink:0
+   so the W7.1 grow/footer pin cannot collapse the row out of view. */
 .quiz-question__confidence {
   margin-top: var(--quiz-q-confidence-mt);
+  flex-shrink: 0;
+  min-width: 0;
 }
 
 /* ── Feedback ───────────────────────────────────────────────────────── */
@@ -247,18 +429,18 @@
   font-size: var(--fs-sm);
 }
 
-/* ── Footer ─────────────────────────────────────────────────────────── */
+/* ── Footer / action bar (W7.1) ─────────────────────────────────────── */
 
-/* The one flexible row: it eats the leftover height so Leave/Submit sit at
-   the bottom of the screen rather than under the last option. */
+/* The one flexible row: it eats the leftover height so the action bar sits
+   at the bottom of the screen rather than under the last option. */
 .quiz-question__grow {
   flex: 1;
   min-height: var(--pad-xl);
 }
 
-/* Leave | pager | Submit. Three columns with equal outer tracks, so the
-   pager sits in the true centre whatever the two buttons' labels are
-   (Submit → Next → See results → Scoring…). */
+/* Hint slot | pager | Skip slot + Check. Equal outer tracks keep the pager
+   centred while the primary label swaps (Check → Next → See results →
+   Scoring…). Leave moved to SessionTop. */
 .quiz-question__footer {
   display: grid;
   grid-template-columns: 1fr auto 1fr;
@@ -266,9 +448,162 @@
   gap: var(--pad-md);
 }
 
-.quiz-question__footer > :first-child { justify-self: start; }
+.quiz-question__actions-start,
+.quiz-question__actions-end {
+  display: flex;
+  align-items: center;
+  gap: var(--pad-sm);
+}
+
+.quiz-question__actions-start { justify-self: start; }
 .quiz-question__footer > .quiz-question__progress { grid-column: 2; }
-.quiz-question__footer > :last-child:not(.quiz-question__progress) { justify-self: end; }
+.quiz-question__actions-end { justify-self: end; }
+
+/* Hint / Study guide / Skip — ghost actions; reserved min-width keeps Check steady. */
+.quiz-question__action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--quiz-action-slot-w);
+  height: 40px;
+  padding: 0 var(--pad-md);
+  flex-shrink: 0;
+  border: 1px solid var(--border, rgba(42, 39, 31, 0.12));
+  border-radius: 6px;
+  background: var(--bg-elevated, var(--bg));
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.quiz-question__action-btn:hover:not(:disabled) {
+  background: var(--bg-soft);
+}
+
+.quiz-question__action-btn:disabled,
+.quiz-question__action-btn[aria-disabled="true"] {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* ── Study guide drawer (W7.5 scaffold) ─────────────────────────────── */
+
+.quiz-guide-drawer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pad-lg);
+  min-height: 0;
+}
+
+.quiz-guide-drawer__lead {
+  margin: 0;
+  color: var(--text);
+}
+
+.quiz-guide-drawer__h {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-muted, var(--text));
+}
+
+.quiz-guide-drawer__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--pad-md);
+  margin-bottom: var(--pad-sm);
+}
+
+.quiz-guide-drawer__link {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--brand-forest, var(--accent));
+  text-decoration: none;
+}
+
+.quiz-guide-drawer__link:hover {
+  text-decoration: underline;
+}
+
+.quiz-guide-drawer__muted {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted, var(--text));
+}
+
+.quiz-guide-drawer__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--pad-sm);
+}
+
+.quiz-guide-drawer__card {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--pad-sm) var(--pad-md);
+  border: 1px solid var(--border, rgba(42, 39, 31, 0.12));
+  border-radius: 8px;
+  background: var(--bg-elevated, var(--bg));
+  text-decoration: none;
+  color: inherit;
+}
+
+.quiz-guide-drawer__card:hover {
+  background: var(--bg-soft);
+}
+
+.quiz-guide-drawer__card-title {
+  font-weight: 500;
+}
+
+.quiz-guide-drawer__card-meta {
+  font-size: 12px;
+  color: var(--text-muted, var(--text));
+}
+
+.quiz-guide-drawer__ask {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pad-sm);
+  padding-top: var(--pad-md);
+  border-top: 1px solid var(--border, rgba(42, 39, 31, 0.1));
+}
+
+/* W7.D1 forest chrome: pager dots + answer selection tone inherit
+   `--quiz-accent` from the shared primitives. Retarget them here so the
+   course colour stays on the concept pill only. */
+.quiz-question .answer-option {
+  --answer-tone: var(--brand-forest, var(--accent));
+}
+
+.quiz-question .progress-dots__dot--current {
+  border-color: var(--brand-forest, var(--accent));
+}
+
+.quiz-question .progress-dots__dot--done {
+  background: var(--brand-forest, var(--accent));
+}
+
+.quiz-question .progress-dots__dot--step.progress-dots__dot--current {
+  border-color: var(--brand-forest, var(--accent));
+}
+
+.quiz-question .progress-dots__dot--step.progress-dots__dot--current[data-outcome] {
+  box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--brand-forest, var(--accent));
+}
+
+.quiz-question .progress-dots__dot--step:hover:not(:disabled) {
+  border-color: var(--brand-forest, var(--accent));
+}
 
 /* ── Keyboard hint ──────────────────────────────────────────────────── */
 
@@ -329,7 +664,8 @@
   position: absolute;
   inset: 0;
   border-radius: inherit;
-  background: var(--quiz-accent, var(--accent));
+  /* W7.D1: generating bar is session chrome → forest. */
+  background: var(--brand-forest, var(--accent));
   transform-origin: left center;
   transform: scaleX(0.04);
   animation: quiz-generating-fill 16s cubic-bezier(0.08, 0.7, 0.2, 1) forwards;
@@ -479,7 +815,8 @@
 }
 
 .quiz-ask__seed-card--correct {
-  border-left-color: var(--quiz-accent, var(--accent));
+  /* Correctness, not course identity — stay on brand forest. */
+  border-left-color: var(--brand-forest, var(--accent));
 }
 
 .quiz-ask__seed-label {

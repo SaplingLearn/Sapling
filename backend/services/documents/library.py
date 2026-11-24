@@ -23,8 +23,11 @@ logger = logging.getLogger(__name__)
 async def list_user_documents(user_id: str) -> list[dict]:
     """The user's live documents, newest first, decrypted, each with the
     abstract ``course_id`` its offering belongs to."""
+    # check_items_status (A128 / W8.1): student-readable drafting bookkeeping so
+    # Library can show "Checks drafting" / offer Quiz when items are ready.
     docs = await table("documents").aselect(
-        "id,user_id,offering_id,file_name,category,summary,concept_notes,created_at,processed_at",
+        "id,user_id,offering_id,file_name,category,summary,concept_notes,"
+        "created_at,processed_at,check_items_status",
         filters={"user_id": f"eq.{user_id}", "deleted_at": "is.null"},
         order="created_at.desc",
     ) or []
@@ -53,12 +56,75 @@ async def list_user_documents(user_id: str) -> list[dict]:
                 )
                 d["concept_notes"] = []
         d["course_id"] = offering_to_course.get(d.get("offering_id"))
+    # W8.1c: stamp concept_notes with graph node ids when names match, so
+    # Library can pass conceptIds into libraryNext. One graph_nodes read for
+    # the whole list; not persisted on the documents row.
+    await _attach_concept_node_ids(user_id, docs)
     return docs
 
 
 def _courses_for_offerings(offering_ids: list[str]) -> dict[str, str | None]:
     """offering id -> abstract course id, one resolve per offering."""
     return {off_id: offering_course_id(off_id) for off_id in offering_ids}
+
+
+def _notes_need_node_ids(docs: list[dict]) -> bool:
+    """True when any decrypted note has a name but no node_id yet."""
+    for d in docs:
+        if not d.get("course_id"):
+            continue
+        notes = d.get("concept_notes")
+        if not isinstance(notes, list):
+            continue
+        for note in notes:
+            if (
+                isinstance(note, dict)
+                and (note.get("name") or "").strip()
+                and not (note.get("node_id") or "").strip()
+            ):
+                return True
+    return False
+
+
+async def _attach_concept_node_ids(user_id: str, docs: list[dict]) -> None:
+    """Mutate each note with ``node_id`` when (course_id, name) hits the graph.
+
+    Dedup matches ``graph_service._normalize_concept`` (case / whitespace).
+    Skips the read when nothing needs an id.
+    """
+    if not _notes_need_node_ids(docs):
+        return
+    # Imported here so list tests that never need ids stay free of a
+    # graph_service import cycle through the module top.
+    from services.graph_service import _normalize_concept
+
+    rows = await table("graph_nodes").aselect(
+        "id,concept_name,course_id",
+        filters={"user_id": f"eq.{user_id}"},
+    ) or []
+    by_key: dict[tuple[str, str], str] = {}
+    for row in rows:
+        course_id = row.get("course_id")
+        name = row.get("concept_name")
+        node_id = row.get("id")
+        if course_id and name and node_id:
+            by_key[(course_id, _normalize_concept(name))] = node_id
+    if not by_key:
+        return
+    for d in docs:
+        course_id = d.get("course_id")
+        notes = d.get("concept_notes")
+        if not course_id or not isinstance(notes, list):
+            continue
+        for note in notes:
+            if not isinstance(note, dict):
+                continue
+            name = note.get("name")
+            if not name or note.get("node_id"):
+                continue
+            node_id = by_key.get((course_id, _normalize_concept(name)))
+            if node_id:
+                note["node_id"] = node_id
 
 
 async def soft_delete_document(document_id: str, user_id: str) -> None:

@@ -96,6 +96,9 @@
      the columns stack it is capped here instead of at the proposal. */
   --quiz-home-topics-min: 360px;
   --quiz-home-topics-stacked-max: 440px;
+  /* Map pane (W7.10): fills the side column; stacked gets a bounded height. */
+  --quiz-home-map-min: 280px;
+  --quiz-home-map-stacked-max: 420px;
   --quiz-home-row-pad: 14px 8px;
   --quiz-home-row-bleed: -8px;
   --quiz-home-row-gap: 14px;
@@ -274,6 +277,17 @@
   color: var(--text-muted);
 }
 
+/* Full course graph in the side pane (W7.10). Fills leftover column height;
+   stacked, capped like the topic list. Course identity uses --quiz-accent on
+   nodes; Start/Adjust stay brand forest via `.btn--primary`. */
+.quiz-home__map {
+  flex: 1 1 0;
+  min-height: var(--quiz-home-map-min);
+  margin-top: var(--quiz-home-scroll-top);
+  position: relative;
+  overflow: hidden;
+}
+
 /* Stacked below the width both columns need side by side: the lead's 500px,
    two 56px gaps and the hairline, and the list's 320px minimum = 933px.
    (A container condition cannot read the tokens; they are spelled out here.) */
@@ -297,6 +311,12 @@
   .quiz-home__topics-scroll {
     flex: none;
     max-height: var(--quiz-home-topics-stacked-max);
+  }
+
+  .quiz-home__map {
+    flex: none;
+    height: var(--quiz-home-map-stacked-max);
+    max-height: var(--quiz-home-map-stacked-max);
   }
 }
 

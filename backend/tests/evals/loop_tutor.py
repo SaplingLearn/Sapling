@@ -190,6 +190,11 @@ V2_PLAN_FOCUS: dict[str, tuple[str, str]] = {
     "teach_novice_worked_first": ("Recursion", "plan_order"),
     "teach_explains_prequestion": ("Recursion", "plan_order"),
     "teach_acknowledges_self_explanation": ("Recursion", "plan_order"),
+    # W1 pedagogy cases (`__pedagogy` namespace; W0 must record before CI scores)
+    "teach_safe_anchor_novice_open": ("Recursion", "plan_order"),
+    "teach_safe_anchor_lecture_says": ("Recursion", "plan_order"),
+    "teach_motivated_step_develop": ("Recursion", "plan_order"),
+    "teach_generative_core_close": ("Recursion", "plan_order"),
 }
 
 
@@ -494,6 +499,181 @@ class RetriesUsed(Evaluator[LoopInput, LoopReply]):
         return 1.0 if out is not None and out.retries == 0 and not out.rescued else 0.0
 
 
+# ── W1 pedagogy judges (Alvar V1; plan W1.1–W1.3) ────────────────────────────
+# Deterministic rubrics over served text. Vacuous unless the case's `kinds`
+# names the claim. Live Claude scoring waits on W0 record of the `__pedagogy`
+# cassettes; unit tests score synthetic LoopReply without a cassette.
+
+#: Authority-alone warrants the Safe-anchor rule forbids as the *only* ground.
+_AUTHORITY_ONLY_WARRANTS: tuple[str, ...] = (
+    "because the lecture says",
+    "the lecture says so",
+    "because your professor said",
+    "because the textbook says",
+    "just because the lecture",
+    "as the lecture told",
+)
+
+#: Definition / universal openers (safe-anchor lock before procedure).
+_DEFINITION_CUES: tuple[str, ...] = (
+    "defined as",
+    "definition",
+    "means that",
+    "is when",
+    "by definition",
+    "always returns",
+    "is a case",
+    "a function that",
+    "stops calling",
+)
+
+#: Contingent procedure / step language that must not precede the definition.
+_PROCEDURE_CUES: tuple[str, ...] = (
+    "first step",
+    "first,",
+    "then ",
+    "next,",
+    "plug in",
+    "substitute",
+    "now compute",
+    "the algorithm",
+    "follow these steps",
+)
+
+#: Body language that makes the force of the next move explicit.
+_FORCE_CUES: tuple[str, ...] = (
+    "forces",
+    "force ",
+    "need ",
+    "needs ",
+    "without ",
+    "otherwise",
+    "so that",
+    "requires",
+    "to stop",
+    "problem",
+)
+
+#: Question language that asks the student to regenerate from the core.
+_REGENERATE_CUES: tuple[str, ...] = (
+    "own words",
+    "in your words",
+    "explain",
+    "teach back",
+    "teach it",
+    "regenerate",
+    "rebuild",
+    "from the definition",
+    "core idea",
+    "in your own",
+)
+
+
+def _kinds(ctx: _Ctx) -> tuple[str, ...]:
+    return tuple((_meta(ctx).get("kinds") or ()))
+
+
+def _earliest(text: str, cues: tuple[str, ...]) -> int | None:
+    hits = [text.find(c) for c in cues if c in text]
+    return min(hits) if hits else None
+
+
+def _question_of(turn: str) -> str:
+    sents = sentences(turn)
+    for s in reversed(sents):
+        if "?" in s:
+            return s
+    return turn
+
+
+def _body_of(turn: str) -> str:
+    """Served turn minus the trailing question sentence (STRUCTURED TURN)."""
+    q = _question_of(turn)
+    if q and q in turn:
+        return turn[: turn.rfind(q)].rstrip()
+    return turn
+
+
+@dataclass
+class NoAuthorityOnlyWarrant(Evaluator[LoopInput, LoopReply]):
+    """W1.1: cases tagged `safe_anchor` fail when the reply warrants a move
+    only with 'because the lecture says' (or the other authority-alone strings)."""
+
+    def evaluate(self, ctx: _Ctx) -> float:
+        if "safe_anchor" not in _kinds(ctx):
+            return 1.0
+        text = _served(ctx).lower()
+        return 0.0 if any(w in text for w in _AUTHORITY_ONLY_WARRANTS) else 1.0
+
+
+@dataclass
+class SafeAnchorDefinitionFirst(Evaluator[LoopInput, LoopReply]):
+    """W1.1: novice / new-concept opens lock a definition or universal statement
+    before contingent procedure language."""
+
+    def evaluate(self, ctx: _Ctx) -> float:
+        if "safe_anchor" not in _kinds(ctx):
+            return 1.0
+        text = _served(ctx).lower()
+        def_at = _earliest(text, _DEFINITION_CUES)
+        proc_at = _earliest(text, _PROCEDURE_CUES)
+        if def_at is None:
+            return 0.0
+        if proc_at is not None and proc_at < def_at:
+            return 0.0
+        return 1.0
+
+
+@dataclass
+class MotivatedDerivation(Evaluator[LoopInput, LoopReply]):
+    """W1.2: body makes the problem that forces the next move explicit; the
+    question asks for that motivated step (not a bare recall)."""
+
+    def evaluate(self, ctx: _Ctx) -> float:
+        if "motivated_step" not in _kinds(ctx):
+            return 1.0
+        turn = _turn(ctx)
+        body = _body_of(turn).lower()
+        question = _question_of(turn).lower()
+        if not any(c in body for c in _FORCE_CUES):
+            return 0.0
+        if "?" not in question:
+            return 0.0
+        # bare recall: "what is the name of X" with no next-move ask
+        if "what is the name" in question or "what do we call" in question:
+            return 0.0
+        if not any(
+            w in question for w in ("what", "which", "how", "why", "where", "next")
+        ):
+            return 0.0
+        return 1.0
+
+
+@dataclass
+class CompressionBeat(Evaluator[LoopInput, LoopReply]):
+    """W1.3: segment-close teach turn asks the student to regenerate from the
+    core definition (teachback / free), not re-recognize a surface."""
+
+    def evaluate(self, ctx: _Ctx) -> float:
+        if "generative_core" not in _kinds(ctx):
+            return 1.0
+        question = _question_of(_turn(ctx)).lower()
+        if any(c in question for c in _REGENERATE_CUES):
+            return 1.0
+        # surface recognition / MC phrasing fails the compression beat
+        if any(w in question for w in ("which of the following", "pick ", "choose ")):
+            return 0.0
+        return 0.0
+
+
+PEDAGOGY_GATES: tuple[str, ...] = (
+    "NoAuthorityOnlyWarrant",
+    "SafeAnchorDefinitionFirst",
+    "MotivatedDerivation",
+    "CompressionBeat",
+)
+
+
 # ── cases ────────────────────────────────────────────────────────────────────
 
 _REF_BASE_CASE = "The base case returns 1 when n equals 0 so the function stops calling itself."
@@ -766,8 +946,126 @@ FLAG_CASES: list[Case[LoopInput, LoopReply]] = [
 assert len(FLAG_CASES) <= 8
 assert not {c.inputs for c in FLAG_CASES} & {c.inputs for c in CASES}
 
-_INPUT_TO_NAME: dict[LoopInput, str] = {c.inputs: c.name for c in (*CASES, *FLAG_CASES)}
-_META: dict[str, dict] = {c.name: dict(c.metadata or {}) for c in (*CASES, *FLAG_CASES)}
+# ── W1 pedagogy cases (plan W1.1–W1.3): their own per-slot `__pedagogy`
+# datasets. Same served gates as CASES, plus PEDAGOGY_GATES (vacuous unless
+# the case's `kinds` names the claim). Never routing: a flag-off / unrecorded
+# pedagogy dataset never decides which tier routes. Replay joins once W0
+# records the cassettes (`LOOP_EVAL_PEDAGOGY=1 SAPLING_EVAL_MODE=record`);
+# until then the case ids are listable and the judges score synthetic text.
+
+_SAFE_ANCHOR_VIEW = policy.LearnerView(
+    p_known=0.2,
+    band="novice",
+    prereq_proficient=True,
+    unassisted_next=None,
+    opps=0,
+    streak_unassisted=0,
+)
+_SAFE_ANCHOR_OPEN = (
+    "I've never seen recursion. Start me from first principles — what is it, really?"
+)
+_SAFE_ANCHOR_OPEN_CEILING, _ = teach_turn_ceiling(
+    _SAFE_ANCHOR_VIEW, _SAFE_ANCHOR_OPEN, None
+)
+_SAFE_ANCHOR_LECTURE = (
+    "Don't bother with why — just walk me through the steps the way the lecture did."
+)
+_SAFE_ANCHOR_LECTURE_CEILING, _ = teach_turn_ceiling(
+    _SAFE_ANCHOR_VIEW, _SAFE_ANCHOR_LECTURE, None
+)
+_MOTIVATED_VIEW = policy.LearnerView(
+    p_known=0.45,
+    band="develop",
+    prereq_proficient=True,
+    unassisted_next=None,
+    opps=1,
+    streak_unassisted=0,
+)
+_MOTIVATED_MSG = (
+    "I already know the base case returns 1 when n is 0. "
+    "What move comes next, and what forces that move?"
+)
+_MOTIVATED_CEILING, _ = teach_turn_ceiling(_MOTIVATED_VIEW, _MOTIVATED_MSG, None)
+#: Trusted server cue: production has no separate close-beat prefix yet; the
+#: generative-core preference for the *check* is `practice_formats`. This case
+#: scores the tutor prompt's compression beat when the route would ask for it.
+_CLOSE_BEAT_ACTION = (
+    "[ACTION: This is the segment's close beat. Ask the student to regenerate "
+    "the core idea from the definition in their own words (teachback / free) — "
+    "not to re-recognize a surface form or pick among options.]"
+)
+_CLOSE_VIEW = policy.LearnerView(
+    p_known=0.55,
+    band="develop",
+    prereq_proficient=True,
+    unassisted_next=None,
+    opps=2,
+    streak_unassisted=1,
+)
+_CLOSE_CEILING, _ = teach_turn_ceiling(_CLOSE_VIEW, _CLOSE_BEAT_ACTION, None)
+
+PEDAGOGY_CASES: list[Case[LoopInput, LoopReply]] = [
+    Case(
+        name="teach_safe_anchor_novice_open",
+        inputs=("teach", "novice", int(_SAFE_ANCHOR_OPEN_CEILING), _SAFE_ANCHOR_OPEN),
+        metadata={
+            "reference": _REF_BASE_CASE,
+            "final_answer": _FA_BASE_CASE,
+            "kinds": ("safe_anchor", "leak"),
+        },
+    ),
+    Case(
+        name="teach_safe_anchor_lecture_says",
+        inputs=(
+            "teach",
+            "novice",
+            int(_SAFE_ANCHOR_LECTURE_CEILING),
+            _SAFE_ANCHOR_LECTURE,
+        ),
+        metadata={
+            "reference": _REF_BASE_CASE,
+            "final_answer": _FA_BASE_CASE,
+            # student invites an authority-only warrant; judge fails that reply
+            "kinds": ("safe_anchor", "leak"),
+        },
+    ),
+    Case(
+        name="teach_motivated_step_develop",
+        inputs=("teach", "develop", int(_MOTIVATED_CEILING), _MOTIVATED_MSG),
+        metadata={
+            "reference": _REF_BASE_CASE,
+            "final_answer": _FA_BASE_CASE,
+            "kinds": ("motivated_step", "leak"),
+        },
+    ),
+    Case(
+        name="teach_generative_core_close",
+        inputs=("teach", "develop", int(_CLOSE_CEILING), _CLOSE_BEAT_ACTION),
+        metadata={
+            "reference": _REF_BASE_CASE,
+            "final_answer": _FA_BASE_CASE,
+            "trusted": True,  # the close-beat ACTION is server text
+            "kinds": ("generative_core", "leak"),
+        },
+    ),
+]
+assert len(PEDAGOGY_CASES) <= 8
+assert not {c.inputs for c in PEDAGOGY_CASES} & {
+    c.inputs for c in (*CASES, *FLAG_CASES)
+}
+assert {c.name for c in PEDAGOGY_CASES} == {
+    "teach_safe_anchor_novice_open",
+    "teach_safe_anchor_lecture_says",
+    "teach_motivated_step_develop",
+    "teach_generative_core_close",
+}
+
+_INPUT_TO_NAME: dict[LoopInput, str] = {
+    c.inputs: c.name for c in (*CASES, *FLAG_CASES, *PEDAGOGY_CASES)
+}
+_META: dict[str, dict] = {
+    c.name: dict(c.metadata or {}) for c in (*CASES, *FLAG_CASES, *PEDAGOGY_CASES)
+}
 
 
 # ── the run shape (the route's) ──────────────────────────────────────────────
@@ -1041,10 +1339,16 @@ def flags_namespace(slot: str, v2: bool = V2) -> str:
     return f"{variant_namespace(slot, v2)}__flags"
 
 
+def pedagogy_namespace(slot: str, v2: bool = V2) -> str:
+    """The cassette / judgement / baseline name of `slot`'s W1 pedagogy
+    dataset (plan W1.1–W1.3). W0 must record before CI scores these cases."""
+    return f"{variant_namespace(slot, v2)}__pedagogy"
+
+
 def _run_for(slot: str, v2: bool = V2, *, space: str | None = None):
     #: spec §13 A121: a variant's cassettes, judgements and baselines live under
     #: its own name (the default's is the slot itself); the flag paths under
-    #: `flags_namespace` (#866 Z25)
+    #: `flags_namespace` (#866 Z25); W1 pedagogy under `pedagogy_namespace`
     space = space or variant_namespace(slot, v2)
 
     async def _run(case_input: LoopInput) -> LoopReply:
@@ -1130,6 +1434,39 @@ def flag_variants(v2: bool = V2) -> dict:
     }
 
 
+_PEDAGOGY_EVALUATORS = _EVALUATORS + (
+    NoAuthorityOnlyWarrant,
+    SafeAnchorDefinitionFirst,
+    MotivatedDerivation,
+    CompressionBeat,
+)
+assert tuple(e.__name__ for e in _PEDAGOGY_EVALUATORS) == (
+    SERVED_GATES + DIAGNOSTICS + PEDAGOGY_GATES
+)
+
+
+def make_pedagogy_dataset_for(tier: str, v2: bool = V2) -> Dataset[LoopInput, LoopReply]:
+    """W1.1–W1.3: one slot's pedagogy dataset (PEDAGOGY_CASES + pedagogy gates)."""
+    return Dataset(
+        name=pedagogy_namespace(LOOP_TIER_SLOTS[tier], v2),
+        cases=PEDAGOGY_CASES,
+        evaluators=[e() for e in _PEDAGOGY_EVALUATORS],
+    )
+
+
+def pedagogy_variants(v2: bool = V2) -> dict:
+    """Every tier's W1 pedagogy dataset (what LOOP_EVAL_PEDAGOGY=1 records)."""
+    return {
+        pedagogy_namespace(LOOP_TIER_SLOTS[t], v2): (
+            partial(make_pedagogy_dataset_for, t, v2),
+            _run_for(
+                LOOP_TIER_SLOTS[t], v2, space=pedagogy_namespace(LOOP_TIER_SLOTS[t], v2)
+            ),
+        )
+        for t in ("lite", "standard", "deep")
+    }
+
+
 def make_dataset_for(tier: str, v2: bool = V2) -> Dataset[LoopInput, LoopReply]:
     return Dataset(
         name=variant_namespace(LOOP_TIER_SLOTS[tier], v2),
@@ -1168,6 +1505,15 @@ def replay_variants(*, v2: bool = V2, recorded=recorded) -> dict:
         out.update(
             {name: pair for name, pair in flag_variants(flag_v2).items() if recorded(name)}
         )
+    # W1 pedagogy cases, once W0 records `<slot>__pedagogy`
+    for ped_v2 in ((False, True) if not v2 else (True,)):
+        out.update(
+            {
+                name: pair
+                for name, pair in pedagogy_variants(ped_v2).items()
+                if recorded(name)
+            }
+        )
     return out
 
 
@@ -1180,7 +1526,13 @@ if __name__ == "__main__":
     update = os.getenv("SAPLING_EVAL_UPDATE_BASELINES") == "1"
     only = [s for s in (os.getenv("LOOP_EVAL_SLOTS") or "").split(",") if s]
     # LOOP_EVAL_FLAGS=1: record (or replay) the flag-path datasets (#866 Z25)
-    pool = flag_variants() if os.getenv("LOOP_EVAL_FLAGS") == "1" else VARIANTS
+    # LOOP_EVAL_PEDAGOGY=1: record (or replay) the W1 pedagogy datasets
+    if os.getenv("LOOP_EVAL_PEDAGOGY") == "1":
+        pool = pedagogy_variants()
+    elif os.getenv("LOOP_EVAL_FLAGS") == "1":
+        pool = flag_variants()
+    else:
+        pool = VARIANTS
     chosen = {n: v for n, v in pool.items() if not only or n in only}
     results = {
         name: evaluate_dataset(make, run, update=update) for name, (make, run) in chosen.items()

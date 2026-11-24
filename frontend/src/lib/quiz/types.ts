@@ -23,6 +23,13 @@ export interface QuizConfig {
  *  only decides when the verdict is shown. There is no `/config` list for it. */
 export type FeedbackMode = "as-you-go" | "at-end";
 
+/**
+ * W7.8: Practice (learning evidence path) vs Exam Twin (score-only, tool-light).
+ * Wire twin of `learning/quiz_session_mode.py`. Default Practice keeps
+ * pre-W7.8 behaviour.
+ */
+export type QuizSessionMode = "practice" | "exam_twin";
+
 /** Persisted under `sapling_quiz_prefs`. `null` means "no stored preference —
  *  fall back to the config-derived default". */
 export interface QuizPrefs {
@@ -30,6 +37,8 @@ export interface QuizPrefs {
   count: number | null;
   difficulty: string | null;
   feedback: FeedbackMode;
+  /** W7.8: omitted → Practice. */
+  sessionMode?: QuizSessionMode;
 }
 
 /** An answer option as the keyless projection sends it (`include_answer_key: false`
@@ -77,6 +86,21 @@ export interface GenerateSource {
   regenerated_count: number;
 }
 
+/**
+ * W7.6: generate preferred a weak prerequisite (fringe readiness). Present
+ * only with `quiz_concept_plan` on and a real prereq edge; empty/upload-flat
+ * graphs omit it. `redirected` means the attempt was written under the
+ * prereq, not the requested dependent.
+ */
+export interface QuizPrereqBanner {
+  prereq_id: string;
+  prereq_name: string;
+  dependent_id: string;
+  dependent_name: string;
+  course_id: string | null;
+  redirected: boolean;
+}
+
 export interface GenerateResult {
   quiz_id: string;
   questions: WireQuestion[];
@@ -84,6 +108,12 @@ export interface GenerateResult {
   resolved_difficulty: string;
   requested_count: number;
   delivered_count: number;
+  /** W7.8: Practice | Exam Twin — echoed from the stored attempt. */
+  session_mode?: QuizSessionMode;
+  /** W7.6: posed concept when generate redirected to a weak prerequisite. */
+  concept_node_id?: string;
+  /** W7.6: session banner when a weak prerequisite steered the pose. */
+  prereq?: QuizPrereqBanner;
   source?: GenerateSource;
 }
 
@@ -201,7 +231,12 @@ export interface QuizLearning {
 
 /** #866 K40: each is true of at least one question of the submit; `write_failed`
  *  is the evidence claim or the graph write failing (#760), and comes alone. */
-export type MasteryUnmovedReason = "not_verified" | "already_counted" | "helped" | "write_failed";
+export type MasteryUnmovedReason =
+  | "not_verified"
+  | "already_counted"
+  | "helped"
+  | "write_failed"
+  | "exam_twin";
 
 export interface SubmitResult {
   score: number;
@@ -352,7 +387,14 @@ export interface QuizSession {
   intent: QuizIntent;
   scope: QuizScope;
   source: QuizSource;
-  config: { count: number; difficulty: string; feedback: FeedbackMode; questionFormat?: string };
+  config: {
+    count: number;
+    difficulty: string;
+    feedback: FeedbackMode;
+    questionFormat?: string;
+    /** W7.8: Practice when omitted (pre-W7.8 sessions / fixtures). */
+    sessionMode?: QuizSessionMode;
+  };
   conceptId: string;
   courseId: string | null;
   attemptId: string | null;
@@ -375,4 +417,6 @@ export interface QuizSession {
    *  request named a source attempt — which is exactly when the results
    *  eyebrow may claim "the ones you missed, again". */
   reserved: { reservedCount: number; regeneratedCount: number } | null;
+  /** W7.6: weak-prerequisite banner from generate; null when none / flags off. */
+  prereq: QuizPrereqBanner | null;
 }

@@ -6,6 +6,7 @@ from __future__ import annotations
 import copy
 import logging
 from typing import NamedTuple
+import config
 from services.loop.errors import HTTPException
 from agents.deps import SaplingDeps
 from agents.tools.check import CheckAnswer, GradeOutcome
@@ -16,6 +17,7 @@ from learning.evidence import (
     PlanningObservation,
     PlanningPersistenceUnavailable,
     flush_pending,
+    stated_confidence,
     weight_factors,
 )
 from learning.evidence_transaction import (
@@ -545,4 +547,24 @@ def _finish_check_checkpoint(checkpoint, scope, request, *, loop_on, deps=None, 
         # misconceptions its item tests — after the flush and the claimed save
         _resolve_misconceptions(checkpoint, diagnosis, committed, surface="check", request=request)
     ask = held.get("checks", 0) >= ZPD_RATING_EVERY_N_CHECKS
-    return _Submission("feedback", state, c["rendered"], scope, c["verdict"], refused=c["refused"], ask_rating=ask)
+    # W2.5: high stated confidence + wrong → Continue holds for corrective feedback
+    verdict = c["verdict"]
+    answer = c.get("answer") if isinstance(c.get("answer"), dict) else {}
+    dwell = policy.hypercorrection_feedback_dwell_ms(
+        correct=verdict == "correct",
+        student_confidence=stated_confidence(
+            answer.get("confidence"), idk=verdict == "idk"
+        ),
+        idk=verdict == "idk",
+        time_scale=config.LEARNING_GATE_TIME_SCALE,
+    )
+    return _Submission(
+        "feedback",
+        state,
+        c["rendered"],
+        scope,
+        verdict,
+        refused=c["refused"],
+        ask_rating=ask,
+        feedback_dwell_ms=dwell,
+    )

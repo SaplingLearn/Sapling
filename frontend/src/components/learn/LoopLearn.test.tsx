@@ -551,7 +551,7 @@ describe("LoopLearn — A26", () => {
     expect(banner.getAttribute("data-session-capped")).toBe("false");
     expect(banner.textContent).toContain("Tutor chat paused until");
     expect(banner.textContent).toContain("Practice and review keep working");
-    expect(screen.getByTestId("loop-budget-study-link").getAttribute("href")).toBe("/study");
+    expect(screen.getByTestId("loop-budget-study-link").getAttribute("href")).toBe("/study?course=c1");
     await waitFor(() => expect(api.nextLoopProbe).toHaveBeenCalledWith("s9", "u1"));
     expect(toast.error).not.toHaveBeenCalled();
   });
@@ -712,6 +712,56 @@ describe("LoopLearn — A26", () => {
     expect(screen.queryByTestId("loop-materials-unavailable")).toBeNull();
   });
 
+  it("W4.3: a teach turn with materials_grounded shows calm grounded chrome, not cites", async () => {
+    api.streamLoopChat.mockResolvedValue(
+      turn({ reply: "From your lecture notes…", phase: "teach", materials_grounded: true }),
+    );
+    await resumedTeach();
+    fireEvent.change(await screen.findByTestId("tutor-input"), { target: { value: "why?" } });
+    fireEvent.click(screen.getByTestId("tutor-send"));
+    await screen.findByText("From your lecture notes…");
+    const chrome = await screen.findByTestId("loop-materials-grounded");
+    expect(chrome.textContent).toBe("Grounded in your materials");
+    expect(screen.queryByTestId("loop-materials-unavailable")).toBeNull();
+  });
+
+  it("W4.3: no grounded chrome without materials_grounded (never invents cites)", async () => {
+    api.streamLoopChat.mockResolvedValue(turn({ reply: "A general explanation.", phase: "teach" }));
+    await resumedTeach();
+    fireEvent.change(await screen.findByTestId("tutor-input"), { target: { value: "why?" } });
+    fireEvent.click(screen.getByTestId("tutor-send"));
+    await screen.findByText("A general explanation.");
+    expect(screen.queryByTestId("loop-materials-grounded")).toBeNull();
+  });
+
+  it("W4.3: unavailable note stays when retrieval failed; grounded chrome stays off", async () => {
+    api.streamLoopChat.mockResolvedValue(
+      turn({ reply: "Here is the idea.", phase: "teach", materials_unavailable: true }),
+    );
+    await resumedTeach();
+    fireEvent.change(await screen.findByTestId("tutor-input"), { target: { value: "why?" } });
+    fireEvent.click(screen.getByTestId("tutor-send"));
+    await screen.findByTestId("loop-materials-unavailable");
+    expect(screen.queryByTestId("loop-materials-grounded")).toBeNull();
+  });
+
+  it("W4.3: the opener's materials_grounded lands on the greeting once teach is on screen", async () => {
+    // Probe paints the greeting via ProbePanel (string only); ChatPanel chrome
+    // appears when the session reaches teach with that message still in the log.
+    api.listLoopSessionsFor.mockResolvedValue(listed([]));
+    api.startLoopSession.mockResolvedValue({
+      session_id: "s9",
+      initial_message: "Welcome — let's begin from your notes.",
+      materials_grounded: true,
+    });
+    api.nextLoopProbe.mockResolvedValue({ done: true, phase: "plan", no_check_items: true });
+    api.getLoopPlan.mockResolvedValue({ concepts: [], order: [], empty: true, phase: "teach" });
+    render(<LoopLearn />);
+    await startFromHome();
+    await screen.findByText("Welcome — let's begin from your notes.");
+    expect(await screen.findByTestId("loop-materials-grounded")).toBeTruthy();
+  });
+
   it("A128: the note belongs to its session — switching sessions clears it", async () => {
     api.listLoopSessionsFor.mockResolvedValue(
       listed([open("s2", "teach", "2026-09-21T10:00:00Z"), open("s1", "teach", "2026-09-20T10:00:00Z")]),
@@ -864,6 +914,31 @@ describe("LoopLearn — teach / check / feedback (A16, A46)", () => {
     expect(screen.queryByText("Your reasoning (optional)")).toBeNull();
     fireEvent.change(screen.getByTestId("loop-attempt-reason"), { target: { value: "since x" } });
     expect(screen.getByTestId("loop-attempt-submit")).toBeEnabled();
+  });
+
+  it("W2.3: free check shows optional reasoning; submit stays answer-only when empty", async () => {
+    api.streamLoopCheckAnswer.mockResolvedValue(turn({ graded: true }));
+    await withCheckItem(pose);
+    expect(screen.getByText("Your reasoning (optional)")).toBeTruthy();
+    expect(screen.getByTestId("loop-attempt-reasoning")).toBeTruthy();
+    fireEvent.change(screen.getByTestId("loop-attempt-input"), { target: { value: "n == 0" } });
+    fireEvent.click(screen.getByTestId("loop-attempt-submit"));
+    await waitFor(() => expect(api.streamLoopCheckAnswer).toHaveBeenCalledWith(
+      "s2", "u1", "qh7", { answer: "n == 0", idk: false }, expect.any(Object),
+    ));
+  });
+
+  it("W2.3: free check posts reasoning when filled; still not required", async () => {
+    api.streamLoopCheckAnswer.mockResolvedValue(turn({ graded: true }));
+    await withCheckItem(pose);
+    fireEvent.change(screen.getByTestId("loop-attempt-input"), { target: { value: "n == 0" } });
+    fireEvent.change(screen.getByTestId("loop-attempt-reasoning"), { target: { value: "base case stops it" } });
+    fireEvent.click(screen.getByTestId("loop-attempt-submit"));
+    await waitFor(() => expect(api.streamLoopCheckAnswer).toHaveBeenCalledWith(
+      "s2", "u1", "qh7",
+      { answer: "n == 0", idk: false, reasoning: "base case stops it" },
+      expect.any(Object),
+    ));
   });
 
   it.each(["retry", "transform"])("A46: retract (%s) discards every streamed token; done.reply is final", async (reason) => {
@@ -1359,8 +1434,25 @@ describe("LoopLearn — PKG-13 fix round", () => {
     await resumedTeach();
     expect(screen.getByTestId("tutor-course-c2")).toBeTruthy();
     fireEvent.click(screen.getByTestId("loop-close-button"));
-    expect((await screen.findByTestId("loop-close-study-link")).getAttribute("href")).toBe("/study");
+    expect((await screen.findByTestId("loop-close-study-link")).getAttribute("href")).toBe("/study?course=c1");
+    expect(screen.getByTestId("loop-close-study-link").textContent).toBe("Due on Study");
+    // W3.3b: Practice cue stream (course+start when no due ids / flags off)
+    expect(screen.getByTestId("loop-close-practice-link").textContent).toBe("Practice what's due");
+    expect(screen.getByTestId("loop-close-practice-link").getAttribute("href")).toBe(
+      "/quiz?course=c1&from=link&return=%2Fstudy%3Fcourse%3Dc1&start=1",
+    );
+    expect(screen.getByTestId("loop-close-tree-link").getAttribute("href")).toBe("/tree?course=c1");
+    expect(screen.queryByTestId("loop-close-quiz-link")).toBeNull(); // closeRecord has no concepts
     cleanup();
+    flags.hide_quiz = "on";
+    api.closeLoopSession.mockResolvedValue({ close: closeRecord, model_written: false, close_phase: "teach" });
+    await resumedTeach();
+    fireEvent.click(screen.getByTestId("loop-close-button"));
+    await screen.findByTestId("loop-close-study-link");
+    expect(screen.queryByTestId("loop-close-practice-link")).toBeNull();
+    expect(screen.queryByTestId("loop-close-quiz-link")).toBeNull();
+    cleanup();
+    delete flags.hide_quiz;
     api.getCourses.mockResolvedValue({ courses: [] });
     render(<LoopLearn />);
     // Z61: the Tree has no add-course control; the Dashboard's course manager does
@@ -2666,6 +2758,40 @@ describe("LoopLearn — stated confidence (spec §13 A127)", () => {
     await waitFor(() =>
       expect(sentCheck()).toEqual({ option: "B", reason: "since y", idk: false, confidence: "fairly_sure" }),
     );
+  });
+
+  it("a teachback check offers the same A127/A132 control (W2.5 surface coverage)", async () => {
+    api.streamLoopCheckAnswer.mockResolvedValue(turn({ phase: "feedback", graded: true, verdict: "not_yet" }));
+    await withCheckItem({ ...pose, format: "teachback" });
+    expect(screen.getByTestId("loop-check-confidence")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("loop-check-confidence-sure"));
+    fireEvent.change(screen.getByTestId("loop-attempt-input"), { target: { value: "it calls itself" } });
+    fireEvent.click(screen.getByTestId("loop-attempt-submit"));
+    await waitFor(() =>
+      expect(sentCheck()).toEqual({ answer: "it calls itself", idk: false, confidence: "sure" }),
+    );
+  });
+
+  it("W2.5: high-confidence wrong holds Continue for feedback_dwell_ms", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      api.streamLoopCheckAnswer.mockResolvedValue(
+        turn({ phase: "feedback", graded: true, verdict: "not_yet", feedback_dwell_ms: 8000 }),
+      );
+      await withCheckItem();
+      fireEvent.click(screen.getByTestId("loop-check-confidence-sure"));
+      fireEvent.change(screen.getByTestId("loop-attempt-input"), { target: { value: "wrong" } });
+      fireEvent.click(screen.getByTestId("loop-attempt-submit"));
+      await screen.findByTestId("loop-feedback-dwell");
+      expect(screen.getByTestId("loop-continue")).toBeDisabled();
+      await act(async () => {
+        vi.advanceTimersByTime(8000);
+      });
+      await waitFor(() => expect(screen.getByTestId("loop-continue")).not.toBeDisabled());
+      expect(screen.queryByTestId("loop-feedback-dwell")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("'I don't know' never carries a confidence, even one already chosen", async () => {

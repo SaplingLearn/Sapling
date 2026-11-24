@@ -600,6 +600,13 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
         raise
 
     mastery_before = node["mastery_score"]
+    from learning import quiz_session_mode
+
+    # W7.8: stored mode decides the evidence path (client cannot flip after
+    # generate). Exam Twin = score only — no mastery, no farm claim, no
+    # misconceptions, no Ask (refused at quiz_ask).
+    session_mode = quiz_session_mode.parse(attempt.get("session_mode"))
+    exam_twin = not quiz_session_mode.writes_mastery(session_mode)
     # Learning-loop spec §13 A146/A147: each flag resolved ONCE for this
     # submit, for the student. Off (the default), nothing below changes. What
     # they need from before the evidence write is read here: the skill meters
@@ -609,6 +616,8 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
     misconceptions_on, routing_on = quiz_learning.quiz_flags(
         user_id, quiz_learning.MISCONCEPTIONS_FLAG, quiz_learning.RESULTS_ROUTING_FLAG
     )
+    if exam_twin or not quiz_session_mode.allows_misconceptions(session_mode):
+        misconceptions_on = False
     skills_before = (
         quiz_learning.skill_snapshot(user_id, concept_node_id) if routing_on else None
     )
@@ -645,38 +654,45 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
     checked: list[dict] = []
     counted: list[dict] = []
     claim_ok = True
-    try:
-        graded = _quiz_evidence(concept_node_id, questions, results, stated)
-        checked = _lint_gate(user_id, body.quiz_id, concept_node_id, questions, results, graded)
-        counted, claim_ok = _farm_guard_outcome(user_id, body.quiz_id, checked)
-        evidence = _help_floor(user_id, counted, answered_at)
-        # #849: the class-aggregate refresh this write triggers can make an LLM
-        # call; it runs after the response, never inside the submit.
-        applied = apply_graph_update(
-            user_id, {"evidence": evidence}, course_id=node.get("course_id"), defer=background_tasks.add_task,
-        ) if evidence else []
-    except Exception:
-        logger.exception(
-            "quiz: mastery update failed after scoring quiz_id=%s concept=%s",
-            body.quiz_id, concept_node_id,
-        )
-        events_service.log_event(
-            "quiz.mastery_write_failed",
-            category="error",
-            user_id=user_id,
-            request_id=current_request_id(),
-            payload={"quiz_id": body.quiz_id, "concept_node_id": concept_node_id},
-        )
-        mastery_written = False
-        # Mastery did not move: report it as unchanged.
+    applied: list = []
+    if exam_twin:
+        # W7.8: dress rehearsal — score stands; graph and farm untouched.
+        mastery_written = True
         mastery_score_after = mastery_before
     else:
-        mastery_written = True
-        mastery_before, mastery_score_after = _mastery_span(applied, mastery_before)
+        try:
+            graded = _quiz_evidence(concept_node_id, questions, results, stated)
+            checked = _lint_gate(user_id, body.quiz_id, concept_node_id, questions, results, graded)
+            counted, claim_ok = _farm_guard_outcome(user_id, body.quiz_id, checked)
+            evidence = _help_floor(user_id, counted, answered_at)
+            # #849: the class-aggregate refresh this write triggers can make an LLM
+            # call; it runs after the response, never inside the submit.
+            applied = apply_graph_update(
+                user_id, {"evidence": evidence}, course_id=node.get("course_id"), defer=background_tasks.add_task,
+            ) if evidence else []
+        except Exception:
+            logger.exception(
+                "quiz: mastery update failed after scoring quiz_id=%s concept=%s",
+                body.quiz_id, concept_node_id,
+            )
+            events_service.log_event(
+                "quiz.mastery_write_failed",
+                category="error",
+                user_id=user_id,
+                request_id=current_request_id(),
+                payload={"quiz_id": body.quiz_id, "concept_node_id": concept_node_id},
+            )
+            mastery_written = False
+            # Mastery did not move: report it as unchanged.
+            mastery_score_after = mastery_before
+        else:
+            mastery_written = True
+            mastery_before, mastery_score_after = _mastery_span(applied, mastery_before)
     p_delta = mastery_score_after - mastery_before
     unmoved = mastery_unmoved(
         graded=len(graded), checked=len(checked), counted=len(counted), written=evidence,
         stored=mastery_written and claim_ok,
+        exam_twin=exam_twin,
     )
 
     if mastery_written:

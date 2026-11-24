@@ -99,6 +99,7 @@ from services.loop.learner import (
     _seconds_since,
 )
 from services.loop.context import (
+    _materials_grounded,
     _materials_notice,
     _note_retrieval_failure,
     _prepare_loop_run,
@@ -288,6 +289,7 @@ class _LoopTurn:
         self.reveal_overflow = None  # A93: posed items beyond the scan window
         self.reveal_fallback: tuple | None = None  # a failed learning_reveals write
         self.retrieval_failed = False  # A128: this turn's course-material retrieval failed
+        self.materials_grounded = False  # W4.3: course passages were in this turn's prompt
         # Spec §13 A121, both settled in _plan before the model runs: the turn
         # poses the concept's next check (so it ends without its own question),
         # and the turn opens with the verdict on the reply to the tutor's question
@@ -445,7 +447,16 @@ class _LoopTurn:
         ):
             return False
         try:
-            return _activate_next_item(self.user_id, self.course_id, trial, now=_now_s()) is not None
+            return (
+                _activate_next_item(
+                    self.user_id,
+                    self.course_id,
+                    trial,
+                    now=_now_s(),
+                    session_id=self.session_id,
+                )
+                is not None
+            )
         except Exception:
             logger.warning("check activation trial failed; the turn keeps its question", exc_info=True)
             return False
@@ -593,6 +604,7 @@ class _LoopTurn:
         self.poses_check, self.answer_check, self.focus = False, False, None
         self.pq_follows, self.se_prompt = False, None
         self.retrieval_failed = False
+        self.materials_grounded = False
         if decision.pause_novice and self.band == "novice" and self.phase in ("check", "hint"):
             self.paused = True  # novice-band concepts pause at the hard level (§3.5)
             return
@@ -744,6 +756,7 @@ class _LoopTurn:
             out=assembly,
         )
         self.retrieval_failed = assembly.get("retrieval") == "failed"
+        self.materials_grounded = assembly.get("materials_grounded") is True
         self.deps.loop_leak = self._leak_guard()  # N1: the validator's guard
 
     def _confront_line(self) -> str | None:
@@ -1131,6 +1144,7 @@ class _LoopTurn:
             # graded check's feedback, an activation past a concept with no check)
             **_moved_plan_view(self.user_id, _plan_position(self.state), saved),
             **_materials_notice(out),
+            **_materials_grounded({"materials_grounded": self.materials_grounded}),
             **teach_prompts,
             # spec §13 A138: the answer route's turn (present only there)
             **({"prequestion_answered": True} if self.kind == "prequestion" else {}),
@@ -1475,7 +1489,13 @@ class _LoopTurn:
             # LOOP_TEACH_TURNS_BEFORE_CHECK-th activates its next check item
             state["teach_turns"] = int(state.get("teach_turns") or 0) + 1
             if state["teach_turns"] >= LOOP_TEACH_TURNS_BEFORE_CHECK and _auto_poses_checks(state):
-                qh = _activate_next_item(self.user_id, self.course_id, state, now=self._now)
+                qh = _activate_next_item(
+                    self.user_id,
+                    self.course_id,
+                    state,
+                    now=self._now,
+                    session_id=self.session_id,
+                )
                 if qh is not None and not self.poses_check:
                     # Spec §13 A121: this turn was planned and served WITH its own
                     # question (its trial found nothing to pose), so it poses no
@@ -1515,6 +1535,9 @@ class _LoopTurn:
         }
         if getattr(self, "ask_rating", False):  # PKG-14: present only when true, never false
             extra["ask_rating"] = True
+        dwell = int(getattr(self, "feedback_dwell_ms", 0) or 0)
+        if dwell > 0:  # W2.5: present only when a high-confidence wrong needs the pause
+            extra["feedback_dwell_ms"] = dwell
         if self.kind == "feedback" and self.verdict == "correct":
             extra.update(_credit_for(self.entry))  # #866 K07
         return extra

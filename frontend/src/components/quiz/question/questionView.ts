@@ -77,6 +77,51 @@ export function canGoTo(index: number, cursor: number, total: number, navigable:
   return navigable && index !== cursor && index >= 0 && index < total;
 }
 
+/**
+ * W7.5: there is no quiz hint API, and the existing Ask panel seeds the tutor
+ * with the correct answer — so a pre-check Hint would leak. Keep the slot
+ * visible but disabled with an honest reason (title + tooltip).
+ */
+export const HINT_SLOT_DISABLED = {
+  enabled: false as const,
+  title:
+    "Hints aren't available during a quiz — they would reveal the answer. Use Ask about this after you check.",
+};
+
+/**
+ * W7.5 Skip: advance via `GO_TO` without recording an answer. Unanswered items
+ * earn no mastery (payout is on submit of graded answers only). Disabled when
+ * there is nowhere ahead, the item is already graded, or navigation is locked.
+ */
+export function skipSlotState({
+  phase,
+  busy,
+  cursor,
+  total,
+  hasVerdict,
+}: {
+  phase: Phase;
+  busy: boolean;
+  cursor: number;
+  total: number;
+  hasVerdict: boolean;
+}): { enabled: boolean; title: string; targetIndex: number | null } {
+  if (!canNavigate(phase, busy, total)) {
+    return { enabled: false, title: "Can't skip right now", targetIndex: null };
+  }
+  if (hasVerdict) {
+    return { enabled: false, title: "Already answered — use Next", targetIndex: null };
+  }
+  if (cursor >= total - 1) {
+    return { enabled: false, title: "Already on the last question", targetIndex: null };
+  }
+  return {
+    enabled: true,
+    title: "Skip this question for now (no mastery credit until you answer it)",
+    targetIndex: cursor + 1,
+  };
+}
+
 export type PrimaryAction = "none" | "next" | "submit";
 
 export interface PrimaryButton {
@@ -112,7 +157,9 @@ export function primaryButton({
   if (showVerdict || phase === "answered") {
     return { label: allAnswered ? "See results" : "Next", testid: "quiz-next", enabled: phase === "answered", action: "next" };
   }
-  return { label: "Submit", testid: "quiz-submit-answer", enabled: phase === "active" && !busy && hasAnswer, action: "submit" };
+  // W7.1 session chrome: the design's primary is "Check"; testid stays
+  // `quiz-submit-answer` so Playwright journeys keep working.
+  return { label: "Check", testid: "quiz-submit-answer", enabled: phase === "active" && !busy && hasAnswer, action: "submit" };
 }
 
 /** Nothing is left to answer, in any order. */

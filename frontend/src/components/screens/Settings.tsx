@@ -42,6 +42,7 @@ import {
   type UsernameState,
 } from "./settingsUsername";
 import { humanizeError } from "@/lib/errorMessage";
+import { QuizPrefsSection } from "./QuizPrefsSection";
 
 type Tab = "profile" | "cosmetics" | "preferences" | "notifications" | "data";
 
@@ -641,6 +642,7 @@ export function Settings() {
                   </label>
                 </div>
               </div>
+              <QuizPrefsSection />
             </div>
           )}
 

@@ -1,11 +1,12 @@
 """
 backend/routes/study.py — the /api/study HTTP surface (the Study hub's Daily
-Goal panel).
+Goal panel + learner-next for Focus / Quick Reviews).
 
 Each handler is a thin wrapper over the same-named function in
 ``services/study/`` (#118): it checks the caller, parses the request and
 returns what the service answers. How the minutes are estimated is documented
-with the code that does it, ``services/study/daily.py``.
+with the code that does it, ``services/study/daily.py``. Learner-next is
+``services/study/next.py`` (W8.3).
 
 Mounted behind the ``hide_study`` nav flag (``main.py``,
 ``services/feature_flags.py::NAV_FEATURE_API``). The client is
@@ -40,3 +41,13 @@ def set_daily_goal(user_id: str, body: DailyGoalBody, request: Request):
     """Set the daily goal, in minutes a day."""
     require_self(user_id, request)
     return study_service.set_daily_goal(user_id, body.minutes)
+
+
+@router.get("/{user_id}/next")
+def get_next(user_id: str, request: Request, course_id: str | None = None):
+    """W8.3: FSRS-due / misconception / ready buckets for Hub Focus and Quick
+    Reviews. Same wire entries as ``GET /api/quiz/plan`` concepts, uncapped.
+    404 while ``learning_loop`` or ``quiz_concept_plan`` is off; 503 when the
+    student's state could not be read."""
+    require_self(user_id, request)
+    return study_service.get_next(user_id, course_id)

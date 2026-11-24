@@ -166,6 +166,7 @@ describe("F5 — the hide_study, hide_library and hide_tree nav flags", () => {
     fireEvent.click(screen.getByTestId("loop-close-button"));
     await screen.findByTestId("loop-close-done");
     expect(screen.queryByTestId("loop-close-study-link")).toBeNull();
+    expect(screen.queryByTestId("loop-close-practice-link")).toBeNull();
     expect(screen.queryByTestId("loop-close-retention-link")).toBeNull();
     fireEvent.click(screen.getByTestId("loop-new-session"));
     await screen.findByTestId("tutor-home");
@@ -206,7 +207,7 @@ describe("F5 — the hide_study, hide_library and hide_tree nav flags", () => {
     expect(screen.queryAllByRole("link").filter((a) => a.getAttribute("href")?.startsWith("/tree"))).toEqual([]);
   });
 
-  it("the tree visible (the default): Open map and the phone's Map point at /tree", async () => {
+  it("the tree visible (the default): See on your map and the phone's Map point at /tree", async () => {
     await resumedTeach();
     expect(screen.getByTestId("loop-tree-link").getAttribute("href")).toMatch(/^\/tree/);
     cleanup();
@@ -360,7 +361,7 @@ describe("F11b — the due line counts the reviews that are due", () => {
     await waitFor(() => expect(screen.getByTestId("tutor-panel-due-count").textContent).toBe("3 reviews due"));
     expect(api.getReviewSummary).toHaveBeenCalledWith("u1");
     fireEvent.click(screen.getByTestId("loop-new-session"));
-    expect((await screen.findByTestId("tutor-home-due")).textContent).toBe("Review what's due · 3");
+    expect((await screen.findByTestId("tutor-home-due")).textContent).toBe("Due on Study · 3");
   });
 
   it("nothing due: the panel says so and the home offers no review pill", async () => {

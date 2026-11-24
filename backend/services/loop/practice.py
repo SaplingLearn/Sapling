@@ -21,7 +21,6 @@ from learning.loop_state_store import reported_hashes, revealed_hashes, seen_has
 from learning.params import (
     SURFACE_FAMILIARITY_UNKNOWN,
     CHECK_ITEM_DIFFICULTIES,
-    CHECK_ITEM_FORMATS,
     LOOP_CHECK_DIFFICULTY_BY_BAND,
     LOOP_CHECKS_PER_CONCEPT,
 )
@@ -39,6 +38,7 @@ from services.loop.learner import (
 from services.loop.context import _RETRIEVAL_FAILED_VALUE, _RETRIEVAL_KEY, _take_retrieval_mark
 from services.loop.planning import _practice_pool
 from services.loop.cursor import _advance_cursor, CURSOR_REASON_KEY, _MOVE_REASONS
+from services.loop.next_probe_hint import preferred_next_question_hash
 
 
 def _count_feedback_and_move(state: dict, entry: dict) -> None:
@@ -263,16 +263,24 @@ def _isomorph_after_unknown(
     )
 
 
-def _activate_next_item(user_id: str, course_id: str, state: dict, *, now: float) -> str | None:
+def _activate_next_item(
+    user_id: str,
+    course_id: str,
+    state: dict,
+    *,
+    now: float,
+    session_id: str | None = None,
+) -> str | None:
     """The ONLY code that SETS the document's `current` (the spec's `active`;
     feedback and withdrawal only clear it). For the current plan concept: its
     items, minus everything the student has seen or had revealed, every hash
     already keyed in this session and the concept's post-test reserve (A23);
-    the band's target difficulty; the formats rotated by the concept's checks
-    so far. A concept with nothing servable advances the cursor and tries the
-    next (at most once per remaining concept). No plan → None (teaching only).
-    Writes no evidence and runs no model. An item the student reported (A113)
-    is excluded like a seen or revealed one."""
+    the band's target difficulty; formats from `policy.practice_formats` (rotate
+    by checks so far; generative free/teachback preferred on the segment-close
+    check, W1.3). A concept with nothing servable advances the cursor and tries
+    the next (at most once per remaining concept). No plan → None (teaching
+    only). Writes no evidence and runs no model. An item the student reported
+    (A113) is excluded like a seen or revealed one."""
     concept = state.get("concept")
     if not concept:
         return None
@@ -313,8 +321,8 @@ def _activate_next_item(user_id: str, course_id: str, state: dict, *, now: float
             item = _isomorph_after_unknown(state, concept, items, exclude, familiarity=familiarity)
             learner = _learner_state(user_id, concept)
             band, _ = _band_of(learner)
-            rotation = int(state.get("concept_checks") or 0) % len(CHECK_ITEM_FORMATS)
-            formats = CHECK_ITEM_FORMATS[rotation:] + CHECK_ITEM_FORMATS[:rotation]
+            # W1.3: rotation + segment-close generative-core preference
+            formats = policy.practice_formats(int(state.get("concept_checks") or 0))
             target = _target_difficulty(state, concept, band)
             if item is None and combos:
                 # A141: the ideas-combined dial — a multi-concept item whose
@@ -323,7 +331,36 @@ def _activate_next_item(user_id: str, course_id: str, state: dict, *, now: float
                     user_id, course_id, state, concept, items[0].concept_key,
                     target=target, formats=formats, excluded=excluded,
                 )
+            # W2.4b: low-trust next-probe hint among already-eligible items.
+            # Flag off → None (no decrypt, no-op). Flag on → open the latest
+            # step reasoning_encrypted under the session bind and prefer();
+            # a returned hash wins only if still eligible for this format pass.
+            hint_qh = preferred_next_question_hash(
+                user_id,
+                None,
+                tuple(
+                    (i.question_hash, i.prompt)
+                    for i in items
+                    if i.question_hash not in exclude
+                ),
+                session_id=session_id,
+                state=state,
+            )
             for fmt in formats if item is None else ():
+                if hint_qh:
+                    hinted = next(
+                        (
+                            i
+                            for i in items
+                            if i.question_hash == hint_qh
+                            and i.format == fmt
+                            and i.question_hash not in exclude
+                        ),
+                        None,
+                    )
+                    if hinted is not None:
+                        item = hinted
+                        break
                 item = select_item(
                     items,
                     format=fmt,

@@ -758,6 +758,13 @@
   display: inline-block;
 }
 
+/* W3.2: outline = practiced (solid ring on the map), not a mastery fill. */
+.legendOutline {
+  background: transparent;
+  box-sizing: border-box;
+  border: 1.5px solid var(--text);
+}
+
 /* ── Conversation pieces (T4–T12) ──────────────────────────────────────── */
 .col {
   padding: 24px clamp(24px, 4vw, 56px) 32px;

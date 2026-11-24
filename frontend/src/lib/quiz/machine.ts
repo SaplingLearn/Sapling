@@ -124,10 +124,11 @@ const PRE_CONFIG_COUNT = 5;
 /** Likewise `GenerateQuizBody.difficulty = "medium"`. */
 const PRE_CONFIG_DIFFICULTY = "medium";
 const DEFAULT_FEEDBACK: SessionConfig["feedback"] = "at-end";
+const DEFAULT_SESSION_MODE: SessionConfig["sessionMode"] = "practice";
 
 /** Session config from stored prefs, falling back to config-derived defaults
  *  (§5 B1): 5 questions if offered else the middle option; "medium" if offered
- *  else the first difficulty. */
+ *  else the first difficulty. W7.8: sessionMode defaults to Practice. */
 export function defaultConfigFor(config: QuizConfig | null, prefs: QuizPrefs): SessionConfig {
   const options = config?.num_questions.options ?? [];
   const difficulties = config?.difficulties ?? [];
@@ -141,8 +142,21 @@ export function defaultConfigFor(config: QuizConfig | null, prefs: QuizPrefs): S
     ?? (difficulties.includes(PRE_CONFIG_DIFFICULTY)
       ? PRE_CONFIG_DIFFICULTY
       : difficulties[0] ?? PRE_CONFIG_DIFFICULTY);
-  return { count, difficulty, feedback: prefs.feedback ?? DEFAULT_FEEDBACK,
-    ...(prefs.questionFormat && config?.question_types.includes(prefs.questionFormat) ? { questionFormat: prefs.questionFormat } : {}) };
+  const sessionMode = prefs.sessionMode ?? DEFAULT_SESSION_MODE;
+  // Exam Twin is tool-light and post-test-like: verdicts stay at the end.
+  const feedback =
+    sessionMode === "exam_twin"
+      ? "at-end"
+      : (prefs.feedback ?? DEFAULT_FEEDBACK);
+  return {
+    count,
+    difficulty,
+    feedback,
+    sessionMode,
+    ...(prefs.questionFormat && config?.question_types.includes(prefs.questionFormat)
+      ? { questionFormat: prefs.questionFormat }
+      : {}),
+  };
 }
 
 function scopeForEntry(entry: EntryRequest): QuizScope {
@@ -181,6 +195,7 @@ export function initialSession(
     deliveredShort: false,
     sourceAttemptId: null,
     reserved: null,
+    prereq: null,
   };
 }
 
@@ -300,6 +315,7 @@ function generatingFrom(
     xp: null,
     deliveredShort: false,
     reserved: null,
+    prereq: null,
   };
 }
 
@@ -379,6 +395,9 @@ function onGenerated(session: QuizSession, event: EventOf<"GENERATED">): QuizSes
     ...session,
     phase: "active",
     attemptId: result.quiz_id,
+    // W7.6: generate may have redirected to a weak prerequisite — follow it
+    // so the pill / accent / submit evidence match the attempt row.
+    conceptId: result.concept_node_id || session.conceptId,
     items: itemsFor(result.questions),
     cursor: 0,
     error: null,
@@ -391,6 +410,7 @@ function onGenerated(session: QuizSession, event: EventOf<"GENERATED">): QuizSes
         regeneratedCount: result.source.regenerated_count,
       }
       : null,
+    prereq: result.prereq ?? null,
   };
 }
 
@@ -587,6 +607,7 @@ function onExit(session: QuizSession): QuizSession {
     deliveredShort: false,
     sourceAttemptId: null,
     reserved: null,
+    prereq: null,
   };
 }
 
@@ -594,7 +615,7 @@ function onCancel(session: QuizSession): QuizSession {
   if (session.phase === "generating") {
     // Back to the same concept on home, minus any practice framing: the
     // student asked to stop, not to keep "the ones you missed" queued.
-    return { ...session, phase: "home", error: null, sourceAttemptId: null, reserved: null };
+    return { ...session, phase: "home", error: null, sourceAttemptId: null, reserved: null, prereq: null };
   }
   if (session.phase === "submitting") {
     return { ...session, phase: settledPhase(session), error: null };
@@ -753,14 +774,15 @@ function resumedFraming(
 
 /** G5: only the stored session knows this attempt was a practice run and what
  *  it re-served — the resume payload has no idea. Without the carry a resumed
- *  practice quiz would lose its eyebrow. */
+ *  practice quiz would lose its eyebrow. W7.6: the prereq banner is local too. */
 function resumedPractice(
   matching: QuizSession | null,
-): Pick<QuizSession, "deliveredShort" | "sourceAttemptId" | "reserved"> {
+): Pick<QuizSession, "deliveredShort" | "sourceAttemptId" | "reserved" | "prereq"> {
   return {
     deliveredShort: matching?.deliveredShort ?? false,
     sourceAttemptId: matching?.sourceAttemptId ?? null,
     reserved: matching?.reserved ?? null,
+    prereq: matching?.prereq ?? null,
   };
 }
 

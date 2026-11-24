@@ -189,6 +189,7 @@ def test_the_list_reads_no_flag_for_the_forced_answer(monkeypatch):
 EXPECTED_LOOP_FLAGS = {
     "item_reports", "retention_due_badge", "probe_matched_pretest", "upload_prereq_edges",
     "loop_tutor_v2", "help_gate_strict", "segment_prequestion", "self_explanation_prompts",
+    "next_probe_hint",
     "varied_isomorphs", "multi_concept_items", "quiz_concept_plan", "quiz_planned_questions",
     "quiz_item_gates", "quiz_misconceptions", "quiz_results_routing",
 }

@@ -1501,12 +1501,27 @@ def test_plan_get_returns_ordered_sections_and_stores_proposal(probe):
     assert "X" not in ids  # blocked behind N1
     assert all(c["concept_name"] == f"name-{c['node_id']}" for c in body["concepts"])
     assert body["concepts"][0]["p_known"] == pytest.approx(_BELOW)
+    # W3.1: only pairs whose both ends are in today's proposal (drop P→… / N1→X)
+    assert body["prereq_edges"] == []
     plan_doc = probe.store["doc"]["plan"]
     assert plan_doc["proposed"] == ids
     assert plan_doc["proposed_kinds"] == dict(zip(ids, kinds))
     assert probe.store["doc"]["phase"] == "plan"
     assert probe.due.call_args.args[0] == UID
     assert set(probe.due.call_args.args[1]) == set(probe.states.return_value)
+
+
+def test_plan_get_exposes_prereq_edges_among_proposed_concepts(probe):
+    """W3.1 spike: GET /plan ships prerequisite pairs among today's concepts."""
+    _planning(probe)
+    # K→N1: both stay in the proposal (K proficient sibling; N1 still fringe-ready).
+    # P→… and N1→X stay out of the payload (P/X not proposed).
+    probe.edges.return_value = [
+        ("P", "N1"), ("P", "N2"), ("P", "K"), ("N1", "X"), ("K", "N1"),
+    ]
+    body = client.get(f"{LOOP}/plan", params=PLAN_Q).json()
+    assert body["prereq_edges"] == [{"prerequisite": "K", "dependent": "N1"}]
+    assert {c["node_id"] for c in body["concepts"]} >= {"N1", "K"}
 
 
 def test_plan_get_gives_each_concept_one_kind_and_no_goal_reason_without_a_goal(probe):

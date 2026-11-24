@@ -62,6 +62,8 @@ export const generateQuiz = (p: {
   conceptNodeId: string;
   numQuestions: number;
   difficulty: string;
+  /** W7.8: Practice (default) | Exam Twin. Omitted → server default practice. */
+  sessionMode?: "practice" | "exam_twin";
   sourceAttemptId?: string | null;
   /** #760: lets the session cancel or time out a generation it gave up on. */
   signal?: AbortSignal;
@@ -79,6 +81,10 @@ export const generateQuiz = (p: {
       // Omitted rather than sent as null: every other generate is an ordinary
       // one, and the route's response only carries `source` when asked.
       ...(p.sourceAttemptId ? { source_attempt_id: p.sourceAttemptId } : {}),
+      // W7.8: only send when non-default so Practice digests stay lean.
+      ...(p.sessionMode && p.sessionMode !== "practice"
+        ? { session_mode: p.sessionMode }
+        : {}),
     }),
   });
 

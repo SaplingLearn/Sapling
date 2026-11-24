@@ -204,24 +204,35 @@ describe("prefs", () => {
   });
 
   it("defaults to no remembered count/difficulty and at-end feedback", () => {
-    expect(loadPrefs()).toEqual({ count: null, difficulty: null, feedback: "at-end" });
+    expect(loadPrefs()).toEqual({
+      count: null, difficulty: null, feedback: "at-end", sessionMode: "practice",
+    });
   });
 
   it("round-trips", () => {
-    savePrefs({ count: 10, difficulty: "hard", feedback: "as-you-go" });
-    expect(loadPrefs()).toEqual({ count: 10, difficulty: "hard", feedback: "as-you-go" });
+    savePrefs({ count: 10, difficulty: "hard", feedback: "as-you-go", sessionMode: "exam_twin" });
+    expect(loadPrefs()).toEqual({
+      count: 10, difficulty: "hard", feedback: "as-you-go", sessionMode: "exam_twin",
+    });
   });
 
   it("drops a remembered value the live config no longer offers", () => {
     savePrefs({ count: 15, difficulty: "impossible", feedback: "as-you-go" });
-    expect(loadPrefs(CONFIG)).toEqual({ count: null, difficulty: null, feedback: "as-you-go" });
-    // Without a config to check against, the stored value is left alone.
-    expect(loadPrefs()).toEqual({ count: 15, difficulty: "impossible", feedback: "as-you-go" });
+    expect(loadPrefs(CONFIG)).toEqual({
+      count: null, difficulty: null, feedback: "as-you-go", sessionMode: "practice",
+    });
+    // Without a config to check against, the stored value is left alone —
+    // sessionMode still defaults when the stored record omitted it.
+    expect(loadPrefs()).toEqual({
+      count: 15, difficulty: "impossible", feedback: "as-you-go", sessionMode: "practice",
+    });
   });
 
   it("keeps a remembered value the config still offers", () => {
     savePrefs({ count: 3, difficulty: "adaptive", feedback: "at-end" });
-    expect(loadPrefs(CONFIG)).toEqual({ count: 3, difficulty: "adaptive", feedback: "at-end" });
+    expect(loadPrefs(CONFIG)).toEqual({
+      count: 3, difficulty: "adaptive", feedback: "at-end", sessionMode: "practice",
+    });
   });
 
   it("falls back for a corrupted or hostile record", () => {

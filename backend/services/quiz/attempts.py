@@ -236,17 +236,23 @@ def _sweep_abandoned(user_id: str, *, active_attempt_ids: set[str] | None = None
         logger.exception("quiz: abandon sweep failed user=%s", user_id)
 
 
+#: Columns added after the attempt-insert path shipped. Each is stripped on a
+#: PostgREST schema-cache miss so a billed generation still lands a row (same
+#: seatbelt as `exam_days_away` / H3). Ordering is still: migration before code.
+_ATTEMPT_OPTIONAL_COLUMNS = ("exam_days_away", "session_mode")
+
+
 def _insert_attempt(attempt_row: dict) -> None:
-    """Write the attempt, surviving a schema that predates `exam_days_away`.
+    """Write the attempt, surviving a schema that predates optional columns.
 
     The omit-when-None rule alone does NOT make a pre-migration environment
     safe, and the failure is nastier than it looks: it strikes exactly the
-    students the feature is FOR (the ones with a dated upcoming exam), so it
-    presents as a random partial outage rather than an obvious missing
-    migration. And it strikes late — the agent has already run and been
-    billed — so an unhandled 400 here loses the generated quiz, writes no
-    attempt row, emits no `quiz.generation_failed`, and never refunds the
-    rate-limit slot.
+    students the feature is FOR (the ones with a dated upcoming exam, or an
+    Exam Twin start), so it presents as a random partial outage rather than
+    an obvious missing migration. And it strikes late — the agent has already
+    run and been billed — so an unhandled 400 here loses the generated quiz,
+    writes no attempt row, emits no `quiz.generation_failed`, and never
+    refunds the rate-limit slot.
     #
     Ordering is still the rule (migration before code, as with
     20260814051517). This is the seatbelt for the window where PostgREST has
@@ -256,12 +262,13 @@ def _insert_attempt(attempt_row: dict) -> None:
         table("quiz_attempts").insert(attempt_row)
         return
     except Exception:
-        if "exam_days_away" not in attempt_row:
+        if not any(c in attempt_row for c in _ATTEMPT_OPTIONAL_COLUMNS):
             raise
-    retry = {k: v for k, v in attempt_row.items() if k != "exam_days_away"}
+    retry = {k: v for k, v in attempt_row.items() if k not in _ATTEMPT_OPTIONAL_COLUMNS}
     logger.warning(
-        "quiz: attempt insert failed with exam_days_away present; retrying "
-        "without it (is 20260822090747 applied?) quiz_id=%s",
+        "quiz: attempt insert failed with optional columns present; retrying "
+        "without %s quiz_id=%s",
+        [c for c in _ATTEMPT_OPTIONAL_COLUMNS if c in attempt_row],
         attempt_row.get("id"),
     )
     table("quiz_attempts").insert(retry)

@@ -26,11 +26,19 @@ vi.mock("@/lib/api", () => ({
 }));
 vi.mock("@/lib/studyGuide/api", () => ({ listGuides: vi.fn() }));
 vi.mock("@/lib/quiz/api", () => ({ listAttempts: vi.fn() }));
-vi.mock("@/lib/studyApi", () => ({ getStudyDaily: vi.fn(), setStudyDailyGoal: vi.fn(async (_u: string, m: number) => ({ goal_minutes: m })) }));
+vi.mock("@/lib/studyApi", () => ({
+  getStudyDaily: vi.fn(),
+  setStudyDailyGoal: vi.fn(async (_u: string, m: number) => ({ goal_minutes: m })),
+  getStudyNext: vi.fn(),
+}));
 vi.mock("@/lib/topicChecklistApi", () => ({ getTopicChecklist: vi.fn(), refreshTopicChecklist: vi.fn() }));
-const flagState = vi.hoisted(() => ({ hideQuiz: false }));
+const flagState = vi.hoisted(() => ({ hideQuiz: false, flags: {} as Record<string, string> }));
 vi.mock("@/context/FlagsContext", () => ({
-  useFlagMap: () => ({ flags: flagState.hideQuiz ? { hide_quiz: "on" } : {}, ready: true }),
+  useFlagMap: () => ({
+    flags: flagState.hideQuiz ? { ...flagState.flags, hide_quiz: "on" } : flagState.flags,
+    ready: true,
+  }),
+  useFlag: (key: string) => flagState.flags[key] ?? "off",
 }));
 
 import { StudyHub } from "./StudyHub";
@@ -38,7 +46,7 @@ import { HUB_IN, HUB_IN_LATE, HUB_OUT, HUB_SWITCH_MS, HUB_WHOLE } from "./hubMot
 import { ToastProvider } from "../ToastProvider";
 import * as api from "@/lib/api";
 import { listAttempts } from "@/lib/quiz/api";
-import { getStudyDaily, setStudyDailyGoal } from "@/lib/studyApi";
+import { getStudyDaily, getStudyNext, setStudyDailyGoal } from "@/lib/studyApi";
 import { listGuides } from "@/lib/studyGuide/api";
 import type { GuideCard } from "@/lib/studyGuide/types";
 import { getTopicChecklist, refreshTopicChecklist } from "@/lib/topicChecklistApi";
@@ -73,11 +81,14 @@ const unlinkedNote = () => screen.queryByTestId("readiness-unlinked-note");
 beforeEach(() => {
   vi.clearAllMocks(); // call history only; each test's implementations are set below
   push.mockReset();
+  flagState.hideQuiz = false;
+  flagState.flags = {};
   // No outline by default, and none to generate: the roadmap keeps its
   // prerequisite-layer fallback, which is what these assertions were written
   // against, and no exam has concepts of its own.
   vi.mocked(getTopicChecklist).mockResolvedValue({ topics: [], needs_refresh: false } as never);
   vi.mocked(refreshTopicChecklist).mockResolvedValue({ topics: [], needs_refresh: false } as never);
+  vi.mocked(getStudyNext).mockResolvedValue({ due: [], misconceptions: [], ready: [] });
   vi.mocked(api.getGraph).mockResolvedValue({
     nodes: [
       node("var", "Variables", "mastered", 0.96),
@@ -144,6 +155,8 @@ describe("StudyHub", () => {
     expect(within(card).getByText("Loops")).toBeTruthy();
     // The block names the concept and how to start on it; no quiz history.
     expect(within(card).getByRole("link", { name: "Start quiz" })).toBeTruthy();
+    expect(within(card).getByTestId("focus-learn").getAttribute("href")).toContain("concept=rec");
+    expect(within(card).getByTestId("focus-learn").textContent).toMatch(/Continue in Tutor/);
     expect(within(card).queryByText(/Last Quiz/i)).toBeNull();
     // Legend counts.
     expect(screen.getByRole("button", { name: /1\s*Struggling/ })).toBeTruthy();
@@ -1277,6 +1290,75 @@ describe("StudyHub shows only what its data backs", () => {
     expect(within(list).queryByText(/on Exam 2/)).toBeNull();
     expect(within(list).getByText("Loops")).toBeTruthy();
     expect(within(list).getByText("Recursion")).toBeTruthy();
+  });
+
+  it("with learning_loop + quiz_concept_plan, Focus and Due Reviews follow learner-next due[]", async () => {
+    flagState.flags = { learning_loop: "on", quiz_concept_plan: "on" };
+    const planned = (node_id: string, concept_name: string, reason: "due" | "ready") => ({
+      node_id, concept_name, course_id: "c1", reason, p_known: 0.5, band: "develop" as const,
+      due_at: reason === "due" ? "2026-11-07T12:00:00Z" : null, open_misconceptions: 0,
+    });
+    // Due: Arrays (unexplored in the graph fixture); ready: Loops — Focus
+    // should prefer Arrays as Up Next, and the rail should say "Due Reviews".
+    vi.mocked(getStudyNext).mockResolvedValue({
+      due: [planned("arr", "Arrays", "due")],
+      misconceptions: [],
+      ready: [planned("loop", "Loops", "ready")],
+    });
+    renderHub();
+    await hubLoaded();
+    await waitFor(() => expect(getStudyNext).toHaveBeenCalledWith("u1", "c1"));
+    await waitFor(() => expect(screen.getByRole("button", { name: /1 Due Review/ })).toBeTruthy());
+    const focus = screen.getByTestId("focus-card");
+    expect(within(focus).getByText("Arrays")).toBeTruthy();
+    expect(within(focus).getByText("Up Next")).toBeTruthy();
+    fireEvent.focus(screen.getByRole("button", { name: /1 Due Review/ }));
+    const dueDlg = screen.getByRole("dialog", { name: "Due reviews" });
+    expect(within(dueDlg).getByText("Due for review")).toBeTruthy();
+    // W8.3b / W3.3b: Due Reviews offer Practice what's due beside Flashcards.
+    expect(within(dueDlg).getByTestId("due-reviews-flashcards")).toBeTruthy();
+    expect(within(dueDlg).getByTestId("due-reviews-quiz").textContent).toBe("Practice what's due");
+    fireEvent.click(within(dueDlg).getByTestId("due-reviews-quiz"));
+    expect(push).toHaveBeenLastCalledWith(
+      "/quiz?concept=arr&from=link&return=%2Fstudy%3Fcourse%3Dc1&start=1",
+    );
+  });
+
+  it("Due Reviews keep Flashcards-only while hide_quiz is on", async () => {
+    flagState.flags = { learning_loop: "on", quiz_concept_plan: "on" };
+    flagState.hideQuiz = true;
+    vi.mocked(getStudyNext).mockResolvedValue({
+      due: [{
+        node_id: "arr", concept_name: "Arrays", course_id: "c1", reason: "due",
+        p_known: 0.5, band: "develop", due_at: "2026-11-07T12:00:00Z", open_misconceptions: 0,
+      }],
+      misconceptions: [],
+      ready: [],
+    });
+    renderHub();
+    await hubLoaded();
+    await waitFor(() => expect(screen.getByRole("button", { name: /1 Due Review/ })).toBeTruthy());
+    fireEvent.focus(screen.getByRole("button", { name: /1 Due Review/ }));
+    const dueDlg = screen.getByRole("dialog", { name: "Due reviews" });
+    expect(within(dueDlg).getByRole("button", { name: "Start Review" })).toBeTruthy();
+    expect(within(dueDlg).queryByTestId("due-reviews-quiz")).toBeNull();
+  });
+
+  it("never asks for study next while learning_loop or quiz_concept_plan is off", async () => {
+    flagState.flags = { learning_loop: "on" }; // plan sibling still off
+    renderHub();
+    await hubLoaded();
+    expect(getStudyNext).not.toHaveBeenCalled();
+  });
+
+  it("flag-off Quick Reviews stay Flashcards-only (no Quiz secondary)", async () => {
+    renderHub();
+    await hubLoaded();
+    const row = screen.getByRole("button", { name: /Quick Reviews?/ });
+    fireEvent.focus(row);
+    const list = screen.getByRole("dialog", { name: "Quick reviews" });
+    expect(within(list).getByRole("button", { name: "Start Review" })).toBeTruthy();
+    expect(within(list).queryByTestId("due-reviews-quiz")).toBeNull();
   });
 
   it("a tile's ... tooltip names what its menu offers", async () => {

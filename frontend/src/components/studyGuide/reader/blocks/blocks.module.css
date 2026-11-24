@@ -149,8 +149,10 @@
 .close:hover { background: var(--sap-100); }
 .promptList { display: flex; flex-wrap: wrap; gap: 8px; }
 .option {
-  min-height: 40px; padding: 0 14px; border: 1px solid var(--sap-200); border-radius: var(--r-md);
+  display: inline-flex; align-items: center; min-height: 40px; padding: 0 14px;
+  border: 1px solid var(--sap-200); border-radius: var(--r-md);
   background: var(--bg-panel); color: var(--sap-900); font-size: var(--fs-base);
+  text-decoration: none;
   transition: border-color var(--dur-fast) var(--ease);
 }
 .option:hover:not(:disabled) { border-color: var(--brand-forest); }

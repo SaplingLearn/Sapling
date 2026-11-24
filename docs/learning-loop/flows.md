@@ -20,6 +20,9 @@ them.
    the concept plan, planned questions, item gates, misconceptions and the
    results block (A143–A147, five flags)
 
+Cross-surface CTAs (Tutor wrap-up ↔ Study Hub ↔ Quiz results ↔ Retention):
+[w3-handoffs.md](w3-handoffs.md) (W3.4 / W8.5 copy + deep links; hide_* safe).
+
 ## 1. From an upload to a servable item
 
 An upload turns into check items in the background. Nothing here can fail the
@@ -1088,7 +1091,12 @@ question screen is the pre-loop one. The quiz reads that through
 `useLoopStatus` with `{ reuse: true }`: a probe answer Learn or Study got in
 the last five minutes is reused, so the quiz sends no second probe. When no
 question of a submit could move the mastery, submit says why
-(`mastery_unmoved`: `not_verified`, `already_counted`, `helped` or
-`write_failed`, `backend/services/quiz/unmoved.py`), and only then do the
-results give a reason for an unchanged percent (#866 K40). The
+(`mastery_unmoved`: `not_verified`, `already_counted`, `helped`,
+`write_failed`, or `exam_twin`, `backend/services/quiz/unmoved.py`), and only
+then do the results give a reason for an unchanged percent (#866 K40). The
 quiz is never a post-test or a learning-gain measure.
+
+**Practice vs Exam Twin (W7.8).** Generate may set `session_mode`:
+`practice` (default) is the learning evidence path above; `exam_twin` is a
+tool-light dress rehearsal — submit writes no mastery, takes no farm claim,
+and Ask is refused (409). Rules: [`w7-practice-exam-twin.md`](w7-practice-exam-twin.md).

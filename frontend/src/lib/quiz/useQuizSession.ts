@@ -364,6 +364,8 @@ export function useQuizSession(userId: string, entry: EntryRequest): QuizSession
           numQuestions: from.config.count,
           difficulty: from.config.difficulty,
           questionFormat: from.config.questionFormat,
+          // W7.8: Exam Twin is score-only / tool-light on the server.
+          sessionMode: from.config.sessionMode,
           // G5: set only by PRACTISE_MISSED, so an ordinary start sends
           // nothing and the route behaves exactly as it always has.
           sourceAttemptId: from.sourceAttemptId,

@@ -438,13 +438,57 @@ def test_context_blocks_tell_a_failed_retrieval_from_an_empty_one():
         for got, want in (
             (Retrieval(chunks=[], failed=True), {"retrieval": "failed"}),
             (Retrieval(chunks=[]), {}),
-            (Retrieval(chunks=[{"chunk_text": "r", "similarity": 0.9}]), {}),
+            # W4.3: passages in the prompt → materials_grounded (never decorative cites)
+            (Retrieval(chunks=[{"chunk_text": "r", "similarity": 0.9}]), {"materials_grounded": True}),
         ):
             out: dict = {}
             with patch_loop("retrieve_chunks_detailed", return_value=got):
                 blocks = _context_blocks(**kw, out=out)
             assert out == want
             assert bool(blocks) is bool(got.chunks), "a failure never blocks the turn"
+
+
+def test_a_grounded_retrieval_serves_materials_grounded_on_the_turn(gate_on, seams):
+    """W4.3: when course passages reach the prompt, the turn says so once
+    (present-only); an empty or failed retrieval never claims grounded."""
+    seams.store["doc"] = {"phase": "teach", "concept": "node-1"}
+
+    def _grounded(**kw):
+        kw["out"]["materials_grounded"] = True
+        return ["CTX"]
+
+    seams.blocks.side_effect = _grounded
+    r = _teach_json_turn()
+    assert r.status_code == 200 and r.json()["materials_grounded"] is True
+    assert "materials_unavailable" not in r.json()
+
+    seams.blocks.side_effect = None  # clean: seams' default reports nothing
+    seams.blocks.return_value = ["CTX"]
+    clean = _teach_json_turn("and then?")
+    assert clean.status_code == 200 and "materials_grounded" not in clean.json()
+
+
+def test_source_chunks_mark_materials_grounded():
+    """W4.3: check-item source passages also ground the turn (hint / explain)."""
+    from learning import policy
+    from services.loop.context import _context_blocks
+
+    item = type("Item", (), {"source_chunk_ids": ["ch-1"]})()
+    out: dict = {}
+    with (
+        patch_loop("_get_course_info", return_value={"course_code": "CS111"}),
+        patch_loop("chunks_for_ids", return_value=[{"chunk_text": "SRC"}]),
+    ):
+        blocks = _context_blocks(
+            user_id="u1",
+            course_id="c1",
+            user_message="hi",
+            item=item,
+            context=policy.ContextPolicy(0, False, 2, False, "none"),
+            out=out,
+        )
+    assert out == {"materials_grounded": True}
+    assert len(blocks) == 1 and "SRC" in blocks[0]
 
 
 def _failing_retrieval(**kw):

@@ -129,6 +129,49 @@ def test_concept_plan_caps_each_course_on_its_own():
     assert [c["node_id"] for c in plan if c["course_id"] == "c2"] == ["b1", "b2"]
 
 
+# ── W7.6: prereq guidance (prefer_pose + banner) ────────────────────────────
+
+
+def test_prereq_guidance_redirects_to_the_weak_parent():
+    nodes = [ql._Node("p", "Foundations", "c1"), ql._Node("c", "Matrices", "c1")]
+    states = {
+        "p": MagicMock(p_known=0.25),
+        "c": MagicMock(p_known=0.40),
+    }
+    with (
+        patch.object(ql, "_nodes", return_value=nodes),
+        patch.object(ql, "read_states", return_value=states),
+        patch.object(ql, "_prereq_edges", return_value=[("p", "c")]),
+    ):
+        got = ql.prereq_guidance("u", "c", "c1")
+    assert got is not None
+    assert got.pose_node_id == "p"
+    assert got.banner == {
+        "prereq_id": "p",
+        "prereq_name": "Foundations",
+        "dependent_id": "c",
+        "dependent_name": "Matrices",
+        "course_id": "c1",
+        "redirected": True,
+    }
+
+
+def test_prereq_guidance_is_inert_with_empty_edges():
+    nodes = [ql._Node("alone", "Alone", "c1")]
+    with (
+        patch.object(ql, "_nodes", return_value=nodes),
+        patch.object(ql, "read_states", return_value={"alone": MagicMock(p_known=0.2)}),
+        patch.object(ql, "_prereq_edges", return_value=[]),
+    ):
+        got = ql.prereq_guidance("u", "alone", "c1")
+    assert got == ql.PrereqGuidance(pose_node_id="alone", banner=None)
+
+
+def test_prereq_guidance_degrades_on_a_failed_read():
+    with patch.object(ql, "_nodes", side_effect=RuntimeError("down")):
+        assert ql.prereq_guidance("u", "c", "c1") is None
+
+
 # ── A144: planned questions ─────────────────────────────────────────────────
 
 

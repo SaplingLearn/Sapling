@@ -29,6 +29,7 @@ from services.loop.planning import (
     _goal_practice_unavailable,
     _learning_scope_payload,
     _plan_node_names,
+    _plan_prereq_edges,
     _probe_plan_read_limit,
     _require_phase,
     _update_if_changed,
@@ -87,8 +88,23 @@ def plan_get(request: Request, user_id: str, session_id: str) -> dict:
             doc["phase"] = "teach"
 
     saved = _update_if_changed(session_id, state, store, require_open=bool(state.get("goal")))
+    # W3.1: prereq pairs among today's proposal (+ goal targets), same orientation
+    # as the planner (`EDGE_PREREQ_SOURCE_IS_PREREQ`). Additive for PlanPanel DAG.
+    keep = set(ids) | set(targets)
+    prereq_edges = [
+        {"prerequisite": a, "dependent": b}
+        for a, b in _plan_prereq_edges(user_id, list(keep))
+        if a in keep and b in keep and a != b
+    ]
     if not ids:
-        return {"concepts": [], "order": list(PLAN_ORDER), "empty": True, "phase": "teach", **_learning_scope_payload(saved, session_id)}
+        return {
+            "concepts": [],
+            "order": list(PLAN_ORDER),
+            "empty": True,
+            "phase": "teach",
+            "prereq_edges": [],
+            **_learning_scope_payload(saved, session_id),
+        }
     names = _plan_node_names(user_id, ids)
     return {
         "concepts": [
@@ -103,6 +119,7 @@ def plan_get(request: Request, user_id: str, session_id: str) -> dict:
             for n in ids
         ],
         "order": list(PLAN_ORDER),
+        "prereq_edges": prereq_edges,
         **_learning_scope_payload(saved, session_id),
     }
 

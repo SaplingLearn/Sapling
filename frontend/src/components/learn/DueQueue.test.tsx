@@ -593,6 +593,27 @@ describe("DueQueue — stated confidence (spec §13 A127)", () => {
     await userEvent.click(screen.getByTestId("review-rate-3"));
     expect("confidence" in sent()).toBe(false);
   });
+
+  it("W2.5: high-confidence wrong holds Next for feedback_dwell_ms", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      mockNext.mockResolvedValue(next(FREE));
+      mockAnswer.mockResolvedValue(graded({ correct: false, feedback_dwell_ms: 5000 }));
+      render(<DueQueue userId="u1" courseId="c1" />);
+      await screen.findByTestId("review-item");
+      await userEvent.type(screen.getByTestId("review-answer-input"), "nope");
+      await userEvent.click(screen.getByTestId("review-confidence-sure"));
+      await userEvent.click(screen.getByTestId("review-submit"));
+      await screen.findByTestId("loop-feedback-dwell");
+      expect(screen.getByTestId("review-next")).toBeDisabled();
+      await act(async () => {
+        vi.advanceTimersByTime(5000);
+      });
+      await waitFor(() => expect(screen.getByTestId("review-next")).not.toBeDisabled());
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("DueQueue — a check that cannot be graded never pins the queue (#866 K16)", () => {

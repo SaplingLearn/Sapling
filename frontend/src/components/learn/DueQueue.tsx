@@ -51,6 +51,7 @@ import {
 import { useFlag } from "@/context/FlagsContext";
 import { extractErrorDetail } from "@/lib/errorMessage";
 import { useFeedbackHold } from "@/lib/feedbackPacing";
+import { HYPERCORRECTION_DWELL_COPY, useHypercorrectionDwell } from "@/lib/hypercorrectionDwell";
 import { BudgetPausedBanner, formatResetAt } from "./BudgetPausedBanner";
 import { ConfidenceControl } from "./ConfidenceControl";
 import { FIELD_STYLE } from "./loopShared";
@@ -99,6 +100,8 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
   const [flipped, setFlipped] = React.useState(false);
   const [result, setResult] = React.useState<ReviewAnswerResponse | null>(null);
   const [alreadyGraded, setAlreadyGraded] = React.useState(false);
+  // W2.5: high-confidence wrong → Next waits for corrective feedback
+  const hypercorrectionHold = useHypercorrectionDwell(result?.feedback_dwell_ms);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   // The queue itself failed to load: `error` says why and Retry loads again.
@@ -380,18 +383,25 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
           {/* #866 K16: after a grade the grader could not make, Next goes on and
               the question comes back after the rest (a refusal stays: own words) */}
           {(answered || pause !== null || (retryable && !result?.refused)) && (
-            <button
-              data-testid="review-next"
-              className="btn btn--sm"
-              style={{ alignSelf: "flex-start" }}
-              disabled={busy}
-              onClick={() => {
-                focusNext.current = "item";
-                void load();
-              }}
-            >
-              Next
-            </button>
+            <>
+              <button
+                data-testid="review-next"
+                className="btn btn--sm"
+                style={{ alignSelf: "flex-start" }}
+                disabled={busy || hypercorrectionHold}
+                onClick={() => {
+                  focusNext.current = "item";
+                  void load();
+                }}
+              >
+                Next
+              </button>
+              {hypercorrectionHold && (
+                <span role="status" data-testid="loop-feedback-dwell" style={{ fontSize: 13, color: "var(--text-muted)" }}>
+                  {HYPERCORRECTION_DWELL_COPY}
+                </span>
+              )}
+            </>
           )}
         </div>
       )}

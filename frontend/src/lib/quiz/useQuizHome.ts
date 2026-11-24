@@ -327,8 +327,10 @@ export function useQuizHome(
           nodes: (graphRes.nodes ?? []) as GraphNode[],
           edges: (graphRes.edges ?? []) as GraphEdge[],
           attempts,
+          // Keep a course plan even when the all-courses read failed: a
+          // `?course=` arrival can still queue that course in plan order.
           plan,
-          coursePlan: plan ? coursePlan : null,
+          coursePlan,
           error: null,
         });
 
@@ -412,7 +414,9 @@ export function useQuizHome(
       const resolved = entrySelection(entry, scopedNodes, scopedCourses).conceptId;
       if (resolved) return { conceptId: resolved, describable: true };
     } else if (entry?.course) {
-      const first = (plan
+      // Plan order when either the all-courses or the course-scoped plan
+      // answered — a failed global read must not drop a good course plan.
+      const first = (plan || coursePlan
         ? plannedCourseQueue(candidates, courseCandidates, scopedNodes, entry.course)
         : queueFor("course", scopedNodes, entry.course))[0];
       if (first) return { conceptId: first, describable: false };
@@ -423,7 +427,7 @@ export function useQuizHome(
     // An entry that resolved to nothing lands here too, so an unusable
     // `?course=` degrades to an ordinary primary card — description and all.
     return { conceptId: primary?.node.id ?? null, describable: true };
-  }, [entry, scopedNodes, scopedCourses, primary, picked, dueQueue, plan, candidates, courseCandidates]);
+  }, [entry, scopedNodes, scopedCourses, primary, picked, dueQueue, plan, coursePlan, candidates, courseCandidates]);
   const cardConceptId = card.conceptId;
   const describable = card.describable;
 

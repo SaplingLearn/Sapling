@@ -8,9 +8,10 @@ import { modalOpen } from "./modalOpen";
 import { type Draft, FIELD_STYLE, focusAnswerStart } from "./loopShared";
 import { TutorTurn } from "./TutorTurn";
 import { LOOP_ANSWER_MAX } from "@/lib/inputLimits";
+import { HYPERCORRECTION_DWELL_COPY } from "@/lib/hypercorrectionDwell";
 
 export function ProbePanel({
-  item, count, draft, setDraft, reference, note, busy, loadFailed, greeting, onSubmit, onIdk, onNext, onRetry,
+  item, count, draft, setDraft, reference, note, busy, nextHeld = false, loadFailed, greeting, onSubmit, onIdk, onNext, onRetry,
 }: {
   item: LoopProbeItem | null;
   count: number;
@@ -19,6 +20,8 @@ export function ProbePanel({
   reference: string | null;
   note: string | null;
   busy: boolean;
+  /** W2.5: high-confidence wrong — Next waits for the feedback dwell. */
+  nextHeld?: boolean;
   /** The next item failed to load (not a pause): offer a retry, never an empty card. */
   loadFailed: boolean;
   /** The session opener: in the probe phase always a template — a welcome and
@@ -79,9 +82,14 @@ export function ProbePanel({
         {!item && reference !== null && (
           <div className="card" style={{ padding: "var(--pad-xl)", display: "flex", flexDirection: "column", gap: 12 }}>
             {referenceBlock}
-            <button data-testid="loop-probe-next" className="btn btn--primary" disabled={busy} onClick={onNext}>
+            <button data-testid="loop-probe-next" className="btn btn--primary" disabled={busy || nextHeld} onClick={onNext}>
               Next
             </button>
+            {nextHeld && (
+              <span role="status" data-testid="loop-feedback-dwell" style={{ fontSize: 13, color: "var(--text-muted)" }}>
+                {HYPERCORRECTION_DWELL_COPY}
+              </span>
+            )}
           </div>
         )}
         {!item && !busy && loadFailed && (
@@ -176,11 +184,16 @@ export function ProbePanel({
                   data-testid="loop-probe-next"
                   className="btn btn--primary"
                   style={{ alignSelf: "flex-start" }}
-                  disabled={busy}
+                  disabled={busy || nextHeld}
                   onClick={onNext}
                 >
                   Next
                 </button>
+                {nextHeld && (
+                  <span role="status" data-testid="loop-feedback-dwell" style={{ fontSize: 13, color: "var(--text-muted)" }}>
+                    {HYPERCORRECTION_DWELL_COPY}
+                  </span>
+                )}
               </>
             )}
           </section>

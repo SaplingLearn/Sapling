@@ -67,6 +67,9 @@ export interface ChatMsg {
    *  and read in order — but is not painted, so nothing renders twice. Clearing
    *  the flag only paints it: no node is added, so nothing is announced again. */
   visuallyHidden?: boolean;
+  /** W4.3: this turn's prompt included the student's course passages — calm
+   *  "Grounded in your materials" chrome (no cite list; loop teach only). */
+  materialsGrounded?: boolean;
 }
 
 /** The standard visually-hidden recipe: kept in the accessibility tree, painted nowhere. */
@@ -550,6 +553,20 @@ const Message = React.memo(function Message({
               Retry
             </button>
           )}
+        </div>
+      )}
+      {m.materialsGrounded && !isUser && !m.interrupted && (
+        <div
+          data-testid="loop-materials-grounded"
+          role="status"
+          style={{
+            marginTop: m.content ? 8 : 0,
+            fontFamily: "var(--font-sans)",
+            fontSize: 12,
+            color: "var(--text-muted)",
+          }}
+        >
+          Grounded in your materials
         </div>
       )}
     </>

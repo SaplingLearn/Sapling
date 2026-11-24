@@ -113,6 +113,11 @@ export interface ProposalCardProps extends Omit<CardTextProps, "onReset"> {
   /** The due link's numbers, or `null` to leave it out. */
   dueLink: Omit<DueLinkProps, "onClick"> | null;
   onReviewDue: () => void;
+  /**
+   * List-mode neighbourhood under the card (default). Map mode hides it —
+   * the full course graph lives in the side pane (W7.D3 / W7.10).
+   */
+  showNeighbourhood?: boolean;
 }
 
 export function ProposalCard({
@@ -127,6 +132,7 @@ export function ProposalCard({
   onAdjust,
   dueLink,
   onReviewDue,
+  showNeighbourhood = true,
   ...text
 }: ProposalCardProps) {
   return (
@@ -143,13 +149,15 @@ export function ProposalCard({
           eases onto the new cluster, instead of the graph being rebuilt. */}
       <CardText key={card.node.id} {...text} onReset={() => onPick(null)} />
 
-      <LiveNeighbourhood
-        centreId={card.node.id}
-        nodes={viewNodes}
-        edges={edges}
-        onPick={onPick}
-        ariaLabel={`${card.node.concept_name} and its neighbours on your knowledge tree`}
-      />
+      {showNeighbourhood && (
+        <LiveNeighbourhood
+          centreId={card.node.id}
+          nodes={viewNodes}
+          edges={edges}
+          onPick={onPick}
+          ariaLabel={`${card.node.concept_name} and its neighbours on your knowledge tree`}
+        />
+      )}
 
       <div className="quiz-home__actions">
         <Button

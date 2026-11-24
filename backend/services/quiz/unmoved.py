@@ -18,7 +18,9 @@ from typing import Literal
 from learning.params import RUNG_NO_CREDIT_MIN
 
 #: The reasons, each true of at least one question when it is listed.
-Reason = Literal["not_verified", "already_counted", "helped", "write_failed"]
+#: `exam_twin` (W7.8): the attempt's session mode never writes mastery — the
+#: score stands, the graph does not move, and no farm claim is taken.
+Reason = Literal["not_verified", "already_counted", "helped", "write_failed", "exam_twin"]
 
 
 def _can_move(ev: dict) -> bool:
@@ -30,6 +32,7 @@ def _can_move(ev: dict) -> bool:
 
 def mastery_unmoved(
     *, graded: int, checked: int, counted: int, written: list[dict], stored: bool,
+    exam_twin: bool = False,
 ) -> list[Reason] | None:
     """The reasons NO question of this submit could move the mastery, or None
     when one could (or there was no question at all).
@@ -38,7 +41,10 @@ def mastery_unmoved(
     survived `_farm_guard`, and `written` is what `_help_floor` handed the
     graph writer. `stored` is False when the evidence did not reach the graph:
     the farm guard's claim failed (it fails closed) or the write raised
-    (#760) — then the one reason is `write_failed`."""
+    (#760) — then the one reason is `write_failed`. `exam_twin` (W7.8): the
+    session mode itself writes nothing — that reason alone."""
+    if exam_twin:
+        return ["exam_twin"]
     if not stored:
         return ["write_failed"]
     if any(_can_move(ev) for ev in written):

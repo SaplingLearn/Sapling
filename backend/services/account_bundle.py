@@ -149,12 +149,15 @@ ENCRYPTED: dict[str, dict[str, str]] = {
 #: Encrypted values INSIDE a JSON column: table -> column -> object key -> the
 #: path its binding names (`encryption.NESTED_CIPHERTEXTS`). Each is a TEXT
 #: ciphertext wherever the key sits in the document. `sessions.loop_state`: a
-#: goal's prose (learning/goals.py) and a pending grade checkpoint
-#: (learning/grade_checkpoint.py, its JSON sealed whole), both bound to the
-#: session; session ids are preserved, so source and target bind alike.
+#: goal's prose (learning/goals.py), a pending grade checkpoint
+#: (learning/grade_checkpoint.py, its JSON sealed whole), and a free/teachback
+#: reason-before-submit (learning/check_reason.py; never evidence), all bound
+#: to the session; session ids are preserved, so source and target bind alike.
 NESTED_ENCRYPTED: dict[str, dict[str, dict[str, str]]] = {
     "sessions": {"loop_state": {
-        "text_encrypted": "goal.text_encrypted", "grade_checkpoint": "grade_checkpoint",
+        "text_encrypted": "goal.text_encrypted",
+        "grade_checkpoint": "grade_checkpoint",
+        "reasoning_encrypted": "reasoning_encrypted",
     }},
 }
 

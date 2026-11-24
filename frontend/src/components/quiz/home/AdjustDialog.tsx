@@ -27,6 +27,12 @@ const NOTES = {
   "at-end": "Answers stay hidden while you work — you'll review everything on the results screen.",
 } as const;
 
+const MODE_NOTES = {
+  practice: "Practice counts toward mastery when a question passes its checks.",
+  exam_twin:
+    "Exam Twin is score-only and tool-light — it does not change mastery or use Ask about this.",
+} as const;
+
 export interface AdjustDialogProps {
   open: boolean;
   /** "{concept} · {CODE}" — the quiz these settings apply to. */
@@ -67,10 +73,14 @@ export function AdjustDialog({
   // `session.config` while this is open (the machine refuses `SET_CONFIG`
   // mid-quiz, and Done closes the dialog), so a value change here really is
   // "the defaults finally arrived".
-  const { count, difficulty, feedback } = initialConfig;
+  // Re-seed the scalars Adjust edits (length / difficulty / answers / mode).
+  // Format is left off so a remembered Format from prefs is not wiped when
+  // Adjust opens — and conversely a Format-only change elsewhere is not
+  // pulled into this dialog's draft (same as pre-W7.8 three-scalar re-seed).
+  const { count, difficulty, feedback, sessionMode } = initialConfig;
   React.useEffect(() => {
-    if (open) setDraft({ count, difficulty, feedback });
-  }, [open, count, difficulty, feedback]);
+    if (open) setDraft({ count, difficulty, feedback, sessionMode });
+  }, [open, count, difficulty, feedback, sessionMode]);
 
   return (
     <Dialog
@@ -90,7 +100,10 @@ export function AdjustDialog({
 
         <QuizSettings config={config} value={draft} onChange={setDraft} flush />
 
-        <p className="quiz-home-dialog__note">{NOTES[draft.feedback]}</p>
+        <p className="quiz-home-dialog__note">
+          {MODE_NOTES[draft.sessionMode ?? "practice"]}{" "}
+          {NOTES[draft.feedback]}
+        </p>
 
         <div className="quiz-home-dialog__footer">
           <Button data-testid="quiz-adjust-done" onClick={() => onDone(draft)}>

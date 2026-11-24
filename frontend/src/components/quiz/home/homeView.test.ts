@@ -96,6 +96,17 @@ describe("courseQueueFor (a ?course= arrival's queue)", () => {
     const home = { planned: true, candidates: [planned(REC)], nodes: [REC, DET], courseCandidates: null };
     expect(courseQueueFor(home, "c-math")).toEqual(["det"]);
   });
+
+  it("uses a course-scoped plan even when the all-courses plan failed (planned false)", () => {
+    const own = node("own", "Own");
+    const home = {
+      planned: false,
+      candidates: [],
+      nodes: [REC, own],
+      courseCandidates: [planned(own), planned(REC)],
+    };
+    expect(courseQueueFor(home, "c-cs")).toEqual(["own", "rec"]);
+  });
 });
 
 describe("entryKeyFor / pickedIdFor", () => {
@@ -294,13 +305,16 @@ describe("the card's copy", () => {
     expect(adjustSubtitle("Recursion", "")).toBe("Recursion");
   });
 
-  it("remembers the three settings, and a question format when set", () => {
-    expect(prefsFor(CFG)).toEqual(CFG);
-    expect(prefsFor({ ...CFG, questionFormat: "mcq" })).toEqual({ ...CFG, questionFormat: "mcq" });
+  it("remembers the settings (incl. mode), and a question format when set", () => {
+    expect(prefsFor(CFG)).toEqual({ ...CFG, sessionMode: "practice" });
+    expect(prefsFor({ ...CFG, questionFormat: "mcq" })).toEqual({
+      ...CFG, sessionMode: "practice", questionFormat: "mcq",
+    });
     expect(Object.keys(prefsFor({ ...CFG, questionFormat: "mcq" }))).toEqual([
       "count",
       "difficulty",
       "feedback",
+      "sessionMode",
       "questionFormat",
     ]);
   });

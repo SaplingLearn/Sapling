@@ -16,12 +16,14 @@
  */
 import React from "react";
 import { useRouter } from "next/navigation";
+import { handoffLearnHref } from "@/lib/learningHandoffs";
 import { buildQuizHref } from "@/lib/quiz/source";
 import { flashcardsHref, studyGuideHref, studyHref } from "@/lib/toolHrefs";
 
 export type ToolKey = "quiz" | "cards" | "guide";
 
 const TOOL_HOME: Record<ToolKey, (courseId: string) => string> = {
+  // W7.D2: header Quiz → course home/launcher (no start=1); see docs/learning-loop/w7-d2-hub-guide-settings.md
   quiz: cid => buildQuizHref({ course: cid }, { kind: "link", returnTo: studyHref(cid) }),
   cards: cid => flashcardsHref(cid),
   guide: () => studyGuideHref(),
@@ -41,6 +43,8 @@ export interface ToolNav {
   quizHref: (conceptId: string) => string;
   /** Flashcards started on these concepts' decks. */
   cardsHref: (conceptNames: string[]) => string;
+  /** Tutor session on one concept (W3.4 Continue learning). */
+  learnHref: (conceptId: string, conceptName: string) => string;
 }
 
 export function useToolNav(courseId: string): ToolNav {
@@ -62,6 +66,8 @@ export function useToolNav(courseId: string): ToolNav {
     quizHref: conceptId =>
       buildQuizHref({ concept: conceptId }, { kind: "link", returnTo: studyHref(courseId) }, { start: true }),
     cardsHref: names => flashcardsHref(courseId, names, { start: true }),
+    learnHref: (conceptId, conceptName) =>
+      handoffLearnHref({ conceptId, conceptName, courseId }),
   }), [leaving, leaveTo, courseId]);
 }
 

@@ -29,6 +29,7 @@ PARAM_NAMES = (
     "GATE_INDEPENDENT_MIN_S",
     "GATE_INDEPENDENT_MIN_S_NOVICE",
     "GATE_RUNG_DWELL_MIN_S",
+    "GATE_HYPERCORRECTION_FEEDBACK_DWELL_S",
     "H6_MIN_GENUINE_ATTEMPTS",
     "OFFER_BANDS",
     "BAND_WINDOW",
@@ -1964,6 +1965,7 @@ def test_gate_seconds_scale_every_gate_constant():
         "GATE_INDEPENDENT_MIN_S",
         "GATE_INDEPENDENT_MIN_S_NOVICE",
         "GATE_RUNG_DWELL_MIN_S",
+        "GATE_HYPERCORRECTION_FEEDBACK_DWELL_S",
     ):
         assert params.gate_seconds(name) == float(getattr(params, name))
         assert params.gate_seconds(name, scale) == pytest.approx(getattr(params, name) * scale)
@@ -4149,6 +4151,52 @@ def test_next_isomorph_none_when_only_self_or_mismatches():
         is None
     )
     assert next_isomorph(a, []) is None
+
+
+def test_practice_formats_rotates_then_prefers_generative_core_at_segment_close():
+    """W1.3: ordinary rotation until the last check of the concept; then free /
+    teachback ahead of mc_reason so the close beat is generative, not recognition."""
+    from learning import params
+    from learning.policy import practice_formats
+
+    assert params.GENERATIVE_CORE_FORMATS == ("free", "teachback")
+    assert set(params.GENERATIVE_CORE_FORMATS) <= set(params.CHECK_ITEM_FORMATS)
+    assert practice_formats(0) == ("free", "teachback", "mc_reason")
+    # segment close when LOOP_CHECKS_PER_CONCEPT == 2: rotate to teachback first,
+    # then pull free ahead of mc_reason
+    assert params.LOOP_CHECKS_PER_CONCEPT == 2
+    assert practice_formats(1) == ("teachback", "free", "mc_reason")
+    # a later index that would otherwise open on mc_reason still demotes it
+    assert practice_formats(2) == ("free", "teachback", "mc_reason")
+    assert practice_formats(-1) == practice_formats(0)
+
+
+def test_hypercorrection_feedback_dwell_only_on_high_confidence_wrong():
+    """W2.5: Continue/Next holds only for Sure (≥ MISCONCEPTION_CONFIDENCE) wrong;
+    guessing / fairly_sure / correct / idk / missing → 0. Scales with A5."""
+    from learning import params
+    from learning.evidence import stated_confidence
+    from learning.policy import hypercorrection_feedback_dwell_ms
+
+    sure = stated_confidence("sure")
+    mid = stated_confidence("fairly_sure")
+    low = stated_confidence("guessing")
+    full = int(round(params.GATE_HYPERCORRECTION_FEEDBACK_DWELL_S * 1000))
+
+    assert hypercorrection_feedback_dwell_ms(correct=False, student_confidence=sure) == full
+    assert hypercorrection_feedback_dwell_ms(correct=False, student_confidence=mid) == 0
+    assert hypercorrection_feedback_dwell_ms(correct=False, student_confidence=low) == 0
+    assert hypercorrection_feedback_dwell_ms(correct=False, student_confidence=None) == 0
+    assert hypercorrection_feedback_dwell_ms(correct=True, student_confidence=sure) == 0
+    assert hypercorrection_feedback_dwell_ms(
+        correct=False, student_confidence=sure, idk=True
+    ) == 0
+    assert hypercorrection_feedback_dwell_ms(
+        correct=False, student_confidence=sure, time_scale=0.01
+    ) == int(round(params.GATE_HYPERCORRECTION_FEEDBACK_DWELL_S * 0.01 * 1000))
+    # "Sure" is the only label at/above the misconception cut (diagnosis, not weight)
+    assert sure >= params.MISCONCEPTION_CONFIDENCE
+    assert mid < params.MISCONCEPTION_CONFIDENCE
 
 
 def test_loop_state_round_trips_attempts_and_confront():

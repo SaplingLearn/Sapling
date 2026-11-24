@@ -108,7 +108,7 @@ test("a quiz launched from the tree moves mastery and returns to the node panel"
   // real delta rather than "the block finally rendered".
   await expect(page.getByTestId(`tree-node-recent-quiz-${SEEDED_RECURSION_ATTEMPT}`)).toBeVisible();
 
-  await page.getByRole("button", { name: "Quick quiz" }).click();
+  await page.getByTestId("tree-node-action-quiz").click();
 
   // The href the panel builds carries the origin AND the way back (§6).
   await expect(page).toHaveURL(/\/quiz\?/);

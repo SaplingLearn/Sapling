@@ -29,6 +29,10 @@ vi.mock("@/context/UserContext", () => ({
   useUser: () => ({ userId: "u1", userReady: true, userName: "Ada" }),
 }));
 
+vi.mock("@/context/FlagsContext", () => ({
+  useFlag: () => "off",
+}));
+
 vi.mock("@/lib/useIsMobile", () => ({ useIsMobile: () => mobile.value }));
 
 vi.mock("../graph/KnowledgeGraph", () => ({
@@ -231,7 +235,7 @@ describe("detail panel", () => {
     renderTree();
     await selectNode(user, RECURSION);
 
-    await user.click(screen.getByRole("button", { name: /learn this/i }));
+    await user.click(screen.getByTestId("tree-node-action-teach"));
     // #866 K05: the concept names itself, so the loop's session is on it
     expect(push).toHaveBeenCalledWith(`/learn?topic=Recursion&concept=${RECURSION}&mode=socratic&course=${COURSE_ID}`);
   });
@@ -241,7 +245,7 @@ describe("detail panel", () => {
     renderTree();
     await selectNode(user, ROOT_ID);
 
-    await user.click(screen.getByRole("button", { name: /learn this/i }));
+    await user.click(screen.getByTestId("tree-node-action-teach"));
     expect(push).toHaveBeenCalledWith(`/learn?mode=socratic&course=${COURSE_ID}`);
     expect(screen.queryByRole("button", { name: /delete concept/i })).not.toBeInTheDocument();
   });
@@ -361,6 +365,32 @@ describe("toolbar filters", () => {
 
     await user.click(screen.getByRole("button", { name: "All" }));
     expect(graphNodeIds()).toEqual([RECURSION, POINTERS, LOOPS, ROOT_ID]);
+  });
+});
+
+describe("?course= focus (W8.1b)", () => {
+  it("centres the named course once enrollments load", async () => {
+    params.value = new URLSearchParams(`course=${COURSE_ID}`);
+    renderTree();
+
+    await waitFor(() =>
+      expect(screen.getByTestId("stub-graph")).toHaveAttribute("data-focus-course", COURSE_ID),
+    );
+    expect(screen.getByTestId("graph-add-concept")).toBeInTheDocument();
+    expect(screen.getByTestId(`graph-course-filter-${COURSE_ID}`)).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
+  it("ignores an unenrolled course id", async () => {
+    params.value = new URLSearchParams("course=course-gone");
+    renderTree();
+
+    await screen.findByTestId("stub-graph");
+    await waitFor(() => expect(mockedCourses).toHaveBeenCalled());
+    expect(screen.getByTestId("stub-graph")).toHaveAttribute("data-focus-course", "null");
+    expect(screen.queryByTestId("graph-add-concept")).not.toBeInTheDocument();
   });
 });
 

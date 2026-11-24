@@ -311,6 +311,15 @@ Both backend-only; migrations
 `backend/db/migrations/20261108041742_learning_posttest_windows.sql` and
 `backend/db/migrations/20261108093359_learning_posttest_outcomes.sql`.
 
+### Nested `reasoning_encrypted` on a check step (W2.3)
+
+Optional free/teachback “show your reasoning” prose is sealed inside
+`sessions.loop_state` on the step as `reasoning_encrypted`
+(`encryption.NESTED_CIPHERTEXTS`, bound to the session id). Written by
+`backend/learning/check_reason.py` under the grading claim; **never evidence**
+(grader still sees answer + rubric only). See
+[w2-reason-before-submit.md](./w2-reason-before-submit.md).
+
 ### `learning_prequestions` and `learning_self_explanations` (wave 4)
 
 Both from `backend/db/migrations/20261108184825_learning_teach_prompts.sql`,
@@ -371,7 +380,7 @@ models the learner reads them, except A76's release rule (below).
 | `ai_tutor_daily_calls` | `(user_id, day)` → tutor call count, incremented atomically by `ai_budget_bump_tutor_calls` (A39); the 200-a-day cap. Backend-only. |
 | `llm_usage` | every model run; the loop added `cached_tokens`, `thinking_tokens` (A21), `session_id` (A92) and `course_id` (A137), all nullable. Read by the budget, the KPIs and cost per gain. The writer drops a column the database lacks and retries. |
 | `quiz_evidence_claims` | `(user_id, question_hash)` → the claim that allows one quiz evidence per rolling 24 hours (A100). Backend-only. |
-| `quiz_attempts` | `questions_json` (**encrypted**, JSON) holds each question in its wire shape. Internal keys, never served (the keyless allowlist; `_INTERNAL_QUESTION_KEYS` on the admin keyed path): `question_hash`, `provenance`, `lint_flags` (A132), and with the quiz flags on `planned` {slot, difficulty_source, target} (A144), `gate` {status, alignment, key} (A145) and an option's `misconception` tag (A144). No column was added for A143–A147. |
+| `quiz_attempts` | `questions_json` (**encrypted**, JSON) holds each question in its wire shape. Internal keys, never served (the keyless allowlist; `_INTERNAL_QUESTION_KEYS` on the admin keyed path): `question_hash`, `provenance`, `lint_flags` (A132), and with the quiz flags on `planned` {slot, difficulty_source, target} (A144), `gate` {status, alignment, key} (A145) and an option's `misconception` tag (A144). No column was added for A143–A147. W7.8 adds plaintext `session_mode` (`practice` \| `exam_twin`, default `practice`). |
 | `flashcards` | FSRS columns `fsrs_d`, `fsrs_s`, `due_at`, `reps`, `lapses` (PKG-11); updated only through `flashcard_fsrs_update`. |
 | `user_settings` | `loop_arm` (the trial arm label, set by SQL only); `learning_loop_beta` is retired and read by nothing in the app. |
 

@@ -237,6 +237,32 @@ def test_the_next_step_is_none_when_nothing_is_left():
     assert (step.kind, step.due_count, step.learn_node_id) == ("none", 0, None)
 
 
+# ── quiz_plan: prefer_pose (W7.6) ───────────────────────────────────────────
+
+
+def test_prefer_pose_picks_the_weakest_parent_below_proficient():
+    """Fringe cut (BKT_PROFICIENT): lowest p among unready parents."""
+    p = {"foundation": 0.20, "sibling": 0.50, "blocked": 0.40}
+    edges = [("foundation", "blocked"), ("sibling", "blocked")]
+    assert quiz_plan.prefer_pose("blocked", p, edges) == "foundation"
+
+
+def test_prefer_pose_is_none_when_every_parent_is_proficient():
+    p = {"foundation": 0.96, "blocked": 0.40}
+    assert quiz_plan.prefer_pose("blocked", p, [("foundation", "blocked")]) is None
+
+
+def test_prefer_pose_is_none_with_empty_edges():
+    """upload_prereq_edges off / flat graph: vacuously ready, no redirect."""
+    assert quiz_plan.prefer_pose("alone", {"alone": 0.2}, []) is None
+
+
+def test_prefer_pose_ignores_foreign_and_self_edges():
+    p = {"a": 0.1, "b": 0.2}
+    assert quiz_plan.prefer_pose("b", p, [("a", "a"), ("gone", "b")]) is None
+    assert quiz_plan.prefer_pose("b", p, [("a", "b")]) == "a"
+
+
 # ── quiz_gates: the gates (A145) ────────────────────────────────────────────
 
 

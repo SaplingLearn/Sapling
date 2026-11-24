@@ -33,6 +33,9 @@
  *    percentage points.
  */
 
+import { buildQuizHref } from "@/lib/quiz/source";
+import { studyHref } from "@/lib/toolHrefs";
+
 export type Status = "mastered" | "progress" | "review" | "new";
 export type AssessType = "Exam" | "Quiz" | "Homework";
 
@@ -456,6 +459,79 @@ export function quickReviews(topics: Concept[], today: Date) {
     .filter(x => x.ago >= 7 || x.t.st === "review" || x.t.m < 70)
     .sort((a, b) => b.score - a.score)
     .slice(0, 5);
+}
+
+/**
+ * W8.3: Quick Reviews from the learner-next `due[]` (FSRS-due), in that
+ * order. Concepts missing from the hub's graph (other courses, deleted) are
+ * skipped. No length cap — the server is already the shared source of truth.
+ */
+export function dueReviewsFromNext(
+  topics: Concept[],
+  dueIds: readonly string[],
+  today: Date,
+): { t: Concept; ago: number }[] {
+  const byId = new Map(topics.map(t => [t.id, t]));
+  const out: { t: Concept; ago: number }[] = [];
+  for (const id of dueIds) {
+    const t = byId.get(id);
+    if (!t) continue;
+    const last = t.lastStudied ? Date.parse(t.lastStudied) : NaN;
+    const ago = Number.isFinite(last)
+      ? Math.max(0, Math.floor((startOfDay(today).getTime() - startOfDay(new Date(last)).getTime()) / 86400000))
+      : 0;
+    out.push({ t, ago });
+  }
+  return out;
+}
+
+/**
+ * W8.3b / W3.3b: Quiz Practice deep link for Due Reviews (and wrap-up).
+ * Lead id from the same learner-next `due[]` the rail lists (`buildQuizHref`
+ * takes one concept). Null when the bucket is empty unless
+ * `courseStartIfEmpty` — then course+start (wrap-up when due ids are unknown).
+ * Flashcards stay the primary Hub CTA.
+ */
+export function dueReviewsQuizHref(
+  courseId: string,
+  dueConceptIds: readonly string[],
+  opts: { courseStartIfEmpty?: boolean } = {},
+): string | null {
+  const concept = dueConceptIds[0];
+  if (concept) {
+    return buildQuizHref(
+      { concept },
+      { kind: "link", returnTo: studyHref(courseId) },
+      { start: true },
+    );
+  }
+  if (opts.courseStartIfEmpty) {
+    return buildQuizHref(
+      { course: courseId },
+      { kind: "link", returnTo: studyHref(courseId) },
+      { start: true },
+    );
+  }
+  return null;
+}
+
+/**
+ * W8.3: Up Next queue from learner-next order (due → misconceptions → ready).
+ * Same exam-scope fallback as `examQueue`: once the scoped set is empty the
+ * course-wide order is used again.
+ */
+export function examQueueFromNext(
+  topics: Concept[],
+  scope: ExamScope | null,
+  orderedIds: readonly string[],
+): { queue: Concept[]; fallback: boolean } {
+  const byId = new Map(topics.map(t => [t.id, t]));
+  const course = orderedIds.map(id => byId.get(id)).filter((t): t is Concept => !!t);
+  // Nothing from the learner model in this course: keep the graph-tier queue
+  // so Focus does not go empty while the roadmap still has work.
+  if (course.length === 0) return examQueue(topics, scope);
+  const own = scope ? course.filter(t => scope.ids.has(t.id)) : course;
+  return own.length ? { queue: own, fallback: false } : { queue: course, fallback: !!scope };
 }
 
 export const ring = (m: number, r: number) => {

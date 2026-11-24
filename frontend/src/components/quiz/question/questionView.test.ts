@@ -5,6 +5,8 @@ import {
   askSeedFor,
   canGoTo,
   canNavigate,
+  HINT_SLOT_DISABLED,
+  skipSlotState,
   conceptLabel,
   correctOption,
   difficultyLabel,
@@ -55,6 +57,7 @@ function session(over: Partial<QuizSession> = {}): QuizSession {
     deliveredShort: false,
     sourceAttemptId: null,
     reserved: null,
+    prereq: null,
     ...over,
   };
 }
@@ -159,11 +162,35 @@ describe("the pager", () => {
   });
 });
 
+describe("W7.5 hint / skip slots", () => {
+  it("keeps Hint disabled with an honest leak-safe reason", () => {
+    expect(HINT_SLOT_DISABLED.enabled).toBe(false);
+    expect(HINT_SLOT_DISABLED.title).toMatch(/reveal the answer/i);
+  });
+
+  it("enables Skip to the next unanswered index without mastery", () => {
+    expect(skipSlotState({ phase: "active", busy: false, cursor: 0, total: 3, hasVerdict: false })).toEqual({
+      enabled: true,
+      title: expect.stringMatching(/no mastery/i),
+      targetIndex: 1,
+    });
+  });
+
+  it("disables Skip on the last question, after a verdict, or when locked", () => {
+    expect(skipSlotState({ phase: "active", busy: false, cursor: 2, total: 3, hasVerdict: false }).enabled).toBe(false);
+    expect(skipSlotState({ phase: "active", busy: false, cursor: 2, total: 3, hasVerdict: false }).title).toMatch(/last question/i);
+    expect(skipSlotState({ phase: "active", busy: false, cursor: 0, total: 3, hasVerdict: true }).enabled).toBe(false);
+    expect(skipSlotState({ phase: "active", busy: false, cursor: 0, total: 3, hasVerdict: true }).title).toMatch(/Already answered/i);
+    expect(skipSlotState({ phase: "active", busy: true, cursor: 0, total: 3, hasVerdict: false }).enabled).toBe(false);
+    expect(skipSlotState({ phase: "submitting", busy: false, cursor: 0, total: 3, hasVerdict: false }).enabled).toBe(false);
+  });
+});
+
 describe("primaryButton", () => {
   const base = { phase: "active" as const, showVerdict: false, allAnswered: false, busy: false, hasAnswer: true };
 
   it("submits a chosen answer while active", () => {
-    expect(primaryButton(base)).toEqual({ label: "Submit", testid: "quiz-submit-answer", enabled: true, action: "submit" });
+    expect(primaryButton(base)).toEqual({ label: "Check", testid: "quiz-submit-answer", enabled: true, action: "submit" });
     expect(primaryButton({ ...base, hasAnswer: false }).enabled).toBe(false);
     expect(primaryButton({ ...base, busy: true }).enabled).toBe(false);
     expect(primaryButton({ ...base, phase: "confirm-leave" }).enabled).toBe(false);

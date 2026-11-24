@@ -88,6 +88,8 @@ type Props = {
   width?: number;
   height?: number;
   highlightId?: string;
+  /** W3.2: solid practiced outline by node id (forwarded to KnowledgeGraph2D). */
+  practicedIds?: ReadonlySet<string> | readonly string[];
   onNodeClick?: (n: GraphNode) => void;
   /** 2D only: top offset of the zoom stack, for a host that puts its own
    *  control (the Tree's Fullscreen icon) in the corner above it. */

@@ -15,6 +15,8 @@
  */
 import React from "react";
 import Link from "next/link";
+import { Icon } from "@/components/Icon";
+import { HANDOFF_COPY } from "@/lib/learningHandoffs";
 import { FOCUS_ARC, chipsThatFit, focusCardsLabel } from "./hubModel";
 import { DISPLAY, Glyph, MONO, POPOVER, StatusDot, WarnIcon, shownTools, type GlyphName } from "./hubUi";
 import s from "./StudyHub.module.css";
@@ -132,7 +134,7 @@ function Prereqs({ prereqs, gapOn }: { prereqs: Concept[]; gapOn: Concept | null
   );
 }
 
-export function FocusCard({ concept, upNext, masteredExam, prereqs, cardCount, quizShown, nav }: {
+export function FocusCard({ concept, upNext, masteredExam, prereqs, cardCount, quizShown, tutorShown = true, nav }: {
   concept: Concept;
   /** It is the head of the study queue (rather than a concept the student clicked off it). */
   upNext: boolean;
@@ -143,12 +145,26 @@ export function FocusCard({ concept, upNext, masteredExam, prereqs, cardCount, q
   /** Flashcards the student already has on it. */
   cardCount: number;
   quizShown: boolean;
+  /** False while `hide_tutor` hides Tutor (W3.4). */
+  tutorShown?: boolean;
   nav: ToolNav;
 }) {
-  const actions: { key: ToolKey; icon: GlyphName; label: string; href: string }[] = [
-    { key: "quiz", icon: "bulb", label: "Start quiz", href: nav.quizHref(concept.id) },
-    { key: "cards", icon: "cards", label: focusCardsLabel(cardCount), href: nav.cardsHref([concept.name]) },
+  type FocusAction = { key: ToolKey | "learn"; icon: GlyphName | "clover"; label: string; href: string; testId: string };
+  const actions: FocusAction[] = [
+    // Primary stays "Start quiz" (W7.D2); Guide uses "Quiz this concept".
+    { key: "quiz", icon: "bulb", label: "Start quiz", href: nav.quizHref(concept.id), testId: "focus-quiz" },
+    { key: "cards", icon: "cards", label: focusCardsLabel(cardCount), href: nav.cardsHref([concept.name]), testId: "focus-cards" },
   ];
+  if (tutorShown) {
+    actions.push({
+      key: "learn",
+      icon: "clover",
+      label: HANDOFF_COPY.continueInTutor,
+      href: nav.learnHref(concept.id, concept.name),
+      testId: "focus-learn",
+    });
+  }
+  const visible = shownTools(actions, quizShown);
   return (
     <div data-testid="focus-card" data-flip="focus" data-flip-how="fade" className={s.focus} style={{ position: "relative", ...BLOCK, minWidth: 0 }}>
       {/* The line stays while a clicked concept is shown (only its second half
@@ -173,12 +189,17 @@ export function FocusCard({ concept, upNext, masteredExam, prereqs, cardCount, q
           </div>
         </div>
         {/* Straight into this concept. The header's tool buttons open the
-            tools themselves; these start the quiz / deck on what is up next. */}
+            tools themselves; these start the quiz / deck / tutor on what is up next. */}
         <nav aria-label={`Study ${concept.name}`} className={s.focusActions}>
-          {shownTools(actions, quizShown).map((ac, i) => (
-            <Link key={ac.key} href={ac.href} className={i === 0 ? `${s.focusAct} ${s.focusActPrimary}` : s.focusAct}
+          {visible.map((ac, i) => (
+            <Link key={ac.key} href={ac.href} data-testid={ac.testId}
+              className={i === 0 ? `${s.focusAct} ${s.focusActPrimary}` : s.focusAct}
               onClick={leaveOnClick(nav.leaveTo, ac.href)}>
-              <span aria-hidden="true" style={{ display: "grid" }}><Glyph name={ac.icon} size={14} /></span>
+              <span aria-hidden="true" style={{ display: "grid" }}>
+                {ac.icon === "clover"
+                  ? <Icon name="clover" size={14} />
+                  : <Glyph name={ac.icon} size={14} />}
+              </span>
               {ac.label}
             </Link>
           ))}

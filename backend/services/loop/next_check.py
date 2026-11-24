@@ -96,7 +96,9 @@ def check_next(body: LoopCheckNextBody, request: Request) -> dict:
                     and cur_entry.get("graded_at") is None):
                 _abandon_claimed(cur_entry, ABANDON_MOVED_PAST)
             st["current"] = None
-        out["qh"] = _activate_next_item(body.user_id, course_id, st, now=now)
+        out["qh"] = _activate_next_item(
+            body.user_id, course_id, st, now=now, session_id=body.session_id
+        )
         if out["qh"] is not None:
             # Spec §13 A121: the student chose the check over the tutor's last
             # question; the card is now the one open prompt, so a later chat

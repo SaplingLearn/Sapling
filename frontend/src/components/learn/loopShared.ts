@@ -18,7 +18,15 @@ export const FIELD_STYLE: React.CSSProperties = {
 
 /** An answer being written. `confidence` (spec §13 A127) is the student's stated
  *  confidence — null until chosen, and a skip sends none. */
-export type Draft = { answer: string; option: string; reason: string; confidence: StudentConfidence | null };
+/** `reason` is mc_reason's required one-sentence why; `reasoning` is the
+ *  optional free/teachback "show your reasoning" field (W2.3; never graded). */
+export type Draft = {
+  answer: string;
+  option: string;
+  reason: string;
+  reasoning: string;
+  confidence: StudentConfidence | null;
+};
 export type HintView = { denied: string } | { reply: string } | null;
 
 /** The denial a hint card words (#866 K32): POST /hint's reason, made precise by

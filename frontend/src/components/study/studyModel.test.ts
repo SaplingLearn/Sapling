@@ -7,7 +7,10 @@ import {
   classifyAssessment,
   readiness,
   conceptIdsForExam,
+  dueReviewsFromNext,
+  dueReviewsQuizHref,
   examQueue,
+  examQueueFromNext,
   examScope,
   readinessBand,
   studyQueue,
@@ -206,6 +209,24 @@ describe("readiness and queue", () => {
     const qr = quickReviews(stale, NOW);
     expect(qr.map(x => x.t.id)).toEqual(["a"]);
     expect(qr[0].ago).toBe(19);
+  });
+
+  it("dueReviewsFromNext keeps learner-next due order and skips unknown ids", () => {
+    const due = dueReviewsFromNext(cs, ["c", "missing", "b"], NOW);
+    expect(due.map(x => x.t.id)).toEqual(["c", "b"]);
+  });
+
+  it("dueReviewsQuizHref deep-links the lead due concept (W8.3b)", () => {
+    expect(dueReviewsQuizHref("c1", [])).toBeNull();
+    expect(dueReviewsQuizHref("c1", ["arr", "loop"])).toBe(
+      "/quiz?concept=arr&from=link&return=%2Fstudy%3Fcourse%3Dc1&start=1",
+    );
+  });
+
+  it("dueReviewsQuizHref falls back to course+start when wrap-up has no due ids (W3.3b)", () => {
+    expect(dueReviewsQuizHref("c1", [], { courseStartIfEmpty: true })).toBe(
+      "/quiz?course=c1&from=link&return=%2Fstudy%3Fcourse%3Dc1&start=1",
+    );
   });
 });
 
@@ -407,5 +428,16 @@ describe("examQueue", () => {
     const done = conceptsForCourse([node("a", "mastered", 0.9), node("b", "mastered", 0.95)], [], "c1", NOW);
     expect(examQueue(done, scope("a"))).toEqual({ queue: [], fallback: false });
     expect(examQueue(done, null)).toEqual({ queue: [], fallback: false });
+  });
+
+  it("examQueueFromNext follows learner-next order, then exam scope", () => {
+    const q = examQueueFromNext(cs, scope("p", "n", "q"), ["n", "r", "q", "p"]);
+    expect(ids(q.queue)).toEqual(["n", "q", "p"]);
+    expect(q.fallback).toBe(false);
+  });
+
+  it("examQueueFromNext falls back to the graph-tier queue when next has nothing in-course", () => {
+    const q = examQueueFromNext(cs, null, ["other-course"]);
+    expect(q).toEqual(examQueue(cs, null));
   });
 });

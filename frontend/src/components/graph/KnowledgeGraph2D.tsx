@@ -95,6 +95,12 @@ type Props = {
   height?: number;
   variant?: GraphVariant;
   highlightId?: string;
+  /**
+   * Concepts practiced this session (W3.2 dual encoding): solid outline ring
+   * by node id. Orthogonal to mastery fill and to `highlightId` (current step)
+   * / `comparison` (partner rings). SessionMap feeds measured learner_state keys.
+   */
+  practicedIds?: ReadonlySet<string> | readonly string[];
   onNodeClick?: (n: GraphNode) => void;
   /** Pause simulation when graph is off-screen (default: true). */
   pauseWhenOffscreen?: boolean;
@@ -548,6 +554,7 @@ function KnowledgeGraph2DImpl({
   height = 480,
   variant = "organism",
   highlightId,
+  practicedIds,
   onNodeClick,
   pauseWhenOffscreen = true,
   comparison = null,
@@ -619,6 +626,13 @@ function KnowledgeGraph2DImpl({
     }
     return map;
   }, [comparison]);
+  // W3.2 covered/practiced channel: Set lookup for solid outline rings.
+  const practicedIdSet = React.useMemo(() => {
+    if (!practicedIds) return null;
+    if (practicedIds instanceof Set) return practicedIds.size > 0 ? practicedIds : null;
+    if (Array.isArray(practicedIds)) return practicedIds.length > 0 ? new Set(practicedIds) : null;
+    return practicedIds.size > 0 ? practicedIds : null;
+  }, [practicedIds]);
   const svgRef = React.useRef<SVGSVGElement>(null);
   const simRef = React.useRef<Simulation<SimNode, SimLink> | null>(null);
   const simNodesRef = React.useRef<SimNode[]>([]);
@@ -1686,6 +1700,31 @@ function KnowledgeGraph2DImpl({
                 repeatCount="indefinite"
               />
             </circle>
+          ))}
+        {practicedIdSet?.has(n.id) &&
+          !n.is_subject_root &&
+          (organic ? (
+            // Solid practiced ring (W3.2): covered this session, not mastery.
+            // Inside the highlight pulse (r+8); distinct from comparison dashes.
+            <path
+              data-testid={`tutor-map-practiced-${n.id}`}
+              d={nodeBlobPath(n.id, r + 5, wobble)}
+              fill="none"
+              stroke="var(--text)"
+              strokeWidth={2}
+              opacity={0.85}
+            />
+          ) : (
+            <circle
+              data-testid={`tutor-map-practiced-${n.id}`}
+              cx={0}
+              cy={0}
+              r={r + 5}
+              fill="none"
+              stroke="var(--text)"
+              strokeWidth={2}
+              opacity={0.85}
+            />
           ))}
         {(() => {
           const partner = !n.is_subject_root && comparisonByName.get((n.name || "").trim().toLowerCase());

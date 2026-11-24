@@ -1209,7 +1209,7 @@ export type LoopProbeNext = LoopLearningScope & (
   // A128: `preparing` (present only when true) — none yet: the student's upload is being drafted
   | { done: true; phase: LoopPhase; no_check_items?: boolean; preparing?: boolean });
 export type LoopProbeAnswerResult = LoopLearningScope & WithCrisisSupport & (
-  | { graded: true; correct: boolean; p_known: number; probe_done: boolean; novice_floor: boolean; reference_answer?: string }
+  | { graded: true; correct: boolean; p_known: number; probe_done: boolean; novice_floor: boolean; reference_answer?: string; feedback_dwell_ms?: number }
   // unavailable → counted as not asked; refused (A33) → the item stays posed;
   // recorded: false → graded but lost to a stale claim (the probe moved on)
   | { graded: false; unavailable?: boolean; refused?: boolean; recorded?: boolean });
@@ -1230,12 +1230,19 @@ export interface LoopPlanConcept {
   reason?: 'goal' | 'prerequisite' | 'review' | 'related';
   target_node_ids?: string[];
 }
+/** W3.1: prereq pairs among today's plan proposal ∪ goal targets (GET /plan). */
+export interface LoopPlanPrereqEdge {
+  prerequisite: string;
+  dependent: string;
+}
 export interface LoopPlan extends LoopLearningScope {
   concepts: LoopPlanConcept[];
   order: string[];
   /** Nothing to plan: the server moved the session straight to `teach`. */
   empty?: boolean;
   phase?: LoopPhase;
+  /** Planner-aligned prerequisite edges for PlanPanel dependency view (W3.1). */
+  prereq_edges?: LoopPlanPrereqEdge[];
 }
 export interface LoopOpenSession { session_id: string; topic: string; started_at: string; phase: LoopPhase }
 export interface LoopStartResult extends LoopLearningScope, WithCrisisSupport {
@@ -1246,6 +1253,8 @@ export interface LoopStartResult extends LoopLearningScope, WithCrisisSupport {
   budget?: LoopBudgetNotice | null;
   /** A128: the opener's course-material retrieval failed (present only when true). */
   materials_unavailable?: boolean;
+  /** W4.3: the opener's prompt included course passages (present only when true). */
+  materials_grounded?: boolean;
 }
 /** #866 K08: the approved plan as GET /status lists it, sent by a turn or
  *  "Check me" only when that request moved it (its cursor, or band repair's
@@ -1261,6 +1270,9 @@ export interface LoopTurnResult extends ChatResult, LoopPlanMoved, LoopCreditFie
   /** A128: this turn's course-material retrieval failed — present (true) on the
    *  session's FIRST such turn only; the UI shows one calm note from it. */
   materials_unavailable?: boolean;
+  /** W4.3: this turn's prompt included retrieved course passages — present
+   *  (true) only then; the UI's calm "Grounded in your materials" chrome. */
+  materials_grounded?: boolean;
   // submissions (/check/answer) add these
   graded?: boolean;
   verdict?: string | null;
@@ -1269,6 +1281,8 @@ export interface LoopTurnResult extends ChatResult, LoopPlanMoved, LoopCreditFie
   refused?: boolean;
   /** PKG-14: present (true) on the graded check that reached ZPD_RATING_EVERY_N_CHECKS. */
   ask_rating?: boolean;
+  /** W2.5: ms Continue must wait after high-confidence wrong feedback (present only then). */
+  feedback_dwell_ms?: number;
   /** Spec §13 A138: this turn opened a new segment on its ungraded guess (present only then). */
   prequestion?: LoopPrequestion | null;
   /** Spec §13 A139: this turn's question is a self-explanation prompt (present only then). */
@@ -1324,11 +1338,14 @@ export interface LoopCloseResponse { close: LoopCloseRecord; model_written: bool
  *  "Sure") — the answer bodies' enum (backend learning.evidence.StudentConfidence).
  *  Optional: a skip sends nothing, never a default. */
 export type StudentConfidence = 'guessing' | 'fairly_sure' | 'sure';
-/** PKG-07's LoopCheckAnswerBody answer fields (the probe takes the same ones). */
+/** PKG-07's LoopCheckAnswerBody answer fields (the probe takes the same ones).
+ *  `reasoning` is W2.3's optional free/teachback "show your reasoning" — check
+ *  submit only; never graded / never evidence. */
 export interface LoopCheckAnswer {
   answer?: string;
   option?: string;
   reason?: string;
+  reasoning?: string;
   idk: boolean;
   /** A127: sent only when chosen, and never with an idk (which states none). */
   confidence?: StudentConfidence | null;
@@ -1341,6 +1358,7 @@ const loopAnswerFields = (a: LoopCheckAnswer): Record<string, unknown> => ({
   ...(a.idk ? {} : a.option !== undefined ? { option: a.option, reason: a.reason ?? '' } : { answer: a.answer ?? '' }),
   idk: a.idk,
   ...(!a.idk && a.confidence ? { confidence: a.confidence } : {}),
+  ...(!a.idk && a.reasoning?.trim() ? { reasoning: a.reasoning.trim() } : {}),
 });
 
 

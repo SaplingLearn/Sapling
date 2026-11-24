@@ -9,6 +9,8 @@ student's state for them, runs the item checks, and writes misconceptions.
   generated questions, on the `quiz_check` slot.
 - A146 `exposure_before` + `misconceptions_after_submit`: record and resolve.
 - A147 `skill_snapshot` + `results_block`: what the results say.
+- W7.6 `prereq_guidance`: prefer a weak prerequisite at generate time (same
+  fringe readiness as the home plan) and stamp the session banner.
 
 Every read degrades instead of failing a quiz: a plan read that fails falls
 back to the BKT prior or to nothing, a check that fails leaves its questions
@@ -205,8 +207,13 @@ def _iso(ts: datetime | None) -> str | None:
 
 def concept_plan(user_id: str, course_id: str | None = None, now: datetime | None = None) -> list[dict]:
     """The concepts the quiz proposes, in the learner model's order
-    (quiz_plan.rank_concepts). Raises on a failed node or state read: the
-    route answers 503 and the home keeps its own ranking."""
+    (quiz_plan.rank_concepts → learning.learner_next, then the per-course
+    cap). Raises on a failed node or state read: the route answers 503 and
+    the home keeps its own ranking.
+
+    Study Focus / Dashboard that need the three buckets separately (due /
+    misconceptions / ready) should call `services.learner_next.learner_next`
+    instead — same reads and pure ranking, uncapped (W8.6)."""
     now = now or _now()
     nodes = _nodes(user_id, course_id)
     if not nodes:
@@ -227,6 +234,57 @@ def concept_plan(user_id: str, course_id: str | None = None, now: datetime | Non
         }
         for c in quiz_plan.rank_concepts(states, edges, now)
     ]
+
+
+# ── W7.6: prefer a weak prerequisite at generate time ──────────────────────
+
+
+@dataclass(frozen=True)
+class PrereqGuidance:
+    """What `/generate` should pose, and the session banner when a requested
+    concept waits on a weak prerequisite (`quiz_concept_plan`).
+
+    `pose_node_id` is the concept the attempt is written under (the weak
+    parent when redirected, else the request). `banner` is the wire block the
+    question screen renders; None when there is nothing to say (ready, or no
+    edges — upload graphs without `upload_prereq_edges`)."""
+
+    pose_node_id: str
+    banner: dict | None  # prereq_id/name, dependent_id/name, course_id, redirected
+
+
+def prereq_guidance(user_id: str, requested_node_id: str, course_id: str | None) -> PrereqGuidance | None:
+    """W7.6: Learn's fringe/repair preference for one generate. None on a
+    failed read (caller keeps the request as-is); never raises. Call only
+    when `quiz_concept_plan` is on for the student (`quiz_flags`)."""
+    try:
+        nodes = _nodes(user_id, course_id)
+        by_id = {n.id: n for n in nodes}
+        if requested_node_id not in by_id:
+            # The route already 404s an unknown node; a race that drops it
+            # mid-request keeps the request unchanged.
+            return None
+        states = read_states(user_id, list(by_id))
+        p_known = {n.id: (states[n.id].p_known if n.id in states else BKT_L0) for n in nodes}
+        edges = _prereq_edges(user_id, by_id)
+        preferred = quiz_plan.prefer_pose(requested_node_id, p_known, edges)
+        if preferred is None or preferred not in by_id:
+            return PrereqGuidance(pose_node_id=requested_node_id, banner=None)
+        prereq, dependent = by_id[preferred], by_id[requested_node_id]
+        return PrereqGuidance(
+            pose_node_id=preferred,
+            banner={
+                "prereq_id": prereq.id,
+                "prereq_name": prereq.name,
+                "dependent_id": dependent.id,
+                "dependent_name": dependent.name,
+                "course_id": prereq.course_id or dependent.course_id,
+                "redirected": preferred != requested_node_id,
+            },
+        )
+    except Exception as exc:
+        logger.warning("quiz: prereq guidance unreadable: %s", type(exc).__name__)
+        return None
 
 
 # ── A144: what each planned question asks for ──────────────────────────────

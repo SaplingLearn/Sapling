@@ -9,7 +9,12 @@ import { LEARNING_LOOP_FLAG } from "@/lib/learningLoopFlag";
 /** Spec §13 A126: the "retention check due" badge (Study nav entry, Dashboard)
  *  is behind this client-visible flag, and behind the student's
  *  `learning_loop` flag too (the badge reads a loop endpoint). Either off — the
- *  default — fetches nothing. */
+ *  default — fetches nothing.
+ *
+ *  W8.7: this is the delayed post-test pose (`GET /posttest/due`), not FSRS
+ *  review-due. FSRS due / ready for Learn-next and Study Focus come from
+ *  shared `learner_next` (`GET /api/study/{id}/next`) under learning_loop +
+ *  quiz_concept_plan — do not fork that ranking into this badge. */
 export const RETENTION_DUE_FLAG = "retention_due_badge";
 /** How often an open, visible tab asks again. The server caches each student's
  *  answer for POSTTEST_DUE_CACHE_S (300 s) and clears it when they open or

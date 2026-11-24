@@ -54,6 +54,7 @@ KILL_SWITCH = "LEARNING_LOOP_ENABLED"
 LOOP_FLAGS: frozenset[str] = frozenset({
     "item_reports", "retention_due_badge", "probe_matched_pretest", "upload_prereq_edges",
     "loop_tutor_v2", "help_gate_strict", "segment_prequestion", "self_explanation_prompts",
+    "next_probe_hint",
     "varied_isomorphs", "multi_concept_items", "quiz_concept_plan", "quiz_planned_questions",
     "quiz_item_gates", "quiz_misconceptions", "quiz_results_routing",
 })

@@ -16,9 +16,22 @@ const SESSION_MAP_HEIGHT = 240;
  *     no zoom stack over the nodes. It follows the layout until the student
  *     pans, drags or pinch-zooms it; a double-click re-frames it, and so does
  *     a new set of concepts. A plain wheel scrolls the panel, never the map.
+ *   - W3.2 dual encoding: fill = understood (mastery); solid outline =
+ *     practiced this session (`practicedNodeIds` from measured learner_state).
  * Width is measured (the panel's own), as Learn.tsx's sidebar graph does.
  */
-export function SessionMap({ nodes, edges, highlightId }: { nodes: GraphNode[]; edges: GraphEdge[]; highlightId?: string }) {
+export function SessionMap({
+  nodes,
+  edges,
+  highlightId,
+  practicedNodeIds,
+}: {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  highlightId?: string;
+  /** Node ids with a measured learner_state entry this session (covered/practiced). */
+  practicedNodeIds?: ReadonlySet<string> | readonly string[];
+}) {
   const [width, setWidth] = useState(0);
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -37,6 +50,7 @@ export function SessionMap({ nodes, edges, highlightId }: { nodes: GraphNode[]; 
           width={width}
           height={SESSION_MAP_HEIGHT}
           highlightId={highlightId}
+          practicedIds={practicedNodeIds}
           colorMode="mastery"
           fit
           zoomControls={false}
