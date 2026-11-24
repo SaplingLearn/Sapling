@@ -26,7 +26,7 @@ import logging
 import re
 
 from pydantic import BaseModel, Field
-from pydantic_ai import Agent
+from pydantic_ai import Agent, ModelRetry
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RunUsage
@@ -248,6 +248,40 @@ check_items_agent = Agent[SaplingDeps, CheckItemsOutput](
     system_prompt=_PROMPT,
     metadata={"prompt_version": _PROMPT_HASH, "agent": "check_items"},
 )
+
+
+def optionless_mc(output: CheckItemsOutput) -> list[str]:
+    """The mc_reason drafts of `output` with NO options, each named as
+    "<concept> difficulty <n>". Such a draft is not a multiple-choice item at
+    all — the schema's `options` defaults to [] for free and teachback, so a
+    model that forgets them writes a free item under the mc_reason label — and
+    nothing in repair_draft or the A37 drop rules can make it one. A count
+    other than CHECK_ITEM_MC_OPTIONS stays an `option_count` drop (A37)."""
+    return [
+        f"{one_line(d.concept)} difficulty {d.difficulty}"
+        for d in output.items
+        if d.format == "mc_reason" and not d.options
+    ]
+
+
+@check_items_agent.output_validator
+def _validate_options_present(output: CheckItemsOutput) -> CheckItemsOutput:
+    """Retry (within `retries=` CHECK_ITEM_OUTPUT_RETRIES, as an empty items
+    list is) an output with an option-less mc_reason draft: the Claude
+    recording of 2026-11-24 drew one call (Big-O Notation) whose three
+    mc_reason drafts all came back `options: []`, in 2 of 3 runs, which the
+    A37 McOptionsValid contract (required 1.0) does not allow. The same
+    prompt, never a second one (ADR 0024)."""
+    missing = optionless_mc(output)
+    if missing:
+        raise ModelRetry(
+            "These mc_reason items have no options: "
+            + "; ".join(missing)
+            + f". Every mc_reason item carries exactly {_MC_OPTIONS} options (the correct "
+            "one first, then the distractors, each with its own misconception). Return "
+            "every item again, with those options filled in."
+        )
+    return output
 
 
 def _flex_settings(task: AgentTask = "check_items") -> ModelSettings | None:

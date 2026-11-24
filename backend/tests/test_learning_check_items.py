@@ -6071,6 +6071,24 @@ class TestMcReasonEval:
         assert scores["McReasonValidEvaluator"] == round(17 / 18, 6)
         assert scores["McCorrectNotLongestEvaluator"] == round(9 / 18, 6)
 
+    def test_an_optionless_mc_reason_draft_is_an_output_error_the_retries_answer(self):
+        """The Claude recording of 2026-11-24 drew a call whose every
+        mc_reason draft came back `options: []` (the schema's default for free
+        and teachback), in 2 of 3 runs: the drafter retries it, as it does an
+        empty items list, so McOptionsValid's required 1.0 can hold. A wrong
+        count (3 options) stays A37's `option_count` drop, never a retry."""
+        from pydantic_ai import ModelRetry
+
+        from agents.check_items import CheckItemsOutput, _validate_options_present
+
+        ok = CheckItemsOutput(items=[_draft(), _mc_draft()])
+        assert _validate_options_present(ok) is ok
+        three = CheckItemsOutput(items=[_mc_draft(options=_opts(_CORRECT, _ITER, _LOSS))])
+        assert _validate_options_present(three) is three
+        bare = CheckItemsOutput(items=[_draft(), _mc_draft(options=[], difficulty=2)])
+        with pytest.raises(ModelRetry, match="Learning Rate difficulty 2"):
+            _validate_options_present(bare)
+
     def test_options_valid_reads_only_the_a37_option_rules(self):
         from learning.checks import MC_OPTION_RULES
 
