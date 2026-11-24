@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A claim that recursion works without a base case can be tested by tracing what the calls actually do.\", \"body\": \"Take your own belief at face value: a version of factorial(n) whose only rule is factorial(n) = n * factorial(n-1), with nothing else. Start it at factorial(0) and write down which call it makes next, and the one after that.\", \"question\": \"When you trace those first few calls by hand, what does each call ask for, and does the chain ever reach a call that returns a value without making another call?\"}"
+    "{\"key_idea\": \"A claim that recursion works without a base case can be tested by following the calls one at a time.\", \"body\": \"Take your own claim and trace factorial(0) in a version with no base case, where every call just does n * factorial(n-1). Write down which call factorial(0) makes next, and which call that one makes after it.\", \"question\": \"What do you see happening to the argument and to the number of calls as you trace a few steps, and does that match your belief that it works?\"}"
   ],
   "input_sha256": "e0d1f2189c5056960cbc9baea8ab8349a501c5d4879b45ee65bea90b8e5da741",
   "model": "claude-sonnet-5-5",
   "output": {
-    "body": "Take your own belief at face value: a version of factorial(n) whose only rule is factorial(n) = n * factorial(n-1), with nothing else. Start it at factorial(0) and write down which call it makes next, and the one after that.",
-    "key_idea": "A claim that recursion works without a base case can be tested by tracing what the calls actually do.",
-    "question": "When you trace those first few calls by hand, what does each call ask for, and does the chain ever reach a call that returns a value without making another call?"
+    "body": "Take your own claim and trace factorial(0) in a version with no base case, where every call just does n * factorial(n-1). Write down which call factorial(0) makes next, and which call that one makes after it.",
+    "key_idea": "A claim that recursion works without a base case can be tested by following the calls one at a time.",
+    "question": "What do you see happening to the argument and to the number of calls as you trace a few steps, and does that match your belief that it works?"
   },
-  "prompt_hash": "b187384be34a",
+  "prompt_hash": "20d0e4f9042d",
   "requests": 1,
   "rescued": false,
   "retries": 0,

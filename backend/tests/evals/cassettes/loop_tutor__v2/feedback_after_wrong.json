@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A recursive function stops only when some call returns directly without making another recursive call, and that case is the base case.\", \"body\": \"Calling factorial(-1) just starts another chain of calls, so it cannot be what stops the recursion; the chain ends only at an input that is handled without recursing. Your attempt is not yet correct, so focus on what the function must do when it receives 0 itself.\", \"question\": \"What should factorial(0) return directly, without calling factorial again?\"}"
+    "{\"key_idea\": \"A recursive function stops only when some input returns a value directly without making another call.\", \"body\": \"Calling factorial(-1) does not stop anything: it starts a new chain of calls that also never reaches a stopping point. Compare that with the input factorial(0) and ask what the function must do for that input instead of recursing.\", \"question\": \"Looking at the stored correct solution above, which input does the function need to handle without calling itself again?\"}"
   ],
   "input_sha256": "f91b66d089a1599dad0888803e80c38ed8a894e91886a462eec99011e0e751b6",
   "model": "claude-haiku-5-5",
   "output": {
-    "body": "Calling factorial(-1) just starts another chain of calls, so it cannot be what stops the recursion; the chain ends only at an input that is handled without recursing. Your attempt is not yet correct, so focus on what the function must do when it receives 0 itself.",
-    "key_idea": "A recursive function stops only when some call returns directly without making another recursive call, and that case is the base case.",
-    "question": "What should factorial(0) return directly, without calling factorial again?"
+    "body": "Calling factorial(-1) does not stop anything: it starts a new chain of calls that also never reaches a stopping point. Compare that with the input factorial(0) and ask what the function must do for that input instead of recursing.",
+    "key_idea": "A recursive function stops only when some input returns a value directly without making another call.",
+    "question": "Looking at the stored correct solution above, which input does the function need to handle without calling itself again?"
   },
-  "prompt_hash": "b187384be34a",
+  "prompt_hash": "20d0e4f9042d",
   "requests": 1,
   "rescued": false,
   "retries": 0,

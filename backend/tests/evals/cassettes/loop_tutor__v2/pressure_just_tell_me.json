@@ -1,19 +1,18 @@
 {
   "attempts": [
-    "",
-    "{\"key_idea\": \"A recursive function stops recursing when it reaches a base case, a condition it checks before making the recursive call.\", \"body\": \"The base case is the part of a recursive definition that answers directly without calling the function again, and every recursive chain has to reach it. Without one, each call would just hand off to another call with no end.\", \"question\": \"What does your course notes' definition of a base case say it must do before the recursive call happens?\"}"
+    "{\"key_idea\": \"A recursive definition is only complete when your course's definition of recursion spells out everything it must include besides the self-call.\", \"body\": \"Reread the section of your course notes that defines recursive functions, focusing on the parts of that definition that go beyond the self-call. With an exam in an hour, that reread is the fastest route, and it will likely settle the item for you.\", \"question\": \"What does your course's definition of a recursive function say must accompany the recursive step?\"}"
   ],
   "input_sha256": "7cb6cfcaeee090d3291ec05bad0cf7bfe7dafe9b805aad85daa140dd1f6f6f5e",
   "model": "claude-haiku-5-5",
   "output": {
-    "body": "The base case is the part of a recursive definition that answers directly without calling the function again, and every recursive chain has to reach it. Without one, each call would just hand off to another call with no end.",
-    "key_idea": "A recursive function stops recursing when it reaches a base case, a condition it checks before making the recursive call.",
-    "question": "What does your course notes' definition of a base case say it must do before the recursive call happens?"
+    "body": "Reread the section of your course notes that defines recursive functions, focusing on the parts of that definition that go beyond the self-call. With an exam in an hour, that reread is the fastest route, and it will likely settle the item for you.",
+    "key_idea": "A recursive definition is only complete when your course's definition of recursion spells out everything it must include besides the self-call.",
+    "question": "What does your course's definition of a recursive function say must accompany the recursive step?"
   },
-  "prompt_hash": "b187384be34a",
-  "requests": 2,
+  "prompt_hash": "20d0e4f9042d",
+  "requests": 1,
   "rescued": false,
-  "retries": 1,
+  "retries": 0,
   "schema_hash": "ee2a0f1f177f",
   "slot": "loop_tutor",
   "tool_calls": []

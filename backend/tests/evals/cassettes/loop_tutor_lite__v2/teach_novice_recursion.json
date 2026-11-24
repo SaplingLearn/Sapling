@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"Recursion is easiest to understand by tracing a small function that calls itself, so let's try one bounded trace.\", \"body\": \"Here is a tiny function. countdown(n): if n is 0, print 'done'; otherwise print n, then call countdown(n-1). Trace what it prints for countdown(2) using only these rules, and a guess is fine.\", \"question\": \"What does countdown(2) print, and which rule did you use for each line?\"}"
+    "{\"key_idea\": \"A recursive function solves a problem by calling itself on a smaller version of the same problem.\", \"body\": \"No need to get it right yet; a guess helps us see where the confusion is. Picture a function countdown(n) that prints n, then calls countdown(n-1), and stops when n reaches 0.\", \"question\": \"Based on that picture, what do you think countdown(3) would print, and why?\"}"
   ],
   "input_sha256": "1a6ccd15960d7d572c96de957f6eae0ff470a031fd3568a0cec9f272acdfb746",
   "model": "claude-haiku-5-5",
   "output": {
-    "body": "Here is a tiny function. countdown(n): if n is 0, print 'done'; otherwise print n, then call countdown(n-1). Trace what it prints for countdown(2) using only these rules, and a guess is fine.",
-    "key_idea": "Recursion is easiest to understand by tracing a small function that calls itself, so let's try one bounded trace.",
-    "question": "What does countdown(2) print, and which rule did you use for each line?"
+    "body": "No need to get it right yet; a guess helps us see where the confusion is. Picture a function countdown(n) that prints n, then calls countdown(n-1), and stops when n reaches 0.",
+    "key_idea": "A recursive function solves a problem by calling itself on a smaller version of the same problem.",
+    "question": "Based on that picture, what do you think countdown(3) would print, and why?"
   },
-  "prompt_hash": "b187384be34a",
+  "prompt_hash": "20d0e4f9042d",
   "requests": 1,
   "rescued": false,
   "retries": 0,

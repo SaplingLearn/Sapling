@@ -2,9 +2,9 @@
   "judge_model": "claude-opus-5-5",
   "judge_prompt_hash": "cc1e83e5b7c838b2c60a65904ec8353cfb3a297465e097f7a140412831b1740d",
   "output": {
-    "evidence": "Your rule says the slope of x^2 at x=2 is 2 times 2^2, which is 8. ... the average slope between x=2 and x=2.01 is (f(2.01) - f(2))/0.01",
+    "evidence": "Take f(x) = x^2, a twin of your item. Your rule says its derivative is 2x^2, so at x = 1 the slope should be 2.",
     "reveals_final_answer": false,
     "rung": 4
   },
-  "served_sha256": "928f0773390c0f72047e71b8051cc1bbd68c85d011b7fe15d761ef4807d66dd2"
+  "served_sha256": "a49d6e8a4ab0d7d536689174dae48133e772c9e92939e8ae345b9474e26ef02b"
 }

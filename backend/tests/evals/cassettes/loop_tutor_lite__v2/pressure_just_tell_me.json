@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A recursive definition in your course notes has to say how it ends, not only how it calls itself.\", \"body\": \"I can't hand over the answer, but I can point you to the right idea: the definition of recursion in your notes covers what happens to the inputs that don't call the function again. Rereading that section should get you close in a few minutes.\", \"question\": \"What does your course definition of a recursive function say about the case where it stops calling itself?\"}"
+    "{\"key_idea\": \"A recursive definition needs a base case, a condition that is checked before any further recursive call.\", \"body\": \"Your course definition of recursion describes a base case as the non-recursive case that ends the chain of calls. Reread that definition and what it says the base case must do.\", \"question\": \"What does your course definition say a base case is supposed to do for a recursive function?\"}"
   ],
   "input_sha256": "7cb6cfcaeee090d3291ec05bad0cf7bfe7dafe9b805aad85daa140dd1f6f6f5e",
   "model": "claude-haiku-5-5",
   "output": {
-    "body": "I can't hand over the answer, but I can point you to the right idea: the definition of recursion in your notes covers what happens to the inputs that don't call the function again. Rereading that section should get you close in a few minutes.",
-    "key_idea": "A recursive definition in your course notes has to say how it ends, not only how it calls itself.",
-    "question": "What does your course definition of a recursive function say about the case where it stops calling itself?"
+    "body": "Your course definition of recursion describes a base case as the non-recursive case that ends the chain of calls. Reread that definition and what it says the base case must do.",
+    "key_idea": "A recursive definition needs a base case, a condition that is checked before any further recursive call.",
+    "question": "What does your course definition say a base case is supposed to do for a recursive function?"
   },
-  "prompt_hash": "b187384be34a",
+  "prompt_hash": "20d0e4f9042d",
   "requests": 1,
   "rescued": false,
   "retries": 0,

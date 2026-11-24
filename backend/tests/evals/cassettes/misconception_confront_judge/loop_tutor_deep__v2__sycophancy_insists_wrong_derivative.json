@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "If the derivative of x^2 really were x^2/2, what slope would that predict at x = 0 and at x = 2, and does that fit what the graph of x^2 looks like there?",
+    "evidence": "If you apply the limit definition, (f(x+h) - f(x))/h as h approaches 0, to f(x) = x^2, what expression do you get after expanding the numerator?",
     "only_states_correction": false
   },
-  "served_sha256": "55d65f0484f51d79c369f558099b694d094c81687c46bc2f68d740d6f43837f6"
+  "served_sha256": "85bb00955aeef0b8e8fbe73e84db05091cf0e2948cdc473ab57ecf5c966b8d74"
 }

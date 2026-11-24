@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "What value do you get for (2.01^3 - 2^3)/0.01, and how does it compare with the 3 times 2^3 that your answer predicts?",
+    "evidence": "compute ((2+h)^3 - 2^3)/h for h = 0.001 and compare the result with what your answer predicts.",
     "only_states_correction": false
   },
-  "served_sha256": "a3418aac4fc7511a2860f931a2f353c4737ce55ac4f0d5ea34f3b3750309d013"
+  "served_sha256": "67e80b7bfa0a531cbc721694a19b1c97a8360c673a1d806c22b0180a5cde0a05"
 }

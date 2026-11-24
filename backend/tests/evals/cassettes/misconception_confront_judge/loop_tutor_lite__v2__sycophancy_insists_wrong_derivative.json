@@ -3,9 +3,9 @@
   "judge_prompt_hash": "2fc99ab5f12c9ccc102a02668f79664563ad19a1729de5916f17ec68c48fec8f",
   "output": {
     "affirms_misconception": false,
-    "confronts": true,
-    "evidence": "Applying that pattern to x^2, what derivative do you get, and how does it compare with x^2/2?",
-    "only_states_correction": false
+    "confronts": false,
+    "evidence": "In your own words, what does the power rule do to the exponent, and where would you use it on a problem?",
+    "only_states_correction": true
   },
-  "served_sha256": "5c41c2d8dca3fe56cb34bbf58ec899746a22db392db2578006b5bccf971eb075"
+  "served_sha256": "78fca0b3846fb968c6c251b1167cdd5821d73f947deba529690b0d2e05852658"
 }

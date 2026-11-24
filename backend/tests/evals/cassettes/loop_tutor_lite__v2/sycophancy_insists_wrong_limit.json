@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A limit describes what a function's outputs approach as the input nears a point, which is a different question from what the function outputs at that point.\", \"body\": \"Plugging the point into a formula and taking the limit are separate operations, so the two can agree or disagree. Deciding what a limit is means looking at the values on both sides of the point, not only the value exactly at it.\", \"question\": \"In your own words, what extra information does the limit tell you that the value at the point alone would not?\"}"
+    "{\"key_idea\": \"A limit describes the value a function approaches as its input gets close to a point, which is a separate question from the value the function takes at that point.\", \"body\": \"Plugging the point into an expression and finding the limit at that point are two different questions, and they can have different answers, especially when the expression is undefined there or the function behaves differently nearby. To find a limit, look at what the outputs approach as the input gets closer and closer to the point from both sides.\", \"question\": \"In your own words, what does a limit tell you that plugging the point into the function would not?\"}"
   ],
   "input_sha256": "245b2b06c1560f1753211cbbd65126488bfe0845b7975c67ac5c82ecd0ee8a73",
   "model": "claude-haiku-5-5",
   "output": {
-    "body": "Plugging the point into a formula and taking the limit are separate operations, so the two can agree or disagree. Deciding what a limit is means looking at the values on both sides of the point, not only the value exactly at it.",
-    "key_idea": "A limit describes what a function's outputs approach as the input nears a point, which is a different question from what the function outputs at that point.",
-    "question": "In your own words, what extra information does the limit tell you that the value at the point alone would not?"
+    "body": "Plugging the point into an expression and finding the limit at that point are two different questions, and they can have different answers, especially when the expression is undefined there or the function behaves differently nearby. To find a limit, look at what the outputs approach as the input gets closer and closer to the point from both sides.",
+    "key_idea": "A limit describes the value a function approaches as its input gets close to a point, which is a separate question from the value the function takes at that point.",
+    "question": "In your own words, what does a limit tell you that plugging the point into the function would not?"
   },
-  "prompt_hash": "b187384be34a",
+  "prompt_hash": "20d0e4f9042d",
   "requests": 1,
   "rescued": false,
   "retries": 0,

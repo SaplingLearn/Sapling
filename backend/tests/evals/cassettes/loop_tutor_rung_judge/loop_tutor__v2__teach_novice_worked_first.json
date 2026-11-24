@@ -2,9 +2,9 @@
   "judge_model": "claude-opus-5-5",
   "judge_prompt_hash": "ef37fe670c185dbbd3a48c9c1c6fd26940cb876f4d996a477462b25b084d6daf",
   "output": {
-    "evidence": "Take the isomorph sum_to(n), which adds all whole numbers from 1 up to n: the base case is sum_to(1) = 1",
+    "evidence": "Isomorph: define g(n) = 2 + g(n-1) with base case g(0) = 0, which returns twice n. To get g(2), the function needs g(1)...",
     "reveals_final_answer": false,
     "rung": 4
   },
-  "served_sha256": "92ef1dbfbf2ef936753925bd5b727b8dd1406991c48bf32f6a6e5cbbfb4f7249"
+  "served_sha256": "92eb2b95aad9375aae1facb31b9b927f3afe0f5ae4a78221b0132ca126a5657e"
 }

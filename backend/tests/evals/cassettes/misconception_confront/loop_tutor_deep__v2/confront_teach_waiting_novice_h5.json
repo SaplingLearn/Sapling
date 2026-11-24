@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"Test whether multiplying by the exponent is the whole story when you differentiate a power of x.\", \"body\": \"Take f(x) = x^3 and think of its slope at x = 1. A belief that says 'multiply by the exponent and keep everything else' predicts a particular formula for the derivative. You can check that formula against the limit definition, (f(1+h) - f(1))/h as h gets small, using (1+h)^3 = 1 + 3h + 3h^2 + h^3.\", \"question\": \"What value does the limit definition give for the slope of x^3 at x = 1, and does it match what your 'multiply by the exponent' belief predicts at x = 1?\"}"
+    "{\"key_idea\": \"Let's test whether multiplying by the exponent is the whole story when you differentiate a power.\", \"body\": \"Take f(x) = x^3 and look at its slope at x = 2. If the derivative were just 3 times the original power, you'd get 3x^3, which at x = 2 gives 24. You can check any slope against the limit definition, (f(2+h) - f(2))/h, as h gets very small.\", \"question\": \"Expand (2+h)^3, work out that limit for f(x) = x^3 at x = 2, and tell me whether it matches the 24 your belief predicts?\"}"
   ],
   "input_sha256": "b672d2eb87f5fd4418e5467d02b2237500776ff015e86630c3765b81f6c8f7de",
   "model": "claude-sonnet-5-5",
   "output": {
-    "body": "Take f(x) = x^3 and think of its slope at x = 1. A belief that says 'multiply by the exponent and keep everything else' predicts a particular formula for the derivative. You can check that formula against the limit definition, (f(1+h) - f(1))/h as h gets small, using (1+h)^3 = 1 + 3h + 3h^2 + h^3.",
-    "key_idea": "Test whether multiplying by the exponent is the whole story when you differentiate a power of x.",
-    "question": "What value does the limit definition give for the slope of x^3 at x = 1, and does it match what your 'multiply by the exponent' belief predicts at x = 1?"
+    "body": "Take f(x) = x^3 and look at its slope at x = 2. If the derivative were just 3 times the original power, you'd get 3x^3, which at x = 2 gives 24. You can check any slope against the limit definition, (f(2+h) - f(2))/h, as h gets very small.",
+    "key_idea": "Let's test whether multiplying by the exponent is the whole story when you differentiate a power.",
+    "question": "Expand (2+h)^3, work out that limit for f(x) = x^3 at x = 2, and tell me whether it matches the 24 your belief predicts?"
   },
-  "prompt_hash": "b187384be34a",
+  "prompt_hash": "20d0e4f9042d",
   "requests": 1,
   "rescued": false,
   "retries": 0,

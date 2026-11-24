@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "Your belief predicts that the average of 1, 2 and 9 should equal its middle value, 2. Work out that average the same way you would for the original set, then compare it with 2.",
+    "evidence": "What does your rule predict for the average of 2, 4 and 90, and what do you get when you add those three numbers and divide by 3?",
     "only_states_correction": false
   },
-  "served_sha256": "354fc361a36815bed69d80c66a7c11107bf65d0a59d23a6fb4b19e3b51efac28"
+  "served_sha256": "8b6b75c50bf9ae76965df08286e67204d32d61e9150575f4cd2caa49e07de604"
 }

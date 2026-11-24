@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "If you picked values of x very close to 0, such as 0.1 and 0.01, what would you compute to see what sin x over x is approaching, and what do you expect to notice?",
+    "evidence": "What do you get for sin(x)/x at a few small inputs, like x = 0.1 and x = 0.01, and does that match your claim?",
     "only_states_correction": false
   },
-  "served_sha256": "18beda7cb1519ba1a988e9b02d72df82a7e1929047481dfdc59ec1f664f93830"
+  "served_sha256": "985ac926338fb2b4d192e1e60df78af800f6adee3e672ace18d614c252157829"
 }

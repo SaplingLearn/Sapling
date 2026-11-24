@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "What is the next call that factorial(0) makes in that version, and does anything in those lines ever stop it?",
+    "evidence": "Under your explanation, what happens step by step when factorial(-1) is called, and does it ever stop?",
     "only_states_correction": false
   },
-  "served_sha256": "772a25e894facbe48e61fee56a49466152350d88e8276a19a1045b961845400a"
+  "served_sha256": "456b38f2e42cb247a4fcd6f4ef4749bbe37324801345fbddba418cd34896c2e2"
 }

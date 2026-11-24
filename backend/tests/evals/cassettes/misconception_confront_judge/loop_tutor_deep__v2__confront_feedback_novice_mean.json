@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "change the last one from 9 to 90, so the list is 2, 4 and 90... by your middle-one rule, and then think about... fair share of the total... do the two ways agree?",
+    "evidence": "What do you get for 2, 4 and 100 using that equal-share idea, and does it match what your middle-one belief predicts?",
     "only_states_correction": false
   },
-  "served_sha256": "82a4c293c3555bd49ed24b718dbc075e7fd92995589720a6c3a35ecf8ec82fbc"
+  "served_sha256": "1b9af2ad2d45a959dc55dc67447b353e47de0b715fc53723a4f7493dd86457d1"
 }

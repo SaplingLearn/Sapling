@@ -2,9 +2,9 @@
   "judge_model": "claude-opus-5-5",
   "judge_prompt_hash": "80402569d294638f7e2af95a0f9fb23341de5c768ef3b0c1b576bf4c335c2f4c",
   "output": {
-    "evidence": "Take sum(n) = n + sum(n-1), where sum(0) is defined directly as 0 and never calls sum again. Tracing sum(2): it calls sum(1), which calls sum(0)",
+    "evidence": "Isomorph: countdown(n) prints n and then calls countdown(n-1), unless n == 0, where it prints 'liftoff' and returns without calling itself.",
     "reveals_final_answer": false,
     "rung": 4
   },
-  "served_sha256": "3e4f7d0845c48052eeb6cf1b299b5f1d5cd3133a53b4c195381bcebbc51415a6"
+  "served_sha256": "9ef91e158cc22d7857bb0f370a57e0086403dfd0501a03c04758022cc1db6196"
 }

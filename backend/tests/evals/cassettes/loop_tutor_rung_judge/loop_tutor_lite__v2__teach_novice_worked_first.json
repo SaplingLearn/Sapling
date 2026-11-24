@@ -2,9 +2,9 @@
   "judge_model": "claude-opus-5-5",
   "judge_prompt_hash": "ef37fe670c185dbbd3a48c9c1c6fd26940cb876f4d996a477462b25b084d6daf",
   "output": {
-    "evidence": "Isomorph: to count the items in a list, define len([]) = 0 as the base case, and len(list) = 1 + len(rest of list) as the recursive step",
+    "evidence": "Isomorph: sum(n) = n + sum(n-1) with base case sum(1) = 1, so sum(3) needs 3 + sum(2)",
     "reveals_final_answer": false,
     "rung": 4
   },
-  "served_sha256": "1fe6d3e5fcdd38818b14a78f7fea830b17c27053f1eab004d2b51ea472e04917"
+  "served_sha256": "e114eba04f157273d42b675f45d3a7f737818412ad939b4256ac7cb5c1c7faee"
 }

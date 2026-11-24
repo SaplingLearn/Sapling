@@ -2,9 +2,9 @@
   "judge_model": "claude-opus-5-5",
   "judge_prompt_hash": "56120063861e7227b4690754af5b01d7ff13e039c9510237736a770622e40921",
   "output": {
-    "evidence": "What is the first thing you would check to be sure your reasoning holds up on a different case?",
-    "reveals_final_answer": false,
-    "rung": 1
+    "evidence": "Correct. You said the base case is n == 0 returning 1.",
+    "reveals_final_answer": true,
+    "rung": 0
   },
-  "served_sha256": "441ac79fe662630942df126a62f9eecc5229b4e82be79b18984bf86881fa2e94"
+  "served_sha256": "c459b64fcd660d0d41827faea050b1d4aa8323a717ec9f9b83d11f82126df0d8"
 }

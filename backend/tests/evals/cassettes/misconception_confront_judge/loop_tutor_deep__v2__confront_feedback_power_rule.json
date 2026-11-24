@@ -3,9 +3,9 @@
   "judge_prompt_hash": "e747e9906d9ea9f91bfd2330cf4ed74ce2b05a64908c150b370f30141a813635",
   "output": {
     "affirms_misconception": false,
-    "confronts": false,
-    "evidence": "Take x^2 at x = 1, where your rule ... would give 2x^2.",
+    "confronts": true,
+    "evidence": "What does your rule give for the derivative of x^1, and does it match the slope of the line y = x?",
     "only_states_correction": false
   },
-  "served_sha256": "deea2c5a71f68d84318d08544d399b3f29802af71e5f8f19af2f7d08f25866b9"
+  "served_sha256": "6c9f5b3c09418f65032ff34b90fd6e69fc5a6dfca312a0aabb3f764ab62850c5"
 }

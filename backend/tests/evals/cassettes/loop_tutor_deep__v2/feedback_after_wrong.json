@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A recursive function stops only when some input hits a base case that returns a value without making another recursive call.\", \"body\": \"Your attempt has factorial(0) calling factorial(-1), which makes a new call, so nothing in that chain ever ends the recursion. The stored solution above shows what happens at 0 instead, so compare it with your version.\", \"question\": \"Looking at the stored solution, what does factorial(0) do differently from your version, and why does that mean it makes no further call?\"}"
+    "{\"key_idea\": \"A recursive function stops only when some input hits a base case that returns a value without making another recursive call.\", \"body\": \"Calling factorial(-1) is one more recursive call, so it can't be what ends the chain. Compare it with the stored solution above: the stopping happens at factorial(0) itself, before any further call is made.\", \"question\": \"Looking at the code, what does factorial do when n is 0, and does that path call factorial again?\"}"
   ],
   "input_sha256": "f91b66d089a1599dad0888803e80c38ed8a894e91886a462eec99011e0e751b6",
   "model": "claude-sonnet-5-5",
   "output": {
-    "body": "Your attempt has factorial(0) calling factorial(-1), which makes a new call, so nothing in that chain ever ends the recursion. The stored solution above shows what happens at 0 instead, so compare it with your version.",
+    "body": "Calling factorial(-1) is one more recursive call, so it can't be what ends the chain. Compare it with the stored solution above: the stopping happens at factorial(0) itself, before any further call is made.",
     "key_idea": "A recursive function stops only when some input hits a base case that returns a value without making another recursive call.",
-    "question": "Looking at the stored solution, what does factorial(0) do differently from your version, and why does that mean it makes no further call?"
+    "question": "Looking at the code, what does factorial do when n is 0, and does that path call factorial again?"
   },
-  "prompt_hash": "b187384be34a",
+  "prompt_hash": "20d0e4f9042d",
   "requests": 1,
   "rescued": false,
   "retries": 0,

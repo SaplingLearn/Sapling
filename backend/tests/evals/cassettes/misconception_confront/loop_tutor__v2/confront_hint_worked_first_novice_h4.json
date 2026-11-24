@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A derivative rule can be tested by comparing its predicted slope with a slope you can compute directly from the function.\", \"body\": \"Your rule says the slope of x^2 at x=2 is 2 times 2^2, which is 8. A slope can be estimated from a nearby pair of points: the average slope between x=2 and x=2.01 is (f(2.01) - f(2))/0.01, where f(x) = x^2.\", \"question\": \"What value do you get for (2.01^2 - 2^2)/0.01, and does it agree with the 8 your rule predicts?\"}"
+    "{\"key_idea\": \"A rule for derivatives can be tested by checking its prediction against a slope you can measure directly.\", \"body\": \"Take f(x) = x^2, a twin of your item. Your rule says its derivative is 2x^2, so at x = 1 the slope should be 2. The average rate of change between x = 1 and x = 1.01 is (f(1.01) - f(1)) / 0.01, which you can compute directly without any rule.\", \"question\": \"What does (1.01^2 - 1^2) / 0.01 come out to, and how does it compare with the 2 your rule predicts?\"}"
   ],
   "input_sha256": "e04344ef924ad2eeae1085f5644e87a354dcdfcce4a6cb8d2ec9399cfc3f87d2",
   "model": "claude-haiku-5-5",
   "output": {
-    "body": "Your rule says the slope of x^2 at x=2 is 2 times 2^2, which is 8. A slope can be estimated from a nearby pair of points: the average slope between x=2 and x=2.01 is (f(2.01) - f(2))/0.01, where f(x) = x^2.",
-    "key_idea": "A derivative rule can be tested by comparing its predicted slope with a slope you can compute directly from the function.",
-    "question": "What value do you get for (2.01^2 - 2^2)/0.01, and does it agree with the 8 your rule predicts?"
+    "body": "Take f(x) = x^2, a twin of your item. Your rule says its derivative is 2x^2, so at x = 1 the slope should be 2. The average rate of change between x = 1 and x = 1.01 is (f(1.01) - f(1)) / 0.01, which you can compute directly without any rule.",
+    "key_idea": "A rule for derivatives can be tested by checking its prediction against a slope you can measure directly.",
+    "question": "What does (1.01^2 - 1^2) / 0.01 come out to, and how does it compare with the 2 your rule predicts?"
   },
-  "prompt_hash": "b187384be34a",
+  "prompt_hash": "20d0e4f9042d",
   "requests": 1,
   "rescued": false,
   "retries": 0,

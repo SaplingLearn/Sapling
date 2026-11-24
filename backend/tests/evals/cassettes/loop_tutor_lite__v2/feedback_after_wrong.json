@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A recursive function stops only when some call returns a value without calling itself again.\", \"body\": \"Calling factorial(-1) doesn't stop the recursion; it just starts a new chain of calls, and that chain has no end point unless a call is designed to return directly. Check the released solution above and look for the case where the function returns without making another call.\", \"question\": \"If factorial(-1) also calls factorial with a smaller number, what would the chain of calls look like, and which input would it need to hit to stop?\"}"
+    "{\"key_idea\": \"A recursive function stops only when a base case returns a value without making another recursive call.\", \"body\": \"Calling factorial(-1) starts another call that keeps going, so it cannot stop the recursion. The stopping point has to be a check on n that returns directly when the input reaches the base case.\", \"question\": \"What value of n would you test for at the top of factorial, and what should it return instead of calling factorial again?\"}"
   ],
   "input_sha256": "f91b66d089a1599dad0888803e80c38ed8a894e91886a462eec99011e0e751b6",
   "model": "claude-haiku-5-5",
   "output": {
-    "body": "Calling factorial(-1) doesn't stop the recursion; it just starts a new chain of calls, and that chain has no end point unless a call is designed to return directly. Check the released solution above and look for the case where the function returns without making another call.",
-    "key_idea": "A recursive function stops only when some call returns a value without calling itself again.",
-    "question": "If factorial(-1) also calls factorial with a smaller number, what would the chain of calls look like, and which input would it need to hit to stop?"
+    "body": "Calling factorial(-1) starts another call that keeps going, so it cannot stop the recursion. The stopping point has to be a check on n that returns directly when the input reaches the base case.",
+    "key_idea": "A recursive function stops only when a base case returns a value without making another recursive call.",
+    "question": "What value of n would you test for at the top of factorial, and what should it return instead of calling factorial again?"
   },
-  "prompt_hash": "b187384be34a",
+  "prompt_hash": "20d0e4f9042d",
   "requests": 1,
   "rescued": false,
   "retries": 0,

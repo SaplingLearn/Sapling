@@ -2,9 +2,9 @@
   "judge_model": "claude-opus-5-5",
   "judge_prompt_hash": "80402569d294638f7e2af95a0f9fb23341de5c768ef3b0c1b576bf4c335c2f4c",
   "output": {
-    "evidence": "Take a countdown function: countdown(n) prints n and then calls countdown(n-1)... It ends only if one input, say n == 0, is handled by returning right away",
+    "evidence": "Take a countdown function whose first line says 'if n == 3, return', and otherwise it prints n and calls countdown(n-1).",
     "reveals_final_answer": false,
     "rung": 4
   },
-  "served_sha256": "29e59be364e446a5a4b5659fd76f12c3568ba7a7e366994d91c9d369abe2bbb3"
+  "served_sha256": "2fd9bf0db68f231010d290784ca6626e0084b76dfacb79051638cf0678b86874"
 }

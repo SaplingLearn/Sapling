@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A recursive function stops only if some call reaches a case that does not call itself again, so the claim that no base case is needed can be tested directly on the input 0.\", \"body\": \"Your claim predicts that factorial(0) still finishes without a base case, so the prediction can be checked by tracing it. Follow each call factorial(0) makes under your version and note what input each new call receives.\", \"question\": \"Under your version, what input does the first call to factorial make after factorial(0), and does that call ever reach a point where it stops calling itself?\"}"
+    "{\"key_idea\": \"A recursive function only stops if some call returns without calling itself, so you can test whether your no-base-case belief holds by tracing the calls.\", \"body\": \"Take the rule n * factorial(n-1) with no stopping case and call it on 0, then follow every new call it makes. Your belief predicts the chain of calls ends on its own, so check that prediction against each call you generate.\", \"question\": \"What value does factorial receive on its next call after factorial(0) makes the call factorial(n-1), and does that call return a number or make yet another call?\"}"
   ],
   "input_sha256": "e0d1f2189c5056960cbc9baea8ab8349a501c5d4879b45ee65bea90b8e5da741",
   "model": "claude-haiku-5-5",
   "output": {
-    "body": "Your claim predicts that factorial(0) still finishes without a base case, so the prediction can be checked by tracing it. Follow each call factorial(0) makes under your version and note what input each new call receives.",
-    "key_idea": "A recursive function stops only if some call reaches a case that does not call itself again, so the claim that no base case is needed can be tested directly on the input 0.",
-    "question": "Under your version, what input does the first call to factorial make after factorial(0), and does that call ever reach a point where it stops calling itself?"
+    "body": "Take the rule n * factorial(n-1) with no stopping case and call it on 0, then follow every new call it makes. Your belief predicts the chain of calls ends on its own, so check that prediction against each call you generate.",
+    "key_idea": "A recursive function only stops if some call returns without calling itself, so you can test whether your no-base-case belief holds by tracing the calls.",
+    "question": "What value does factorial receive on its next call after factorial(0) makes the call factorial(n-1), and does that call return a number or make yet another call?"
   },
-  "prompt_hash": "b187384be34a",
+  "prompt_hash": "20d0e4f9042d",
   "requests": 1,
   "rescued": false,
   "retries": 0,

@@ -531,7 +531,7 @@ Use this as the merge/readiness checklist. Every row must be **Done (A+)**, **N/
 - [x] Core question types shipped + interactive types phased (W7.2) — first slice (MC/short/numeric/algebra on SessionTop); interactive kit still phased  
 - [x] Launcher/home wired to `quiz_concept_plan` / planned generation (W7.3)  
 - [x] Confidence ↔ A132 (W7.4)  
-- [x] Hints / guide drawer leak-safe (W7.5) — Skip + StudyGuideDrawer; Hint disabled (no leak-safe API)  
+- [x] Hints / guide drawer leak-safe (W7.5) — Skip + StudyGuideDrawer; Hint = client scaffolding ([`w7-5-hint-scaffold.md`](w7-5-hint-scaffold.md); Bastani ladder deferred)  
 
 - [x] Prereq banner ↔ graph fringe (W7.6)  
 - [x] Summary CTAs → Tree / Study / Tutor (W7.7)  
@@ -624,7 +624,7 @@ Five concurrent tracks kicked off from this plan. **No flag enables** until W0 e
 | W7.6 | Prereq-weak banner + fringe preference | **done** |
 | W3.4 | Learn ↔ Study ↔ Quiz handoff copy + deep links | **done** → [`w3-handoffs.md`](w3-handoffs.md) |
 | W7.D3 | Launcher + Map design brief | **done** → [`w7-d3-launcher-map.md`](w7-d3-launcher-map.md) |
-| W7.5 | Wire Hint/Skip slots + leak-safe study-guide drawer scaffold | **done** (Skip + drawer; Hint disabled) |
+| W7.5 | Wire Hint/Skip slots + leak-safe study-guide drawer scaffold | **done** (Skip + drawer; Hint = client scaffold) |
 | W2.4 | Low-trust next-probe hint from reasoning (flagged; never mastery) | **done** (`next_probe_hint` off; W2.4b decrypt wire) → [`w2-next-probe-hint.md`](w2-next-probe-hint.md) |
 
 **Skipped this wave (need key / evals):** W0, W5.*, W1 cassette scoring, W4 SVG agent.
@@ -667,7 +667,17 @@ Five concurrent tracks kicked off from this plan. **No flag enables** until W0 e
 
 **Compliance re-audit (2026-11-23):** [`day2-plan-compliance-audit.md`](day2-plan-compliance-audit.md) — PASS / PARTIAL / SPIKE / BLOCKED vs each acceptance row.
 
-**Still blocked on spend:** W0.1–W0.3 Claude cassette re-record (blocks flag enables + clears W1 prompt-hash drift). **Not in these waves:** W5 enables, W4 build, full W7 question kit.
+**W0.1–W0.3:** Claude cassette re-record **done** (2026-11-24 on #866). **Not yet:** W5 population enables (owner via [`w0-flag-enable-checklist.md`](w0-flag-enable-checklist.md)), W4 SVG agent, full W7 kit beyond Sort/Label slices.
+
+### Day 8 parallel launch (post-W0 orchestration — 2026-11-24)
+
+| Track | Scope | Agent |
+|---|---|---|
+| W7.2 Label | Focus-shell Label kit type (after Sort) | in flight |
+| W7.5 Hint | Bastani-safe Hint slice or honest deferred scaffold | **done** → [`w7-5-hint-scaffold.md`](w7-5-hint-scaffold.md) |
+| W5.E2 polish | Further `V2_INSTRUCTIONS` harden for standard `__v2` (prompt-only) | in flight |
+| W1.3 / W2.3 E2E | Playwright generative-core + reason-before-submit stubs | in flight |
+| W8.4 | Flashcards copy ↔ FSRS / learner_state honesty | in flight |
 
 ---
 

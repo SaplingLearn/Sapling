@@ -1,18 +1,19 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A recursive function solves a problem by handing a smaller copy of the same problem to itself, and it stops at a base case that needs no further help.\", \"body\": \"Before I explain more, let's see what your intuition does with a small case. Take countdown(n), which should print n, n-1, ..., 1. Suppose you already have a working countdown(n-1), and your only job is to write what countdown(3) does using it.\", \"question\": \"In plain words or rough pseudocode, what would countdown(3) do itself, and what would it leave to countdown(2)?\"}"
+    "{\"key_idea\": \"A recursive function solves a problem by handing a smaller copy of the same problem to itself, and it stops at a base case that needs no further help.\", \"body\": \"Here is a worked isomorph. To add 1+2+...+n, say sum(n) = n + sum(n-1), and the base case is sum(1) = 1 because there is nothing smaller to hand off. For example, sum(3) = 3 + sum(2), then sum(2) = 2 + sum(1), and sum(1) = 1 stops the chain. Now try a similar one: factorial, where fact(n) = n * fact(n-1).\", \"question\": \"In your own words, what should the base case of fact(n) be, and why does the chain need it?\"}",
+    "{\"key_idea\": \"A recursive function solves a problem by handing a smaller copy of the same problem to itself, and it stops at a base case that needs no further help.\", \"body\": \"Take adding 1+2+...+n: define sum(n) = n + sum(n-1), with base case sum(1) = 1 because there is nothing smaller to hand off. So sum(3) = 3 + sum(2) = 3 + 2 + sum(1), and the known value sum(1) = 1 stops the chain. Factorial has the same structure, with fact(n) = n * fact(n-1).\", \"question\": \"In your own words, what should the base case of fact(n) be, and why does the chain need it?\"}"
   ],
   "input_sha256": "1a6ccd15960d7d572c96de957f6eae0ff470a031fd3568a0cec9f272acdfb746",
   "model": "claude-sonnet-5-5",
   "output": {
-    "body": "Before I explain more, let's see what your intuition does with a small case. Take countdown(n), which should print n, n-1, ..., 1. Suppose you already have a working countdown(n-1), and your only job is to write what countdown(3) does using it.",
+    "body": "Take adding 1+2+...+n: define sum(n) = n + sum(n-1), with base case sum(1) = 1 because there is nothing smaller to hand off. So sum(3) = 3 + sum(2) = 3 + 2 + sum(1), and the known value sum(1) = 1 stops the chain. Factorial has the same structure, with fact(n) = n * fact(n-1).",
     "key_idea": "A recursive function solves a problem by handing a smaller copy of the same problem to itself, and it stops at a base case that needs no further help.",
-    "question": "In plain words or rough pseudocode, what would countdown(3) do itself, and what would it leave to countdown(2)?"
+    "question": "In your own words, what should the base case of fact(n) be, and why does the chain need it?"
   },
-  "prompt_hash": "b187384be34a",
-  "requests": 1,
+  "prompt_hash": "20d0e4f9042d",
+  "requests": 2,
   "rescued": false,
-  "retries": 0,
+  "retries": 1,
   "schema_hash": "ee2a0f1f177f",
   "slot": "loop_tutor_deep",
   "tool_calls": []

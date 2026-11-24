@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "If factorial(0) simply runs the line n * factorial(n - 1) with nothing special for 0, what input does the next call get, and does that call ever reach a point where the numbers run out?",
+    "evidence": "Trace that version by hand for factorial(0): what argument does each new call receive, and at what point does your belief say it stops?",
     "only_states_correction": false
   },
-  "served_sha256": "39d50f3900d3d729e88287aa0199cb63303fb633802ca0b8e3957c7e26d13594"
+  "served_sha256": "1e5ffce1de669525661c112e136a6c9a93f01181789f883ae62cffa9c309b4c2"
 }

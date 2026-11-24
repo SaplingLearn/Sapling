@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A recursive function stops only when some call reaches a base case that returns a value without calling itself again.\", \"body\": \"Take sum(n) = n + sum(n-1), where sum(0) is defined directly as 0 and never calls sum again. Tracing sum(2): it calls sum(1), which calls sum(0), and sum(0) returns 0 right away, so the chain of calls ends and the results add back up. Each call's input shrinks by one, so the chain must eventually hit the input that the definition handles directly.\", \"question\": \"For factorial, which input value does the definition handle directly, and what does your factorial(0) case need to return so the calls stop?\"}"
+    "{\"key_idea\": \"A recursive function stops only when a base case returns without making another call, and each call must move its input toward that case.\", \"body\": \"Isomorph: countdown(n) prints n and then calls countdown(n-1), unless n == 0, where it prints 'liftoff' and returns without calling itself. So countdown(2) runs with 2, then 1, then 0, and the n == 0 check is the one line that ends the chain.\", \"question\": \"Using the same idea, what input does factorial(0) receive, and does factorial's code have a branch that returns without calling factorial again?\"}"
   ],
   "input_sha256": "78b8a97ede546da8ca6d3349c7a261196577cd93fde52115743a9f77fe7a482b",
   "model": "claude-haiku-5-5",
   "output": {
-    "body": "Take sum(n) = n + sum(n-1), where sum(0) is defined directly as 0 and never calls sum again. Tracing sum(2): it calls sum(1), which calls sum(0), and sum(0) returns 0 right away, so the chain of calls ends and the results add back up. Each call's input shrinks by one, so the chain must eventually hit the input that the definition handles directly.",
-    "key_idea": "A recursive function stops only when some call reaches a base case that returns a value without calling itself again.",
-    "question": "For factorial, which input value does the definition handle directly, and what does your factorial(0) case need to return so the calls stop?"
+    "body": "Isomorph: countdown(n) prints n and then calls countdown(n-1), unless n == 0, where it prints 'liftoff' and returns without calling itself. So countdown(2) runs with 2, then 1, then 0, and the n == 0 check is the one line that ends the chain.",
+    "key_idea": "A recursive function stops only when a base case returns without making another call, and each call must move its input toward that case.",
+    "question": "Using the same idea, what input does factorial(0) receive, and does factorial's code have a branch that returns without calling factorial again?"
   },
-  "prompt_hash": "b187384be34a",
+  "prompt_hash": "20d0e4f9042d",
   "requests": 1,
   "rescued": false,
   "retries": 0,

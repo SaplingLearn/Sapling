@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A belief about a derivative rule can be tested on a case where you already know the answer.\", \"body\": \"Take f(x) = x^2, whose graph is a parabola with slope 0 at x = 0 and slope 2 at x = 1. Your belief says to multiply by the exponent and keep the exponent as it is. That gives a specific formula for the slope of x^2 at x = 0 and at x = 1.\", \"question\": \"What does your belief predict for the slope of x^2 at x = 0 and at x = 1, and does it match the slopes 0 and 2 from the graph?\"}"
+    "{\"key_idea\": \"A belief about a rule is worth testing on a case where you already know the answer.\", \"body\": \"Take f(x) = x^2, which is the area of a square with side x. You can find its slope another way: compare f(3) with f(3.01), or just think about how the slope of a parabola looks near x = 0. Your belief about the exponent predicts a specific formula for the derivative of x^2, so you can check that formula against the slope you find.\", \"question\": \"What does your belief predict for the derivative of x^2 at x = 0, and does that match the slope you see on the graph of x^2 there?\"}"
   ],
   "input_sha256": "8eabfb8e74aa4db714f43820c8330e1456deaab2c7d106891b3c3a78be05ee20",
   "model": "claude-sonnet-5-5",
   "output": {
-    "body": "Take f(x) = x^2, whose graph is a parabola with slope 0 at x = 0 and slope 2 at x = 1. Your belief says to multiply by the exponent and keep the exponent as it is. That gives a specific formula for the slope of x^2 at x = 0 and at x = 1.",
-    "key_idea": "A belief about a derivative rule can be tested on a case where you already know the answer.",
-    "question": "What does your belief predict for the slope of x^2 at x = 0 and at x = 1, and does it match the slopes 0 and 2 from the graph?"
+    "body": "Take f(x) = x^2, which is the area of a square with side x. You can find its slope another way: compare f(3) with f(3.01), or just think about how the slope of a parabola looks near x = 0. Your belief about the exponent predicts a specific formula for the derivative of x^2, so you can check that formula against the slope you find.",
+    "key_idea": "A belief about a rule is worth testing on a case where you already know the answer.",
+    "question": "What does your belief predict for the derivative of x^2 at x = 0, and does that match the slope you see on the graph of x^2 there?"
   },
-  "prompt_hash": "b187384be34a",
+  "prompt_hash": "20d0e4f9042d",
   "requests": 1,
   "rescued": false,
   "retries": 0,

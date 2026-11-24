@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": false,
-    "evidence": "In your own words, what does the Power Rule tell you to do with the exponent, and where would you use it?",
+    "evidence": "differentiating x^n multiplies by the exponent n and lowers the exponent by one.",
     "only_states_correction": true
   },
-  "served_sha256": "c38a1cb1fe25db9c00682b164d3521118c432ea537a28b1ef799686c30e1018e"
+  "served_sha256": "fbf4161bc05adb2e55126ad17fa1db6880e2b017458d1266c75ed48e7f9c31e5"
 }

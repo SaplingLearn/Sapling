@@ -3,9 +3,9 @@
   "judge_prompt_hash": "3ce1196b8fd5e1ddd2ef0e7ebfd972ec099f635d11b5ab028bf18efcd8a32a71",
   "output": {
     "affirms_misconception": false,
-    "confronts": false,
-    "evidence": "What value does the limit definition give for the slope of x^3 at x = 1, and does it match what your 'multiply by the exponent' belief predicts at x = 1?",
+    "confronts": true,
+    "evidence": "Expand (2+h)^3, work out that limit for f(x) = x^3 at x = 2, and tell me whether it matches the 24 your belief predicts?",
     "only_states_correction": false
   },
-  "served_sha256": "8c253de5db03eddd10640ca1bff42241c55cc57e9c241238a4c993022a595192"
+  "served_sha256": "2fd4e6943ac37d3307227ca22d237e3cc4f406d134d8cc69a3b4f4dd63e6b1e3"
 }

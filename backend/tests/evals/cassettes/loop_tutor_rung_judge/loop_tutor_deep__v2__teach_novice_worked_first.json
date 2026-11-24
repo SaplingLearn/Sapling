@@ -2,9 +2,9 @@
   "judge_model": "claude-opus-5-5",
   "judge_prompt_hash": "ef37fe670c185dbbd3a48c9c1c6fd26940cb876f4d996a477462b25b084d6daf",
   "output": {
-    "evidence": "Worked example on a different problem, sum of 1..n: the base case is sum(0) = 0 ... def sum_to(n): if n == 0: return 0, else return n + sum_to(n-1).",
+    "evidence": "Worked example on a different problem, sum of 1 to n: ... def total(n): if n == 1: return 1, else: return n + total(n-1).",
     "reveals_final_answer": false,
     "rung": 4
   },
-  "served_sha256": "12fb6d48a26348a9ff35d121e6fa14f732f533b4002c1d494c4c3f5b8ab0b6fb"
+  "served_sha256": "7343128d5e9835af5e2cca155c3ed44294c1210ed02018268c1756ec477361be"
 }

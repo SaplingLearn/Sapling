@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "compute (f(2.01) - f(2)) / 0.01 for f(x) = x^4. What value do you get for that slope estimate, and does it match the 64 your belief predicts?",
+    "evidence": "estimate the slope as the rise over a tiny run: (2.01^3 - 2^3) divided by 0.01. What number do you get from that fraction, and how does it compare with the 24",
     "only_states_correction": false
   },
-  "served_sha256": "b25e10acfb3be24567c8f75d88a85640cbaa541ca7d83c07bc60eac879c98042"
+  "served_sha256": "0f64bcd092feacde3b0d91b09f8f30174d053a39d5a047058c6aba20c05ccd68"
 }

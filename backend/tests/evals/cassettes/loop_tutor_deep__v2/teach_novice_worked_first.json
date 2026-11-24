@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A recursive function solves a problem by handling one smallest case directly (the base case) and otherwise reducing to the same problem on a smaller input.\", \"body\": \"Worked example on a different problem, sum of 1..n: the base case is sum(0) = 0, because it needs no further work and stops the calls. The problem that forces the next move is n > 0, where we can't answer directly, so we notice that sum(n) = n + sum(n-1), which is the same problem on a smaller input. Written out: def sum_to(n): if n == 0: return 0, else return n + sum_to(n-1).\", \"question\": \"Using that same two-part shape, what would the base case be for a function that counts how many digits are in a non-negative whole number like 482?\"}"
+    "{\"key_idea\": \"A recursive function solves a problem by handling the simplest case directly (the base case) and otherwise reducing to a smaller copy of the same problem.\", \"body\": \"Worked example on a different problem, sum of 1 to n: the smallest case is n = 1, where the answer is just 1, so that is the base case and it stops the calls. For any bigger n, the sum is n plus the sum of 1 to n-1, so the function is: def total(n): if n == 1: return 1, else: return n + total(n-1). Tracing total(3) gives 3 + total(2), then 3 + 2 + total(1), then 3 + 2 + 1, so each call shrinks n until it hits the base case.\", \"question\": \"Using the same two-part structure, what would the base case be for a function that counts down the number of letters in a string by removing one letter at a time?\"}"
   ],
   "input_sha256": "34de23f42f0e84467fcb83e1af87ea9d3d04aaf8518411a19b757b77ee920236",
   "model": "claude-sonnet-5-5",
   "output": {
-    "body": "Worked example on a different problem, sum of 1..n: the base case is sum(0) = 0, because it needs no further work and stops the calls. The problem that forces the next move is n > 0, where we can't answer directly, so we notice that sum(n) = n + sum(n-1), which is the same problem on a smaller input. Written out: def sum_to(n): if n == 0: return 0, else return n + sum_to(n-1).",
-    "key_idea": "A recursive function solves a problem by handling one smallest case directly (the base case) and otherwise reducing to the same problem on a smaller input.",
-    "question": "Using that same two-part shape, what would the base case be for a function that counts how many digits are in a non-negative whole number like 482?"
+    "body": "Worked example on a different problem, sum of 1 to n: the smallest case is n = 1, where the answer is just 1, so that is the base case and it stops the calls. For any bigger n, the sum is n plus the sum of 1 to n-1, so the function is: def total(n): if n == 1: return 1, else: return n + total(n-1). Tracing total(3) gives 3 + total(2), then 3 + 2 + total(1), then 3 + 2 + 1, so each call shrinks n until it hits the base case.",
+    "key_idea": "A recursive function solves a problem by handling the simplest case directly (the base case) and otherwise reducing to a smaller copy of the same problem.",
+    "question": "Using the same two-part structure, what would the base case be for a function that counts down the number of letters in a string by removing one letter at a time?"
   },
-  "prompt_hash": "b187384be34a",
+  "prompt_hash": "20d0e4f9042d",
   "requests": 1,
   "rescued": false,
   "retries": 0,

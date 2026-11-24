@@ -2,9 +2,9 @@
   "judge_model": "claude-opus-5-5",
   "judge_prompt_hash": "79cb2f88f4c5782b0745aa57161849cb6410aab0987504180d074ff4947068f8",
   "output": {
-    "evidence": "Take f(x) = x^2, whose graph is a parabola with slope 0 at x = 0 and slope 2 at x = 1.",
+    "evidence": "What does your belief predict for the derivative of x^2 at x = 0, and does that match the slope you see on the graph of x^2 there?",
     "reveals_final_answer": false,
-    "rung": 4
+    "rung": 3
   },
-  "served_sha256": "6b7687271d1bf28c30d3651753d8c0d7b8d3e31467465762332cac216dce87a4"
+  "served_sha256": "f4f6715902e25d738793722047f1b3ee20098c8414c1657455c0c8f44bb146af"
 }

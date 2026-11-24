@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": false,
-    "evidence": "In your own words, what does it mean for a limit to depend on inputs near a point rather than the point itself?",
-    "only_states_correction": false
+    "evidence": "In your own words, why might the output at a point differ from the value the function approaches as the input nears that point?",
+    "only_states_correction": true
   },
-  "served_sha256": "c24cf6037f63c20abb92b7e8903a28f1843bc5fca8e5c9fcfaa1d1761745b679"
+  "served_sha256": "edac69c15ef6f91fc549bd412ec4be21a96b36af75210248afab79bec30167b0"
 }

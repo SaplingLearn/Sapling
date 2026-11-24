@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A claim that the numbers run out is worth testing against what the function actually does with its input at each call.\", \"body\": \"Take your own belief and suppose factorial has no special rule for 0, so every call just does n * factorial(n - 1). Your belief says this stops by itself at 0, and you can check that against what the next call would receive.\", \"question\": \"If factorial(0) simply runs the line n * factorial(n - 1) with nothing special for 0, what input does the next call get, and does that call ever reach a point where the numbers run out?\"}"
+    "{\"key_idea\": \"Test whether a recursive call ever checks for 'running out' of numbers, or only does what its code tells it to do.\", \"body\": \"Take a version of factorial whose code is just: return n * factorial(n - 1), with no if-statement anywhere. Your belief predicts that calling factorial(0) on it ends by itself.\", \"question\": \"Trace that version by hand for factorial(0): what argument does each new call receive, and at what point does your belief say it stops?\"}"
   ],
   "input_sha256": "bf364d85a82c7cae594d1e360ec9924607e87ed2a3b8f2776603b485991feeeb",
   "model": "claude-sonnet-5-5",
   "output": {
-    "body": "Take your own belief and suppose factorial has no special rule for 0, so every call just does n * factorial(n - 1). Your belief says this stops by itself at 0, and you can check that against what the next call would receive.",
-    "key_idea": "A claim that the numbers run out is worth testing against what the function actually does with its input at each call.",
-    "question": "If factorial(0) simply runs the line n * factorial(n - 1) with nothing special for 0, what input does the next call get, and does that call ever reach a point where the numbers run out?"
+    "body": "Take a version of factorial whose code is just: return n * factorial(n - 1), with no if-statement anywhere. Your belief predicts that calling factorial(0) on it ends by itself.",
+    "key_idea": "Test whether a recursive call ever checks for 'running out' of numbers, or only does what its code tells it to do.",
+    "question": "Trace that version by hand for factorial(0): what argument does each new call receive, and at what point does your belief say it stops?"
   },
-  "prompt_hash": "b187384be34a",
+  "prompt_hash": "20d0e4f9042d",
   "requests": 1,
   "rescued": false,
   "retries": 0,

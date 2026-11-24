@@ -2,9 +2,9 @@
   "judge_model": "claude-opus-5-5",
   "judge_prompt_hash": "150caae2136ef67c5970b3ede1a03a78378b1b31aa4b3d95753e30f9160bc419",
   "output": {
-    "evidence": "the derivative of a variable raised to a power n comes from multiplying by n and lowering the exponent by one.",
+    "evidence": "differentiating x^n multiplies by the exponent n and lowers the exponent by one.",
     "reveals_final_answer": false,
     "rung": 2
   },
-  "served_sha256": "c38a1cb1fe25db9c00682b164d3521118c432ea537a28b1ef799686c30e1018e"
+  "served_sha256": "fbf4161bc05adb2e55126ad17fa1db6880e2b017458d1266c75ed48e7f9c31e5"
 }

@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"The middle value and the average are different measures, so your belief that they coincide is something you can test on a new set of numbers.\", \"body\": \"Your belief predicts that the average of 1, 2 and 9 should equal its middle value, 2. Work out that average the same way you would for the original set, then compare it with 2.\", \"question\": \"What average do you get for 1, 2 and 9, and does it match the middle value?\"}"
+    "{\"key_idea\": \"A claim about the average can be tested by checking what it predicts when one value changes.\", \"body\": \"If the average is just the middle value, changing one far-away number should leave the average unchanged, because the middle value stays put. Test that prediction on 2, 4 and 90 by working out what your rule says and comparing it with what the numbers actually give.\", \"question\": \"What does your rule predict for the average of 2, 4 and 90, and what do you get when you add those three numbers and divide by 3?\"}"
   ],
   "input_sha256": "a22712fd78e946fb5a6a4fd176bbe6aff7027a3e739e5d80476f69fec60e789b",
   "model": "claude-haiku-5-5",
   "output": {
-    "body": "Your belief predicts that the average of 1, 2 and 9 should equal its middle value, 2. Work out that average the same way you would for the original set, then compare it with 2.",
-    "key_idea": "The middle value and the average are different measures, so your belief that they coincide is something you can test on a new set of numbers.",
-    "question": "What average do you get for 1, 2 and 9, and does it match the middle value?"
+    "body": "If the average is just the middle value, changing one far-away number should leave the average unchanged, because the middle value stays put. Test that prediction on 2, 4 and 90 by working out what your rule says and comparing it with what the numbers actually give.",
+    "key_idea": "A claim about the average can be tested by checking what it predicts when one value changes.",
+    "question": "What does your rule predict for the average of 2, 4 and 90, and what do you get when you add those three numbers and divide by 3?"
   },
-  "prompt_hash": "b187384be34a",
+  "prompt_hash": "20d0e4f9042d",
   "requests": 1,
   "rescued": false,
   "retries": 0,

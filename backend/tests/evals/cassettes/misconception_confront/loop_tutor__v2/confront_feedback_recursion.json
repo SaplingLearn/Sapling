@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A recursive function stops only if some line of code checks for a case and returns without calling itself, so test the belief that stopping happens on its own.\", \"body\": \"Suppose factorial is written as only 'return n * factorial(n-1)', with no other lines, and it is called with 0. Your belief predicts the numbers run out and the call ends, so trace exactly which line runs and what call it makes next.\", \"question\": \"What is the next call that factorial(0) makes in that version, and does anything in those lines ever stop it?\"}"
+    "{\"key_idea\": \"Your belief that the recursion stops on its own can be tested by tracing a call whose input never reaches the point where the calls would end.\", \"body\": \"Your explanation says the numbers run out by themselves, so test that claim on a case where the countdown never lands on a stopping value, such as factorial(-1) with n going down by one each call. Your idea predicts a specific result for that call, and you can check it by following the steps.\", \"question\": \"Under your explanation, what happens step by step when factorial(-1) is called, and does it ever stop?\"}"
   ],
   "input_sha256": "bf364d85a82c7cae594d1e360ec9924607e87ed2a3b8f2776603b485991feeeb",
   "model": "claude-haiku-5-5",
   "output": {
-    "body": "Suppose factorial is written as only 'return n * factorial(n-1)', with no other lines, and it is called with 0. Your belief predicts the numbers run out and the call ends, so trace exactly which line runs and what call it makes next.",
-    "key_idea": "A recursive function stops only if some line of code checks for a case and returns without calling itself, so test the belief that stopping happens on its own.",
-    "question": "What is the next call that factorial(0) makes in that version, and does anything in those lines ever stop it?"
+    "body": "Your explanation says the numbers run out by themselves, so test that claim on a case where the countdown never lands on a stopping value, such as factorial(-1) with n going down by one each call. Your idea predicts a specific result for that call, and you can check it by following the steps.",
+    "key_idea": "Your belief that the recursion stops on its own can be tested by tracing a call whose input never reaches the point where the calls would end.",
+    "question": "Under your explanation, what happens step by step when factorial(-1) is called, and does it ever stop?"
   },
-  "prompt_hash": "b187384be34a",
+  "prompt_hash": "20d0e4f9042d",
   "requests": 1,
   "rescued": false,
   "retries": 0,

@@ -1,18 +1,19 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A claim about the average can be tested by checking whether it would change when the values change.\", \"body\": \"Your rule says the average is whichever value sits in the middle of the list. Take the same three numbers but change the last one from 9 to 90, so the list is 2, 4 and 90.\", \"question\": \"If you work out the average of 2, 4 and 90 by your middle-one rule, and then think about what 'average' means as a fair share of the total across the three numbers, do the two ways agree?\"}"
+    "{\"key_idea\": \"Whether the middle value and the average are the same thing is something you can test with a case where one number is pulled far from the others.\", \"body\": \"Your belief says the average is whichever value sits in the middle of the ordered list. Take 2, 4 and 100 and keep that belief in mind. Then think about what 'average' means as an even share: if the total were split equally among the three numbers, what would each get?\", \"question\": \"Using that equal-share idea, what do you get for 2, 4 and 100, and does it match what your 'middle one' belief predicts?\"}",
+    "{\"key_idea\": \"Whether the middle value and the average are the same thing is something you can test on a case where one number sits far from the others.\", \"body\": \"Your belief says the average of a list is whichever value sits in the middle once it is ordered. Take 2, 4 and 100, and think of the average as the equal share each number would get if the total were split evenly among the three.\", \"question\": \"What do you get for 2, 4 and 100 using that equal-share idea, and does it match what your middle-one belief predicts?\"}"
   ],
   "input_sha256": "a22712fd78e946fb5a6a4fd176bbe6aff7027a3e739e5d80476f69fec60e789b",
   "model": "claude-sonnet-5-5",
   "output": {
-    "body": "Your rule says the average is whichever value sits in the middle of the list. Take the same three numbers but change the last one from 9 to 90, so the list is 2, 4 and 90.",
-    "key_idea": "A claim about the average can be tested by checking whether it would change when the values change.",
-    "question": "If you work out the average of 2, 4 and 90 by your middle-one rule, and then think about what 'average' means as a fair share of the total across the three numbers, do the two ways agree?"
+    "body": "Your belief says the average of a list is whichever value sits in the middle once it is ordered. Take 2, 4 and 100, and think of the average as the equal share each number would get if the total were split evenly among the three.",
+    "key_idea": "Whether the middle value and the average are the same thing is something you can test on a case where one number sits far from the others.",
+    "question": "What do you get for 2, 4 and 100 using that equal-share idea, and does it match what your middle-one belief predicts?"
   },
-  "prompt_hash": "b187384be34a",
-  "requests": 1,
+  "prompt_hash": "20d0e4f9042d",
+  "requests": 2,
   "rescued": false,
-  "retries": 0,
+  "retries": 1,
   "schema_hash": "ee2a0f1f177f",
   "slot": "loop_tutor_deep",
   "tool_calls": []

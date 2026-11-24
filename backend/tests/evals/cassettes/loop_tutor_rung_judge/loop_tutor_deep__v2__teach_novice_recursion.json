@@ -2,9 +2,9 @@
   "judge_model": "claude-opus-5-5",
   "judge_prompt_hash": "04965e06502fce54287461706513430c3dcacd1ff4e9f575514434a4a837b08a",
   "output": {
-    "evidence": "Key idea: A recursive function solves a problem by handing a smaller copy of the same problem to itself, and it stops at a base case that needs no further help.",
+    "evidence": "Take adding 1+2+...+n: define sum(n) = n + sum(n-1), with base case sum(1) = 1",
     "reveals_final_answer": false,
-    "rung": 2
+    "rung": 4
   },
-  "served_sha256": "ca5d71583f7d1bf90bf8d54757c5927453ca99d9beb7f66a7bfcf8ee1ae4c977"
+  "served_sha256": "f0bf4acf4a411497b907822db925561cafa33371cc6348b56ea755d78c8c80ba"
 }

@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "What does your belief predict for the slope of x^2 at x = 0 and at x = 1, and does it match the slopes 0 and 2 from the graph?",
+    "evidence": "What does your belief predict for the derivative of x^2 at x = 0, and does that match the slope you see on the graph of x^2 there?",
     "only_states_correction": false
   },
-  "served_sha256": "6b7687271d1bf28c30d3651753d8c0d7b8d3e31467465762332cac216dce87a4"
+  "served_sha256": "f4f6715902e25d738793722047f1b3ee20098c8414c1657455c0c8f44bb146af"
 }

@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"Start by naming what your answer commits you to, then check it against the question.\", \"body\": \"You wrote that the base case is n == 0 returning 1, and the graded verdict on that answer is correct.\", \"question\": \"What is the first thing you need to figure out next to explain why you chose that base case?\"}"
+    "{\"key_idea\": \"Start by pinning down what the answer you just gave is claiming.\", \"body\": \"You wrote that the base case is n == 0 returning 1, and the grader has marked that answer correct.\", \"question\": \"What is the first thing you need to check about your own reasoning to see why you chose that base case?\"}"
   ],
   "input_sha256": "c58dc63bbdf3cbebe20856dfb3f96c306ae2d2f8914478905abe9554512a186f",
   "model": "claude-haiku-5-5",
   "output": {
-    "body": "You wrote that the base case is n == 0 returning 1, and the graded verdict on that answer is correct.",
-    "key_idea": "Start by naming what your answer commits you to, then check it against the question.",
-    "question": "What is the first thing you need to figure out next to explain why you chose that base case?"
+    "body": "You wrote that the base case is n == 0 returning 1, and the grader has marked that answer correct.",
+    "key_idea": "Start by pinning down what the answer you just gave is claiming.",
+    "question": "What is the first thing you need to check about your own reasoning to see why you chose that base case?"
   },
-  "prompt_hash": "b187384be34a",
+  "prompt_hash": "20d0e4f9042d",
   "requests": 1,
   "rescued": false,
   "retries": 0,

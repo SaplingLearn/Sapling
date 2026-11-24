@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "What is (4.0401 - 4) divided by 0.01, and how does that compare with the 8 your belief predicts?",
+    "evidence": "Use the points x = 2 and x = 2.01 on y = x^4, then compare that measured slope with the value your own derivative rule gives at x = 2.",
     "only_states_correction": false
   },
-  "served_sha256": "1afb5ac42f492a5a60d5880c96b527af8b6517a434bf52968fb529a4b26547f9"
+  "served_sha256": "92bbcbdc66f369eb97894d03539ae9dbab7b4cfa52bd96e288354629c15b504e"
 }

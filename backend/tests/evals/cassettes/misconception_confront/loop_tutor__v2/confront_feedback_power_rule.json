@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A derivative claim can be tested by checking it against how fast the function actually changes over a tiny step.\", \"body\": \"Keeping x^3 in the result predicts that the slope of y = x^3 at x = 2 equals 3 times 2^3. You can test that by computing the average rate of change (2.01^3 - 2^3)/0.01 over a very small step.\", \"question\": \"What value do you get for (2.01^3 - 2^3)/0.01, and how does it compare with the 3 times 2^3 that your answer predicts?\"}"
+    "{\"key_idea\": \"A derivative gives a slope, so a proposed rule can be tested by measuring the slope of the function directly at a point.\", \"body\": \"Your answer predicts the slope of y = x^3 at x = 2 is 3 times 2^3. Test that prediction with nearby points: compute ((2+h)^3 - 2^3)/h for h = 0.001 and compare the result with what your answer predicts.\", \"question\": \"What number does that difference quotient give you, and does it match the value your answer predicts?\"}"
   ],
   "input_sha256": "e56ef858618cb262c8cfddacb83cd6e53aad926605dd5965b87afc9df84247fe",
   "model": "claude-haiku-5-5",
   "output": {
-    "body": "Keeping x^3 in the result predicts that the slope of y = x^3 at x = 2 equals 3 times 2^3. You can test that by computing the average rate of change (2.01^3 - 2^3)/0.01 over a very small step.",
-    "key_idea": "A derivative claim can be tested by checking it against how fast the function actually changes over a tiny step.",
-    "question": "What value do you get for (2.01^3 - 2^3)/0.01, and how does it compare with the 3 times 2^3 that your answer predicts?"
+    "body": "Your answer predicts the slope of y = x^3 at x = 2 is 3 times 2^3. Test that prediction with nearby points: compute ((2+h)^3 - 2^3)/h for h = 0.001 and compare the result with what your answer predicts.",
+    "key_idea": "A derivative gives a slope, so a proposed rule can be tested by measuring the slope of the function directly at a point.",
+    "question": "What number does that difference quotient give you, and does it match the value your answer predicts?"
   },
-  "prompt_hash": "b187384be34a",
+  "prompt_hash": "20d0e4f9042d",
   "requests": 1,
   "rescued": false,
   "retries": 0,

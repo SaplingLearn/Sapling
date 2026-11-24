@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"Test whether a 0/0 form by itself tells you anything about the limit, by checking it on a case where you can see what happens.\", \"body\": \"Your belief predicts that every limit shaped like 0/0 fails to exist. Take f(x) = 2x/x as x approaches 0: plugging in x = 0 gives 0/0 there too.\", \"question\": \"What does 2x/x equal for every x near 0 but not equal to 0, and does that agree with your belief that a 0/0 form means the limit does not exist?\"}"
+    "{\"key_idea\":\"Test whether a 0/0 form at a point settles anything about the limit near that point.\",\"body\":\"Your belief predicts that every 0/0 form has no limit, so it should hold for a simple case like (2x)/x as x approaches 0, which is also 0/0 at x = 0. A limit looks at the values for x near 0, not at x = 0 itself.\",\"question\":\"If you simplify (2x)/x for x not equal to 0 and see what it approaches as x nears 0, does that match what your belief predicts?\"}"
   ],
   "input_sha256": "1d48218badd0d7fb355e90843966330dbc456227baf602b717ea63dcf976372c",
   "model": "claude-sonnet-5-5",
   "output": {
-    "body": "Your belief predicts that every limit shaped like 0/0 fails to exist. Take f(x) = 2x/x as x approaches 0: plugging in x = 0 gives 0/0 there too.",
-    "key_idea": "Test whether a 0/0 form by itself tells you anything about the limit, by checking it on a case where you can see what happens.",
-    "question": "What does 2x/x equal for every x near 0 but not equal to 0, and does that agree with your belief that a 0/0 form means the limit does not exist?"
+    "body": "Your belief predicts that every 0/0 form has no limit, so it should hold for a simple case like (2x)/x as x approaches 0, which is also 0/0 at x = 0. A limit looks at the values for x near 0, not at x = 0 itself.",
+    "key_idea": "Test whether a 0/0 form at a point settles anything about the limit near that point.",
+    "question": "If you simplify (2x)/x for x not equal to 0 and see what it approaches as x nears 0, does that match what your belief predicts?"
   },
-  "prompt_hash": "b187384be34a",
+  "prompt_hash": "20d0e4f9042d",
   "requests": 1,
   "rescued": false,
   "retries": 0,

@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A limit describes what a function's outputs approach as the input gets close to a point, which is separate from whatever the function happens to equal at that point.\", \"body\": \"The definition of a limit looks at inputs near the point, not only at the point itself, so plugging in the point is just one piece of the picture. I can't confirm a final answer here, so the check is whether the definition supports your reasoning.\", \"question\": \"In your own words, what does it mean for a limit to depend on inputs near a point rather than the point itself?\"}"
+    "{\"key_idea\": \"A limit describes the value a function approaches as the input gets close to a point, which is not always the value the function takes at that point.\", \"body\": \"Because a limit depends on outputs near the point, it can't be settled by looking only at the point itself. Substituting the point directly is a shortcut that works only when the function is continuous there, so its result has to be checked against what nearby values do.\", \"question\": \"In your own words, why might the output at a point differ from the value the function approaches as the input nears that point?\"}"
   ],
   "input_sha256": "245b2b06c1560f1753211cbbd65126488bfe0845b7975c67ac5c82ecd0ee8a73",
   "model": "claude-haiku-5-5",
   "output": {
-    "body": "The definition of a limit looks at inputs near the point, not only at the point itself, so plugging in the point is just one piece of the picture. I can't confirm a final answer here, so the check is whether the definition supports your reasoning.",
-    "key_idea": "A limit describes what a function's outputs approach as the input gets close to a point, which is separate from whatever the function happens to equal at that point.",
-    "question": "In your own words, what does it mean for a limit to depend on inputs near a point rather than the point itself?"
+    "body": "Because a limit depends on outputs near the point, it can't be settled by looking only at the point itself. Substituting the point directly is a shortcut that works only when the function is continuous there, so its result has to be checked against what nearby values do.",
+    "key_idea": "A limit describes the value a function approaches as the input gets close to a point, which is not always the value the function takes at that point.",
+    "question": "In your own words, why might the output at a point differ from the value the function approaches as the input nears that point?"
   },
-  "prompt_hash": "b187384be34a",
+  "prompt_hash": "20d0e4f9042d",
   "requests": 1,
   "rescued": false,
   "retries": 0,

@@ -2,9 +2,9 @@
   "judge_model": "claude-opus-5-5",
   "judge_prompt_hash": "56120063861e7227b4690754af5b01d7ff13e039c9510237736a770622e40921",
   "output": {
-    "evidence": "What is the first thing you need to figure out to check your own reasoning?",
+    "evidence": "Correct. You wrote that the base case is n == 0 returning 1, and the verdict on that answer is correct.",
     "reveals_final_answer": false,
-    "rung": 1
+    "rung": 0
   },
-  "served_sha256": "3f5276e1f1a3495f4ca635aa4a74064c1c0a457c4f5f7eb7ca4b117024463df9"
+  "served_sha256": "91d468afddcdd9b532e3b0324a38d6c3297481adfb4ae3e09ff368a1493010f4"
 }

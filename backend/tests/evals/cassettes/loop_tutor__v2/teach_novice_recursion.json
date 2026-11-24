@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"Recursion solves a problem by reusing a solution to a smaller version of the same problem, and you can see how that works by trying one small case first.\", \"body\": \"Don't worry about getting this right yet, since the attempt is how we find where the confusion sits. Picture adding 1+2+3+4 one step at a time, and suppose someone has already told you that 1+2+3 is 6. Your job is only to say how you would use that 6 to get the total.\", \"question\": \"Using only the fact that 1+2+3 is 6, what would you do to get the total of 1+2+3+4, and what is your reasoning?\"}"
+    "{\"key_idea\": \"Recursion is a function that solves a problem by calling itself on a smaller version of the same problem until it reaches a stopping case.\", \"body\": \"That's a very common first reaction, and a guess is a useful place to start. Here's a tiny function: countdown(n) stops if n is 0, and otherwise prints n and then calls countdown(n-1). Give it your best guess before I explain anything more.\", \"question\": \"What do you think countdown(3) prints, in order, if it stops as soon as n is 0?\"}"
   ],
   "input_sha256": "1a6ccd15960d7d572c96de957f6eae0ff470a031fd3568a0cec9f272acdfb746",
   "model": "claude-haiku-5-5",
   "output": {
-    "body": "Don't worry about getting this right yet, since the attempt is how we find where the confusion sits. Picture adding 1+2+3+4 one step at a time, and suppose someone has already told you that 1+2+3 is 6. Your job is only to say how you would use that 6 to get the total.",
-    "key_idea": "Recursion solves a problem by reusing a solution to a smaller version of the same problem, and you can see how that works by trying one small case first.",
-    "question": "Using only the fact that 1+2+3 is 6, what would you do to get the total of 1+2+3+4, and what is your reasoning?"
+    "body": "That's a very common first reaction, and a guess is a useful place to start. Here's a tiny function: countdown(n) stops if n is 0, and otherwise prints n and then calls countdown(n-1). Give it your best guess before I explain anything more.",
+    "key_idea": "Recursion is a function that solves a problem by calling itself on a smaller version of the same problem until it reaches a stopping case.",
+    "question": "What do you think countdown(3) prints, in order, if it stops as soon as n is 0?"
   },
-  "prompt_hash": "b187384be34a",
+  "prompt_hash": "20d0e4f9042d",
   "requests": 1,
   "rescued": false,
   "retries": 0,

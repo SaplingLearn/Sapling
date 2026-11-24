@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "Does the prediction from your belief match the slopes 0 at x = 0 and 2 at x = 1, and what does that tell you about the belief?",
+    "evidence": "What does your belief give for the derivative of x^2 at x = 1, and does it match the slope you get from that small-interval estimate?",
     "only_states_correction": false
   },
-  "served_sha256": "b2474f12cee086cb6e4bed96f98312bb03f89ff3ed7132523ac479ca1625ce69"
+  "served_sha256": "d1606eeb4a582c08ac297bd1335fe925bd1844167143a6c74f695fc19a1db699"
 }

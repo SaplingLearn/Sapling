@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "does the chain ever reach a call that returns a value without making another call?",
+    "evidence": "trace factorial(0) in a version with no base case, where every call just does n * factorial(n-1). Write down which call factorial(0) makes next",
     "only_states_correction": false
   },
-  "served_sha256": "6054308bfe2cc60e5e30b8244915709d40f5b9c65bd2e1222a5359fd17d2781f"
+  "served_sha256": "56e4db4acbb282a785310f3f189a8b9c119265c67e0e671a2180d325369c5f5c"
 }

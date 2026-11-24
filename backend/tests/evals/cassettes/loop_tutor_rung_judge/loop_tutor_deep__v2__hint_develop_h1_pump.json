@@ -2,9 +2,9 @@
   "judge_model": "claude-opus-5-5",
   "judge_prompt_hash": "f982ee5b9dcb1cd2feae2a9f13a885c624380a1fa952a5cdf7ecc24e9d83de84",
   "output": {
-    "evidence": "What is the first thing you need to figure out before you can answer it?",
+    "evidence": "What is the first thing you need to figure out before you can answer this item?",
     "reveals_final_answer": false,
     "rung": 1
   },
-  "served_sha256": "bf4f9bb81af2e93ff8792b21bd6e47a577f9e1e14837261d98962eeec2e374e8"
+  "served_sha256": "0915cd20d7b61422d78073e438f1768d29cee81f7e845a398d96500ab830f057"
 }

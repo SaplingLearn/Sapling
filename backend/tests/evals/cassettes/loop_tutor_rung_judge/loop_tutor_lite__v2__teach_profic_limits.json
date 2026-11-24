@@ -2,9 +2,9 @@
   "judge_model": "claude-opus-5-5",
   "judge_prompt_hash": "4a7facad9fab6be75173f5821ece6dd0e3847df5f7d6e1ab947c66b74a43f4c1",
   "output": {
-    "evidence": "What do you already know about limits, and which kinds of limit problems have you tried so far?",
+    "evidence": "What do you already know about limits, and what have you tried so far?",
     "reveals_final_answer": false,
     "rung": 1
   },
-  "served_sha256": "57cb50035e64dc7319a515fecca9cf913883e063793f74c51bf269ec960007fc"
+  "served_sha256": "27e6be370b6102109f25fa79a1047db159d0554dda54f48ec2128afde7eb9593"
 }
