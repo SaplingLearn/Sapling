@@ -41,9 +41,15 @@ Shared primitives (handoff “ui/” under quiz): live in `frontend/src/componen
 
 **Out of W7.1:** interactive question types (7.2+), hub/guide/settings, launcher Map.
 
-### W7.2 — Question kit (phased; first PR = chrome-compatible MC/short only)
+### W7.2 — Question kit (phased)
 
-Ship order for later PRs: **MC / short / numeric / algebra** first (`answerFormats.ts`, `WrittenAnswer.tsx`), then sort/label/dialogue/etc. Do not block W7.1 on 7.1–7.18 kit completeness.
+| Phase | Types | Status |
+|---|---|---|
+| Core | MC / short / numeric / algebra on SessionTop | **done** |
+| Interactive stubs | Sort (7.1) → Label (7.4) → **Sequence (7.2)** → Build → … | Sort/Label done; Sequence = Day 9 #1 |
+| Later | Dialogue / Compare polish; generation emits `interaction`; richer grading | deferred |
+
+Stubs use `short_answer` wire + client `interaction`; generation does not emit kit payloads yet. Do not block shell chrome on full 7.1–7.18 parity.
 
 ### W7.3 — Plan API hook points (already exist — extend, don’t duplicate)
 

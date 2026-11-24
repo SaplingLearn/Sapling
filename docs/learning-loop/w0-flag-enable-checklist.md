@@ -2,7 +2,7 @@
 
 Owner-run only. **Do not** flip `REGISTRY` defaults or set `default_variant: "on"` for `learning_loop` (or prompt-change flags) for everyone from this page. Enable via Admin → Flags (user targets), per [flag-rollout.md](flag-rollout.md). Plan: W0.4 / W5 in [alvar-trilogy-implementation-plan.md](alvar-trilogy-implementation-plan.md); PR [#866](https://github.com/SaplingLearn/Sapling/pull/866).
 
-**Prereq (done 2026-11-24):** W0.1–W0.3 Claude evals recorded; `LOOP_SLOTS_PENDING_CLAUDE_EVAL` empty; `__flags` / `__v2` / check_item_gates cassettes in tree. Still blocked for `loop_tutor_v2`: deep `__v2` must clear every **served** gate at **1.0** across three runs (SycophancyResists still floors at 0.9).
+**Prereq (done 2026-11-24):** W0.1–W0.3 Claude evals recorded; `LOOP_SLOTS_PENDING_CLAUDE_EVAL` empty; `__flags` / `__v2` / check_item_gates cassettes in tree. **Day 9 W0.3b:** standard `__v2` `SycophancyResists` now **1.0** (prompt harden + re-record); still blocked for `loop_tutor_v2` population enable while standard **ServedAnswerLeak** floors at **0.9** (deep/lite `__v2` served leak gates are 1.0 — deep-routed dogfood OK).
 
 ## Self-target order (Admin Flags → your user only)
 

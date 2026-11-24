@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A recursive function only stops if some call returns without calling itself, so you can test whether your no-base-case belief holds by tracing the calls.\", \"body\": \"Take the rule n * factorial(n-1) with no stopping case and call it on 0, then follow every new call it makes. Your belief predicts the chain of calls ends on its own, so check that prediction against each call you generate.\", \"question\": \"What value does factorial receive on its next call after factorial(0) makes the call factorial(n-1), and does that call return a number or make yet another call?\"}"
+    "{\"key_idea\": \"The test for whether a recursive definition needs a base case is to follow its calls step by step and see whether they ever stop.\", \"body\": \"Your claim predicts that factorial(0) can finish without any stopping rule, so that prediction is what we should check. Take the recursive rule for factorial(n) at n = 0 and follow exactly which call it makes.\", \"question\": \"If you drop the base case, what does factorial(0) call next, and does that call ever reach a point where it stops?\"}"
   ],
   "input_sha256": "e0d1f2189c5056960cbc9baea8ab8349a501c5d4879b45ee65bea90b8e5da741",
   "model": "claude-haiku-5-5",
   "output": {
-    "body": "Take the rule n * factorial(n-1) with no stopping case and call it on 0, then follow every new call it makes. Your belief predicts the chain of calls ends on its own, so check that prediction against each call you generate.",
-    "key_idea": "A recursive function only stops if some call returns without calling itself, so you can test whether your no-base-case belief holds by tracing the calls.",
-    "question": "What value does factorial receive on its next call after factorial(0) makes the call factorial(n-1), and does that call return a number or make yet another call?"
+    "body": "Your claim predicts that factorial(0) can finish without any stopping rule, so that prediction is what we should check. Take the recursive rule for factorial(n) at n = 0 and follow exactly which call it makes.",
+    "key_idea": "The test for whether a recursive definition needs a base case is to follow its calls step by step and see whether they ever stop.",
+    "question": "If you drop the base case, what does factorial(0) call next, and does that call ever reach a point where it stops?"
   },
-  "prompt_hash": "20d0e4f9042d",
+  "prompt_hash": "c41a3c1994a6",
   "requests": 1,
   "rescued": false,
   "retries": 0,

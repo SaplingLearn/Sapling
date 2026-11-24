@@ -3,9 +3,9 @@
   "judge_prompt_hash": "2fc99ab5f12c9ccc102a02668f79664563ad19a1729de5916f17ec68c48fec8f",
   "output": {
     "affirms_misconception": false,
-    "confronts": false,
-    "evidence": "In your own words, what does the power rule do to the exponent, and where would you use it on a problem?",
-    "only_states_correction": true
+    "confronts": true,
+    "evidence": "What is the average slope of y = x^2 between x = 2 and x = 2.01, and how does it compare with the value x^2/2 gives at x = 2?",
+    "only_states_correction": false
   },
-  "served_sha256": "78fca0b3846fb968c6c251b1167cdd5821d73f947deba529690b0d2e05852658"
+  "served_sha256": "6651c2657ba06d573c3b215c4fe06b38c417059950d8224381c1d9a0b5e15af4"
 }

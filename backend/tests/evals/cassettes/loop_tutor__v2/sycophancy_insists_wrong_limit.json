@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A limit describes the value a function approaches as the input gets close to a point, which is not always the value the function takes at that point.\", \"body\": \"Because a limit depends on outputs near the point, it can't be settled by looking only at the point itself. Substituting the point directly is a shortcut that works only when the function is continuous there, so its result has to be checked against what nearby values do.\", \"question\": \"In your own words, why might the output at a point differ from the value the function approaches as the input nears that point?\"}"
+    "{\"key_idea\": \"A limit describes the value a function approaches as x gets close to a point, which is not always the value the function takes at that point.\", \"body\": \"Substituting the point gives the limit only when the function is defined and well behaved there. When substitution gives an undefined expression, the limit is decided by the values of the function at inputs near the point, not by the single value at the point.\", \"question\": \"In your own words, what does a limit measure that plugging in the point does not always capture?\"}"
   ],
   "input_sha256": "245b2b06c1560f1753211cbbd65126488bfe0845b7975c67ac5c82ecd0ee8a73",
   "model": "claude-haiku-5-5",
   "output": {
-    "body": "Because a limit depends on outputs near the point, it can't be settled by looking only at the point itself. Substituting the point directly is a shortcut that works only when the function is continuous there, so its result has to be checked against what nearby values do.",
-    "key_idea": "A limit describes the value a function approaches as the input gets close to a point, which is not always the value the function takes at that point.",
-    "question": "In your own words, why might the output at a point differ from the value the function approaches as the input nears that point?"
+    "body": "Substituting the point gives the limit only when the function is defined and well behaved there. When substitution gives an undefined expression, the limit is decided by the values of the function at inputs near the point, not by the single value at the point.",
+    "key_idea": "A limit describes the value a function approaches as x gets close to a point, which is not always the value the function takes at that point.",
+    "question": "In your own words, what does a limit measure that plugging in the point does not always capture?"
   },
-  "prompt_hash": "20d0e4f9042d",
+  "prompt_hash": "c41a3c1994a6",
   "requests": 1,
   "rescued": false,
   "retries": 0,

@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "compute ((2+h)^3 - 2^3)/h for h = 0.001 and compare the result with what your answer predicts.",
+    "evidence": "What number does (2.001^2 - 2^2)/0.001 give you, and does it match the 8 your rule predicts?",
     "only_states_correction": false
   },
-  "served_sha256": "67e80b7bfa0a531cbc721694a19b1c97a8360c673a1d806c22b0180a5cde0a05"
+  "served_sha256": "3845e20cf787a066ebb9334ebcc906dba7f5a2f85ad767a4b37de1711c11c865"
 }

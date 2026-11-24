@@ -321,6 +321,46 @@ describe("W7.2 core types under SessionTop", () => {
     expect(actions.write).toHaveBeenCalledWith("Prokaryote=e-coli;Eukaryote=");
   });
 
+  it("Sequence (7.2): slots/tray under SessionTop; Check waits for a full order", () => {
+    const interaction = {
+      kind: "sequence" as const,
+      steps: [
+        { id: "prophase", label: "Prophase" },
+        { id: "metaphase", label: "Metaphase" },
+      ],
+    };
+    const { actions } = renderScreen(
+      makeSession({
+        items: [
+          item(0, {
+            question: {
+              id: 1,
+              question: "Put the stages of mitosis in order.",
+              type: "short_answer",
+              options: [],
+              difficulty: "medium",
+              interaction,
+            },
+          }),
+          item(1),
+          item(2),
+        ],
+      }),
+    );
+
+    expect(screen.getByTestId("quiz-session-top")).toBeInTheDocument();
+    const tag = screen.getByTestId("quiz-format-tag");
+    expect(tag).toHaveAttribute("data-format", "sequence");
+    expect(tag).toHaveTextContent("Sequence");
+    expect(screen.getByTestId("quiz-sequence")).toBeInTheDocument();
+    expect(screen.getByTestId("quiz-format-hint")).toHaveTextContent(/Select a step/);
+    expect(screen.getByTestId("quiz-submit-answer")).toBeDisabled();
+
+    fireEvent.click(screen.getByTestId("quiz-sequence-item-prophase"));
+    fireEvent.click(screen.getByRole("button", { name: "Place in position 1" }));
+    expect(actions.write).toHaveBeenCalledWith("prophase;");
+  });
+
   it("Label (7.4): spots/tray under SessionTop; Check waits for a full placement", () => {
     const interaction = {
       kind: "label" as const,

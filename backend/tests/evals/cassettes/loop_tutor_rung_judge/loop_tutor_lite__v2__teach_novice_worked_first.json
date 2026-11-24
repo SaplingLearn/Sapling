@@ -2,9 +2,9 @@
   "judge_model": "claude-opus-5-5",
   "judge_prompt_hash": "ef37fe670c185dbbd3a48c9c1c6fd26940cb876f4d996a477462b25b084d6daf",
   "output": {
-    "evidence": "Isomorph: sum(n) = n + sum(n-1) with base case sum(1) = 1, so sum(3) needs 3 + sum(2)",
+    "evidence": "Isomorph: sum(n) is 1 plus 2 plus up to n, with the step sum(n) = n + sum(n-1) and the base case sum(0) = 0",
     "reveals_final_answer": false,
     "rung": 4
   },
-  "served_sha256": "e114eba04f157273d42b675f45d3a7f737818412ad939b4256ac7cb5c1c7faee"
+  "served_sha256": "b8f6d7a35df8995a3ddf5af6666cf80732eb0563a8380209978158725526baf4"
 }

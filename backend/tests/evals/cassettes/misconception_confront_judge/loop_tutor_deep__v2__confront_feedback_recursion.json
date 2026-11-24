@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "Trace that version by hand for factorial(0): what argument does each new call receive, and at what point does your belief say it stops?",
+    "evidence": "If you trace factorial(0) through that version, writing out the next two or three calls that happen, what value of n does each call get, and does anything in the code ever tell it to stop?",
     "only_states_correction": false
   },
-  "served_sha256": "1e5ffce1de669525661c112e136a6c9a93f01181789f883ae62cffa9c309b4c2"
+  "served_sha256": "bd42e83618c3b6803d9c6eb7bb8f3d8ab173d9e7bf7dd7cb7d1ca198fb24975e"
 }

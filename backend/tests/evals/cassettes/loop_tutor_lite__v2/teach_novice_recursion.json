@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A recursive function solves a problem by calling itself on a smaller version of the same problem.\", \"body\": \"No need to get it right yet; a guess helps us see where the confusion is. Picture a function countdown(n) that prints n, then calls countdown(n-1), and stops when n reaches 0.\", \"question\": \"Based on that picture, what do you think countdown(3) would print, and why?\"}"
+    "{\"key_idea\": \"A recursive function solves a problem by calling itself on a smaller input until it reaches a base case that needs no further calls.\", \"body\": \"Recursion means a function's definition refers to itself, and every self-call must move toward a stopping point called the base case. Without a base case the calls never end, so the base case is what makes the idea work. Let's start with one small attempt, and you don't need to get it fully right.\", \"question\": \"Given countdown(n) that prints n, then calls countdown(n-1), and stops when n is 0, what do you think countdown(3) prints, in order?\"}"
   ],
   "input_sha256": "1a6ccd15960d7d572c96de957f6eae0ff470a031fd3568a0cec9f272acdfb746",
   "model": "claude-haiku-5-5",
   "output": {
-    "body": "No need to get it right yet; a guess helps us see where the confusion is. Picture a function countdown(n) that prints n, then calls countdown(n-1), and stops when n reaches 0.",
-    "key_idea": "A recursive function solves a problem by calling itself on a smaller version of the same problem.",
-    "question": "Based on that picture, what do you think countdown(3) would print, and why?"
+    "body": "Recursion means a function's definition refers to itself, and every self-call must move toward a stopping point called the base case. Without a base case the calls never end, so the base case is what makes the idea work. Let's start with one small attempt, and you don't need to get it fully right.",
+    "key_idea": "A recursive function solves a problem by calling itself on a smaller input until it reaches a base case that needs no further calls.",
+    "question": "Given countdown(n) that prints n, then calls countdown(n-1), and stops when n is 0, what do you think countdown(3) prints, in order?"
   },
-  "prompt_hash": "20d0e4f9042d",
+  "prompt_hash": "c41a3c1994a6",
   "requests": 1,
   "rescued": false,
   "retries": 0,

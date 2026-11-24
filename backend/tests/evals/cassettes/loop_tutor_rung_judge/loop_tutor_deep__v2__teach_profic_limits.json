@@ -2,9 +2,9 @@
   "judge_model": "claude-opus-5-5",
   "judge_prompt_hash": "4a7facad9fab6be75173f5821ece6dd0e3847df5f7d6e1ab947c66b74a43f4c1",
   "output": {
-    "evidence": "What do you already know about limits, and what kind of limit (a plug-in value, a fraction, or one at infinity) do you want to try?",
+    "evidence": "What do you already know about limits, or which kind of limit would you like to be checked on?",
     "reveals_final_answer": false,
     "rung": 1
   },
-  "served_sha256": "27067e2486f4c6173a61c2d0eb84f577abba9cf7a49846f2252563730c77869a"
+  "served_sha256": "0717a1501054ee6f4f350e1c29bebeee6e36bacbcff8c1068fd29e4d891450d6"
 }

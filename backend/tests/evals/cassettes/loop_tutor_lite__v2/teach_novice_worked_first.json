@@ -1,18 +1,20 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A recursive function solves a problem by calling itself on a smaller input until a base case returns a value directly.\", \"body\": \"Every recursive function needs a base case, the input it answers directly, and a recursive case, where it calls itself on a smaller input. Isomorph: sum(n) = n + sum(n-1) with base case sum(1) = 1, so sum(3) needs 3 + sum(2), which forces sum(2) = 2 + sum(1) = 3, giving sum(3) = 3 + 3 = 6. Each call shrinks the input until the base case stops the chain.\", \"question\": \"For your own function, what smaller input does the recursive call use, and what input is the base case?\"}"
+    "{\"key_idea\": \"A recursive function needs a base case that stops it and a step that calls itself on a smaller input.\", \"body\": \"Isomorph: sum(n) = 1 + 2 + ... + n, with the step sum(n) = n + sum(n-1) and the base case sum(0) = 0, which stops the calls. To get sum(3), the step gives 3 + sum(2), then 2 + sum(1), then 1 + sum(0) = 1, so the chain unwinds to 3 + 2 + 1 = 6. Every recursive function has these same two parts, so the base case must come before you write the step.\", \"question\": \"In your own function, what is the smallest input, and what should it return without calling itself again?\"}",
+    "{\"key_idea\": \"A recursive function needs a base case that stops it and a step that calls itself on a smaller input.\", \"body\": \"Isomorph: sum(n) = 1 + 2 + ... + n, with the step sum(n) = n + sum(n-1) and the base case sum(0) = 0 that stops the calls. To get sum(3), the step gives 3 + sum(2), then 2 + sum(1), then 1 + sum(0) = 1, so the chain unwinds to 3 + 2 + 1 = 6. Every recursive function has these same two parts, so write the base case before the step.\", \"question\": \"In your own function, what is the smallest input, and what should it return without calling itself again?\"}",
+    "{\"key_idea\": \"A recursive function needs a base case that stops it and a step that calls itself on a smaller input.\", \"body\": \"Isomorph: sum(n) is 1 plus 2 plus up to n, with the step sum(n) = n + sum(n-1) and the base case sum(0) = 0 that stops the calls. To get sum(3), the step gives 3 + sum(2), then 2 + sum(1), then 1 + sum(0) = 1, so the chain unwinds to 3 + 2 + 1 = 6. Write the base case before the step, since both parts are required.\", \"question\": \"In your own function, what is the smallest input, and what should it return without calling itself again?\"}"
   ],
   "input_sha256": "34de23f42f0e84467fcb83e1af87ea9d3d04aaf8518411a19b757b77ee920236",
   "model": "claude-haiku-5-5",
   "output": {
-    "body": "Every recursive function needs a base case, the input it answers directly, and a recursive case, where it calls itself on a smaller input. Isomorph: sum(n) = n + sum(n-1) with base case sum(1) = 1, so sum(3) needs 3 + sum(2), which forces sum(2) = 2 + sum(1) = 3, giving sum(3) = 3 + 3 = 6. Each call shrinks the input until the base case stops the chain.",
-    "key_idea": "A recursive function solves a problem by calling itself on a smaller input until a base case returns a value directly.",
-    "question": "For your own function, what smaller input does the recursive call use, and what input is the base case?"
+    "body": "Isomorph: sum(n) is 1 plus 2 plus up to n, with the step sum(n) = n + sum(n-1) and the base case sum(0) = 0 that stops the calls. To get sum(3), the step gives 3 + sum(2), then 2 + sum(1), then 1 + sum(0) = 1, so the chain unwinds to 3 + 2 + 1 = 6. Write the base case before the step, since both parts are required.",
+    "key_idea": "A recursive function needs a base case that stops it and a step that calls itself on a smaller input.",
+    "question": "In your own function, what is the smallest input, and what should it return without calling itself again?"
   },
-  "prompt_hash": "20d0e4f9042d",
-  "requests": 1,
+  "prompt_hash": "c41a3c1994a6",
+  "requests": 3,
   "rescued": false,
-  "retries": 0,
+  "retries": 2,
   "schema_hash": "ee2a0f1f177f",
   "slot": "loop_tutor_lite",
   "tool_calls": []

@@ -3373,6 +3373,18 @@ def test_pose_payload_key_verified_only_when_canonical_verified(seams):
     assert "canonical_verified" not in blob and "gate" not in blob
 
 
+def test_pose_payload_figure_withheld_only_for_visual_surface(seams):
+    """W4.1a: visual surface → withheld figure slot; other surfaces omit it."""
+    from services.loop.practice import _pose_payload
+
+    plain = _pose_payload(ITEM)
+    assert "figure" not in plain
+
+    visual = _pose_payload(ITEM.model_copy(update={"surface_representation": "visual"}))
+    assert visual["figure"] == {"status": "withheld"}
+    assert "svg" not in json.dumps(visual).lower()
+
+
 def test_check_next_activates_and_is_idempotent(gate_on, seams):
     seams.store["doc"] = _plan_state()
     seams.list_items.return_value = [ITEM]

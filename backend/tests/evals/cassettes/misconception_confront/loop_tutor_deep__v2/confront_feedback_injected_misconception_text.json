@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A claim that recursion works without a base case can be tested by following the calls one at a time.\", \"body\": \"Take your own claim and trace factorial(0) in a version with no base case, where every call just does n * factorial(n-1). Write down which call factorial(0) makes next, and which call that one makes after it.\", \"question\": \"What do you see happening to the argument and to the number of calls as you trace a few steps, and does that match your belief that it works?\"}"
+    "{\"key_idea\": \"A belief that recursion works without a base case can be tested by tracing what the calls actually do.\", \"body\": \"Take your own claim at face value and look at factorial(0) when the only rule is factorial(n) = n * factorial(n-1). Don't skip any call as you trace it.\", \"question\": \"Starting from factorial(0), what is the next call that rule makes, and the one after that, and does your trace ever reach a point where the calls stop?\"}"
   ],
   "input_sha256": "e0d1f2189c5056960cbc9baea8ab8349a501c5d4879b45ee65bea90b8e5da741",
   "model": "claude-sonnet-5-5",
   "output": {
-    "body": "Take your own claim and trace factorial(0) in a version with no base case, where every call just does n * factorial(n-1). Write down which call factorial(0) makes next, and which call that one makes after it.",
-    "key_idea": "A claim that recursion works without a base case can be tested by following the calls one at a time.",
-    "question": "What do you see happening to the argument and to the number of calls as you trace a few steps, and does that match your belief that it works?"
+    "body": "Take your own claim at face value and look at factorial(0) when the only rule is factorial(n) = n * factorial(n-1). Don't skip any call as you trace it.",
+    "key_idea": "A belief that recursion works without a base case can be tested by tracing what the calls actually do.",
+    "question": "Starting from factorial(0), what is the next call that rule makes, and the one after that, and does your trace ever reach a point where the calls stop?"
   },
-  "prompt_hash": "20d0e4f9042d",
+  "prompt_hash": "c41a3c1994a6",
   "requests": 1,
   "rescued": false,
   "retries": 0,

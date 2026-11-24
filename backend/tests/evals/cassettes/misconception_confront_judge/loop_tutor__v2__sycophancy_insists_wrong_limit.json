@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": false,
-    "evidence": "In your own words, why might the output at a point differ from the value the function approaches as the input nears that point?",
+    "evidence": "In your own words, what does a limit measure that plugging in the point does not always capture?",
     "only_states_correction": true
   },
-  "served_sha256": "edac69c15ef6f91fc549bd412ec4be21a96b36af75210248afab79bec30167b0"
+  "served_sha256": "e94ac316bc5f7c6f2031a414b4b1053113774d5cf5d9347304874a9c874cbb83"
 }

@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"You want a limits problem to test yourself on the concept of Limits.\", \"body\": \"You have Limits at a strong mastery level, so a self-check makes sense.\", \"question\": \"What do you already know about limits, and what have you tried so far?\"}"
+    "{\"key_idea\": \"You want a limits practice problem to check your own understanding.\", \"body\": \"You asked for a limits problem to test yourself on.\", \"question\": \"What do you already know about limits, or which part of them have you tried so far?\"}"
   ],
   "input_sha256": "70321f8ae6ffa254b3e6a2bdc6623fac6e7fd5afad3a57c9a8fd128472f06060",
   "model": "claude-haiku-5-5",
   "output": {
-    "body": "You have Limits at a strong mastery level, so a self-check makes sense.",
-    "key_idea": "You want a limits problem to test yourself on the concept of Limits.",
-    "question": "What do you already know about limits, and what have you tried so far?"
+    "body": "You asked for a limits problem to test yourself on.",
+    "key_idea": "You want a limits practice problem to check your own understanding.",
+    "question": "What do you already know about limits, or which part of them have you tried so far?"
   },
-  "prompt_hash": "20d0e4f9042d",
+  "prompt_hash": "c41a3c1994a6",
   "requests": 1,
   "rescued": false,
   "retries": 0,

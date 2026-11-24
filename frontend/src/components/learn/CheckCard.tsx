@@ -99,6 +99,22 @@ export function CheckCard({
             {KEY_VERIFIED_LABEL}
           </div>
         )}
+        {/* W4.1a: honest empty figure slot when the pose says the item is
+            visual but no drawable asset is attached yet. Never invents SVG. */}
+        {item.figure?.status === "withheld" && (
+          <div
+            data-testid="loop-figure-withheld"
+            role="status"
+            aria-label="No diagram for this check yet — the question describes it in words"
+            style={{
+              ...TRUST_CHROME_STYLE,
+              borderStyle: "dashed",
+              opacity: 0.9,
+            }}
+          >
+            Diagram described in words — no figure attached yet
+          </div>
+        )}
       </div>
       {mc ? (
         <>

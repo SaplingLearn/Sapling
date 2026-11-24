@@ -1,6 +1,7 @@
 # W4 spike — Visual / SVG / demo pipeline & teach-prose trust
 
-**Status:** spike (docs only — no production visual pipeline code)  
+**Status:** spike + **W4.1a stub shipped** (pose `figure.withheld` + CheckCard chrome; no SVG agent). Stage 1 remainder = load `surface_representation` on request-path decrypt (W4.1b).  
+
 **Plan rows:** Alvar trilogy W4 / claims **AC**, **AD**, **AE**, **L**, **AR**  
 **Branch context:** `feat/learning-loop-reland`  
 **Date:** 2026-11-23

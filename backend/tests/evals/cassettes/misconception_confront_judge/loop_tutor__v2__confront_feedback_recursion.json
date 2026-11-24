@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "Under your explanation, what happens step by step when factorial(-1) is called, and does it ever stop?",
+    "evidence": "Starting from factorial(0) under that rule, what is the argument in the very next call, and does it match what your belief predicts?",
     "only_states_correction": false
   },
-  "served_sha256": "456b38f2e42cb247a4fcd6f4ef4749bbe37324801345fbddba418cd34896c2e2"
+  "served_sha256": "23e2e6b4d1b113574c3f70c4597d565f088a9bc4190520aa75492a9e2d967cb4"
 }

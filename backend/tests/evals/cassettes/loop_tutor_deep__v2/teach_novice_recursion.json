@@ -1,16 +1,16 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A recursive function solves a problem by handing a smaller copy of the same problem to itself, and it stops at a base case that needs no further help.\", \"body\": \"Here is a worked isomorph. To add 1+2+...+n, say sum(n) = n + sum(n-1), and the base case is sum(1) = 1 because there is nothing smaller to hand off. For example, sum(3) = 3 + sum(2), then sum(2) = 2 + sum(1), and sum(1) = 1 stops the chain. Now try a similar one: factorial, where fact(n) = n * fact(n-1).\", \"question\": \"In your own words, what should the base case of fact(n) be, and why does the chain need it?\"}",
-    "{\"key_idea\": \"A recursive function solves a problem by handing a smaller copy of the same problem to itself, and it stops at a base case that needs no further help.\", \"body\": \"Take adding 1+2+...+n: define sum(n) = n + sum(n-1), with base case sum(1) = 1 because there is nothing smaller to hand off. So sum(3) = 3 + sum(2) = 3 + 2 + sum(1), and the known value sum(1) = 1 stops the chain. Factorial has the same structure, with fact(n) = n * fact(n-1).\", \"question\": \"In your own words, what should the base case of fact(n) be, and why does the chain need it?\"}"
+    "{\"key_idea\":\"A recursive function solves a problem by handing a smaller copy of the same problem to itself, and it stops at a base case that needs no further help.\",\"body\":\"Here is a worked example on a different problem, the sum of 1 to n. The base case is sum(1) = 1, because there is nothing smaller to ask about. For any bigger n, sum(n) = n + sum(n-1), so each call passes a smaller problem down until it reaches that base case. Here is a partial solution for sum(3): sum(3) = 3 + sum(2), sum(2) = 2 + sum(1), sum(1) = 1, so sum(2) = 2 + ___.\",\"question\":\"What number goes in the blank, and what does that tell you about how sum(3) gets finished?\"}",
+    "{\"key_idea\":\"A recursive function solves a problem by handing a smaller copy of the same problem to itself, and it stops at a base case that needs no further help.\",\"body\":\"Take the sum of 1 to n: the base case is sum(1) = 1, and for bigger n, sum(n) = n + sum(n-1). Here is sum(3) worked partway: sum(3) = 3 + sum(2), and sum(2) = 2 + sum(1), where sum(1) = 1. So sum(2) = 2 + ___.\",\"question\":\"What number goes in the blank, and what does that tell you about how sum(3) gets finished?\"}"
   ],
   "input_sha256": "1a6ccd15960d7d572c96de957f6eae0ff470a031fd3568a0cec9f272acdfb746",
   "model": "claude-sonnet-5-5",
   "output": {
-    "body": "Take adding 1+2+...+n: define sum(n) = n + sum(n-1), with base case sum(1) = 1 because there is nothing smaller to hand off. So sum(3) = 3 + sum(2) = 3 + 2 + sum(1), and the known value sum(1) = 1 stops the chain. Factorial has the same structure, with fact(n) = n * fact(n-1).",
+    "body": "Take the sum of 1 to n: the base case is sum(1) = 1, and for bigger n, sum(n) = n + sum(n-1). Here is sum(3) worked partway: sum(3) = 3 + sum(2), and sum(2) = 2 + sum(1), where sum(1) = 1. So sum(2) = 2 + ___.",
     "key_idea": "A recursive function solves a problem by handing a smaller copy of the same problem to itself, and it stops at a base case that needs no further help.",
-    "question": "In your own words, what should the base case of fact(n) be, and why does the chain need it?"
+    "question": "What number goes in the blank, and what does that tell you about how sum(3) gets finished?"
   },
-  "prompt_hash": "20d0e4f9042d",
+  "prompt_hash": "c41a3c1994a6",
   "requests": 2,
   "rescued": false,
   "retries": 1,

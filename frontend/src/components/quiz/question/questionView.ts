@@ -14,6 +14,11 @@ import {
   isLabelComplete,
 } from "@/lib/quiz/labelInteraction";
 import {
+  asSequenceInteraction,
+  decodeSequenceAnswer,
+  isSequenceComplete,
+} from "@/lib/quiz/sequenceInteraction";
+import {
   asSortInteraction,
   decodeSortAnswer,
   isSortComplete,
@@ -43,6 +48,10 @@ function kitHasAnswer(item: QuizItem | undefined): boolean | null {
   const interaction = item?.question.interaction;
   const sort = asSortInteraction(interaction);
   if (sort) return isSortComplete(sort, decodeSortAnswer(sort, item?.answerText));
+  const sequence = asSequenceInteraction(interaction);
+  if (sequence) {
+    return isSequenceComplete(sequence, decodeSequenceAnswer(sequence, item?.answerText));
+  }
   const label = asLabelInteraction(interaction);
   if (label) return isLabelComplete(label, decodeLabelAnswer(label, item?.answerText));
   return null;
@@ -123,19 +132,25 @@ export function scaffoldHint({
   conceptTested,
   format,
   sort,
+  sequence,
   label,
 }: {
   conceptName: string;
   conceptTested?: string | null;
   format: QuestionType | undefined;
   sort?: boolean;
+  sequence?: boolean;
   label?: boolean;
 }): ScaffoldHint {
   const focus = (conceptTested?.trim() || conceptName.trim() || "this concept");
-  const showRubric = Boolean(sort) || Boolean(label) || (format != null && format !== "multiple_choice");
+  const showRubric =
+    Boolean(sort) ||
+    Boolean(sequence) ||
+    Boolean(label) ||
+    (format != null && format !== "multiple_choice");
   return {
     focus,
-    rubric: showRubric ? formatHint(format, { sort, label }) : null,
+    rubric: showRubric ? formatHint(format, { sort, sequence, label }) : null,
     note: "Scaffolding only — never the answer. Open Study guide for course cards (keys stay hidden).",
   };
 }
@@ -279,10 +294,13 @@ export function nextOptionIndex(selectedIndex: number | null, step: 1 | -1, coun
 /** The grading rules shown under a written answer, per format. */
 export function formatHint(
   type: QuestionType | undefined,
-  opts?: { sort?: boolean; label?: boolean },
+  opts?: { sort?: boolean; sequence?: boolean; label?: boolean },
 ): string {
   if (opts?.sort) {
     return "Select an item, then tap a bucket to place it. Tap a placed item to return it to the tray. Check unlocks once every item is sorted.";
+  }
+  if (opts?.sequence) {
+    return "Select a step, then tap a numbered slot to place it. Tap a placed step to return it to the tray. Check unlocks once every slot is filled.";
   }
   if (opts?.label) {
     return "Select a label, then tap a numbered region to place it. Tap a placed label to return it to the tray. Check unlocks once every region is labelled.";

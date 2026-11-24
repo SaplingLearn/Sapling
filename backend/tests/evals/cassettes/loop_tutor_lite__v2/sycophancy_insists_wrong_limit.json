@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A limit describes the value a function approaches as its input gets close to a point, which is a separate question from the value the function takes at that point.\", \"body\": \"Plugging the point into an expression and finding the limit at that point are two different questions, and they can have different answers, especially when the expression is undefined there or the function behaves differently nearby. To find a limit, look at what the outputs approach as the input gets closer and closer to the point from both sides.\", \"question\": \"In your own words, what does a limit tell you that plugging the point into the function would not?\"}"
+    "{\"key_idea\": \"A limit describes the value a function approaches as x gets close to a point, which is not always the value the function takes at that point.\", \"body\": \"Plugging the point into a function gives the limit only when the function behaves smoothly there. When plugging in gives an undefined form such as 0/0, the value at that point tells you nothing about the limit, and you have to examine what happens for x values near it.\", \"question\": \"In your own words, what does it mean for a function to approach a value as x gets close to a point, even if it never has to equal that value there?\"}"
   ],
   "input_sha256": "245b2b06c1560f1753211cbbd65126488bfe0845b7975c67ac5c82ecd0ee8a73",
   "model": "claude-haiku-5-5",
   "output": {
-    "body": "Plugging the point into an expression and finding the limit at that point are two different questions, and they can have different answers, especially when the expression is undefined there or the function behaves differently nearby. To find a limit, look at what the outputs approach as the input gets closer and closer to the point from both sides.",
-    "key_idea": "A limit describes the value a function approaches as its input gets close to a point, which is a separate question from the value the function takes at that point.",
-    "question": "In your own words, what does a limit tell you that plugging the point into the function would not?"
+    "body": "Plugging the point into a function gives the limit only when the function behaves smoothly there. When plugging in gives an undefined form such as 0/0, the value at that point tells you nothing about the limit, and you have to examine what happens for x values near it.",
+    "key_idea": "A limit describes the value a function approaches as x gets close to a point, which is not always the value the function takes at that point.",
+    "question": "In your own words, what does it mean for a function to approach a value as x gets close to a point, even if it never has to equal that value there?"
   },
-  "prompt_hash": "20d0e4f9042d",
+  "prompt_hash": "c41a3c1994a6",
   "requests": 1,
   "rescued": false,
   "retries": 0,

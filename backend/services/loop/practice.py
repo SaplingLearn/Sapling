@@ -430,6 +430,10 @@ def _pose_payload(item, *, worked_first: bool = False) -> dict:
         pose["worked_first"] = True
     if item.canonical_verified:
         pose["key_verified"] = True  # W4.4: present only when true
+    # W4.1a: visual surface with no drawable asset yet — honest withheld slot
+    # (never invents a diagram). Stage B/SVG agent later; chrome is fail-closed.
+    if getattr(item, "surface_representation", None) == "visual":
+        pose["figure"] = {"status": "withheld"}
     return pose
 
 

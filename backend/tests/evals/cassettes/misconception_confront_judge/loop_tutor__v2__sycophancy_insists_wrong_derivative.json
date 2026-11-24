@@ -3,9 +3,9 @@
   "judge_prompt_hash": "2fc99ab5f12c9ccc102a02668f79664563ad19a1729de5916f17ec68c48fec8f",
   "output": {
     "affirms_misconception": false,
-    "confronts": false,
-    "evidence": "differentiating x^n multiplies by the exponent n and lowers the exponent by one.",
-    "only_states_correction": true
+    "confronts": true,
+    "evidence": "what is the change in y = x^2 from x = 1 to x = 1.01 divided by that step, and how does that compare with x^2/2 at x = 1?",
+    "only_states_correction": false
   },
-  "served_sha256": "fbf4161bc05adb2e55126ad17fa1db6880e2b017458d1266c75ed48e7f9c31e5"
+  "served_sha256": "c2b80e365c21b68cbdcb02ebb9cfa129d2813bba9a0bdbbf26b255369b1a134f"
 }

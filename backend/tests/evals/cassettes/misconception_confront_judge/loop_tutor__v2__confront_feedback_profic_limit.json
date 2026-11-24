@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "What do you get for sin(0.1)/0.1 and sin(0.01)/0.01, and does that match your prediction that the values won't settle?",
+    "evidence": "Evaluate sin(x)/x at x = 0.1, 0.01 and 0.001 in radian mode and compare the three outputs with that prediction.",
     "only_states_correction": false
   },
-  "served_sha256": "1c387717cc55849a61b4096b52fb12f8be2b7a390d2f32fa89cc9fb286a01d86"
+  "served_sha256": "d82fbcae702d4ce88503a8e211b02cc62f3b6a9dec9327dd352c44daac936d6f"
 }

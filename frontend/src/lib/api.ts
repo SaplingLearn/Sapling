@@ -1159,6 +1159,9 @@ export interface LoopCheckItem {
    *  blind-key or audit). Present only when true — calm "Key verified" chrome
    *  on the check card; never invented client-side. */
   key_verified?: boolean;
+  /** W4.1a: optional figure slot on the pose. `withheld` = visual surface with
+   *  no drawable asset yet (honest empty). Never invents SVG client-side. */
+  figure?: { status: "withheld" | "illustrative" };
 }
 export interface LoopProbeItem extends LoopCheckItem {
   check_item_id: string;

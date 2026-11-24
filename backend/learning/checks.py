@@ -164,6 +164,11 @@ class CheckItem(BaseModel):
     question_hash: str
     graded: bool = False
     created_at: str | None = None
+    # A140 / W4.1a: how the item presents the idea (verbal|symbolic|numeric|
+    # visual|applied). Optional on the model so pose can attach a withheld
+    # figure slot for `visual` before the request-path decrypt always loads
+    # the column (W4.1b). Default None = no figure chrome.
+    surface_representation: str | None = None
     # A34: None on a row drafted before the column existed — never served
     # (is_servable); scripts/backfill_check_items.py regenerates its concept.
     final_answer: str | None = None

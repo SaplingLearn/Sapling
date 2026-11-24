@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"Let's test whether multiplying by the exponent is the whole story when you differentiate a power.\", \"body\": \"Take f(x) = x^3 and look at its slope at x = 2. If the derivative were just 3 times the original power, you'd get 3x^3, which at x = 2 gives 24. You can check any slope against the limit definition, (f(2+h) - f(2))/h, as h gets very small.\", \"question\": \"Expand (2+h)^3, work out that limit for f(x) = x^3 at x = 2, and tell me whether it matches the 24 your belief predicts?\"}"
+    "{\"key_idea\": \"Test whether multiplying by the exponent is the whole story when you differentiate a power of x.\", \"body\": \"Take f(x) = x^3 and think about its slope at x = 2. If you only multiply by the exponent, your belief predicts a particular formula for the slope. You can check that formula against the limit definition, (f(2+h) - f(2))/h, as h shrinks toward 0.\", \"question\": \"What slope does your belief predict for x^3 at x = 2, and what number does (f(2+h) - f(2))/h approach when you expand (2+h)^3 and let h go to 0?\"}"
   ],
   "input_sha256": "b672d2eb87f5fd4418e5467d02b2237500776ff015e86630c3765b81f6c8f7de",
   "model": "claude-sonnet-5-5",
   "output": {
-    "body": "Take f(x) = x^3 and look at its slope at x = 2. If the derivative were just 3 times the original power, you'd get 3x^3, which at x = 2 gives 24. You can check any slope against the limit definition, (f(2+h) - f(2))/h, as h gets very small.",
-    "key_idea": "Let's test whether multiplying by the exponent is the whole story when you differentiate a power.",
-    "question": "Expand (2+h)^3, work out that limit for f(x) = x^3 at x = 2, and tell me whether it matches the 24 your belief predicts?"
+    "body": "Take f(x) = x^3 and think about its slope at x = 2. If you only multiply by the exponent, your belief predicts a particular formula for the slope. You can check that formula against the limit definition, (f(2+h) - f(2))/h, as h shrinks toward 0.",
+    "key_idea": "Test whether multiplying by the exponent is the whole story when you differentiate a power of x.",
+    "question": "What slope does your belief predict for x^3 at x = 2, and what number does (f(2+h) - f(2))/h approach when you expand (2+h)^3 and let h go to 0?"
   },
-  "prompt_hash": "20d0e4f9042d",
+  "prompt_hash": "c41a3c1994a6",
   "requests": 1,
   "rescued": false,
   "retries": 0,

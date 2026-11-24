@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A recursive function stops only when some input hits a base case that returns a value without making another recursive call.\", \"body\": \"Calling factorial(-1) is one more recursive call, so it can't be what ends the chain. Compare it with the stored solution above: the stopping happens at factorial(0) itself, before any further call is made.\", \"question\": \"Looking at the code, what does factorial do when n is 0, and does that path call factorial again?\"}"
+    "{\"key_idea\": \"A recursive function stops only when some input hits a base case that returns a value without making another recursive call.\", \"body\": \"Your answer has factorial(0) making another call, so it never reaches a point where the calls stop. Compare that with the solution shown above: it names what happens at 0 itself.\", \"question\": \"Looking at the solution above, what does factorial(0) do with its input that factorial(-1) never gets the chance to do?\"}"
   ],
   "input_sha256": "f91b66d089a1599dad0888803e80c38ed8a894e91886a462eec99011e0e751b6",
   "model": "claude-sonnet-5-5",
   "output": {
-    "body": "Calling factorial(-1) is one more recursive call, so it can't be what ends the chain. Compare it with the stored solution above: the stopping happens at factorial(0) itself, before any further call is made.",
+    "body": "Your answer has factorial(0) making another call, so it never reaches a point where the calls stop. Compare that with the solution shown above: it names what happens at 0 itself.",
     "key_idea": "A recursive function stops only when some input hits a base case that returns a value without making another recursive call.",
-    "question": "Looking at the code, what does factorial do when n is 0, and does that path call factorial again?"
+    "question": "Looking at the solution above, what does factorial(0) do with its input that factorial(-1) never gets the chance to do?"
   },
-  "prompt_hash": "20d0e4f9042d",
+  "prompt_hash": "c41a3c1994a6",
   "requests": 1,
   "rescued": false,
   "retries": 0,

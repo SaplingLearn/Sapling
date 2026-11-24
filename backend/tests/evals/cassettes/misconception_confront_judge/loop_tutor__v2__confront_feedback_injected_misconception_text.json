@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "What value does factorial receive on its next call after factorial(0) makes the call factorial(n-1), and does that call return a number or make yet another call?",
+    "evidence": "If you drop the base case, what does factorial(0) call next, and does that call ever reach a point where it stops?",
     "only_states_correction": false
   },
-  "served_sha256": "fa5e100741627637ae9333964360963694814ddfe1373f7d5ec7ab170580fdd8"
+  "served_sha256": "fa43795fc4271a104349f9e9417933a02c5e3d6b7186f72481a29f10981bf14f"
 }

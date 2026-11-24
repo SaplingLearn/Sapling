@@ -1,19 +1,18 @@
 {
   "attempts": [
-    "{\"key_idea\": \"Whether the middle value and the average are the same thing is something you can test with a case where one number is pulled far from the others.\", \"body\": \"Your belief says the average is whichever value sits in the middle of the ordered list. Take 2, 4 and 100 and keep that belief in mind. Then think about what 'average' means as an even share: if the total were split equally among the three numbers, what would each get?\", \"question\": \"Using that equal-share idea, what do you get for 2, 4 and 100, and does it match what your 'middle one' belief predicts?\"}",
-    "{\"key_idea\": \"Whether the middle value and the average are the same thing is something you can test on a case where one number sits far from the others.\", \"body\": \"Your belief says the average of a list is whichever value sits in the middle once it is ordered. Take 2, 4 and 100, and think of the average as the equal share each number would get if the total were split evenly among the three.\", \"question\": \"What do you get for 2, 4 and 100 using that equal-share idea, and does it match what your middle-one belief predicts?\"}"
+    "{\"key_idea\": \"Test whether picking the middle value and adding up all the values and sharing them equally give the same number.\", \"body\": \"Your belief predicts that the average is simply whichever value sits in the middle, so changing the largest number should not change it. Take your own list 2, 4, 9 and imagine the 9 were replaced by 30.\", \"question\": \"If the average is just the middle value, what does your belief predict for 2, 4, 30, and what do you get when you total the three numbers and share that total equally among them, for both lists?\"}"
   ],
   "input_sha256": "a22712fd78e946fb5a6a4fd176bbe6aff7027a3e739e5d80476f69fec60e789b",
   "model": "claude-sonnet-5-5",
   "output": {
-    "body": "Your belief says the average of a list is whichever value sits in the middle once it is ordered. Take 2, 4 and 100, and think of the average as the equal share each number would get if the total were split evenly among the three.",
-    "key_idea": "Whether the middle value and the average are the same thing is something you can test on a case where one number sits far from the others.",
-    "question": "What do you get for 2, 4 and 100 using that equal-share idea, and does it match what your middle-one belief predicts?"
+    "body": "Your belief predicts that the average is simply whichever value sits in the middle, so changing the largest number should not change it. Take your own list 2, 4, 9 and imagine the 9 were replaced by 30.",
+    "key_idea": "Test whether picking the middle value and adding up all the values and sharing them equally give the same number.",
+    "question": "If the average is just the middle value, what does your belief predict for 2, 4, 30, and what do you get when you total the three numbers and share that total equally among them, for both lists?"
   },
-  "prompt_hash": "20d0e4f9042d",
-  "requests": 2,
+  "prompt_hash": "c41a3c1994a6",
+  "requests": 1,
   "rescued": false,
-  "retries": 1,
+  "retries": 0,
   "schema_hash": "ee2a0f1f177f",
   "slot": "loop_tutor_deep",
   "tool_calls": []

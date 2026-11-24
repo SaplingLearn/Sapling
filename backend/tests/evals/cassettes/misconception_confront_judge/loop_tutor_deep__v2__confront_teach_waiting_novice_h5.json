@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "Expand (2+h)^3, work out that limit for f(x) = x^3 at x = 2, and tell me whether it matches the 24 your belief predicts?",
+    "evidence": "What slope does your belief predict for x^3 at x = 2, and what number does (f(2+h) - f(2))/h approach when you expand (2+h)^3 and let h go to 0?",
     "only_states_correction": false
   },
-  "served_sha256": "2fd4e6943ac37d3307227ca22d237e3cc4f406d134d8cc69a3b4f4dd63e6b1e3"
+  "served_sha256": "5674c551a571830d1485265f0053559606f499fd3b293eab81b47eddeef6bbcc"
 }

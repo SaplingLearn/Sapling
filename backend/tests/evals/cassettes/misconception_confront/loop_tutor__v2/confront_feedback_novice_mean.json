@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A claim about the average can be tested by checking what it predicts when one value changes.\", \"body\": \"If the average is just the middle value, changing one far-away number should leave the average unchanged, because the middle value stays put. Test that prediction on 2, 4 and 90 by working out what your rule says and comparing it with what the numbers actually give.\", \"question\": \"What does your rule predict for the average of 2, 4 and 90, and what do you get when you add those three numbers and divide by 3?\"}"
+    "{\"key_idea\": \"The middle value and the mean are different measures, so your belief that they match can be tested on a list where they disagree.\", \"body\": \"Take the list 1, 1, 10: your belief predicts the average is 1, because 1 is the middle value. Compare that prediction with what you get by adding all three numbers and dividing by how many there are.\", \"question\": \"What do you get for the mean of 1, 1 and 10, and does it match the 1 your belief predicted?\"}"
   ],
   "input_sha256": "a22712fd78e946fb5a6a4fd176bbe6aff7027a3e739e5d80476f69fec60e789b",
   "model": "claude-haiku-5-5",
   "output": {
-    "body": "If the average is just the middle value, changing one far-away number should leave the average unchanged, because the middle value stays put. Test that prediction on 2, 4 and 90 by working out what your rule says and comparing it with what the numbers actually give.",
-    "key_idea": "A claim about the average can be tested by checking what it predicts when one value changes.",
-    "question": "What does your rule predict for the average of 2, 4 and 90, and what do you get when you add those three numbers and divide by 3?"
+    "body": "Take the list 1, 1, 10: your belief predicts the average is 1, because 1 is the middle value. Compare that prediction with what you get by adding all three numbers and dividing by how many there are.",
+    "key_idea": "The middle value and the mean are different measures, so your belief that they match can be tested on a list where they disagree.",
+    "question": "What do you get for the mean of 1, 1 and 10, and does it match the 1 your belief predicted?"
   },
-  "prompt_hash": "20d0e4f9042d",
+  "prompt_hash": "c41a3c1994a6",
   "requests": 1,
   "rescued": false,
   "retries": 0,

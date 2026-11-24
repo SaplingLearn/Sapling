@@ -1,6 +1,8 @@
 # Day 1–2 plan compliance audit
 
 > **2026-11-24 update:** W0.1–W0.3 Claude evals recorded on `#866`; `LOOP_SLOTS_PENDING_CLAUDE_EVAL` empty; deep+lite `__v2` served gates clear. Day2 rows that said “blocked on Anthropic key” are obsolete — see `alvar-trilogy-implementation-plan.md` W0 readiness and `w0-flag-enable-checklist.md`.
+>
+> **Day 9 remaining backlog** (Sequence kit, standard `__v2`, three E2E lanes, W4.1a figure slot, W3.5a mini-map, operator W5 enables): plan §10 “Day 9 remaining backlog”. This audit’s FAIL/BLOCKED W0 rows are historical.
 
 
 **Against:** [`alvar-trilogy-implementation-plan.md`](alvar-trilogy-implementation-plan.md)  

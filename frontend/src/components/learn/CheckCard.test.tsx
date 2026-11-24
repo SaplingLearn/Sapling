@@ -64,6 +64,17 @@ describe("CheckCard W4.4 key-verified chrome", () => {
     expect(chrome.getAttribute("aria-label")).toContain(KEY_VERIFIED_HINT);
   });
 
+  it("W4.1a: shows withheld figure slot when pose.figure.status is withheld", () => {
+    renderCard({ ...baseItem, figure: { status: "withheld" } });
+    const slot = screen.getByTestId("loop-figure-withheld");
+    expect(slot).toHaveTextContent(/no figure attached yet/i);
+  });
+
+  it("W4.1a: omits figure chrome without pose.figure", () => {
+    renderCard(baseItem);
+    expect(screen.queryByTestId("loop-figure-withheld")).toBeNull();
+  });
+
   it("omits chrome without key_verified (never invents trust)", () => {
     renderCard(baseItem);
     expect(screen.queryByTestId("loop-key-verified")).toBeNull();

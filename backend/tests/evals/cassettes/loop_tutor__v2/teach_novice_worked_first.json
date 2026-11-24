@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A recursive function solves a problem by calling itself on a smaller input, and it stops at a base case that needs no further call.\", \"body\": \"Isomorph: define g(n) = 2 + g(n-1) with base case g(0) = 0, which returns twice n. To get g(2), the function needs g(1), which needs g(0); g(0) returns 0 directly, so g(1) = 2 and g(2) = 4, and the base case is what ends the chain of calls.\", \"question\": \"For your own function, what is the smallest input that needs no further call, and what smaller input does the general case call?\"}"
+    "{\"key_idea\": \"A recursive function solves a problem by calling itself on a smaller input, and it needs a base case that stops the calls.\", \"body\": \"Isomorph: sum_to(n) returns 1 + 2 + ... + n. Its base case is sum_to(0) = 0, which needs no further call, and its recursive step is sum_to(n) = n + sum_to(n-1), since the answer for n is the answer for n-1 plus one new piece, so sum_to(3) = 3 + sum_to(2).\", \"question\": \"For the function you need to write, what is your base case input, and what smaller input does your recursive call use?\"}"
   ],
   "input_sha256": "34de23f42f0e84467fcb83e1af87ea9d3d04aaf8518411a19b757b77ee920236",
   "model": "claude-haiku-5-5",
   "output": {
-    "body": "Isomorph: define g(n) = 2 + g(n-1) with base case g(0) = 0, which returns twice n. To get g(2), the function needs g(1), which needs g(0); g(0) returns 0 directly, so g(1) = 2 and g(2) = 4, and the base case is what ends the chain of calls.",
-    "key_idea": "A recursive function solves a problem by calling itself on a smaller input, and it stops at a base case that needs no further call.",
-    "question": "For your own function, what is the smallest input that needs no further call, and what smaller input does the general case call?"
+    "body": "Isomorph: sum_to(n) returns 1 + 2 + ... + n. Its base case is sum_to(0) = 0, which needs no further call, and its recursive step is sum_to(n) = n + sum_to(n-1), since the answer for n is the answer for n-1 plus one new piece, so sum_to(3) = 3 + sum_to(2).",
+    "key_idea": "A recursive function solves a problem by calling itself on a smaller input, and it needs a base case that stops the calls.",
+    "question": "For the function you need to write, what is your base case input, and what smaller input does your recursive call use?"
   },
-  "prompt_hash": "20d0e4f9042d",
+  "prompt_hash": "c41a3c1994a6",
   "requests": 1,
   "rescued": false,
   "retries": 0,

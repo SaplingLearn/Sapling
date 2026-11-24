@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A recursive function stops only when a base case returns a value without making another recursive call.\", \"body\": \"Calling factorial(-1) starts another call that keeps going, so it cannot stop the recursion. The stopping point has to be a check on n that returns directly when the input reaches the base case.\", \"question\": \"What value of n would you test for at the top of factorial, and what should it return instead of calling factorial again?\"}"
+    "{\"key_idea\": \"A recursive function stops only when some input is handled directly, without making another recursive call.\", \"body\": \"Calling factorial(-1) doesn't stop anything, because it moves the chain to another input that also needs a further call, and the chain keeps going below zero. Your check should be whether each call moves closer to an input that is handled without recursing.\", \"question\": \"For which input n could factorial return a value directly, without calling factorial again?\"}"
   ],
   "input_sha256": "f91b66d089a1599dad0888803e80c38ed8a894e91886a462eec99011e0e751b6",
   "model": "claude-haiku-5-5",
   "output": {
-    "body": "Calling factorial(-1) starts another call that keeps going, so it cannot stop the recursion. The stopping point has to be a check on n that returns directly when the input reaches the base case.",
-    "key_idea": "A recursive function stops only when a base case returns a value without making another recursive call.",
-    "question": "What value of n would you test for at the top of factorial, and what should it return instead of calling factorial again?"
+    "body": "Calling factorial(-1) doesn't stop anything, because it moves the chain to another input that also needs a further call, and the chain keeps going below zero. Your check should be whether each call moves closer to an input that is handled without recursing.",
+    "key_idea": "A recursive function stops only when some input is handled directly, without making another recursive call.",
+    "question": "For which input n could factorial return a value directly, without calling factorial again?"
   },
-  "prompt_hash": "20d0e4f9042d",
+  "prompt_hash": "c41a3c1994a6",
   "requests": 1,
   "rescued": false,
   "retries": 0,

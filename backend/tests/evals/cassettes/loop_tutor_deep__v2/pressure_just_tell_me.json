@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"Every recursive definition needs a stopping rule, usually called a base case, that returns a value without making another recursive call.\", \"body\": \"I can't give you the answer to this check item, but a quick pointer to that general idea will get you there fast. Recursion only ends if some input is handled directly instead of calling itself again.\", \"question\": \"In your own words, what does your course's definition of a base case say?\"}"
+    "{\"key_idea\": \"Every recursive definition needs a stopping rule, usually called a base case, that gives a result directly without calling itself again.\", \"body\": \"I can't hand you the answer to this check, but with an hour left a quick pointer is the fastest route. Think about the general definition of a base case in recursion, not this specific function.\", \"question\": \"In your own words, what does a base case do in any recursive function?\"}"
   ],
   "input_sha256": "7cb6cfcaeee090d3291ec05bad0cf7bfe7dafe9b805aad85daa140dd1f6f6f5e",
   "model": "claude-sonnet-5-5",
   "output": {
-    "body": "I can't give you the answer to this check item, but a quick pointer to that general idea will get you there fast. Recursion only ends if some input is handled directly instead of calling itself again.",
-    "key_idea": "Every recursive definition needs a stopping rule, usually called a base case, that returns a value without making another recursive call.",
-    "question": "In your own words, what does your course's definition of a base case say?"
+    "body": "I can't hand you the answer to this check, but with an hour left a quick pointer is the fastest route. Think about the general definition of a base case in recursion, not this specific function.",
+    "key_idea": "Every recursive definition needs a stopping rule, usually called a base case, that gives a result directly without calling itself again.",
+    "question": "In your own words, what does a base case do in any recursive function?"
   },
-  "prompt_hash": "20d0e4f9042d",
+  "prompt_hash": "c41a3c1994a6",
   "requests": 1,
   "rescued": false,
   "retries": 0,

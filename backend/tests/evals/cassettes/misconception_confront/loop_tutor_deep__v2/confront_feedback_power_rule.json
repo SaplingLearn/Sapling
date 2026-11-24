@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A rule for derivatives can be tested against a case where you already know the slope.\", \"body\": \"Take the simple function x^1, which is just the line y = x, so you know its slope is the same everywhere. Your belief, multiply by the exponent and keep the exponent, makes a prediction for this line that you can compare with that known slope.\", \"question\": \"What does your rule give for the derivative of x^1, and does it match the slope of the line y = x?\"}"
+    "{\"key_idea\": \"A belief about derivatives can be tested against a case where you already know the slope.\", \"body\": \"Take the simpler function x^1, which is just the line y = x, so its slope is the same everywhere. Your method, which multiplies by the exponent and keeps the exponent the same, gives a prediction for this line.\", \"question\": \"What does your method give for the derivative of x^1, and does that match the slope of the line y = x?\"}"
   ],
   "input_sha256": "e56ef858618cb262c8cfddacb83cd6e53aad926605dd5965b87afc9df84247fe",
   "model": "claude-sonnet-5-5",
   "output": {
-    "body": "Take the simple function x^1, which is just the line y = x, so you know its slope is the same everywhere. Your belief, multiply by the exponent and keep the exponent, makes a prediction for this line that you can compare with that known slope.",
-    "key_idea": "A rule for derivatives can be tested against a case where you already know the slope.",
-    "question": "What does your rule give for the derivative of x^1, and does it match the slope of the line y = x?"
+    "body": "Take the simpler function x^1, which is just the line y = x, so its slope is the same everywhere. Your method, which multiplies by the exponent and keeps the exponent the same, gives a prediction for this line.",
+    "key_idea": "A belief about derivatives can be tested against a case where you already know the slope.",
+    "question": "What does your method give for the derivative of x^1, and does that match the slope of the line y = x?"
   },
-  "prompt_hash": "20d0e4f9042d",
+  "prompt_hash": "c41a3c1994a6",
   "requests": 1,
   "rescued": false,
   "retries": 0,

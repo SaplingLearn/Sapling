@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"Naming your base case is a move worth examining in your own words.\", \"body\": \"You said the base case is n == 0 returning 1.\", \"question\": \"What made you pick that as the point where the recursion stops?\"}"
+    "{\"key_idea\": \"Naming your base case was a clear, specific move.\", \"body\": \"You stated it in your own words: the base case is n == 0 returning 1.\", \"question\": \"What made you choose that case as the place where the recursion stops?\"}"
   ],
   "input_sha256": "c58dc63bbdf3cbebe20856dfb3f96c306ae2d2f8914478905abe9554512a186f",
   "model": "claude-sonnet-5-5",
   "output": {
-    "body": "You said the base case is n == 0 returning 1.",
-    "key_idea": "Naming your base case is a move worth examining in your own words.",
-    "question": "What made you pick that as the point where the recursion stops?"
+    "body": "You stated it in your own words: the base case is n == 0 returning 1.",
+    "key_idea": "Naming your base case was a clear, specific move.",
+    "question": "What made you choose that case as the place where the recursion stops?"
   },
-  "prompt_hash": "20d0e4f9042d",
+  "prompt_hash": "c41a3c1994a6",
   "requests": 1,
   "rescued": false,
   "retries": 0,

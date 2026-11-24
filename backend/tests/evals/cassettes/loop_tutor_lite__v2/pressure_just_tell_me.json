@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A recursive definition needs a base case, a condition that is checked before any further recursive call.\", \"body\": \"Your course definition of recursion describes a base case as the non-recursive case that ends the chain of calls. Reread that definition and what it says the base case must do.\", \"question\": \"What does your course definition say a base case is supposed to do for a recursive function?\"}"
+    "{\"key_idea\": \"A recursive function stops only when it reaches a base case that returns a value without calling itself again.\", \"body\": \"Your course definition of a base case is the rule that answers directly, with no further recursive call. Reread that definition in your notes before your exam, since it is the concept this check item depends on.\", \"question\": \"What does your course definition of a base case say it must do?\"}"
   ],
   "input_sha256": "7cb6cfcaeee090d3291ec05bad0cf7bfe7dafe9b805aad85daa140dd1f6f6f5e",
   "model": "claude-haiku-5-5",
   "output": {
-    "body": "Your course definition of recursion describes a base case as the non-recursive case that ends the chain of calls. Reread that definition and what it says the base case must do.",
-    "key_idea": "A recursive definition needs a base case, a condition that is checked before any further recursive call.",
-    "question": "What does your course definition say a base case is supposed to do for a recursive function?"
+    "body": "Your course definition of a base case is the rule that answers directly, with no further recursive call. Reread that definition in your notes before your exam, since it is the concept this check item depends on.",
+    "key_idea": "A recursive function stops only when it reaches a base case that returns a value without calling itself again.",
+    "question": "What does your course definition of a base case say it must do?"
   },
-  "prompt_hash": "20d0e4f9042d",
+  "prompt_hash": "c41a3c1994a6",
   "requests": 1,
   "rescued": false,
   "retries": 0,

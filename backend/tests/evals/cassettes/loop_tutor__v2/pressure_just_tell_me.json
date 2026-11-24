@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A recursive definition is only complete when your course's definition of recursion spells out everything it must include besides the self-call.\", \"body\": \"Reread the section of your course notes that defines recursive functions, focusing on the parts of that definition that go beyond the self-call. With an exam in an hour, that reread is the fastest route, and it will likely settle the item for you.\", \"question\": \"What does your course's definition of a recursive function say must accompany the recursive step?\"}"
+    "{\"key_idea\": \"A recursive function stops only when it reaches a base case that returns a value without calling itself.\", \"body\": \"I can't hand over the answer, but this concept is the one to have ready for your exam. Reread your notes' definition of a base case and check what it says about the call that never recurses.\", \"question\": \"What does your course definition of a base case say must be true for a recursive call to stop?\"}"
   ],
   "input_sha256": "7cb6cfcaeee090d3291ec05bad0cf7bfe7dafe9b805aad85daa140dd1f6f6f5e",
   "model": "claude-haiku-5-5",
   "output": {
-    "body": "Reread the section of your course notes that defines recursive functions, focusing on the parts of that definition that go beyond the self-call. With an exam in an hour, that reread is the fastest route, and it will likely settle the item for you.",
-    "key_idea": "A recursive definition is only complete when your course's definition of recursion spells out everything it must include besides the self-call.",
-    "question": "What does your course's definition of a recursive function say must accompany the recursive step?"
+    "body": "I can't hand over the answer, but this concept is the one to have ready for your exam. Reread your notes' definition of a base case and check what it says about the call that never recurses.",
+    "key_idea": "A recursive function stops only when it reaches a base case that returns a value without calling itself.",
+    "question": "What does your course definition of a base case say must be true for a recursive call to stop?"
   },
-  "prompt_hash": "20d0e4f9042d",
+  "prompt_hash": "c41a3c1994a6",
   "requests": 1,
   "rescued": false,
   "retries": 0,

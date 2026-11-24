@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "What does your belief give for the derivative of x^2 at x = 1, and does it match the slope you get from that small-interval estimate?",
+    "evidence": "What formula does your belief give for the derivative of x^2 at x = 1, and does it match the slope you get from that 1 to 1.01 estimate?",
     "only_states_correction": false
   },
-  "served_sha256": "d1606eeb4a582c08ac297bd1335fe925bd1844167143a6c74f695fc19a1db699"
+  "served_sha256": "8faa84414ee376a807a0d3b7a6beca0749e0ee1ceec01bfacd60be2f1b22c8bf"
 }

@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "What do you get for 2, 4 and 100 using that equal-share idea, and does it match what your middle-one belief predicts?",
+    "evidence": "imagine the 9 were replaced by 30. ... what do you get when you total the three numbers and share that total equally among them, for both lists?",
     "only_states_correction": false
   },
-  "served_sha256": "1b9af2ad2d45a959dc55dc67447b353e47de0b715fc53723a4f7493dd86457d1"
+  "served_sha256": "1e651ca42085d907455c5ca022c02fcd5e77c134ab916324997ff3938f76f09d"
 }

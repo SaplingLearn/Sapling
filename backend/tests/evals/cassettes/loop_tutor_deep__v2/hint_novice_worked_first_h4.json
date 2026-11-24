@@ -1,16 +1,16 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A recursive function stops when some input is answered directly, without making another recursive call.\", \"body\": \"Take a countdown function: countdown(n) prints n and then calls countdown(n-1), but its first line says 'if n == 3, return'. Calling countdown(5) goes 5, 4, and then reaches 3. That call returns right away, so no more calls are made and the chain ends. Without that first line, n would keep shrinking forever.\", \"question\": \"Looking at your factorial code, which line answers an input directly without calling factorial again, and what input does it handle?\"}",
-    "{\"key_idea\": \"A recursive function stops when some input is answered directly, without making another recursive call.\", \"body\": \"Take a countdown function whose first line says 'if n == 3, return', and otherwise it prints n and calls countdown(n-1). Calling countdown(5) goes 5, 4, then reaches 3, and that call returns right away so the chain ends. Without that first line, n would keep shrinking forever.\", \"question\": \"In your factorial code, which line answers an input directly without calling factorial again, and what input does it handle?\"}"
+    "{\"key_idea\":\"A recursive function stops when some input is handled directly, without making another recursive call.\",\"body\":\"Take a countdown function: countdown(n) prints n and calls countdown(n-1). Written that way, it would run forever, going 3, 2, 1, 0, -1, and so on. If we add the line 'if n == 3 ... stop', the chain ends the moment n reaches that value, because that case never calls countdown again.\",\"question\":\"Looking at your own factorial function, which line handles an input directly without calling factorial again, and what does it return for 0?\"}",
+    "{\"key_idea\":\"A recursive function stops when some input is handled directly, without making another recursive call.\",\"body\":\"Take countdown(n), which prints n and then calls countdown(n-1). Alone, it would run forever: 3, 2, 1, 0, -1, and on. Adding the line 'if n == 0, return' ends the chain, because that case never calls countdown again.\",\"question\":\"Looking at your own factorial function, which line handles an input directly without calling factorial again, and what does it return for 0?\"}"
   ],
   "input_sha256": "78b8a97ede546da8ca6d3349c7a261196577cd93fde52115743a9f77fe7a482b",
   "model": "claude-sonnet-5-5",
   "output": {
-    "body": "Take a countdown function whose first line says 'if n == 3, return', and otherwise it prints n and calls countdown(n-1). Calling countdown(5) goes 5, 4, then reaches 3, and that call returns right away so the chain ends. Without that first line, n would keep shrinking forever.",
-    "key_idea": "A recursive function stops when some input is answered directly, without making another recursive call.",
-    "question": "In your factorial code, which line answers an input directly without calling factorial again, and what input does it handle?"
+    "body": "Take countdown(n), which prints n and then calls countdown(n-1). Alone, it would run forever: 3, 2, 1, 0, -1, and on. Adding the line 'if n == 0, return' ends the chain, because that case never calls countdown again.",
+    "key_idea": "A recursive function stops when some input is handled directly, without making another recursive call.",
+    "question": "Looking at your own factorial function, which line handles an input directly without calling factorial again, and what does it return for 0?"
   },
-  "prompt_hash": "20d0e4f9042d",
+  "prompt_hash": "c41a3c1994a6",
   "requests": 2,
   "rescued": false,
   "retries": 1,

@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A derivative gives a slope, so a proposed rule can be tested by measuring the slope of the function directly at a point.\", \"body\": \"Your answer predicts the slope of y = x^3 at x = 2 is 3 times 2^3. Test that prediction with nearby points: compute ((2+h)^3 - 2^3)/h for h = 0.001 and compare the result with what your answer predicts.\", \"question\": \"What number does that difference quotient give you, and does it match the value your answer predicts?\"}"
+    "{\"key_idea\": \"The exponent rule is something you can test against the actual slope of a curve, not just trust.\", \"body\": \"Your rule says the slope of y = x^2 at x = 2 is 2 times 2^2, which predicts 8. You can estimate the true slope by computing (2.001^2 - 2^2)/0.001, which gets closer to the real slope as the step gets smaller.\", \"question\": \"What number does (2.001^2 - 2^2)/0.001 give you, and does it match the 8 your rule predicts?\"}"
   ],
   "input_sha256": "e56ef858618cb262c8cfddacb83cd6e53aad926605dd5965b87afc9df84247fe",
   "model": "claude-haiku-5-5",
   "output": {
-    "body": "Your answer predicts the slope of y = x^3 at x = 2 is 3 times 2^3. Test that prediction with nearby points: compute ((2+h)^3 - 2^3)/h for h = 0.001 and compare the result with what your answer predicts.",
-    "key_idea": "A derivative gives a slope, so a proposed rule can be tested by measuring the slope of the function directly at a point.",
-    "question": "What number does that difference quotient give you, and does it match the value your answer predicts?"
+    "body": "Your rule says the slope of y = x^2 at x = 2 is 2 times 2^2, which predicts 8. You can estimate the true slope by computing (2.001^2 - 2^2)/0.001, which gets closer to the real slope as the step gets smaller.",
+    "key_idea": "The exponent rule is something you can test against the actual slope of a curve, not just trust.",
+    "question": "What number does (2.001^2 - 2^2)/0.001 give you, and does it match the 8 your rule predicts?"
   },
-  "prompt_hash": "20d0e4f9042d",
+  "prompt_hash": "c41a3c1994a6",
   "requests": 1,
   "rescued": false,
   "retries": 0,

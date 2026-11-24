@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "What do you get for sin(x)/x at a few small inputs, like x = 0.1 and x = 0.01, and does that match your claim?",
+    "evidence": "how would you compare their sizes by testing a few small values like 0.1 and 0.01?",
     "only_states_correction": false
   },
-  "served_sha256": "985ac926338fb2b4d192e1e60df78af800f6adee3e672ace18d614c252157829"
+  "served_sha256": "5e0022e0d83465ce50eacdff3688627c0058d326b5c4437d4a7550befad4c66e"
 }

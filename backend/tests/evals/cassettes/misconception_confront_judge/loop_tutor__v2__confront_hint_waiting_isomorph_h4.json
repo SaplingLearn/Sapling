@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "Use the points x = 2 and x = 2.01 on y = x^4, then compare that measured slope with the value your own derivative rule gives at x = 2.",
+    "evidence": "What value do you get for (f(3.01) - f(3))/0.01, and how does it compare with the 18 your rule predicts?",
     "only_states_correction": false
   },
-  "served_sha256": "92bbcbdc66f369eb97894d03539ae9dbab7b4cfa52bd96e288354629c15b504e"
+  "served_sha256": "d168ebeb3972ebdd6a74eaf07d1a9881f710aa7e6c507869cbe1ca616ca36bb5"
 }

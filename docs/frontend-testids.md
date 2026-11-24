@@ -334,6 +334,11 @@ journeys keep anchoring: `quiz-panel`, `quiz-start`,
 | `quiz-sort-buckets` | bucket grid |
 | `quiz-sort-bucket-{index}` | one bucket (`data-bucket` = name); place via “Place in {name}” |
 | `quiz-sort-item-{id}` | one sortable card (tray or bucket); `aria-pressed` while selected in the tray |
+| `quiz-sequence` | W7.2 kit 7.2: Sequence interaction root (`data-complete`, optional `data-verdict`); mounts when `question.interaction.kind === "sequence"` on a short_answer item |
+| `quiz-sequence-tray` / `quiz-sequence-tray-empty` | unassigned Steps tray, or “Every step is placed.” when empty |
+| `quiz-sequence-slots` | ordered slot list (1…n) |
+| `quiz-sequence-slot-{index}` | one slot (`data-slot` = index); place via “Place in position {n}” |
+| `quiz-sequence-item-{id}` | one step card (tray or slot); `aria-pressed` while selected in the tray |
 | `quiz-label` | W7.2 kit 7.4: Label interaction root (`data-complete`, optional `data-verdict`); mounts when `question.interaction.kind === "label"` on a short_answer item |
 | `quiz-label-tray` / `quiz-label-tray-empty` | unassigned Labels tray, or “Every label is placed.” when empty |
 | `quiz-label-spots` | numbered region grid (diagram SVG deferred) |
@@ -1151,6 +1156,7 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `loop-check-prompt` | the current check pose (`check.prompt`, A17/A27); `data-question-hash`, `data-format` |
 | `loop-materials-grounded` | W4.3: calm "Grounded in your materials" status under a teach/opener assistant turn when the server sent `materials_grounded: true` (passages in the prompt); `title` / `aria-label` explain course-material grounding (never a cite list) |
 | `loop-key-verified` | W4.4: calm "Key verified" status on the check card when the pose carries `key_verified: true` (`check_items.canonical_verified`); `title` / `aria-label` explain independent key check (not AI vouching); absent otherwise — never invented client-side |
+| `loop-figure-withheld` | W4.1a: honest empty figure slot when pose carries `figure.status === "withheld"` (visual surface, no drawable asset yet); never invents SVG client-side |
 | `loop-attempt-input` | free/teachback attempt textarea |
 | `loop-attempt-reasoning` | W2.3: optional "Your reasoning" textarea on free/teachback checks only (never graded / never mastery; sealed as `sessions.loop_state` `reasoning_encrypted`); absent on `mc_reason` |
 | `loop-attempt-options` | the attempt box's options radio group, as `loop-probe-options` |

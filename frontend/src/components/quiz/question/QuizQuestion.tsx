@@ -28,11 +28,12 @@
  * W7.5: Hint shows client-side scaffolding already on the question (no LLM /
  * answer key; Bastani ladder deferred); Skip wires to GO_TO; Study guide opens
  * a leak-safe drawer scaffold. No wager.
- * W7.2 kit: Sort (7.1) + Label (7.4) click-to-assign stubs on short_answer + interaction.
+ * W7.2 kit: Sort (7.1) + Sequence (7.2) + Label (7.4) click-to-assign stubs on
+ * short_answer + interaction.
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { BookOpen, ChevronLeft, ChevronRight, Hash, Layers, Library, ListChecks, PenLine, Sigma, Sparkles, Tag, X } from "lucide-react";
+import { BookOpen, ChevronLeft, ChevronRight, Hash, Layers, Library, ListChecks, ListOrdered, PenLine, Sigma, Sparkles, Tag, X } from "lucide-react";
 import { AnswerOption, Badge, Button, Chip, ProgressDots } from "@/components/ui";
 import { ConceptNode } from "@/components/graph/ConceptNode";
 import { ConfidenceControl } from "@/components/learn/ConfidenceControl";
@@ -43,12 +44,14 @@ import { learnHrefForNode } from "@/lib/data";
 import type { QuizActions } from "@/lib/quiz/useQuizSession";
 import { buildQuizHref } from "@/lib/quiz/source";
 import { asLabelInteraction } from "@/lib/quiz/labelInteraction";
+import { asSequenceInteraction } from "@/lib/quiz/sequenceInteraction";
 import { asSortInteraction } from "@/lib/quiz/sortInteraction";
 import type { Phase, QuestionType, QuizConfig, QuizItem, QuizPrereqBanner, QuizSession } from "@/lib/quiz/types";
 import { isUnanswered } from "@/lib/quiz/machine";
 import { expressionParts, superscriptParts, type ExpressionPart } from "@/lib/quiz/answerFormats";
 import { WrittenAnswer, type WrittenType } from "./WrittenAnswer";
 import { LabelAnswer } from "./LabelAnswer";
+import { SequenceAnswer } from "./SequenceAnswer";
 import { SortAnswer } from "./SortAnswer";
 import { AskPanel } from "./AskPanel";
 import { StudyGuideDrawer } from "./StudyGuideDrawer";
@@ -162,6 +165,7 @@ const FORMAT_TAG: Record<string, { label: string; Icon: typeof ListChecks }> = {
   numeric: { label: "Numeric", Icon: Hash },
   symbolic: { label: "Algebra", Icon: Sigma },
   sort: { label: "Sort", Icon: Layers },
+  sequence: { label: "Sequence", Icon: ListOrdered },
   label: { label: "Label", Icon: Tag },
 };
 
@@ -831,6 +835,31 @@ function SortField(props: AnswerFieldProps) {
   );
 }
 
+/** W7.2 Sequence (7.2): tray + ordered slots; Check uses encoded short_answer text. */
+function SequenceField(props: AnswerFieldProps) {
+  const { view, shown, selectable, actions } = props;
+  const sequence = asSequenceInteraction(view.item?.question.interaction);
+  if (!sequence) return <WrittenField {...props} />;
+  return (
+    <div
+      className="quiz-question__written quiz-question__written--sequence"
+      data-marked={shown ? "true" : undefined}
+    >
+      <SequenceAnswer
+        interaction={sequence}
+        value={view.item?.answerText ?? ""}
+        disabled={!selectable}
+        expected={shown?.correctAnswer ?? null}
+        verdict={outcomeOf(shown) ?? null}
+        onChange={text => actions.write?.(text)}
+      />
+      <p className="quiz-question__format-hint" id="quiz-format-hint" data-testid="quiz-format-hint">
+        {formatHint("short_answer", { sequence: true })}
+      </p>
+    </div>
+  );
+}
+
 /** W7.2 Label (7.4): tray + spots; Check uses encoded short_answer text. */
 function LabelField(props: AnswerFieldProps) {
   const { view, shown, selectable, actions } = props;
@@ -860,6 +889,7 @@ function kitField(props: AnswerFieldProps): React.JSX.Element | null {
   if (props.view.format !== "short_answer") return null;
   const interaction = props.view.item?.question.interaction;
   if (asSortInteraction(interaction)) return <SortField {...props} />;
+  if (asSequenceInteraction(interaction)) return <SequenceField {...props} />;
   if (asLabelInteraction(interaction)) return <LabelField {...props} />;
   return null;
 }
@@ -871,7 +901,7 @@ function AnswerFieldFor(props: AnswerFieldProps) {
   return <Field {...props} />;
 }
 
-/** One answer field per wire format. Sort / Label mount via AnswerFieldFor. */
+/** One answer field per wire format. Sort / Sequence / Label mount via AnswerFieldFor. */
 const ANSWER_FIELDS: Record<QuestionType, (props: AnswerFieldProps) => React.JSX.Element> = {
   multiple_choice: ChoiceAnswer,
   short_answer: WrittenField,
@@ -1109,12 +1139,14 @@ export function QuizQuestion({
     ? view.item?.question.interaction
     : undefined;
   const sortInteraction = asSortInteraction(kitInteraction);
+  const sequenceInteraction = asSequenceInteraction(kitInteraction);
   const labelInteraction = asLabelInteraction(kitInteraction);
   const scaffold = scaffoldHint({
     conceptName: concept.name,
     conceptTested: view.item?.question.concept_tested,
     format: view.format,
     sort: Boolean(sortInteraction),
+    sequence: Boolean(sequenceInteraction),
     label: Boolean(labelInteraction),
   });
   const openGuide = useCallback(() => {
@@ -1155,9 +1187,11 @@ export function QuizQuestion({
   );
   const formatTagKey = sortInteraction
     ? "sort"
-    : labelInteraction
-      ? "label"
-      : view.format;
+    : sequenceInteraction
+      ? "sequence"
+      : labelInteraction
+        ? "label"
+        : view.format;
   const header = (
     <QuestionHeader
       concept={concept}

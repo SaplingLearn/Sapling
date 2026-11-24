@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"Notice exactly what you wrote down and how you arrived at it.\", \"body\": \"You wrote that the base case is n == 0 returning 1, and the verdict on that answer is correct.\", \"question\": \"How could you check your own reasoning on a problem like this before you submit it?\"}"
+    "{\"key_idea\": \"Pause on the move you just made before deciding what comes next.\", \"body\": \"You named the case as n == 0 returning 1, and the grader marked that answer correct.\", \"question\": \"What is the first thing you need to figure out before you choose your next step?\"}"
   ],
   "input_sha256": "c58dc63bbdf3cbebe20856dfb3f96c306ae2d2f8914478905abe9554512a186f",
   "model": "claude-haiku-5-5",
   "output": {
-    "body": "You wrote that the base case is n == 0 returning 1, and the verdict on that answer is correct.",
-    "key_idea": "Notice exactly what you wrote down and how you arrived at it.",
-    "question": "How could you check your own reasoning on a problem like this before you submit it?"
+    "body": "You named the case as n == 0 returning 1, and the grader marked that answer correct.",
+    "key_idea": "Pause on the move you just made before deciding what comes next.",
+    "question": "What is the first thing you need to figure out before you choose your next step?"
   },
-  "prompt_hash": "20d0e4f9042d",
+  "prompt_hash": "c41a3c1994a6",
   "requests": 1,
   "rescued": false,
   "retries": 0,

@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "What does your rule predict for the average of 2, 4 and 90, and what do you get when you add those three numbers and divide by 3?",
+    "evidence": "What do you get for the mean of 1, 1 and 10, and does it match the 1 your belief predicted?",
     "only_states_correction": false
   },
-  "served_sha256": "8b6b75c50bf9ae76965df08286e67204d32d61e9150575f4cd2caa49e07de604"
+  "served_sha256": "e1659aaa1cdd5516396c8ba52b2ac71dcb45a21494b477257b5682d81c8e283c"
 }

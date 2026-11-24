@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "If you apply the limit definition, (f(x+h) - f(x))/h as h approaches 0, to f(x) = x^2, what expression do you get after expanding the numerator?",
+    "evidence": "If f(x) = x^2, what do you get when you simplify (f(x+h) - f(x))/h before letting h go to 0, and does it match x^2/2?",
     "only_states_correction": false
   },
-  "served_sha256": "85bb00955aeef0b8e8fbe73e84db05091cf0e2948cdc473ab57ecf5c966b8d74"
+  "served_sha256": "6bd63a9531eeb8c7acbeb764eb18b067da78477fd50c2916f7a7400f8ba6d0f6"
 }

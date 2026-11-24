@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"Recursion is a function that solves a problem by calling itself on a smaller version of the same problem until it reaches a stopping case.\", \"body\": \"That's a very common first reaction, and a guess is a useful place to start. Here's a tiny function: countdown(n) stops if n is 0, and otherwise prints n and then calls countdown(n-1). Give it your best guess before I explain anything more.\", \"question\": \"What do you think countdown(3) prints, in order, if it stops as soon as n is 0?\"}"
+    "{\"key_idea\": \"Recursion is a function that calls itself on a smaller input, and it needs a stopping point to finish.\", \"body\": \"Recursion is easier to see by trying it, so let's start with a quick, bounded attempt. Here is a function: countdown(n) prints n, then calls countdown(n-1), and stops when n is 0. A best guess is fine, and I'll build the rules from wherever you get stuck.\", \"question\": \"Using that definition, what do you think countdown(3) prints, in order, and at what point does it stop?\"}"
   ],
   "input_sha256": "1a6ccd15960d7d572c96de957f6eae0ff470a031fd3568a0cec9f272acdfb746",
   "model": "claude-haiku-5-5",
   "output": {
-    "body": "That's a very common first reaction, and a guess is a useful place to start. Here's a tiny function: countdown(n) stops if n is 0, and otherwise prints n and then calls countdown(n-1). Give it your best guess before I explain anything more.",
-    "key_idea": "Recursion is a function that solves a problem by calling itself on a smaller version of the same problem until it reaches a stopping case.",
-    "question": "What do you think countdown(3) prints, in order, if it stops as soon as n is 0?"
+    "body": "Recursion is easier to see by trying it, so let's start with a quick, bounded attempt. Here is a function: countdown(n) prints n, then calls countdown(n-1), and stops when n is 0. A best guess is fine, and I'll build the rules from wherever you get stuck.",
+    "key_idea": "Recursion is a function that calls itself on a smaller input, and it needs a stopping point to finish.",
+    "question": "Using that definition, what do you think countdown(3) prints, in order, and at what point does it stop?"
   },
-  "prompt_hash": "20d0e4f9042d",
+  "prompt_hash": "c41a3c1994a6",
   "requests": 1,
   "rescued": false,
   "retries": 0,

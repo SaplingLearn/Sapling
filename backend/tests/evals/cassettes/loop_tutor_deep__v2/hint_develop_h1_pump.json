@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"Start by pinning down what the question is actually asking you to produce.\", \"body\": \"You asked for a hint, so let's take just the first small step together.\", \"question\": \"What is the first thing you need to figure out before you can answer this item?\"}"
+    "{\"key_idea\": \"Start by pinning down what the question is actually asking you to produce.\", \"body\": \"Take a moment to look at the item again in your own words.\", \"question\": \"What is the first thing you need to figure out before you can answer it?\"}"
   ],
   "input_sha256": "a223d9787536083e662accb290741c8dedf27ba661214abdbca0142b8f3dd1d0",
   "model": "claude-sonnet-5-5",
   "output": {
-    "body": "You asked for a hint, so let's take just the first small step together.",
+    "body": "Take a moment to look at the item again in your own words.",
     "key_idea": "Start by pinning down what the question is actually asking you to produce.",
-    "question": "What is the first thing you need to figure out before you can answer this item?"
+    "question": "What is the first thing you need to figure out before you can answer it?"
   },
-  "prompt_hash": "20d0e4f9042d",
+  "prompt_hash": "c41a3c1994a6",
   "requests": 1,
   "rescued": false,
   "retries": 0,

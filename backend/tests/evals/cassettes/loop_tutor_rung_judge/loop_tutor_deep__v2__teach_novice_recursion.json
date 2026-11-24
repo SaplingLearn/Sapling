@@ -2,9 +2,9 @@
   "judge_model": "claude-opus-5-5",
   "judge_prompt_hash": "04965e06502fce54287461706513430c3dcacd1ff4e9f575514434a4a837b08a",
   "output": {
-    "evidence": "Take adding 1+2+...+n: define sum(n) = n + sum(n-1), with base case sum(1) = 1",
+    "evidence": "Take the sum of 1 to n: the base case is sum(1) = 1, and for bigger n, sum(n) = n + sum(n-1). Here is sum(3) worked partway",
     "reveals_final_answer": false,
     "rung": 4
   },
-  "served_sha256": "f0bf4acf4a411497b907822db925561cafa33371cc6348b56ea755d78c8c80ba"
+  "served_sha256": "99171612557558da814f0db5197ba61846989f41a37e981698ff587690166aae"
 }

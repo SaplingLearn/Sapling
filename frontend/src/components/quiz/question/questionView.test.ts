@@ -208,6 +208,9 @@ describe("W7.5 hint / skip slots", () => {
     const sort = scaffoldHint({ conceptName: "Recursion", format: "short_answer", sort: true });
     expect(sort.rubric).toMatch(/^Select an item/);
 
+    const sequence = scaffoldHint({ conceptName: "Mitosis", format: "short_answer", sequence: true });
+    expect(sequence.rubric).toMatch(/^Select a step/);
+
     const label = scaffoldHint({ conceptName: "Anatomy", format: "short_answer", label: true });
     expect(label.rubric).toMatch(/^Select a label/);
   });
@@ -312,6 +315,7 @@ describe("the verdict's words", () => {
     expect(formatHint("short_answer")).toBe("Write a brief answer. Capitalization and extra spacing do not affect your score.");
     expect(formatHint(undefined)).toBe(formatHint("short_answer"));
     expect(formatHint("short_answer", { sort: true })).toMatch(/^Select an item/);
+    expect(formatHint("short_answer", { sequence: true })).toMatch(/^Select a step/);
     expect(formatHint("short_answer", { label: true })).toMatch(/^Select a label/);
   });
 
