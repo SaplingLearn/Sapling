@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"You want a limits practice problem so you can check your own understanding.\", \"body\": \"You asked for a limits problem to test yourself before moving on.\", \"question\": \"What do you already know about limits, and which kinds of limit problems have you tried so far?\"}"
+    "{\"key_idea\": \"You want a limits problem so you can check your own understanding.\", \"body\": \"You'd like to test yourself on limits before moving on, and that's a good way to find out where you stand.\", \"question\": \"What do you already know about limits, or what have you tried so far?\"}"
   ],
   "input_sha256": "70321f8ae6ffa254b3e6a2bdc6623fac6e7fd5afad3a57c9a8fd128472f06060",
   "model": "claude-haiku-5-5",
   "output": {
-    "body": "You asked for a limits problem to test yourself before moving on.",
-    "key_idea": "You want a limits practice problem so you can check your own understanding.",
-    "question": "What do you already know about limits, and which kinds of limit problems have you tried so far?"
+    "body": "You'd like to test yourself on limits before moving on, and that's a good way to find out where you stand.",
+    "key_idea": "You want a limits problem so you can check your own understanding.",
+    "question": "What do you already know about limits, or what have you tried so far?"
   },
-  "prompt_hash": "1e98ab9844b3",
+  "prompt_hash": "b187384be34a",
   "requests": 1,
   "rescued": false,
   "retries": 0,

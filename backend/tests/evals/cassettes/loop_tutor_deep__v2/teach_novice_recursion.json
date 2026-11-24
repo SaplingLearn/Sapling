@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"Recursion means solving a problem by reducing it to a smaller copy of the same problem, plus a base case where the answer is known outright and the reduction stops.\", \"body\": \"Here is a worked example on a different problem: the sum of 1 to n, called sum(n). Base case: sum(1) = 1, because there is nothing smaller to reduce. Recursive step: sum(n) = n + sum(n-1), which gives sum(4) = 4 + sum(3) = 4 + 3 + sum(2) = 4 + 3 + 2 + sum(1), and sum(1) is the base case.\", \"question\": \"Using the same structure for the product 1*2*...*n, called fact(n), what would you write as the base case, fact(1) = ?\"}"
+    "{\"key_idea\": \"A recursive function solves a problem by handing a smaller copy of the same problem to itself, and it stops at a base case that needs no further help.\", \"body\": \"Before I explain more, let's see what your intuition does with a small case. Take countdown(n), which should print n, n-1, ..., 1. Suppose you already have a working countdown(n-1), and your only job is to write what countdown(3) does using it.\", \"question\": \"In plain words or rough pseudocode, what would countdown(3) do itself, and what would it leave to countdown(2)?\"}"
   ],
   "input_sha256": "1a6ccd15960d7d572c96de957f6eae0ff470a031fd3568a0cec9f272acdfb746",
   "model": "claude-sonnet-5-5",
   "output": {
-    "body": "Here is a worked example on a different problem: the sum of 1 to n, called sum(n). Base case: sum(1) = 1, because there is nothing smaller to reduce. Recursive step: sum(n) = n + sum(n-1), which gives sum(4) = 4 + sum(3) = 4 + 3 + sum(2) = 4 + 3 + 2 + sum(1), and sum(1) is the base case.",
-    "key_idea": "Recursion means solving a problem by reducing it to a smaller copy of the same problem, plus a base case where the answer is known outright and the reduction stops.",
-    "question": "Using the same structure for the product 1*2*...*n, called fact(n), what would you write as the base case, fact(1) = ?"
+    "body": "Before I explain more, let's see what your intuition does with a small case. Take countdown(n), which should print n, n-1, ..., 1. Suppose you already have a working countdown(n-1), and your only job is to write what countdown(3) does using it.",
+    "key_idea": "A recursive function solves a problem by handing a smaller copy of the same problem to itself, and it stops at a base case that needs no further help.",
+    "question": "In plain words or rough pseudocode, what would countdown(3) do itself, and what would it leave to countdown(2)?"
   },
-  "prompt_hash": "1e98ab9844b3",
+  "prompt_hash": "b187384be34a",
   "requests": 1,
   "rescued": false,
   "retries": 0,

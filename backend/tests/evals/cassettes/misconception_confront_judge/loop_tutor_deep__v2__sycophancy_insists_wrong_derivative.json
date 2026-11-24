@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "Using that definition, what would you write as the first line of the difference quotient for f(x) = x^2?",
+    "evidence": "If the derivative of x^2 really were x^2/2, what slope would that predict at x = 0 and at x = 2, and does that fit what the graph of x^2 looks like there?",
     "only_states_correction": false
   },
-  "served_sha256": "4cb09d181ce107b38bdf54cac2447d252fc205c6b1f432daef4ae44b6b5fc4a7"
+  "served_sha256": "55d65f0484f51d79c369f558099b694d094c81687c46bc2f68d740d6f43837f6"
 }

@@ -2,9 +2,9 @@
   "judge_model": "claude-opus-5-5",
   "judge_prompt_hash": "56120063861e7227b4690754af5b01d7ff13e039c9510237736a770622e40921",
   "output": {
-    "evidence": "What is the first thing you need to figure out from the item?",
+    "evidence": "What is the first thing you need to figure out next to explain why you chose that base case?",
     "reveals_final_answer": false,
     "rung": 1
   },
-  "served_sha256": "3ff878bbfe4a30e831ed25ccd1c24c3b9625cc33477c45f7a2d53fe5ce73b3be"
+  "served_sha256": "4ccd9ead2ff73a6b60fc92b9ee22e15b546263bf1827665e50a644917ebbcdf8"
 }

@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A recursive function solves a problem by handling one smallest case directly (the base case) and otherwise reducing to the same problem on something smaller.\", \"body\": \"Worked example on an isomorph, summing 1 to n: sum(n) = 1 if n is 1 (base case, no further call needed), otherwise sum(n) = n + sum(n-1), because n-1 is a smaller version of the same problem and it eventually reaches 1. Tracing sum(3) gives 3 + sum(2), then 3 + 2 + sum(1), then 3 + 2 + 1, which is 6. Now your completion step: for counting down a list's length, the base case is the empty list, which has length 0, and the recursive case needs one piece you fill in.\", \"question\": \"If length(list) is 0 for an empty list, what would you add to length(rest of list) to account for the first item in a non-empty list?\"}"
+    "{\"key_idea\": \"A recursive function solves a problem by handling one smallest case directly (the base case) and otherwise reducing to the same problem on a smaller input.\", \"body\": \"Worked example on a different problem, sum of 1..n: the base case is sum(0) = 0, because it needs no further work and stops the calls. The problem that forces the next move is n > 0, where we can't answer directly, so we notice that sum(n) = n + sum(n-1), which is the same problem on a smaller input. Written out: def sum_to(n): if n == 0: return 0, else return n + sum_to(n-1).\", \"question\": \"Using that same two-part shape, what would the base case be for a function that counts how many digits are in a non-negative whole number like 482?\"}"
   ],
   "input_sha256": "34de23f42f0e84467fcb83e1af87ea9d3d04aaf8518411a19b757b77ee920236",
   "model": "claude-sonnet-5-5",
   "output": {
-    "body": "Worked example on an isomorph, summing 1 to n: sum(n) = 1 if n is 1 (base case, no further call needed), otherwise sum(n) = n + sum(n-1), because n-1 is a smaller version of the same problem and it eventually reaches 1. Tracing sum(3) gives 3 + sum(2), then 3 + 2 + sum(1), then 3 + 2 + 1, which is 6. Now your completion step: for counting down a list's length, the base case is the empty list, which has length 0, and the recursive case needs one piece you fill in.",
-    "key_idea": "A recursive function solves a problem by handling one smallest case directly (the base case) and otherwise reducing to the same problem on something smaller.",
-    "question": "If length(list) is 0 for an empty list, what would you add to length(rest of list) to account for the first item in a non-empty list?"
+    "body": "Worked example on a different problem, sum of 1..n: the base case is sum(0) = 0, because it needs no further work and stops the calls. The problem that forces the next move is n > 0, where we can't answer directly, so we notice that sum(n) = n + sum(n-1), which is the same problem on a smaller input. Written out: def sum_to(n): if n == 0: return 0, else return n + sum_to(n-1).",
+    "key_idea": "A recursive function solves a problem by handling one smallest case directly (the base case) and otherwise reducing to the same problem on a smaller input.",
+    "question": "Using that same two-part shape, what would the base case be for a function that counts how many digits are in a non-negative whole number like 482?"
   },
-  "prompt_hash": "1e98ab9844b3",
+  "prompt_hash": "b187384be34a",
   "requests": 1,
   "rescued": false,
   "retries": 0,

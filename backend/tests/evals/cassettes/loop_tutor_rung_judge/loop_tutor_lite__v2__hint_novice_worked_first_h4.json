@@ -2,9 +2,9 @@
   "judge_model": "claude-opus-5-5",
   "judge_prompt_hash": "80402569d294638f7e2af95a0f9fb23341de5c768ef3b0c1b576bf4c335c2f4c",
   "output": {
-    "evidence": "Take sum_to(n) = n + sum_to(n-1), with sum_to(0) = 0. Tracing sum_to(2): it calls sum_to(1), which calls sum_to(0), and sum_to(0) returns 0 directly",
+    "evidence": "Take sum(n) = n + sum(n-1), where sum(0) is defined directly as 0 and never calls sum again. Tracing sum(2): it calls sum(1), which calls sum(0)",
     "reveals_final_answer": false,
     "rung": 4
   },
-  "served_sha256": "7c15d628b21cb8a927b8c6b9f2fad4c97a8025623e38a7a556d5fd340cc810a4"
+  "served_sha256": "3e4f7d0845c48052eeb6cf1b299b5f1d5cd3133a53b4c195381bcebbc51415a6"
 }

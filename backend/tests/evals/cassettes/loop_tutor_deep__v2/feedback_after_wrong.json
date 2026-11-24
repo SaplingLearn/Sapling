@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A recursive function stops only when some input hits a base case that returns a value without calling the function again.\", \"body\": \"Your answer has factorial(0) making another recursive call, and that call would need its own stopping point, so the chain never ends. Compare it with the stored solution above and look at what factorial(0) does with its own input.\", \"question\": \"In the stored solution, what does factorial(0) do instead of calling factorial again, and why does that break the chain of calls?\"}"
+    "{\"key_idea\": \"A recursive function stops only when some input hits a base case that returns a value without making another recursive call.\", \"body\": \"Your attempt has factorial(0) calling factorial(-1), which makes a new call, so nothing in that chain ever ends the recursion. The stored solution above shows what happens at 0 instead, so compare it with your version.\", \"question\": \"Looking at the stored solution, what does factorial(0) do differently from your version, and why does that mean it makes no further call?\"}"
   ],
   "input_sha256": "f91b66d089a1599dad0888803e80c38ed8a894e91886a462eec99011e0e751b6",
   "model": "claude-sonnet-5-5",
   "output": {
-    "body": "Your answer has factorial(0) making another recursive call, and that call would need its own stopping point, so the chain never ends. Compare it with the stored solution above and look at what factorial(0) does with its own input.",
-    "key_idea": "A recursive function stops only when some input hits a base case that returns a value without calling the function again.",
-    "question": "In the stored solution, what does factorial(0) do instead of calling factorial again, and why does that break the chain of calls?"
+    "body": "Your attempt has factorial(0) calling factorial(-1), which makes a new call, so nothing in that chain ever ends the recursion. The stored solution above shows what happens at 0 instead, so compare it with your version.",
+    "key_idea": "A recursive function stops only when some input hits a base case that returns a value without making another recursive call.",
+    "question": "Looking at the stored solution, what does factorial(0) do differently from your version, and why does that mean it makes no further call?"
   },
-  "prompt_hash": "1e98ab9844b3",
+  "prompt_hash": "b187384be34a",
   "requests": 1,
   "rescued": false,
   "retries": 0,

@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A recursive function stops only if some call returns a value without calling itself again, so the test is what happens to the calls when no such case exists.\", \"body\": \"Your belief says the recursive rule alone is enough, so take that literally and trace factorial(0) using only n times factorial(n-1) as the definition. Check each call you make and whether any of them ever returns a value without making another call.\", \"question\": \"Following that trace for the first few calls, what does each new call receive as input, and does any of them ever stop?\"}"
+    "{\"key_idea\": \"A recursive function stops only if some call reaches a case that does not call itself again, so the claim that no base case is needed can be tested directly on the input 0.\", \"body\": \"Your claim predicts that factorial(0) still finishes without a base case, so the prediction can be checked by tracing it. Follow each call factorial(0) makes under your version and note what input each new call receives.\", \"question\": \"Under your version, what input does the first call to factorial make after factorial(0), and does that call ever reach a point where it stops calling itself?\"}"
   ],
   "input_sha256": "e0d1f2189c5056960cbc9baea8ab8349a501c5d4879b45ee65bea90b8e5da741",
   "model": "claude-haiku-5-5",
   "output": {
-    "body": "Your belief says the recursive rule alone is enough, so take that literally and trace factorial(0) using only n times factorial(n-1) as the definition. Check each call you make and whether any of them ever returns a value without making another call.",
-    "key_idea": "A recursive function stops only if some call returns a value without calling itself again, so the test is what happens to the calls when no such case exists.",
-    "question": "Following that trace for the first few calls, what does each new call receive as input, and does any of them ever stop?"
+    "body": "Your claim predicts that factorial(0) still finishes without a base case, so the prediction can be checked by tracing it. Follow each call factorial(0) makes under your version and note what input each new call receives.",
+    "key_idea": "A recursive function stops only if some call reaches a case that does not call itself again, so the claim that no base case is needed can be tested directly on the input 0.",
+    "question": "Under your version, what input does the first call to factorial make after factorial(0), and does that call ever reach a point where it stops calling itself?"
   },
-  "prompt_hash": "1e98ab9844b3",
+  "prompt_hash": "b187384be34a",
   "requests": 1,
   "rescued": false,
   "retries": 0,

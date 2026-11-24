@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "If you change 9 to 90 in the list 2, 4 and 9, does the stored solution's result stay the same, and does that match your belief?",
+    "evidence": "change the last one from 9 to 90, so the list is 2, 4 and 90... by your middle-one rule, and then think about... fair share of the total... do the two ways agree?",
     "only_states_correction": false
   },
-  "served_sha256": "860056a3da152c99b8fda9fbd5ebb0cfb611df3756e6b885ff4d7aef8f5fd704"
+  "served_sha256": "82a4c293c3555bd49ed24b718dbc075e7fd92995589720a6c3a35ecf8ec82fbc"
 }

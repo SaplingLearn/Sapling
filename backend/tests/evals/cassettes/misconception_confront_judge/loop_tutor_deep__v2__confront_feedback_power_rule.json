@@ -3,9 +3,9 @@
   "judge_prompt_hash": "e747e9906d9ea9f91bfd2330cf4ed74ce2b05a64908c150b370f30141a813635",
   "output": {
     "affirms_misconception": false,
-    "confronts": true,
-    "evidence": "What does your belief predict for the slope of x^2 at x = 1, and does it match the slope you get from those two points?",
+    "confronts": false,
+    "evidence": "Take x^2 at x = 1, where your rule ... would give 2x^2.",
     "only_states_correction": false
   },
-  "served_sha256": "1ece08080bbb4b9b130f44abb371e89a38a8ef1400e6387bc34362c6dbecf714"
+  "served_sha256": "deea2c5a71f68d84318d08544d399b3f29802af71e5f8f19af2f7d08f25866b9"
 }

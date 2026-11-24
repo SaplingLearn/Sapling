@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"Stating the exact piece you committed to is a clear way to check your own reasoning.\", \"body\": \"The verdict is correct, and you stated your answer in your own words: the base case is n == 0 returning 1.\", \"question\": \"What is the first thing you need to figure out about your own reasoning next?\"}"
+    "{\"key_idea\": \"You stated your answer in your own words, which is the move to check next.\", \"body\": \"You wrote: The base case is n == 0 returning 1.\", \"question\": \"What is the first thing you need to figure out to check your own reasoning?\"}"
   ],
   "input_sha256": "c58dc63bbdf3cbebe20856dfb3f96c306ae2d2f8914478905abe9554512a186f",
   "model": "claude-haiku-5-5",
   "output": {
-    "body": "The verdict is correct, and you stated your answer in your own words: the base case is n == 0 returning 1.",
-    "key_idea": "Stating the exact piece you committed to is a clear way to check your own reasoning.",
-    "question": "What is the first thing you need to figure out about your own reasoning next?"
+    "body": "You wrote: The base case is n == 0 returning 1.",
+    "key_idea": "You stated your answer in your own words, which is the move to check next.",
+    "question": "What is the first thing you need to figure out to check your own reasoning?"
   },
-  "prompt_hash": "1e98ab9844b3",
+  "prompt_hash": "b187384be34a",
   "requests": 1,
   "rescued": false,
   "retries": 0,

@@ -1,19 +1,18 @@
 {
   "attempts": [
-    "{\"key_idea\": \"Start by pinning down what the question asks for in your own words.\", \"body\": \"You wrote that the base case is n == 0 returning 1, and the verdict on that answer is correct. Your next step is to say what the item asked you to find.\", \"question\": \"What is the first thing you need to figure out from the item?\"}",
-    "{\"key_idea\": \"Start by pinning down what the question asks for in your own words.\", \"body\": \"You wrote that the base case is n == 0 returning 1, and that answer was graded correct.\", \"question\": \"What is the first thing you need to figure out from the item?\"}"
+    "{\"key_idea\": \"Start by naming what your answer commits you to, then check it against the question.\", \"body\": \"You wrote that the base case is n == 0 returning 1, and the graded verdict on that answer is correct.\", \"question\": \"What is the first thing you need to figure out next to explain why you chose that base case?\"}"
   ],
   "input_sha256": "c58dc63bbdf3cbebe20856dfb3f96c306ae2d2f8914478905abe9554512a186f",
   "model": "claude-haiku-5-5",
   "output": {
-    "body": "You wrote that the base case is n == 0 returning 1, and that answer was graded correct.",
-    "key_idea": "Start by pinning down what the question asks for in your own words.",
-    "question": "What is the first thing you need to figure out from the item?"
+    "body": "You wrote that the base case is n == 0 returning 1, and the graded verdict on that answer is correct.",
+    "key_idea": "Start by naming what your answer commits you to, then check it against the question.",
+    "question": "What is the first thing you need to figure out next to explain why you chose that base case?"
   },
-  "prompt_hash": "1e98ab9844b3",
-  "requests": 2,
+  "prompt_hash": "b187384be34a",
+  "requests": 1,
   "rescued": false,
-  "retries": 1,
+  "retries": 0,
   "schema_hash": "ee2a0f1f177f",
   "slot": "loop_tutor_lite",
   "tool_calls": []

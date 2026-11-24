@@ -2,9 +2,9 @@
   "judge_model": "claude-opus-5-5",
   "judge_prompt_hash": "4a7facad9fab6be75173f5821ece6dd0e3847df5f7d6e1ab947c66b74a43f4c1",
   "output": {
-    "evidence": "What do you already know about limits, and what kinds of limit problems have you tried so far?",
+    "evidence": "What do you already know about limits, and which kind of limit (for example at a point, at infinity, or one-sided) do you want to try first?",
     "reveals_final_answer": false,
     "rung": 1
   },
-  "served_sha256": "1f7b10c047e5725b9da88d662ecb74af46f6e3cd5169f811067959b0e62f8e10"
+  "served_sha256": "9361ed41ee8efb4baa976cd743fcd081d1dba9a41c07b733767ce4d22ff297a2"
 }

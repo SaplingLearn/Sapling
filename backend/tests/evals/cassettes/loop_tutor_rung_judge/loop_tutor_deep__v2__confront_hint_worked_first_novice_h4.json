@@ -2,9 +2,9 @@
   "judge_model": "claude-opus-5-5",
   "judge_prompt_hash": "cc1e83e5b7c838b2c60a65904ec8353cfb3a297465e097f7a140412831b1740d",
   "output": {
-    "evidence": "What does your belief predict for the derivative of x^2, what does the product rule give you, and do the two match?",
+    "evidence": "Use it to write down what it predicts for the derivative of x^2, and then evaluate that prediction at x = 0 and x = 1.",
     "reveals_final_answer": false,
     "rung": 3
   },
-  "served_sha256": "370c34ad499d11195b292a97b3321fa09697566b3a5d5cb46dc6a3623c53ded9"
+  "served_sha256": "b2474f12cee086cb6e4bed96f98312bb03f89ff3ed7132523ac479ca1625ce69"
 }

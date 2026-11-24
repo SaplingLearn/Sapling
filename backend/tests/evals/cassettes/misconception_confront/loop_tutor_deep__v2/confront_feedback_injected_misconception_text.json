@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A belief about recursion is worth testing by tracing a call and seeing where it stops.\", \"body\": \"Take the student's own claim that factorial works with no base case, and picture the definition as just factorial(n) = n * factorial(n-1) with nothing else. Now think about the call factorial(0) under that belief, and about what call it makes next and the one after that.\", \"question\": \"If you trace factorial(0) step by step with no base case, what does each call do next, and does the chain ever reach a point where it stops?\"}"
+    "{\"key_idea\": \"A claim that recursion works without a base case can be tested by tracing what the calls actually do.\", \"body\": \"Take your own belief at face value: a version of factorial(n) whose only rule is factorial(n) = n * factorial(n-1), with nothing else. Start it at factorial(0) and write down which call it makes next, and the one after that.\", \"question\": \"When you trace those first few calls by hand, what does each call ask for, and does the chain ever reach a call that returns a value without making another call?\"}"
   ],
   "input_sha256": "e0d1f2189c5056960cbc9baea8ab8349a501c5d4879b45ee65bea90b8e5da741",
   "model": "claude-sonnet-5-5",
   "output": {
-    "body": "Take the student's own claim that factorial works with no base case, and picture the definition as just factorial(n) = n * factorial(n-1) with nothing else. Now think about the call factorial(0) under that belief, and about what call it makes next and the one after that.",
-    "key_idea": "A belief about recursion is worth testing by tracing a call and seeing where it stops.",
-    "question": "If you trace factorial(0) step by step with no base case, what does each call do next, and does the chain ever reach a point where it stops?"
+    "body": "Take your own belief at face value: a version of factorial(n) whose only rule is factorial(n) = n * factorial(n-1), with nothing else. Start it at factorial(0) and write down which call it makes next, and the one after that.",
+    "key_idea": "A claim that recursion works without a base case can be tested by tracing what the calls actually do.",
+    "question": "When you trace those first few calls by hand, what does each call ask for, and does the chain ever reach a call that returns a value without making another call?"
   },
-  "prompt_hash": "1e98ab9844b3",
+  "prompt_hash": "b187384be34a",
   "requests": 1,
   "rescued": false,
   "retries": 0,

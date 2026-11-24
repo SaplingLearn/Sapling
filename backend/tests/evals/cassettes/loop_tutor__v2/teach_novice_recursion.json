@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"Recursion is a way of solving a problem by having a function call itself on a smaller version of the same problem.\", \"body\": \"Let's start with a quick try, no notes needed. Suppose countdown(n) prints n, then calls countdown(n - 1), and does nothing when n is 0.\", \"question\": \"What do you think countdown(3) prints, and which step of that process feels unclear to you?\"}"
+    "{\"key_idea\": \"Recursion solves a problem by reusing a solution to a smaller version of the same problem, and you can see how that works by trying one small case first.\", \"body\": \"Don't worry about getting this right yet, since the attempt is how we find where the confusion sits. Picture adding 1+2+3+4 one step at a time, and suppose someone has already told you that 1+2+3 is 6. Your job is only to say how you would use that 6 to get the total.\", \"question\": \"Using only the fact that 1+2+3 is 6, what would you do to get the total of 1+2+3+4, and what is your reasoning?\"}"
   ],
   "input_sha256": "1a6ccd15960d7d572c96de957f6eae0ff470a031fd3568a0cec9f272acdfb746",
   "model": "claude-haiku-5-5",
   "output": {
-    "body": "Let's start with a quick try, no notes needed. Suppose countdown(n) prints n, then calls countdown(n - 1), and does nothing when n is 0.",
-    "key_idea": "Recursion is a way of solving a problem by having a function call itself on a smaller version of the same problem.",
-    "question": "What do you think countdown(3) prints, and which step of that process feels unclear to you?"
+    "body": "Don't worry about getting this right yet, since the attempt is how we find where the confusion sits. Picture adding 1+2+3+4 one step at a time, and suppose someone has already told you that 1+2+3 is 6. Your job is only to say how you would use that 6 to get the total.",
+    "key_idea": "Recursion solves a problem by reusing a solution to a smaller version of the same problem, and you can see how that works by trying one small case first.",
+    "question": "Using only the fact that 1+2+3 is 6, what would you do to get the total of 1+2+3+4, and what is your reasoning?"
   },
-  "prompt_hash": "1e98ab9844b3",
+  "prompt_hash": "b187384be34a",
   "requests": 1,
   "rescued": false,
   "retries": 0,

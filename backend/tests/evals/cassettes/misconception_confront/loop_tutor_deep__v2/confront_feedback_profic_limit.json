@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A 0/0 form is a test of what the quotient does near the point, not a verdict about whether the limit exists.\", \"body\": \"Your belief predicts that any quotient that looks like 0/0 at x = 0 has no limit, so try it on a simple case: (2x)/x as x approaches 0. It also gives 0/0 when you plug in x = 0.\", \"question\": \"What value does (2x)/x take for x close to 0 but not equal to 0, and does that agree with your belief that a 0/0 form has no limit?\"}"
+    "{\"key_idea\": \"Test whether a 0/0 form by itself tells you anything about the limit, by checking it on a case where you can see what happens.\", \"body\": \"Your belief predicts that every limit shaped like 0/0 fails to exist. Take f(x) = 2x/x as x approaches 0: plugging in x = 0 gives 0/0 there too.\", \"question\": \"What does 2x/x equal for every x near 0 but not equal to 0, and does that agree with your belief that a 0/0 form means the limit does not exist?\"}"
   ],
   "input_sha256": "1d48218badd0d7fb355e90843966330dbc456227baf602b717ea63dcf976372c",
   "model": "claude-sonnet-5-5",
   "output": {
-    "body": "Your belief predicts that any quotient that looks like 0/0 at x = 0 has no limit, so try it on a simple case: (2x)/x as x approaches 0. It also gives 0/0 when you plug in x = 0.",
-    "key_idea": "A 0/0 form is a test of what the quotient does near the point, not a verdict about whether the limit exists.",
-    "question": "What value does (2x)/x take for x close to 0 but not equal to 0, and does that agree with your belief that a 0/0 form has no limit?"
+    "body": "Your belief predicts that every limit shaped like 0/0 fails to exist. Take f(x) = 2x/x as x approaches 0: plugging in x = 0 gives 0/0 there too.",
+    "key_idea": "Test whether a 0/0 form by itself tells you anything about the limit, by checking it on a case where you can see what happens.",
+    "question": "What does 2x/x equal for every x near 0 but not equal to 0, and does that agree with your belief that a 0/0 form means the limit does not exist?"
   },
-  "prompt_hash": "1e98ab9844b3",
+  "prompt_hash": "b187384be34a",
   "requests": 1,
   "rescued": false,
   "retries": 0,

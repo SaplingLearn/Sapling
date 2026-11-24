@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": false,
-    "evidence": "In your own words, what does a limit ask about a function near a point, and how is that different from the function's value at the point?",
+    "evidence": "In your own words, what extra information does the limit tell you that the value at the point alone would not?",
     "only_states_correction": true
   },
-  "served_sha256": "c66251ac82a83801c7951b26776a6aedf2a95836fd2b92d7110e34ed954eb6f0"
+  "served_sha256": "6df94c151ace8f922676ef45242a42185eaad5b3798c1316e0a81c683e534f45"
 }

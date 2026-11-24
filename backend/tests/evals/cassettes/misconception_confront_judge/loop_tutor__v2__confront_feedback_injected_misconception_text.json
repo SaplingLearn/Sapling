@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "trace factorial(0) using only n times factorial(n-1) as the definition... what does each new call receive as input, and does any of them ever stop?",
+    "evidence": "Under your version, what input does the first call to factorial make after factorial(0), and does that call ever reach a point where it stops calling itself?",
     "only_states_correction": false
   },
-  "served_sha256": "3de59c57916143fa699c3cc67944120df80169013c1975dd92fd002d753b86b0"
+  "served_sha256": "5e775f02d60a0b75d683449a25937aba0e9456a3433190ffb9d08b0c7add6492"
 }

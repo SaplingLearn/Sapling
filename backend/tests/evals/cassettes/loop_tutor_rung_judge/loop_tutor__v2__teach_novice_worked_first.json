@@ -2,9 +2,9 @@
   "judge_model": "claude-opus-5-5",
   "judge_prompt_hash": "ef37fe670c185dbbd3a48c9c1c6fd26940cb876f4d996a477462b25b084d6daf",
   "output": {
-    "evidence": "Isomorph: double(n) returns 2 added together n times, with base case double(0) = 0 and recursive step double(n) = 2 + double(n-1)",
+    "evidence": "Take the isomorph sum_to(n), which adds all whole numbers from 1 up to n: the base case is sum_to(1) = 1",
     "reveals_final_answer": false,
     "rung": 4
   },
-  "served_sha256": "b49cca4f68162cbbefa501ac41040705e5d8ce6dcbcc244d6dc7f65b5416117c"
+  "served_sha256": "92ef1dbfbf2ef936753925bd5b727b8dd1406991c48bf32f6a6e5cbbfb4f7249"
 }

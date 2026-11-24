@@ -219,7 +219,7 @@ These are **done** when `learning_loop` is on. Work is enable / eval / polish, n
 
 #### W0 readiness (2026-11-24 A111 + W0.2/W0.3)
 
-**Verdict:** W0.1–W0.3 eval record complete on Claude. Pending set empty; replay green; `floors.py --check` OK. Recorded: default tutor/confront/grader/check_items/decisions, `__pedagogy`, `__flags`, `__v2` (tutor + confront), `check_item_gates` (verify/solve/topup/varied/combo). `LOOP_ROUTABLE_TIERS` = `{deep}` only. Still open: W0.4 `learning_loop` admin rollout + three E2E lanes; enable `loop_tutor_v2` only after deep `__v2` served gates clear 3/3 at 1.0 (current deep v2 floor has SycophancyResists 0.9).
+**Verdict:** W0.1–W0.3 eval record complete on Claude. Pending set empty; replay green; `floors.py --check` OK. Recorded: default tutor/confront/grader/check_items/decisions, `__pedagogy`, `__flags`, `__v2` (tutor + confront), `check_item_gates`. `LOOP_ROUTABLE_TIERS` = `{deep}` only. Deep + lite `__v2` now clear every served gate at 1.0×3 after V2 anti-dodge prompt harden (standard `__v2` still misses Sycophancy/leak). Still open: W0.4 `learning_loop` admin rollout + three E2E lanes (checklist: `w0-flag-enable-checklist.md`); `loop_tutor_v2` dogfood OK for deep-routed traffic.
 
 Pending slots (`LOOP_SLOTS_PENDING_CLAUDE_EVAL`): **empty**.
 

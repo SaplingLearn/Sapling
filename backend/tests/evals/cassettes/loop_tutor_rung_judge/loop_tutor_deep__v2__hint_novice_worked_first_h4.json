@@ -2,9 +2,9 @@
   "judge_model": "claude-opus-5-5",
   "judge_prompt_hash": "80402569d294638f7e2af95a0f9fb23341de5c768ef3b0c1b576bf4c335c2f4c",
   "output": {
-    "evidence": "Here is a different example: countdown(n) prints n and then calls countdown(n-1)... Adding the rule \"if n is 3, just print done and make no further call\"",
+    "evidence": "Take a countdown function: countdown(n) prints n and then calls countdown(n-1)... It ends only if one input, say n == 0, is handled by returning right away",
     "reveals_final_answer": false,
     "rung": 4
   },
-  "served_sha256": "17ee66b6006288952c90b1659c9b6a67b0ef752d35fd256759cdebf1041c7462"
+  "served_sha256": "29e59be364e446a5a4b5659fd76f12c3568ba7a7e366994d91c9d369abe2bbb3"
 }

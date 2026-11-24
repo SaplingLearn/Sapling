@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A recursive function stops only when it reaches a base case, which is a case it answers directly without calling itself.\", \"body\": \"Your course defines recursion as a function that calls itself on a smaller input, and it needs a base case to end those calls. Reread the definition of a base case in your notes and look at how it is described there.\", \"question\": \"What does your course definition say a base case must do for the recursive calls to end?\"}"
+    "{\"key_idea\": \"A recursive definition in your course notes has to say how it ends, not only how it calls itself.\", \"body\": \"I can't hand over the answer, but I can point you to the right idea: the definition of recursion in your notes covers what happens to the inputs that don't call the function again. Rereading that section should get you close in a few minutes.\", \"question\": \"What does your course definition of a recursive function say about the case where it stops calling itself?\"}"
   ],
   "input_sha256": "7cb6cfcaeee090d3291ec05bad0cf7bfe7dafe9b805aad85daa140dd1f6f6f5e",
   "model": "claude-haiku-5-5",
   "output": {
-    "body": "Your course defines recursion as a function that calls itself on a smaller input, and it needs a base case to end those calls. Reread the definition of a base case in your notes and look at how it is described there.",
-    "key_idea": "A recursive function stops only when it reaches a base case, which is a case it answers directly without calling itself.",
-    "question": "What does your course definition say a base case must do for the recursive calls to end?"
+    "body": "I can't hand over the answer, but I can point you to the right idea: the definition of recursion in your notes covers what happens to the inputs that don't call the function again. Rereading that section should get you close in a few minutes.",
+    "key_idea": "A recursive definition in your course notes has to say how it ends, not only how it calls itself.",
+    "question": "What does your course definition of a recursive function say about the case where it stops calling itself?"
   },
-  "prompt_hash": "1e98ab9844b3",
+  "prompt_hash": "b187384be34a",
   "requests": 1,
   "rescued": false,
   "retries": 0,

@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A belief about how the power rule works is worth testing on a case you can check another way.\", \"body\": \"Take f(x) = x^3, and suppose a derivative just multiplies by the exponent and leaves the exponent alone. You can check what that predicts against the limit definition, (f(x+h) - f(x))/h as h goes to 0, by expanding (x+h)^3 and simplifying. Limits are a strength of yours, so you have the tools to do this without being told the result.\", \"question\": \"Work out the derivative of x^3 using the limit definition, then compare it with what your belief predicts: do they match?\"}"
+    "{\"key_idea\": \"Test whether multiplying by the exponent is the whole story when you differentiate a power of x.\", \"body\": \"Take f(x) = x^3 and think of its slope at x = 1. A belief that says 'multiply by the exponent and keep everything else' predicts a particular formula for the derivative. You can check that formula against the limit definition, (f(1+h) - f(1))/h as h gets small, using (1+h)^3 = 1 + 3h + 3h^2 + h^3.\", \"question\": \"What value does the limit definition give for the slope of x^3 at x = 1, and does it match what your 'multiply by the exponent' belief predicts at x = 1?\"}"
   ],
   "input_sha256": "b672d2eb87f5fd4418e5467d02b2237500776ff015e86630c3765b81f6c8f7de",
   "model": "claude-sonnet-5-5",
   "output": {
-    "body": "Take f(x) = x^3, and suppose a derivative just multiplies by the exponent and leaves the exponent alone. You can check what that predicts against the limit definition, (f(x+h) - f(x))/h as h goes to 0, by expanding (x+h)^3 and simplifying. Limits are a strength of yours, so you have the tools to do this without being told the result.",
-    "key_idea": "A belief about how the power rule works is worth testing on a case you can check another way.",
-    "question": "Work out the derivative of x^3 using the limit definition, then compare it with what your belief predicts: do they match?"
+    "body": "Take f(x) = x^3 and think of its slope at x = 1. A belief that says 'multiply by the exponent and keep everything else' predicts a particular formula for the derivative. You can check that formula against the limit definition, (f(1+h) - f(1))/h as h gets small, using (1+h)^3 = 1 + 3h + 3h^2 + h^3.",
+    "key_idea": "Test whether multiplying by the exponent is the whole story when you differentiate a power of x.",
+    "question": "What value does the limit definition give for the slope of x^3 at x = 1, and does it match what your 'multiply by the exponent' belief predicts at x = 1?"
   },
-  "prompt_hash": "1e98ab9844b3",
+  "prompt_hash": "b187384be34a",
   "requests": 1,
   "rescued": false,
   "retries": 0,

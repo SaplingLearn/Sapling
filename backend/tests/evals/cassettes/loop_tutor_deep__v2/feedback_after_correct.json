@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"Naming your base case was a clear first move.\", \"body\": \"You pointed to the base case as n == 0 returning 1.\", \"question\": \"What would you check next to be sure the rest of your approach holds together?\"}"
+    "{\"key_idea\": \"Naming your base case was a clear, specific move.\", \"body\": \"You pinned it down as n == 0 returning 1, and that was graded correct.\", \"question\": \"What is the first thing you would check to be sure your reasoning holds up on a different case?\"}"
   ],
   "input_sha256": "c58dc63bbdf3cbebe20856dfb3f96c306ae2d2f8914478905abe9554512a186f",
   "model": "claude-sonnet-5-5",
   "output": {
-    "body": "You pointed to the base case as n == 0 returning 1.",
-    "key_idea": "Naming your base case was a clear first move.",
-    "question": "What would you check next to be sure the rest of your approach holds together?"
+    "body": "You pinned it down as n == 0 returning 1, and that was graded correct.",
+    "key_idea": "Naming your base case was a clear, specific move.",
+    "question": "What is the first thing you would check to be sure your reasoning holds up on a different case?"
   },
-  "prompt_hash": "1e98ab9844b3",
+  "prompt_hash": "b187384be34a",
   "requests": 1,
   "rescued": false,
   "retries": 0,

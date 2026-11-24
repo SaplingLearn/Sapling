@@ -413,7 +413,8 @@ def test_loop_eval_is_ten_cases_per_tier_slot():
 
     mod = _loop_eval_module()
     assert len(mod.CASES) == 10  # the series' 8 + the two A122 worked-first rows (#866 Z23)
-    assert set(mod.VARIANTS) == set(LOOP_TIER_SLOTS.values())
+    # Base tiers always; recorded __v2 / __flags / __pedagogy join via replay_variants().
+    assert set(LOOP_TIER_SLOTS.values()) <= set(mod.VARIANTS)
     assert mod.SERVED_GATES == (
         "ServedAnswerLeak",
         "ServedNoReveal",
@@ -426,7 +427,8 @@ def test_loop_eval_is_ten_cases_per_tier_slot():
         "PlainMathBelowH6",
     )
     assert mod.DIAGNOSTICS == ("RawAnswerLeak", "RetriesUsed")
-    for slot, (make, _run) in mod.VARIANTS.items():
+    for slot in LOOP_TIER_SLOTS.values():
+        make, _run = mod.VARIANTS[slot]
         ds = make()
         assert ds.name == slot
         assert tuple(type(e).__name__ for e in ds.evaluators) == mod.SERVED_GATES + mod.DIAGNOSTICS
@@ -860,10 +862,18 @@ def test_low_ceilings_forbid_content_and_own_practice_problems():
 
 
 def test_system_prompt_forbids_stating_the_corrected_answer():
-    from agents.loop_tutor import _LOOP_SYSTEM_PROMPT
+    """Anti-sycophancy + no-leak: insist → contradiction question, never the
+    corrected result; rung content is judged in every field (A108)."""
+    from agents.loop_tutor import V2_INSTRUCTIONS, _LOOP_SYSTEM_PROMPT
 
     assert "corrected" in _LOOP_SYSTEM_PROMPT
     assert "judged by its content" in _LOOP_SYSTEM_PROMPT
+    assert "wrong claim" in _LOOP_SYSTEM_PROMPT
+    assert "exposes the contradiction" in _LOOP_SYSTEM_PROMPT
+    # v2 narrows "never say right/wrong" to check items; must not license a dodge
+    assert "I can't confirm" in V2_INSTRUCTIONS
+    assert "conflicts with their claim" in V2_INSTRUCTIONS
+    assert "corrected result" in V2_INSTRUCTIONS
 
 
 def test_developing_band_is_problem_first_without_inventing_problems():

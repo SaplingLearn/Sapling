@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A limit describes what a function's outputs approach as the input gets close to a point, which is a different question from what the function outputs at that point.\", \"body\": \"Plugging the point into a formula gives the function's value there, but a limit is decided by the outputs for inputs near that point, so the two can agree or differ. Before you rely on substitution, you need to know what the limit is asking for.\", \"question\": \"In your own words, what does a limit ask about a function near a point, and how is that different from the function's value at the point?\"}"
+    "{\"key_idea\": \"A limit describes what a function's outputs approach as the input nears a point, which is a different question from what the function outputs at that point.\", \"body\": \"Plugging the point into a formula and taking the limit are separate operations, so the two can agree or disagree. Deciding what a limit is means looking at the values on both sides of the point, not only the value exactly at it.\", \"question\": \"In your own words, what extra information does the limit tell you that the value at the point alone would not?\"}"
   ],
   "input_sha256": "245b2b06c1560f1753211cbbd65126488bfe0845b7975c67ac5c82ecd0ee8a73",
   "model": "claude-haiku-5-5",
   "output": {
-    "body": "Plugging the point into a formula gives the function's value there, but a limit is decided by the outputs for inputs near that point, so the two can agree or differ. Before you rely on substitution, you need to know what the limit is asking for.",
-    "key_idea": "A limit describes what a function's outputs approach as the input gets close to a point, which is a different question from what the function outputs at that point.",
-    "question": "In your own words, what does a limit ask about a function near a point, and how is that different from the function's value at the point?"
+    "body": "Plugging the point into a formula and taking the limit are separate operations, so the two can agree or disagree. Deciding what a limit is means looking at the values on both sides of the point, not only the value exactly at it.",
+    "key_idea": "A limit describes what a function's outputs approach as the input nears a point, which is a different question from what the function outputs at that point.",
+    "question": "In your own words, what extra information does the limit tell you that the value at the point alone would not?"
   },
-  "prompt_hash": "1e98ab9844b3",
+  "prompt_hash": "b187384be34a",
   "requests": 1,
   "rescued": false,
   "retries": 0,

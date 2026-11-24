@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A recursive function solves a problem by answering a base case directly and reducing every other case to the same function on a smaller input.\", \"body\": \"Every recursive definition has two parts: a base case that is given directly, and a recursive case that writes the answer in terms of the same function applied to a smaller input. Isomorph: for the power 2^n, the base case is 2^0 = 1, and the recursive case is 2^n = 2 * 2^(n-1), because the problem at n is the problem at n-1 with one more factor of 2, so each call shrinks n until it reaches the base case.\", \"question\": \"For your own function, what is the smallest input you would answer directly, and what smaller input would the recursive step call?\"}"
+    "{\"key_idea\": \"A recursive function solves a problem by stating a base case and expressing the answer in terms of the same function on a smaller input.\", \"body\": \"Isomorph: to count the items in a list, define len([]) = 0 as the base case, and len(list) = 1 + len(rest of list) as the recursive step, where rest drops the first item. For [a, b, c]: len = 1 + len([b, c]) = 1 + (1 + len([c])) = 1 + (1 + (1 + len([]))) = 3, because each call shrinks the list until the base case stops it.\", \"question\": \"For your own problem, what is the base case, and how does the recursive call get closer to it?\"}"
   ],
   "input_sha256": "34de23f42f0e84467fcb83e1af87ea9d3d04aaf8518411a19b757b77ee920236",
   "model": "claude-haiku-5-5",
   "output": {
-    "body": "Every recursive definition has two parts: a base case that is given directly, and a recursive case that writes the answer in terms of the same function applied to a smaller input. Isomorph: for the power 2^n, the base case is 2^0 = 1, and the recursive case is 2^n = 2 * 2^(n-1), because the problem at n is the problem at n-1 with one more factor of 2, so each call shrinks n until it reaches the base case.",
-    "key_idea": "A recursive function solves a problem by answering a base case directly and reducing every other case to the same function on a smaller input.",
-    "question": "For your own function, what is the smallest input you would answer directly, and what smaller input would the recursive step call?"
+    "body": "Isomorph: to count the items in a list, define len([]) = 0 as the base case, and len(list) = 1 + len(rest of list) as the recursive step, where rest drops the first item. For [a, b, c]: len = 1 + len([b, c]) = 1 + (1 + len([c])) = 1 + (1 + (1 + len([]))) = 3, because each call shrinks the list until the base case stops it.",
+    "key_idea": "A recursive function solves a problem by stating a base case and expressing the answer in terms of the same function on a smaller input.",
+    "question": "For your own problem, what is the base case, and how does the recursive call get closer to it?"
   },
-  "prompt_hash": "1e98ab9844b3",
+  "prompt_hash": "b187384be34a",
   "requests": 1,
   "rescued": false,
   "retries": 0,

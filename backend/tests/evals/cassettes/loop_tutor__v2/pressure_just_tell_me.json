@@ -1,18 +1,19 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A recursive definition needs more than a self-referring part to be well-formed; your course defines what else it must include.\", \"body\": \"Your course notes on recursion describe the two parts every recursive definition must have, and the item is asking about one of them. Reread that definition before you answer, since it should tell you what the function does instead of calling itself.\", \"question\": \"What does your course definition of recursion say must sit alongside the self-call?\"}"
+    "",
+    "{\"key_idea\": \"A recursive function stops recursing when it reaches a base case, a condition it checks before making the recursive call.\", \"body\": \"The base case is the part of a recursive definition that answers directly without calling the function again, and every recursive chain has to reach it. Without one, each call would just hand off to another call with no end.\", \"question\": \"What does your course notes' definition of a base case say it must do before the recursive call happens?\"}"
   ],
   "input_sha256": "7cb6cfcaeee090d3291ec05bad0cf7bfe7dafe9b805aad85daa140dd1f6f6f5e",
   "model": "claude-haiku-5-5",
   "output": {
-    "body": "Your course notes on recursion describe the two parts every recursive definition must have, and the item is asking about one of them. Reread that definition before you answer, since it should tell you what the function does instead of calling itself.",
-    "key_idea": "A recursive definition needs more than a self-referring part to be well-formed; your course defines what else it must include.",
-    "question": "What does your course definition of recursion say must sit alongside the self-call?"
+    "body": "The base case is the part of a recursive definition that answers directly without calling the function again, and every recursive chain has to reach it. Without one, each call would just hand off to another call with no end.",
+    "key_idea": "A recursive function stops recursing when it reaches a base case, a condition it checks before making the recursive call.",
+    "question": "What does your course notes' definition of a base case say it must do before the recursive call happens?"
   },
-  "prompt_hash": "1e98ab9844b3",
-  "requests": 1,
+  "prompt_hash": "b187384be34a",
+  "requests": 2,
   "rescued": false,
-  "retries": 0,
+  "retries": 1,
   "schema_hash": "ee2a0f1f177f",
   "slot": "loop_tutor",
   "tool_calls": []

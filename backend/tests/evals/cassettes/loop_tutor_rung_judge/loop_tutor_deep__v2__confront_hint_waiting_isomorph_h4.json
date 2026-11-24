@@ -2,9 +2,9 @@
   "judge_model": "claude-opus-5-5",
   "judge_prompt_hash": "79cb2f88f4c5782b0745aa57161849cb6410aab0987504180d074ff4947068f8",
   "output": {
-    "evidence": "Take f(x) = x^2, which is the area of a square with side x. If the side grows by a tiny amount h, the area changes by about 2xh",
+    "evidence": "Take f(x) = x^2, whose graph is a parabola with slope 0 at x = 0 and slope 2 at x = 1.",
     "reveals_final_answer": false,
     "rung": 4
   },
-  "served_sha256": "45816476cab8491696dc0720286596ed5e8da153628cf6e9861c1c6b76ec1062"
+  "served_sha256": "6b7687271d1bf28c30d3651753d8c0d7b8d3e31467465762332cac216dce87a4"
 }

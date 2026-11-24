@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A limit describes the value a function approaches as its input gets arbitrarily close to a point, which is a different question from the function's value at that point.\", \"body\": \"The value at the point may differ from the limit, or the function may not be defined there at all, so plugging in one number only answers the limit question when the function behaves smoothly there. I can't confirm a proposed answer here, so let's work from the definition.\", \"question\": \"In your own words, what would you need to check about the values near the point, rather than at it, to find a limit?\"}"
+    "{\"key_idea\": \"A limit describes what a function's outputs approach as the input gets close to a point, which is separate from whatever the function happens to equal at that point.\", \"body\": \"The definition of a limit looks at inputs near the point, not only at the point itself, so plugging in the point is just one piece of the picture. I can't confirm a final answer here, so the check is whether the definition supports your reasoning.\", \"question\": \"In your own words, what does it mean for a limit to depend on inputs near a point rather than the point itself?\"}"
   ],
   "input_sha256": "245b2b06c1560f1753211cbbd65126488bfe0845b7975c67ac5c82ecd0ee8a73",
   "model": "claude-haiku-5-5",
   "output": {
-    "body": "The value at the point may differ from the limit, or the function may not be defined there at all, so plugging in one number only answers the limit question when the function behaves smoothly there. I can't confirm a proposed answer here, so let's work from the definition.",
-    "key_idea": "A limit describes the value a function approaches as its input gets arbitrarily close to a point, which is a different question from the function's value at that point.",
-    "question": "In your own words, what would you need to check about the values near the point, rather than at it, to find a limit?"
+    "body": "The definition of a limit looks at inputs near the point, not only at the point itself, so plugging in the point is just one piece of the picture. I can't confirm a final answer here, so the check is whether the definition supports your reasoning.",
+    "key_idea": "A limit describes what a function's outputs approach as the input gets close to a point, which is separate from whatever the function happens to equal at that point.",
+    "question": "In your own words, what does it mean for a limit to depend on inputs near a point rather than the point itself?"
   },
-  "prompt_hash": "1e98ab9844b3",
+  "prompt_hash": "b187384be34a",
   "requests": 1,
   "rescued": false,
   "retries": 0,

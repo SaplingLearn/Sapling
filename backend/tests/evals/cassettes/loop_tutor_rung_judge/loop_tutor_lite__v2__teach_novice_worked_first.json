@@ -2,9 +2,9 @@
   "judge_model": "claude-opus-5-5",
   "judge_prompt_hash": "ef37fe670c185dbbd3a48c9c1c6fd26940cb876f4d996a477462b25b084d6daf",
   "output": {
-    "evidence": "Isomorph: for the power 2^n, the base case is 2^0 = 1, and the recursive case is 2^n = 2 * 2^(n-1)",
+    "evidence": "Isomorph: to count the items in a list, define len([]) = 0 as the base case, and len(list) = 1 + len(rest of list) as the recursive step",
     "reveals_final_answer": false,
     "rung": 4
   },
-  "served_sha256": "dc865e019fd6c1e9bedb038d9ef7af002c808fd99f2a5f10b0c17a93f2c50dfd"
+  "served_sha256": "1fe6d3e5fcdd38818b14a78f7fea830b17c27053f1eab004d2b51ea472e04917"
 }

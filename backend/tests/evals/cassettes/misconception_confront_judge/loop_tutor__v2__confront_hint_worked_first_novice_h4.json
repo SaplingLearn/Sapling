@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "What does (f(3.001) - f(3)) / 0.001 give for f(x) = x^2, and how does that compare with the 18 the belief predicts?",
+    "evidence": "What value do you get for (2.01^2 - 2^2)/0.01, and does it agree with the 8 your rule predicts?",
     "only_states_correction": false
   },
-  "served_sha256": "9ad14c1918c702b2dec030b5450440bf88c443df2cc1c788f54c09c4ddbc6243"
+  "served_sha256": "928f0773390c0f72047e71b8051cc1bbd68c85d011b7fe15d761ef4807d66dd2"
 }

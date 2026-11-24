@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "Trace factorial(-1) by that same rule for three calls and see whether the numbers ever run out.",
+    "evidence": "What is the next call that factorial(0) makes in that version, and does anything in those lines ever stop it?",
     "only_states_correction": false
   },
-  "served_sha256": "1ee0a54f3e2d1fd1951787caeb08a13175ea5e7fd4dfff1990dbcad506d87f62"
+  "served_sha256": "772a25e894facbe48e61fee56a49466152350d88e8276a19a1045b961845400a"
 }

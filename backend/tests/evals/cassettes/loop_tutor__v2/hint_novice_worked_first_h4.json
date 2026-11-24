@@ -1,19 +1,18 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A recursive call chain ends at the input where the function returns a value directly, without making another call.\", \"body\": \"Take power(b, n) defined as: if n is 0 return 1, else return b * power(b, n-1). Tracing power(2, 2), it calls power(2, 1), which calls power(2, 0), and that call hits the n = 0 line and returns 1 without calling anything else. Each call passes a smaller n down the chain, so it stops at the first input where the function answers directly.\", \"question\": \"For factorial(0), which line of your definition runs, and does that line make another call?\"}",
-    "{\"key_idea\": \"Tracing a recursive call on a small isomorph shows how the input changes from one call to the next.\", \"body\": \"Take power(b, n) defined as: if n is 0 return 1, else return b * power(b, n-1). Tracing power(2, 2), it calls power(2, 1), which calls power(2, 0), so the value of n changes at every call. Follow each call line by line and note which line runs for each value of n.\", \"question\": \"For factorial(0), which line of your definition does the call run, and is there a further call after it?\"}"
+    "{\"key_idea\": \"A recursive function stops only when some input reaches a case it answers directly, without calling itself again.\", \"body\": \"Isomorph: power(b, n) is defined as 1 when n is 0, and as b times power(b, n-1) otherwise. Tracing power(2, 2) gives 2 times (2 times power(2, 0)), and power(2, 0) returns right away, so each call's input drops by 1 until it reaches that direct case.\", \"question\": \"Using the same pattern, what input does factorial(0) receive, and does your factorial definition send that input into another call to factorial?\"}"
   ],
   "input_sha256": "78b8a97ede546da8ca6d3349c7a261196577cd93fde52115743a9f77fe7a482b",
   "model": "claude-haiku-5-5",
   "output": {
-    "body": "Take power(b, n) defined as: if n is 0 return 1, else return b * power(b, n-1). Tracing power(2, 2), it calls power(2, 1), which calls power(2, 0), so the value of n changes at every call. Follow each call line by line and note which line runs for each value of n.",
-    "key_idea": "Tracing a recursive call on a small isomorph shows how the input changes from one call to the next.",
-    "question": "For factorial(0), which line of your definition does the call run, and is there a further call after it?"
+    "body": "Isomorph: power(b, n) is defined as 1 when n is 0, and as b times power(b, n-1) otherwise. Tracing power(2, 2) gives 2 times (2 times power(2, 0)), and power(2, 0) returns right away, so each call's input drops by 1 until it reaches that direct case.",
+    "key_idea": "A recursive function stops only when some input reaches a case it answers directly, without calling itself again.",
+    "question": "Using the same pattern, what input does factorial(0) receive, and does your factorial definition send that input into another call to factorial?"
   },
-  "prompt_hash": "1e98ab9844b3",
-  "requests": 2,
+  "prompt_hash": "b187384be34a",
+  "requests": 1,
   "rescued": false,
-  "retries": 1,
+  "retries": 0,
   "schema_hash": "ee2a0f1f177f",
   "slot": "loop_tutor",
   "tool_calls": []

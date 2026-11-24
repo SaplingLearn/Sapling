@@ -2,9 +2,9 @@
   "judge_model": "claude-opus-5-5",
   "judge_prompt_hash": "ef37fe670c185dbbd3a48c9c1c6fd26940cb876f4d996a477462b25b084d6daf",
   "output": {
-    "evidence": "Worked example on an isomorph, summing 1 to n: sum(n) = 1 if n is 1 (base case, no further call needed), otherwise sum(n) = n + sum(n-1)",
+    "evidence": "Worked example on a different problem, sum of 1..n: the base case is sum(0) = 0 ... def sum_to(n): if n == 0: return 0, else return n + sum_to(n-1).",
     "reveals_final_answer": false,
     "rung": 4
   },
-  "served_sha256": "1dafc30fb8a424ac33b8768de3c799568ee38717eea2edf3107c09cedbae2222"
+  "served_sha256": "12fb6d48a26348a9ff35d121e6fa14f732f533b4002c1d494c4c3f5b8ab0b6fb"
 }

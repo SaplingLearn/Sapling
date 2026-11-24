@@ -42,15 +42,16 @@ def _sha(value) -> str:
 
 
 # ── Default (flag-off) request digests — function-mode capture ───────────────
-# Was 7fa9cd0e; re-pinned for W1.1/W1.2/W1.4 (safe-anchor + motivated derivation).
-# Cassette / routing freshness stays stale until W0 re-record.
+# Was 7fa9cd0e; re-pinned for W1.1/W1.2/W1.4 then again after W0 Claude A111
+# (system prompt / tool-defs hash landed at 7d2b25572445). Case prefixes
+# below are unchanged.
 
-PRE_A121_PROMPT_HASH = "60deb79ab6a6"  # agents.loop_tutor._PROMPT_HASH, the metadata prompt_version
-PRE_A121_SYSTEM_PROMPT_SHA256 = "cecf20a45ab3ceffc9382bd657ba9d8b51913d9b4a1d69d1617ae86687fdf3e8"
+PRE_A121_PROMPT_HASH = "7d2b25572445"  # agents.loop_tutor._PROMPT_HASH, the metadata prompt_version
+PRE_A121_SYSTEM_PROMPT_SHA256 = "0e95465a855b69815402d1fa9bacbd88151a4d9c57571cb497976c349c2cece4"
 PRE_A121_OUTPUT_TEMPLATE_SHA256 = "f7d3986addb6c3774c5644ec7ed3232159316e2e161601421ad337da22cd91c4"
 #: The request's instructions as the model gets them: the system prompt plus
 #: the prompted-output instruction built from the template and the schema.
-PRE_A121_INSTRUCTIONS_SHA256 = "09bd0504dda643c9c64b3a3e0bf129b22df0feef9dc038f43e34568e76e3b0a3"
+PRE_A121_INSTRUCTIONS_SHA256 = "01f03a37c4b7d23d992688d7b51802f9f41ed194eca667db88bec5fe2610afb8"
 #: The output object: its JSON schema, title and description (the TypedDict's
 #: docstring — pydantic-ai sends it).
 PRE_A121_SCHEMA_SHA256 = "f6c4d36a213fbaeaa31c1ece8c3ed9cf1583ff5b9185763346782c12e51c89e4"
@@ -126,13 +127,13 @@ PRE_A121_CASES = {
 # (no recording exists yet; a change here only re-pins what its first live
 # recording will be made against)
 
-V2_INSTRUCTIONS_SHA256 = "5178da7e0786109d41907b60856c7bab5ae978a10234c1b585f847c45d29a8e0"
+V2_INSTRUCTIONS_SHA256 = "8a9dbe964bf1c9ec09988b01e1621cd789811d3b3c3e712015a0d7ff32f1bdc1"
 V2_OUTPUT_TEMPLATE_SHA256 = "8b38d332747a9209a396200a37eef5a34ad498cdc537c2506689dfee3ca89acf"
 #: LoopTurnOutV2's JSON schema (what the eval's schema_hash is taken over)
 #: and the output object's schema as the request carries it
 V2_SCHEMA_SHA256 = "ee2a0f1f177fea6961205f9ee748f7698f3794c5557cd19058dae5da35fb0549"
 V2_WIRE_SCHEMA_SHA256 = "54b75b0589cd5f8fc1a1363f7fc9be226c66cdb0d1545218f80e98da814b6125"
-V2_PROMPT_VERSION = "6cf357c8d47a"  # sha256(system prompt, instructions, template, tool defs)[:12]
+V2_PROMPT_VERSION = "b187384be34a"  # sha256(system prompt, instructions, template, tool defs)[:12]
 ANSWER_CHECK_LINE_SHA256 = "b728e683c5e002bfbffe5b0200062b3cfdb270c3db1619ff634ca1c32438bcb4"
 PLAN_FOCUS_REASONS_SHA256 = "d01b9552b709862b07dc6f4005620273df0bbf4333598494ad0f0b59613d8a70"
 
@@ -365,7 +366,11 @@ def test_the_flag_on_eval_records_into_its_own_namespace():
     for slot in ("loop_tutor_lite", "loop_tutor", "loop_tutor_deep"):
         assert loop.variant_namespace(slot, False) == slot
         assert loop.variant_namespace(slot, True) == f"{slot}__v2"
-        assert slot in loop.VARIANTS and f"{slot}__v2" not in loop.VARIANTS
+        assert slot in loop.VARIANTS
+        # Once W0.3 recorded `__v2`, default VARIANTS also replays those namespaces
+        # (never collides with the default slot key).
+        assert f"{slot}__v2" in loop.VARIANTS
+        assert loop.variant_namespace(slot, True) != slot
     for slot in confront.CONFRONT_SLOTS:
         assert confront._cassette_dataset(slot, True) != confront._cassette_dataset(slot, False)
         assert confront.dataset_name(slot, True) == f"misconception_confront__{slot}__v2"
@@ -394,4 +399,7 @@ def test_the_flag_on_eval_records_into_its_own_namespace():
     with pytest.raises(loop.StaleRecordingError, match="system prompt"):
         loop.check_fresh(rec, "loop_tutor", case.inputs, True)  # never a flag-on one
     root = Path(__file__).parent / "evals" / "cassettes"
-    assert not (root / "loop_tutor__v2").exists(), "recorded only by the owner"
+    # W0.3 recorded `__v2` into its own namespace (never overwrites default).
+    assert (root / "loop_tutor__v2").is_dir()
+    assert (root / "loop_tutor").is_dir()
+    assert (root / "loop_tutor__v2") != (root / "loop_tutor")

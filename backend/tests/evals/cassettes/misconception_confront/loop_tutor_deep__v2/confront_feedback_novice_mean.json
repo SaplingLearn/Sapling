@@ -1,19 +1,18 @@
 {
   "attempts": [
-    "{\"key_idea\":\"Test whether picking the middle value actually uses all of the numbers, which is what an average is supposed to do.\",\"body\":\"Your belief says the average of 2, 4 and 9 is the middle one. Take your own list and change the 9 to 90, so it becomes 2, 4 and 90. Under your belief the answer stays the same, so check whether that fits the idea of an average that balances all the values.\",\"question\":\"Using the stored solution above, work out how it combines the numbers, then compare that with your belief and tell me whether changing 9 to 90 should affect the average?\"}",
-    "{\"key_idea\":\"A test of the middle-value belief is whether the result responds to every number in the list.\",\"body\":\"Your belief says the average of 2, 4 and 9 is the middle one, so it would not change if the 9 became 90. Compare that prediction with how the stored solution above combines the numbers.\",\"question\":\"If you change 9 to 90 in the list 2, 4 and 9, does the stored solution's result stay the same, and does that match your belief?\"}"
+    "{\"key_idea\": \"A claim about the average can be tested by checking whether it would change when the values change.\", \"body\": \"Your rule says the average is whichever value sits in the middle of the list. Take the same three numbers but change the last one from 9 to 90, so the list is 2, 4 and 90.\", \"question\": \"If you work out the average of 2, 4 and 90 by your middle-one rule, and then think about what 'average' means as a fair share of the total across the three numbers, do the two ways agree?\"}"
   ],
   "input_sha256": "a22712fd78e946fb5a6a4fd176bbe6aff7027a3e739e5d80476f69fec60e789b",
   "model": "claude-sonnet-5-5",
   "output": {
-    "body": "Your belief says the average of 2, 4 and 9 is the middle one, so it would not change if the 9 became 90. Compare that prediction with how the stored solution above combines the numbers.",
-    "key_idea": "A test of the middle-value belief is whether the result responds to every number in the list.",
-    "question": "If you change 9 to 90 in the list 2, 4 and 9, does the stored solution's result stay the same, and does that match your belief?"
+    "body": "Your rule says the average is whichever value sits in the middle of the list. Take the same three numbers but change the last one from 9 to 90, so the list is 2, 4 and 90.",
+    "key_idea": "A claim about the average can be tested by checking whether it would change when the values change.",
+    "question": "If you work out the average of 2, 4 and 90 by your middle-one rule, and then think about what 'average' means as a fair share of the total across the three numbers, do the two ways agree?"
   },
-  "prompt_hash": "1e98ab9844b3",
-  "requests": 2,
+  "prompt_hash": "b187384be34a",
+  "requests": 1,
   "rescued": false,
-  "retries": 1,
+  "retries": 0,
   "schema_hash": "ee2a0f1f177f",
   "slot": "loop_tutor_deep",
   "tool_calls": []

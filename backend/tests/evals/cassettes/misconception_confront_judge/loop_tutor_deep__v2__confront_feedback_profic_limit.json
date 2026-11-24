@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "What value does (2x)/x take for x close to 0 but not equal to 0, and does that agree with your belief that a 0/0 form has no limit?",
+    "evidence": "What does 2x/x equal for every x near 0 but not equal to 0, and does that agree with your belief that a 0/0 form means the limit does not exist?",
     "only_states_correction": false
   },
-  "served_sha256": "e222fa666184538de03875e0deffb70fdc8bced7c3b5d915f8148b233c9a06c8"
+  "served_sha256": "d694bcd9f9a96726b22139700eaec88c13cac11e35f7d0d22c476bb79839694b"
 }

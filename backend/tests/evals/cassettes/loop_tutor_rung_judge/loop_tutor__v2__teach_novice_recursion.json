@@ -2,9 +2,9 @@
   "judge_model": "claude-opus-5-5",
   "judge_prompt_hash": "04965e06502fce54287461706513430c3dcacd1ff4e9f575514434a4a837b08a",
   "output": {
-    "evidence": "Recursion is a way of solving a problem by having a function call itself on a smaller version of the same problem.",
+    "evidence": "suppose someone has already told you that 1+2+3 is 6. Your job is only to say how you would use that 6 to get the total.",
     "reveals_final_answer": false,
-    "rung": 2
+    "rung": 4
   },
-  "served_sha256": "89105f6ee3909ade67ab789c4f5f9c991ee66dbd14bbb21552642feb56a28a7c"
+  "served_sha256": "bc6e5ecc875a8c5c17eb271851f0b46c0d68d1f4a56ec7060c30525ce85c73dc"
 }

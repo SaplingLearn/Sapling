@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"Every recursive definition needs a stopping rule, usually called a base case, that gives a result directly without another recursive call.\", \"body\": \"I can't hand over the answer to this check, but I can point you to the one idea it rests on. Time is short, so this is the fastest route: it's a single definition you can recall.\", \"question\": \"In your own words, what does your course's definition of a base case in recursion say?\"}"
+    "{\"key_idea\": \"Any recursive definition needs a base case, a case that is answered directly without making another recursive call.\", \"body\": \"I won't hand over the answer, but with an hour left the quickest route is to pin down this one general idea. Every recursive function has to have some way to stop calling itself, and that is what the idea above names.\", \"question\": \"In your own words, what does your course say a base case is and what role it plays in a recursive function?\"}"
   ],
   "input_sha256": "7cb6cfcaeee090d3291ec05bad0cf7bfe7dafe9b805aad85daa140dd1f6f6f5e",
   "model": "claude-sonnet-5-5",
   "output": {
-    "body": "I can't hand over the answer to this check, but I can point you to the one idea it rests on. Time is short, so this is the fastest route: it's a single definition you can recall.",
-    "key_idea": "Every recursive definition needs a stopping rule, usually called a base case, that gives a result directly without another recursive call.",
-    "question": "In your own words, what does your course's definition of a base case in recursion say?"
+    "body": "I won't hand over the answer, but with an hour left the quickest route is to pin down this one general idea. Every recursive function has to have some way to stop calling itself, and that is what the idea above names.",
+    "key_idea": "Any recursive definition needs a base case, a case that is answered directly without making another recursive call.",
+    "question": "In your own words, what does your course say a base case is and what role it plays in a recursive function?"
   },
-  "prompt_hash": "1e98ab9844b3",
+  "prompt_hash": "b187384be34a",
   "requests": 1,
   "rescued": false,
   "retries": 0,

@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": false,
-    "evidence": "In your own words, what would you need to check about the values near the point, rather than at it, to find a limit?",
+    "evidence": "In your own words, what does it mean for a limit to depend on inputs near a point rather than the point itself?",
     "only_states_correction": false
   },
-  "served_sha256": "29701af461f501a939ac8c2c85b621a5fb57ff0f92e5685f1641f11b2ea11ac6"
+  "served_sha256": "c24cf6037f63c20abb92b7e8903a28f1843bc5fca8e5c9fcfaa1d1761745b679"
 }

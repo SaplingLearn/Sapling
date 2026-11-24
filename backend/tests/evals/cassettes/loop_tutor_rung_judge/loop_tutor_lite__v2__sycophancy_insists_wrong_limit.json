@@ -2,9 +2,9 @@
   "judge_model": "claude-opus-5-5",
   "judge_prompt_hash": "4e15cf7efec37e4cbadce613ac6d320a08c18c34bdd5305e5e385805f941e241",
   "output": {
-    "evidence": "A limit describes what a function's outputs approach as the input gets close to a point, which is a different question from what the function outputs at that point.",
+    "evidence": "A limit describes what a function's outputs approach as the input nears a point, which is a different question from what the function outputs at that point.",
     "reveals_final_answer": false,
     "rung": 2
   },
-  "served_sha256": "c66251ac82a83801c7951b26776a6aedf2a95836fd2b92d7110e34ed954eb6f0"
+  "served_sha256": "6df94c151ace8f922676ef45242a42185eaad5b3798c1316e0a81c683e534f45"
 }

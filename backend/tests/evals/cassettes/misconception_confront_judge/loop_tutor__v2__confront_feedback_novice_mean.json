@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "What do you get when you compute the mean of 1, 2 and 30, and does it match the 2 your belief predicts?",
+    "evidence": "Your belief predicts that the average of 1, 2 and 9 should equal its middle value, 2. Work out that average the same way you would for the original set, then compare it with 2.",
     "only_states_correction": false
   },
-  "served_sha256": "911e94b15d7397bbb164bcd54529b6f7823b316e37921916710752e6d24427ce"
+  "served_sha256": "354fc361a36815bed69d80c66a7c11107bf65d0a59d23a6fb4b19e3b51efac28"
 }

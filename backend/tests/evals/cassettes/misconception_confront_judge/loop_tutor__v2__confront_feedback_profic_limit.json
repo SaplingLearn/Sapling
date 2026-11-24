@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "What do you get for sin(0.1)/0.1 in radians, and does it look like it is settling toward one number as you try x = 0.01 and x = 0.001?",
+    "evidence": "evaluate sin(x)/x at x = 0.1 and x = 0.01 to see what the values actually do... do those values seem to be settling toward a single number?",
     "only_states_correction": false
   },
-  "served_sha256": "5a6f2ba5b45086d5b960c232b7b6b2b045f1877fc9c407128000ccf716aca297"
+  "served_sha256": "c5a601858aa487303ccc96620b82e5e855d34d53a4094f64332eb3a342547ce6"
 }

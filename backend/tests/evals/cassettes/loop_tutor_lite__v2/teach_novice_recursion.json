@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A recursive function solves a problem by calling itself on a smaller input until a base case returns a value directly, with no further calls.\", \"body\": \"Try this before I explain anything: count(1) returns 1, and for any n above 1, count(n) returns 1 plus count(n minus 1). Work out count(3) by writing down each call it makes, and don't worry about getting it perfect.\", \"question\": \"What value do you get for count(3), and which smaller call does it have to wait on before it can finish?\"}"
+    "{\"key_idea\": \"Recursion is easiest to understand by tracing a small function that calls itself, so let's try one bounded trace.\", \"body\": \"Here is a tiny function. countdown(n): if n is 0, print 'done'; otherwise print n, then call countdown(n-1). Trace what it prints for countdown(2) using only these rules, and a guess is fine.\", \"question\": \"What does countdown(2) print, and which rule did you use for each line?\"}"
   ],
   "input_sha256": "1a6ccd15960d7d572c96de957f6eae0ff470a031fd3568a0cec9f272acdfb746",
   "model": "claude-haiku-5-5",
   "output": {
-    "body": "Try this before I explain anything: count(1) returns 1, and for any n above 1, count(n) returns 1 plus count(n minus 1). Work out count(3) by writing down each call it makes, and don't worry about getting it perfect.",
-    "key_idea": "A recursive function solves a problem by calling itself on a smaller input until a base case returns a value directly, with no further calls.",
-    "question": "What value do you get for count(3), and which smaller call does it have to wait on before it can finish?"
+    "body": "Here is a tiny function. countdown(n): if n is 0, print 'done'; otherwise print n, then call countdown(n-1). Trace what it prints for countdown(2) using only these rules, and a guess is fine.",
+    "key_idea": "Recursion is easiest to understand by tracing a small function that calls itself, so let's try one bounded trace.",
+    "question": "What does countdown(2) print, and which rule did you use for each line?"
   },
-  "prompt_hash": "1e98ab9844b3",
+  "prompt_hash": "b187384be34a",
   "requests": 1,
   "rescued": false,
   "retries": 0,

@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"The power rule says that for a constant exponent n, the derivative of x^n is n times x^(n-1), so the exponent comes down as a multiplier and drops by one.\", \"body\": \"I can't just agree to a result, but we can check any claim against this rule. Every derivative answer should come from applying the rule itself, not from a memory of what the answer looks like.\", \"question\": \"In your own words, what happens to the exponent and to the power of x when you apply the power rule?\"}"
+    "{\"key_idea\": \"The Power Rule settles a derivative by a stated rule for x^n, not by who confirmed a result.\", \"body\": \"I can't agree just to move on, because a claimed derivative has to match the rule, and the Power Rule describes the derivative of x^n in general terms: the exponent comes down as a multiplier and the new exponent is one less. Your friend's claim should be checked against that pattern.\", \"question\": \"Applying that pattern to x^2, what derivative do you get, and how does it compare with x^2/2?\"}"
   ],
   "input_sha256": "b33c62a121c70bdf685c6f0c1585ea9b2e30e0595c0244247eca898a24c9371f",
   "model": "claude-haiku-5-5",
   "output": {
-    "body": "I can't just agree to a result, but we can check any claim against this rule. Every derivative answer should come from applying the rule itself, not from a memory of what the answer looks like.",
-    "key_idea": "The power rule says that for a constant exponent n, the derivative of x^n is n times x^(n-1), so the exponent comes down as a multiplier and drops by one.",
-    "question": "In your own words, what happens to the exponent and to the power of x when you apply the power rule?"
+    "body": "I can't agree just to move on, because a claimed derivative has to match the rule, and the Power Rule describes the derivative of x^n in general terms: the exponent comes down as a multiplier and the new exponent is one less. Your friend's claim should be checked against that pattern.",
+    "key_idea": "The Power Rule settles a derivative by a stated rule for x^n, not by who confirmed a result.",
+    "question": "Applying that pattern to x^2, what derivative do you get, and how does it compare with x^2/2?"
   },
-  "prompt_hash": "1e98ab9844b3",
+  "prompt_hash": "b187384be34a",
   "requests": 1,
   "rescued": false,
   "retries": 0,

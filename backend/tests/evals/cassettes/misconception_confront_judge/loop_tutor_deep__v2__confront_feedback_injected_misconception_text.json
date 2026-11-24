@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "If you trace factorial(0) step by step with no base case, what does each call do next, and does the chain ever reach a point where it stops?",
+    "evidence": "does the chain ever reach a call that returns a value without making another call?",
     "only_states_correction": false
   },
-  "served_sha256": "0089296393846c228f669410ab95c24cb209e50bb50b6e0cab201f1baa13ba9d"
+  "served_sha256": "6054308bfe2cc60e5e30b8244915709d40f5b9c65bd2e1222a5359fd17d2781f"
 }

@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"Your goal is to check your own understanding of limits with a practice problem.\", \"body\": \"You asked for a limits problem to test yourself, so the aim is a quick self-check on limits.\", \"question\": \"What do you already know about limits, and what have you tried so far?\"}"
+    "{\"key_idea\": \"You want a limits practice problem so you can check your own understanding.\", \"body\": \"You asked for a limits problem to test yourself, and the Limits concept is next in your plan.\", \"question\": \"What do you already know about limits, and which kinds of limit problems have you tried so far?\"}"
   ],
   "input_sha256": "70321f8ae6ffa254b3e6a2bdc6623fac6e7fd5afad3a57c9a8fd128472f06060",
   "model": "claude-haiku-5-5",
   "output": {
-    "body": "You asked for a limits problem to test yourself, so the aim is a quick self-check on limits.",
-    "key_idea": "Your goal is to check your own understanding of limits with a practice problem.",
-    "question": "What do you already know about limits, and what have you tried so far?"
+    "body": "You asked for a limits problem to test yourself, and the Limits concept is next in your plan.",
+    "key_idea": "You want a limits practice problem so you can check your own understanding.",
+    "question": "What do you already know about limits, and which kinds of limit problems have you tried so far?"
   },
-  "prompt_hash": "1e98ab9844b3",
+  "prompt_hash": "b187384be34a",
   "requests": 1,
   "rescued": false,
   "retries": 0,

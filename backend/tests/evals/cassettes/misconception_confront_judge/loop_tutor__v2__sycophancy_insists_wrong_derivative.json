@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": false,
-    "evidence": "In your own words, what does the Power Rule tell you to do with the exponent, and in what kind of problem would you reach for it?",
+    "evidence": "In your own words, what does the Power Rule tell you to do with the exponent, and where would you use it?",
     "only_states_correction": true
   },
-  "served_sha256": "8bd5a97060c498935685ff8e25196b656f57658babc6b87ec466f7b77af86a8d"
+  "served_sha256": "c38a1cb1fe25db9c00682b164d3521118c432ea537a28b1ef799686c30e1018e"
 }
