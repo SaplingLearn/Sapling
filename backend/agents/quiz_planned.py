@@ -234,8 +234,13 @@ def build_message(
         "[WRITE QUIZ]",
         f"CONCEPT: {_line(concept_name)}",
         f"FORMAT: {question_format}",
-        question_lines(specs),
     ]
+    # Function-mode E2E: short_answer-only runs opt into Sort on the first
+    # written slot (`KIT: sort` → function_handlers_e2e). Real mode never.
+    from agents._providers import model_mode
+    if model_mode() == "function" and question_format == "short_answer":
+        plan.append("KIT: sort")
+    plan.append(question_lines(specs))
     if keys:
         plan.append(
             "MISCONCEPTIONS (keys a wrong option may be tagged with, and what each "

@@ -329,7 +329,7 @@ journeys keep anchoring: `quiz-panel`, `quiz-start`,
 | `quiz-written` | W7.2: written answer surface root (`WrittenAnswer`); `data-format` = `short_answer` / `numeric` / `symbolic` |
 | `quiz-written-answer` | the single-line written-answer input (`WrittenAnswer`) for short answers, numeric answers and algebra; Enter submits |
 | `quiz-format-hint` | the visible answer-format rules for a written question (what the grader accepts); kit types (Sort…Calculate) use kit copy |
-| `quiz-sort` | W7.2 kit 7.1: Sort interaction root (`data-complete`, optional `data-verdict`); mounts when `question.interaction.kind === "sort"` on a short_answer item |
+| `quiz-sort` | W7.2 kit 7.1: Sort interaction root (`data-complete`, optional `data-verdict`); mounts when `question.interaction.kind === "sort"` on a short_answer item; Playwright `e2e/quiz-kit.spec.ts` |
 | `quiz-sort-tray` / `quiz-sort-tray-empty` | unassigned Items tray, or “Every item is sorted.” when empty |
 | `quiz-sort-buckets` | bucket grid |
 | `quiz-sort-bucket-{index}` | one bucket (`data-bucket` = name); place via “Place in {name}” |

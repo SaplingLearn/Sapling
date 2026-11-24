@@ -17,7 +17,7 @@ Quiz generation may attach a kit `interaction` object on a `short_answer` wire q
 | Belief | Kit UI does not invent mastery channels; submit still uses written evidence |
 | Plain quiz schema | **No** `interaction` on `agents/quiz.QuizQuestion` — flag-off request digests stay byte-identical |
 | Planned writer | Optional `PlannedQuestion.interaction`; prompt may emit any sanitized kit kind (≤1 kit item per quiz) when `quiz_planned_questions` is on |
-| Function E2E | Default MC/written unchanged. Opt-in `KIT: sort` on the planned write prompt → first written slot gets Sort + `[e2e-kit-sort]`; quiz_check solve returns `E2E_KIT_SORT_ANSWER` |
+| Function E2E | Default MC/written unchanged. Planned `FORMAT: short_answer` in function mode appends `KIT: sort` → first slot Sort + `[e2e-kit-sort]`; quiz_check solve returns `E2E_KIT_SORT_ANSWER`. Playwright: `frontend/e2e/quiz-kit.spec.ts` |
 
 ## Code
 
@@ -30,5 +30,4 @@ Quiz generation may attach a kit `interaction` object on a `short_answer` wire q
 
 ## Next
 
-1. Playwright journey that sends `KIT: sort` (or stamps interaction in a test double) and checks `quiz-sort`.  
-2. Richer per-criterion grading (still deferred).
+1. Richer per-criterion grading (still deferred).
