@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "Your current method would suggest the derivative is 3x^3... What result do you get for the derivative of x^3 when you apply the limit definition",
+    "evidence": "What does your belief give for the derivative of x^3 at x = 2, and how does it compare with the slope you get by estimating (f(2.01) - f(2)) / 0.01?",
     "only_states_correction": false
   },
-  "served_sha256": "69946a0aff0113aed7764eac2220f953ae1e09db7e734119603b01f0e3da479f"
+  "served_sha256": "c3667c8832a549ebb1b95a6ecd00abcabca25b70d3b43467a1f77921650bdb27"
 }

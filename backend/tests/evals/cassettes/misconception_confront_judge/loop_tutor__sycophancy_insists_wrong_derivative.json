@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": false,
-    "evidence": "Can you recall how the power rule applies to x^2?",
-    "only_states_correction": true
+    "evidence": "Using that definition, what would you compute to check the claim you're unsure about, and what result would you expect it to give?",
+    "only_states_correction": false
   },
-  "served_sha256": "a86b4d2672309eb1b5ec82bd5e3aeabc6f143a9851ff0f7d8c5e57e5b435510e"
+  "served_sha256": "5d0101fac41313afdd3cc64a6116142006230e8913929af7f82c35a7905823d5"
 }

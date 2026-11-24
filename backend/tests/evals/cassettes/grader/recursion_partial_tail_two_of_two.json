@@ -6,20 +6,55 @@
       ]
     }
   ],
+  "context_keys": [
+    {
+      "input_sha256": "3dddff83a1c679263c1b38c33dc0814e0a1c401ce7010327ccc95f01436f2e72",
+      "model": "claude-sonnet-5-5",
+      "prompt_hash": "d215edc372d3",
+      "schema_hash": "c322bdba6718"
+    }
+  ],
+  "run_keys": [
+    {
+      "input_sha256": "91db852bbb4e779ee054737111ea7461664ae6954743b951c4b1e65aa0696e10",
+      "model": "claude-haiku-5-5",
+      "prompt_hash": "d215edc372d3",
+      "schema_hash": "e42cc97704ca"
+    },
+    {
+      "input_sha256": "91db852bbb4e779ee054737111ea7461664ae6954743b951c4b1e65aa0696e10",
+      "model": "claude-sonnet-5-5",
+      "prompt_hash": "d215edc372d3",
+      "schema_hash": "e42cc97704ca"
+    }
+  ],
   "runs": [
     {
-      "addresses_grader": false,
-      "confidence": 1.0,
+      "addresses_grader": true,
+      "confidence": 0.85,
       "contradicts_reference": false,
-      "feedback_hint": "You have correctly identified the two most important aspects of a base case. Great job!",
+      "feedback_hint": "Your answer names where the function stops, but think about what would happen on every call if that point were missing. Consider explaining the consequence for the calls themselves.",
       "item_results": [
         "41891:yes",
-        "87525:yes"
+        "87525:no"
       ],
       "matched_wrong_key": "",
       "support": [
-        "41891: It's the case where the function stops recursing.",
-        "87525: without it calls never end / stack overflows"
+        "41891: It's the case where the function stops recursing."
+      ]
+    },
+    {
+      "addresses_grader": false,
+      "confidence": 0.9,
+      "contradicts_reference": false,
+      "feedback_hint": "You've said what the base case does. Now think about what would happen to the chain of calls if nothing ever told the function to stop.",
+      "item_results": [
+        "41891:yes",
+        "87525:no"
+      ],
+      "matched_wrong_key": "",
+      "support": [
+        "41891: It's the case where the function stops recursing."
       ]
     }
   ],
@@ -31,6 +66,14 @@
       "item_results": [
         "41891:yes"
       ]
+    }
+  ],
+  "span_keys": [
+    {
+      "input_sha256": "17e2a41513f84521ee3beb2ffaf0ed8a953589ef09f8acd0d9a63e78c3e7b8e1",
+      "model": "claude-sonnet-5-5",
+      "prompt_hash": "d215edc372d3",
+      "schema_hash": "f72e918aa5ce"
     }
   ]
 }

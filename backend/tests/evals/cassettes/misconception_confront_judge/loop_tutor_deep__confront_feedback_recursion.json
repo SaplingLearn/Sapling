@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "Following that same rule, what would the call to `factorial(-1)` try to do next?",
+    "evidence": "Trace that version by hand from factorial(0) for three calls: what argument does each call receive, and does anything in it tell the function to stop?",
     "only_states_correction": false
   },
-  "served_sha256": "e3882bae70eda196f4c93d64eaa18c87ab1b9affd070495447a232e6260deaec"
+  "served_sha256": "b2be9af3aea1c4ac9203ec10260e2bae96de3030708745f34b262fcffa2f150e"
 }

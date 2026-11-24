@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"The mean and the median are calculated differently and represent different aspects of a dataset.\", \"body\": \"When a dataset has an even number of values, finding the middle value for the median involves an extra step. Consider the numbers 2, 4, 6, and 9.\", \"question\": \"What would you identify as the middle number using your current method, and what would happen if you were to apply the mean formula to these numbers?\"}"
+    "{\"key_idea\": \"Your belief that the average is the middle value makes a prediction we can test on a list where the two differ.\", \"body\": \"If the average is the middle value, then for 1, 2 and 10 the belief predicts an average of 2. Checking that prediction against the actual numbers will show whether the belief holds.\", \"question\": \"Work out the average of 1, 2 and 10 yourself, then compare your result with the 2 your belief predicts: do they match?\"}"
   ],
-  "input_sha256": "f40a03123d34c7743e1b1bf334cdcd105ce1ecc2d18baa128b5e44b367e4ab17",
-  "model": "gemini-2.5-flash",
+  "input_sha256": "27425b788be3bbd084d77bf56c8962fd89cd02fe0bea395425f70e53ae76b17b",
+  "model": "claude-haiku-5-5",
   "output": {
-    "body": "When a dataset has an even number of values, finding the middle value for the median involves an extra step. Consider the numbers 2, 4, 6, and 9.",
-    "key_idea": "The mean and the median are calculated differently and represent different aspects of a dataset.",
-    "question": "What would you identify as the middle number using your current method, and what would happen if you were to apply the mean formula to these numbers?"
+    "body": "If the average is the middle value, then for 1, 2 and 10 the belief predicts an average of 2. Checking that prediction against the actual numbers will show whether the belief holds.",
+    "key_idea": "Your belief that the average is the middle value makes a prediction we can test on a list where the two differ.",
+    "question": "Work out the average of 1, 2 and 10 yourself, then compare your result with the 2 your belief predicts: do they match?"
   },
-  "prompt_hash": "10676b7d004e",
+  "prompt_hash": "7d2b25572445",
   "requests": 1,
   "rescued": false,
   "retries": 0,

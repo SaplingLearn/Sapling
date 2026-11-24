@@ -6,17 +6,33 @@
       ]
     }
   ],
+  "context_keys": [
+    {
+      "input_sha256": "c8959f9575115482796559aa6e6c64a9c6287fc167bd60af0e2741914cae3c0d",
+      "model": "claude-sonnet-5-5",
+      "prompt_hash": "d215edc372d3",
+      "schema_hash": "c322bdba6718"
+    }
+  ],
+  "run_keys": [
+    {
+      "input_sha256": "a5a5e88cf78317db050ca9bde65b65d2d17d951cfc4e178b274e9c9fd146378c",
+      "model": "claude-haiku-5-5",
+      "prompt_hash": "d215edc372d3",
+      "schema_hash": "e42cc97704ca"
+    }
+  ],
   "runs": [
     {
       "addresses_grader": false,
-      "confidence": 0.9,
+      "confidence": 0.8,
       "contradicts_reference": false,
-      "feedback_hint": "The student correctly states that the base case stops recursion, but doesn't elaborate on the consequences of not having one, such as stack overflow.",
+      "feedback_hint": "You have identified what the base case does; now consider what would happen during the calls if that case were missing. The phrase 'the stack part is implied' is not something you have explained, so spell out that part in your own words.",
       "item_results": [
         "50777:yes",
         "75505:no"
       ],
-      "matched_wrong_key": "w_loop",
+      "matched_wrong_key": "",
       "support": [
         "50777: It's the case where the function stops recursing."
       ]
@@ -30,6 +46,14 @@
       "item_results": [
         "50777:yes"
       ]
+    }
+  ],
+  "span_keys": [
+    {
+      "input_sha256": "b0c3dbf7f635f07f647906d0f37619d81668d62735a379b76517a18bba56bbf7",
+      "model": "claude-sonnet-5-5",
+      "prompt_hash": "d215edc372d3",
+      "schema_hash": "f72e918aa5ce"
     }
   ]
 }

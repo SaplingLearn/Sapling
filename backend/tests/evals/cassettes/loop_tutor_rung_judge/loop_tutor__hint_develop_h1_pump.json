@@ -2,9 +2,9 @@
   "judge_model": "claude-opus-5-5",
   "judge_prompt_hash": "f982ee5b9dcb1cd2feae2a9f13a885c624380a1fa952a5cdf7ecc24e9d83de84",
   "output": {
-    "evidence": "What is the first thing you need to figure out about this problem?",
+    "evidence": "What is the first thing you need to figure out about this item?",
     "reveals_final_answer": false,
     "rung": 1
   },
-  "served_sha256": "9301df4170a64fe1e154efa65a75534eef8ec6fcff13c636dd7a970c38b4e45d"
+  "served_sha256": "22923e13ac1439ce25901d675a18e9fb9f621b1a43e7a95f174f872b4eb1d803"
 }

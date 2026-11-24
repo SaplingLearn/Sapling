@@ -991,8 +991,9 @@ def test_the_defaults_are_evaluated_or_pending_and_always_independent(slot_event
 @pytest.mark.parametrize(
     "slot,model,reason",
     [
-        ("grader", "claude-sonnet-5-5", "pending_claude_eval"),  # A111: pending on claude-*
-        ("loop_tutor_deep", "claude-opus-5-5", "pending_claude_eval"),
+        # A111 cleared: unevaluated Claude is not_evaluated (pending set empty).
+        ("grader", "claude-sonnet-5-5", "not_evaluated"),
+        ("loop_tutor_deep", "claude-opus-5-5", "not_evaluated"),
         ("grader", "gemini-2.5-pro", "not_evaluated"),  # a Gemini model it was not recorded on
         ("check_items_solve", "claude-sonnet-5-5", "not_evaluated"),
     ],
@@ -1031,7 +1032,7 @@ def test_resolving_a_flipped_slot_warns_with_no_boot_check(slot_events, monkeypa
     with caplog.at_level(logging.WARNING, logger="agents._providers"):
         p.model_for("loop_tutor_deep")
     assert [kw["payload"] for et, kw in slot_events if et == "system.unevaluated_slot"] == [
-        {"slot": "loop_tutor_deep", "model": "claude-opus-5-5", "reason": "pending_claude_eval"}
+        {"slot": "loop_tutor_deep", "model": "claude-opus-5-5", "reason": "not_evaluated"}
     ]
     assert any("outside its evaluated models" in r.getMessage() for r in caplog.records)
 
@@ -1051,7 +1052,7 @@ def test_a_qualified_model_name_is_judged_by_its_bare_name(slot_events, monkeypa
     from agents import _providers as p
 
     assert p.unevaluated_reason("grader", "google-gla:gemini-2.5-flash-lite") is None
-    assert p.unevaluated_reason("grader", "anthropic:claude-haiku-5-5") == "pending_claude_eval"
+    assert p.unevaluated_reason("grader", "anthropic:claude-haiku-5-5") is None  # A111 recorded
 
 
 def test_function_mode_has_no_slot_warnings(monkeypatch):
@@ -1107,8 +1108,8 @@ def test_the_admin_learning_loop_panel_lists_the_active_warnings(monkeypatch):
     from tests.split_patches import ADMIN_ANALYTICS_MODULES, setattr_in
 
     warnings = [
-        {"kind": "unevaluated", "slot": "grader", "model": "claude-haiku-5-5",
-         "reason": "pending_claude_eval"},
+        {"kind": "unevaluated", "slot": "grader", "model": "claude-sonnet-5-5",
+         "reason": "not_evaluated"},
         {"kind": "not_independent", "slot": "grader_second", "model": "gemini-2.5-flash",
          "independent_of": "grader", "rule": "A22"},
     ]
@@ -1128,4 +1129,4 @@ def test_the_admin_learning_loop_panel_lists_the_active_warnings(monkeypatch):
         ("unevaluated", "grader"),
         ("not_independent", "grader_second"),
     ]
-    assert got[0]["reason"] == "pending_claude_eval" and got[1]["independent_of"] == "grader"
+    assert got[0]["reason"] == "not_evaluated" and got[1]["independent_of"] == "grader"

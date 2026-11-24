@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "```json\n{\n\"key_idea\": \"A recursive function must have a base case to prevent it from calling itself forever.\",\n\"body\": \"Your answer describes what the recursive step would do, but the factorial function includes a specific rule to handle the input `0`. This rule, the base case, stops the recursion by returning a value directly instead of making another call.\",\n\"question\": \"What value does the factorial function return for the specific input of 0?\"\n}\n```"
+    "{\"key_idea\": \"A recursive function stops only when a base case returns a value directly, without making another recursive call.\", \"body\": \"Your attempt was graded not yet correct: if factorial(0) calls factorial(-1), the calls keep moving away from the stopping point, so nothing ever ends the chain. The stored solution above shows what the function does at 0, so compare it with your version.\", \"question\": \"Looking at that solution, what does factorial(0) do differently from your version, and why does that mean no further call is made?\"}"
   ],
-  "input_sha256": "95a19fc05757ad6e016227d97dd39e22562fe5aabf5aaab7c707cbfbee95456c",
-  "model": "gemini-2.5-pro",
+  "input_sha256": "9b455c7f8af1c23e73135f6ba007d9712915b8415da93bb06e4d7a156060b044",
+  "model": "claude-sonnet-5-5",
   "output": {
-    "body": "Your answer describes what the recursive step would do, but the factorial function includes a specific rule to handle the input `0`. This rule, the base case, stops the recursion by returning a value directly instead of making another call.",
-    "key_idea": "A recursive function must have a base case to prevent it from calling itself forever.",
-    "question": "What value does the factorial function return for the specific input of 0?"
+    "body": "Your attempt was graded not yet correct: if factorial(0) calls factorial(-1), the calls keep moving away from the stopping point, so nothing ever ends the chain. The stored solution above shows what the function does at 0, so compare it with your version.",
+    "key_idea": "A recursive function stops only when a base case returns a value directly, without making another recursive call.",
+    "question": "Looking at that solution, what does factorial(0) do differently from your version, and why does that mean no further call is made?"
   },
-  "prompt_hash": "10676b7d004e",
+  "prompt_hash": "7d2b25572445",
   "requests": 1,
   "rescued": false,
   "retries": 0,

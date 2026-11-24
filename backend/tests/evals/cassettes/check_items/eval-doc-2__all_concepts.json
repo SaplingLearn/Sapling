@@ -1,0 +1,915 @@
+{
+  "output": {
+    "items": [
+      {
+        "answer_kind": "free",
+        "canonical_answer": "",
+        "chunk_ids": [
+          "eval-doc-2:c1"
+        ],
+        "concept": "Recursion",
+        "difficulty": 1,
+        "final_answer": "A function that calls itself on a smaller subproblem until a base case",
+        "format": "free",
+        "options": [],
+        "prompt": "What is a recursive function?",
+        "reference_answer": "A recursive function calls itself on a smaller subproblem until it reaches a base case. Final answer: A function that calls itself on a smaller subproblem until a base case.",
+        "rubric": [
+          "States that the function calls itself",
+          "Mentions a smaller subproblem or reaching a base case"
+        ],
+        "stepwise": false,
+        "tolerance": "",
+        "wrong_keys": [
+          "loop_confusion"
+        ],
+        "wrong_texts": [
+          "Describes a loop or a function calling a different function rather than itself."
+        ]
+      },
+      {
+        "answer_kind": "free",
+        "canonical_answer": "",
+        "chunk_ids": [
+          "eval-doc-2:c1",
+          "eval-doc-2:c0"
+        ],
+        "concept": "Recursion",
+        "difficulty": 2,
+        "final_answer": "A smaller argument, moving toward the base case",
+        "format": "free",
+        "options": [],
+        "prompt": "In a recursive factorial function, what should each recursive call be given as its argument, relative to the current one, and why?",
+        "reference_answer": "Each call must work on a smaller subproblem, so the argument gets smaller (e.g. n-1 for factorial). This moves the calls toward the base case so the recursion can stop. Final answer: A smaller argument, moving toward the base case.",
+        "rubric": [
+          "States the argument gets smaller",
+          "Links this to reaching the base case"
+        ],
+        "stepwise": false,
+        "tolerance": "",
+        "wrong_keys": [
+          "same_argument"
+        ],
+        "wrong_texts": [
+          "Passes the same or a larger argument, so the calls never approach the base case."
+        ]
+      },
+      {
+        "answer_kind": "free",
+        "canonical_answer": "",
+        "chunk_ids": [
+          "eval-doc-2:c1",
+          "eval-doc-2:c2"
+        ],
+        "concept": "Recursion",
+        "difficulty": 3,
+        "final_answer": "The call stack overflows",
+        "format": "free",
+        "options": [],
+        "prompt": "A function calls itself but each call receives the same input as before. Predict what happens when it runs and explain.",
+        "reference_answer": "The call is not on a smaller subproblem, so it never reaches a base case. The calls keep stacking on the call stack until it overflows. Final answer: The call stack overflows.",
+        "rubric": [
+          "Notes the input never gets smaller so no base case is reached",
+          "Concludes with call stack overflow"
+        ],
+        "stepwise": false,
+        "tolerance": "",
+        "wrong_keys": [
+          "returns_normally"
+        ],
+        "wrong_texts": [
+          "Thinks the function will eventually stop or return on its own."
+        ]
+      },
+      {
+        "answer_kind": "free",
+        "canonical_answer": "",
+        "chunk_ids": [
+          "eval-doc-2:c1"
+        ],
+        "concept": "Recursion",
+        "difficulty": 1,
+        "final_answer": "A function calling itself on smaller subproblems until a base case",
+        "format": "teachback",
+        "options": [],
+        "prompt": "Explain to a classmate who missed the lecture what recursion is.",
+        "reference_answer": "Recursion is when a function calls itself on a smaller version of the problem, repeating until it hits a base case that stops it. Final answer: A function calling itself on smaller subproblems until a base case.",
+        "rubric": [
+          "Says the function calls itself",
+          "Mentions smaller subproblems",
+          "Mentions the base case ending it"
+        ],
+        "stepwise": false,
+        "tolerance": "",
+        "wrong_keys": [
+          "loop_confusion"
+        ],
+        "wrong_texts": [
+          "Equates recursion with an ordinary loop or with calling another function."
+        ]
+      },
+      {
+        "answer_kind": "free",
+        "canonical_answer": "",
+        "chunk_ids": [
+          "eval-doc-2:c0",
+          "eval-doc-2:c1"
+        ],
+        "concept": "Recursion",
+        "difficulty": 2,
+        "final_answer": "Write a base case and a recursive step on a smaller subproblem",
+        "format": "teachback",
+        "options": [],
+        "prompt": "Explain to a classmate who missed the lecture how to write a recursive function such as factorial, naming its parts.",
+        "reference_answer": "Identify the base case that stops the recursion, then write the recursive step that calls the function on a smaller subproblem. Tracing the call stack shows how calls build up and return. Final answer: Write a base case and a recursive step on a smaller subproblem.",
+        "rubric": [
+          "Names the base case",
+          "Names the recursive step on a smaller input"
+        ],
+        "stepwise": false,
+        "tolerance": "",
+        "wrong_keys": [
+          "missing_base_case"
+        ],
+        "wrong_texts": [
+          "Describes only the recursive call and forgets the terminating branch."
+        ]
+      },
+      {
+        "answer_kind": "free",
+        "canonical_answer": "",
+        "chunk_ids": [
+          "eval-doc-2:c3",
+          "eval-doc-2:c1"
+        ],
+        "concept": "Recursion",
+        "difficulty": 3,
+        "final_answer": "Naive recursive Fibonacci makes exponentially many calls, O(2^n)",
+        "format": "teachback",
+        "options": [],
+        "prompt": "Explain to a classmate who missed the lecture why naive recursive Fibonacci is slow and what that says about recursion's cost.",
+        "reference_answer": "Naive Fibonacci calls itself twice per call on smaller inputs, so the number of calls grows exponentially, O(2^n). Recursion can be correct yet costly in running time. Final answer: Naive recursive Fibonacci makes exponentially many calls, O(2^n).",
+        "rubric": [
+          "States the running time is O(2^n)",
+          "Explains the many repeated recursive calls"
+        ],
+        "stepwise": false,
+        "tolerance": "",
+        "wrong_keys": [
+          "linear_cost"
+        ],
+        "wrong_texts": [
+          "Believes recursive Fibonacci takes linear time."
+        ]
+      },
+      {
+        "answer_kind": "free",
+        "canonical_answer": "",
+        "chunk_ids": [
+          "eval-doc-2:c1"
+        ],
+        "concept": "Recursion",
+        "difficulty": 1,
+        "final_answer": "Calls itself on a smaller subproblem",
+        "format": "mc_reason",
+        "options": [
+          {
+            "is_correct": true,
+            "misconception_key": null,
+            "misconception_text": null,
+            "text": "Calls itself on a smaller subproblem"
+          },
+          {
+            "is_correct": false,
+            "misconception_key": "loop_confusion",
+            "misconception_text": "Confuses iteration with recursion.",
+            "text": "Repeats a block using a for loop"
+          },
+          {
+            "is_correct": false,
+            "misconception_key": "other_function",
+            "misconception_text": "Thinks any function call is recursion.",
+            "text": "Calls a different helper function once"
+          },
+          {
+            "is_correct": false,
+            "misconception_key": "confuses_big_o",
+            "misconception_text": "Confuses recursion with Big-O analysis.",
+            "text": "Runs with an asymptotic upper bound"
+          }
+        ],
+        "prompt": "Which description fits a recursive function? Pick one option and give your reason.",
+        "reference_answer": "Recursion means a function calls itself on a smaller subproblem until reaching a base case. Final answer: Calls itself on a smaller subproblem.",
+        "rubric": [
+          "Says the function calls itself",
+          "Mentions smaller subproblem or base case"
+        ],
+        "stepwise": false,
+        "tolerance": "",
+        "wrong_keys": [],
+        "wrong_texts": []
+      },
+      {
+        "answer_kind": "free",
+        "canonical_answer": "",
+        "chunk_ids": [
+          "eval-doc-2:c1",
+          "eval-doc-2:c0"
+        ],
+        "concept": "Recursion",
+        "difficulty": 2,
+        "final_answer": "Pass a smaller value toward the base",
+        "format": "mc_reason",
+        "options": [
+          {
+            "is_correct": true,
+            "misconception_key": null,
+            "misconception_text": null,
+            "text": "Pass a smaller value toward the base"
+          },
+          {
+            "is_correct": false,
+            "misconception_key": "same_argument",
+            "misconception_text": "Thinks the input need not shrink.",
+            "text": "Pass the same value again"
+          },
+          {
+            "is_correct": false,
+            "misconception_key": "grows_argument",
+            "misconception_text": "Thinks the input should grow.",
+            "text": "Pass a larger value each call"
+          },
+          {
+            "is_correct": false,
+            "misconception_key": "no_argument",
+            "misconception_text": "Thinks calls carry no state.",
+            "text": "Pass no argument at all"
+          }
+        ],
+        "prompt": "In recursive factorial, what should the recursive call do with its argument n? Pick one option and give your reason.",
+        "reference_answer": "Each recursive call works on a smaller subproblem so it approaches the base case that ends the recursion. Final answer: Pass a smaller value toward the base.",
+        "rubric": [
+          "Says the input shrinks",
+          "Connects shrinking to reaching the base case"
+        ],
+        "stepwise": false,
+        "tolerance": "",
+        "wrong_keys": [],
+        "wrong_texts": []
+      },
+      {
+        "answer_kind": "free",
+        "canonical_answer": "",
+        "chunk_ids": [
+          "eval-doc-2:c2",
+          "eval-doc-2:c1"
+        ],
+        "concept": "Recursion",
+        "difficulty": 3,
+        "final_answer": "The call stack overflows",
+        "format": "mc_reason",
+        "options": [
+          {
+            "is_correct": true,
+            "misconception_key": null,
+            "misconception_text": null,
+            "text": "The call stack overflows"
+          },
+          {
+            "is_correct": false,
+            "misconception_key": "returns_normally",
+            "misconception_text": "Thinks it stops by itself.",
+            "text": "It returns after one call"
+          },
+          {
+            "is_correct": false,
+            "misconception_key": "constant_time",
+            "misconception_text": "Thinks it costs constant time.",
+            "text": "It runs in O(1) time"
+          },
+          {
+            "is_correct": false,
+            "misconception_key": "loop_confusion",
+            "misconception_text": "Thinks recursion turns into iteration.",
+            "text": "It becomes an ordinary loop"
+          }
+        ],
+        "prompt": "A recursive function never shrinks its input and has no stopping branch. What happens when it is called? Pick one option and give your reason.",
+        "reference_answer": "Without a base case the calls never terminate, and each one adds to the call stack until it overflows. Final answer: The call stack overflows.",
+        "rubric": [
+          "Notes no base case ends the calls",
+          "Mentions calls piling on the call stack"
+        ],
+        "stepwise": false,
+        "tolerance": "",
+        "wrong_keys": [],
+        "wrong_texts": []
+      },
+      {
+        "answer_kind": "free",
+        "canonical_answer": "",
+        "chunk_ids": [
+          "eval-doc-2:c2"
+        ],
+        "concept": "Base Case",
+        "difficulty": 1,
+        "final_answer": "It terminates the recursion",
+        "format": "free",
+        "options": [],
+        "prompt": "What is the role of the base case in a recursive function?",
+        "reference_answer": "The base case is the non-recursive branch that terminates the recursion. Final answer: It terminates the recursion.",
+        "rubric": [
+          "Says it is non-recursive",
+          "Says it stops the recursion"
+        ],
+        "stepwise": false,
+        "tolerance": "",
+        "wrong_keys": [
+          "starts_recursion"
+        ],
+        "wrong_texts": [
+          "Thinks the base case begins or repeats the recursion."
+        ]
+      },
+      {
+        "answer_kind": "free",
+        "canonical_answer": "",
+        "chunk_ids": [
+          "eval-doc-2:c2",
+          "eval-doc-2:c0"
+        ],
+        "concept": "Base Case",
+        "difficulty": 2,
+        "final_answer": "Add a base case, or the stack overflows",
+        "format": "free",
+        "options": [],
+        "prompt": "A student writes a recursive factorial function containing only the line that calls factorial on a smaller n. What problem will occur, and what must be added?",
+        "reference_answer": "No branch ends the recursion, so the calls never stop and the call stack overflows. A non-recursive base case must be added. Final answer: Add a base case, or the stack overflows.",
+        "rubric": [
+          "Identifies the missing base case",
+          "Mentions stack overflow"
+        ],
+        "stepwise": false,
+        "tolerance": "",
+        "wrong_keys": [
+          "returns_normally"
+        ],
+        "wrong_texts": [
+          "Thinks the function will stop on its own."
+        ]
+      },
+      {
+        "answer_kind": "free",
+        "canonical_answer": "",
+        "chunk_ids": [
+          "eval-doc-2:c2",
+          "eval-doc-2:c1"
+        ],
+        "concept": "Base Case",
+        "difficulty": 3,
+        "final_answer": "The recursive step never reaches the base case",
+        "format": "free",
+        "options": [],
+        "prompt": "A recursive function has a base case, yet it still overflows the call stack. Give a likely cause.",
+        "reference_answer": "The recursive step probably does not move toward the base case, so the base case is never reached and calls keep stacking until overflow. Final answer: The recursive step never reaches the base case.",
+        "rubric": [
+          "Says the base case is never reached",
+          "Links this to the recursive step not shrinking the problem"
+        ],
+        "stepwise": false,
+        "tolerance": "",
+        "wrong_keys": [
+          "base_case_enough"
+        ],
+        "wrong_texts": [
+          "Thinks merely having a base case guarantees termination."
+        ]
+      },
+      {
+        "answer_kind": "free",
+        "canonical_answer": "",
+        "chunk_ids": [
+          "eval-doc-2:c2"
+        ],
+        "concept": "Base Case",
+        "difficulty": 1,
+        "final_answer": "The non-recursive branch that terminates the recursion",
+        "format": "teachback",
+        "options": [],
+        "prompt": "Explain to a classmate who missed the lecture what a base case is.",
+        "reference_answer": "A base case is the non-recursive branch that ends the recursion. Without it, the call stack overflows. Final answer: The non-recursive branch that terminates the recursion.",
+        "rubric": [
+          "Says non-recursive branch",
+          "Says it ends recursion"
+        ],
+        "stepwise": false,
+        "tolerance": "",
+        "wrong_keys": [
+          "starts_recursion"
+        ],
+        "wrong_texts": [
+          "Thinks the base case makes the recursive call."
+        ]
+      },
+      {
+        "answer_kind": "free",
+        "canonical_answer": "",
+        "chunk_ids": [
+          "eval-doc-2:c0",
+          "eval-doc-2:c2"
+        ],
+        "concept": "Base Case",
+        "difficulty": 2,
+        "final_answer": "Choose the smallest input that is answered without recursing",
+        "format": "teachback",
+        "options": [],
+        "prompt": "Explain to a classmate who missed the lecture how to pick the base case when writing recursive factorial.",
+        "reference_answer": "Find the smallest input where the answer needs no further recursive call, and return it directly there. The recursive step then shrinks toward it. Final answer: Choose the smallest input that is answered without recursing.",
+        "rubric": [
+          "Describes a non-recursive direct answer",
+          "Says the recursive step shrinks toward it"
+        ],
+        "stepwise": false,
+        "tolerance": "",
+        "wrong_keys": [
+          "missing_base_case"
+        ],
+        "wrong_texts": [
+          "Forgets the terminating branch or picks an input the calls never reach."
+        ]
+      },
+      {
+        "answer_kind": "free",
+        "canonical_answer": "",
+        "chunk_ids": [
+          "eval-doc-2:c2",
+          "eval-doc-2:c0"
+        ],
+        "concept": "Base Case",
+        "difficulty": 3,
+        "final_answer": "Without a base case, stack frames pile up until overflow",
+        "format": "teachback",
+        "options": [],
+        "prompt": "Explain to a classmate who missed the lecture why a missing base case shows up as a call stack problem when tracing.",
+        "reference_answer": "Each call waits for the next recursive call, adding a frame to the call stack. With no base case, nothing stops this, so frames pile up until overflow. Final answer: Without a base case, stack frames pile up until overflow.",
+        "rubric": [
+          "Explains each call adds a stack frame",
+          "Says nothing ends the calls without a base case"
+        ],
+        "stepwise": false,
+        "tolerance": "",
+        "wrong_keys": [
+          "returns_normally"
+        ],
+        "wrong_texts": [
+          "Believes calls unwind by themselves without a terminating branch."
+        ]
+      },
+      {
+        "answer_kind": "free",
+        "canonical_answer": "",
+        "chunk_ids": [
+          "eval-doc-2:c2"
+        ],
+        "concept": "Base Case",
+        "difficulty": 1,
+        "final_answer": "Terminates the recursion",
+        "format": "mc_reason",
+        "options": [
+          {
+            "is_correct": true,
+            "misconception_key": null,
+            "misconception_text": null,
+            "text": "Terminates the recursion"
+          },
+          {
+            "is_correct": false,
+            "misconception_key": "grows_argument",
+            "misconception_text": "Thinks it enlarges the problem.",
+            "text": "Calls the function on a larger input"
+          },
+          {
+            "is_correct": false,
+            "misconception_key": "confuses_big_o",
+            "misconception_text": "Confuses it with Big-O analysis.",
+            "text": "Measures the running time"
+          },
+          {
+            "is_correct": false,
+            "misconception_key": "starts_recursion",
+            "misconception_text": "Thinks it creates more recursion.",
+            "text": "Doubles the number of calls"
+          }
+        ],
+        "prompt": "What does the base case do in a recursive function? Pick one option and give your reason.",
+        "reference_answer": "The base case is the non-recursive branch, so reaching it stops further calls. Final answer: Terminates the recursion.",
+        "rubric": [
+          "Says it is non-recursive",
+          "Says it stops further calls"
+        ],
+        "stepwise": false,
+        "tolerance": "",
+        "wrong_keys": [],
+        "wrong_texts": []
+      },
+      {
+        "answer_kind": "free",
+        "canonical_answer": "",
+        "chunk_ids": [
+          "eval-doc-2:c2"
+        ],
+        "concept": "Base Case",
+        "difficulty": 2,
+        "final_answer": "Call stack overflow",
+        "format": "mc_reason",
+        "options": [
+          {
+            "is_correct": true,
+            "misconception_key": null,
+            "misconception_text": null,
+            "text": "Call stack overflow"
+          },
+          {
+            "is_correct": false,
+            "misconception_key": "returns_normally",
+            "misconception_text": "Thinks it finishes normally.",
+            "text": "A correct final result"
+          },
+          {
+            "is_correct": false,
+            "misconception_key": "constant_time",
+            "misconception_text": "Thinks lacking a base case saves time.",
+            "text": "A faster O(1) run"
+          },
+          {
+            "is_correct": false,
+            "misconception_key": "skips_call",
+            "misconception_text": "Thinks the call is ignored.",
+            "text": "Silent skipping of the call"
+          }
+        ],
+        "prompt": "A recursive function has no base case. What results when it runs? Pick one option and give your reason.",
+        "reference_answer": "Without a base case nothing terminates the recursion, so the call stack overflows. Final answer: Call stack overflow.",
+        "rubric": [
+          "Says nothing terminates the recursion",
+          "Mentions stack growth"
+        ],
+        "stepwise": false,
+        "tolerance": "",
+        "wrong_keys": [],
+        "wrong_texts": []
+      },
+      {
+        "answer_kind": "free",
+        "canonical_answer": "",
+        "chunk_ids": [
+          "eval-doc-2:c2",
+          "eval-doc-2:c1"
+        ],
+        "concept": "Base Case",
+        "difficulty": 3,
+        "final_answer": "Recursive step never nears the base",
+        "format": "mc_reason",
+        "options": [
+          {
+            "is_correct": true,
+            "misconception_key": null,
+            "misconception_text": null,
+            "text": "Recursive step never nears the base"
+          },
+          {
+            "is_correct": false,
+            "misconception_key": "base_case_wrong_nature",
+            "misconception_text": "Thinks a base case should be recursive.",
+            "text": "The base case is non-recursive"
+          },
+          {
+            "is_correct": false,
+            "misconception_key": "confuses_big_o",
+            "misconception_text": "Thinks slow growth causes overflow.",
+            "text": "The function is O(2^n)"
+          },
+          {
+            "is_correct": false,
+            "misconception_key": "no_argument",
+            "misconception_text": "Blames argument count.",
+            "text": "Too few arguments are passed"
+          }
+        ],
+        "prompt": "A function has a base case but still overflows the stack. Which is the most likely cause? Pick one option and give your reason.",
+        "reference_answer": "If calls do not shrink toward the base case, it is never reached, so calls keep stacking until overflow. Final answer: Recursive step never nears the base.",
+        "rubric": [
+          "Says the base case is never reached",
+          "Ties it to the recursive step not shrinking input"
+        ],
+        "stepwise": false,
+        "tolerance": "",
+        "wrong_keys": [],
+        "wrong_texts": []
+      },
+      {
+        "answer_kind": "free",
+        "canonical_answer": "",
+        "chunk_ids": [
+          "eval-doc-2:c3"
+        ],
+        "concept": "Big-O Notation",
+        "difficulty": 1,
+        "final_answer": "An asymptotic upper bound on running time",
+        "format": "free",
+        "options": [],
+        "prompt": "What does Big-O notation describe?",
+        "reference_answer": "Big-O gives an asymptotic upper bound on running time. Final answer: An asymptotic upper bound on running time.",
+        "rubric": [
+          "Says upper bound",
+          "Says it relates to running time"
+        ],
+        "stepwise": false,
+        "tolerance": "",
+        "wrong_keys": [
+          "exact_time"
+        ],
+        "wrong_texts": [
+          "Thinks Big-O gives the exact running time in seconds."
+        ]
+      },
+      {
+        "answer_kind": "free",
+        "canonical_answer": "",
+        "chunk_ids": [
+          "eval-doc-2:c3"
+        ],
+        "concept": "Big-O Notation",
+        "difficulty": 2,
+        "final_answer": "O(2^n)",
+        "format": "free",
+        "options": [],
+        "prompt": "What Big-O running time does naive recursive Fibonacci have?",
+        "reference_answer": "Naive Fibonacci recursion is O(2^n). Final answer: O(2^n).",
+        "rubric": [
+          "States O(2^n)",
+          "Identifies it as exponential"
+        ],
+        "stepwise": false,
+        "tolerance": "",
+        "wrong_keys": [
+          "linear_cost"
+        ],
+        "wrong_texts": [
+          "Thinks recursive Fibonacci is linear, O(n)."
+        ]
+      },
+      {
+        "answer_kind": "free",
+        "canonical_answer": "",
+        "chunk_ids": [
+          "eval-doc-2:c3"
+        ],
+        "concept": "Big-O Notation",
+        "difficulty": 3,
+        "final_answer": "Wrong; Big-O is an upper bound, not an exact count",
+        "format": "free",
+        "options": [],
+        "prompt": "Someone says recursive Fibonacci's O(2^n) means it takes exactly 2^n steps. Evaluate this claim.",
+        "reference_answer": "Big-O is an asymptotic upper bound on running time, not an exact count, so it bounds growth rather than giving exact steps. Final answer: Wrong; Big-O is an upper bound, not an exact count.",
+        "rubric": [
+          "Rejects the claim",
+          "Explains Big-O is an asymptotic upper bound"
+        ],
+        "stepwise": false,
+        "tolerance": "",
+        "wrong_keys": [
+          "exact_time"
+        ],
+        "wrong_texts": [
+          "Treats Big-O as an exact step count."
+        ]
+      },
+      {
+        "answer_kind": "free",
+        "canonical_answer": "",
+        "chunk_ids": [
+          "eval-doc-2:c3"
+        ],
+        "concept": "Big-O Notation",
+        "difficulty": 1,
+        "final_answer": "An asymptotic upper bound on running time",
+        "format": "teachback",
+        "options": [],
+        "prompt": "Explain to a classmate who missed the lecture what Big-O notation is.",
+        "reference_answer": "Big-O notation gives an asymptotic upper bound on running time, describing how it grows. Final answer: An asymptotic upper bound on running time.",
+        "rubric": [
+          "Says upper bound",
+          "Mentions running time"
+        ],
+        "stepwise": false,
+        "tolerance": "",
+        "wrong_keys": [
+          "exact_time"
+        ],
+        "wrong_texts": [
+          "Thinks it measures exact seconds."
+        ]
+      },
+      {
+        "answer_kind": "free",
+        "canonical_answer": "",
+        "chunk_ids": [
+          "eval-doc-2:c3"
+        ],
+        "concept": "Big-O Notation",
+        "difficulty": 2,
+        "final_answer": "Naive recursive Fibonacci is O(2^n)",
+        "format": "teachback",
+        "options": [],
+        "prompt": "Explain to a classmate who missed the lecture how Big-O describes the naive recursive Fibonacci function.",
+        "reference_answer": "Naive recursive Fibonacci is O(2^n), an upper bound meaning running time grows exponentially with n. Final answer: Naive recursive Fibonacci is O(2^n).",
+        "rubric": [
+          "States O(2^n)",
+          "Says it is an upper bound on growth"
+        ],
+        "stepwise": false,
+        "tolerance": "",
+        "wrong_keys": [
+          "linear_cost"
+        ],
+        "wrong_texts": [
+          "Thinks it grows only linearly."
+        ]
+      },
+      {
+        "answer_kind": "free",
+        "canonical_answer": "",
+        "chunk_ids": [
+          "eval-doc-2:c3"
+        ],
+        "concept": "Big-O Notation",
+        "difficulty": 3,
+        "final_answer": "O(2^n) means running time grows exponentially with n",
+        "format": "teachback",
+        "options": [],
+        "prompt": "Explain to a classmate who missed the lecture why O(2^n) is a warning sign when using recursion.",
+        "reference_answer": "Big-O is an upper bound on running time; O(2^n) means time can double with each increase in n, as with naive Fibonacci recursion, so it becomes impractical for larger inputs. Final answer: O(2^n) means running time grows exponentially with n.",
+        "rubric": [
+          "Says Big-O bounds running time as input grows",
+          "Explains exponential growth makes large n impractical"
+        ],
+        "stepwise": false,
+        "tolerance": "",
+        "wrong_keys": [
+          "linear_cost"
+        ],
+        "wrong_texts": [
+          "Underestimates growth as linear."
+        ]
+      },
+      {
+        "answer_kind": "free",
+        "canonical_answer": "",
+        "chunk_ids": [
+          "eval-doc-2:c3"
+        ],
+        "concept": "Big-O Notation",
+        "difficulty": 1,
+        "final_answer": "Asymptotic upper bound on running time",
+        "format": "mc_reason",
+        "options": [
+          {
+            "is_correct": true,
+            "misconception_key": null,
+            "misconception_text": null,
+            "text": "Asymptotic upper bound on running time"
+          },
+          {
+            "is_correct": false,
+            "misconception_key": "exact_time",
+            "misconception_text": "Thinks it gives exact time.",
+            "text": "Exact running time in seconds"
+          },
+          {
+            "is_correct": false,
+            "misconception_key": "stack_depth",
+            "misconception_text": "Confuses it with stack depth.",
+            "text": "Depth of the call stack only"
+          },
+          {
+            "is_correct": false,
+            "misconception_key": "lower_bound_memory",
+            "misconception_text": "Confuses upper bound with a lower bound and time with memory.",
+            "text": "Lower bound on memory usage"
+          }
+        ],
+        "prompt": "What does Big-O notation express? Pick one option and give your reason.",
+        "reference_answer": "Big-O bounds how running time grows from above, asymptotically. Final answer: Asymptotic upper bound on running time.",
+        "rubric": [
+          "Says upper bound",
+          "Says running time growth"
+        ],
+        "stepwise": false,
+        "tolerance": "",
+        "wrong_keys": [],
+        "wrong_texts": []
+      },
+      {
+        "answer_kind": "free",
+        "canonical_answer": "",
+        "chunk_ids": [
+          "eval-doc-2:c3"
+        ],
+        "concept": "Big-O Notation",
+        "difficulty": 2,
+        "final_answer": "O(2^n)",
+        "format": "mc_reason",
+        "options": [
+          {
+            "is_correct": true,
+            "misconception_key": null,
+            "misconception_text": null,
+            "text": "O(2^n)"
+          },
+          {
+            "is_correct": false,
+            "misconception_key": "linear_cost",
+            "misconception_text": "Thinks the cost is linear.",
+            "text": "O(n)"
+          },
+          {
+            "is_correct": false,
+            "misconception_key": "constant_time",
+            "misconception_text": "Thinks it takes constant time.",
+            "text": "O(1)"
+          },
+          {
+            "is_correct": false,
+            "misconception_key": "log_cost",
+            "misconception_text": "Thinks the cost is logarithmic.",
+            "text": "O(log n)"
+          }
+        ],
+        "prompt": "Which Big-O bound applies to naive recursive Fibonacci? Pick one option and give your reason.",
+        "reference_answer": "Naive Fibonacci recursion makes exponentially growing numbers of calls. Final answer: O(2^n).",
+        "rubric": [
+          "Identifies exponential growth",
+          "Ties it to recursive calls"
+        ],
+        "stepwise": false,
+        "tolerance": "",
+        "wrong_keys": [],
+        "wrong_texts": []
+      },
+      {
+        "answer_kind": "free",
+        "canonical_answer": "",
+        "chunk_ids": [
+          "eval-doc-2:c3"
+        ],
+        "concept": "Big-O Notation",
+        "difficulty": 3,
+        "final_answer": "It only bounds growth from above",
+        "format": "mc_reason",
+        "options": [
+          {
+            "is_correct": true,
+            "misconception_key": null,
+            "misconception_text": null,
+            "text": "It only bounds growth from above"
+          },
+          {
+            "is_correct": false,
+            "misconception_key": "exact_time",
+            "misconception_text": "Treats Big-O as exact.",
+            "text": "It gives the exact step count"
+          },
+          {
+            "is_correct": false,
+            "misconception_key": "lower_bound",
+            "misconception_text": "Mixes up upper and lower bounds.",
+            "text": "It bounds growth from below"
+          },
+          {
+            "is_correct": false,
+            "misconception_key": "stack_depth",
+            "misconception_text": "Confuses time with stack depth.",
+            "text": "It measures call stack depth"
+          }
+        ],
+        "prompt": "A colleague claims O(2^n) for naive Fibonacci gives its exact step count. What is the best response? Pick one option and give your reason.",
+        "reference_answer": "Big-O is an asymptotic upper bound on running time, so it describes growth rather than an exact count. Final answer: It only bounds growth from above.",
+        "rubric": [
+          "Says Big-O is an upper bound",
+          "Says it is not an exact count"
+        ],
+        "stepwise": false,
+        "tolerance": "",
+        "wrong_keys": [],
+        "wrong_texts": []
+      }
+    ]
+  },
+  "recorded_under": {
+    "input_sha256": "e38433a3631c562657f96e1ba572b774ac7104d6d620fc2e8935ce8391efd1ef",
+    "model": "claude-sonnet-5-5",
+    "prompt_hash": "4710781c2f16",
+    "schema_hash": "d4d6bdaf562d"
+  }
+}

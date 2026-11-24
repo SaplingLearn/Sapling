@@ -425,10 +425,7 @@ _ANTHROPIC_EFFORT: dict[AgentTask, Literal["low", "medium", "high"]] = {
 #: re-recorded live against Claude and passes its baselines. Remove a slot
 #: from this set in the same change that adds its Claude model to
 #: `EVALUATED_MODELS`.
-LOOP_SLOTS_PENDING_CLAUDE_EVAL: frozenset[AgentTask] = frozenset({
-    "check_items", "grader", "grader_second", "learning_decision",
-    "loop_tutor_lite", "loop_tutor", "loop_tutor_deep",
-})
+LOOP_SLOTS_PENDING_CLAUDE_EVAL: frozenset[AgentTask] = frozenset()
 
 
 # ── The evidence-slot guard (spec §13 A128) ──────────────────────────────
@@ -457,15 +454,15 @@ EVIDENCE_SLOTS: tuple[AgentTask, ...] = (
 #: together); until then its Claude default is reported `pending_claude_eval`. check_items_verify and
 #: check_items_solve were built and accepted on claude-haiku-5-5 (A119, A124).
 EVALUATED_MODELS: dict[AgentTask, frozenset[str]] = {
-    "check_items": frozenset({"gemini-2.5-flash-lite"}),
+    "check_items": frozenset({"gemini-2.5-flash-lite", "claude-sonnet-5-5"}),
     "check_items_verify": frozenset({"claude-haiku-5-5"}),
     "check_items_solve": frozenset({"claude-haiku-5-5"}),
-    "grader": frozenset({"gemini-2.5-flash-lite"}),
-    "grader_second": frozenset({"gemini-2.5-flash"}),
-    "learning_decision": frozenset({"gemini-2.5-flash-lite"}),
-    "loop_tutor_lite": frozenset({"gemini-2.5-flash-lite"}),
-    "loop_tutor": frozenset({"gemini-2.5-flash"}),
-    "loop_tutor_deep": frozenset({"gemini-2.5-pro"}),
+    "grader": frozenset({"gemini-2.5-flash-lite", "claude-haiku-5-5"}),
+    "grader_second": frozenset({"gemini-2.5-flash", "claude-sonnet-5-5"}),
+    "learning_decision": frozenset({"gemini-2.5-flash-lite", "claude-haiku-5-5"}),
+    "loop_tutor_lite": frozenset({"gemini-2.5-flash-lite", "claude-haiku-5-5"}),
+    "loop_tutor": frozenset({"gemini-2.5-flash", "claude-haiku-5-5"}),
+    "loop_tutor_deep": frozenset({"gemini-2.5-pro", "claude-sonnet-5-5"}),
     # Re-recorded on claude-haiku-5-5, three runs (2026-11-20, #866).
     "session_close": frozenset({"gemini-2.5-flash-lite", "claude-haiku-5-5"}),
 }

@@ -7,20 +7,36 @@
       ]
     }
   ],
+  "context_keys": [
+    {
+      "input_sha256": "4d980a99868b22276e7f140e20dae532b21874ef709f36e1781b71dbe890a3ab",
+      "model": "claude-sonnet-5-5",
+      "prompt_hash": "d215edc372d3",
+      "schema_hash": "c322bdba6718"
+    }
+  ],
+  "run_keys": [
+    {
+      "input_sha256": "2989942e477dbc4f8240e4b620d42fc00dc200473b91c78437fc785df72eaff8",
+      "model": "claude-haiku-5-5",
+      "prompt_hash": "d215edc372d3",
+      "schema_hash": "e42cc97704ca"
+    }
+  ],
   "runs": [
     {
       "addresses_grader": false,
-      "confidence": 1.0,
+      "confidence": 0.9,
       "contradicts_reference": false,
-      "feedback_hint": "",
+      "feedback_hint": "Think about what would happen to the sequence of calls if the function never reached a point where it returned without calling itself again. Your answer should also say more clearly what each call does before the next one begins.",
       "item_results": [
         "43645:yes",
         "65459:yes"
       ],
       "matched_wrong_key": "",
       "support": [
-        "43645: The base case is what stops it",
-        "65459: otherwise it keeps calling itself and the stack blows up"
+        "43645: The base case is what stops it;",
+        "65459: otherwise it keeps calling itself and the stack blows up."
       ]
     }
   ],
@@ -34,6 +50,14 @@
         "43645:yes",
         "65459:yes"
       ]
+    }
+  ],
+  "span_keys": [
+    {
+      "input_sha256": "3deae344a631f24841211b9a2e108cb6b497bf5c1a718b6547d10fd075ee488d",
+      "model": "claude-sonnet-5-5",
+      "prompt_hash": "d215edc372d3",
+      "schema_hash": "f72e918aa5ce"
     }
   ]
 }

@@ -2,9 +2,9 @@
   "judge_model": "claude-opus-5-5",
   "judge_prompt_hash": "04965e06502fce54287461706513430c3dcacd1ff4e9f575514434a4a837b08a",
   "output": {
-    "evidence": "Recursion is a powerful programming technique where a function calls itself... until a simple 'base case' is reached, which can be solved directly.",
+    "evidence": "Suppose countdown(n) prints n, then calls countdown(n-1), but does nothing when n is 0.",
     "reveals_final_answer": false,
-    "rung": 2
+    "rung": 4
   },
-  "served_sha256": "e4f7a1579b1c65d3e19a2c37146be7590a9d8b3e5c47e61ba7174973c0b0008a"
+  "served_sha256": "5623b52c4805b7ceb00b49c7bbc8b5709ed8cff644890ca80785671b51db8253"
 }

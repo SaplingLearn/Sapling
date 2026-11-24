@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "Consider the numbers 2, 4, 6, and 9. What would you identify as the middle number using your current method, and what would happen if you were to apply the mean formula",
+    "evidence": "Work out the average of 1, 2 and 10 yourself, then compare your result with the 2 your belief predicts: do they match?",
     "only_states_correction": false
   },
-  "served_sha256": "9730c40bbb9abb6453132705a23e905902fc8ed84d6c9450be3edd6ecc80c381"
+  "served_sha256": "74487d45910e798ffc5e927bc6e5b940507478a60c1ab24c42c5b99cdaeb6b82"
 }

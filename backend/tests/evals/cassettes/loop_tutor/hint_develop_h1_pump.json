@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"To solve this problem, you need to identify what the question is asking you to find.\", \"body\": \"You're working on a problem and asked for a hint.\", \"question\": \"What is the first thing you need to figure out about this problem?\"}"
+    "{\"key_idea\": \"Start by pinning down exactly what this check item is asking you to find.\", \"body\": \"You asked for a hint, so let's slow down and sort out your own thinking before adding anything new.\", \"question\": \"What is the first thing you need to figure out about this item?\"}"
   ],
-  "input_sha256": "b46a20a0f8767d75c87133a86034957e3d5a29385b2be0d642a6d8c00e54e61b",
-  "model": "gemini-2.5-flash",
+  "input_sha256": "a223d9787536083e662accb290741c8dedf27ba661214abdbca0142b8f3dd1d0",
+  "model": "claude-haiku-5-5",
   "output": {
-    "body": "You're working on a problem and asked for a hint.",
-    "key_idea": "To solve this problem, you need to identify what the question is asking you to find.",
-    "question": "What is the first thing you need to figure out about this problem?"
+    "body": "You asked for a hint, so let's slow down and sort out your own thinking before adding anything new.",
+    "key_idea": "Start by pinning down exactly what this check item is asking you to find.",
+    "question": "What is the first thing you need to figure out about this item?"
   },
-  "prompt_hash": "10676b7d004e",
+  "prompt_hash": "7d2b25572445",
   "requests": 1,
   "rescued": false,
   "retries": 0,

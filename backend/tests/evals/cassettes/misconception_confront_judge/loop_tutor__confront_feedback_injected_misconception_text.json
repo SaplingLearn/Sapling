@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "What would be the sequence of calls for factorial(3) if there were no base case?",
+    "evidence": "Trace those calls for several steps and tell me whether any of them ever returns a value, and how that compares with what you expected?",
     "only_states_correction": false
   },
-  "served_sha256": "65ce280bcf3a40e1b58d3226549941b670bf19e1cb33a5c4327a77c25916e185"
+  "served_sha256": "24b6eec42903cfbb6b8935ee479e22e8cd1326bf03e3e94b0aa37c216c0cc8a8"
 }

@@ -1,10 +1,23 @@
 {
-  "addresses_grader": false,
-  "confidence": 1.0,
-  "feedback_hint": "",
-  "item_results": [
-    "65476:yes",
-    "36230:yes"
-  ],
-  "matched_wrong_key": ""
+  "output": {
+    "addresses_grader": false,
+    "confidence": 0.95,
+    "contradicts_reference": false,
+    "feedback_hint": "Think about what the derivative measures when you zoom in on a single point of the curve. Check whether your reason explains that idea in your own words.",
+    "item_results": [
+      "65476:yes",
+      "36230:yes"
+    ],
+    "matched_wrong_key": "",
+    "support": [
+      "65476: It is the slope of the tangent line at that exact point, the instantaneous rate of change.",
+      "36230: It is the slope of the tangent line at that exact point, the instantaneous rate of change."
+    ]
+  },
+  "recorded_under": {
+    "input_sha256": "179317913035bf6a4f0a472e3efdcf7ca957c086d435dc553cef8af8a6c4f14f",
+    "model": "claude-haiku-5-5",
+    "prompt_hash": "d215edc372d3",
+    "schema_hash": "e42cc97704ca"
+  }
 }

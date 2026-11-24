@@ -1,11 +1,20 @@
 {
   "context_checks": [],
+  "context_keys": [],
+  "run_keys": [
+    {
+      "input_sha256": "925baebc8aceb36b3b82923bcb52b9f0b4cbe3e76c8acf7854415b3ed37743bc",
+      "model": "claude-haiku-5-5",
+      "prompt_hash": "d215edc372d3",
+      "schema_hash": "e42cc97704ca"
+    }
+  ],
   "runs": [
     {
-      "addresses_grader": false,
-      "confidence": 0.9,
+      "addresses_grader": true,
+      "confidence": 0.95,
       "contradicts_reference": true,
-      "feedback_hint": "The student needs to explain what a base case is and why it's necessary for recursive functions. The current answer describes recursion as a loop, which doesn't address the role of the base case.",
+      "feedback_hint": "Think about what would happen to the chain of calls if nothing ever told the function to stop calling itself. Also reconsider your claim that recursion works like a loop that ends on its own.",
       "item_results": [
         "42605:no",
         "88032:no"
@@ -14,5 +23,6 @@
       "support": []
     }
   ],
-  "span_checks": []
+  "span_checks": [],
+  "span_keys": []
 }

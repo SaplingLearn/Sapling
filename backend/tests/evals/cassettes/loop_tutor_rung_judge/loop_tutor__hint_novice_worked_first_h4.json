@@ -1,0 +1,10 @@
+{
+  "judge_model": "claude-opus-5-5",
+  "judge_prompt_hash": "80402569d294638f7e2af95a0f9fb23341de5c768ef3b0c1b576bf4c335c2f4c",
+  "output": {
+    "evidence": "Consider power(2, n), defined by a line for n equal to 0 and a line for other n that multiplies 2 by power(2, n-1). Tracing power(2, 3) produces the calls",
+    "reveals_final_answer": false,
+    "rung": 4
+  },
+  "served_sha256": "7a5701c9e17efeb512e504834045553b37a79dfab7348a026a166fc8ff328bc0"
+}

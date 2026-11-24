@@ -7,20 +7,36 @@
       ]
     }
   ],
+  "context_keys": [
+    {
+      "input_sha256": "f72d746fe1024b0efff85e1d89e9a5bccea95a6e5f74e1b70fd34d57eb9df332",
+      "model": "claude-sonnet-5-5",
+      "prompt_hash": "d215edc372d3",
+      "schema_hash": "c322bdba6718"
+    }
+  ],
+  "run_keys": [
+    {
+      "input_sha256": "4a05039eac22189a37434c906213df61cb87610ac4a7758fa38a53ea7000cf11",
+      "model": "claude-haiku-5-5",
+      "prompt_hash": "d215edc372d3",
+      "schema_hash": "e42cc97704ca"
+    }
+  ],
   "runs": [
     {
       "addresses_grader": false,
-      "confidence": 1.0,
+      "confidence": 0.9,
       "contradicts_reference": false,
-      "feedback_hint": "",
+      "feedback_hint": "Check which resistors still sit in a complete loop once the switch is open, and whether R1's path is still intact.",
       "item_results": [
         "50387:yes",
         "85826:yes"
       ],
       "matched_wrong_key": "",
       "support": [
-        "50387: R1: no.",
-        "85826: R2: yes."
+        "50387: Only R2 carries current when S is open, because the open switch breaks the path through R1.",
+        "85826: R2: yes. Only R2 carries current when S is open"
       ]
     }
   ],
@@ -34,6 +50,14 @@
         "50387:yes",
         "85826:yes"
       ]
+    }
+  ],
+  "span_keys": [
+    {
+      "input_sha256": "657620515ca348c7bf50c5cfb37706b67ec2267e2844e216a4ac2c2be5c0b5e5",
+      "model": "claude-sonnet-5-5",
+      "prompt_hash": "d215edc372d3",
+      "schema_hash": "f72e918aa5ce"
     }
   ]
 }

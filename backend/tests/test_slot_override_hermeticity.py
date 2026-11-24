@@ -18,11 +18,14 @@ import subprocess
 import sys
 from pathlib import Path
 
-from agents._providers import LOOP_SLOTS_PENDING_CLAUDE_EVAL
-
 BACKEND = Path(__file__).resolve().parents[1]
 #: the owner's live-walkthrough shell: one override per learning-loop slot
-EXPORTED = {f"SAPLING_MODEL_{slot.upper()}": "gemini-2.5-flash-lite" for slot in LOOP_SLOTS_PENDING_CLAUDE_EVAL}
+#: (the historical A111 pending set; still exported even after Claude evals clear)
+_LOOP_SLOT_OVERRIDES = (
+    "check_items", "grader", "grader_second", "learning_decision",
+    "loop_tutor_lite", "loop_tutor", "loop_tutor_deep",
+)
+EXPORTED = {f"SAPLING_MODEL_{slot.upper()}": "gemini-2.5-flash-lite" for slot in _LOOP_SLOT_OVERRIDES}
 #: each failed under the exports before the conftest clears
 PINNED = (
     # run time: asserts the grader's default provider, then sets its own override

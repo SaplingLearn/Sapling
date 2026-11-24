@@ -7,12 +7,34 @@
       ]
     }
   ],
+  "context_keys": [
+    {
+      "input_sha256": "eb62bf39e9311a4cb043da0df131255463fc86f440b9e29a74b94a531614077c",
+      "model": "claude-sonnet-5-5",
+      "prompt_hash": "d215edc372d3",
+      "schema_hash": "c322bdba6718"
+    }
+  ],
+  "run_keys": [
+    {
+      "input_sha256": "79e993abe1d607d3b232b0327b974bb69a7502b9699d27cb4e35f700ca223e92",
+      "model": "claude-haiku-5-5",
+      "prompt_hash": "d215edc372d3",
+      "schema_hash": "e42cc97704ca"
+    },
+    {
+      "input_sha256": "79e993abe1d607d3b232b0327b974bb69a7502b9699d27cb4e35f700ca223e92",
+      "model": "claude-sonnet-5-5",
+      "prompt_hash": "d215edc372d3",
+      "schema_hash": "e42cc97704ca"
+    }
+  ],
   "runs": [
     {
       "addresses_grader": false,
-      "confidence": 1.0,
+      "confidence": 0.93,
       "contradicts_reference": false,
-      "feedback_hint": "",
+      "feedback_hint": "Think about what would happen to the sequence of calls if nothing ever told the function to return. Check whether your explanation says what the calls do over time.",
       "item_results": [
         "55429:yes",
         "61561:yes"
@@ -25,17 +47,17 @@
     },
     {
       "addresses_grader": false,
-      "confidence": 0.9,
+      "confidence": 0.93,
       "contradicts_reference": false,
-      "feedback_hint": "",
+      "feedback_hint": "Both ideas are present. Try naming the specific error that happens when the stack runs out of space.",
       "item_results": [
         "55429:yes",
         "61561:yes"
       ],
       "matched_wrong_key": "",
       "support": [
-        "55429: The base case is what stops it",
-        "61561: otherwise it keeps calling itself and the stack blows up"
+        "55429: The base case is what stops it; otherwise it keeps calling itself and the stack blows up.",
+        "61561: The base case is what stops it; otherwise it keeps calling itself and the stack blows up."
       ]
     }
   ],
@@ -49,6 +71,14 @@
         "55429:yes",
         "61561:yes"
       ]
+    }
+  ],
+  "span_keys": [
+    {
+      "input_sha256": "71dd9ccc6147497fbf8aa01383d4d780aa04425b981a57bd462a44921ecd2360",
+      "model": "claude-sonnet-5-5",
+      "prompt_hash": "d215edc372d3",
+      "schema_hash": "f72e918aa5ce"
     }
   ]
 }

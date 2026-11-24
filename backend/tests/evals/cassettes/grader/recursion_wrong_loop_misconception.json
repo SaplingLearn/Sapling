@@ -1,11 +1,20 @@
 {
   "context_checks": [],
+  "context_keys": [],
+  "run_keys": [
+    {
+      "input_sha256": "1e257cf7321c5adf3d041abef17c28e48572e038bcffe71ed32b6ad9b8245045",
+      "model": "claude-haiku-5-5",
+      "prompt_hash": "d215edc372d3",
+      "schema_hash": "e42cc97704ca"
+    }
+  ],
   "runs": [
     {
       "addresses_grader": false,
-      "confidence": 1.0,
+      "confidence": 0.95,
       "contradicts_reference": true,
-      "feedback_hint": "The student claims recursion ends on its own, like a for loop, and doesn't need a base case. This contradicts the reference answer which states the base case stops recursion and prevents stack overflow.",
+      "feedback_hint": "Think about what would happen to the sequence of calls if the function never reached a point where it returned without calling itself again. Consider what actually ends a recursive process compared with a loop.",
       "item_results": [
         "73324:no",
         "96768:no"
@@ -14,5 +23,6 @@
       "support": []
     }
   ],
-  "span_checks": []
+  "span_checks": [],
+  "span_keys": []
 }

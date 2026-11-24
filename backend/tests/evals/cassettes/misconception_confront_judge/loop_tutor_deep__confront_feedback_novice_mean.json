@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "What result does your 'middle value' rule give for that set, and what result do you get if you add the numbers and divide by how many there are?",
+    "evidence": "How many coins would each pile hold after you level them out, and does that number match the 4 you picked as the middle one?",
     "only_states_correction": false
   },
-  "served_sha256": "43f466d01ff0ef8f08fcddedb1ca21d28bd6555af59c2357a38b19fece8ff9ff"
+  "served_sha256": "d21b05313d55ae4153a9236a99cb7a7c4e8f18b2f772d5808401235b017c5df7"
 }

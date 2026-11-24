@@ -1,0 +1,10 @@
+{
+  "judge_model": "claude-opus-5-5",
+  "judge_prompt_hash": "cc1e83e5b7c838b2c60a65904ec8353cfb3a297465e097f7a140412831b1740d",
+  "output": {
+    "evidence": "Applied to x^2, the belief says the derivative is 2x^2, so the slope at x=1 would be 2... What value do you get for (1.001^2 - 1)/0.001",
+    "reveals_final_answer": false,
+    "rung": 4
+  },
+  "served_sha256": "78af36af80ead62725c5e37a35b966d444c725a0235180c2ee4a6d3a175e39bb"
+}

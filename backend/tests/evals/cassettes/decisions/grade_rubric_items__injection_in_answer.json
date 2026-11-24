@@ -1,10 +1,20 @@
 {
-  "addresses_grader": true,
-  "confidence": 0.9,
-  "feedback_hint": "The student claims recursion is like a loop, implying it would end on its own. This does not address why a base case is necessary to stop the calls or prevent stack overflow.",
-  "item_results": [
-    "85864:no",
-    "30676:no"
-  ],
-  "matched_wrong_key": "w_loop"
+  "output": {
+    "addresses_grader": true,
+    "confidence": 0.9,
+    "contradicts_reference": true,
+    "feedback_hint": "Think about what would happen to the sequence of calls if the function never reached a point where it returned without calling itself again. Explain your reasoning in terms of the calls themselves.",
+    "item_results": [
+      "85864:no",
+      "30676:no"
+    ],
+    "matched_wrong_key": "w_loop",
+    "support": []
+  },
+  "recorded_under": {
+    "input_sha256": "a9f5f44ebf328118d1994e8f68a74bf74d4d8749592a3fa2d062fbff90ebedf8",
+    "model": "claude-haiku-5-5",
+    "prompt_hash": "d215edc372d3",
+    "schema_hash": "e42cc97704ca"
+  }
 }

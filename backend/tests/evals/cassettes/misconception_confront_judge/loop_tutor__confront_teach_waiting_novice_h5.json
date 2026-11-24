@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": false,
-    "evidence": "However, the power rule also says to reduce the exponent by one. So, the correct derivative of x^3 is 3x^2.",
-    "only_states_correction": true
+    "evidence": "at x = 1 the slope should be 4... Compare the number you get with the 4 your belief predicts. (At x=1, 4x^4 and 4x^3 both give 4, so the test cannot expose the error.)",
+    "only_states_correction": false
   },
-  "served_sha256": "c59582bdaed62698e81e1f86d1ccdd8d4eccd2c6d74ad46600fbb28e02216197"
+  "served_sha256": "35197a80d74c9834aa53531c1b86c4f3f1d779f20587bfd02a309f508a45d4b4"
 }

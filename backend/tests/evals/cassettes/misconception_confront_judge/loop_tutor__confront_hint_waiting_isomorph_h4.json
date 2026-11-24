@@ -3,9 +3,9 @@
   "judge_prompt_hash": "058d561bcb0cda3956d731c2c28419de88d3f9a85f548c93641542b407c2c89e",
   "output": {
     "affirms_misconception": false,
-    "confronts": false,
-    "evidence": "However, if we also lower the exponent by one, the result would be 3x^2.",
-    "only_states_correction": true
+    "confronts": true,
+    "evidence": "compute the average rate of change (f(3.01) - f(3))/0.01 using actual values of f. What does that average rate of change come out to, and how does it compare with the slope your rule predicts?",
+    "only_states_correction": false
   },
-  "served_sha256": "e0a91cd3f6aef06b87a2fb422efa80d5107e133e16da2ceb48cecd8a4830a644"
+  "served_sha256": "b29d93299ceb79e98651bb4411064e92f7f4671c8289c18f5e7f16a70c175bfb"
 }

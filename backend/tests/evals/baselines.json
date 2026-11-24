@@ -9,16 +9,17 @@
     "TeachBackProbesEvaluator": 1.0
   },
   "check_items": {
-    "CitesChunkEvaluator": 1.0,
-    "DraftValidEvaluator": 0.981481,
+    "CitesChunkEvaluator": 0.986111,
+    "ConceptsCoveredEvaluator": 1.0,
+    "DraftValidEvaluator": 0.958333,
     "FinalAnswerValidEvaluator": 1.0,
     "HasReferenceEvaluator": 1.0,
-    "McCorrectNotLongestEvaluator": 0.5,
-    "McOptionsValidEvaluator": 1.0,
-    "McReasonValidEvaluator": 0.944444,
+    "McCorrectNotLongestEvaluator": 0.430556,
+    "McOptionsValidEvaluator": 0.875,
+    "McReasonValidEvaluator": 0.875,
     "NoLeakInPromptEvaluator": 1.0,
     "RubricCountEvaluator": 1.0,
-    "WrongReasonCountEvaluator": 1.0
+    "WrongReasonCountEvaluator": 0.875
   },
   "concept_extraction": {
     "AllNamesTitleCaseEvaluator": 1.0,
@@ -28,9 +29,9 @@
   },
   "decisions": {
     "ConfidenceInRangeEvaluator": 1.0,
-    "GoldAgreementEvaluator": 0.75,
+    "GoldAgreementEvaluator": 1.0,
     "InjectionHeldEvaluator": 1.0,
-    "NoFalsePositiveEvaluator": 0.75
+    "NoFalsePositiveEvaluator": 1.0
   },
   "document_classification": {
     "CategoryEvaluator": 0.862069,
@@ -49,7 +50,7 @@
     "InjectionHeldEvaluator": 1.0,
     "NoReferenceLeakEvaluator": 1.0,
     "RawHintLeakFreeEvaluator": 1.0,
-    "RubricAgreementEvaluator": 0.983871,
+    "RubricAgreementEvaluator": 1.0,
     "StrictOnWrongEvaluator": 1.0
   },
   "loop_rung_judge": {
@@ -63,11 +64,11 @@
     "NoControlTags": 1.0,
     "OneQuestion": 1.0,
     "PlainMathBelowH6": 1.0,
-    "RawAnswerLeak": 1.0,
-    "RetriesUsed": 0.875,
-    "ServedAnswerLeak": 1.0,
+    "RawAnswerLeak": 0.9,
+    "RetriesUsed": 0.7,
+    "ServedAnswerLeak": 0.9,
     "ServedNoReveal": 1.0,
-    "SycophancyResists": 1.0
+    "SycophancyResists": 0.9
   },
   "loop_tutor_deep": {
     "CeilingCompliance": 1.0,
@@ -77,23 +78,23 @@
     "OneQuestion": 1.0,
     "PlainMathBelowH6": 1.0,
     "RawAnswerLeak": 1.0,
-    "RetriesUsed": 0.75,
+    "RetriesUsed": 0.8,
     "ServedAnswerLeak": 1.0,
     "ServedNoReveal": 1.0,
     "SycophancyResists": 1.0
   },
   "loop_tutor_lite": {
-    "CeilingCompliance": 0.75,
+    "CeilingCompliance": 1.0,
     "FeedbackNeverEndsInAnswer": 1.0,
     "MaxSentences": 1.0,
     "NoControlTags": 1.0,
     "OneQuestion": 1.0,
     "PlainMathBelowH6": 1.0,
-    "RawAnswerLeak": 1.0,
-    "RetriesUsed": 0.25,
+    "RawAnswerLeak": 0.9,
+    "RetriesUsed": 0.9,
     "ServedAnswerLeak": 1.0,
-    "ServedNoReveal": 0.875,
-    "SycophancyResists": 1.0
+    "ServedNoReveal": 0.9,
+    "SycophancyResists": 0.8
   },
   "loop_tutor_routing": {
     "_note": "PKG-07 fix round 2 (spec \u00a713 A49): per-run scores of LOOP_ROUTING_RUNS fresh recordings per slot; a tier routes only when EVERY run scores 1.0 on every served gate (min-of-N). A case that raised counts as a failed run.",
@@ -106,10 +107,24 @@
         "OneQuestion": 1.0,
         "PlainMathBelowH6": 1.0,
         "RawAnswerLeak": 1.0,
-        "RetriesUsed": 0.875,
+        "RetriesUsed": 0.8,
         "ServedAnswerLeak": 1.0,
         "ServedNoReveal": 1.0,
-        "SycophancyResists": 1.0,
+        "SycophancyResists": 0.9,
+        "_raised": false
+      },
+      {
+        "CeilingCompliance": 1.0,
+        "FeedbackNeverEndsInAnswer": 1.0,
+        "MaxSentences": 1.0,
+        "NoControlTags": 1.0,
+        "OneQuestion": 1.0,
+        "PlainMathBelowH6": 1.0,
+        "RawAnswerLeak": 0.9,
+        "RetriesUsed": 0.7,
+        "ServedAnswerLeak": 0.9,
+        "ServedNoReveal": 1.0,
+        "SycophancyResists": 0.9,
         "_raised": false
       },
       {
@@ -120,24 +135,10 @@
         "OneQuestion": 1.0,
         "PlainMathBelowH6": 1.0,
         "RawAnswerLeak": 1.0,
-        "RetriesUsed": 0.875,
+        "RetriesUsed": 0.7,
         "ServedAnswerLeak": 1.0,
         "ServedNoReveal": 1.0,
-        "SycophancyResists": 1.0,
-        "_raised": false
-      },
-      {
-        "CeilingCompliance": 1.0,
-        "FeedbackNeverEndsInAnswer": 1.0,
-        "MaxSentences": 1.0,
-        "NoControlTags": 1.0,
-        "OneQuestion": 1.0,
-        "PlainMathBelowH6": 1.0,
-        "RawAnswerLeak": 1.0,
-        "RetriesUsed": 1.0,
-        "ServedAnswerLeak": 1.0,
-        "ServedNoReveal": 1.0,
-        "SycophancyResists": 1.0,
+        "SycophancyResists": 0.9,
         "_raised": false
       }
     ],
@@ -164,7 +165,7 @@
         "OneQuestion": 1.0,
         "PlainMathBelowH6": 1.0,
         "RawAnswerLeak": 1.0,
-        "RetriesUsed": 0.75,
+        "RetriesUsed": 0.8,
         "ServedAnswerLeak": 1.0,
         "ServedNoReveal": 1.0,
         "SycophancyResists": 1.0,
@@ -194,11 +195,25 @@
         "OneQuestion": 1.0,
         "PlainMathBelowH6": 1.0,
         "RawAnswerLeak": 1.0,
-        "RetriesUsed": 0.428571,
+        "RetriesUsed": 1.0,
         "ServedAnswerLeak": 1.0,
-        "ServedNoReveal": 1.0,
-        "SycophancyResists": 1.0,
-        "_raised": true
+        "ServedNoReveal": 0.9,
+        "SycophancyResists": 0.8,
+        "_raised": false
+      },
+      {
+        "CeilingCompliance": 1.0,
+        "FeedbackNeverEndsInAnswer": 1.0,
+        "MaxSentences": 1.0,
+        "NoControlTags": 1.0,
+        "OneQuestion": 1.0,
+        "PlainMathBelowH6": 1.0,
+        "RawAnswerLeak": 0.9,
+        "RetriesUsed": 0.9,
+        "ServedAnswerLeak": 1.0,
+        "ServedNoReveal": 0.9,
+        "SycophancyResists": 0.8,
+        "_raised": false
       },
       {
         "CeilingCompliance": 1.0,
@@ -208,41 +223,27 @@
         "OneQuestion": 1.0,
         "PlainMathBelowH6": 1.0,
         "RawAnswerLeak": 1.0,
-        "RetriesUsed": 0.625,
+        "RetriesUsed": 0.9,
         "ServedAnswerLeak": 1.0,
-        "ServedNoReveal": 1.0,
-        "SycophancyResists": 1.0,
-        "_raised": false
-      },
-      {
-        "CeilingCompliance": 0.75,
-        "FeedbackNeverEndsInAnswer": 1.0,
-        "MaxSentences": 1.0,
-        "NoControlTags": 1.0,
-        "OneQuestion": 1.0,
-        "PlainMathBelowH6": 1.0,
-        "RawAnswerLeak": 1.0,
-        "RetriesUsed": 0.25,
-        "ServedAnswerLeak": 1.0,
-        "ServedNoReveal": 0.875,
-        "SycophancyResists": 1.0,
+        "ServedNoReveal": 0.9,
+        "SycophancyResists": 0.9,
         "_raised": false
       }
     ],
     "recorded_under": {
       "loop_tutor": {
-        "model": "gemini-2.5-flash",
-        "prompt_hash": "10676b7d004e",
+        "model": "claude-haiku-5-5",
+        "prompt_hash": "7d2b25572445",
         "schema_hash": "ab89f4f429db"
       },
       "loop_tutor_deep": {
-        "model": "gemini-2.5-pro",
-        "prompt_hash": "10676b7d004e",
+        "model": "claude-sonnet-5-5",
+        "prompt_hash": "7d2b25572445",
         "schema_hash": "ab89f4f429db"
       },
       "loop_tutor_lite": {
-        "model": "gemini-2.5-flash-lite",
-        "prompt_hash": "10676b7d004e",
+        "model": "claude-haiku-5-5",
+        "prompt_hash": "7d2b25572445",
         "schema_hash": "ab89f4f429db"
       }
     },
@@ -250,8 +251,8 @@
   },
   "misconception_confront__loop_tutor": {
     "CeilingCompliance": 1.0,
-    "Confronts": 0.428571,
-    "FeedbackNeverEndsInAnswer": 0.857143,
+    "Confronts": 0.625,
+    "FeedbackNeverEndsInAnswer": 1.0,
     "MaxSentences": 1.0,
     "NoAffirmation": 1.0,
     "NoControlTags": 1.0,
@@ -259,7 +260,7 @@
     "OneQuestion": 1.0,
     "PlainMathBelowH6": 1.0,
     "RawAnswerLeak": 1.0,
-    "RetriesUsed": 0.571429,
+    "RetriesUsed": 1.0,
     "ServedAnswerLeak": 1.0,
     "ServedNoReveal": 1.0,
     "VerdictHeld": 1.0
@@ -275,7 +276,7 @@
     "OneQuestion": 1.0,
     "PlainMathBelowH6": 1.0,
     "RawAnswerLeak": 1.0,
-    "RetriesUsed": 0.571429,
+    "RetriesUsed": 0.625,
     "ServedAnswerLeak": 1.0,
     "ServedNoReveal": 1.0,
     "VerdictHeld": 1.0
@@ -285,24 +286,7 @@
     "misconception_confront__loop_tutor": [
       {
         "CeilingCompliance": 1.0,
-        "Confronts": 0.429,
-        "FeedbackNeverEndsInAnswer": 1.0,
-        "MaxSentences": 1.0,
-        "NoAffirmation": 1.0,
-        "NoControlTags": 1.0,
-        "NoInstructionEcho": 1.0,
-        "OneQuestion": 1.0,
-        "PlainMathBelowH6": 1.0,
-        "RawAnswerLeak": 1.0,
-        "RetriesUsed": 0.571,
-        "ServedAnswerLeak": 1.0,
-        "ServedNoReveal": 1.0,
-        "VerdictHeld": 1.0,
-        "_raised": false
-      },
-      {
-        "CeilingCompliance": 1.0,
-        "Confronts": 0.5,
+        "Confronts": 0.875,
         "FeedbackNeverEndsInAnswer": 1.0,
         "MaxSentences": 1.0,
         "NoAffirmation": 1.0,
@@ -315,12 +299,12 @@
         "ServedAnswerLeak": 1.0,
         "ServedNoReveal": 1.0,
         "VerdictHeld": 1.0,
-        "_raised": true
+        "_raised": false
       },
       {
         "CeilingCompliance": 1.0,
-        "Confronts": 0.429,
-        "FeedbackNeverEndsInAnswer": 0.857,
+        "Confronts": 1.0,
+        "FeedbackNeverEndsInAnswer": 1.0,
         "MaxSentences": 1.0,
         "NoAffirmation": 1.0,
         "NoControlTags": 1.0,
@@ -328,7 +312,24 @@
         "OneQuestion": 1.0,
         "PlainMathBelowH6": 1.0,
         "RawAnswerLeak": 1.0,
-        "RetriesUsed": 0.571,
+        "RetriesUsed": 1.0,
+        "ServedAnswerLeak": 1.0,
+        "ServedNoReveal": 1.0,
+        "VerdictHeld": 1.0,
+        "_raised": false
+      },
+      {
+        "CeilingCompliance": 1.0,
+        "Confronts": 0.625,
+        "FeedbackNeverEndsInAnswer": 1.0,
+        "MaxSentences": 1.0,
+        "NoAffirmation": 1.0,
+        "NoControlTags": 1.0,
+        "NoInstructionEcho": 1.0,
+        "OneQuestion": 1.0,
+        "PlainMathBelowH6": 1.0,
+        "RawAnswerLeak": 1.0,
+        "RetriesUsed": 1.0,
         "ServedAnswerLeak": 1.0,
         "ServedNoReveal": 1.0,
         "VerdictHeld": 1.0,
@@ -347,7 +348,7 @@
         "OneQuestion": 1.0,
         "PlainMathBelowH6": 1.0,
         "RawAnswerLeak": 1.0,
-        "RetriesUsed": 0.571,
+        "RetriesUsed": 0.625,
         "ServedAnswerLeak": 1.0,
         "ServedNoReveal": 1.0,
         "VerdictHeld": 1.0,
@@ -364,7 +365,7 @@
         "OneQuestion": 1.0,
         "PlainMathBelowH6": 1.0,
         "RawAnswerLeak": 1.0,
-        "RetriesUsed": 0.857,
+        "RetriesUsed": 0.625,
         "ServedAnswerLeak": 1.0,
         "ServedNoReveal": 1.0,
         "VerdictHeld": 1.0,
@@ -381,7 +382,7 @@
         "OneQuestion": 1.0,
         "PlainMathBelowH6": 1.0,
         "RawAnswerLeak": 1.0,
-        "RetriesUsed": 0.714,
+        "RetriesUsed": 0.625,
         "ServedAnswerLeak": 1.0,
         "ServedNoReveal": 1.0,
         "VerdictHeld": 1.0,
@@ -390,13 +391,13 @@
     ],
     "recorded_under": {
       "misconception_confront__loop_tutor": {
-        "model": "gemini-2.5-flash",
-        "prompt_hash": "10676b7d004e",
+        "model": "claude-haiku-5-5",
+        "prompt_hash": "7d2b25572445",
         "schema_hash": "ab89f4f429db"
       },
       "misconception_confront__loop_tutor_deep": {
-        "model": "gemini-2.5-pro",
-        "prompt_hash": "10676b7d004e",
+        "model": "claude-sonnet-5-5",
+        "prompt_hash": "7d2b25572445",
         "schema_hash": "ab89f4f429db"
       }
     },

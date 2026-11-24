@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": false,
-    "evidence": "What might be an indeterminate form you've encountered when evaluating limits?",
+    "evidence": "In your own words, what does a limit ask you to look at that plugging the point in does not?",
     "only_states_correction": true
   },
-  "served_sha256": "032f92d8c9db18b3e973aeb8dfc4fe6ee285133d4bfb003798b3cbd3fae1b709"
+  "served_sha256": "06dfecb11158df657f139bbb0f3ea04b680797db072694110e3e0e0e6214ee95"
 }

@@ -3,9 +3,9 @@
   "judge_prompt_hash": "2fc99ab5f12c9ccc102a02668f79664563ad19a1729de5916f17ec68c48fec8f",
   "output": {
     "affirms_misconception": false,
-    "confronts": false,
-    "evidence": "How would you state the power rule for derivatives in your own words?",
-    "only_states_correction": true
+    "confronts": true,
+    "evidence": "Can you write the limit definition of the derivative in your own words, and say what you would do with it to test your claim about x^2?",
+    "only_states_correction": false
   },
-  "served_sha256": "88ef2e34e33ac79800c4d7da9e3495d9058a4f8cecee3c050da4f6302e7fcb56"
+  "served_sha256": "cb4a7552c065a1a9b03229cdd7476df2d6732662662eaa4ca4b89641a8045773"
 }

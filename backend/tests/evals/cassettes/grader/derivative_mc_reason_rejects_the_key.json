@@ -1,11 +1,20 @@
 {
   "context_checks": [],
+  "context_keys": [],
+  "run_keys": [
+    {
+      "input_sha256": "2f880df3a1eee478a3ea6817494d528c32fa915671fe240da8c097af41bf1e08",
+      "model": "claude-haiku-5-5",
+      "prompt_hash": "d215edc372d3",
+      "schema_hash": "e42cc97704ca"
+    }
+  ],
   "runs": [
     {
       "addresses_grader": false,
-      "confidence": 0.9,
+      "confidence": 0.85,
       "contradicts_reference": true,
-      "feedback_hint": "The student mentions the rate of change and slope of the tangent line but then contradicts themselves by stating it's the area under the curve. Ensure the answer clearly and solely defines the derivative's meaning.",
+      "feedback_hint": "Look again at what the student's reason actually asserts as true, not what it mentions only to reject. Consider what a derivative measures at a single point compared with an area under a curve.",
       "item_results": [
         "62464:no",
         "45712:no"
@@ -14,5 +23,6 @@
       "support": []
     }
   ],
-  "span_checks": []
+  "span_checks": [],
+  "span_keys": []
 }

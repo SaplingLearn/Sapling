@@ -6,12 +6,28 @@
       ]
     }
   ],
+  "context_keys": [
+    {
+      "input_sha256": "3156b7b0e3beb2a79d65380745ad263c3b3097cd43c6f01134dd548460e3c3c2",
+      "model": "claude-sonnet-5-5",
+      "prompt_hash": "d215edc372d3",
+      "schema_hash": "c322bdba6718"
+    }
+  ],
+  "run_keys": [
+    {
+      "input_sha256": "f62d63746738d8b45bb564e90dcfe3c7e4006c0b89d718df4483c993ade45263",
+      "model": "claude-haiku-5-5",
+      "prompt_hash": "d215edc372d3",
+      "schema_hash": "e42cc97704ca"
+    }
+  ],
   "runs": [
     {
       "addresses_grader": false,
       "confidence": 0.9,
       "contradicts_reference": false,
-      "feedback_hint": "The student correctly identifies that the base case stops recursion. However, the explanation for why this is necessary could be more complete. Consider elaborating on the consequences of not having a base case, such as what happens to the function calls.",
+      "feedback_hint": "You describe what the base case does; consider what would happen across repeated calls if that case were missing.",
       "item_results": [
         "52139:yes",
         "42566:no"
@@ -30,6 +46,14 @@
       "item_results": [
         "52139:yes"
       ]
+    }
+  ],
+  "span_keys": [
+    {
+      "input_sha256": "46776427a829752ff872b54b723bd8b2f2c3d992ef16cb1cca591217b7243e2a",
+      "model": "claude-sonnet-5-5",
+      "prompt_hash": "d215edc372d3",
+      "schema_hash": "f72e918aa5ce"
     }
   ]
 }

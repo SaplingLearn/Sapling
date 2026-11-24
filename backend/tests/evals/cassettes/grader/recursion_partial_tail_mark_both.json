@@ -6,12 +6,48 @@
       ]
     }
   ],
+  "context_keys": [
+    {
+      "input_sha256": "b408cf6ce51032f494e3dc2a7f93b4637848a4a0230052b4ecc5bf055d92702d",
+      "model": "claude-sonnet-5-5",
+      "prompt_hash": "d215edc372d3",
+      "schema_hash": "c322bdba6718"
+    }
+  ],
+  "run_keys": [
+    {
+      "input_sha256": "4ffc81f604728557d5463580374e5697d1b879194ed29a3519da5544656fb196",
+      "model": "claude-haiku-5-5",
+      "prompt_hash": "d215edc372d3",
+      "schema_hash": "e42cc97704ca"
+    },
+    {
+      "input_sha256": "4ffc81f604728557d5463580374e5697d1b879194ed29a3519da5544656fb196",
+      "model": "claude-sonnet-5-5",
+      "prompt_hash": "d215edc372d3",
+      "schema_hash": "e42cc97704ca"
+    }
+  ],
   "runs": [
     {
-      "addresses_grader": false,
-      "confidence": 1.0,
+      "addresses_grader": true,
+      "confidence": 0.85,
       "contradicts_reference": false,
-      "feedback_hint": "The student correctly identified that the base case stops recursion. However, the explanation for why this is necessary (preventing infinite calls and stack overflow) is missing.",
+      "feedback_hint": "Think about what happens to the chain of calls if the function never reaches a point where it returns instead of calling itself. Say more about what goes wrong in that situation.",
+      "item_results": [
+        "57694:yes",
+        "77039:no"
+      ],
+      "matched_wrong_key": "",
+      "support": [
+        "57694: It's the case where the function stops recursing."
+      ]
+    },
+    {
+      "addresses_grader": true,
+      "confidence": 0.9,
+      "contradicts_reference": false,
+      "feedback_hint": "You've said what the base case does. Now think about what would happen to the chain of calls and the stack if no call ever reached such a case.",
       "item_results": [
         "57694:yes",
         "77039:no"
@@ -30,6 +66,14 @@
       "item_results": [
         "57694:yes"
       ]
+    }
+  ],
+  "span_keys": [
+    {
+      "input_sha256": "5358bf3596367e1053a9ad3b3c21092561d5cbc6cec286b481ffbc76d9e640f4",
+      "model": "claude-sonnet-5-5",
+      "prompt_hash": "d215edc372d3",
+      "schema_hash": "f72e918aa5ce"
     }
   ]
 }

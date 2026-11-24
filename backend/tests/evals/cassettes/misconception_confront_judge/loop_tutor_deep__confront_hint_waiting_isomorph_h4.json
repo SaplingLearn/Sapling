@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "If your rule is correct, the derivative at x=3 would be 2 * 3^2 = 18... What is the slope of the line connecting the two points on the curve at x=3 and x=3.001?",
+    "evidence": "What does your rule predict for the derivative of x^2 at x = 1, and what slope do you get from (f(1.01) - f(1)) / 0.01?",
     "only_states_correction": false
   },
-  "served_sha256": "5a4b52f51f346b2530bfbb5819cbb409f9c440a62247849c7d6f19667cd3a92d"
+  "served_sha256": "73fdd4f422e94930804f4fa6e0ae94bfdd9704c4a89dd356a163d9023125b211"
 }

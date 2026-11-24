@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\n    \"key_idea\": \"You have correctly identified the base case for the recursive function.\",\n    \"body\": \"Your base case of n == 0 returning 1 is correct.\",\n    \"question\": \"What is the next step in defining the recursive function?\"\n}"
+    "{\"key_idea\": \"Relay the graded result for your check item and look at how you got there.\", \"body\": \"The verdict on your answer is correct, and you stated it in your own words: the base case is n == 0 returning 1.\", \"question\": \"What is the first thing you would check to confirm your reasoning on the next item?\"}"
   ],
-  "input_sha256": "c02b17858a4a4fde302799016886ff8a66b8d8e9fc377d3ba34dbabf44d9c107",
-  "model": "gemini-2.5-flash-lite",
+  "input_sha256": "99a20e5d11427337630e1c3fcdd955e9a3603ed430ab1a9f235846db54bde553",
+  "model": "claude-haiku-5-5",
   "output": {
-    "body": "Your base case of n == 0 returning 1 is correct.",
-    "key_idea": "You have correctly identified the base case for the recursive function.",
-    "question": "What is the next step in defining the recursive function?"
+    "body": "The verdict on your answer is correct, and you stated it in your own words: the base case is n == 0 returning 1.",
+    "key_idea": "Relay the graded result for your check item and look at how you got there.",
+    "question": "What is the first thing you would check to confirm your reasoning on the next item?"
   },
-  "prompt_hash": "10676b7d004e",
+  "prompt_hash": "7d2b25572445",
   "requests": 1,
   "rescued": false,
   "retries": 0,

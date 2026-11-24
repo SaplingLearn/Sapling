@@ -1,5 +1,8 @@
 {
   "context_checks": [],
+  "context_keys": [],
+  "run_keys": [],
   "runs": [],
-  "span_checks": []
+  "span_checks": [],
+  "span_keys": []
 }

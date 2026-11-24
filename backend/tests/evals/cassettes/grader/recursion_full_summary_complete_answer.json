@@ -7,20 +7,36 @@
       ]
     }
   ],
+  "context_keys": [
+    {
+      "input_sha256": "bbf0d99aac597fe63b00062371ec642bc54c022bb61c1ff9a6b4492ffd5ea3a7",
+      "model": "claude-sonnet-5-5",
+      "prompt_hash": "d215edc372d3",
+      "schema_hash": "c322bdba6718"
+    }
+  ],
+  "run_keys": [
+    {
+      "input_sha256": "e34fd0ceecd7df1311d2e1454e5964fae4095998ffb2b74014039b18e26dde20",
+      "model": "claude-haiku-5-5",
+      "prompt_hash": "d215edc372d3",
+      "schema_hash": "e42cc97704ca"
+    }
+  ],
   "runs": [
     {
       "addresses_grader": false,
-      "confidence": 1.0,
+      "confidence": 0.95,
       "contradicts_reference": false,
-      "feedback_hint": "There were no issues with your answer.",
+      "feedback_hint": "Think about what would happen during the calls if the function never reached a certain point. Check whether your explanation covers both why the calls halt and what goes wrong without that.",
       "item_results": [
         "57098:yes",
         "89878:yes"
       ],
       "matched_wrong_key": "",
       "support": [
-        "57098: The base case is what stops it",
-        "89878: otherwise it keeps calling itself and the stack blows up."
+        "57098: The base case is what stops it; otherwise it keeps calling itself and the stack blows up.",
+        "89878: The base case is what stops it; otherwise it keeps calling itself and the stack blows up."
       ]
     }
   ],
@@ -34,6 +50,14 @@
         "57098:yes",
         "89878:yes"
       ]
+    }
+  ],
+  "span_keys": [
+    {
+      "input_sha256": "b22feb8f6f533a1531d910c050de4d91fab2784a1eb2e422ca893ef41a20a2c0",
+      "model": "claude-sonnet-5-5",
+      "prompt_hash": "d215edc372d3",
+      "schema_hash": "f72e918aa5ce"
     }
   ]
 }

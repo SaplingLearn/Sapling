@@ -1,19 +1,18 @@
 {
   "attempts": [
-    "{\"key_idea\": \"Recursion requires a base case to prevent infinite loops.\", \"body\": \"A recursive function must have a condition under which it stops calling itself. This stopping condition is known as the base case. Without a base case, the function would continue to call itself indefinitely.\", \"question\": \"What is the base case for the factorial function?\"}",
-    "{\"key_idea\": \"A base case terminates recursion.\", \"body\": \"The factorial function needs a base case to stop calling itself. This base case is factorial(0) = 1, which provides a direct result without further recursion.\", \"question\": \"How does factorial(0) = 1 stop the recursion?\"}"
+    "{\"key_idea\": \"A recursive definition only stops when it reaches a base case, a input handled directly without calling the function again.\", \"body\": \"This is the concept to check, not the answer to the item. Your course definition of a base case should tell you what it must do, and what must be true about it for the recursion to end.\", \"question\": \"What does your course definition of a base case say it has to do, and how is it different from the recursive case?\"}"
   ],
-  "input_sha256": "bc6f09f3c01f1addd69bee699e92ab566f49bf1cf95bd58b4971158fc5642cf1",
-  "model": "gemini-2.5-flash-lite",
+  "input_sha256": "7cb6cfcaeee090d3291ec05bad0cf7bfe7dafe9b805aad85daa140dd1f6f6f5e",
+  "model": "claude-haiku-5-5",
   "output": {
-    "body": "The factorial function needs a base case to stop calling itself. This base case is factorial(0) = 1, which provides a direct result without further recursion.",
-    "key_idea": "A base case terminates recursion.",
-    "question": "How does factorial(0) = 1 stop the recursion?"
+    "body": "This is the concept to check, not the answer to the item. Your course definition of a base case should tell you what it must do, and what must be true about it for the recursion to end.",
+    "key_idea": "A recursive definition only stops when it reaches a base case, a input handled directly without calling the function again.",
+    "question": "What does your course definition of a base case say it has to do, and how is it different from the recursive case?"
   },
-  "prompt_hash": "10676b7d004e",
-  "requests": 2,
+  "prompt_hash": "7d2b25572445",
+  "requests": 1,
   "rescued": false,
-  "retries": 1,
+  "retries": 0,
   "schema_hash": "ab89f4f429db",
   "slot": "loop_tutor_lite",
   "tool_calls": []

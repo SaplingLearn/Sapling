@@ -113,13 +113,13 @@ _TIER_ORDER: tuple[str, ...] = ("lite", "standard", "deep")
 LOOP_ROUTING_RUNS = 3
 #: Tiers whose slot scores 1.0 on EVERY served gate of tests/evals/loop_tutor.py
 #: in ALL LOOP_ROUTING_RUNS fresh recordings, no case raised (spec §10, A15,
-#: A49; baselines.json `loop_tutor_routing`). Fix round 2 (2026-09-29):
-#: `loop_tutor` (gemini-2.5-flash, thinking 0) and `loop_tutor_deep`
-#: (gemini-2.5-pro, thinking 1024) pass 3/3; flash-lite fails 2/3 (a raised
-#: case, an H3 teach turn stating the derivative), so lite turns route up to
-#: standard (`routable_tier`). Pinned by
+#: A49; baselines.json `loop_tutor_routing`). Claude A111 re-record
+#: (2026-11-24): only `loop_tutor_deep` (`claude-sonnet-5-5`) clears 3/3;
+#: `loop_tutor` (haiku) and `loop_tutor_lite` miss SycophancyResists /
+#: ServedNoReveal / ServedAnswerLeak on at least one run, so those turns
+#: route up to deep (`routable_tier`). Pinned by
 #: tests/test_loop_tutor_agent.py::test_loop_routable_tiers_match_baselines.
-LOOP_ROUTABLE_TIERS: frozenset[str] = frozenset({"standard", "deep"})
+LOOP_ROUTABLE_TIERS: frozenset[str] = frozenset({"deep"})
 
 
 def routable_tier(tier: str) -> str:

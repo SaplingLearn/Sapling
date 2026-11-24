@@ -6,33 +6,54 @@
       ]
     }
   ],
+  "context_keys": [
+    {
+      "input_sha256": "df56da8b60df11c651aa58cbfc4b4be6331b23859131f0d43d5c096951834151",
+      "model": "claude-sonnet-5-5",
+      "prompt_hash": "d215edc372d3",
+      "schema_hash": "c322bdba6718"
+    }
+  ],
+  "run_keys": [
+    {
+      "input_sha256": "fb88b981c2d26fc274bce5265b1ee1e07f5bf4279dafaabd3a9177ff89515a8d",
+      "model": "claude-haiku-5-5",
+      "prompt_hash": "d215edc372d3",
+      "schema_hash": "e42cc97704ca"
+    }
+  ],
   "runs": [
     {
       "addresses_grader": false,
-      "confidence": 1.0,
+      "confidence": 0.85,
       "contradicts_reference": false,
-      "feedback_hint": "",
+      "feedback_hint": "You have identified part of the idea. Think about what would happen on every call if that case were missing, and what the program would run out of.",
       "item_results": [
         "57192:yes",
-        "33074:yes"
+        "33074:no"
       ],
       "matched_wrong_key": "",
       "support": [
-        "57192: It's the case where the function stops recursing.",
-        "33074: Both, please."
+        "57192: It's the case where the function stops recursing."
       ]
     }
   ],
   "span_checks": [
     {
       "asserted": [
-        "57192:yes",
-        "33074:no"
+        "57192:yes"
       ],
       "item_results": [
-        "57192:yes",
-        "33074:no"
+        "57192:yes"
       ]
+    }
+  ],
+  "span_keys": [
+    {
+      "input_sha256": "7e51ae2a6d42fdf7d62fa393a09beba1a0626b4a8e7da3184ebe22e1c179dddc",
+      "model": "claude-sonnet-5-5",
+      "prompt_hash": "d215edc372d3",
+      "schema_hash": "f72e918aa5ce"
     }
   ]
 }

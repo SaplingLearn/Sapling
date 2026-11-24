@@ -1,4 +1,12 @@
 {
-  "choice": "w_speed",
-  "confidence": 1.0
+  "output": {
+    "choice": "w_speed",
+    "confidence": 0.95
+  },
+  "recorded_under": {
+    "input_sha256": "e33fe9611ab350e841e08d04c468fcb73d7e8b640b73893de47067dc40e92bd6",
+    "model": "claude-haiku-5-5",
+    "prompt_hash": "17f6dbd632ff",
+    "schema_hash": "d4d592b8967f"
+  }
 }

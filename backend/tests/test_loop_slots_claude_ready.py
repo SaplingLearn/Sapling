@@ -1,6 +1,6 @@
-"""The learning-loop slots run on Claude (owner decision 2026-11-19; their
-Claude eval pass is still pending, LOOP_SLOTS_PENDING_CLAUDE_EVAL). By default
-each sends Claude-shaped settings — no Gemini thinking budget (a 400 on Claude
+"""The learning-loop slots run on Claude (owner decision 2026-11-19; A111
+Claude eval pass recorded 2026-11-24, pending set cleared). By default each
+sends Claude-shaped settings — no Gemini thinking budget (a 400 on Claude
 5.x), no Gemini Flex tier, and the Claude max_tokens ceiling instead of a
 Gemini-sized cap that adaptive thinking would overrun. Pointing one back at
 Gemini with SAPLING_MODEL_<SLOT>=gemini-* still sends the Gemini shapes,

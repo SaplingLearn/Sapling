@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"The value of a limit is not always found by direct substitution.\", \"body\": \"While direct substitution can sometimes work, it's not universally applicable for evaluating limits. When substitution results in an indeterminate form, further analysis is needed.\", \"question\": \"What might be an indeterminate form you've encountered when evaluating limits?\"}"
+    "{\"key_idea\": \"A limit describes the value a function approaches as its input gets close to a point, which is a separate question from the value at that point.\", \"body\": \"A limit is defined by the outputs on both sides as the input nears the point, so plugging the point in is only one possible piece of information. When the value at the point and the approached value could differ, the limit has to be determined from the nearby behavior.\", \"question\": \"In your own words, what does a limit ask you to look at that plugging the point in does not?\"}"
   ],
-  "input_sha256": "35fe5e01b7c6d642772e8b83c30cd6a1ab00804cba48fcdc6e69de31bfdd59ef",
-  "model": "gemini-2.5-flash",
+  "input_sha256": "1d646be41b159cf748ffedc3f39a4a41e1ca09617cc71c9196f5af84b5a8c107",
+  "model": "claude-haiku-5-5",
   "output": {
-    "body": "While direct substitution can sometimes work, it's not universally applicable for evaluating limits. When substitution results in an indeterminate form, further analysis is needed.",
-    "key_idea": "The value of a limit is not always found by direct substitution.",
-    "question": "What might be an indeterminate form you've encountered when evaluating limits?"
+    "body": "A limit is defined by the outputs on both sides as the input nears the point, so plugging the point in is only one possible piece of information. When the value at the point and the approached value could differ, the limit has to be determined from the nearby behavior.",
+    "key_idea": "A limit describes the value a function approaches as its input gets close to a point, which is a separate question from the value at that point.",
+    "question": "In your own words, what does a limit ask you to look at that plugging the point in does not?"
   },
-  "prompt_hash": "10676b7d004e",
+  "prompt_hash": "7d2b25572445",
   "requests": 1,
   "rescued": false,
   "retries": 0,

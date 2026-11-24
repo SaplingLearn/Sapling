@@ -1,18 +1,59 @@
 {
-  "context_checks": [],
+  "context_checks": [
+    {
+      "withdrawn": [
+        "93687:no"
+      ]
+    }
+  ],
+  "context_keys": [
+    {
+      "input_sha256": "4276ee60690508db8bf86e07b89b9681e48d6ef288363f45cebaa69b07dc6a09",
+      "model": "claude-sonnet-5-5",
+      "prompt_hash": "d215edc372d3",
+      "schema_hash": "c322bdba6718"
+    }
+  ],
+  "run_keys": [
+    {
+      "input_sha256": "0e71a2f49ee1cebf3395b4d62a2ed8270cb695beda5f0d78af306455a599a1fc",
+      "model": "claude-haiku-5-5",
+      "prompt_hash": "d215edc372d3",
+      "schema_hash": "e42cc97704ca"
+    }
+  ],
   "runs": [
     {
       "addresses_grader": false,
-      "confidence": 1.0,
-      "contradicts_reference": true,
-      "feedback_hint": "The student describes the slope between two points, which is an average rate of change, not the instantaneous rate of change at a single point.",
+      "confidence": 0.8,
+      "contradicts_reference": false,
+      "feedback_hint": "Your description uses two points on the curve; think about what happens to that pair of points when they are brought together at the location in question.",
       "item_results": [
-        "93687:no",
+        "93687:yes",
         "43272:no"
       ],
       "matched_wrong_key": "w_avg",
-      "support": []
+      "support": [
+        "93687: The change in y over the change in x between two points on the curve."
+      ]
     }
   ],
-  "span_checks": []
+  "span_checks": [
+    {
+      "asserted": [
+        "93687:yes"
+      ],
+      "item_results": [
+        "93687:yes"
+      ]
+    }
+  ],
+  "span_keys": [
+    {
+      "input_sha256": "f8ea24d952ef525695d5b462dfc071aaeae7731cf5beb421bd77959037630e4b",
+      "model": "claude-sonnet-5-5",
+      "prompt_hash": "d215edc372d3",
+      "schema_hash": "f72e918aa5ce"
+    }
+  ]
 }

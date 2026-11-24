@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": false,
-    "evidence": "The power rule states that the derivative of x^n is nx^(n-1)... How would you apply the power rule to find the derivative of x to the power of 4?",
-    "only_states_correction": true
+    "evidence": "In your own words, what does the expression (f(a+h) - f(a))/h measure, and what happens to it as h gets smaller?",
+    "only_states_correction": false
   },
-  "served_sha256": "cf0d34b5e33088462d4c3e0dc22dfe251054c0e423378479df0346910d451335"
+  "served_sha256": "804a82ef7ebbf42df4729aec91854d48592a74ab4ce07a1058cab41dd34f3757"
 }

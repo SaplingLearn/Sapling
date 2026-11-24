@@ -1,0 +1,19 @@
+{
+  "attempts": [
+    "{\"key_idea\": \"A recursive function stops when a base case returns a value directly, without making another recursive call.\", \"body\": \"Take a countdown function: countdown(n) prints n and then calls countdown(n-1), and it has the line 'if n == 3: return'. Calling countdown(5) goes 5, 4, then reaches 3, where that line returns immediately, so the chain of calls ends there. Without that line, every call would just trigger another one.\", \"question\": \"Looking at your factorial function, which line returns a value without calling factorial again, and what input triggers it?\"}"
+  ],
+  "input_sha256": "78b8a97ede546da8ca6d3349c7a261196577cd93fde52115743a9f77fe7a482b",
+  "model": "claude-sonnet-5-5",
+  "output": {
+    "body": "Take a countdown function: countdown(n) prints n and then calls countdown(n-1), and it has the line 'if n == 3: return'. Calling countdown(5) goes 5, 4, then reaches 3, where that line returns immediately, so the chain of calls ends there. Without that line, every call would just trigger another one.",
+    "key_idea": "A recursive function stops when a base case returns a value directly, without making another recursive call.",
+    "question": "Looking at your factorial function, which line returns a value without calling factorial again, and what input triggers it?"
+  },
+  "prompt_hash": "7d2b25572445",
+  "requests": 1,
+  "rescued": false,
+  "retries": 0,
+  "schema_hash": "ab89f4f429db",
+  "slot": "loop_tutor_deep",
+  "tool_calls": []
+}
