@@ -1,0 +1,19 @@
+{
+  "attempts": [
+    "{\"key_idea\": \"A recursive definition needs a base case that stops the recursion and a recursive step that rewrites a bigger input in terms of a smaller one.\", \"body\": \"The base case alone only covers one input, so every other input needs a rule that moves it toward that base case. That requirement is what forces the next move: the problem for n greater than 0 has to be expressed using the same problem on a smaller input.\", \"question\": \"In your own words, how could the answer for a general n be built from the answer for something smaller, so that it eventually reaches the base case you already have?\"}"
+  ],
+  "input_sha256": "d87d439f09624a19176d3ee1c317a987f20599db40989127ef8cb7125a4ec445",
+  "model": "claude-sonnet-5-5",
+  "output": {
+    "body": "The base case alone only covers one input, so every other input needs a rule that moves it toward that base case. That requirement is what forces the next move: the problem for n greater than 0 has to be expressed using the same problem on a smaller input.",
+    "key_idea": "A recursive definition needs a base case that stops the recursion and a recursive step that rewrites a bigger input in terms of a smaller one.",
+    "question": "In your own words, how could the answer for a general n be built from the answer for something smaller, so that it eventually reaches the base case you already have?"
+  },
+  "prompt_hash": "7d2b25572445",
+  "requests": 1,
+  "rescued": false,
+  "retries": 0,
+  "schema_hash": "ab89f4f429db",
+  "slot": "loop_tutor_deep",
+  "tool_calls": []
+}

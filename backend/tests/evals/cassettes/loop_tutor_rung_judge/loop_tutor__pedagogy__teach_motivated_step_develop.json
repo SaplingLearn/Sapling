@@ -1,0 +1,10 @@
+{
+  "judge_model": "claude-opus-5-5",
+  "judge_prompt_hash": "4d944931440b65151857a8a7b51c4506a65cc2c35d04e030249204021e211a3d",
+  "output": {
+    "evidence": "A recursive definition needs a recursive step that restates the problem in terms of a smaller version of itself, alongside the base case.",
+    "reveals_final_answer": false,
+    "rung": 2
+  },
+  "served_sha256": "3fffbfb405506622e3a3fa1731de36d5cb2f59d23db3fdb1840b927a85a9c90e"
+}

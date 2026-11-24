@@ -1,0 +1,19 @@
+{
+  "attempts": [
+    "{\"key_idea\": \"The chain rule differentiates a function built from an inner and an outer piece by multiplying the outer derivative (evaluated at the inner function) by the inner derivative.\", \"body\": \"Lock this definition: if y = f(g(x)), then dy/dx = f'(g(x)) * g'(x), because the inner function changes first and its rate has to be carried through the outer one. Isomorph: for y = (x^2+1)^3, the outer piece is u^3 giving 3(x^2+1)^2, and the inner piece x^2+1 gives 2x, so dy/dx = 3(x^2+1)^2 * 2x.\", \"question\": \"For y = (3x-1)^4, the derivative has the form 4(3x-1)^3 * (blank), so what goes in the blank?\"}"
+  ],
+  "input_sha256": "34be89137472ba7e165ef7b5b3eb7cdceb9b17fb1c6eea11e9d1e428bdf3042c",
+  "model": "claude-haiku-5-5",
+  "output": {
+    "body": "Lock this definition: if y = f(g(x)), then dy/dx = f'(g(x)) * g'(x), because the inner function changes first and its rate has to be carried through the outer one. Isomorph: for y = (x^2+1)^3, the outer piece is u^3 giving 3(x^2+1)^2, and the inner piece x^2+1 gives 2x, so dy/dx = 3(x^2+1)^2 * 2x.",
+    "key_idea": "The chain rule differentiates a function built from an inner and an outer piece by multiplying the outer derivative (evaluated at the inner function) by the inner derivative.",
+    "question": "For y = (3x-1)^4, the derivative has the form 4(3x-1)^3 * (blank), so what goes in the blank?"
+  },
+  "prompt_hash": "7d2b25572445",
+  "requests": 1,
+  "rescued": false,
+  "retries": 0,
+  "schema_hash": "ab89f4f429db",
+  "slot": "loop_tutor_lite",
+  "tool_calls": []
+}

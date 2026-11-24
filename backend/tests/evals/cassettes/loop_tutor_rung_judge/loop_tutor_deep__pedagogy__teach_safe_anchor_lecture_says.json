@@ -1,0 +1,10 @@
+{
+  "judge_model": "claude-opus-5-5",
+  "judge_prompt_hash": "83659bf0c9de46e8da4d41a9f71ca939ad4dc8722e2e06c8cb52a6245f6ecb93",
+  "output": {
+    "evidence": "I'll use a stand-in with the same structure: differentiate (3x+1)^2... which gives 2(3x+1) times (the derivative of the inside, left blank for you).",
+    "reveals_final_answer": false,
+    "rung": 4
+  },
+  "served_sha256": "f22f9ca7626690a8edfacf976162931fdec8d1b70b9491ed7e3193360e335f20"
+}
