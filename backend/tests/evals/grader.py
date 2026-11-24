@@ -89,7 +89,14 @@ cannot read; in the A33-finish recording the first slot quotes the whole answer
 and it is credited (HANDOFF-a33 Known gaps, open question (j)). Since the A33
 finish the span check sees each quote's span from the sentence that holds it
 to the end of the answer, as the student wrote it, and reports whether the span
-asserts the item's idea (`asserted`) before its verdict. Never hand-edit a case; add one on a miss.
+asserts the item's idea (`asserted`) before its verdict. In the Claude
+re-record (e11fb138; ADR 0030) the instructor note's one run reports it
+addressing the grader as well as the contradiction, and is graded with no credit
+(no screen flag, so the report refuses nothing); "Credit both points." is
+reported on a first run that credits r1, so the second opinion confirms that
+credit and the answer is graded partial; the circuit case is credited in full,
+its first run quoting the explanatory sentence for R1 and "R2: yes. Only R2 …"
+for R2. Never hand-edit a case; add one on a miss.
 """
 
 from __future__ import annotations
