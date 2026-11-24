@@ -41,7 +41,8 @@ export const TOOL: Record<ToolKey, { title: string; icon: GlyphName; bg: string;
 export const TOOL_ORDER: ToolKey[] = ["quiz", "cards", "guide"];
 
 /** The tools on offer: hide_quiz (#620) hides Quiz everywhere it appears. */
-export const shownTools = <T extends { key: ToolKey }>(items: T[], quizShown: boolean): T[] =>
+/** Filter hub actions; `key` may be a ToolKey or an extra action (e.g. learn). */
+export const shownTools = <T extends { key: string }>(items: T[], quizShown: boolean): T[] =>
   items.filter(item => item.key !== "quiz" || quizShown);
 
 export type GlyphName = "bulb" | "cards" | "file";

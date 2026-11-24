@@ -16,7 +16,14 @@ import type { ToolNav } from "./useToolNav";
 const concept = (id: string, name: string, gap = ""): Concept => ({
   id, name, st: "progress", m: 40, lastStudied: null, pre: [], post: [], step: 0, group: "Core", gap, weekDelta: 0,
 });
-const NAV: ToolNav = { leaving: false, leaveTo: () => {}, toolHome: () => "/", quizHref: () => "/quiz", cardsHref: () => "/flashcards" };
+const NAV: ToolNav = {
+  leaving: false,
+  leaveTo: () => {},
+  toolHome: () => "/",
+  quizHref: () => "/quiz",
+  cardsHref: () => "/flashcards",
+  learnHref: () => "/learn",
+};
 const PREREQS = [
   concept("var", "Variables"),
   concept("arr", "Arrays"),

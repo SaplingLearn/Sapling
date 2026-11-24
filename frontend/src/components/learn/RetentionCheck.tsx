@@ -106,7 +106,7 @@ function RetentionSession({ userId, courseId }: { userId: string; courseId: stri
   const focusNext = useRef<FocusTarget | null>(null);
   const itemRef = useRef<HTMLDivElement>(null);
   const resultRef = useRef<HTMLParagraphElement>(null);
-  const statusRef = useRef<HTMLElement>(null);
+  const statusRef = useRef<HTMLDivElement>(null);
   const errorRef = useRef<HTMLParagraphElement>(null);
   const pauseRef = useRef<HTMLDivElement>(null);
   const request = useRef(0);

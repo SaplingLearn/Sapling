@@ -627,11 +627,13 @@ function KnowledgeGraph2DImpl({
     return map;
   }, [comparison]);
   // W3.2 covered/practiced channel: Set lookup for solid outline rings.
-  const practicedIdSet = React.useMemo(() => {
+  const practicedIdSet = React.useMemo((): ReadonlySet<string> | null => {
     if (!practicedIds) return null;
-    if (practicedIds instanceof Set) return practicedIds.size > 0 ? practicedIds : null;
-    if (Array.isArray(practicedIds)) return practicedIds.length > 0 ? new Set(practicedIds) : null;
-    return practicedIds.size > 0 ? practicedIds : null;
+    // Prop is `ReadonlySet | readonly string[]`; Array.isArray picks the list.
+    const set: ReadonlySet<string> = Array.isArray(practicedIds)
+      ? new Set(practicedIds as readonly string[])
+      : (practicedIds as ReadonlySet<string>);
+    return set.size > 0 ? set : null;
   }, [practicedIds]);
   const svgRef = React.useRef<SVGSVGElement>(null);
   const simRef = React.useRef<Simulation<SimNode, SimLink> | null>(null);

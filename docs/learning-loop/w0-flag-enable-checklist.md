@@ -49,6 +49,40 @@ scripts/e2e-cycle.sh -- bash -c 'cd frontend && npx playwright test e2e/learn-lo
 
 CI matrix: `.github/workflows/e2e.yml` (`lane: [default, kill-switch, flag-off]`). Local slots: `docs/e2e-exploration.md` + root `Makefile` (`e2e` / `e2e-up` / `e2e-down` → `scripts/e2e-cycle.sh`). Dev app ports `:3000`/`:5000` are never used.
 
+### W0.5 lane status on PR head (2026-11-24)
+
+Measure/document only — **no** `REGISTRY` / population defaults flipped. Slot 1 was held by another worktree (`wt-h866-int`, `SAPLING_MODEL_MODE=real`); left untouched. Ran a focused **default** cycle in **slot 2** via `scripts/e2e-cycle.sh` (bash 5) against `56f4ac8e`; cycle tore down cleanly (no orphan).
+
+| Lane | Result | Notes |
+|---|---|---|
+| **Default** | **FAIL (infra/build)** on `56f4ac8e` — Playwright never started | Slot 2 cycle: Supabase up, migrations, seed, backend `:5102` OK. **`npm run build:test` failed TypeScript.** Log: `.e2e/w0.5-default-lane.log` / `.e2e/frontend-build.log`. |
+| **Kill-switch** | **SKIP** (same blocker) | Re-run after TS fix lands (this commit). |
+| **Flag-off** | **SKIP** (same blocker) | Same. |
+
+**Blocker (fixed in follow-up):** `KnowledgeGraph2D` practicedIds narrowing, `RetentionCheck` ref type, `FocusCard` / `shownTools` / `learnHref` test stub. Re-run the three lane commands below on the tip.
+
+**Operator re-run (after TS green; PATH needs bash 5 for `mapfile`):**
+
+```sh
+# from repo root; never :3000/:5000
+export PATH="/opt/homebrew/bin:$PATH"
+export SAPLING_MODEL_MODE=function
+export SAPLING_FUNCTION_HANDLERS=agents.function_handlers_e2e
+
+# Default (focused)
+unset LEARNING_LOOP_ENABLED SAPLING_FLAG_LEARNING_LOOP
+scripts/e2e-cycle.sh -- bash -c 'cd frontend && npx playwright test e2e/learn-loop.spec.ts e2e/tutor.spec.ts --reporter=list'
+
+# Kill-switch
+LEARNING_LOOP_ENABLED=false scripts/e2e-cycle.sh -- bash -c 'cd frontend && npx playwright test e2e/learn-loop.spec.ts e2e/tutor.spec.ts --reporter=list'
+
+# Flag-off
+unset LEARNING_LOOP_ENABLED
+SAPLING_FLAG_LEARNING_LOOP=off scripts/e2e-cycle.sh -- bash -c 'cd frontend && npx playwright test e2e/learn-loop.spec.ts e2e/tutor.spec.ts --reporter=list'
+```
+
+If slot 1 stays held elsewhere, omit `--slot` (cycle picks 2/3) or pass `--slot 2` / `--slot 3`. Prefer cycle teardown over fighting the foreign hold.
+
 ## PR test-plan snippet (paste into #866 / follow-ups)
 
 ```markdown
@@ -57,9 +91,9 @@ CI matrix: `.github/workflows/e2e.yml` (`lane: [default, kill-switch, flag-off]`
 - [ ] Self-target only: `learning_loop` → read-only (`quiz_concept_plan`, `quiz_results_routing`, `item_reports`, `next_probe_hint`) → `__flags` prompts (`segment_prequestion`, `self_explanation_prompts`)
 - [ ] `loop_tutor_v2` not enabled (deep `__v2` served gates not yet 1.0 × 3)
 - [ ] No `REGISTRY` / everyone `default_variant: "on"` for `learning_loop` or prompt-change flags
-- [ ] E2E default lane green (`make e2e` or held `make e2e-up` + Playwright + oracles)
-- [ ] E2E kill-switch lane green (`LEARNING_LOOP_ENABLED=false make e2e`)
-- [ ] E2E flag-off lane green (`SAPLING_FLAG_LEARNING_LOOP=off make e2e`)
+- [ ] E2E default lane green (`make e2e` or held `make e2e-up` + Playwright + oracles) — **2026-11-24 `56f4ac8e`: blocked — `frontend` `build:test` TS fail (Playwright not reached); see w0-flag-enable-checklist.md W0.5**
+- [ ] E2E kill-switch lane green (`LEARNING_LOOP_ENABLED=false make e2e`) — **skipped same build blocker**
+- [ ] E2E flag-off lane green (`SAPLING_FLAG_LEARNING_LOOP=off make e2e`) — **skipped same build blocker**
 - [ ] Rollout watches from `docs/learning-loop/flag-rollout.md` per flag
 ```
 
@@ -67,4 +101,4 @@ CI matrix: `.github/workflows/e2e.yml` (`lane: [default, kill-switch, flag-off]`
 
 - Turn `learning_loop` (or any prompt-change flag) on for everyone
 - Change `backend/services/feature_flags.py::REGISTRY` defaults
-- Re-record evals or run `make e2e-up` (operator / CI when slots free)
+- Re-record evals or run `make e2e-up` (operator / CI when slots free; W0.5 attempted a cycle — build failed before Playwright)
