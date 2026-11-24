@@ -81,5 +81,10 @@ def grade_written(question: dict, answer: str) -> bool:
         return actual is not None and target is not None and actual == target
     if question.get("type") == "symbolic":
         return equivalent_algebra(answer, expected)
+    # W7 kit: order-insensitive / value|unit compare when interaction is present.
+    from services.quiz.kit_grade import kit_answers_match
+    kit = kit_answers_match(question, answer)
+    if kit is not None:
+        return kit
     accepted = [expected, *question.get("accepted_answers", [])]
     return any(isinstance(a, str) and normalize_answer(answer) == normalize_answer(a) for a in accepted)

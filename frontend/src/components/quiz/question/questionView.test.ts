@@ -6,6 +6,7 @@ import {
   canGoTo,
   canNavigate,
   hintSlotState,
+  hintLadder,
   scaffoldHint,
   skipSlotState,
   conceptLabel,
@@ -348,6 +349,14 @@ describe("W7.5 hint / skip slots", () => {
     expect(highlight.rubric).toMatch(/^Tap passages/);
     const calculate = scaffoldHint({ conceptName: "Kinematics", format: "short_answer", calculate: true });
     expect(calculate.rubric).toMatch(/^Enter the number/);
+  });
+
+  it("builds a Bastani-lite H0–H2 ladder from the scaffold", () => {
+    const mc = scaffoldHint({ conceptName: "Recursion", format: "multiple_choice" });
+    expect(hintLadder(mc).map((r) => r.id)).toEqual(["H0", "H2"]);
+    const written = scaffoldHint({ conceptName: "Recursion", format: "numeric" });
+    expect(hintLadder(written).map((r) => r.id)).toEqual(["H0", "H1", "H2"]);
+    expect(hintLadder(written)[1].body).toMatch(/^Enter only the number/);
   });
 
   it("enables Hint in Practice and refuses it in Exam Twin", () => {

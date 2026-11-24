@@ -135,7 +135,7 @@ describe("W7.5 action-bar slots", () => {
   });
   afterEach(cleanup);
 
-  it("opens client scaffolding without naming the answer", () => {
+  it("opens Bastani-lite ladder without naming the answer", () => {
     renderScreen(makeSession());
     const hint = screen.getByTestId("quiz-hint-slot");
     expect(hint).not.toBeDisabled();
@@ -144,17 +144,19 @@ describe("W7.5 action-bar slots", () => {
 
     fireEvent.click(hint);
     const panel = screen.getByTestId("quiz-hint-panel");
-    expect(panel).toHaveTextContent(/Focus on Recursion/i);
-    expect(panel).toHaveTextContent(/never the answer/i);
+    expect(screen.getByTestId("quiz-hint-rung-H0")).toHaveTextContent(/Stay with Recursion/i);
+    expect(screen.queryByTestId("quiz-hint-rung-H1")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("quiz-hint-rung-H2")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("quiz-hint-more"));
+    expect(screen.getByTestId("quiz-hint-rung-H2")).toHaveTextContent(/never the answer/i);
     expect(panel).not.toHaveTextContent(/\b(a|b|c|d)\b.*correct/i);
-    expect(screen.queryByTestId("quiz-hint-rubric")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId("quiz-hint-open-guide"));
     expect(screen.getByTestId("guide-drawer-stub")).toBeInTheDocument();
     expect(screen.queryByTestId("quiz-hint-panel")).not.toBeInTheDocument();
   });
 
-  it("surfaces written format rules as rubric scaffolding", () => {
+  it("surfaces written format rules on the H1 rung", () => {
     renderScreen(
       makeSession({
         items: [
@@ -174,8 +176,20 @@ describe("W7.5 action-bar slots", () => {
       }),
     );
     fireEvent.click(screen.getByTestId("quiz-hint-slot"));
-    expect(screen.getByTestId("quiz-hint-panel")).toHaveTextContent(/Focus on Derivatives/i);
-    expect(screen.getByTestId("quiz-hint-rubric")).toHaveTextContent(/Enter only the number/);
+    expect(screen.getByTestId("quiz-hint-rung-H0")).toHaveTextContent(/Stay with Derivatives/i);
+    fireEvent.click(screen.getByTestId("quiz-hint-more"));
+    expect(screen.getByTestId("quiz-hint-rung-H1")).toHaveTextContent(/Enter only the number/);
+  });
+
+  it("shows a soft Exam Twin countdown that never auto-submits", () => {
+    renderScreen(
+      makeSession({
+        config: { count: 3, difficulty: "medium", feedback: "as-you-go", sessionMode: "exam_twin" },
+      }),
+    );
+    const timer = screen.getByTestId("quiz-exam-timer");
+    expect(timer).toHaveTextContent(/^\d+:\d{2}$/);
+    expect(timer).toHaveAttribute("title", expect.stringMatching(/does not auto-submit/i));
   });
 
   it("disables Hint in Exam Twin", () => {

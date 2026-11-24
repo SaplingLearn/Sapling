@@ -184,6 +184,13 @@ export type ScaffoldHint = {
   note: string;
 };
 
+export type HintRung = {
+  /** Bastani-lite client rung id (H0–H2). Never includes the key. */
+  id: "H0" | "H1" | "H2";
+  title: string;
+  body: string;
+};
+
 export function scaffoldHint({
   conceptName,
   conceptTested,
@@ -232,13 +239,42 @@ export function scaffoldHint({
     Boolean(rank) ||
     Boolean(connect) ||
     (format != null && format !== "multiple_choice");
+  const rubric = showRubric
+    ? formatHint(format, { sort, sequence, label, build, compare, dialogue, explain, highlight, calculate, position, rank, connect })
+    : null;
   return {
     focus,
-    rubric: showRubric
-      ? formatHint(format, { sort, sequence, label, build, compare, dialogue, explain, highlight, calculate, position, rank, connect })
-      : null,
+    rubric,
     note: "Scaffolding only — never the answer. Open Study guide for course cards (keys stay hidden).",
   };
+}
+
+/**
+ * Client Bastani-lite ladder (H0–H2). Each Hint click reveals one more rung.
+ * Never names options, explanations, or keys. Loop POST /hint stays deferred
+ * (docs/learning-loop/w7-5-hint-scaffold.md).
+ */
+export function hintLadder(scaffold: ScaffoldHint): HintRung[] {
+  const rungs: HintRung[] = [
+    {
+      id: "H0",
+      title: "Focus",
+      body: `Stay with ${scaffold.focus}.`,
+    },
+  ];
+  if (scaffold.rubric) {
+    rungs.push({
+      id: "H1",
+      title: "How to answer",
+      body: scaffold.rubric,
+    });
+  }
+  rungs.push({
+    id: "H2",
+    title: "Next support",
+    body: scaffold.note,
+  });
+  return rungs;
 }
 
 /** Hint is on in Practice when a live item is open; Exam Twin stays tool-light. */

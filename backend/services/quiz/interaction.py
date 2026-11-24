@@ -172,7 +172,7 @@ def _sanitize_highlight(raw: dict[str, Any]) -> dict[str, Any] | None:
 
 def _sanitize_calculate(raw: dict[str, Any]) -> dict[str, Any] | None:
     out: dict[str, Any] = {"kind": "calculate"}
-    for key in ("placeholder", "unitLabel"):
+    for key in ("placeholder", "unitLabel", "stepsPlaceholder"):
         val = _opt_str(raw.get(key))
         if val:
             out[key] = val

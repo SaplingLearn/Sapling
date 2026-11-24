@@ -261,6 +261,7 @@ describe("QuizQuestion — the question", () => {
     expect(screen.getByTestId("quiz-progress")).toHaveAttribute("aria-label", "Question 2 of 3");
     expect(screen.getByTestId("quiz-session-top")).toHaveTextContent("CS101");
     expect(screen.getByTestId("quiz-session-top")).toHaveTextContent("Recursion");
+    expect(screen.getByTestId("quiz-skill-chip")).toHaveTextContent("Understand");
     expect(screen.getByTestId("quiz-tier-chip")).toHaveTextContent("Struggling");
     expect(screen.queryByTestId("quiz-returning-chip")).not.toBeInTheDocument();
     expect(screen.getByTestId("quiz-exam-distance")).toHaveAttribute("data-pips", "4");

@@ -34,8 +34,8 @@ Shared primitives (handoff “ui/” under quiz): live in `frontend/src/componen
 |---|---|---|
 | Full-screen focus session (no SideNav) | `QuizScreen.tsx` when `QUESTION_PHASES` | **done** — `SessionTop` + `data-quiz-session`; home/results keep TopBar |
 | 64px session top: X / course+topic / “Question N of M” + bar / XP+streak / `?` | `QuizQuestion.tsx` `SessionTop` | Progress + leave done; XP/streak stay off session top (W7.D1) |
-| Meta row: concept pill (blob) + skill chip + exam-distance pips + source + “Returning” | `QuizQuestion.tsx` + concept summary from `QuizScreen` | Concept pill + tier + Returning + exam-distance done ([`w7-meta-chips.md`](./w7-meta-chips.md)); Bloom skill chip still deferred (no field) |
-| Action bar: Hint / Study guide \| wager \| Skip / Check | `QuizQuestion.tsx` | Hint / Study guide / Skip / Check **done**; wager deferred |
+| Meta row: concept pill (blob) + skill chip + exam-distance pips + source + “Returning” | `QuizQuestion.tsx` + concept summary from `QuizScreen` | Concept pill + Bloom skill chip ([`w7-skill-chip.md`](./w7-skill-chip.md)) + tier + Returning + exam-distance ([`w7-meta-chips.md`](./w7-meta-chips.md)) |
+| Action bar: Hint / Study guide \| wager \| Skip / Check | `QuizQuestion.tsx` | Hint ladder / Study guide / Skip / Check **done**; mid-session XP wager deferred (A132 confidence only) |
 | Feedback / verdict panel tones | `question.css` + `components/ui/AnswerOption.tsx` | Correct/incorrect states exist; partial/hint/info tones from handoff |
 | Accent = brand forest vs `--quiz-accent` course tint | `QuizScreen.tsx` `rootStyle` | Confirm with product before flipping (plan W7 open question) |
 

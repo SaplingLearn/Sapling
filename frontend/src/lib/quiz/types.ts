@@ -204,8 +204,8 @@ export interface HighlightInteraction {
 }
 
 /**
- * W7.2 Calculate (7.13) — numeric value + unit on short_answer.
- * Working steps stay deferred; answer encodes as `value|unit`.
+ * W7.2 Calculate (7.13) — numeric value + unit (+ optional working steps).
+ * Encode: `value|unit` or `value|unit|steps`. Grading uses value|unit only.
  */
 export interface CalculateInteraction {
   kind: "calculate";
@@ -213,6 +213,8 @@ export interface CalculateInteraction {
   unitLabel?: string;
   /** Value field placeholder. */
   placeholder?: string;
+  /** Working-steps placeholder. */
+  stepsPlaceholder?: string;
 }
 
 /** One marker the student places on a Position scale (7.12). */

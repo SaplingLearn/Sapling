@@ -1,10 +1,7 @@
 "use client";
 
 /**
- * W7.2 Calculate (design kit 7.13) under the focus SessionTop shell.
- *
- * Value + unit fields encode into short_answer `answerText` as `value|unit`.
- * Working-steps UI is deferred. Generation does not emit `interaction` yet.
+ * W7.2 Calculate (design kit 7.13) — value + unit + optional working steps.
  */
 
 import React, { useMemo } from "react";
@@ -37,14 +34,15 @@ export function CalculateAnswer({
   const locked = disabled || done;
   const valuePh = interaction.placeholder?.trim() || "Your answer";
   const unitPh = interaction.unitLabel?.trim() || "Units";
+  const stepsPh = interaction.stepsPlaceholder?.trim() || "Show your working (optional)";
 
-  const setValue = (next: string) => {
+  const commit = (next: { value?: string; unit?: string; steps?: string }) => {
     if (locked) return;
-    onChange(encodeCalculateAnswer(next, parts.unit));
-  };
-  const setUnit = (next: string) => {
-    if (locked) return;
-    onChange(encodeCalculateAnswer(parts.value, next));
+    onChange(encodeCalculateAnswer(
+      next.value ?? parts.value,
+      next.unit ?? parts.unit,
+      next.steps ?? parts.steps,
+    ));
   };
 
   return (
@@ -64,7 +62,7 @@ export function CalculateAnswer({
           disabled={locked}
           placeholder={valuePh}
           aria-label={valuePh}
-          onChange={e => setValue(e.target.value)}
+          onChange={e => commit({ value: e.target.value })}
         />
         <input
           className="quiz-calculate__unit field"
@@ -74,9 +72,23 @@ export function CalculateAnswer({
           disabled={locked}
           placeholder={unitPh}
           aria-label={unitPh}
-          onChange={e => setUnit(e.target.value)}
+          onChange={e => commit({ unit: e.target.value })}
         />
       </div>
+      <label className="quiz-calculate__steps-label label-micro" htmlFor="quiz-calculate-steps">
+        Working
+      </label>
+      <textarea
+        id="quiz-calculate-steps"
+        className="quiz-calculate__steps field"
+        data-testid="quiz-calculate-steps"
+        rows={3}
+        value={parts.steps}
+        disabled={locked}
+        placeholder={stepsPh}
+        aria-label={stepsPh}
+        onChange={e => commit({ steps: e.target.value })}
+      />
     </div>
   );
 }

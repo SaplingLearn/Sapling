@@ -11,9 +11,9 @@
  * paints with `--brand-forest` / `--accent`, never the course tint.
  *
  * W7.1 shell (Quiz Shell.dc.html + w7-design-decisions.md): session top omits
- * XP/streak/? (XP only on results); open question body (no stem card); meta
- * row = concept pill + mastery tier chip; action bar Hint / Study guide / Skip
- * (W7.5: Hint = client scaffolding panel; Skip = GO_TO; guide drawer scaffold).
+ * XP/streak/? (XP only on results; Exam Twin soft timer when mode=exam_twin);
+ * open question body (no stem card); meta row = concept pill + Bloom skill +
+ * tier + Returning + exam-distance; action bar Hint ladder / Study guide / Skip.
  */
 
 .quiz-question {
@@ -69,6 +69,23 @@
 
 .quiz-session-top__end {
   justify-content: flex-end;
+}
+
+/* W7.8 soft Exam Twin clock — display only; never auto-submits. */
+.quiz-session-top__timer {
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
+  padding: 4px 8px;
+  border-radius: var(--r-sm);
+  background: var(--bg-soft);
+}
+
+.quiz-session-top__timer--urgent {
+  color: var(--danger, #b42318);
+  background: color-mix(in srgb, var(--danger, #b42318) 12%, var(--bg));
 }
 
 .quiz-session-top__leave {
@@ -236,7 +253,8 @@
 }
 
 .quiz-question__exam-distance-pip--filled {
-  background: color-mix(in srgb, var(--accent) 70%, var(--text-dim));
+  /* W7.D1: distance chrome uses brand forest, not course tint. */
+  background: color-mix(in srgb, var(--brand-forest, var(--accent)) 75%, var(--text-dim));
 }
 
 /* W7.6: weak-prerequisite banner under the meta row. */
@@ -404,14 +422,53 @@
   padding: var(--pad-md) var(--pad-lg);
 }
 
-/* W7.5 Hint panel: interaction card (same budget as verdict / leave). */
+/* W7.5 Hint panel: Bastani-lite H0–H2 ladder (scaffold only; no loop /hint). */
 .quiz-question__hint-panel {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 8px;
+  gap: 10px;
   margin-top: var(--pad-md);
   padding: var(--pad-md) var(--pad-lg);
+  border-color: color-mix(in srgb, var(--brand-forest, var(--accent)) 22%, var(--border));
+}
+
+.quiz-question__hint-ladder {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+}
+
+.quiz-question__hint-rung {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-left: 10px;
+  border-left: 2px solid color-mix(in srgb, var(--brand-forest, var(--accent)) 35%, var(--border));
+}
+
+.quiz-question__hint-rung-title {
+  color: var(--brand-forest, var(--accent));
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.quiz-question__hint-rung-body {
+  margin: 0;
+  font-size: var(--fs-lg);
+  color: var(--text);
+  line-height: 1.45;
+}
+
+.quiz-question__hint-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--pad-sm) var(--pad-md);
 }
 
 .quiz-question__hint-panel-focus {
@@ -1607,7 +1664,7 @@
   box-shadow: inset 0 0 0 1px var(--err);
 }
 
-/* W7.2 Calculate (7.13): value + unit. */
+/* W7.2 Calculate (7.13): value + unit + optional working steps. */
 .quiz-calculate {
   display: grid;
   gap: var(--pad-md);
@@ -1628,6 +1685,20 @@
   min-height: 48px;
   font-family: var(--font-reading, inherit);
   font-size: var(--fs-lg);
+}
+
+.quiz-calculate__steps-label {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.quiz-calculate__steps {
+  width: 100%;
+  min-height: 72px;
+  resize: vertical;
+  font-family: var(--font-reading, inherit);
+  font-size: var(--fs-md);
+  line-height: 1.45;
 }
 
 .quiz-calculate[data-verdict="correct"] .quiz-calculate__value,

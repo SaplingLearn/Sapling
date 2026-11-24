@@ -42,6 +42,7 @@ UI: five pips; filled count = `6 - pips` so nearer concepts show more filled dot
 
 - Skill / Bloom chip (Analyze / Apply…) — no field on the summary yet; tier chip stays.
 - Live XP wager stakes — A132 confidence only (W7.D1 / W7.4).
+- Bloom skill chip — see [`w7-skill-chip.md`](./w7-skill-chip.md) (landed; tier still shows beside it).
 - Mastery writes from these chips — display only.
 
 ## Code

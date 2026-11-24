@@ -25,11 +25,12 @@
  * concept-pill meta row, and an action bar with Hint / Study guide / Skip
  * beside Check. W7.D1: Check / progress / pager = brand forest; `--quiz-accent`
  * is course identity on the concept pill only. No XP in the session top.
- * W7.5: Hint shows client-side scaffolding already on the question (no LLM /
- * answer key; Bastani ladder deferred); Skip wires to GO_TO; Study guide opens
- * a leak-safe drawer scaffold. No wager.
- * W7.2 kit: Sort (7.1) + Sequence (7.2) + Label (7.4) + Build (~7.x) +
- * Compare + Dialogue + Explain + Highlight + Calculate stubs on short_answer.
+ * W7.5: Hint is a Bastani-lite H0–H2 client ladder (scaffold only — no loop
+ * /hint). Skip → GO_TO; Study guide opens a leak-safe drawer. Wager/XP stakes
+ * stay deferred — A132 confidence only. Meta: Bloom skill chip + tier +
+ * Returning + exam-distance. Exam Twin soft timer in SessionTop.
+ * W7.2 kit: Sort / Sequence / Label / Build / Compare / Dialogue / Explain /
+ * Highlight / Calculate (value|unit|steps) on short_answer.
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -60,6 +61,8 @@ import {
   examDistancePips,
   isReturningConcept,
 } from "@/lib/quiz/metaChips";
+import { skillChipLabel } from "@/lib/quiz/skillChip";
+import { examTwinDurationSeconds, formatExamClock } from "@/lib/quiz/examTimer";
 import type { Phase, QuestionType, QuizConfig, QuizItem, QuizPrereqBanner, QuizSession } from "@/lib/quiz/types";
 import { isUnanswered } from "@/lib/quiz/machine";
 import { expressionParts, superscriptParts, type ExpressionPart } from "@/lib/quiz/answerFormats";
@@ -97,9 +100,11 @@ import {
   optionStatus,
   outcomeOf,
   primaryButton,
+  hintLadder,
   scaffoldHint,
   skipSlotState,
   verdictShown,
+  type HintRung,
   type ItemView,
   type PrimaryAction,
   type PrimaryButton,
@@ -386,6 +391,7 @@ function exitButtonFor(phase: Phase): { testid: string; label: string; leaves: b
  * 64px focus-session top bar (W7.1): leave / cancel on the left, course +
  * topic, centred "Question N of M" with a forest progress fill, disclaimer
  * on the right. XP and streak stay on results — never in this bar (W7.D1).
+ * Exam Twin shows a soft countdown (W7.8) — never auto-submits.
  */
 function SessionTop({
   phase,
@@ -393,15 +399,18 @@ function SessionTop({
   concept,
   position,
   quizLength,
+  examRemainingSec,
 }: {
   phase: Phase;
   actions: QuizActions;
   concept: QuizConceptSummary;
   position: number;
   quizLength: number;
+  examRemainingSec?: number | null;
 }) {
   const exit = exitButtonFor(phase);
   const pct = quizLength > 0 ? Math.min(100, Math.max(0, (position / quizLength) * 100)) : 0;
+  const examUrgent = examRemainingSec != null && examRemainingSec <= 60;
   return (
     <header className="quiz-session-top" data-testid="quiz-session-top">
       <div className="quiz-session-top__start">
@@ -437,6 +446,17 @@ function SessionTop({
         </div>
       </div>
       <div className="quiz-session-top__end">
+        {examRemainingSec != null && (
+          <span
+            className={`quiz-session-top__timer${examUrgent ? " quiz-session-top__timer--urgent" : ""}`}
+            data-testid="quiz-exam-timer"
+            data-urgent={examUrgent ? "true" : "false"}
+            title="Exam Twin soft timer — finish when you can; it does not auto-submit"
+            aria-label={`Time remaining ${formatExamClock(examRemainingSec)}`}
+          >
+            {formatExamClock(examRemainingSec)}
+          </span>
+        )}
         <AIDisclaimerChip />
       </div>
     </header>
@@ -449,6 +469,7 @@ function QuestionHeader({
   formatTagKey,
   showFormat,
   difficulty,
+  interactionKind,
 }: {
   concept: QuizConceptSummary;
   format: QuestionType;
@@ -456,12 +477,18 @@ function QuestionHeader({
   formatTagKey: string;
   showFormat: boolean;
   difficulty: string;
+  interactionKind?: string | null;
 }) {
   const formatTag = FORMAT_TAG[formatTagKey] ?? FORMAT_TAG[format] ?? FORMAT_TAG.multiple_choice;
   // A blank accent would reach `shadeFor` as an unparseable colour and pass
   // straight through; the CSS variable degrades to the app accent instead.
   const accent = concept.color || "var(--quiz-accent, var(--accent))";
   const tierLabel = TIER_CHIP[concept.tier];
+  const skill = skillChipLabel({
+    type: format,
+    difficulty: difficulty.toLowerCase(),
+    interactionKind,
+  });
   const returning = isReturningConcept(concept.timesStudied, concept.lastStudiedAt);
   const dist = examDistancePips(concept.tier, concept.mastery);
   const filled = examDistanceFilled(dist);
@@ -479,6 +506,9 @@ function QuestionHeader({
           {concept.name}
         </span>
       </span>
+      {skill && (
+        <Chip data-testid="quiz-skill-chip">{skill}</Chip>
+      )}
       {tierLabel && (
         <Chip data-testid="quiz-tier-chip">{tierLabel}</Chip>
       )}
@@ -1256,8 +1286,15 @@ function VerdictFeedback({
   );
 }
 
-/** W7.5: client scaffolding only — concept focus + format rules already on the item. */
+/**
+ * W7.5: Bastani-lite client ladder (H0→H1→H2). Scaffold only — never POSTs
+ * loop /hint. Each "More help" reveals one rung; Study guide stays leak-safe.
+ */
 function HintPanel({ hint, onOpenGuide }: { hint: ScaffoldHint; onOpenGuide: () => void }) {
+  const ladder = hintLadder(hint);
+  const [visible, setVisible] = useState(1);
+  const shown = ladder.slice(0, Math.min(visible, ladder.length));
+  const canClimb = visible < ladder.length;
   return (
     <aside
       id="quiz-hint-panel"
@@ -1265,23 +1302,39 @@ function HintPanel({ hint, onOpenGuide }: { hint: ScaffoldHint; onOpenGuide: () 
       data-testid="quiz-hint-panel"
       aria-label="Question scaffolding"
     >
-      <p className="quiz-question__hint-panel-focus body-serif">
-        Focus on <strong>{hint.focus}</strong> — answer from that idea.
-      </p>
-      {hint.rubric && (
-        <p className="quiz-question__hint-panel-rubric" data-testid="quiz-hint-rubric">
-          {hint.rubric}
-        </p>
-      )}
-      <p className="quiz-question__hint-panel-note">{hint.note}</p>
-      <Button
-        variant="link"
-        size="sm"
-        data-testid="quiz-hint-open-guide"
-        onClick={onOpenGuide}
-      >
-        Open Study guide
-      </Button>
+      <ol className="quiz-question__hint-ladder" data-testid="quiz-hint-ladder">
+        {shown.map((rung: HintRung) => (
+          <li
+            key={rung.id}
+            className="quiz-question__hint-rung"
+            data-testid={`quiz-hint-rung-${rung.id}`}
+            data-rung={rung.id}
+          >
+            <span className="quiz-question__hint-rung-title label-micro">{rung.title}</span>
+            <p className="quiz-question__hint-rung-body body-serif">{rung.body}</p>
+          </li>
+        ))}
+      </ol>
+      <div className="quiz-question__hint-actions">
+        {canClimb && (
+          <Button
+            variant="link"
+            size="sm"
+            data-testid="quiz-hint-more"
+            onClick={() => setVisible(n => Math.min(ladder.length, n + 1))}
+          >
+            More help
+          </Button>
+        )}
+        <Button
+          variant="link"
+          size="sm"
+          data-testid="quiz-hint-open-guide"
+          onClick={onOpenGuide}
+        >
+          Open Study guide
+        </Button>
+      </div>
     </aside>
   );
 }
@@ -1324,12 +1377,13 @@ function QuestionAside({
   );
 }
 
-/** Learning-loop spec §13 A132 / W7.4: A127's optional "How sure are you?" on
- *  every quiz question (shared `ConfidenceControl` with CheckCard — Guessing /
- *  Fairly sure / Sure), while the learning loop is on (`askConfidence`, #866
- *  K46). Kit "Certain / Unsure" wager maps here; no second store, no XP stakes.
- *  Choosing makes no request — the level rides `/answer` — and Check never
- *  waits on it. Stays under the answer (not SessionTop); disabled once sent. */
+/**
+ * Learning-loop spec §13 A132 / W7.4: optional "How sure are you?" while the
+ * loop is on (`askConfidence`). Kit Certain/Unsure + mid-session XP wager stay
+ * deferred on purpose — same Guessing / Fairly sure / Sure store as CheckCard;
+ * no second confidence API, no XP stakes (W7.D1). Choosing makes no request —
+ * the level rides `/answer` — and Check never waits on it.
+ */
 function QuestionConfidence({
   confidenceRef,
   item,
@@ -1342,12 +1396,13 @@ function QuestionConfidence({
   actions: QuizActions;
 }) {
   return (
-    <div ref={confidenceRef} className="quiz-question__confidence">
+    <div ref={confidenceRef} className="quiz-question__confidence" data-wager="deferred">
       <ConfidenceControl
         testIdPrefix="quiz-confidence"
         value={item?.confidence ?? null}
         onChange={level => actions.setConfidence?.(level)}
         disabled={!selectable || item?.verdict != null}
+        variant="default"
       />
     </div>
   );
@@ -1395,6 +1450,27 @@ export function QuizQuestion({
   const view = itemView(items[cursor]);
   const total = items.length;
   const showVerdict = verdictShown(session, view.item);
+  const quizLength = total || session.config.count;
+  const sessionMode = session.config.sessionMode ?? "practice";
+  const examBudget = sessionMode === "exam_twin"
+    ? examTwinDurationSeconds(quizLength)
+    : null;
+  const [examRemainingSec, setExamRemainingSec] = useState<number | null>(examBudget);
+
+  // Soft Exam Twin countdown — display only; never auto-submits (W7.8).
+  useEffect(() => {
+    if (examBudget == null) {
+      setExamRemainingSec(null);
+      return;
+    }
+    setExamRemainingSec(examBudget);
+    const started = Date.now();
+    const id = window.setInterval(() => {
+      const left = Math.max(0, examBudget - Math.floor((Date.now() - started) / 1000));
+      setExamRemainingSec(left);
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [examBudget, session.attemptId]);
 
   /**
    * A quiz call is in flight. Straight off the hook (`useQuizSession`'s
@@ -1409,8 +1485,6 @@ export function QuizQuestion({
   const askOpen = askForCursor === cursor;
   const selectable = phase === "active" && !busy;
   const difficulty = difficultyLabel(view.item, session);
-  const quizLength = total || session.config.count;
-  const sessionMode = session.config.sessionMode ?? "practice";
   const skip = skipSlotState({
     phase,
     busy,
@@ -1490,6 +1564,7 @@ export function QuizQuestion({
       concept={concept}
       position={position}
       quizLength={quizLength}
+      examRemainingSec={examRemainingSec}
     />
   );
   const formatTagKey = sortInteraction
@@ -1524,6 +1599,7 @@ export function QuizQuestion({
       formatTagKey={formatTagKey}
       showFormat={phase !== "generating" && Boolean(view.item)}
       difficulty={difficulty}
+      interactionKind={kitInteraction?.kind ?? null}
     />
   );
   const prereqBanner = session.prereq ? <PrereqBanner banner={session.prereq} /> : null;

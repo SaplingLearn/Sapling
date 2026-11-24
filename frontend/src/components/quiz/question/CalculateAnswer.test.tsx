@@ -47,4 +47,19 @@ describe("CalculateAnswer", () => {
     mount({ value: "12|m/s" });
     expect(screen.getByTestId("quiz-calculate")).toHaveAttribute("data-complete", "true");
   });
+
+  it("appends optional working steps after value|unit", () => {
+    const { onChange } = mount({
+      value: "12|m/s",
+      interaction: { ...CAR, stepsPlaceholder: "Show the derivation" },
+    });
+    expect(screen.getByTestId("quiz-calculate-steps")).toHaveAttribute(
+      "placeholder",
+      "Show the derivation",
+    );
+    fireEvent.change(screen.getByTestId("quiz-calculate-steps"), {
+      target: { value: "v = d/t" },
+    });
+    expect(onChange).toHaveBeenCalledWith("12|m/s|v = d/t");
+  });
 });

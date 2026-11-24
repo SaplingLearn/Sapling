@@ -685,7 +685,7 @@ Ordered. **Operator-only** rows are not agent work. Adjust this table if scope s
 | 16 | **W7.2j** | Position kit stub (design 7.12) | **done** | Markers on scale stops + vitest + testids; `kind: "position"` |
 | 17 | **W7.2k** | Rank kit stub (design 7.15) | **done** | Order + why encode + vitest + testids; `kind: "rank"` |
 | 18 | **W7.2l** | Connect kit stub (design 7.3 match) | **done** | Left→right pairing + vitest + testids; `kind: "connect"` |
-| 19 | **W7 meta** | Returning + exam-distance chips | **done** | Formula [`w7-meta-chips.md`](w7-meta-chips.md); `metaChips.ts` + QuestionHeader; Bloom skill / wager still deferred |
+| 19 | **W7 meta** | Returning + exam-distance + Bloom skill chip | **done** | Formula [`w7-meta-chips.md`](w7-meta-chips.md) + [`w7-skill-chip.md`](w7-skill-chip.md); wager = A132 only |
 | 20 | **W7.2l-map** | Connect concept-map mode | **done** | `mode: "map"` + undirected edges + vitest + testids |
 | 21 | **W7 emit** | Generation `interaction` wire path | **done** (partial) | Sanitize + attach; plain schema untouched |
 | 22 | **W7 emit-b** | Planned kit prompt (all kinds) + wire stamp | **done** | `PlannedQuestion.interaction`; flag-off digests green ([`w7-generation-emit.md`](w7-generation-emit.md)) |

@@ -58,3 +58,16 @@
   font-size: 12px;
   color: var(--text-muted);
 }
+
+/* W7 wager chrome — forest accent when selected; no XP math. */
+.wager .label {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.optionOn {
+  border-color: var(--accent) !important;
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg-panel)) !important;
+  color: color-mix(in srgb, var(--accent) 70%, var(--text));
+  font-weight: 600;
+}
