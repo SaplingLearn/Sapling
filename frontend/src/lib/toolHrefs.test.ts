@@ -26,6 +26,13 @@ describe("studyGuideHref", () => {
   it("lives under /study, so the shell's auth and hide_study gates cover it", () => {
     expect(studyGuideHref().startsWith("/study/")).toBe(true);
   });
+
+  it("carries concept and course the same way Quiz/Teach deep links do", () => {
+    expect(studyGuideHref({ concept: "node-1" })).toBe("/study/guide?concept=node-1");
+    expect(studyGuideHref({ course: "c1" })).toBe("/study/guide?course=c1");
+    expect(studyGuideHref({ course: "c1", concept: "node-1" }))
+      .toBe("/study/guide?course=c1&concept=node-1");
+  });
 });
 
 describe("studyGuideReaderHref", () => {

@@ -3,8 +3,8 @@
  *
  * Reuses the same builders as Study's `useToolNav` / Quiz entry
  * (`learnHrefForNode`, `buildQuizHref`, `flashcardsHref`, `studyGuideHref`) —
- * one concept id, no forked ranking. Study Guide has no per-concept create
- * hook today, so Guide opens the Study Guides home.
+ * one concept id, no forked ranking. Guide stamps `?concept=` (or `?course=`
+ * for a subject root) the same way Teach/Quiz do.
  */
 import { learnHrefForNode, type GraphNode } from "@/lib/data";
 import { buildQuizHref } from "@/lib/quiz/source";
@@ -60,9 +60,16 @@ export function treeCardsHref(node: TreeNodeRef): string {
   return flashcardsHref(courseId, [node.name], { start: true });
 }
 
-/** Study Guides home — no concept-scoped create/open hook yet. */
-export function treeGuideHref(): string {
-  return studyGuideHref();
+/**
+ * Study Guides home scoped to this concept id (or the course for a subject
+ * root) — same `concept` / `course` keys Teach and Quiz use.
+ */
+export function treeGuideHref(node: TreeNodeRef): string {
+  if (node.is_subject_root) {
+    const courseId = treeNodeCourseId(node);
+    return studyGuideHref(courseId ? { course: courseId } : undefined);
+  }
+  return studyGuideHref({ concept: node.id });
 }
 
 export type TreeNodeAction = {
@@ -93,7 +100,7 @@ export function treeNodeActions(
   }
   if (opts.loopOn && opts.studyShown) {
     out.push({ key: "cards", label: "Cards", href: treeCardsHref(node) });
-    out.push({ key: "guide", label: "Guide", href: treeGuideHref() });
+    out.push({ key: "guide", label: "Guide", href: treeGuideHref(node) });
   }
   return out;
 }

@@ -85,8 +85,11 @@ describe("treeCardsHref", () => {
 });
 
 describe("treeGuideHref", () => {
-  it("opens the Study Guides home", () => {
-    expect(treeGuideHref()).toBe("/study/guide");
+  it("scopes a concept by id", () => {
+    expect(treeGuideHref(concept)).toBe(`/study/guide?concept=${concept.id}`);
+  });
+  it("scopes a subject root to its course", () => {
+    expect(treeGuideHref(root)).toBe("/study/guide?course=course-cs101");
   });
 });
 
@@ -103,7 +106,7 @@ describe("treeNodeActions", () => {
     expect(actions.map(a => a.key)).toEqual(["teach", "quiz", "cards", "guide"]);
     expect(actions.map(a => a.label)).toEqual(["Teach", "Quiz", "Cards", "Guide"]);
     expect(actions.find(a => a.key === "cards")!.href).toBe(treeCardsHref(concept));
-    expect(actions.find(a => a.key === "guide")!.href).toBe(treeGuideHref());
+    expect(actions.find(a => a.key === "guide")!.href).toBe(treeGuideHref(concept));
   });
 
   it("hides Quiz under hide_quiz", () => {

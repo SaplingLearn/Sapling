@@ -226,7 +226,7 @@ describe("W8.2 coherence actions (learning_loop on)", () => {
     );
     push.mockClear();
     await user.click(screen.getByTestId("tree-node-action-guide"));
-    expect(push).toHaveBeenCalledWith("/study/guide");
+    expect(push).toHaveBeenCalledWith(`/study/guide?concept=${RECURSION}`);
   });
 });
 
