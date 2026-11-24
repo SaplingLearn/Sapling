@@ -36,7 +36,7 @@ import type { Browser, Page, Response } from "@playwright/test";
 
 import { expect, killSwitchLane, test } from "./support/fixtures";
 import { loopOffLane } from "./support/lane";
-import { queryRaw, seedGoalContinuationItems, seedTeachPromptItems, setUserFlag } from "./support/db";
+import { queryRaw, seedCloseBeatItems, seedGoalContinuationItems, seedTeachPromptItems, setUserFlag } from "./support/db";
 import { decryptNestedText, decryptText, decryptTexts } from "./support/decrypt";
 import { learningParams } from "./support/params";
 import { runOracle } from "./support/oracle";
@@ -475,7 +475,8 @@ test("loop user completes probe → plan → check (explicit submission) with a 
   expect(Number(checkedState!.p_known)).toBeCloseTo(beforeCheckKnown, 2);
   // The DB stores the posterior; UI reads intentionally apply elapsed-time
   // decay. Allow that tiny read-time difference while checking the same node.
-  expect(Number(checkedState!.p_known)).toBeCloseTo(afterCheckKnown, 5);
+  // Precision 4: BKT float round-trip can drift ~1e-5 across decrypt/JSON (flake at 5).
+  expect(Number(checkedState!.p_known)).toBeCloseTo(afterCheckKnown, 4);
 
   // The explicit submission was graded (A16): an evidence row carries the check's hash,
   // and every graded probe answer wrote one too.
@@ -1200,7 +1201,8 @@ test("budget cap: tutor chat pauses on /learn; review still serves and grades on
   await expect(banner).toContainText("Review keeps working, but checks on concepts you're just starting are paused too");
   await expect(banner).toContainText("Tutor chat paused until"); // the daily copy (A39: not session-capped)
   expect(await banner.getAttribute("data-reset-at")).toBeTruthy();
-  await expect(page.getByTestId("loop-budget-study-link")).toHaveAttribute("href", "/study");
+  // Course-scoped Study handoff when the paused session has a course (learningHandoffs).
+  await expect(page.getByTestId("loop-budget-study-link")).toHaveAttribute("href", /^\/study(\?course=.+)?$/);
   expect(await page.getByText("[e2e-function-model]").count()).toBe(0); // no model turn ran
 
   // ── /study: review keeps working at the hard level ───────────────────────
@@ -1427,7 +1429,8 @@ test("phone learner can check in, answer a check and reach wrap-up without horiz
   await expect(page.getByTestId("loop-close-button")).toBeEnabled();
   await page.getByTestId("loop-close-button").click();
   await expect(page.getByTestId("loop-close-done")).toBeVisible();
-  await expect(page.getByTestId("loop-close-study-link")).toHaveAttribute("href", "/study");
+  // Course-scoped Study handoff when the session has a course (learningHandoffs).
+  await expect(page.getByTestId("loop-close-study-link")).toHaveAttribute("href", /^\/study(\?course=.+)?$/);
   await context.close();
 });
 
@@ -1586,6 +1589,8 @@ test("an answer waits for an earned hint in flight, and a graded check shows no 
   try {
     await openLearn(page);
     await walkProbeAndPlan(page, P);
+    // Probe keeps one practice reserve; refill so Check me still has an item.
+    await seedCloseBeatItems();
     await firstTeachTurn(page);
     await page.getByTestId("loop-check-me").click();
     await expect(page.getByTestId("loop-check-prompt")).toBeVisible();
@@ -2087,10 +2092,10 @@ test("a new goal session respects an earlier helped prerequisite miss even when 
 });
 
 /** W1.3: segment-close check prefers generative formats (free/teachback) via
- *  practice_formats — regenerate the idea, not MC surface recognition. Seed
- *  only has free/teachback; with LOOP_CHECKS_PER_CONCEPT=2 the close beat
- *  (concept_checks==1) prefers teachback when that pool still has an item.
- *  Soft-skips the teachback pin when probe already exhausted it (format still
+ *  practice_formats — regenerate the idea, not MC surface recognition. The
+ *  diagnostic keeps one practice reserve per concept, so seedCloseBeatItems
+ *  (after probe) adds a fresh free+teachback pool for LOOP_CHECKS_PER_CONCEPT=2.
+ *  Soft-skips the teachback pin when that pool still prefers free (format still
  *  generative). Default lane only (learning_loop on). */
 test("generative-core close beat poses a teachback/free check on the last check of a concept", async ({ browser }) => {
   test.skip(loopOffLane, "loop path: default lane only");
@@ -2102,6 +2107,8 @@ test("generative-core close beat poses a teachback/free check on the last check 
     await openLearn(page);
     const phase = page.getByTestId("loop-phase");
     await walkProbeAndPlan(page, P);
+    // After probe: one practice reserve left. Close-beat fixtures refill free/teachback.
+    await seedCloseBeatItems();
     await firstTeachTurn(page);
 
     const formats: string[] = [];

@@ -2,9 +2,9 @@
   "judge_model": "claude-opus-5-5",
   "judge_prompt_hash": "13d84e97454ede6eb0cae17b23da22a66222b47ead6a4b4325a174d51c088a14",
   "output": {
-    "evidence": "A recursive function stops only when it reaches a base case, a condition where it returns a value without calling itself again.",
+    "evidence": "A recursive definition stops only when it reaches a base case that is answered directly, without calling the function again.",
     "reveals_final_answer": false,
     "rung": 2
   },
-  "served_sha256": "b71772a1238894e64eb913300fde843c002d8b71b849f55410d50ae34d20daba"
+  "served_sha256": "4bd8208254871e43cae3d40267429bdc10d5264ce8fad779d8acafadd767b999"
 }

@@ -1,13 +1,13 @@
 {
   "attempts": [
-    "{\"key_idea\": \"Pause on the move you just made and name what it was trying to settle.\", \"body\": \"You wrote that the base case is n == 0 returning 1.\", \"question\": \"What is the first thing you need to figure out to check your own reasoning here?\"}"
+    "{\"key_idea\": \"Notice what you just did: you stated your answer in your own words and checked it against the item.\", \"body\": \"You wrote that the base case is n == 0 returning 1, and the grader marked that answer correct.\", \"question\": \"What is the first thing you need to figure out before you take on the next part?\"}"
   ],
   "input_sha256": "c58dc63bbdf3cbebe20856dfb3f96c306ae2d2f8914478905abe9554512a186f",
   "model": "claude-haiku-5-5",
   "output": {
-    "body": "You wrote that the base case is n == 0 returning 1.",
-    "key_idea": "Pause on the move you just made and name what it was trying to settle.",
-    "question": "What is the first thing you need to figure out to check your own reasoning here?"
+    "body": "You wrote that the base case is n == 0 returning 1, and the grader marked that answer correct.",
+    "key_idea": "Notice what you just did: you stated your answer in your own words and checked it against the item.",
+    "question": "What is the first thing you need to figure out before you take on the next part?"
   },
   "prompt_hash": "ca02dcf9e63b",
   "requests": 1,

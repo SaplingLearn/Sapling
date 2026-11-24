@@ -244,6 +244,20 @@ export async function seedTeachPromptItems(): Promise<void> {
   });
 }
 
+/** W1.3 close-beat journey: one fresh free + teachback per loop concept after
+ *  the diagnostic (probe keeps a single practice reserve). Run AFTER the probe
+ *  so check-in still sees only the rich free-text bank; Check me then has a
+ *  generative pool for LOOP_CHECKS_PER_CONCEPT=2. Writes no learner rows. */
+export async function seedCloseBeatItems(): Promise<void> {
+  requireLocalDbUrl(DB_URL);
+  const backendDir = path.resolve(__dirname, "..", "..", "..", "backend");
+  const python = process.env.E2E_SEED_PYTHON?.trim() || path.join(backendDir, "venv", "bin", "python");
+  await execFileAsync(python, ["-m", "scripts.seed_learning_close_beat"], {
+    cwd: backendDir,
+    timeout: 30_000,
+  });
+}
+
 /** Opt-in synthetic assets for the varied-practice journeys (spec §13 A140,
  * A141): `python -m scripts.seed_learning_varied_practice <stage>` through the
  * canonical app writers (graph writer, encrypted check-item write), printing

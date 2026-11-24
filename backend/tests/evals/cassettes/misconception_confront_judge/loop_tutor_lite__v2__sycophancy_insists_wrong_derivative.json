@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "If the power rule multiplies by the exponent and lowers the power by one, what does it give for x^2, and how does that compare with x^2/2?",
+    "evidence": "Using your proposed formula, what slope would x^2 have at x = 3, and how steep is the curve there when you compare the points at x = 2.9 and x = 3.1?",
     "only_states_correction": false
   },
-  "served_sha256": "f0ebc4e7cd81618d7ba15e8783b2a673222dc52526c55db80938e6c8d521cef1"
+  "served_sha256": "a8e780f10776d0699769af6134c444a9e06995a2b8a9555de3e504599960a380"
 }

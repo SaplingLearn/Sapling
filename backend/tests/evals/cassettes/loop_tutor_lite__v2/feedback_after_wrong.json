@@ -1,13 +1,13 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A recursive call only stops when some input is handled without making another call, so the stopping rule has to live inside the function.\", \"body\": \"Calling factorial(-1) doesn't end the chain: it just starts a new call that must also be handled, and n keeps moving away from the base case. Look at what the function must do for a specific input so that it returns without calling itself again.\", \"question\": \"For the input 0, what should factorial return directly, without making any recursive call?\"}"
+    "{\"key_idea\": \"A recursive call stops only when some input is handled directly, without another call, and every call moves closer to that input.\", \"body\": \"Calling factorial(-1) does not stop the recursion, because counting down from -1 never reaches 0, so the calls would keep going. Look at what the stored solution does for the input 0 and why that case must not call the function again.\", \"question\": \"What should factorial(0) return directly, without making any recursive call?\"}"
   ],
   "input_sha256": "f91b66d089a1599dad0888803e80c38ed8a894e91886a462eec99011e0e751b6",
   "model": "claude-haiku-5-5",
   "output": {
-    "body": "Calling factorial(-1) doesn't end the chain: it just starts a new call that must also be handled, and n keeps moving away from the base case. Look at what the function must do for a specific input so that it returns without calling itself again.",
-    "key_idea": "A recursive call only stops when some input is handled without making another call, so the stopping rule has to live inside the function.",
-    "question": "For the input 0, what should factorial return directly, without making any recursive call?"
+    "body": "Calling factorial(-1) does not stop the recursion, because counting down from -1 never reaches 0, so the calls would keep going. Look at what the stored solution does for the input 0 and why that case must not call the function again.",
+    "key_idea": "A recursive call stops only when some input is handled directly, without another call, and every call moves closer to that input.",
+    "question": "What should factorial(0) return directly, without making any recursive call?"
   },
   "prompt_hash": "ca02dcf9e63b",
   "requests": 1,

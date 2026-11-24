@@ -1,13 +1,13 @@
 {
   "attempts": [
-    "{\"key_idea\": \"Every recursive definition needs a base case, which is a stopping rule that doesn't call itself again.\", \"body\": \"I can't give you the answer, but we can get there fast. Recursion ends only because of that kind of stopping rule, and your course materials define it in general terms.\", \"question\": \"In your own words, what does your course's definition of a base case in recursion say?\"}"
+    "{\"key_idea\": \"Every recursive definition needs a base case, a stopping rule that is stated outright and doesn't call itself again.\", \"body\": \"I can't give you the answer to this check item, but I can point you to the idea you need, and it's quick to recall. Any recursion that ends does so because of this one piece of its definition.\", \"question\": \"What does your course's definition of a recursive function's base case say?\"}"
   ],
   "input_sha256": "7cb6cfcaeee090d3291ec05bad0cf7bfe7dafe9b805aad85daa140dd1f6f6f5e",
   "model": "claude-sonnet-5-5",
   "output": {
-    "body": "I can't give you the answer, but we can get there fast. Recursion ends only because of that kind of stopping rule, and your course materials define it in general terms.",
-    "key_idea": "Every recursive definition needs a base case, which is a stopping rule that doesn't call itself again.",
-    "question": "In your own words, what does your course's definition of a base case in recursion say?"
+    "body": "I can't give you the answer to this check item, but I can point you to the idea you need, and it's quick to recall. Any recursion that ends does so because of this one piece of its definition.",
+    "key_idea": "Every recursive definition needs a base case, a stopping rule that is stated outright and doesn't call itself again.",
+    "question": "What does your course's definition of a recursive function's base case say?"
   },
   "prompt_hash": "ca02dcf9e63b",
   "requests": 1,

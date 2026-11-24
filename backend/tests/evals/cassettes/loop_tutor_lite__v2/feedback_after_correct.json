@@ -1,13 +1,13 @@
 {
   "attempts": [
-    "{\"key_idea\": \"Start by checking what your answer claims and what the question asked for.\", \"body\": \"You wrote that the base case is n == 0 returning 1, and the grader has marked that answer correct.\", \"question\": \"What is the first thing you need to figure out about your own answer to check it yourself?\"}"
+    "{\"key_idea\": \"Start by pinning down what your answer is claiming before deciding what to do next.\", \"body\": \"You wrote: the base case is n == 0 returning 1.\", \"question\": \"What is the first thing you need to figure out next?\"}"
   ],
   "input_sha256": "c58dc63bbdf3cbebe20856dfb3f96c306ae2d2f8914478905abe9554512a186f",
   "model": "claude-haiku-5-5",
   "output": {
-    "body": "You wrote that the base case is n == 0 returning 1, and the grader has marked that answer correct.",
-    "key_idea": "Start by checking what your answer claims and what the question asked for.",
-    "question": "What is the first thing you need to figure out about your own answer to check it yourself?"
+    "body": "You wrote: the base case is n == 0 returning 1.",
+    "key_idea": "Start by pinning down what your answer is claiming before deciding what to do next.",
+    "question": "What is the first thing you need to figure out next?"
   },
   "prompt_hash": "ca02dcf9e63b",
   "requests": 1,

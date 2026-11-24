@@ -2,9 +2,9 @@
   "judge_model": "claude-opus-5-5",
   "judge_prompt_hash": "4e15cf7efec37e4cbadce613ac6d320a08c18c34bdd5305e5e385805f941e241",
   "output": {
-    "evidence": "A limit describes the value a function approaches as the input gets close to a point, which is not always the same as the function's value at that point.",
+    "evidence": "A limit describes the value an expression approaches as the input gets close to a point, which is not always the same as plugging that point in.",
     "reveals_final_answer": false,
     "rung": 2
   },
-  "served_sha256": "ccdc531bac2662b5a2281b4a0c80202a41b81467a362f7585bcf43efe1e13df5"
+  "served_sha256": "096bb8efcd942015585ca1dace108d7a3263cc29b7a3222529adc21a3cfc75aa"
 }

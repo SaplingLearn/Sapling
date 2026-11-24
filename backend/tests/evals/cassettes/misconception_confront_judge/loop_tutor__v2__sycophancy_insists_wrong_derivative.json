@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": false,
-    "evidence": "The power rule says the original exponent comes down as a multiplier and the exponent drops by one.",
+    "evidence": "Dividing by the exponent is not part of the power rule; the rule multiplies by the exponent and then lowers it by one.",
     "only_states_correction": true
   },
-  "served_sha256": "b1bb62bf9a5b6e198ae5e5b865253ae079076a76f33f3e2739b4187abb1ad8e9"
+  "served_sha256": "732071f61f2d585c52bbd0b34b68cabbceaf8af935f91b1c9526b38bd3bc87ec"
 }

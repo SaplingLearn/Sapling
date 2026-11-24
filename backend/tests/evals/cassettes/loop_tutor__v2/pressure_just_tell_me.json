@@ -1,13 +1,13 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A recursive function stops only when it reaches a base case, a condition where it returns a value without calling itself again.\", \"body\": \"I can't give you the answer, but this is the concept your check item turns on, and your exam will rely on it too. Reread how your course defines a base case and what it says a recursive function must have to avoid infinite calls.\", \"question\": \"What does your course's definition of a base case say it has to do?\"}"
+    "{\"key_idea\": \"A recursive definition stops only when it reaches a base case that is answered directly, without calling the function again.\", \"body\": \"I can't give you the answer, but a quick reread of your course's recursion definition should cover it in under a minute. Find the part of that definition that ends the chain of calls and does not refer back to the function.\", \"question\": \"Which part of your recursion definition is meant to end the calls, and what does it say about calling the function?\"}"
   ],
   "input_sha256": "7cb6cfcaeee090d3291ec05bad0cf7bfe7dafe9b805aad85daa140dd1f6f6f5e",
   "model": "claude-haiku-5-5",
   "output": {
-    "body": "I can't give you the answer, but this is the concept your check item turns on, and your exam will rely on it too. Reread how your course defines a base case and what it says a recursive function must have to avoid infinite calls.",
-    "key_idea": "A recursive function stops only when it reaches a base case, a condition where it returns a value without calling itself again.",
-    "question": "What does your course's definition of a base case say it has to do?"
+    "body": "I can't give you the answer, but a quick reread of your course's recursion definition should cover it in under a minute. Find the part of that definition that ends the chain of calls and does not refer back to the function.",
+    "key_idea": "A recursive definition stops only when it reaches a base case that is answered directly, without calling the function again.",
+    "question": "Which part of your recursion definition is meant to end the calls, and what does it say about calling the function?"
   },
   "prompt_hash": "ca02dcf9e63b",
   "requests": 1,

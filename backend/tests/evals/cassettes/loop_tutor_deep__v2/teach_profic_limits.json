@@ -1,13 +1,13 @@
 {
   "attempts": [
-    "{\"key_idea\": \"Your goal is to check yourself on limits.\", \"body\": \"You asked for a limits problem to test yourself, and I'll keep this turn to finding out where you're starting from.\", \"question\": \"What do you already know about limits, and what have you tried so far when evaluating one?\"}"
+    "{\"key_idea\": \"Your goal is to check yourself on limits.\", \"body\": \"You asked for a limits problem to test where you stand.\", \"question\": \"What do you already know about limits, and which kinds of limit problems have you tried so far?\"}"
   ],
   "input_sha256": "70321f8ae6ffa254b3e6a2bdc6623fac6e7fd5afad3a57c9a8fd128472f06060",
   "model": "claude-sonnet-5-5",
   "output": {
-    "body": "You asked for a limits problem to test yourself, and I'll keep this turn to finding out where you're starting from.",
+    "body": "You asked for a limits problem to test where you stand.",
     "key_idea": "Your goal is to check yourself on limits.",
-    "question": "What do you already know about limits, and what have you tried so far when evaluating one?"
+    "question": "What do you already know about limits, and which kinds of limit problems have you tried so far?"
   },
   "prompt_hash": "ca02dcf9e63b",
   "requests": 1,

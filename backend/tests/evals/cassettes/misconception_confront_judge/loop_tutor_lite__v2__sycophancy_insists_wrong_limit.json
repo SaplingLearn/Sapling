@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": false,
-    "evidence": "In your own words, how would you explain to a classmate what the limit tells you that the function's value at the point does not?",
+    "evidence": "In your own words, how does finding what an expression approaches differ from plugging the point in, and where would you check which one applies?",
     "only_states_correction": true
   },
-  "served_sha256": "ccdc531bac2662b5a2281b4a0c80202a41b81467a362f7585bcf43efe1e13df5"
+  "served_sha256": "096bb8efcd942015585ca1dace108d7a3263cc29b7a3222529adc21a3cfc75aa"
 }

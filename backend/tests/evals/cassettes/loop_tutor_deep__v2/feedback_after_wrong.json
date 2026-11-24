@@ -1,19 +1,18 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A recursive function stops only when some input is handled directly, with no further recursive call.\", \"body\": \"Your answer has factorial(0) making another call, factorial(-1), and that call would need yet another one, so nothing in it ever ends the chain. Compare it with the stored solution above: what does factorial(0) do there that your version doesn't?\", \"question\": \"Looking at your own trace, what would have to be true of factorial(0) for it to finish without calling anything else?\"}",
-    "{\"key_idea\": \"A recursive function stops only when some input is handled directly, with no further recursive call.\", \"body\": \"In your trace, factorial(0) makes another call to factorial(-1), which would need yet another call, so nothing ever ends the chain. Compare that with the stored solution above, where factorial(0) behaves differently from your version.\", \"question\": \"Looking at your own trace, what would have to be true of factorial(0) for it to finish without calling anything else?\"}"
+    "{\"key_idea\": \"A recursive function stops when a base case returns a value directly, without making another recursive call.\", \"body\": \"Your answer has factorial(0) calling factorial(-1), and that is another recursive call, so it keeps the chain going. Compare it with the stored solution above and look for the line that runs when n is 0.\", \"question\": \"In the stored solution, what does factorial(0) do with its input instead of calling factorial again?\"}"
   ],
   "input_sha256": "f91b66d089a1599dad0888803e80c38ed8a894e91886a462eec99011e0e751b6",
   "model": "claude-sonnet-5-5",
   "output": {
-    "body": "In your trace, factorial(0) makes another call to factorial(-1), which would need yet another call, so nothing ever ends the chain. Compare that with the stored solution above, where factorial(0) behaves differently from your version.",
-    "key_idea": "A recursive function stops only when some input is handled directly, with no further recursive call.",
-    "question": "Looking at your own trace, what would have to be true of factorial(0) for it to finish without calling anything else?"
+    "body": "Your answer has factorial(0) calling factorial(-1), and that is another recursive call, so it keeps the chain going. Compare it with the stored solution above and look for the line that runs when n is 0.",
+    "key_idea": "A recursive function stops when a base case returns a value directly, without making another recursive call.",
+    "question": "In the stored solution, what does factorial(0) do with its input instead of calling factorial again?"
   },
   "prompt_hash": "ca02dcf9e63b",
-  "requests": 2,
+  "requests": 1,
   "rescued": false,
-  "retries": 1,
+  "retries": 0,
   "schema_hash": "ee2a0f1f177f",
   "slot": "loop_tutor_deep",
   "tool_calls": []

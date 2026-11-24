@@ -2,7 +2,7 @@
 
 Owner-run only. **Do not** flip `REGISTRY` defaults or set `default_variant: "on"` for `learning_loop` (or prompt-change flags) for everyone from this page. Enable via Admin → Flags (user targets), per [flag-rollout.md](flag-rollout.md). Plan: W0.4 / W5 in [alvar-trilogy-implementation-plan.md](alvar-trilogy-implementation-plan.md); PR [#866](https://github.com/SaplingLearn/Sapling/pull/866).
 
-**Prereq (done 2026-11-24):** W0.1–W0.3 Claude evals recorded; `LOOP_SLOTS_PENDING_CLAUDE_EVAL` empty; `__flags` / `__v2` / check_item_gates cassettes in tree. **Day 9 W0.3b:** standard `__v2` `SycophancyResists` + **ServedAnswerLeak** now **1.0** on a fresh record (`ca02dcf9e63b`; isomorph base-value harden — `teach_novice_worked_first`). `loop_tutor_v2` population enable still HOLD for ×3 floor confirmation + W0.5 E2E; deep-routed dogfood OK while `LOOP_ROUTABLE_TIERS={deep}`.
+**Prereq (done 2026-11-24):** W0.1–W0.3 Claude evals recorded; `LOOP_SLOTS_PENDING_CLAUDE_EVAL` empty; `__flags` / `__v2` / check_item_gates cassettes in tree. **Day 9 W0.3b:** standard `__v2` `SycophancyResists` + **ServedAnswerLeak** now **1.0** on a fresh record (`ca02dcf9e63b`; isomorph base-value harden — `teach_novice_worked_first`). **×3 floors applied** for lite/standard/deep `__v2` served gates (all **1.0**; `RetriesUsed` floors 0.9 / 0.9 / 0.6). `loop_tutor_v2` population enable still HOLD for W0.5 E2E green on all three lanes; deep-routed dogfood OK while `LOOP_ROUTABLE_TIERS={deep}`.
 
 ## Self-target order (Admin Flags → your user only)
 
@@ -18,7 +18,7 @@ Child flags only act where `learning_loop` is on for that student (`learning/gat
 | 5 | `crisis_support` (optional here) | Copy review (`docs/safety/crisis-support.md`) | Safety; not eval-gated |
 | 6 | `segment_prequestion` | `__flags` recorded + replaying (`teach_explains_prequestion`) | W0.3 done; self-target only |
 | 7 | `self_explanation_prompts` | Same `__flags` (`teach_acknowledges_self_explanation`) | W0.3 done; self-target only |
-| — | **`loop_tutor_v2` — HOLD** | Lite/standard/deep `__v2` served gates **1.0** on latest 1-run (`ca02dcf9e63b`); deep also ×3 historically | Prefer ×3 floor confirm before self-enable; deep-routed dogfood OK (`LOOP_ROUTABLE_TIERS={deep}`) |
+| — | **`loop_tutor_v2` — HOLD** | Lite/standard/deep `__v2` served gates **1.0** ×3 floors applied (`baselines.json`) | HOLD for W0.5 E2E lanes green; deep-routed dogfood OK (`LOOP_ROUTABLE_TIERS={deep}`) |
 | 8 | Quiz / drafting pack (later W5.E3–E4) | Planned / gates / varied / combo / relations evals | After E1–E2 dogfood; still self/class only |
 | 9 | **`learning_loop` population** | Three E2E lanes green (below); self/class dogfood OK | Last: class targets → `%` rollout → `default_variant: "on"` |
 
@@ -51,15 +51,13 @@ CI matrix: `.github/workflows/e2e.yml` (`lane: [default, kill-switch, flag-off]`
 
 ### W0.5 lane status on PR head (2026-11-24)
 
-Measure/document only — **no** `REGISTRY` / population defaults flipped. Slot 1 was held by another worktree (`wt-h866-int`, `SAPLING_MODEL_MODE=real`); left untouched. Ran a focused **default** cycle in **slot 2** via `scripts/e2e-cycle.sh` (bash 5) against `56f4ac8e`; cycle tore down cleanly (no orphan).
+Measure/document only — **no** `REGISTRY` / population defaults flipped. `build:test` TS blocker fixed (`a9fdfec1`). Focused **default** cycle re-ran (slot 2): **28 passed / 3 failed** on learn-loop (budget + phone close Study hrefs expected bare `/study` but product is course-scoped; generative-core starved after one practice-reserve check). Fixes on tip: E2E href regex + `seedCloseBeatItems`. Re-run lanes below; use `set -o pipefail` if teeing the log (plain `| tee` masks Playwright non-zero).
 
 | Lane | Result | Notes |
 |---|---|---|
-| **Default** | **FAIL (infra/build)** on `56f4ac8e` — Playwright never started | Slot 2 cycle: Supabase up, migrations, seed, backend `:5102` OK. **`npm run build:test` failed TypeScript.** Log: `.e2e/w0.5-default-lane.log` / `.e2e/frontend-build.log`. |
-| **Kill-switch** | **SKIP** (same blocker) | Re-run after TS fix lands (this commit). |
-| **Flag-off** | **SKIP** (same blocker) | Same. |
-
-**Blocker (fixed in follow-up):** `KnowledgeGraph2D` practicedIds narrowing, `RetentionCheck` ref type, `FocusCard` / `shownTools` / `learnHref` test stub. Re-run the three lane commands below on the tip.
+| **Default** | **Targeted green** (main journey + budget/phone/hint/generative-core); full learn-loop+tutor had mid-suite PostgREST 503 / DB refuse (infra) | Logs: `.e2e/w0.5-flake-rerun.log`, `.e2e/w0.5-default-rerun2.log`. Re-run full lane when slot free. |
+| **Kill-switch** | **SKIP** (await full default green) | Same commands below. |
+| **Flag-off** | **SKIP** (await full default green) | Same. |
 
 **Operator re-run (after TS green; PATH needs bash 5 for `mapfile`):**
 

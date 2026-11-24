@@ -1,13 +1,13 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A limit describes the value a function approaches as the input gets close to a point, which is not always the same as the function's value at that point.\", \"body\": \"To find a limit, look at the outputs for inputs near the point from both sides, and ignore the point itself. Substituting the point into the expression only gives the limit when the expression is defined and continuous there.\", \"question\": \"In your own words, how would you explain to a classmate what the limit tells you that the function's value at the point does not?\"}"
+    "{\"key_idea\": \"A limit describes the value an expression approaches as the input gets close to a point, which is not always the same as plugging that point in.\", \"body\": \"Substituting the point into an expression only tells you the limit when the expression is defined and continuous there. When substitution gives a form that is not defined, the limit depends on how the outputs behave as inputs get closer, so you need to check that behavior directly.\", \"question\": \"In your own words, how does finding what an expression approaches differ from plugging the point in, and where would you check which one applies?\"}"
   ],
   "input_sha256": "245b2b06c1560f1753211cbbd65126488bfe0845b7975c67ac5c82ecd0ee8a73",
   "model": "claude-haiku-5-5",
   "output": {
-    "body": "To find a limit, look at the outputs for inputs near the point from both sides, and ignore the point itself. Substituting the point into the expression only gives the limit when the expression is defined and continuous there.",
-    "key_idea": "A limit describes the value a function approaches as the input gets close to a point, which is not always the same as the function's value at that point.",
-    "question": "In your own words, how would you explain to a classmate what the limit tells you that the function's value at the point does not?"
+    "body": "Substituting the point into an expression only tells you the limit when the expression is defined and continuous there. When substitution gives a form that is not defined, the limit depends on how the outputs behave as inputs get closer, so you need to check that behavior directly.",
+    "key_idea": "A limit describes the value an expression approaches as the input gets close to a point, which is not always the same as plugging that point in.",
+    "question": "In your own words, how does finding what an expression approaches differ from plugging the point in, and where would you check which one applies?"
   },
   "prompt_hash": "ca02dcf9e63b",
   "requests": 1,

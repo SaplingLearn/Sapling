@@ -1,18 +1,19 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A recursive function stops when some input is handled directly, without calling itself again.\", \"body\": \"Take sum_to(n), which equals 1+2+...+n and is defined as n + sum_to(n-1). Each call shrinks n by 1, so without a special rule it would go on to sum_to(-1), sum_to(-2), and so on forever. The fix is a line like 'if n == 0, the result is 0 and no further call is made', which gives the chain a place to end.\", \"question\": \"Looking at your factorial function, which line handles an input directly without calling factorial again, and what does it do for 0?\"}"
+    "{\"key_idea\": \"A recursive function stops when some input is handled directly, without calling itself, and that input is called the base case.\", \"body\": \"Take sum_to(n), which equals 1+2+...+n and is defined as n + sum_to(n-1). Left alone, it would call sum_to(-1), sum_to(-2), and so on forever, because every call makes another call. The fix is one line saying that when n is 0, sum_to(0)=0 is given directly with no further call, so the chain ends there.\", \"question\": \"Looking at your own factorial function, which line gives an answer directly without making another call, and what input triggers it?\"}",
+    "{\"key_idea\": \"A recursive function ends only when some input is answered directly, with no further call to itself.\", \"body\": \"Take sum_to(n), which equals 1+2+...+n and is built as n + sum_to(n-1). If every input made another call, the chain sum_to(5), sum_to(4), sum_to(3), and so on would never finish. It finishes because one particular input is settled on the spot, and the calls stop there.\", \"question\": \"In your own factorial function, which input is settled directly without making another call?\"}"
   ],
   "input_sha256": "78b8a97ede546da8ca6d3349c7a261196577cd93fde52115743a9f77fe7a482b",
   "model": "claude-sonnet-5-5",
   "output": {
-    "body": "Take sum_to(n), which equals 1+2+...+n and is defined as n + sum_to(n-1). Each call shrinks n by 1, so without a special rule it would go on to sum_to(-1), sum_to(-2), and so on forever. The fix is a line like 'if n == 0, the result is 0 and no further call is made', which gives the chain a place to end.",
-    "key_idea": "A recursive function stops when some input is handled directly, without calling itself again.",
-    "question": "Looking at your factorial function, which line handles an input directly without calling factorial again, and what does it do for 0?"
+    "body": "Take sum_to(n), which equals 1+2+...+n and is built as n + sum_to(n-1). If every input made another call, the chain sum_to(5), sum_to(4), sum_to(3), and so on would never finish. It finishes because one particular input is settled on the spot, and the calls stop there.",
+    "key_idea": "A recursive function ends only when some input is answered directly, with no further call to itself.",
+    "question": "In your own factorial function, which input is settled directly without making another call?"
   },
   "prompt_hash": "ca02dcf9e63b",
-  "requests": 1,
+  "requests": 2,
   "rescued": false,
-  "retries": 0,
+  "retries": 1,
   "schema_hash": "ee2a0f1f177f",
   "slot": "loop_tutor_deep",
   "tool_calls": []

@@ -2,9 +2,9 @@
   "judge_model": "claude-opus-5-5",
   "judge_prompt_hash": "ef37fe670c185dbbd3a48c9c1c6fd26940cb876f4d996a477462b25b084d6daf",
   "output": {
-    "evidence": "Isomorph: sum_to(n) equals 1+2+...+n, with base case sum_to(0)=0 to stop the calls",
+    "evidence": "Isomorph: sum_to(n) equals 1+2+...+n, and its recursive step is sum_to(n) = n + sum_to(n-1)... The base case sum_to(0) = 0 stops the calls",
     "reveals_final_answer": false,
     "rung": 4
   },
-  "served_sha256": "2fed45d938bc99a165da041b4d65006370d3cf3500f8c482979cdacad0a276ce"
+  "served_sha256": "498d6f1a3b2fb0f46ade7ebabb8f88f699d46a7dc85074823be897794db1e6b1"
 }

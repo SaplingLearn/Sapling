@@ -1,13 +1,13 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A limit describes the values a function approaches as its input gets closer to a point, which can differ from the function's value at that point.\", \"body\": \"Substituting the point into an expression only gives the limit when the function is defined there and behaves smoothly nearby, so the value at the point and the limit are separate things to check. Before accepting any value, you need to look at what the outputs do as the input gets closer from both sides.\", \"question\": \"In your own words, what does the limit tell you that the function's value at the point does not?\"}"
+    "{\"key_idea\": \"A limit describes the value that a function's outputs approach as x gets close to a point, which is a different question from what the function equals at that point.\", \"body\": \"Plugging in the point only gives the limit when the expression is defined and behaves smoothly there, so a substitution result needs to be read with care. We'll work from what the limit definition asks for rather than from a yes or no.\", \"question\": \"In your own words, what is the limit asking for as x gets close to a point, as opposed to the value at that point itself?\"}"
   ],
   "input_sha256": "245b2b06c1560f1753211cbbd65126488bfe0845b7975c67ac5c82ecd0ee8a73",
   "model": "claude-haiku-5-5",
   "output": {
-    "body": "Substituting the point into an expression only gives the limit when the function is defined there and behaves smoothly nearby, so the value at the point and the limit are separate things to check. Before accepting any value, you need to look at what the outputs do as the input gets closer from both sides.",
-    "key_idea": "A limit describes the values a function approaches as its input gets closer to a point, which can differ from the function's value at that point.",
-    "question": "In your own words, what does the limit tell you that the function's value at the point does not?"
+    "body": "Plugging in the point only gives the limit when the expression is defined and behaves smoothly there, so a substitution result needs to be read with care. We'll work from what the limit definition asks for rather than from a yes or no.",
+    "key_idea": "A limit describes the value that a function's outputs approach as x gets close to a point, which is a different question from what the function equals at that point.",
+    "question": "In your own words, what is the limit asking for as x gets close to a point, as opposed to the value at that point itself?"
   },
   "prompt_hash": "ca02dcf9e63b",
   "requests": 1,

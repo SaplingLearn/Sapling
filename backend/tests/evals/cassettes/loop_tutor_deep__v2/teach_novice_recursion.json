@@ -1,18 +1,19 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A recursive function solves a problem by handing a smaller version of the same problem to itself, and it stops at a base case that needs no further help.\", \"body\": \"Take sum_to(n), which equals 1+2+...+n. Its smaller self is sum_to(n-1), so sum_to(n) equals n + sum_to(n-1). That chain of smaller problems has to end somewhere, and sum_to(0)=0 is where it ends.\", \"question\": \"Using that rule, what smaller sum_to call would sum_to(3) hand off to, and what would it add to that call's result?\"}"
+    "{\"key_idea\": \"A recursive function solves a problem by handing a smaller copy of the same problem to itself, and it stops at a base case that it can answer directly.\", \"body\": \"Here is a small example. sum_to(n) equals 1+2+...+n, and it can be defined as: if n = 0, then sum_to(0) = 0; otherwise sum_to(n) = n + sum_to(n-1). The base case is needed because without it the chain of smaller copies would never stop. Try this attempt before we go further: using that rule, sum_to(2) = 2 + sum_to(1), and sum_to(1) = 1 + sum_to(0).\", \"question\": \"What number do you get for sum_to(2) once you fill in sum_to(0)?\"}",
+    "{\"key_idea\": \"A recursive function solves a problem by handing a smaller copy of the same problem to itself, and it stops at a base case that it can answer directly.\", \"body\": \"Take sum_to(n), which equals 1+2+...+n: if n = 0 then sum_to(0) = 0, otherwise sum_to(n) = n + sum_to(n-1). The base case matters because without it the chain of smaller copies would never stop. So sum_to(2) = 2 + sum_to(1), and sum_to(1) = 1 + sum_to(0).\", \"question\": \"What number do you get for sum_to(2) once you fill in sum_to(0)?\"}"
   ],
   "input_sha256": "1a6ccd15960d7d572c96de957f6eae0ff470a031fd3568a0cec9f272acdfb746",
   "model": "claude-sonnet-5-5",
   "output": {
-    "body": "Take sum_to(n), which equals 1+2+...+n. Its smaller self is sum_to(n-1), so sum_to(n) equals n + sum_to(n-1). That chain of smaller problems has to end somewhere, and sum_to(0)=0 is where it ends.",
-    "key_idea": "A recursive function solves a problem by handing a smaller version of the same problem to itself, and it stops at a base case that needs no further help.",
-    "question": "Using that rule, what smaller sum_to call would sum_to(3) hand off to, and what would it add to that call's result?"
+    "body": "Take sum_to(n), which equals 1+2+...+n: if n = 0 then sum_to(0) = 0, otherwise sum_to(n) = n + sum_to(n-1). The base case matters because without it the chain of smaller copies would never stop. So sum_to(2) = 2 + sum_to(1), and sum_to(1) = 1 + sum_to(0).",
+    "key_idea": "A recursive function solves a problem by handing a smaller copy of the same problem to itself, and it stops at a base case that it can answer directly.",
+    "question": "What number do you get for sum_to(2) once you fill in sum_to(0)?"
   },
   "prompt_hash": "ca02dcf9e63b",
-  "requests": 1,
+  "requests": 2,
   "rescued": false,
-  "retries": 0,
+  "retries": 1,
   "schema_hash": "ee2a0f1f177f",
   "slot": "loop_tutor_deep",
   "tool_calls": []

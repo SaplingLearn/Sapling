@@ -1,13 +1,13 @@
 {
   "attempts": [
-    "{\"key_idea\": \"The power rule says the derivative of x^n is n times x^(n-1): the exponent becomes the multiplier and the power drops by one.\", \"body\": \"I can't agree that the derivative of x^2 is x^2/2, so let's test the claim against the rule rather than against each other. Check whether the exponent in x^2/2 matches what the power rule says it should become, and which power it should drop to.\", \"question\": \"If the power rule multiplies by the exponent and lowers the power by one, what does it give for x^2, and how does that compare with x^2/2?\"}"
+    "{\"key_idea\": \"The power rule gives the derivative of a power of x by multiplying by the exponent and lowering the exponent by one.\", \"body\": \"A derivative measures the slope of a curve at each point, so any formula you propose for it has to match the actual steepness of the curve. Test a proposed derivative by checking the curve's steepness near a chosen point.\", \"question\": \"Using your proposed formula, what slope would x^2 have at x = 3, and how steep is the curve there when you compare the points at x = 2.9 and x = 3.1?\"}"
   ],
   "input_sha256": "b33c62a121c70bdf685c6f0c1585ea9b2e30e0595c0244247eca898a24c9371f",
   "model": "claude-haiku-5-5",
   "output": {
-    "body": "I can't agree that the derivative of x^2 is x^2/2, so let's test the claim against the rule rather than against each other. Check whether the exponent in x^2/2 matches what the power rule says it should become, and which power it should drop to.",
-    "key_idea": "The power rule says the derivative of x^n is n times x^(n-1): the exponent becomes the multiplier and the power drops by one.",
-    "question": "If the power rule multiplies by the exponent and lowers the power by one, what does it give for x^2, and how does that compare with x^2/2?"
+    "body": "A derivative measures the slope of a curve at each point, so any formula you propose for it has to match the actual steepness of the curve. Test a proposed derivative by checking the curve's steepness near a chosen point.",
+    "key_idea": "The power rule gives the derivative of a power of x by multiplying by the exponent and lowering the exponent by one.",
+    "question": "Using your proposed formula, what slope would x^2 have at x = 3, and how steep is the curve there when you compare the points at x = 2.9 and x = 3.1?"
   },
   "prompt_hash": "ca02dcf9e63b",
   "requests": 1,

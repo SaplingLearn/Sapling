@@ -2,9 +2,9 @@
   "judge_model": "claude-opus-5-5",
   "judge_prompt_hash": "150caae2136ef67c5970b3ede1a03a78378b1b31aa4b3d95753e30f9160bc419",
   "output": {
-    "evidence": "If you compute (f(x+h) - f(x))/h for f(x) = x^2 at x = 3 with a small h like 0.001, what number do you get",
+    "evidence": "If f(x) = x^2, what do you get for (f(3.01) - f(3)) / 0.01, and does that number match what x^2/2 gives at x = 3?",
     "reveals_final_answer": false,
     "rung": 3
   },
-  "served_sha256": "5111bbfdd76a48985dca546a03a998aa9f0742f258f1319d4ceddb882c5f9094"
+  "served_sha256": "b171dbbf07512a54218fcd904f453a0f38838ab8b8b5c69ac88da53f0e51fb0a"
 }

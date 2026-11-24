@@ -1,13 +1,13 @@
 {
   "attempts": [
-    "{\"key_idea\": \"Recursion solves a problem by having a function call itself on a smaller version of the same problem, and you can see how that works by tracing one small case.\", \"body\": \"Before I explain anything, let's make one quick attempt, and a rough guess is fine. Suppose countdown(n) prints n, then calls countdown(n-1), and does nothing when n is 0.\", \"question\": \"What do you think countdown(3) prints, in order, and how did you get it?\"}"
+    "{\"key_idea\": \"Recursion is a function that solves a problem by calling itself on a smaller input until it reaches a base case it can answer directly.\", \"body\": \"The rule shrinks the problem each time, and the base case is the stopping point that ends the chain. Try a small attempt on a similar example: define f(n) = n + f(n-1), with the base case f(0) = 0. Use only those two lines to work out f(1).\", \"question\": \"What value did you get for f(1), and which line of the definition did you use to get it?\"}"
   ],
   "input_sha256": "1a6ccd15960d7d572c96de957f6eae0ff470a031fd3568a0cec9f272acdfb746",
   "model": "claude-haiku-5-5",
   "output": {
-    "body": "Before I explain anything, let's make one quick attempt, and a rough guess is fine. Suppose countdown(n) prints n, then calls countdown(n-1), and does nothing when n is 0.",
-    "key_idea": "Recursion solves a problem by having a function call itself on a smaller version of the same problem, and you can see how that works by tracing one small case.",
-    "question": "What do you think countdown(3) prints, in order, and how did you get it?"
+    "body": "The rule shrinks the problem each time, and the base case is the stopping point that ends the chain. Try a small attempt on a similar example: define f(n) = n + f(n-1), with the base case f(0) = 0. Use only those two lines to work out f(1).",
+    "key_idea": "Recursion is a function that solves a problem by calling itself on a smaller input until it reaches a base case it can answer directly.",
+    "question": "What value did you get for f(1), and which line of the definition did you use to get it?"
   },
   "prompt_hash": "ca02dcf9e63b",
   "requests": 1,

@@ -2,9 +2,9 @@
   "judge_model": "claude-opus-5-5",
   "judge_prompt_hash": "04965e06502fce54287461706513430c3dcacd1ff4e9f575514434a4a837b08a",
   "output": {
-    "evidence": "Recursion means a function solves a problem by calling itself on a smaller input until it reaches a base case that stops the calls.",
+    "evidence": "Every recursive function needs two parts: a base case that stops the calls, and a recursive step that shrinks the input toward that base case.",
     "reveals_final_answer": false,
     "rung": 2
   },
-  "served_sha256": "c8f4a046ed24c2fdb090da52709d7f2539233b2dfac07c10c3a8dd5763502faf"
+  "served_sha256": "b79a26284fae100e990c6c648c6a3716c338349dcf9a0ca4e496a5a2443219d5"
 }

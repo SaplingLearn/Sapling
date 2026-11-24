@@ -2,9 +2,9 @@
   "judge_model": "claude-opus-5-5",
   "judge_prompt_hash": "ef37fe670c185dbbd3a48c9c1c6fd26940cb876f4d996a477462b25b084d6daf",
   "output": {
-    "evidence": "Worked example on a different problem: sum_to(n) equals 1+2+...+n. The smallest case is sum_to(0)=0",
+    "evidence": "Take sum_to(n), which equals 1+2+...+n. Its base case is sum_to(0)=0",
     "reveals_final_answer": false,
     "rung": 4
   },
-  "served_sha256": "7ea6e7360b0d629d2c9279d3b1eba4ac7fb1dcdef240c3bdc70702844fd836c6"
+  "served_sha256": "6acaca69708bfc0ad5307620603a685b20e05591f4456ad84102888233d6219e"
 }

@@ -1,13 +1,13 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A recursive function stops only when a call reaches a base case that returns without calling the function again.\", \"body\": \"Your idea that factorial(0) calls factorial(-1) describes the recursion continuing, because each call moves further from the stopping point rather than toward it. Check which values of n your chain of calls actually produces, and whether the stopping condition is ever met along the way.\", \"question\": \"In your factorial code, what branch runs when n is 0, and does that branch make another call to factorial?\"}"
+    "{\"key_idea\": \"A recursive function stops only when some call reaches a base case that returns without making another recursive call.\", \"body\": \"Calling factorial(-1) starts a new recursive chain rather than ending one, so the recursion does not stop there. Ask what the base case is for, and whether each call moves toward it or away from it.\", \"question\": \"Where does factorial(-1) send its next call, and would that call ever return without recursing?\"}"
   ],
   "input_sha256": "f91b66d089a1599dad0888803e80c38ed8a894e91886a462eec99011e0e751b6",
   "model": "claude-haiku-5-5",
   "output": {
-    "body": "Your idea that factorial(0) calls factorial(-1) describes the recursion continuing, because each call moves further from the stopping point rather than toward it. Check which values of n your chain of calls actually produces, and whether the stopping condition is ever met along the way.",
-    "key_idea": "A recursive function stops only when a call reaches a base case that returns without calling the function again.",
-    "question": "In your factorial code, what branch runs when n is 0, and does that branch make another call to factorial?"
+    "body": "Calling factorial(-1) starts a new recursive chain rather than ending one, so the recursion does not stop there. Ask what the base case is for, and whether each call moves toward it or away from it.",
+    "key_idea": "A recursive function stops only when some call reaches a base case that returns without making another recursive call.",
+    "question": "Where does factorial(-1) send its next call, and would that call ever return without recursing?"
   },
   "prompt_hash": "ca02dcf9e63b",
   "requests": 1,

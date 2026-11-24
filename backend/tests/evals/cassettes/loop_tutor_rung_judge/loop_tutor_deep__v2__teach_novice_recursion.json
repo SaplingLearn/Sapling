@@ -2,9 +2,9 @@
   "judge_model": "claude-opus-5-5",
   "judge_prompt_hash": "04965e06502fce54287461706513430c3dcacd1ff4e9f575514434a4a837b08a",
   "output": {
-    "evidence": "Take sum_to(n), which equals 1+2+...+n. Its smaller self is sum_to(n-1), so sum_to(n) equals n + sum_to(n-1)... sum_to(0)=0 is where it ends.",
+    "evidence": "Take sum_to(n), which equals 1+2+...+n: if n = 0 then sum_to(0) = 0, otherwise sum_to(n) = n + sum_to(n-1).",
     "reveals_final_answer": false,
     "rung": 4
   },
-  "served_sha256": "08841ef3f5c92fc10b1c74af2c18a00fe13acc0f61f2e43d98f75143802f8836"
+  "served_sha256": "7861ac2198485fadd2c8d92a2f1263a8e5a65d80318aae6aad12e59575b3aff1"
 }

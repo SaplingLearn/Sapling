@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": false,
-    "evidence": "In your own words, what does the limit tell you that the function's value at the point does not?",
-    "only_states_correction": true
+    "evidence": "In your own words, what is the limit asking for as x gets close to a point, as opposed to the value at that point itself?",
+    "only_states_correction": false
   },
-  "served_sha256": "7be25600ad0d03a0cd27ddf64b6af77443edba4310808d852458a1138f34a4ef"
+  "served_sha256": "d2224fffac6295989e2a2da48706afec9a4e61abd850119adec1c16170fb2b69"
 }
