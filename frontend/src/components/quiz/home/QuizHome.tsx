@@ -120,12 +120,16 @@ export function QuizHome({ home, config, entry, session, actions, onPickedChange
       return;
     }
     autoStarted.current = true;
+    // W3.3c: `?scope=due&start=1` arms the due cue-stream queue (Practice);
+    // concept / course keep the Study Hub deep-link behaviour.
     const named = entry.course
       ? mode === "course"
-      : mode === "concept" && !pickedId && Boolean(arrivalConceptId && card);
+      : entry.scope === "due"
+        ? mode === "due"
+        : mode === "concept" && !pickedId && Boolean(arrivalConceptId && card);
     if (named) startCard(effectiveConfig);
     consumeStartParam();
-  }, [entry.start, entry.course, session.phase, home.status, config, armed, mode, pickedId, arrivalConceptId, card, startCard, effectiveConfig]);
+  }, [entry.start, entry.course, entry.scope, session.phase, home.status, config, armed, mode, pickedId, arrivalConceptId, card, startCard, effectiveConfig]);
 
   // ── Dialogs ───────────────────────────────────────────────────────────
 

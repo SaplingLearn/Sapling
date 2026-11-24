@@ -1133,6 +1133,8 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `loop-teach-start` | "Start with <first plan concept>" — sends that as the first chat turn (shown until the student has chatted) |
 | `loop-check-me` | "Check me": posts `/check/next` when no item is current (A27) |
 | `loop-check-prompt` | the current check pose (`check.prompt`, A17/A27); `data-question-hash`, `data-format` |
+| `loop-materials-grounded` | W4.3: calm "Grounded in your materials" status under a teach/opener assistant turn when the server sent `materials_grounded: true` (passages in the prompt); absent otherwise — never a cite list |
+| `loop-key-verified` | W4.4: calm "Key verified" status on the check card when the pose carries `key_verified: true` (`check_items.canonical_verified`); absent otherwise — never invented client-side |
 | `loop-attempt-input` | free/teachback attempt textarea |
 | `loop-attempt-options` | the attempt box's options radio group, as `loop-probe-options` |
 | `loop-attempt-option-{letter}` | one served `mc_reason` option in the attempt box |

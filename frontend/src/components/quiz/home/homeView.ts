@@ -61,7 +61,8 @@ export interface TopicPick {
 }
 
 export function entryKeyFor(entry: EntryRequest): string {
-  return `${entry.concept ?? ""}|${entry.topic ?? ""}|${entry.course ?? ""}|${entry.scope ?? ""}`;
+  const queue = entry.queue?.length ? entry.queue.join(",") : "";
+  return `${entry.concept ?? ""}|${entry.topic ?? ""}|${entry.course ?? ""}|${entry.scope ?? ""}|${queue}`;
 }
 
 /** The pick, while it still belongs to this arrival and names a real concept. */

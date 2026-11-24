@@ -500,7 +500,8 @@ Use this as the merge/readiness checklist. Every row must be **Done (A+)**, **N/
 - [x] Plan-as-structure UI (W3.1)  
 - [x] One-interface handoffs (W3.4) — see [`w3-handoffs.md`](w3-handoffs.md)  
 
-- [x] Teach-prose grounding chrome (W4.3) — `materials_grounded` label; W4.4 verify still open  
+- [x] Teach-prose grounding chrome (W4.3) — `materials_grounded` label  
+- [x] Key-verified chrome (W4.4) — `key_verified` on pose when `canonical_verified` (no SVG / no new LLM)  
 
 - [x] Item verification (enable quiz gates W5.E3)  
 - [ ] Tutor v2 on (W5.E2)
@@ -613,7 +614,7 @@ Five concurrent tracks kicked off from this plan. **No flag enables** until W0 e
 | Track | Scope |
 |---|---|
 | W7.2 | Core types on new shell: MC / short / numeric / algebra polish (not 7.1–7.18 kit) |
-| W4.4 | Key-verified chrome when blind-key/verify already succeeded (no SVG agent) |
+| W4.4 | Key-verified chrome when blind-key/verify already succeeded (no SVG agent) | **done** (`key_verified` ← `canonical_verified` on pose) |
 | W2.4b | Decrypt reasoning → `next_probe_hint` prefer (flagged; never mastery) | **done** → [`w2-next-probe-hint.md`](w2-next-probe-hint.md) |
 | W3.3c | Practice cue stream: multi-due quiz queue from `learner_next` |
 | W8.7 verify | Confirm Dashboard Learn-next + document retention vs FSRS due | **done** (Learn-next = `getStudyNext`/`learner_next` when `learning_loop`+`quiz_concept_plan`; A126 badge = `GET /posttest/due`, not FSRS) |

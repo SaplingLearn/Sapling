@@ -762,6 +762,18 @@ describe("LoopLearn — A26", () => {
     expect(await screen.findByTestId("loop-materials-grounded")).toBeTruthy();
   });
 
+  it("W4.4: a posed check with key_verified shows calm Key verified chrome", async () => {
+    await withCheckItem({ ...pose, key_verified: true });
+    const chrome = screen.getByTestId("loop-key-verified");
+    expect(chrome.textContent).toBe("Key verified");
+    expect(screen.queryByTestId("loop-materials-grounded")).toBeNull(); // separate surface
+  });
+
+  it("W4.4: no Key verified chrome without key_verified on the pose", async () => {
+    await withCheckItem(pose);
+    expect(screen.queryByTestId("loop-key-verified")).toBeNull();
+  });
+
   it("A128: the note belongs to its session — switching sessions clears it", async () => {
     api.listLoopSessionsFor.mockResolvedValue(
       listed([open("s2", "teach", "2026-09-21T10:00:00Z"), open("s1", "teach", "2026-09-20T10:00:00Z")]),

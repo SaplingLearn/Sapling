@@ -262,7 +262,8 @@ describe("QuizQuestion — the question", () => {
     expect(screen.getByTestId("quiz-session-top")).toHaveTextContent("CS101");
     expect(screen.getByTestId("quiz-session-top")).toHaveTextContent("Recursion");
     expect(screen.getByTestId("quiz-tier-chip")).toHaveTextContent("Struggling");
-    expect(screen.getByTestId("quiz-session-progress")).toHaveAttribute("aria-label", "Question 2 of 3");
+    expect(screen.getByTestId("quiz-session-progress")).toHaveTextContent("Question 2 of 3");
+    expect(screen.getByRole("progressbar", { name: "Question 2 of 3" })).toBeInTheDocument();
     expect(screen.getByTestId("quiz-hint-slot")).toBeInTheDocument();
     expect(screen.getByTestId("quiz-skip-slot")).toBeInTheDocument();
     expect(screen.getByText("MEDIUM")).toBeInTheDocument();
