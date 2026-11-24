@@ -16,7 +16,7 @@ Quiz generation may attach a kit `interaction` object on a `short_answer` wire q
 | Sanitize | Server drops unknown / incomplete payloads — never 502s the quiz |
 | Belief | Kit UI does not invent mastery channels; submit still uses written evidence |
 | Plain quiz schema | **No** `interaction` on `agents/quiz.QuizQuestion` — flag-off request digests stay byte-identical |
-| Planned writer | Optional `PlannedQuestion.interaction`; prompt may emit **Sort / Label / Sequence** (≤1 kit item per quiz) when `quiz_planned_questions` is on |
+| Planned writer | Optional `PlannedQuestion.interaction`; prompt may emit any sanitized kit kind (≤1 kit item per quiz) when `quiz_planned_questions` is on |
 | Function E2E | Default / planned handlers stay MC/written fixtures (no Sort) so existing journeys keep clicking |
 
 ## Code
@@ -24,11 +24,11 @@ Quiz generation may attach a kit `interaction` object on a `short_answer` wire q
 | Piece | Path |
 |---|---|
 | Sanitize / attach | `services/quiz/interaction.py` |
-| Planned field + Sort/Label/Sequence prompt | `agents/quiz_planned.py` |
+| Planned field + kit prompt (all sanitized kinds) | `agents/quiz_planned.py` |
 | Stamp → wire | `quiz_learning.planned_question` → `generation._absorb` → `attach_interaction` |
 | Kinds sanitized | All twelve stubs: `sort`…`rank` + `connect` (match / map) |
 
 ## Next
 
-1. Prompt kinds beyond Sort/Label/Sequence; dedicated function-mode kit journey.  
+1. Dedicated function-mode kit journey (fixtures).  
 2. Richer per-criterion grading (still deferred).

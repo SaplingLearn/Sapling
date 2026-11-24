@@ -152,14 +152,24 @@ WRITTEN_RULES = (
     "grading.\n\n"
     "Optional kit UI on short_answer only: at most ONE item per quiz may set "
     "`interaction`. Ids are short tokens without `;` `=` or `,`. Leave "
-    "`interaction` null/omitted for ordinary short answers and for numeric/symbolic.\n"
-    '- Sort (`kind: "sort"`): ≥2 `buckets` (strings) + ≥1 `items` `{id,label}`. '
-    "`correct_answer` = `BucketA=id1,id2;BucketB=id3` (bucket order matches `buckets`).\n"
-    '- Label (`kind: "label"`): equal-length `spots` and `labels` lists `{id,label}`, '
-    "no shared ids. `correct_answer` = `spotId=labelId;…` in spot order.\n"
-    '- Sequence (`kind: "sequence"`): ≥2 `steps` `{id,label}`. `correct_answer` = '
-    "`id1;id2;…` in correct order.\n"
-    "Do not invent other `kind` values yet.\n\n"
+    "`interaction` null/omitted for ordinary short answers and for numeric/symbolic. "
+    "Pick the kind that matches the task; `correct_answer` must be the encoded "
+    "string the UI would submit:\n"
+    '- `sort`: ≥2 string `buckets` + `items` `{id,label}` → `Bucket=id1,id2;…`\n'
+    '- `label`: equal-length `spots`/`labels` `{id,label}` → `spotId=labelId;…`\n'
+    '- `sequence`: ≥2 `steps` `{id,label}` → `id1;id2;…` (correct order)\n'
+    '- `build`: `slots` + ≥ as many `parts` `{id,label}` → `slotId=partId;…`\n'
+    '- `compare`: `left`/`right` `{id,label}` + ≥2 `options` → chosen option id\n'
+    '- `dialogue`: `role`, `open`, `follow` (+ optional reply caps) → student replies '
+    "joined as the short answer\n"
+    '- `explain`: optional `placeholder`/`rubric` → prose short answer\n'
+    '- `highlight`: ≥2 `passages` `{id,label}` → selected ids (encode as the UI does)\n'
+    '- `calculate`: optional `placeholder`/`unitLabel` → `value|unit`\n'
+    '- `position`: ≥2 `markers` + ≥2 `stops` `{id,label}` → `marker=stop;…`\n'
+    '- `rank`: ≥2 `items` `{id,label}` → ordered ids + why (UI encode)\n'
+    '- `connect`: match with equal `left`/`right` `{id,label}` → `left=right;…`; '
+    'or `mode:"map"` with ≥3 `nodes` → undirected `a=b;…`\n'
+    "Unknown kinds are dropped server-side.\n\n"
 )
 FORMAT_RULES = (
     "FORMAT names the question type to write. When it is mixed, choose each "
