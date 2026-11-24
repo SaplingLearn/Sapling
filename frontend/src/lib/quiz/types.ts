@@ -256,6 +256,23 @@ export interface RankInteraction {
   whyPlaceholder?: string;
 }
 
+/** One node in a Connect match (design kit 7.3). */
+export interface ConnectInteractionNode {
+  id: string;
+  label: string;
+}
+
+/**
+ * W7.2 Connect (7.3 match) — pair every left node to one right node.
+ * Encode: `left=right;…`. Concept-map mode deferred.
+ */
+export interface ConnectInteraction {
+  kind: "connect";
+  left: ConnectInteractionNode[];
+  right: ConnectInteractionNode[];
+  note?: string;
+}
+
 export type QuestionInteraction =
   | SortInteraction
   | SequenceInteraction
@@ -267,7 +284,8 @@ export type QuestionInteraction =
   | HighlightInteraction
   | CalculateInteraction
   | PositionInteraction
-  | RankInteraction;
+  | RankInteraction
+  | ConnectInteraction;
 
 export interface WireQuestion {
   material_context?: "course_material" | "catalog" | "general";

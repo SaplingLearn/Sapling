@@ -706,4 +706,42 @@ describe("W7.2 core types under SessionTop", () => {
     fireEvent.click(screen.getByTestId("quiz-rank-slot-0").querySelector("button")!);
     expect(actions.write).toHaveBeenCalledWith("mi;");
   });
+
+  it("Connect (W7.2 / 7.3): pair left to right; Check waits for all pairs", () => {
+    const interaction = {
+      kind: "connect" as const,
+      left: [
+        { id: "aspirin", label: "Aspirin" },
+        { id: "penicillin", label: "Penicillin" },
+      ],
+      right: [
+        { id: "cox", label: "Inhibits COX" },
+        { id: "wall", label: "Inhibits wall" },
+      ],
+    };
+    const { actions } = renderScreen(
+      makeSession({
+        items: [
+          item(0, {
+            question: {
+              id: 1,
+              question: "Match each drug to its mechanism.",
+              type: "short_answer",
+              options: [],
+              difficulty: "medium",
+              interaction,
+            },
+          }),
+          item(1),
+          item(2),
+        ],
+      }),
+    );
+    expect(screen.getByTestId("quiz-format-tag")).toHaveAttribute("data-format", "connect");
+    expect(screen.getByTestId("quiz-connect")).toBeInTheDocument();
+    expect(screen.getByTestId("quiz-submit-answer")).toBeDisabled();
+    fireEvent.click(screen.getByTestId("quiz-connect-left-aspirin"));
+    fireEvent.click(screen.getByTestId("quiz-connect-right-cox"));
+    expect(actions.write).toHaveBeenCalledWith("aspirin=cox;penicillin=");
+  });
 });

@@ -43,6 +43,11 @@ import {
   isRankComplete,
 } from "@/lib/quiz/rankInteraction";
 import {
+  asConnectInteraction,
+  decodeConnectAnswer,
+  isConnectComplete,
+} from "@/lib/quiz/connectInteraction";
+import {
   asLabelInteraction,
   decodeLabelAnswer,
   isLabelComplete,
@@ -104,6 +109,8 @@ function kitHasAnswer(item: QuizItem | undefined): boolean | null {
   if (position) return isPositionComplete(position, decodePositionAnswer(position, item?.answerText));
   const rank = asRankInteraction(interaction);
   if (rank) return isRankComplete(rank, item?.answerText);
+  const connect = asConnectInteraction(interaction);
+  if (connect) return isConnectComplete(connect, decodeConnectAnswer(connect, item?.answerText));
   return null;
 }
 
@@ -192,6 +199,7 @@ export function scaffoldHint({
   calculate,
   position,
   rank,
+  connect,
 }: {
   conceptName: string;
   conceptTested?: string | null;
@@ -207,6 +215,7 @@ export function scaffoldHint({
   calculate?: boolean;
   position?: boolean;
   rank?: boolean;
+  connect?: boolean;
 }): ScaffoldHint {
   const focus = (conceptTested?.trim() || conceptName.trim() || "this concept");
   const showRubric =
@@ -221,11 +230,12 @@ export function scaffoldHint({
     Boolean(calculate) ||
     Boolean(position) ||
     Boolean(rank) ||
+    Boolean(connect) ||
     (format != null && format !== "multiple_choice");
   return {
     focus,
     rubric: showRubric
-      ? formatHint(format, { sort, sequence, label, build, compare, dialogue, explain, highlight, calculate, position, rank })
+      ? formatHint(format, { sort, sequence, label, build, compare, dialogue, explain, highlight, calculate, position, rank, connect })
       : null,
     note: "Scaffolding only — never the answer. Open Study guide for course cards (keys stay hidden).",
   };
@@ -382,6 +392,7 @@ export function formatHint(
     calculate?: boolean;
     position?: boolean;
     rank?: boolean;
+    connect?: boolean;
   },
 ): string {
   if (opts?.sort) {
@@ -416,6 +427,9 @@ export function formatHint(
   }
   if (opts?.rank) {
     return "Select an item, then tap a numbered slot. Add a short reason for your top choice. Check unlocks once the order is full and a why is written.";
+  }
+  if (opts?.connect) {
+    return "Select a left item, then tap its match on the right. Tap a paired left item to clear. Check unlocks once every left item is paired.";
   }
   if (type === "symbolic") {
     return "Enter an expression using single-letter variables, + − * / ^ and parentheses, with whole-number powers from −8 to 8. For example, 2(x + 1) and 2x + 2 are equivalent wherever both are defined. Functions and equations are not supported.";

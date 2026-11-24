@@ -227,6 +227,23 @@ describe("itemView", () => {
     expect(itemView(item({ question: rankQ, answerText: "mi;gerd\u001eBecause" })).hasAnswer).toBe(true);
   });
 
+  it("W7.2 Connect: hasAnswer when every left item is paired", () => {
+    const interaction = {
+      kind: "connect" as const,
+      left: [
+        { id: "aspirin", label: "Aspirin" },
+        { id: "penicillin", label: "Penicillin" },
+      ],
+      right: [
+        { id: "cox", label: "COX" },
+        { id: "wall", label: "Wall" },
+      ],
+    };
+    const connectQ = question({ type: "short_answer", options: [], interaction });
+    expect(itemView(item({ question: connectQ, answerText: "aspirin=cox;penicillin=" })).hasAnswer).toBe(false);
+    expect(itemView(item({ question: connectQ, answerText: "aspirin=cox;penicillin=wall" })).hasAnswer).toBe(true);
+  });
+
   it("survives no item at all", () => {
     expect(itemView(undefined)).toMatchObject({
       item: undefined,

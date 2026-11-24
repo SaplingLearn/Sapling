@@ -33,7 +33,7 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { BookOpen, ChevronLeft, ChevronRight, Columns2, Gauge, Hash, Highlighter, Layers, Library, ListChecks, ListOrdered, MessagesSquare, PenLine, Puzzle, Sigma, Sparkles, Tag, TextAlignStart, Calculator, ArrowDownWideNarrow, X } from "lucide-react";
+import { BookOpen, ChevronLeft, ChevronRight, Columns2, Gauge, GitCompareArrows, Hash, Highlighter, Layers, Library, ListChecks, ListOrdered, MessagesSquare, PenLine, Puzzle, Sigma, Sparkles, Tag, TextAlignStart, Calculator, ArrowDownWideNarrow, X } from "lucide-react";
 import { AnswerOption, Badge, Button, Chip, ProgressDots } from "@/components/ui";
 import { ConceptNode } from "@/components/graph/ConceptNode";
 import { ConfidenceControl } from "@/components/learn/ConfidenceControl";
@@ -51,6 +51,7 @@ import { asHighlightInteraction } from "@/lib/quiz/highlightInteraction";
 import { asCalculateInteraction } from "@/lib/quiz/calculateInteraction";
 import { asPositionInteraction } from "@/lib/quiz/positionInteraction";
 import { asRankInteraction } from "@/lib/quiz/rankInteraction";
+import { asConnectInteraction } from "@/lib/quiz/connectInteraction";
 import { asLabelInteraction } from "@/lib/quiz/labelInteraction";
 import { asSequenceInteraction } from "@/lib/quiz/sequenceInteraction";
 import { asSortInteraction } from "@/lib/quiz/sortInteraction";
@@ -66,6 +67,7 @@ import { HighlightAnswer } from "./HighlightAnswer";
 import { CalculateAnswer } from "./CalculateAnswer";
 import { PositionAnswer } from "./PositionAnswer";
 import { RankAnswer } from "./RankAnswer";
+import { ConnectAnswer } from "./ConnectAnswer";
 import { LabelAnswer } from "./LabelAnswer";
 import { SequenceAnswer } from "./SequenceAnswer";
 import { SortAnswer } from "./SortAnswer";
@@ -192,6 +194,7 @@ const FORMAT_TAG: Record<string, { label: string; Icon: typeof ListChecks }> = {
   calculate: { label: "Calculate", Icon: Calculator },
   position: { label: "Position", Icon: Gauge },
   rank: { label: "Rank", Icon: ArrowDownWideNarrow },
+  connect: { label: "Connect", Icon: GitCompareArrows },
 };
 
 /** Where the question's grounding came from, said plainly. */
@@ -963,6 +966,29 @@ function CompareField(props: AnswerFieldProps) {
 
 
 
+
+/** W7.2 Connect (7.3): pair left to right. */
+function ConnectField(props: AnswerFieldProps) {
+  const { view, shown, selectable, actions } = props;
+  const connect = asConnectInteraction(view.item?.question.interaction);
+  if (!connect) return <WrittenField {...props} />;
+  return (
+    <div className="quiz-question__written quiz-question__written--connect" data-marked={shown ? "true" : undefined}>
+      <ConnectAnswer
+        interaction={connect}
+        value={view.item?.answerText ?? ""}
+        disabled={!selectable}
+        expected={shown?.correctAnswer ?? null}
+        verdict={outcomeOf(shown) ?? null}
+        onChange={text => actions.write?.(text)}
+      />
+      <p className="quiz-question__format-hint" id="quiz-format-hint" data-testid="quiz-format-hint">
+        {formatHint("short_answer", { connect: true })}
+      </p>
+    </div>
+  );
+}
+
 /** W7.2 Position (7.12): markers on scale stops. */
 function PositionField(props: AnswerFieldProps) {
   const { view, shown, selectable, actions } = props;
@@ -1121,6 +1147,7 @@ function kitField(props: AnswerFieldProps): React.JSX.Element | null {
   if (asCalculateInteraction(interaction)) return <CalculateField {...props} />;
   if (asPositionInteraction(interaction)) return <PositionField {...props} />;
   if (asRankInteraction(interaction)) return <RankField {...props} />;
+  if (asConnectInteraction(interaction)) return <ConnectField {...props} />;
   return null;
 }
 
@@ -1379,6 +1406,7 @@ export function QuizQuestion({
   const calculateInteraction = asCalculateInteraction(kitInteraction);
   const positionInteraction = asPositionInteraction(kitInteraction);
   const rankInteraction = asRankInteraction(kitInteraction);
+  const connectInteraction = asConnectInteraction(kitInteraction);
   const scaffold = scaffoldHint({
     conceptName: concept.name,
     conceptTested: view.item?.question.concept_tested,
@@ -1394,6 +1422,7 @@ export function QuizQuestion({
     calculate: Boolean(calculateInteraction),
     position: Boolean(positionInteraction),
     rank: Boolean(rankInteraction),
+    connect: Boolean(connectInteraction),
   });
   const openGuide = useCallback(() => {
     setAskForCursor(null);
@@ -1453,7 +1482,9 @@ export function QuizQuestion({
                       ? "position"
                       : rankInteraction
                         ? "rank"
-                        : view.format;
+                        : connectInteraction
+                          ? "connect"
+                          : view.format;
   const header = (
     <QuestionHeader
       concept={concept}
