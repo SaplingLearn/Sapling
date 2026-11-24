@@ -21,8 +21,6 @@ import { useRouter } from "next/navigation";
 import { FullHeightScreen } from "../FullHeightScreen";
 import { useToast } from "../ToastProvider";
 import { useUser } from "@/context/UserContext";
-import { libraryGuides } from "../studyGuide/home/guidesModel";
-import { useLibraryGuides } from "../studyGuide/home/useLibraryGuides";
 
 import { DocMenu } from "./DocMenu";
 import { BulkBar, UndoToast } from "./LibraryBits";
@@ -54,7 +52,6 @@ export function Library() {
   const { userId, userReady } = useUser();
   const data = useLibraryData(userId, userReady);
   const ui = useLibraryUi();
-  const guides = useLibraryGuides(userId);
 
   const searchRef = React.useRef<HTMLInputElement>(null);
   const fileRef = React.useRef<HTMLInputElement>(null);
@@ -130,17 +127,7 @@ export function Library() {
     scopeCourseId: scope.scopeCourseId, go: ui.setLoc,
   }), [data.documents, courses, ui.loc, scope.scopeCourseId, ui.setLoc]);
 
-  // A saved study guide is not a document, so it follows the course scope and
-  // the search but shows only under "All Types" and "Study Guide".
-  const shownGuides = React.useMemo(() => libraryGuides(guides.guides, {
-    category: ui.type,
-    courseFilter: scope.kind === "c"
-      ? (scope.locId === "none" ? "uncategorized" : scope.locId!)
-      : "all",
-    query: ui.query,
-  }), [guides.guides, ui.type, scope.kind, scope.locId, ui.query]);
-
-  const empty = scope.rows.length + scope.folderItems.length + shownGuides.length === 0;
+  const empty = scope.rows.length + scope.folderItems.length === 0;
   const menuDoc = ui.docMenu
     ? scope.source.find(d => d.id === ui.docMenu!.docId)
     : undefined;
@@ -158,9 +145,11 @@ export function Library() {
           e.preventDefault();
           upload.pickFiles(files);
         }}
+        onScroll={() => { if (ui.docMenu) ui.closeAllMenus(); }}
         style={{
           position: "relative", flex: 1, minWidth: 0, display: "grid",
-          gridTemplateColumns: "minmax(0, 1fr)", gridTemplateRows: "auto minmax(0, 1fr)",
+          gridTemplateColumns: "minmax(0, 1fr)", gridTemplateRows: "auto auto",
+          alignContent: "start", overflowY: "auto", overflowX: "hidden",
           padding: "36px 64px 0 56px", boxSizing: "border-box",
           background: "#FAF8F3", color: "#1A1814", fontSize: 15, lineHeight: 1.45,
           WebkitFontSmoothing: "antialiased",
@@ -193,10 +182,11 @@ export function Library() {
           aria-label="Documents"
           style={{
             gridColumn: 1, gridRow: 2, position: "relative", display: "flex",
-            flexDirection: "column", minHeight: 0, minWidth: 0,
+            flexDirection: "column", minWidth: 0,
           }}
         >
           <LibraryScopeBar
+            isTrash={scope.isTrash}
             title={labels.title}
             dotColor={scope.scopeCourse?.color ?? null}
             showDot={scope.kind !== "all" && !scope.isTrash}
@@ -204,7 +194,6 @@ export function Library() {
             onCourseMenu={ui.openCourseMenu}
             menuClosing={ui.closing}
             scopeOptions={options}
-            isTrash={scope.isTrash}
             trashCount={data.trash.length}
             trashDropOver={ui.dropOn === "trash"}
             trashBump={ui.trashBump}
@@ -273,7 +262,6 @@ export function Library() {
             view={ui.view}
             columns={scope.columns}
             showCourse={scope.showCourse}
-            isTrash={scope.isTrash}
             documents={scope.rows}
             folders={scope.folderItems}
             rowProps={rowProps}
@@ -285,19 +273,13 @@ export function Library() {
             loadError={data.loadError}
             hasDocuments={data.documents.length > 0}
             onRetry={data.retry}
-            guides={shownGuides}
-            guidesFailed={guides.failed}
-            onGuidesRetry={guides.reload}
-            courses={data.courses}
             empty={empty}
-            guidesKnown={guides.known}
             emptyTitle={labels.emptyTitle}
             emptyBody={labels.emptyBody}
             hasQuery={ui.query.length > 0}
             scoped={scope.searchScoped}
             onClearSearch={() => ui.setQuery("")}
             onSearchAll={() => ui.setLoc("all")}
-            onScroll={() => { if (ui.docMenu) ui.closeAllMenus(); }}
           />
 
           {data.toast && (

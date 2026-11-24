@@ -67,10 +67,17 @@ const NOTES_DESIGN = read("../notes/__fixtures__/notes.design.html");
  * (`position: absolute; transform: {{ fitT }}; transform-origin: 0 0`) so it
  * can be previewed at any window size. The real page is responsive inside the
  * repo's own shell, so that wrapper has no counterpart.
+ *
+ * The scroller: the prototype pins the title, search and scope bar and scrolls
+ * the document list alone (`grid-template-rows: auto minmax(0, 1fr)` with
+ * `overflow-y: auto` on the list). Owner's call 2026-11-24 — the whole page
+ * scrolls instead, so the header travels up with the documents, which means
+ * the rows track `auto auto` and the page owns the overflow.
  */
 const EXPECTED_DEVIATIONS = [
   /^font-family: '(Aleo|SUSE|IBM Plex Mono)'/,
   /^width: 1920px$/, /^height: 1080px$/, /^transform-origin: 0 0$/,
+  /^grid-template-rows: auto minmax\(0, 1fr\)$/,
 ];
 
 /** The rebuild's own source: components, hooks, and the ported stylesheet. */

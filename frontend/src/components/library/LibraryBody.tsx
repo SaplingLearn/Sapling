@@ -10,9 +10,6 @@
 import React from "react";
 
 import type { DocFolder, Document as Doc } from "@/lib/types";
-import type { EnrolledCourse } from "@/lib/api";
-import type { GuideCard } from "@/lib/studyGuide/types";
-import { LibraryGuides } from "../studyGuide/home/LibraryGuides";
 
 import { EmptyState } from "./LibraryBits";
 import { DocRow, FolderRow, ListHeader } from "./LibraryList";
@@ -24,7 +21,6 @@ export interface LibraryBodyProps {
   view: "list" | "panel";
   columns: string;
   showCourse: boolean;
-  isTrash: boolean;
 
   documents: Doc[];
   folders: DocFolder[];
@@ -41,14 +37,8 @@ export interface LibraryBodyProps {
   hasDocuments: boolean;
   onRetry: () => void;
 
-  guides: GuideCard[];
-  guidesFailed: boolean;
-  onGuidesRetry: () => void;
-  courses: EnrolledCourse[];
 
   empty: boolean;
-  /** Guides may still be on their way; "nothing here" waits for them. */
-  guidesKnown: boolean;
   emptyTitle: string;
   emptyBody: string;
   hasQuery: boolean;
@@ -56,7 +46,6 @@ export interface LibraryBodyProps {
   onClearSearch: () => void;
   onSearchAll: () => void;
 
-  onScroll: () => void;
 }
 
 function LoadError({
@@ -109,38 +98,38 @@ function LoadError({
   );
 }
 
+/** The incoming view's entrance, on the design's own easing. */
+const VIEW_IN: React.CSSProperties = {
+  animation: "sapViewIn 260ms cubic-bezier(0.2, 0.7, 0.2, 1) both",
+};
+
 export function LibraryBody(props: LibraryBodyProps) {
   const {
-    view, columns, showCourse, isTrash, documents, folders, rowProps, folderProps,
-    allChecked, onToggleAll, loadError, hasDocuments, onRetry, guides, guidesFailed,
-    onGuidesRetry, courses, empty, guidesKnown, emptyTitle, emptyBody, hasQuery,
-    scoped, onClearSearch, onSearchAll, onScroll,
+    view, columns, showCourse, documents, folders, rowProps, folderProps,
+    allChecked, onToggleAll, loadError, hasDocuments, onRetry,
+    empty, emptyTitle, emptyBody, hasQuery,
+    scoped, onClearSearch, onSearchAll,
   } = props;
 
-  const showEmpty = empty && guidesKnown && !(loadError && !hasDocuments);
+  const showEmpty = empty && !(loadError && !hasDocuments);
 
   return (
     <div
-      onScroll={onScroll}
       style={{
-        flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden",
+        // The PAGE scrolls, not this list: the title, search and scope bar
+        // travel up with the documents rather than staying pinned.
+        overflowX: "hidden",
         padding: "6px 6px 96px 0",
         animation: "sapFadeIn 260ms cubic-bezier(0.2, 0.7, 0.2, 1) 900ms both",
       }}
     >
       {loadError && <LoadError hasDocuments={hasDocuments} onRetry={onRetry} />}
 
-      {!isTrash && (
-        <LibraryGuides
-          guides={guides}
-          courses={courses}
-          failed={guidesFailed}
-          onRetry={onGuidesRetry}
-        />
-      )}
-
+      {/* Keyed on the view so React remounts on a switch and the animation
+          replays; without the key the incoming view inherits the outgoing
+          one's finished animation and nothing moves. */}
       {!empty && view === "list" && (
-        <>
+        <div key="list" style={VIEW_IN}>
           <ListHeader
             columns={columns}
             showCourse={showCourse}
@@ -158,11 +147,11 @@ export function LibraryBody(props: LibraryBodyProps) {
           {documents.map((d, i) => (
             <DocRow key={d.id} columns={columns} showCourse={showCourse} {...rowProps(d, i)} />
           ))}
-        </>
+        </div>
       )}
 
       {!empty && view === "panel" && (
-        <div style={PANEL_GRID}>
+        <div key="panel" style={{ ...PANEL_GRID, ...VIEW_IN }}>
           {folders.map((f, i) => <FolderCard key={f.id} {...folderProps(f.id, i)} />)}
           {documents.map((d, i) => (
             <DocCard key={d.id} showCourseDot={showCourse} {...rowProps(d, i)} />

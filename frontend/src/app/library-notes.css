@@ -40,6 +40,10 @@
 @keyframes sapShimmer { 0% { background-position: -300px 0; } 100% { background-position: 300px 0; } }
 @keyframes sapSkelOut { from { opacity: 1; visibility: visible; } to { opacity: 0; visibility: hidden; } }
 
+/* List <-> Panel. The rows and cards each animate themselves in, but the
+   outgoing view used to vanish on the same frame, which read as a jump.
+   The incoming view fades and rises as one block over that stagger. */
+@keyframes sapViewIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 @keyframes sapFadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 @keyframes sapSlideUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { [data-sap-surface], [data-sap-surface] * { animation-duration: 1ms !important; animation-delay: 0ms !important; } }
