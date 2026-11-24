@@ -321,7 +321,7 @@ journeys keep anchoring: `quiz-panel`, `quiz-start`,
 | `quiz-cancel-generate` | its "Cancel" — aborts the generation and returns to quiz home (#760) |
 | `quiz-panel` | question root (`phase: active \| answered`) |
 | `quiz-progress` | the question rail's progress dots (`ui/ProgressDots`) |
-| `quiz-question-meta` | W7.1 meta row (concept pill, tier chip, format tag, difficulty) |
+| `quiz-question-meta` | W7.1 meta row (concept pill, tier / Returning chips, exam-distance pips, format tag, difficulty) |
 | `quiz-format-tag` | W7.2: `data-format` includes core types plus kit tags `sort`…`rank` (still `short_answer` on the wire) |
 | `quiz-action-bar` | W7.1 footer: Hint / Study guide / pager / Skip / Check |
 | `quiz-answer-options` | answer radiogroup (multiple choice) |
@@ -403,6 +403,8 @@ journeys keep anchoring: `quiz-panel`, `quiz-start`,
 | `quiz-guide-open-home` / `quiz-guide-list` / `quiz-guide-card-{id}` / `quiz-guide-empty` | W7.5: drawer guide links (list cards only, never detail keys) |
 | `quiz-guide-ask-input` / `quiz-guide-ask-send` / `quiz-guide-ask-retry` | W7.5: concept Ask in the drawer (`guide_ask`; no quiz seed) |
 | `quiz-tier-chip` | W7.1: mastery tier chip in the question meta row |
+| `quiz-returning-chip` | W7 meta: “Returning” when `times_studied ≥ 1` or `last_studied_at` set ([`w7-meta-chips.md`](learning-loop/w7-meta-chips.md)) |
+| `quiz-exam-distance` | W7 meta: five exam-distance pips (`data-pips` 1…5; nearer exam-ready → more filled) |
 | `quiz-cancel-submit` | "Cancel" in place of Leave while scoring (`phase: submitting`) — aborts the submit and returns to the final verdict (#760) |
 | `quiz-leave-dialog` / `quiz-leave-cancel` / `quiz-leave-confirm` | the leave confirmation |
 | `quiz-ask-panel` | the tutor sheet (`ui/Sheet`) |

@@ -88,6 +88,12 @@ substitute, and some refused. The research binding is
 | Refused | Student-editable teaching prompts | Staff / flag variants only if ever | Plan AN / W6 |
 | Refused | Mic dictation / think-while-reading | Blocked by Permissions-Policy; typed later only if product decides | Plan AO / W6 |
 
+### W7 meta chips (outside §13 numbering)
+
+Quiz shell “Returning” + exam-distance pips are display-only, derived from
+graph `times_studied` / `last_studied_at` + tier/score. Formula and UI contract:
+[`w7-meta-chips.md`](./w7-meta-chips.md). Does not write mastery.
+
 ## By theme
 
 ### Evidence and the learner model (17)

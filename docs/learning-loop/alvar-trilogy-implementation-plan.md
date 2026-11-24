@@ -381,7 +381,7 @@ Update `docs/learning-loop/amendments.md` with a short “Alvar trilogy: adopted
 
 1. Question text and keys still come from quiz generation agents / planned writer — the design kit’s demo prompts are **fixtures for UI only**.  
 2. Mastery chips and blob nodes read `graph_nodes` / submit deltas — never local prototype mastery.  
-3. “Returning concept” / exam-distance pips derive from learner_state (last review, FSRS due, or times_studied) — define the formula in amendments before coding.  
+3. “Returning concept” / exam-distance pips — **done** ([`w7-meta-chips.md`](./w7-meta-chips.md); `times_studied` / `last_studied_at` + tier/score; FSRS due optional later).  
 4. Ask-about-this / Tutor handoff keeps existing origins (`quiz-ask`); do not drop the panel in the reskin.  
 5. Library-grounded quizzes continue to use course materials via existing grounding; empty library → honest empty state (design empty components).
 
@@ -685,8 +685,9 @@ Ordered. **Operator-only** rows are not agent work. Adjust this table if scope s
 | 16 | **W7.2j** | Position kit stub (design 7.12) | **done** | Markers on scale stops + vitest + testids; `kind: "position"` |
 | 17 | **W7.2k** | Rank kit stub (design 7.15) | **done** | Order + why encode + vitest + testids; `kind: "rank"` |
 | 18 | **W7.2l** | Connect kit stub (design 7.3 match) | **done** | Left→right pairing + vitest + testids; `kind: "connect"`; concept-map mode deferred |
+| 19 | **W7 meta** | Returning + exam-distance chips | **done** | Formula [`w7-meta-chips.md`](w7-meta-chips.md); `metaChips.ts` + QuestionHeader; Bloom skill / wager still deferred |
 
-**Day 9 progress:** #1–8 + #10–18 **done** · #9 operator HOLD (only remaining Day 9 row).
+**Day 9 progress:** #1–8 + #10–19 **done** · #9 operator HOLD (only remaining Day 9 row).
 
 ---
 

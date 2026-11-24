@@ -109,6 +109,8 @@ export function QuizScreen() {
       color: accent ?? "",
       tier: activeNode?.mastery_tier ?? "unexplored",
       mastery: activeNode?.mastery_score ?? 0,
+      timesStudied: activeNode?.times_studied ?? 0,
+      lastStudiedAt: activeNode?.last_studied_at ?? null,
     }),
     [activeNode, activeCourse, accent, session.conceptId],
   );

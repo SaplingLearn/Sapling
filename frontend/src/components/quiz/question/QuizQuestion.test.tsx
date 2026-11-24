@@ -262,11 +262,27 @@ describe("QuizQuestion — the question", () => {
     expect(screen.getByTestId("quiz-session-top")).toHaveTextContent("CS101");
     expect(screen.getByTestId("quiz-session-top")).toHaveTextContent("Recursion");
     expect(screen.getByTestId("quiz-tier-chip")).toHaveTextContent("Struggling");
+    expect(screen.queryByTestId("quiz-returning-chip")).not.toBeInTheDocument();
+    expect(screen.getByTestId("quiz-exam-distance")).toHaveAttribute("data-pips", "4");
     expect(screen.getByTestId("quiz-session-progress")).toHaveTextContent("Question 2 of 3");
     expect(screen.getByRole("progressbar", { name: "Question 2 of 3" })).toBeInTheDocument();
     expect(screen.getByTestId("quiz-hint-slot")).toBeInTheDocument();
     expect(screen.getByTestId("quiz-skip-slot")).toBeInTheDocument();
     expect(screen.getByText("MEDIUM")).toBeInTheDocument();
+  });
+
+  it("shows Returning when the concept was studied before", () => {
+    render(
+      <QuizQuestion
+        session={makeSession()}
+        actions={makeActions()}
+        config={null}
+        concept={{ ...CONCEPT, timesStudied: 2, lastStudiedAt: "2026-11-01T00:00:00Z" }}
+        userId="user-1"
+        courseId="course-cs101"
+      />,
+    );
+    expect(screen.getByTestId("quiz-returning-chip")).toHaveTextContent("Returning");
   });
 
   it("gives the radiogroup exactly one tab stop — the selection, else the first row", () => {

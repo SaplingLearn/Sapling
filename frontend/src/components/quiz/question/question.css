@@ -220,6 +220,25 @@
   flex: 1;
 }
 
+/* W7 meta: exam-distance pips (docs/learning-loop/w7-meta-chips.md). */
+.quiz-question__exam-distance {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+}
+
+.quiz-question__exam-distance-pip {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--r-full);
+  background: var(--border);
+}
+
+.quiz-question__exam-distance-pip--filled {
+  background: color-mix(in srgb, var(--accent) 70%, var(--text-dim));
+}
+
 /* W7.6: weak-prerequisite banner under the meta row. */
 .quiz-prereq-banner {
   display: flex;

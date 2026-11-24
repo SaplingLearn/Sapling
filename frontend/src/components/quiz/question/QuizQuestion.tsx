@@ -55,6 +55,11 @@ import { asConnectInteraction } from "@/lib/quiz/connectInteraction";
 import { asLabelInteraction } from "@/lib/quiz/labelInteraction";
 import { asSequenceInteraction } from "@/lib/quiz/sequenceInteraction";
 import { asSortInteraction } from "@/lib/quiz/sortInteraction";
+import {
+  examDistanceFilled,
+  examDistancePips,
+  isReturningConcept,
+} from "@/lib/quiz/metaChips";
 import type { Phase, QuestionType, QuizConfig, QuizItem, QuizPrereqBanner, QuizSession } from "@/lib/quiz/types";
 import { isUnanswered } from "@/lib/quiz/machine";
 import { expressionParts, superscriptParts, type ExpressionPart } from "@/lib/quiz/answerFormats";
@@ -119,6 +124,9 @@ export interface QuizConceptSummary {
   color: string;
   tier: string;
   mastery: number;
+  /** Graph study history — feeds Returning + exam-distance (w7-meta-chips.md). */
+  timesStudied?: number;
+  lastStudiedAt?: string | null;
 }
 
 export interface QuizQuestionProps {
@@ -454,6 +462,9 @@ function QuestionHeader({
   // straight through; the CSS variable degrades to the app accent instead.
   const accent = concept.color || "var(--quiz-accent, var(--accent))";
   const tierLabel = TIER_CHIP[concept.tier];
+  const returning = isReturningConcept(concept.timesStudied, concept.lastStudiedAt);
+  const dist = examDistancePips(concept.tier, concept.mastery);
+  const filled = examDistanceFilled(dist);
   return (
     <div className="quiz-question__header" data-testid="quiz-question-meta">
       <span className="quiz-question__concept-pill">
@@ -471,6 +482,27 @@ function QuestionHeader({
       {tierLabel && (
         <Chip data-testid="quiz-tier-chip">{tierLabel}</Chip>
       )}
+      {returning && (
+        <Chip data-testid="quiz-returning-chip">Returning</Chip>
+      )}
+      <span
+        className="quiz-question__exam-distance"
+        data-testid="quiz-exam-distance"
+        data-pips={dist}
+        title={`Exam distance ${dist} of 5`}
+        aria-label={`Exam distance ${dist} of 5`}
+      >
+        {Array.from({ length: 5 }, (_, i) => (
+          <span
+            key={i}
+            className={
+              i < filled
+                ? "quiz-question__exam-distance-pip quiz-question__exam-distance-pip--filled"
+                : "quiz-question__exam-distance-pip"
+            }
+          />
+        ))}
+      </span>
       <span className="quiz-question__header-gap" />
       {showFormat && (
         <span className="quiz-question__format" data-testid="quiz-format-tag" data-format={formatTagKey}>

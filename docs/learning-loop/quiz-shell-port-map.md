@@ -14,7 +14,7 @@ Goal: map handoff artifacts → production files, name the **first slice (W7.1�
 | Handoff artifact | Spec steps | Production target(s) | Notes |
 |---|---|---|---|
 | `Quiz Component Library.dc.html` | 1 | `frontend/src/components/quiz/quiz.css` + shared `components/ui/*` (`AnswerOption`, `ProgressDots`, `Chip`, …) + `components/graph/ConceptNode.tsx` / `lib/graph/nodeStyle.ts` | Tokens already live in `app/globals.css`. Empty states → `home/HomeStates.tsx`. Mastery blobs → existing `ConceptNode`, not plant-stage strings. |
-| `Quiz Shell.dc.html` | 2–3 | `QuizScreen.tsx`, `question/QuizQuestion.tsx`, `question/question.css`, `question/LeaveDialog.tsx`, `question/AskPanel.tsx` | **Shipped:** attempt phases use `SessionTop` + `data-quiz-session` (SideNav hidden). Home / results / error keep app `TopBar` + Study back link (W7.D1). Hint / Skip / Study guide / prereq banner live; wager + exam-distance / Returning chips still deferred. |
+| `Quiz Shell.dc.html` | 2–3 | `QuizScreen.tsx`, `question/QuizQuestion.tsx`, `question/question.css`, `question/LeaveDialog.tsx`, `question/AskPanel.tsx` | **Shipped:** attempt phases use `SessionTop` + `data-quiz-session` (SideNav hidden). Home / results / error keep app `TopBar` + Study back link (W7.D1). Hint / Skip / Study guide / prereq banner live; Returning + exam-distance pips live ([`w7-meta-chips.md`](./w7-meta-chips.md)); wager still deferred. |
 | `Quiz Components 7.1–7.18*.dc.html` + `quiz-kit.js` / `quiz-data-*.js` | 4–5 | `question/*Answer.tsx` + `lib/quiz/*Interaction.ts` (Sort/Label/Sequence/Build/Compare/Dialogue) + core MC/written | Kit stubs on `short_answer` wire; generation does not emit `interaction` yet. Demo prompts remain **UI fixtures only**. |
 | `Quiz Session.dc.html` | 6–7 | `QuizScreen.tsx` phases + `home/` start path + `results/QuizResults.tsx` (+ `LearningBlock.tsx`) | Practice / Exam Twin start, leave, generating skeleton, summary. Generating already exists as a question phase. |
 | Study Hub / Guide / Settings recreations | 8–9 | `components/study/**`, `components/studyGuide/**`, `components/screens/Settings.tsx` | Port on **copies** of design files; production edits go to these React trees. Hub Quiz button → launcher (W7.9). |
@@ -34,7 +34,7 @@ Shared primitives (handoff “ui/” under quiz): live in `frontend/src/componen
 |---|---|---|
 | Full-screen focus session (no SideNav) | `QuizScreen.tsx` when `QUESTION_PHASES` | **done** — `SessionTop` + `data-quiz-session`; home/results keep TopBar |
 | 64px session top: X / course+topic / “Question N of M” + bar / XP+streak / `?` | `QuizQuestion.tsx` `SessionTop` | Progress + leave done; XP/streak stay off session top (W7.D1) |
-| Meta row: concept pill (blob) + skill chip + exam-distance pips + source + “Returning” | `QuizQuestion.tsx` + concept summary from `QuizScreen` | Concept pill + format tag done; skill / exam-distance / Returning still need data |
+| Meta row: concept pill (blob) + skill chip + exam-distance pips + source + “Returning” | `QuizQuestion.tsx` + concept summary from `QuizScreen` | Concept pill + tier + Returning + exam-distance done ([`w7-meta-chips.md`](./w7-meta-chips.md)); Bloom skill chip still deferred (no field) |
 | Action bar: Hint / Study guide \| wager \| Skip / Check | `QuizQuestion.tsx` | Hint / Study guide / Skip / Check **done**; wager deferred |
 | Feedback / verdict panel tones | `question.css` + `components/ui/AnswerOption.tsx` | Correct/incorrect states exist; partial/hint/info tones from handoff |
 | Accent = brand forest vs `--quiz-accent` course tint | `QuizScreen.tsx` `rootStyle` | Confirm with product before flipping (plan W7 open question) |
@@ -88,7 +88,7 @@ Optional later in the same epic: `results/QuizResults.tsx`, `results/LearningBlo
 
 1. Kit demo prompts ≠ production items.  
 2. Mastery from `graph_nodes` / submit deltas only.  
-3. “Returning” / exam-distance pips need an amendment formula before coding.  
+3. “Returning” / exam-distance pips — **done** ([`w7-meta-chips.md`](./w7-meta-chips.md); `lib/quiz/metaChips.ts`).  
 4. Keep Ask-tutor (`AskPanel` / `quiz-ask` origin).  
 5. Empty library → honest empty state (`HomeStates`), not fake concepts.
 
