@@ -23,6 +23,7 @@ from agents.quiz import quiz_agent, Quiz, PROMPT_VERSION
 from agents.quiz_planned import (
     PROMPT_VERSION as PLANNED_PROMPT_VERSION,
     build_message as build_planned_message,
+    planned_kit,
     quiz_planned_agent,
 )
 from agents.deps import SaplingDeps
@@ -684,7 +685,9 @@ async def _quiz_via_agent(
             spec = tags = None
             kit = None
             if plan is not None:
-                planned = quiz_learning.planned_question(q, plan, filled_slots, concept_name)
+                planned = quiz_learning.planned_question(
+                    q, plan, filled_slots, concept_name, kit=planned_kit(quiz, q),
+                )
                 if planned is None:
                     dropped += 1
                     continue

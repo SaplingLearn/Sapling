@@ -33,6 +33,7 @@ function_handlers_e2e.py::_quiz_handler answers both schemas.
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 from collections.abc import Sequence
 from typing import Any
@@ -77,10 +78,6 @@ class PlannedQuestion(BaseModel):
     accepted_answers: list[str] = Field(default_factory=list)
     correct_answer: str
     explanation: str
-    # W7 kit payload (flat dict). Only on the planned schema so flag-off plain
-    # quiz requests stay byte-identical. Wire sanitize in
-    # services/quiz/interaction.py. See docs/learning-loop/w7-generation-emit.md.
-    interaction: dict[str, Any] | None = None
 
     @field_validator("accepted_answers", mode="before")
     @classmethod
@@ -89,9 +86,49 @@ class PlannedQuestion(BaseModel):
 
 
 class PlannedQuiz(BaseModel):
-    """The agent's structured output: one item per QUESTION line."""
+    """The agent's structured output: one item per QUESTION line, plus the
+    quiz's one optional W7 kit item.
+
+    The kit rides the QUIZ, not the question, as two flat scalars: the
+    question object is already at the output-schema budget's 8 properties
+    (agents/__init__.py), a nested optional `interaction` object would be the
+    `Sub | None` shape the budget forbids, and a free-form JSON object is not
+    a strict-mode schema on Claude. The prompt already allows at most one kit
+    item per quiz, so a slot number and the kit as a JSON string say all of
+    it; `kit_for` parses it and services/quiz/interaction.py sanitizes it
+    (fail closed: unparseable or unknown payloads are dropped, never the
+    question). Only on the planned schema, so flag-off plain quiz requests
+    stay byte-identical. See docs/learning-loop/w7-generation-emit.md."""
 
     questions: list[PlannedQuestion]
+    kit_slot: int = Field(
+        default=0,
+        description="the slot of the one short_answer item answered with a kit, or 0 for none",
+    )
+    kit: str = Field(
+        default="",
+        description="that item's kit as one JSON object (its `kind` plus the kind's fields), or ''",
+    )
+
+    def kit_for(self, slot: int) -> dict[str, Any] | None:
+        """The raw kit payload for `slot` (unsanitized), or None: no kit, a
+        different slot, or a `kit` string that is not one JSON object."""
+        if not self.kit_slot or slot != self.kit_slot or not self.kit.strip():
+            return None
+        try:
+            parsed = json.loads(self.kit)
+        except ValueError:
+            logger.warning("quiz_planned: dropped an unparseable kit (%d chars)", len(self.kit))
+            return None
+        return parsed if isinstance(parsed, dict) else None
+
+
+def planned_kit(quiz: object, question: object) -> dict[str, Any] | None:
+    """`PlannedQuiz.kit_for` for one of a run's questions, whichever schema
+    the run had: the plain quiz (flag off) has no kit."""
+    if not isinstance(quiz, PlannedQuiz) or not isinstance(question, PlannedQuestion):
+        return None
+    return quiz.kit_for(question.slot)
 
     @field_validator("questions", mode="before")
     @classmethod
@@ -150,11 +187,12 @@ WRITTEN_RULES = (
     "single letter in the question); never ask for an equation, a function, a root or "
     "trigonometric notation. Do not ask open-ended questions that need subjective "
     "grading.\n\n"
-    "Optional kit UI on short_answer only: at most ONE item per quiz may set "
-    "`interaction`. Ids are short tokens without `;` `=` or `,`. Leave "
-    "`interaction` null/omitted for ordinary short answers and for numeric/symbolic. "
-    "Pick the kind that matches the task; `correct_answer` must be the encoded "
-    "string the UI would submit:\n"
+    "Optional kit UI on short_answer only: at most ONE item per quiz may be a kit "
+    "item. For it, set `kit_slot` to that item's `slot` and `kit` to the kit "
+    "written as one JSON object: its `kind` and that kind's fields. Ids are short "
+    "tokens without `;` `=` or `,`. With no kit item, `kit_slot` is 0 and `kit` is "
+    "''; never a kit on numeric or symbolic items. Pick the kind that matches the "
+    "task; `correct_answer` must be the encoded string the UI would submit:\n"
     '- `sort`: ≥2 string `buckets` + `items` `{id,label}` → `Bucket=id1,id2;…`\n'
     '- `label`: equal-length `spots`/`labels` `{id,label}` → `spotId=labelId;…`\n'
     '- `sequence`: ≥2 `steps` `{id,label}` → `id1;id2;…` (correct order)\n'

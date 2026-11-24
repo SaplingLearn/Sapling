@@ -127,36 +127,77 @@ def test_attach_drops_bad_interaction_without_dropping_item():
 
 
 def test_planned_question_returns_kit_for_wire_attach():
-    from agents.quiz_planned import PlannedQuestion
+    import json
+
+    from agents.quiz_planned import PlannedQuestion, PlannedQuiz, planned_kit
     from learning import quiz_plan
     from services import quiz_learning as ql
 
     plan = ql.GenerationPlan(
-        specs=[quiz_plan.QuestionSpec(1, "medium")],
+        specs=[quiz_plan.QuestionSpec(1, "medium"), quiz_plan.QuestionSpec(2, "medium")],
         keys=(),
         p_known=0.4,
         source=quiz_plan.difficulty_source("medium"),
     )
-    planned = PlannedQuestion(
+    kit = {
+        "kind": "sort",
+        "buckets": ["Prok", "Euk"],
+        "items": [
+            {"id": "e-coli", "label": "E. coli"},
+            {"id": "yeast", "label": "Yeast"},
+        ],
+    }
+    sort_item = PlannedQuestion(
         slot=1,
         question="Sort the cells.",
         type="short_answer",
         correct_answer="Prok=e-coli;Euk=yeast",
         explanation="By domain.",
-        interaction={
-            "kind": "sort",
-            "buckets": ["Prok", "Euk"],
-            "items": [
-                {"id": "e-coli", "label": "E. coli"},
-                {"id": "yeast", "label": "Yeast"},
-            ],
-        },
     )
-    out = ql.planned_question(planned, plan, set(), "Cells")
+    plain_item = PlannedQuestion(
+        slot=2, question="Name the domain of yeast.", type="short_answer",
+        correct_answer="Eukaryote", explanation="Yeast has a nucleus.",
+    )
+    # The kit rides the quiz as two flat scalars (output-schema budget), not
+    # the question.
+    quiz = PlannedQuiz(questions=[sort_item, plain_item], kit_slot=1, kit=json.dumps(kit))
+    out = ql.planned_question(sort_item, plan, set(), "Cells", kit=planned_kit(quiz, sort_item))
     assert out is not None
-    q, spec, _tags, kit = out
+    q, spec, _tags, raw = out
     assert spec.slot == 1
     wire = _agent_question_to_wire(q, 1)
     assert wire is not None
-    attach_interaction(wire, kit)
+    attach_interaction(wire, raw)
     assert wire["interaction"]["kind"] == "sort"
+
+    other = ql.planned_question(plain_item, plan, set(), "Cells", kit=planned_kit(quiz, plain_item))
+    assert other is not None and other[3] is None
+
+
+def test_planned_kit_fails_closed():
+    from agents.quiz import Quiz
+    from agents.quiz_planned import PlannedQuestion, PlannedQuiz, planned_kit
+
+    item = PlannedQuestion(
+        slot=1, question="Sort.", type="short_answer", correct_answer="a", explanation="b",
+    )
+    assert planned_kit(PlannedQuiz(questions=[item]), item) is None  # no kit
+    for junk in ("not json", "[1, 2]", '"sort"', "   "):
+        assert planned_kit(PlannedQuiz(questions=[item], kit_slot=1, kit=junk), item) is None
+    # A plain (flag-off) quiz has no kit.
+    plain = Quiz(questions=[QuizQuestion(
+        question="Q?", type="short_answer", difficulty="medium", correct_answer="a",
+        explanation="b", concept="C",
+    )])
+    assert planned_kit(plain, plain.questions[0]) is None
+
+
+def test_the_planned_schema_carries_the_kit_as_flat_quiz_scalars():
+    """The kit must not come back as a nested or free-form object on the
+    question (tests/test_agent_output_schemas.py budget; Claude strict JSON)."""
+    from agents.quiz_planned import PlannedQuiz
+
+    schema = PlannedQuiz.model_json_schema()
+    assert schema["properties"]["kit_slot"]["type"] == "integer"
+    assert schema["properties"]["kit"]["type"] == "string"
+    assert "interaction" not in schema["$defs"]["PlannedQuestion"]["properties"]

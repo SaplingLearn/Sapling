@@ -367,6 +367,7 @@ def test_the_planned_quiz_handler_emits_kit_sort_when_prompted(monkeypatch):
     """W7: `KIT: sort` stamps Sort interaction on the first written slot only."""
     from agents.function_handlers_e2e import (
         E2E_KIT_SORT_ANSWER,
+        E2E_KIT_SORT_INTERACTION,
         E2E_KIT_SORT_MARKER,
         E2E_CHECK_ITEM_FINAL_ANSWER,
     )
@@ -380,18 +381,29 @@ def test_the_planned_quiz_handler_emits_kit_sort_when_prompted(monkeypatch):
         "QUESTION 1: difficulty medium.\nQUESTION 2: difficulty medium.\n"
     )
     with quiz_planned_agent.override(model=model_for("quiz")):
-        items = quiz_planned_agent.run_sync(prompt, deps=_deps()).output.questions
-    assert len(items) == 2
-    first, second = items
-    assert first.interaction is not None and first.interaction["kind"] == "sort"
+        quiz = quiz_planned_agent.run_sync(prompt, deps=_deps()).output
+    assert len(quiz.questions) == 2
+    first, second = quiz.questions
+    # The kit rides the quiz (PlannedQuiz.kit_slot/kit), not the question.
+    assert quiz.kit_slot == first.slot == 1
+    assert quiz.kit_for(first.slot) == E2E_KIT_SORT_INTERACTION
     assert first.correct_answer == E2E_KIT_SORT_ANSWER
     assert E2E_KIT_SORT_MARKER in first.question
-    assert second.interaction is None
+    assert quiz.kit_for(second.slot) is None
     assert second.correct_answer == E2E_CHECK_ITEM_FINAL_ANSWER
     wire = _agent_question_to_wire(quiz_planned_to_plain(first), 1)
     assert wire is not None
-    attach_interaction(wire, first.interaction)
-    assert wire["interaction"]["kind"] == "sort"
+    attach_interaction(wire, quiz.kit_for(first.slot))
+    assert wire["interaction"] == E2E_KIT_SORT_INTERACTION
+
+
+def test_the_planned_quiz_handler_emits_no_kit_unprompted(monkeypatch):
+    """Without `KIT:` the planned handler's args are the questions alone, so
+    every pre-W7 planned fixture is unchanged."""
+    from agents.function_handlers_e2e import _e2e_planned
+
+    args = _e2e_planned(_PLANNED_PROMPT.format(fmt="short_answer"))
+    assert set(args) == {"questions"}
 
 
 def test_quiz_check_solve_returns_kit_sort_answer():

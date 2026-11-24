@@ -171,7 +171,7 @@ def _quiz_handler(messages, info) -> ModelResponse:
         # Spec §13 A144: the planned agent (agents/quiz_planned.py) rides this
         # slot with its own schema, told apart by it.
         return ModelResponse(
-            parts=[ToolCallPart(tool_name=tool.name, args={"questions": _e2e_planned(prompt)})]
+            parts=[ToolCallPart(tool_name=tool.name, args=_e2e_planned(prompt))]
         )
     requested = re.search(r"question_format: (short_answer|numeric|symbolic|mixed)\.", prompt)
     questions = _E2E_QUIZ_QUESTIONS
@@ -214,8 +214,11 @@ register_function_handler("quiz", _quiz_handler)
 # so a target on it tags the first distractor — the one a journey picks). A
 # written item (FORMAT short_answer, or mixed: even slots) answers
 # E2E_CHECK_ITEM_FINAL_ANSWER too, so the solve agrees with it in code.
-# Opt-in `KIT: sort` (first written slot only): Sort interaction +
-# E2E_KIT_SORT_ANSWER; stem carries `[e2e-kit-sort]` so quiz_check solve agrees.
+# Opt-in `KIT: sort` (first written slot only): the quiz's `kit_slot` names
+# that slot and its `kit` is E2E_KIT_SORT_INTERACTION as a JSON string (the kit
+# rides the quiz, not the question: agents/quiz_planned.py::PlannedQuiz), the
+# item answers E2E_KIT_SORT_ANSWER, and its stem carries `[e2e-kit-sort]` so the
+# quiz_check solve agrees. Without KIT the args are `{"questions": ...}` alone.
 # Contract: tests/test_e2e_function_handlers.py. Keep in sync.
 
 E2E_PLANNED_STEM = "E2E planned question {n} [e2e-function-model][{concept}]: what does the learning rate control?"
@@ -248,7 +251,7 @@ _PLANNED_FORMAT_RE = re.compile(r"^FORMAT: (\w+)$", re.M)
 _PLANNED_KIT_RE = re.compile(r"^KIT: (sort)\s*$", re.M)
 
 
-def _e2e_planned(prompt: str) -> list[dict]:
+def _e2e_planned(prompt: str) -> dict:
     concept_m = _PLANNED_CONCEPT_RE.search(prompt)
     concept = concept_m.group(1).strip() if concept_m else "Recursion"
     fmt_m = _PLANNED_FORMAT_RE.search(prompt)
@@ -258,13 +261,13 @@ def _e2e_planned(prompt: str) -> list[dict]:
     listed = set(re.findall(r"^- ([a-z0-9_]+): ", prompt, re.M))
     distractors = E2E_CHECK_ITEM_OPTIONS[1:]
     items = []
-    kit_sort_used = False
+    kit_args: dict = {}
     for slot_text, _difficulty, target in _PLANNED_SLOT_RE.findall(prompt):
         n = int(slot_text)
         written = fmt in ("short_answer", "numeric", "symbolic") or (fmt == "mixed" and n % 2 == 0)
         if written:
-            if kit == "sort" and not kit_sort_used:
-                kit_sort_used = True
+            if kit == "sort" and not kit_args:
+                kit_args = {"kit_slot": n, "kit": json.dumps(E2E_KIT_SORT_INTERACTION)}
                 items.append({
                     "slot": n,
                     "question": E2E_KIT_SORT_STEM.format(n=n, concept=concept),
@@ -274,7 +277,6 @@ def _e2e_planned(prompt: str) -> list[dict]:
                     "accepted_answers": [E2E_KIT_SORT_ANSWER],
                     "correct_answer": E2E_KIT_SORT_ANSWER,
                     "explanation": E2E_KIT_SORT_EXPLANATION,
-                    "interaction": dict(E2E_KIT_SORT_INTERACTION),
                 })
                 continue
             items.append({
@@ -305,7 +307,7 @@ def _e2e_planned(prompt: str) -> list[dict]:
             "correct_answer": E2E_CHECK_ITEM_FINAL_ANSWER,
             "explanation": E2E_PLANNED_EXPLANATION,
         })
-    return items
+    return {"questions": items, **kit_args}
 
 
 # ── Document upload pipeline (#387) ─────────────────────────────────────────
