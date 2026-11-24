@@ -490,4 +490,47 @@ describe("W7.2 core types under SessionTop", () => {
     fireEvent.click(screen.getByTestId("quiz-compare-option-both"));
     expect(actions.write).toHaveBeenCalledWith("both");
   });
+
+  it("Dialogue (W7.2 / 7.17): partner thread; Check waits for minReplies", () => {
+    const interaction = {
+      kind: "dialogue" as const,
+      role: "Confused Classmate",
+      open: "Heavier objects fall faster, right?",
+      follow: "Doesn't a bigger force mean it falls faster?",
+      minReplies: 2,
+      maxReplies: 4,
+    };
+    const { actions } = renderScreen(
+      makeSession({
+        items: [
+          item(0, {
+            question: {
+              id: 1,
+              question: "Talk it through with your classmate.",
+              type: "short_answer",
+              options: [],
+              difficulty: "medium",
+              interaction,
+            },
+          }),
+          item(1),
+          item(2),
+        ],
+      }),
+    );
+
+    expect(screen.getByTestId("quiz-session-top")).toBeInTheDocument();
+    const tag = screen.getByTestId("quiz-format-tag");
+    expect(tag).toHaveAttribute("data-format", "dialogue");
+    expect(tag).toHaveTextContent("Dialogue");
+    expect(screen.getByTestId("quiz-dialogue")).toBeInTheDocument();
+    expect(screen.getByTestId("quiz-format-hint")).toHaveTextContent(/Reply to your partner/);
+    expect(screen.getByTestId("quiz-submit-answer")).toBeDisabled();
+
+    fireEvent.change(screen.getByTestId("quiz-dialogue-input"), {
+      target: { value: "Same acceleration without air resistance." },
+    });
+    fireEvent.click(screen.getByTestId("quiz-dialogue-send"));
+    expect(actions.write).toHaveBeenCalledWith("Same acceleration without air resistance.");
+  });
 });

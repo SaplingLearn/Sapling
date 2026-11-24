@@ -33,7 +33,7 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { BookOpen, ChevronLeft, ChevronRight, Columns2, Hash, Layers, Library, ListChecks, ListOrdered, PenLine, Puzzle, Sigma, Sparkles, Tag, X } from "lucide-react";
+import { BookOpen, ChevronLeft, ChevronRight, Columns2, Hash, Layers, Library, ListChecks, ListOrdered, MessagesSquare, PenLine, Puzzle, Sigma, Sparkles, Tag, X } from "lucide-react";
 import { AnswerOption, Badge, Button, Chip, ProgressDots } from "@/components/ui";
 import { ConceptNode } from "@/components/graph/ConceptNode";
 import { ConfidenceControl } from "@/components/learn/ConfidenceControl";
@@ -45,6 +45,7 @@ import type { QuizActions } from "@/lib/quiz/useQuizSession";
 import { buildQuizHref } from "@/lib/quiz/source";
 import { asBuildInteraction } from "@/lib/quiz/buildInteraction";
 import { asCompareInteraction } from "@/lib/quiz/compareInteraction";
+import { asDialogueInteraction } from "@/lib/quiz/dialogueInteraction";
 import { asLabelInteraction } from "@/lib/quiz/labelInteraction";
 import { asSequenceInteraction } from "@/lib/quiz/sequenceInteraction";
 import { asSortInteraction } from "@/lib/quiz/sortInteraction";
@@ -54,6 +55,7 @@ import { expressionParts, superscriptParts, type ExpressionPart } from "@/lib/qu
 import { WrittenAnswer, type WrittenType } from "./WrittenAnswer";
 import { BuildAnswer } from "./BuildAnswer";
 import { CompareAnswer } from "./CompareAnswer";
+import { DialogueAnswer } from "./DialogueAnswer";
 import { LabelAnswer } from "./LabelAnswer";
 import { SequenceAnswer } from "./SequenceAnswer";
 import { SortAnswer } from "./SortAnswer";
@@ -162,8 +164,8 @@ function isTypingTarget(target: EventTarget | null): boolean {
 
 /** What each format is called on screen — the same names the Format setting
  *  uses, so "Algebra" in the settings is "Algebra" on the question. Sort /
- *  Sequence / Label / Build / Compare are kit-only (W7.2): still a short_answer
- *  on the wire. */
+ *  Sequence / Label / Build / Compare / Dialogue are kit-only (W7.2): still a
+ *  short_answer on the wire. */
 const FORMAT_TAG: Record<string, { label: string; Icon: typeof ListChecks }> = {
   multiple_choice: { label: "Multiple choice", Icon: ListChecks },
   short_answer: { label: "Short answer", Icon: PenLine },
@@ -174,6 +176,7 @@ const FORMAT_TAG: Record<string, { label: string; Icon: typeof ListChecks }> = {
   label: { label: "Label", Icon: Tag },
   build: { label: "Build", Icon: Puzzle },
   compare: { label: "Compare", Icon: Columns2 },
+  dialogue: { label: "Dialogue", Icon: MessagesSquare },
 };
 
 /** Where the question's grounding came from, said plainly. */
@@ -942,6 +945,31 @@ function CompareField(props: AnswerFieldProps) {
   );
 }
 
+/** W7.2 Dialogue (7.17): partner thread + replies; Check uses encoded short_answer text. */
+function DialogueField(props: AnswerFieldProps) {
+  const { view, shown, selectable, actions } = props;
+  const dialogue = asDialogueInteraction(view.item?.question.interaction);
+  if (!dialogue) return <WrittenField {...props} />;
+  return (
+    <div
+      className="quiz-question__written quiz-question__written--dialogue"
+      data-marked={shown ? "true" : undefined}
+    >
+      <DialogueAnswer
+        interaction={dialogue}
+        value={view.item?.answerText ?? ""}
+        disabled={!selectable}
+        expected={shown?.correctAnswer ?? null}
+        verdict={outcomeOf(shown) ?? null}
+        onChange={text => actions.write?.(text)}
+      />
+      <p className="quiz-question__format-hint" id="quiz-format-hint" data-testid="quiz-format-hint">
+        {formatHint("short_answer", { dialogue: true })}
+      </p>
+    </div>
+  );
+}
+
 function kitField(props: AnswerFieldProps): React.JSX.Element | null {
   if (props.view.format !== "short_answer") return null;
   const interaction = props.view.item?.question.interaction;
@@ -950,6 +978,7 @@ function kitField(props: AnswerFieldProps): React.JSX.Element | null {
   if (asLabelInteraction(interaction)) return <LabelField {...props} />;
   if (asBuildInteraction(interaction)) return <BuildField {...props} />;
   if (asCompareInteraction(interaction)) return <CompareField {...props} />;
+  if (asDialogueInteraction(interaction)) return <DialogueField {...props} />;
   return null;
 }
 
@@ -960,7 +989,7 @@ function AnswerFieldFor(props: AnswerFieldProps) {
   return <Field {...props} />;
 }
 
-/** One answer field per wire format. Sort / Sequence / Label / Build / Compare mount via AnswerFieldFor. */
+/** One answer field per wire format. Kit stubs mount via AnswerFieldFor. */
 const ANSWER_FIELDS: Record<QuestionType, (props: AnswerFieldProps) => React.JSX.Element> = {
   multiple_choice: ChoiceAnswer,
   short_answer: WrittenField,
@@ -1202,6 +1231,7 @@ export function QuizQuestion({
   const labelInteraction = asLabelInteraction(kitInteraction);
   const buildInteraction = asBuildInteraction(kitInteraction);
   const compareInteraction = asCompareInteraction(kitInteraction);
+  const dialogueInteraction = asDialogueInteraction(kitInteraction);
   const scaffold = scaffoldHint({
     conceptName: concept.name,
     conceptTested: view.item?.question.concept_tested,
@@ -1211,6 +1241,7 @@ export function QuizQuestion({
     label: Boolean(labelInteraction),
     build: Boolean(buildInteraction),
     compare: Boolean(compareInteraction),
+    dialogue: Boolean(dialogueInteraction),
   });
   const openGuide = useCallback(() => {
     setAskForCursor(null);
@@ -1258,7 +1289,9 @@ export function QuizQuestion({
           ? "build"
           : compareInteraction
             ? "compare"
-            : view.format;
+            : dialogueInteraction
+              ? "dialogue"
+              : view.format;
   const header = (
     <QuestionHeader
       concept={concept}

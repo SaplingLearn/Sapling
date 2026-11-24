@@ -366,7 +366,7 @@ Update `docs/learning-loop/amendments.md` with a short “Alvar trilogy: adopted
 | Task | Type | Effort | Acceptance |
 |---|---|---|---|
 | W7.1 Port shell tokens + session chrome into `quiz/` (TopBar focus mode, meta row with blob concept pill, progress, XP/streak only if product keeps gamification) | ui | L | Visual match to Shell frames; a11y; no new color system |
-| W7.2 Port question-type kit (7.1–7.18) behind real attempt JSON; **MC / short / numeric / algebra first**, interactive types phased | ui | XL | **Shipped stubs:** Sort (7.1), Label (7.4), Sequence (7.2), Build (W7.2d), Compare (W7.2e). **Next:** Dialogue. Generation emit + richer grading still later; each stub round-trips fixture → Check → short_answer wire |
+| W7.2 Port question-type kit (7.1–7.18) behind real attempt JSON; **MC / short / numeric / algebra first**, interactive types phased | ui | XL | **Shipped stubs:** Sort (7.1), Label (7.4), Sequence (7.2), Build (W7.2d), Compare (W7.2e), Dialogue (W7.2f / 7.17). Generation emit + richer grading still later; each stub round-trips fixture → Check → short_answer wire |
 | W7.3 **Hook generation to loop algorithm:** home/launcher consumes `GET /api/quiz/plan` when `quiz_concept_plan` on; Adjust/Start pass planned concept ids; generation path uses `quiz_planned_questions` + gates when on | integrate | M | E2E `quiz-learning.spec.ts` + new launcher journeys; flag-off = pre-loop quiz |
 | W7.4 Confidence / wager UI maps to existing stated-confidence API (A132) — do not invent a second confidence store; align “Certain / Fairly sure / Unsure” with `guessing` / `fairly_sure` / `sure` | integrate | S | Pins in quiz-journeys confidence test |
 | W7.5 Hint / skip / study-guide drawer: hints must not become answer leaks (same Bastani rule as Tutor); study-guide drawer deep-links concept; Skip respects attempt rules | integrate | M | No mastery from hint-only; E2E |
@@ -521,10 +521,10 @@ Use this as the merge/readiness checklist. Every row must be **Done (A+)**, **N/
 - [x] Hub / Guide / Settings designed + shipped (W7.D2 / W7.9)  
 - [x] Launcher + Map designed + shipped (W7.D3 / W7.10)  
 - [x] Quiz shell in production (W7.1)  
-- [x] Core types + Sort/Label/Sequence/Build/Compare stubs (W7.2) — Dialogue later  
+- [x] Core types + Sort/Label/Sequence/Build/Compare/Dialogue stubs (W7.2)  
 - [x] Launcher/home ↔ plan (W7.3) · Confidence A132 (W7.4) · Hint scaffold (W7.5)  
 - [x] Prereq banner (W7.6) · Summary CTAs (W7.7) · Practice/Exam Twin (W7.8)  
-- [ ] Kill legacy quiz chrome (W7.11) — after Dialogue kit parity  
+- [ ] Kill legacy quiz chrome (W7.11) — after interactive kit parity + E2E  
 - [x] Library / Tree / Study / learner_next spine (W8.1–W8.4, W8.6–W8.7)  
 - [x] Cross-link copy system (W8.5) — [`w3-handoffs.md`](w3-handoffs.md)  
 
@@ -676,10 +676,11 @@ Ordered. **Operator-only** rows are not agent work. Adjust this table if scope s
 | 7 | **W7.2d** | Build kit stub (after Sequence) | **done** | Encode/decode + UI + vitest + testids; short_answer wire (`kind: "build"`) |
 | 8 | **W0.5** | Three E2E lanes on PR head | **done** | Same as #3 — checklist marked green on tip |
 | 9 | **W5 / W0.4** | Flag self→class→% enable | **operator** | Admin Flags only; see checklist |
-| 10 | **W7.11** | Retire legacy quiz chrome | **chore** | After interactive kit parity (Dialogue still open) + E2E |
+| 10 | **W7.11** | Retire legacy quiz chrome | **chore** | After interactive kit parity + E2E |
 | 11 | **W7.2e** | Compare kit stub (after Build) | **done** | Encode/decode + UI + vitest + testids; short_answer wire (`kind: "compare"`) |
+| 12 | **W7.2f** | Dialogue kit stub (design 7.17, after Compare) | **done** | Encode/decode + UI + vitest + testids; short_answer wire (`kind: "dialogue"`) |
 
-**Day 9 progress:** #1–8 + #11 **done** · #9 operator HOLD · #10 W7.11 waits on Dialogue kit parity.
+**Day 9 progress:** #1–8 + #11–12 **done** · #9 operator HOLD · #10 W7.11 chore still open.
 
 ---
 

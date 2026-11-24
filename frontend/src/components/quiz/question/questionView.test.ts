@@ -155,6 +155,21 @@ describe("itemView", () => {
     expect(itemView(item({ question: compareQ, answerText: "both" })).hasAnswer).toBe(true);
   });
 
+  it("W7.2 Dialogue: hasAnswer only after minReplies", () => {
+    const interaction = {
+      kind: "dialogue" as const,
+      role: "Confused Classmate",
+      open: "Heavier objects fall faster?",
+      follow: "Doesn't a bigger force mean faster?",
+      minReplies: 2,
+    };
+    const dialogueQ = question({ type: "short_answer", options: [], interaction });
+    expect(itemView(item({ question: dialogueQ, answerText: "Only one" })).hasAnswer).toBe(false);
+    expect(
+      itemView(item({ question: dialogueQ, answerText: "First\u001eSecond" })).hasAnswer,
+    ).toBe(true);
+  });
+
   it("survives no item at all", () => {
     expect(itemView(undefined)).toMatchObject({
       item: undefined,
@@ -251,6 +266,8 @@ describe("W7.5 hint / skip slots", () => {
     expect(build.rubric).toMatch(/^Select a part/);
     const compare = scaffoldHint({ conceptName: "Cell division", format: "short_answer", compare: true });
     expect(compare.rubric).toMatch(/^Read both sides/);
+    const dialogue = scaffoldHint({ conceptName: "Free fall", format: "short_answer", dialogue: true });
+    expect(dialogue.rubric).toMatch(/^Reply to your partner/);
   });
 
   it("enables Hint in Practice and refuses it in Exam Twin", () => {
@@ -357,6 +374,7 @@ describe("the verdict's words", () => {
     expect(formatHint("short_answer", { label: true })).toMatch(/^Select a label/);
     expect(formatHint("short_answer", { build: true })).toMatch(/^Select a part/);
     expect(formatHint("short_answer", { compare: true })).toMatch(/^Read both sides/);
+    expect(formatHint("short_answer", { dialogue: true })).toMatch(/^Reply to your partner/);
   });
 
   it("ends the key with exactly one full stop", () => {

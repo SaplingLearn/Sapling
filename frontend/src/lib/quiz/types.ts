@@ -152,12 +152,34 @@ export interface CompareInteraction {
   options: CompareInteractionOption[];
 }
 
+/**
+ * W7.2 Dialogue (design kit 7.17) — scripted partner turns + student replies.
+ * Opening and follow-up are fixed copy; the student sends ≥ `minReplies`
+ * messages (default 2). Answer encodes as joined reply text.
+ */
+export interface DialogueInteraction {
+  kind: "dialogue";
+  /** Partner label shown above their bubbles (e.g. "Confused Classmate"). */
+  role: string;
+  /** Partner's opening line. */
+  open: string;
+  /** Partner's follow-up after the student's first reply. */
+  follow: string;
+  /** Composer placeholder. */
+  placeholder?: string;
+  /** Replies required before Check unlocks (default 2). */
+  minReplies?: number;
+  /** Cap on student messages (default 4). */
+  maxReplies?: number;
+}
+
 export type QuestionInteraction =
   | SortInteraction
   | SequenceInteraction
   | LabelInteraction
   | BuildInteraction
-  | CompareInteraction;
+  | CompareInteraction
+  | DialogueInteraction;
 
 export interface WireQuestion {
   material_context?: "course_material" | "catalog" | "general";

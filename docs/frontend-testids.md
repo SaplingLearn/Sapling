@@ -322,13 +322,13 @@ journeys keep anchoring: `quiz-panel`, `quiz-start`,
 | `quiz-panel` | question root (`phase: active \| answered`) |
 | `quiz-progress` | the question rail's progress dots (`ui/ProgressDots`) |
 | `quiz-question-meta` | W7.1 meta row (concept pill, tier chip, format tag, difficulty) |
-| `quiz-format-tag` | W7.2: which format this question shows (`data-format` = `multiple_choice` / `short_answer` / `numeric` / `symbolic` / `sort` / `sequence` / `label` / `build` / `compare`); core labels match Settings Format; kit tags (`sort` 7.1, `sequence` 7.2, `label` 7.4, `build` ~7.x, `compare`) are still `short_answer` on the wire |
+| `quiz-format-tag` | W7.2: which format this question shows (`data-format` = `multiple_choice` / `short_answer` / `numeric` / `symbolic` / `sort` / `sequence` / `label` / `build` / `compare` / `dialogue`); core labels match Settings Format; kit tags (`sort` 7.1, `sequence` 7.2, `label` 7.4, `build` ~7.x, `compare`, `dialogue` 7.17) are still `short_answer` on the wire |
 | `quiz-action-bar` | W7.1 footer: Hint / Study guide / pager / Skip / Check |
 | `quiz-answer-options` | answer radiogroup (multiple choice) |
 | `quiz-keyboard-hint` | W7.2: sr-only MC keyboard map (`A`–`F` / `1`–`6`, Enter, Escape); describes `quiz-answer-options` |
 | `quiz-written` | W7.2: written answer surface root (`WrittenAnswer`); `data-format` = `short_answer` / `numeric` / `symbolic` |
 | `quiz-written-answer` | the single-line written-answer input (`WrittenAnswer`) for short answers, numeric answers and algebra; Enter submits |
-| `quiz-format-hint` | the visible answer-format rules for a written question (what the grader accepts); describes the written-answer input; Sort / Sequence / Label / Build / Compare use kit copy |
+| `quiz-format-hint` | the visible answer-format rules for a written question (what the grader accepts); describes the written-answer input; Sort / Sequence / Label / Build / Compare / Dialogue use kit copy |
 | `quiz-sort` | W7.2 kit 7.1: Sort interaction root (`data-complete`, optional `data-verdict`); mounts when `question.interaction.kind === "sort"` on a short_answer item |
 | `quiz-sort-tray` / `quiz-sort-tray-empty` | unassigned Items tray, or “Every item is sorted.” when empty |
 | `quiz-sort-buckets` | bucket grid |
@@ -354,6 +354,13 @@ journeys keep anchoring: `quiz-panel`, `quiz-start`,
 | `quiz-compare-side-{id}` | one side panel (`data-side` = id) |
 | `quiz-compare-options` | relation chip group |
 | `quiz-compare-option-{id}` | one relation chip; `aria-pressed` while selected |
+| `quiz-dialogue` | W7.2 Dialogue (7.17): interaction root (`data-complete`, `data-replies`, optional `data-verdict`); mounts when `question.interaction.kind === "dialogue"` on a short_answer item |
+| `quiz-dialogue-role` | partner role label |
+| `quiz-dialogue-thread` | chat log (opening + replies + follow-up) |
+| `quiz-dialogue-open` | partner opening bubble |
+| `quiz-dialogue-follow` | partner follow-up bubble (after the first student reply) |
+| `quiz-dialogue-reply-{i}` | one student reply bubble (0-indexed) |
+| `quiz-dialogue-composer` / `quiz-dialogue-input` / `quiz-dialogue-send` / `quiz-dialogue-count` | reply composer, textarea, Send, and message counter |
 | `quiz-key-{id}` | a symbol key under a numeric (`minus`/`fraction`/`percent`/`exponent`/`space`) or algebra (`squared`/`power`/`brackets`/`plus`/`minus`/`times`/`divide`, plus `more` toggle and `digit-*`/`point` behind it) input; inserts at the cursor |
 | `quiz-written-readback` | the live read-back under a numeric or algebra input ("Reads as 0.75", the superscript preview, or why it can't be graded); `data-ok` says which |
 | `quiz-material-context` | reports whether retrieved course material, catalog context, or general knowledge was supplied |
