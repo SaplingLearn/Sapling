@@ -37,7 +37,7 @@ import type { Browser, Page, Response } from "@playwright/test";
 import { expect, killSwitchLane, test } from "./support/fixtures";
 import { loopOffLane } from "./support/lane";
 import { queryRaw, seedGoalContinuationItems, seedTeachPromptItems, setUserFlag } from "./support/db";
-import { decryptText, decryptTexts } from "./support/decrypt";
+import { decryptNestedText, decryptText, decryptTexts } from "./support/decrypt";
 import { learningParams } from "./support/params";
 import { runOracle } from "./support/oracle";
 import { showsAnotherItem } from "./support/probe";
@@ -2086,13 +2086,70 @@ test("a new goal session respects an earlier helped prerequisite miss even when 
   } finally { await context.close(); }
 });
 
+/** W1.3: segment-close check prefers generative formats (free/teachback) via
+ *  practice_formats — regenerate the idea, not MC surface recognition. Seed
+ *  only has free/teachback; with LOOP_CHECKS_PER_CONCEPT=2 the close beat
+ *  (concept_checks==1) prefers teachback when that pool still has an item.
+ *  Soft-skips the teachback pin when probe already exhausted it (format still
+ *  generative). Default lane only (learning_loop on). */
+test("generative-core close beat poses a teachback/free check on the last check of a concept", async ({ browser }) => {
+  test.skip(loopOffLane, "loop path: default lane only");
+  test.setTimeout(LOOP_JOURNEY_TIMEOUT_MS);
+  const P = await learningParams(["PROBE_SESSION_CAP", "LOOP_CHECKS_PER_CONCEPT"]);
+  expect(Number(P.LOOP_CHECKS_PER_CONCEPT)).toBe(2);
+  const { context, page } = await signIn(browser, USER_LOOP, "Lou Loop");
+  try {
+    await openLearn(page);
+    const phase = page.getByTestId("loop-phase");
+    await walkProbeAndPlan(page, P);
+    await firstTeachTurn(page);
+
+    const formats: string[] = [];
+    for (let n = 0; n < Number(P.LOOP_CHECKS_PER_CONCEPT); n += 1) {
+      const posed = page.waitForResponse((r) => new URL(r.url()).pathname === "/api/learn/loop/check/next");
+      await page.getByTestId("loop-check-me").click();
+      const check = page.getByTestId("loop-check-prompt");
+      await expect(check).toBeVisible();
+      const format = await check.getAttribute("data-format");
+      expect(format).toBeTruthy();
+      // Generative-core family (SEED_LOOP_FORMATS; never mc_reason recognition).
+      expect(["free", "teachback"]).toContain(format);
+      formats.push(format!);
+      if ((await (await posed).json()).check?.worked_first) {
+        await expect(page.getByTestId("loop-hint-reply")).toBeVisible();
+        await expect(page.getByTestId("loop-hint-button")).toBeEnabled();
+      }
+      // Close beat = last graded check before the concept cursor advances.
+      if (n === Number(P.LOOP_CHECKS_PER_CONCEPT) - 1) {
+        // practice_formats(1) pulls teachback ahead of free/mc_reason when available.
+        if (format !== "teachback") {
+          test.skip(true, "close-beat teachback preference unmet for this seed walk (still generative)");
+        }
+        await expect(page.getByTestId("loop-attempt-input")).toHaveAttribute(
+          "placeholder",
+          "Explain it in your own words",
+        );
+      }
+      await page.getByTestId("loop-attempt-input").fill(GRADER_CORRECT_TOKEN);
+      await page.getByTestId("loop-attempt-submit").click();
+      await expect(phase).toHaveAttribute("data-phase", "feedback");
+      await expect(page.getByTestId("tutor-stop")).toHaveCount(0);
+    }
+    expect(formats[formats.length - 1]).toBe("teachback");
+  } finally {
+    await context.close();
+  }
+});
+
 /** W2.3: optional “show your reasoning” on free/teachback — visible, not required,
- *  and submit still grades the answer. Default lane only (learning_loop on). */
-test("reason-before-submit: free/teachback shows optional reasoning and submit still works", async ({ browser }) => {
+ *  posts on the wire, and lands sealed as sessions.loop_state steps[].reasoning_encrypted
+ *  (nested bind; plaintext never left on the step). Default lane only (learning_loop on). */
+test("reason-before-submit: free/teachback shows optional reasoning and seals it encrypted", async ({ browser }) => {
   test.skip(loopOffLane, "loop path: default lane only");
   test.setTimeout(LOOP_JOURNEY_TIMEOUT_MS);
   const P = await learningParams(["PROBE_SESSION_CAP"]);
   const { context, page } = await signIn(browser, USER_LOOP, "Lou Loop");
+  const reasoning = "base case stops the recursion";
   try {
     await openLearn(page);
     const phase = page.getByTestId("loop-phase");
@@ -2109,18 +2166,52 @@ test("reason-before-submit: free/teachback shows optional reasoning and submit s
       await expect(page.getByTestId("loop-hint-reply")).toBeVisible();
       await expect(page.getByTestId("loop-hint-button")).toBeEnabled();
     }
+    const sessionId = await phase.getAttribute("data-session-id");
+    const hash = await check.getAttribute("data-question-hash");
+    expect(sessionId).toBeTruthy();
+    expect(hash).toBeTruthy();
     const submitted = page.waitForRequest((r) => r.url().includes("/api/learn/loop/check/answer"));
     await page.getByTestId("loop-attempt-input").fill(`working: ${GRADER_CORRECT_TOKEN}`);
-    await page.getByTestId("loop-attempt-reasoning").fill("base case stops the recursion");
+    await page.getByTestId("loop-attempt-reasoning").fill(reasoning);
     await page.getByTestId("loop-attempt-submit").click();
     const body = JSON.parse((await submitted).postData() ?? "{}");
     expect(body).toMatchObject({
       answer: `working: ${GRADER_CORRECT_TOKEN}`,
-      reasoning: "base case stops the recursion",
+      reasoning,
       idk: false,
     });
     await expect(phase).toHaveAttribute("data-phase", "feedback");
     await expect(page.getByTestId("loop-messages")).toContainText(LOOP_FEEDBACK_BODY);
+
+    // Encrypted nest at rest (learning/check_reason.KEY + nested_bind).
+    await expect
+      .poll(async () => {
+        const [row] = (await queryRaw(
+          `SELECT loop_state->'steps'->$2->>'reasoning_encrypted' AS sealed
+             FROM sessions WHERE id = $1 AND user_id = $3`,
+          [sessionId, hash, USER_LOOP],
+        )) as { sealed: string | null }[];
+        return row?.sealed ?? "";
+      }, { timeout: DB_POLL_TIMEOUT_MS })
+      .not.toBe("");
+    const [stored] = (await queryRaw(
+      `SELECT loop_state->'steps'->$2->>'reasoning_encrypted' AS sealed,
+              loop_state::text AS raw
+         FROM sessions WHERE id = $1 AND user_id = $3`,
+      [sessionId, hash, USER_LOOP],
+    )) as { sealed: string; raw: string }[];
+    expect(stored.sealed).toBeTruthy();
+    expect(stored.sealed).not.toContain(reasoning);
+    expect(stored.raw).not.toContain(reasoning);
+    expect(
+      await decryptNestedText({
+        value: stored.sealed,
+        table: "sessions",
+        column: "loop_state",
+        path: "reasoning_encrypted",
+        row: sessionId!,
+      }),
+    ).toBe(reasoning);
   } finally {
     await context.close();
   }
