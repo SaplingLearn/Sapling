@@ -5,7 +5,7 @@
  * grade, Continue / Next stays disabled until that many ms have elapsed so the
  * student attends to corrective feedback. Diagnosis only — never mastery weight.
  */
-import { useEffect, useState } from "react";
+import { useLayoutEffect, useState } from "react";
 
 /** True while a positive dwell window is still open (pure; clock injected). */
 export function feedbackDwellLocked(dwellMs: number | null | undefined, startedAt: number, now: number): boolean {
@@ -19,14 +19,17 @@ export function feedbackDwellLocked(dwellMs: number | null | undefined, startedA
  */
 export function useHypercorrectionDwell(dwellMs: number | null | undefined): boolean {
   const [locked, setLocked] = useState(() => (dwellMs ?? 0) > 0);
-  useEffect(() => {
-    if (dwellMs == null || dwellMs <= 0) {
-      setLocked(false);
-      return;
-    }
-    setLocked(true);
-    const started = Date.now();
-    const id = window.setTimeout(() => setLocked(false), Math.max(0, dwellMs - (Date.now() - started)));
+  // A new value re-arms (or clears) the hold during render, the way React
+  // adjusts state to a changed prop; the effect only owns the timer. A layout
+  // effect, so the clock starts in the commit that first shows the hold.
+  const [armedFor, setArmedFor] = useState(dwellMs);
+  if (!Object.is(armedFor, dwellMs)) {
+    setArmedFor(dwellMs);
+    setLocked(dwellMs != null && dwellMs > 0);
+  }
+  useLayoutEffect(() => {
+    if (dwellMs == null || dwellMs <= 0) return;
+    const id = window.setTimeout(() => setLocked(false), dwellMs);
     return () => window.clearTimeout(id);
   }, [dwellMs]);
   return locked;

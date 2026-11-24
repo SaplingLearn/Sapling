@@ -81,6 +81,28 @@ type FocusTarget = "item" | "result";
 
 const STATUS_LINE: React.CSSProperties = { margin: "10px 0 0", fontSize: 13 };
 
+type Handoff = ReturnType<typeof retentionEmptyHandoffCtas>[number];
+
+/** The way on from an empty or finished set (a plain render call, so the
+ *  element tree is the one the inline JSX produced). */
+function renderHandoffs(links: readonly Handoff[], keyOf: (link: Handoff) => string, testIdOf: (link: Handoff) => string) {
+  if (links.length === 0) return null;
+  return (
+    <p style={{ margin: "8px 0 0", display: "flex", flexWrap: "wrap", gap: 10 }}>
+      {links.map((link) => (
+        <Link key={keyOf(link)} data-testid={testIdOf(link)} href={link.href} style={{ color: "var(--accent)", fontWeight: 500 }}>
+          {link.label}
+        </Link>
+      ))}
+    </p>
+  );
+}
+
+/** An mc_reason answer needs its option and its reason; any other its text. */
+function retentionAnswered(item: RetentionItem, choice: string, reason: string, answer: string): boolean {
+  return item.format === "mc_reason" ? !!choice && !!reason.trim() : !!answer.trim();
+}
+
 function RetentionSession({ userId, courseId }: { userId: string; courseId: string }) {
   // docs/safety/crisis-support.md: an answer the crisis screen answered
   const crisis = useCrisisSupport();
@@ -206,7 +228,7 @@ function RetentionSession({ userId, courseId }: { userId: string; courseId: stri
       if (mounted.current && mine === request.current) setBusy(false);
     }
   };
-  const canSubmit = !!item && !busy && (item.format === "mc_reason" ? !!choice && !!reason.trim() : !!answer.trim());
+  const canSubmit = !!item && !busy && retentionAnswered(item, choice, reason, answer);
   return <>
     {crisis.dialog}
     {/* A block, not a flex item: the button keeps its own width (the card's
@@ -220,29 +242,13 @@ function RetentionSession({ userId, courseId }: { userId: string; courseId: stri
         {items?.length === 0 && (
           <div ref={statusRef} tabIndex={-1} data-testid="retention-empty" style={STATUS_LINE}>
             <p style={{ margin: 0 }}>No eligible unseen retention checks are available for this course. Checks open at fixed times after you first study a concept; you may need more time or new check material.</p>
-            {emptyHandoffs.length > 0 && (
-              <p style={{ margin: "8px 0 0", display: "flex", flexWrap: "wrap", gap: 10 }}>
-                {emptyHandoffs.map((link) => (
-                  <Link key={link.testId} data-testid={link.testId} href={link.href} style={{ color: "var(--accent)", fontWeight: 500 }}>
-                    {link.label}
-                  </Link>
-                ))}
-              </p>
-            )}
+            {renderHandoffs(emptyHandoffs, (link) => link.testId, (link) => link.testId)}
           </div>
         )}
         {items && items.length > 0 && !item && (
           <div ref={statusRef} tabIndex={-1} data-testid="retention-finished" style={STATUS_LINE}>
             <p style={{ margin: 0 }}>This set is finished. A few answers do not establish mastery; keep checking what you retain over time.</p>
-            {emptyHandoffs.length > 0 && (
-              <p style={{ margin: "8px 0 0", display: "flex", flexWrap: "wrap", gap: 10 }}>
-                {emptyHandoffs.map((link) => (
-                  <Link key={`fin-${link.testId}`} data-testid={`retention-finished-${link.key}-link`} href={link.href} style={{ color: "var(--accent)", fontWeight: 500 }}>
-                    {link.label}
-                  </Link>
-                ))}
-              </p>
-            )}
+            {renderHandoffs(emptyHandoffs, (link) => `fin-${link.testId}`, (link) => `retention-finished-${link.key}-link`)}
           </div>
         )}
       </div>

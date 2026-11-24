@@ -1,10 +1,10 @@
 // What the Tutor shows about the session on screen, from the loop's own
 // data (moved out of LoopLearn.tsx unchanged): the plan the panel lists, the
 // current concept, the phase line, and the home's first focus.
-import type { LoopGoal, LoopPanelConcept, LoopPhase, LoopPlanConcept } from "@/lib/api";
+import type { EnrolledCourse, LoopGoal, LoopPanelConcept, LoopPhase, LoopPlanConcept } from "@/lib/api";
 import type { GraphNode } from "@/lib/data";
 import { retentionHref } from "@/context/RetentionDueContext";
-import type { TutorSessionRow } from "./sessions";
+import { sessionTitle, type TutorSessionRow } from "./sessions";
 
 /** An approved plan as the server reports it: its concepts and the cursor. */
 export type ApprovedPlan = { concepts: LoopPanelConcept[]; cursor: number };
@@ -88,4 +88,28 @@ export function linkGoal(link: { concept: string; course: string }, courseId: st
 /** A session the "New session" button should wrap up first: one the student is in. */
 export function isOpenPhase(phase: LoopPhase): boolean {
   return phase !== "close";
+}
+
+/** The TopBar's title for the view on screen (a session's: its row's name). */
+export function tutorTopTitle(
+  view: string,
+  course: EnrolledCourse | null,
+  readOnly: { topic: string } | null,
+  sessionRow: TutorSessionRow | null,
+  sessionId: string | null,
+): string {
+  if (view === "home" || view === "goal") return "New session";
+  if (view === "all") return "All sessions";
+  if (view === "course") return course ? `${course.course_code ? `${course.course_code} · ` : ""}${course.course_name}` : "Course";
+  if (readOnly) return readOnly.topic || "Earlier session";
+  return sessionRow ? sessionTitle(sessionRow, course ?? undefined) : sessionId ? "Guided session" : "Tutor";
+}
+
+/** The TopBar's line under the title: the view's own, else where the session is. */
+export function tutorTopSub(view: string, phaseLine: () => string): string {
+  if (view === "home") return "Choose where to start.";
+  if (view === "goal") return "Choose what this session is for.";
+  if (view === "all") return "Newest first.";
+  if (view === "course") return "Sessions, material and progress.";
+  return phaseLine();
 }

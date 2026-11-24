@@ -382,7 +382,7 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
 
           {/* #866 K16: after a grade the grader could not make, Next goes on and
               the question comes back after the rest (a refusal stays: own words) */}
-          {(answered || pause !== null || (retryable && !result?.refused)) && (
+          {showsNext(answered, pause, result) && (
             <>
               <button
                 data-testid="review-next"
@@ -411,6 +411,13 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
 
 // ── The panel's parts: plain render calls, not components, so React sees the
 // same element tree the inline JSX produced (nothing remounts). ──────────────
+
+/** Whether Next is on screen: the item is answered, a pause holds it, or the
+ *  grader could not make a grade (#866 K16; a refusal stays: own words). */
+function showsNext(answered: boolean, pause: LoopBudgetPause | null, result: ReviewAnswerResponse | null): boolean {
+  const retryable = result !== null && result.unavailable;
+  return answered || pause !== null || (retryable && !result.refused);
+}
 
 /** Why the panel moved past the last item (see the header). */
 type Notice = "reported" | "gone" | "newDay" | "newDayLater" | "newDayPlain" | "unreported";

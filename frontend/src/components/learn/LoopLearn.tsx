@@ -76,7 +76,7 @@ import {
 import { useFlag } from "@/context/FlagsContext";
 import { useStudyNavShown } from "../useRetentionNav";
 import { forgetEndedSession, noteLearningSession, useFeedbackHold } from "@/lib/feedbackPacing";
-import { HYPERCORRECTION_DWELL_COPY, useHypercorrectionDwell } from "@/lib/hypercorrectionDwell";
+import { useHypercorrectionDwell } from "@/lib/hypercorrectionDwell";
 import { checkIsOpen, hintTurnEvents, initialLoopState, reduceLoopEvent } from "./loopState";
 import { hasDeepLink, readDeepLink } from "./deepLink";
 import styles from "./LoopLearn.module.css";
@@ -104,11 +104,13 @@ import { ClosePanel } from "./ClosePanel";
 import { RatingPrompt } from "./RatingPrompt";
 import { claimWrapUpAsk, useWrapUpAsk } from "./WrapUpRating";
 import { checkMeFailure, checkMeNote, FEEDBACK_PENDING_COPY } from "./checkNote";
+import { TeachActions } from "./TeachActions";
+import { LearnerChip } from "./LearnerChip";
 import { SESSION_CLOSED_DETAIL, sessionRefusal } from "./sessionErrors";
 import { withPlanHistory } from "./loopHistory";
 import { dropInterruptedTurn } from "./chatRetry";
 import { modalOpen } from "./modalOpen";
-import { BAND_LABEL, hintDenial, type Draft, type HintView } from "./loopShared";
+import { hintDenial, type Draft, type HintView } from "./loopShared";
 import { VerdictBanner } from "./VerdictBanner";
 import { ProbePanel } from "./ProbePanel";
 import { PlanPanel } from "./PlanPanel";
@@ -117,6 +119,7 @@ import { LoopNotices } from "./LoopNotices";
 import { ReadOnlyTranscript } from "./ReadOnlyTranscript";
 import {
   conceptAt, conceptGoal, currentConcept, dueLink, findRow, isOpenPhase, linkGoal, nextAfterVerdict, panelPlanOf, phaseText,
+  tutorTopSub, tutorTopTitle,
   weakestConcept, type ApprovedPlan,
 } from "./tutor/sessionView";
 
@@ -1897,20 +1900,8 @@ export function LoopLearn() {
     if (!sessionId) return starting ? "Starting…" : "";
     return phaseText(state.phase, panelPlan, currentNodeId, conceptNames);
   };
-  const topTitle = (): string => {
-    if (view === "home" || view === "goal") return "New session";
-    if (view === "all") return "All sessions";
-    if (view === "course") return course ? `${course.course_code ? `${course.course_code} · ` : ""}${course.course_name}` : "Course";
-    if (readOnly) return readOnly.topic || "Earlier session";
-    return sessionRow ? sessionTitle(sessionRow, course ?? undefined) : sessionId ? "Guided session" : "Tutor";
-  };
-  const topSub = (): string => {
-    if (view === "home") return "Choose where to start.";
-    if (view === "goal") return "Choose what this session is for.";
-    if (view === "all") return "Newest first.";
-    if (view === "course") return "Sessions, material and progress.";
-    return phaseLine();
-  };
+  const topTitle = () => tutorTopTitle(view, course, readOnly, sessionRow, sessionId);
+  const topSub = () => tutorTopSub(view, phaseLine);
   const showPanel = allOf(inSession, !isMobile, layout.panelOpen, !!sessionId, !readOnly, !sessionsError, !noCourses);
   // A phone has no sidebar or panel on screen: the map and New session sit here.
   const renderMobileActions = () => (
@@ -2029,81 +2020,32 @@ export function LoopLearn() {
   );
   const notices = renderNotices();
 
-  const renderLearnerChip = () => (
-    <span
-      data-testid="loop-learner-state"
-      data-node-id={learner?.node_id ?? ""}
-      data-p-known={learner ? String(learner.p_known) : ""}
-      data-band={learner?.band ?? ""}
-      className="chip"
-      style={{ visibility: learner ? "visible" : "hidden" }}
-    >
-      {learner
-        ? `${conceptNames.get(learner.node_id) ?? "This concept"} · ${BAND_LABEL[learner.band] ?? learner.band}`
-        : "—"}
-    </span>
-  );
-  const learnerChip = renderLearnerChip();
+  const learnerChip = <LearnerChip learner={learner} names={conceptNames} />;
 
   /** Between checks: Continue (after feedback), Check me, the plan's first
-   *  concept, and the check's status line. */
+   *  concept, and the check's status line. A render call, not a component. */
   const renderTeachActions = (firstConcept: LoopPlanConcept | undefined) => (
-    <div className={tutorStyles.chatActions}>
-      {state.phase === "feedback" && (
-        <button
-          ref={continueRef}
-          data-testid="loop-continue"
-          className="btn btn--primary"
-          onClick={() => {
-            setFeedbackDwellMs(null);
-            send(CONTINUE_MESSAGE);
-          }}
-          disabled={!!paused || streaming || starting || scopeLoading || hypercorrectionHold}
-        >
-          {feedbackPending ? "Retry feedback" : "Continue"}
-        </button>
-      )}
-      {state.phase === "feedback" && hypercorrectionHold && (
-        <span role="status" data-testid="loop-feedback-dwell" style={{ fontSize: 13, color: "var(--text-muted)" }}>
-          {HYPERCORRECTION_DWELL_COPY}
-        </span>
-      )}
-      <button
-        ref={checkMeRef}
-        data-testid="loop-check-me"
-        className={state.phase === "feedback" ? "btn" : "btn btn--primary"}
-        onClick={() => void checkMe()}
-        disabled={checkBusy || streaming || feedbackPending || starting || scopeLoading || hypercorrectionHold}
-        title={feedbackPending ? FEEDBACK_PENDING_COPY : "Get a question on this concept"}
-      >
-        Check me
-      </button>
-      {feedbackPending && !streaming && !checkNote && <span role="status" style={{ fontSize: 13, color: "var(--text-muted)" }}>{FEEDBACK_PENDING_COPY}</span>}
-      {(messages.length <= 1 || planJustApproved) && firstConcept && state.phase === "teach" && !paused && (
-        <button
-          ref={teachStartRef}
-          data-testid="loop-teach-start"
-          className="btn"
-          onClick={() => send(`Teach me about ${firstConcept.concept_name}.`)}
-          disabled={streaming}
-        >
-          Start with {firstConcept.concept_name}
-        </button>
-      )}
-      {/* Always in the DOM: a live region inserted with its text already in
-          it is not reliably announced (spec §13 A135). */}
-      <span aria-live="polite">
-        {checkNote && (
-          <span
-            role="status"
-            data-testid={checkNote === REPORTED_COPY ? "loop-check-reported" : undefined}
-            style={{ fontSize: 13, color: "var(--text-muted)" }}
-          >
-            {checkNote}
-          </span>
-        )}
-      </span>
-    </div>
+    <TeachActions
+      feedback={state.phase === "feedback"}
+      feedbackPending={feedbackPending}
+      hold={hypercorrectionHold}
+      continueDisabled={anyOf(!!paused, streaming, starting, scopeLoading, hypercorrectionHold)}
+      checkMeDisabled={anyOf(checkBusy, streaming, feedbackPending, starting, scopeLoading, hypercorrectionHold)}
+      pendingNote={allOf(feedbackPending, !streaming, !checkNote)}
+      teachStart={allOf(messages.length <= 1 || planJustApproved, state.phase === "teach", !paused) ? firstConcept : undefined}
+      streaming={streaming}
+      checkNote={checkNote}
+      checkNoteReported={checkNote === REPORTED_COPY}
+      continueRef={continueRef}
+      checkMeRef={checkMeRef}
+      teachStartRef={teachStartRef}
+      onContinue={() => {
+        setFeedbackDwellMs(null);
+        send(CONTINUE_MESSAGE);
+      }}
+      onCheckMe={() => void checkMe()}
+      onTeachStart={(concept) => send(`Teach me about ${concept.concept_name}.`)}
+    />
   );
 
   const renderChatHeader = (firstConcept: LoopPlanConcept | undefined) => (

@@ -25,11 +25,12 @@ function usePracticeDueIds(courseId: string | null, enabled: boolean): readonly 
   const loopOn = useFlag("learning_loop") === "on";
   const planOn = useFlag("quiz_concept_plan") === "on";
   const [ids, setIds] = useState<readonly string[]>([]);
+  // Switched off (or nothing to read for): drop the last answer during render
+  // rather than in the effect, so it never shows for a render.
+  const active = enabled && !!courseId && !!userId && loopOn && planOn;
+  if (!active && ids.length > 0) setIds([]);
   useEffect(() => {
-    if (!enabled || !courseId || !userId || !loopOn || !planOn) {
-      setIds([]);
-      return;
-    }
+    if (!enabled || !courseId || !userId || !loopOn || !planOn) return;
     let live = true;
     getStudyNext(userId, courseId)
       .then((r) => {

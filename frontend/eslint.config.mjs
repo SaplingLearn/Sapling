@@ -207,6 +207,8 @@ const eslintConfig = [
       // Learning loop (PKG-13): the loop-path Learn screen and its budget banner.
       "src/components/learn/LoopLearn.tsx",
       "src/components/learn/BudgetPausedBanner.tsx",
+      // LoopLearn's actions between checks, moved out of it. No backlog.
+      "src/components/learn/TeachActions.tsx",
       // "Report this question" (spec §13 A113), shared by the loop and review
       // surfaces; its testids are passed in. New file, no baselined backlog.
       "src/components/learn/ReportQuestion.tsx",
@@ -293,6 +295,10 @@ const eslintConfig = [
       // controls are baselined in eslint-suppressions.json, so the rule
       // covers new elements only. Shrink that baseline as testids are added.
       "src/components/screens/Settings.tsx",
+      // Settings' switch and its analytics card, moved out of Settings.tsx.
+      // Every control already carries a testid: no backlog.
+      "src/components/screens/SettingsToggle.tsx",
+      "src/components/screens/AnalyticsPreference.tsx",
     ],
     rules: {
       "no-restricted-syntax": [

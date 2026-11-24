@@ -50,11 +50,13 @@ export function QuizPrefsSection() {
   const configKey = config
     ? `${config.num_questions.options.join(",")}|${config.difficulties.join(",")}|${config.question_types.join(",")}`
     : "";
-  const configRef = React.useRef(config);
-  configRef.current = config;
-  React.useEffect(() => {
-    if (configKey) setPrefs(loadPrefs(configRef.current));
-  }, [configKey]);
+  // Adjusted during render, the way React resets state to a changed input:
+  // each new key (the first one included) reloads the prefs once.
+  const [loadedFor, setLoadedFor] = React.useState<string | null>(null);
+  if (loadedFor !== configKey) {
+    setLoadedFor(configKey);
+    if (configKey) setPrefs(loadPrefs(config));
+  }
 
   if (!quizShown) return null;
 

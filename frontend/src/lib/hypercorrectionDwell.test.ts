@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import { feedbackDwellLocked, useHypercorrectionDwell } from "./hypercorrectionDwell";
@@ -36,6 +37,27 @@ describe("useHypercorrectionDwell", () => {
     expect(result.current).toBe(false);
 
     rerender({ ms: null });
+    expect(result.current).toBe(false);
+  });
+
+  it("a new positive value re-arms the hold; null clears it at once", () => {
+    const { result, rerender } = renderHook(
+      ({ ms }: { ms: number | null }) => useHypercorrectionDwell(ms),
+      { initialProps: { ms: 8000 as number | null } },
+    );
+    act(() => {
+      vi.advanceTimersByTime(8000);
+    });
+    expect(result.current).toBe(false);
+    rerender({ ms: 5000 });
+    expect(result.current).toBe(true);
+    rerender({ ms: null });
+    expect(result.current).toBe(false);
+    rerender({ ms: 5000 });
+    expect(result.current).toBe(true);
+    act(() => {
+      vi.advanceTimersByTime(5000);
+    });
     expect(result.current).toBe(false);
   });
 

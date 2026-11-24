@@ -454,7 +454,9 @@ describe("DueQueue launch polish (PKG-13; spec §11.3, §3.5)", () => {
   });
 
   it("concepts held by the monthly cap say so, with the reset's date — never 'daily' (#866 K18)", async () => {
-    const until = "2026-12-01T00:00:00+00:00";
+    // Weeks out, relative to today: within a week the banner names the weekday
+    // instead of the date (formatResetAt), so a fixed date turns this red.
+    const until = new Date(Date.now() + 20 * 86_400_000).toISOString();
     mockNext.mockResolvedValue(next(CARD));
     mockSummary.mockResolvedValue(summary({ paused: 2, paused_scope: "monthly_usd", paused_until: until }));
     render(<DueQueue userId="u1" courseId="c1" />);

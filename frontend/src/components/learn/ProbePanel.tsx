@@ -10,6 +10,30 @@ import { TutorTurn } from "./TutorTurn";
 import { LOOP_ANSWER_MAX } from "@/lib/inputLimits";
 import { HYPERCORRECTION_DWELL_COPY } from "@/lib/hypercorrectionDwell";
 
+/** K02: an mc_reason answer needs its reason too (the grader judges it, never
+ *  the option alone); any other format needs its typed answer. */
+function draftAnswered(mc: boolean, draft: Draft): boolean {
+  return mc ? draft.option !== "" && draft.reason.trim() !== "" : draft.answer.trim() !== "";
+}
+
+/** Next after the answer is shown, held (W2.5) while the feedback dwell runs. */
+function ProbeNext({
+  busy, nextHeld, onNext, style,
+}: { busy: boolean; nextHeld: boolean; onNext: () => void; style?: React.CSSProperties }) {
+  return (
+    <>
+      <button data-testid="loop-probe-next" className="btn btn--primary" style={style} disabled={busy || nextHeld} onClick={onNext}>
+        Next
+      </button>
+      {nextHeld && (
+        <span role="status" data-testid="loop-feedback-dwell" style={{ fontSize: 13, color: "var(--text-muted)" }}>
+          {HYPERCORRECTION_DWELL_COPY}
+        </span>
+      )}
+    </>
+  );
+}
+
 export function ProbePanel({
   item, count, draft, setDraft, reference, note, busy, nextHeld = false, loadFailed, greeting, onSubmit, onIdk, onNext, onRetry,
 }: {
@@ -33,8 +57,7 @@ export function ProbePanel({
   onRetry: () => void;
 }) {
   const mc = item?.format === "mc_reason";
-  // K02: an mc_reason answer needs its reason too (the grader judges it, never the option alone)
-  const canSubmit = !!item && !busy && (mc ? draft.option !== "" && draft.reason.trim() !== "" : draft.answer.trim() !== "");
+  const canSubmit = !!item && !busy && draftAnswered(mc, draft);
   const ids = useId();
   const promptId = `${ids}-prompt`;
   const headingId = `${ids}-question`;
@@ -82,14 +105,7 @@ export function ProbePanel({
         {!item && reference !== null && (
           <div className="card" style={{ padding: "var(--pad-xl)", display: "flex", flexDirection: "column", gap: 12 }}>
             {referenceBlock}
-            <button data-testid="loop-probe-next" className="btn btn--primary" disabled={busy || nextHeld} onClick={onNext}>
-              Next
-            </button>
-            {nextHeld && (
-              <span role="status" data-testid="loop-feedback-dwell" style={{ fontSize: 13, color: "var(--text-muted)" }}>
-                {HYPERCORRECTION_DWELL_COPY}
-              </span>
-            )}
+            <ProbeNext busy={busy} nextHeld={nextHeld} onNext={onNext} />
           </div>
         )}
         {!item && !busy && loadFailed && (
@@ -180,20 +196,7 @@ export function ProbePanel({
             ) : (
               <>
                 {referenceBlock}
-                <button
-                  data-testid="loop-probe-next"
-                  className="btn btn--primary"
-                  style={{ alignSelf: "flex-start" }}
-                  disabled={busy || nextHeld}
-                  onClick={onNext}
-                >
-                  Next
-                </button>
-                {nextHeld && (
-                  <span role="status" data-testid="loop-feedback-dwell" style={{ fontSize: 13, color: "var(--text-muted)" }}>
-                    {HYPERCORRECTION_DWELL_COPY}
-                  </span>
-                )}
+                <ProbeNext busy={busy} nextHeld={nextHeld} onNext={onNext} style={{ alignSelf: "flex-start" }} />
               </>
             )}
           </section>
