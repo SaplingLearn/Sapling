@@ -154,6 +154,7 @@ same calls run against fixed, deterministic handlers.
 | [architecture.md](architecture.md) | the module map: what each file in `backend/learning/`, the loop routes, the agents, the services and the frontend do, and how they connect |
 | [flows.md](flows.md) | what happens over time: upload to servable item, a session step by step, grading and the evidence write, review, the post-test, voids, the kill switch |
 | [w3-handoffs.md](w3-handoffs.md) | W3.4 / W8.5: Learn ↔ Study ↔ Quiz CTA copy + deep links (`learningHandoffs.ts`); hide_* safe |
+| [w3-5-learner-minimap-spike.md](w3-5-learner-minimap-spike.md) | W3.5a: learner-constructed mini-map (wrap-up stub; never mastery / graph_edges) |
 | [data-model.md](data-model.md) | every learning table and SQL function: columns, what is append-only, what is encrypted, who writes it |
 | [invariants.md](invariants.md) | the rules you must not break, why, and which test enforces each |
 | [operations.md](operations.md) | flags, model slots and cost, migrations and their rollout order, the release verifier, every test lane with its command, running locally with real models |

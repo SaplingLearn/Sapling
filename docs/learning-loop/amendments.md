@@ -82,7 +82,7 @@ substitute, and some refused. The research binding is
 | Adopted | Quiz in the learning system | A143–A147 (five flags, all off by default) | Plan §2.4 quiz; this guide "The quiz" |
 | Narrowed | Thinking fields | Reason-before-submit / self-explain text may hint the next probe; never mastery | design_choices Q2–Q3; plan S, W / W2.3–W2.4; [w2-reason-before-submit.md](./w2-reason-before-submit.md) (W2.3); [w2-next-probe-hint.md](./w2-next-probe-hint.md) (W2.4 helper + `next_probe_hint` flag) |
 | Narrowed | Predict before explain | Segment-level prequestion only — not before every reasoning step | design_choices Q1; plan U vs U2 |
-| Narrowed | Persistent knowledge graphs | Concept + prerequisite graph (and optional learner-built map); not proposition / reasoning-chain ontology as mastery | design_choices Q6; plan X, Y / W3.5 |
+| Narrowed | Persistent knowledge graphs | Concept + prerequisite graph (and optional learner-built map); not proposition / reasoning-chain ontology as mastery | design_choices Q6; plan X, Y / W3.5; [w3-5-learner-minimap-spike.md](./w3-5-learner-minimap-spike.md) |
 | Refused | "Feels obviously true" as a stop rule | Stop = graded check only (Alvar V1 pedagogy) | design_choices Q5; plan W1 / W6 |
 | Refused | Free-text → mastery | Chat and think-aloud never write `p_known` | design_choices Q3; plan G, W |
 | Refused | Student-editable teaching prompts | Staff / flag variants only if ever | Plan AN / W6 |

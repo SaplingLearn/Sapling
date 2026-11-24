@@ -322,13 +322,13 @@ journeys keep anchoring: `quiz-panel`, `quiz-start`,
 | `quiz-panel` | question root (`phase: active \| answered`) |
 | `quiz-progress` | the question rail's progress dots (`ui/ProgressDots`) |
 | `quiz-question-meta` | W7.1 meta row (concept pill, tier chip, format tag, difficulty) |
-| `quiz-format-tag` | W7.2: which format this question shows (`data-format` = `multiple_choice` / `short_answer` / `numeric` / `symbolic` / `sort` / `label`); core labels match Settings Format; `sort` is kit 7.1 and `label` is kit 7.4 (both still `short_answer` on the wire) |
+| `quiz-format-tag` | W7.2: which format this question shows (`data-format` = `multiple_choice` / `short_answer` / `numeric` / `symbolic` / `sort` / `sequence` / `label` / `build`); core labels match Settings Format; kit tags (`sort` 7.1, `sequence` 7.2, `label` 7.4, `build` ~7.x) are still `short_answer` on the wire |
 | `quiz-action-bar` | W7.1 footer: Hint / Study guide / pager / Skip / Check |
 | `quiz-answer-options` | answer radiogroup (multiple choice) |
 | `quiz-keyboard-hint` | W7.2: sr-only MC keyboard map (`A`–`F` / `1`–`6`, Enter, Escape); describes `quiz-answer-options` |
 | `quiz-written` | W7.2: written answer surface root (`WrittenAnswer`); `data-format` = `short_answer` / `numeric` / `symbolic` |
 | `quiz-written-answer` | the single-line written-answer input (`WrittenAnswer`) for short answers, numeric answers and algebra; Enter submits |
-| `quiz-format-hint` | the visible answer-format rules for a written question (what the grader accepts); describes the written-answer input; Sort / Label use placement copy |
+| `quiz-format-hint` | the visible answer-format rules for a written question (what the grader accepts); describes the written-answer input; Sort / Sequence / Label / Build use placement copy |
 | `quiz-sort` | W7.2 kit 7.1: Sort interaction root (`data-complete`, optional `data-verdict`); mounts when `question.interaction.kind === "sort"` on a short_answer item |
 | `quiz-sort-tray` / `quiz-sort-tray-empty` | unassigned Items tray, or “Every item is sorted.” when empty |
 | `quiz-sort-buckets` | bucket grid |
@@ -344,6 +344,11 @@ journeys keep anchoring: `quiz-panel`, `quiz-start`,
 | `quiz-label-spots` | numbered region grid (diagram SVG deferred) |
 | `quiz-label-spot-{id}` | one region (`data-spot` = id); place via “Place on {caption}” |
 | `quiz-label-item-{id}` | one label card (tray or spot); `aria-pressed` while selected in the tray |
+| `quiz-build` | W7.2d Build (~7.x construct): interaction root (`data-complete`, optional `data-verdict`); mounts when `question.interaction.kind === "build"` on a short_answer item |
+| `quiz-build-tray` / `quiz-build-tray-empty` | unassigned Parts tray, or “Every part is placed.” when empty (extras may remain when `parts > slots`) |
+| `quiz-build-slots` | target slot grid |
+| `quiz-build-slot-{id}` | one slot (`data-slot` = id); place via “Place on {caption}” |
+| `quiz-build-item-{id}` | one part card (tray or slot); `aria-pressed` while selected in the tray |
 | `quiz-key-{id}` | a symbol key under a numeric (`minus`/`fraction`/`percent`/`exponent`/`space`) or algebra (`squared`/`power`/`brackets`/`plus`/`minus`/`times`/`divide`, plus `more` toggle and `digit-*`/`point` behind it) input; inserts at the cursor |
 | `quiz-written-readback` | the live read-back under a numeric or algebra input ("Reads as 0.75", the superscript preview, or why it can't be graded); `data-ok` says which |
 | `quiz-material-context` | reports whether retrieved course material, catalog context, or general knowledge was supplied |
@@ -1197,6 +1202,10 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `loop-close-summary` | the close summary text |
 | `loop-close-concept-{nodeId}` | one checked concept on the wrap-up (spec §13 A117): `data-baseline` = `pre_session` / `check_in` / `teaching` (where its change starts; a close stored before A117 reads `pre_session`), `data-direction` = `up` / `down` / `same` — a first measurement with no move after it is `same` with a "first measured" label, never an arrow |
 | `loop-close-self-eval` | the self-evaluation question — a reflection prompt, no input (A60: nothing stores an answer) |
+| `loop-close-minimap` | W3.5a learner mini-map on wrap-up (2+ concepts); client edges only — never mastery / graph writes |
+| `loop-close-minimap-chips` | chip tray; each chip is `loop-close-minimap-chip-{nodeId}` (`aria-pressed` while selected) |
+| `loop-close-minimap-edges` | local edge list; a row is `loop-close-minimap-edge-{idA\|idB}` (sorted ids); remove is `loop-close-minimap-remove-{idA\|idB}` |
+| `loop-close-minimap-clear` | clears every local edge |
 | `loop-close-if-then` | the stored if-then plan (rendered only when non-empty) |
 | `loop-close-rating` | the wrap-up's "How was that session?" card (paced: once per session, `lib/feedbackPacing.ts`); the 1–4 scale's buttons are `loop-close-rating-{1..4}` |
 | `loop-close-rating-details` | the follow-ups a rating reveals on the same card (U9): `loop-close-rating-helpful-{i}` / `loop-close-rating-friction-{i}` chips (`aria-pressed`), `loop-close-rating-comment` |

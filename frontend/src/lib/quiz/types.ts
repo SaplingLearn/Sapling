@@ -61,10 +61,11 @@ export function isWrittenType(type: string | null | undefined): boolean {
 }
 
 /**
- * W7.2 interactive kit (phased): Sort (7.1), Sequence (7.2), Label (7.4).
- * Optional on a `short_answer` wire question — generation does not emit them
- * yet. The UI serialises placements into `answerText` via
- * `lib/quiz/sortInteraction` / `sequenceInteraction` / `labelInteraction`.
+ * W7.2 interactive kit (phased): Sort (7.1), Sequence (7.2), Label (7.4),
+ * Build (~7.x construct). Optional on a `short_answer` wire question —
+ * generation does not emit them yet. The UI serialises placements into
+ * `answerText` via `lib/quiz/sortInteraction` / `sequenceInteraction` /
+ * `labelInteraction` / `buildInteraction`.
  */
 export interface SortInteractionItem {
   id: string;
@@ -107,7 +108,33 @@ export interface LabelInteraction {
   labels: LabelInteractionItem[];
 }
 
-export type QuestionInteraction = SortInteraction | SequenceInteraction | LabelInteraction;
+/** One target slot in a Build (W7.2d / design kit ~7.x construct). */
+export interface BuildInteractionSlot {
+  id: string;
+  label: string;
+}
+
+/** One tray part the student assigns to a slot. */
+export interface BuildInteractionPart {
+  id: string;
+  label: string;
+}
+
+/**
+ * W7.2 Build — assemble parts into slots (`parts.length >= slots.length`).
+ * Prefer `kind: "build"` over design "construct" naming.
+ */
+export interface BuildInteraction {
+  kind: "build";
+  slots: BuildInteractionSlot[];
+  parts: BuildInteractionPart[];
+}
+
+export type QuestionInteraction =
+  | SortInteraction
+  | SequenceInteraction
+  | LabelInteraction
+  | BuildInteraction;
 
 export interface WireQuestion {
   material_context?: "course_material" | "catalog" | "general";

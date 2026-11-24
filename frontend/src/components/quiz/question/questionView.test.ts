@@ -122,6 +122,24 @@ describe("itemView", () => {
     expect(itemView(item({ question: labelQ, answerText: "1=aorta;2=pa" })).hasAnswer).toBe(true);
   });
 
+  it("W7.2 Build: hasAnswer only when every slot is filled", () => {
+    const interaction = {
+      kind: "build" as const,
+      slots: [
+        { id: "head", label: "Head" },
+        { id: "base", label: "Base" },
+      ],
+      parts: [
+        { id: "phosphate", label: "Phosphate" },
+        { id: "adenine", label: "Adenine" },
+        { id: "amino", label: "Amino acid" },
+      ],
+    };
+    const buildQ = question({ type: "short_answer", options: [], interaction });
+    expect(itemView(item({ question: buildQ, answerText: "head=phosphate;base=" })).hasAnswer).toBe(false);
+    expect(itemView(item({ question: buildQ, answerText: "head=phosphate;base=adenine" })).hasAnswer).toBe(true);
+  });
+
   it("survives no item at all", () => {
     expect(itemView(undefined)).toMatchObject({
       item: undefined,
@@ -213,6 +231,9 @@ describe("W7.5 hint / skip slots", () => {
 
     const label = scaffoldHint({ conceptName: "Anatomy", format: "short_answer", label: true });
     expect(label.rubric).toMatch(/^Select a label/);
+
+    const build = scaffoldHint({ conceptName: "Nucleotides", format: "short_answer", build: true });
+    expect(build.rubric).toMatch(/^Select a part/);
   });
 
   it("enables Hint in Practice and refuses it in Exam Twin", () => {
@@ -317,6 +338,7 @@ describe("the verdict's words", () => {
     expect(formatHint("short_answer", { sort: true })).toMatch(/^Select an item/);
     expect(formatHint("short_answer", { sequence: true })).toMatch(/^Select a step/);
     expect(formatHint("short_answer", { label: true })).toMatch(/^Select a label/);
+    expect(formatHint("short_answer", { build: true })).toMatch(/^Select a part/);
   });
 
   it("ends the key with exactly one full stop", () => {

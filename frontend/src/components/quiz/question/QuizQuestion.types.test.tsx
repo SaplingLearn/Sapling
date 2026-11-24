@@ -404,4 +404,49 @@ describe("W7.2 core types under SessionTop", () => {
     fireEvent.click(screen.getByRole("button", { name: "Place on 1" }));
     expect(actions.write).toHaveBeenCalledWith("1=aorta;2=");
   });
+
+  it("Build (W7.2d): slots/tray under SessionTop; Check waits for full slots", () => {
+    const interaction = {
+      kind: "build" as const,
+      slots: [
+        { id: "head", label: "Head" },
+        { id: "base", label: "Base" },
+      ],
+      parts: [
+        { id: "phosphate", label: "Phosphate" },
+        { id: "adenine", label: "Adenine" },
+        { id: "amino", label: "Amino acid" },
+      ],
+    };
+    const { actions } = renderScreen(
+      makeSession({
+        items: [
+          item(0, {
+            question: {
+              id: 1,
+              question: "Assemble a nucleotide from these parts.",
+              type: "short_answer",
+              options: [],
+              difficulty: "medium",
+              interaction,
+            },
+          }),
+          item(1),
+          item(2),
+        ],
+      }),
+    );
+
+    expect(screen.getByTestId("quiz-session-top")).toBeInTheDocument();
+    const tag = screen.getByTestId("quiz-format-tag");
+    expect(tag).toHaveAttribute("data-format", "build");
+    expect(tag).toHaveTextContent("Build");
+    expect(screen.getByTestId("quiz-build")).toBeInTheDocument();
+    expect(screen.getByTestId("quiz-format-hint")).toHaveTextContent(/Select a part/);
+    expect(screen.getByTestId("quiz-submit-answer")).toBeDisabled();
+
+    fireEvent.click(screen.getByTestId("quiz-build-item-phosphate"));
+    fireEvent.click(screen.getByRole("button", { name: "Place on Head" }));
+    expect(actions.write).toHaveBeenCalledWith("head=phosphate;base=");
+  });
 });

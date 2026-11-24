@@ -11,6 +11,7 @@ import {
 import { getStudyNext } from "@/lib/studyApi";
 import { retentionHref } from "@/context/RetentionDueContext";
 import { CenteredCard } from "./CenteredCard";
+import { LearnerMiniMapStub } from "./LearnerMiniMapStub";
 import { modalOpen } from "./modalOpen";
 import { WrapUpRating } from "./WrapUpRating";
 import tutorStyles from "./tutor/tutor.module.css";
@@ -227,6 +228,15 @@ export function ClosePanel({
             Take a moment with it — it&apos;s just for you, nothing is saved.
           </div>
         </section>
+        {/* W3.5a: generative mini-map — client edges only; never mastery / graph_edges. */}
+        {rec.concepts.length >= 2 && (
+          <LearnerMiniMapStub
+            concepts={rec.concepts.map((c) => ({
+              id: c.node_id,
+              label: names.get(c.node_id) ?? "A concept",
+            }))}
+          />
+        )}
         {rec.if_then && (
           <section data-testid="loop-close-if-then" className={`card ${tutorStyles.cardPad}`} style={{ gap: 6, background: "var(--accent-soft)", borderColor: "var(--accent-border)" }}>
             <span className="label-micro">Your plan for next time</span>

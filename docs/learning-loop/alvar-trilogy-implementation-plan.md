@@ -368,7 +368,7 @@ Update `docs/learning-loop/amendments.md` with a short “Alvar trilogy: adopted
 | Task | Type | Effort | Acceptance |
 |---|---|---|---|
 | W7.1 Port shell tokens + session chrome into `quiz/` (TopBar focus mode, meta row with blob concept pill, progress, XP/streak only if product keeps gamification) | ui | L | Visual match to Shell frames; a11y; no new color system |
-| W7.2 Port question-type kit (7.1–7.18) behind real attempt JSON; **MC / short / numeric / algebra first**, interactive types phased | ui | XL | **Shipped stubs:** Sort (7.1), Label (7.4). **Next:** Sequence (7.2) → Build → Compare / Explain polish → Dialogue. Generation emit + richer grading still later; each stub round-trips fixture → Check → short_answer wire |
+| W7.2 Port question-type kit (7.1–7.18) behind real attempt JSON; **MC / short / numeric / algebra first**, interactive types phased | ui | XL | **Shipped stubs:** Sort (7.1), Label (7.4), Sequence (7.2), Build (W7.2d). **Next:** Compare / Explain polish → Dialogue. Generation emit + richer grading still later; each stub round-trips fixture → Check → short_answer wire |
 | W7.3 **Hook generation to loop algorithm:** home/launcher consumes `GET /api/quiz/plan` when `quiz_concept_plan` on; Adjust/Start pass planned concept ids; generation path uses `quiz_planned_questions` + gates when on | integrate | M | E2E `quiz-learning.spec.ts` + new launcher journeys; flag-off = pre-loop quiz |
 | W7.4 Confidence / wager UI maps to existing stated-confidence API (A132) — do not invent a second confidence store; align “Certain / Fairly sure / Unsure” with `guessing` / `fairly_sure` / `sure` | integrate | S | Pins in quiz-journeys confidence test |
 | W7.5 Hint / skip / study-guide drawer: hints must not become answer leaks (same Bastani rule as Tutor); study-guide drawer deep-links concept; Skip respects attempt rules | integrate | M | No mastery from hint-only; E2E |
@@ -523,7 +523,7 @@ Use this as the merge/readiness checklist. Every row must be **Done (A+)**, **N/
 - [x] Hub / Guide / Settings designed + shipped (W7.D2 / W7.9)  
 - [x] Launcher + Map designed + shipped (W7.D3 / W7.10)  
 - [x] Quiz shell in production (W7.1)  
-- [x] Core types + Sort/Label stubs (W7.2) — **Sequence next** (Day 9); Build/Dialogue later  
+- [x] Core types + Sort/Label/Sequence/Build stubs (W7.2) — Compare/Dialogue later  
 - [x] Launcher/home ↔ plan (W7.3) · Confidence A132 (W7.4) · Hint scaffold (W7.5)  
 - [x] Prereq banner (W7.6) · Summary CTAs (W7.7) · Practice/Exam Twin (W7.8)  
 - [ ] Kill legacy quiz chrome (W7.11) — after kit parity  
@@ -675,12 +675,12 @@ Ordered. **Operator-only** rows are not agent work. Adjust this table if scope s
 | 4 | **W4.1a** | Check `figure` withheld slot (no SVG agent) | **done** (stub) | Pose `figure:{status:withheld}` when `surface_representation=visual`; CheckCard `loop-figure-withheld`. Paired with **W4.1b** (request-path load) |
 | 5 | **W4.1b** | Load `surface_representation` on request-path check decrypt | **done** | `_COLUMNS` + `_row_to_item` (fail-closed enum); visual items serve withheld figure in prod. `surface_context` stays ciphertext / familiarity-only |
 | 6 | **W3.5a** | Learner mini-map spike + optional wrap-up stub | **done** | Doc + fixture UI → [`w3-5-learner-minimap-spike.md`](w3-5-learner-minimap-spike.md); never writes mastery edges |
-| 7 | **W7.2d** | Build kit stub (after Sequence) | **build** | Same pattern as Sort/Label/Sequence |
+| 7 | **W7.2d** | Build kit stub (after Sequence) | **done** | Encode/decode + UI + vitest + testids; short_answer wire (`kind: "build"`) |
 | 8 | **W0.5** | Three E2E lanes on PR head | **measure** | Still open — needs held stack / cycle |
 | 9 | **W5 / W0.4** | Flag self→class→% enable | **operator** | Admin Flags only; see checklist |
 | 10 | **W7.11** | Retire legacy quiz chrome | **chore** | After interactive kit parity + E2E |
 
-**Day 9 progress:** #1 Sequence **done** · #2 sycophancy **1.0** (leak still soft) · #4 figure withheld **done** · #5 W4.1b request-path surface **done** · #6 W3.5a **done** · next **#8 E2E lanes** or **#7 Build kit**.
+**Day 9 progress:** #1 Sequence **done** · #2 sycophancy **1.0** (leak still soft) · #4 figure withheld **done** · #5 W4.1b request-path surface **done** · #6 W3.5a **done** · #7 Build **done** · next **#8 E2E lanes**.
 
 ---
 
