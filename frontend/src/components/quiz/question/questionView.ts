@@ -34,6 +34,15 @@ import {
   isCalculateComplete,
 } from "@/lib/quiz/calculateInteraction";
 import {
+  asPositionInteraction,
+  decodePositionAnswer,
+  isPositionComplete,
+} from "@/lib/quiz/positionInteraction";
+import {
+  asRankInteraction,
+  isRankComplete,
+} from "@/lib/quiz/rankInteraction";
+import {
   asLabelInteraction,
   decodeLabelAnswer,
   isLabelComplete,
@@ -91,6 +100,10 @@ function kitHasAnswer(item: QuizItem | undefined): boolean | null {
   if (highlight) return isHighlightComplete(highlight, item?.answerText);
   const calculate = asCalculateInteraction(interaction);
   if (calculate) return isCalculateComplete(item?.answerText);
+  const position = asPositionInteraction(interaction);
+  if (position) return isPositionComplete(position, decodePositionAnswer(position, item?.answerText));
+  const rank = asRankInteraction(interaction);
+  if (rank) return isRankComplete(rank, item?.answerText);
   return null;
 }
 
@@ -177,6 +190,8 @@ export function scaffoldHint({
   explain,
   highlight,
   calculate,
+  position,
+  rank,
 }: {
   conceptName: string;
   conceptTested?: string | null;
@@ -190,6 +205,8 @@ export function scaffoldHint({
   explain?: boolean;
   highlight?: boolean;
   calculate?: boolean;
+  position?: boolean;
+  rank?: boolean;
 }): ScaffoldHint {
   const focus = (conceptTested?.trim() || conceptName.trim() || "this concept");
   const showRubric =
@@ -202,11 +219,13 @@ export function scaffoldHint({
     Boolean(explain) ||
     Boolean(highlight) ||
     Boolean(calculate) ||
+    Boolean(position) ||
+    Boolean(rank) ||
     (format != null && format !== "multiple_choice");
   return {
     focus,
     rubric: showRubric
-      ? formatHint(format, { sort, sequence, label, build, compare, dialogue, explain, highlight, calculate })
+      ? formatHint(format, { sort, sequence, label, build, compare, dialogue, explain, highlight, calculate, position, rank })
       : null,
     note: "Scaffolding only — never the answer. Open Study guide for course cards (keys stay hidden).",
   };
@@ -361,6 +380,8 @@ export function formatHint(
     explain?: boolean;
     highlight?: boolean;
     calculate?: boolean;
+    position?: boolean;
+    rank?: boolean;
   },
 ): string {
   if (opts?.sort) {
@@ -389,6 +410,12 @@ export function formatHint(
   }
   if (opts?.calculate) {
     return "Enter the number and its unit. Check unlocks once both fields are filled.";
+  }
+  if (opts?.position) {
+    return "Select a marker, then tap a stop on the scale. Tap a placed marker to return it. Check unlocks once every marker is placed.";
+  }
+  if (opts?.rank) {
+    return "Select an item, then tap a numbered slot. Add a short reason for your top choice. Check unlocks once the order is full and a why is written.";
   }
   if (type === "symbolic") {
     return "Enter an expression using single-letter variables, + − * / ^ and parentheses, with whole-number powers from −8 to 8. For example, 2(x + 1) and 2x + 2 are equivalent wherever both are defined. Functions and equations are not supported.";

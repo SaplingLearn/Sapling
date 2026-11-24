@@ -1299,6 +1299,129 @@
   display: none;
 }
 
+
+/* W7.2 Position (7.12): markers on scale stops. */
+.quiz-position {
+  display: grid;
+  gap: var(--pad-md);
+  width: 100%;
+  min-width: 0;
+  flex-shrink: 0;
+}
+.quiz-position__axis,
+.quiz-position__tray-label,
+.quiz-rank__hint,
+.quiz-rank__tray-label {
+  margin: 0;
+  color: var(--text-muted);
+}
+.quiz-position__stops {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: var(--pad-sm);
+}
+.quiz-position__stop,
+.quiz-rank__slot {
+  display: grid;
+  gap: 6px;
+  min-height: 88px;
+  padding: var(--pad-sm);
+  border: 1.5px dashed var(--border);
+  border-radius: var(--r-md);
+  background: var(--bg-panel);
+}
+.quiz-position__stop--target,
+.quiz-rank__slot--target {
+  border-style: solid;
+  border-color: var(--accent);
+}
+.quiz-position__stop-hit,
+.quiz-rank__slot-hit {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.quiz-position__stop-hit:disabled,
+.quiz-rank__slot-hit:disabled { cursor: default; }
+.quiz-position__stop-label,
+.quiz-rank__slot-num {
+  font-weight: 600;
+  color: var(--text);
+}
+.quiz-position__stop-hint,
+.quiz-rank__slot-hint,
+.quiz-position__tray-empty,
+.quiz-rank__tray-empty {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+}
+.quiz-position__tray,
+.quiz-rank__tray { display: grid; gap: var(--pad-sm); }
+.quiz-position__cards,
+.quiz-rank__cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.quiz-position__card,
+.quiz-rank__card {
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg-panel);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+.quiz-position__card:disabled,
+.quiz-rank__card:disabled { cursor: default; }
+.quiz-position__card--lift,
+.quiz-rank__card--lift {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.quiz-position__card--right,
+.quiz-rank__card--right {
+  border-color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 10%, var(--bg-panel));
+}
+.quiz-position__card--wrong,
+.quiz-rank__card--wrong {
+  border-color: var(--err);
+  background: color-mix(in srgb, var(--err) 10%, var(--bg-panel));
+}
+
+/* W7.2 Rank (7.15): ordered slots + why. */
+.quiz-rank {
+  display: grid;
+  gap: var(--pad-md);
+  width: 100%;
+  min-width: 0;
+  flex-shrink: 0;
+}
+.quiz-rank__slots {
+  display: grid;
+  gap: var(--pad-sm);
+}
+.quiz-rank__why {
+  width: 100%;
+  min-height: 72px;
+  resize: vertical;
+}
+
 /* W7.2 Highlight (7.10): toggleable passages. */
 .quiz-highlight {
   display: grid;

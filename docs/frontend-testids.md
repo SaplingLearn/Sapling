@@ -322,7 +322,7 @@ journeys keep anchoring: `quiz-panel`, `quiz-start`,
 | `quiz-panel` | question root (`phase: active \| answered`) |
 | `quiz-progress` | the question rail's progress dots (`ui/ProgressDots`) |
 | `quiz-question-meta` | W7.1 meta row (concept pill, tier chip, format tag, difficulty) |
-| `quiz-format-tag` | W7.2: which format this question shows (`data-format` = `multiple_choice` / `short_answer` / `numeric` / `symbolic` / `sort` / `sequence` / `label` / `build` / `compare` / `dialogue` / `explain` / `highlight` / `calculate`); kit tags stay `short_answer` on the wire |
+| `quiz-format-tag` | W7.2: `data-format` includes core types plus kit tags `sort`…`rank` (still `short_answer` on the wire) |
 | `quiz-action-bar` | W7.1 footer: Hint / Study guide / pager / Skip / Check |
 | `quiz-answer-options` | answer radiogroup (multiple choice) |
 | `quiz-keyboard-hint` | W7.2: sr-only MC keyboard map (`A`–`F` / `1`–`6`, Enter, Escape); describes `quiz-answer-options` |
@@ -369,6 +369,12 @@ journeys keep anchoring: `quiz-panel`, `quiz-start`,
 | `quiz-highlight-passages` / `quiz-highlight-row-{id}` | passage group / one toggle row (`data-selected`, `aria-pressed`) |
 | `quiz-calculate` | W7.2 Calculate (7.13): interaction root (`data-complete`, optional `data-verdict`); mounts when `question.interaction.kind === "calculate"` |
 | `quiz-calculate-value` / `quiz-calculate-unit` | number and unit inputs; encode as `value\|unit` |
+| `quiz-position` | W7.2 Position (7.12): interaction root; mounts when `kind === "position"` |
+| `quiz-position-axis` / `quiz-position-stops` / `quiz-position-stop-{id}` | axis caption, stop grid, one stop |
+| `quiz-position-tray` / `quiz-position-item-{id}` | markers tray / marker card |
+| `quiz-rank` | W7.2 Rank (7.15): interaction root; mounts when `kind === "rank"` |
+| `quiz-rank-hint` / `quiz-rank-slots` / `quiz-rank-slot-{i}` | hint, ordered slots |
+| `quiz-rank-tray` / `quiz-rank-item-{id}` / `quiz-rank-why` | items tray / card / why textarea |
 | `quiz-key-{id}` | a symbol key under a numeric (`minus`/`fraction`/`percent`/`exponent`/`space`) or algebra (`squared`/`power`/`brackets`/`plus`/`minus`/`times`/`divide`, plus `more` toggle and `digit-*`/`point` behind it) input; inserts at the cursor |
 | `quiz-written-readback` | the live read-back under a numeric or algebra input ("Reads as 0.75", the superscript preview, or why it can't be graded); `data-ok` says which |
 | `quiz-material-context` | reports whether retrieved course material, catalog context, or general knowledge was supplied |

@@ -33,7 +33,7 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { BookOpen, ChevronLeft, ChevronRight, Columns2, Hash, Highlighter, Layers, Library, ListChecks, ListOrdered, MessagesSquare, PenLine, Puzzle, Sigma, Sparkles, Tag, TextAlignStart, Calculator, X } from "lucide-react";
+import { BookOpen, ChevronLeft, ChevronRight, Columns2, Gauge, Hash, Highlighter, Layers, Library, ListChecks, ListOrdered, MessagesSquare, PenLine, Puzzle, Sigma, Sparkles, Tag, TextAlignStart, Calculator, ArrowDownWideNarrow, X } from "lucide-react";
 import { AnswerOption, Badge, Button, Chip, ProgressDots } from "@/components/ui";
 import { ConceptNode } from "@/components/graph/ConceptNode";
 import { ConfidenceControl } from "@/components/learn/ConfidenceControl";
@@ -49,6 +49,8 @@ import { asDialogueInteraction } from "@/lib/quiz/dialogueInteraction";
 import { asExplainInteraction } from "@/lib/quiz/explainInteraction";
 import { asHighlightInteraction } from "@/lib/quiz/highlightInteraction";
 import { asCalculateInteraction } from "@/lib/quiz/calculateInteraction";
+import { asPositionInteraction } from "@/lib/quiz/positionInteraction";
+import { asRankInteraction } from "@/lib/quiz/rankInteraction";
 import { asLabelInteraction } from "@/lib/quiz/labelInteraction";
 import { asSequenceInteraction } from "@/lib/quiz/sequenceInteraction";
 import { asSortInteraction } from "@/lib/quiz/sortInteraction";
@@ -62,6 +64,8 @@ import { DialogueAnswer } from "./DialogueAnswer";
 import { ExplainAnswer } from "./ExplainAnswer";
 import { HighlightAnswer } from "./HighlightAnswer";
 import { CalculateAnswer } from "./CalculateAnswer";
+import { PositionAnswer } from "./PositionAnswer";
+import { RankAnswer } from "./RankAnswer";
 import { LabelAnswer } from "./LabelAnswer";
 import { SequenceAnswer } from "./SequenceAnswer";
 import { SortAnswer } from "./SortAnswer";
@@ -186,6 +190,8 @@ const FORMAT_TAG: Record<string, { label: string; Icon: typeof ListChecks }> = {
   explain: { label: "Explain", Icon: TextAlignStart },
   highlight: { label: "Highlight", Icon: Highlighter },
   calculate: { label: "Calculate", Icon: Calculator },
+  position: { label: "Position", Icon: Gauge },
+  rank: { label: "Rank", Icon: ArrowDownWideNarrow },
 };
 
 /** Where the question's grounding came from, said plainly. */
@@ -956,6 +962,51 @@ function CompareField(props: AnswerFieldProps) {
 
 
 
+
+/** W7.2 Position (7.12): markers on scale stops. */
+function PositionField(props: AnswerFieldProps) {
+  const { view, shown, selectable, actions } = props;
+  const position = asPositionInteraction(view.item?.question.interaction);
+  if (!position) return <WrittenField {...props} />;
+  return (
+    <div className="quiz-question__written quiz-question__written--position" data-marked={shown ? "true" : undefined}>
+      <PositionAnswer
+        interaction={position}
+        value={view.item?.answerText ?? ""}
+        disabled={!selectable}
+        expected={shown?.correctAnswer ?? null}
+        verdict={outcomeOf(shown) ?? null}
+        onChange={text => actions.write?.(text)}
+      />
+      <p className="quiz-question__format-hint" id="quiz-format-hint" data-testid="quiz-format-hint">
+        {formatHint("short_answer", { position: true })}
+      </p>
+    </div>
+  );
+}
+
+/** W7.2 Rank (7.15): ordered slots + why. */
+function RankField(props: AnswerFieldProps) {
+  const { view, shown, selectable, actions } = props;
+  const rank = asRankInteraction(view.item?.question.interaction);
+  if (!rank) return <WrittenField {...props} />;
+  return (
+    <div className="quiz-question__written quiz-question__written--rank" data-marked={shown ? "true" : undefined}>
+      <RankAnswer
+        interaction={rank}
+        value={view.item?.answerText ?? ""}
+        disabled={!selectable}
+        expected={shown?.correctAnswer ?? null}
+        verdict={outcomeOf(shown) ?? null}
+        onChange={text => actions.write?.(text)}
+      />
+      <p className="quiz-question__format-hint" id="quiz-format-hint" data-testid="quiz-format-hint">
+        {formatHint("short_answer", { rank: true })}
+      </p>
+    </div>
+  );
+}
+
 /** W7.2 Highlight (7.10): toggle passages; Check uses encoded short_answer text. */
 function HighlightField(props: AnswerFieldProps) {
   const { view, shown, selectable, actions } = props;
@@ -1068,6 +1119,8 @@ function kitField(props: AnswerFieldProps): React.JSX.Element | null {
   if (asExplainInteraction(interaction)) return <ExplainField {...props} />;
   if (asHighlightInteraction(interaction)) return <HighlightField {...props} />;
   if (asCalculateInteraction(interaction)) return <CalculateField {...props} />;
+  if (asPositionInteraction(interaction)) return <PositionField {...props} />;
+  if (asRankInteraction(interaction)) return <RankField {...props} />;
   return null;
 }
 
@@ -1324,6 +1377,8 @@ export function QuizQuestion({
   const explainInteraction = asExplainInteraction(kitInteraction);
   const highlightInteraction = asHighlightInteraction(kitInteraction);
   const calculateInteraction = asCalculateInteraction(kitInteraction);
+  const positionInteraction = asPositionInteraction(kitInteraction);
+  const rankInteraction = asRankInteraction(kitInteraction);
   const scaffold = scaffoldHint({
     conceptName: concept.name,
     conceptTested: view.item?.question.concept_tested,
@@ -1337,6 +1392,8 @@ export function QuizQuestion({
     explain: Boolean(explainInteraction),
     highlight: Boolean(highlightInteraction),
     calculate: Boolean(calculateInteraction),
+    position: Boolean(positionInteraction),
+    rank: Boolean(rankInteraction),
   });
   const openGuide = useCallback(() => {
     setAskForCursor(null);
@@ -1392,7 +1449,11 @@ export function QuizQuestion({
                   ? "highlight"
                   : calculateInteraction
                     ? "calculate"
-                    : view.format;
+                    : positionInteraction
+                      ? "position"
+                      : rankInteraction
+                        ? "rank"
+                        : view.format;
   const header = (
     <QuestionHeader
       concept={concept}

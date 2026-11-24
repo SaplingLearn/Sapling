@@ -634,4 +634,76 @@ describe("W7.2 core types under SessionTop", () => {
     fireEvent.change(screen.getByTestId("quiz-calculate-value"), { target: { value: "12" } });
     expect(actions.write).toHaveBeenCalledWith("12|");
   });
+
+  it("Position (W7.2 / 7.12): place markers; Check waits for all", () => {
+    const interaction = {
+      kind: "position" as const,
+      markers: [
+        { id: "lemon", label: "Lemon juice" },
+        { id: "water", label: "Pure water" },
+      ],
+      stops: [
+        { id: "2", label: "2" },
+        { id: "7", label: "7" },
+      ],
+    };
+    const { actions } = renderScreen(
+      makeSession({
+        items: [
+          item(0, {
+            question: {
+              id: 1,
+              question: "Place each substance on the pH scale.",
+              type: "short_answer",
+              options: [],
+              difficulty: "medium",
+              interaction,
+            },
+          }),
+          item(1),
+          item(2),
+        ],
+      }),
+    );
+    expect(screen.getByTestId("quiz-format-tag")).toHaveAttribute("data-format", "position");
+    expect(screen.getByTestId("quiz-position")).toBeInTheDocument();
+    expect(screen.getByTestId("quiz-submit-answer")).toBeDisabled();
+    fireEvent.click(screen.getByTestId("quiz-position-item-lemon"));
+    fireEvent.click(screen.getByTestId("quiz-position-stop-2").querySelector("button")!);
+    expect(actions.write).toHaveBeenCalledWith("lemon=2;water=");
+  });
+
+  it("Rank (W7.2 / 7.15): order + why; Check waits for both", () => {
+    const interaction = {
+      kind: "rank" as const,
+      items: [
+        { id: "mi", label: "MI" },
+        { id: "gerd", label: "GERD" },
+      ],
+    };
+    const { actions } = renderScreen(
+      makeSession({
+        items: [
+          item(0, {
+            question: {
+              id: 1,
+              question: "Rank the diagnoses.",
+              type: "short_answer",
+              options: [],
+              difficulty: "medium",
+              interaction,
+            },
+          }),
+          item(1),
+          item(2),
+        ],
+      }),
+    );
+    expect(screen.getByTestId("quiz-format-tag")).toHaveAttribute("data-format", "rank");
+    expect(screen.getByTestId("quiz-rank")).toBeInTheDocument();
+    expect(screen.getByTestId("quiz-submit-answer")).toBeDisabled();
+    fireEvent.click(screen.getByTestId("quiz-rank-item-mi"));
+    fireEvent.click(screen.getByTestId("quiz-rank-slot-0").querySelector("button")!);
+    expect(actions.write).toHaveBeenCalledWith("mi;");
+  });
 });

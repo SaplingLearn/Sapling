@@ -215,6 +215,47 @@ export interface CalculateInteraction {
   placeholder?: string;
 }
 
+/** One marker the student places on a Position scale (7.12). */
+export interface PositionInteractionMarker {
+  id: string;
+  label: string;
+}
+
+/** One stop on the Position continuum. */
+export interface PositionInteractionStop {
+  id: string;
+  label: string;
+}
+
+/**
+ * W7.2 Position (7.12) — place every marker on a stop.
+ * Encode: `marker=stop;…` (Build-shaped).
+ */
+export interface PositionInteraction {
+  kind: "position";
+  markers: PositionInteractionMarker[];
+  stops: PositionInteractionStop[];
+  /** Optional axis caption (e.g. "pH scale"). */
+  axisLabel?: string;
+}
+
+/** One card in a Rank & Judge list (7.15). */
+export interface RankInteractionItem {
+  id: string;
+  label: string;
+}
+
+/**
+ * W7.2 Rank (7.15) — order items best→worst plus a short why.
+ * Encode: `id;id;…` + record-separator + why prose.
+ */
+export interface RankInteraction {
+  kind: "rank";
+  items: RankInteractionItem[];
+  hint?: string;
+  whyPlaceholder?: string;
+}
+
 export type QuestionInteraction =
   | SortInteraction
   | SequenceInteraction
@@ -224,7 +265,9 @@ export type QuestionInteraction =
   | DialogueInteraction
   | ExplainInteraction
   | HighlightInteraction
-  | CalculateInteraction;
+  | CalculateInteraction
+  | PositionInteraction
+  | RankInteraction;
 
 export interface WireQuestion {
   material_context?: "course_material" | "catalog" | "general";

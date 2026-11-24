@@ -197,6 +197,36 @@ describe("itemView", () => {
     expect(itemView(item({ question: calculateQ, answerText: "12|m/s" })).hasAnswer).toBe(true);
   });
 
+  it("W7.2 Position: hasAnswer when every marker is placed", () => {
+    const interaction = {
+      kind: "position" as const,
+      markers: [
+        { id: "lemon", label: "Lemon" },
+        { id: "water", label: "Water" },
+      ],
+      stops: [
+        { id: "2", label: "2" },
+        { id: "7", label: "7" },
+      ],
+    };
+    const positionQ = question({ type: "short_answer", options: [], interaction });
+    expect(itemView(item({ question: positionQ, answerText: "lemon=2;water=" })).hasAnswer).toBe(false);
+    expect(itemView(item({ question: positionQ, answerText: "lemon=2;water=7" })).hasAnswer).toBe(true);
+  });
+
+  it("W7.2 Rank: hasAnswer when order is full and why is set", () => {
+    const interaction = {
+      kind: "rank" as const,
+      items: [
+        { id: "mi", label: "MI" },
+        { id: "gerd", label: "GERD" },
+      ],
+    };
+    const rankQ = question({ type: "short_answer", options: [], interaction });
+    expect(itemView(item({ question: rankQ, answerText: "mi;gerd" })).hasAnswer).toBe(false);
+    expect(itemView(item({ question: rankQ, answerText: "mi;gerd\u001eBecause" })).hasAnswer).toBe(true);
+  });
+
   it("survives no item at all", () => {
     expect(itemView(undefined)).toMatchObject({
       item: undefined,

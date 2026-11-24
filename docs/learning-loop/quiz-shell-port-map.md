@@ -46,7 +46,7 @@ Shared primitives (handoff “ui/” under quiz): live in `frontend/src/componen
 | Phase | Types | Status |
 |---|---|---|
 | Core | MC / short / numeric / algebra on SessionTop | **done** |
-| Interactive stubs | Sort → Label → Sequence → Build → Compare → Dialogue → Explain → Highlight (7.10) → Calculate (7.13) | those nine **done**; Position / Rank / Connect still open |
+| Interactive stubs | … → Highlight → Calculate → Position (7.12) → Rank (7.15) | eleven stubs **done**; Connect (7.3) still open |
 | Later | Generation emits `interaction`; richer per-criterion grading | deferred |
 
 Stubs use `short_answer` wire + client `interaction`; generation does not emit kit payloads yet. Do not block shell chrome on full 7.1–7.18 parity.
