@@ -55,7 +55,7 @@ Measure/document only — **no** `REGISTRY` / population defaults flipped. `buil
 
 | Lane | Result | Notes |
 |---|---|---|
-| **Default** | **Targeted green** (main journey + budget/phone/hint/generative-core); full learn-loop+tutor had mid-suite PostgREST 503 / DB refuse (infra) | Logs: `.e2e/w0.5-flake-rerun.log`, `.e2e/w0.5-default-rerun2.log`. Re-run full lane when slot free. |
+| **Default** | **Near green** — 30/31 then A138 probe-poll flake fixed; targeted A138/A139/main green | Full re-run still owed (kill-switch / flag-off too). Logs: `.e2e/w0.5-default-rerun3.log`, `.e2e/w0.5-a138-rerun.log`. |
 | **Kill-switch** | **SKIP** (await full default green) | Same commands below. |
 | **Flag-off** | **SKIP** (await full default green) | Same. |
 
