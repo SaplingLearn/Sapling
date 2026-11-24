@@ -19,6 +19,12 @@ def _clean_id(raw: Any) -> str:
     return id_
 
 
+def _clean_text(raw: Any) -> str:
+    if not isinstance(raw, str):
+        return ""
+    return raw.strip()
+
+
 def _clean_nodes(raw: Any) -> list[dict[str, str]]:
     nodes: list[dict[str, str]] = []
     seen: set[str] = set()
@@ -28,12 +34,33 @@ def _clean_nodes(raw: Any) -> list[dict[str, str]]:
         if not isinstance(it, dict):
             continue
         id_ = _clean_id(it.get("id"))
-        label = it.get("label")
-        if not id_ or not isinstance(label, str) or not label.strip() or id_ in seen:
+        label = _clean_text(it.get("label"))
+        if not id_ or not label or id_ in seen:
             continue
         seen.add(id_)
-        nodes.append({"id": id_, "label": label.strip()})
+        nodes.append({"id": id_, "label": label})
     return nodes
+
+
+def _clean_side(raw: Any) -> dict[str, str] | None:
+    if not isinstance(raw, dict):
+        return None
+    id_ = _clean_id(raw.get("id"))
+    label = _clean_text(raw.get("label"))
+    if not id_ or not label:
+        return None
+    return {"id": id_, "label": label}
+
+
+def _opt_str(raw: Any) -> str | None:
+    text = _clean_text(raw)
+    return text or None
+
+
+def _clamp_int(raw: Any, default: int, lo: int, hi: int) -> int:
+    if isinstance(raw, bool) or not isinstance(raw, int):
+        return default
+    return max(lo, min(hi, raw))
 
 
 def _sanitize_sort(raw: dict[str, Any]) -> dict[str, Any] | None:
@@ -49,18 +76,147 @@ def _sanitize_sort(raw: dict[str, Any]) -> dict[str, Any] | None:
     return {"kind": "sort", "buckets": buckets, "items": items}
 
 
+def _sanitize_label(raw: dict[str, Any]) -> dict[str, Any] | None:
+    spots = _clean_nodes(raw.get("spots"))
+    labels = _clean_nodes(raw.get("labels"))
+    if not spots or not labels or len(spots) != len(labels):
+        return None
+    spot_ids = {s["id"] for s in spots}
+    if any(l["id"] in spot_ids for l in labels):
+        return None
+    return {"kind": "label", "spots": spots, "labels": labels}
+
+
+def _sanitize_sequence(raw: dict[str, Any]) -> dict[str, Any] | None:
+    steps = _clean_nodes(raw.get("steps"))
+    if len(steps) < 2:
+        return None
+    return {"kind": "sequence", "steps": steps}
+
+
+def _sanitize_build(raw: dict[str, Any]) -> dict[str, Any] | None:
+    slots = _clean_nodes(raw.get("slots"))
+    parts = _clean_nodes(raw.get("parts"))
+    if not slots or not parts or len(parts) < len(slots):
+        return None
+    slot_ids = {s["id"] for s in slots}
+    if any(p["id"] in slot_ids for p in parts):
+        return None
+    return {"kind": "build", "slots": slots, "parts": parts}
+
+
+def _sanitize_compare(raw: dict[str, Any]) -> dict[str, Any] | None:
+    left = _clean_side(raw.get("left"))
+    right = _clean_side(raw.get("right"))
+    options = _clean_nodes(raw.get("options"))
+    if not left or not right or left["id"] == right["id"] or len(options) < 2:
+        return None
+    side_ids = {left["id"], right["id"]}
+    if any(o["id"] in side_ids for o in options):
+        return None
+    return {"kind": "compare", "left": left, "right": right, "options": options}
+
+
+def _sanitize_dialogue(raw: dict[str, Any]) -> dict[str, Any] | None:
+    role = _clean_text(raw.get("role"))
+    open_ = _clean_text(raw.get("open"))
+    follow = _clean_text(raw.get("follow"))
+    if not role or not open_ or not follow:
+        return None
+    min_replies = _clamp_int(raw.get("minReplies"), 2, 1, 8)
+    max_replies = _clamp_int(raw.get("maxReplies"), 4, 1, 8)
+    if max_replies < min_replies:
+        min_replies, max_replies = 2, 4
+    out: dict[str, Any] = {
+        "kind": "dialogue",
+        "role": role,
+        "open": open_,
+        "follow": follow,
+        "minReplies": min_replies,
+        "maxReplies": max_replies,
+    }
+    placeholder = _opt_str(raw.get("placeholder"))
+    if placeholder:
+        out["placeholder"] = placeholder
+    return out
+
+
+def _sanitize_explain(raw: dict[str, Any]) -> dict[str, Any] | None:
+    out: dict[str, Any] = {"kind": "explain"}
+    placeholder = _opt_str(raw.get("placeholder"))
+    if placeholder:
+        out["placeholder"] = placeholder
+    rubric_raw = raw.get("rubric")
+    if isinstance(rubric_raw, list):
+        rubric = [r.strip() for r in rubric_raw if isinstance(r, str) and r.strip()]
+        if rubric:
+            out["rubric"] = rubric
+    return out
+
+
+def _sanitize_highlight(raw: dict[str, Any]) -> dict[str, Any] | None:
+    passages = _clean_nodes(raw.get("passages"))
+    if len(passages) < 2:
+        return None
+    min_selected = _clamp_int(raw.get("minSelected"), 1, 1, len(passages))
+    out: dict[str, Any] = {
+        "kind": "highlight",
+        "passages": passages,
+        "minSelected": min_selected,
+    }
+    note = _opt_str(raw.get("note"))
+    if note:
+        out["note"] = note
+    return out
+
+
+def _sanitize_calculate(raw: dict[str, Any]) -> dict[str, Any] | None:
+    out: dict[str, Any] = {"kind": "calculate"}
+    for key in ("placeholder", "unitLabel"):
+        val = _opt_str(raw.get(key))
+        if val:
+            out[key] = val
+    return out
+
+
+def _sanitize_position(raw: dict[str, Any]) -> dict[str, Any] | None:
+    markers = _clean_nodes(raw.get("markers"))
+    stops = _clean_nodes(raw.get("stops"))
+    if len(markers) < 2 or len(stops) < 2:
+        return None
+    stop_ids = {s["id"] for s in stops}
+    if any(m["id"] in stop_ids for m in markers):
+        return None
+    out: dict[str, Any] = {"kind": "position", "markers": markers, "stops": stops}
+    axis = _opt_str(raw.get("axisLabel"))
+    if axis:
+        out["axisLabel"] = axis
+    return out
+
+
+def _sanitize_rank(raw: dict[str, Any]) -> dict[str, Any] | None:
+    items = _clean_nodes(raw.get("items"))
+    if len(items) < 2:
+        return None
+    out: dict[str, Any] = {"kind": "rank", "items": items}
+    for key in ("hint", "whyPlaceholder"):
+        val = _opt_str(raw.get(key))
+        if val:
+            out[key] = val
+    return out
+
+
 def _sanitize_connect(raw: dict[str, Any]) -> dict[str, Any] | None:
     mode = raw.get("mode")
-    note = raw.get("note")
-    note_s = note.strip() if isinstance(note, str) and note.strip() else None
+    note = _opt_str(raw.get("note"))
 
     if mode == "map":
         nodes = _clean_nodes(raw.get("nodes"))
         if len(nodes) < 3:
             return None
         out: dict[str, Any] = {"kind": "connect", "mode": "map", "nodes": nodes}
-        if note_s:
-            out["note"] = note_s
+        if note:
+            out["note"] = note
         return out
 
     left = _clean_nodes(raw.get("left"))
@@ -71,13 +227,23 @@ def _sanitize_connect(raw: dict[str, Any]) -> dict[str, Any] | None:
     if any(n["id"] in right_ids for n in left):
         return None
     out = {"kind": "connect", "left": left, "right": right}
-    if note_s:
-        out["note"] = note_s
+    if note:
+        out["note"] = note
     return out
 
 
 _KIND_SANITIZERS = {
     "sort": _sanitize_sort,
+    "label": _sanitize_label,
+    "sequence": _sanitize_sequence,
+    "build": _sanitize_build,
+    "compare": _sanitize_compare,
+    "dialogue": _sanitize_dialogue,
+    "explain": _sanitize_explain,
+    "highlight": _sanitize_highlight,
+    "calculate": _sanitize_calculate,
+    "position": _sanitize_position,
+    "rank": _sanitize_rank,
     "connect": _sanitize_connect,
 }
 

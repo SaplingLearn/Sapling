@@ -25,7 +25,7 @@ Quiz generation may attach a kit `interaction` object on a `short_answer` wire q
 | Sanitize | `backend/services/quiz/interaction.py::sanitize_interaction` |
 | Attach | `wire._agent_question_to_wire` copies a sanitized dict onto the wire item |
 | Agent field | Optional `QuizQuestion.interaction: dict \| None` (flat; omitted by default) |
-| First kinds | `sort` (+ `connect` match / map). Other kit kinds follow the same helper. |
+| Kinds | All twelve stubs: `sort`…`rank` + `connect` (match / map). |
 
 ## Next
 

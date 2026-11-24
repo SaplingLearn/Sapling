@@ -41,6 +41,50 @@ def test_sanitize_connect_match_and_map():
     assert mapped is not None and mapped.get("mode") == "map"
 
 
+def test_sanitize_remaining_kit_kinds():
+    assert sanitize_interaction({
+        "kind": "label",
+        "spots": [{"id": "s1", "label": "S1"}, {"id": "s2", "label": "S2"}],
+        "labels": [{"id": "l1", "label": "L1"}, {"id": "l2", "label": "L2"}],
+    })["kind"] == "label"
+    assert sanitize_interaction({
+        "kind": "sequence",
+        "steps": [{"id": "a", "label": "A"}, {"id": "b", "label": "B"}],
+    })["kind"] == "sequence"
+    assert sanitize_interaction({
+        "kind": "build",
+        "slots": [{"id": "s", "label": "Slot"}],
+        "parts": [{"id": "p1", "label": "P1"}, {"id": "p2", "label": "P2"}],
+    })["kind"] == "build"
+    assert sanitize_interaction({
+        "kind": "compare",
+        "left": {"id": "l", "label": "Left"},
+        "right": {"id": "r", "label": "Right"},
+        "options": [{"id": "only-l", "label": "Only left"}, {"id": "both", "label": "Both"}],
+    })["kind"] == "compare"
+    assert sanitize_interaction({
+        "kind": "dialogue",
+        "role": "Peer",
+        "open": "Hi?",
+        "follow": "And then?",
+    })["kind"] == "dialogue"
+    assert sanitize_interaction({"kind": "explain"})["kind"] == "explain"
+    assert sanitize_interaction({
+        "kind": "highlight",
+        "passages": [{"id": "a", "label": "A"}, {"id": "b", "label": "B"}],
+    })["kind"] == "highlight"
+    assert sanitize_interaction({"kind": "calculate"})["kind"] == "calculate"
+    assert sanitize_interaction({
+        "kind": "position",
+        "markers": [{"id": "m1", "label": "M1"}, {"id": "m2", "label": "M2"}],
+        "stops": [{"id": "s1", "label": "S1"}, {"id": "s2", "label": "S2"}],
+    })["kind"] == "position"
+    assert sanitize_interaction({
+        "kind": "rank",
+        "items": [{"id": "a", "label": "A"}, {"id": "b", "label": "B"}],
+    })["kind"] == "rank"
+
+
 def test_wire_attaches_sort_on_short_answer():
     q = QuizQuestion(
         question="Sort each organism.",
