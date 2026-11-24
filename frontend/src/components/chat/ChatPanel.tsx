@@ -496,29 +496,11 @@ export function PageTurn({ children, testId, plain = false }: { children: React.
   );
 }
 
-const Message = React.memo(function Message({
-  m,
-  onRetry,
-  onPage,
-  markdown = "rich",
-}: {
-  m: ChatMsg;
-  onRetry?: (m: ChatMsg) => void;
-  /** A tutor turn sits on the page (`PageTurn`) rather than in a bubble. */
-  onPage?: boolean;
-  /** The markdown a tutor turn may use (ChatPanel's `markdown`). */
-  markdown?: MarkdownProfile;
-}) {
-  const isUser = m.role === "user";
-  if (m.crisisSupport && !isUser) {
-    // Sapling speaking, not the tutor: no tutor avatar, no serif bubble.
-    return (
-      <div className="fade-in" style={{ alignSelf: "stretch", maxWidth: 640, width: "100%" }}>
-        <CrisisSupportCard support={m.crisisSupport} />
-      </div>
-    );
-  }
-  const body = (
+/** A message's text and its trust chrome (interrupted + Retry, "from your
+ *  materials"). A plain render call, so React sees the tree the inline JSX
+ *  produced. */
+function renderMessageBody(m: ChatMsg, isUser: boolean, markdown: MarkdownProfile, onRetry?: (m: ChatMsg) => void) {
+  return (
     <>
       {m.loading ? (
         <span style={{ opacity: 0.6, fontFamily: "var(--font-sans)" }}>{m.loadingLabel || "Thinking…"}</span>
@@ -576,6 +558,31 @@ const Message = React.memo(function Message({
       )}
     </>
   );
+}
+
+const Message = React.memo(function Message({
+  m,
+  onRetry,
+  onPage,
+  markdown = "rich",
+}: {
+  m: ChatMsg;
+  onRetry?: (m: ChatMsg) => void;
+  /** A tutor turn sits on the page (`PageTurn`) rather than in a bubble. */
+  onPage?: boolean;
+  /** The markdown a tutor turn may use (ChatPanel's `markdown`). */
+  markdown?: MarkdownProfile;
+}) {
+  const isUser = m.role === "user";
+  if (m.crisisSupport && !isUser) {
+    // Sapling speaking, not the tutor: no tutor avatar, no serif bubble.
+    return (
+      <div className="fade-in" style={{ alignSelf: "stretch", maxWidth: 640, width: "100%" }}>
+        <CrisisSupportCard support={m.crisisSupport} />
+      </div>
+    );
+  }
+  const body = renderMessageBody(m, isUser, markdown, onRetry);
   // In the log but not painted (`visuallyHidden`): the row's own attributes.
   const hidden = m.visuallyHidden ? { attr: "true", style: VISUALLY_HIDDEN } : { attr: undefined, style: null };
   if (onPage && !isUser) {
