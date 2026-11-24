@@ -8,13 +8,9 @@ choose **which eligible check to pose next**. Never evidence. Never mastery.
 | Layer | Role |
 |---|---|
 | `learning/next_probe_hint.py::prefer` | Pure: plaintext + `(question_hash, searchable_text)` candidates → preferred hash or `None` (keyword overlap; sealed ciphertext rejected) |
-| `services/loop/next_probe_hint.py::preferred_next_question_hash` | Flag gate: off → `None` immediately; on → `prefer` |
-| `services/loop/practice.py::_activate_next_item` | Single call site among the eligible pool; when the hint returns a still-eligible hash it wins that format pass |
-
-Plaintext reasoning is **not** decrypted into activation yet (W2.3 stores only
-`reasoning_encrypted`). Until that thread lands, the call site passes `None`
-for text — so even with the flag on, `prefer` returns `None` and selection
-matches pre-W2.4. Flag off stays a hard no-op (no scoring).
+| `learning/check_reason.py::open` / `latest_plaintext` | W2.4b: open nested `reasoning_encrypted` under the session bind; pick the most recently graded step |
+| `services/loop/next_probe_hint.py::preferred_next_question_hash` | Flag gate: off → `None` immediately (no decrypt); on → `latest_plaintext` then `prefer` |
+| `services/loop/practice.py::_activate_next_item` | Single call site among the eligible pool; threads `session_id` + state; when the hint returns a still-eligible hash it wins that format pass |
 
 ## Flag
 
@@ -29,8 +25,9 @@ matches pre-W2.4. Flag off stays a hard no-op (no scoring).
 | Never `apply_graph_update` / never bump `p_known` | Pure + gate modules ban mastery symbols; `test_inv_32_*` + `test_learning_next_probe_hint` |
 | No LLM | Deterministic token overlap only |
 | Eligible pool only | Caller supplies already-filtered candidates; hint cannot widen the set |
+| Decrypt only when flag on | Gate returns before `latest_plaintext`; wrong-session bind opens as `None` |
 
 ## Non-goals
 
 - Self-explain / reasoning → mastery (plan W / W2.6)
-- Full decrypt-and-rerank in activation (follow-up once session_id + open path are threaded)
+- Self-explain table reply decrypt into the same hint (reason-before-submit path only for W2.4b)
