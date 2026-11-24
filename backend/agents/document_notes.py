@@ -48,7 +48,13 @@ _BLOCK_GUIDE = (
     '  <div class="blk" data-blk="qa" data-open="0">'
     '<div class="qa-q">QUESTION</div><div class="qa-a">ANSWER</div></div>\n'
     "For a review checklist use:\n"
-    '  <ul class="check"><li data-done="0"><span>ITEM</span></li></ul>\n'
+    '  <ul class="check"><li data-done="0">'
+    '<span class="box" contenteditable="false" data-act="check">✓</span>'
+    "<span>ITEM</span></li></ul>\n"
+    # The `.box` span IS the checkbox: `library-notes.css` styles
+    # `ul.check li > .box`, and `data-act="check"` is what the editor's click
+    # handler looks for. A checklist written without it renders as plain text
+    # and cannot be ticked.
 )
 
 _NOTES_PROMPT = (
