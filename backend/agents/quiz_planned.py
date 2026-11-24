@@ -150,15 +150,16 @@ WRITTEN_RULES = (
     "single letter in the question); never ask for an equation, a function, a root or "
     "trigonometric notation. Do not ask open-ended questions that need subjective "
     "grading.\n\n"
-    "Optional kit UI on short_answer only: you MAY set `interaction` to a Sort payload "
-    "when the item is genuinely a sort-into-buckets task (at most one such item per "
-    "quiz). Shape: "
-    '`{"kind":"sort","buckets":["NameA","NameB"],"items":[{"id":"id1","label":"Label1"},…]}` '
-    "with ≥2 buckets and ≥1 item; ids are short tokens without `;` `=` or `,`. "
-    "`correct_answer` MUST be the encoded placement string "
-    "`BucketA=id1,id2;BucketB=id3` (bucket order matches `buckets`; items within a "
-    "bucket in any order). Leave `interaction` null/omitted for ordinary short answers "
-    "and for numeric/symbolic. Do not invent other `kind` values yet.\n\n"
+    "Optional kit UI on short_answer only: at most ONE item per quiz may set "
+    "`interaction`. Ids are short tokens without `;` `=` or `,`. Leave "
+    "`interaction` null/omitted for ordinary short answers and for numeric/symbolic.\n"
+    '- Sort (`kind: "sort"`): ≥2 `buckets` (strings) + ≥1 `items` `{id,label}`. '
+    "`correct_answer` = `BucketA=id1,id2;BucketB=id3` (bucket order matches `buckets`).\n"
+    '- Label (`kind: "label"`): equal-length `spots` and `labels` lists `{id,label}`, '
+    "no shared ids. `correct_answer` = `spotId=labelId;…` in spot order.\n"
+    '- Sequence (`kind: "sequence"`): ≥2 `steps` `{id,label}`. `correct_answer` = '
+    "`id1;id2;…` in correct order.\n"
+    "Do not invent other `kind` values yet.\n\n"
 )
 FORMAT_RULES = (
     "FORMAT names the question type to write. When it is mixed, choose each "

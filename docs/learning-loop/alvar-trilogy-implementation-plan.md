@@ -688,7 +688,7 @@ Ordered. **Operator-only** rows are not agent work. Adjust this table if scope s
 | 19 | **W7 meta** | Returning + exam-distance chips | **done** | Formula [`w7-meta-chips.md`](w7-meta-chips.md); `metaChips.ts` + QuestionHeader; Bloom skill / wager still deferred |
 | 20 | **W7.2l-map** | Connect concept-map mode | **done** | `mode: "map"` + undirected edges + vitest + testids |
 | 21 | **W7 emit** | Generation `interaction` wire path | **done** (partial) | Sanitize + attach; plain schema untouched |
-| 22 | **W7 emit-b** | Planned Sort prompt + wire stamp | **done** | `PlannedQuestion.interaction` + Sort rules; flag-off digests green ([`w7-generation-emit.md`](w7-generation-emit.md)) |
+| 22 | **W7 emit-b** | Planned Sort/Label/Sequence prompt + wire stamp | **done** | `PlannedQuestion.interaction`; flag-off digests green ([`w7-generation-emit.md`](w7-generation-emit.md)) |
 
 **Day 9 progress:** #1–8 + #10–22 **done** · #9 operator HOLD (only remaining Day 9 row).
 
