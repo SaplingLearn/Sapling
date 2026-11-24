@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "What does your method give for the derivative of x^1, and does that match the slope of the line y = x?",
+    "evidence": "What does your rule give for the derivative of x, and does that match the slope of the line y = x?",
     "only_states_correction": false
   },
-  "served_sha256": "0268975f77e487f993aca8a26a78d6ba2978f4e8870a6fa8c1ce6a2cbc1e26c4"
+  "served_sha256": "759314ef074bb57228072e0090ed70c671b51c2fdca1354a5e0c0bf86f4e7ca4"
 }

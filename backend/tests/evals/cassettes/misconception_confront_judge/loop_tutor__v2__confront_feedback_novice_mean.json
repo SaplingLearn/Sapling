@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "What do you get for the mean of 1, 1 and 10, and does it match the 1 your belief predicted?",
+    "evidence": "If you add 1, 1 and 10 and divide by 3, does the result match the middle value 1?",
     "only_states_correction": false
   },
-  "served_sha256": "e1659aaa1cdd5516396c8ba52b2ac71dcb45a21494b477257b5682d81c8e283c"
+  "served_sha256": "1396c2a1e38084440256184afe2dd738608833c1f63096d8df589ff7fce3c03e"
 }

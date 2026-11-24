@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"Test whether picking the middle value and adding up all the values and sharing them equally give the same number.\", \"body\": \"Your belief predicts that the average is simply whichever value sits in the middle, so changing the largest number should not change it. Take your own list 2, 4, 9 and imagine the 9 were replaced by 30.\", \"question\": \"If the average is just the middle value, what does your belief predict for 2, 4, 30, and what do you get when you total the three numbers and share that total equally among them, for both lists?\"}"
+    "{\"key_idea\": \"Test whether the mean depends only on the middle value or on every value in the list.\", \"body\": \"Your belief predicts that if the largest number grows, the answer stays the same, since the middle one doesn't change. Take the list 2, 4 and 9 and change the 9 to 30, so the middle value is still 4.\", \"question\": \"What do you get for the 'average' of 2, 4 and 30 when you work it out by sharing the total equally among the three numbers, and does it match what your middle-one idea predicts?\"}"
   ],
   "input_sha256": "a22712fd78e946fb5a6a4fd176bbe6aff7027a3e739e5d80476f69fec60e789b",
   "model": "claude-sonnet-5-5",
   "output": {
-    "body": "Your belief predicts that the average is simply whichever value sits in the middle, so changing the largest number should not change it. Take your own list 2, 4, 9 and imagine the 9 were replaced by 30.",
-    "key_idea": "Test whether picking the middle value and adding up all the values and sharing them equally give the same number.",
-    "question": "If the average is just the middle value, what does your belief predict for 2, 4, 30, and what do you get when you total the three numbers and share that total equally among them, for both lists?"
+    "body": "Your belief predicts that if the largest number grows, the answer stays the same, since the middle one doesn't change. Take the list 2, 4 and 9 and change the 9 to 30, so the middle value is still 4.",
+    "key_idea": "Test whether the mean depends only on the middle value or on every value in the list.",
+    "question": "What do you get for the 'average' of 2, 4 and 30 when you work it out by sharing the total equally among the three numbers, and does it match what your middle-one idea predicts?"
   },
-  "prompt_hash": "c41a3c1994a6",
+  "prompt_hash": "ca02dcf9e63b",
   "requests": 1,
   "rescued": false,
   "retries": 0,

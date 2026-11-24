@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": false,
-    "evidence": "In your own words, what does a limit measure that plugging in the point does not always capture?",
+    "evidence": "In your own words, what does the limit tell you that the function's value at the point does not?",
     "only_states_correction": true
   },
-  "served_sha256": "e94ac316bc5f7c6f2031a414b4b1053113774d5cf5d9347304874a9c874cbb83"
+  "served_sha256": "7be25600ad0d03a0cd27ddf64b6af77443edba4310808d852458a1138f34a4ef"
 }

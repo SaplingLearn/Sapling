@@ -3,9 +3,9 @@
   "judge_prompt_hash": "2fc99ab5f12c9ccc102a02668f79664563ad19a1729de5916f17ec68c48fec8f",
   "output": {
     "affirms_misconception": false,
-    "confronts": true,
-    "evidence": "what is the change in y = x^2 from x = 1 to x = 1.01 divided by that step, and how does that compare with x^2/2 at x = 1?",
-    "only_states_correction": false
+    "confronts": false,
+    "evidence": "The power rule says the original exponent comes down as a multiplier and the exponent drops by one.",
+    "only_states_correction": true
   },
-  "served_sha256": "c2b80e365c21b68cbdcb02ebb9cfa129d2813bba9a0bdbbf26b255369b1a134f"
+  "served_sha256": "b1bb62bf9a5b6e198ae5e5b865253ae079076a76f33f3e2739b4187abb1ad8e9"
 }

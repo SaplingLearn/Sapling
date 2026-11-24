@@ -2,9 +2,9 @@
   "judge_model": "claude-opus-5-5",
   "judge_prompt_hash": "4e15cf7efec37e4cbadce613ac6d320a08c18c34bdd5305e5e385805f941e241",
   "output": {
-    "evidence": "What do sin x and x each do as x gets very close to 0, and how would you compare their sizes by testing a few small values like 0.1 and 0.01?",
+    "evidence": "If you tried x = 0.1, 0.01 and 0.001 on a calculator (in radians), what would you compare to see what the quotient approaches?",
     "reveals_final_answer": false,
     "rung": 3
   },
-  "served_sha256": "5e0022e0d83465ce50eacdff3688627c0058d326b5c4437d4a7550befad4c66e"
+  "served_sha256": "f58807226f2f748d4cfc6df289d8fba3e8b3749d21e04517cbbb039338fb5dec"
 }

@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"The middle value and the mean are different measures, so your belief that they match can be tested on a list where they disagree.\", \"body\": \"Take the list 1, 1, 10: your belief predicts the average is 1, because 1 is the middle value. Compare that prediction with what you get by adding all three numbers and dividing by how many there are.\", \"question\": \"What do you get for the mean of 1, 1 and 10, and does it match the 1 your belief predicted?\"}"
+    "{\"key_idea\": \"A belief about what the mean is should survive a test on a case where the middle value and the average come apart.\", \"body\": \"Your belief predicts that the mean of 1, 1 and 10 is its middle value, which is 1. Check that prediction against the numbers before you trust it.\", \"question\": \"If you add 1, 1 and 10 and divide by 3, does the result match the middle value 1?\"}"
   ],
   "input_sha256": "a22712fd78e946fb5a6a4fd176bbe6aff7027a3e739e5d80476f69fec60e789b",
   "model": "claude-haiku-5-5",
   "output": {
-    "body": "Take the list 1, 1, 10: your belief predicts the average is 1, because 1 is the middle value. Compare that prediction with what you get by adding all three numbers and dividing by how many there are.",
-    "key_idea": "The middle value and the mean are different measures, so your belief that they match can be tested on a list where they disagree.",
-    "question": "What do you get for the mean of 1, 1 and 10, and does it match the 1 your belief predicted?"
+    "body": "Your belief predicts that the mean of 1, 1 and 10 is its middle value, which is 1. Check that prediction against the numbers before you trust it.",
+    "key_idea": "A belief about what the mean is should survive a test on a case where the middle value and the average come apart.",
+    "question": "If you add 1, 1 and 10 and divide by 3, does the result match the middle value 1?"
   },
-  "prompt_hash": "c41a3c1994a6",
+  "prompt_hash": "ca02dcf9e63b",
   "requests": 1,
   "rescued": false,
   "retries": 0,

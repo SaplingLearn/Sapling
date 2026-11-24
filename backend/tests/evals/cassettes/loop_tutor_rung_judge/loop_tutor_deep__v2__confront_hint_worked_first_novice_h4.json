@@ -2,9 +2,9 @@
   "judge_model": "claude-opus-5-5",
   "judge_prompt_hash": "cc1e83e5b7c838b2c60a65904ec8353cfb3a297465e097f7a140412831b1740d",
   "output": {
-    "evidence": "Take f(x) = x^2... compare f(1) = 1 with f(1.01) = 1.0201 and divide the change in output by the change in input (0.01).",
+    "evidence": "Take f(x) = x^2, whose graph is a parabola with slope 0 at x = 0 and slope 2 at x = 1",
     "reveals_final_answer": false,
     "rung": 4
   },
-  "served_sha256": "8faa84414ee376a807a0d3b7a6beca0749e0ee1ceec01bfacd60be2f1b22c8bf"
+  "served_sha256": "720c8a72533e35dfb0bc8645cecf78ccb092dbb781777665e22c810fd9b521f5"
 }

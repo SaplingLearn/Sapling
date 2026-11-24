@@ -1,19 +1,18 @@
 {
   "attempts": [
-    "{\"key_idea\":\"A recursive function solves a problem by handing a smaller copy of the same problem to itself, and it stops at a base case that needs no further help.\",\"body\":\"Here is a worked example on a different problem, the sum of 1 to n. The base case is sum(1) = 1, because there is nothing smaller to ask about. For any bigger n, sum(n) = n + sum(n-1), so each call passes a smaller problem down until it reaches that base case. Here is a partial solution for sum(3): sum(3) = 3 + sum(2), sum(2) = 2 + sum(1), sum(1) = 1, so sum(2) = 2 + ___.\",\"question\":\"What number goes in the blank, and what does that tell you about how sum(3) gets finished?\"}",
-    "{\"key_idea\":\"A recursive function solves a problem by handing a smaller copy of the same problem to itself, and it stops at a base case that needs no further help.\",\"body\":\"Take the sum of 1 to n: the base case is sum(1) = 1, and for bigger n, sum(n) = n + sum(n-1). Here is sum(3) worked partway: sum(3) = 3 + sum(2), and sum(2) = 2 + sum(1), where sum(1) = 1. So sum(2) = 2 + ___.\",\"question\":\"What number goes in the blank, and what does that tell you about how sum(3) gets finished?\"}"
+    "{\"key_idea\": \"A recursive function solves a problem by handing a smaller version of the same problem to itself, and it stops at a base case that needs no further help.\", \"body\": \"Take sum_to(n), which equals 1+2+...+n. Its smaller self is sum_to(n-1), so sum_to(n) equals n + sum_to(n-1). That chain of smaller problems has to end somewhere, and sum_to(0)=0 is where it ends.\", \"question\": \"Using that rule, what smaller sum_to call would sum_to(3) hand off to, and what would it add to that call's result?\"}"
   ],
   "input_sha256": "1a6ccd15960d7d572c96de957f6eae0ff470a031fd3568a0cec9f272acdfb746",
   "model": "claude-sonnet-5-5",
   "output": {
-    "body": "Take the sum of 1 to n: the base case is sum(1) = 1, and for bigger n, sum(n) = n + sum(n-1). Here is sum(3) worked partway: sum(3) = 3 + sum(2), and sum(2) = 2 + sum(1), where sum(1) = 1. So sum(2) = 2 + ___.",
-    "key_idea": "A recursive function solves a problem by handing a smaller copy of the same problem to itself, and it stops at a base case that needs no further help.",
-    "question": "What number goes in the blank, and what does that tell you about how sum(3) gets finished?"
+    "body": "Take sum_to(n), which equals 1+2+...+n. Its smaller self is sum_to(n-1), so sum_to(n) equals n + sum_to(n-1). That chain of smaller problems has to end somewhere, and sum_to(0)=0 is where it ends.",
+    "key_idea": "A recursive function solves a problem by handing a smaller version of the same problem to itself, and it stops at a base case that needs no further help.",
+    "question": "Using that rule, what smaller sum_to call would sum_to(3) hand off to, and what would it add to that call's result?"
   },
-  "prompt_hash": "c41a3c1994a6",
-  "requests": 2,
+  "prompt_hash": "ca02dcf9e63b",
+  "requests": 1,
   "rescued": false,
-  "retries": 1,
+  "retries": 0,
   "schema_hash": "ee2a0f1f177f",
   "slot": "loop_tutor_deep",
   "tool_calls": []

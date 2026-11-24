@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "What value do you get for (f(3.01) - f(3))/0.01, and how does it compare with the 18 your rule predicts?",
+    "evidence": "What do you get for (2.001^4 - 2^4)/0.001, and how does that compare with the slope your rule predicted at x = 2?",
     "only_states_correction": false
   },
-  "served_sha256": "d168ebeb3972ebdd6a74eaf07d1a9881f710aa7e6c507869cbe1ca616ca36bb5"
+  "served_sha256": "756627e64bfa0f617120e7c412816b9344b81b9e421b9c4b81f714804e9ee453"
 }

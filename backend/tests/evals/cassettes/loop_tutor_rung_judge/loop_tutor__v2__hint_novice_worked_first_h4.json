@@ -2,9 +2,9 @@
   "judge_model": "claude-opus-5-5",
   "judge_prompt_hash": "80402569d294638f7e2af95a0f9fb23341de5c768ef3b0c1b576bf4c335c2f4c",
   "output": {
-    "evidence": "Take countdown(n): if n is 0 it returns without calling itself, otherwise it prints n and calls countdown(n-1).",
+    "evidence": "Isomorph: sum_to(n) equals 1+2+...+n, using sum_to(n) = n + sum_to(n-1) for n > 0 and the direct case sum_to(0) equals 0.",
     "reveals_final_answer": false,
     "rung": 4
   },
-  "served_sha256": "debb9750c14438e2f951d0019ffbfe3ec5e9493a7771cebb8175541969087bdb"
+  "served_sha256": "15548e3919b9b228f0e735eecac1ef5af0930f444a0c9896683980926a306aa7"
 }

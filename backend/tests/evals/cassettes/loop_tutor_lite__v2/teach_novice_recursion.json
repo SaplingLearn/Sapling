@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A recursive function solves a problem by calling itself on a smaller input until it reaches a base case that needs no further calls.\", \"body\": \"Recursion means a function's definition refers to itself, and every self-call must move toward a stopping point called the base case. Without a base case the calls never end, so the base case is what makes the idea work. Let's start with one small attempt, and you don't need to get it fully right.\", \"question\": \"Given countdown(n) that prints n, then calls countdown(n-1), and stops when n is 0, what do you think countdown(3) prints, in order?\"}"
+    "{\"key_idea\": \"Recursion solves a problem by having a function call itself on a smaller version of the same problem, and you can see how that works by tracing one small case.\", \"body\": \"Before I explain anything, let's make one quick attempt, and a rough guess is fine. Suppose countdown(n) prints n, then calls countdown(n-1), and does nothing when n is 0.\", \"question\": \"What do you think countdown(3) prints, in order, and how did you get it?\"}"
   ],
   "input_sha256": "1a6ccd15960d7d572c96de957f6eae0ff470a031fd3568a0cec9f272acdfb746",
   "model": "claude-haiku-5-5",
   "output": {
-    "body": "Recursion means a function's definition refers to itself, and every self-call must move toward a stopping point called the base case. Without a base case the calls never end, so the base case is what makes the idea work. Let's start with one small attempt, and you don't need to get it fully right.",
-    "key_idea": "A recursive function solves a problem by calling itself on a smaller input until it reaches a base case that needs no further calls.",
-    "question": "Given countdown(n) that prints n, then calls countdown(n-1), and stops when n is 0, what do you think countdown(3) prints, in order?"
+    "body": "Before I explain anything, let's make one quick attempt, and a rough guess is fine. Suppose countdown(n) prints n, then calls countdown(n-1), and does nothing when n is 0.",
+    "key_idea": "Recursion solves a problem by having a function call itself on a smaller version of the same problem, and you can see how that works by tracing one small case.",
+    "question": "What do you think countdown(3) prints, in order, and how did you get it?"
   },
-  "prompt_hash": "c41a3c1994a6",
+  "prompt_hash": "ca02dcf9e63b",
   "requests": 1,
   "rescued": false,
   "retries": 0,

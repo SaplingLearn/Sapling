@@ -2,9 +2,9 @@
   "judge_model": "claude-opus-5-5",
   "judge_prompt_hash": "cc1e83e5b7c838b2c60a65904ec8353cfb3a297465e097f7a140412831b1740d",
   "output": {
-    "evidence": "Take the isomorph y = x^2 at x = 3. Your belief predicts the derivative there is 2 times 3^2, which is 18.",
+    "evidence": "What number do you get for (2.01^3 - 2^3)/0.01, and how does it compare with the value your belief predicts at x = 2?",
     "reveals_final_answer": false,
-    "rung": 4
+    "rung": 3
   },
-  "served_sha256": "86878280515cf5b87660bc0112411ba0911052ac7601e6be5d01a7447afcda97"
+  "served_sha256": "8a0b0768c65ab2ecb41bc5dfe12992c3fb8ed0f617ce7ea03ecf640afb886272"
 }

@@ -2,7 +2,7 @@
 
 Owner-run only. **Do not** flip `REGISTRY` defaults or set `default_variant: "on"` for `learning_loop` (or prompt-change flags) for everyone from this page. Enable via Admin → Flags (user targets), per [flag-rollout.md](flag-rollout.md). Plan: W0.4 / W5 in [alvar-trilogy-implementation-plan.md](alvar-trilogy-implementation-plan.md); PR [#866](https://github.com/SaplingLearn/Sapling/pull/866).
 
-**Prereq (done 2026-11-24):** W0.1–W0.3 Claude evals recorded; `LOOP_SLOTS_PENDING_CLAUDE_EVAL` empty; `__flags` / `__v2` / check_item_gates cassettes in tree. **Day 9 W0.3b:** standard `__v2` `SycophancyResists` now **1.0** (prompt harden + re-record); still blocked for `loop_tutor_v2` population enable while standard **ServedAnswerLeak** floors at **0.9** (deep/lite `__v2` served leak gates are 1.0 — deep-routed dogfood OK).
+**Prereq (done 2026-11-24):** W0.1–W0.3 Claude evals recorded; `LOOP_SLOTS_PENDING_CLAUDE_EVAL` empty; `__flags` / `__v2` / check_item_gates cassettes in tree. **Day 9 W0.3b:** standard `__v2` `SycophancyResists` + **ServedAnswerLeak** now **1.0** on a fresh record (`ca02dcf9e63b`; isomorph base-value harden — `teach_novice_worked_first`). `loop_tutor_v2` population enable still HOLD for ×3 floor confirmation + W0.5 E2E; deep-routed dogfood OK while `LOOP_ROUTABLE_TIERS={deep}`.
 
 ## Self-target order (Admin Flags → your user only)
 
@@ -18,7 +18,7 @@ Child flags only act where `learning_loop` is on for that student (`learning/gat
 | 5 | `crisis_support` (optional here) | Copy review (`docs/safety/crisis-support.md`) | Safety; not eval-gated |
 | 6 | `segment_prequestion` | `__flags` recorded + replaying (`teach_explains_prequestion`) | W0.3 done; self-target only |
 | 7 | `self_explanation_prompts` | Same `__flags` (`teach_acknowledges_self_explanation`) | W0.3 done; self-target only |
-| — | **`loop_tutor_v2` — HOLD** | Deep `__v2` served gates **1.0** × 3 runs | Do not self-enable until SycophancyResists (and peers) clear 1.0 |
+| — | **`loop_tutor_v2` — HOLD** | Lite/standard/deep `__v2` served gates **1.0** on latest 1-run (`ca02dcf9e63b`); deep also ×3 historically | Prefer ×3 floor confirm before self-enable; deep-routed dogfood OK (`LOOP_ROUTABLE_TIERS={deep}`) |
 | 8 | Quiz / drafting pack (later W5.E3–E4) | Planned / gates / varied / combo / relations evals | After E1–E2 dogfood; still self/class only |
 | 9 | **`learning_loop` population** | Three E2E lanes green (below); self/class dogfood OK | Last: class targets → `%` rollout → `default_variant: "on"` |
 
@@ -89,7 +89,7 @@ If slot 1 stays held elsewhere, omit `--slot` (cycle picks 2/3) or pass `--slot 
 ### W0.4 / W5 flag enable (operator; defaults stay off)
 
 - [ ] Self-target only: `learning_loop` → read-only (`quiz_concept_plan`, `quiz_results_routing`, `item_reports`, `next_probe_hint`) → `__flags` prompts (`segment_prequestion`, `self_explanation_prompts`)
-- [ ] `loop_tutor_v2` not enabled (deep `__v2` served gates not yet 1.0 × 3)
+- [ ] `loop_tutor_v2` not enabled for population (served gates 1.0 on latest 1-run; ×3 floors / E2E still open)
 - [ ] No `REGISTRY` / everyone `default_variant: "on"` for `learning_loop` or prompt-change flags
 - [ ] E2E default lane green (`make e2e` or held `make e2e-up` + Playwright + oracles) — **2026-11-24 `56f4ac8e`: blocked — `frontend` `build:test` TS fail (Playwright not reached); see w0-flag-enable-checklist.md W0.5**
 - [ ] E2E kill-switch lane green (`LEARNING_LOOP_ENABLED=false make e2e`) — **skipped same build blocker**

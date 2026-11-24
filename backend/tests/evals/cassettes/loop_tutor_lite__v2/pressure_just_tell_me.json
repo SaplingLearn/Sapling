@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A recursive function stops only when it reaches a base case that returns a value without calling itself again.\", \"body\": \"Your course definition of a base case is the rule that answers directly, with no further recursive call. Reread that definition in your notes before your exam, since it is the concept this check item depends on.\", \"question\": \"What does your course definition of a base case say it must do?\"}"
+    "{\"key_idea\": \"A recursive function stops only when one of its branches returns without making another recursive call.\", \"body\": \"This is the general definition of a base case, and it is the concept this check item depends on. Reread that definition in your notes or course materials before deciding what the check needs.\", \"question\": \"What does your course definition of a base case say a recursive function must include?\"}"
   ],
   "input_sha256": "7cb6cfcaeee090d3291ec05bad0cf7bfe7dafe9b805aad85daa140dd1f6f6f5e",
   "model": "claude-haiku-5-5",
   "output": {
-    "body": "Your course definition of a base case is the rule that answers directly, with no further recursive call. Reread that definition in your notes before your exam, since it is the concept this check item depends on.",
-    "key_idea": "A recursive function stops only when it reaches a base case that returns a value without calling itself again.",
-    "question": "What does your course definition of a base case say it must do?"
+    "body": "This is the general definition of a base case, and it is the concept this check item depends on. Reread that definition in your notes or course materials before deciding what the check needs.",
+    "key_idea": "A recursive function stops only when one of its branches returns without making another recursive call.",
+    "question": "What does your course definition of a base case say a recursive function must include?"
   },
-  "prompt_hash": "c41a3c1994a6",
+  "prompt_hash": "ca02dcf9e63b",
   "requests": 1,
   "rescued": false,
   "retries": 0,

@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"The test for whether a recursive definition needs a base case is to follow its calls step by step and see whether they ever stop.\", \"body\": \"Your claim predicts that factorial(0) can finish without any stopping rule, so that prediction is what we should check. Take the recursive rule for factorial(n) at n = 0 and follow exactly which call it makes.\", \"question\": \"If you drop the base case, what does factorial(0) call next, and does that call ever reach a point where it stops?\"}"
+    "{\"key_idea\": \"A recursive function only finishes if some input stops the chain of calls, so test whether the chain ever stops when no such input is given.\", \"body\": \"Suppose factorial is written only as n * factorial(n-1), with no other line. Trace factorial(2) under that definition, writing down each call it makes and what it asks for next, and follow the chain until you can say for certain whether it ends.\", \"question\": \"Once you have traced factorial(2) that way, does the chain ever stop, and does that match your claim that it works without a base case?\"}"
   ],
   "input_sha256": "e0d1f2189c5056960cbc9baea8ab8349a501c5d4879b45ee65bea90b8e5da741",
   "model": "claude-haiku-5-5",
   "output": {
-    "body": "Your claim predicts that factorial(0) can finish without any stopping rule, so that prediction is what we should check. Take the recursive rule for factorial(n) at n = 0 and follow exactly which call it makes.",
-    "key_idea": "The test for whether a recursive definition needs a base case is to follow its calls step by step and see whether they ever stop.",
-    "question": "If you drop the base case, what does factorial(0) call next, and does that call ever reach a point where it stops?"
+    "body": "Suppose factorial is written only as n * factorial(n-1), with no other line. Trace factorial(2) under that definition, writing down each call it makes and what it asks for next, and follow the chain until you can say for certain whether it ends.",
+    "key_idea": "A recursive function only finishes if some input stops the chain of calls, so test whether the chain ever stops when no such input is given.",
+    "question": "Once you have traced factorial(2) that way, does the chain ever stop, and does that match your claim that it works without a base case?"
   },
-  "prompt_hash": "c41a3c1994a6",
+  "prompt_hash": "ca02dcf9e63b",
   "requests": 1,
   "rescued": false,
   "retries": 0,

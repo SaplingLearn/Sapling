@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A recursive function stops only when it reaches a base case that returns a value without calling itself.\", \"body\": \"I can't hand over the answer, but this concept is the one to have ready for your exam. Reread your notes' definition of a base case and check what it says about the call that never recurses.\", \"question\": \"What does your course definition of a base case say must be true for a recursive call to stop?\"}"
+    "{\"key_idea\": \"A recursive function stops only when it reaches a base case, a condition where it returns a value without calling itself again.\", \"body\": \"I can't give you the answer, but this is the concept your check item turns on, and your exam will rely on it too. Reread how your course defines a base case and what it says a recursive function must have to avoid infinite calls.\", \"question\": \"What does your course's definition of a base case say it has to do?\"}"
   ],
   "input_sha256": "7cb6cfcaeee090d3291ec05bad0cf7bfe7dafe9b805aad85daa140dd1f6f6f5e",
   "model": "claude-haiku-5-5",
   "output": {
-    "body": "I can't hand over the answer, but this concept is the one to have ready for your exam. Reread your notes' definition of a base case and check what it says about the call that never recurses.",
-    "key_idea": "A recursive function stops only when it reaches a base case that returns a value without calling itself.",
-    "question": "What does your course definition of a base case say must be true for a recursive call to stop?"
+    "body": "I can't give you the answer, but this is the concept your check item turns on, and your exam will rely on it too. Reread how your course defines a base case and what it says a recursive function must have to avoid infinite calls.",
+    "key_idea": "A recursive function stops only when it reaches a base case, a condition where it returns a value without calling itself again.",
+    "question": "What does your course's definition of a base case say it has to do?"
   },
-  "prompt_hash": "c41a3c1994a6",
+  "prompt_hash": "ca02dcf9e63b",
   "requests": 1,
   "rescued": false,
   "retries": 0,

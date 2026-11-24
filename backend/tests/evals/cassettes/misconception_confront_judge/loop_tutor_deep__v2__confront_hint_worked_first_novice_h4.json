@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "What formula does your belief give for the derivative of x^2 at x = 1, and does it match the slope you get from that 1 to 1.01 estimate?",
+    "evidence": "What does your rule give for the derivative of x^2 at x = 0 and at x = 1, and does it match the slopes 0 and 2 from the graph?",
     "only_states_correction": false
   },
-  "served_sha256": "8faa84414ee376a807a0d3b7a6beca0749e0ee1ceec01bfacd60be2f1b22c8bf"
+  "served_sha256": "720c8a72533e35dfb0bc8645cecf78ccb092dbb781777665e22c810fd9b521f5"
 }

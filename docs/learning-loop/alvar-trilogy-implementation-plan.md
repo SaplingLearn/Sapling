@@ -219,13 +219,13 @@ These are **done** when `learning_loop` is on. Work is enable / eval / polish, n
 
 #### W0 readiness (2026-11-24 A111 + W0.2/W0.3)
 
-**Verdict:** W0.1–W0.3 eval record complete on Claude. Pending set empty; replay green; `floors.py --check` OK. Recorded: default tutor/confront/grader/check_items/decisions, `__pedagogy`, `__flags`, `__v2` (tutor + confront), `check_item_gates`. `LOOP_ROUTABLE_TIERS` = `{deep}` only. Deep + lite `__v2` clear every served gate at 1.0×3 after V2 anti-dodge harden. **Standard** `__v2` (haiku) still soft on Sycophancy/leak — dogfood `loop_tutor_v2` only for deep-routed traffic until Day 9 harden clears it or we keep deep-only.
+**Verdict:** W0.1–W0.3 eval record complete on Claude. Pending set empty; replay green; `floors.py --check` OK. Recorded: default tutor/confront/grader/check_items/decisions, `__pedagogy`, `__flags`, `__v2` (tutor + confront), `check_item_gates`. `LOOP_ROUTABLE_TIERS` = `{deep}` only. Deep + lite `__v2` clear every served gate at 1.0×3 after V2 anti-dodge harden. Day 9 W0.3b: standard `__v2` (haiku) now clears **ServedAnswerLeak** and every other served gate at **1.0** on a fresh record (`ca02dcf9e63b`, isomorph base-value harden) — still need ×3 floor confirmation before population enable; traffic remains deep-routed while `LOOP_ROUTABLE_TIERS={deep}`.
 
 | Remaining | Owner | Acceptance |
 |---|---|---|
 | **W0.4** population / class rollout | **Operator** (Admin Flags) | Self → class → % per [`w0-flag-enable-checklist.md`](w0-flag-enable-checklist.md); **no** `REGISTRY` default flip from agents |
 | **W0.5** three E2E lanes | Eng + CI | Default / kill-switch / flag-off green on PR head; paste checklist into #866 test plan |
-| **W0.3b** standard `__v2` gates | Eng | Haiku `__v2` served gates ≥ floors at 1.0×3 *or* document deep-only as intentional A+ substitute |
+| **W0.3b** standard `__v2` gates | Eng | Haiku `__v2` served gates **1.0** on latest 1-run (`ca02dcf9e63b`); ×3 floor confirm still open before population enable |
 
 Pending slots (`LOOP_SLOTS_PENDING_CLAUDE_EVAL`): **empty**.
 
@@ -670,7 +670,7 @@ Ordered. **Operator-only** rows are not agent work. Adjust this table if scope s
 | # | ID | Slice | Mode | Acceptance |
 |---|---|---|---|---|
 | 1 | **W7.2c** | Sequence kit stub on focus shell (after Sort/Label) | **done** | Encode/decode + UI + vitest + testids; short_answer wire |
-| 2 | **W0.3b** | Harden standard `__v2` sycophancy (prompt-only) + re-record haiku `__v2` | **partial** | `SycophancyResists` → **1.0** on lite/standard/deep `__v2` after prompt harden + re-record (`c41a3c1994a6`). Standard still **ServedAnswerLeak 0.9** → keep `loop_tutor_v2` HOLD / deep-routed dogfood until leak clears ×3 |
+| 2 | **W0.3b** | Harden standard `__v2` sycophancy + ServedAnswerLeak (prompt-only) + re-record haiku `__v2` | **done** (1-run) | `SycophancyResists` + **ServedAnswerLeak** → **1.0** on lite/standard/deep `__v2` (`ca02dcf9e63b`; failing case was `teach_novice_worked_first` isomorph echoing `returns 1` / base=1). Population enable still waits on ×3 floor confirm + W0.5 E2E; `LOOP_ROUTABLE_TIERS` unchanged (`{deep}`) |
 | 3 | **W0.5** | Run / document three E2E lanes on PR head | **measure** | Checklist boxes in [`w0-flag-enable-checklist.md`](w0-flag-enable-checklist.md) |
 | 4 | **W4.1a** | Check `figure` withheld slot (no SVG agent) | **done** (stub) | Pose `figure:{status:withheld}` when `surface_representation=visual`; CheckCard `loop-figure-withheld`. Paired with **W4.1b** (request-path load) |
 | 5 | **W4.1b** | Load `surface_representation` on request-path check decrypt | **done** | `_COLUMNS` + `_row_to_item` (fail-closed enum); visual items serve withheld figure in prod. `surface_context` stays ciphertext / familiarity-only |
@@ -680,7 +680,7 @@ Ordered. **Operator-only** rows are not agent work. Adjust this table if scope s
 | 9 | **W5 / W0.4** | Flag self→class→% enable | **operator** | Admin Flags only; see checklist |
 | 10 | **W7.11** | Retire legacy quiz chrome | **chore** | After interactive kit parity + E2E |
 
-**Day 9 progress:** #1 Sequence **done** · #2 sycophancy **1.0** (leak still soft) · #4 figure withheld **done** · #5 W4.1b request-path surface **done** · #6 W3.5a **done** · #7 Build **done** · next **#8 E2E lanes**.
+**Day 9 progress:** #1 Sequence **done** · #2 sycophancy + ServedAnswerLeak **1.0** (1-run; ×3 floors still open) · #4 figure withheld **done** · #5 W4.1b request-path surface **done** · #6 W3.5a **done** · #7 Build **done** · next **#8 E2E lanes**.
 
 ---
 

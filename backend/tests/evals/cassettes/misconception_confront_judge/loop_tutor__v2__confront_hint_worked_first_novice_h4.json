@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "What is ((3.01)^2 - 3^2) / 0.01, and does that slope match the 18 your rule predicts?",
+    "evidence": "What number do you get for (2.01^3 - 2^3)/0.01, and how does it compare with the value your belief predicts at x = 2?",
     "only_states_correction": false
   },
-  "served_sha256": "86878280515cf5b87660bc0112411ba0911052ac7601e6be5d01a7447afcda97"
+  "served_sha256": "8a0b0768c65ab2ecb41bc5dfe12992c3fb8ed0f617ce7ea03ecf640afb886272"
 }

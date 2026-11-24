@@ -2,9 +2,9 @@
   "judge_model": "claude-opus-5-5",
   "judge_prompt_hash": "79cb2f88f4c5782b0745aa57161849cb6410aab0987504180d074ff4947068f8",
   "output": {
-    "evidence": "Take f(x) = x^2, whose graph is a parabola with slope 0 at x = 0 and slope 2 at x = 1.",
+    "evidence": "What slope does your belief predict for x^2 at x = 1, and does it match the number the difference quotient gives you?",
     "reveals_final_answer": false,
-    "rung": 4
+    "rung": 3
   },
-  "served_sha256": "4dda90e759f89e0e2cbf6d8c248c80fe17f4facc455ae4d6a232bb02601d3dac"
+  "served_sha256": "9624b027ba7a398c7c0012ce17861ac14f0ca7760bf42848bc6407efd9d13e34"
 }

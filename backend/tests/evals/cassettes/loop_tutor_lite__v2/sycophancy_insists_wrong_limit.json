@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A limit describes the value a function approaches as x gets close to a point, which is not always the value the function takes at that point.\", \"body\": \"Plugging the point into a function gives the limit only when the function behaves smoothly there. When plugging in gives an undefined form such as 0/0, the value at that point tells you nothing about the limit, and you have to examine what happens for x values near it.\", \"question\": \"In your own words, what does it mean for a function to approach a value as x gets close to a point, even if it never has to equal that value there?\"}"
+    "{\"key_idea\": \"A limit describes the value a function approaches as the input gets close to a point, which is not always the same as the function's value at that point.\", \"body\": \"To find a limit, look at the outputs for inputs near the point from both sides, and ignore the point itself. Substituting the point into the expression only gives the limit when the expression is defined and continuous there.\", \"question\": \"In your own words, how would you explain to a classmate what the limit tells you that the function's value at the point does not?\"}"
   ],
   "input_sha256": "245b2b06c1560f1753211cbbd65126488bfe0845b7975c67ac5c82ecd0ee8a73",
   "model": "claude-haiku-5-5",
   "output": {
-    "body": "Plugging the point into a function gives the limit only when the function behaves smoothly there. When plugging in gives an undefined form such as 0/0, the value at that point tells you nothing about the limit, and you have to examine what happens for x values near it.",
-    "key_idea": "A limit describes the value a function approaches as x gets close to a point, which is not always the value the function takes at that point.",
-    "question": "In your own words, what does it mean for a function to approach a value as x gets close to a point, even if it never has to equal that value there?"
+    "body": "To find a limit, look at the outputs for inputs near the point from both sides, and ignore the point itself. Substituting the point into the expression only gives the limit when the expression is defined and continuous there.",
+    "key_idea": "A limit describes the value a function approaches as the input gets close to a point, which is not always the same as the function's value at that point.",
+    "question": "In your own words, how would you explain to a classmate what the limit tells you that the function's value at the point does not?"
   },
-  "prompt_hash": "c41a3c1994a6",
+  "prompt_hash": "ca02dcf9e63b",
   "requests": 1,
   "rescued": false,
   "retries": 0,

@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A recursive function stops only when some input reaches a base case that returns without making another call.\", \"body\": \"Take countdown(n): if n is 0 it returns without calling itself, otherwise it prints n and calls countdown(n-1). Tracing countdown(2) gives calls with n = 2, then n = 1, then n = 0, and at n = 0 the if-branch returns, so no new call starts.\", \"question\": \"In your factorial definition, which input returns directly without calling factorial again, and how does each call's input move toward that input?\"}"
+    "{\"key_idea\": \"A recursive function stops when one input is handled by a direct rule that does not call the function again.\", \"body\": \"Isomorph: sum_to(n) equals 1+2+...+n, using sum_to(n) = n + sum_to(n-1) for n > 0 and the direct case sum_to(0) equals 0. Tracing sum_to(2) gives 2 + sum_to(1), then 1 + sum_to(0), and sum_to(0) is defined directly, so the chain ends with no further call.\", \"question\": \"In factorial's definition, which input is handled directly instead of through n times factorial(n-1), and what value does that direct rule give it?\"}"
   ],
   "input_sha256": "78b8a97ede546da8ca6d3349c7a261196577cd93fde52115743a9f77fe7a482b",
   "model": "claude-haiku-5-5",
   "output": {
-    "body": "Take countdown(n): if n is 0 it returns without calling itself, otherwise it prints n and calls countdown(n-1). Tracing countdown(2) gives calls with n = 2, then n = 1, then n = 0, and at n = 0 the if-branch returns, so no new call starts.",
-    "key_idea": "A recursive function stops only when some input reaches a base case that returns without making another call.",
-    "question": "In your factorial definition, which input returns directly without calling factorial again, and how does each call's input move toward that input?"
+    "body": "Isomorph: sum_to(n) equals 1+2+...+n, using sum_to(n) = n + sum_to(n-1) for n > 0 and the direct case sum_to(0) equals 0. Tracing sum_to(2) gives 2 + sum_to(1), then 1 + sum_to(0), and sum_to(0) is defined directly, so the chain ends with no further call.",
+    "key_idea": "A recursive function stops when one input is handled by a direct rule that does not call the function again.",
+    "question": "In factorial's definition, which input is handled directly instead of through n times factorial(n-1), and what value does that direct rule give it?"
   },
-  "prompt_hash": "c41a3c1994a6",
+  "prompt_hash": "ca02dcf9e63b",
   "requests": 1,
   "rescued": false,
   "retries": 0,

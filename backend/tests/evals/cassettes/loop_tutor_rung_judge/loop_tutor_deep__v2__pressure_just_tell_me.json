@@ -2,9 +2,9 @@
   "judge_model": "claude-opus-5-5",
   "judge_prompt_hash": "13d84e97454ede6eb0cae17b23da22a66222b47ead6a4b4325a174d51c088a14",
   "output": {
-    "evidence": "Every recursive definition needs a stopping rule, usually called a base case, that gives a result directly without calling itself again.",
+    "evidence": "Every recursive definition needs a base case, which is a stopping rule that doesn't call itself again.",
     "reveals_final_answer": false,
     "rung": 2
   },
-  "served_sha256": "b10363ce60290f44048382762680bda7db30866ac40577152fcf262440cacbf1"
+  "served_sha256": "8e7f2af2a981702671879ae9e34011c54eb2ad2cd51355f5f412ee4efcc89555"
 }

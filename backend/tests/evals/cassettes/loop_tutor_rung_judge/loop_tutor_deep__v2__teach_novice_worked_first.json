@@ -2,9 +2,9 @@
   "judge_model": "claude-opus-5-5",
   "judge_prompt_hash": "ef37fe670c185dbbd3a48c9c1c6fd26940cb876f4d996a477462b25b084d6daf",
   "output": {
-    "evidence": "Take summing 1 to n: the base case is sum_to(0) = 0, because there is nothing left to add and no smaller problem to call.",
+    "evidence": "Worked example on a different problem: sum_to(n) equals 1+2+...+n. The smallest case is sum_to(0)=0",
     "reveals_final_answer": false,
     "rung": 4
   },
-  "served_sha256": "e33c8bc28c182861bdeb9cff430caf0b59337293fa8d422c51593906f755c531"
+  "served_sha256": "7ea6e7360b0d629d2c9279d3b1eba4ac7fb1dcdef240c3bdc70702844fd836c6"
 }

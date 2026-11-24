@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A limit describes the value a function approaches as x gets close to a point, which is not always the value the function takes at that point.\", \"body\": \"Substituting the point gives the limit only when the function is defined and well behaved there. When substitution gives an undefined expression, the limit is decided by the values of the function at inputs near the point, not by the single value at the point.\", \"question\": \"In your own words, what does a limit measure that plugging in the point does not always capture?\"}"
+    "{\"key_idea\": \"A limit describes the values a function approaches as its input gets closer to a point, which can differ from the function's value at that point.\", \"body\": \"Substituting the point into an expression only gives the limit when the function is defined there and behaves smoothly nearby, so the value at the point and the limit are separate things to check. Before accepting any value, you need to look at what the outputs do as the input gets closer from both sides.\", \"question\": \"In your own words, what does the limit tell you that the function's value at the point does not?\"}"
   ],
   "input_sha256": "245b2b06c1560f1753211cbbd65126488bfe0845b7975c67ac5c82ecd0ee8a73",
   "model": "claude-haiku-5-5",
   "output": {
-    "body": "Substituting the point gives the limit only when the function is defined and well behaved there. When substitution gives an undefined expression, the limit is decided by the values of the function at inputs near the point, not by the single value at the point.",
-    "key_idea": "A limit describes the value a function approaches as x gets close to a point, which is not always the value the function takes at that point.",
-    "question": "In your own words, what does a limit measure that plugging in the point does not always capture?"
+    "body": "Substituting the point into an expression only gives the limit when the function is defined there and behaves smoothly nearby, so the value at the point and the limit are separate things to check. Before accepting any value, you need to look at what the outputs do as the input gets closer from both sides.",
+    "key_idea": "A limit describes the values a function approaches as its input gets closer to a point, which can differ from the function's value at that point.",
+    "question": "In your own words, what does the limit tell you that the function's value at the point does not?"
   },
-  "prompt_hash": "c41a3c1994a6",
+  "prompt_hash": "ca02dcf9e63b",
   "requests": 1,
   "rescued": false,
   "retries": 0,

@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A belief that the numbers run out on their own can be tested by tracing what the call actually does at each step.\", \"body\": \"Take a version of factorial with no special case for 0, where each call just returns n * factorial(n - 1). Your belief predicts that the calls stop by themselves once the numbers run out, and you can check that by following the calls.\", \"question\": \"If you trace factorial(0) through that version, writing out the next two or three calls that happen, what value of n does each call get, and does anything in the code ever tell it to stop?\"}"
+    "{\"key_idea\": \"The belief that the numbers run out on their own is something you can test by tracing what a call actually does.\", \"body\": \"Take a version of factorial with no special case for 0, where factorial(n) is defined only as n * factorial(n-1). Trace what that definition asks for when n is 0, then what it asks for next, and keep going a few steps.\", \"question\": \"Writing out each call by hand, what is the argument in each of the next three calls after factorial(0), and does anything in that rule tell the calls to stop?\"}"
   ],
   "input_sha256": "bf364d85a82c7cae594d1e360ec9924607e87ed2a3b8f2776603b485991feeeb",
   "model": "claude-sonnet-5-5",
   "output": {
-    "body": "Take a version of factorial with no special case for 0, where each call just returns n * factorial(n - 1). Your belief predicts that the calls stop by themselves once the numbers run out, and you can check that by following the calls.",
-    "key_idea": "A belief that the numbers run out on their own can be tested by tracing what the call actually does at each step.",
-    "question": "If you trace factorial(0) through that version, writing out the next two or three calls that happen, what value of n does each call get, and does anything in the code ever tell it to stop?"
+    "body": "Take a version of factorial with no special case for 0, where factorial(n) is defined only as n * factorial(n-1). Trace what that definition asks for when n is 0, then what it asks for next, and keep going a few steps.",
+    "key_idea": "The belief that the numbers run out on their own is something you can test by tracing what a call actually does.",
+    "question": "Writing out each call by hand, what is the argument in each of the next three calls after factorial(0), and does anything in that rule tell the calls to stop?"
   },
-  "prompt_hash": "c41a3c1994a6",
+  "prompt_hash": "ca02dcf9e63b",
   "requests": 1,
   "rescued": false,
   "retries": 0,

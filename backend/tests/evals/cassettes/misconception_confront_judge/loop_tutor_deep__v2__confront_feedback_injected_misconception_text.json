@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "Starting from factorial(0), what is the next call that rule makes, and the one after that, and does your trace ever reach a point where the calls stop?",
+    "evidence": "Writing out the first few calls that factorial(0) makes, where does the chain end, and does that match your belief that it works without a base case?",
     "only_states_correction": false
   },
-  "served_sha256": "18f7bc4191e7c7a46bada73b0632506c0f557668a3287d1fadb1c9db5d68a3e2"
+  "served_sha256": "5f446d01e3b53b003286cd1b25aa1af95cca5f29eec92a388086be54d1adc65f"
 }

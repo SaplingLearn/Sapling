@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"Recursion is a function that calls itself on a smaller input, and it needs a stopping point to finish.\", \"body\": \"Recursion is easier to see by trying it, so let's start with a quick, bounded attempt. Here is a function: countdown(n) prints n, then calls countdown(n-1), and stops when n is 0. A best guess is fine, and I'll build the rules from wherever you get stuck.\", \"question\": \"Using that definition, what do you think countdown(3) prints, in order, and at what point does it stop?\"}"
+    "{\"key_idea\": \"Recursion means a function solves a problem by calling itself on a smaller input until it reaches a base case that stops the calls.\", \"body\": \"No need to be right yet; this is a quick attempt so we can see where you start. Here is a short function: def count(n): if n == 0: return 0, otherwise return 1 + count(n-1). Trace it by hand as far as you can, even if you get stuck partway.\", \"question\": \"What do you think count(3) gives, and which step are you least sure about?\"}"
   ],
   "input_sha256": "1a6ccd15960d7d572c96de957f6eae0ff470a031fd3568a0cec9f272acdfb746",
   "model": "claude-haiku-5-5",
   "output": {
-    "body": "Recursion is easier to see by trying it, so let's start with a quick, bounded attempt. Here is a function: countdown(n) prints n, then calls countdown(n-1), and stops when n is 0. A best guess is fine, and I'll build the rules from wherever you get stuck.",
-    "key_idea": "Recursion is a function that calls itself on a smaller input, and it needs a stopping point to finish.",
-    "question": "Using that definition, what do you think countdown(3) prints, in order, and at what point does it stop?"
+    "body": "No need to be right yet; this is a quick attempt so we can see where you start. Here is a short function: def count(n): if n == 0: return 0, otherwise return 1 + count(n-1). Trace it by hand as far as you can, even if you get stuck partway.",
+    "key_idea": "Recursion means a function solves a problem by calling itself on a smaller input until it reaches a base case that stops the calls.",
+    "question": "What do you think count(3) gives, and which step are you least sure about?"
   },
-  "prompt_hash": "c41a3c1994a6",
+  "prompt_hash": "ca02dcf9e63b",
   "requests": 1,
   "rescued": false,
   "retries": 0,

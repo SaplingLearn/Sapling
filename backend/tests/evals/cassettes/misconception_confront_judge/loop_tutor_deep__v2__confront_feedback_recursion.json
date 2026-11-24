@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "If you trace factorial(0) through that version, writing out the next two or three calls that happen, what value of n does each call get, and does anything in the code ever tell it to stop?",
+    "evidence": "what is the argument in each of the next three calls after factorial(0), and does anything in that rule tell the calls to stop?",
     "only_states_correction": false
   },
-  "served_sha256": "bd42e83618c3b6803d9c6eb7bb8f3d8ab173d9e7bf7dd7cb7d1ca198fb24975e"
+  "served_sha256": "7d4026f1c872ccc90899aa32b84b58ce02d5287e82ad14128b17bf7cf10a1409"
 }

@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"Test whether multiplying by the exponent is the whole story when you differentiate a power of x.\", \"body\": \"Take f(x) = x^3 and think about its slope at x = 2. If you only multiply by the exponent, your belief predicts a particular formula for the slope. You can check that formula against the limit definition, (f(2+h) - f(2))/h, as h shrinks toward 0.\", \"question\": \"What slope does your belief predict for x^3 at x = 2, and what number does (f(2+h) - f(2))/h approach when you expand (2+h)^3 and let h go to 0?\"}"
+    "{\"key_idea\": \"A belief about derivatives is worth testing against a case you can check independently.\", \"body\": \"Suppose the rule for the derivative of x^3 is to bring down the exponent and keep everything else the same, so the exponent stays 3. Now look at a case you already understand: f(x) = x^2 is the area of a square with side x, and the derivative is its rate of change as x grows. You can estimate that rate at x = 3 by comparing f(3) = 9 with f(3.01) = 9.0601 (the difference quotient).\", \"question\": \"What does that estimate give for the slope at x = 3, and does your rule of bringing down the exponent and keeping it give the same number?\"}"
   ],
   "input_sha256": "b672d2eb87f5fd4418e5467d02b2237500776ff015e86630c3765b81f6c8f7de",
   "model": "claude-sonnet-5-5",
   "output": {
-    "body": "Take f(x) = x^3 and think about its slope at x = 2. If you only multiply by the exponent, your belief predicts a particular formula for the slope. You can check that formula against the limit definition, (f(2+h) - f(2))/h, as h shrinks toward 0.",
-    "key_idea": "Test whether multiplying by the exponent is the whole story when you differentiate a power of x.",
-    "question": "What slope does your belief predict for x^3 at x = 2, and what number does (f(2+h) - f(2))/h approach when you expand (2+h)^3 and let h go to 0?"
+    "body": "Suppose the rule for the derivative of x^3 is to bring down the exponent and keep everything else the same, so the exponent stays 3. Now look at a case you already understand: f(x) = x^2 is the area of a square with side x, and the derivative is its rate of change as x grows. You can estimate that rate at x = 3 by comparing f(3) = 9 with f(3.01) = 9.0601 (the difference quotient).",
+    "key_idea": "A belief about derivatives is worth testing against a case you can check independently.",
+    "question": "What does that estimate give for the slope at x = 3, and does your rule of bringing down the exponent and keeping it give the same number?"
   },
-  "prompt_hash": "c41a3c1994a6",
+  "prompt_hash": "ca02dcf9e63b",
   "requests": 1,
   "rescued": false,
   "retries": 0,

@@ -2,9 +2,9 @@
   "judge_model": "claude-opus-5-5",
   "judge_prompt_hash": "56120063861e7227b4690754af5b01d7ff13e039c9510237736a770622e40921",
   "output": {
-    "evidence": "Correct. You stated it in your own words: the base case is n == 0 returning 1.",
+    "evidence": "What is the first thing you would check to be sure your base case is doing its job?",
     "reveals_final_answer": false,
-    "rung": 0
+    "rung": 1
   },
-  "served_sha256": "5bb8a51f625bf711d0fe2f370948583bc38676a39b4bdcda5fef8d22b4e61314"
+  "served_sha256": "e98105ae3822c097d9d98e04760eb41d6f246e702e187bd8cf0cd976746111ba"
 }

@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "What number does (2.001^2 - 2^2)/0.001 give you, and does it match the 8 your rule predicts?",
+    "evidence": "What value do you get for (2.01^3 - 2^3) divided by 0.01, and how does it compare with 3 times 2^3?",
     "only_states_correction": false
   },
-  "served_sha256": "3845e20cf787a066ebb9334ebcc906dba7f5a2f85ad767a4b37de1711c11c865"
+  "served_sha256": "f118ed88cf5885cb114ca68f5b843d93bfaea5883ac7d92a6e79ec375b705dfd"
 }

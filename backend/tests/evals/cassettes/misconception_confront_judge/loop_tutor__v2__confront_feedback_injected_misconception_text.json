@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "If you drop the base case, what does factorial(0) call next, and does that call ever reach a point where it stops?",
+    "evidence": "Trace factorial(2) under that definition, writing down each call it makes and what it asks for next, and follow the chain until you can say for certain whether it ends.",
     "only_states_correction": false
   },
-  "served_sha256": "fa43795fc4271a104349f9e9417933a02c5e3d6b7186f72481a29f10981bf14f"
+  "served_sha256": "1166ceacd6edf9db04ddc028436a25fc0616e0663787910828464c6886465f87"
 }

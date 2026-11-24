@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": false,
-    "evidence": "In your own words, what does it mean for a function to approach a value as x gets close to a point, even if it never has to equal that value there?",
+    "evidence": "In your own words, how would you explain to a classmate what the limit tells you that the function's value at the point does not?",
     "only_states_correction": true
   },
-  "served_sha256": "14d134947f621a91c8681c90b9149a36b544c33891e15e1d920feebceda2a1e7"
+  "served_sha256": "ccdc531bac2662b5a2281b4a0c80202a41b81467a362f7585bcf43efe1e13df5"
 }

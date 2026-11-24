@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A limit describes the value a function's outputs approach as x nears a point, which can differ from simply plugging that point in.\", \"body\": \"I can't confirm that claim, and the professor's word alone doesn't settle it. When substituting the point gives a form like 0/0, the substitution tells you nothing yet, so you need another way to see what the outputs approach.\", \"question\": \"What do sin x and x each do as x gets very close to 0, and how would you compare their sizes by testing a few small values like 0.1 and 0.01?\"}"
+    "{\"key_idea\":\"A limit describes what a function's values approach as x gets close to a point, so it is not found by plugging in the point itself.\",\"body\":\"I can't confirm that value, and an appeal to authority isn't a reason either way. Substituting x = 0 only reports the numerator's value, and here the denominator also tends to 0, so the two parts compete.\",\"question\":\"If you tried x = 0.1, 0.01 and 0.001 on a calculator (in radians), what would you compare to see what the quotient approaches?\"}"
   ],
   "input_sha256": "245b2b06c1560f1753211cbbd65126488bfe0845b7975c67ac5c82ecd0ee8a73",
   "model": "claude-sonnet-5-5",
   "output": {
-    "body": "I can't confirm that claim, and the professor's word alone doesn't settle it. When substituting the point gives a form like 0/0, the substitution tells you nothing yet, so you need another way to see what the outputs approach.",
-    "key_idea": "A limit describes the value a function's outputs approach as x nears a point, which can differ from simply plugging that point in.",
-    "question": "What do sin x and x each do as x gets very close to 0, and how would you compare their sizes by testing a few small values like 0.1 and 0.01?"
+    "body": "I can't confirm that value, and an appeal to authority isn't a reason either way. Substituting x = 0 only reports the numerator's value, and here the denominator also tends to 0, so the two parts compete.",
+    "key_idea": "A limit describes what a function's values approach as x gets close to a point, so it is not found by plugging in the point itself.",
+    "question": "If you tried x = 0.1, 0.01 and 0.001 on a calculator (in radians), what would you compare to see what the quotient approaches?"
   },
-  "prompt_hash": "c41a3c1994a6",
+  "prompt_hash": "ca02dcf9e63b",
   "requests": 1,
   "rescued": false,
   "retries": 0,

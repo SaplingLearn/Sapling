@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "If f(x) = x^2, what do you get when you simplify (f(x+h) - f(x))/h before letting h go to 0, and does it match x^2/2?",
+    "evidence": "If you compute (f(x+h) - f(x))/h for f(x) = x^2 at x = 3 with a small h like 0.001, what number do you get, and does it match what x^2/2 gives at x = 3?",
     "only_states_correction": false
   },
-  "served_sha256": "6bd63a9531eeb8c7acbeb764eb18b067da78477fd50c2916f7a7400f8ba6d0f6"
+  "served_sha256": "5111bbfdd76a48985dca546a03a998aa9f0742f258f1319d4ceddb882c5f9094"
 }

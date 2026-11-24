@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A 0/0 form at a point tells you only that direct substitution fails, so what to test is what the values do near 0.\", \"body\": \"If a 0/0 form meant the limit does not exist, then every function whose substitution gives 0/0 would have to fail to settle near that point. Take your own example, sin(x)/x, and look at the values it takes as x gets close to 0.\", \"question\": \"Using a calculator in radians, what do you get for sin(x)/x at x = 0.1, 0.01 and 0.001, and does that pattern fit your belief that the limit does not exist?\"}"
+    "{\"key_idea\": \"A 0/0 form is a test of what the function does near the point, not a verdict on whether the limit exists.\", \"body\": \"Your belief predicts that any limit that looks like 0/0 must fail to exist. Take your own function, sin(x)/x, and look at values close to 0 instead of at 0 itself, for example x = 0.1 and x = 0.01 (in radians).\", \"question\": \"What values do you get for sin(x)/x at those two points, and do they fit with the limit not existing?\"}"
   ],
   "input_sha256": "1d48218badd0d7fb355e90843966330dbc456227baf602b717ea63dcf976372c",
   "model": "claude-sonnet-5-5",
   "output": {
-    "body": "If a 0/0 form meant the limit does not exist, then every function whose substitution gives 0/0 would have to fail to settle near that point. Take your own example, sin(x)/x, and look at the values it takes as x gets close to 0.",
-    "key_idea": "A 0/0 form at a point tells you only that direct substitution fails, so what to test is what the values do near 0.",
-    "question": "Using a calculator in radians, what do you get for sin(x)/x at x = 0.1, 0.01 and 0.001, and does that pattern fit your belief that the limit does not exist?"
+    "body": "Your belief predicts that any limit that looks like 0/0 must fail to exist. Take your own function, sin(x)/x, and look at values close to 0 instead of at 0 itself, for example x = 0.1 and x = 0.01 (in radians).",
+    "key_idea": "A 0/0 form is a test of what the function does near the point, not a verdict on whether the limit exists.",
+    "question": "What values do you get for sin(x)/x at those two points, and do they fit with the limit not existing?"
   },
-  "prompt_hash": "c41a3c1994a6",
+  "prompt_hash": "ca02dcf9e63b",
   "requests": 1,
   "rescued": false,
   "retries": 0,

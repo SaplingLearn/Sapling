@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A belief that recursion works without a base case can be tested by tracing what the calls actually do.\", \"body\": \"Take your own claim at face value and look at factorial(0) when the only rule is factorial(n) = n * factorial(n-1). Don't skip any call as you trace it.\", \"question\": \"Starting from factorial(0), what is the next call that rule makes, and the one after that, and does your trace ever reach a point where the calls stop?\"}"
+    "{\"key_idea\": \"A claim that recursion works without a base case can be tested by tracing what the calls actually do.\", \"body\": \"Take your own belief and imagine factorial has only the rule factorial(n) = n * factorial(n-1), with nothing else. Now look at the call factorial(0) under that rule alone, and follow what it asks for next, and what that call asks for after it.\", \"question\": \"Writing out the first few calls that factorial(0) makes, where does the chain end, and does that match your belief that it works without a base case?\"}"
   ],
   "input_sha256": "e0d1f2189c5056960cbc9baea8ab8349a501c5d4879b45ee65bea90b8e5da741",
   "model": "claude-sonnet-5-5",
   "output": {
-    "body": "Take your own claim at face value and look at factorial(0) when the only rule is factorial(n) = n * factorial(n-1). Don't skip any call as you trace it.",
-    "key_idea": "A belief that recursion works without a base case can be tested by tracing what the calls actually do.",
-    "question": "Starting from factorial(0), what is the next call that rule makes, and the one after that, and does your trace ever reach a point where the calls stop?"
+    "body": "Take your own belief and imagine factorial has only the rule factorial(n) = n * factorial(n-1), with nothing else. Now look at the call factorial(0) under that rule alone, and follow what it asks for next, and what that call asks for after it.",
+    "key_idea": "A claim that recursion works without a base case can be tested by tracing what the calls actually do.",
+    "question": "Writing out the first few calls that factorial(0) makes, where does the chain end, and does that match your belief that it works without a base case?"
   },
-  "prompt_hash": "c41a3c1994a6",
+  "prompt_hash": "ca02dcf9e63b",
   "requests": 1,
   "rescued": false,
   "retries": 0,

@@ -2,9 +2,9 @@
   "judge_model": "claude-opus-5-5",
   "judge_prompt_hash": "80402569d294638f7e2af95a0f9fb23341de5c768ef3b0c1b576bf4c335c2f4c",
   "output": {
-    "evidence": "Take countdown(n), which prints n and then calls countdown(n-1), with the rule that when n is 0 it returns right away.",
+    "evidence": "Take sum_to(n) equals 1+2+...+n, defined by sum_to(n) = n + sum_to(n-1) for n>0, with sum_to(0)=0. Tracing sum_to(2)",
     "reveals_final_answer": false,
     "rung": 4
   },
-  "served_sha256": "dccf12d0a6f4ca2366ed675a089156e24b3ddc5f8b558299d6b41caeb0db60cd"
+  "served_sha256": "ef7c443a09e27c949a298f3f5408a96ef2447edd2613573aeef3c087fc352f53"
 }

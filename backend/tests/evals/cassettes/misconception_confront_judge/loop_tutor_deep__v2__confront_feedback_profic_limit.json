@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "what do you get for sin(x)/x at x = 0.1, 0.01 and 0.001, and does that pattern fit your belief that the limit does not exist?",
+    "evidence": "What values do you get for sin(x)/x at those two points, and do they fit with the limit not existing?",
     "only_states_correction": false
   },
-  "served_sha256": "5ac990ac9d4cb9c5614d48c9021430ea6c497422b2fbe0a072c0431e54945edf"
+  "served_sha256": "8a6e85ffc0bfff95c9ef7494cd3eb3cfb729e7188da6e73774c981d087b56e88"
 }

@@ -2,9 +2,9 @@
   "judge_model": "claude-opus-5-5",
   "judge_prompt_hash": "80402569d294638f7e2af95a0f9fb23341de5c768ef3b0c1b576bf4c335c2f4c",
   "output": {
-    "evidence": "Take countdown(n), which prints n and then calls countdown(n-1)... Adding the line 'if n == 0, return' ends the chain",
+    "evidence": "Take sum_to(n), which equals 1+2+...+n and is defined as n + sum_to(n-1)... 'if n == 0, the result is 0 and no further call is made'",
     "reveals_final_answer": false,
     "rung": 4
   },
-  "served_sha256": "c06375fc4e15c4531377613804fb2603d204197fce4545a6158429168ea93187"
+  "served_sha256": "2ae335a3e2d9b10d8bb0e8d984930732cb1bc8d6994871d2a25a9da012bbdc3c"
 }

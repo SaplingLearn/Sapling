@@ -2,9 +2,9 @@
   "judge_model": "claude-opus-5-5",
   "judge_prompt_hash": "04965e06502fce54287461706513430c3dcacd1ff4e9f575514434a4a837b08a",
   "output": {
-    "evidence": "Take the sum of 1 to n: the base case is sum(1) = 1, and for bigger n, sum(n) = n + sum(n-1). Here is sum(3) worked partway",
+    "evidence": "Take sum_to(n), which equals 1+2+...+n. Its smaller self is sum_to(n-1), so sum_to(n) equals n + sum_to(n-1)... sum_to(0)=0 is where it ends.",
     "reveals_final_answer": false,
     "rung": 4
   },
-  "served_sha256": "99171612557558da814f0db5197ba61846989f41a37e981698ff587690166aae"
+  "served_sha256": "08841ef3f5c92fc10b1c74af2c18a00fe13acc0f61f2e43d98f75143802f8836"
 }

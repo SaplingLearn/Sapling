@@ -2,9 +2,9 @@
   "judge_model": "claude-opus-5-5",
   "judge_prompt_hash": "56120063861e7227b4690754af5b01d7ff13e039c9510237736a770622e40921",
   "output": {
-    "evidence": "What is the first thing you need to figure out before you choose your next step?",
+    "evidence": "What is the first thing you need to figure out to check your own reasoning here?",
     "reveals_final_answer": false,
     "rung": 1
   },
-  "served_sha256": "e8663ac0557cdc6abad058aefe54c1657a2fc316a1cb11581e81a38d789bd686"
+  "served_sha256": "d085df80b0a4c8fe73f49d4c3ed238e255cedf3e0c28b07c99fe501674fdde61"
 }

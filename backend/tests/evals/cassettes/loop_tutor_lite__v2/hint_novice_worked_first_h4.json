@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A recursive function stops only when some input is answered directly, without calling itself again.\", \"body\": \"Take countdown(n), which prints n and then calls countdown(n-1), with the rule that when n is 0 it returns right away. Calling countdown(2) runs countdown(1), which runs countdown(0), and that last call hits the direct answer and makes no further call, so the chain ends.\", \"question\": \"In the factorial definition you're working with, which input value has a result given directly rather than by calling factorial again?\"}"
+    "{\"key_idea\": \"A recursive function stops only when some input is answered directly, without making another recursive call.\", \"body\": \"Take sum_to(n) equals 1+2+...+n, defined by sum_to(n) = n + sum_to(n-1) for n>0, with sum_to(0)=0. Tracing sum_to(2): it calls sum_to(1), which calls sum_to(0), and that input is answered directly as 0, so the chain ends and the values come back up. Apply the same tracing to factorial, where the directly answered input is the one you need to identify.\", \"question\": \"For factorial, which input would you check first to see whether it can be answered without calling factorial again?\"}"
   ],
   "input_sha256": "78b8a97ede546da8ca6d3349c7a261196577cd93fde52115743a9f77fe7a482b",
   "model": "claude-haiku-5-5",
   "output": {
-    "body": "Take countdown(n), which prints n and then calls countdown(n-1), with the rule that when n is 0 it returns right away. Calling countdown(2) runs countdown(1), which runs countdown(0), and that last call hits the direct answer and makes no further call, so the chain ends.",
-    "key_idea": "A recursive function stops only when some input is answered directly, without calling itself again.",
-    "question": "In the factorial definition you're working with, which input value has a result given directly rather than by calling factorial again?"
+    "body": "Take sum_to(n) equals 1+2+...+n, defined by sum_to(n) = n + sum_to(n-1) for n>0, with sum_to(0)=0. Tracing sum_to(2): it calls sum_to(1), which calls sum_to(0), and that input is answered directly as 0, so the chain ends and the values come back up. Apply the same tracing to factorial, where the directly answered input is the one you need to identify.",
+    "key_idea": "A recursive function stops only when some input is answered directly, without making another recursive call.",
+    "question": "For factorial, which input would you check first to see whether it can be answered without calling factorial again?"
   },
-  "prompt_hash": "c41a3c1994a6",
+  "prompt_hash": "ca02dcf9e63b",
   "requests": 1,
   "rescued": false,
   "retries": 0,
