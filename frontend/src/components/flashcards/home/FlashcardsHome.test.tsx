@@ -32,6 +32,12 @@ vi.mock("@/lib/useIsMobile", () => ({
 const flagState = vi.hoisted(() => ({ flags: {} as Record<string, string>, ready: true }));
 vi.mock("@/context/FlagsContext", () => ({ useFlagMap: () => flagState }));
 
+vi.mock("next/link", () => ({
+  default: ({ children, href, ...rest }: { children: React.ReactNode; href: string }) => (
+    <a href={href} {...rest}>{children}</a>
+  ),
+}));
+
 vi.mock("@/components/flashcards/FlashcardImportModal", () => ({
   FlashcardImportModal: () => null,
 }));
@@ -123,7 +129,8 @@ describe("Flashcards home: the hero", () => {
   it("opens on the prompt and the decks: no card, no concept grid, no tray", async () => {
     await home();
 
-    expect(screen.getByRole("heading", { name: "What do you want to study?" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "What do you want to practice?" })).toBeTruthy();
+    expect(screen.getByTestId("flashcards-practice-note").textContent).toMatch(/Retrieval practice/i);
     expect(screen.queryByText(/Card 1 of/)).toBeNull();
     expect(screen.queryByRole("checkbox", { name: /^Variables/ })).toBeNull();
     expect(screen.queryByRole("complementary", { name: "Your selection" })).toBeNull();
@@ -234,7 +241,7 @@ describe("Flashcards home: the hero", () => {
     await user.click(sortIt());
 
     expect(await screen.findByText(/Nothing on this course's map matched that/)).toBeTruthy();
-    expect(screen.getByRole("heading", { name: "What do you want to study?" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "What do you want to practice?" })).toBeTruthy();
     expect(screen.queryByRole("checkbox", { name: /^Variables/ })).toBeNull();
     expect(describeField()).toHaveValue("organic chemistry");
     expect(sortIt()).toBeEnabled();
@@ -280,7 +287,8 @@ describe("Flashcards home: decks", () => {
     // Variables is mastered, Recursion struggling; "Graphs" is not a course
     // concept, so a third of the track shows through and it is not listed.
     expect(mastery("s1")).toEqual(["mastered 33%", "struggling 33%"]);
-    expect(midterm.getByRole("img", { name: "Mastery: 1 mastered, 1 struggling" })).toBeTruthy();
+    expect(midterm.getByRole("img", { name: "On your map: 1 mastered, 1 struggling" })).toBeTruthy();
+    expect(midterm.getByTestId("flashcards-map-hint").textContent).toMatch(/not from cards alone/);
     expect(legend("s1")).toBe("1 mastered1 struggling");
 
     const pointers = within(deck("s2"));
@@ -382,18 +390,18 @@ describe("Flashcards home: decks", () => {
 
     // Leaving it is leaving it: the home, and a reload there stays home.
     await userEvent.click(screen.getByRole("button", { name: "All sets" }));
-    expect(await screen.findByRole("heading", { name: "What do you want to study?" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "What do you want to practice?" })).toBeTruthy();
     expect(new URLSearchParams(window.location.search).has("review")).toBe(false);
     cleanup();
     renderPage();
-    expect(await screen.findByRole("heading", { name: "What do you want to study?" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "What do you want to practice?" })).toBeTruthy();
     expect(screen.queryByText(/Card \d+ of/)).toBeNull();
   });
 
   it("a review marker with nothing kept behind it (another tab, a shared link) opens the home", async () => {
     arriveAt("course=c1&review=1");
     renderPage();
-    expect(await screen.findByRole("heading", { name: "What do you want to study?" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "What do you want to practice?" })).toBeTruthy();
     expect(new URLSearchParams(window.location.search).has("review")).toBe(false);
   });
 
@@ -416,7 +424,7 @@ describe("Flashcards home: decks", () => {
 
     await waitFor(() => expect(mocks.cards).toHaveBeenCalledTimes(2));
     await act(async () => {});
-    expect(screen.queryByRole("heading", { name: "What do you want to study?" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "What do you want to practice?" })).toBeNull();
     expect(new URLSearchParams(window.location.search).get("review")).toBe("1");
 
     await act(async () => { courses.resolve({ courses: [COURSE] }); });
@@ -448,7 +456,7 @@ describe("Flashcards home: decks", () => {
     expect(mocks.generate).not.toHaveBeenCalled();
 
     await user.click(screen.getByRole("button", { name: "All sets" }));
-    expect(await screen.findByRole("heading", { name: "What do you want to study?" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "What do you want to practice?" })).toBeTruthy();
     expect(deck("s3")).toBeTruthy();
   });
 
@@ -713,7 +721,8 @@ describe("Flashcards home: the automatic decks", () => {
     await home();
 
     expect(deckIds()).toEqual(["auto:all", "s1"]);
-    expect(screen.queryByText(/\bdue\b/i)).toBeNull();
+    // Card-due counts only — the hero may still mention Study due reviews (W8.4).
+    expect(screen.queryByText(/\d+ due\b/i)).toBeNull();
     expect(within(deck("s1")).getByText("3 concepts · 3 cards")).toBeTruthy();
   });
 
@@ -869,7 +878,7 @@ describe("Flashcards home: loading, failing and empty", () => {
     renderPage();
 
     const loading = await screen.findByTestId("flashcards-home-loading");
-    expect(within(loading).getByRole("heading", { name: "What do you want to study?" })).toBeTruthy();
+    expect(within(loading).getByRole("heading", { name: "What do you want to practice?" })).toBeTruthy();
     expect([figure("cards"), figure("concepts"), figure("sets")]).toEqual(["–", "–", "–"]);
     expect(sortIt()).toBeDisabled();
 
@@ -883,7 +892,7 @@ describe("Flashcards home: loading, failing and empty", () => {
     mocks.sets.mockRejectedValue(new Error("boom"));
     const user = await home();
 
-    expect(screen.getByRole("heading", { name: "What do you want to study?" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "What do you want to practice?" })).toBeTruthy();
     expect(deckIds()).toEqual(["auto:all"]);
     expect(figure("sets")).toBe("0");
     await user.click(screen.getByRole("button", { name: /Build one by hand/ }));
@@ -897,7 +906,7 @@ describe("Flashcards home: loading, failing and empty", () => {
 
     expect(await screen.findByText(/No concepts for this course yet/)).toBeTruthy();
     expect(screen.getByRole("link", { name: "Library" }).getAttribute("href")).toBe("/library");
-    expect(screen.getByRole("heading", { name: "What do you want to study?" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "What do you want to practice?" })).toBeTruthy();
     expect(screen.queryByTestId(/^flashcards-deck-/)).toBeNull();
     expect(screen.queryByRole("button", { name: /Build one by hand/ })).toBeNull();
     // Nothing to sort a description into.
@@ -930,7 +939,7 @@ describe("Flashcards home: loading, failing and empty", () => {
     renderPage();
 
     expect(await screen.findByText(/Add a course to make flashcards for it/)).toBeTruthy();
-    expect(screen.getByRole("heading", { name: "What do you want to study?" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "What do you want to practice?" })).toBeTruthy();
     expect(screen.queryByTestId(/^flashcards-deck-/)).toBeNull();
     expect(mocks.sets).not.toHaveBeenCalled();
   });
@@ -982,7 +991,7 @@ describe("Flashcards deep links from the Study hub", () => {
     renderPage();
 
     expect(await screen.findByText("Card 1 of 3")).toBeTruthy();
-    expect(screen.queryByRole("heading", { name: "What do you want to study?" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "What do you want to practice?" })).toBeNull();
     expect(mocks.generate).not.toHaveBeenCalled();
     expect(screen.getByTestId("flashcards-deck-name").textContent).toBe("2 concepts");
     // `start` is consumed; the rest of the link stays.
@@ -993,7 +1002,7 @@ describe("Flashcards deep links from the Study hub", () => {
 
     // "All sets" lands on the home.
     await userEvent.click(screen.getByRole("button", { name: "All sets" }));
-    expect(await screen.findByRole("heading", { name: "What do you want to study?" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "What do you want to practice?" })).toBeTruthy();
     expect(screen.queryByRole("checkbox", { name: /^Variables/ })).toBeNull();
   });
 
@@ -1025,7 +1034,7 @@ describe("Flashcards deep links from the Study hub", () => {
 
     expect(await screen.findByText("Making cards for Sorting…")).toBeTruthy();
     expect(mocks.generate).toHaveBeenCalledWith("u1", "Sorting", 5, undefined, "c1");
-    expect(screen.queryByRole("heading", { name: "What do you want to study?" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "What do you want to practice?" })).toBeNull();
 
     const made = [card("g1", "Sorting", { course_id: null }), card("g2", "Sorting", { course_id: null })];
     mocks.cards.mockResolvedValue({ flashcards: [...CARDS, ...made] });
@@ -1060,7 +1069,7 @@ describe("Flashcards deep links from the Study hub", () => {
 
     await screen.findByTestId("flashcards-home-status");
     expect(homeStatus()).toMatch(/No cards could be made for this selection/);
-    expect(screen.getByRole("heading", { name: "What do you want to study?" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "What do you want to practice?" })).toBeTruthy();
     expect(new URLSearchParams(window.location.search).get("start")).toBeNull();
   });
 

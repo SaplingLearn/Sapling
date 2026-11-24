@@ -16,11 +16,14 @@
  */
 import React from "react";
 import dynamic from "next/dynamic";
+import Link from "next/link";
 import { useUser } from "@/context/UserContext";
 import { deleteFlashcard, rateFlashcard } from "@/lib/api";
 import { humanizeError } from "@/lib/errorMessage";
+import { HANDOFF_COPY } from "@/lib/learningHandoffs";
 import { Icon } from "../../Icon";
 import { useToast } from "../../ToastProvider";
+import { REVIEW_DONE_NOTE } from "../flashcardsCopy";
 import type { Card } from "../home/flashcardsModel";
 import rv from "./review.module.css";
 import {
@@ -59,6 +62,8 @@ export interface ReviewProps {
   initial?: ReviewProgress;
   /** Told where the review is whenever that changes. Must be stable. */
   onProgress?: (progress: ReviewProgress) => void;
+  /** Study hub when that nav is visible (W8.4 handoff); absent → no Study link. */
+  studyHref?: string | null;
 }
 
 const FROM_THE_TOP: ReviewProgress = { idx: 0, ratings: {}, round: null, done: false };
@@ -67,7 +72,7 @@ const FROM_THE_TOP: ReviewProgress = { idx: 0, ratings: {}, round: null, done: f
 const typingIn = (target: EventTarget | null): boolean =>
   target instanceof HTMLElement && ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName);
 
-export function Review({ deck, accent, fromHome, onRated, onDeleted, onAllSets, initial = FROM_THE_TOP, onProgress }: ReviewProps) {
+export function Review({ deck, accent, fromHome, onRated, onDeleted, onAllSets, initial = FROM_THE_TOP, onProgress, studyHref = null }: ReviewProps) {
   const toast = useToast();
   const { userId } = useUser();
   /** The cards of a "review the ones you missed" round; null: the whole deck. */
@@ -210,6 +215,7 @@ export function Review({ deck, accent, fromHome, onRated, onDeleted, onAllSets, 
           onAgain={() => begin(null)}
           onMissed={ids => begin(ids)}
           onAllSets={fromHome ? onAllSets : undefined}
+          studyHref={studyHref}
         />
       </div>
     );
@@ -316,9 +322,10 @@ function FlipCard({ flipped, onFlip, card }: { flipped: boolean; onFlip: () => v
 
 // ── deck complete ────────────────────────────────────────────────────────────
 
-/** How the session went, and what next. */
+/** How the session went, and what next. Ratings schedule cards; they do not
+ *  establish concept mastery (W8.4). */
 function Summary({
-  counts, missedIds, onAgain, onMissed, onAllSets,
+  counts, missedIds, onAgain, onMissed, onAllSets, studyHref,
 }: {
   counts: Tally;
   missedIds: string[];
@@ -326,11 +333,13 @@ function Summary({
   onMissed: (ids: string[]) => void;
   /** Absent when the review was not started from the home. */
   onAllSets?: () => void;
+  studyHref?: string | null;
 }) {
   const shown = TALLY_ORDER.filter(kind => counts[kind] > 0);
   return (
     <div className={rv.summary} data-testid="flashcards-summary">
       <div className={`h-serif ${rv.summaryTitle}`}>Deck complete</div>
+      <p className={rv.summaryNote} data-testid="flashcards-review-note">{REVIEW_DONE_NOTE}</p>
       <div className={rv.stack} role="img" aria-label={`This session: ${tallyLabel(counts)}`}>
         {shown.map(kind => (
           <span key={kind} className={rv.stackPart} data-kind={kind} data-testid={`flashcards-stack-${kind}`} style={{ flexGrow: counts[kind] }} />
@@ -343,6 +352,11 @@ function Summary({
           <button type="button" className="btn" onClick={() => onMissed(missedIds)}>
             Review the {missedIds.length} you missed
           </button>
+        )}
+        {studyHref && (
+          <Link href={studyHref} className="btn" data-testid="flashcards-review-study">
+            {HANDOFF_COPY.dueOnStudy}
+          </Link>
         )}
         {onAllSets && (
           <button type="button" className="btn btn--ghost" onClick={onAllSets}>

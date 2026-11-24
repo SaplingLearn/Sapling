@@ -32,7 +32,11 @@
   background: var(--sidenav-bg); color: #fff;
 }
 .heroMain { min-width: 0; }
-.hero .heroTitle { margin: 0 0 12px; font-size: 24px; line-height: 1.2; letter-spacing: -0.01em; color: #fff; }
+.hero .heroTitle { margin: 0 0 6px; font-size: 24px; line-height: 1.2; letter-spacing: -0.01em; color: #fff; }
+.heroLede {
+  margin: 0 0 12px; max-width: 36rem; font-size: var(--fs-sm); line-height: 1.4;
+  color: color-mix(in srgb, #fff 72%, transparent);
+}
 .prompt { display: flex; gap: 8px; }
 .promptField {
   flex: 1; min-width: 0; height: 46px; padding: 0 14px;
@@ -246,6 +250,11 @@
 }
 .legendItem { display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; }
 .legendDot { width: 6px; height: 6px; border-radius: 50%; }
+/* W8.4: bar = map tiers, not card-session mastery. */
+.mapHint {
+  margin: 4px 0 0; font-size: 10px; line-height: 1.3; color: var(--text-dim);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 .deckFoot { margin-top: auto; display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 34px; }
 .deckFact { min-width: 0; font-size: var(--fs-xs); font-weight: 600; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .deckFactUrgent { color: var(--warn); }

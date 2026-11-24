@@ -113,6 +113,9 @@
 
 .summary { width: 100%; max-width: 620px; padding: 40px 0; text-align: center; color: var(--text-muted); }
 .summaryTitle { font-size: var(--fs-2xl); color: var(--text); }
+.summaryNote {
+  max-width: 420px; margin: 8px auto 0; font-size: var(--fs-sm); line-height: 1.45; color: var(--text-dim);
+}
 .stack {
   display: flex; gap: 2px; height: 10px; max-width: 420px; margin: 18px auto 12px;
   border-radius: var(--r-full); overflow: hidden; background: var(--bg-soft);

@@ -18,6 +18,7 @@ import React from "react";
 import { SET_NAME_MAX, type FlashcardSet } from "@/lib/flashcardSetsApi";
 import { useConfirm } from "@/lib/useConfirm";
 import { mixable, type Deck } from "./decksModel";
+import { MAP_STATUS_HINT, mapStatusAria } from "../flashcardsCopy";
 import { masteryLegend, plural, type MasteryCounts } from "./flashcardsModel";
 import h from "./home.module.css";
 
@@ -168,15 +169,15 @@ function Peek({ peek }: { peek: Deck["peek"] }) {
 
 const pct = (count: number, total: number) => `${total ? Math.round((count / total) * 100) : 0}%`;
 
-/** How much of the deck is mastered, being learned, struggled with, as a bar
- *  and a legend of the groups that have anything in them. What is not started
- *  leaves the track showing, and is not listed. */
+/** Map / learner-model tiers for the deck's concepts (Study's words), as a
+ *  bar and a legend. Not a score from reviewing these cards (W8.4). What is
+ *  not started leaves the track showing, and is not listed. */
 function Mastery({ counts }: { counts: MasteryCounts }) {
   const legend = masteryLegend(counts);
   const said = legend.length ? legend.map(p => `${p.count} ${p.kind}`).join(", ") : "not started";
   return (
     <div className={h.masteryBlock}>
-      <span className={h.mastery} role="img" aria-label={`Mastery: ${said}`} data-testid="flashcards-mastery">
+      <span className={h.mastery} role="img" aria-label={mapStatusAria(said)} data-testid="flashcards-mastery">
         {legend.map(p => <i key={p.kind} data-kind={p.kind} style={{ width: pct(p.count, counts.total) }} />)}
       </span>
       <div className={h.legend} aria-hidden="true" data-testid="flashcards-deck-legend">
@@ -186,6 +187,7 @@ function Mastery({ counts }: { counts: MasteryCounts }) {
           </span>
         ))}
       </div>
+      <p className={h.mapHint} data-testid="flashcards-map-hint">{MAP_STATUS_HINT}</p>
     </div>
   );
 }

@@ -22,6 +22,7 @@ import {
   removeCard, validCardsOf,
 } from "./importModalModel";
 import s from "./FlashcardImportModal.module.css";
+import { IMPORT_PRACTICE_NOTE } from "./flashcardsCopy";
 import { humanizeError } from "@/lib/errorMessage";
 import { CLEANUP_WITHHELD_NOTICE } from "@/lib/integrityNotice";
 
@@ -182,7 +183,10 @@ function useCleanup(cards: ParsedCard[], onChange: (next: ParsedCard[]) => void)
 function ModalHeader({ titleId, onClose }: { titleId: string; onClose: () => void }) {
   return (
     <header className={s.header}>
-      <h2 id={titleId} className={`h-serif ${s.title}`}>Import flashcards</h2>
+      <div className={s.headerText}>
+        <h2 id={titleId} className={`h-serif ${s.title}`}>Import flashcards</h2>
+        <p className={s.lede} data-testid="flashcards-import-note">{IMPORT_PRACTICE_NOTE}</p>
+      </div>
       <button type="button" className={s.close} onClick={onClose} aria-label="Close dialog">
         <Icon name="x" size={16} />
       </button>

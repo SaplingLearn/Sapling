@@ -29,7 +29,7 @@
 
 .header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
   flex: none;
@@ -37,12 +37,21 @@
   border-bottom: 1px solid var(--border);
 }
 
+.headerText { min-width: 0; flex: 1; }
+
 .title {
   margin: 0;
   min-width: 0;
   color: var(--text);
   font-size: 22px;
   font-weight: 500;
+}
+
+.lede {
+  margin: 4px 0 0;
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+  color: var(--text-muted);
 }
 
 /* Quiet at rest; the ring on keyboard focus is the app-wide :focus-visible. */

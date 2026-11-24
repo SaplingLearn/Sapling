@@ -55,6 +55,7 @@ import type { StartProgress } from "../flashcards/home/useStart";
 import { Review } from "../flashcards/review/Review";
 import rv from "../flashcards/review/review.module.css";
 import { studyHref } from "@/lib/toolHrefs";
+import { useIsNavHidden } from "@/lib/useNavHidden";
 
 export function Flashcards({
   now,
@@ -92,6 +93,7 @@ export function Flashcards({
 
 function PageBody({ page }: { page: FlashcardsPageState }) {
   const { view, courseId, model, exams, sets, draft, dispatch, progress, running, notice } = page;
+  const studyHidden = useIsNavHidden()("/study");
   switch (view.kind) {
     case "review":
       return (
@@ -104,6 +106,7 @@ function PageBody({ page }: { page: FlashcardsPageState }) {
           onAllSets={page.leaveReview}
           initial={page.session.initial}
           onProgress={page.session.onProgress}
+          studyHref={studyHidden ? null : studyHref(courseId || null)}
         />
       );
     case "arriving":

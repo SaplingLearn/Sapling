@@ -264,6 +264,8 @@ describe("FlashcardImportModal layout", () => {
     render(modal({ onClose }));
     const dialog = screen.getByRole("dialog", { name: "Import flashcards" });
     expect(within(dialog).getByRole("heading", { level: 2, name: "Import flashcards" })).toBeInTheDocument();
+    // W8.4: generate/import does not claim concept mastery from cards alone.
+    expect(within(dialog).getByTestId("flashcards-import-note").textContent).toMatch(/retrieval practice/i);
     // One close button: Dialog's own is switched off in favour of the header's.
     fireEvent.click(within(dialog).getByRole("button", { name: "Close dialog" }));
     expect(onClose).toHaveBeenCalledTimes(1);
