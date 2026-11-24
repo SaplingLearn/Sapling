@@ -515,7 +515,7 @@ Use this as the merge/readiness checklist. Every row must be **Done (A+)**, **N/
 - [ ] Varied isomorphs on (W5.E4)  
 - [ ] Multi-concept on (W5.E4)  
 - [ ] Upload prereqs on (W5.E4)  
-- [x] Practice mode (W3.3) — entry slice (Hub + wrap-up); full cue stream still later  
+- [x] Practice mode (W3.3) — entry + multi-due `scope=due&queue=` cue stream; richer stream still later  
 
 - [x] Covered vs understood map (W3.2) — practiced outline + mastery fill  
 
