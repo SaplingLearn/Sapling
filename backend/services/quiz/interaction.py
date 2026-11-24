@@ -259,3 +259,16 @@ def sanitize_interaction(raw: Any) -> dict[str, Any] | None:
     if fn is None:
         return None
     return fn(raw)
+
+
+def attach_interaction(wire: dict[str, Any], raw: Any) -> dict[str, Any]:
+    """Copy a sanitized kit payload onto a short_answer wire item (in place).
+
+    Other types ignore `raw`. Bad payloads are dropped without mutating.
+    """
+    if wire.get("type") != "short_answer":
+        return wire
+    interaction = sanitize_interaction(raw)
+    if interaction is not None:
+        wire["interaction"] = interaction
+    return wire

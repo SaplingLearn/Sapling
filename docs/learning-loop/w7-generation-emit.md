@@ -1,7 +1,7 @@
 # W7 generation emit — kit `interaction` on the wire
 
-**Status:** first slice landed (2026-11-24) — sanitize + wire attach; agent prompt still silent  
-**Closes:** port-map “Later: Generation emits `interaction`” (partial)
+**Status:** planned Sort emit landed (2026-11-24) — sanitize + attach; plain quiz schema untouched  
+**Closes:** port-map “Later: Generation emits `interaction`” (partial → planned Sort)
 
 ## Goal
 
@@ -15,20 +15,20 @@ Quiz generation may attach a kit `interaction` object on a `short_answer` wire q
 | Shape | Same client types as `frontend/src/lib/quiz/types.ts` (`kind` + kind fields) |
 | Sanitize | Server drops unknown / incomplete payloads — never 502s the quiz |
 | Belief | Kit UI does not invent mastery channels; submit still uses written evidence |
-| Prompt | **Not yet** asking the model for `interaction` (Gemini schema budget; rollout later) |
-| Function E2E | Default quiz handler stays MC-only so `quiz.spec.ts` keeps clicking A/B/C |
+| Plain quiz schema | **No** `interaction` on `agents/quiz.QuizQuestion` — flag-off request digests stay byte-identical |
+| Planned writer | Optional `PlannedQuestion.interaction`; prompt may emit **Sort** (≤1 per quiz) when `quiz_planned_questions` is on |
+| Function E2E | Default / planned handlers stay MC/written fixtures (no Sort) so existing journeys keep clicking |
 
 ## Code
 
 | Piece | Path |
 |---|---|
-| Sanitize | `backend/services/quiz/interaction.py::sanitize_interaction` |
-| Attach | `wire._agent_question_to_wire` copies a sanitized dict onto the wire item |
-| Agent field | Optional `QuizQuestion.interaction: dict \| None` (flat; omitted by default) |
-| Kinds | All twelve stubs: `sort`…`rank` + `connect` (match / map). |
+| Sanitize / attach | `services/quiz/interaction.py` |
+| Planned field + Sort prompt | `agents/quiz_planned.py` |
+| Stamp → wire | `quiz_learning.planned_question` → `generation._absorb` → `attach_interaction` |
+| Kinds sanitized | All twelve stubs: `sort`…`rank` + `connect` (match / map) |
 
 ## Next
 
-1. Prompt + planned writer: emit Sort (then Label…) when format dial / fixtures ask.  
-2. Function-mode fixture behind a dedicated journey (not the default three-MC quiz).  
-3. Richer per-criterion grading (still deferred).
+1. Prompt kinds beyond Sort (Label…); dedicated function-mode Sort journey.  
+2. Richer per-criterion grading (still deferred).

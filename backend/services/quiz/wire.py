@@ -17,7 +17,6 @@ from services.quiz.grading import WRITTEN_TYPES, numeric_value
 from services.quiz.algebra import equivalent_algebra
 from services.fingerprint import fingerprint
 from services.quiz.identity import question_hash
-from services.quiz.interaction import sanitize_interaction
 from learning import quiz_gates
 
 # Log records keep the name they had in routes/quiz.py before the #118 split:
@@ -297,11 +296,6 @@ def _agent_question_to_wire(q: QuizQuestion, qid: int) -> dict | None:
             "difficulty": q.difficulty,
             "question_hash": question_hash(q.question, [q.type]),
         }
-        # W7: optional kit interaction on short_answer only (sanitize drops junk).
-        if q.type == "short_answer":
-            interaction = sanitize_interaction(q.interaction)
-            if interaction is not None:
-                wire["interaction"] = interaction
         return wire if _validate_wire_question(wire) else None
     if len(q.options) != _MCQ_OPTIONS:
         logger.warning(

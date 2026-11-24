@@ -35,6 +35,7 @@ from __future__ import annotations
 import hashlib
 import logging
 from collections.abc import Sequence
+from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 from pydantic_ai import Agent
@@ -76,6 +77,10 @@ class PlannedQuestion(BaseModel):
     accepted_answers: list[str] = Field(default_factory=list)
     correct_answer: str
     explanation: str
+    # W7 kit payload (flat dict). Only on the planned schema so flag-off plain
+    # quiz requests stay byte-identical. Wire sanitize in
+    # services/quiz/interaction.py. See docs/learning-loop/w7-generation-emit.md.
+    interaction: dict[str, Any] | None = None
 
     @field_validator("accepted_answers", mode="before")
     @classmethod
@@ -145,6 +150,15 @@ WRITTEN_RULES = (
     "single letter in the question); never ask for an equation, a function, a root or "
     "trigonometric notation. Do not ask open-ended questions that need subjective "
     "grading.\n\n"
+    "Optional kit UI on short_answer only: you MAY set `interaction` to a Sort payload "
+    "when the item is genuinely a sort-into-buckets task (at most one such item per "
+    "quiz). Shape: "
+    '`{"kind":"sort","buckets":["NameA","NameB"],"items":[{"id":"id1","label":"Label1"},…]}` '
+    "with ≥2 buckets and ≥1 item; ids are short tokens without `;` `=` or `,`. "
+    "`correct_answer` MUST be the encoded placement string "
+    "`BucketA=id1,id2;BucketB=id3` (bucket order matches `buckets`; items within a "
+    "bucket in any order). Leave `interaction` null/omitted for ordinary short answers "
+    "and for numeric/symbolic. Do not invent other `kind` values yet.\n\n"
 )
 FORMAT_RULES = (
     "FORMAT names the question type to write. When it is mixed, choose each "

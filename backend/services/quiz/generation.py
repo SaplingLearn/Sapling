@@ -680,12 +680,13 @@ async def _quiz_via_agent(
         nonlocal dropped
         for q in quiz.questions:
             spec = tags = None
+            kit = None
             if plan is not None:
                 planned = quiz_learning.planned_question(q, plan, filled_slots, concept_name)
                 if planned is None:
                     dropped += 1
                     continue
-                q, spec, tags = planned
+                q, spec, tags, kit = planned
             if question_format != "mixed" and q.type != question_format:
                 dropped += 1
                 continue
@@ -708,6 +709,10 @@ async def _quiz_via_agent(
             if mapped is None:
                 dropped += 1
                 continue
+            # W7: planned kit interaction (Sort…) — sanitize + attach; never mastery.
+            if kit is not None:
+                from services.quiz.interaction import attach_interaction
+                attach_interaction(mapped, kit)
             mapped["provenance"] = {**provenance_base, "model": model}
             mapped["material_context"] = (
                 "course_material" if material.rag_grounded else "catalog" if material.has_catalog else "general"

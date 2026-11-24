@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 from pydantic_ai import Agent
@@ -101,11 +101,6 @@ class QuizQuestion(BaseModel):
     # concept_names per the prompt. Used by the route to award mastery
     # on a correct answer.
     concept: str
-    # W7 kit payload (flat dict — no nested model — so Gemini's schema
-    # compiler stays within state limits). Prompt does not ask for it yet;
-    # wire attaches a sanitized copy when present. See
-    # docs/learning-loop/w7-generation-emit.md.
-    interaction: dict[str, Any] | None = None
 
     # The clips run BEFORE item validation, as decoding-time maxItems did: a
     # malformed surplus entry past the cap is discarded, never a reason to
@@ -114,6 +109,11 @@ class QuizQuestion(BaseModel):
     @classmethod
     def _clip_accepted_answers(cls, accepted):
         return _clip(accepted, MAX_ACCEPTED_ANSWERS, "accepted_answers")
+
+    # W7 kit `interaction` is NOT on this schema: flag-off generation must stay
+    # byte-identical (tests/test_quiz_learning_flags_off.py). Planned writer
+    # carries it; wire attach is services/quiz/interaction.py. See
+    # docs/learning-loop/w7-generation-emit.md.
 
 
 class Quiz(BaseModel):

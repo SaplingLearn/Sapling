@@ -1,7 +1,7 @@
 """W7 generation emit — sanitize + wire attach (docs/learning-loop/w7-generation-emit.md)."""
 
 from agents.quiz import QuizQuestion
-from services.quiz.interaction import sanitize_interaction
+from services.quiz.interaction import attach_interaction, sanitize_interaction
 from services.quiz.wire import _agent_question_to_wire
 
 
@@ -85,7 +85,7 @@ def test_sanitize_remaining_kit_kinds():
     })["kind"] == "rank"
 
 
-def test_wire_attaches_sort_on_short_answer():
+def test_attach_sort_on_short_answer_wire():
     q = QuizQuestion(
         question="Sort each organism.",
         type="short_answer",
@@ -95,22 +95,21 @@ def test_wire_attaches_sort_on_short_answer():
         correct_answer="Prokaryote=e-coli;Eukaryote=yeast",
         explanation="Cell type.",
         concept="Cells",
-        interaction={
-            "kind": "sort",
-            "buckets": ["Prokaryote", "Eukaryote"],
-            "items": [
-                {"id": "e-coli", "label": "E. coli"},
-                {"id": "yeast", "label": "Yeast"},
-            ],
-        },
     )
     wire = _agent_question_to_wire(q, 1)
     assert wire is not None
-    assert wire["type"] == "short_answer"
+    attach_interaction(wire, {
+        "kind": "sort",
+        "buckets": ["Prokaryote", "Eukaryote"],
+        "items": [
+            {"id": "e-coli", "label": "E. coli"},
+            {"id": "yeast", "label": "Yeast"},
+        ],
+    })
     assert wire["interaction"]["kind"] == "sort"
 
 
-def test_wire_drops_bad_interaction_without_dropping_item():
+def test_attach_drops_bad_interaction_without_dropping_item():
     q = QuizQuestion(
         question="Name the organelle.",
         type="short_answer",
@@ -120,8 +119,44 @@ def test_wire_drops_bad_interaction_without_dropping_item():
         correct_answer="mitochondria",
         explanation="Powerhouse.",
         concept="Cells",
-        interaction={"kind": "sort", "buckets": ["one"], "items": []},
     )
     wire = _agent_question_to_wire(q, 2)
     assert wire is not None
+    attach_interaction(wire, {"kind": "sort", "buckets": ["one"], "items": []})
     assert "interaction" not in wire
+
+
+def test_planned_question_returns_kit_for_wire_attach():
+    from agents.quiz_planned import PlannedQuestion
+    from learning import quiz_plan
+    from services import quiz_learning as ql
+
+    plan = ql.GenerationPlan(
+        specs=[quiz_plan.QuestionSpec(1, "medium")],
+        keys=(),
+        p_known=0.4,
+        source=quiz_plan.difficulty_source("medium"),
+    )
+    planned = PlannedQuestion(
+        slot=1,
+        question="Sort the cells.",
+        type="short_answer",
+        correct_answer="Prok=e-coli;Euk=yeast",
+        explanation="By domain.",
+        interaction={
+            "kind": "sort",
+            "buckets": ["Prok", "Euk"],
+            "items": [
+                {"id": "e-coli", "label": "E. coli"},
+                {"id": "yeast", "label": "Yeast"},
+            ],
+        },
+    )
+    out = ql.planned_question(planned, plan, set(), "Cells")
+    assert out is not None
+    q, spec, _tags, kit = out
+    assert spec.slot == 1
+    wire = _agent_question_to_wire(q, 1)
+    assert wire is not None
+    attach_interaction(wire, kit)
+    assert wire["interaction"]["kind"] == "sort"

@@ -365,9 +365,9 @@ def generation_plan(
 
 def planned_question(question, plan: GenerationPlan, filled_slots: set[int], concept_name: str):
     """A144: a planned run's question as the plan has it — (the quiz
-    question, its spec, its option tags) — or None when it answers no open
-    plan slot (routes/quiz.py counts it dropped). The concept and the
-    difficulty are the plan's, never the model's."""
+    question, its spec, its option tags, optional kit interaction) — or None
+    when it answers no open plan slot (routes/quiz.py counts it dropped). The
+    concept and the difficulty are the plan's, never the model's."""
     from agents.quiz import QuizQuestion
 
     spec = plan.spec(question.slot)
@@ -380,7 +380,9 @@ def planned_question(question, plan: GenerationPlan, filled_slots: set[int], con
         correct_answer=question.correct_answer, explanation=question.explanation,
         concept=concept_name,
     )
-    return quiz_question, spec, tags
+    # W7: kit interaction rides PlannedQuestion only; stamp for wire attach.
+    kit = getattr(question, "interaction", None)
+    return quiz_question, spec, tags, kit
 
 
 # ── A145: the item gates ───────────────────────────────────────────────────
