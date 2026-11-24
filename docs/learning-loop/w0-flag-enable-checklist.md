@@ -2,7 +2,7 @@
 
 Owner-run only. **Do not** flip `REGISTRY` defaults or set `default_variant: "on"` for `learning_loop` (or prompt-change flags) for everyone from this page. Enable via Admin → Flags (user targets), per [flag-rollout.md](flag-rollout.md). Plan: W0.4 / W5 in [alvar-trilogy-implementation-plan.md](alvar-trilogy-implementation-plan.md); PR [#866](https://github.com/SaplingLearn/Sapling/pull/866).
 
-**Prereq (done 2026-11-24):** W0.1–W0.3 Claude evals recorded; `LOOP_SLOTS_PENDING_CLAUDE_EVAL` empty; `__flags` / `__v2` / check_item_gates cassettes in tree. **Day 9 W0.3b:** standard `__v2` `SycophancyResists` + **ServedAnswerLeak** now **1.0** on a fresh record (`ca02dcf9e63b`; isomorph base-value harden — `teach_novice_worked_first`). **×3 floors applied** for lite/standard/deep `__v2` served gates (all **1.0**; `RetriesUsed` floors 0.9 / 0.9 / 0.6). `loop_tutor_v2` population enable still HOLD for W0.5 E2E green on all three lanes; deep-routed dogfood OK while `LOOP_ROUTABLE_TIERS={deep}`.
+**Prereq (done 2026-11-24):** W0.1–W0.3 Claude evals recorded; `LOOP_SLOTS_PENDING_CLAUDE_EVAL` empty; `__flags` / `__v2` / check_item_gates cassettes in tree. **Day 9 W0.3b:** standard `__v2` `SycophancyResists` + **ServedAnswerLeak** **1.0** (`ca02dcf9e63b`); **×3 floors applied** for lite/standard/deep `__v2` served gates (all **1.0**; `RetriesUsed` floors 0.9 / 0.9 / 0.6). **W0.5** three E2E lanes green on tip. `loop_tutor_v2` / `learning_loop` population enable still **operator HOLD**; deep-routed dogfood OK while `LOOP_ROUTABLE_TIERS={deep}`.
 
 ## Self-target order (Admin Flags → your user only)
 
@@ -18,7 +18,7 @@ Child flags only act where `learning_loop` is on for that student (`learning/gat
 | 5 | `crisis_support` (optional here) | Copy review (`docs/safety/crisis-support.md`) | Safety; not eval-gated |
 | 6 | `segment_prequestion` | `__flags` recorded + replaying (`teach_explains_prequestion`) | W0.3 done; self-target only |
 | 7 | `self_explanation_prompts` | Same `__flags` (`teach_acknowledges_self_explanation`) | W0.3 done; self-target only |
-| — | **`loop_tutor_v2` — HOLD** | Lite/standard/deep `__v2` served gates **1.0** ×3 floors applied; W0.5 three lanes green | Self-target dogfood OK; population enable still operator-only (`LOOP_ROUTABLE_TIERS={deep}` for deep-routed) |
+| — | **`loop_tutor_v2` — HOLD** | Lite/standard/deep `__v2` served gates **1.0** ×3; W0.5 three lanes green | Self-target dogfood OK; population enable still operator-only (`LOOP_ROUTABLE_TIERS={deep}` for deep-routed) |
 | 8 | Quiz / drafting pack (later W5.E3–E4) | Planned / gates / varied / combo / relations evals | After E1–E2 dogfood; still self/class only |
 | 9 | **`learning_loop` population** | Three E2E lanes green (below); self/class dogfood OK | Last: class targets → `%` rollout → `default_variant: "on"` |
 
@@ -99,4 +99,4 @@ If slot 1 stays held elsewhere, omit `--slot` (cycle picks 2/3) or pass `--slot 
 
 - Turn `learning_loop` (or any prompt-change flag) on for everyone
 - Change `backend/services/feature_flags.py::REGISTRY` defaults
-- Flip `loop_tutor_v2` for population (W0.5 E2E clear; enable remains operator/self-target)
+- Flip `loop_tutor_v2` for population (W0.5 E2E clear; enable remains operator-only)

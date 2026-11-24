@@ -28,12 +28,12 @@
  * W7.5: Hint shows client-side scaffolding already on the question (no LLM /
  * answer key; Bastani ladder deferred); Skip wires to GO_TO; Study guide opens
  * a leak-safe drawer scaffold. No wager.
- * W7.2 kit: Sort (7.1) + Sequence (7.2) + Label (7.4) + Build (~7.x) click-to-
- * assign stubs on short_answer + interaction.
+ * W7.2 kit: Sort (7.1) + Sequence (7.2) + Label (7.4) + Build (~7.x) +
+ * Compare click-to-assign stubs on short_answer + interaction.
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { BookOpen, ChevronLeft, ChevronRight, Hash, Layers, Library, ListChecks, ListOrdered, PenLine, Puzzle, Sigma, Sparkles, Tag, X } from "lucide-react";
+import { BookOpen, ChevronLeft, ChevronRight, Columns2, Hash, Layers, Library, ListChecks, ListOrdered, PenLine, Puzzle, Sigma, Sparkles, Tag, X } from "lucide-react";
 import { AnswerOption, Badge, Button, Chip, ProgressDots } from "@/components/ui";
 import { ConceptNode } from "@/components/graph/ConceptNode";
 import { ConfidenceControl } from "@/components/learn/ConfidenceControl";
@@ -44,6 +44,7 @@ import { learnHrefForNode } from "@/lib/data";
 import type { QuizActions } from "@/lib/quiz/useQuizSession";
 import { buildQuizHref } from "@/lib/quiz/source";
 import { asBuildInteraction } from "@/lib/quiz/buildInteraction";
+import { asCompareInteraction } from "@/lib/quiz/compareInteraction";
 import { asLabelInteraction } from "@/lib/quiz/labelInteraction";
 import { asSequenceInteraction } from "@/lib/quiz/sequenceInteraction";
 import { asSortInteraction } from "@/lib/quiz/sortInteraction";
@@ -52,6 +53,7 @@ import { isUnanswered } from "@/lib/quiz/machine";
 import { expressionParts, superscriptParts, type ExpressionPart } from "@/lib/quiz/answerFormats";
 import { WrittenAnswer, type WrittenType } from "./WrittenAnswer";
 import { BuildAnswer } from "./BuildAnswer";
+import { CompareAnswer } from "./CompareAnswer";
 import { LabelAnswer } from "./LabelAnswer";
 import { SequenceAnswer } from "./SequenceAnswer";
 import { SortAnswer } from "./SortAnswer";
@@ -160,8 +162,8 @@ function isTypingTarget(target: EventTarget | null): boolean {
 
 /** What each format is called on screen — the same names the Format setting
  *  uses, so "Algebra" in the settings is "Algebra" on the question. Sort /
- *  Sequence / Label / Build are kit-only (W7.2): still a short_answer on the
- *  wire. */
+ *  Sequence / Label / Build / Compare are kit-only (W7.2): still a short_answer
+ *  on the wire. */
 const FORMAT_TAG: Record<string, { label: string; Icon: typeof ListChecks }> = {
   multiple_choice: { label: "Multiple choice", Icon: ListChecks },
   short_answer: { label: "Short answer", Icon: PenLine },
@@ -171,6 +173,7 @@ const FORMAT_TAG: Record<string, { label: string; Icon: typeof ListChecks }> = {
   sequence: { label: "Sequence", Icon: ListOrdered },
   label: { label: "Label", Icon: Tag },
   build: { label: "Build", Icon: Puzzle },
+  compare: { label: "Compare", Icon: Columns2 },
 };
 
 /** Where the question's grounding came from, said plainly. */
@@ -914,6 +917,31 @@ function BuildField(props: AnswerFieldProps) {
   );
 }
 
+/** W7.2 Compare: two sides + relation chips; Check uses encoded short_answer text. */
+function CompareField(props: AnswerFieldProps) {
+  const { view, shown, selectable, actions } = props;
+  const compare = asCompareInteraction(view.item?.question.interaction);
+  if (!compare) return <WrittenField {...props} />;
+  return (
+    <div
+      className="quiz-question__written quiz-question__written--compare"
+      data-marked={shown ? "true" : undefined}
+    >
+      <CompareAnswer
+        interaction={compare}
+        value={view.item?.answerText ?? ""}
+        disabled={!selectable}
+        expected={shown?.correctAnswer ?? null}
+        verdict={outcomeOf(shown) ?? null}
+        onChange={text => actions.write?.(text)}
+      />
+      <p className="quiz-question__format-hint" id="quiz-format-hint" data-testid="quiz-format-hint">
+        {formatHint("short_answer", { compare: true })}
+      </p>
+    </div>
+  );
+}
+
 function kitField(props: AnswerFieldProps): React.JSX.Element | null {
   if (props.view.format !== "short_answer") return null;
   const interaction = props.view.item?.question.interaction;
@@ -921,6 +949,7 @@ function kitField(props: AnswerFieldProps): React.JSX.Element | null {
   if (asSequenceInteraction(interaction)) return <SequenceField {...props} />;
   if (asLabelInteraction(interaction)) return <LabelField {...props} />;
   if (asBuildInteraction(interaction)) return <BuildField {...props} />;
+  if (asCompareInteraction(interaction)) return <CompareField {...props} />;
   return null;
 }
 
@@ -931,7 +960,7 @@ function AnswerFieldFor(props: AnswerFieldProps) {
   return <Field {...props} />;
 }
 
-/** One answer field per wire format. Sort / Sequence / Label / Build mount via AnswerFieldFor. */
+/** One answer field per wire format. Sort / Sequence / Label / Build / Compare mount via AnswerFieldFor. */
 const ANSWER_FIELDS: Record<QuestionType, (props: AnswerFieldProps) => React.JSX.Element> = {
   multiple_choice: ChoiceAnswer,
   short_answer: WrittenField,
@@ -1172,6 +1201,7 @@ export function QuizQuestion({
   const sequenceInteraction = asSequenceInteraction(kitInteraction);
   const labelInteraction = asLabelInteraction(kitInteraction);
   const buildInteraction = asBuildInteraction(kitInteraction);
+  const compareInteraction = asCompareInteraction(kitInteraction);
   const scaffold = scaffoldHint({
     conceptName: concept.name,
     conceptTested: view.item?.question.concept_tested,
@@ -1180,6 +1210,7 @@ export function QuizQuestion({
     sequence: Boolean(sequenceInteraction),
     label: Boolean(labelInteraction),
     build: Boolean(buildInteraction),
+    compare: Boolean(compareInteraction),
   });
   const openGuide = useCallback(() => {
     setAskForCursor(null);
@@ -1225,7 +1256,9 @@ export function QuizQuestion({
         ? "label"
         : buildInteraction
           ? "build"
-          : view.format;
+          : compareInteraction
+            ? "compare"
+            : view.format;
   const header = (
     <QuestionHeader
       concept={concept}

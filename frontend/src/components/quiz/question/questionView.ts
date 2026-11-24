@@ -14,6 +14,10 @@ import {
   isBuildComplete,
 } from "@/lib/quiz/buildInteraction";
 import {
+  asCompareInteraction,
+  isCompareComplete,
+} from "@/lib/quiz/compareInteraction";
+import {
   asLabelInteraction,
   decodeLabelAnswer,
   isLabelComplete,
@@ -61,6 +65,8 @@ function kitHasAnswer(item: QuizItem | undefined): boolean | null {
   if (label) return isLabelComplete(label, decodeLabelAnswer(label, item?.answerText));
   const build = asBuildInteraction(interaction);
   if (build) return isBuildComplete(build, decodeBuildAnswer(build, item?.answerText));
+  const compare = asCompareInteraction(interaction);
+  if (compare) return isCompareComplete(compare, item?.answerText);
   return null;
 }
 
@@ -142,6 +148,7 @@ export function scaffoldHint({
   sequence,
   label,
   build,
+  compare,
 }: {
   conceptName: string;
   conceptTested?: string | null;
@@ -150,6 +157,7 @@ export function scaffoldHint({
   sequence?: boolean;
   label?: boolean;
   build?: boolean;
+  compare?: boolean;
 }): ScaffoldHint {
   const focus = (conceptTested?.trim() || conceptName.trim() || "this concept");
   const showRubric =
@@ -157,10 +165,11 @@ export function scaffoldHint({
     Boolean(sequence) ||
     Boolean(label) ||
     Boolean(build) ||
+    Boolean(compare) ||
     (format != null && format !== "multiple_choice");
   return {
     focus,
-    rubric: showRubric ? formatHint(format, { sort, sequence, label, build }) : null,
+    rubric: showRubric ? formatHint(format, { sort, sequence, label, build, compare }) : null,
     note: "Scaffolding only — never the answer. Open Study guide for course cards (keys stay hidden).",
   };
 }
@@ -304,7 +313,7 @@ export function nextOptionIndex(selectedIndex: number | null, step: 1 | -1, coun
 /** The grading rules shown under a written answer, per format. */
 export function formatHint(
   type: QuestionType | undefined,
-  opts?: { sort?: boolean; sequence?: boolean; label?: boolean; build?: boolean },
+  opts?: { sort?: boolean; sequence?: boolean; label?: boolean; build?: boolean; compare?: boolean },
 ): string {
   if (opts?.sort) {
     return "Select an item, then tap a bucket to place it. Tap a placed item to return it to the tray. Check unlocks once every item is sorted.";
@@ -317,6 +326,9 @@ export function formatHint(
   }
   if (opts?.build) {
     return "Select a part, then tap a slot to place it. Tap a placed part to return it to the tray. Check unlocks once every slot is filled.";
+  }
+  if (opts?.compare) {
+    return "Read both sides, then tap one relation. Tap again to clear. Check unlocks once a relation is selected.";
   }
   if (type === "symbolic") {
     return "Enter an expression using single-letter variables, + − * / ^ and parentheses, with whole-number powers from −8 to 8. For example, 2(x + 1) and 2x + 2 are equivalent wherever both are defined. Functions and equations are not supported.";

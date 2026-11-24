@@ -219,13 +219,11 @@ These are **done** when `learning_loop` is on. Work is enable / eval / polish, n
 
 #### W0 readiness (2026-11-24 A111 + W0.2/W0.3)
 
-**Verdict:** W0.1–W0.3 eval record complete on Claude. Pending set empty; replay green; `floors.py --check` OK. Recorded: default tutor/confront/grader/check_items/decisions, `__pedagogy`, `__flags`, `__v2` (tutor + confront), `check_item_gates`. `LOOP_ROUTABLE_TIERS` = `{deep}` only. Deep + lite `__v2` clear every served gate at 1.0×3 after V2 anti-dodge harden. Day 9 W0.3b: standard `__v2` (haiku) now clears **ServedAnswerLeak** and every other served gate at **1.0** on a fresh record (`ca02dcf9e63b`, isomorph base-value harden) — still need ×3 floor confirmation before population enable; traffic remains deep-routed while `LOOP_ROUTABLE_TIERS={deep}`.
+**Verdict:** W0.1–W0.3 eval record complete on Claude. Pending set empty; replay green; `floors.py --check` OK. Recorded: default tutor/confront/grader/check_items/decisions, `__pedagogy`, `__flags`, `__v2` (tutor + confront), `check_item_gates`. `LOOP_ROUTABLE_TIERS` = `{deep}` only. Lite/standard/deep `__v2` served gates (incl. SycophancyResists + ServedAnswerLeak) are **1.0** with ×3 floors in `baselines.json` (prompt `ca02dcf9e63b`). **W0.5** three E2E lanes green on PR tip — see [`w0-flag-enable-checklist.md`](w0-flag-enable-checklist.md). Population enable for `learning_loop` / `loop_tutor_v2` remains **operator-only**; traffic stays deep-routed while `LOOP_ROUTABLE_TIERS={deep}`.
 
 | Remaining | Owner | Acceptance |
 |---|---|---|
 | **W0.4** population / class rollout | **Operator** (Admin Flags) | Self → class → % per [`w0-flag-enable-checklist.md`](w0-flag-enable-checklist.md); **no** `REGISTRY` default flip from agents |
-| **W0.5** three E2E lanes | Eng + CI | Default / kill-switch / flag-off green on PR head; paste checklist into #866 test plan |
-| **W0.3b** standard `__v2` gates | Eng | Haiku `__v2` served gates **1.0** on latest 1-run (`ca02dcf9e63b`); ×3 floor confirm still open before population enable |
 
 Pending slots (`LOOP_SLOTS_PENDING_CLAUDE_EVAL`): **empty**.
 
@@ -368,7 +366,7 @@ Update `docs/learning-loop/amendments.md` with a short “Alvar trilogy: adopted
 | Task | Type | Effort | Acceptance |
 |---|---|---|---|
 | W7.1 Port shell tokens + session chrome into `quiz/` (TopBar focus mode, meta row with blob concept pill, progress, XP/streak only if product keeps gamification) | ui | L | Visual match to Shell frames; a11y; no new color system |
-| W7.2 Port question-type kit (7.1–7.18) behind real attempt JSON; **MC / short / numeric / algebra first**, interactive types phased | ui | XL | **Shipped stubs:** Sort (7.1), Label (7.4), Sequence (7.2), Build (W7.2d). **Next:** Compare / Explain polish → Dialogue. Generation emit + richer grading still later; each stub round-trips fixture → Check → short_answer wire |
+| W7.2 Port question-type kit (7.1–7.18) behind real attempt JSON; **MC / short / numeric / algebra first**, interactive types phased | ui | XL | **Shipped stubs:** Sort (7.1), Label (7.4), Sequence (7.2), Build (W7.2d), Compare (W7.2e). **Next:** Dialogue. Generation emit + richer grading still later; each stub round-trips fixture → Check → short_answer wire |
 | W7.3 **Hook generation to loop algorithm:** home/launcher consumes `GET /api/quiz/plan` when `quiz_concept_plan` on; Adjust/Start pass planned concept ids; generation path uses `quiz_planned_questions` + gates when on | integrate | M | E2E `quiz-learning.spec.ts` + new launcher journeys; flag-off = pre-loop quiz |
 | W7.4 Confidence / wager UI maps to existing stated-confidence API (A132) — do not invent a second confidence store; align “Certain / Fairly sure / Unsure” with `guessing` / `fairly_sure` / `sure` | integrate | S | Pins in quiz-journeys confidence test |
 | W7.5 Hint / skip / study-guide drawer: hints must not become answer leaks (same Bastani rule as Tutor); study-guide drawer deep-links concept; Skip respects attempt rules | integrate | M | No mastery from hint-only; E2E |
@@ -513,7 +511,7 @@ Use this as the merge/readiness checklist. Every row must be **Done (A+)**, **N/
 - [ ] Upload prereqs on (W5.E4)  
 - [x] Practice mode (W3.3) — entry + multi-due cue stream; richer stream later  
 - [x] Covered vs understood map (W3.2) — practiced outline + mastery fill  
-- [ ] Real visuals Stage A figure slot (W4.1) — Stage B SVG verify deferred  
+- [x] Real visuals Stage A figure slot (W4.1a/b) — Stage B SVG verify deferred  
 - [x] Learner mini-map activity (W3.5a) — spike + wrap-up stub → [`w3-5-learner-minimap-spike.md`](w3-5-learner-minimap-spike.md); full graded structure (b) later  
 
 - [x] N/A logged: per-step predict, text→mastery, proposition ontology, editable prompts, mic (W6)
@@ -523,10 +521,10 @@ Use this as the merge/readiness checklist. Every row must be **Done (A+)**, **N/
 - [x] Hub / Guide / Settings designed + shipped (W7.D2 / W7.9)  
 - [x] Launcher + Map designed + shipped (W7.D3 / W7.10)  
 - [x] Quiz shell in production (W7.1)  
-- [x] Core types + Sort/Label/Sequence/Build stubs (W7.2) — Compare/Dialogue later  
+- [x] Core types + Sort/Label/Sequence/Build/Compare stubs (W7.2) — Dialogue later  
 - [x] Launcher/home ↔ plan (W7.3) · Confidence A132 (W7.4) · Hint scaffold (W7.5)  
 - [x] Prereq banner (W7.6) · Summary CTAs (W7.7) · Practice/Exam Twin (W7.8)  
-- [ ] Kill legacy quiz chrome (W7.11) — after kit parity  
+- [ ] Kill legacy quiz chrome (W7.11) — after Dialogue kit parity  
 - [x] Library / Tree / Study / learner_next spine (W8.1–W8.4, W8.6–W8.7)  
 - [x] Cross-link copy system (W8.5) — [`w3-handoffs.md`](w3-handoffs.md)  
 
@@ -659,7 +657,7 @@ Five concurrent tracks kicked off from this plan. **No flag enables** until W0 e
 |---|---|---|
 | W7.2 Label | Focus-shell Label kit (after Sort) | **done** |
 | W7.5 Hint | Client scaffolding Hint (Bastani ladder deferred) | **done** → [`w7-5-hint-scaffold.md`](w7-5-hint-scaffold.md) |
-| W5.E2 polish | Deep/lite `__v2` anti-dodge + re-record | **done**; standard `__v2` still soft → Day 9 |
+| W5.E2 polish | Deep/lite/standard `__v2` anti-dodge + re-record | **done**; ×3 floors in `baselines.json` |
 | W1.3 / W2.3 E2E | generative-core + reason-before-submit journeys | **done** (soft-skip / nested decrypt) |
 | W8.4 | Flashcards copy ↔ FSRS honesty | **done** |
 
@@ -670,17 +668,18 @@ Ordered. **Operator-only** rows are not agent work. Adjust this table if scope s
 | # | ID | Slice | Mode | Acceptance |
 |---|---|---|---|---|
 | 1 | **W7.2c** | Sequence kit stub on focus shell (after Sort/Label) | **done** | Encode/decode + UI + vitest + testids; short_answer wire |
-| 2 | **W0.3b** | Harden standard `__v2` sycophancy + ServedAnswerLeak (prompt-only) + re-record haiku `__v2` | **done** (1-run) | `SycophancyResists` + **ServedAnswerLeak** → **1.0** on lite/standard/deep `__v2` (`ca02dcf9e63b`; failing case was `teach_novice_worked_first` isomorph echoing `returns 1` / base=1). Population enable still waits on ×3 floor confirm + W0.5 E2E; `LOOP_ROUTABLE_TIERS` unchanged (`{deep}`) |
-| 3 | **W0.5** | Run / document three E2E lanes on PR head | **measure** | Checklist boxes in [`w0-flag-enable-checklist.md`](w0-flag-enable-checklist.md) |
+| 2 | **W0.3b** | Harden standard `__v2` sycophancy + ServedAnswerLeak (prompt-only) + re-record haiku `__v2` | **done** | Lite/standard/deep `__v2` served gates **1.0** ×3 floors applied (`baselines.json`); `LOOP_ROUTABLE_TIERS` unchanged (`{deep}`) |
+| 3 | **W0.5** | Run / document three E2E lanes on PR head | **done** | Default / kill-switch / flag-off green — [`w0-flag-enable-checklist.md`](w0-flag-enable-checklist.md) |
 | 4 | **W4.1a** | Check `figure` withheld slot (no SVG agent) | **done** (stub) | Pose `figure:{status:withheld}` when `surface_representation=visual`; CheckCard `loop-figure-withheld`. Paired with **W4.1b** (request-path load) |
 | 5 | **W4.1b** | Load `surface_representation` on request-path check decrypt | **done** | `_COLUMNS` + `_row_to_item` (fail-closed enum); visual items serve withheld figure in prod. `surface_context` stays ciphertext / familiarity-only |
 | 6 | **W3.5a** | Learner mini-map spike + optional wrap-up stub | **done** | Doc + fixture UI → [`w3-5-learner-minimap-spike.md`](w3-5-learner-minimap-spike.md); never writes mastery edges |
 | 7 | **W7.2d** | Build kit stub (after Sequence) | **done** | Encode/decode + UI + vitest + testids; short_answer wire (`kind: "build"`) |
-| 8 | **W0.5** | Three E2E lanes on PR head | **measure** | Still open — needs held stack / cycle |
+| 8 | **W0.5** | Three E2E lanes on PR head | **done** | Same as #3 — checklist marked green on tip |
 | 9 | **W5 / W0.4** | Flag self→class→% enable | **operator** | Admin Flags only; see checklist |
-| 10 | **W7.11** | Retire legacy quiz chrome | **chore** | After interactive kit parity + E2E |
+| 10 | **W7.11** | Retire legacy quiz chrome | **chore** | After interactive kit parity (Dialogue still open) + E2E |
+| 11 | **W7.2e** | Compare kit stub (after Build) | **done** | Encode/decode + UI + vitest + testids; short_answer wire (`kind: "compare"`) |
 
-**Day 9 progress:** #1 Sequence **done** · #2 sycophancy + ServedAnswerLeak **1.0** (1-run; ×3 floors still open) · #4 figure withheld **done** · #5 W4.1b request-path surface **done** · #6 W3.5a **done** · #7 Build **done** · next **#8 E2E lanes**.
+**Day 9 progress:** #1–8 + #11 **done** · #9 operator HOLD · #10 W7.11 waits on Dialogue kit parity.
 
 ---
 

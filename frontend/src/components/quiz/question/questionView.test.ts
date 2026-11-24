@@ -140,6 +140,21 @@ describe("itemView", () => {
     expect(itemView(item({ question: buildQ, answerText: "head=phosphate;base=adenine" })).hasAnswer).toBe(true);
   });
 
+  it("W7.2 Compare: hasAnswer only when a relation option is chosen", () => {
+    const interaction = {
+      kind: "compare" as const,
+      left: { id: "mitosis", label: "Mitosis" },
+      right: { id: "meiosis", label: "Meiosis" },
+      options: [
+        { id: "left_only", label: "Only the left" },
+        { id: "both", label: "Both" },
+      ],
+    };
+    const compareQ = question({ type: "short_answer", options: [], interaction });
+    expect(itemView(item({ question: compareQ, answerText: "" })).hasAnswer).toBe(false);
+    expect(itemView(item({ question: compareQ, answerText: "both" })).hasAnswer).toBe(true);
+  });
+
   it("survives no item at all", () => {
     expect(itemView(undefined)).toMatchObject({
       item: undefined,
@@ -234,6 +249,8 @@ describe("W7.5 hint / skip slots", () => {
 
     const build = scaffoldHint({ conceptName: "Nucleotides", format: "short_answer", build: true });
     expect(build.rubric).toMatch(/^Select a part/);
+    const compare = scaffoldHint({ conceptName: "Cell division", format: "short_answer", compare: true });
+    expect(compare.rubric).toMatch(/^Read both sides/);
   });
 
   it("enables Hint in Practice and refuses it in Exam Twin", () => {
@@ -339,6 +356,7 @@ describe("the verdict's words", () => {
     expect(formatHint("short_answer", { sequence: true })).toMatch(/^Select a step/);
     expect(formatHint("short_answer", { label: true })).toMatch(/^Select a label/);
     expect(formatHint("short_answer", { build: true })).toMatch(/^Select a part/);
+    expect(formatHint("short_answer", { compare: true })).toMatch(/^Read both sides/);
   });
 
   it("ends the key with exactly one full stop", () => {

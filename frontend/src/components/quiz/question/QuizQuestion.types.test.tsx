@@ -449,4 +449,45 @@ describe("W7.2 core types under SessionTop", () => {
     fireEvent.click(screen.getByRole("button", { name: "Place on Head" }));
     expect(actions.write).toHaveBeenCalledWith("head=phosphate;base=");
   });
+
+  it("Compare (W7.2): two sides + relation chips; Check waits for a choice", () => {
+    const interaction = {
+      kind: "compare" as const,
+      left: { id: "mitosis", label: "Mitosis" },
+      right: { id: "meiosis", label: "Meiosis" },
+      options: [
+        { id: "left_only", label: "Only the left" },
+        { id: "both", label: "Both" },
+      ],
+    };
+    const { actions } = renderScreen(
+      makeSession({
+        items: [
+          item(0, {
+            question: {
+              id: 1,
+              question: "Which produces identical daughter cells?",
+              type: "short_answer",
+              options: [],
+              difficulty: "medium",
+              interaction,
+            },
+          }),
+          item(1),
+          item(2),
+        ],
+      }),
+    );
+
+    expect(screen.getByTestId("quiz-session-top")).toBeInTheDocument();
+    const tag = screen.getByTestId("quiz-format-tag");
+    expect(tag).toHaveAttribute("data-format", "compare");
+    expect(tag).toHaveTextContent("Compare");
+    expect(screen.getByTestId("quiz-compare")).toBeInTheDocument();
+    expect(screen.getByTestId("quiz-format-hint")).toHaveTextContent(/Read both sides/);
+    expect(screen.getByTestId("quiz-submit-answer")).toBeDisabled();
+
+    fireEvent.click(screen.getByTestId("quiz-compare-option-both"));
+    expect(actions.write).toHaveBeenCalledWith("both");
+  });
 });

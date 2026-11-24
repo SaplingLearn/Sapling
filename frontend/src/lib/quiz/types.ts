@@ -62,10 +62,10 @@ export function isWrittenType(type: string | null | undefined): boolean {
 
 /**
  * W7.2 interactive kit (phased): Sort (7.1), Sequence (7.2), Label (7.4),
- * Build (~7.x construct). Optional on a `short_answer` wire question —
+ * Build (~7.x construct), Compare. Optional on a `short_answer` wire question —
  * generation does not emit them yet. The UI serialises placements into
  * `answerText` via `lib/quiz/sortInteraction` / `sequenceInteraction` /
- * `labelInteraction` / `buildInteraction`.
+ * `labelInteraction` / `buildInteraction` / `compareInteraction`.
  */
 export interface SortInteractionItem {
   id: string;
@@ -130,11 +130,34 @@ export interface BuildInteraction {
   parts: BuildInteractionPart[];
 }
 
+/** One fixed panel in a Compare (left / right). */
+export interface CompareInteractionSide {
+  id: string;
+  label: string;
+}
+
+/** One relation chip the student may pick (e.g. only left / both). */
+export interface CompareInteractionOption {
+  id: string;
+  label: string;
+}
+
+/**
+ * W7.2 Compare — two sides + ≥2 relation options; answer is one option id.
+ */
+export interface CompareInteraction {
+  kind: "compare";
+  left: CompareInteractionSide;
+  right: CompareInteractionSide;
+  options: CompareInteractionOption[];
+}
+
 export type QuestionInteraction =
   | SortInteraction
   | SequenceInteraction
   | LabelInteraction
-  | BuildInteraction;
+  | BuildInteraction
+  | CompareInteraction;
 
 export interface WireQuestion {
   material_context?: "course_material" | "catalog" | "general";

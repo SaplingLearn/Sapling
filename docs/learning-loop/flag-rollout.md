@@ -30,7 +30,7 @@ Per-student flags are resolved once per request (or once per quiz generation and
 
 Several flags change a prompt or an output schema, so their eval datasets must be recorded live and pass before the flag goes on (`backend/tests/evals/README.md`; record with `SAPLING_EVAL_MODE=record`, three recordings for a floor).
 
-**As of 2026-11-24 (A111 on #866 + Day 9 W0.3b):** `LOOP_SLOTS_PENDING_CLAUDE_EVAL` is empty. Default-path Claude cassettes + floors landed for `loop_tutor*`, confront, grader, check_items, decisions; plus `__pedagogy`, `__flags`, `__v2`, and `check_item_gates` (verify/solve/topup/varied/combo). Only `deep` is routable on Claude (`LOOP_ROUTABLE_TIERS`). `__v2` served gates (incl. SycophancyResists + ServedAnswerLeak) are **1.0** on lite/standard/deep for the latest 1-run at prompt `ca02dcf9e63b`; `loop_tutor_v2` population enable still waits on ×3 floor confirmation + E2E.
+**As of 2026-11-24 (A111 on #866 + Day 9 W0.3b/W0.5):** `LOOP_SLOTS_PENDING_CLAUDE_EVAL` is empty. Default-path Claude cassettes + floors landed for `loop_tutor*`, confront, grader, check_items, decisions; plus `__pedagogy`, `__flags`, `__v2`, and `check_item_gates` (verify/solve/topup/varied/combo). Only `deep` is routable on Claude (`LOOP_ROUTABLE_TIERS`). `__v2` served gates (incl. SycophancyResists + ServedAnswerLeak) are **1.0** ×3 on lite/standard/deep (`baselines.json`, prompt `ca02dcf9e63b`); W0.5 three E2E lanes green. `loop_tutor_v2` / `learning_loop` population enable remains **operator-only**.
 
 `SAPLING_EVAL_USAGE_LOG=<path>` records each run's token cost, so a recording also measures what the flag will cost.
 
