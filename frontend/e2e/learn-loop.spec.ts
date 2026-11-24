@@ -180,11 +180,15 @@ async function walkProbeAndPlan(page: Page, P: Params, approve = true): Promise<
     // A correct answer advances; a miss shows corrective feedback until Next.
     // Neither case bypasses the diagnostic or assumes a posterior means mastery.
     await expect
-      .poll(async () => {
-        if ((await phase.getAttribute("data-phase")) !== "probe") return true;
-        if (!(await probeItem.isVisible())) return false;
-        return (await page.getByTestId("loop-probe-reference").isVisible()) || (await showsAnotherItem(probeItem, qh));
-      })
+      .poll(
+        async () => {
+          if ((await phase.getAttribute("data-phase")) !== "probe") return true;
+          if (!(await probeItem.isVisible())) return false;
+          return (await page.getByTestId("loop-probe-reference").isVisible()) || (await showsAnotherItem(probeItem, qh));
+        },
+        // Grader + state CAS can exceed the default 5s expect timeout under load.
+        { timeout: GATE_POLL_MARGIN_MS },
+      )
       .toBe(true);
     if (await page.getByTestId("loop-probe-reference").isVisible()) {
       expect(difficulty).toBeGreaterThan(1);
