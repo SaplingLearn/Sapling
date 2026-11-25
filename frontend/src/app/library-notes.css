@@ -1,24 +1,19 @@
 /* Library — ported from the design handoff.
  *
  * `reference/library-global.css` from design_handoff_library_notes, verbatim
- * apart from three deliberate changes, each marked below:
+ * apart from two deliberate changes:
  *
  *  1. The `body` / `a` rules are dropped: the shell already paints those from
  *     --bg and --brand-forest, which hold the same values.
- *  2. The literal font stacks ('Aleo', 'SUSE', 'IBM Plex Mono') become
- *     var(--font-serif) / --font-sans / --font-mono. next/font/local registers
- *     each face under a generated family name, so the literal names match
- *     nothing here and would silently render Times (see the note at the top of
- *     globals.css). Same three faces, same weights.
- *  3. The rules the design writes against `*` — the custom scrollbar and the
+ *  2. The rules the design writes against `*` — the custom scrollbar and the
  *     reduced-motion override — are scoped to `[data-sap-surface]`, the
  *     attribute the Library puts on its root, so they cannot repaint or
  *     flatten the rest of the app.
  *
  * Everything else (every keyframe, every literal value) is byte-for-byte what
- * the prototype ships. Hover and focus states,
- * which the prototype expresses as `style-hover="…"` attributes on elements,
- * live at the bottom of this file as `.sap-*` classes.
+ * the prototype ships. Hover and focus states, which the prototype expresses
+ * as `style-hover="…"` attributes on elements, live at the bottom of this file
+ * as `.sap-*` classes.
  */
 
 /* ── from reference/library-global.css ─────────────────────────────────── */

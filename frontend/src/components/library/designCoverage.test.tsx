@@ -61,7 +61,9 @@ const LIBRARY_DESIGN = read("__fixtures__/library-v2.design.html");
  * the document list alone (`grid-template-rows: auto minmax(0, 1fr)` with
  * `overflow-y: auto` on the list). Owner's call 2026-11-24 — the whole page
  * scrolls instead, so the header travels up with the documents, which means
- * the rows track `auto auto` and the page owns the overflow.
+ * the rows track `auto auto` and the page owns the overflow. The two
+ * `min-height: 0`s the prototype needs for that inner scroller (the documents
+ * section and the list inside it) go with it; they are its only two.
  *
  * The control height: the handoff draws the search field and Upload at 48px.
  * Owner's call 2026-11-25 — too heavy for the row — so both come down to the
@@ -78,14 +80,15 @@ const LIBRARY_DESIGN = read("__fixtures__/library-v2.design.html");
  * baseline-aligns the label to it. Owner's call 2026-11-25 removed the count,
  * so the label is the chip's only content and centres on the icon instead —
  * which leaves `align-items: baseline` with nothing left to align. It is the
- * only baseline in the prototype.
+ * only baseline in the prototype. The count's own `display: inline-block`
+ * (its bump animation needs a box) goes with the count; it is the only one.
  */
 const EXPECTED_DEVIATIONS = [
   /^font-family: '(Aleo|SUSE|IBM Plex Mono)'/,
   /^width: 1920px$/, /^height: 1080px$/, /^transform-origin: 0 0$/,
-  /^grid-template-rows: auto minmax\(0, 1fr\)$/,
+  /^grid-template-rows: auto minmax\(0, 1fr\)$/, /^min-height: 0$/,
   /^height: 48px$/, /^top: 54px$/,
-  /^align-items: baseline$/,
+  /^align-items: baseline$/, /^display: inline-block$/,
 ];
 
 /** The rebuild's own source: components, hooks, and the ported stylesheet. */
@@ -127,6 +130,10 @@ function carried(have: Set<string>, haveSets: Set<string>, p: string, v: string)
     `${camel}: ${bare},`, `${camel}: ${bare} `, `${camel}: ${bare}}`,
     `${p}="${v}"`, `${camel}="${v}"`,
     `${p}={${bare}}`, `${camel}={${bare}}`, `${p}={"${v}"}`, `${camel}={"${v}"}`,
+    // A primitive's default (`MenuScrim({ zIndex = 30 })`), and a square one
+    // sized by one prop (`<CheckBox size={22} />` sets width and height).
+    `${camel} = ${bare},`, `${camel} = ${bare} `, `${camel} = ${bare}}`,
+    ...(/^(width|height)$/.test(p) ? [`size={${bare}}`] : []),
   ]) if (SOURCE.includes(needle)) return true;
   // A value chosen by a ternary (`border: final ? "…" : "1px solid #445D22"`)
   // is never preceded by its property name. Multi-token values are specific

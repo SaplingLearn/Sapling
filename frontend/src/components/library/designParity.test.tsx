@@ -318,15 +318,13 @@ describe("the three faces are used where the design uses them", () => {
     }
   });
 
-  it("the stylesheet resolves every face through the repo's variables", () => {
+  it("the stylesheet never names a face by its literal family", () => {
     // next/font registers each face under a generated name, so a bare 'Aleo'
-    // would silently render Times.
+    // would silently render Times. The Library's faces are all set inline,
+    // through var(--font-serif|sans|mono) (the test above).
     expect(LIBRARY_CSS).not.toMatch(/font-family:[^;]*'Aleo'/);
     expect(LIBRARY_CSS).not.toMatch(/font-family:[^;]*'SUSE'/);
     expect(LIBRARY_CSS).not.toMatch(/font-family:[^;]*'IBM Plex Mono'/);
-    expect(LIBRARY_CSS).toContain("var(--font-serif)");
-    expect(LIBRARY_CSS).toContain("var(--font-sans)");
-    expect(LIBRARY_CSS).toContain("var(--font-mono)");
   });
 
   it("the Library title is Aleo at the design's 34px", async () => {
