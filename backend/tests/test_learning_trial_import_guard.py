@@ -1,10 +1,10 @@
 """learning_trial is research tooling outside the request path (the within-
 student trial's analysis, docs/research/learning-loop/2026-11-08-within-student-
-trial-preregistration.md). Pinned in both directions, over the whole import
-graph of backend/:
+trial-preregistration.md). Pinned in both directions:
 
   - no application module reaches it, directly or through another module
-    (only tests/, scripts/ and the package itself may import it); and
+    (only tests/, scripts/ and the package itself may import it): the
+    `learning-trial-offline` contract in backend/.importlinter (lint-imports);
   - it reaches no application module: stdlib and itself only, with the GLMM
     path's numpy / pandas / statsmodels imported lazily inside a function,
     so the app venv imports every module without them; and
@@ -22,8 +22,6 @@ import pytest
 
 BACKEND = pathlib.Path(__file__).resolve().parents[1]
 PACKAGE = "learning_trial"
-#: where an import of the package is allowed: offline tooling and tests
-NOT_APP = ("tests/", "scripts/", f"{PACKAGE}/")
 OPTIONAL = {"numpy", "pandas", "statsmodels", "scipy"}
 
 
@@ -32,14 +30,6 @@ def _module_name(path: pathlib.Path) -> str:
     if parts[-1] == "__init__":
         parts = parts[:-1]
     return ".".join(parts)
-
-
-def _backend_files():
-    for path in sorted(BACKEND.rglob("*.py")):
-        rel = path.relative_to(BACKEND).as_posix()
-        if rel.startswith(("venv/", ".venv")) or "/__pycache__/" in rel:
-            continue
-        yield rel, path
 
 
 def _imports(path: pathlib.Path, module: str) -> set[str]:
@@ -68,30 +58,6 @@ def _imports(path: pathlib.Path, module: str) -> set[str]:
             if name in ("import_module", "__import__") and isinstance(node.args[0].value, str):
                 out.add(node.args[0].value)
     return out
-
-
-def _graph() -> dict[str, set[str]]:
-    return {_module_name(path): _imports(path, _module_name(path)) for _, path in _backend_files()}
-
-
-def _is_package_module(name: str) -> bool:
-    return name == PACKAGE or name.startswith(PACKAGE + ".")
-
-
-def test_no_application_module_reaches_learning_trial():
-    graph = _graph()
-    reaches = {name for name in graph if _is_package_module(name)}
-    changed = True
-    while changed:  # every module that imports, directly or transitively, the package
-        changed = False
-        for name, imported in graph.items():
-            if name not in reaches and any(i in reaches or _is_package_module(i) for i in imported):
-                reaches.add(name)
-                changed = True
-    paths = {_module_name(p): rel for rel, p in _backend_files()}
-    offenders = sorted(paths[name] for name in reaches if not paths[name].startswith(NOT_APP))
-    assert not offenders, f"application modules reach {PACKAGE}: {offenders}"
-    assert "scripts.export_learning_trial" in reaches, "the scan must see the exporter's import"
 
 
 def test_learning_trial_imports_only_the_stdlib_and_itself():
