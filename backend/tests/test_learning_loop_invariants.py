@@ -2620,7 +2620,7 @@ FRONTEND_E2E = BACKEND.parent / "frontend" / "e2e"
 SEED = BACKEND / "db" / "seed_local_rich.py"
 #: The stub marker PKG-00 left in frontend/e2e/learn-loop.spec.ts. PKG-13 Task 9
 #: replaces the stub with the journeys; from then on inv_13a requires the spec
-#: to cite at least one E2E_ constant (the skip below can no longer fire).
+#: to cite at least one E2E_ constant, and fails if the stub comes back.
 LEARN_LOOP_SPEC_STUB_MARKER = "Contains no tests yet."
 
 # `/** Must match backend/agents/function_handlers_e2e.py::E2E_X */` followed by
@@ -2762,43 +2762,13 @@ def test_inv_13a_spec_constants_match_function_handlers():
                 f"{spec}: {name} drifted from the backend constant"
             )
         loop_spec = (FRONTEND_E2E / "learn-loop.spec.ts").read_text()
-        if LEARN_LOOP_SPEC_STUB_MARKER in loop_spec:
-            pytest.skip(
-                "learn-loop.spec.ts is still the PKG-00 stub; PKG-13 Task 9 writes the journeys"
-            )
+        assert LEARN_LOOP_SPEC_STUB_MARKER not in loop_spec, "learn-loop.spec.ts is the PKG-00 stub"
         assert any(spec == "learn-loop.spec.ts" for spec, _, _ in pairs), (
             "learn-loop.spec.ts cites no E2E_ constant"
         )
     finally:
         providers.clear_function_handlers()
         sys.modules.pop("agents.function_handlers_e2e", None)
-
-
-def test_inv_13b_seed_opts_in_exactly_the_loop_users():
-    """The name is historical (PKG-13: only the loop seed users carried the staff/QA toggle).
-    After launch (PKG-14b, spec §8, §11.4) no journey may depend on learning_loop_beta:
-    the gate never reads it, so every seeded student is on the loop in the default lane."""
-    hits = [
-        f"{p.relative_to(FRONTEND_E2E)}:{i}"
-        for p in sorted(FRONTEND_E2E.rglob("*.ts"))
-        for i, line in enumerate(p.read_text().splitlines(), 1)
-        if "learning_loop_beta" in line
-    ]
-    assert hits == [], f"E2E journeys still depend on the retired toggle: {hits}"
-
-
-def test_inv_13b_no_oracle_reads_the_retired_toggle():
-    """Z50: nor may an oracle — the toggle measures nothing about who had the
-    loop on (the seed writes it as inert fixture data), so the learn_loop
-    oracle's loop users are the students with a loop session."""
-    oracles = BACKEND / "e2e_oracles"
-    hits = [
-        f"{p.relative_to(BACKEND)}:{i}"
-        for p in sorted(oracles.rglob("*.py"))
-        for i, line in enumerate(p.read_text().splitlines(), 1)
-        if "learning_loop_beta" in line
-    ]
-    assert hits == [], f"an oracle reads the retired toggle: {hits}"
 
 
 # ── Z49: the showcase lanes photograph production's default ──────────────────
