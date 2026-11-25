@@ -41,9 +41,13 @@
 @keyframes sapSkelOut { from { opacity: 1; visibility: visible; } to { opacity: 0; visibility: hidden; } }
 
 /* List <-> Panel. The rows and cards each animate themselves in, but the
-   outgoing view used to vanish on the same frame, which read as a jump.
-   The incoming view fades and rises as one block over that stagger. */
-@keyframes sapViewIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+   outgoing view used to vanish on the same frame, which read as a jump. The
+   incoming view slides in as one block over that stagger, from the side its
+   tab sits on: Panel is the right tab, so it enters from the right, and List
+   from the left. Direction is what makes the toggle feel like a switch rather
+   than a replace. */
+@keyframes sapViewInRight { from { opacity: 0; transform: translateX(28px); } to { opacity: 1; transform: none; } }
+@keyframes sapViewInLeft  { from { opacity: 0; transform: translateX(-28px); } to { opacity: 1; transform: none; } }
 @keyframes sapFadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 @keyframes sapSlideUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { [data-sap-surface], [data-sap-surface] * { animation-duration: 1ms !important; animation-delay: 0ms !important; } }

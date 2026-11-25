@@ -170,16 +170,18 @@ describe("the design's measurements are the rebuild's", () => {
   });
 
   /**
-   * The handoff draws this at 48px. Owner's call 2026-11-25 scaled the three
-   * header controls down together (`primitives.ts::CONTROL_H`), so the height
-   * asserted here is the decision, not the drawing; everything else about the
-   * button is still the design's.
+   * Two owner's calls on 2026-11-25 land on this button, so the height and
+   * radius asserted here are decisions rather than the drawing: it scaled down
+   * with the other header controls (`primitives.ts::CONTROL_H`), and it took
+   * the Study Guide button's 6px edge so the pair matches. Both values are
+   * still ones the design names elsewhere, and the fill and weight are
+   * untouched.
    */
-  it("the upload split button keeps the design's radius, fill and weight", async () => {
+  it("the upload split button keeps the design's fill and weight", async () => {
     await renderLibrary();
     const upload = screen.getByTestId("library-upload");
     expect(upload.style.height).toBe(`${CONTROL_H}px`);
-    expect(upload.style.borderRadius).toBe("12px");
+    expect(upload.style.borderRadius).toBe("6px");
     expect(upload.style.background).toBe("rgb(68, 93, 34)"); // #445D22
     expect(upload.style.fontWeight).toBe("700");
   });

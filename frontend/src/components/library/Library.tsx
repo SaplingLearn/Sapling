@@ -194,7 +194,6 @@ export function Library() {
             onCourseMenu={ui.openCourseMenu}
             menuClosing={ui.closing}
             scopeOptions={options}
-            trashCount={data.trash.length}
             trashDropOver={ui.dropOn === "trash"}
             trashBump={ui.trashBump}
             onTrash={() => ui.setLoc(scope.isTrash ? "all" : "trash")}

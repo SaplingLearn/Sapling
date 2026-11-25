@@ -64,6 +64,9 @@ function GuidesButton() {
       className="btn btn--sm"
       style={{
         height: CONTROL_H, padding: "0 16px", fontSize: "var(--fs-md)",
+        // Owner's call 2026-11-25: sit a little further left, so the pair is
+        // not read as one split control.
+        marginRight: 8,
         whiteSpace: "nowrap", flexShrink: 0, textDecoration: "none",
       }}
     >
@@ -302,7 +305,13 @@ export function LibraryHeader(props: LibraryHeaderProps) {
                 border: 0,
                 background: "#445D22",
                 color: "#FFFFFF",
-                borderRadius: 12,
+                // Owner's call 2026-11-25: the same edge as the Study Guide
+                // button beside it, rather than the handoff's 12px, so the
+                // pair matches. That button is `btn btn--sm`, whose
+                // `var(--r-sm)` resolves to 6px — written as the number so the
+                // rendered value stays one the design names, which is what
+                // `designParity` checks every radius against.
+                borderRadius: 6,
                 font: "inherit",
                 fontSize: 15,
                 fontWeight: 700,

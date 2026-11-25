@@ -12,7 +12,7 @@ import React from "react";
 
 import { Icon } from "../Icon";
 import {
-  FONT_MONO, FONT_SERIF, Glyph, MENU_IN, MENU_OUT, MENU_SURFACE, MenuScrim, TrashIcon,
+  FONT_SERIF, Glyph, MENU_IN, MENU_OUT, MENU_SURFACE, MenuScrim, TrashIcon,
 } from "./primitives";
 
 export interface ScopeOption {
@@ -38,7 +38,6 @@ export interface LibraryScopeBarProps {
   scopeOptions: ScopeOption[];
 
   isTrash: boolean;
-  trashCount: number;
   trashDropOver: boolean;
   /** Replays each time something lands in the Trash, so the can bumps. */
   trashBump: number;
@@ -76,10 +75,9 @@ export interface LibraryScopeBarProps {
 
 /** The Trash button: a drop target, with the lid tilt and the landing bump. */
 function TrashButton({
-  isTrash, count, dropOver, bump, onClick, onDragOver, onDragLeave, onDrop,
+  isTrash, dropOver, bump, onClick, onDragOver, onDragLeave, onDrop,
 }: {
   isTrash: boolean;
-  count: number;
   dropOver: boolean;
   bump: number;
   onClick: () => void;
@@ -117,14 +115,10 @@ function TrashButton({
         lidTransform={dropOver ? "translateY(-2px) rotate(-16deg)" : "none"}
         lidAnimation={bump ? `sapLid${suffix} 520ms cubic-bezier(0.2, 0.7, 0.2, 1)` : "none"}
       />
-      <span style={{ display: "inline-flex", alignItems: "baseline", gap: 7, lineHeight: 1 }}>
-        <span>Trash</span>
-        <span style={{
-          fontFamily: FONT_MONO, fontSize: 13, lineHeight: 1, color: "#6F6857",
-          transform: "translateY(0.5px)", display: "inline-block",
-          animation: bump ? `sapBump${suffix} 420ms cubic-bezier(0.2, 0.7, 0.2, 1)` : "none",
-        }}>{count}</span>
-      </span>
+      {/* Owner's call 2026-11-25: no count. The handoff puts one after the
+          word; without it the label is the chip's only content, so it centres
+          on the icon rather than hanging to its left. */}
+      <span style={{ display: "inline-flex", alignItems: "center", lineHeight: 1 }}>Trash</span>
     </button>
   );
 }
@@ -314,7 +308,7 @@ function EmptyTrash({ confirm, onClick }: { confirm: boolean; onClick: () => voi
 export function LibraryScopeBar(props: LibraryScopeBarProps) {
   const {
     title, dotColor, showDot, courseMenuOpen, onCourseMenu, menuClosing, scopeOptions,
-    isTrash, trashCount, trashDropOver, trashBump, onTrash, onTrashDragOver,
+    isTrash, trashDropOver, trashBump, onTrash, onTrashDragOver,
     onTrashDragLeave, onTrashDrop, isFolder, folderRenaming, folderDraft, onFolderDraft,
     onFolderRenameStart, onFolderRenameCommit, onFolderRenameCancel, onFolderDelete,
     trashHasItems, emptyConfirm, onEmptyTrash, scoped, scopeName, onSearchAll,
@@ -362,7 +356,6 @@ export function LibraryScopeBar(props: LibraryScopeBarProps) {
           />
           <TrashButton
             isTrash={isTrash}
-            count={trashCount}
             dropOver={trashDropOver}
             bump={trashBump}
             onClick={onTrash}

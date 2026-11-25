@@ -81,12 +81,19 @@ const NOTES_DESIGN = read("../notes/__fixtures__/notes.design.html");
  * radii and type sizes are still the handoff's, so this one regex is the whole
  * deviation. Exactly the four header elements in the prototype carry
  * `height: 48px`, so allowlisting it hides nothing else.
+ *
+ * The Trash count: the handoff puts a tabular count after the word, and
+ * baseline-aligns the label to it. Owner's call 2026-11-25 removed the count,
+ * so the label is the chip's only content and centres on the icon instead —
+ * which leaves `align-items: baseline` with nothing left to align. It is the
+ * only baseline in the prototype.
  */
 const EXPECTED_DEVIATIONS = [
   /^font-family: '(Aleo|SUSE|IBM Plex Mono)'/,
   /^width: 1920px$/, /^height: 1080px$/, /^transform-origin: 0 0$/,
   /^grid-template-rows: auto minmax\(0, 1fr\)$/,
   /^height: 48px$/,
+  /^align-items: baseline$/,
 ];
 
 /** The rebuild's own source: components, hooks, and the ported stylesheet. */

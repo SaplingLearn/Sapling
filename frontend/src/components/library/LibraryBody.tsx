@@ -98,10 +98,13 @@ function LoadError({
   );
 }
 
-/** The incoming view's entrance, on the design's own easing. */
-const VIEW_IN: React.CSSProperties = {
-  animation: "sapViewIn 260ms cubic-bezier(0.2, 0.7, 0.2, 1) both",
-};
+/** The incoming view's entrance, from the side its tab sits on. */
+const viewIn = (view: "list" | "panel"): React.CSSProperties => ({
+  animation: `sapViewIn${view === "panel" ? "Right" : "Left"} `
+    + "300ms cubic-bezier(0.2, 0.7, 0.2, 1) both",
+  // The slide would otherwise widen the page mid-flight.
+  overflowX: "clip",
+});
 
 export function LibraryBody(props: LibraryBodyProps) {
   const {
@@ -129,7 +132,7 @@ export function LibraryBody(props: LibraryBodyProps) {
           replays; without the key the incoming view inherits the outgoing
           one's finished animation and nothing moves. */}
       {!empty && view === "list" && (
-        <div key="list" style={VIEW_IN}>
+        <div key="list" style={viewIn("list")}>
           <ListHeader
             columns={columns}
             showCourse={showCourse}
@@ -151,7 +154,7 @@ export function LibraryBody(props: LibraryBodyProps) {
       )}
 
       {!empty && view === "panel" && (
-        <div key="panel" style={{ ...PANEL_GRID, ...VIEW_IN }}>
+        <div key="panel" style={{ ...PANEL_GRID, ...viewIn("panel") }}>
           {folders.map((f, i) => <FolderCard key={f.id} {...folderProps(f.id, i)} />)}
           {documents.map((d, i) => (
             <DocCard key={d.id} showCourseDot={showCourse} {...rowProps(d, i)} />
