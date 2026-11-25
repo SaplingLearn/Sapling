@@ -269,7 +269,7 @@ function Arriving({ progress }: { progress: StartProgress | null }) {
   return (
     <div className={rv.stage}>
       {/* Replaces the skeleton once the deck is known to be in the making. */}
-      <motion.div className={rv.message} role="status" {...m.fade}>
+      <motion.div className={rv.message} role="status" variants={{ hidden: m.fade.initial, shown: m.fade.animate }} initial="hidden" animate="shown" transition={m.fade.transition}>
         <div className={`h-serif ${fc.messageTitle}`}>Making cards for {progress.name}…</div>
         <div className={fc.messageBody}>
           {progress.of > 1 ? `${progress.at} of ${progress.of}. ` : ""}From your course material. Review starts as soon as they&apos;re ready.
@@ -285,7 +285,7 @@ function LoadFailed({ onRetry }: { onRetry: () => void }) {
   const m = useMotionPresets();
   return (
     <div className={rv.stage}>
-      <motion.div className={rv.message} role="alert" {...m.fadeUp}>
+      <motion.div className={rv.message} role="alert" variants={m.list.item} initial="hidden" animate="shown">
         <div className={`h-serif ${fc.messageTitle}`}>Couldn&apos;t load your flashcards</div>
         <div className={fc.messageBody}>Check your connection and try again.</div>
         <button type="button" className={`btn btn--primary ${fc.messageAction}`} onClick={onRetry}>Try again</button>

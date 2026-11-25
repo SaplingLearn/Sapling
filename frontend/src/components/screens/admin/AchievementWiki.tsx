@@ -523,7 +523,7 @@ function AchievementCard({
 
       <AnimatePresence initial={false}>
       {expanded && (
-        <motion.div key="editor" {...m.collapse}>
+        <motion.div key="editor" variants={{ hidden: m.collapse.initial, shown: m.collapse.animate, gone: m.collapse.exit }} initial="hidden" animate="shown" exit="gone" transition={m.collapse.transition}>
         <div className={w.editor}>
           <div className={w.editorFields}>
             <LabeledField label="Name">
@@ -588,7 +588,7 @@ function AchievementCard({
             {triggers.length === 0 && <div className={w.none}>None.</div>}
             <AnimatePresence initial={false}>
             {triggers.map(t => (
-              <motion.div key={t.id} className={w.row} {...m.fadeUp}>
+              <motion.div key={t.id} className={w.row} variants={m.list.item} initial="hidden" animate="shown">
                 <input
                   value={triggerDrafts[t.id]?.trigger_type ?? t.trigger_type}
                   onChange={e => setTriggerDrafts(prev => ({
@@ -643,7 +643,7 @@ function AchievementCard({
             {linkedCosmeticIds.map(cid => {
               const c = cosmetics.find(x => x.id === cid);
               return (
-                <motion.div key={cid} className={w.row} {...m.fadeUp}>
+                <motion.div key={cid} className={w.row} variants={m.list.item} initial="hidden" animate="shown">
                   <span className={`${w.field} ${w.grow} ${w.cosmeticName}`}>
                     <span>{c ? c.name : cid}</span>
                     {c && (

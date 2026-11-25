@@ -140,7 +140,7 @@ function LoopReviews({ courses, retentionCourse }: { courses: EnrolledCourse[]; 
   if (loopActive === "error") {
     return (
       <div className={s.shell}>
-        <motion.div role="status" className={`${s.reviews} ${s.statusNotice}`} {...m.fadeUp}>
+        <motion.div role="status" className={`${s.reviews} ${s.statusNotice}`} variants={m.list.item} initial="hidden" animate="shown">
           <p>Couldn&apos;t load due reviews. The rest of Study is still available.</p>
           <button type="button" className="btn btn--sm" onClick={retryLoopStatus} data-testid="review-status-retry">
             Retry due reviews
@@ -152,7 +152,7 @@ function LoopReviews({ courses, retentionCourse }: { courses: EnrolledCourse[]; 
   if (loopActive !== true) return null;
   return (
     <div className={s.shell}>
-      <motion.div className={s.reviews} data-testid="study-reviews" {...m.fadeUp}>
+      <motion.div className={s.reviews} data-testid="study-reviews" variants={m.list.item} initial="hidden" animate="shown">
         <DueQueue userId={userId} />
         <RetentionCheck key={userId} userId={userId} courses={courses} initialCourseId={retentionCourse} />
       </motion.div>
