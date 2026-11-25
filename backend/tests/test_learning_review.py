@@ -3223,6 +3223,57 @@ def test_a127_review_answer_hands_the_label_to_the_grade(client, monkeypatch, st
     assert seen["confidence"] == label
 
 
+@pytest.mark.parametrize(
+    "outcome,extra,held",
+    [
+        pytest.param({"correct": False}, {"confidence": "sure"}, True, id="sure-wrong"),
+        pytest.param({"correct": True}, {"confidence": "sure"}, False, id="sure-correct"),
+        # the review body has no idk of its own: the phrase is the idk (A16)
+        pytest.param({"correct": False}, {"confidence": "sure", "answer": "idk"}, False, id="idk"),
+        pytest.param({"correct": False}, {}, False, id="no-confidence"),
+        pytest.param({"correct": False}, {"confidence": "guessing"}, False, id="guessing-wrong"),
+        pytest.param({"correct": False}, {"confidence": "fairly_sure"}, False, id="fairly-sure-wrong"),
+        pytest.param({"correct": None, "unavailable": True}, {"confidence": "sure"}, False, id="ungraded"),
+    ],
+)
+def test_w25_review_answer_holds_next_after_a_sure_miss_only(
+    client, monkeypatch, store, outcome, extra, held
+):
+    """W2.5 on the review surface (the check's and the probe's are pinned in
+    tests/test_learning_feedback_dwell.py): `feedback_dwell_ms` only on a wrong
+    answer the student was sure of — absent otherwise, never 0 or null."""
+    import config
+    from learning import review
+    from learning.review import ReviewOutcome
+
+    monkeypatch.setattr(config, "LEARNING_GATE_TIME_SCALE", 1.0)
+    _session(monkeypatch, {"sr": {}, "review": {"spent_s": 0, "retention": 0.9}})
+    _check_answer_seams(monkeypatch, _check_item("n-due", "qh-1"))
+    _opened(store, "n-due", "ci-qh-1")
+
+    async def fake_grade(user_id, item, **kw):
+        return ReviewOutcome(hint="h", sr={}, **outcome)
+
+    monkeypatch.setattr(review, "grade_review", fake_grade)
+    body = {
+        "user_id": USER,
+        "session_id": _sid(),
+        "course_id": COURSE,
+        "kind": "check",
+        "item_id": "ci-qh-1",
+        "answer": "because",
+        **extra,
+    }
+    with _loop():
+        r = client.post(f"{REVIEW}/answer", json=body)
+    assert r.status_code == 200, r.text
+    if held:
+        full = params.GATE_HYPERCORRECTION_FEEDBACK_DWELL_S * params.MS_PER_SECOND
+        assert r.json()["feedback_dwell_ms"] == full
+    else:
+        assert "feedback_dwell_ms" not in r.json()
+
+
 def _a127_review(monkeypatch, *, correct=True, matched=""):
     """grade_review with the REAL grade_answer (its grader stubbed), the single
     writer captured and the misconception store faked (the A127 rule runs for

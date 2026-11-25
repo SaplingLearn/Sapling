@@ -36,7 +36,8 @@ def test_seal_is_bound_ciphertext_not_plaintext():
         bind=nested_bind("sessions", "loop_state", check_reason.KEY, "sess-1"),
     )
     assert opened == plain
-    assert check_reason.open("sess-1", sealed) == plain
+    opened = check_reason.open("sess-1", sealed)
+    assert opened == plain
     # Wrong session binding must not open (AAD).
     assert (
         decrypt_if_present(
@@ -45,9 +46,8 @@ def test_seal_is_bound_ciphertext_not_plaintext():
         )
         is None
     )
-    assert check_reason.open("other", sealed) is None
-    assert check_reason.open("sess-1", None) is None
-    assert check_reason.open("sess-1", "") is None
+    refused = [check_reason.open(*cell) for cell in (("other", sealed), ("sess-1", None), ("sess-1", ""))]
+    assert refused == [None, None, None]
 
 
 def test_latest_plaintext_picks_most_recent_graded_step():
@@ -58,13 +58,37 @@ def test_latest_plaintext_picks_most_recent_graded_step():
         "steps": {
             "qh-old": {check_reason.KEY: older, "graded_at": 10.0},
             "qh-new": {check_reason.KEY: newer, "graded_at": 20.0},
-            "qh-empty": {"graded_at": 30.0},
         }
     }
     assert check_reason.latest_plaintext(state, "s1") == "newer inductive step confusion"
     assert check_reason.latest_plaintext(state, "wrong") is None
     assert check_reason.latest_plaintext({}, "s1") is None
     assert check_reason.latest_plaintext(state, None) is None
+
+
+@pytest.mark.parametrize("empty", [None, "", 7])
+def test_latest_plaintext_none_when_the_latest_graded_step_has_no_reasoning(empty):
+    """w2-next-probe-hint.md: the most recently graded step is picked first, so
+    prose on an older step never speaks for a newer grade without any."""
+    older = check_reason.seal("s1", "older recursion base case prose")
+    latest = {"graded_at": 30.0}
+    if empty is not None:
+        latest[check_reason.KEY] = empty
+    state = {"steps": {"qh-old": {check_reason.KEY: older, "graded_at": 10.0}, "qh-new": latest}}
+    assert check_reason.latest_plaintext(state, "s1") is None
+    latest["graded_at"] = 5.0  # graded BEFORE the step with reasoning: no longer the latest
+    assert check_reason.latest_plaintext(state, "s1") == "older recursion base case prose"
+
+
+@pytest.mark.parametrize("at", [None, True, "30", float("nan"), float("inf")])
+def test_latest_plaintext_never_picks_an_ungraded_step(at):
+    """Reasoning is sealed under the grading claim, before the grade: a step
+    without a finite graded_at is not graded, whatever it carries."""
+    sealed = check_reason.seal("s1", "open answer recursion base case")
+    state = {"steps": {"qh-open": {check_reason.KEY: sealed, "graded_at": at}}}
+    assert check_reason.latest_plaintext(state, "s1") is None
+    state["steps"]["qh-graded"] = {"graded_at": 1.0}
+    assert check_reason.latest_plaintext(state, "s1") is None
 
 
 def test_stash_on_step_writes_only_when_allowed():

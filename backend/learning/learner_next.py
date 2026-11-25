@@ -37,6 +37,12 @@ class ConceptState:
     fsrs_due_at: datetime | None = None
     open_misconceptions: int = 0
     course_id: str | None = None  # the quiz plan's cap bucket (None: one shared)
+    planning_p: float | None = None  # learner_state.planning_p; None: p_known
+
+    @property
+    def p_plan(self) -> float:
+        """The belief readiness and proficiency are decided by (spec §13 A153)."""
+        return self.p_known if self.planning_p is None else self.planning_p
 
 
 @dataclass(frozen=True)
@@ -109,6 +115,6 @@ def learner_next(
         )
     )
     listed.update(c.node_id for c in misconceptions)
-    fringe = planner.outer_fringe({s.node_id: s.p_known for s in states}, prereq_edges)
+    fringe = planner.outer_fringe({s.node_id: s.p_plan for s in states}, prereq_edges)
     ready = tuple(_as_next(by_id[node], READY) for node in fringe if node not in listed)
     return LearnerNext(due=due, misconceptions=misconceptions, ready=ready)

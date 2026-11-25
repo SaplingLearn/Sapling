@@ -97,9 +97,11 @@ A floor set from ONE recording is not accepted. Every re-record is:
 2. **Floors = the minimum of the three runs**, per evaluator, written by
    `floors.py` (never by hand, never from one run). For a routed dataset the
    same call rewrites its **routing block**: the three per-run score blocks
-   (`_raised` set for a run in which a case or an evaluator raised) and
-   `recorded_under`, the model, prompt hash and schema hash every run was
-   recorded under (runs of different prompts or models are refused):
+   and `recorded_under`, the model, prompt hash and schema hash every run was
+   recorded under. Routed or not, it refuses a run in which a case or an
+   evaluator raised (its scores average only what finished) and runs recorded
+   under different prompts, schemas or models (start a new log for a new
+   prompt: the log is appended to, and the LAST three runs count):
 
    ```bash
    # the loop tutor (agents/loop_tutor.LOOP_ROUTABLE_TIERS reads the block)
@@ -132,7 +134,11 @@ A floor set from ONE recording is not accepted. Every re-record is:
 `python tests/evals/floors.py --check` (also run by `tests/test_eval_floors.py`)
 fails when a floor is not the minimum of its recorded runs: a routed dataset's
 routing block (written at up to three decimals before floors.py wrote them), or
-the newest committed run log of any other dataset. A floor with neither must be
+the newest committed run log of any other dataset. It also fails on a raised
+run behind a floor, and on a run log whose `recorded_under` differs between its
+runs or from what the dataset records under today (a log that names none is
+compared by score only); it imports the agents for that, so set
+`ENCRYPTION_KEY` (any 64 hex characters). A floor with neither must be
 named in `floors.SINGLE_RECORDING_FLOORS`: the datasets recorded once before
 this rule, each until its next re-record. `floors.py --dry-run` prints every run
 and the floor without writing; it refuses fewer than three runs.
@@ -188,6 +194,13 @@ procedure. The v2 prompt version covers the base system prompt too, so the
 same change re-records deep `__v2` as well: 22 + 24 = 46 more per run, 138 for
 three (about 790 in all when all three tiers and `__v2` were recorded).
 
+`floors.py` writes whatever the minimum is, so it would lower a safety floor
+too. The default variant's routable tiers are pinned at 1.0 on every served
+gate by those two files, and every `__v2` floor is pinned at exactly 1.0 on
+every `SERVED_GATES` member of its eval module, plus RawAnswerLeak (which
+`docs/learning-loop/w0-flag-enable-checklist.md` step 3 requires of `__v2`), by
+`tests/test_eval_floors.py`. On a miss fix the prompt, never the pin.
+
 ## Coverage
 
 Offline (in `run_all.py` + CI): `document_classification`, `document_summary`,
@@ -233,15 +246,11 @@ with the same code rules the service stores by (`learning/checks.py::
 validate_draft`) plus grounding (cited chunk ids are input ids; no reference
 leaks into the prompt) and `FinalAnswerValid` (spec §13 A34, required 1.0:
 every accepted draft's final answer is a verbatim copy from its reference).
-Its baseline was re-recorded by PKG-06's A34 reopen of PKG-04 (29af030; one
-recording on the final prompt — DraftValid 0.722, WrongReasonCount 0.667,
-both lower than the first recording; HANDOFF-04/HANDOFF-06), then by the A37
-reopen (spec §13 A37: the mc_reason options as objects, 48a65bc), its
-review round (options alike in length), its third review (the reference
-as a strong student's reason, never the model thinking aloud) and its round 4
-(each distractor states its own misconception; the item's wrong reasons are
-read off the distractors, and WrongReasonCount scores those for mc_reason).
-`McOptionsValid` (required 1.0) and `McReasonValid` score the mc_reason
+Its floors are the minimum of the three `claude-sonnet-5-5` runs in its newest
+run log; the Gemini-era recordings of the A34 and A37 rounds (HANDOFF-04,
+HANDOFF-06) are history. For mc_reason each distractor states its own
+misconception (A37): the item's wrong reasons are read off the distractors, and
+WrongReasonCount scores those. `McOptionsValid` (required 1.0) and `McReasonValid` score the mc_reason
 drafts; `McCorrectNotLongest` is the share of stored mc_reason drafts whose
 correct option is not strictly the longest, gated at its recorded rate.
 

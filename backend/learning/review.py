@@ -129,7 +129,12 @@ _CARD_COLUMNS = "id,topic,offering_id,fsrs_d,fsrs_s,due_at,reps,lapses,last_rati
 #: What a served / graded card needs besides the queue's columns: the text
 #: (serve) and the counter flashcard_fsrs_update advances (grade).
 _CARD_ROW_COLUMNS = _CARD_COLUMNS + ",times_reviewed,front,back"
-_CONCEPT_COLUMNS = "node_id,p_known,streak_unassisted,fsrs_d,fsrs_s,fsrs_last_review_at,fsrs_due_at"
+_CONCEPT_COLUMNS = (
+    "node_id,p_known,streak_unassisted,fsrs_d,fsrs_s,fsrs_last_review_at,fsrs_due_at,last_evidence_at"
+)
+#: Node ids per `in.(…)` read (A153): a student back from a long break can have
+#: hundreds of concepts due, and one list of them outgrows a proxy's URL limit.
+_NODE_READ_BATCH = 100
 _PHASE_TO_STAGE: dict[str, Stage] = {
     fsrs.SR_ACQUISITION: "acquire",
     fsrs.SR_RELEARN: "relearn",
@@ -569,13 +574,14 @@ def _due_concepts(
     rows = [r for r in rows or [] if r.get("fsrs_due_at") is not None]
     if not rows:
         return []
-    ids = ",".join(r["node_id"] for r in rows)
-    nodes = table("graph_nodes").select(
-        "id,course_id,concept_name", filters={"user_id": f"eq.{user_id}", "id": f"in.({ids})"}
-    )
-    by_id = {
-        n["id"]: n for n in nodes or [] if course_id is None or n.get("course_id") == course_id
-    }
+    ids = [r["node_id"] for r in rows]
+    nodes: list[dict] = []
+    for start in range(0, len(ids), _NODE_READ_BATCH):
+        batch = ",".join(ids[start : start + _NODE_READ_BATCH])
+        nodes += table("graph_nodes").select(
+            "id,course_id,concept_name", filters={"user_id": f"eq.{user_id}", "id": f"in.({batch})"}
+        ) or []
+    by_id = {n["id"]: n for n in nodes if course_id is None or n.get("course_id") == course_id}
     due = [(row, by_id[row["node_id"]]) for row in rows if row["node_id"] in by_id]
     if due and hold():  # #866 K16: the grader cap — no check can be graded until it lifts
         stats["grading_paused"] += len(due)
@@ -589,7 +595,11 @@ def _due_concepts(
             logger.warning("review: skipped concept node=%s (%s)", node["id"], exc)
             continue
         last = parse_ts(row.get("fsrs_last_review_at"))
-        band_name = band(decayed_p(row.get("p_known") or 0.0, _elapsed_days(last, now), stability))
+        # A153: belief decays from the last evidence, as learner_state's read decays
+        # it. An assisted answer is evidence but no FSRS review, so counting from the
+        # last review read a lower band here than the tutor and the plan used.
+        seen_at = parse_ts(row.get("last_evidence_at")) or last
+        band_name = band(decayed_p(row.get("p_known") or 0.0, _elapsed_days(seen_at, now), stability))
         if band_name == "novice" and pause():  # A20: before any item read
             stats["paused"] += 1
             logger.info("review: paused novice concept node=%s (tutor hard level)", node["id"])

@@ -247,12 +247,6 @@ account.import                audit     outcome, counts (internal, peer-initiate
 account.purge                 audit     outcome (purged | incomplete); purged: days_since_delete,
                                         counts; incomplete: error (exception class). NO user
                                         id (the 30-day purge, services/account_purge.py)
-safety.crisis_support_shown   system    surface (services/crisis_support.SURFACES), category
-                                        (acute_danger / suicidal_ideation / self_harm), tier
-                                        (explicit / mention) — a student message matched the
-                                        crisis screen and got the resources card instead of a
-                                        model turn. Never the text, not even content_fp; NOT
-                                        mirrored to PostHog (docs/safety/crisis-support.md)
 encryption.binding_mismatch   system    table, column, reason (unbound_read | malformed |
                                         unknown_kid | auth_failed), version — a v2 🔒 value
                                         that does not open in the cell it was read from.
@@ -577,14 +571,6 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     "db.unscoped_query",
     "db.rls_shadow_divergence",
     "db.rls_denied",
-    # docs/safety/crisis-support.md: a student message matched the crisis
-    # screen and got the resources card instead of a model turn
-    # (services/crisis_support.py). category="system", like decision.made:
-    # the server emits it about a turn, so it is not counted as activity.
-    # Payload surface / category / tier: enums only; never the message,
-    # never even a content fingerprint. NOT mirrored to PostHog
-    # (posthog_client._NOT_MIRRORED says why).
-    "safety.crisis_support_shown",
     # Finding M13 (docs/security/encryption-aad-plan.md, services/encryption.py):
     # a 🔒 value refused at read. category="system", NO user id (the decrypt
     # seam does not know one), payload table / column / reason / version only:

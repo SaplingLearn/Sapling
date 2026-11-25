@@ -722,11 +722,11 @@ def test_the_planner_orders_prerequisites_before_dependents_once_edges_exist(db,
     names = {node_id: name for name, _imp, node_id in DECK}
     states = {node_id: BKT_L0 for node_id in names}
 
-    # Before: no edges, so the fringe is the whole deck in node-id order — the
-    # walkthrough's plan, Collision Resolution 1st, Hash Table 3rd, Hash Function 5th.
+    # Before: no edges, so the fringe is the whole deck, in the upload's own order
+    # (A153; it was node-id order, and the walkthrough's plan put Collision
+    # Resolution 1st, Hash Table 3rd, Hash Function 5th).
     before = [names[n] for n in planner.outer_fringe(states, _plan_prereq_edges(USER, list(names)))]
-    assert before.index("Collision Resolution") == 0
-    assert (before.index("Hash Table"), before.index("Hash Function")) == (2, 4)
+    assert before == list(names.values()) and before[0] == "Hash Table"
 
     cp.write_document_prerequisites(USER, COURSE, _concepts(DECK, DECK_RELATIONS))
     # The loop route's own reader orients the rows (EDGE_PREREQ_SOURCE_IS_PREREQ).

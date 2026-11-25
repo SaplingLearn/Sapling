@@ -23,7 +23,7 @@ import logging
 from collections.abc import Collection, Sequence
 
 from learning.checks import CheckItem, is_servable, select_item
-from learning.learner_state import read_states
+from learning.learner_state import planning_p, read_states
 from learning.multi_concept import (
     ComponentState,
     components_of,
@@ -96,7 +96,7 @@ def _component_states(user_id: str, course_id: str, keys: Collection[str]) -> di
     for key, node_id in nodes.items():
         st = states.get(node_id)
         if st is not None:
-            out[key] = ComponentState(st.p_known, int(st.n_strong_unassisted or 0))
+            out[key] = ComponentState(planning_p(st), int(st.n_strong_unassisted or 0))
     return out
 
 

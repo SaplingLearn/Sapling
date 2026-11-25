@@ -391,7 +391,7 @@ _OFFERING_TABLES = ("documents", "enrollments", "notes", "flashcards", "sessions
 
 # Tables whose rows carry an abstract `course_id` to remap (by course_code).
 _COURSE_TABLES = (
-    "graph_nodes", "flashcard_sets", "learning_evidence_voids", "misconception_attempts",
+    "graph_nodes", "flashcard_sets", "document_folders", "learning_evidence_voids", "misconception_attempts",
     "posttest_poses", "posttest_skips", "learning_prequestions",
     "learning_self_explanations", "document_folders",
 )

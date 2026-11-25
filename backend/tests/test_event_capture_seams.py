@@ -15,6 +15,10 @@ hermetic Supabase/LLM guards keep everything offline.
 """
 from __future__ import annotations
 
+import ast
+import pathlib
+import re
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -229,15 +233,33 @@ def test_event_taxonomy_is_pinned():
         "db.unscoped_query",
         "db.rls_shadow_divergence",
         "db.rls_denied",
-        # docs/safety/crisis-support.md: the crisis screen fired. Emit
-        # coverage (and the no-content / no-PostHog pins) lives in
-        # test_crisis_support_routes.py.
-        "safety.crisis_support_shown",
         # Finding M13: a 🔒 value refused at read. Emit coverage lives in
         # test_encryption_aad.py.
         "encryption.binding_mismatch",
         "encryption.legacy_refused",
     })
+
+
+def test_event_taxonomy_lists_each_event_once():
+    """A frozenset hides a repeated entry, so read the source: no event type is
+    listed twice in the literal, and the module docstring documents each
+    (event, category) once (decision.made has two: usage and system)."""
+    source = pathlib.Path(events_service.__file__).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    literal = next(
+        node.value.args[0]
+        for node in tree.body
+        if isinstance(node, ast.AnnAssign)
+        and isinstance(node.target, ast.Name)
+        and node.target.id == "EVENT_TAXONOMY"
+    )
+    listed = Counter(e.value for e in literal.elts)
+    assert [e for e, n in listed.items() if n > 1] == []
+    documented = Counter(
+        re.findall(r"^([a-z0-9_]+\.[a-z0-9_.]+) +(usage|system|audit)\b", ast.get_docstring(tree), re.M)
+    )
+    assert ("safety.crisis_support_shown", "system") in documented
+    assert [e for e, n in documented.items() if n > 1] == []
 
 
 # ── Middleware: error.4xx / error.5xx ────────────────────────────────────────

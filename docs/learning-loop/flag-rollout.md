@@ -82,8 +82,8 @@ Several flags change a prompt or an output schema, so their eval datasets must b
 - **Watch:** the admin report's `self_explanation` block: reply rate, and next-item success after a reply.
 
 ### next_probe_hint (W2.4)
-- **Changes:** when reason-before-submit / self-explain plaintext is available, activation may prefer an already-eligible check whose stem overlaps that text (deterministic keywords). Never mastery.
-- **Before:** nothing eval-gated (no prompt change). Since W2.4b the call site in `services/loop/practice.py` opens the student's latest sealed reasoning (only while the flag is on) and passes it in, so the flag acts once reason-before-submit text exists. See [w2-next-probe-hint.md](w2-next-probe-hint.md).
+- **Changes:** when the student's most recently graded check carries reason-before-submit text, activation may prefer an already-eligible check whose stem overlaps that text (deterministic keywords). Self-explain replies are not read. Never mastery.
+- **Before:** nothing eval-gated (no prompt change). Since W2.4b the call site in `services/loop/practice.py` opens the sealed reasoning on the student's most recently graded step (only while the flag is on; no reasoning on that step means no hint) and passes it in, so the flag acts once reason-before-submit text exists. See [w2-next-probe-hint.md](w2-next-probe-hint.md).
 - **Watch:** it emits no event of its own. Activation still respects exclusions / post-test reserves; no `apply_graph_update` from this path.
 - **Roll back:** off restores ordinary `select_item` preference.
 

@@ -19,7 +19,7 @@ without a validated cut-point" (a candidate for an A/B test, not a research
 finding); "reopen" means the row changed a package that was already built;
 "owner decision" means the product owner decided it, not a reviewer.
 
-**Numbering.** Rows run from A1 to A152. **A56–A59 and A64–A69 were never
+**Numbering.** Rows run from A1 to A153. **A56–A59 and A64–A69 were never
 assigned** (packages built in parallel reserved number ranges; nothing in the
 repository cites those numbers; since A142 the spec's table says so where
 they would be). There are 142 rows, all indexed below. A143–A147 are one
@@ -80,7 +80,7 @@ substitute, and some refused. The research binding is
 | Adopted | Varied isomorphs + cue-familiarity dial | A140, flag `varied_isomorphs` | Plan P, R / W5.E4 |
 | Adopted | Multi-concept / combine-ideas dial | A141, flag `multi_concept_items` | Plan Q / W5.E4 |
 | Adopted | Quiz in the learning system | A143–A147 (five flags, all off by default) | Plan §2.4 quiz; this guide "The quiz" |
-| Narrowed | Thinking fields | Reason-before-submit / self-explain text may hint the next probe; never mastery | design_choices Q2–Q3; plan S, W / W2.3–W2.4; [w2-reason-before-submit.md](./w2-reason-before-submit.md) (W2.3); [w2-next-probe-hint.md](./w2-next-probe-hint.md) (W2.4 helper + `next_probe_hint` flag) |
+| Narrowed | Thinking fields | Reason-before-submit text may hint the next probe (self-explain replies are not wired to it); never mastery | design_choices Q2–Q3; plan S, W / W2.3–W2.4; [w2-reason-before-submit.md](./w2-reason-before-submit.md) (W2.3); [w2-next-probe-hint.md](./w2-next-probe-hint.md) (W2.4 helper + `next_probe_hint` flag) |
 | Narrowed | Predict before explain | Segment-level prequestion only — not before every reasoning step | design_choices Q1; plan U vs U2 |
 | Narrowed | Persistent knowledge graphs | Concept + prerequisite graph (and optional learner-built map); not proposition / reasoning-chain ontology as mastery | design_choices Q6; plan X, Y / W3.5; [w3-5-learner-minimap-spike.md](./w3-5-learner-minimap-spike.md) |
 | Refused | "Feels obviously true" as a stop rule | Stop = graded check only (Alvar V1 pedagogy) | design_choices Q5; plan W1 / W6 |
@@ -197,6 +197,7 @@ graph `times_studied` / `last_studied_at` + tier/score. Formula and UI contract:
 | A143 | quiz plan | The quiz home proposes concepts from the learner model (FSRS-due first, then open misconceptions, then the ready fringe), behind `quiz_concept_plan` | `backend/learning/quiz_plan.py::rank_concepts` |
 | A147 | quiz results | The quiz results show each skill meter that moved, what is due and the next step (review, or Learn), behind `quiz_results_routing` | `backend/services/quiz_learning.py::results_block` |
 | A152 | guide ask | A study guide's Ask opens a `guide_ask` session that teaches from the first turn (extends A99) | `backend/services/guide_ask.py::guide_ask_state` |
+| A153 | model agreement | Proficiency holds between reviews; the check-in closes a strand, not itself; asking is no attempt; an idk is no slip; the review band decays from the last evidence (extends A120, A122) | `backend/learning/learner_state.py::planning_p` |
 
 ### Safety and integrity (21)
 
@@ -419,6 +420,7 @@ graph `times_studied` / `last_studied_at` + tier/score. Formula and UI contract:
 | A150 | Evidence and the learner model | starting belief | A stored score is the starting belief, journaled for the void replay; a never-studied concept stays off the map |
 | A151 | Safety and integrity | help ledger | Help asked after a locked quiz answer does not floor that answer (amends A99) |
 | A152 | Teaching policy | guide ask | A study guide's Ask teaches from the first turn through `guide_ask` (extends A99) |
+| A153 | Learner model | model agreement | Planning, probe, attempts, slips and review bands agree with the learner model (extends A120, A122) |
 
 ## Where the spec and the code disagree
 
@@ -467,3 +469,5 @@ in §13:
   (amends A99).
 - **A152**: a study guide's Ask teaches from the first turn through a
   `guide_ask` session (extends A99).
+- **A153**: proficiency holds between reviews, the check-in closes a strand
+  instead of itself, and a message that only asks is no attempt (proposed).

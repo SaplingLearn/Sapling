@@ -281,11 +281,11 @@ def weakest_ready(
     p_known: Mapping[str, float], prereq_edges: Iterable[tuple[str, str]]
 ) -> str | None:
     """The concept with the lowest p_known among the ready ones below
-    proficiency (`planner.outer_fringe`'s set), ties by node id; None."""
+    proficiency (`planner.outer_fringe`'s set), ties in its order; None."""
     fringe = planner.outer_fringe(dict(p_known), prereq_edges)
     if not fringe:
         return None
-    return min(fringe, key=lambda n: (p_known[n], n))
+    return min(fringe, key=lambda n: p_known[n])
 
 
 def prefer_pose(
@@ -331,7 +331,7 @@ def next_step(
     learn target is always named when there is one, so a client without the
     review queue (the learning loop switched off) can offer it instead."""
     due = sum(1 for s in states if _due(s, now))
-    learn = weakest_ready({s.node_id: s.p_known for s in states}, prereq_edges)
+    learn = weakest_ready({s.node_id: s.p_plan for s in states}, prereq_edges)
     if due:
         return NextStep(NEXT_REVIEW, due, learn)
     if learn is not None:

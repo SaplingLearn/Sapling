@@ -51,33 +51,33 @@ def open(session_id: str, sealed: str | None) -> str | None:
 
 
 def latest_plaintext(state: Mapping | None, session_id: str | None) -> str | None:
-    """Most recently graded step's opened reasoning, or None.
+    """The most recently graded step's opened reasoning, or None.
 
-    Scans ``state["steps"]`` for ``reasoning_encrypted``; prefers the highest
-    finite ``graded_at`` (then ``question_hash``). Wrong-session ciphertext
-    opens as None. Never writes; never touches mastery.
+    The step is chosen FIRST, by the highest finite ``graded_at`` (then
+    ``question_hash``), whether or not it carries ``reasoning_encrypted``: when
+    it has none the answer is None, so prose left on an older step never speaks
+    for a newer grade. An ungraded step is never chosen (its answer may still be
+    open). Wrong-session ciphertext opens as None. Never writes; never touches
+    mastery.
     """
     if not session_id or not isinstance(state, Mapping):
         return None
     steps = state.get("steps")
     if not isinstance(steps, dict) or not steps:
         return None
-    best_key: tuple[float, str] | None = None
-    best_sealed: str | None = None
+    latest_key: tuple[float, str] | None = None
+    latest: dict | None = None
     for qh, entry in steps.items():
         if not isinstance(entry, dict):
             continue
-        sealed = entry.get(KEY)
-        if not isinstance(sealed, str) or not sealed:
-            continue
         at = entry.get("graded_at")
         if type(at) not in (int, float) or not isfinite(at):
-            at = 0.0
+            continue
         key = (float(at), str(qh))
-        if best_key is None or key > best_key:
-            best_key = key
-            best_sealed = sealed
-    return open(session_id, best_sealed) if best_sealed is not None else None
+        if latest_key is None or key > latest_key:
+            latest_key = key
+            latest = entry
+    return open(session_id, latest.get(KEY)) if latest is not None else None
 
 
 def stash_on_step(entry: dict, session_id: str, *, format: str | None, reasoning: str | None) -> None:

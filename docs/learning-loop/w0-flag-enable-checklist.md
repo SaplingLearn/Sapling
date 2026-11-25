@@ -95,7 +95,7 @@ Each needs step 0 on for you.
 - **Go:** the report lands in the queue and staff can approve or retire it.
 
 ### 1d. `next_probe_hint`
-- **Try:** answer checks with reason-before-submit text. Since W2.4b the flag opens your sealed reasoning and may prefer an eligible next check whose stem overlaps it.
+- **Try:** answer checks with reason-before-submit text. Since W2.4b the flag opens the sealed reasoning on your most recently graded check and may prefer an eligible next check whose stem overlaps it.
 - **Watch:** no event of its own. Activation must still respect exclusions and post-test reserves. It never writes mastery (`test_inv_32_*`).
 - **Go:** nothing odd. "No visible change" is an acceptable result.
 
@@ -203,7 +203,7 @@ The owner's decision, after self-target dogfood is clean. Gates in [flag-rollout
 
 ## The three E2E lanes
 
-Required on the commit you dogfood, and before any class rollout. Export lane env in the **same shell** that boots the stack and runs Playwright (`frontend/e2e/support/lane.ts`; `global-setup.ts` asserts agreement). Never put `LEARNING_LOOP_ENABLED` in `backend/.env` (`scripts/e2e-up.sh` refuses). Never on `:3000`/`:5000`.
+Required on the commit you dogfood, and before any class rollout. Export lane env in the **same shell** that boots the stack and runs Playwright (`frontend/e2e/support/lane.ts`; `global-setup.ts` asserts agreement). Never put `LEARNING_LOOP_ENABLED` in `.env` under `backend/` (`scripts/e2e-up.sh` refuses). Never on `:3000`/`:5000`.
 
 ```sh
 # from the repo root; cycles pick a free slot

@@ -136,11 +136,11 @@ _DEFAULTS: dict[AgentTask, str] = {
     # now"), mapped by ADR 0030's rule: former Flash-Lite slots → Haiku at
     # `low`, former Flash → Haiku at `medium`, Pro → Sonnet at `low`. Their
     # quality gates (grader agreement, served-turn ceiling compliance,
-    # no-reveal, check-item validity) were recorded on Gemini and are NOT yet
-    # re-recorded on Claude, so every one stays in
-    # `LOOP_SLOTS_PENDING_CLAUDE_EVAL` and the evidence-slot guard warns at
-    # boot until its A111 eval pass lands. The per-run settings already pick
-    # the Claude shape by provider (`settings_for_slot`).
+    # no-reveal, check-item validity) were first recorded on Gemini; the A111
+    # pass re-recorded them on these Claude defaults and emptied
+    # `LOOP_SLOTS_PENDING_CLAUDE_EVAL` (2026-11-24), so the evidence-slot guard
+    # is silent on every default. The per-run settings pick the Claude shape by
+    # provider (`settings_for_slot`).
     #
     # Ingest-time check-item drafting (PKG-04): single-shot structured
     # generation off the request path; SAPLING_MODEL_CHECK_ITEMS overrides.
@@ -239,7 +239,7 @@ _GEMINI_FALLBACKS: dict[AgentTask, str | None] = {
     "concept_prune": "gemini-2.5-flash",
     "ocr_vision": "gemini-2.5-flash",
     "decision": "gemini-2.5-flash-lite",
-    # Learning loop (see above): each pending slot's Gemini default.
+    # Learning loop (see above): each slot's Gemini-era default.
     "check_items": "gemini-2.5-flash-lite",
     "check_items_verify": None,
     "check_items_solve": None,
@@ -386,10 +386,10 @@ _ANTHROPIC_EFFORT: dict[AgentTask, Literal["low", "medium", "high"]] = {
     "concept_prune": "medium",
     "ocr_vision": "medium",
     "decision": "low",
-    # Learning-loop slots, on Claude since 2026-11-19 with their Claude eval
-    # pass still pending (`LOOP_SLOTS_PENDING_CLAUDE_EVAL` below); levels by
-    # ADR 0030's mapping: the slots that ran on Flash-Lite (no thinking) →
-    # `low`, full Flash → `medium`, Pro (now Sonnet) → `low`.
+    # Learning-loop slots, on Claude since 2026-11-19, their Claude eval pass
+    # (A111) recorded at these levels; levels by ADR 0030's mapping: the slots
+    # that ran on Flash-Lite (no thinking) → `low`, full Flash → `medium`, Pro
+    # (now Sonnet) → `low`.
     # check_items authors the assessment items themselves, so it takes the
     # quality-side level despite its Flash-Lite origin.
     "check_items": "medium",
@@ -417,14 +417,15 @@ _ANTHROPIC_EFFORT: dict[AgentTask, Literal["low", "medium", "high"]] = {
 }
 
 #: Learning-loop slots that DEFAULT to Claude (owner decision 2026-11-19) but
-#: whose Claude eval pass (A111) has not run yet. Their quality gates — grader
-#: rubric agreement, served-turn ceiling compliance and no-reveal, check-item
-#: validity — were recorded on Gemini, and a grader verdict is learning
-#: evidence, so the evidence-slot guard reports each one as
-#: `pending_claude_eval` (a warning, never a block) until its dataset is
-#: re-recorded live against Claude and passes its baselines. Remove a slot
-#: from this set in the same change that adds its Claude model to
-#: `EVALUATED_MODELS`.
+#: whose Claude eval pass (A111) has not run. EMPTY since 2026-11-24: the pass
+#: re-recorded every slot's quality gates — grader rubric agreement, served-turn
+#: ceiling compliance and no-reveal, check-item validity — on its Claude
+#: default. A slot in it is reported `pending_claude_eval` by the evidence-slot
+#: guard (a warning, never a block: a grader verdict is learning evidence); a
+#: slot leaves it in the same change that adds its Claude model to
+#: `EVALUATED_MODELS`. It tracks model SLOTS on their default prompts only: a
+#: flag's prompt variant (`loop_tutor_v2`, `__flags`) with no passing floors is
+#: not in it and warns nowhere.
 LOOP_SLOTS_PENDING_CLAUDE_EVAL: frozenset[AgentTask] = frozenset()
 
 
@@ -520,8 +521,8 @@ _ANTHROPIC_CACHED_TASKS: frozenset[AgentTask] = frozenset({"chat_tutor", "quiz",
 #: declares no tools (`_tools_until_first_round`), so an entry written at the
 #: end would never be read: a 1.25x write on every call. The breakpoint at the
 #: end of the static prefix is read by every later call within the TTL.
-#: Settings of the claude-* model only: a Gemini slot (every pending slot's
-#: default, A111) and function mode are unchanged.
+#: Settings of the claude-* model only: a slot pointed at a gemini-* model
+#: and function mode are unchanged.
 _ANTHROPIC_CACHED_PREFIX_TASKS: frozenset[AgentTask] = frozenset({
     "check_items", "check_items_verify", "grader", "grader_second",
     "loop_tutor_lite", "loop_tutor", "loop_tutor_deep",

@@ -77,7 +77,7 @@ import { useFlag } from "@/context/FlagsContext";
 import { useStudyNavShown } from "../useRetentionNav";
 import { forgetEndedSession, noteLearningSession, useFeedbackHold } from "@/lib/feedbackPacing";
 import { type DwellArm, dwellArm, useHypercorrectionDwell } from "@/lib/hypercorrectionDwell";
-import { checkIsOpen, hintTurnEvents, initialLoopState, reduceLoopEvent } from "./loopState";
+import { checkIsOpen, hintTurnEvents, initialLoopState, isGradedTurn, reduceLoopEvent } from "./loopState";
 import { hasDeepLink, readDeepLink } from "./deepLink";
 import styles from "./LoopLearn.module.css";
 import { GoalEditor, GoalProgressNote, ScopeSummary } from "./LearningScope";
@@ -569,6 +569,7 @@ export function LoopLearn() {
     invalidateHint();
     applyLearningScope(st);
     if (st.approved_plan) setApprovedPlan(st.approved_plan);
+    if (st.practiced_node_ids) dispatch({ type: "practiced", nodeIds: st.practiced_node_ids }); // W3.2
     setPendingGrade(st.pending_grade ?? null);
     if (st.loop_phase === "close") {
       void enterClosed(sid);
@@ -1284,7 +1285,7 @@ export function LoopLearn() {
     setFeedbackPending(false); // only a successful done means feedback was served
     setCheckNote(null);
     for (const learnerState of res.learner_state ?? []) {
-      dispatch({ type: "learner_state", state: learnerState });
+      dispatch({ type: "learner_state", state: learnerState, graded: isGradedTurn(res) }); // W3.2
     }
     applyActivated(res.check);
     // spec §13 A138/A139: a served turn closes any open guess or "why" prompt
@@ -1809,11 +1810,6 @@ export function LoopLearn() {
   const currentNodeId = currentConcept(approvedPlan, focusNodeId);
   const mapNodeId = currentNodeId ?? focusNodeId;
   const learner = state.focusNodeId ? state.learnerState[state.focusNodeId] : undefined;
-  // W3.2: practiced = measured learner_state keys (session covered outline).
-  const practicedNodeIds = useMemo(
-    () => new Set(Object.keys(state.learnerState)),
-    [state.learnerState],
-  );
   const treeHref = mapNodeId ? `/tree?node=${encodeURIComponent(mapNodeId)}` : "/tree";
   const teaching = TEACHING.includes(state.phase);
   const streaming = streamingText !== null;
@@ -2303,7 +2299,7 @@ export function LoopLearn() {
           nodes={railGraph.nodes}
           edges={railGraph.edges}
           highlightId={mapNodeId ?? undefined}
-          practicedNodeIds={practicedNodeIds}
+          practicedNodeIds={state.practiced}
         />
       ) : graphError ? <LoadFailed testId="tutor-map-error" what="your map" onRetry={() => void refreshGraph()} /> : (
         <div className={styles.railEmpty}>Concepts appear here as you learn.</div>

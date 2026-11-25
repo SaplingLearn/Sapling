@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+import json
 import pathlib
 from unittest.mock import patch
 
 import pytest
 
 from learning import check_reason, next_probe_hint
+from learning.checks import is_servable
+from services.feature_flags import REGISTRY
 from services.loop import next_probe_hint as gated
+from tests.split_patches import patch_loop
+from tests.test_learn_loop_routes import NOW, _iso, _plan_state, _step
+from tests.test_learn_loop_routes import seams as seams  # the loop routes' fixture
 
 BACKEND = pathlib.Path(__file__).resolve().parents[1]
 
@@ -135,3 +141,143 @@ def test_gated_flag_off_skips_decrypt():
             "user_1", None, cands, session_id="s1", state=state
         ) is None
     latest.assert_not_called()
+
+
+def test_flag_description_promises_only_the_text_that_is_read():
+    """Only the graded step's reason-before-submit text reaches the hint; a
+    self-explanation reply never does (w2-next-probe-hint.md, Non-goals)."""
+    flag = REGISTRY["next_probe_hint"]
+    assert flag.variants == ("off", "on")
+    assert "reason-before-submit" in flag.description
+    assert "self-explain" not in flag.description
+
+
+# ── W2.4: the activation itself, with the flag on ───────────────────────────
+
+REASON = "I mixed up the recursion base case with the inductive step"
+
+
+def _bank_item(qh: str, prompt: str, **over):
+    return _iso(qh).model_copy(update={"prompt": prompt, "created_at": "2026-11-05T00:00:00+00:00", **over})
+
+
+#: what select_item poses: the oldest of equals, and it shares no word with REASON
+PLAIN = _bank_item("qh-plain", "Name one stable sorting algorithm.", created_at="2026-09-01T00:00:00+00:00")
+#: overlaps REASON on every topic word
+BEST = _bank_item("qh-best", "State the recursion base case and the inductive step.")
+#: overlaps REASON on two
+NEXT_BEST = _bank_item("qh-next", "What does the base case do?")
+
+#: why a check is not servable (learning.checks.is_servable: A34, K16, A123/A124)
+UNSERVABLE = {
+    "no_final_answer": {"final_answer": None},
+    "blank_final_answer": {"final_answer": "  "},
+    "no_rubric": {"rubric": []},
+    "held": {"lint_flags": ["reports_threshold"]},
+}
+
+
+def _reasoned_state(**steps) -> dict:
+    """A plan on node-1 whose one graded step carries REASON, sealed."""
+    prior = _step(check_item_id="item-prior", graded_at=NOW - 50, feedback_given=True)
+    prior[check_reason.KEY] = check_reason.seal("s1", REASON)
+    return _plan_state(steps={"qh-prior": prior, **steps})
+
+
+def _activate(state: dict, *, on: bool = True) -> str | None:
+    from services.loop.practice import _activate_next_item
+
+    with patch("services.loop.next_probe_hint.flag_on", return_value=on):
+        return _activate_next_item("u1", "c1", state, now=NOW, session_id="s1")
+
+
+def test_activation_poses_the_overlapping_servable_item(seams):
+    seams.list_items.return_value = [PLAIN, NEXT_BEST, BEST]
+    assert _activate(_reasoned_state()) == "qh-best"
+
+
+def test_activation_flag_off_is_the_ordinary_pick_without_a_decrypt(seams):
+    seams.list_items.return_value = [PLAIN, NEXT_BEST, BEST]
+    off, no_prose = _reasoned_state(), _reasoned_state()
+    del no_prose["steps"]["qh-prior"][check_reason.KEY]
+    with patch("services.loop.next_probe_hint.check_reason.open") as opened:
+        assert _activate(off, on=False) == "qh-plain"
+    opened.assert_not_called()
+    # the same document a session with no reasoning at all gets with the flag on
+    assert _activate(no_prose) == "qh-plain"
+    assert off["steps"]["qh-plain"] == no_prose["steps"]["qh-plain"]
+
+
+@pytest.mark.parametrize("why", sorted(UNSERVABLE))
+def test_activation_hint_never_poses_an_unservable_item(seams, why):
+    refused = BEST.model_copy(update=UNSERVABLE[why])
+    assert not is_servable(refused)
+    seams.list_items.return_value = [PLAIN, refused]
+    assert _activate(_reasoned_state()) == "qh-plain"
+    # nor does it shadow the best item that IS servable: it is no candidate
+    seams.list_items.return_value = [PLAIN, NEXT_BEST, refused]
+    assert _activate(_reasoned_state()) == "qh-next"
+
+
+@pytest.mark.parametrize("why", sorted(UNSERVABLE))
+def test_activation_re_checks_the_hinted_hash_itself(seams, why):
+    """Whatever the hint answers, the pick is servable and not excluded."""
+    refused = BEST.model_copy(update=UNSERVABLE[why])
+    seams.list_items.return_value = [PLAIN, refused]
+    with patch_loop("preferred_next_question_hash", return_value="qh-best"):
+        assert _activate(_reasoned_state()) == "qh-plain"
+
+
+def test_activation_with_only_an_unservable_overlap_poses_nothing_on_the_concept(seams):
+    """Flag on, the one overlapping row is unservable: the concept is as empty
+    as it is with the flag off."""
+    for on in (False, True):
+        seams.list_items.return_value = [BEST.model_copy(update={"rubric": []})]
+        state = _reasoned_state()
+        assert _activate(state, on=on) is None
+        assert not state.get("current") and state["plan"]["done"] is True
+
+
+@pytest.mark.parametrize("site", ["seen", "revealed", "reported", "session", "reserve"])
+def test_activation_hint_never_widens_past_the_excluded_set(seams, site):
+    best, state = BEST, _reasoned_state()
+    if site == "seen":
+        seams.seen_hashes.return_value = {"qh-best"}
+    elif site == "revealed":
+        seams.revealed_hashes.return_value = {"qh-best"}
+    elif site == "reported":
+        seams.reported_hashes.return_value = {"qh-best"}
+    elif site == "session":
+        state = _reasoned_state(**{"qh-best": _step(graded_at=NOW - 90, feedback_given=True)})
+    elif site == "reserve":
+        best = _bank_item("qh-reserve", BEST.prompt)
+    seams.list_items.return_value = [PLAIN, best]
+    assert _activate(state) == "qh-plain"
+
+
+def test_activation_ignores_reasoning_older_than_the_latest_grade(seams):
+    """The doc's rule on the real path: a newer grade with no reasoning means
+    no hint, so the ordinary item is posed."""
+    seams.list_items.return_value = [PLAIN, BEST]
+    newer = _step(check_item_id="item-newer", graded_at=NOW - 10, feedback_given=True)
+    assert _activate(_reasoned_state(**{"qh-newer": newer})) == "qh-plain"
+
+
+def test_activation_hint_writes_no_mastery_and_no_prose(seams):
+    """The hinted step is the ordinary step (same keys, same values but the
+    item), the prior step is untouched and nothing reaches the graph."""
+    seams.list_items.return_value = [PLAIN, BEST]
+    hinted, plain = _reasoned_state(), _reasoned_state()
+    plain["steps"]["qh-prior"] = dict(hinted["steps"]["qh-prior"])
+    before = json.loads(json.dumps(hinted["steps"]["qh-prior"]))
+    with patch("services.graph_service.apply_graph_update") as graph:
+        assert _activate(hinted) == "qh-best"
+    graph.assert_not_called()
+    assert _activate(plain, on=False) == "qh-plain"
+    assert hinted["steps"].pop("qh-best") == {
+        **plain["steps"].pop("qh-plain"), "check_item_id": BEST.id,
+    }
+    assert hinted["steps"] == {"qh-prior": before}
+    assert hinted.pop("current") == "qh-best" and plain.pop("current") == "qh-plain"
+    assert hinted == plain
+    assert REASON not in json.dumps(hinted)

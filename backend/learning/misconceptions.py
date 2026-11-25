@@ -113,7 +113,7 @@ def slip_or_misconception(history: list[Attempt]) -> Verdict:
     """Spec §3.3. `history` = this session's attempts on ONE node, oldest
     first; the verdict is about the last one. First matching rule wins:
     right-with-a-matched-wrong-reason → not_known; right on an isomorph of an
-    earlier wrong → slip; right → none; wrong with stated confidence >=
+    earlier wrong answer (never an idk, A153) → slip; right → none; wrong with stated confidence >=
     MISCONCEPTION_CONFIDENCE, or the same matched key on
     MISCONCEPTION_MIN_ISOMORPHS distinct items → misconception (it outranks
     novice: PKG-08's probe.novice_floor owns probe exit on its own); misses
@@ -131,8 +131,8 @@ def slip_or_misconception(history: list[Attempt]) -> Verdict:
             return "not_known"  # right answer, wrong reason: treat as a miss (§3.3)
         earlier = {a.question_hash: a for a in history[:-1]}
         prior = earlier.get(last.isomorph_of or "")
-        if prior is not None and not prior.correct:
-            return "slip"
+        if prior is not None and not prior.correct and not prior.idk:
+            return "slip"  # an idk claimed no knowledge to slip from (A153)
         return "none"
     if last.confidence is not None and last.confidence >= MISCONCEPTION_CONFIDENCE:
         return "misconception"

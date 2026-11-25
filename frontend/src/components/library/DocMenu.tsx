@@ -24,12 +24,7 @@ import React from "react";
 
 import type { DocFolder, Document as Doc } from "@/lib/types";
 import type { EnrolledCourse } from "@/lib/api";
-import { useFlagMap } from "@/context/FlagsContext";
-import { LEARNING_LOOP_FLAG } from "@/lib/learningLoopFlag";
-import { conceptIdsFromNotes, libraryNext } from "@/lib/libraryNext";
-import { useIsNavHidden } from "@/lib/useNavHidden";
-import { LibraryNextCtas } from "./LibraryNextCtas";
-import styles from "./DocMenu.module.css";
+import { LibraryDocNext } from "./LibraryDocNext";
 import { TYPE_ORDER, TYPES, courseLabel } from "./libraryModel";
 import {
   FolderIcon, Glyph, MENU_HEADING, MENU_IN, MENU_ITEM, MENU_OUT,
@@ -142,32 +137,6 @@ function DocumentFacts({ doc }: { doc: Doc }) {
         </>
       )}
     </>
-  );
-}
-
-/**
- * Where to go next with this document (W8.1): its concepts on the Tree, and a
- * quiz on them once they are ready — with the learning loop on, "ready" means
- * its check items are drafted (`check_items_status`), and until then the line
- * says where drafting is. The old Library's detail panel showed this; it moves
- * here with the panel's other contents.
- */
-function DocNextSteps({ doc }: { doc: Doc }) {
-  const { flags } = useFlagMap();
-  const isNavHidden = useIsNavHidden();
-  const next = libraryNext({
-    courseId: doc.course_id,
-    conceptIds: conceptIdsFromNotes(doc.concept_notes),
-    conceptCount: doc.concept_notes?.length ?? 0,
-    checkItemsStatus: doc.check_items_status ?? null,
-    loopOn: flags[LEARNING_LOOP_FLAG] === "on",
-    treeHidden: isNavHidden("/tree"),
-    quizHidden: isNavHidden("/quiz"),
-  });
-  return (
-    <div className={styles.next}>
-      <LibraryNextCtas next={next} />
-    </div>
   );
 }
 
@@ -344,7 +313,7 @@ export function DocMenu(props: DocMenuProps) {
           </div>
 
           <DocumentFacts doc={doc} />
-          <DocNextSteps doc={doc} />
+          <LibraryDocNext doc={doc} />
 
           <MenuDivider />
 

@@ -1,13 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
-import { initialLoopState, reduceLoopEvent } from './loopState';
+import type { LoopTurnResult } from '@/lib/api';
+import { initialLoopState, isGradedTurn, reduceLoopEvent } from './loopState';
 
 const item = { question_hash: 'qh1', format: 'free' as const, difficulty: 1 as const, prompt: 'p' };
 
 describe('reduceLoopEvent', () => {
   it('starts in probe with no item', () => {
     expect(initialLoopState()).toEqual({
-      phase: 'probe', item: null, learnerState: {}, budgetPause: null, focusNodeId: null,
+      phase: 'probe', item: null, learnerState: {}, practiced: [], budgetPause: null, focusNodeId: null,
     });
   });
 
@@ -55,6 +56,30 @@ describe('reduceLoopEvent', () => {
     const s = reduceLoopEvent(initialLoopState(), { type: 'learner_state', state: { node_id: 'n1', p_known: 0.35, band: 'develop', measured: false } });
     expect(s.focusNodeId).toBe('n1');
     expect(s.learnerState).toEqual({});
+  });
+
+  it('W3.2: a resume seeds the practiced concepts, with no skill and no focus', () => {
+    const s = reduceLoopEvent(initialLoopState(), { type: 'practiced', nodeIds: ['n1', 'n2'] });
+    expect(s).toEqual({ ...initialLoopState(), practiced: ['n1', 'n2'] });
+  });
+
+  it('W3.2: practiced is the resumed concepts and the graded ones; a plain turn or an unmeasured state adds none', () => {
+    let s = reduceLoopEvent(initialLoopState(), { type: 'practiced', nodeIds: ['n1'] });
+    s = reduceLoopEvent(s, { type: 'learner_state', state: { node_id: 'n2', p_known: 0.4, band: 'develop' }, graded: true });
+    s = reduceLoopEvent(s, { type: 'learner_state', state: { node_id: 'n2', p_known: 0.5, band: 'develop' }, graded: true }); // once
+    s = reduceLoopEvent(s, { type: 'learner_state', state: { node_id: 'n3', p_known: 0.35, band: 'develop', measured: false }, graded: true });
+    s = reduceLoopEvent(s, { type: 'learner_state', state: { node_id: 'n4', p_known: 0.7, band: 'develop' } }); // an earlier session's skill
+    expect(s.practiced).toEqual(['n1', 'n2']);
+    expect(Object.keys(s.learnerState).sort()).toEqual(['n2', 'n4']); // the chip still shows n4's skill
+    expect(reduceLoopEvent(s, { type: 'reset' }).practiced).toEqual([]); // another session's map starts bare
+  });
+
+  it("W3.2: a turn is graded on a graded submission or one delivering its owed feedback, as the server's steps are", () => {
+    const turn = (over: Partial<LoopTurnResult>): LoopTurnResult => ({ reply: 'ok', graph_update: { new_nodes: [], new_edges: [] }, mastery_changes: [], ...over });
+    expect(isGradedTurn(turn({ graded: true, phase: 'feedback' }))).toBe(true);
+    expect(isGradedTurn(turn({ phase: 'feedback' }))).toBe(true);
+    for (const phase of ['teach', 'check', 'hint', undefined]) expect(isGradedTurn(turn({ phase }))).toBe(false);
+    expect(isGradedTurn(turn({ graded: false, unavailable: true, phase: 'check' }))).toBe(false);
   });
 
   it('learner_state is keyed by node_id, overwrites, and focuses the node', () => {

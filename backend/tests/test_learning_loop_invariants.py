@@ -2894,7 +2894,7 @@ def test_inv_31_reason_before_submit_never_writes_mastery():
 
 
 def test_inv_32_next_probe_hint_never_writes_mastery():
-    """W2.4 / W2.4b: reason/self-explain prose may only choose which eligible
+    """W2.4 / W2.4b: reason-before-submit prose may only choose which eligible
     check to pose next — never apply_graph_update / never p_known. Pure helper
     is in PURE_MODULES; the flag-gated call site decrypts reasoning_encrypted
     under the session bind when on, then prefer()s — still never mastery."""

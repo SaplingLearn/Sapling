@@ -28,7 +28,8 @@ logger = logging.getLogger(__name__)
 
 
 #: Columns the Library reads, as they are once the redesign's migration has
-#: run.
+#: run. check_items_status (A128 / W8.1): student-readable drafting bookkeeping,
+#: so the Library can show "Checks drafting" / offer Quiz when items are ready.
 _LIBRARY_COLS = (
     "id,user_id,offering_id,folder_id,file_name,category,summary,"
     "concept_notes,page_count,created_at,processed_at,check_items_status"
@@ -41,7 +42,7 @@ _LIBRARY_COLS = (
 #: 400 would be no page at all.
 _LIBRARY_COLS_LEGACY = (
     "id,user_id,offering_id,file_name,category,summary,"
-    "concept_notes,created_at,processed_at,check_items_status"
+    "concept_notes,created_at,processed_at"
 )
 
 #: The PostgREST wording for "that column does not exist" (the same markers
@@ -135,8 +136,9 @@ async def list_user_documents(user_id: str) -> list[dict]:
         {"user_id": f"eq.{user_id}", "deleted_at": "is.null"}, "created_at.desc")
     docs = await _hydrate(docs)
     # W8.1c: stamp concept_notes with graph node ids when names match, so
-    # the Library can pass conceptIds into libraryNext. One graph_nodes read
-    # for the whole list; not persisted on the documents row.
+    # Library can pass conceptIds into libraryNext. One graph_nodes read for
+    # the whole list; not persisted on the documents row. Live rows only: the
+    # Trash offers no quiz.
     await _attach_concept_node_ids(user_id, docs)
     return docs
 
@@ -235,11 +237,15 @@ async def soft_delete_document(document_id: str, user_id: str) -> None:
     from services.chunk_visibility import withdraw_document_chunks
 
     await run_in_threadpool(withdraw_document_chunks, document_id, user_id)
-    # Learning loop PKG-04 (A23): check items drafted from this document's
-    # text leave the class pool with it. Never gated on the loop (withdrawal
-    # holds under the kill switch, and for a student whose learning_loop flag
-    # is off) and never fails the delete — but a failure is reported (Z34),
-    # never only logged: an operator re-runs the idempotent withdrawal.
+    await _withdraw_check_items(document_id, user_id)
+
+
+async def _withdraw_check_items(document_id: str, user_id: str) -> None:
+    """Learning loop PKG-04 (A23): check items drafted from this document's
+    text leave the class pool with it. Never gated on the loop (withdrawal
+    holds under the kill switch, and for a student whose learning_loop flag
+    is off) and never fails the delete — but a failure is reported (Z34),
+    never only logged: an operator re-runs the idempotent withdrawal."""
     try:
         await run_in_threadpool(retire_items_for_documents, [document_id])
     except Exception:
@@ -264,6 +270,11 @@ async def restore_document(document_id: str, user_id: str) -> None:
     whatever the original index left — and the usual entry point schedules the
     work (a job when `jobs_queue` is on, inline otherwise).
 
+    The delete also DELETED the check items drafted from the document (A23),
+    so its drafting mark goes back to "never drafted": draft on enable claims
+    it when the student next opens the course with the loop on. Nothing is
+    drafted here, and a document the loop never drafted is untouched.
+
     Never raises on the indexing half: the restore itself has happened by
     then, and the lifespan sweeper drains any row left pending.
     """
@@ -271,11 +282,6 @@ async def restore_document(document_id: str, user_id: str) -> None:
         {"deleted_at": None},
         filters={"id": f"eq.{document_id}", "user_id": f"eq.{user_id}"},
     )
-    # The delete RETIRED the check items drafted from this document (A23,
-    # `retire_items_for_documents` deletes them), so a `done` mark would now
-    # claim items that no longer exist. Back to never-drafted: the loop's
-    # draft on enable (`claim_undrafted_documents`) drafts it again the next
-    # time the student opens a loop session in the course. Never raises.
     await run_in_threadpool(forget_drafting, document_id)
     try:
         await table("documents").aupdate(
@@ -303,12 +309,17 @@ async def hard_delete_document(document_id: str, user_id: str) -> None:
     30-day grace the Trash gives.
 
     ``enrollments.syllabus_doc_id`` is ``ON DELETE SET NULL`` and
-    ``course_chunks`` cascade, so the row can go.
+    ``course_chunks`` cascade, so the row can go. Its check items went with
+    the soft delete (A23); withdrawing again is idempotent and covers one that
+    failed then. Only for a row this call removed: one restored meanwhile is
+    live, and keeps its items.
     """
-    await table("documents").adelete(
+    purged = await table("documents").adelete(
         filters={
             "id": f"eq.{document_id}",
             "user_id": f"eq.{user_id}",
             "deleted_at": "not.is.null",
         }
     )
+    if purged:
+        await _withdraw_check_items(document_id, user_id)

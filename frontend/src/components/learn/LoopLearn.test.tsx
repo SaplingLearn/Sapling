@@ -32,7 +32,11 @@ vi.mock("next/dynamic", () => ({
       return <div data-markdown-profile={profile}>{children}</div>;
     },
 }));
-vi.mock("../graph/KnowledgeGraph", () => ({ KnowledgeGraph: () => <div data-testid="kg-stub" /> }));
+vi.mock("../graph/KnowledgeGraph", () => ({
+  KnowledgeGraph: ({ practicedIds }: { practicedIds?: Iterable<string> }) => (
+    <div data-testid="kg-stub" data-practiced={[...(practicedIds ?? [])].sort().join(" ")} />
+  ),
+}));
 vi.mock("../DisclaimerModal", () => ({ DisclaimerModal: () => null }));
 vi.mock("next/link", () => ({
   default: ({ href, children, ...rest }: { href: string; children: React.ReactNode }) => <a href={href} {...rest}>{children}</a>,
@@ -695,9 +699,9 @@ describe("LoopLearn — A26", () => {
     render(<LoopLearn />);
     await startFromHome();
     expect((await screen.findByTestId("loop-no-check-items")).textContent).toContain("No practice questions for this course yet");
-    expect(screen.queryByTestId("loop-preparing-items")).toBeNull();
+    await waitFor(() => expect(screen.queryByTestId("loop-preparing-items")).toBeNull());
     // A128: another notice showing never brings the materials note with it
-    expect(screen.queryByTestId("loop-materials-unavailable")).toBeNull();
+    await waitFor(() => expect(screen.queryByTestId("loop-materials-unavailable")).toBeNull());
   });
 
   it("A128: while the upload is still drafted, says preparing — never 'No practice questions'", async () => {
@@ -746,7 +750,7 @@ describe("LoopLearn — A26", () => {
     fireEvent.change(await screen.findByTestId("tutor-input"), { target: { value: "why?" } });
     fireEvent.click(screen.getByTestId("tutor-send"));
     await screen.findByText("Plain turn.");
-    expect(screen.queryByTestId("loop-materials-unavailable")).toBeNull();
+    await waitFor(() => expect(screen.queryByTestId("loop-materials-unavailable")).toBeNull());
   });
 
   it("W4.3: a teach turn with materials_grounded shows calm grounded chrome, not cites", async () => {
@@ -760,7 +764,7 @@ describe("LoopLearn — A26", () => {
     const chrome = await screen.findByTestId("loop-materials-grounded");
     expect(chrome.textContent).toBe(MATERIALS_GROUNDED_LABEL);
     expect(chrome).toHaveAttribute("title", MATERIALS_GROUNDED_HINT);
-    expect(screen.queryByTestId("loop-materials-unavailable")).toBeNull();
+    await waitFor(() => expect(screen.queryByTestId("loop-materials-unavailable")).toBeNull());
   });
 
   it("W4.3: no grounded chrome without materials_grounded (never invents cites)", async () => {
@@ -842,8 +846,6 @@ describe("LoopLearn — A26", () => {
     fireEvent.change(screen.getByTestId("tutor-input"), { target: { value: "i want to kill myself" } });
     fireEvent.click(screen.getByTestId("tutor-send"));
     await screen.findByTestId("crisis-support-card");
-    // The note leaves through its collapse exit (AnimatePresence): gone once
-    // that settles, not necessarily in the same tick as the card arriving.
     await waitFor(() => expect(screen.queryByTestId("loop-materials-unavailable")).toBeNull());
     fireEvent.change(screen.getByTestId("tutor-input"), { target: { value: "and?" } });
     fireEvent.click(screen.getByTestId("tutor-send"));
@@ -864,8 +866,6 @@ describe("LoopLearn — A26", () => {
     fireEvent.change(await screen.findByTestId("tutor-input"), { target: { value: "i want to kill myself" } });
     fireEvent.click(screen.getByTestId("tutor-send"));
     await screen.findByTestId("crisis-support-card");
-    // The note leaves through its collapse exit (AnimatePresence): gone once
-    // that settles, not necessarily in the same tick as the card arriving.
     await waitFor(() => expect(screen.queryByTestId("loop-preparing-items")).toBeNull());
   });
 
@@ -2417,7 +2417,7 @@ describe("explicit goal fresh-practice preflight", () => {
     render(<LoopLearn />);
     fireEvent.click(await screen.findByTestId("loop-practice-refresh"));
     await screen.findByTestId("loop-plan-concept-foundation");
-    expect(screen.queryByTestId("loop-practice-unavailable")).toBeNull();
+    await waitFor(() => expect(screen.queryByTestId("loop-practice-unavailable")).toBeNull());
     expect(api.approveLoopPlan).not.toHaveBeenCalled();
     expect(api.startLoopSession).not.toHaveBeenCalled();
     expect(api.streamLoopChat).not.toHaveBeenCalled();
@@ -2473,7 +2473,7 @@ describe("explicit goal fresh-practice preflight", () => {
     fireEvent.click(screen.getByTestId("loop-session-s3"));
     await waitFor(() => expect(screen.getByTestId("loop-phase").getAttribute("data-session-id")).toBe("s3"));
     await act(async () => { oldPlan.resolve(unavailable); });
-    expect(screen.queryByTestId("loop-practice-unavailable")).toBeNull();
+    await waitFor(() => expect(screen.queryByTestId("loop-practice-unavailable")).toBeNull());
     expect(screen.queryByTestId("loop-plan-approve")).toBeNull();
     expect(screen.getByTestId("loop-goal-summary").textContent).toContain("Explore the whole course");
   });
@@ -2849,6 +2849,30 @@ describe("LoopLearn — stated confidence (spec §13 A127)", () => {
     }
   });
 
+  it("W2.5: a confident wrong probe answer holds Next for feedback_dwell_ms", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "probe", "2026-09-21T10:00:00Z")]));
+      api.nextLoopProbe.mockResolvedValue(probeItem);
+      api.answerLoopProbe.mockResolvedValue({
+        graded: true, correct: false, p_known: 0.2, probe_done: false, novice_floor: false, reference_answer: "ref", feedback_dwell_ms: 8000,
+      });
+      render(<LoopLearn />);
+      fireEvent.change(await screen.findByTestId("loop-probe-input"), { target: { value: "a loop" } });
+      fireEvent.click(screen.getByTestId("loop-probe-confidence-sure"));
+      fireEvent.click(screen.getByTestId("loop-probe-submit"));
+      await screen.findByTestId("loop-feedback-dwell");
+      expect(screen.getByTestId("loop-probe-next")).toBeDisabled();
+      await act(async () => {
+        vi.advanceTimersByTime(8000);
+      });
+      await waitFor(() => expect(screen.getByTestId("loop-probe-next")).not.toBeDisabled());
+      expect(screen.queryByTestId("loop-feedback-dwell")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("'I don't know' never carries a confidence, even one already chosen", async () => {
     api.streamLoopCheckAnswer.mockResolvedValue(turn({ graded: true, verdict: "idk" }));
     await withCheckItem();
@@ -2891,6 +2915,66 @@ describe("LoopLearn — stated confidence (spec §13 A127)", () => {
     fireEvent.click(screen.getByTestId("loop-probe-submit"));
     await waitFor(() => expect(api.answerLoopProbe).toHaveBeenCalled());
     expect("confidence" in sentProbe()).toBe(false);
+  });
+});
+
+describe("LoopLearn — practiced outlines on the session map (W3.2)", () => {
+  const outlined = () => screen.getByTestId("kg-stub").getAttribute("data-practiced");
+  // the map draws once it has a concept and the shell a (wide) width; jsdom measures none
+  beforeEach(() => {
+    api.getGraph.mockResolvedValue({ nodes: [{ id: "n1", concept_name: "Recursion", course_id: "c1", subject: "Intro CS", mastery_score: 0.3, mastery_tier: "learning" }], edges: [] });
+    vi.stubGlobal("ResizeObserver", class {
+      constructor(private readonly cb: (entries: { contentRect: { width: number } }[]) => void) {}
+      observe() { this.cb([{ contentRect: { width: 1400 } }]); }
+      unobserve() {}
+      disconnect() {}
+    });
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  /** A plain chat turn, `learner` its concept's stored skill. */
+  const chat = async (learner: object, over: object = {}) => {
+    api.streamLoopChat.mockResolvedValue(turn({ phase: "teach", learner_state: [learner], ...over }));
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "why?" } });
+    fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
+    await waitFor(() => expect(screen.getByTestId("loop-learner-state").getAttribute("data-p-known")).not.toBe(""));
+  };
+  const n3 = { node_id: "n3", p_known: 0.4, band: "develop" };
+
+  it("a resume outlines the concepts graded earlier in the session; a plain chat turn adds none", async () => {
+    api.getLoopSessionStatus.mockResolvedValue(status({ practiced_node_ids: ["n1", "n2"] }));
+    await resumedTeach();
+    await waitFor(() => expect(outlined()).toBe("n1 n2"));
+    expect(screen.getByTestId("loop-learner-state").getAttribute("data-p-known")).toBe(""); // ids carry no skill
+    // n3's skill is an earlier session's: shown on the chip, never as practice here
+    await chat(n3);
+    expect(outlined()).toBe("n1 n2");
+  });
+
+  it("a graded check outlines its concept; an ungraded one (an outage) does not", async () => {
+    await withCheckItem();
+    const answer = async (over: object, reply: string) => {
+      api.streamLoopCheckAnswer.mockResolvedValue(turn({ reply, learner_state: [n3], ...over }));
+      fireEvent.change(screen.getByTestId("loop-attempt-input"), { target: { value: "a loop" } });
+      fireEvent.click(screen.getByTestId("loop-attempt-submit"));
+      await screen.findByText(reply);
+    };
+    await answer({ graded: false, verdict: null, unavailable: true, phase: "check" }, "Not checked.");
+    expect(outlined()).toBe("");
+    await answer({ graded: true, verdict: "not_yet", phase: "feedback" }, "Not yet.");
+    expect(outlined()).toBe("n3");
+  });
+
+  it("a chat turn that delivers a grade's owed feedback outlines its concept", async () => {
+    await resumedTeach();
+    await chat(n3, { phase: "feedback" });
+    expect(outlined()).toBe("n3");
+  });
+
+  it("a session with nothing graded yet outlines nothing", async () => {
+    await resumedTeach();
+    await screen.findByTestId("kg-stub");
+    expect(outlined()).toBe("");
   });
 });
 
