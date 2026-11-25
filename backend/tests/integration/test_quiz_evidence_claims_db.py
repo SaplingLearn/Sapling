@@ -9,7 +9,8 @@ dicts and the Prefer header, never what PostgREST and Postgres do with them.
   QUIZ_EVIDENCE_WINDOW_HOURS) is renewed by exactly one of 8 concurrent
   submitters (the conditional UPDATE, READ COMMITTED's re-check);
 - the claim is per student;
-- the table is backend-only (RLS on, no anon/authenticated grant);
+- the table is backend-only: test_rls_lockdown_db.py (RLS on every public
+  table, no anon grant, authenticated only the planned grants);
 - the quiz-ask help row (source 'quiz', RUNG_NO_CREDIT_MIN) passes the ledger's
   CHECK constraints and `max_help_many` reads it back as the floor.
 
@@ -113,21 +114,6 @@ def test_the_claim_is_per_student(db_conn):
     qh = _qh()
     assert _claim(USER, "attempt-a", [qh]) == {qh}
     assert _claim(OTHER, "attempt-b", [qh]) == {qh}
-
-
-def test_the_claims_table_is_backend_only(db_conn):
-    row = db_conn.execute(
-        "SELECT relrowsecurity FROM pg_class WHERE relname = 'quiz_evidence_claims'"
-    ).fetchone()
-    assert row["relrowsecurity"] is True
-    for role in ("anon", "authenticated"):
-        exists = db_conn.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (role,)).fetchone()
-        if not exists:
-            continue
-        grant = db_conn.execute(
-            "SELECT has_table_privilege(%s, 'quiz_evidence_claims', 'SELECT') AS ok", (role,)
-        ).fetchone()
-        assert grant["ok"] is False, role
 
 
 def test_the_quiz_ask_help_row_is_a_valid_ledger_row_and_floors_the_quiz(db_conn):
