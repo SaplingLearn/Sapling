@@ -55,8 +55,9 @@ vi.mock("../ManageCoursesModal", () => ({
 }));
 vi.mock("../Skeleton", () => ({ DashboardSkeleton: () => <div data-testid="stub-skeleton" /> }));
 vi.mock("../MiniStat", () => ({
-  MiniStat: ({ label, value, sub }: { label: string; value: number; sub?: string }) => (
-    <div data-testid={`stub-ministat-${label}`}>{`${value}|${sub ?? ""}`}</div>
+  // The value is a node (an AnimatedNumber) since #866.
+  MiniStat: ({ label, value, sub }: { label: string; value: React.ReactNode; sub?: string }) => (
+    <div data-testid={`stub-ministat-${label}`}>{value}{`|${sub ?? ""}`}</div>
   ),
 }));
 vi.mock("../Icon", () => ({ Icon: () => null }));
@@ -415,7 +416,7 @@ describe("Dashboard legacy (topnav) wiring", () => {
 
     fireEvent.pointerEnter(chips[2]);
     expect(mainGraph().focusCourseId).toBe("c-C");
-    expect(chips[2]).toHaveStyle({ fontWeight: "600" });
+    expect(chips[2]).toHaveAttribute("data-lit", "true");
     fireEvent.pointerLeave(chips[2]);
     expect(mainGraph().focusCourseId).toBe("c-B");
 
