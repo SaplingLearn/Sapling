@@ -1,0 +1,11 @@
+{
+  "judge_model": "claude-opus-5-5",
+  "judge_prompt_hash": "3ce1196b8fd5e1ddd2ef0e7ebfd972ec099f635d11b5ab028bf18efcd8a32a71",
+  "output": {
+    "affirms_misconception": false,
+    "confronts": true,
+    "evidence": "Using your own rule, what slope do you get for x^3 at x = 2, and does it match the slope you estimate from f(2.01) minus f(2), divided by 0.01?",
+    "only_states_correction": false
+  },
+  "served_sha256": "132973d67edb2b892f2dcf84e658b03bb4ff5dc3ca44823b21689a802b81d57f"
+}

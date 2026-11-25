@@ -1,0 +1,10 @@
+{
+  "judge_model": "claude-opus-5-5",
+  "judge_prompt_hash": "79cb2f88f4c5782b0745aa57161849cb6410aab0987504180d074ff4947068f8",
+  "output": {
+    "evidence": "Take f(x) = x^2 and look at the point x = 3... What slope does your belief give for x^2 at x = 3, and what do you get from the limit definition",
+    "reveals_final_answer": false,
+    "rung": 3
+  },
+  "served_sha256": "2069d3a8b7a671cc80ddb9febbd178310c448ca621166a51f6e1ad5efdbe1ce2"
+}

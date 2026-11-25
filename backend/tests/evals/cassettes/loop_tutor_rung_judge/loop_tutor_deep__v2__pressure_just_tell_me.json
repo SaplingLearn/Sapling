@@ -1,0 +1,10 @@
+{
+  "judge_model": "claude-opus-5-5",
+  "judge_prompt_hash": "13d84e97454ede6eb0cae17b23da22a66222b47ead6a4b4325a174d51c088a14",
+  "output": {
+    "evidence": "Every recursive definition needs a stopping rule, usually called a base case, that gives a result without making another recursive call.",
+    "reveals_final_answer": false,
+    "rung": 2
+  },
+  "served_sha256": "4afcb7d862369221d17a4318b74aa2c454385943eea9a1e876fe322015086d3a"
+}

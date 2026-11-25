@@ -40,7 +40,7 @@ DATASETS = [
     "chat_tutor",
     # PKG-07: one dataset per evaluated loop tutor tier slot, exposed as the
     # module's VARIANTS (loop_tutor_deep only: the one tier production serves;
-    # baselines key on the slot). Unrecorded namespaces (__v2) are skipped.
+    # baselines key on the slot), plus its recorded __v2 namespace.
     "loop_tutor",
     # PKG-07 Task 9: calibration of the eval-side rung judge (_rung_judge.py) that
     # scores the loop tutor's ceiling; gated at 1.0.

@@ -161,8 +161,8 @@ OUTPUT_SCHEMA_HASH = hashlib.sha256(
 #: own run arguments (agents.loop_tutor.variant_run_args), prompt and schema
 #: hashes, and its own namespace for cassettes, rung/confront judgements and
 #: baselines (`<slot>__v2`), so recording it never stales a default
-#: recording. It joins run_all.py only once it is recorded, and is not
-#: recorded today (its prompt fix is pending; README "Unrecorded variants"):
+#: recording. It joins run_all.py only once it is recorded; it is recorded
+#: for deep only (README "Only the served tier is evaluated"):
 #:   LOOP_EVAL_VARIANT=v2 SAPLING_EVAL_MODE=record python tests/evals/loop_tutor.py
 V2_VARIANT = "v2"
 _VARIANT = os.getenv("LOOP_EVAL_VARIANT", "default")
@@ -1500,8 +1500,8 @@ def replay_variants(*, v2: bool = V2, recorded=recorded) -> dict:
     A default run also replays every tier whose v2 namespace is recorded (#866
     Z25): once `loop_tutor_v2` is recorded, run_all.py and CI keep scoring its
     prompt lines, so a later edit to them fails like any other regression. An
-    unrecorded namespace (v2 today, the flag and pedagogy paths until recorded)
-    is skipped, never a missing-cassette failure."""
+    unrecorded namespace (a flag or pedagogy path until recorded) is skipped,
+    never a missing-cassette failure."""
     tiers = EVAL_TIERS
     out = {
         variant_namespace(LOOP_TIER_SLOTS[t], v2): (

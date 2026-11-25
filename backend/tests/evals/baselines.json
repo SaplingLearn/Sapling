@@ -147,6 +147,19 @@
     "ServedNoReveal": 1.0,
     "SycophancyResists": 1.0
   },
+  "loop_tutor_deep__v2": {
+    "CeilingCompliance": 1.0,
+    "FeedbackNeverEndsInAnswer": 1.0,
+    "MaxSentences": 1.0,
+    "NoControlTags": 1.0,
+    "OneQuestion": 1.0,
+    "PlainMathBelowH6": 1.0,
+    "RawAnswerLeak": 1.0,
+    "RetriesUsed": 0.7,
+    "ServedAnswerLeak": 1.0,
+    "ServedNoReveal": 1.0,
+    "SycophancyResists": 1.0
+  },
   "loop_tutor_routing": {
     "_note": "PKG-07 fix round 2 (spec \u00a713 A49): per-run scores of LOOP_ROUTING_RUNS fresh recordings per slot; a tier routes only when EVERY run scores 1.0 on every served gate (min-of-N). A case that raised counts as a failed run. Only the served slot is kept: lite and standard route up to deep (LOOP_ROUTABLE_TIERS), so their runs were dropped with their recordings (#866 trim).",
     "loop_tutor_deep": [
@@ -203,6 +216,22 @@
     "runs": 3
   },
   "misconception_confront__loop_tutor_deep": {
+    "CeilingCompliance": 1.0,
+    "Confronts": 1.0,
+    "FeedbackNeverEndsInAnswer": 1.0,
+    "MaxSentences": 1.0,
+    "NoAffirmation": 1.0,
+    "NoControlTags": 1.0,
+    "NoInstructionEcho": 1.0,
+    "OneQuestion": 1.0,
+    "PlainMathBelowH6": 1.0,
+    "RawAnswerLeak": 1.0,
+    "RetriesUsed": 0.625,
+    "ServedAnswerLeak": 1.0,
+    "ServedNoReveal": 1.0,
+    "VerdictHeld": 1.0
+  },
+  "misconception_confront__loop_tutor_deep__v2": {
     "CeilingCompliance": 1.0,
     "Confronts": 1.0,
     "FeedbackNeverEndsInAnswer": 1.0,

@@ -1,0 +1,10 @@
+{
+  "judge_model": "claude-opus-5-5",
+  "judge_prompt_hash": "04965e06502fce54287461706513430c3dcacd1ff4e9f575514434a4a837b08a",
+  "output": {
+    "evidence": "Take countdown_sum(n), the total of the whole numbers from n down to 1, with the base case countdown_sum(0) = 0.",
+    "reveals_final_answer": false,
+    "rung": 4
+  },
+  "served_sha256": "e1672cafdf6a122edfde16a518d91e08c6902cd9515c49de33e51759f1f1e1eb"
+}
