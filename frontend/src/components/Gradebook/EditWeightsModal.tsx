@@ -107,12 +107,11 @@ export function EditWeightsModal({ open, initial, onClose, onSave }: Props) {
           display: "grid",
           gridTemplateColumns: COLS,
           gap: 6,
-          fontSize: 10,
-          letterSpacing: "0.12em",
-          textTransform: "uppercase",
+          fontSize: 12,
+          
+          
           color: "var(--text-muted)",
-          padding: "0 2px 6px",
-        }}
+          padding: "0 2px 6px" }}
       >
         <span />
         <span>Name</span>

@@ -23,7 +23,7 @@
 
 import { DragField } from './DragField';
 import { FadeIn } from '@/components/landing/anim';
-import { FONT_MONO, FONT_SANS } from '@/lib/landing/fonts';
+import { FONT_SANS } from '@/lib/landing/fonts';
 
 /** Syllabus lines. The bold span is the concept a chip carries away. */
 const DOC_LINES: [string, string, string][] = [
@@ -75,14 +75,14 @@ const MOTES: { d: number; s: React.CSSProperties }[] = [
   { d: 0.35, s: { left: '11.2%', top: '43.9%', width: 8.8, height: 8.8, background: '#96B86F', opacity: 0.4, boxShadow: '0 0 21px #96B86F66', animation: 'nodeFloatA 15.2s ease-in-out -13.9s infinite' } },
 ];
 
-const MONO: React.CSSProperties = { fontFamily: "var(--font-plex-mono), 'IBM Plex Mono', ui-monospace, monospace" };
+const LABEL: React.CSSProperties = { fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif" };
 const TILE: React.CSSProperties = {
   background: '#FDFCF9', border: '1px solid #E8E5DA', borderRadius: 16,
   padding: '14px 15px', minHeight: 150, position: 'relative', overflow: 'hidden',
   display: 'flex', flexDirection: 'column', gap: 9,
   transition: 'transform 220ms ease, box-shadow 220ms ease',
 };
-const TILE_LABEL: React.CSSProperties = { ...MONO, fontSize: 9, letterSpacing: '0.24em', color: '#445D22' };
+const TILE_LABEL: React.CSSProperties = { ...LABEL, fontSize: 11, letterSpacing: '0.01em', color: '#445D22' };
 const TILE_COUNT: React.CSSProperties = { fontFamily: "var(--font-aleo), 'Aleo', Georgia, serif", fontSize: 21, fontWeight: 600, lineHeight: 1, color: '#191F13' };
 /** Underline that marks a concept inside the document. */
 const MARK: React.CSSProperties = { fontWeight: 600, color: '#3B4233', boxShadow: 'inset 0 -4px 0 rgba(104,149,31,0.18)' };
@@ -188,7 +188,7 @@ export function ActIngest({
                 style={{ position: 'relative', height: '100%', maxWidth: 340, boxSizing: 'border-box', display: 'flex', flexDirection: 'column', background: '#FDFCF9', border: '1px solid #E8E5DA', borderRadius: 14, padding: '22px 22px 24px', boxShadow: '0 30px 80px rgba(25,31,19,0.16)' }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <span style={{ ...MONO, fontSize: 10, letterSpacing: '0.2em', color: '#697062' }}>CS 112 · SYLLABUS.PDF</span>
+                  <span style={{ ...LABEL, fontSize: 12, letterSpacing: '0.01em', color: '#697062' }}>CS 112 · syllabus.pdf</span>
                   <span style={{ width: 8, height: 8, borderRadius: 99, background: '#68951F' }} />
                 </div>
                 <div style={{ position: 'relative', flex: 1, minHeight: 0, marginTop: 14, overflow: 'hidden' }}>
@@ -208,18 +208,18 @@ export function ActIngest({
                   ))}
                 </div>
                 <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid #EDF0EA', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <span style={{ display: 'flex', alignItems: 'center', gap: 6, ...MONO, fontSize: 8, letterSpacing: '0.16em', color: '#445D22' }}>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 6, ...LABEL, fontSize: 9.5, letterSpacing: '0.01em', color: '#445D22' }}>
                     <span style={{ width: 5, height: 5, borderRadius: 99, background: '#68951F', animation: 'ocrBlink 1.4s ease-in-out infinite' }} />
-                    OCR · 4 PAGES
+                    OCR · 4 pages
                   </span>
-                  <span style={{ ...MONO, fontSize: 8, letterSpacing: '0.16em', color: '#9FA49A' }}>12 CONCEPTS FOUND</span>
+                  <span style={{ ...LABEL, fontSize: 9.5, letterSpacing: '0.01em', color: '#9FA49A' }}>12 concepts found</span>
                 </div>
               </div>
 
               {/* ── destinations ── */}
               <div className="ld-ingest-tiles" style={{ position: 'relative', width: '100%', display: 'grid', gridTemplateColumns: '1fr 1fr', gridAutoRows: '1fr', gap: 16 }}>
                 <div data-ingest-tile="0" style={TILE}>
-                  <TileHead label="GRAPH" i={0} />
+                  <TileHead label="Graph" i={0} />
                   <div aria-hidden="true" className="ld-ingest-graph" style={{ position: 'relative', flex: 1, borderRadius: 10, background: '#F6F8F4', border: '1px solid #EDF0EA', overflow: 'hidden' }}>
                     <svg width="100%" height="100%" viewBox="0 0 230 84" preserveAspectRatio="xMidYMid meet">
                       <line x1="115" y1="42" x2="52" y2="20" stroke="rgba(68,93,34,0.24)" />
@@ -227,64 +227,64 @@ export function ActIngest({
                       <line x1="115" y1="42" x2="186" y2="24" stroke="rgba(68,93,34,0.24)" />
                       <line x1="115" y1="42" x2="176" y2="66" stroke="rgba(68,93,34,0.14)" />
                       <circle cx="115" cy="42" r="8" fill="#68951F" />
-                      <text x="115" y="45" textAnchor="middle" style={{ fontFamily: FONT_MONO }} fontSize="6.5" fill="#FDFCF9">112</text>
+                      <text x="115" y="45" textAnchor="middle" style={{ fontFamily: FONT_SANS }} fontSize="6.5" fill="#FDFCF9">112</text>
                       <circle cx="52" cy="20" r="4.5" fill="#7B9E51" /><text x="52" y="12" textAnchor="middle" style={{ fontFamily: FONT_SANS }} fontSize="7" fill="#91978B">Trees</text>
                       <circle cx="44" cy="64" r="4.5" fill="#7B9E51" /><text x="44" y="78" textAnchor="middle" style={{ fontFamily: FONT_SANS }} fontSize="7" fill="#91978B">Hashing</text>
                       <circle cx="186" cy="24" r="4.5" fill="#7B9E51" /><text x="186" y="16" textAnchor="middle" style={{ fontFamily: FONT_SANS }} fontSize="7" fill="#91978B">Graphs</text>
                       <circle cx="176" cy="66" r="4" fill="#C7CBC2" /><text x="176" y="79" textAnchor="middle" style={{ fontFamily: FONT_SANS }} fontSize="7" fill="#9FA49A">DP</text>
                     </svg>
-                    <span style={{ position: 'absolute', left: 9, bottom: 6, ...MONO, fontSize: 7, letterSpacing: '0.14em', color: '#9FA49A' }}>
-                      MASTERY 0%  ·  UNEXPLORED
+                    <span style={{ position: 'absolute', left: 9, bottom: 6, ...LABEL, fontSize: 8.5, letterSpacing: '0.01em', color: '#9FA49A' }}>
+                      Mastery 0%  ·  Unexplored
                     </span>
                   </div>
                 </div>
 
                 <div data-ingest-tile="1" style={TILE}>
-                  <TileHead label="FLASHCARDS" i={1} />
+                  <TileHead label="Flashcards" i={1} />
                   <div aria-hidden="true" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}>
                     <div style={{ flex: 1, borderRadius: 9, background: '#F6F8F4', border: '1px solid #E6EAE2', padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 3, justifyContent: 'center' }}>
-                      <span style={{ ...MONO, fontSize: 6.5, letterSpacing: '0.2em', color: '#9FA49A' }}>FRONT · AUTO-GENERATED</span>
+                      <span style={{ ...LABEL, fontSize: 8, letterSpacing: '0.01em', color: '#9FA49A' }}>Front · Auto-generated</span>
                       <span style={{ fontFamily: "var(--font-aleo), 'Aleo', Georgia, serif", fontSize: 11, fontWeight: 600, lineHeight: 1.25, color: '#191F13' }}>What does Big-O actually bound?</span>
                     </div>
                     <div style={{ display: 'flex', gap: 4 }}>
-                      {([['FORGOT', 'rgba(178,88,85,0.4)', 'rgba(178,88,85,0.08)', '#9c4b48'],
-                         ['HARD', 'rgba(200,155,94,0.4)', 'rgba(200,155,94,0.08)', '#8a6636'],
-                         ['EASY', 'rgba(90,120,52,0.4)', 'rgba(90,120,52,0.08)', '#4a622b']] as const).map(([t, bd, bg, fg]) => (
-                        <span key={t} style={{ flex: 1, textAlign: 'center', padding: '3px 0', borderRadius: 5, border: `1px solid ${bd}`, background: bg, ...MONO, fontSize: 6.5, color: fg }}>{t}</span>
+                      {([['Forgot', 'rgba(178,88,85,0.4)', 'rgba(178,88,85,0.08)', '#9c4b48'],
+                         ['Hard', 'rgba(200,155,94,0.4)', 'rgba(200,155,94,0.08)', '#8a6636'],
+                         ['Easy', 'rgba(90,120,52,0.4)', 'rgba(90,120,52,0.08)', '#4a622b']] as const).map(([t, bd, bg, fg]) => (
+                        <span key={t} style={{ flex: 1, textAlign: 'center', padding: '3px 0', borderRadius: 5, border: `1px solid ${bd}`, background: bg, ...LABEL, fontSize: 6.5, color: fg }}>{t}</span>
                       ))}
                     </div>
                   </div>
                 </div>
 
                 <div data-ingest-tile="2" style={TILE}>
-                  <TileHead label="CALENDAR" i={2} />
+                  <TileHead label="Calendar" i={2} />
                   <div aria-hidden="true" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4, justifyContent: 'center' }}>
-                    {([['#b25855', 'OCT 14', 'Midterm · in class'],
-                       ['#68951F', 'OCT 18', 'PS 3 · Gradescope'],
-                       ['#7B9E51', 'DEC 09', 'Final · cumulative']] as const).map(([c, d, t]) => (
+                    {([['#b25855', 'Oct 14', 'Midterm · in class'],
+                       ['#68951F', 'Oct 18', 'PS 3 · Gradescope'],
+                       ['#7B9E51', 'Dec 09', 'Final · cumulative']] as const).map(([c, d, t]) => (
                       <div key={d} style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '4px 7px', borderRadius: 6, background: '#F6F8F4', border: '1px solid #EDF0EA' }}>
                         <span style={{ width: 3, height: 15, borderRadius: 2, background: c, flex: '0 0 auto' }} />
-                        <span style={{ ...MONO, fontSize: 6.5, letterSpacing: '0.1em', color: '#9FA49A', flex: '0 0 auto' }}>{d}</span>
+                        <span style={{ ...LABEL, fontSize: 8, letterSpacing: '0.01em', color: '#9FA49A', flex: '0 0 auto' }}>{d}</span>
                         <span style={{ fontSize: 8.5, color: '#3B4233', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t}</span>
                       </div>
                     ))}
-                    <span style={{ ...MONO, fontSize: 6.5, letterSpacing: '0.14em', color: '#445D22', paddingLeft: 2 }}>SYNCED TO GOOGLE CALENDAR</span>
+                    <span style={{ ...LABEL, fontSize: 8, letterSpacing: '0.01em', color: '#445D22', paddingLeft: 2 }}>Synced to Google calendar</span>
                   </div>
                 </div>
 
                 <div data-ingest-tile="3" style={TILE}>
-                  <TileHead label="QUIZ BANK" i={3} />
+                  <TileHead label="Quiz bank" i={3} />
                   <div aria-hidden="true" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 5, justifyContent: 'center' }}>
                     <span style={{ fontSize: 9, lineHeight: 1.35, color: '#191F13', fontWeight: 600 }}>Worst-case lookup in a hash map with chaining?</span>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                       <span style={{ display: 'flex', gap: 5, padding: '3px 7px', borderRadius: 5, border: '1px solid #E3E0D5', background: '#F6F8F4', fontSize: 8, color: '#697062' }}>
-                        <b style={{ ...MONO, fontSize: 7, fontWeight: 400, color: '#9FA49A' }}>A.</b>O(1)
+                        <b style={{ ...LABEL, fontSize: 7, fontWeight: 400, color: '#9FA49A' }}>A.</b>O(1)
                       </span>
                       <span style={{ display: 'flex', gap: 5, padding: '3px 7px', borderRadius: 5, border: '1px solid #68951F', background: '#EAF1E4', fontSize: 8, color: '#445D22', fontWeight: 600 }}>
-                        <b style={{ ...MONO, fontSize: 7, fontWeight: 400, color: '#68951F' }}>B.</b>O(n)
+                        <b style={{ ...LABEL, fontSize: 7, fontWeight: 400, color: '#68951F' }}>B.</b>O(n)
                       </span>
                     </div>
-                    <span style={{ ...MONO, fontSize: 6.5, letterSpacing: '0.14em', color: '#9FA49A' }}>DIFFICULTY ADAPTS TO YOUR ANSWERS</span>
+                    <span style={{ ...LABEL, fontSize: 8, letterSpacing: '0.01em', color: '#9FA49A' }}>Difficulty adapts to your answers</span>
                   </div>
                 </div>
               </div>
@@ -304,7 +304,7 @@ export function ActIngest({
                       background: dark ? '#445D22' : '#FDFCF9',
                       border: dark ? undefined : '1px solid #E0E6DA',
                       color: dark ? '#EAF1E4' : '#3B4233',
-                      ...MONO, fontSize: 10.5, letterSpacing: '0.08em', whiteSpace: 'nowrap',
+                      ...LABEL, fontSize: 12.5, letterSpacing: '0.01em', whiteSpace: 'nowrap',
                       boxShadow: dark ? '0 8px 24px rgba(68,93,34,0.3)' : '0 8px 24px rgba(25,31,19,0.12)',
                       willChange: 'transform',
                     }}

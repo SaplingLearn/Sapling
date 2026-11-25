@@ -16,6 +16,7 @@ import {
   hasStatsStrip, heroBackground, isPrivateProfile, prettyUrl, safeWebsiteHref, sortRolesByPriority, studiesOf,
   type StudyGroup,
 } from "./profileViewHelpers";
+import { sentenceCase } from "@/lib/sentenceCase";
 
 // Rarity colors come only from the canonical --rarity-* tokens (globals.css).
 const rarityVar = (r: string) => `var(--rarity-${r}, var(--text-muted))`;
@@ -372,8 +373,8 @@ function FeaturedAchievementCard({ achievement }: { achievement: UserAchievement
     >
       <div style={{ fontSize: 26, marginBottom: 4 }}>{achievement.icon || "★"}</div>
       <div style={{ fontSize: 11, fontWeight: 600 }}>{achievement.name}</div>
-      <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 2, textTransform: "uppercase", letterSpacing: "0.08em" }}>
-        {achievement.rarity}
+      <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 2 }}>
+        {sentenceCase(achievement.rarity)}
       </div>
     </div>
   );

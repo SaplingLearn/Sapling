@@ -34,6 +34,7 @@ import { LibraryGuides } from "../studyGuide/home/LibraryGuides";
 import { libraryGuides } from "../studyGuide/home/guidesModel";
 import { useLibraryGuides } from "../studyGuide/home/useLibraryGuides";
 import { humanizeError } from "@/lib/errorMessage";
+import { sentenceCase } from "@/lib/sentenceCase";
 
 const catColor: Record<Doc["category"], string> = {
   lecture_notes: "var(--c-sage)",
@@ -314,7 +315,7 @@ export function Library() {
                           <Icon name="doc" size={18} />
                         </div>
                         <span className="chip" style={{ textTransform: "capitalize" }}>
-                          {d.category.replace("_", " ")}
+                          {sentenceCase(d.category.replace("_", " "))}
                         </span>
                       </div>
                       <div>
@@ -381,7 +382,7 @@ export function Library() {
                         </div>
                       </div>
                       <span className="chip" style={{ textTransform: "capitalize", flexShrink: 0 }}>
-                        {d.category.replace("_", " ")}
+                        {sentenceCase(d.category.replace("_", " "))}
                       </span>
                       <span style={{
                         fontSize: 11, color: "var(--text-muted)",
@@ -583,7 +584,7 @@ function DetailPanel({
   return (
     <aside style={container}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <span className="chip">{doc.category.replace("_", " ")}</span>
+        <span className="chip">{sentenceCase(doc.category.replace("_", " "))}</span>
         <button data-testid="library-detail-close" className="btn btn--ghost btn--sm" onClick={onClose} aria-label="Close">
           <Icon name="x" size={12} />
         </button>

@@ -188,8 +188,8 @@ describe("materials", () => {
   it("lists each material with its category, the scope's suggested ones on", async () => {
     await modal();
     expect(tile("d3")).toHaveTextContent("Recursion slides.pptx");
-    expect(tile("d3")).toHaveTextContent("slides");
-    expect(tile("d1")).toHaveTextContent("lecture notes");
+    expect(tile("d3")).toHaveTextContent("Slides");
+    expect(tile("d1")).toHaveTextContent("Lecture notes");
     expect(selected()).toEqual(["d1", "d2", "d3"]);
     expect(screen.getByTestId("guide-new-materials-count")).toHaveTextContent("3 of 3 selected");
   });

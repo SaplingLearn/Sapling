@@ -77,7 +77,7 @@ export function ErrorFallback({ error, reset }: { error: Error; reset: () => voi
           {subtext}
         </div>
         {error.message && (
-          <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 20, wordBreak: "break-word", fontFamily: "var(--font-mono)" }}>
+          <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 20, wordBreak: "break-word", fontFamily: "var(--font-code)" }}>
             {error.message}
           </div>
         )}

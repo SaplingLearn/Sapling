@@ -6,7 +6,9 @@
  *  - display = Aleo (brand moments, h1s, hero)
  *  - serif   = Aleo (long-form prose, tutor voice in chat)
  *  - sans    = SUSE (all UI chrome)
- *  - mono    = IBM Plex Mono (numerals, code)
+ *  - code    = the system monospace, for real code only (code blocks, ids,
+ *              pasted tokens). No mono webfont ships: labels, eyebrows and
+ *              numerals are SUSE with tabular figures (`.mono`, `.label-micro`).
  *
  * "Serif for soul, sans for function" — a slab serif for headings and
  * long-form, SUSE for UI chrome, so the hierarchy is doing the work, not
@@ -31,7 +33,7 @@
   --medium-stroke: 0px;
   --font-serif: var(--font-aleo), 'Aleo', georgia, serif;
   --font-sans: var(--font-suse), 'SUSE', system-ui, -apple-system, sans-serif;
-  --font-mono: var(--font-plex-mono), 'IBM Plex Mono', 'Fira Code', ui-monospace, monospace;
+  --font-code: ui-monospace, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
 
   /* Canonical brand green — olive ("forest" is the legacy role name; the
      value moved from #1B6C42 to the moss olive #445D22). Mirrored by
@@ -228,14 +230,15 @@ body { font-size: 14px; line-height: 1.5; }
 /* Body prose in the serif role for long-form reading surfaces (chat tutor, study guide bodies,
  * About / Pending copy). Never for UI chrome. */
 .body-serif { font-family: var(--font-serif); font-weight: 400; line-height: 1.6; }
-.mono { font-family: var(--font-mono); font-feature-settings: "ss01"; letter-spacing: -0.02em; }
+/* Numerals and metadata. The name predates the type change: it is SUSE with
+   tabular figures now, so columns of numbers still line up. */
+.mono { font-family: var(--font-sans); font-variant-numeric: tabular-nums; }
 .chip {
   display: inline-flex; align-items: center; gap: 6px;
   padding: 3px 9px; border-radius: var(--r-full);
-  font-size: 11px; font-family: var(--font-mono); letter-spacing: 0.02em;
+  font-size: 12px; font-family: var(--font-sans); letter-spacing: 0.01em; font-weight: 500;
   background: var(--bg-soft); color: var(--text-dim);
   border: 1px solid var(--border);
-  text-transform: uppercase;
 }
 .chip--accent { background: var(--accent-soft); color: var(--sap-600); border-color: var(--accent-border); }
 .chip--warn   { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
@@ -303,8 +306,7 @@ body { font-size: 14px; line-height: 1.5; }
 .divider { height: 1px; background: var(--border); }
 
 .label-micro {
-  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.14em;
-  text-transform: uppercase; color: var(--text-muted);
+  font-family: var(--font-sans); font-size: 13px; font-weight: 600; letter-spacing: 0; color: var(--text-muted);
 }
 
 @keyframes fade-in { from { opacity: 0; transform: translateY(4px);} to { opacity: 1; transform: none; } }
@@ -412,7 +414,7 @@ body { font-size: 14px; line-height: 1.5; }
   background: transparent;
   border: 1px solid transparent;
   border-radius: var(--r-sm);
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: 14px;
   font-weight: 600;
   color: var(--text);
@@ -730,7 +732,7 @@ body { font-size: 14px; line-height: 1.5; }
      size="hero">. These four are the values that screen was drawn at; the
      hero rules below exist so the promotion renders it unchanged. */
   --empty-hero-fs: 56px;
-  --empty-hero-eyebrow-fs: 11px;
+  --empty-hero-eyebrow-fs: 15px;
   --empty-hero-body-fs: 17px;
   --empty-hero-cta-pad: 10px 18px;
 }
@@ -852,7 +854,7 @@ body { font-size: 14px; line-height: 1.5; }
   border-radius: var(--r-sm);
   background: var(--bg);
   color: var(--text-dim);
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: var(--fs-md);
   font-weight: 500;
   letter-spacing: 0;
@@ -1311,11 +1313,10 @@ body { font-size: 14px; line-height: 1.5; }
   margin-bottom: 32px;
   font-size: var(--empty-hero-body-fs);
 }
-/* `.label-micro` is 10px and drops ss01; the screen this was promoted from
-   used `.mono` at 11px, which keeps it. Restore both for the hero size. */
+/* The hero eyebrow sits over a 56px title, so it runs a step above
+   `.label-micro`'s 13px. */
 .empty-state--hero .empty-state__eyebrow {
   font-size: var(--empty-hero-eyebrow-fs);
-  font-feature-settings: "ss01";
 }
 /* The hero CTA is a plain `.btn--primary` at the promoted padding and size —
    NOT `.btn--lg`, which is 1px shorter and 100 heavier. */
@@ -1368,7 +1369,6 @@ body { font-size: 14px; line-height: 1.5; }
 
 .font-aleo { font-family: var(--font-aleo), 'Aleo', serif; }
 .font-inter    { font-family: var(--font-inter), sans-serif; }
-.font-plex-mono { font-family: var(--font-plex-mono), 'IBM Plex Mono', monospace; }
 
 /* Prevent horizontal overflow without breaking position: sticky */
 .landing-page {
@@ -1610,7 +1610,6 @@ input[type="reset"]:disabled {
 .landing-page .font-aleo      { font-family: var(--font-aleo), 'Aleo', serif; }
 .landing-page .font-gummi     { font-family: var(--font-gummi), Georgia, serif; }
 .landing-page .font-inter      { font-family: var(--font-inter), sans-serif; }
-.landing-page .font-plex-mono { font-family: var(--font-plex-mono), 'IBM Plex Mono', monospace; }
 .landing-page .font-suse      { font-family: var(--font-suse), 'SUSE', sans-serif; }
 
 /* Global mesh (animated blobs behind the hero). */
@@ -1733,7 +1732,7 @@ input[type="reset"]:disabled {
 
 /* ── Knowledge graph demo (#344) ── */
 .landing-page .landing-graph-chip {
-  font-family: var(--font-plex-mono), 'IBM Plex Mono', monospace;
+  font-family: var(--font-suse), 'SUSE', system-ui, sans-serif;
   font-size: 0.78rem;
   letter-spacing: 0.08em;
   padding: 7px 16px;
@@ -1869,10 +1868,9 @@ input[type="reset"]:disabled {
   border-radius: var(--r-full);
   border: 1px solid var(--tier);
   background: color-mix(in oklch, var(--tier) 8%, var(--bg));
-  font-family: var(--font-plex-mono), 'IBM Plex Mono', monospace;
-  font-size: 0.62rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-family: var(--font-suse), 'SUSE', system-ui, sans-serif;
+  font-size: 0.745rem;
+  letter-spacing: 0.01em;
   color: var(--text);
   white-space: nowrap;
 }
@@ -2025,11 +2023,10 @@ input[type="reset"]:disabled {
    knowledge-graph section sets inline one viewport above. */
 .landing-page .landing-eyebrow {
   display: inline-block;
-  font-family: var(--font-plex-mono), 'IBM Plex Mono', monospace;
-  font-size: 0.7rem;
+  font-family: var(--font-suse), 'SUSE', system-ui, sans-serif;
+  font-size: 0.825rem;
   font-weight: 500;
-  letter-spacing: 0.32em;
-  text-transform: uppercase;
+  letter-spacing: 0.01em;
   color: var(--brand-forest);
 }
 
@@ -2137,17 +2134,16 @@ input[type="reset"]:disabled {
 }
 
 .landing-page .landing-surface-title {
-  font-family: var(--font-plex-mono), 'IBM Plex Mono', monospace;
-  font-size: 0.62rem;
+  font-family: var(--font-suse), 'SUSE', system-ui, sans-serif;
+  font-size: 0.745rem;
   font-weight: 500;
-  letter-spacing: 0.2em;
-  text-transform: uppercase;
+  letter-spacing: 0.01em;
   color: var(--text-dim);
 }
 
 .landing-page .landing-surface-meta,
 .landing-page .landing-surface-mono {
-  font-family: var(--font-plex-mono), 'IBM Plex Mono', monospace;
+  font-family: var(--font-suse), 'SUSE', system-ui, sans-serif;
   font-size: 0.66rem;
   letter-spacing: 0.02em;
   color: var(--text-muted);
@@ -2170,10 +2166,9 @@ input[type="reset"]:disabled {
 }
 
 .landing-page .landing-surface-label {
-  font-family: var(--font-plex-mono), 'IBM Plex Mono', monospace;
-  font-size: 0.6rem;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
+  font-family: var(--font-suse), 'SUSE', system-ui, sans-serif;
+  font-size: 0.725rem;
+  letter-spacing: 0.01em;
   color: var(--text-muted);
 }
 
@@ -2256,7 +2251,7 @@ input[type="reset"]:disabled {
 }
 
 .landing-page .landing-surface-status {
-  font-family: var(--font-plex-mono), 'IBM Plex Mono', monospace;
+  font-family: var(--font-suse), 'SUSE', system-ui, sans-serif;
   font-size: 0.6rem;
   letter-spacing: 0.06em;
   padding: 3px 8px;
@@ -2298,10 +2293,9 @@ input[type="reset"]:disabled {
 .landing-page .landing-surface-chip.is-count,
 .landing-page .landing-surface-chip.is-code,
 .landing-page .landing-surface-chip.is-hard {
-  font-family: var(--font-plex-mono), 'IBM Plex Mono', monospace;
-  font-size: 0.62rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-family: var(--font-suse), 'SUSE', system-ui, sans-serif;
+  font-size: 0.745rem;
+  letter-spacing: 0.01em;
   color: var(--text-muted);
 }
 
@@ -2348,7 +2342,7 @@ input[type="reset"]:disabled {
 }
 
 .landing-page .landing-surface-optionkey {
-  font-family: var(--font-plex-mono), 'IBM Plex Mono', monospace;
+  font-family: var(--font-suse), 'SUSE', system-ui, sans-serif;
   font-size: 0.72rem;
   font-weight: 600;
   color: var(--text-muted);
@@ -2359,10 +2353,9 @@ input[type="reset"]:disabled {
 
 /* "The next question moved" — a status, so it takes a status colour. */
 .landing-page .landing-surface-tune {
-  font-family: var(--font-plex-mono), 'IBM Plex Mono', monospace;
-  font-size: 0.62rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-family: var(--font-suse), 'SUSE', system-ui, sans-serif;
+  font-size: 0.745rem;
+  letter-spacing: 0.01em;
   padding: 3px 9px;
   border-radius: var(--r-full);
   border: 1px solid var(--state-progress);
@@ -2426,7 +2419,7 @@ input[type="reset"]:disabled {
   color: var(--text);
 }
 .landing-page .landing-surface-ratekey {
-  font-family: var(--font-plex-mono), 'IBM Plex Mono', monospace;
+  font-family: var(--font-suse), 'SUSE', system-ui, sans-serif;
   font-size: 0.6rem;
   padding: 1px 5px;
   border-radius: var(--r-xs);
@@ -2486,7 +2479,7 @@ input[type="reset"]:disabled {
   border-radius: var(--r-full);
   background: var(--ink-100);
   border: 1px solid var(--border);
-  font-family: var(--font-plex-mono), 'IBM Plex Mono', monospace;
+  font-family: var(--font-suse), 'SUSE', system-ui, sans-serif;
   font-size: 0.6rem;
   letter-spacing: 0.02em;
   color: var(--text-dim);
@@ -2594,7 +2587,7 @@ input[type="reset"]:disabled {
   color: var(--text);
 }
 .landing-page .landing-surface-points {
-  font-family: var(--font-plex-mono), 'IBM Plex Mono', monospace;
+  font-family: var(--font-suse), 'SUSE', system-ui, sans-serif;
   font-size: 0.82rem;
   font-weight: 600;
   color: var(--text);
@@ -2614,7 +2607,7 @@ input[type="reset"]:disabled {
   border-radius: var(--r-full);
   border: 1px solid var(--grade);
   background: color-mix(in oklch, var(--grade) 8%, var(--bg));
-  font-family: var(--font-plex-mono), 'IBM Plex Mono', monospace;
+  font-family: var(--font-suse), 'SUSE', system-ui, sans-serif;
   font-size: 0.72rem;
   font-weight: 600;
   color: var(--text);
@@ -2635,7 +2628,7 @@ input[type="reset"]:disabled {
    so these sit alongside the existing .landing-page surface above rather
    than replacing it in-place.
 
-   Fonts reuse the app's next/font variables (Aleo, SUSE, IBM Plex Mono),
+   Fonts reuse the app's next/font variables (Aleo, SUSE),
    so no extra webfont request is needed.
 
    prefers-reduced-motion is deliberately NOT repeated here — the global
@@ -2680,7 +2673,6 @@ input[type="reset"]:disabled {
   --ld-font-sans:    var(--font-suse), 'SUSE', system-ui, sans-serif;
   --ld-font-display: var(--font-gummi), georgia, serif;
   --ld-font-serif:   var(--font-aleo), 'Aleo', georgia, serif;
-  --ld-font-mono:    var(--font-plex-mono), 'IBM Plex Mono', ui-monospace, monospace;
 
   background: var(--ld-page);
   color: var(--ld-ink);

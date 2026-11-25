@@ -16,13 +16,13 @@
 import React from "react";
 import Link from "next/link";
 import { FOCUS_ARC, chipsThatFit, focusCardsLabel } from "./hubModel";
-import { DISPLAY, Glyph, MONO, POPOVER, StatusDot, WarnIcon, shownTools, type GlyphName } from "./hubUi";
+import { DISPLAY, Glyph, LABEL, POPOVER, StatusDot, WarnIcon, shownTools, type GlyphName } from "./hubUi";
 import s from "./StudyHub.module.css";
 import { ST_LABEL, ring, type Concept } from "./studyModel";
 import { leaveOnClick, type ToolKey, type ToolNav } from "./useToolNav";
 
 /* `.label-micro`, for the one place it sits on the dark block. */
-const MICRO_ON_DARK: React.CSSProperties = { fontFamily: MONO, fontSize: 10, letterSpacing: "0.14em", textTransform: "uppercase", color: "var(--sap-100)" };
+const MICRO_ON_DARK: React.CSSProperties = { fontFamily: LABEL, fontSize: 12, color: "var(--sap-100)" };
 const BLOCK: React.CSSProperties = { borderRadius: "var(--r-lg)", background: "var(--sidenav-bg)", color: "#FFFFFF", padding: "16px 18px" };
 const FALLBACK_NOTE: React.CSSProperties = { margin: "0 0 10px", fontSize: "var(--fs-sm)", lineHeight: 1.3, color: "rgba(255,255,255,0.86)" };
 const CHIP: React.CSSProperties = { display: "inline-flex", alignItems: "center", height: 22, padding: "0 8px", borderRadius: 11, color: "#FFFFFF", fontSize: "var(--fs-xs)", fontWeight: 600, whiteSpace: "nowrap" };

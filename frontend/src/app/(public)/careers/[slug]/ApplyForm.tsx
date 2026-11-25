@@ -26,7 +26,7 @@ import Link from 'next/link';
 import { type Job, DEPT_COLORS } from '../jobs';
 import { submitJobApplication } from '@/lib/api';
 import { CompanionShell } from '@/components/companion/CompanionShell';
-import { ACCENT, BODY, DISPLAY, INK, MONO, MUTED, SERIF } from '@/lib/landing/companionType';
+import { ACCENT, BODY, DISPLAY, INK, LABEL, MUTED, SERIF } from '@/lib/landing/companionType';
 
 const SANS = "var(--font-suse), 'SUSE', system-ui, sans-serif";
 
@@ -62,9 +62,8 @@ const LABEL_STYLE: React.CSSProperties = {
 };
 
 const EYEBROW: React.CSSProperties = {
-  display: 'block', fontFamily: MONO, fontSize: 10, letterSpacing: '0.14em',
-  textTransform: 'uppercase', color: ACCENT,
-};
+  display: 'block', fontFamily: LABEL, fontSize: 12, 
+  color: ACCENT };
 
 /**
  * The way back to the list. The old chrome's only back link pointed at `/`,
@@ -171,7 +170,7 @@ export default function ApplyForm({ job }: { job: Job | null }) {
               {job.department}
             </span>
           )}
-          <span style={{ fontFamily: MONO, fontSize: 10.5, letterSpacing: '0.12em', textTransform: 'uppercase', color: MUTED }}>
+          <span style={{ fontFamily: LABEL, fontSize: 12.5, color: MUTED }}>
             {job.location} · {job.type}
           </span>
         </div>

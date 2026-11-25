@@ -162,11 +162,10 @@ export function CourseCard({ course, variant, courseColor, semester }: CourseCar
             zIndex: 1,
             fontSize: isHero ? 12 : 10.5,
             fontWeight: 600,
-            letterSpacing: "0.14em",
-            textTransform: "uppercase",
+            
+            
             color: "#ffffff",
-            opacity: 0.92,
-          }}
+            opacity: 0.92 }}
         >
           {course.course_code}
         </div>

@@ -118,12 +118,11 @@ function TranscriptBody({ report }: { report: GpaReport }) {
         <span
           className="mono"
           style={{
-            fontSize: 10,
-            letterSpacing: "0.18em",
-            textTransform: "uppercase",
+            fontSize: 12,
+            
+            
             color: "var(--text-muted)",
-            fontWeight: 600,
-          }}
+            fontWeight: 600 }}
         >
           Cumulative GPA
         </span>
@@ -163,7 +162,7 @@ function TranscriptBody({ report }: { report: GpaReport }) {
             >
               {sem.label || "No term"}
             </span>
-            <span className="mono" style={{ fontSize: 12, color: "var(--text-dim)" }}>
+            <span className="mono" style={{ fontSize: 14, color: "var(--text-dim)" }}>
               GPA {sem.gpa === null ? "—" : sem.gpa.toFixed(2)}
             </span>
           </div>

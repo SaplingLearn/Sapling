@@ -3,6 +3,7 @@ import type { Source } from "@/lib/studyGuide/types";
 
 import s from "./reader.module.css";
 import { madeFromLabel, SOURCES_ANCHOR } from "./readerModel";
+import { sentenceCase } from "@/lib/sentenceCase";
 
 /** What the guide was made from. Every citation links here. */
 export function Sources({ sources }: { sources: Source[] }) {
@@ -20,7 +21,7 @@ export function Sources({ sources }: { sources: Source[] }) {
               <Icon name="file" size={14} />
             </span>
             <span className={s.sourceName}>{source.name}</span>
-            <span className="label-micro">{source.kind}</span>
+            <span className="label-micro">{sentenceCase(source.kind)}</span>
           </li>
         ))}
       </ul>

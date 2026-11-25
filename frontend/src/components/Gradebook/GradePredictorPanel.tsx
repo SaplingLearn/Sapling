@@ -179,7 +179,7 @@ function PredictorBody({
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <span
             className="mono"
-            style={{ fontSize: 10, letterSpacing: "0.14em", textTransform: "uppercase", color: "var(--text-muted)" }}
+            style={{ fontSize: 12, color: "var(--text-muted)" }}
           >
             {!allHaveTotal ? "Set totals to enable prediction" : "Hypothetical Scores"}
           </span>
@@ -383,7 +383,7 @@ function renderScoreInputs(
           borderRadius: 6,
           textAlign: "right",
           fontSize: 13,
-          fontFamily: "var(--font-mono)",
+          fontFamily: "var(--font-sans)",
         }}
       />
       <span style={{ color: "var(--text-muted)", fontSize: 12 }}>/</span>
@@ -412,7 +412,7 @@ function renderScoreInputs(
             borderRadius: 6,
             textAlign: "right",
             fontSize: 12,
-            fontFamily: "var(--font-mono)",
+            fontFamily: "var(--font-sans)",
             background: "var(--bg)",
           }}
         />
@@ -478,7 +478,7 @@ function renderCurveField(
         style={{
           width: 44, padding: "2px 4px", border: "1px solid var(--accent-border)",
           borderRadius: 4, textAlign: "right", fontSize: 11,
-          fontFamily: "var(--font-mono)", background: "var(--accent-soft)",
+          fontFamily: "var(--font-sans)", background: "var(--accent-soft)",
         }}
       />
       <span style={{ color: "var(--text-muted)" }}>%</span>

@@ -368,10 +368,10 @@ export function getArticle(slug: string): JournalArticle | undefined {
   return JOURNAL_ARTICLES.find((a) => a.slug === slug);
 }
 
-const MONTHS = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 /**
- * The one date format: `12 JUN 2026`.
+ * The one date format: `12 Jun 2026`.
  *
  * Reads the ISO string directly instead of going through `Date`, which parses
  * a bare `YYYY-MM-DD` as UTC midnight and would print the previous day for
@@ -392,5 +392,5 @@ const WORDS_PER_MINUTE = 200;
 /** Read time derived from the article itself, floored at a minute. */
 export function readTime(body: ArticleBlock[]): string {
   const words = articleText(body).split(/\s+/).filter(Boolean).length;
-  return `${Math.max(1, Math.round(words / WORDS_PER_MINUTE))} MIN`;
+  return `${Math.max(1, Math.round(words / WORDS_PER_MINUTE))} min`;
 }

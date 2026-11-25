@@ -50,12 +50,12 @@ export function IntroOverlay({
         <div
           style={{
             marginTop: 14, display: 'flex', alignItems: 'baseline', gap: 9,
-            fontFamily: "var(--font-plex-mono), 'IBM Plex Mono', ui-monospace, monospace", fontSize: 10,
-            letterSpacing: '0.3em', color: '#9FA49A',
+            fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", fontSize: 12,
+            letterSpacing: '0.01em', color: '#9FA49A',
             animation: 's1Word 2.4s cubic-bezier(0.22,1,0.36,1) both',
           }}
         >
-          <span>LOADING</span>
+          <span>Loading</span>
           {/* zero-padded to three digits so the lockup never reflows as it counts */}
           <span style={{ color: '#697062' }}>{String(Math.min(100, loadPct)).padStart(3, '0')}</span>
         </div>

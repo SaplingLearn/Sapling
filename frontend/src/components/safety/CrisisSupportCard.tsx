@@ -86,7 +86,7 @@ export function CrisisSupportCard({
         <p key={i} style={{ margin: "0 0 8px" }}>{p}</p>
       ))}
       {support.resources_heading && (
-        <p style={{ margin: "12px 0 6px", fontSize: 12, fontWeight: 600, color: "var(--info)", textTransform: "uppercase", letterSpacing: "0.04em" }}>
+        <p style={{ margin: "12px 0 6px", fontSize: 14, fontWeight: 600, color: "var(--info)" }}>
           {support.resources_heading}
         </p>
       )}

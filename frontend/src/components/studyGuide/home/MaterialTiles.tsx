@@ -4,6 +4,7 @@ import type { MaterialOption } from "@/lib/studyGuide/types";
 
 import { MAX_MATERIALS, atCap } from "./newGuideModel";
 import m from "./newGuide.module.css";
+import { sentenceCase } from "@/lib/sentenceCase";
 
 export interface MaterialTilesProps {
   materials: MaterialOption[];
@@ -53,7 +54,7 @@ export function MaterialTiles({ materials, selected, onToggle, onSuggested, onAl
                 <span className={m.tileCheck} aria-hidden="true">{on && <Icon name="check" size={11} />}</span>
                 <span className={m.tileText}>
                   <span className={m.tileName}>{material.file_name}</span>
-                  <span className="label-micro">{material.category.replace(/_/g, " ")}</span>
+                  <span className="label-micro">{sentenceCase(material.category.replace(/_/g, " "))}</span>
                 </span>
               </button>
             </li>

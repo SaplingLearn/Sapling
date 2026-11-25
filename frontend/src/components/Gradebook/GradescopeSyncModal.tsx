@@ -527,12 +527,11 @@ function GradescopeSyncDialog({
           <div
             className="mono"
             style={{
-              fontSize: 10,
-              letterSpacing: "0.18em",
-              textTransform: "uppercase",
+              fontSize: 12,
+              
+              
               color: "var(--text-muted)",
-              marginBottom: 8,
-            }}
+              marginBottom: 8 }}
           >
             Gradescope · {saplingCourseLabel || "Connection"}
           </div>
@@ -730,12 +729,11 @@ function CredentialsStep({
         className="mono"
         style={{
           display: "block",
-          fontSize: 11,
-          letterSpacing: "0.12em",
-          textTransform: "uppercase",
+          fontSize: 13,
+          
+          
           color: "var(--text-muted)",
-          marginBottom: 6,
-        }}
+          marginBottom: 6 }}
       >
         Email
       </label>
@@ -762,12 +760,11 @@ function CredentialsStep({
         className="mono"
         style={{
           display: "block",
-          fontSize: 11,
-          letterSpacing: "0.12em",
-          textTransform: "uppercase",
+          fontSize: 13,
+          
+          
           color: "var(--text-muted)",
-          marginBottom: 6,
-        }}
+          marginBottom: 6 }}
       >
         Password
       </label>
@@ -1145,12 +1142,11 @@ function SyncStat({
       <div
         className="mono"
         style={{
-          fontSize: 9,
-          letterSpacing: "0.14em",
-          textTransform: "uppercase",
+          fontSize: 11,
+          
+          
           color: "var(--text-muted)",
-          marginBottom: 4,
-        }}
+          marginBottom: 4 }}
       >
         {label}
       </div>
@@ -1272,12 +1268,11 @@ function BuSsoFormStep({
         className="mono"
         style={{
           display: "block",
-          fontSize: 11,
-          letterSpacing: "0.12em",
-          textTransform: "uppercase",
+          fontSize: 13,
+          
+          
           color: "var(--text-muted)",
-          marginBottom: 6,
-        }}
+          marginBottom: 6 }}
       >
         BU username
       </label>
@@ -1305,12 +1300,11 @@ function BuSsoFormStep({
         className="mono"
         style={{
           display: "block",
-          fontSize: 11,
-          letterSpacing: "0.12em",
-          textTransform: "uppercase",
+          fontSize: 13,
+          
+          
           color: "var(--text-muted)",
-          marginBottom: 6,
-        }}
+          marginBottom: 6 }}
       >
         BU password
       </label>
@@ -1556,12 +1550,11 @@ function CookiePasteStep({
         className="mono"
         style={{
           display: "block",
-          fontSize: 11,
-          letterSpacing: "0.12em",
-          textTransform: "uppercase",
+          fontSize: 13,
+          
+          
           color: "var(--text-muted)",
-          marginBottom: 6,
-        }}
+          marginBottom: 6 }}
       >
         _gradescope_session <span style={{ color: "var(--err)" }}>*</span>
       </label>
@@ -1580,7 +1573,7 @@ function CookiePasteStep({
           border: "1px solid var(--border)",
           background: "var(--bg-input)",
           color: "var(--text)",
-          fontFamily: "var(--font-mono)",
+          fontFamily: "var(--font-code)",
           fontSize: 12,
           resize: "vertical",
           marginBottom: 14,
@@ -1592,12 +1585,11 @@ function CookiePasteStep({
         className="mono"
         style={{
           display: "block",
-          fontSize: 11,
-          letterSpacing: "0.12em",
-          textTransform: "uppercase",
+          fontSize: 13,
+          
+          
           color: "var(--text-muted)",
-          marginBottom: 6,
-        }}
+          marginBottom: 6 }}
       >
         signed_token <span style={{ color: "var(--text-muted)" }}>(optional)</span>
       </label>
@@ -1615,7 +1607,7 @@ function CookiePasteStep({
           border: "1px solid var(--border)",
           background: "var(--bg-input)",
           color: "var(--text)",
-          fontFamily: "var(--font-mono)",
+          fontFamily: "var(--font-code)",
           fontSize: 12,
           resize: "vertical",
           marginBottom: 20,
@@ -1653,7 +1645,7 @@ const kbd: React.CSSProperties = {
   border: "1px solid var(--border)",
   borderBottomWidth: 2,
   borderRadius: 4,
-  fontFamily: "var(--font-mono)",
+  fontFamily: "var(--font-sans)",
   fontSize: 11,
   background: "var(--bg-subtle)",
   color: "var(--text)",

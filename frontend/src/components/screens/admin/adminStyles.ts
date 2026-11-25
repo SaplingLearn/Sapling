@@ -16,11 +16,10 @@ export const thStyle: React.CSSProperties = {
   textAlign: "left",
   padding: "10px 16px",
   fontWeight: 500,
-  fontSize: 11,
-  textTransform: "uppercase",
-  letterSpacing: "0.08em",
-  color: "var(--text-muted)",
-};
+  fontSize: 13,
+  
+  
+  color: "var(--text-muted)" };
 
 /** Admin table body cell. */
 export const tdStyle: React.CSSProperties = { padding: "10px 16px" };

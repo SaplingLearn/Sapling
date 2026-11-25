@@ -70,9 +70,9 @@
      14px text) so the two sit at one height whatever the line metrics. */
   --quiz-home-pill-pad: 7px 15px;
   --quiz-home-pill-fs: 14px;
-  /* The eyebrows here sit over 34px and 18px type; `.label-micro`'s 10px
-     read as a footnote beside them. */
-  --quiz-home-eyebrow-fs: 12px;
+  /* The eyebrows here sit over 34px and 18px type, a step above
+     `.label-micro`'s 13px. */
+  --quiz-home-eyebrow-fs: 14px;
   --quiz-home-search-w: 240px;
   --quiz-home-search-min: 160px;
   --quiz-home-course-dot: 8px;

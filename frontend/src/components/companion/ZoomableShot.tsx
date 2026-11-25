@@ -21,7 +21,7 @@ import { useState } from 'react';
 import Image from 'next/image';
 
 import { Lightbox } from '@/components/companion/Lightbox';
-import { MONO } from '@/lib/landing/companionType';
+import { LABEL } from '@/lib/landing/companionType';
 
 export interface ZoomableShotProps {
   src: string;
@@ -81,12 +81,11 @@ export function ZoomableShot({
               borderRadius: 6,
               background: 'rgba(250,248,243,0.9)',
               backdropFilter: 'blur(4px)',
-              fontFamily: MONO,
-              fontSize: 9,
-              letterSpacing: '0.14em',
-              textTransform: 'uppercase',
-              color: '#3f3b31',
-            }}
+              fontFamily: LABEL,
+              fontSize: 11,
+              
+              
+              color: '#3f3b31' }}
           >
             {route}
           </span>

@@ -8,14 +8,14 @@ import Link from "next/link";
 import { INHERIT_FONT } from "@/lib/inheritFont";
 import { Icon } from "../Icon";
 import { tileActionsHint, tileCardsLabel, type RoadmapTile as Tile, type TileRelation } from "./hubModel";
-import { Glyph, MONO, POPOVER, TOOL, WarnIcon, shownTools } from "./hubUi";
+import { Glyph, LABEL, POPOVER, TOOL, WarnIcon, shownTools } from "./hubUi";
 import s from "./StudyHub.module.css";
 import { SC, ST_LABEL, TC, ring, type Concept } from "./studyModel";
 import type { SetHub } from "./useHubState";
 import type { ToolKey, ToolNav } from "./useToolNav";
 
 /* The small tags that ride a tile's top edge: the `.chip` voice, tile-sized. */
-const TAG: React.CSSProperties = { position: "absolute", top: -7, right: 8, height: 15, padding: "0 6px", borderRadius: "var(--r-full)", fontFamily: MONO, fontSize: 9, letterSpacing: "0.06em", textTransform: "uppercase", fontWeight: 600, display: "inline-flex", alignItems: "center", boxShadow: "0 0 0 2px var(--bg)" };
+const TAG: React.CSSProperties = { position: "absolute", top: -7, right: 8, height: 15, padding: "0 6px", borderRadius: "var(--r-full)", fontFamily: LABEL, fontSize: 11, fontWeight: 600, display: "inline-flex", alignItems: "center", boxShadow: "0 0 0 2px var(--bg)" };
 const NEXT_TAG: React.CSSProperties = { ...TAG, background: "var(--brand-forest)", color: "#FFFFFF" };
 const RELATION_TAG: Record<Exclude<TileRelation, "">, React.CSSProperties> = {
   "Needed First": { ...TAG, background: "var(--warn-soft)", color: "var(--warn)" },

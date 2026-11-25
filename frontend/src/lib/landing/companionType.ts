@@ -15,7 +15,7 @@
  * 672px did.
  */
 
-export const MONO = "var(--font-plex-mono), 'IBM Plex Mono', ui-monospace, monospace";
+export const LABEL = "var(--font-suse), 'SUSE', system-ui, sans-serif";
 export const SERIF = "var(--font-aleo), 'Aleo', Georgia, serif";
 export const DISPLAY = "var(--font-gummi), Georgia, serif";
 
@@ -82,12 +82,11 @@ export const PAGE_CONTENT = PAGE_MAX - PAGE_PAD * 2;
  */
 export const ARTICLE = {
   eyebrow: {
-    fontFamily: MONO,
-    fontSize: 11,
-    letterSpacing: '0.14em',
-    textTransform: 'uppercase',
-    color: MUTED,
-  },
+    fontFamily: LABEL,
+    fontSize: 13,
+    
+    
+    color: MUTED },
   title: {
     fontFamily: DISPLAY,
     fontWeight: 500,
