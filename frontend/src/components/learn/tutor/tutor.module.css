@@ -734,6 +734,11 @@
   gap: 8px;
 }
 
+/* The session panel's knowledge map (SessionMap): the panel's full width, measured. */
+.sessionMap {
+  width: 100%;
+}
+
 .legend {
   display: flex;
   flex-wrap: wrap;

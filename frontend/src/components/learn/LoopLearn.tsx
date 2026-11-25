@@ -2298,7 +2298,7 @@ export function LoopLearn() {
       treeHref={treeHref}
       showTreeLink={allOf(!isMobile, treeVisible)}
       onHide={layout.hidePanel}
-      map={railGraph.nodes.length > 0 ? (
+      map={railGraph.nodes.some((n) => !n.is_subject_root) ? (
         <SessionMap
           nodes={railGraph.nodes}
           edges={railGraph.edges}
