@@ -1,11 +1,14 @@
 "use client";
 import React, { useEffect, useState } from "react";
+import { motion } from "framer-motion";
 import { submitFeedback } from "@/lib/api";
 import { useUser } from "@/context/UserContext";
 import { mayPrompt, recordPrompt, releaseFeedbackSlot, tryClaimFeedbackSlot } from "@/lib/feedbackPacing";
 import { LONG_TEXT_MAX } from "@/lib/inputLimits";
 import { ChipPicker, FRICTION, HELPFULNESS, toggled } from "../sessionFeedbackOptions";
 import { SessionRatingScale } from "./SessionRatingScale";
+import { useMotionPresets } from "@/lib/motion";
+import styles from "./WrapUpRating.module.css";
 
 const THANKS_COPY = "Thanks — this helps tune your tutor.";
 const FAILED_COPY = "Couldn't send your feedback. Try again.";
@@ -61,6 +64,7 @@ export function WrapUpRating({ sessionId, topic }: { sessionId: string; topic?: 
   const [sent, setSent] = useState<Sent>("idle");
   useEffect(() => () => releaseFeedbackSlot("session"), []);
   const locked = sent === "sending" || sent === "sent";
+  const m = useMotionPresets();
 
   const send = async () => {
     if (!userId || rating === null || locked) return;
@@ -82,17 +86,18 @@ export function WrapUpRating({ sessionId, topic }: { sessionId: string; topic?: 
   };
 
   return (
-    <section data-testid="loop-close-rating" aria-labelledby="loop-close-rating-h" className="card fade-in" style={{ padding: "var(--pad-lg)", display: "flex", flexDirection: "column", gap: 12 }}>
+    <section data-testid="loop-close-rating" aria-labelledby="loop-close-rating-h" className={`card fade-in ${styles.card}`}>
       <span className="label-micro">Your feedback</span>
-      <h3 id="loop-close-rating-h" className="h-serif" style={{ margin: 0, fontSize: 18 }}>How was that session?</h3>
+      <h3 id="loop-close-rating-h" className={`h-serif ${styles.heading}`}>How was that session?</h3>
       <SessionRatingScale value={rating} onSelect={setRating} disabled={locked} testIdPrefix="loop-close-rating" />
       {rating !== null && sent !== "sent" && (
-        <div data-testid="loop-close-rating-details" className="fade-in" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        // The follow-ups open under the scale once a rating is chosen (`collapse`).
+        <motion.div {...m.collapse} data-testid="loop-close-rating-details" className={styles.details}>
           <ChipPicker label="What worked?" options={HELPFULNESS} selected={helpful} disabled={locked}
             onToggle={(v) => setHelpful((l) => toggled(l, v))} testIdPrefix="loop-close-rating-helpful" />
           <ChipPicker label="Any friction?" options={FRICTION} selected={friction} disabled={locked}
             onToggle={(v) => setFriction((l) => toggled(l, v))} testIdPrefix="loop-close-rating-friction" />
-          <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <label className={styles.field}>
             <span className="label-micro">Anything else to add?</span>
             <textarea
               data-testid="loop-close-rating-comment"
@@ -102,18 +107,18 @@ export function WrapUpRating({ sessionId, topic }: { sessionId: string; topic?: 
               onChange={(e) => setComment(e.target.value)}
               placeholder="Optional note…"
               rows={3}
-              style={{ width: "100%", padding: "10px 14px", fontSize: 13, border: "1px solid var(--border)", borderRadius: "var(--r-sm)", background: "var(--bg-input)", fontFamily: "inherit", resize: "vertical", boxSizing: "border-box" }}
+              className={styles.comment}
             />
           </label>
           <div>
-            <button type="button" data-testid="loop-close-rating-send" className="btn btn--primary" disabled={locked} onClick={() => void send()}>
+            <button type="button" data-testid="loop-close-rating-send" className={`btn btn--primary ${styles.send}`} disabled={locked} onClick={() => void send()}>
               {sent === "sending" ? "Sending…" : "Send feedback"}
             </button>
           </div>
-        </div>
+        </motion.div>
       )}
       {/* Always in the DOM, so the outcome is announced (spec §13 A135). */}
-      <div aria-live="polite" style={{ fontSize: 13, color: "var(--text-muted)" }}>
+      <div aria-live="polite" className={styles.outcome}>
         {sent === "sent" && <span role="status" data-testid="loop-close-rating-sent">{THANKS_COPY}</span>}
         {sent === "failed" && <span role="status">{FAILED_COPY}</span>}
       </div>

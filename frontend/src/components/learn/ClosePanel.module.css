@@ -1,0 +1,130 @@
+/* The loop's wrap-up (ClosePanel): the styles its inline style objects held (#866). */
+
+.root {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.wrapping {
+  padding: var(--sp-20);
+  color: var(--text-dim);
+}
+
+.note {
+  margin: 0 0 var(--sp-6);
+  font-size: var(--fs-base);
+  color: var(--text-dim);
+}
+
+.links {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+  flex-wrap: wrap;
+}
+
+/* The wrap-up's title: 24px sits between --fs-2xl (22) and --fs-3xl (26),
+   two px from each, so it keeps its size here. */
+.title {
+  --title-fs: 24px;
+  margin: 0;
+  font-size: var(--title-fs);
+}
+
+/* What moved: each concept's arrow takes its direction's role colour. */
+.arrow {
+  margin-right: var(--sp-3);
+  color: var(--text-muted);
+}
+
+.arrow[data-dir="up"] {
+  color: var(--sap-600);
+}
+
+.arrow[data-dir="down"] {
+  color: var(--warn);
+}
+
+.movedLabel {
+  font-size: var(--fs-md);
+  color: var(--text-muted);
+}
+
+.movedLabel[data-dir="down"] {
+  color: var(--warn);
+}
+
+.caption {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+
+.quiet {
+  margin: 0;
+  font-size: var(--fs-md);
+  color: var(--text-muted);
+}
+
+.summary {
+  margin: 0;
+  font-family: var(--font-serif);
+  font-size: var(--fs-base);
+  font-weight: 400;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+/* Doubled class: outranks tutor's .cardPad gap whichever stylesheet loads last. */
+.tight.tight {
+  gap: var(--sp-3);
+}
+
+/* The reflection and the next-time plan were 15px, between --fs-base and
+   --fs-lg: rounded up a px to --fs-lg. */
+.reflection {
+  font-family: var(--font-serif);
+  font-size: var(--fs-lg);
+  font-style: italic;
+}
+
+.aside {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+
+.plan.plan {
+  background: var(--accent-soft);
+  border-color: var(--accent-border);
+}
+
+.planText {
+  font-size: var(--fs-lg);
+}
+
+.done {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+  flex-wrap: wrap;
+  font-size: var(--fs-base);
+  color: var(--text-dim);
+}
+
+/* "Session closed." takes the row's slack; the buttons wrap under it on a narrow screen. */
+.closed {
+  --closed-min: 120px;
+  flex: 1;
+  min-width: var(--closed-min);
+}
+
+/* A press sinks the button a touch (the global .btn transition carries it). */
+.press {
+  --press-scale: 0.98;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .press:active:not(:disabled) {
+    transform: scale(var(--press-scale));
+  }
+}

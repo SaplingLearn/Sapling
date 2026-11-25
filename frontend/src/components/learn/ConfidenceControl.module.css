@@ -3,10 +3,10 @@
 .row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-4);
   flex-wrap: wrap;
   min-width: 0;
-  font-size: 13px;
+  font-size: var(--fs-md);
 }
 
 .label {
@@ -19,20 +19,32 @@
 
 .group {
   display: inline-flex;
-  gap: 6px;
+  gap: var(--sp-3);
   flex-wrap: wrap;
   min-width: 0;
 }
 
 .option {
-  padding: 4px 12px;
-  border-radius: 999px;
+  /* Press feedback: a slight give, not a movement. No scale token exists. */
+  --confidence-press-scale: 0.96;
+  padding: var(--sp-2) var(--sp-6);
+  border-radius: var(--r-full);
   border: 1px solid var(--border);
   background: var(--bg-panel);
   color: var(--text);
-  font-size: 13px;
+  font-size: var(--fs-md);
   line-height: 1.4;
   cursor: pointer;
+  transition:
+    background-color var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease),
+    transform var(--dur-instant) var(--ease-out);
+}
+
+.option[aria-checked="false"]:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  background: var(--bg-subtle);
 }
 
 .option[aria-checked="true"] {
@@ -46,6 +58,12 @@
   opacity: 0.6;
 }
 
+@media (prefers-reduced-motion: no-preference) {
+  .option:active:not(:disabled) {
+    transform: scale(var(--confidence-press-scale));
+  }
+}
+
 /* A visible focus ring on every level: keyboard users move through the group
    with the arrow keys, so the focused level must always be shown. */
 .option:focus-visible,
@@ -55,7 +73,7 @@
 }
 
 .clear {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--text-muted);
 }
 

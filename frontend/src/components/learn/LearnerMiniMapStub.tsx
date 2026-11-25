@@ -11,7 +11,10 @@
  */
 
 import React, { useState } from "react";
+import { motion } from "framer-motion";
+import { useMotionPresets } from "@/lib/motion";
 import tutorStyles from "./tutor/tutor.module.css";
+import styles from "./LearnerMiniMapStub.module.css";
 
 export type MiniMapConcept = { id: string; label: string };
 
@@ -42,6 +45,7 @@ export function LearnerMiniMapStub({
   const chips = takeMiniMapConcepts(concepts);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [edges, setEdges] = useState<MiniMapEdge[]>([]);
+  const m = useMotionPresets();
 
   if (chips.length < 2) return null;
 
@@ -75,22 +79,21 @@ export function LearnerMiniMapStub({
   return (
     <section
       data-testid="loop-close-minimap"
-      className={`card ${tutorStyles.cardPad}`}
-      style={{ gap: 10 }}
+      className={`card ${tutorStyles.cardPad} ${styles.root}`}
       aria-labelledby="loop-close-minimap-h"
     >
       <div>
         <span className="label-micro">Connect these ideas</span>
-        <h3 id="loop-close-minimap-h" className="h-serif" style={{ margin: "4px 0 0", fontSize: 18 }}>
+        <h3 id="loop-close-minimap-h" className={`h-serif ${styles.title}`}>
           How do they link?
         </h3>
       </div>
-      <p style={{ margin: 0, fontSize: 13, color: "var(--text-muted)" }}>
+      <p className={styles.lede}>
         Tap one concept, then another to draw a link. Just for you — nothing is saved.
       </p>
       <div
         data-testid="loop-close-minimap-chips"
-        style={{ display: "flex", flexWrap: "wrap", gap: 8 }}
+        className={styles.chips}
         role="group"
         aria-label="Concepts to connect"
       >
@@ -102,12 +105,7 @@ export function LearnerMiniMapStub({
               type="button"
               data-testid={`loop-close-minimap-chip-${c.id}`}
               aria-pressed={pressed}
-              className="btn"
-              style={{
-                fontSize: 13,
-                background: pressed ? "var(--accent-soft)" : undefined,
-                borderColor: pressed ? "var(--accent-border)" : undefined,
-              }}
+              className={`btn ${styles.chip}`}
               onClick={() => onChip(c.id)}
             >
               {c.label}
@@ -115,49 +113,46 @@ export function LearnerMiniMapStub({
           );
         })}
       </div>
-      <ul
+      {/* Each link drawn rises into the list (the list stagger's item). */}
+      <motion.ul
         data-testid="loop-close-minimap-edges"
-        style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 6 }}
+        className={styles.edges}
+        variants={m.list.container}
+        initial="hidden"
+        animate="shown"
       >
         {edges.length === 0 ? (
-          <li style={{ fontSize: 13, color: "var(--text-muted)" }}>No links yet.</li>
+          <motion.li key="none" variants={m.list.item} className={styles.empty}>No links yet.</motion.li>
         ) : (
           edges.map((e) => {
             const k = edgeKey(e.a, e.b);
             return (
-              <li
+              <motion.li
                 key={k}
+                variants={m.list.item}
                 data-testid={`loop-close-minimap-edge-${k}`}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                  fontSize: 14,
-                  fontFamily: "var(--font-serif)",
-                }}
+                className={styles.edge}
               >
-                <span style={{ flex: 1, minWidth: 0 }}>
+                <span className={styles.edgeLabel}>
                   {labelOf(e.a)} <span aria-hidden>↔</span> {labelOf(e.b)}
                 </span>
                 <button
                   type="button"
-                  className="btn"
-                  style={{ fontSize: 12 }}
+                  className={`btn ${styles.small} ${styles.press}`}
                   data-testid={`loop-close-minimap-remove-${k}`}
                   onClick={() => removeEdge(e.a, e.b)}
                 >
                   Remove
                 </button>
-              </li>
+              </motion.li>
             );
           })
         )}
-      </ul>
+      </motion.ul>
       {edges.length > 0 && (
         <button
           type="button"
-          className="btn"
-          style={{ alignSelf: "flex-start", fontSize: 12 }}
+          className={`btn ${styles.small} ${styles.clear} ${styles.press}`}
           data-testid="loop-close-minimap-clear"
           onClick={clearAll}
         >

@@ -1,0 +1,16 @@
+/* A card that stands in for the screen (CenteredCard). */
+
+.scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--sp-16);
+}
+
+.card {
+  /* A reading-width card, not a token: wide enough for a short paragraph
+     and one row of actions. */
+  --centered-card-max: 520px;
+  max-width: var(--centered-card-max);
+  margin: var(--sp-12) auto;
+  padding: var(--pad-xl);
+}

@@ -1,5 +1,6 @@
 "use client";
 import React from "react";
+import styles from "./SessionRatingScale.module.css";
 
 /**
  * The "How was that session?" scale, as `feedback.rating` stores it (type
@@ -31,8 +32,8 @@ export function SessionRatingScale({
   const first = SESSION_RATINGS[0];
   const last = SESSION_RATINGS[SESSION_RATINGS.length - 1];
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-      <div style={{ display: "flex", gap: 8, justifyContent: "space-between" }}>
+    <div className={styles.scale}>
+      <div className={styles.row}>
         {SESSION_RATINGS.map((r) => {
           const sel = value === r.value;
           return (
@@ -45,25 +46,14 @@ export function SessionRatingScale({
               title={r.label}
               disabled={disabled}
               onClick={() => onSelect(r.value)}
-              className="h-serif"
-              style={{
-                flex: 1,
-                padding: "12px 4px",
-                fontSize: 20,
-                fontWeight: 500,
-                color: sel ? "var(--accent)" : "var(--text-dim)",
-                borderRadius: "var(--r-md)",
-                border: `1px solid ${sel ? "var(--accent-border)" : "var(--border)"}`,
-                background: sel ? "var(--accent-soft)" : "var(--bg-panel)",
-                transition: "background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease)",
-              }}
+              className={`h-serif ${styles.digit}`}
             >
               {r.value}
             </button>
           );
         })}
       </div>
-      <div aria-hidden style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 12, color: "var(--text-muted)" }}>
+      <div aria-hidden className={styles.ends}>
         <span>{first.value} = {first.label}</span>
         <span>{last.value} = {last.label}</span>
       </div>

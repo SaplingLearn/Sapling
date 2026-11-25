@@ -7,7 +7,7 @@ import { HANDOFF_COPY } from "@/lib/learningHandoffs";
 import { MASTERY_PALETTE, TIER_LABEL, tierFor, type MasteryTier } from "@/lib/graph/nodeStyle";
 import { Icon } from "../../Icon";
 import { ChevRight } from "./TutorIcons";
-import { courseColor, sessionTitle, shortWhen, type TutorSessionRow } from "./sessions";
+import { courseColor, dotColor, sessionTitle, shortWhen, type TutorSessionRow } from "./sessions";
 import { ManagedSessionRow } from "./ManagedSessionRow";
 import styles from "./tutor.module.css";
 
@@ -37,7 +37,7 @@ export function Meter({ label, score, testId }: { label: string; score: number |
         aria-valuemax={100}
         aria-valuenow={pct}
       >
-        <i style={{ width: `${pct}%`, background: masteryTone(score) }} />
+        <i style={{ "--fill": `${pct}%`, "--tone": masteryTone(score) } as React.CSSProperties} />
       </span>
       <span className={styles.pct}>{score == null ? "—" : `${pct}%`}</span>
     </div>
@@ -146,7 +146,7 @@ type Material = { id: string; file_name: string; category?: string | null };
 /** A list that could not be read says so, with a retry — never its empty state. */
 export function LoadFailed({ what, onRetry, testId }: { what: string; onRetry: () => void; testId?: string }) {
   return (
-    <div role="status" data-testid={testId} className={`${styles.listRow} ${styles.listRowStatic}`} style={{ gap: 10, flexWrap: "wrap" }}>
+    <div role="status" data-testid={testId} className={`${styles.listRow} ${styles.listRowStatic} ${styles.loadFailed}`}>
       <span className={styles.ls}>Couldn&apos;t load {what}.</span>
       <button type="button" className="btn btn--sm" onClick={onRetry}>Try again</button>
     </div>
@@ -239,9 +239,9 @@ export function TutorCourse({
           <div className={styles.cardPad}>
             {progress.length > 0
               ? progress.map((n) => <Meter key={n.id} label={n.name} score={n.mastery_tier === "unexplored" ? null : n.mastery_score} />)
-              : !onRetryConcepts && <p className={styles.ls} style={{ margin: 0 }}>Concepts appear here as you learn.</p>}
+              : !onRetryConcepts && <p className={`${styles.ls} ${styles.flush}`}>Concepts appear here as you learn.</p>}
             {onRetryConcepts && <LoadFailed testId="tutor-course-concepts-error" what="your concepts" onRetry={onRetryConcepts} />}
-            {dueHref && <Link href={dueHref} className="btn btn--sm" style={{ alignSelf: "flex-start" }}>Review what&apos;s due</Link>}
+            {dueHref && <Link href={dueHref} className={`btn btn--sm ${styles.start}`}>Review what&apos;s due</Link>}
           </div>
         </section>
       </div>
@@ -260,7 +260,7 @@ export function TutorCourse({
           <div key={m.id} className={`${styles.listRow} ${styles.listRowStatic}`}>
             <Icon name="doc" size={15} />
             <span className={styles.grow}>
-              <div className={styles.lt} style={{ fontWeight: 500 }}>{m.file_name}</div>
+              <div className={`${styles.lt} ${styles.medium}`}>{m.file_name}</div>
               {m.category && <div className={styles.ls}>{m.category.replace(/_/g, " ")}</div>}
             </span>
           </div>
@@ -317,11 +317,11 @@ export function TutorAllSessions({
   return (
     <div className={styles.page} data-testid="tutor-all-sessions">
       <div className={styles.toolbar}>
-        <label className={`${styles.search} ${styles.grow}`} style={{ maxWidth: 420 }}>
+        <label className={`${styles.search} ${styles.grow} ${styles.searchWide}`}>
           <Icon name="search" size={14} />
           <input ref={search} type="search" placeholder="Search sessions" aria-label="Search all sessions" value={query} onChange={(e) => setQuery(e.target.value)} />
         </label>
-        <div role="group" aria-label="Filter sessions" style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+        <div role="group" aria-label="Filter sessions" className={styles.segGroup}>
           {FILTERS.map(([k, l]) => (
             <button key={k} type="button" className={styles.segPill} aria-pressed={filter === k} onClick={() => setFilter(k)}>{l}</button>
           ))}
@@ -333,11 +333,11 @@ export function TutorAllSessions({
           const title = sessionTitle(s, entry?.c);
           return (
             <ManagedSessionRow key={s.id} row={s} title={title} onOpen={onOpen} onRename={onRename} onDelete={onDelete}>
-              <span className={styles.cdot} style={{ background: courseColor(entry?.c, entry?.i ?? 0) }} aria-hidden />
+              <span className={styles.cdot} style={dotColor(courseColor(entry?.c, entry?.i ?? 0))} aria-hidden />
               <span className={styles.grow}>
                 <div className={styles.lt}>{title}</div>
                 <div className={styles.ls}>
-                  {entry?.c.course_code && <span style={{ fontFamily: "var(--font-mono)" }}>{entry.c.course_code} · </span>}
+                  {entry?.c.course_code && <span className={styles.mono}>{entry.c.course_code} · </span>}
                   {shortWhen(s.startedAt)}
                 </div>
               </span>

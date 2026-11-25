@@ -1,0 +1,74 @@
+/* The learning-scope editor and the check-in coverage (LearningScope): the
+   styles their inline style objects held (#866). The layout classes stay in
+   LoopLearn.module.css. */
+
+.title {
+  margin: 0;
+  font-size: var(--fs-2xl);
+}
+
+.lede {
+  margin: 0;
+  font-size: var(--fs-base);
+  color: var(--text-dim);
+}
+
+.muted {
+  color: var(--text-muted);
+}
+
+.hint {
+  margin: var(--sp-2) 0 var(--sp-5);
+  font-size: var(--fs-md);
+  color: var(--text-dim);
+}
+
+.count {
+  margin: var(--sp-5) 0 0;
+  font-size: var(--fs-md);
+}
+
+.error {
+  margin: 0;
+  font-size: var(--fs-base);
+  color: var(--err);
+}
+
+.footnote {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+
+/* A press sinks the button a touch (the global .btn transition carries it). */
+.press {
+  --press-scale: 0.98;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .press:active:not(:disabled) {
+    transform: scale(var(--press-scale));
+  }
+}
+
+/* Check-in coverage. The heading was 15px, between --fs-base and --fs-lg:
+   rounded up a px to --fs-lg. */
+.diagnosisTitle {
+  margin: 0 0 var(--sp-3);
+  font-size: var(--fs-lg);
+}
+
+.status {
+  margin: 0;
+  font-size: var(--fs-md);
+  line-height: 1.5;
+}
+
+.stop {
+  margin: var(--sp-3) 0 0;
+  font-size: var(--fs-md);
+}
+
+.details {
+  margin-top: var(--sp-4);
+}

@@ -1,14 +1,17 @@
 "use client";
-import React, { useId, useLayoutEffect, useRef } from "react";
+import React, { useId, useLayoutEffect, useRef, useState } from "react";
+import { motion } from "framer-motion";
 import { type LoopProbeItem } from "@/lib/api";
 import { ConfidenceControl } from "./ConfidenceControl";
 import { OptionList } from "./OptionList";
 import tutorStyles from "./tutor/tutor.module.css";
 import { modalOpen } from "./modalOpen";
-import { type Draft, FIELD_STYLE, focusAnswerStart } from "./loopShared";
+import { type Draft, FIELD_CLASS, focusAnswerStart } from "./loopShared";
 import { TutorTurn } from "./TutorTurn";
 import { LOOP_ANSWER_MAX } from "@/lib/inputLimits";
 import { HYPERCORRECTION_DWELL_COPY } from "@/lib/hypercorrectionDwell";
+import { useMotionPresets } from "@/lib/motion";
+import styles from "./ProbePanel.module.css";
 
 /** K02: an mc_reason answer needs its reason too (the grader judges it, never
  *  the option alone); any other format needs its typed answer. */
@@ -18,15 +21,15 @@ function draftAnswered(mc: boolean, draft: Draft): boolean {
 
 /** Next after the answer is shown, held (W2.5) while the feedback dwell runs. */
 function ProbeNext({
-  busy, nextHeld, onNext, style,
-}: { busy: boolean; nextHeld: boolean; onNext: () => void; style?: React.CSSProperties }) {
+  busy, nextHeld, onNext, className,
+}: { busy: boolean; nextHeld: boolean; onNext: () => void; className?: string }) {
   return (
     <>
-      <button data-testid="loop-probe-next" className="btn btn--primary" style={style} disabled={busy || nextHeld} onClick={onNext}>
+      <button data-testid="loop-probe-next" className={`btn btn--primary${className ? ` ${className}` : ""}`} disabled={busy || nextHeld} onClick={onNext}>
         Next
       </button>
       {nextHeld && (
-        <span role="status" data-testid="loop-feedback-dwell" style={{ fontSize: 13, color: "var(--text-muted)" }}>
+        <span role="status" data-testid="loop-feedback-dwell" className={styles.note}>
           {HYPERCORRECTION_DWELL_COPY}
         </span>
       )}
@@ -76,24 +79,24 @@ export function ProbePanel({
     if (reference === null || modalOpen()) return;
     referenceRef.current?.focus();
   }, [reference]);
+  // A new question rises into place (`fadeUp`, keyed by its hash); the one on
+  // screen when the panel first paints does not move.
+  const m = useMotionPresets();
+  const [firstHash] = useState(questionHash);
+  const swapped = questionHash !== firstHash;
   const referenceBlock = (
     <div
       ref={referenceRef}
       tabIndex={-1}
       data-testid="loop-probe-reference"
-      style={{
-        whiteSpace: "pre-wrap",
-        overflowWrap: "anywhere",
-        fontSize: 14,
-        ...(item ? { padding: "10px 14px", borderRadius: "var(--r-md)", background: "var(--bg-soft)" } : null),
-      }}
+      className={item ? `${styles.reference} ${styles.referenceBoxed}` : styles.reference}
     >
-      <div className="label-micro" style={{ marginBottom: 4 }}>Here&apos;s the answer</div>
+      <div className={`label-micro ${styles.referenceLabel}`}>Here&apos;s the answer</div>
       {reference}
     </div>
   );
   return (
-    <div style={{ flex: 1, overflowY: "auto" }}>
+    <div className={styles.scroll}>
       <div className={tutorStyles.col}>
         <h2 className={tutorStyles.sr}>Quick check-in</h2>
         <TutorTurn testId="loop-probe-greeting">
@@ -101,15 +104,15 @@ export function ProbePanel({
         </TutorTurn>
         {/* The coverage summary reads the check-in's results: it shows on the plan,
             once there is something to summarise, not over the first question. */}
-        {!item && busy && <div style={{ fontSize: 14, color: "var(--text-muted)" }}>Loading the next question…</div>}
+        {!item && busy && <div className={styles.status}>Loading the next question…</div>}
         {!item && reference !== null && (
-          <div className="card" style={{ padding: "var(--pad-xl)", display: "flex", flexDirection: "column", gap: 12 }}>
+          <div className={`card ${styles.answerCard}`}>
             {referenceBlock}
             <ProbeNext busy={busy} nextHeld={nextHeld} onNext={onNext} />
           </div>
         )}
         {!item && !busy && loadFailed && (
-          <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 14, color: "var(--text-muted)" }}>
+          <div className={`${styles.status} ${styles.failed}`}>
             <span>The next question didn&apos;t load.</span>
             <button data-testid="loop-probe-retry" className="btn btn--sm" onClick={onRetry}>
               Try again
@@ -117,7 +120,10 @@ export function ProbePanel({
           </div>
         )}
         {item && (
-          <section
+          <motion.section
+            key={item.question_hash}
+            {...m.fadeUp}
+            initial={swapped ? m.fadeUp.initial : false}
             ref={cardRef}
             aria-labelledby={headingId}
             data-testid="loop-probe-item"
@@ -142,12 +148,12 @@ export function ProbePanel({
                       labelledBy={promptId}
                       disabled={busy}
                     />
-                    <label className={tutorStyles.fl} htmlFor={`${ids}-reason`} style={{ marginBottom: -8 }}>In one sentence: why?</label>
+                    <label htmlFor={`${ids}-reason`} className={`${tutorStyles.fl} ${styles.reasonLabel}`}>In one sentence: why?</label>
                     <input
                       id={`${ids}-reason`}
                       data-testid="loop-probe-reason"
                       maxLength={LOOP_ANSWER_MAX}
-                      style={FIELD_STYLE}
+                      className={FIELD_CLASS}
                       placeholder="Because…"
                       value={draft.reason}
                       disabled={busy}
@@ -164,7 +170,7 @@ export function ProbePanel({
                     data-answer-start=""
                     aria-label="Check-in answer"
                     aria-describedby={promptId}
-                    style={FIELD_STYLE}
+                    className={FIELD_CLASS}
                     rows={3}
                     placeholder={item.format === "teachback" ? "Explain it in your own words" : "Your answer"}
                     value={draft.answer}
@@ -184,7 +190,7 @@ export function ProbePanel({
                   onChange={(confidence) => setDraft((d) => ({ ...d, confidence }))}
                   disabled={busy}
                 />
-                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <div className={styles.actions}>
                   <button data-testid="loop-probe-submit" className="btn btn--primary" disabled={!canSubmit} onClick={onSubmit}>
                     {busy ? "Checking…" : "Submit answer"}
                   </button>
@@ -196,12 +202,12 @@ export function ProbePanel({
             ) : (
               <>
                 {referenceBlock}
-                <ProbeNext busy={busy} nextHeld={nextHeld} onNext={onNext} style={{ alignSelf: "flex-start" }} />
+                <ProbeNext busy={busy} nextHeld={nextHeld} onNext={onNext} className={styles.next} />
               </>
             )}
-          </section>
+          </motion.section>
         )}
-        {note && <div role="status" style={{ fontSize: 13, color: "var(--text-muted)" }}>{note}</div>}
+        {note && <div role="status" className={styles.note}>{note}</div>}
       </div>
     </div>
   );

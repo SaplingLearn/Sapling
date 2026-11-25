@@ -1,3 +1,4 @@
+import type { CSSProperties } from "react";
 import type { EnrolledCourse, LoopOpenSession, Session } from "@/lib/api";
 
 /** One session as the Tutor lists it (sidebar recents, a course, all sessions). */
@@ -91,6 +92,11 @@ export function mergeSessions(
 const FALLBACK_COLORS = ["var(--c-crimson)", "var(--c-rust)", "var(--c-sage)", "var(--c-amber)", "var(--c-brown)"];
 export function courseColor(course: EnrolledCourse | undefined, index: number): string {
   return course?.color || FALLBACK_COLORS[Math.abs(index) % FALLBACK_COLORS.length];
+}
+
+/** A course dot's colour (`.cdot` paints `--dot`): runtime data, so it rides a custom property. */
+export function dotColor(color: string): CSSProperties {
+  return { "--dot": color } as CSSProperties;
 }
 
 /** A session's name. A course-wide session is titled after its course, which

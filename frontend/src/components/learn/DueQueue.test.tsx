@@ -40,6 +40,7 @@ vi.mock("@/context/FlagsContext", () => ({ useFlag: (key: string) => flags[key] 
 import { ApiError } from "@/lib/api";
 import { __resetFeedbackPacingForTests, feedbackHeld } from "@/lib/feedbackPacing";
 import { DueQueue } from "./DueQueue";
+import { FIELD_CLASS } from "./loopShared";
 import crisisFixture from "@/test-utils/crisisSupport.json";
 
 const SR = { stage: "acquire", correct: 0, target: 3 } as const;
@@ -759,11 +760,10 @@ describe("DueQueue — the student's review day ends mid-answer (#866 K17)", () 
 describe("DueQueue — the answer boxes are visible fields (#866 Z29)", () => {
   // Tailwind's preflight strips every textarea's border, padding and fill: a box
   // with no style of its own is invisible, so each one carries the loop's field
-  // style (FIELD_STYLE, as the loop's check card does) and a visible label.
+  // class (FIELD_CLASS, as the loop's check card does) and a visible label.
   const looksLikeAField = (box: HTMLElement) => {
-    expect(box.style.border).toBe("1px solid var(--border)");
-    expect(box.style.background).toBe("var(--bg-input)");
-    expect(box.style.padding).toBe("10px 12px");
+    expect(FIELD_CLASS).toBeTruthy();
+    expect(box.classList.contains(FIELD_CLASS)).toBe(true);
   };
 
   it("a free check's answer box is styled and has a visible label", async () => {

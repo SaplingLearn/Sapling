@@ -1,9 +1,13 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
+import { useMotionPresets } from "@/lib/motion";
 import type { LoopDiagnosis, LoopGoal, LoopGoalProgress } from "@/lib/api";
 import type { GraphNode } from "@/lib/data";
 import styles from "./LoopLearn.module.css";
+import own from "./LearningScope.module.css";
+import { LOOP_GOAL_MAX_TARGETS, LOOP_GOAL_TEXT_MAX } from "./loopShared";
 
 /** The session's learning scope under the stepper: its goal, or the whole course. */
 export function ScopeSummary({ error, ready, goal, names, onRetry }: {
@@ -16,7 +20,7 @@ export function ScopeSummary({ error, ready, goal, names, onRetry }: {
   return (
     <div className={styles.scopeSummary} data-testid="loop-goal-summary">
       {error ? <><span>Couldn&apos;t load this session&apos;s learning scope. </span>
-        <button type="button" data-testid="loop-goal-retry" className="btn btn--sm" onClick={onRetry}>Retry learning scope</button></>
+        <button type="button" data-testid="loop-goal-retry" className={`btn btn--sm ${own.press}`} onClick={onRetry}>Retry learning scope</button></>
         : !ready ? "Loading learning scope…"
           : goal ? <><strong>Goal: </strong>{goal.text || "Selected concepts"}<span> · {goal.target_node_ids.map((id) => names.get(id) ?? "Selected concept").join(", ")}</span></>
             : "Scope: Explore the whole course"}
@@ -55,21 +59,22 @@ export function GoalEditor({ goal, nodes, busy, error, onSave, onCancel, loading
   const [wholeCourse, setWholeCourse] = useState(false);
   const firstField = useRef<HTMLTextAreaElement>(null);
   useEffect(() => { firstField.current?.focus(); }, []);
+  const m = useMotionPresets();
   const available = new Set(nodes.map((n) => n.id));
   const confirmed = targets.filter((id) => available.has(id));
-  const canSave = !busy && (wholeCourse || (!loadingNodes && !nodesError && confirmed.length > 0 && confirmed.length <= 12));
+  const canSave = !busy && (wholeCourse || (!loadingNodes && !nodesError && confirmed.length > 0 && confirmed.length <= LOOP_GOAL_MAX_TARGETS));
   return (
     <div className={styles.scopeEditor}>
       <form className={`card ${styles.scopeCard}`} aria-label="Learning goal" onSubmit={(event) => {
         event.preventDefault();
         if (canSave) onSave(wholeCourse ? null : { text: text.trim(), target_node_ids: confirmed });
       }}>
-        <h2 className="h-serif" style={{ margin: 0, fontSize: 22 }}>What do you want to learn?</h2>
-        <p style={{ margin: 0, fontSize: 14, color: "var(--text-dim)" }}>
+        <h2 className={`h-serif ${own.title}`}>What do you want to learn?</h2>
+        <p className={own.lede}>
           Describe your objective, then confirm the concepts it covers. The tutor will check those concepts and their prerequisites.
         </p>
-        <label htmlFor="loop-goal-text">Your objective <span style={{ color: "var(--text-muted)" }}>(optional)</span></label>
-        <textarea ref={firstField} id="loop-goal-text" data-testid="loop-goal-text" value={text} maxLength={500} rows={3}
+        <label htmlFor="loop-goal-text">Your objective <span className={own.muted}>(optional)</span></label>
+        <textarea ref={firstField} id="loop-goal-text" data-testid="loop-goal-text" value={text} maxLength={LOOP_GOAL_TEXT_MAX} rows={3}
           disabled={busy || wholeCourse} className={styles.scopeText} onChange={(event) => setText(event.target.value)}
           placeholder="For example: explain how negative numbers are represented" />
         <fieldset disabled={busy} className={styles.scopeFieldset}>
@@ -83,20 +88,23 @@ export function GoalEditor({ goal, nodes, busy, error, onSave, onCancel, loading
             <span>Focus on selected concepts</span>
           </label>
         </fieldset>
+        {/* Switching scope opens or closes the concept list in place. */}
+        <AnimatePresence initial={false}>
         {!wholeCourse && (
+          <motion.div key="targets" {...m.collapse}>
           <fieldset disabled={busy} className={styles.scopeFieldset}>
-            <legend>Confirm target concepts <span style={{ color: "var(--text-muted)" }}>(1–12)</span></legend>
-            <p style={{ margin: "4px 0 10px", fontSize: 13, color: "var(--text-dim)" }}>
+            <legend>Confirm target concepts <span className={own.muted}>(1–{LOOP_GOAL_MAX_TARGETS})</span></legend>
+            <p className={own.hint}>
               Only concepts from this course are listed. Your text does not select concepts automatically.
             </p>
             {loadingNodes && <p role="status">Loading course concepts…</p>}
             {nodesError && <div role="alert"><p>Couldn&apos;t load this course&apos;s concepts.</p>
-              <button type="button" data-testid="loop-goal-retry-concepts" className="btn btn--sm" disabled={busy} onClick={onRetryNodes}>Retry course concepts</button></div>}
+              <button type="button" data-testid="loop-goal-retry-concepts" className={`btn btn--sm ${own.press}`} disabled={busy} onClick={onRetryNodes}>Retry course concepts</button></div>}
             <div className={styles.scopeOptions}>
               {nodes.map((node) => (
                 <label key={node.id} className={styles.scopeOption}>
                   <input type="checkbox" checked={confirmed.includes(node.id)} data-testid={`loop-goal-target-${node.id}`}
-                    disabled={!confirmed.includes(node.id) && confirmed.length >= 12}
+                    disabled={!confirmed.includes(node.id) && confirmed.length >= LOOP_GOAL_MAX_TARGETS}
                     onChange={(event) => setTargets((current) => event.target.checked
                       ? [...current, node.id] : current.filter((id) => id !== node.id))} />
                   <span>{node.name}</span>
@@ -104,15 +112,17 @@ export function GoalEditor({ goal, nodes, busy, error, onSave, onCancel, loading
               ))}
             </div>
             {nodes.length === 0 && !loadingNodes && !nodesError && <p role="status">No target concepts are available for this course yet. You can explore the whole course or add material in Library.</p>}
-            <p role="status" style={{ margin: "10px 0 0", fontSize: 13 }}>{confirmed.length} of 12 selected</p>
+            <p role="status" className={own.count}>{confirmed.length} of {LOOP_GOAL_MAX_TARGETS} selected</p>
           </fieldset>
+          </motion.div>
         )}
-        {error && <p role="alert" style={{ margin: 0, color: "var(--err)", fontSize: 14 }}>{error}</p>}
+        </AnimatePresence>
+        {error && <p role="alert" className={own.error}>{error}</p>}
         <div className={styles.scopeActions}>
-          <button type="submit" className="btn btn--primary" disabled={!canSave} data-testid="loop-goal-save">{busy ? "Updating check-in…" : "Use this scope"}</button>
-          <button type="button" data-testid="loop-goal-cancel" className="btn btn--ghost" disabled={busy} onClick={onCancel}>Cancel</button>
+          <button type="submit" className={`btn btn--primary ${own.press}`} disabled={!canSave} data-testid="loop-goal-save">{busy ? "Updating check-in…" : "Use this scope"}</button>
+          <button type="button" data-testid="loop-goal-cancel" className={`btn btn--ghost ${own.press}`} disabled={busy} onClick={onCancel}>Cancel</button>
         </div>
-        <p style={{ margin: 0, fontSize: 12, color: "var(--text-muted)" }}>
+        <p className={own.footnote}>
           Changing scope keeps your earlier evidence. A new check-in may be needed before you start learning.
         </p>
       </form>
@@ -151,11 +161,11 @@ export function DiagnosisSummary({ diagnosis, names }: { diagnosis: LoopDiagnosi
   if (!diagnosis) return null;
   return (
     <section aria-label="Check-in coverage" data-testid="loop-diagnosis" className={styles.diagnosis}>
-      <h3 style={{ margin: "0 0 6px", fontSize: 15 }}>Check-in coverage</h3>
-      <p style={{ margin: 0, fontSize: 13, lineHeight: 1.5 }}>{STATUS_COPY[diagnosis.status] ?? "Check-in evidence is incomplete."}</p>
-      {diagnosis.stop_reason && STOP_COPY[diagnosis.stop_reason] && <p style={{ margin: "6px 0 0", fontSize: 13 }}>{STOP_COPY[diagnosis.stop_reason]}</p>}
+      <h3 className={own.diagnosisTitle}>Check-in coverage</h3>
+      <p className={own.status}>{STATUS_COPY[diagnosis.status] ?? "Check-in evidence is incomplete."}</p>
+      {diagnosis.stop_reason && STOP_COPY[diagnosis.stop_reason] && <p className={own.stop}>{STOP_COPY[diagnosis.stop_reason]}</p>}
       {diagnosis.skills.length > 0 && (
-        <details style={{ marginTop: 8 }}>
+        <details className={own.details}>
           <summary>Evidence by concept ({diagnosis.skills.length})</summary>
           <ul className={styles.diagnosisList}>
             {diagnosis.skills.map((skill) => (

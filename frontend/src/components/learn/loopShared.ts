@@ -1,20 +1,17 @@
 /** Pieces LoopLearn and its panels share (moved out of LoopLearn.tsx). */
-import type React from "react";
 import type { LoopHintResponse, StudentConfidence } from "@/lib/api";
+import fieldStyles from "./loopShared.module.css";
+
+/** A learning goal's free text, as the goal editor caps it (POST /goal's `text`),
+ *  and its target concepts' cap, re-exported beside it for the goal's checks. */
+export const LOOP_GOAL_TEXT_MAX = 500;
+export { LOOP_GOAL_MAX_TARGETS } from "@/lib/inputLimits";
 
 export const BAND_LABEL: Record<string, string> = { novice: "Getting started", develop: "Developing", profic: "Proficient" };
 
-export const FIELD_STYLE: React.CSSProperties = {
-  width: "100%",
-  padding: "10px 12px",
-  fontSize: 14,
-  lineHeight: 1.45,
-  border: "1px solid var(--border)",
-  borderRadius: "var(--r-md)",
-  background: "var(--bg-input)",
-  resize: "vertical",
-  boxSizing: "border-box",
-};
+/** The loop's written-answer field: a textarea carries it to read as a field
+ *  (Tailwind's preflight strips a textarea's own border, padding and fill). */
+export const FIELD_CLASS = fieldStyles.field;
 
 /** An answer being written. `confidence` (spec §13 A127) is the student's stated
  *  confidence — null until chosen, and a skip sends none. */

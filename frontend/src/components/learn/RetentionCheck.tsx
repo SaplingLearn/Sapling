@@ -2,6 +2,8 @@
 
 import React, { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { motion } from "framer-motion";
+import { useMotionPresets } from "@/lib/motion";
 import { useRetentionDue } from "@/context/RetentionDueContext";
 import { useFlag } from "@/context/FlagsContext";
 import { useStudyNavShown } from "@/components/useRetentionNav";
@@ -13,6 +15,7 @@ import { extractErrorDetail } from "@/lib/errorMessage";
 import { useFeedbackHold } from "@/lib/feedbackPacing";
 import { retentionEmptyHandoffCtas } from "@/lib/learningHandoffs";
 import styles from "./LoopLearn.module.css";
+import own from "./RetentionCheck.module.css";
 import { useCrisisSupport } from "../safety/CrisisSupportCard";
 import { RetentionPauseBanner, retentionErrorText } from "./retentionPause";
 import { LOOP_ANSWER_MAX } from "@/lib/inputLimits";
@@ -56,18 +59,18 @@ export function RetentionCheck({ userId, courses, initialCourseId = "" }: {
   const fellBack = !!initialCourseId && selected === initialCourseId && !!courseId && courseId !== selected;
   const shown = courses.find((course) => course.course_id === courseId);
   return (
-    <section aria-label="Retention check" className={`card ${styles.retention}`} style={{ margin: 0 }}>
-      <h2 style={{ margin: 0, fontSize: 17 }}>Retention check</h2>
-      <p style={{ margin: 0, fontSize: 13 }}>Check what you remember after time away. No tutor hints here. Sapling notes any help or practice in between.</p>
+    <section aria-label="Retention check" className={`card ${styles.retention} ${own.flush}`}>
+      <h2 className={own.title}>Retention check</h2>
+      <p className={own.copy}>Check what you remember after time away. No tutor hints here. Sapling notes any help or practice in between.</p>
       <label>Course
         {/* #866 Z29: the answer boxes' field style — Tailwind's preflight strips a select's border and fill */}
-        <select aria-label="Retention course" aria-describedby={fellBack ? noteId : undefined} data-testid="retention-course" value={courseId} onChange={(event) => setSelected(event.target.value)} className={styles.scopeText} style={{ display: "block", minWidth: 0, marginTop: 4 }}>
+        <select aria-label="Retention course" aria-describedby={fellBack ? noteId : undefined} data-testid="retention-course" value={courseId} onChange={(event) => setSelected(event.target.value)} className={`${styles.scopeText} ${own.select}`}>
           {!courseId && <option value="">Add a course first</option>}
           {courses.map((course) => <option key={course.course_id} value={course.course_id}>{course.course_name}</option>)}
         </select>
       </label>
       {fellBack && (
-        <p id={noteId} data-testid="retention-course-fallback" style={{ margin: 0, fontSize: 13 }}>
+        <p id={noteId} data-testid="retention-course-fallback" className={own.copy}>
           The course in your link isn&apos;t one of your courses, so this check is set to {shown?.course_name ?? "your first course"}. Pick another course above if you meant a different one.
         </p>
       )}
@@ -79,8 +82,6 @@ export function RetentionCheck({ userId, courses, initialCourseId = "" }: {
 /** Where focus goes once the action in flight settles (see RetentionCheck). */
 type FocusTarget = "item" | "result";
 
-const STATUS_LINE: React.CSSProperties = { margin: "10px 0 0", fontSize: 13 };
-
 type Handoff = ReturnType<typeof retentionEmptyHandoffCtas>[number];
 
 /** The way on from an empty or finished set (a plain render call, so the
@@ -88,9 +89,9 @@ type Handoff = ReturnType<typeof retentionEmptyHandoffCtas>[number];
 function renderHandoffs(links: readonly Handoff[], keyOf: (link: Handoff) => string, testIdOf: (link: Handoff) => string) {
   if (links.length === 0) return null;
   return (
-    <p style={{ margin: "8px 0 0", display: "flex", flexWrap: "wrap", gap: 10 }}>
+    <p className={own.handoffs}>
       {links.map((link) => (
-        <Link key={keyOf(link)} data-testid={testIdOf(link)} href={link.href} style={{ color: "var(--accent)", fontWeight: 500 }}>
+        <Link key={keyOf(link)} data-testid={testIdOf(link)} href={link.href} className={own.handoffLink}>
           {link.label}
         </Link>
       ))}
@@ -229,44 +230,47 @@ function RetentionSession({ userId, courseId }: { userId: string; courseId: stri
     }
   };
   const canSubmit = !!item && !busy && retentionAnswered(item, choice, reason, answer);
+  const m = useMotionPresets();
   return <>
     {crisis.dialog}
     {/* A block, not a flex item: the button keeps its own width (the card's
         column stretched it into something that read as a text field), and the
         live region below it takes no gap while it is empty. */}
     <div>
-      <button type="button" data-testid="retention-open" className={item ? "btn btn--sm" : "btn btn--sm btn--primary"} disabled={!courseId || busy} onClick={() => void open()}>{busy ? "Checking…" : "Open eligible retention checks"}</button>
+      <button type="button" data-testid="retention-open" className={`${item ? "btn btn--sm" : "btn btn--sm btn--primary"} ${own.press}`} disabled={!courseId || busy} onClick={() => void open()}>{busy ? "Checking…" : "Open eligible retention checks"}</button>
       {/* Always in the DOM, so each status line is announced when it appears. */}
       <div aria-live="polite">
-        {skipped && <p data-testid="retention-skipped" style={STATUS_LINE}>That question is no longer available, so it was skipped.</p>}
+        {skipped && <p data-testid="retention-skipped" className={own.statusLine}>That question is no longer available, so it was skipped.</p>}
         {items?.length === 0 && (
-          <div ref={statusRef} tabIndex={-1} data-testid="retention-empty" style={STATUS_LINE}>
-            <p style={{ margin: 0 }}>No retention checks are open for this course yet. They open at set times after you first study a concept, so check back later or add course material.</p>
+          <div ref={statusRef} tabIndex={-1} data-testid="retention-empty" className={own.statusLine}>
+            <p className={own.bare}>No retention checks are open for this course yet. They open at set times after you first study a concept, so check back later or add course material.</p>
             {renderHandoffs(emptyHandoffs, (link) => link.testId, (link) => link.testId)}
           </div>
         )}
         {items && items.length > 0 && !item && (
-          <div ref={statusRef} tabIndex={-1} data-testid="retention-finished" style={STATUS_LINE}>
-            <p style={{ margin: 0 }}>This set is finished. A few answers do not establish mastery; keep checking what you retain over time.</p>
+          <div ref={statusRef} tabIndex={-1} data-testid="retention-finished" className={own.statusLine}>
+            <p className={own.bare}>This set is finished. A few answers do not establish mastery; keep checking what you retain over time.</p>
             {renderHandoffs(emptyHandoffs, (link) => `fin-${link.testId}`, (link) => `retention-finished-${link.key}-link`)}
           </div>
         )}
       </div>
     </div>
-    {error && <p ref={errorRef} tabIndex={-1} role="alert" style={{ margin: 0, fontSize: 13 }}>{error}</p>}
+    {error && <p ref={errorRef} tabIndex={-1} role="alert" className={own.copy}>{error}</p>}
     <RetentionPauseBanner pause={pause} focusRef={pauseRef} />
-    {item && <div ref={itemRef} data-testid="retention-item" style={{ display: "flex", flexDirection: "column", gap: 8, minWidth: 0 }}>
-      <p style={{ margin: 0, fontSize: 12 }}>Question {index + 1} of {items?.length}</p>
+    {/* Keyed on the question: the next one rises in as a new card. */}
+    {item && <motion.div key={`${index}:${item.question_hash}`} {...m.fadeUp} ref={itemRef} data-testid="retention-item" className={own.item}>
+      <p className={own.counter}>Question {index + 1} of {items?.length}</p>
       <div>
-        <p style={{ margin: 0, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{item.prompt}</p>
+        <p className={own.prompt}>{item.prompt}</p>
         {/* Present while the question is, so the result is announced when it is written. */}
         <div aria-live="polite">
-          {result !== null && <p ref={resultRef} tabIndex={-1} data-testid="retention-result" style={{ margin: "8px 0 0" }}>{result ? "Correct on this retention check. One answer is not proof of mastery." : "Not correct on this check. Review your material before trying again."}</p>}
+          {/* The verdict lands with a pulse (right) or a shake (wrong). */}
+          {result !== null && <motion.p {...m.pulse(result ? "correct" : "wrong")} ref={resultRef} tabIndex={-1} data-testid="retention-result" className={own.result}>{result ? "Correct on this retention check. One answer is not proof of mastery." : "Not correct on this check. Review your material before trying again."}</motion.p>}
         </div>
       </div>
-      {result === null ? <form aria-label="Retention answer" onSubmit={(event) => { event.preventDefault(); if (canSubmit) void submit(false); }} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      {result === null ? <form aria-label="Retention answer" onSubmit={(event) => { event.preventDefault(); if (canSubmit) void submit(false); }} className={own.form}>
         {item.format === "mc_reason" ? <>
-          <fieldset disabled={busy} style={{ minWidth: 0, margin: 0 }}><legend>Your answer</legend>
+          <fieldset disabled={busy} className={own.fieldset}><legend>Your answer</legend>
             {(item.options ?? []).map((option) => <label key={option.letter} className={styles.scopeOption}>
               <input type="radio" name="retention-option" checked={choice === option.letter} onChange={() => setChoice(option.letter)} />
               <span>{option.letter}. {option.text}</span>
@@ -275,10 +279,10 @@ function RetentionSession({ userId, courseId }: { userId: string; courseId: stri
           <label>Your reasoning<input data-testid="retention-reason" maxLength={LOOP_ANSWER_MAX} value={reason} disabled={busy} onChange={(event) => setReason(event.target.value)} className={styles.scopeText} /></label>
         </> : <label>Your answer<textarea data-testid="retention-answer" maxLength={LOOP_ANSWER_MAX} rows={3} value={answer} disabled={busy} onChange={(event) => setAnswer(event.target.value)} className={styles.scopeText} /></label>}
         <div className={styles.scopeActions}>
-          <button data-testid="retention-submit" type="submit" className="btn btn--sm btn--primary" disabled={!canSubmit}>Check answer</button>
-          <button data-testid="retention-idk" type="button" className="btn btn--sm" disabled={busy} onClick={() => void submit(true)}>I don&apos;t know</button>
+          <button data-testid="retention-submit" type="submit" className={`btn btn--sm btn--primary ${own.press}`} disabled={!canSubmit}>Check answer</button>
+          <button data-testid="retention-idk" type="button" className={`btn btn--sm ${own.press}`} disabled={busy} onClick={() => void submit(true)}>I don&apos;t know</button>
         </div>
-      </form> : <button data-testid="retention-next" type="button" className="btn btn--sm" style={{ alignSelf: "flex-start" }} onClick={() => { setSkipped(false); advance(); }}>Continue</button>}
-    </div>}
+      </form> : <button data-testid="retention-next" type="button" className={`btn btn--sm ${own.next} ${own.press}`} onClick={() => { setSkipped(false); advance(); }}>Continue</button>}
+    </motion.div>}
   </>;
 }

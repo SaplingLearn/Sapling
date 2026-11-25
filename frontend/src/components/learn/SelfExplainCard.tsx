@@ -12,21 +12,13 @@
 // keeps focus there), or in place of the Continue / Check me row after
 // feedback — where LoopLearn moves lost focus to `inputRef` (spec §13 A135).
 import React, { useEffect, useId, useState } from "react";
+import { motion } from "framer-motion";
 
 import type { LoopSelfExplain } from "@/lib/api";
 import { LOOP_ANSWER_MAX } from "@/lib/inputLimits";
-
-const FIELD_STYLE: React.CSSProperties = {
-  width: "100%",
-  padding: "10px 12px",
-  fontSize: 14,
-  lineHeight: 1.45,
-  border: "1px solid var(--border)",
-  borderRadius: "var(--r-md)",
-  background: "var(--bg-input)",
-  resize: "vertical",
-  boxSizing: "border-box",
-};
+import { FIELD_CLASS } from "./loopShared";
+import { useMotionPresets } from "@/lib/motion";
+import styles from "./SelfExplainCard.module.css";
 
 export const SELF_EXPLAIN_HEADING = "Explain it in your own words";
 export const SELF_EXPLAIN_SUBLINE = "Not scored — a sentence or two is plenty.";
@@ -69,30 +61,22 @@ export function SelfExplainCard({
     if (canSend) onSend(reply.trim());
   };
   const Heading = nested ? "h3" : "h2";
+  const m = useMotionPresets();
+  // Keyed by the prompt: a new ask rises into place (`fadeUp`).
   return (
-    <section
+    <motion.section
+      key={prompt.prompt_id}
+      {...m.fadeUp}
       aria-labelledby={headingId}
       data-testid="loop-self-explain"
       data-juncture={prompt.juncture}
       data-prompt-id={prompt.prompt_id}
-      className={nested ? "fade-in" : "card fade-in"}
-      style={
-        nested
-          ? {
-              display: "flex", flexDirection: "column", gap: 8, padding: "10px 12px",
-              borderRadius: "var(--r-md)", border: "1px dashed var(--border)", background: "var(--bg-soft)",
-            }
-          : { padding: "14px 16px", display: "flex", flexDirection: "column", gap: 8, borderColor: "var(--accent-border)" }
-      }
+      className={nested ? `${styles.card} ${styles.nested}` : `card ${styles.card} ${styles.standalone}`}
     >
-      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-        <Heading id={headingId} className="label-micro" style={{ margin: 0, fontWeight: 400 }}>{SELF_EXPLAIN_HEADING}</Heading>
-        <p style={{ margin: 0, fontSize: 13, color: "var(--text-dim)" }}>{SELF_EXPLAIN_SUBLINE}</p>
-        <p
-          id={promptId}
-          data-testid="loop-self-explain-prompt"
-          style={{ margin: "4px 0 0", fontSize: 15, lineHeight: 1.5, whiteSpace: "pre-wrap" }}
-        >
+      <div className={styles.head}>
+        <Heading id={headingId} className={`label-micro ${styles.heading}`}>{SELF_EXPLAIN_HEADING}</Heading>
+        <p className={styles.subline}>{SELF_EXPLAIN_SUBLINE}</p>
+        <p id={promptId} data-testid="loop-self-explain-prompt" className={styles.prompt}>
           {prompt.prompt}
         </p>
       </div>
@@ -102,7 +86,7 @@ export function SelfExplainCard({
         maxLength={LOOP_ANSWER_MAX}
         aria-label="Your explanation"
         aria-describedby={promptId}
-        style={FIELD_STYLE}
+        className={FIELD_CLASS}
         rows={2}
         placeholder="Because…"
         value={reply}
@@ -112,7 +96,7 @@ export function SelfExplainCard({
           if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) send();
         }}
       />
-      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+      <div className={styles.actions}>
         <button
           type="button"
           data-testid="loop-self-explain-send"
@@ -126,6 +110,6 @@ export function SelfExplainCard({
           Skip
         </button>
       </div>
-    </section>
+    </motion.section>
   );
 }

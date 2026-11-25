@@ -1,0 +1,17 @@
+/* The graded check's verdict (VerdictBanner); its box is tutor.module.css's
+   `.verdictYes` / `.verdictNo`. */
+
+.title {
+  font: 600 var(--fs-xl) var(--font-display);
+  /* The pulse grows the word from where it starts, not the row's middle. */
+  transform-origin: left center;
+  color: var(--warn);
+}
+
+.titleYes {
+  color: var(--sap-600);
+}
+
+.note {
+  font-size: var(--fs-base);
+}

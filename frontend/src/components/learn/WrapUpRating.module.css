@@ -1,0 +1,60 @@
+/* The wrap-up's feedback card (WrapUpRating). */
+
+.card {
+  padding: var(--pad-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-6);
+}
+
+.heading {
+  margin: 0;
+  font-size: var(--fs-xl);
+}
+
+.details {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-6);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.comment {
+  width: 100%;
+  padding: var(--sp-5) var(--sp-7);
+  font-size: var(--fs-md);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg-input);
+  font-family: inherit;
+  resize: vertical;
+  box-sizing: border-box;
+  transition: border-color var(--dur-fast) var(--ease);
+}
+
+.comment:hover:not(:disabled) {
+  border-color: var(--border-strong);
+}
+
+/* A press answers at once (the global `.btn` transition carries it back). */
+.send {
+  /* No scale token exists for a press. */
+  --wrapup-press-scale: 0.97;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .send:active:not(:disabled) {
+    transform: scale(var(--wrapup-press-scale));
+    transition-duration: var(--dur-instant);
+  }
+}
+
+.outcome {
+  font-size: var(--fs-md);
+  color: var(--text-muted);
+}

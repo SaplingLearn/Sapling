@@ -1,0 +1,68 @@
+/* A wrapped-up session, read-only (ReadOnlyTranscript). */
+
+.scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--sp-10) var(--sp-16);
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-7);
+}
+
+.bar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+  flex-wrap: wrap;
+}
+
+.lede {
+  font-size: var(--fs-base);
+  color: var(--text-dim);
+}
+
+.spacer {
+  flex: 1;
+}
+
+.transcript {
+  padding: var(--pad-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-6);
+}
+
+.empty {
+  font-size: var(--fs-md);
+  color: var(--text-muted);
+}
+
+.turn {
+  /* A bubble's widest, so the two sides stay visibly apart. */
+  --transcript-bubble-max: 85%;
+  align-self: flex-start;
+  max-width: var(--transcript-bubble-max);
+}
+
+.turnUser {
+  align-self: flex-end;
+}
+
+.who {
+  margin-bottom: var(--sp-1);
+}
+
+.bubble {
+  white-space: pre-wrap;
+  font-size: var(--fs-base);
+  padding: var(--sp-4) var(--sp-6);
+  border-radius: var(--r-md);
+  background: var(--bg-soft);
+}
+
+.turnUser .bubble {
+  background: var(--accent-soft);
+}

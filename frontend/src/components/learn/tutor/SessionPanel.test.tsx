@@ -21,12 +21,6 @@ import { SessionPanel } from "./SessionPanel";
 
 afterEach(cleanup);
 
-/** jsdom normalises colours to rgb(); the palette is hex. */
-function rgb(hex: string): string {
-  const n = parseInt(hex.slice(1), 16);
-  return `rgb(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255})`;
-}
-
 function panel(
   plan: React.ComponentProps<typeof SessionPanel>["plan"],
   opts: { prereqEdges?: LoopPlanPrereqEdge[]; names?: Map<string, string> } = {},
@@ -78,8 +72,8 @@ describe("SessionPanel", () => {
       ...(["mastered", "learning", "struggling", "unexplored"] as const).map((t) => TIER_LABEL[t]),
       "Practiced",
     ]);
-    expect(items.slice(0, 4).map((li) => li.querySelector("i")!.style.background)).toEqual(
-      (["mastered", "learning", "struggling", "unexplored"] as const).map((t) => rgb(MASTERY_PALETTE[t])),
+    expect(items.slice(0, 4).map((li) => li.querySelector("i")!.style.getPropertyValue("--swatch"))).toEqual(
+      (["mastered", "learning", "struggling", "unexplored"] as const).map((t) => MASTERY_PALETTE[t]),
     );
     expect(screen.getByTestId("tutor-map-key-practiced")).toHaveTextContent("Practiced");
     expect(screen.getByTestId("map-slot")).toBeTruthy();

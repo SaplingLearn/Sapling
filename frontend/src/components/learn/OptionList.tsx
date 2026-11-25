@@ -2,6 +2,7 @@
 import React, { useMemo } from "react";
 
 import { useRadioGroup } from "./useRadioGroup";
+import styles from "./OptionList.module.css";
 
 /** The served options of an `mc_reason` item, in stored order; the UI never
  *  marks one correct (A22). A radio group (spec §13 A135) named by the question
@@ -32,10 +33,9 @@ export function OptionList({
       role="radiogroup"
       aria-labelledby={labelledBy}
       data-testid={`${testIdPrefix}s`}
-      style={{ display: "flex", flexDirection: "column", gap: 6 }}
+      className={styles.group}
     >
       {options.map((o, i) => {
-        const on = selected === o.letter;
         const radio = group.optionProps(i);
         return (
           <button
@@ -48,21 +48,9 @@ export function OptionList({
             data-testid={`${testIdPrefix}-${o.letter}`}
             disabled={disabled}
             onClick={() => onSelect(o.letter)}
-            style={{
-              display: "flex",
-              gap: 10,
-              alignItems: "flex-start",
-              textAlign: "left",
-              padding: "9px 12px",
-              borderRadius: "var(--r-md)",
-              border: `1px solid ${on ? "var(--accent-border)" : "var(--border)"}`,
-              background: on ? "var(--accent-soft)" : "var(--bg-panel)",
-              fontSize: 14,
-              cursor: disabled ? "default" : "pointer",
-              color: "var(--text)",
-            }}
+            className={styles.option}
           >
-            <strong style={{ minWidth: 16 }}>{o.letter}</strong>
+            <strong className={styles.letter}>{o.letter}</strong>
             <span>{o.text}</span>
           </button>
         );

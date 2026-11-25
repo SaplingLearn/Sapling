@@ -39,6 +39,7 @@ import {
   MotionConfig,
   MotionGlobalConfig,
   useReducedMotion,
+  type Target,
   type TargetAndTransition,
   type Transition,
   type Variants,
@@ -56,7 +57,10 @@ const { duration: D, ease: E, offset: O, stagger: S } = MOTION;
 
 /** Spread onto a `motion.*` element: where it starts, where it rests, how it leaves. */
 export interface MotionPreset {
-  initial: TargetAndTransition;
+  /** `Target`, not TargetAndTransition: framer's `initial` prop takes no
+   *  transition, and the wider type stops `{...preset}` spreading onto a
+   *  `motion.*` element (TS2322/TS2590). */
+  initial: Target;
   animate: TargetAndTransition;
   exit: TargetAndTransition;
   transition: Transition;

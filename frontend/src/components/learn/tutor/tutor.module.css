@@ -4,6 +4,9 @@
    from the globals.css tokens only (WCAG 2.1 AA on every surface they meet). */
 
 .shell {
+  /* The Tutor's control height: the sidebar's rows, its search and New
+     session, the all-sessions search and filters, the actions under a turn. */
+  --side-control: 36px;
   display: flex;
   flex: 1;
   min-height: 0;
@@ -12,7 +15,9 @@
 
 /* ── Tutor sidebar ─────────────────────────────────────────────────────── */
 .side {
-  width: 252px;
+  /* The sidebar's width: a layout size, not a scale step. */
+  --side-w: 252px;
+  width: var(--side-w);
   flex-shrink: 0;
   background: var(--bg-subtle);
   border-right: 1px solid var(--border);
@@ -22,14 +27,16 @@
   overflow: hidden;
 }
 
-/* Sidebar sizes: every row, the search and New session are 36px tall; the
-   head's toggle is the shell's 32px icon button. */
+/* Sidebar sizes: every row, the search and New session are --side-control
+   tall (on .shell, and on .drawer for the phone's portal); the head's toggle
+   is the shell's 32px icon button. */
 .sideInner {
-  --side-control: 36px;
-  padding: 22px 14px 18px;
+  /* A hairline between rows: a step of the scale would add up down a long list. */
+  --side-row-gap: 1px;
+  padding: var(--sp-11) var(--sp-7) var(--sp-9);
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: var(--sp-8);
   overflow-y: auto;
   height: 100%;
 }
@@ -38,12 +45,12 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 4px;
+  padding: 0 var(--sp-2);
 }
 
 .sideHead h2 {
   margin: 0;
-  font-size: 22px;
+  font-size: var(--fs-2xl);
   line-height: 32px;
 }
 
@@ -56,8 +63,8 @@
 }
 
 .iconBtn {
-  width: 32px;
-  height: 32px;
+  width: var(--sp-16);
+  height: var(--sp-16);
   border-radius: var(--r-sm);
   display: inline-grid;
   place-items: center;
@@ -82,14 +89,17 @@
 .search {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 0 11px;
-  height: var(--side-control, 36px);
+  gap: var(--sp-4);
+  padding: 0 var(--sp-6);
+  height: var(--side-control);
   box-sizing: border-box;
   border-radius: var(--r-sm);
   background: var(--bg-panel);
   border: 1px solid var(--border);
   color: var(--text-muted);
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease);
 }
 
 .search input {
@@ -99,34 +109,57 @@
   width: 100%;
   min-width: 0;
   font: inherit;
-  font-size: 13px;
+  font-size: var(--fs-md);
   color: var(--text);
 }
 
 .search:focus-within {
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
+  box-shadow: 0 0 0 var(--sp-2) var(--focus-halo);
 }
 
 .sideSec {
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: var(--side-row-gap);
+}
+
+/* A column of sidebar rows (the recents and each day's list), the rows' hairline apart. */
+.sideStack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--side-row-gap);
+}
+
+.bare {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.sideNote {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  padding: var(--sp-2) var(--sp-4);
+}
+
+.sideFoot {
+  padding: var(--sp-4) var(--sp-4) 0;
 }
 
 .sideSec > :global(.label-micro) {
-  padding: 0 8px 6px;
+  padding: 0 var(--sp-4) var(--sp-3);
 }
 
 .sideRow {
   display: flex;
   align-items: center;
-  gap: 9px;
-  height: var(--side-control, 36px);
+  gap: var(--sp-5);
+  height: var(--side-control);
   box-sizing: border-box;
-  padding: 0 8px;
+  padding: 0 var(--sp-4);
   border-radius: var(--r-sm);
-  font-size: 13px;
+  font-size: var(--fs-md);
   color: var(--text-dim);
   text-align: left;
   width: 100%;
@@ -162,16 +195,19 @@
 }
 
 .cdot {
-  width: 8px;
-  height: 8px;
+  width: var(--sp-4);
+  height: var(--sp-4);
   border-radius: 50%;
+  background: var(--dot, var(--c-sage));
   flex-shrink: 0;
 }
 
 /* An open session: filled. A wrapped-up one: a ring. */
 .sdot {
-  width: 7px;
-  height: 7px;
+  /* A ring a hair smaller than the course dot (.cdot), so the two read apart. */
+  --sdot-size: 7px;
+  width: var(--sdot-size);
+  height: var(--sdot-size);
   border-radius: 50%;
   flex-shrink: 0;
   border: 1.5px solid var(--text-muted);
@@ -183,15 +219,15 @@
 }
 
 .sideWhen {
-  font: 400 10px/14px var(--font-mono);
+  font: 400 var(--fs-2xs)/14px var(--font-mono);
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--text-muted);
-  padding: 8px 8px 3px;
+  padding: var(--sp-4) var(--sp-4) var(--sp-2);
 }
 
 .code {
-  font: 500 11px var(--font-mono);
+  font: 500 var(--fs-xs) var(--font-mono);
   color: var(--text-muted);
   flex-shrink: 0;
 }
@@ -199,10 +235,10 @@
 .textLink {
   color: var(--accent);
   font-weight: 500;
-  font-size: 13px;
+  font-size: var(--fs-md);
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--sp-2);
   background: none;
   border: 0;
   padding: 0;
@@ -239,8 +275,8 @@
 .topbar {
   display: flex;
   align-items: flex-end;
-  gap: 12px;
-  padding: 22px clamp(24px, 4vw, 56px) 16px;
+  gap: var(--sp-6);
+  padding: var(--sp-11) clamp(var(--sp-12), 4vw, var(--sp-28)) var(--sp-8);
   border-bottom: 1px solid var(--border);
   background: var(--bg);
   flex-shrink: 0;
@@ -255,17 +291,17 @@
    and every action 32px tall. */
 .topTitle h1 {
   margin: 0;
-  font-size: 30px;
+  font-size: var(--fs-4xl);
   line-height: 36px;
   overflow-wrap: anywhere;
 }
 
 .crumb {
   display: block;
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   line-height: 14px;
-  height: 14px;
-  margin-bottom: 4px;
+  height: var(--sp-7);
+  margin-bottom: var(--sp-2);
   background: none;
   border: 0;
   padding: 0;
@@ -280,30 +316,30 @@
 }
 
 .topSub {
-  font-size: 13px;
+  font-size: var(--fs-md);
   line-height: 20px;
-  min-height: 20px;
+  min-height: var(--sp-10);
   color: var(--text-dim);
-  margin-top: 4px;
+  margin-top: var(--sp-2);
 }
 
 .crumbStatic {
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   line-height: 14px;
-  height: 14px;
-  margin-bottom: 4px;
+  height: var(--sp-7);
+  margin-bottom: var(--sp-2);
 }
 
 .topActs {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-4);
   flex-wrap: wrap;
   justify-content: flex-end;
 }
 
 .topActs > :is(button, a, span) {
-  height: 32px;
+  height: var(--sp-16);
   box-sizing: border-box;
 }
 
@@ -338,7 +374,7 @@
   justify-content: center;
   align-items: center;
   text-align: center;
-  padding: 40px 32px;
+  padding: var(--sp-20) var(--sp-16);
 }
 
 .home > * {
@@ -346,28 +382,28 @@
 }
 
 .home > .heroMark {
-  margin-bottom: 24px;
+  margin-bottom: var(--sp-12);
 }
 
 .home > h2 {
-  margin-bottom: 16px;
+  margin-bottom: var(--sp-8);
 }
 
 .home > .quote {
-  margin-bottom: 24px;
+  margin-bottom: var(--sp-12);
 }
 
 .home > .suggest {
-  margin-bottom: 16px;
+  margin-bottom: var(--sp-8);
 }
 
 .home > .ctaNote {
-  margin-top: 12px;
+  margin-top: var(--sp-6);
 }
 
 .heroMark {
-  width: 56px;
-  height: 56px;
+  width: var(--sp-28);
+  height: var(--sp-28);
   flex-shrink: 0;
   color: var(--accent);
   display: grid;
@@ -379,15 +415,20 @@
 }
 
 .home h2 {
-  font: 600 42px/48px var(--font-display);
+  /* The home hero: larger than the type scale's top step, on the page's 8px rhythm. */
+  --home-title-size: 42px;
+  font: 600 var(--home-title-size)/var(--sp-24) var(--font-display);
   letter-spacing: -0.02em;
   text-wrap: balance;
 }
 
 .quote {
-  font: italic 400 15px/24px var(--font-serif);
+  /* The pull quote sits between the body steps (14 and 16), with the rhythm's 24px line. */
+  --quote-size: 15px;
+  --quote-measure: 560px;
+  font: italic 400 var(--quote-size)/var(--sp-12) var(--font-serif);
   color: var(--text-dim);
-  max-width: 560px;
+  max-width: var(--quote-measure);
   margin: 0;
   text-wrap: balance;
 }
@@ -395,22 +436,23 @@
 .suggest {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--sp-4);
   justify-content: center;
-  max-width: 680px;
+  --suggest-measure: 680px;
+  max-width: var(--suggest-measure);
 }
 
 .pill {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  height: var(--home-control, 40px);
-  padding: 0 16px;
+  gap: var(--sp-3);
+  height: var(--home-control, var(--sp-20));
+  padding: 0 var(--sp-8);
   box-sizing: border-box;
   line-height: 1;
-  border-radius: 999px;
-  font-size: 13px;
+  border-radius: var(--r-full);
+  font-size: var(--fs-md);
   font-weight: 500;
   border: 1px solid var(--border);
   color: var(--text-dim);
@@ -431,57 +473,57 @@
 }
 
 .cta {
-  height: var(--home-control, 40px);
-  padding: 0 16px;
+  height: var(--home-control, var(--sp-20));
+  padding: 0 var(--sp-8);
   box-sizing: border-box;
 }
 
 .ctaNote {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   line-height: 16px;
   color: var(--text-muted);
 }
 
 /* ── T2 / T3 pages ─────────────────────────────────────────────────────── */
 .page {
-  padding: 24px clamp(24px, 4vw, 56px) 32px;
+  padding: var(--sp-12) clamp(var(--sp-12), 4vw, var(--sp-28)) var(--sp-16);
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: var(--sp-8);
 }
 
 .grid2 {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 16px;
+  gap: var(--sp-8);
 }
 
 .cardHead {
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
-  gap: 10px;
-  padding: 16px 22px 12px;
+  gap: var(--sp-5);
+  padding: var(--sp-8) var(--sp-11) var(--sp-6);
   border-bottom: 1px solid var(--border);
 }
 
 .cardHead h3 {
-  margin: 2px 0 0;
-  font-size: 18px;
+  margin: var(--sp-1) 0 0;
+  font-size: var(--fs-xl);
 }
 
 .cardPad {
-  padding: 18px 22px;
+  padding: var(--sp-9) var(--sp-11);
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: var(--sp-7);
 }
 
 .listRow {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 12px 22px;
+  gap: var(--sp-6);
+  padding: var(--sp-6) var(--sp-11);
   border: 0;
   border-bottom: 1px solid var(--border);
   width: 100%;
@@ -525,18 +567,18 @@
 
 .rowActs {
   display: flex;
-  gap: 4px;
-  padding-right: 14px;
+  gap: var(--sp-2);
+  padding-right: var(--sp-7);
   flex-shrink: 0;
 }
 
 .renameInput {
   flex: 1;
   min-width: 0;
-  margin: 8px 12px 8px 22px;
-  padding: 6px 10px;
+  margin: var(--sp-4) var(--sp-6) var(--sp-4) var(--sp-11);
+  padding: var(--sp-3) var(--sp-5);
   font: inherit;
-  font-size: 14px;
+  font-size: var(--fs-base);
   font-weight: 600;
   border: 1px solid var(--border);
   border-radius: var(--r-sm);
@@ -550,14 +592,14 @@
 
 .lt {
   font-weight: 600;
-  font-size: 14px;
+  font-size: var(--fs-base);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .ls {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--text-muted);
 }
 
@@ -569,7 +611,7 @@
 .toolbar {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-4);
   flex-wrap: wrap;
 }
 
@@ -577,17 +619,29 @@
 .segPill {
   display: inline-flex;
   align-items: center;
-  height: 36px;
+  height: var(--side-control);
   box-sizing: border-box;
-  padding: 6px 14px;
-  border-radius: 999px;
-  font-size: 12px;
+  padding: var(--sp-3) var(--sp-7);
+  border-radius: var(--r-full);
+  font-size: var(--fs-sm);
   font-weight: 500;
   background: var(--bg-subtle);
   color: var(--text-dim);
   border: 1px solid var(--border);
   cursor: pointer;
   white-space: nowrap;
+  transition:
+    background-color var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+
+.segPill:hover {
+  color: var(--text);
+}
+
+.segPill:active {
+  transform: scale(0.97);
 }
 
 .segPill[aria-pressed="true"] {
@@ -598,7 +652,9 @@
 
 /* ── Session panel (right) ─────────────────────────────────────────────── */
 .panel {
-  width: 300px;
+  /* The session panel's width: a layout size, not a scale step. */
+  --panel-w: 300px;
+  width: var(--panel-w);
   flex-shrink: 0;
   border-left: 1px solid var(--border);
   background: var(--bg-subtle);
@@ -608,23 +664,25 @@
 }
 
 .panelHead {
-  padding: 18px 18px 12px;
+  padding: var(--sp-9) var(--sp-9) var(--sp-6);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--sp-4);
 }
 
 .panelHead h2 {
   margin: 0;
-  font-size: 20px;
+  /* Between the scale's 18 and 22: the panel's own heading size. */
+  --panel-title-size: 20px;
+  font-size: var(--panel-title-size);
 }
 
 .panelInner {
-  padding: 0 18px 18px;
+  padding: 0 var(--sp-9) var(--sp-9);
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: var(--sp-10);
   overflow-y: auto;
   flex: 1;
   min-height: 0;
@@ -633,18 +691,24 @@
 .panelSec {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--sp-4);
 }
 
 .planRow {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 9px 10px;
+  gap: var(--sp-5);
+  /* 9px: a step either way would shift every plan row by 2px. */
+  --plan-row-pad-y: 9px;
+  padding: var(--plan-row-pad-y) var(--sp-5);
   border-radius: var(--r-md);
   background: var(--bg-panel);
   border: 1px solid var(--border);
   min-width: 0;
+  transition:
+    background-color var(--dur) var(--ease-in-out),
+    border-color var(--dur) var(--ease-in-out),
+    color var(--dur) var(--ease-in-out);
 }
 
 .planCur {
@@ -654,14 +718,18 @@
 }
 
 .planBox {
-  width: 20px;
-  height: 20px;
+  width: var(--sp-10);
+  height: var(--sp-10);
   border-radius: var(--r-xs);
   border: 1.5px solid var(--border-strong);
   display: grid;
   place-items: center;
   flex-shrink: 0;
-  font: 600 10px var(--font-mono);
+  font: 600 var(--fs-2xs) var(--font-mono);
+  transition:
+    background-color var(--dur) var(--ease-in-out),
+    border-color var(--dur) var(--ease-in-out),
+    color var(--dur) var(--ease-in-out);
 }
 
 .planCur .planBox {
@@ -675,13 +743,13 @@
 }
 
 .pn {
-  font-size: 13px;
+  font-size: var(--fs-md);
   font-weight: 600;
   overflow-wrap: anywhere;
 }
 
 .ps {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--text-muted);
 }
 
@@ -690,11 +758,14 @@
 }
 
 .meter {
+  /* The bar's and the percentage's columns: layout sizes, not scale steps. */
+  --meter-bar-w: 90px;
+  --meter-pct-w: 36px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 90px 36px;
+  grid-template-columns: minmax(0, 1fr) var(--meter-bar-w) var(--meter-pct-w);
   align-items: center;
-  gap: 10px;
-  font-size: 13px;
+  gap: var(--sp-5);
+  font-size: var(--fs-md);
 }
 
 .meter > span:first-child {
@@ -704,41 +775,112 @@
 }
 
 .bar {
-  height: 6px;
-  border-radius: 999px;
+  height: var(--sp-3);
+  border-radius: var(--r-full);
   background: var(--bg-soft);
   overflow: hidden;
   display: block;
 }
 
+/* The fill tweens when a score moves (a CSS transition: never on first paint). */
 .bar > i {
   display: block;
   height: 100%;
-  border-radius: 999px;
+  width: var(--fill, 0%);
+  background: var(--tone);
+  border-radius: var(--r-full);
+  transition:
+    width var(--dur-slow) var(--ease-out),
+    background-color var(--dur) var(--ease);
 }
 
 .pct {
-  font: 500 11px var(--font-mono);
+  font: 500 var(--fs-xs) var(--font-mono);
   color: var(--text-dim);
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
 
 .reviewBox {
-  padding: 12px;
+  padding: var(--sp-6);
   border-radius: var(--r-md);
   background: var(--bg-panel);
   border: 1px solid var(--border);
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--sp-4);
+}
+
+.planList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+/* A section's head: its label, and a link at the far end. */
+.secHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-4);
+}
+
+.note {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+
+.small {
+  font-size: var(--fs-sm);
+}
+
+.medium {
+  font-weight: 500;
+}
+
+.mono {
+  font-family: var(--font-mono);
+}
+
+.flush {
+  margin: 0;
+}
+
+/* A control that keeps its own width at the start of a column. */
+.start {
+  align-self: flex-start;
+}
+
+.loadFailed {
+  gap: var(--sp-5);
+  flex-wrap: wrap;
+}
+
+/* The all-sessions search: room to type, not the whole toolbar. */
+.searchWide {
+  --search-wide-max: 420px;
+  max-width: var(--search-wide-max);
+}
+
+.segGroup {
+  display: flex;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+}
+
+/* The session panel's knowledge map (SessionMap): the panel's full width, measured. */
+.sessionMap {
+  width: 100%;
 }
 
 .legend {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px 12px;
-  font-size: 11px;
+  gap: var(--sp-3) var(--sp-6);
+  font-size: var(--fs-xs);
   color: var(--text-dim);
   list-style: none;
   margin: 0;
@@ -748,12 +890,13 @@
 .legend li {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: var(--sp-3);
 }
 
 .legend i {
-  width: 8px;
-  height: 8px;
+  background: var(--swatch);
+  width: var(--sp-4);
+  height: var(--sp-4);
   border-radius: 50%;
   display: inline-block;
 }
@@ -767,10 +910,10 @@
 
 /* ── Conversation pieces (T4–T12) ──────────────────────────────────────── */
 .col {
-  padding: 24px clamp(24px, 4vw, 56px) 32px;
+  padding: var(--sp-12) clamp(var(--sp-12), 4vw, var(--sp-28)) var(--sp-16);
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: var(--sp-8);
 }
 
 /* The phase stepper (wireframe D): Check-in · Plan · Learn · Wrap-up across
@@ -783,9 +926,9 @@
   container: stepper / inline-size;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--sp-5);
   margin: 0;
-  padding: 16px clamp(16px, 4vw, 56px) 0;
+  padding: var(--sp-8) clamp(var(--sp-8), 4vw, var(--sp-28)) 0;
   list-style: none;
   min-width: 0;
 }
@@ -793,12 +936,13 @@
 .step {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-4);
   min-width: 0;
-  font-size: 13px;
-  line-height: 22px;
+  font-size: var(--fs-md);
+  line-height: var(--sp-11);
   color: var(--text-muted);
   white-space: nowrap;
+  transition: color var(--dur) var(--ease-in-out);
 }
 
 .step + .step {
@@ -808,9 +952,9 @@
 .step + .step::before {
   content: "";
   flex: 1 1 auto;
-  min-width: 12px;
+  min-width: var(--sp-6);
   height: 1px;
-  margin-right: 2px;
+  margin-right: var(--sp-1);
   background: var(--border-strong);
 }
 
@@ -837,15 +981,19 @@
 }
 
 .stepMark {
-  width: 22px;
-  height: 22px;
+  width: var(--sp-11);
+  height: var(--sp-11);
   border-radius: 50%;
   border: 1.5px solid var(--border-strong);
   display: grid;
   place-items: center;
   flex-shrink: 0;
   box-sizing: border-box;
-  font: 600 11px/1 var(--font-mono);
+  font: 600 var(--fs-xs)/1 var(--font-mono);
+  transition:
+    background-color var(--dur) var(--ease-in-out),
+    border-color var(--dur) var(--ease-in-out),
+    color var(--dur) var(--ease-in-out);
 }
 
 .step[data-state="done"] {
@@ -873,29 +1021,29 @@
 .chatActions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-4);
   flex-wrap: wrap;
 }
 
 .chatActions > :is(button, a) {
-  height: 36px;
+  height: var(--side-control);
   padding-top: 0;
   padding-bottom: 0;
   box-sizing: border-box;
 }
 
 .qcard {
-  padding: 20px 22px;
+  padding: var(--sp-10) var(--sp-11);
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: var(--sp-7);
 }
 
 .qhead {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: var(--sp-5);
   flex-wrap: wrap;
 }
 
@@ -906,7 +1054,7 @@
 }
 
 .q {
-  font: 500 18px/1.4 var(--font-display);
+  font: 500 var(--fs-xl)/1.4 var(--font-display);
   margin: 0;
   letter-spacing: -0.01em;
   white-space: pre-wrap;
@@ -915,19 +1063,19 @@
 
 .fl {
   display: block;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-dim);
-  margin-bottom: 6px;
+  margin-bottom: var(--sp-3);
 }
 
 .verdictYes,
 .verdictNo {
   border-radius: var(--r-lg);
-  padding: 14px 18px;
+  padding: var(--sp-7) var(--sp-9);
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--sp-3);
   border: 1px solid;
 }
 
@@ -944,14 +1092,14 @@
 .closeGrid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 16px;
+  gap: var(--sp-8);
 }
 
 .moved {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  font-size: 14px;
+  gap: var(--sp-4);
+  font-size: var(--fs-base);
   margin: 0;
   padding: 0;
   list-style: none;
@@ -961,7 +1109,7 @@
   display: flex;
   justify-content: space-between;
   align-items: baseline;
-  gap: 16px;
+  gap: var(--sp-8);
   flex-wrap: wrap;
 }
 
@@ -977,18 +1125,41 @@
   position: fixed;
   inset: 0;
   /* over the app's own top bar, so the drawer's head (Tutor, Hide) shows */
-  z-index: 1000;
-  background: rgba(26, 24, 20, 0.32);
+  z-index: var(--z-toast);
+  background: var(--scrim);
 }
 
 .drawer {
+  /* A portal outside .shell: it carries the shell's control height itself. */
+  --side-control: 36px;
   position: absolute;
   top: 0;
   bottom: 0;
   left: 0;
-  width: min(300px, 86vw);
+  --drawer-w: 300px;
+  width: min(var(--drawer-w), 86vw);
   display: flex;
   box-shadow: var(--shadow-lg);
+}
+
+/* Opening it: the scrim fades in and the drawer slides in from its edge. It
+   mounts on open and unmounts on close, so only the entrance animates. */
+@media (prefers-reduced-motion: no-preference) {
+  .drawerScrim {
+    animation: tutor-scrim-in var(--dur) var(--ease-out);
+  }
+
+  .drawer {
+    animation: tutor-drawer-in var(--dur-slow) var(--ease-out);
+  }
+}
+
+@keyframes tutor-scrim-in {
+  from { opacity: 0; }
+}
+
+@keyframes tutor-drawer-in {
+  from { transform: translateX(-100%); }
 }
 
 .drawer .side {
@@ -1004,8 +1175,8 @@
   .topbar {
     flex-wrap: wrap;
     align-items: flex-start;
-    padding: 16px;
-    row-gap: 12px;
+    padding: var(--sp-8);
+    row-gap: var(--sp-6);
   }
 
   .topTitle {
@@ -1018,17 +1189,19 @@
   }
 
   .topTitle h1 {
-    font-size: 24px;
+    /* A phone's title: between the scale's 22 and 26. */
+    --top-title-size: 24px;
+    font-size: var(--top-title-size);
   }
 
   .home h2 {
-    font-size: 30px;
+    font-size: var(--fs-4xl);
     line-height: 36px;
   }
 
   .page,
   .col {
-    padding: 16px;
+    padding: var(--sp-8);
   }
 
   /* Only the current step keeps its name on screen; the others keep theirs

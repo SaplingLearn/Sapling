@@ -13,22 +13,14 @@
 // stop, named by it) in a layout effect, unless a modal dialog owns focus; the
 // options are a radio group (`OptionList` → `useRadioGroup`).
 import React, { useId, useLayoutEffect, useRef, useState } from "react";
+import { motion } from "framer-motion";
 
 import type { LoopPrequestion, LoopPrequestionGuess } from "@/lib/api";
 import { OptionList } from "./OptionList";
 import { LOOP_ANSWER_MAX } from "@/lib/inputLimits";
-
-const FIELD_STYLE: React.CSSProperties = {
-  width: "100%",
-  padding: "10px 12px",
-  fontSize: 14,
-  lineHeight: 1.45,
-  border: "1px solid var(--border)",
-  borderRadius: "var(--r-md)",
-  background: "var(--bg-input)",
-  resize: "vertical",
-  boxSizing: "border-box",
-};
+import { FIELD_CLASS } from "./loopShared";
+import { useMotionPresets } from "@/lib/motion";
+import styles from "./PrequestionCard.module.css";
 
 export const PREQUESTION_HEADING = "Take a guess first — this one isn't scored";
 export const PREQUESTION_SUBLINE = "Guess before we start: the explanation comes right after.";
@@ -67,6 +59,7 @@ export function PrequestionCard({
   const promptId = `${ids}-prompt`;
   const cardRef = useRef<HTMLElement>(null);
   const canSubmit = !busy && (mc ? option !== "" : answer.trim() !== "");
+  const m = useMotionPresets();
 
   // A new question takes focus — its first answer control — so a screen reader
   // reads the question and the student can answer at once (spec §13 A135).
@@ -86,8 +79,12 @@ export function PrequestionCard({
     );
   };
 
+  // Keyed by the question: a new one rises into place (`fadeUp`), so the swap
+  // reads as a new question rather than the same card's text changing.
   return (
-    <section
+    <motion.section
+      key={questionHash}
+      {...m.fadeUp}
       ref={cardRef}
       aria-labelledby={headingId}
       data-testid="loop-prequestion"
@@ -95,23 +92,18 @@ export function PrequestionCard({
       data-format={prequestion.format}
       data-difficulty={prequestion.difficulty}
       data-answered={answered ? "true" : "false"}
-      className="card fade-in"
-      style={{ padding: "14px 16px", display: "flex", flexDirection: "column", gap: 10, borderColor: "var(--accent-border)" }}
+      className={`card ${styles.card}`}
     >
-      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-        <h2 id={headingId} className="label-micro" style={{ margin: 0, fontWeight: 400 }}>{PREQUESTION_HEADING}</h2>
-        <p style={{ margin: 0, fontSize: 13, color: "var(--text-dim)" }}>{PREQUESTION_SUBLINE}</p>
-        <p
-          id={promptId}
-          data-testid="loop-prequestion-prompt"
-          style={{ margin: "4px 0 0", fontSize: 15, lineHeight: 1.5, whiteSpace: "pre-wrap" }}
-        >
+      <div className={styles.head}>
+        <h2 id={headingId} className={`label-micro ${styles.heading}`}>{PREQUESTION_HEADING}</h2>
+        <p className={styles.subline}>{PREQUESTION_SUBLINE}</p>
+        <p id={promptId} data-testid="loop-prequestion-prompt" className={styles.prompt}>
           {prequestion.prompt}
         </p>
       </div>
       {answered ? (
-        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-          <span style={{ fontSize: 14, color: "var(--text-dim)" }}>Your guess is saved.</span>
+        <div className={styles.saved}>
+          <span className={styles.savedNote}>Your guess is saved.</span>
           <button
             type="button"
             data-testid="loop-prequestion-explain"
@@ -139,7 +131,7 @@ export function PrequestionCard({
                 data-testid="loop-prequestion-reason"
                 maxLength={LOOP_ANSWER_MAX}
                 aria-label="Why you think so (optional)"
-                style={FIELD_STYLE}
+                className={FIELD_CLASS}
                 placeholder="Why? (optional)"
                 value={reason}
                 disabled={busy}
@@ -156,7 +148,7 @@ export function PrequestionCard({
               data-answer-start=""
               aria-label="Your guess"
               aria-describedby={promptId}
-              style={FIELD_STYLE}
+              className={FIELD_CLASS}
               rows={2}
               placeholder="Your guess"
               value={answer}
@@ -167,7 +159,7 @@ export function PrequestionCard({
               }}
             />
           )}
-          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <div className={styles.actions}>
             <button
               type="button"
               data-testid="loop-prequestion-submit"
@@ -189,6 +181,6 @@ export function PrequestionCard({
           </div>
         </>
       )}
-    </section>
+    </motion.section>
   );
 }

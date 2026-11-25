@@ -1,0 +1,52 @@
+/* The served options of an mc_reason item (OptionList): a radio group of rows. */
+
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.option {
+  /* Press feedback: a slight give, not a movement. No scale token exists. */
+  --option-press-scale: 0.99;
+  display: flex;
+  gap: var(--sp-5);
+  align-items: flex-start;
+  text-align: left;
+  padding: var(--sp-4) var(--sp-6);
+  border-radius: var(--r-md);
+  border: 1px solid var(--border);
+  background: var(--bg-panel);
+  font-size: var(--fs-base);
+  cursor: pointer;
+  color: var(--text);
+  transition:
+    background-color var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    transform var(--dur-instant) var(--ease-out);
+}
+
+.option[aria-checked="false"]:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  background: var(--bg-subtle);
+}
+
+.option[aria-checked="true"] {
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+}
+
+.option:disabled {
+  cursor: default;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .option:active:not(:disabled) {
+    transform: scale(var(--option-press-scale));
+  }
+}
+
+/* The letter column, wide enough for one capital so the texts align. */
+.letter {
+  min-width: var(--sp-8);
+}

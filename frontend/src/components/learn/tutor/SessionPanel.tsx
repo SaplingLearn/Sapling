@@ -10,6 +10,9 @@ import { SidebarGlyph } from "./TutorIcons";
 import { Meter } from "./TutorPages";
 import styles from "./tutor.module.css";
 
+/** A key swatch's colour, from the map's own palette (runtime data, not a literal here). */
+const swatch = (color: string) => ({ "--swatch": color }) as React.CSSProperties;
+
 export type PanelConcept = { nodeId: string; name: string; score: number | null };
 
 /** The knowledge map's key: the map is drawn in mastery colours (one colour
@@ -73,11 +76,11 @@ export function SessionPanel({
         </button>
       </div>
       <div className={styles.panelInner}>
-        <div style={hasLearner ? undefined : { display: "none" }}>{learnerChip}</div>
+        <div hidden={!hasLearner}>{learnerChip}</div>
         {plan && plan.length > 0 && (
           <section className={styles.panelSec} aria-labelledby="tutor-panel-plan">
             <span id="tutor-panel-plan" className="label-micro">Plan</span>
-            <ol style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 6 }}>
+            <ol className={styles.planList}>
               {plan.map((c, i) => {
                 const current = c.node_id === currentNodeId;
                 return (
@@ -113,27 +116,27 @@ export function SessionPanel({
           <section className={styles.panelSec} aria-labelledby="tutor-panel-due">
             <span id="tutor-panel-due" className="label-micro">Due for review</span>
             <div className={styles.reviewBox}>
-              <span data-testid="tutor-panel-due-count" style={{ fontSize: 12, color: "var(--text-muted)" }}>
+              <span data-testid="tutor-panel-due-count" className={styles.note}>
                 {dueCountText(dueCount)}
               </span>
-              <Link href={dueHref} className="btn btn--sm" style={{ alignSelf: "flex-start" }} data-testid="tutor-panel-review">
+              <Link href={dueHref} className={`btn btn--sm ${styles.start}`} data-testid="tutor-panel-review">
                 {HANDOFF_COPY.dueOnStudy}
               </Link>
             </div>
           </section>
         )}
         <section className={styles.panelSec} aria-labelledby="tutor-panel-map">
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+          <div className={styles.secHead}>
             <span id="tutor-panel-map" className="label-micro">Knowledge map</span>
             {showTreeLink && (
-              <Link data-testid="loop-tree-link" href={treeHref} className={styles.textLink} style={{ fontSize: 12 }}>
+              <Link data-testid="loop-tree-link" href={treeHref} className={`${styles.textLink} ${styles.small}`}>
                 {HANDOFF_COPY.seeOnMap}
               </Link>
             )}
           </div>
           {map}
           <ul className={styles.legend} aria-label="Map key" data-testid="tutor-map-key">
-            {MAP_TIERS.map((t) => <li key={t}><i style={{ background: MASTERY_PALETTE[t] }} />{TIER_LABEL[t]}</li>)}
+            {MAP_TIERS.map((t) => <li key={t}><i style={swatch(MASTERY_PALETTE[t])} />{TIER_LABEL[t]}</li>)}
             <li data-testid="tutor-map-key-practiced">
               <i className={styles.legendOutline} aria-hidden />
               Practiced
