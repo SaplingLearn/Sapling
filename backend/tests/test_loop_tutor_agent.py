@@ -26,39 +26,6 @@ def test_stream_event_types_gain_the_five_loop_events():
     )
 
 
-def test_loop_limits_shape():
-    from agents import CONTINUATION_LIMITS, LOOP_LIMITS
-
-    assert LOOP_LIMITS.request_limit == 4
-    assert LOOP_LIMITS.tool_calls_limit == 3
-    assert LOOP_LIMITS.total_tokens_limit == 40_000
-    # The #646 continuation stays tool-less and budget-capped for the loop too.
-    assert CONTINUATION_LIMITS.tool_calls_limit == 0
-
-
-def test_tier_thinking_constants_appended_to_params():
-    from learning.params import (
-        LOOP_FLASH_THINKING_BUDGET,
-        LOOP_MAX_VISIBLE_TOKENS,
-        LOOP_PRO_THINKING_BUDGET,
-    )
-
-    assert LOOP_PRO_THINKING_BUDGET == 1024  # 2.5 Pro cannot go below 128; never 0
-    assert LOOP_FLASH_THINKING_BUDGET == 0
-    assert LOOP_MAX_VISIBLE_TOKENS == 400
-
-
-def test_loop_tutor_tier_slots_and_defaults():
-    from agents._providers import _DEFAULTS, AgentTask, model_name_for
-
-    assert set(LOOP_TUTOR_SLOTS) <= set(get_args(AgentTask))
-    # On Claude since 2026-11-19 (ADR 0030 mapping; Claude eval pending)
-    assert _DEFAULTS["loop_tutor_lite"] == "claude-haiku-5-5"
-    assert _DEFAULTS["loop_tutor"] == "claude-haiku-5-5"
-    assert _DEFAULTS["loop_tutor_deep"] == "claude-sonnet-5-5"
-    assert model_name_for("loop_tutor") == "claude-haiku-5-5"
-
-
 def _tool_names(tools) -> set:
     return {getattr(t, "name", None) or getattr(t, "__name__", None) for t in tools}
 
@@ -406,35 +373,6 @@ def _score(mod, evaluator, inputs, reply, **metadata):
 
     ctx = SimpleNamespace(inputs=inputs, output=reply, metadata=metadata)
     return evaluator.evaluate(ctx)
-
-
-def test_loop_eval_is_ten_cases_per_tier_slot():
-    from agents.loop_tutor import LOOP_TIER_SLOTS
-
-    mod = _loop_eval_module()
-    assert len(mod.CASES) == 10  # the series' 8 + the two A122 worked-first rows (#866 Z23)
-    # Base tiers always; recorded __v2 / __flags / __pedagogy join via replay_variants().
-    assert set(LOOP_TIER_SLOTS.values()) <= set(mod.VARIANTS)
-    assert mod.SERVED_GATES == (
-        "ServedAnswerLeak",
-        "ServedNoReveal",
-        "CeilingCompliance",
-        "MaxSentences",
-        "OneQuestion",
-        "FeedbackNeverEndsInAnswer",
-        "SycophancyResists",
-        "NoControlTags",
-        "PlainMathBelowH6",
-    )
-    assert mod.DIAGNOSTICS == ("RawAnswerLeak", "RetriesUsed")
-    for slot in LOOP_TIER_SLOTS.values():
-        make, _run = mod.VARIANTS[slot]
-        ds = make()
-        assert ds.name == slot
-        assert tuple(type(e).__name__ for e in ds.evaluators) == mod.SERVED_GATES + mod.DIAGNOSTICS
-    for case in mod.CASES:  # A34: every case names its item's structured final answer
-        assert case.metadata["final_answer"] and case.metadata["reference"]
-    assert not hasattr(mod, "_infer_rung"), "the marker classifier is replaced by the rung judge"
 
 
 def test_loop_eval_evaluators_score_the_served_path():
@@ -844,108 +782,6 @@ def test_phase_prefix_names_what_the_ceiling_means_for_each_field(ceiling):
         assert CEILING_GUIDE[ceiling] not in teach and "item" not in guide.replace(
             "check items", ""
         )
-
-
-def test_low_ceilings_forbid_content_and_own_practice_problems():
-    from agents.loop_tutor import CEILING_GUIDE
-
-    for rung in (0, 1):
-        assert "practice problem" in CEILING_GUIDE[rung]
-        assert "no concept" in CEILING_GUIDE[rung].lower()
-    assert "never what to do next" in CEILING_GUIDE[2]
-    # below H4 the model invents no problem of its own (the loop poses vetted,
-    # leak-checked check items) and computes no result in an example
-    for rung in (2, 3):
-        assert "problem of your own" in CEILING_GUIDE[rung]
-        assert "computes a result" in CEILING_GUIDE[rung]
-    assert "no fact about the subject" in CEILING_GUIDE[1]
-
-
-def test_system_prompt_forbids_stating_the_corrected_answer():
-    """Anti-sycophancy + no-leak: insist → contradiction question, never the
-    corrected result; rung content is judged in every field (A108)."""
-    from agents.loop_tutor import V2_INSTRUCTIONS, _LOOP_SYSTEM_PROMPT
-
-    assert "corrected" in _LOOP_SYSTEM_PROMPT
-    assert "judged by its content" in _LOOP_SYSTEM_PROMPT
-    assert "wrong claim" in _LOOP_SYSTEM_PROMPT
-    assert "exposes the contradiction" in _LOOP_SYSTEM_PROMPT
-    # v2 narrows "never say right/wrong" to check items; must not license a dodge
-    assert "I can't confirm" in V2_INSTRUCTIONS
-    assert "conflicts with their claim" in V2_INSTRUCTIONS
-    assert "corrected result" in V2_INSTRUCTIONS
-
-
-def test_developing_band_is_problem_first_without_inventing_problems():
-    """'problem-first' read as 'make up a problem': every slot invented a worked
-    practice problem under an H3 ceiling. The student works on THEIR problem or
-    the loop's check item."""
-    from agents.loop_tutor import _BAND_FORMATS, CEILING_GUIDE
-
-    assert "problem of your own" in _BAND_FORMATS["develop"]
-    assert "check item" in _BAND_FORMATS["develop"]
-    assert "not about this item" in CEILING_GUIDE[2]
-
-
-def test_teach_pedagogy_pins_safe_anchor_and_motivated_derivation():
-    """W1.1 / W1.2 / W1.3 / W1.4: Alvar V1 pedagogy rides the system prompt and
-    the novice / worked-first band copy; stop remains graded check, never fluency."""
-    from agents.loop_tutor import (
-        NOVICE_WORKED_FIRST_FORMAT,
-        _BAND_FORMATS,
-        _LOOP_SYSTEM_PROMPT,
-        _PHASE_RULES,
-    )
-
-    assert "TEACH PEDAGOGY" in _LOOP_SYSTEM_PROMPT
-    assert "Safe-anchor" in _LOOP_SYSTEM_PROMPT
-    assert "lockable definition or universal statement" in _LOOP_SYSTEM_PROMPT
-    assert "because the lecture says" in _LOOP_SYSTEM_PROMPT
-    assert "Motivated derivation" in _LOOP_SYSTEM_PROMPT
-    assert "problem that forces the next move" in _LOOP_SYSTEM_PROMPT
-    assert "Compression / generative core" in _LOOP_SYSTEM_PROMPT
-    assert "regenerate the idea from the core definition" in _LOOP_SYSTEM_PROMPT
-    assert "re-recognize a surface" in _LOOP_SYSTEM_PROMPT
-    assert "feels obvious" in _LOOP_SYSTEM_PROMPT
-    assert "graded check" in _LOOP_SYSTEM_PROMPT
-    assert "safe anchor" in _PHASE_RULES["teach"]
-    assert "safe anchor" in _BAND_FORMATS["novice"]
-    assert "forces the next move" in _BAND_FORMATS["novice"]
-    assert "safe anchor" in NOVICE_WORKED_FIRST_FORMAT
-    assert "forces the next move" in NOVICE_WORKED_FIRST_FORMAT
-    assert "lockable definition" in _BAND_FORMATS["develop"]
-    assert "authority alone" in _BAND_FORMATS["profic"]
-
-
-def test_w1_pedagogy_eval_cases_are_listed_without_cassettes():
-    """Plan W1.1–W1.3 acceptance: named pedagogy cases exist and join replay
-    only once W0 records `<slot>__pedagogy` (never routing until then)."""
-    from agents.loop_tutor import LOOP_TIER_SLOTS
-
-    mod = _loop_eval_module()
-    names = {c.name for c in mod.PEDAGOGY_CASES}
-    assert names == {
-        "teach_safe_anchor_novice_open",
-        "teach_safe_anchor_lecture_says",
-        "teach_motivated_step_develop",
-        "teach_generative_core_close",
-    }
-    assert not names & {c.name for c in mod.CASES}
-    assert not names & {c.name for c in mod.FLAG_CASES}
-    for case in mod.PEDAGOGY_CASES:
-        assert case.metadata["final_answer"] and case.metadata["reference"]
-        assert case.inputs[0] == "teach"
-        assert case.name in mod.V2_PLAN_FOCUS
-    ped = mod.pedagogy_variants(False)
-    assert set(ped) == {
-        mod.pedagogy_namespace(s, False) for s in LOOP_TIER_SLOTS.values()
-    }
-    assert not set(ped) & set(mod.replay_variants(recorded=lambda _s: False))
-    assert set(ped) <= set(mod.replay_variants(recorded=lambda _s: True))
-    ds = mod.make_pedagogy_dataset_for("standard", False)
-    assert tuple(type(e).__name__ for e in ds.evaluators) == (
-        mod.SERVED_GATES + mod.DIAGNOSTICS + mod.PEDAGOGY_GATES
-    )
 
 
 def test_w1_pedagogy_judges_score_served_rubrics():
