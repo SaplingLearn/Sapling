@@ -3,7 +3,7 @@
   "max-lines": {
     "src/app/(shell)/notetaker/page.tsx": 1870,
     "src/components/Gradebook/GradescopeSyncModal.tsx": 1502,
-    "src/components/graph/KnowledgeGraph2D.tsx": 1435,
+    "src/components/graph/KnowledgeGraph2D.tsx": 1411,
     "src/components/screens/Admin.tsx": 1107,
     "src/components/screens/Calendar.tsx": 887,
     "src/components/screens/Dashboard.tsx": 1130,

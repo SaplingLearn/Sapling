@@ -1,0 +1,106 @@
+/**
+ * The idle drift: with nothing happening, every node the simulation owns
+ * keeps wandering a few units about where it rests (see `driftForce`).
+ *
+ * The force itself is pure, so it is pinned here on its own: the whole-graph
+ * behaviour it produces — a map that is drawn where it settles and stays
+ * within a few units of there for ever — is pinned in
+ * `components/graph/KnowledgeGraph2D.load.test.tsx`.
+ */
+
+import { forceSimulation } from "d3-force";
+import { describe, expect, it } from "vitest";
+import { IDLE_ALPHA, SETTLE_ALPHA, driftForce, startPlanned, type DriftNode } from "./motion";
+
+const node = (id: string, extra: Partial<DriftNode> = {}): DriftNode => ({ id, vx: 0, vy: 0, ...extra });
+const speed = (n: DriftNode) => Math.hypot(n.vx ?? 0, n.vy ?? 0);
+
+/** Where a node ends up after `ms` of nothing but the drift and d3's decay. */
+function wander(n: DriftNode, ms: number, from = 0): { x: number; y: number } {
+  let x = 0, y = 0;
+  for (let t = from; t < from + ms; t += 1000 / 60) {
+    driftForce([n], t);
+    n.vx = (n.vx ?? 0) * 0.6;
+    n.vy = (n.vy ?? 0) * 0.6;
+    x += n.vx ?? 0;
+    y += n.vy ?? 0;
+  }
+  return { x, y };
+}
+
+describe("driftForce", () => {
+  it("nudges a node that the simulation owns", () => {
+    const n = node("concept-1");
+    driftForce([n], 0);
+    expect(speed(n)).toBeGreaterThan(0);
+  });
+
+  it("leaves a held node alone — dragged, or pinned where it was dropped", () => {
+    const held = node("concept-1", { fx: 10, fy: 20 });
+    driftForce([held], 0);
+    expect(speed(held)).toBe(0);
+  });
+
+  it("pushes a course root more gently than a concept", () => {
+    const concept = node("same-id");
+    const root = node("same-id", { is_subject_root: true });
+    driftForce([concept, root], 0);
+    expect(speed(root)).toBeCloseTo(speed(concept) / 2);
+  });
+
+  it("is the same on every load: the push comes from the node's id, not chance", () => {
+    const a = node("concept-1");
+    const b = node("concept-1");
+    driftForce([a], 1234);
+    driftForce([b], 1234);
+    expect([b.vx, b.vy]).toEqual([a.vx, a.vy]);
+  });
+
+  it("never has two nodes swinging together", () => {
+    const a = node("concept-1");
+    const b = node("concept-2");
+    // Sampled a comparable way INTO the turn, not at a fixed wall-clock time:
+    // two nodes' pushes separate as their phases advance, so with the 40s turn
+    // (DRIFT_TURN_MS) a 4s sample is barely a tenth of the way round and they
+    // have hardly parted yet. The claim is that they never swing together, not
+    // that they differ within four seconds.
+    driftForce([a, b], 0);
+    driftForce([a, b], 12_000);
+    expect(Math.abs((a.vx ?? 0) - (b.vx ?? 0))).toBeGreaterThan(0.001);
+  });
+
+  // What these assert is the SHAPE of the motion, not the numbers: that the
+  // push cancels itself over a full turn, and that a second of it is neither
+  // nothing nor a leap. The per-second bound belongs to DRIFT_ACCEL and the
+  // full-turn bound to the reach, so each moves when its own constant does.
+  // Both are the drift IN ISOLATION and read higher than the live graph, where
+  // the orbit and home springs pull back — measure in the app, not here.
+
+  it("turns right round, so a node wanders rather than flying off", () => {
+    // Over a full turn the push cancels itself: the node comes back.
+    const n = node("concept-1");
+    const far = wander(n, 60_000);
+    expect(Math.hypot(far.x, far.y)).toBeLessThan(40);
+  });
+
+  it("wanders a few units, not pixels at a time", () => {
+    const n = node("concept-1");
+    const moved = wander(n, 1000);
+    expect(Math.hypot(moved.x, moved.y)).toBeGreaterThan(0.5);
+    expect(Math.hypot(moved.x, moved.y)).toBeLessThan(15);
+  });
+});
+
+describe("the idle heat", () => {
+  it("sits under the settle threshold, or a released concept would never settle", () => {
+    expect(IDLE_ALPHA).toBeLessThan(SETTLE_ALPHA);
+  });
+
+  // This file runs without a DOM, so no reduced-motion preference: drift is on.
+  it("leaves a drag's own heat alone when the layout is re-planned mid-drag", () => {
+    const sim = forceSimulation([{ x: 0, y: 0 }]).stop().alphaTarget(0.3);
+    expect(startPlanned(sim, true)).toBe(false);
+    expect(sim.alphaTarget()).toBe(0.3);
+    sim.stop();
+  });
+});
