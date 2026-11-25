@@ -16,7 +16,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { CompanionShell } from '@/components/companion/CompanionShell';
 import { FAQ_GROUPS } from '@/lib/landing/companionContent';
-import { DISPLAY, MONO, PROSE_MEASURE, SERIF } from '@/lib/landing/companionType';
+import { DISPLAY, LABEL, PROSE_MEASURE, SERIF } from '@/lib/landing/companionType';
 
 /** Groups paired with a running index across ALL groups, computed once. */
 const INDEXED = (() => {
@@ -33,7 +33,7 @@ export default function FaqPage() {
   return (
     <CompanionShell current="/faq">
       <div>
-        <span style={{ display: 'block', fontFamily: MONO, fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#6f6857', animation: 'fadeUp 600ms ease both' }}>
+        <span style={{ display: 'block', fontFamily: LABEL, fontSize: 12, color: '#6f6857', animation: 'fadeUp 600ms ease both' }}>
           Straight answers
         </span>
         <h1 style={{ margin: '14px 0 0', fontFamily: DISPLAY, fontWeight: 500, fontSize: 48, lineHeight: 1.15, letterSpacing: '-0.015em', animation: 'fadeUp 700ms ease 60ms both' }}>
@@ -47,7 +47,7 @@ export default function FaqPage() {
         <div style={{ marginTop: 44, display: 'flex', flexDirection: 'column', gap: 34 }}>
           {INDEXED.map((g) => (
             <section key={g.label}>
-              <span style={{ display: 'block', fontFamily: MONO, fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--brand-forest-bright)', marginBottom: 6 }}>
+              <span style={{ display: 'block', fontFamily: LABEL, fontSize: 12, color: 'var(--brand-forest-bright)', marginBottom: 6 }}>
                 {g.label}
               </span>
               {g.items.map((item) => {
@@ -93,7 +93,7 @@ export default function FaqPage() {
 
         <div style={{ marginTop: 52, borderRadius: 18, background: '#faf8f3', border: '1px solid rgba(42,39,31,0.10)', padding: 'clamp(26px,4vw,40px)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 24, flexWrap: 'wrap' }}>
           <div style={{ maxWidth: '44ch' }}>
-            <span style={{ display: 'block', fontFamily: MONO, fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--brand-forest-bright)' }}>
+            <span style={{ display: 'block', fontFamily: LABEL, fontSize: 12, color: 'var(--brand-forest-bright)' }}>
               Still curious
             </span>
             <p style={{ margin: '10px 0 0', fontFamily: SERIF, fontSize: 15.5, lineHeight: 1.65, color: '#3f3b31' }}>

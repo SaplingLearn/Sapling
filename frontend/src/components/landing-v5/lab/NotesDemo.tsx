@@ -13,7 +13,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { LAB_TIER, MONO } from './LabShell';
+import { LAB_TIER, LABEL } from './LabShell';
 
 const INITIAL_TITLE = 'Lecture 7 — Eigenvalues';
 const INITIAL_BODY = [
@@ -33,7 +33,7 @@ const MATCHERS: { name: string; tier: keyof typeof LAB_TIER; hit: RegExp }[] = [
 
 const ACTION_BTN: React.CSSProperties = {
   padding: '9px 14px', borderRadius: 9, border: '1px solid #E0E6DA', background: '#FDFCF9',
-  ...MONO, fontSize: 9.5, letterSpacing: '0.1em', color: '#445D22',
+  ...LABEL, fontSize: 11.5, letterSpacing: '0.01em', color: '#445D22',
   cursor: 'pointer', transition: 'all 180ms',
 };
 
@@ -89,8 +89,8 @@ export function NotesDemo() {
             aria-label="Note title"
             style={{ flex: 1, border: 'none', outline: 'none', background: 'transparent', fontFamily: "var(--font-aleo), 'Aleo', Georgia, serif", fontSize: 22, fontWeight: 600, color: '#191F13', padding: 0 }}
           />
-          <span style={{ ...MONO, fontSize: 9, letterSpacing: '0.16em', whiteSpace: 'nowrap', color: saved ? '#5a7834' : '#9FA49A' }}>
-            {saved ? 'SAVED' : 'SAVING…'}
+          <span style={{ ...LABEL, fontSize: 11, letterSpacing: '0.01em', whiteSpace: 'nowrap', color: saved ? '#5a7834' : '#9FA49A' }}>
+            {saved ? 'Saved' : 'Saving…'}
           </span>
         </div>
 
@@ -103,28 +103,28 @@ export function NotesDemo() {
         />
 
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <button onClick={summarize} type="button" className="ld-labaction" style={ACTION_BTN}>SUMMARIZE</button>
-          <button onClick={extract} type="button" className="ld-labaction" style={ACTION_BTN}>EXTRACT CONCEPTS</button>
+          <button onClick={summarize} type="button" className="ld-labaction" style={ACTION_BTN}>Summarize</button>
+          <button onClick={extract} type="button" className="ld-labaction" style={ACTION_BTN}>Extract concepts</button>
           <button
             onClick={() => setSummary('Lowest-mastery linked concept is Eigenvalues (41%) — /quiz?concept=eigenvalues would open next.')}
             type="button"
             className="ld-labaction"
             style={ACTION_BTN}
           >
-            GENERATE QUIZ
+            Generate quiz
           </button>
         </div>
 
         {summary && (
           <div style={{ borderRadius: 11, background: '#F6F8F4', border: '1px solid #E6EAE2', padding: '13px 15px', animation: 'labIn 280ms ease both' }}>
-            <span style={{ ...MONO, fontSize: 9, letterSpacing: '0.2em', color: '#91978B' }}>SUMMARY</span>
+            <span style={{ ...LABEL, fontSize: 11, letterSpacing: '0.01em', color: '#91978B' }}>Summary</span>
             <p style={{ margin: '6px 0 0', fontSize: 13, lineHeight: 1.65, color: '#3B4233' }}>{summary}</p>
           </div>
         )}
       </div>
 
       <div style={{ padding: '20px 18px', background: '#F6F8F4', display: 'flex', flexDirection: 'column', gap: 10 }}>
-        <span style={{ ...MONO, fontSize: 9, letterSpacing: '0.18em', color: '#91978B' }}>LINKED CONCEPTS</span>
+        <span style={{ ...LABEL, fontSize: 11, letterSpacing: '0.01em', color: '#91978B' }}>Linked concepts</span>
         {busy && (
           <span style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12, color: '#91978B' }}>
             <span style={{ width: 12, height: 12, borderRadius: 99, border: '2px solid #E0E6DA', borderTopColor: '#68951F', animation: 'labSpin 700ms linear infinite' }} />

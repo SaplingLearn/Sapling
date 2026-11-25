@@ -251,7 +251,7 @@ describe("QuizQuestion — the question", () => {
     }
     expect(screen.getByTestId("quiz-progress")).toHaveAttribute("aria-label", "Question 2 of 3");
     expect(screen.getByText("Recursion · CS101")).toBeInTheDocument();
-    expect(screen.getByText("MEDIUM")).toBeInTheDocument();
+    expect(screen.getByText("Medium")).toBeInTheDocument();
   });
 
   it("gives the radiogroup exactly one tab stop — the selection, else the first row", () => {

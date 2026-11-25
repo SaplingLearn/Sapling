@@ -6,7 +6,7 @@
  * pages) — each with its own hand-typed tag, date and read time. They had
  * already drifted: the graph post was tagged `Under the hood` on the landing
  * and `Product` everywhere else, and `/news` printed `6/12/2026` against the
- * article header's `JUN 2026`. Nothing could catch that, because agreement
+ * article header's `Jun 2026`. Nothing could catch that, because agreement
  * between three literal tables is not a property any of them state.
  *
  * These tests state it. The surfaces are derived now, so most of this holds
@@ -20,16 +20,16 @@ import { POSTS } from './content';
 import { JOURNAL_ARTICLES, articleText, dateLabel, getArticle, readTime } from './journalArticles';
 
 describe('dateLabel', () => {
-  it('renders an ISO date as the mono eyebrow format', () => {
-    expect(dateLabel('2026-06-12')).toBe('12 JUN 2026');
-    expect(dateLabel('2026-05-04')).toBe('04 MAY 2026');
+  it('renders an ISO date as the eyebrow format', () => {
+    expect(dateLabel('2026-06-12')).toBe('12 Jun 2026');
+    expect(dateLabel('2026-05-04')).toBe('04 May 2026');
   });
 
   it('does not shift the day across timezones', () => {
     // `new Date('2026-01-01')` is UTC midnight; formatting it anywhere west
     // of Greenwich yields 31 DEC 2025. The formatter must read the string.
-    expect(dateLabel('2026-01-01')).toBe('01 JAN 2026');
-    expect(dateLabel('2026-12-31')).toBe('31 DEC 2026');
+    expect(dateLabel('2026-01-01')).toBe('01 Jan 2026');
+    expect(dateLabel('2026-12-31')).toBe('31 Dec 2026');
   });
 });
 
@@ -37,8 +37,8 @@ describe('readTime', () => {
   const words = (n: number) => Array.from({ length: n }, () => 'word').join(' ');
 
   it('derives minutes from the body at 200wpm', () => {
-    expect(readTime([{ t: 'p', text: words(1200) }])).toBe('6 MIN');
-    expect(readTime([{ t: 'p', text: words(600) }])).toBe('3 MIN');
+    expect(readTime([{ t: 'p', text: words(1200) }])).toBe('6 min');
+    expect(readTime([{ t: 'p', text: words(600) }])).toBe('3 min');
   });
 
   it('counts headings and list items, not just paragraphs', () => {
@@ -47,11 +47,11 @@ describe('readTime', () => {
       { t: 'h2' as const, text: words(100) },
       { t: 'ul' as const, items: [words(100), words(100)] },
     ];
-    expect(readTime(body)).toBe('3 MIN');
+    expect(readTime(body)).toBe('3 min');
   });
 
-  it('floors at one minute rather than reporting 0 MIN', () => {
-    expect(readTime([{ t: 'p', text: 'Three short words.' }])).toBe('1 MIN');
+  it('floors at one minute rather than reporting 0 min', () => {
+    expect(readTime([{ t: 'p', text: 'Three short words.' }])).toBe('1 min');
   });
 });
 

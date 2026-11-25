@@ -24,7 +24,7 @@ import { POSTS, POST_FLOAT_DELAYS } from '@/lib/landing/content';
 import { DragField } from './DragField';
 import { FadeIn } from '@/components/landing/anim';
 
-const MONO: React.CSSProperties = { fontFamily: "var(--font-plex-mono), 'IBM Plex Mono', ui-monospace, monospace" };
+const LABEL: React.CSSProperties = { fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif" };
 
 export function Journal({
   email,
@@ -72,15 +72,15 @@ export function Journal({
                   <ArticleArt art={p.art} sizes="(max-width: 900px) 100vw, 33vw" />
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 16, padding: '0 6px' }}>
-                  <span style={{ ...MONO, fontSize: 9.5, letterSpacing: '0.26em', color: '#445D22', textTransform: 'uppercase' }}>{p.tag}</span>
-                  <span style={{ ...MONO, fontSize: 9.5, color: '#697062' }}>{p.date}</span>
+                  <span style={{ ...LABEL, fontSize: 11.5, color: '#445D22' }}>{p.tag}</span>
+                  <span style={{ ...LABEL, fontSize: 9.5, color: '#697062' }}>{p.date}</span>
                 </div>
                 <h3 style={{ margin: '12px 6px 0', fontFamily: "var(--font-gummi), Georgia, serif", fontSize: 22, fontWeight: 600, lineHeight: 1.22, letterSpacing: '-0.01em' }}>
                   {p.title}
                 </h3>
                 <p style={{ margin: '12px 6px 18px', color: '#697062', fontSize: 13.5, lineHeight: 1.7, flex: 1 }}>{p.excerpt}</p>
                 <div style={{ margin: '0 6px', paddingTop: 14, borderTop: '1px solid #EDF0EA' }}>
-                  <span style={{ ...MONO, fontSize: 10, letterSpacing: '0.2em', color: '#445D22' }}>READ · {p.time}</span>
+                  <span style={{ ...LABEL, fontSize: 12, letterSpacing: '0.01em', color: '#445D22' }}>READ · {p.time}</span>
                 </div>
               </a>
             </div>

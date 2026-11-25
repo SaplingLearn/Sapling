@@ -29,6 +29,7 @@ import { EmailBroadcastsTab } from "./admin/EmailBroadcasts";
 import { AccountToolsDialog } from "./admin/AccountToolsDialog";
 import { AdminReauthBanner } from "./admin/AdminReauthBanner";
 import { fieldStyle } from "./admin/adminStyles";
+import { sentenceCase } from "@/lib/sentenceCase";
 
 type Tab = "users" | "allowlist" | "email" | "roles" | "flags" | "achievements" | "cosmetics" | "analytics" | "audit" | "feedback";
 
@@ -223,7 +224,7 @@ function UsersTab() {
             <thead>
               <tr style={{ background: "var(--bg-subtle)" }}>
                 {["User", "Email", "Roles", "Last seen", "Joined", ""].map(h => (
-                  <th key={h} style={{ textAlign: "left", padding: "10px 16px", fontWeight: 500, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--text-muted)" }}>
+                  <th key={h} style={{ textAlign: "left", padding: "10px 16px", fontWeight: 500, fontSize: 13, color: "var(--text-muted)" }}>
                     {h}
                   </th>
                 ))}
@@ -750,7 +751,7 @@ function CosmeticsTab() {
         {COSMETIC_TYPES.map(t => (
           <div key={t} className="card" style={{ padding: 0 }}>
             <div style={{ padding: "10px 16px", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between" }}>
-              <div className="label-micro" style={{ textTransform: "uppercase" }}>{t.replace("_", " ")}</div>
+              <div className="label-micro" style={{ }}>{sentenceCase(t.replace("_", " "))}</div>
               <span style={{ fontSize: 11, color: "var(--text-muted)" }}>{grouped[t].length}</span>
             </div>
             {grouped[t].length === 0 && (
@@ -771,7 +772,7 @@ function CosmeticsTab() {
                 middle={
                   <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
                     <span style={{ fontWeight: 600 }}>{c.name}</span>
-                    <span className="chip" style={{ fontSize: 10, textTransform: "uppercase" }}>{c.rarity}</span>
+                    <span className="chip" style={{ fontSize: 12 }}>{sentenceCase(c.rarity)}</span>
                   </span>
                 }
                 sub={c.slug}
@@ -864,7 +865,7 @@ function AnalyticsTab() {
               background: rc.color, border: "1px solid var(--border)",
             }} />
             <span style={{ flex: 1, fontWeight: 500 }}>{rc.name}</span>
-            <span style={{ fontFamily: "var(--font-mono)", color: "var(--text-dim)" }}>{rc.count}</span>
+            <span style={{ fontFamily: "var(--font-sans)", color: "var(--text-dim)" }}>{rc.count}</span>
           </div>
         ))}
       </div>
@@ -983,11 +984,9 @@ function RoleProfilePreview({
               <RoleBadge role={draftRole} />
               <span style={{
                 position: "absolute", top: -6, right: -6,
-                fontSize: 8, fontWeight: 600, letterSpacing: "0.05em",
+                fontSize: 9.5, fontWeight: 600, 
                 padding: "1px 4px", borderRadius: 4,
-                background: "var(--accent)", color: "#fff",
-                textTransform: "uppercase",
-              }}>
+                background: "var(--accent)", color: "#fff" }}>
                 draft
               </span>
             </span>
@@ -1070,7 +1069,7 @@ function AuditTab() {
           <thead>
             <tr style={{ background: "var(--bg-subtle)" }}>
               {["When", "Actor", "Action", "Target", "Payload"].map(h => (
-                <th key={h} style={{ textAlign: "left", padding: "10px 16px", fontWeight: 500, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--text-muted)" }}>
+                <th key={h} style={{ textAlign: "left", padding: "10px 16px", fontWeight: 500, fontSize: 13, color: "var(--text-muted)" }}>
                   {h}
                 </th>
               ))}
@@ -1082,15 +1081,15 @@ function AuditTab() {
                 <td style={{ padding: "10px 16px", color: "var(--text-muted)", whiteSpace: "nowrap" }}>
                   {new Date(e.created_at).toLocaleString()}
                 </td>
-                <td style={{ padding: "10px 16px", fontFamily: "var(--font-mono)", fontSize: 12 }}>{e.actor_id}</td>
+                <td style={{ padding: "10px 16px", fontFamily: "var(--font-code)", fontSize: 12 }}>{e.actor_id}</td>
                 <td style={{ padding: "10px 16px" }}>
                   <span className="chip">{e.action}</span>
                 </td>
                 <td style={{ padding: "10px 16px", color: "var(--text-dim)" }}>
                   <span className="chip">{e.target_type}</span>
-                  <span style={{ marginLeft: 6, fontFamily: "var(--font-mono)", fontSize: 12 }}>{e.target_id || "—"}</span>
+                  <span style={{ marginLeft: 6, fontFamily: "var(--font-code)", fontSize: 12 }}>{e.target_id || "—"}</span>
                 </td>
-                <td style={{ padding: "10px 16px", fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-muted)", maxWidth: 360, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                <td style={{ padding: "10px 16px", fontFamily: "var(--font-code)", fontSize: 11, color: "var(--text-muted)", maxWidth: 360, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
                     title={JSON.stringify(e.payload)}>
                   {Object.keys(e.payload || {}).length ? JSON.stringify(e.payload) : "—"}
                 </td>

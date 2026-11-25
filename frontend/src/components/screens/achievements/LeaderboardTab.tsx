@@ -91,7 +91,7 @@ function RankRow({ row }: { row: LeaderboardRow }) {
         <span style={{ fontSize: 13, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {row.name}
         </span>
-        {row.is_you && <span className="chip chip--accent">YOU</span>}
+        {row.is_you && <span className="chip chip--accent">You</span>}
       </div>
       <div style={{ fontSize: 11.5, color: "var(--text-muted)", whiteSpace: "nowrap" }}>
         {row.stage} · Lvl {row.level}

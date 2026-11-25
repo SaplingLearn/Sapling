@@ -165,8 +165,8 @@ export function CurveSettingsModal({
           grade; each standard deviation above or below shifts the grade by a fixed amount.
         </p>
         <div style={{ display: "grid", gap: 10, marginBottom: 16 }}>
-          <p style={{ margin: 0, fontSize: 11, color: "var(--text-muted)", textTransform: "uppercase",
-            letterSpacing: "0.1em", fontFamily: "var(--font-mono)" }}>
+          <p style={{ margin: 0, fontSize: 13, color: "var(--text-muted)", 
+            fontFamily: "var(--font-sans)" }}>
             Course Policy (from syllabus)
           </p>
           <div style={{ display: "flex", gap: 8 }}>
@@ -821,12 +821,11 @@ function Masthead({ data }: { data: GradebookCourse }) {
         <div
           className="mono"
           style={{
-            fontSize: 11,
-            letterSpacing: "0.2em",
-            textTransform: "uppercase",
+            fontSize: 13,
+            
+            
             color: "var(--text-muted)",
-            marginBottom: 8,
-          }}
+            marginBottom: 8 }}
         >
           {data.course_code}
           {data.semester ? ` · ${data.semester}` : ""}
@@ -1338,12 +1337,11 @@ function SectionHead({
         <span
           className="mono"
           style={{
-            fontSize: 10,
-            letterSpacing: "0.18em",
-            textTransform: "uppercase",
+            fontSize: 12,
+            
+            
             color: "var(--text-muted)",
-            fontWeight: 600,
-          }}
+            fontWeight: 600 }}
         >
           {label}
         </span>

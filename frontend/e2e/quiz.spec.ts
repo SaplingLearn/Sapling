@@ -399,7 +399,7 @@ test("the Adjust dialog mirrors /api/quiz/config; adaptive reports its resolved 
   await expect(page.getByTestId("quiz-answer-options")).toBeVisible({
     timeout: GENERATE_TIMEOUT,
   });
-  await expect(page.getByTestId("quiz-panel")).toContainText("MEDIUM");
+  await expect(page.getByTestId("quiz-panel")).toContainText("Medium");
 
   // …and the attempt the route wrote records the requested value.
   const attempts = await queryRaw(

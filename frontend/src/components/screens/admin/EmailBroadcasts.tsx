@@ -448,7 +448,7 @@ function AudienceFieldset({ audiences, audience, onChange }: {
             onChange={() => onChange(a.key)}
           />
           <span style={{ flex: 1 }}>{a.label}</span>
-          <span style={{ fontFamily: "var(--font-mono)", color: "var(--text-dim)" }}>{a.count}</span>
+          <span style={{ fontFamily: "var(--font-sans)", color: "var(--text-dim)" }}>{a.count}</span>
         </label>
       ))}
     </fieldset>
@@ -590,7 +590,7 @@ function HistoryRow({ b, audiences, resuming, onResume }: {
         )}
       </td>
       <td style={{ ...tdStyle, whiteSpace: "nowrap" }}>
-        <span style={{ fontFamily: "var(--font-mono)" }}>{b.sent_count}/{b.recipient_count}</span>
+        <span style={{ fontFamily: "var(--font-sans)" }}>{b.sent_count}/{b.recipient_count}</span>
         <DeliveryOutcome failed={b.failed_count} skipped={b.skipped_count} />
       </td>
       <td style={{ ...tdStyle, color: "var(--text-muted)", whiteSpace: "nowrap" }}>

@@ -230,9 +230,9 @@ function ProviderCard({
         <div
           className="mono"
           style={{
-            fontSize: 11,
-            letterSpacing: "0.12em",
-            textTransform: "uppercase",
+            fontSize: 13,
+            
+            
             color: loading
               ? "var(--text-muted)"
               : needsReauth
@@ -240,8 +240,7 @@ function ProviderCard({
                 : connected
                   ? "var(--sap-600)"
                   : "var(--text-muted)",
-            marginBottom: 6,
-          }}
+            marginBottom: 6 }}
         >
           {loading
             ? "Checking…"

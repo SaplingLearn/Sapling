@@ -251,7 +251,7 @@ for (const viewport of [{ width: 1440, height: 600 }, { width: 1280, height: 500
     await openLanding(page);
     await expect.poll(async () => {
       const button = await page.getByRole("button", { name: "Sign up for Beta Testing", exact: true }).first().boundingBox();
-      const cue = await page.getByText("SEE WHAT'S INSIDE", { exact: true }).locator("..").boundingBox();
+      const cue = await page.getByText("See what's inside", { exact: true }).locator("..").boundingBox();
       return button && cue ? cue.y - button.y - button.height : -Infinity;
     }).toBeGreaterThanOrEqual(24);
   });

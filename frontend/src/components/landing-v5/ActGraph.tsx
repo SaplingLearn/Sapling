@@ -63,8 +63,8 @@ const CAP_P: React.CSSProperties = {
 };
 
 const MONO_TINY: React.CSSProperties = {
-  fontFamily: "var(--font-plex-mono), 'IBM Plex Mono', ui-monospace, monospace", fontSize: 8.5,
-  letterSpacing: '0.22em', color: '#697062',
+  fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", fontSize: 10,
+  letterSpacing: '0.01em', color: '#697062',
 };
 
 /** Four blurred blobs that read as out-of-focus foliage at the frame edges. */
@@ -175,12 +175,12 @@ export function ActGraph({
                       />
                       <span
                         style={{
-                          fontFamily: "var(--font-plex-mono), 'IBM Plex Mono', ui-monospace, monospace", fontSize: 11,
-                          letterSpacing: '0.14em',
+                          fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", fontSize: 13,
+                          letterSpacing: '0.01em',
                           color: t === 'mastered' ? '#191F13' : '#3B4233',
                         }}
                       >
-                        {XTIER_LABEL[t].toUpperCase()}
+                        {XTIER_LABEL[t]}
                       </span>
                     </div>
                   ))}
@@ -212,12 +212,12 @@ export function ActGraph({
             <p style={{ position: 'relative', margin: '14px 0 0', color: '#3B4233', fontSize: 16, textShadow: '0 1px 14px rgba(242,244,240,0.9)' }}>
               Your whole semester, one living map, updated as you learn.
             </p>
-            <span style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', gap: 8, marginTop: 18, fontFamily: "var(--font-plex-mono), 'IBM Plex Mono', ui-monospace, monospace", fontSize: 10.5, letterSpacing: '0.22em', color: '#445D22' }}>
+            <span style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', gap: 8, marginTop: 18, fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", fontSize: 12.5, letterSpacing: '0.01em', color: '#445D22' }}>
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#445D22" strokeWidth="2" strokeLinecap="round">
                 <path d="M5 9l-3 3 3 3" /><path d="M9 5l3-3 3 3" /><path d="M15 19l-3 3-3-3" />
                 <path d="M19 9l3 3-3 3" /><path d="M2 12h20" /><path d="M12 2v20" />
               </svg>
-              DRAG TO ORBIT · CLICK TO EXPLORE
+              Drag to orbit · Click to explore
             </span>
           </div>
 
@@ -233,40 +233,40 @@ export function ActGraph({
         {exploring && (
           <div className={node ? 'ld-hud ld-hud--node' : 'ld-hud'} style={{ position: 'absolute', inset: 0, zIndex: 6, pointerEvents: 'none', animation: 'panelFade 420ms ease 520ms both' }}>
             <div className="ld-hud-course" style={{ position: 'absolute', left: 'max(3vw,20px)', top: 24, display: 'flex', flexDirection: 'column', gap: 4 }}>
-              <span style={{ fontFamily: "var(--font-plex-mono), 'IBM Plex Mono', ui-monospace, monospace", fontSize: 11, letterSpacing: '0.28em', color: '#445D22' }}>{COURSE.code}</span>
+              <span style={{ fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", fontSize: 13, letterSpacing: '0.01em', color: '#445D22' }}>{COURSE.code}</span>
               <span style={{ fontFamily: "var(--font-aleo), 'Aleo', Georgia, serif", fontSize: 21, fontWeight: 600, color: '#191F13' }}>{COURSE.name}</span>
             </div>
 
             <div className="ld-hud-legend" style={{ position: 'absolute', left: 'max(3vw,20px)', bottom: 26, display: 'flex', flexDirection: 'column', gap: 9, padding: '14px 16px', borderRadius: 14, background: 'rgba(253,252,249,0.8)', border: '1px solid rgba(25,31,19,0.10)', backdropFilter: 'blur(10px)', pointerEvents: 'auto' }}>
-              <span style={{ ...MONO_TINY, letterSpacing: '0.24em' }}>
+              <span style={{ ...MONO_TINY, letterSpacing: '0.01em' }}>
                 {COURSE.term} · {Math.max(0, nodes.length - 1)} CONCEPTS MAPPED
               </span>
               {XTIER_ORDER.map((t) => (
                 <span key={t} style={{ display: 'flex', alignItems: 'center', gap: 9, fontSize: 11.5, color: '#3B4233' }}>
                   <span style={{ width: 9, height: 9, borderRadius: 99, flex: '0 0 auto', background: XTIER[t] }} />
                   {XTIER_LABEL[t]}
-                  <b style={{ marginLeft: 'auto', fontFamily: "var(--font-plex-mono), 'IBM Plex Mono', ui-monospace, monospace", fontSize: 10, fontWeight: 400, color: '#697062' }}>{counts[t]}</b>
+                  <b style={{ marginLeft: 'auto', fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", fontSize: 10, fontWeight: 400, color: '#697062' }}>{counts[t]}</b>
                 </span>
               ))}
             </div>
 
-            <span className="ld-hud-hint" style={{ position: 'absolute', left: '50%', bottom: 26, transform: 'translateX(-50%)', fontFamily: "var(--font-plex-mono), 'IBM Plex Mono', ui-monospace, monospace", fontSize: 9, letterSpacing: '0.22em', color: '#697062', whiteSpace: 'nowrap' }}>
-              DRAG TO ORBIT · SCROLL TO ZOOM · CLICK A CONCEPT
+            <span className="ld-hud-hint" style={{ position: 'absolute', left: '50%', bottom: 26, transform: 'translateX(-50%)', fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", fontSize: 11, letterSpacing: '0.01em', color: '#697062', whiteSpace: 'nowrap' }}>
+              Drag to orbit · Scroll to zoom · Click a concept
             </span>
 
             {node && (
               <div className="ld-hud-inspector" style={{ position: 'absolute', right: 'max(3vw,20px)', top: 78, bottom: 70, width: 'min(340px,32vw)', overflow: 'auto', padding: '22px 22px 20px', borderRadius: 18, background: 'rgba(253,252,249,0.92)', border: '1px solid rgba(25,31,19,0.12)', backdropFilter: 'blur(14px)', pointerEvents: 'auto', animation: 'panelFade 300ms ease both' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
                   <span style={{ width: 10, height: 10, borderRadius: 99, flex: '0 0 auto', background: XTIER[node.tier] }} />
-                  <span style={{ fontFamily: "var(--font-plex-mono), 'IBM Plex Mono', ui-monospace, monospace", fontSize: 8.5, letterSpacing: '0.24em', color: XTIER[node.tier] }}>
-                    {XTIER_LABEL[node.tier].toUpperCase()}
+                  <span style={{ fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", fontSize: 10, letterSpacing: '0.01em', color: XTIER[node.tier] }}>
+                    {XTIER_LABEL[node.tier]}
                   </span>
-                  <span style={{ fontFamily: "var(--font-plex-mono), 'IBM Plex Mono', ui-monospace, monospace", fontSize: 8, letterSpacing: '0.16em', color: '#697062' }}>
+                  <span style={{ fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", fontSize: 9.5, letterSpacing: '0.01em', color: '#697062' }}>
                     {node.root
-                      ? 'COURSE'
+                      ? 'Course'
                       : node.hub
-                        ? `UNIT · ${COURSE.code}`
-                        : `${COURSE.code} · ${COURSE.topics[node.topic!].label.toUpperCase()}`}
+                        ? `Unit · ${COURSE.code}`
+                        : `${COURSE.code} · ${COURSE.topics[node.topic!].label}`}
                   </span>
                   <button
                     onClick={() => onSelectNode(null)}
@@ -284,14 +284,14 @@ export function ActGraph({
                   <span style={{ flex: 1, height: 6, borderRadius: 99, background: 'rgba(25,31,19,0.10)', overflow: 'hidden' }}>
                     <span style={{ display: 'block', height: '100%', borderRadius: 99, transition: 'width 420ms cubic-bezier(0.22,1,0.36,1)', width: `${Math.round(node.mastery * 100)}%`, background: XTIER[node.tier] }} />
                   </span>
-                  <span style={{ fontFamily: "var(--font-plex-mono), 'IBM Plex Mono', ui-monospace, monospace", fontSize: 11, color: '#191F13' }}>{Math.round(node.mastery * 100)}%</span>
+                  <span style={{ fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", fontSize: 11, color: '#191F13' }}>{Math.round(node.mastery * 100)}%</span>
                 </div>
-                <span style={{ display: 'block', marginTop: 5, ...MONO_TINY, letterSpacing: '0.16em', color: '#697062' }}>
-                  MASTERY SCORE · UPDATED AFTER EVERY SESSION
+                <span style={{ display: 'block', marginTop: 5, ...MONO_TINY, letterSpacing: '0.01em', color: '#697062' }}>
+                  Mastery score · Updated after every session
                 </span>
 
                 <span style={{ display: 'block', marginTop: 18, ...MONO_TINY }}>
-                  {neighbours.length} CONNECTED {neighbours.length === 1 ? 'CONCEPT' : 'CONCEPTS'}
+                  {neighbours.length} connected {neighbours.length === 1 ? 'concept' : 'concepts'}
                 </span>
                 <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                   {neighbours.map((j) => (
@@ -308,11 +308,11 @@ export function ActGraph({
                   ))}
                 </div>
 
-                <span style={{ display: 'block', marginTop: 18, ...MONO_TINY }}>WHAT SAPLING DOES WITH THIS NODE</span>
+                <span style={{ display: 'block', marginTop: 18, ...MONO_TINY }}>What Sapling does with this node</span>
                 <div style={{ marginTop: 9, display: 'flex', flexDirection: 'column', gap: 10 }}>
                   {nodeUses(node, neighbours.length).map((u, i) => (
                     <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: 3, paddingLeft: 11, borderLeft: '2px solid rgba(68,93,34,0.3)' }}>
-                      <span style={{ fontFamily: "var(--font-plex-mono), 'IBM Plex Mono', ui-monospace, monospace", fontSize: 8.5, letterSpacing: '0.16em', color: '#445D22' }}>{u.tag}</span>
+                      <span style={{ fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", fontSize: 10, letterSpacing: '0.01em', color: '#445D22' }}>{u.tag}</span>
                       <span style={{ fontSize: 12, lineHeight: 1.6, color: '#3B4233' }}>{u.text}</span>
                     </div>
                   ))}
@@ -326,7 +326,7 @@ export function ActGraph({
                     Ask the tutor
                   </button>
                 </div>
-                <span style={{ display: 'block', marginTop: 9, ...MONO_TINY, letterSpacing: '0.1em', color: '#697062' }}>
+                <span style={{ display: 'block', marginTop: 9, ...MONO_TINY, letterSpacing: '0.01em', color: '#697062' }}>
                   /learn?topic={encodeURIComponent(node.label)}&amp;mode=socratic
                 </span>
               </div>
@@ -336,9 +336,9 @@ export function ActGraph({
               onClick={onExitExplore}
               type="button"
               className="ld-exitexplore ld-hud-exit"
-              style={{ position: 'absolute', right: 'max(3vw,20px)', top: 26, display: 'flex', alignItems: 'center', gap: 8, padding: '9px 16px', borderRadius: 99, border: '1px solid rgba(25,31,19,0.14)', background: 'rgba(253,252,249,0.85)', color: '#3B4233', fontFamily: "var(--font-plex-mono), 'IBM Plex Mono', ui-monospace, monospace", fontSize: 9.5, letterSpacing: '0.2em', cursor: 'pointer', pointerEvents: 'auto', transition: 'all 220ms' }}
+              style={{ position: 'absolute', right: 'max(3vw,20px)', top: 26, display: 'flex', alignItems: 'center', gap: 8, padding: '9px 16px', borderRadius: 99, border: '1px solid rgba(25,31,19,0.14)', background: 'rgba(253,252,249,0.85)', color: '#3B4233', fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", fontSize: 11.5, letterSpacing: '0.01em', cursor: 'pointer', pointerEvents: 'auto', transition: 'all 220ms' }}
             >
-              ✕ EXIT EXPLORE
+              ✕ Exit explore
             </button>
           </div>
         )}

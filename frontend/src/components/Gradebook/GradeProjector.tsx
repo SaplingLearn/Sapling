@@ -419,12 +419,11 @@ export function GradeProjector({
           <div
             className="mono"
             style={{
-              fontSize: 9,
-              letterSpacing: "0.18em",
-              textTransform: "uppercase",
+              fontSize: 11,
+              
+              
               color: "var(--text-muted)",
-              marginBottom: 2,
-            }}
+              marginBottom: 2 }}
           >
             now
           </div>
@@ -506,12 +505,11 @@ function Stat({
       <div
         className="mono"
         style={{
-          fontSize: 10,
-          letterSpacing: "0.14em",
-          textTransform: "uppercase",
+          fontSize: 12,
+          
+          
           color: "var(--text-muted)",
-          marginBottom: 6,
-        }}
+          marginBottom: 6 }}
       >
         {label}
       </div>

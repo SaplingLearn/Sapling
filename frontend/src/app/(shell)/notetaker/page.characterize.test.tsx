@@ -414,14 +414,14 @@ describe("agent actions", () => {
   it("extract re-reads the linked concepts after the agent call", async () => {
     vi.mocked(extractNoteConcepts).mockResolvedValue({ concepts: ["Base case"], linked: 1 });
     await renderPage();
-    await screen.findByText("learning");
+    await screen.findByText("Learning");
     vi.mocked(listNoteConcepts).mockResolvedValue({
       concepts: [LINKED, { ...LINKED, id: "concept-2", concept_name: "Base case", mastery_tier: "mastered" }],
     });
     fireEvent.click(screen.getByRole("button", { name: "Extract concepts" }));
     await screen.findByText("Base case");
     expect(extractNoteConcepts).toHaveBeenCalledWith("n1", "u1");
-    expect(screen.getByText("mastered")).toBeInTheDocument();
+    expect(screen.getByText("Mastered")).toBeInTheDocument();
   });
 
   it("extract toasts on failure", async () => {
@@ -446,7 +446,7 @@ describe("linked concepts", () => {
     });
     vi.mocked(linkNoteConcept).mockResolvedValue({ linked: true });
     await renderPage();
-    await screen.findByText("learning");
+    await screen.findByText("Learning");
 
     fireEvent.click(screen.getByRole("button", { name: /Link concept/ }));
     let dialog = screen.getByRole("dialog");

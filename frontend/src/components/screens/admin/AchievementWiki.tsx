@@ -19,6 +19,7 @@ import type {
   Achievement, AchievementCategory, RarityTier, AchievementTrigger, Cosmetic,
   AdminUserListItem as AdminUser,
 } from "@/lib/types";
+import { sentenceCase } from "@/lib/sentenceCase";
 
 const RARITIES: RarityTier[] = ["common", "uncommon", "rare", "epic", "legendary"];
 
@@ -466,8 +467,8 @@ function AchievementCard({
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             <span style={{ fontWeight: 600, fontSize: 14.5 }}>{achievement.name}</span>
-            <span className="chip" style={{ textTransform: "uppercase", fontSize: 10 }}>{achievement.rarity}</span>
-            <span className="chip" style={{ fontSize: 10 }}>{CAT_META[achievement.category].label}</span>
+            <span className="chip" style={{ fontSize: 12 }}>{sentenceCase(achievement.rarity)}</span>
+            <span className="chip" style={{ fontSize: 12 }}>{CAT_META[achievement.category].label}</span>
             {achievement.is_secret && <span className="chip chip--warn">secret</span>}
           </div>
           <div style={{ fontSize: 12, color: "var(--text-dim)", marginTop: 5, lineHeight: 1.45 }}>
@@ -627,8 +628,8 @@ function AchievementCard({
                   <span style={{ ...fieldStyle, flex: 1, display: "flex", alignItems: "center", gap: 8 }}>
                     <span>{c ? c.name : cid}</span>
                     {c && (
-                      <span style={{ fontSize: 10, color: "var(--text-muted)", textTransform: "uppercase" }}>
-                        {c.type} · {c.rarity}
+                      <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
+                        {sentenceCase(c.type)} · {sentenceCase(c.rarity)}
                       </span>
                     )}
                   </span>
@@ -649,7 +650,7 @@ function AchievementCard({
                 onChange={setPendingCosmeticId}
                 options={cosmetics
                   .filter(c => !linkedCosmeticIds.includes(c.id))
-                  .map(c => ({ value: c.id, label: c.name, description: `${c.type} · ${c.rarity}` }))}
+                  .map(c => ({ value: c.id, label: c.name, description: `${sentenceCase(c.type)} · ${sentenceCase(c.rarity)}` }))}
                 placeholder={cosmetics.length === 0 ? "No cosmetics defined yet" : "Pick a cosmetic to link…"}
                 disabled={cosmetics.filter(c => !linkedCosmeticIds.includes(c.id)).length === 0}
               />

@@ -355,13 +355,12 @@ const COMPONENTS: Components = {
             <div
               style={{
                 fontFamily: "var(--font-sans)",
-                fontSize: 11,
-                letterSpacing: "0.08em",
-                textTransform: "uppercase",
+                fontSize: 13,
+                
+                
                 color: isWarn ? "var(--warn)" : "var(--accent)",
                 fontWeight: 700,
-                marginBottom: 4,
-              }}
+                marginBottom: 4 }}
             >
               {label}
             </div>

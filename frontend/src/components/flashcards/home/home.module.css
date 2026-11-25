@@ -177,7 +177,7 @@
 .deckTag {
   min-width: 0; padding: 2px 8px; border-radius: var(--r-full);
   background: var(--deck-pill); color: var(--deck-on);
-  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.04em; text-transform: uppercase;
+  font-family: var(--font-sans); font-size: 12px; letter-spacing: 0.01em;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .band .deckName {

@@ -138,8 +138,7 @@ function CoursePicker({
     <>
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <span style={{
-          fontFamily: FONT_MONO, fontSize: 12, letterSpacing: "0.12em",
-          textTransform: "uppercase", color: "#6F6857",
+          fontFamily: FONT_MONO, fontSize: 14, color: "#6F6857",
         }}>Course</span>
         {hint && (
           <span style={{ fontSize: 13, color: "#445D22", fontWeight: 600 }}>
@@ -212,14 +211,10 @@ function FolderPicker({
   return (
     <>
       <span style={{
-        marginTop: 14, fontFamily: FONT_MONO, fontSize: 12, letterSpacing: "0.12em",
-        textTransform: "uppercase", color: "#6F6857",
+        marginTop: 14, fontFamily: FONT_MONO, fontSize: 14, color: "#6F6857",
       }}>
         Folder{" "}
-        <span style={{
-          textTransform: "none", letterSpacing: 0,
-          fontFamily: "var(--font-sans)", fontSize: 13,
-        }}>(optional)</span>
+        <span style={{ fontFamily: "var(--font-sans)", fontSize: 13 }}>(optional)</span>
       </span>
 
       <div style={{ position: "relative" }}>

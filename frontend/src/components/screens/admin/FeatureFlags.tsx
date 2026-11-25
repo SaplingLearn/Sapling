@@ -11,6 +11,7 @@ import { adminListFlags, adminListRoles, adminUpdateFlag, type AdminFlag } from 
 
 import { FlagPanel } from "./FlagPanel";
 import { changeSummary, flagMeta, groupFlags, relativeTime, rolloutPhrase, switchFor, variantLabel } from "./flagLabels";
+import { sentenceCase } from "@/lib/sentenceCase";
 
 /**
  * Admin "Feature flags" tab (#620, ADR 0029).
@@ -68,7 +69,7 @@ export function FeatureFlagsTab() {
 
       {groupFlags(flags).map(({ group, flags: inGroup }) => (
         <section key={group} className="flags__group" aria-labelledby={`flags-group-${group}`}>
-          <h3 id={`flags-group-${group}`} className="label-micro flags__group-title">{group}</h3>
+          <h3 id={`flags-group-${group}`} className="label-micro flags__group-title">{sentenceCase(group)}</h3>
           <div className="card flags__list">
             {inGroup.map((f) => (
               <FlagRow

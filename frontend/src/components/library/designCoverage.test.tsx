@@ -98,6 +98,13 @@ const LIBRARY_DESIGN = read("__fixtures__/library-v2.design.html");
  * listed: other controls still carry every one of them. The skeleton's
  * 104px-wide bar was the chip's placeholder in the filter row, so it goes
  * too; it is the only 104px in the prototype.
+ *
+ * The caps labels: the handoff sets its group headings (the upload menu's and
+ * the Where-to modal's Course / Folder) in IBM Plex Mono caps tracked 0.12em,
+ * with a `text-transform: none` to undo it on "(optional)". #928 retired the
+ * mono face and forced caps app-wide, so those labels are sentence case at
+ * about +2px, and the three declarations that only that style needed go. Each
+ * occurs nowhere else in the prototype.
  */
 const EXPECTED_DEVIATIONS = [
   /^font-family: '(Aleo|SUSE|IBM Plex Mono)'/,
@@ -108,6 +115,7 @@ const EXPECTED_DEVIATIONS = [
   /^transform-box: fill-box$/, /^transform-origin: 85% 100%$/,
   /^transition: transform 200ms cubic-bezier\(0\.2, 0\.7, 0\.2, 1\)$/,
   /^transform: translateY\(0\.5px\)$/, /^width: 104px$/,
+  /^text-transform: (uppercase|none)$/, /^letter-spacing: 0\.12em$/,
 ];
 
 /** The rebuild's own source: components, hooks, and the ported stylesheet. */

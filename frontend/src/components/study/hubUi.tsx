@@ -13,7 +13,7 @@ import type { ToolKey } from "./useToolNav";
 
 export const DISPLAY = "var(--font-display)";
 export const SANS = "var(--font-sans)";
-export const MONO = "var(--font-mono)";
+export const LABEL = "var(--font-sans)";
 
 /** One line, cut with an ellipsis. */
 export const ELLIPSIS: React.CSSProperties = { whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" };

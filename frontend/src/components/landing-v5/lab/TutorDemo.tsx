@@ -14,7 +14,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { MONO } from './LabShell';
+import { LABEL } from './LabShell';
 import { TUTOR } from './labData';
 
 type Mode = keyof typeof TUTOR;
@@ -71,7 +71,7 @@ export function TutorDemo() {
                 onClick={() => switchMode(k)}
                 type="button"
                 aria-pressed={on}
-                style={{ padding: '7px 14px', borderRadius: 7, border: 'none', ...MONO, fontSize: 9.5, letterSpacing: '0.14em', cursor: 'pointer', transition: 'all 200ms', background: on ? '#191F13' : 'transparent', color: on ? '#FDFCF9' : '#697062', fontWeight: on ? 600 : 400 }}
+                style={{ padding: '7px 14px', borderRadius: 7, border: 'none', ...LABEL, fontSize: 11.5, letterSpacing: '0.01em', cursor: 'pointer', transition: 'all 200ms', background: on ? '#191F13' : 'transparent', color: on ? '#FDFCF9' : '#697062', fontWeight: on ? 600 : 400 }}
               >
                 {TUTOR[k].label}
               </button>
@@ -80,7 +80,7 @@ export function TutorDemo() {
         </div>
         <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 7 }}>
           <span style={{ width: 7, height: 7, borderRadius: 99, background: T.tone }} />
-          <span style={{ ...MONO, fontSize: 9, letterSpacing: '0.14em', color: '#91978B' }}>{T.topic}</span>
+          <span style={{ ...LABEL, fontSize: 11, letterSpacing: '0.01em', color: '#91978B' }}>{T.topic}</span>
         </span>
       </div>
 
@@ -119,10 +119,10 @@ export function TutorDemo() {
 
         {sources.length > 0 && !thinking && (
           <div style={{ marginLeft: 35, display: 'flex', flexDirection: 'column', gap: 5 }}>
-            <span style={{ ...MONO, fontSize: 8.5, letterSpacing: '0.2em', color: '#9FA49A' }}>GROUNDED IN YOUR UPLOADS</span>
+            <span style={{ ...LABEL, fontSize: 10, letterSpacing: '0.01em', color: '#9FA49A' }}>Grounded in your uploads</span>
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
               {sources.map((src) => (
-                <span key={src} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '4px 9px', borderRadius: 6, background: '#F6F8F4', border: '1px solid #E0E6DA', ...MONO, fontSize: 9, color: '#3B4233' }}>
+                <span key={src} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '4px 9px', borderRadius: 6, background: '#F6F8F4', border: '1px solid #E0E6DA', ...LABEL, fontSize: 9, color: '#3B4233' }}>
                   <span style={{ width: 5, height: 5, borderRadius: 99, background: '#68951F' }} />
                   {src}
                 </span>
@@ -147,10 +147,10 @@ export function TutorDemo() {
           ))}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-          <span style={{ ...MONO, fontSize: 8.5, letterSpacing: '0.14em', color: '#9FA49A' }}>
+          <span style={{ ...LABEL, fontSize: 10, letterSpacing: '0.01em', color: '#9FA49A' }}>
             {current
-              ? (mode === 'teachback' ? 'IT LISTENS FOR WHAT YOU SKIPPED' : 'IT NEVER HANDS OVER THE ANSWER')
-              : 'SESSION COMPLETE · MASTERY WRITTEN BACK TO YOUR GRAPH'}
+              ? (mode === 'teachback' ? 'It listens for what you skipped' : 'It never hands over the answer')
+              : 'Session complete · Mastery written back to your graph'}
           </span>
           <button onClick={reset} type="button" className="ld-labrecent" style={{ padding: '7px 14px', borderRadius: 8, border: '1px solid #E0E6DA', background: '#FDFCF9', fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", fontSize: 12, color: '#697062', cursor: 'pointer' }}>
             Start over

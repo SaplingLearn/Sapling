@@ -30,7 +30,7 @@ import { HeroCard } from '@/components/marketing/HeroCard';
 import { useScrollLock } from '@/lib/useScrollLock';
 
 const SERIF = "var(--font-aleo), 'Aleo', Georgia, serif";
-const MONO = "var(--font-plex-mono), 'IBM Plex Mono', ui-monospace, monospace";
+const LABEL = "var(--font-suse), 'SUSE', system-ui, sans-serif";
 const SANS = "var(--font-suse), 'SUSE', system-ui, sans-serif";
 
 /** The three perks of being on the list, each with its own accent dot.
@@ -165,7 +165,7 @@ export function BetaModal({
           <SaplingWordmark width={88} />
 
           <div>
-            <div style={{ fontFamily: MONO, fontSize: 10.5, color: '#6b7280', letterSpacing: '0.22em', marginBottom: 14, textTransform: 'uppercase', fontWeight: 600 }}>
+            <div style={{ fontFamily: LABEL, fontSize: 12.5, color: '#6b7280', marginBottom: 14, fontWeight: 600 }}>
               Early access
             </div>
             <h2 style={{ margin: 0, fontFamily: SERIF, fontSize: 44, lineHeight: 1.05, fontWeight: 700, color: '#1a1a1a', letterSpacing: '-0.02em' }}>
@@ -194,11 +194,10 @@ export function BetaModal({
                   <span
                     style={{
                       display: 'inline-flex', alignItems: 'center', padding: '3px 10px',
-                      borderRadius: 9999, fontSize: 10, fontWeight: 500, fontFamily: MONO,
-                      letterSpacing: '0.1em', textTransform: 'uppercase',
+                      borderRadius: 9999, fontSize: 12, fontWeight: 500, fontFamily: LABEL,
+                      
                       background: 'rgba(212,175,55,0.08)', color: '#C9A227',
-                      border: '1.5px solid rgba(212,175,55,0.55)',
-                    }}
+                      border: '1.5px solid rgba(212,175,55,0.55)' }}
                   >
                     Beta Tester
                   </span>

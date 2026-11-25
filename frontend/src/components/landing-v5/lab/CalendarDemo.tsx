@@ -14,7 +14,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { MONO } from './LabShell';
+import { LABEL } from './LabShell';
 import { CAL_BASE, CAL_SYLLABUS, TYPE } from './labData';
 
 type View = 'month' | 'week' | 'day';
@@ -78,7 +78,7 @@ export function CalendarDemo() {
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', gap: 5 }}>
           {DOWS.map((d, i) => (
-            <span key={i} style={{ ...MONO, fontSize: 8.5, letterSpacing: '0.12em', color: '#9FA49A', textAlign: 'center' }}>{d}</span>
+            <span key={i} style={{ ...LABEL, fontSize: 10, letterSpacing: '0.01em', color: '#9FA49A', textAlign: 'center' }}>{d}</span>
           ))}
         </div>
 
@@ -103,7 +103,7 @@ export function CalendarDemo() {
                       }),
                 }}
               >
-                <span style={{ ...MONO, fontSize: 9, color: selected ? '#445D22' : '#9FA49A' }}>{c.day}</span>
+                <span style={{ ...LABEL, fontSize: 9, color: selected ? '#445D22' : '#9FA49A' }}>{c.day}</span>
                 {c.chips.map((ch, j) => (
                   <span key={j} style={{ width: '100%', height: 5, borderRadius: 2, animation: 'labIn 300ms ease both', background: TYPE[ch.type as keyof typeof TYPE] }} />
                 ))}
@@ -114,7 +114,7 @@ export function CalendarDemo() {
       </div>
 
       <div style={{ padding: '18px 16px', background: '#F6F8F4', display: 'flex', flexDirection: 'column', gap: 10 }}>
-        <span style={{ ...MONO, fontSize: 9, letterSpacing: '0.18em', color: '#91978B' }}>OCTOBER {day}</span>
+        <span style={{ ...LABEL, fontSize: 11, letterSpacing: '0.01em', color: '#91978B' }}>OCTOBER {day}</span>
 
         {sideItems.map((a, i) => (
           <div key={i} style={{ padding: '10px 12px', borderRadius: 10, background: '#FDFCF9', border: '1px solid #E0E6DA', display: 'flex', flexDirection: 'column', gap: 3, animation: 'labIn 280ms ease both' }}>
@@ -122,8 +122,8 @@ export function CalendarDemo() {
               <span style={{ width: 8, height: 8, borderRadius: 2, flex: '0 0 auto', background: TYPE[a.type as keyof typeof TYPE] }} />
               <span style={{ fontSize: 12.5, fontWeight: 600, color: '#191F13' }}>{a.title}</span>
             </div>
-            <span style={{ ...MONO, fontSize: 9, letterSpacing: '0.08em', color: '#91978B' }}>
-              {a.course} · {a.type.toUpperCase()}
+            <span style={{ ...LABEL, fontSize: 11, letterSpacing: '0.01em', color: '#91978B' }}>
+              {a.course} · {a.type}
             </span>
           </div>
         ))}
@@ -137,9 +137,9 @@ export function CalendarDemo() {
             onClick={upload}
             type="button"
             className="ld-labupload"
-            style={{ padding: '10px 12px', borderRadius: 9, border: '1px dashed #68951F', background: '#EAF1E4', ...MONO, fontSize: 9.5, letterSpacing: '0.1em', color: '#445D22', cursor: 'pointer' }}
+            style={{ padding: '10px 12px', borderRadius: 9, border: '1px dashed #68951F', background: '#EAF1E4', ...LABEL, fontSize: 11.5, letterSpacing: '0.01em', color: '#445D22', cursor: 'pointer' }}
           >
-            {uploading ? 'READING SYLLABUS…' : uploaded ? 'SYLLABUS APPLIED' : '+ UPLOAD MA242_SYLLABUS.PDF'}
+            {uploading ? 'Reading syllabus…' : uploaded ? 'Syllabus applied' : '+ Upload ma242_syllabus.pdf'}
           </button>
           <span style={{ fontSize: 11, lineHeight: 1.6, color: '#9FA49A' }}>
             {uploaded

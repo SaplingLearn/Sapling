@@ -2007,7 +2007,7 @@ function RailHeader({ cardCourse, topic }: { cardCourse: EnrolledCourse | null; 
     <div style={{ padding: "20px 22px 16px", borderBottom: "1px solid var(--border)" }}>
       <div className="label-micro">Knowledge map</div>
       {cardCourse && (
-        <div style={{ marginTop: 8, fontFamily: "var(--font-mono)", fontSize: 12, fontWeight: 500, color: "var(--brand-forest)" }}>
+        <div style={{ marginTop: 8, fontFamily: "var(--font-sans)", fontSize: 12, fontWeight: 500, color: "var(--brand-forest)" }}>
           {cardCourse.course_code}
         </div>
       )}

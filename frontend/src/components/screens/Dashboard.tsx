@@ -1098,7 +1098,7 @@ function renderLegacyRightPanel({
             const key = d.toISOString().slice(0, 10);
             return (
               <div key={key} style={{ textAlign: "center" }}>
-                <div className="label-micro" style={{ fontSize: 9 }}>
+                <div className="label-micro" style={{ fontSize: 11 }}>
                   {d.toLocaleDateString("en-US", { weekday: "short" }).slice(0, 2)}
                 </div>
                 <div style={{ marginTop: 6, display: "grid", placeItems: "center" }}>

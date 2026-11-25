@@ -10,7 +10,7 @@ import {
   WIKI_NOTE_SPECS, WIKI_ONBOARDING_SPECS, WIKI_PIPELINE, WIKI_PROGRESS_TERMS,
   WIKI_QUIZ_SPECS, WIKI_ROOM_SPECS, WIKI_SHOTS, WIKI_TIERS, WIKI_UPLOAD_SPECS,
 } from '@/lib/landing/companionContent';
-import { ARTICLE, DISPLAY, MONO, SERIF } from '@/lib/landing/companionType';
+import { ARTICLE, DISPLAY, LABEL, SERIF } from '@/lib/landing/companionType';
 
 /**
  * Wiki.
@@ -130,7 +130,7 @@ const MASTHEAD_PAD = 42;
 const MASTHEAD_GAP = 56;
 
 /** The green mono key that opens a row. */
-const KEY: React.CSSProperties = { fontFamily: MONO, fontSize: 13.5, letterSpacing: '0.06em', color: 'var(--brand-forest)' };
+const KEY: React.CSSProperties = { fontFamily: LABEL, fontSize: 13.5, letterSpacing: '0.06em', color: 'var(--brand-forest)' };
 /** The value a spec row states, above its reason. */
 const VALUE: React.CSSProperties = { fontSize: 17, fontWeight: 600, color: '#1a1814' };
 
@@ -264,7 +264,7 @@ export default function WikiPage() {
         */}
         <header style={{ paddingBottom: MASTHEAD_PAD, borderBottom: '1px solid rgba(42,39,31,0.12)' }}>
           <div style={{ animation: 'fadeUp 700ms ease both' }}>
-            <span style={{ display: 'block', fontFamily: MONO, fontSize: 12.5, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#6f6857' }}>
+            <span style={{ display: 'block', fontFamily: LABEL, fontSize: 12.5, color: '#6f6857' }}>
               Reference
             </span>
             {/* The shared companion display scale, not a local size: at a flat
@@ -305,7 +305,7 @@ export default function WikiPage() {
                   <div key={t.name} style={{ display: 'grid', gridTemplateColumns: '12px minmax(0,124px) minmax(0,116px) minmax(0,1fr)', gap: 16, alignItems: 'baseline', padding: '15px 0', borderTop: ROW_TOP }}>
                     <span style={{ width: 10, height: 10, borderRadius: 99, background: cssColor(t.dot) }} />
                     <span style={VALUE}>{t.name}</span>
-                    <span style={{ fontFamily: MONO, fontSize: 13.5, lineHeight: 1.5, color: '#6f6857', whiteSpace: 'nowrap' }}>{t.range}</span>
+                    <span style={{ fontFamily: LABEL, fontSize: 13.5, lineHeight: 1.5, color: '#6f6857', whiteSpace: 'nowrap' }}>{t.range}</span>
                     <span style={DEF}>{t.meaning}</span>
                   </div>
                 ))}
@@ -318,7 +318,7 @@ export default function WikiPage() {
               lede="Mastery moves on demonstrated understanding, not time spent, which means several things you might expect to move it do not. Every change is appended to your graph with a reason attached."
             >
               {/* The formula reads as an equation, so it gets to look like one. */}
-              <div style={{ padding: '16px 18px', borderRadius: 10, background: '#faf8f3', border: '1px solid rgba(42,39,31,0.10)', fontFamily: MONO, fontSize: 15, lineHeight: 1.6, color: '#1a1814', overflowX: 'auto' }}>
+              <div style={{ padding: '16px 18px', borderRadius: 10, background: '#faf8f3', border: '1px solid rgba(42,39,31,0.10)', fontFamily: LABEL, fontSize: 15, lineHeight: 1.6, color: '#1a1814', overflowX: 'auto' }}>
                 {WIKI_MASTERY_FORMULA}
               </div>
               <p style={{ ...LEDE, marginTop: 14 }}>
@@ -330,7 +330,7 @@ export default function WikiPage() {
                   {WIKI_MASTERY_MOVES.map((m) => (
                     <div key={m.source} style={{ display: 'grid', gridTemplateColumns: `${KEY_COL} minmax(0,132px) minmax(0,1fr)`, gap: ROW_GAP, alignItems: 'baseline', padding: '15px 0', borderTop: ROW_TOP }}>
                       <span style={VALUE}>{m.source}</span>
-                      <span style={{ fontFamily: MONO, fontSize: 13.5, color: 'var(--brand-forest)', whiteSpace: 'nowrap' }}>{m.value}</span>
+                      <span style={{ fontFamily: LABEL, fontSize: 13.5, color: 'var(--brand-forest)', whiteSpace: 'nowrap' }}>{m.value}</span>
                       <span style={DEF}>{m.note}</span>
                     </div>
                   ))}
@@ -362,7 +362,7 @@ export default function WikiPage() {
               <div style={{ display: 'flex', flexDirection: 'column' }}>
                 {WIKI_MODES.map((m) => (
                   <div key={m.name} style={{ display: 'grid', gridTemplateColumns: `${KEY_COL} minmax(0,1fr)`, gap: ROW_GAP, padding: '15px 0', borderTop: ROW_TOP }}>
-                    <span style={{ ...KEY, letterSpacing: '0.1em', textTransform: 'uppercase' }}>{m.name}</span>
+                    <span style={{ ...KEY }}>{m.name}</span>
                     <span style={DEF}>{m.def}</span>
                   </div>
                 ))}
@@ -388,7 +388,7 @@ export default function WikiPage() {
               <div style={{ display: 'flex', flexDirection: 'column' }}>
                 {WIKI_PIPELINE.map((p) => (
                   <div key={p.num} style={{ display: 'grid', gridTemplateColumns: `${KEY_COL} minmax(0,1fr)`, gap: ROW_GAP, padding: '15px 0', borderTop: ROW_TOP }}>
-                    <span style={{ fontFamily: MONO, fontSize: 13.5, letterSpacing: '0.16em', color: 'var(--brand-forest-bright)', paddingTop: 2 }}>{p.num}</span>
+                    <span style={{ fontFamily: LABEL, fontSize: 13.5, letterSpacing: '0.16em', color: 'var(--brand-forest-bright)', paddingTop: 2 }}>{p.num}</span>
                     <span style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
                       <span style={VALUE}>{p.title}</span>
                       <span style={DEF}>{p.body}</span>
@@ -415,7 +415,7 @@ export default function WikiPage() {
                 {WIKI_FLASHCARD_RATINGS.map((r) => (
                   <div key={r.label} style={{ border: '1px solid rgba(42,39,31,0.10)', borderRadius: 12, padding: 18, background: '#faf8f3', display: 'flex', alignItems: 'center', gap: 9 }}>
                     <span style={{ ...VALUE, color: cssColor(r.tone) }}>{r.label}</span>
-                    <span style={{ fontFamily: MONO, fontSize: 13.5, color: '#6f6857' }}>KEY {r.key}</span>
+                    <span style={{ fontFamily: LABEL, fontSize: 13.5, color: '#6f6857' }}>KEY {r.key}</span>
                   </div>
                 ))}
               </div>
@@ -449,7 +449,7 @@ export default function WikiPage() {
                 {WIKI_LETTERS.map((l) => (
                   <span key={l.letter} style={{ display: 'flex', alignItems: 'baseline', gap: 8, padding: '8px 14px', borderRadius: 8, background: '#faf8f3', border: '1px solid rgba(42,39,31,0.10)' }}>
                     <b style={{ ...VALUE }}>{l.letter}</b>
-                    <span style={{ fontFamily: MONO, fontSize: 13.5, color: '#6f6857' }}>{l.min}</span>
+                    <span style={{ fontFamily: LABEL, fontSize: 13.5, color: '#6f6857' }}>{l.min}</span>
                   </span>
                 ))}
               </div>

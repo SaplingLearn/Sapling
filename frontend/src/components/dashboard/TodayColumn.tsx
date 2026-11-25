@@ -410,7 +410,7 @@ export function TodayColumn(props: {
             const future = d.getTime() > today.getTime();
             return (
               <div key={key} style={{ textAlign: "center" }}>
-                <div className="label-micro" style={{ fontSize: 9.5, letterSpacing: "0.06em" }}>
+                <div className="label-micro" style={{ fontSize: 11, letterSpacing: "0.06em" }}>
                   {d.toLocaleDateString("en-US", { weekday: "narrow" })}
                 </div>
                 <div

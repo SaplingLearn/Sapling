@@ -397,7 +397,7 @@ export const RECIPES_PUBLIC: RecipeBook = {
           ms === 1900 ? 0 : orig(handler, ms, ...args)) as typeof window.setTimeout;
       });
       await page.goto("/", { waitUntil: "domcontentloaded" });
-      await expect(page.getByText("LOADING", { exact: true })).toBeVisible({ timeout: T });
+      await expect(page.getByText("Loading", { exact: true })).toBeVisible({ timeout: T });
       await text(page, /^100$/); // the counter tops out while held
       await page.waitForTimeout(1_000); // the sprout finishes growing (2.4s)
       await expect(page.locator('h1[aria-label="Sapling"]')).toHaveText("");
@@ -447,7 +447,7 @@ export const RECIPES_PUBLIC: RecipeBook = {
     persona: "public",
     run: async (page) => {
       await actGraphCap(3).run(page);
-      await expect(page.locator('[data-cap="3"]')).toContainText("CLICK TO EXPLORE");
+      await expect(page.locator('[data-cap="3"]')).toContainText("Click to explore");
     },
   },
   "landing/explore-idle": {

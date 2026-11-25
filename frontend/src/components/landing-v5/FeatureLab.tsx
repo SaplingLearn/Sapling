@@ -19,7 +19,7 @@
 import { GAL, LAB_KIND } from '@/lib/landing/content';
 import { FeatureLabDemo } from './lab';
 
-const MONO: React.CSSProperties = { fontFamily: "var(--font-plex-mono), 'IBM Plex Mono', ui-monospace, monospace" };
+const LABEL: React.CSSProperties = { fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif" };
 
 export function FeatureLab({
   index,
@@ -50,7 +50,7 @@ export function FeatureLab({
       >
         <div className="ld-lab-grid" style={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: 'minmax(320px,4fr) 7fr', animation: 'panelFade 420ms ease 160ms both' }}>
           <div className="ld-lab-copy" style={{ padding: 'clamp(28px,5vh,56px) clamp(28px,4vw,56px)', display: 'flex', flexDirection: 'column', borderRight: '1px solid #ECE9DE', overflow: 'auto' }}>
-            <span style={{ ...MONO, fontSize: 10.5, letterSpacing: '0.3em', color: '#445D22', textTransform: 'uppercase' }}>
+            <span style={{ ...LABEL, fontSize: 12.5, color: '#445D22' }}>
               {g.num} · {g.kicker}
             </span>
             <h3 style={{ margin: '16px 0 0', fontFamily: "var(--font-gummi), Georgia, serif", fontSize: 'clamp(1.9rem,3.2vw,2.9rem)', fontWeight: 600, lineHeight: 1.06, letterSpacing: '-0.018em', color: '#191F13' }}>
@@ -105,7 +105,7 @@ export function FeatureLab({
                   color: on ? '#FDFCF9' : '#3B4233',
                 }}
               >
-                <span style={{ ...MONO, fontSize: 8.5, letterSpacing: '0.22em', color: on ? 'rgba(253,252,249,0.7)' : '#9FA49A' }}>
+                <span style={{ ...LABEL, fontSize: 10, letterSpacing: '0.01em', color: on ? 'rgba(253,252,249,0.7)' : '#9FA49A' }}>
                   {r.num}
                 </span>
                 <span style={{ fontSize: 12.5, fontWeight: 600, whiteSpace: 'nowrap' }}>{r.kicker}</span>

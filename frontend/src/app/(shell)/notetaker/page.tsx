@@ -39,6 +39,7 @@ import {
   noteDetailRailStyle,
   chatRailStyle,
 } from "@/lib/notes/notetakerLayout";
+import { sentenceCase } from "@/lib/sentenceCase";
 
 type Mastery = "mastered" | "learning" | "struggling" | "unexplored";
 
@@ -1058,7 +1059,7 @@ function NoteEditor({
           background: fullscreen ? "transparent" : "var(--bg-inset)",
           fontSize: 11,
           color: "var(--text-muted)",
-          fontFamily: "var(--font-mono)",
+          fontFamily: "var(--font-sans)",
           letterSpacing: "0.04em",
           transition:
             "padding var(--dur-slow) var(--ease), background var(--dur-slow) var(--ease), border-color var(--dur-slow) var(--ease)",
@@ -1194,12 +1195,10 @@ function NoteDetail({
                 <span
                   className="mono"
                   style={{
-                    fontSize: 10,
-                    color: "var(--text-muted)",
-                    textTransform: "uppercase",
-                  }}
+                    fontSize: 12,
+                    color: "var(--text-muted)" }}
                 >
-                  {c.mastery}
+                  {sentenceCase(c.mastery)}
                 </span>
                 <button
                   type="button"
@@ -1744,12 +1743,10 @@ function ConceptPickerModal({
                   <span
                     className="mono"
                     style={{
-                      fontSize: 10,
-                      color: "var(--text-muted)",
-                      textTransform: "uppercase",
-                    }}
+                      fontSize: 12,
+                      color: "var(--text-muted)" }}
                   >
-                    {n.mastery_tier}
+                    {sentenceCase(n.mastery_tier)}
                   </span>
                 </button>
               ))}
