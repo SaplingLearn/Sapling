@@ -47,7 +47,7 @@ from services.feature_flags import flag_on
 from services.graph_service import _normalize_concept
 from services.request_limits import check_rate_limit
 
-from services.loop.state import _agate, _arm_for, _gate, _item_like, _request_id
+from services.loop.state import _agate, _arm_for, _gate, _item_like, _request_id, _require_answer_fields
 from services.loop.learner import _band_for, _learner_state
 from services.loop.served import _POSES
 from services.loop.reveals import _ledger, _refloor, _reveal_floor
@@ -77,6 +77,9 @@ from services.loop.posttest_poses import (
 #: Every module of the package logs as the route always did (the ops-log
 #: mirror and the tests key on this logger name).
 logger = logging.getLogger("routes.learn_loop")
+
+#: The window of the no-model routes' light limit: LOOP_PROBE_PLAN_READS_PER_MIN is per minute.
+_LIGHT_LIMIT_WINDOW_S = 60
 
 
 def posttest_start(body: PosttestStartBody, request: Request) -> dict:
@@ -214,20 +217,7 @@ async def posttest_answer(body: PosttestAnswerBody, request: Request):
     if not body.user_id:
         body.user_id = await guard_off_loop(get_session_user_id, request)
     loop_on = await _agate(body.user_id, request)
-    node = await asyncio.to_thread(_posttest_node, body.user_id, body.node_id)  # #117
-    course_id, key = node["course_id"], _normalize_concept(node.get("concept_name") or "")
-    # #117: every sync PostgREST read and write below hops off the event loop
-    items = (await asyncio.to_thread(items_for_concepts, course_id, [key])).get(key) or []
-    item = next((i for i in items if i.question_hash == body.question_hash), None)
-    if item is None:
-        raise HTTPException(status_code=404, detail="check item not found")
-    if not body.idk:
-        if item.format == "mc_reason" and not body.selected_option:
-            raise HTTPException(status_code=422, detail="an mc_reason answer needs selected_option")
-        if item.format != "mc_reason" and not body.answer:
-            raise HTTPException(status_code=422, detail="a free answer needs answer")
-    if await asyncio.to_thread(_posttest_reported, body.user_id, item.question_hash):
-        raise HTTPException(status_code=409, detail=_NOT_A_POSTTEST_ITEM)
+    course_id, item = await _answerable_posttest_item(body)
     now = _posttest_now()
     claim = str(uuid.uuid4())
     pose = await asyncio.to_thread(  # #117: off the event loop
@@ -241,22 +231,7 @@ async def posttest_answer(body: PosttestAnswerBody, request: Request):
             _posttest_floor, body.user_id, body.node_id, item, _ts(pose.get("posed_at"))
         ))
         band, p_before = await asyncio.to_thread(_band_for, body.user_id, body.node_id)
-        deps = SaplingDeps(
-            user_id=body.user_id,
-            course_id=course_id,
-            supabase=None,
-            request_id=_request_id(request),
-            session_id=None,
-            feature="loop_posttest",
-            learning_loop=loop_on,
-        )
-        answer = CheckAnswer(
-            question_hash=item.question_hash,
-            answer_text=body.answer,
-            selected_option=body.selected_option,
-            reason=body.reason,
-            idk=body.idk,
-        )
+        deps = _posttest_deps(body, request, course_id, loop_on)
         # A76: every grading caller decides the re-check through the one helper
         # (no session log here: the node's journal decides)
         recheck = await asyncio.to_thread(
@@ -265,7 +240,7 @@ async def posttest_answer(body: PosttestAnswerBody, request: Request):
         async with within_grade_deadline():  # the claim goes stale after LOOP_GRADING_CLAIM_STALE_S
             outcome = await grade_answer(
                 _item_like(item),
-                answer,
+                _posttest_check_answer(body, item),
                 deps=deps,
                 node_id=body.node_id,
                 max_rung=int(floor),
@@ -280,24 +255,15 @@ async def posttest_answer(body: PosttestAnswerBody, request: Request):
             _refloor, deps.pending_evidence, body.user_id, item, _ts(pose.get("posed_at")), int(floor)
         ))
         answered_at = _posttest_now()
-        # A126: telemetry beside the outcome, bounded by the server's own clock:
-        # the item cannot have been hidden for longer than it was on screen
         served = _ts(pose.get("served_at"))
-        shown_from = served or _ts(pose.get("posed_at"))
-        hidden_count, hidden_s = clamp_visibility(
-            body.hidden_count,
-            body.hidden_s,
-            (answered_at - shown_from).total_seconds() if shown_from else None,
-        )
+        hidden_count, hidden_s = _posttest_visibility(body, pose, served, answered_at)
         # #866 review A5: the evidence FIRST, under the claim and the pose's own identity
         # (`_pose_operation`): a failed write leaves the pose open (released
         # below) for the same answer to be sent again, never an answered pose
         # whose evidence BKT never saw; a retry replays the first commit, or
         # the earlier committed grade stands (`_earlier_pose_commit`)
-        operation = _pose_operation(body.user_id, body.node_id, pose, claim)
-        for ev in deps.pending_evidence:
-            ev["operation_id"] = operation
-        retired, earlier = False, None
+        operation = _stamp_pose_operation(deps, body, pose, claim)
+        retired = False
         try:
             # ONE call: the post-test's only evidence write
             changes = await asyncio.to_thread(flush_pending, deps, course_id)
@@ -307,11 +273,7 @@ async def posttest_answer(body: PosttestAnswerBody, request: Request):
             earlier = await asyncio.to_thread(_earlier_pose_commit, body.user_id, body.node_id, operation)
             if earlier is None:
                 raise
-            changes, floor = [], Rung(earlier["max_rung"])
-            outcome = SimpleNamespace(
-                correct=earlier["correct"], confidence=None, grader_backend=None,
-                evidence={"channel": earlier["channel"]},
-            )
+            changes, floor, outcome = [], Rung(earlier["max_rung"]), _earlier_outcome(earlier)
         # then the pose's close, re-validating the claim; it records the outcome
         answered = await asyncio.to_thread(  # #117: off the event loop
             _answer_pose,
@@ -339,16 +301,93 @@ async def posttest_answer(body: PosttestAnswerBody, request: Request):
         # ambiguous write is never journaled twice (`_pose_operation`)
         raise HTTPException(status_code=503, detail=_POSTTEST_UNAVAILABLE) from None
     finally:
-        if not answered:
-            try:
-                await asyncio.to_thread(_release_pose, body.user_id, body.node_id, claim)
-            except Exception:
-                logger.warning("post-test claim on %s not released", body.node_id, exc_info=True)
-        clear_posttest_due_cache(body.user_id)
+        await _settle_posttest_claim(body, claim, answered)
     await asyncio.to_thread(  # #117: off the event loop
         _emit_posttest_step, body, request, item, outcome, band, p_before, changes, floor
     )
     return {"correct": bool(outcome.correct), "confidence": outcome.confidence}
+
+
+async def _answerable_posttest_item(body: PosttestAnswerBody):
+    """(course id, item) for the answered post-test item: the node's (404), its
+    concept's item by hash (404), an answer with its format's field (422,
+    unless idk), never an item the student reported (409, A113)."""
+    node = await asyncio.to_thread(_posttest_node, body.user_id, body.node_id)  # #117
+    course_id, key = node["course_id"], _normalize_concept(node.get("concept_name") or "")
+    # #117: every sync PostgREST read and write below hops off the event loop
+    items = (await asyncio.to_thread(items_for_concepts, course_id, [key])).get(key) or []
+    item = next((i for i in items if i.question_hash == body.question_hash), None)
+    if item is None:
+        raise HTTPException(status_code=404, detail="check item not found")
+    if not body.idk:
+        _require_answer_fields(item.format, selected_option=body.selected_option, answer=body.answer)
+    if await asyncio.to_thread(_posttest_reported, body.user_id, item.question_hash):
+        raise HTTPException(status_code=409, detail=_NOT_A_POSTTEST_ITEM)
+    return course_id, item
+
+
+def _posttest_deps(body: PosttestAnswerBody, request: Request, course_id: str, loop_on: bool) -> SaplingDeps:
+    """The grader's deps for a post-test answer: no session."""
+    return SaplingDeps(
+        user_id=body.user_id,
+        course_id=course_id,
+        supabase=None,
+        request_id=_request_id(request),
+        session_id=None,
+        feature="loop_posttest",
+        learning_loop=loop_on,
+    )
+
+
+def _posttest_check_answer(body: PosttestAnswerBody, item) -> CheckAnswer:
+    """The answer as grade_answer takes it."""
+    return CheckAnswer(
+        question_hash=item.question_hash,
+        answer_text=body.answer,
+        selected_option=body.selected_option,
+        reason=body.reason,
+        idk=body.idk,
+    )
+
+
+def _posttest_visibility(body: PosttestAnswerBody, pose: dict, served, answered_at: datetime):
+    """A126: the page-hidden telemetry beside the outcome, bounded by the
+    server's own clock: the item cannot have been hidden for longer than it
+    was on screen."""
+    shown_from = served or _ts(pose.get("posed_at"))
+    return clamp_visibility(
+        body.hidden_count,
+        body.hidden_s,
+        (answered_at - shown_from).total_seconds() if shown_from else None,
+    )
+
+
+def _stamp_pose_operation(deps: SaplingDeps, body: PosttestAnswerBody, pose: dict, claim: str) -> str:
+    """The pose's evidence operation id (`_pose_operation`), stamped on every
+    pending evidence row before the flush."""
+    operation = _pose_operation(body.user_id, body.node_id, pose, claim)
+    for ev in deps.pending_evidence:
+        ev["operation_id"] = operation
+    return operation
+
+
+def _earlier_outcome(earlier: dict) -> SimpleNamespace:
+    """The outcome an earlier committed attempt of this pose recorded."""
+    return SimpleNamespace(
+        correct=earlier["correct"], confidence=None, grader_backend=None,
+        evidence={"channel": earlier["channel"]},
+    )
+
+
+async def _settle_posttest_claim(body: PosttestAnswerBody, claim: str, answered: bool) -> None:
+    """An unanswered pose's claim is released (best effort) so the same answer
+    may be sent again; the student's "due" answer is dropped either way."""
+    if not answered:
+        try:
+            await asyncio.to_thread(_release_pose, body.user_id, body.node_id, claim)
+        except Exception:
+            logger.warning("post-test claim on %s not released", body.node_id, exc_info=True)
+    clear_posttest_due_cache(body.user_id)
 
 
 _POSTTEST_UNAVAILABLE = "Post-test evidence unavailable; retry the same answer"
@@ -383,7 +422,7 @@ def _posttest_light_limit(user_id: str) -> None:
     sliding window) on the two no-model post-test routes — the display stamp
     and the "due" read. Not the A20 rate limit: no model runs behind them."""
     retry = check_rate_limit(
-        f"loop_posttest_light:{user_id}", limit=config.LOOP_PROBE_PLAN_READS_PER_MIN, window_sec=60
+        f"loop_posttest_light:{user_id}", limit=config.LOOP_PROBE_PLAN_READS_PER_MIN, window_sec=_LIGHT_LIMIT_WINDOW_S
     )
     if retry is not None:
         raise HTTPException(
