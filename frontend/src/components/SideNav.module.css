@@ -1,0 +1,267 @@
+/* The sidebar rail (SideNav.tsx). Its collapse/expand GEOMETRY (the rail's
+   width and padding, each row's computed inset, the header slot's height,
+   the labels' fade) is computed in SideNav.tsx and written inline, because
+   it is derived from the rail's widths and tweens between them; everything
+   else, including every hover and active state, lives here. Inside the rail
+   the semantic tokens are re-declared for the olive fill
+   ([data-app-sidenav] in globals.css), so these rules speak shell tokens. */
+
+.rail {
+  /* The hairline between rows: counted into the 38px row pitch. */
+  --sidenav-row-gap: 1px;
+  /* Collapse/expand: margin, padding and height tween on the rail's curve. */
+  --sidenav-geometry:
+    margin var(--dur) var(--ease),
+    padding var(--dur) var(--ease),
+    height var(--dur) var(--ease);
+  /* Active/hover surfaces. A plain neutral highlight: the selected row is a
+     flat --bg-soft fill (inside the rail, a translucent dark wash; a cream
+     wash failed AA under the white label), with the label in bold. No rail,
+     no hue on the label: the fill IS the treatment. Hover is the same colour
+     at half strength, so it reads as the weaker, transient state and never
+     as a second selection. */
+  --sidenav-active-bg: var(--bg-soft);
+  --sidenav-hover-bg: color-mix(in srgb, var(--bg-soft) 50%, transparent);
+
+  height: 100%;
+  background: var(--sidenav-bg);
+  border-radius: 0 var(--r-lg) var(--r-lg) 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sidenav-row-gap);
+  /* The rail itself never scrolls: only the destinations region does, so
+     the account footer stays pinned at the bottom. */
+  overflow: hidden;
+  transition:
+    width var(--dur) var(--ease),
+    min-width var(--dur) var(--ease),
+    padding var(--dur) var(--ease),
+    box-shadow var(--dur) var(--ease);
+}
+
+/* Everywhere but the Tutor: in the flow, one layer over the page's edge. */
+.railInFlow {
+  position: relative;
+  z-index: var(--z-raised);
+  box-shadow: none;
+}
+
+/* On the Tutor: floats over its fixed 64px slot, so a hover-open never
+   pushes the chat. */
+.railFloating {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  z-index: var(--sidenav-peek-z);
+  box-shadow: none;
+}
+
+.railFloating[data-peek="true"] {
+  box-shadow: var(--shadow-lg);
+}
+
+/* The Tutor's fixed slot. Its rail opens over the page: above sticky page
+   chrome, below popovers. No layer token sits between --z-sticky (20) and
+   --z-popover (100); this keeps the rail's long-standing 40. */
+.slot,
+.railFloating {
+  --sidenav-peek-z: calc(var(--z-sticky) * 2);
+}
+
+.slot {
+  height: 100%;
+  position: relative;
+  z-index: var(--sidenav-peek-z);
+  flex-shrink: 0;
+}
+
+/* ── logo ───────────────────────────────────────────────────────────── */
+
+.logo {
+  position: relative;
+  display: block;
+  padding-bottom: var(--sp-7);
+  box-sizing: content-box;
+  overflow: hidden;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: var(--sp-4);
+  text-decoration: none;
+}
+
+.wordmark {
+  position: absolute;
+  left: var(--sp-3);
+  top: 0;
+}
+
+.symbol {
+  position: absolute;
+  top: 0;
+  /* The source is brand green; the rail is olive, so render it in cream
+     like the wordmark. */
+  filter: brightness(0) invert(1);
+}
+
+/* ── destinations ───────────────────────────────────────────────────── */
+
+/* Scrolls on its own when the viewport is too short, scrollbar hidden
+   (here, and the WebKit pseudo-element in globals.css): a 10px gutter in a
+   200px rail read as clutter. `min-height: 0` lets a flex child shrink
+   below its content and scroll at all. */
+.scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sidenav-row-gap);
+}
+
+/* A group's header slot: its height (inline) tweens between the wide
+   label and the narrow hairline, so the rows below slide, not jump. */
+.header {
+  position: relative;
+  flex-shrink: 0;
+  overflow: hidden;
+  transition: var(--sidenav-geometry);
+}
+
+.groupLabel {
+  position: absolute;
+  left: var(--sp-5);
+}
+
+/* The collapsed rail's group separator. Its inset is shared by every
+   horizontal rule in the rail, so they read as one line family. */
+.groupRule {
+  position: absolute;
+  left: var(--sp-4);
+  right: var(--sp-4);
+  top: var(--sp-9);
+  height: 1px;
+  background: var(--border);
+  transition: opacity var(--dur-fast) var(--ease);
+}
+
+/* A nav row (and the Collapse toggle, built like one). */
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+  flex-shrink: 0;
+  overflow: hidden;
+  border-radius: var(--r-xs);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: var(--fs-md);
+  font-weight: 400;
+  text-align: left;
+  text-decoration: none;
+  transition:
+    background var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease),
+    transform var(--dur-instant) var(--ease-out),
+    var(--sidenav-geometry);
+}
+
+.row:hover:not([data-active="true"]) {
+  background: var(--sidenav-hover-bg);
+  color: var(--text);
+}
+
+.row:active {
+  transform: scale(0.98);
+}
+
+.row[data-active="true"] {
+  background: var(--sidenav-active-bg);
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* The icon slot: the retention dot rides it, so the narrow rail shows it. */
+.iconWrap {
+  display: inline-flex;
+  flex-shrink: 0;
+  position: relative;
+}
+
+.label {
+  flex: 1;
+}
+
+/* ── account footer ─────────────────────────────────────────────────── */
+
+/* One full-width rule opens the footer, the same line as the logo's, so the
+   pair frames the rail and the account cluster reads as split off. */
+.footer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sidenav-row-gap);
+  flex-shrink: 0;
+  margin-top: var(--sp-2);
+  padding-top: var(--sp-5);
+  border-top: 1px solid var(--border);
+}
+
+.profile {
+  padding: var(--sp-5) 0 var(--sp-2);
+}
+
+.profileRow {
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+.settings {
+  flex: 1;
+  min-width: 0;
+  border-radius: var(--r-sm);
+}
+
+.who {
+  min-width: 0;
+  flex: 1;
+}
+
+.userName {
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.userSub {
+  font-size: var(--fs-xs);
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.gear {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+/* ── the collapse glyph ─────────────────────────────────────────────── */
+
+.toggleIcon {
+  flex-shrink: 0;
+}
+
+/* Only the chevron moves: it points in while the rail is wide and turns
+   about its own centre to point out when narrow, on the rail's duration. */
+.toggleChevron {
+  transform-box: fill-box;
+  transform-origin: center;
+  transition: transform var(--dur) var(--ease);
+}
+
+.toggleIcon[data-collapsed="true"] .toggleChevron {
+  transform: rotate(180deg);
+}
