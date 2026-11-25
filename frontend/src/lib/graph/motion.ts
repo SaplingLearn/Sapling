@@ -25,12 +25,14 @@ import { IS_TEST_MODE } from "@/lib/testMode";
 // anywhere: phase and turn rate come from the node's id, which keeps the
 // motion the same on every load (no Math.random, nothing to re-measure) and
 // stops any two nodes swinging together. Nothing else about the layout
-// changes — the orbit and home springs hold the wander to a few units, and
+// changes — the orbit and home springs bound the wander, and
 // the simulation is only kept barely warm (IDLE_ALPHA), so those springs
 // stay gentle and the planned layout is never re-run.
 /** How hard the drift pushes a concept, per tick, before velocity decay.
- *  At 0.03 a concept wanders within ~10 units of where it settled. */
-const DRIFT_ACCEL = 0.03;
+ *  0.03 measured ~10 units of wander over five seconds, which at a normal
+ *  zoom is a couple of screen pixels — indistinguishable from a dead stop.
+ *  Tuned up until the motion is actually legible on screen. */
+const DRIFT_ACCEL = 0.14;
 /** How long one node's push takes to turn right round (ms). */
 const DRIFT_TURN_MS = 13_000;
 /** Course roots are anchors: they wander at half a concept's amplitude. */
