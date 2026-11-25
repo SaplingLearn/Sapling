@@ -36,7 +36,8 @@ def test_seal_is_bound_ciphertext_not_plaintext():
         bind=nested_bind("sessions", "loop_state", check_reason.KEY, "sess-1"),
     )
     assert opened == plain
-    assert check_reason.open("sess-1", sealed) == plain
+    opened = check_reason.open("sess-1", sealed)
+    assert opened == plain
     # Wrong session binding must not open (AAD).
     assert (
         decrypt_if_present(
@@ -45,9 +46,8 @@ def test_seal_is_bound_ciphertext_not_plaintext():
         )
         is None
     )
-    assert check_reason.open("other", sealed) is None
-    assert check_reason.open("sess-1", None) is None
-    assert check_reason.open("sess-1", "") is None
+    refused = [check_reason.open(*cell) for cell in (("other", sealed), ("sess-1", None), ("sess-1", ""))]
+    assert refused == [None, None, None]
 
 
 def test_latest_plaintext_picks_most_recent_graded_step():

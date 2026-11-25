@@ -170,7 +170,8 @@ def test_flag_off_every_scenario_is_byte_identical_to_f9eca612(name, gate_on, se
         # panel lists the plan after a reload. It does not depend on either
         # flag, so it is checked here and left out of the f9eca612 digest,
         # which stays the one captured from that commit.
-        assert captured["body"].pop("approved_plan") == {
+        approved_plan = captured["body"].pop("approved_plan")
+        assert approved_plan == {
             "concepts": [
                 {"node_id": "node-1", "concept_name": "", "kind": "new"},
                 {"node_id": "node-2", "concept_name": "", "kind": "new"},
@@ -182,7 +183,8 @@ def test_flag_off_every_scenario_is_byte_identical_to_f9eca612(name, gate_on, se
         # the Tutor's current concept follows it. Like `approved_plan` on
         # /status it does not depend on either flag: checked here, left out of
         # the f9eca612 digest.
-        assert captured["body"].pop("approved_plan") == {
+        approved_plan = captured["body"].pop("approved_plan")
+        assert approved_plan == {
             "concepts": [
                 {"node_id": "node-1", "concept_name": "", "kind": "new"},
                 {"node_id": "node-2", "concept_name": "", "kind": "new"},

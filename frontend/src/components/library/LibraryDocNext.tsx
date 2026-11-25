@@ -12,6 +12,7 @@ import { LEARNING_LOOP_FLAG } from "@/lib/learningLoopFlag";
 import type { Document as Doc } from "@/lib/types";
 import { useIsNavHidden } from "@/lib/useNavHidden";
 
+import styles from "./LibraryDocNext.module.css";
 import { LibraryNextCtas } from "./LibraryNextCtas";
 
 export function LibraryDocNext({ doc }: { doc: Doc }) {
@@ -27,7 +28,7 @@ export function LibraryDocNext({ doc }: { doc: Doc }) {
     quizHidden: isNavHidden("/quiz"),
   });
   return (
-    <div style={{ padding: "0 4px" }}>
+    <div className={styles.next}>
       <LibraryNextCtas next={next} />
     </div>
   );
