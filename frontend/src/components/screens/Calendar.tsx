@@ -315,14 +315,13 @@ export function Calendar() {
         actions={topActions}
       />
 
-      {/* Crossfade/rise the calendar body when the view, the range (Prev /
-          Today / Next) or the load state changes, keyed on that state.
-          Mirrors Study.tsx's mode="wait" pattern so the swap settles instead
-          of snapping (#295); no animation on the first paint. */}
-      <AnimatePresence mode="wait" initial={false}>
+      {/* Rise the body in when the view, range or load state changes (not on
+          first paint). Enter only: a mode="wait" exit hand-off stalled the
+          Table view under load, so the old body unmounts at once. */}
+      <AnimatePresence initial={false}>
         <motion.div
           key={loading ? "loading" : loadError ? "error" : `${view}:${rangeLabel}`}
-          {...asProps(m.fadeUp)}
+          {...asProps(m.fadeUp)} exit={undefined}
         >
           {loading ? (
             <CalendarMonthSkeleton />

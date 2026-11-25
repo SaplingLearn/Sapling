@@ -19,7 +19,7 @@ type MarkState = "done" | "today" | "missed" | "future";
 export function StreakMark({ state, day }: { state: MarkState; day: number }) {
   const m = useMotionPresets();
   return (
-    <AnimatePresence initial={false} mode="wait">
+    <AnimatePresence initial={false}>
       <Mark key={state} state={state} day={day} motionProps={m.scaleIn} />
     </AnimatePresence>
   );
@@ -28,7 +28,7 @@ export function StreakMark({ state, day }: { state: MarkState; day: number }) {
 function Mark({ state, day, motionProps }: { state: MarkState; day: number; motionProps: MotionPreset }) {
   if (state === "done") {
     return (
-      <motion.svg initial={motionProps.initial} animate={motionProps.animate} exit={motionProps.exit} transition={motionProps.transition} viewBox="0 0 32 32" width={MARK_PX} height={MARK_PX} aria-label="completed">
+      <motion.svg initial={motionProps.initial} animate={motionProps.animate} transition={motionProps.transition} viewBox="0 0 32 32" width={MARK_PX} height={MARK_PX} aria-label="completed">
         <path d={STREAK_SHIELD_PATH} fill="var(--alert-warn)" />
         <path
           d="M10.5 16.5 L14.2 20.2 L22 12.4"
@@ -43,7 +43,7 @@ function Mark({ state, day, motionProps }: { state: MarkState; day: number; moti
   }
   if (state === "today") {
     return (
-      <motion.svg initial={motionProps.initial} animate={motionProps.animate} exit={motionProps.exit} transition={motionProps.transition} viewBox="0 0 32 32" width={MARK_PX} height={MARK_PX} aria-label="today">
+      <motion.svg initial={motionProps.initial} animate={motionProps.animate} transition={motionProps.transition} viewBox="0 0 32 32" width={MARK_PX} height={MARK_PX} aria-label="today">
         <circle cx="16" cy="16" r="13" fill="var(--alert-err)" />
         <path
           d="M16 10 V22 M10 16 H22"
@@ -56,7 +56,7 @@ function Mark({ state, day, motionProps }: { state: MarkState; day: number; moti
     );
   }
   return (
-    <motion.svg initial={motionProps.initial} animate={motionProps.animate} exit={motionProps.exit} transition={motionProps.transition} viewBox="0 0 32 32" width={MARK_PX} height={MARK_PX} aria-label={state === "missed" ? "missed" : "upcoming"}>
+    <motion.svg initial={motionProps.initial} animate={motionProps.animate} transition={motionProps.transition} viewBox="0 0 32 32" width={MARK_PX} height={MARK_PX} aria-label={state === "missed" ? "missed" : "upcoming"}>
       <path
         d={STREAK_SHIELD_PATH}
         fill="none"

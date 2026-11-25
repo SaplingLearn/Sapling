@@ -598,9 +598,10 @@ function DetailPanel({
         <div className={styles.scanRow}>
           <div className={styles.scanText}>
             <div className="label-micro">Concept scan</div>
-            {/* The note swaps to the scan's result: fade the new text in. */}
-            <AnimatePresence mode="wait" initial={false}>
-              <motion.div key={scanNote} className={styles.scanNote} {...asProps(m.fade)}>
+            {/* The note swaps to the scan's result: fade the new text in (enter
+                only, so the new note never waits on the old one's exit). */}
+            <AnimatePresence initial={false}>
+              <motion.div key={scanNote} className={styles.scanNote} {...asProps(m.fade)} exit={undefined}>
                 {scanNote}
               </motion.div>
             </AnimatePresence>
