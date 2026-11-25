@@ -19,6 +19,8 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
+from cryptography.exceptions import InvalidTag
+
 from db.connection import table
 from services.encryption import bind, decrypt_if_present, encrypt_if_present
 
@@ -134,7 +136,10 @@ async def source_text(document_id: str, user_id: str) -> tuple[str, dict]:
             try:
                 notes = decrypt_json(
                     notes, bind=bind("documents", "concept_notes", document_id))
-            except Exception:
+            except (InvalidTag, ValueError):
+                # decrypt_json raises an EncryptionError (a ValueError) for a
+                # refused value, or the original InvalidTag / base64 / JSON
+                # error when neither the ciphertext nor plaintext parses.
                 logger.warning(
                     "concept_notes decrypt failed for document %s; generating from the summary alone",
                     document_id,
