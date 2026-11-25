@@ -65,6 +65,7 @@ import { Library } from "./Library";
 import { Notes } from "../notes/Notes";
 import { ToastProvider } from "../ToastProvider";
 import { GLYPHS } from "./glyphs";
+import { CONTROL_H } from "./primitives";
 
 const read = (p: string) => fs.readFileSync(path.join(__dirname, p), "utf8");
 const LIBRARY_DESIGN = read("__fixtures__/library-v2.design.html");
@@ -168,10 +169,16 @@ describe("the design's measurements are the rebuild's", () => {
     expect(used).toEqual([]);
   });
 
-  it("the upload split button is 48px tall with a 12px radius, as drawn", async () => {
+  /**
+   * The handoff draws this at 48px. Owner's call 2026-11-25 scaled the three
+   * header controls down together (`primitives.ts::CONTROL_H`), so the height
+   * asserted here is the decision, not the drawing; everything else about the
+   * button is still the design's.
+   */
+  it("the upload split button keeps the design's radius, fill and weight", async () => {
     await renderLibrary();
     const upload = screen.getByTestId("library-upload");
-    expect(upload.style.height).toBe("48px");
+    expect(upload.style.height).toBe(`${CONTROL_H}px`);
     expect(upload.style.borderRadius).toBe("12px");
     expect(upload.style.background).toBe("rgb(68, 93, 34)"); // #445D22
     expect(upload.style.fontWeight).toBe("700");

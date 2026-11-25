@@ -220,3 +220,14 @@ export function MenuScrim({ onClick, zIndex = 30 }: { onClick: () => void; zInde
 
 export const MENU_IN = "sapMenuIn 170ms cubic-bezier(0.2, 0.7, 0.2, 1) both";
 export const MENU_OUT = "sapMenuOut 130ms cubic-bezier(0.4, 0, 1, 1) both";
+
+/**
+ * The header controls' shared height.
+ *
+ * The handoff draws the search field and Upload at 48px. Owner's call
+ * 2026-11-25: too heavy for the row, so both come DOWN to the Study hub tool
+ * button's own 40px — that button is unchanged — and the skeleton's matching
+ * bars follow. Only the height moves; every padding, radius and type size
+ * stays the handoff's. Named once so the three cannot drift apart.
+ */
+export const CONTROL_H = 40;

@@ -16,6 +16,7 @@
 import React from "react";
 
 import { Skeleton } from "../Skeleton";
+import { CONTROL_H } from "./primitives";
 
 /** Cosmetic only — never announced, never interactive. */
 const ROOT: React.CSSProperties = {
@@ -103,13 +104,13 @@ export function LibrarySkeleton({ view }: { view: "list" | "panel" }) {
         </div>
         <Bar
           width="100%"
-          height={48}
+          height={CONTROL_H}
           radius={12}
           style={{ flex: 1, minWidth: 0, maxWidth: 840, marginLeft: 24 }}
         />
         <Bar
           width={136}
-          height={48}
+          height={CONTROL_H}
           radius={12}
           style={{ flexShrink: 0, marginLeft: "auto" }}
         />

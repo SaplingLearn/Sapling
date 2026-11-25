@@ -14,6 +14,7 @@ import { studyGuideHref } from "@/lib/toolHrefs";
 import {
   FONT_MONO, FONT_SERIF, Glyph, FolderIcon, MENU_IN, MENU_ITEM, MENU_OUT,
   MENU_SURFACE, MenuDivider, MenuScrim,
+  CONTROL_H,
 } from "./primitives";
 import { TYPE_ORDER, TYPES, SORTS, type SortKey } from "./libraryModel";
 
@@ -60,18 +61,14 @@ function GuidesButton() {
     <Link
       href={studyGuideHref()}
       data-testid="library-guides"
-      className="sapHoverWarm"
+      className="btn btn--sm"
       style={{
-        display: "inline-flex", alignItems: "center", gap: 9,
-        height: 48, padding: "0 18px", boxSizing: "border-box",
-        border: "1px solid rgba(42,39,31,0.16)", borderRadius: 12,
-        background: "#FDFCF9", color: "#1A1814",
-        font: "inherit", fontSize: 15, fontWeight: 700,
+        height: CONTROL_H, padding: "0 16px", fontSize: "var(--fs-md)",
         whiteSpace: "nowrap", flexShrink: 0, textDecoration: "none",
       }}
     >
       <span aria-hidden="true" style={{ display: "grid", color: TOOL.guide.fg }}>
-        <ToolGlyph name={TOOL.guide.icon} size={17} />
+        <ToolGlyph name={TOOL.guide.icon} size={14} />
       </span>
       {TOOL.guide.title}
     </Link>
@@ -122,7 +119,7 @@ export function LibraryHeader(props: LibraryHeaderProps) {
         display: "flex",
         alignItems: "center",
         gap: 10,
-        height: 48,
+        height: CONTROL_H,
         boxSizing: "border-box",
         padding: "0 8px 0 16px",
         border: "1px solid rgba(42,39,31,0.16)",
@@ -300,7 +297,7 @@ export function LibraryHeader(props: LibraryHeaderProps) {
                 display: "inline-flex",
                 alignItems: "center",
                 gap: 8,
-                height: 48,
+                height: CONTROL_H,
                 padding: "0 14px 0 16px",
                 border: 0,
                 background: "#445D22",

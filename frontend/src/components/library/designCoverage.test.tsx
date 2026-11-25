@@ -73,11 +73,20 @@ const NOTES_DESIGN = read("../notes/__fixtures__/notes.design.html");
  * `overflow-y: auto` on the list). Owner's call 2026-11-24 — the whole page
  * scrolls instead, so the header travels up with the documents, which means
  * the rows track `auto auto` and the page owns the overflow.
+ *
+ * The control height: the handoff draws the search field and Upload at 48px.
+ * Owner's call 2026-11-25 — too heavy for the row — so both come down to the
+ * Study hub tool button's 40px (`primitives.ts::CONTROL_H`), and the
+ * skeleton's matching bars with them. ONLY the height moves: the paddings,
+ * radii and type sizes are still the handoff's, so this one regex is the whole
+ * deviation. Exactly the four header elements in the prototype carry
+ * `height: 48px`, so allowlisting it hides nothing else.
  */
 const EXPECTED_DEVIATIONS = [
   /^font-family: '(Aleo|SUSE|IBM Plex Mono)'/,
   /^width: 1920px$/, /^height: 1080px$/, /^transform-origin: 0 0$/,
   /^grid-template-rows: auto minmax\(0, 1fr\)$/,
+  /^height: 48px$/,
 ];
 
 /** The rebuild's own source: components, hooks, and the ported stylesheet. */
