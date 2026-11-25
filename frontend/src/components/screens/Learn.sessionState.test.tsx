@@ -386,7 +386,7 @@ describe("handleModeSwitch", () => {
     await waitFor(() => expect(nav.replace).toHaveBeenCalledWith(expect.stringContaining("mode=expository"), expect.anything()));
     await waitFor(() => expect(nav.replace).toHaveBeenLastCalledWith(expect.stringContaining("mode=socratic"), expect.anything()));
     // The Socratic pill is the active one again.
-    expect(screen.getByRole("button", { name: "Socratic" })).toHaveStyle({ background: "var(--accent)" });
+    expect(screen.getByRole("button", { name: "Socratic" })).toHaveAttribute("aria-pressed", "true");
   });
 
   it("an older failed switch does not roll back a newer one", async () => {
@@ -400,7 +400,7 @@ describe("handleModeSwitch", () => {
     await waitFor(() => expect(log()).toHaveTextContent("Now teach-back."));
     await act(async () => { first.reject(new Error("late failure")); });
 
-    expect(screen.getByRole("button", { name: "Teach-back" })).toHaveStyle({ background: "var(--accent)" });
+    expect(screen.getByRole("button", { name: "Teach-back" })).toHaveAttribute("aria-pressed", "true");
   });
 });
 
@@ -481,7 +481,7 @@ describe("a turn on a session the server has ended (409)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Expository" }));
     expect(await screen.findByText("Unknown tutor mode")).toBeInTheDocument();
     expect(screen.queryByTestId("tutor-session-ended")).toBeNull();
-    expect(screen.getByRole("button", { name: "Socratic" })).toHaveStyle({ background: "var(--accent)" });
+    expect(screen.getByRole("button", { name: "Socratic" })).toHaveAttribute("aria-pressed", "true");
   });
 });
 
