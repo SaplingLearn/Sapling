@@ -19,6 +19,10 @@ import {
 } from "./support/quiz";
 import { USER_ACTIVE } from "./support/stack";
 
+/** agents/function_handlers_e2e.py::E2E_CHECK_ITEM_FINAL_ANSWER, the planned
+ *  written fixture's key. */
+const PLANNED_WRITTEN_ANSWER = "The size of each parameter update step";
+
 const LOOP_ON_ONLY = "kit Sort needs the learning loop: default lane only";
 
 const QUIZ_FLAGS = [
@@ -38,7 +42,9 @@ test("planned short_answer quiz mounts Sort and grades a correct placement", asy
       window.localStorage.setItem(
         key,
         JSON.stringify({
-          count: 1,
+          // A count off /api/quiz/config's options (3, 5, 10) is dropped back
+          // to the default 5 by loadPrefs, so ask for the smallest real one.
+          count: 3,
           difficulty: "medium",
           feedback: "at-end",
           questionFormat: "short_answer",
@@ -62,8 +68,18 @@ test("planned short_answer quiz mounts Sort and grades a correct placement", asy
   await expect(sort).toHaveAttribute("data-complete", "true");
 
   await page.getByTestId("quiz-submit-answer").click();
+
+  // Slots 2 and 3 are the planned written fixture (no kit): answer them right.
+  const written = page.getByTestId("quiz-written-answer");
+  for (const n of [2, 3]) {
+    await expect(page.getByTestId("quiz-panel")).toContainText(`E2E planned written question ${n}`, {
+      timeout: SUBMIT_TIMEOUT,
+    });
+    await written.fill(PLANNED_WRITTEN_ANSWER);
+    await page.getByTestId("quiz-submit-answer").click();
+  }
   await expectResults(page);
-  await expect(page.getByTestId("quiz-results-score")).toHaveText("1 of 1 correct", {
+  await expect(page.getByTestId("quiz-results-score")).toHaveText("3 of 3 correct", {
     timeout: SUBMIT_TIMEOUT,
   });
 });
