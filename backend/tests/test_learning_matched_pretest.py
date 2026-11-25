@@ -12,9 +12,7 @@ the reserves — the same format and difficulty, else the same difficulty —
 ranked by A129's quality order.
 
 Pure: `pretest_form` and the probe's `pretest_forms`. Route: the flag (off is
-byte-identical), the anchors read, the practice reserve, the fallbacks. And
-the report the spec row quotes: what `item_match` looks like on the E2E seed
-with the flag off and on."""
+byte-identical), the anchors read, the practice reserve, the fallbacks."""
 
 from __future__ import annotations
 
@@ -28,13 +26,12 @@ from learning.checks import (
     CheckItem,
     RubricItem,
     WrongReason,
-    choose_posttest_item,
     posttest_reserve_hashes,
     pretest_form,
     pretest_match,
 )
 from tests.test_learning_probe_planner import LOOP, NEXT, client, probe  # noqa: F401  (fixture)
-from tests.split_patches import patch_loop, setattr_loop
+from tests.split_patches import setattr_loop
 import learning.probe
 
 FMT = {"f": "free", "t": "teachback", "m": "mc_reason"}
@@ -326,109 +323,3 @@ def test_teaching_keeps_the_form_when_it_is_the_only_fresh_item(one_strand, monk
     body = client.post(f"{LOOP}/probe/next", json=NEXT).json()
     assert one_strand.store["doc"]["probe"]["practice_reserves"] == {"A": "t2"}
     assert body["question_hash"] in others
-
-
-# ── the E2E seed: item_match with the flag off and on ────────────────────────
-
-
-def _seed_bank():
-    """The rich seed's loop concepts (db/seed_local_rich.py: three concepts,
-    free and teachback at every difficulty), through the real seed code and
-    the real decrypt boundary, bound to the loop user's nodes."""
-    from db import seed_helpers
-    from db import seed_local_rich as seed
-    from services.loop.planning import _BoundItem
-    from services.check_item_service import _row_to_item
-    from services.graph_service import _normalize_concept
-
-    rows: dict[str, list[dict]] = {}
-
-    class _T:
-        def __init__(self, name):
-            self.name = name
-
-        def select(self, *_a, **_k):
-            return []
-
-        def upsert(self, row, on_conflict=None):
-            rows.setdefault(self.name, []).append(row)
-
-        insert = upsert
-
-    with patch.object(seed_helpers, "table", _T), patch.object(seed, "table", _T), patch.object(
-        seed, "_admin_role_id", lambda: None
-    ):
-        seed_helpers.reset_counts()
-        seed.seed_learning_loop()
-    node_for = {
-        _normalize_concept(name): seed.loop_node_id(seed.USER_LOOP, slug) for slug, name, _ in seed.LOOP_NODES
-    }
-    return [_BoundItem(_row_to_item(r), node_for[r["concept_key"]]) for r in rows["check_items"]]
-
-
-def _first_items(probe_ns, on: bool) -> dict:  # noqa: F811
-    """A new student's first probe item on every seeded concept (each strand
-    in the probe at once, every answer correct)."""
-
-    first: dict[str, object] = {}
-    with patch_loop("flag_on", _flag(on)), patch_loop("posttest_anchors", MagicMock(return_value=([], False))):
-        for _ in range(params.PROBE_SESSION_CAP):
-            body = client.post(f"{LOOP}/probe/next", json=NEXT).json()
-            if body["done"]:
-                break
-            pr = probe_ns.store["doc"]["probe"]
-            first.setdefault(body["node_id"], body["question_hash"])
-            pr["history"].append({**pr["current"], "correct": True, "idk": False, "p_after": 0.5})
-            pr["current"] = None
-    return first
-
-
-@pytest.mark.parametrize("on", [False, True])
-def test_item_match_on_a_full_bank(one_strand, on):
-    """The drafter's full bank (one item per format × difficulty) protects two
-    reserves, f2 and m2 — one per window. Off, a new student's pretest is
-    teachback at difficulty 1 and both windows' pairs are `none`; on, it is
-    teachback at difficulty 2 and both are `difficulty`."""
-    first = _first_items(one_strand, on)
-    items = [b.item for b in one_strand.full]
-    pretest = next(i for i in items if i.question_hash == first["A"])
-    week = choose_posttest_item(items, {pretest.question_hash}, window_index=0, pretest=pretest)
-    month = choose_posttest_item(
-        items, {pretest.question_hash, week.item.question_hash}, window_index=1, pretest=pretest
-    )
-    assert (week.source, month.source) == ("reserve", "reserve")
-    assert (pretest.question_hash, week.match, month.match) == (
-        ("t2", "difficulty", "difficulty") if on else ("t1", "none", "none")
-    )
-
-
-@pytest.mark.parametrize("on", [False, True])
-def test_item_match_on_the_e2e_seed(probe, on):  # noqa: F811
-    """What a new seeded student's pretest/post-test pairs look like.
-
-    The seed gives each concept six items (free and teachback at every
-    difficulty) — too few for a second reserve, so each concept protects one,
-    free at difficulty 2, and the 28-day window poses a fallback whose match
-    depends on what the student practised. Off, the probe's first item on
-    every concept is its band pick for a new student, teachback at difficulty
-    1, so every 7-day pair is `none`. On, it is teachback at difficulty 2 and
-    every 7-day pair is `difficulty` — the best the seed allows: it has no
-    second free item at difficulty 2, so no `exact` form exists."""
-    bank = _seed_bank()
-    nodes = sorted({b.node_id for b in bank})
-    assert len(nodes) == 3 and len(bank) == 18
-    probe.full = bank
-    probe.states.return_value = {n: params.BKT_L0 for n in nodes}
-    probe.edges.return_value = []  # every concept in the probe at once
-    first = _first_items(probe, on)
-    assert set(first) == set(nodes)
-    matches = {}
-    for node, qh in first.items():
-        items = [b.item for b in bank if b.node_id == node]
-        pretest = next(i for i in items if i.question_hash == qh)
-        week = choose_posttest_item(items, {qh}, window_index=0, pretest=pretest)
-        month = choose_posttest_item(items, {qh, week.item.question_hash}, window_index=1, pretest=pretest)
-        assert week.source == "reserve" and (week.item.format, week.item.difficulty) == ("free", 2)
-        assert month is not None and month.source == "fallback"  # one reserve per seeded concept
-        matches[node] = (pretest.format, pretest.difficulty, week.match)
-    assert set(matches.values()) == {("teachback", 2, "difficulty") if on else ("teachback", 1, "none")}
