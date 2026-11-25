@@ -1097,7 +1097,8 @@ async def _generate_or_502(
         ) from e
 
 
-async def generate_quiz(body: GenerateQuizBody, request: Request):
+async def _check_generate_request(body: GenerateQuizBody, request: Request) -> None:
+    """`generate_quiz`'s access and input checks, before any read."""
     await guard_off_loop(require_self, body.user_id, request)
     if body.include_answer_key:
         # PKG-14b owner decision 2 (spec §13 A94): the client-side answer key is a
@@ -1117,6 +1118,10 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
                 "hard, or adaptive."
             ),
         )
+
+
+async def _owned_node(body: GenerateQuizBody) -> dict:
+    """The student's own concept node, or the 404."""
     # #117: on the event loop: reads are `a*` calls, sync helpers hop off it.
     node_rows = await table(_NODES_TABLE).aselect(
         "*",
@@ -1128,7 +1133,355 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
             code=QuizErrorCode.QUIZ_CONCEPT_NOT_FOUND,
             message="We couldn't find that concept in your knowledge graph.",
         )
-    node = node_rows[0]
+    return node_rows[0]
+
+
+async def _claim_generate_slot(body: GenerateQuizBody) -> float | None:
+    """#544 F1: claim this request's rate-limit slot, or the 429."""
+    retry_after, slot = await aclaim_rate_limit(
+        f"quiz_generate:{body.user_id}",
+        limit=QUIZ_GENERATE_RATE_LIMIT,
+        window_sec=QUIZ_GENERATE_RATE_WINDOW_SEC,
+    )
+    if retry_after is not None:
+        raise QuizAPIError(
+            status_code=429,
+            code=QuizErrorCode.QUIZ_RATE_LIMITED,
+            message=(
+                "You've generated a lot of quizzes just now — "
+                "take a moment and try again shortly."
+            ),
+            headers={"Retry-After": str(retry_after)},
+        )
+    return slot
+
+
+async def _reserved_or_refund(body: GenerateQuizBody, slot: float | None):
+    """G5 (#537): the re-served misses; a refusal refunds the slot first."""
+    try:
+        return await _reserved_misses(body)
+    except QuizAPIError:
+        # None of these refusals is a generation: a stale attempt id off a
+        # results screen the student left open would otherwise spend their
+        # quota eight times over and then 429 them having generated nothing.
+        # Same rule _generate_or_502 follows on every one of its exits.
+        _refund_generate_slot(body.user_id, slot)
+        raise
+
+
+async def _check_daily_spend(
+    body: GenerateQuizBody, slot: float | None, request_id: str, missing: int
+) -> None:
+    """The daily spend cap, only when something is left to generate."""
+    if missing > 0 and await run_in_threadpool(_daily_spend_exceeded, body.user_id):
+        logger.warning(
+            "quiz: daily spend cap reached user=%s request_id=%s",
+            body.user_id, request_id,
+        )
+        # #760: refused before anything was generated, so it must not cost a
+        # rate-limit slot. The cap can't be checked before the claim — whether
+        # it applies depends on how much G5 re-served — so hand back this
+        # request's exact slot instead.
+        _refund_generate_slot(body.user_id, slot)
+        raise QuizAPIError(
+            status_code=429,
+            code=QuizErrorCode.QUIZ_DAILY_LIMIT_REACHED,
+            message=(
+                "You've reached today's limit for AI-generated study "
+                "material. It resets tomorrow."
+            ),
+        )
+
+
+async def _prereq_pose(body: GenerateQuizBody, node: dict, course_id, concept_name: str):
+    """W7.6: same fringe/repair preference as Learn — pose the weak
+    prerequisite instead of a blocked dependent. Empty edges → no-op.
+    Returns (node, concept_node_id, course_id, concept_name, banner)."""
+    concept_node_id = body.concept_node_id
+    guidance = await run_in_threadpool(
+        quiz_learning.prereq_guidance,
+        body.user_id,
+        body.concept_node_id,
+        course_id,
+    )
+    if guidance is None:
+        return node, concept_node_id, course_id, concept_name, None
+    if guidance.pose_node_id != concept_node_id:
+        pose_rows = await table(_NODES_TABLE).aselect(
+            "*",
+            filters={
+                "id": f"eq.{guidance.pose_node_id}",
+                "user_id": f"eq.{body.user_id}",
+            },
+        )
+        if pose_rows:
+            node = pose_rows[0]
+            concept_node_id = guidance.pose_node_id
+            course_id = node.get("course_id") or course_id
+            concept_name = node.get("concept_name") or concept_name
+    return node, concept_node_id, course_id, concept_name, guidance.banner
+
+
+async def _generate_remainder(
+    body: GenerateQuizBody,
+    *,
+    recovered: list[dict],
+    missing: int,
+    node: dict,
+    concept_node_id: str,
+    course_id,
+    concept_name: str,
+    request_id: str,
+    slot: float | None,
+    planned_on: bool,
+    gates_on: bool,
+) -> tuple[list[dict], int | None]:
+    """Generate the `missing` questions G5 did not re-serve: (the quiz's
+    questions, exam days away). A failed generation re-raises, unless there
+    is a recovered quiz to serve short."""
+    plan = (
+        await run_in_threadpool(
+            quiz_learning.generation_plan,
+            body.user_id,
+            concept_node_id,
+            course_id=course_id,
+            concept_name=concept_name,
+            count=missing,
+            requested=body.difficulty,
+            question_format=body.question_format,
+        )
+        if planned_on
+        else None
+    )
+    try:
+        generated = await _generate_or_502(
+            body,
+            request_id=request_id,
+            course_id=course_id,
+            concept_name=concept_name,
+            times_studied=node.get("times_studied"),
+            count=missing,
+            slot=slot,
+            plan=plan,
+            gate=(
+                _item_gate(
+                    body.user_id,
+                    course_id,
+                    concept_name,
+                    request_id,
+                    _writer_model_name(body.model_pref),
+                )
+                if gates_on
+                else None
+            ),
+            concept_node_id=concept_node_id,
+        )
+    except QuizAPIError:
+        if not recovered:
+            raise
+        # A quiz was recoverable and the top-up wasn't: serve the short
+        # quiz rather than deny the student practice they'd already
+        # earned. Same call the top-up handler makes one level down, and
+        # the response says exactly what it contains. The slot refund
+        # inside _generate_or_502 stands — that generation really did
+        # fail, whatever else we manage to serve.
+        logger.warning(
+            "quiz: remainder generation failed; serving the %d re-served "
+            "question(s) request_id=%s", len(recovered), request_id,
+        )
+        return recovered, None
+    return _merged_with_reserved(recovered, generated.questions), generated.exam_days_away
+
+
+def _merged_with_reserved(recovered: list[dict], generated: list[dict]) -> list[dict]:
+    """The re-served questions, then the generated ones that repeat none of them.
+
+    The do-not-repeat block should already keep generation off the re-served
+    items (they were served on the source attempt, so E6 names them), but a
+    model that repeats one anyway must not put the same item in front of the
+    student twice in one quiz."""
+    reserved_hashes = {
+        h for h in (wire_question_hash(q) for q in recovered) if h
+    }
+    # The stem check is the COARSER of the two and is why the collector
+    # keeps both: a hash covers the stem AND the options, so a model
+    # re-emitting a re-served stem with reworded distractors clears
+    # the hash check. The collector's own `seen_stems` only ever holds the
+    # current run's questions, never the re-served ones, so this is
+    # the only place that case can be caught.
+    reserved_stems = {
+        normalize_text(q.get("question") or "") for q in recovered
+    } - {""}
+    return recovered + [
+        q for q in generated
+        if wire_question_hash(q) not in reserved_hashes
+        and normalize_text(q.get("question") or "") not in reserved_stems
+    ]
+
+
+def _attempt_row(
+    body: GenerateQuizBody,
+    *,
+    quiz_id: str,
+    concept_node_id: str,
+    questions: list[dict],
+    session_mode: str,
+    practice_mode: str,
+    exam_days_away: int | None,
+) -> dict:
+    """The quiz_attempts row for this generation."""
+    attempt_row = {
+        "id": quiz_id,
+        "user_id": body.user_id,
+        "concept_node_id": concept_node_id,
+        "difficulty": body.difficulty,
+        "questions_json": encrypt_json(
+            questions, bind=bind("quiz_attempts", "questions_json", quiz_id)),
+    }
+    # W7.8: only stamp Exam Twin on the row. Practice is the column DEFAULT
+    # (and parse(None)), so omitting it keeps flags-off generate digests
+    # byte-identical to pre-W7.8 and survives a pre-migration schema cache.
+    if session_mode != practice_mode:
+        attempt_row["session_mode"] = session_mode
+    # H3/#555: recorded so the question "do deadline-aware quizzes perform
+    # differently?" is answerable later. Omitted when unknown rather than
+    # written as an explicit null, mirroring apply_graph_update's rule: an
+    # environment that took this code before the migration keeps generating
+    # instead of 400ing on a column PostgREST's schema cache doesn't have.
+    if exam_days_away is not None:
+        attempt_row["exam_days_away"] = exam_days_away
+    return attempt_row
+
+
+async def _store_attempt_or_502(
+    attempt_row: dict, body: GenerateQuizBody, slot: float | None, request_id: str
+) -> None:
+    """Insert the attempt row, or refund, count and answer the 502."""
+    try:
+        await run_in_threadpool(_insert_attempt, attempt_row)
+    except Exception as e:
+        # #760: the quiz was generated (and billed) but there is no row to
+        # serve it from, so the student got nothing. Same three duties as
+        # every other failure exit: refund THIS request's slot, make the 502
+        # countable, and answer with the contract's retryable code rather
+        # than an opaque 500.
+        logger.exception(
+            "quiz: attempt insert failed after generation request_id=%s",
+            request_id,
+        )
+        _refund_generate_slot(body.user_id, slot)
+        _log_generation_failed(body, request_id, "attempt_insert_failed")
+        prompt_dimensions.clear()
+        raise QuizAPIError(
+            status_code=502,
+            code=QuizErrorCode.QUIZ_GENERATION_FAILED,
+            message="Quiz generation is temporarily unavailable. Please try again.",
+        ) from e
+
+
+def _log_quiz_started(
+    body: GenerateQuizBody,
+    *,
+    request_id: str,
+    quiz_id: str,
+    concept_node_id: str,
+    num_questions: int,
+    mode_fields: dict,
+) -> None:
+    """#117: quiz.started once the attempt row exists. num_questions is the
+    actual generated count (the agent may return fewer than requested)."""
+    events_service.log_event(
+        "quiz.started",
+        category="usage",
+        user_id=body.user_id,
+        request_id=request_id,
+        payload={
+            "quiz_id": quiz_id,
+            "concept_node_id": concept_node_id,
+            "num_questions": num_questions,
+            "difficulty": body.difficulty,
+            # W7.8: only when Exam Twin — Practice is the pre-W7.8 default and
+            # must not move flags-off event digests.
+            **mode_fields,
+            # F6: the prompt's composition, carried on the event that
+            # already shares a request_id with this generation's llm_usage
+            # row — so prompt_tokens becomes attributable to sections
+            # rather than estimated. Ids/counts/enums only, per the #117
+            # payload rule; no prompt text goes anywhere near this.
+            **prompt_dimensions.snapshot(),
+        },
+    )
+
+
+def _generate_response(
+    body: GenerateQuizBody,
+    *,
+    quiz_id: str,
+    questions: list[dict],
+    mode_fields: dict,
+    concept_node_id: str,
+    prereq_banner: dict | None,
+    reserved,
+    recovered: list[dict],
+    regenerated_count: int,
+) -> dict:
+    """The POST /generate response body."""
+    # #541 C3 / #546: the answer key (per-option `correct` booleans) ships
+    # to the client only behind the deprecated include_answer_key flag.
+    # Lifecycle prose is documented once, on the field itself — see
+    # models.GenerateQuizBody.include_answer_key.
+    response_questions = _client_questions(questions, body.include_answer_key)
+    # #540 A1: echo what generation actually chose. requested_difficulty
+    # is what the student asked for (may be 'adaptive');
+    # resolved_difficulty is the overall mix the agent produced (always
+    # concrete) — so the client can say "we picked hard for you" instead
+    # of repeating the request back.
+    return {
+        "quiz_id": quiz_id,
+        "questions": response_questions,
+        "requested_difficulty": body.difficulty,
+        "resolved_difficulty": _resolved_difficulty(questions),
+        # #543 E2: never silently short-change a quiz. Drift (and the
+        # bounded top-up) can leave fewer questions than asked for; the
+        # client can now say so instead of pretending this is what was
+        # requested.
+        "requested_count": body.num_questions,
+        "delivered_count": len(questions),
+        # W7.8: echoed only for Exam Twin so Practice generate digests stay
+        # byte-identical (client already knows Practice is the default).
+        **mode_fields,
+        # W7.6: additive under quiz_concept_plan only — flags-off digests stay
+        # byte-identical. `concept_node_id` when the pose redirected to a
+        # weak prerequisite; `prereq` is the session banner block.
+        **(
+            {"concept_node_id": concept_node_id}
+            if concept_node_id != body.concept_node_id
+            else {}
+        ),
+        **({"prereq": prereq_banner} if prereq_banner else {}),
+        # G5 (#537): present whenever the request named a source attempt, and
+        # then always — so the three outcomes stay distinguishable and the
+        # client can label each honestly: re-served everything
+        # (regenerated_count 0), re-served some (both non-zero), re-served
+        # nothing and fell back to generation (reserved_count 0). Additive: a
+        # request that isn't practising a past attempt never sees the key.
+        **(
+            {
+                "source": {
+                    "attempt_id": reserved.attempt_id,
+                    "reserved_count": len(recovered),
+                    "regenerated_count": regenerated_count,
+                }
+            }
+            if reserved is not None
+            else {}
+        ),
+    }
+
+
+async def generate_quiz(body: GenerateQuizBody, request: Request):
+    await _check_generate_request(body, request)
+    node = await _owned_node(body)
     course_id = node.get("course_id") or None
     concept_name = node.get("concept_name") or ""
     # The attempt is written under the posed concept; W7.6 may rewrite this
@@ -1148,56 +1501,16 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
     # first, so probing can't consume a victim's quota) and BEFORE the
     # model call. Neither rejection is a backend failure, so neither emits
     # quiz.generation_failed.
-    retry_after, slot = await aclaim_rate_limit(
-        f"quiz_generate:{body.user_id}",
-        limit=QUIZ_GENERATE_RATE_LIMIT,
-        window_sec=QUIZ_GENERATE_RATE_WINDOW_SEC,
-    )
-    if retry_after is not None:
-        raise QuizAPIError(
-            status_code=429,
-            code=QuizErrorCode.QUIZ_RATE_LIMITED,
-            message=(
-                "You've generated a lot of quizzes just now — "
-                "take a moment and try again shortly."
-            ),
-            headers={"Retry-After": str(retry_after)},
-        )
+    slot = await _claim_generate_slot(body)
     # G5 (#537): "practise the ones you missed" re-serves the exact items the
     # student got wrong on a previous attempt — verbatim, with no model call
     # for them. Resolved BEFORE the spend cap because a quiz that is entirely
     # re-served spends nothing: the cap's own message is about "AI-generated
     # study material", and there is none here.
-    try:
-        reserved = await _reserved_misses(body)
-    except QuizAPIError:
-        # None of these refusals is a generation: a stale attempt id off a
-        # results screen the student left open would otherwise spend their
-        # quota eight times over and then 429 them having generated nothing.
-        # Same rule _generate_or_502 follows on every one of its exits.
-        _refund_generate_slot(body.user_id, slot)
-        raise
+    reserved = await _reserved_or_refund(body, slot)
     recovered = list(reserved.questions) if reserved else []
     missing = body.num_questions - len(recovered)
-
-    if missing > 0 and await run_in_threadpool(_daily_spend_exceeded, body.user_id):
-        logger.warning(
-            "quiz: daily spend cap reached user=%s request_id=%s",
-            body.user_id, request_id,
-        )
-        # #760: refused before anything was generated, so it must not cost a
-        # rate-limit slot. The cap can't be checked before the claim — whether
-        # it applies depends on how much G5 re-served — so hand back this
-        # request's exact slot instead.
-        _refund_generate_slot(body.user_id, slot)
-        raise QuizAPIError(
-            status_code=429,
-            code=QuizErrorCode.QUIZ_DAILY_LIMIT_REACHED,
-            message=(
-                "You've reached today's limit for AI-generated study "
-                "material. It resets tomorrow."
-            ),
-        )
+    await _check_daily_spend(body, slot, request_id, missing)
 
     # F6: open the prompt-composition capture for this request. Both the
     # route and the agent's read tools contribute; the snapshot rides into
@@ -1231,104 +1544,24 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
         quiz_learning.ITEM_GATES_FLAG,
     )
     if concept_plan_on and reserved is None:
-        # W7.6: same fringe/repair preference as Learn — pose the weak
-        # prerequisite instead of a blocked dependent. Empty edges → no-op.
         # Practise-missed keeps the source concept (those items belong there).
-        guidance = await run_in_threadpool(
-            quiz_learning.prereq_guidance,
-            body.user_id,
-            body.concept_node_id,
-            course_id,
+        node, concept_node_id, course_id, concept_name, prereq_banner = await _prereq_pose(
+            body, node, course_id, concept_name
         )
-        if guidance is not None and guidance.pose_node_id != concept_node_id:
-            pose_rows = await table(_NODES_TABLE).aselect(
-                "*",
-                filters={
-                    "id": f"eq.{guidance.pose_node_id}",
-                    "user_id": f"eq.{body.user_id}",
-                },
-            )
-            if pose_rows:
-                node = pose_rows[0]
-                concept_node_id = guidance.pose_node_id
-                course_id = node.get("course_id") or course_id
-                concept_name = node.get("concept_name") or concept_name
-        if guidance is not None:
-            prereq_banner = guidance.banner
     if missing > 0:
-        plan = (
-            await run_in_threadpool(
-                quiz_learning.generation_plan,
-                body.user_id,
-                concept_node_id,
-                course_id=course_id,
-                concept_name=concept_name,
-                count=missing,
-                requested=body.difficulty,
-                question_format=body.question_format,
-            )
-            if planned_on
-            else None
+        questions, exam_days_away = await _generate_remainder(
+            body,
+            recovered=recovered,
+            missing=missing,
+            node=node,
+            concept_node_id=concept_node_id,
+            course_id=course_id,
+            concept_name=concept_name,
+            request_id=request_id,
+            slot=slot,
+            planned_on=planned_on,
+            gates_on=gates_on,
         )
-        try:
-            generated = await _generate_or_502(
-                body,
-                request_id=request_id,
-                course_id=course_id,
-                concept_name=concept_name,
-                times_studied=node.get("times_studied"),
-                count=missing,
-                slot=slot,
-                plan=plan,
-                gate=(
-                    _item_gate(
-                        body.user_id,
-                        course_id,
-                        concept_name,
-                        request_id,
-                        _writer_model_name(body.model_pref),
-                    )
-                    if gates_on
-                    else None
-                ),
-                concept_node_id=concept_node_id,
-            )
-        except QuizAPIError:
-            if not recovered:
-                raise
-            # A quiz was recoverable and the top-up wasn't: serve the short
-            # quiz rather than deny the student practice they'd already
-            # earned. Same call the top-up handler makes one level down, and
-            # the response says exactly what it contains. The slot refund
-            # inside _generate_or_502 stands — that generation really did
-            # fail, whatever else we manage to serve.
-            logger.warning(
-                "quiz: remainder generation failed; serving the %d re-served "
-                "question(s) request_id=%s", len(recovered), request_id,
-            )
-        else:
-            # The do-not-repeat block should already keep generation off the
-            # re-served items (they were served on the source attempt, so E6
-            # names them), but a model that repeats one anyway must not put
-            # the same item in front of the student twice in one quiz.
-            reserved_hashes = {
-                h for h in (wire_question_hash(q) for q in recovered) if h
-            }
-            # The stem check is the COARSER of the two and is why _absorb
-            # keeps both: a hash covers the stem AND the options, so a model
-            # re-emitting a re-served stem with reworded distractors clears
-            # the hash check. _absorb's own `seen_stems` only ever holds the
-            # current run's questions, never the re-served ones, so this is
-            # the only place that case can be caught.
-            reserved_stems = {
-                normalize_text(q.get("question") or "") for q in recovered
-            } - {""}
-            questions = recovered + [
-                q for q in generated.questions
-                if wire_question_hash(q) not in reserved_hashes
-                and normalize_text(q.get("question") or "") not in reserved_stems
-            ]
-            exam_days_away = generated.exam_days_away
     regenerated_count = len(questions) - len(recovered)
     if gates_on:
         # A145: a re-served question stored before the gates is practice.
@@ -1339,135 +1572,50 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
     from learning import quiz_session_mode
 
     session_mode = quiz_session_mode.parse(body.session_mode)
+    mode_fields = (
+        {"session_mode": session_mode}
+        if session_mode != quiz_session_mode.PRACTICE
+        else {}
+    )
     quiz_id = str(uuid.uuid4())
-    attempt_row = {
-        "id": quiz_id,
-        "user_id": body.user_id,
-        "concept_node_id": concept_node_id,
-        "difficulty": body.difficulty,
-        "questions_json": encrypt_json(
-            questions, bind=bind("quiz_attempts", "questions_json", quiz_id)),
-    }
-    # W7.8: only stamp Exam Twin on the row. Practice is the column DEFAULT
-    # (and parse(None)), so omitting it keeps flags-off generate digests
-    # byte-identical to pre-W7.8 and survives a pre-migration schema cache.
-    if session_mode != quiz_session_mode.PRACTICE:
-        attempt_row["session_mode"] = session_mode
-    # H3/#555: recorded so the question "do deadline-aware quizzes perform
-    # differently?" is answerable later. Omitted when unknown rather than
-    # written as an explicit null, mirroring apply_graph_update's rule: an
-    # environment that took this code before the migration keeps generating
-    # instead of 400ing on a column PostgREST's schema cache doesn't have.
-    if exam_days_away is not None:
-        attempt_row["exam_days_away"] = exam_days_away
-    try:
-        await run_in_threadpool(_insert_attempt, attempt_row)
-    except Exception as e:
-        # #760: the quiz was generated (and billed) but there is no row to
-        # serve it from, so the student got nothing. Same three duties as
-        # every other failure exit: refund THIS request's slot, make the 502
-        # countable, and answer with the contract's retryable code rather
-        # than an opaque 500.
-        logger.exception(
-            "quiz: attempt insert failed after generation request_id=%s",
-            request_id,
-        )
-        _refund_generate_slot(body.user_id, slot)
-        _log_generation_failed(body, request_id, "attempt_insert_failed")
-        prompt_dimensions.clear()
-        raise QuizAPIError(
-            status_code=502,
-            code=QuizErrorCode.QUIZ_GENERATION_FAILED,
-            message="Quiz generation is temporarily unavailable. Please try again.",
-        ) from e
+    await _store_attempt_or_502(
+        _attempt_row(
+            body,
+            quiz_id=quiz_id,
+            concept_node_id=concept_node_id,
+            questions=questions,
+            session_mode=session_mode,
+            practice_mode=quiz_session_mode.PRACTICE,
+            exam_days_away=exam_days_away,
+        ),
+        body,
+        slot,
+        request_id,
+    )
     if reserved is not None:
         # G5, closing the pair opened before the run: how this quiz was
         # actually assembled. Rides quiz.started on the F6 snapshot, which
         # shares a request_id with the llm_usage row — so "this generation
         # cost N prompt tokens for 2 of its 5 questions" is answerable.
         prompt_dimensions.record(regenerated_count=regenerated_count)
-    # #117: quiz.started once the attempt row exists. num_questions is the
-    # actual generated count (the agent may return fewer than requested).
-    events_service.log_event(
-        "quiz.started",
-        category="usage",
-        user_id=body.user_id,
+    _log_quiz_started(
+        body,
         request_id=request_id,
-        payload={
-            "quiz_id": quiz_id,
-            "concept_node_id": concept_node_id,
-            "num_questions": len(questions),
-            "difficulty": body.difficulty,
-            # W7.8: only when Exam Twin — Practice is the pre-W7.8 default and
-            # must not move flags-off event digests.
-            **(
-                {"session_mode": session_mode}
-                if session_mode != quiz_session_mode.PRACTICE
-                else {}
-            ),
-            # F6: the prompt's composition, carried on the event that
-            # already shares a request_id with this generation's llm_usage
-            # row — so prompt_tokens becomes attributable to sections
-            # rather than estimated. Ids/counts/enums only, per the #117
-            # payload rule; no prompt text goes anywhere near this.
-            **prompt_dimensions.snapshot(),
-        },
+        quiz_id=quiz_id,
+        concept_node_id=concept_node_id,
+        num_questions=len(questions),
+        mode_fields=mode_fields,
     )
     prompt_dimensions.clear()
-    # #541 C3 / #546: the answer key (per-option `correct` booleans) ships
-    # to the client only behind the deprecated include_answer_key flag.
-    # Lifecycle prose is documented once, on the field itself — see
-    # models.GenerateQuizBody.include_answer_key.
     _record_answer_key_flag(body, quiz_id, request_id)
-    response_questions = _client_questions(questions, body.include_answer_key)
-
-    # #540 A1: echo what generation actually chose. requested_difficulty
-    # is what the student asked for (may be 'adaptive');
-    # resolved_difficulty is the overall mix the agent produced (always
-    # concrete) — so the client can say "we picked hard for you" instead
-    # of repeating the request back.
-    return {
-        "quiz_id": quiz_id,
-        "questions": response_questions,
-        "requested_difficulty": body.difficulty,
-        "resolved_difficulty": _resolved_difficulty(questions),
-        # #543 E2: never silently short-change a quiz. Drift (and the
-        # bounded top-up) can leave fewer questions than asked for; the
-        # client can now say so instead of pretending this is what was
-        # requested.
-        "requested_count": body.num_questions,
-        "delivered_count": len(questions),
-        # W7.8: echoed only for Exam Twin so Practice generate digests stay
-        # byte-identical (client already knows Practice is the default).
-        **(
-            {"session_mode": session_mode}
-            if session_mode != quiz_session_mode.PRACTICE
-            else {}
-        ),
-        # W7.6: additive under quiz_concept_plan only — flags-off digests stay
-        # byte-identical. `concept_node_id` when the pose redirected to a
-        # weak prerequisite; `prereq` is the session banner block.
-        **(
-            {"concept_node_id": concept_node_id}
-            if concept_node_id != body.concept_node_id
-            else {}
-        ),
-        **({"prereq": prereq_banner} if prereq_banner else {}),
-        # G5 (#537): present whenever the request named a source attempt, and
-        # then always — so the three outcomes stay distinguishable and the
-        # client can label each honestly: re-served everything
-        # (regenerated_count 0), re-served some (both non-zero), re-served
-        # nothing and fell back to generation (reserved_count 0). Additive: a
-        # request that isn't practising a past attempt never sees the key.
-        **(
-            {
-                "source": {
-                    "attempt_id": reserved.attempt_id,
-                    "reserved_count": len(recovered),
-                    "regenerated_count": regenerated_count,
-                }
-            }
-            if reserved is not None
-            else {}
-        ),
-    }
+    return _generate_response(
+        body,
+        quiz_id=quiz_id,
+        questions=questions,
+        mode_fields=mode_fields,
+        concept_node_id=concept_node_id,
+        prereq_banner=prereq_banner,
+        reserved=reserved,
+        recovered=recovered,
+        regenerated_count=regenerated_count,
+    )
