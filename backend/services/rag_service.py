@@ -30,6 +30,13 @@ logger = logging.getLogger(__name__)
 # Bound embedding requests so a stalled Gemini call can't hang quiz/tutor
 # grounding indefinitely — retrieve_chunks() runs inline on the request path.
 _HTTP_TIMEOUT_MS = 60_000
+_EMBED_BATCH = 50  # chunks per embed call (the embeddings API's limit)
+_DEFAULT_K = 5  # chunks a retrieval returns by default
+_DEFAULT_MIN_SIMILARITY = 0.55  # a retrieved chunk's default similarity floor
+_OWNER_READ_TRIES = 2  # tries of the per-uploader cap's owner read before it degrades
+_CHUNKS_TABLE = "course_chunks"
+_CATALOG_CATEGORY = "catalog"  # the BU course-catalog partition (scripts/ingest_catalog.py)
+_CURRENT_SEMESTER = "current"  # the semester a document chunk is stored under
 _EMBED_MODEL = "gemini-embedding-001"
 # The id and dimension live in db/chunk_ids (no SDK import) so the rich
 # seed can build chunk rows without importing google-genai; re-exported here —
@@ -377,7 +384,7 @@ def course_relevance(course_code: str, sample_text: str) -> float | None:
     """
     # Newest EMBEDDED row: ingest_catalog.py never deletes a superseded blurb,
     # and on a double embed failure it inserts rows with a NULL embedding.
-    rows = table("course_chunks").select(
+    rows = table(_CHUNKS_TABLE).select(
         "embedding",
         filters={
             "course_id": f"eq.{course_code}",
@@ -439,7 +446,7 @@ def _overfetch(k: int) -> int:
 
 @runs_as_service  # attribution only: uploader ids of rows the reader was already served, never text
 def _uploaders_of(chunk_ids: list[str]) -> dict[str, str | None]:
-    rows = table("course_chunks").select(
+    rows = table(_CHUNKS_TABLE).select(
         "id,uploader_id", filters={"id": f"in.({','.join(chunk_ids)})"},
     ) or []
     return {r["id"]: r.get("uploader_id") for r in rows if isinstance(r, dict) and r.get("id")}
@@ -464,7 +471,7 @@ def cap_per_uploader(
     ids = [r["id"] for r in rows if isinstance(r.get("id"), str) and r["id"]]
     owners: dict[str, str | None] | None = None
     last_exc: Exception | None = None
-    for _attempt in range(2):
+    for _attempt in range(_OWNER_READ_TRIES):
         try:
             owners = _uploaders_of(ids) if ids else {}
             break
@@ -476,7 +483,7 @@ def cap_per_uploader(
         student = 0
         degraded: list[dict] = []
         for row in rows:
-            if row.get("category") != "catalog":
+            if row.get("category") != _CATALOG_CATEGORY:
                 if student >= per_uploader:
                     continue
                 student += 1
@@ -501,8 +508,8 @@ def cap_per_uploader(
 def retrieve_chunks(
     query: str,
     course_id: str | None = None,
-    k: int = 5,
-    min_similarity: float = 0.55,
+    k: int = _DEFAULT_K,
+    min_similarity: float = _DEFAULT_MIN_SIMILARITY,
     user_id: str | None = None,
 ) -> list[dict]:
     """Return up to k chunks similar to query, optionally filtered by course_id.
@@ -526,8 +533,8 @@ def retrieve_chunks(
 def retrieve_chunks_detailed(
     query: str,
     course_id: str | None = None,
-    k: int = 5,
-    min_similarity: float = 0.55,
+    k: int = _DEFAULT_K,
+    min_similarity: float = _DEFAULT_MIN_SIMILARITY,
     user_id: str | None = None,
 ) -> Retrieval:
     """`retrieve_chunks`, plus whether the empty result is a fault or a fact."""
@@ -553,7 +560,7 @@ def retrieve_chunks_detailed(
         # encryption costs retrieval nothing but ~k AES-GCM decrypts.
         for row in kept:
             row["chunk_text"] = decrypt_if_present(
-                row.get("chunk_text"), bind=bind("course_chunks", "chunk_text", row))
+                row.get("chunk_text"), bind=bind(_CHUNKS_TABLE, "chunk_text", row))
         return Retrieval(chunks=kept)
     except _EmbeddingDisabled as e:
         # The #439 seam guard, not a failure: below-seam embedding is disabled
@@ -602,7 +609,7 @@ def chunks_for_ids(chunk_ids: list[str], *, user_id: str) -> list[dict]:
         return []
     in_ids = f"in.({','.join(pg_quote_value(c) for c in ids)})"
     rows = (
-        table("course_chunks").select(
+        table(_CHUNKS_TABLE).select(
             "id,course_id,chunk_text,visibility,uploader_id", filters={"id": in_ids}
         )
         or []
@@ -624,7 +631,7 @@ def chunks_for_ids(chunk_ids: list[str], *, user_id: str) -> list[dict]:
         r["id"]: {
             "id": r["id"],
             "course_id": r.get("course_id"),
-            "chunk_text": decrypt_if_present(r.get("chunk_text"), bind=bind("course_chunks", "chunk_text", r)),
+            "chunk_text": decrypt_if_present(r.get("chunk_text"), bind=bind(_CHUNKS_TABLE, "chunk_text", r)),
         }
         for r in rows
         if r.get("visibility") == SHARED or r.get("uploader_id") == user_id or r["id"] in contributed
@@ -681,6 +688,123 @@ def index_document_chunks(
     ).upserted
 
 
+def _chunk_records(
+    course_code: str,
+    doc_id: str,
+    uploader_id: str,
+    chunks: list[str],
+    *,
+    visibility: str,
+    category: str,
+) -> list[dict]:
+    """One course_chunks record per unique chunk id, first occurrence kept
+    (Postgres rejects an upsert payload that hits the same row twice)."""
+    records_by_id: dict[str, dict] = {}
+    for i, chunk_text in enumerate(chunks):
+        cid = chunk_id(
+            course_code, chunk_text, visibility=visibility, uploader_id=uploader_id
+        )
+        if cid in records_by_id:
+            continue
+        records_by_id[cid] = {
+            "id":          cid,
+            "course_id":   course_code,
+            "doc_id":      doc_id,
+            "uploader_id": uploader_id,
+            "chunk_index": i,
+            "chunk_text":  chunk_text,
+            "chunk_hash":  cid,
+            "embedding":   None,
+            "category":    category,
+            "visibility":  visibility,
+            "semester":    _CURRENT_SEMESTER,
+            "section_id":  None,
+            "school":      "",
+        }
+    return list(records_by_id.values())
+
+
+def _embed_records(records: list[dict], doc_id: str) -> tuple[bool, bool, str | None]:
+    """Embed the records in place, _EMBED_BATCH at a time. Returns
+    (embedding_disabled, embedding_unavailable, the last embed error's class).
+
+    `embedding_disabled` distinguishes "the seam turned embedding off" (#439,
+    every function-mode run) from "embedding broke" — only the latter is
+    worth an error event."""
+    embedding_disabled = False
+    embedding_unavailable = False
+    embed_error: str | None = None
+    for i in range(0, len(records), _EMBED_BATCH):
+        batch = records[i : i + _EMBED_BATCH]
+        texts = [r["chunk_text"] for r in batch]
+        try:
+            vecs = _embed_documents_batch(texts)
+            for rec, vec in zip(batch, vecs):
+                rec["embedding"] = vec
+        except _EmbeddingDisabled as e:
+            embedding_disabled = True
+            logger.info("[RAG] doc %s batch %s not embedded: %s", doc_id, i, e)
+        except EmbeddingUnavailable:
+            # Spec §13 A128: the breaker is open, so every later batch would
+            # be refused the same way — stop here. The breaker already logged
+            # the outage once; the caller decides what the row records.
+            embedding_unavailable = True
+            embed_error = embed_error or EmbeddingUnavailable.__name__
+            logger.info(
+                "[RAG] doc %s: embeddings breaker open at batch %s; the rest of the "
+                "document waits for it", doc_id, i,
+            )
+            break
+        except Exception as e:
+            embed_error = type(e).__name__
+            logger.warning(
+                "[RAG] embed failed for doc %s batch %s: %s", doc_id, i, e, exc_info=True
+            )
+    return embedding_disabled, embedding_unavailable, embed_error
+
+
+def _report_dropped(
+    doc_id: str,
+    uploader_id: str,
+    dropped: int,
+    total: int,
+    *,
+    embedding_disabled: bool,
+    embedding_unavailable: bool,
+) -> None:
+    """Say why `dropped` of `total` chunks had no embedding to store."""
+    if embedding_disabled:
+        logger.info(
+            "[RAG] doc %s: %s/%s chunk(s) not indexed — embedding disabled (#439)",
+            doc_id, dropped, total,
+        )
+    elif embedding_unavailable:
+        # Spec §13 A128: an outage the breaker reported once (its own event);
+        # the row records failed/partial and the sweeper re-drives it once
+        # the breaker closes, so this is a wait, not a silent loss.
+        logger.info(
+            "[RAG] doc %s: %s/%s chunk(s) not indexed — embeddings unavailable "
+            "(breaker open)", doc_id, dropped, total,
+        )
+    else:
+        # Silent data loss behind a successful-looking upload: the documents
+        # row lands, the user sees success, and these chunks are simply absent
+        # from retrieval forever. Countable so a partial-index rate is visible
+        # (#482). The caller records the document `partial` and the indexing
+        # sweeper re-drives it (services/document_indexing.py).
+        logger.warning(
+            "[RAG] doc %s: dropped %s/%s chunk(s) with no embedding — "
+            "they would be unretrievable",
+            doc_id, dropped, total,
+        )
+        log_event(
+            "rag.chunks_dropped",
+            category="error",
+            user_id=uploader_id,
+            payload={"doc_id": doc_id, "dropped": dropped, "total": total},
+        )
+
+
 @runs_as_service  # #115: same as index_document_chunks
 def index_document_chunks_detailed(
     course_code: str,
@@ -722,7 +846,7 @@ def index_document_chunks_detailed(
     catalog de-dup key on, so a document row claiming it would be served as
     official BU course data.
     """
-    if category == "catalog":
+    if category == _CATALOG_CATEGORY:
         raise ValueError(
             "category='catalog' is the BU course-catalog partition "
             "(scripts/ingest_catalog.py); a document chunk claiming it would "
@@ -731,64 +855,10 @@ def index_document_chunks_detailed(
     if not chunks:
         return ChunkIndexResult(upserted=0, total=0)
 
-    records_by_id: dict[str, dict] = {}
-    for i, chunk_text in enumerate(chunks):
-        cid = chunk_id(
-            course_code, chunk_text, visibility=visibility, uploader_id=uploader_id
-        )
-        if cid in records_by_id:
-            continue
-        records_by_id[cid] = {
-            "id":          cid,
-            "course_id":   course_code,
-            "doc_id":      doc_id,
-            "uploader_id": uploader_id,
-            "chunk_index": i,
-            "chunk_text":  chunk_text,
-            "chunk_hash":  cid,
-            "embedding":   None,
-            "category":    category,
-            "visibility":  visibility,
-            "semester":    "current",
-            "section_id":  None,
-            "school":      "",
-        }
-
-    records = list(records_by_id.values())
-
-    # Embed in batches of 50 (API limit)
-    BATCH = 50
-    # Distinguishes "the seam turned embedding off" (#439, every function-mode
-    # run) from "embedding broke" — only the latter is worth an error event.
-    embedding_disabled = False
-    embedding_unavailable = False
-    embed_error: str | None = None
-    for i in range(0, len(records), BATCH):
-        batch = records[i : i + BATCH]
-        texts = [r["chunk_text"] for r in batch]
-        try:
-            vecs = _embed_documents_batch(texts)
-            for rec, vec in zip(batch, vecs):
-                rec["embedding"] = vec
-        except _EmbeddingDisabled as e:
-            embedding_disabled = True
-            logger.info("[RAG] doc %s batch %s not embedded: %s", doc_id, i, e)
-        except EmbeddingUnavailable:
-            # Spec §13 A128: the breaker is open, so every later batch would
-            # be refused the same way — stop here. The breaker already logged
-            # the outage once; the caller decides what the row records.
-            embedding_unavailable = True
-            embed_error = embed_error or EmbeddingUnavailable.__name__
-            logger.info(
-                "[RAG] doc %s: embeddings breaker open at batch %s; the rest of the "
-                "document waits for it", doc_id, i,
-            )
-            break
-        except Exception as e:
-            embed_error = type(e).__name__
-            logger.warning(
-                "[RAG] embed failed for doc %s batch %s: %s", doc_id, i, e, exc_info=True
-            )
+    records = _chunk_records(
+        course_code, doc_id, uploader_id, chunks, visibility=visibility, category=category
+    )
+    embedding_disabled, embedding_unavailable, embed_error = _embed_records(records, doc_id)
 
     # Never persist a chunk whose embedding didn't land. match_course_chunks
     # ranks by vector distance, so a NULL-embedding row can never be returned
@@ -797,37 +867,11 @@ def index_document_chunks_detailed(
     # failure used to read as a complete success (#482).
     embedded = [r for r in records if r["embedding"] is not None]
     dropped = len(records) - len(embedded)
-    if dropped and embedding_disabled:
-        logger.info(
-            "[RAG] doc %s: %s/%s chunk(s) not indexed — embedding disabled (#439)",
-            doc_id, dropped, len(records),
+    if dropped:
+        _report_dropped(
+            doc_id, uploader_id, dropped, len(records),
+            embedding_disabled=embedding_disabled, embedding_unavailable=embedding_unavailable,
         )
-    elif dropped and embedding_unavailable:
-        # Spec §13 A128: an outage the breaker reported once (its own event);
-        # the row records failed/partial and the sweeper re-drives it once
-        # the breaker closes, so this is a wait, not a silent loss.
-        logger.info(
-            "[RAG] doc %s: %s/%s chunk(s) not indexed — embeddings unavailable "
-            "(breaker open)", doc_id, dropped, len(records),
-        )
-    elif dropped:
-        # Silent data loss behind a successful-looking upload: the documents
-        # row lands, the user sees success, and these chunks are simply absent
-        # from retrieval forever. Countable so a partial-index rate is visible
-        # (#482). The caller records the document `partial` and the indexing
-        # sweeper re-drives it (services/document_indexing.py).
-        logger.warning(
-            "[RAG] doc %s: dropped %s/%s chunk(s) with no embedding — "
-            "they would be unretrievable",
-            doc_id, dropped, len(records),
-        )
-        log_event(
-            "rag.chunks_dropped",
-            category="error",
-            user_id=uploader_id,
-            payload={"doc_id": doc_id, "dropped": dropped, "total": len(records)},
-        )
-
     if not embedded:
         return ChunkIndexResult(
             upserted=0, total=len(records),
@@ -852,9 +896,9 @@ def index_document_chunks_detailed(
     # same binding and every reader opens it with the id it selected.
     for rec in embedded:
         rec["chunk_text"] = encrypt_if_present(
-            rec["chunk_text"], bind=bind("course_chunks", "chunk_text", rec["id"]))
+            rec["chunk_text"], bind=bind(_CHUNKS_TABLE, "chunk_text", rec["id"]))
 
-    table("course_chunks").upsert(embedded, on_conflict="id")
+    table(_CHUNKS_TABLE).upsert(embedded, on_conflict="id")
     if visibility == SHARED:
         # Only shared rows get a ledger entry. A private row's id already
         # encodes its single possible owner, and keeping it out of the ledger

@@ -59,6 +59,8 @@ def prompt_text(prompt: Mapping[str, Any]) -> str:
     """The text of a stored prompt (its `prompt_key`)."""
     return PROMPTS[prompt["prompt_key"]]
 
+# learning.ladder.Rung's H4..H6, restated: this module may not import the PKG-06
+# ladder (tests/test_learning_zpd_policy.py::test_zpd_layer_is_inert_nothing_imports_it)
 _H4, _H5, _H6 = 4, 5, 6
 
 

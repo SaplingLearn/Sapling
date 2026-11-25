@@ -260,9 +260,17 @@ class EvidencePlan:
         }
 
 
+#: Postgres SQLSTATEs after which the server rolled the transaction back:
+#: deadlock, serialization failure, lock not available, query canceled.
+_RETRYABLE_SQLSTATES = frozenset({"40P01", "40001", "55P03", "57014"})
+_SNAPSHOT_RPC = "learning_evidence_snapshot"
+_COMMIT_RPC = "learning_evidence_commit"
+_VOID_COMMIT_RPC = "learning_evidence_void_commit"
+
+
 def _retryable_sql(exc: Exception) -> bool:
     try:
-        return exc.response.json().get("code") in {"40P01", "40001", "55P03", "57014"}
+        return exc.response.json().get("code") in _RETRYABLE_SQLSTATES
     except Exception:
         return False
 
@@ -284,14 +292,7 @@ def commit_evidence_transaction(
     """
     op_id = operation_id(evidences)
     semantic = fingerprint(user_id, course_id, evidences, retention)
-    times = {getattr(ev, "observed_at", None) for ev in evidences}
-    if len(times) > 1:
-        raise EvidenceTransactionConflict("Evidence batch observation times disagree")
-    observed_at = next(iter(times)) if times else None
-    if observed_at is not None:
-        if not isinstance(observed_at, _DATETIME_TYPE) or observed_at.tzinfo is None:
-            raise EvidenceTransactionConflict("Evidence observation time is not trusted UTC")
-        observed_at = observed_at.astimezone(timezone.utc)
+    observed_at = _trusted_observed_at(evidences)
     try:
         existing = read_receipt(user_id, op_id, input_fingerprint=semantic)
         if existing is not None:
@@ -305,21 +306,7 @@ def commit_evidence_transaction(
             }
         )
         for _attempt in range(EVIDENCE_TRANSACTION_RETRIES):
-            snapshot = _result(
-                rpc(
-                    "learning_evidence_snapshot",
-                    {
-                        "p_user_id": user_id,
-                        "p_course_id": course_id,
-                        "p_node_ids": node_ids,
-                        "p_checks": [
-                            {"session_id": sid, "question_hash": qh} for sid, qh in checks
-                        ],
-                    },
-                )
-            )
-            if snapshot["status"] != "snapshot":
-                raise EvidenceTransactionConflict("Evidence target ownership/course unavailable")
+            snapshot = _evidence_snapshot(user_id, course_id, node_ids, checks)
             plan = EvidencePlan(
                 op_id, snapshot, observed_at or datetime.now(timezone.utc), observed_at
             )
@@ -332,35 +319,12 @@ def commit_evidence_transaction(
                 "p_input_fingerprint": semantic,
                 "p_plan": payload,
             }
-            # An ambiguous response is retried identically, never recalculated.
-            try:
-                out = _result(rpc("learning_evidence_commit", args))
-            except Exception as first:
-                if _retryable_sql(first):
-                    continue  # The server explicitly rolled back the transaction.
-                try:
-                    out = _result(rpc("learning_evidence_commit", args))
-                except Exception as second:
-                    known = read_receipt(user_id, op_id, input_fingerprint=semantic)
-                    if known is not None:
-                        return known["changes"], known, False
-                    raise PlanningPersistenceUnavailable(
-                        "Evidence commit acknowledgment unavailable"
-                    ) from second
-            if out["status"] == "stale":
+            kind, out = _commit_or_recover(args, user_id, op_id, semantic)
+            if kind == _RECOVERED:
+                return out["changes"], out, False
+            if kind == _RETRY or out["status"] == "stale":
                 continue
-            if out["status"] == "superseded":
-                raise EvidenceObservationSuperseded(
-                    "Newer learner evidence supersedes this uncommitted grade"
-                )
-            if out["status"] == "retired":
-                # §13 A123: under the item's lock the commit found a staff
-                # retire — no row was written, so none can be left non-void.
-                raise EvidenceItemRetired("A check item this batch grades was retired")
-            if out["status"] not in {"committed", "replay"}:
-                raise EvidenceTransactionConflict(
-                    "Evidence transaction identity/ownership conflict"
-                )
+            _raise_for_commit_status(out["status"])
             receipt = _receipt(out, user_id, op_id, semantic)
             return receipt["changes"], receipt, out["status"] == "committed"
         raise PlanningPersistenceUnavailable("Evidence transaction remained busy")
@@ -368,6 +332,84 @@ def commit_evidence_transaction(
         raise
     except Exception as exc:
         raise PlanningPersistenceUnavailable("Evidence transaction unavailable") from exc
+
+
+def _trusted_observed_at(evidences: list[Evidence]) -> datetime | None:
+    """The batch's one observation time, as UTC, or None; a batch whose times
+    disagree, or a time that is not an aware datetime, is a conflict."""
+    times = {getattr(ev, "observed_at", None) for ev in evidences}
+    if len(times) > 1:
+        raise EvidenceTransactionConflict("Evidence batch observation times disagree")
+    observed_at = next(iter(times)) if times else None
+    if observed_at is None:
+        return None
+    if not isinstance(observed_at, _DATETIME_TYPE) or observed_at.tzinfo is None:
+        raise EvidenceTransactionConflict("Evidence observation time is not trusted UTC")
+    return observed_at.astimezone(timezone.utc)
+
+
+def _evidence_snapshot(
+    user_id: str, course_id: str | None, node_ids: list[str], checks: list[tuple[str, str]]
+) -> dict:
+    """One evidence snapshot; a target the store does not own is a conflict."""
+    snapshot = _result(
+        rpc(
+            _SNAPSHOT_RPC,
+            {
+                "p_user_id": user_id,
+                "p_course_id": course_id,
+                "p_node_ids": node_ids,
+                "p_checks": [
+                    {"session_id": sid, "question_hash": qh} for sid, qh in checks
+                ],
+            },
+        )
+    )
+    if snapshot["status"] != "snapshot":
+        raise EvidenceTransactionConflict("Evidence target ownership/course unavailable")
+    return snapshot
+
+
+#: `_commit_or_recover`'s outcomes besides the commit's own answer.
+_RETRY = "retry"  # the server rolled the transaction back: re-read and re-plan
+_RECOVERED = "recovered"  # the acknowledgment was lost; the receipt says it committed
+_ANSWERED = "answered"
+
+
+def _commit_or_recover(args: dict, user_id: str, op_id: str, semantic: str) -> tuple[str, dict]:
+    """Submit the plan. An ambiguous response is retried identically, never
+    recalculated; a second failure reads the receipt. Returns (_ANSWERED, the
+    commit's answer), (_RETRY, {}) or (_RECOVERED, the receipt)."""
+    try:
+        return _ANSWERED, _result(rpc(_COMMIT_RPC, args))
+    except Exception as first:
+        if _retryable_sql(first):
+            return _RETRY, {}  # The server explicitly rolled back the transaction.
+        try:
+            return _ANSWERED, _result(rpc(_COMMIT_RPC, args))
+        except Exception as second:
+            known = read_receipt(user_id, op_id, input_fingerprint=semantic)
+            if known is not None:
+                return _RECOVERED, known
+            raise PlanningPersistenceUnavailable(
+                "Evidence commit acknowledgment unavailable"
+            ) from second
+
+
+def _raise_for_commit_status(status) -> None:
+    """Raise for a commit answer that wrote nothing; committed and replay pass."""
+    if status == "superseded":
+        raise EvidenceObservationSuperseded(
+            "Newer learner evidence supersedes this uncommitted grade"
+        )
+    if status == "retired":
+        # §13 A123: under the item's lock the commit found a staff
+        # retire — no row was written, so none can be left non-void.
+        raise EvidenceItemRetired("A check item this batch grades was retired")
+    if status not in {"committed", "replay"}:
+        raise EvidenceTransactionConflict(
+            "Evidence transaction identity/ownership conflict"
+        )
 
 
 # ── spec §13 A123: void + recompute ─────────────────────────────────────────
@@ -446,12 +488,12 @@ def commit_void_transaction(
                 raise EvidenceTransactionConflict("Invalid evidence void plan")
             args = {**args_base, "p_operation_id": op_id, "p_plan": plan.payload}
             try:
-                out = _result(rpc("learning_evidence_void_commit", args))
+                out = _result(rpc(_VOID_COMMIT_RPC, args))
             except Exception as first:
                 if _retryable_sql(first):
                     continue  # the server explicitly rolled the transaction back
                 try:
-                    out = _result(rpc("learning_evidence_void_commit", args))
+                    out = _result(rpc(_VOID_COMMIT_RPC, args))
                 except Exception as second:
                     raise PlanningPersistenceUnavailable(
                         "Evidence void acknowledgment unavailable"

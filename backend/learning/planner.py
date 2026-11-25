@@ -20,6 +20,7 @@ from learning.params import (
     PLAN_MAX_CONCEPTS,
     PLAN_MAX_COUPLED,
     PLAN_ORDER,
+    PLANNING_MISS_BELOW_PROFICIENT,
     PROBE_DIFFICULTY_SHIFT,
 )
 from learning.probe import independent_observations
@@ -122,7 +123,7 @@ def planning_states(states: dict[str, float], observations: Sequence[dict]) -> d
     result = dict(states)
     for node, levels in failed.items():
         if levels:
-            result[node] = min(result[node], BKT_PROFICIENT - 0.01)
+            result[node] = min(result[node], BKT_PROFICIENT - PLANNING_MISS_BELOW_PROFICIENT)
     return result
 
 

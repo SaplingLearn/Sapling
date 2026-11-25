@@ -1628,6 +1628,8 @@ _MYTH_THAT = frozenset(
     for common in ("", "common ")
 )
 _SENTENCE_TAIL = " \t.!?\"'\u201d\u2019)"
+_PARAGRAPH_NEWLINES = 2  # line breaks (a blank line) that start a paragraph
+_BACK_HEAD_WORDS = 2  # a backward frame's subject and verb ("that is")
 _UNIT_WORD = re.compile(r"[a-z']+")
 _UNIT_BREAK = re.compile(r"[.!?]+|\n")
 
@@ -1641,7 +1643,7 @@ def _units(answer: str) -> list[tuple[int, int, bool]]:
         brk = m.group() == "\n"
         seg_end = m.start() if brk else m.end()
         if answer[pos:seg_end].strip():
-            units.append((pos, seg_end, newlines >= 2))
+            units.append((pos, seg_end, newlines >= _PARAGRAPH_NEWLINES))
             newlines = 1 if brk else 0
         elif brk:
             newlines += 1
@@ -1671,6 +1673,11 @@ def _global(words: list[str]) -> bool:
     )
 
 
+_FORWARD_TAIL_MAX_WORDS = 2  # words a forward frame's disowning word may have after it
+_LEAD_CHARS = 40  # chars of a span's start read for a reset ("Actually, …")
+_LEAD_RESET_WORDS = 3  # words of that lead a reset word may be among
+
+
 def _forward_frame(text: str, words: list[str]) -> bool:
     """Points ahead AND disowns, as a complete label: "The following is a common
     misconception, and it is false." / "Everything below is false." / a heading
@@ -1693,7 +1700,7 @@ def _forward_frame(text: str, words: list[str]) -> bool:
         if a == "not" and b in _NOT_TRUE
     ]
     last = max(hits + nots, default=-1)
-    return last >= 0 and len(words) - 1 - last <= 2
+    return last >= 0 and len(words) - 1 - last <= _FORWARD_TAIL_MAX_WORDS
 
 
 _BACK_FILLER = frozenset(
@@ -1712,9 +1719,9 @@ def _backward_frame(words: list[str]) -> bool:
         w = ["that", *w[2:]]
     elif w[:3] == ["all", "of", "that"] or w[:3] == ["all", "of", "this"]:
         w = ["that", *w[3:]]
-    if len(w) < 3 or w[0] not in {"that", "this"} or w[1] not in _BACK_VERBS:
+    if len(w) <= _BACK_HEAD_WORDS or w[0] not in {"that", "this"} or w[1] not in _BACK_VERBS:
         return False
-    k = 2
+    k = _BACK_HEAD_WORDS
     while k < len(w) and w[k] in _BACK_FILLER:
         k += 1
     if k >= len(w):
@@ -1732,14 +1739,12 @@ def disowned(answer: str, span: str) -> bool:
     span = (span or "").strip()
     if not span or not answer:
         return False
-    start = answer.find(span)
-    if start < 0:
-        start = answer.casefold().find(span.casefold())
+    start = _span_start(answer, span)
     if start < 0:
         return False
     end = start + len(span)
-    lead = answer[start : start + 40]
-    if _resets(lead, _words(lead)[:3]):
+    lead = answer[start : start + _LEAD_CHARS]
+    if _resets(lead, _words(lead)[:_LEAD_RESET_WORDS]):
         return False
     units = _units(answer)
     first = next((k for k, (a, b, _) in enumerate(units) if a <= start < max(b, a + 1)), None)
@@ -1748,35 +1753,61 @@ def disowned(answer: str, span: str) -> bool:
         return False
     if last is None:
         last = first
-    # the span's own unit, before the span: "Wrong ideas to avoid: <span>"
-    a0 = units[first][0]
-    before = answer[a0:start]
-    if before.strip():
-        bw = _words(before)
-        if _resets(before, bw):
-            return False
-        # A103: "It's a myth that <span>." — the frame is the sentence's whole lead
-        # and the span its whole rest
-        if tuple(bw) in _MYTH_THAT and not answer[end : units[first][1]].strip(_SENTENCE_TAIL):
-            return True
-        # only a colon label governs inside its own sentence ("Myths: <span>");
-        # a sentence cut mid-reason ("The claim below is false because <span>") never
-        if before.rstrip().endswith(":") and _forward_frame(before, bw):
-            return True
+    own = _own_unit_frame(answer, units[first], start, end)
+    if own is not None:
+        return own
     # walk back to the nearest governing frame (each unit read once: linear)
     texts = [answer[a:b] for a, b, _ in units]
     words = [_words(t) for t in texts]
-    crossed_paragraph = units[first][2]
-    for k in range(first - 1, -1, -1):
-        w = words[k]
-        if _forward_frame(texts[k], w):
-            return not crossed_paragraph or _global(w)
-        if _resets(texts[k], w):
-            break
-        crossed_paragraph = crossed_paragraph or units[k][2]
+    governed = _governing_frame(units, texts, words, first)
+    if governed is not None:
+        return governed
     # the unit right after the span: "That is a common misconception."
     if last + 1 < len(units):
         text, w = texts[last + 1], words[last + 1]
         if not units[last + 1][2] and _backward_frame(w) and not _resets(text, w):
             return True
     return False
+
+
+def _span_start(answer: str, span: str) -> int:
+    """Where `span` starts in `answer` (case-blind as a fallback), or -1."""
+    start = answer.find(span)
+    if start < 0:
+        start = answer.casefold().find(span.casefold())
+    return start
+
+
+def _own_unit_frame(answer: str, unit, start: int, end: int) -> bool | None:
+    """The span's own unit, before the span: "Wrong ideas to avoid: <span>".
+    True or False when it decides; None when it says nothing."""
+    before = answer[unit[0] : start]
+    if not before.strip():
+        return None
+    bw = _words(before)
+    if _resets(before, bw):
+        return False
+    # A103: "It's a myth that <span>." — the frame is the sentence's whole lead
+    # and the span its whole rest
+    if tuple(bw) in _MYTH_THAT and not answer[end : unit[1]].strip(_SENTENCE_TAIL):
+        return True
+    # only a colon label governs inside its own sentence ("Myths: <span>");
+    # a sentence cut mid-reason ("The claim below is false because <span>") never
+    if before.rstrip().endswith(":") and _forward_frame(before, bw):
+        return True
+    return None
+
+
+def _governing_frame(units, texts: list[str], words: list[list[str]], first: int) -> bool | None:
+    """Walk back from the span's unit to the nearest forward frame: whether it
+    governs the span (a paragraph break stops all but a global one), or None
+    when none does before a reset."""
+    crossed_paragraph = units[first][2]
+    for k in range(first - 1, -1, -1):
+        w = words[k]
+        if _forward_frame(texts[k], w):
+            return not crossed_paragraph or _global(w)
+        if _resets(texts[k], w):
+            return None
+        crossed_paragraph = crossed_paragraph or units[k][2]
+    return None

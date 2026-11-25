@@ -200,6 +200,8 @@ from services.share_screen import screen_from_stored
 logger = logging.getLogger("sapling.services.check_items")
 
 _TABLE = "check_items"
+_FEATURE = "check_items"  # the drafting runs' usage feature, model slot and request-id prefix
+_LOG_HASH_CHARS = 12  # hex chars of a question_hash a log line carries
 _ON_CONFLICT = "course_id,concept_key,question_hash"
 _MC_REASON = "mc_reason"
 _NUMERIC = "numeric"
@@ -503,13 +505,62 @@ def _store_screened(
     A128: `unsourced` (the call showed passages of a document whose indexing
     failed) marks every row that cites no chunk; it is no hold, so such a row
     still serves and takes its slot."""
-    allowed = set(allowed_chunk_ids)
-    exclude = set(exclude_ids)
     source_docs = sorted({d for d in source_document_ids if d})
     if not source_docs and document_id:
         source_docs = [document_id]
+    built, unverified = _built_rows(
+        course_id,
+        concept_key,
+        document_id,
+        screened,
+        allowed=set(allowed_chunk_ids),
+        source_docs=source_docs,
+        unsourced=unsourced,
+    )
+    hashes = [b["question_hash"] for _, b in built if isinstance(b, dict)]
+    decided = review_statuses(course_id, hashes) if hashes else {}
+    audited = audit_holds(course_id, hashes) if hashes else {}
+    exclude = set(exclude_ids) | _stored_ids(b["id"] for _, b in built if isinstance(b, dict))
+    rows, mc_drops, counts = _triage_rows(built, decided, audited, exclude, limit)
+    # DO NOTHING on conflict (Z09): a row stored since the read above is never
+    # rewritten by a draft. What is counted as stored is what the insert says
+    # it wrote (its representation lists only the inserted rows), so a row a
+    # concurrent run stored first is a repeat here too, never a second success.
+    inserted = _insert_new([row for row, _ in rows])
+    stored: list[dict] = []
+    for row, kind in rows:
+        if row["id"] not in inserted:
+            counts["repeat"] += 1
+        else:
+            stored.append(row)
+            if kind:
+                counts[kind] += 1
+    _log_store(counts, limit, course_id, concept_key)
+    return _ConceptWrite(
+        [r["id"] for r in stored],
+        {
+            r["id"]: r["difficulty"]
+            for r in stored
+            if r["format"] == _MC_REASON and not _row_held(r)
+        },
+        _resolve_drops(mc_drops, inserted),
+        unverified,
+    )
+
+
+def _built_rows(
+    course_id: str,
+    concept_key: str,
+    document_id: str | None,
+    screened: Iterable[_Screened],
+    *,
+    allowed: set[str],
+    source_docs: list[str],
+    unsourced: bool,
+) -> tuple[list[tuple[_Screened, str | dict]], int]:
+    """`_store_screened`'s rows: (the entry, the reasons it was dropped) or
+    (the entry, its row), in draft order, and the count of unverified drops."""
     stamp = _utcnow().isoformat()
-    # (the entry, the reasons it was dropped) or (the entry, its row), in draft order
     built: list[tuple[_Screened, str | dict]] = []
     unverified = 0
     for entry in screened:
@@ -535,38 +586,64 @@ def _store_screened(
                 ),
             )
         )
-    hashes = [b["question_hash"] for _, b in built if isinstance(b, dict)]
-    decided = review_statuses(course_id, hashes) if hashes else {}
-    audited = audit_holds(course_id, hashes) if hashes else {}
-    exclude |= _stored_ids(b["id"] for _, b in built if isinstance(b, dict))
-    # each row to insert and the _STORE_LOG kind it counts under, in draft order
+    return built, unverified
+
+
+#: A row `_triage_rows` skips before its insert: the _STORE_LOG kind it counts
+#: under and the mc_reason drop reason it reports.
+_SKIP_DROPS = {"retired": _RETIRED, "repeat": _REPEAT}
+
+
+def _skipped(row: dict, status: str | None, seen: set[str], exclude: set[str]) -> str | None:
+    """Why a built row is not inserted: "retired", "" (named twice in this
+    batch: one upsert may not name a row twice, and it is one item), "repeat",
+    or None when it goes on to the insert."""
+    if status == RETIRED:
+        return "retired"
+    if row["id"] in seen:
+        return ""
+    if row["id"] in exclude:
+        return "repeat"
+    return None
+
+
+def _stored_kind(
+    status: str | None, audit_code: str | None, held: bool, reasons: str
+) -> tuple[str, str, bool]:
+    """A row to insert: the _STORE_LOG kind it counts under, the held reason
+    the top-up reads, and whether it serves (takes a `limit` slot)."""
+    if status == QUARANTINED:
+        return "quarantined", _QUARANTINED, False
+    if audit_code:
+        return "audited", _AUDITED, False
+    if held:
+        return "", reasons, False
+    return "", "", True
+
+
+def _triage_rows(built, decided, audited, exclude: set[str], limit: int | None):
+    """Decide each built row of `_store_screened`, in draft order. Returns
+    (each row to insert with its _STORE_LOG kind, the mc_reason drops — a drop
+    reason, or (row id, held reason) for a row the insert decides — and the
+    counts so far)."""
     rows: list[tuple[dict, str]] = []
     seen: set[str] = set()
-    # an mc_reason draft's drop reason, or (its row id, its held reason) for a
-    # row whose insert decides it: kept in draft order (the top-up reads it)
     mc_drops: list[str | tuple[str, str]] = []
     counts: Counter[str] = Counter()
     served = 0
     for entry, row in built:
-        fmt = entry.format
+        is_mc = entry.format == _MC_REASON
         if not isinstance(row, dict):
-            if fmt == _MC_REASON:
+            if is_mc:
                 mc_drops.append(row)
             continue
         status = decided.get(row["question_hash"])
-        if status == RETIRED:
-            counts["retired"] += 1
-            if fmt == _MC_REASON:
-                mc_drops.append(_RETIRED)
-            continue
-        if row["id"] in seen:
-            # Same normalized prompt twice in one batch: one upsert may not
-            # name a row twice (PostgREST rejects it), and it is one item.
-            continue
-        if row["id"] in exclude:
-            counts["repeat"] += 1
-            if fmt == _MC_REASON:
-                mc_drops.append(_REPEAT)
+        skip = _skipped(row, status, seen, exclude)
+        if skip is not None:
+            if skip:
+                counts[skip] += 1
+                if is_mc:
+                    mc_drops.append(_SKIP_DROPS[skip])
             continue
         audit_code = audited.get(row["question_hash"])
         _hold_as_decided(row, status, audit_code)
@@ -575,42 +652,12 @@ def _store_screened(
             counts["surplus"] += 1
             continue
         seen.add(row["id"])
-        if status == QUARANTINED:
-            kind, reason = "quarantined", _QUARANTINED
-        elif audit_code:
-            kind, reason = "audited", _AUDITED
-        elif held:
-            kind, reason = "", entry.reasons
-        else:
-            served += 1
-            kind, reason = "", ""
+        kind, reason, serves = _stored_kind(status, audit_code, held, entry.reasons)
+        served += serves
         rows.append((row, kind))
-        if fmt == _MC_REASON:
+        if is_mc:
             mc_drops.append((row["id"], reason))
-    # DO NOTHING on conflict (Z09): a row stored since the read above is never
-    # rewritten by a draft. What is counted as stored is what the insert says
-    # it wrote (its representation lists only the inserted rows), so a row a
-    # concurrent run stored first is a repeat here too, never a second success.
-    inserted = _insert_new([row for row, _ in rows])
-    stored: list[dict] = []
-    for row, kind in rows:
-        if row["id"] not in inserted:
-            counts["repeat"] += 1
-        else:
-            stored.append(row)
-            if kind:
-                counts[kind] += 1
-    _log_store(counts, limit, course_id, concept_key)
-    return _ConceptWrite(
-        [r["id"] for r in stored],
-        {
-            r["id"]: r["difficulty"]
-            for r in stored
-            if r["format"] == _MC_REASON and not _row_held(r)
-        },
-        _resolve_drops(mc_drops, inserted),
-        unverified,
-    )
+    return rows, mc_drops, counts
 
 
 def _resolve_drops(drops: list[str | tuple[str, str]], inserted: set[str]) -> list[str]:
@@ -2444,7 +2491,7 @@ def _solve_screened(
                 course_id,
                 key,
                 entry.format,
-                question_hash(entry.draft.prompt)[:12],
+                question_hash(entry.draft.prompt)[:_LOG_HASH_CHARS],
                 check.flag,
             )
             out[key].append(
@@ -2996,7 +3043,7 @@ def _drafting_version(*, varied: bool = False, combo: bool = False) -> str:
     parts = [
         check_items._PROMPT_HASH,
         check_items_topup._PROMPT_HASH,
-        model_name_for("check_items"),
+        model_name_for(_FEATURE),
         check_items_verify._PROMPT_HASH,
         model_name_for("check_items_verify"),
         check_items_solve._PROMPT_HASH,
@@ -3211,6 +3258,165 @@ def _rerank_without(
     return kept, lost
 
 
+def _without_stalled(todo: list, ledger: _DraftFailures, course_id: str, *, varied: bool):
+    """`todo` without the concepts the ledger finds stalled on an unchanged
+    source, and how many those were (logged)."""
+    stalled = [
+        key for key, _, ranked in todo
+        if ledger.stalled(key, _source_fingerprint(ranked, varied=varied))
+    ]
+    if not stalled:
+        return todo, 0
+    logger.info(
+        "check items: %d concept(s) skipped after %d failed drafting passes on an "
+        "unchanged source (course=%s): %s",
+        len(stalled),
+        CHECK_ITEM_REDRAFT_MAX_FAILURES,
+        course_id,
+        stalled,
+    )
+    return [t for t in todo if t[0] not in stalled], len(stalled)
+
+
+def _drafting_queue(
+    todo: list, ledger: _DraftFailures, *, varied: bool
+) -> deque[tuple[list, _SplitGroup | None]]:
+    """The run's call queue of (batch, split group).
+
+    A multi-concept call whose output never validated is re-run one concept at
+    a time, once, so the failure lands on the concept that caused it and its
+    batch-mates still get items this pass (A38 fix round 2). At most 1 +
+    CHECK_ITEM_CONCEPTS_PER_CALL calls per batch. A concept whose last split
+    rescued its whole batch (it and its mates each drafted fine alone) is
+    drafted alone while that holds (A38 fix round 3), so a combination-only
+    failure does not cost 1 + N calls a pass."""
+    solo = [t for t in todo if ledger.solo(t[0], _source_fingerprint(t[2], varied=varied))]
+    rest = [t for t in todo if t not in solo]
+    return deque(
+        [([t], None) for t in solo]
+        + [
+            (rest[start : start + CHECK_ITEM_CONCEPTS_PER_CALL], None)
+            for start in range(0, len(rest), CHECK_ITEM_CONCEPTS_PER_CALL)
+        ]
+    )
+
+
+def _draft_batch(batch: list, names: list[str], sources, course_id: str, *, deps, flex: bool, varied: bool):
+    """One drafting call for a batch: the varied drafter (A140) or the plain one."""
+    if not varied:
+        return run_agent_sync(draft_items(names, sources.passages, deps=deps, flex=flex))
+    # A140: the varied drafter, told the surfaces the concepts' stored
+    # items already use; its drafts read as the plain drafter's
+    stored_surfaces = used_surfaces(course_id, [key for key, _, _ in batch])
+    used = {name: stored_surfaces[key] for key, name, _ in batch if key in stored_surfaces}
+    return _surfaced(
+        run_agent_sync(
+            draft_items_varied(names, sources.passages, used=used, deps=deps, flex=flex)
+        )
+    )
+
+
+def _after_unavailable(
+    out: CheckItemsUnavailable,
+    batch: list,
+    group: _SplitGroup | None,
+    queue: deque,
+    ledger: _DraftFailures,
+    *,
+    user_id: str | None,
+    document_id: str | None,
+    course_id: str,
+    varied: bool,
+) -> int:
+    """A drafting call came back unavailable: report it, then either split a
+    multi-concept batch whose output never validated (0 counted) or count the
+    batch unavailable (returned)."""
+    _report_failure(user_id, document_id, course_id, out.reason)
+    if out.reason in _CONCEPT_FAILURE_REASONS and len(batch) > 1:
+        new_group = _SplitGroup(list(batch), varied=varied)
+        queue.extendleft(([concept], new_group) for concept in reversed(batch))
+        return 0
+    if group is not None:
+        group.settle(batch[0][0], ok=False, ledger=ledger)
+    # Only a one-concept call's validation failure is that concept's
+    # own outcome; anything else is no concept's fault (M2 allowlist).
+    if len(batch) == 1 and out.reason in _CONCEPT_FAILURE_REASONS:
+        key, _, ranked = batch[0]
+        ledger.failed(key, _source_fingerprint(ranked, varied=varied))
+    return len(batch)
+
+
+def _drafts_by_key(batch: list, out, names: list[str]) -> dict[str, list[CheckItemDraft]]:
+    """A call's drafts by concept key; a draft outside the call's concepts is
+    dropped (logged)."""
+    drafts_by_key: dict[str, list[CheckItemDraft]] = {key: [] for key, _, _ in batch}
+    for draft in out.items:
+        dkey = concept_key(draft.concept)
+        if dkey in drafts_by_key:
+            drafts_by_key[dkey].append(draft)
+        else:
+            logger.warning(
+                "check item draft for %r is outside the call's concepts %s; dropped",
+                draft.concept,
+                names,
+            )
+    return drafts_by_key
+
+
+def _top_up_batch(
+    batch: list,
+    write,
+    group: _SplitGroup | None,
+    ledger: _DraftFailures,
+    *,
+    deps,
+    flex: bool,
+    gone: set[str],
+    user_id: str | None,
+    document_id: str | None,
+    course_id: str,
+    scope: dict,
+    varied: bool,
+) -> int:
+    """A37: top up every concept this call left below the mc_reason floor and
+    settle each concept's ledger and split group. Returns the items the
+    top-ups created."""
+    created = 0
+    for key, name, ranked in batch:
+        if key not in write.stored:
+            if group is not None:
+                group.settle(key, ok=False, ledger=ledger)
+            continue
+        topped = _top_up_mc_reason(
+            key,
+            name,
+            ranked,
+            write.stored[key],
+            deps=deps,
+            flex=flex,
+            gone=gone,
+            user_id=user_id,
+            document_id=document_id,
+            course_id=course_id,
+            scope=scope,
+            varied=varied,
+        )
+        created += topped.created
+        # A write that failed (StorageError) is not the drafts' fault:
+        # only a concept whose write ran is counted either way — and a
+        # concept whose drafts the A119 check left unanswered is not
+        # counted as failing (the check's outcome, not the concept's).
+        fp = _source_fingerprint(ranked, varied=varied)
+        ok = bool(write.stored[key].ids or topped.own)
+        if ok:
+            ledger.succeeded(key, fp)
+        elif not (write.stored[key].unverified or topped.unverified):
+            ledger.failed(key, fp)
+        if group is not None:
+            group.settle(key, ok=ok, ledger=ledger)
+    return created
+
+
 def generate_for_concepts(
     *,
     user_id: str | None,
@@ -3266,28 +3472,15 @@ def generate_for_concepts(
         course_id, keys, names_by_key, chunks, min_chunk_score
     )
     ledger = _DraftFailures(course_id, [key for key, _, _ in todo])
-    stalled = [
-        key for key, _, ranked in todo
-        if ledger.stalled(key, _source_fingerprint(ranked, varied=varied))
-    ]
-    if stalled:
-        logger.info(
-            "check items: %d concept(s) skipped after %d failed drafting passes on an "
-            "unchanged source (course=%s): %s",
-            len(stalled),
-            CHECK_ITEM_REDRAFT_MAX_FAILURES,
-            course_id,
-            stalled,
-        )
-        skipped += len(stalled)
-        todo = [t for t in todo if t[0] not in stalled]
+    todo, stalled = _without_stalled(todo, ledger, course_id, varied=varied)
+    skipped += stalled
 
     deps = SaplingDeps(
         user_id=user_id or "",
         course_id=course_id,
         supabase=None,
-        request_id=current_request_id() or f"check_items:{document_id or course_id}",
-        feature="check_items",
+        request_id=current_request_id() or f"{_FEATURE}:{document_id or course_id}",
+        feature=_FEATURE,
     )
     created = attempted = unavailable = 0
     # Documents a re-check found withdrawn during this run. The backfill reads
@@ -3296,22 +3489,7 @@ def generate_for_concepts(
     # concept they alone covered counts unmatched instead of costing a call
     # whose drafts would be dropped.
     gone: set[str] = set()
-    # (batch, split): a multi-concept call whose output never validated is
-    # re-run one concept at a time, once, so the failure lands on the concept
-    # that caused it and its batch-mates still get items this pass (A38 fix
-    # round 2). At most 1 + CHECK_ITEM_CONCEPTS_PER_CALL calls per batch.
-    # A concept whose last split rescued its whole batch (it and its mates
-    # each drafted fine alone) is drafted alone while that holds (A38 fix
-    # round 3), so a combination-only failure does not cost 1 + N calls a pass.
-    solo = [t for t in todo if ledger.solo(t[0], _source_fingerprint(t[2], varied=varied))]
-    rest = [t for t in todo if t not in solo]
-    queue: deque[tuple[list, _SplitGroup | None]] = deque(
-        [([t], None) for t in solo]
-        + [
-            (rest[start : start + CHECK_ITEM_CONCEPTS_PER_CALL], None)
-            for start in range(0, len(rest), CHECK_ITEM_CONCEPTS_PER_CALL)
-        ]
-    )
+    queue = _drafting_queue(todo, ledger, varied=varied)
     while queue:
         batch, group = queue.popleft()
         split = group is not None
@@ -3322,51 +3500,25 @@ def generate_for_concepts(
                 continue
         names = [name for _, name, _ in batch]
         sources = _call_sources(ranked for _, _, ranked in batch)
-
-        if varied:
-            # A140: the varied drafter, told the surfaces the concepts' stored
-            # items already use; its drafts read as the plain drafter's
-            stored_surfaces = used_surfaces(course_id, [key for key, _, _ in batch])
-            used = {name: stored_surfaces[key] for key, name, _ in batch if key in stored_surfaces}
-            out = _surfaced(
-                run_agent_sync(
-                    draft_items_varied(names, sources.passages, used=used, deps=deps, flex=flex)
-                )
-            )
-        else:
-            out = run_agent_sync(draft_items(names, sources.passages, deps=deps, flex=flex))
+        out = _draft_batch(batch, names, sources, course_id, deps=deps, flex=flex, varied=varied)
         if not split:  # a split re-run is the same concepts' same attempt
             attempted += len(batch)
         if isinstance(out, CheckItemsUnavailable):
-            _report_failure(user_id, document_id, course_id, out.reason)
-            if out.reason in _CONCEPT_FAILURE_REASONS and len(batch) > 1:
-                new_group = _SplitGroup(list(batch), varied=varied)
-                queue.extendleft(([concept], new_group) for concept in reversed(batch))
-                continue
-            if group is not None:
-                group.settle(batch[0][0], ok=False, ledger=ledger)
-            unavailable += len(batch)
-            # Only a one-concept call's validation failure is that concept's
-            # own outcome; anything else is no concept's fault (M2 allowlist).
-            if len(batch) == 1 and out.reason in _CONCEPT_FAILURE_REASONS:
-                key, _, ranked = batch[0]
-                ledger.failed(key, _source_fingerprint(ranked, varied=varied))
+            unavailable += _after_unavailable(
+                out,
+                batch,
+                group,
+                queue,
+                ledger,
+                user_id=user_id,
+                document_id=document_id,
+                course_id=course_id,
+                varied=varied,
+            )
             continue
 
-        drafts_by_key: dict[str, list[CheckItemDraft]] = {key: [] for key, _, _ in batch}
-        for draft in out.items:
-            dkey = concept_key(draft.concept)
-            if dkey in drafts_by_key:
-                drafts_by_key[dkey].append(draft)
-            else:
-                logger.warning(
-                    "check item draft for %r is outside the call's concepts %s; dropped",
-                    draft.concept,
-                    names,
-                )
-
         write = _write_checked(
-            drafts_by_key,
+            _drafts_by_key(batch, out, names),
             sources,
             gone=gone,
             user_id=user_id,
@@ -3385,38 +3537,20 @@ def generate_for_concepts(
         created += sum(len(w.ids) for w in write.stored.values())
         if write.withdrawn:
             continue  # the call's drafts were dropped, or its items retired
-        # A37: a concept this call left below the mc_reason floor is topped up.
-        for key, name, ranked in batch:
-            if key in write.stored:
-                topped = _top_up_mc_reason(
-                    key,
-                    name,
-                    ranked,
-                    write.stored[key],
-                    deps=deps,
-                    flex=flex,
-                    gone=gone,
-                    user_id=user_id,
-                    document_id=document_id,
-                    course_id=course_id,
-                    scope=scope,
-                    varied=varied,
-                )
-                created += topped.created
-                # A write that failed (StorageError) is not the drafts' fault:
-                # only a concept whose write ran is counted either way — and a
-                # concept whose drafts the A119 check left unanswered is not
-                # counted as failing (the check's outcome, not the concept's).
-                fp = _source_fingerprint(ranked, varied=varied)
-                ok = bool(write.stored[key].ids or topped.own)
-                if ok:
-                    ledger.succeeded(key, fp)
-                elif not (write.stored[key].unverified or topped.unverified):
-                    ledger.failed(key, fp)
-                if group is not None:
-                    group.settle(key, ok=ok, ledger=ledger)
-            elif group is not None:
-                group.settle(key, ok=False, ledger=ledger)
+        created += _top_up_batch(
+            batch,
+            write,
+            group,
+            ledger,
+            deps=deps,
+            flex=flex,
+            gone=gone,
+            user_id=user_id,
+            document_id=document_id,
+            course_id=course_id,
+            scope=scope,
+            varied=varied,
+        )
 
     outcome = GenerationOutcome(created, attempted, unavailable, skipped, unmatched)
     logger.info(
@@ -3482,6 +3616,88 @@ def _combo_passages(names: list[str], chunks: list[dict]) -> list[dict] | None:
     return merged
 
 
+def _combos_to_draft(
+    course_id: str,
+    concept_names: Iterable[str],
+    names: dict[str, str],
+    parents: dict[str, set[str]],
+    chunks: list[dict],
+) -> tuple[list[tuple[str, list[str], list[dict]]], int, int]:
+    """The document's combinations to draft as (key, component names, passages),
+    with how many were skipped (already holding MULTI_CONCEPT_ITEMS_PER_COMBO
+    items) and unmatched (some component no passage discusses)."""
+    apexes = list(dict.fromkeys(k for k in (concept_key(n) for n in concept_names) if k))
+    apexes = apexes[:CHECK_ITEM_MAX_CONCEPTS_PER_DOC]
+    skipped = unmatched = 0
+    todo: list[tuple[str, list[str], list[dict]]] = []
+    for comps in combinations([a for a in apexes if a in names], parents):
+        key = combo_key(comps)
+        if count_items(course_id, key) >= MULTI_CONCEPT_ITEMS_PER_COMBO:
+            skipped += 1
+            continue
+        comp_names = [names[k] for k in comps]
+        ranked = _combo_passages(comp_names, chunks)
+        if ranked is None:
+            unmatched += 1
+            continue
+        todo.append((key, comp_names, ranked))
+    return todo, skipped, unmatched
+
+
+def _after_combo_unavailable(
+    out: CheckItemsUnavailable,
+    batch: list,
+    queue: deque,
+    ledger: _DraftFailures,
+    *,
+    user_id: str,
+    document_id: str | None,
+    course_id: str,
+) -> int:
+    """A combination call came back unavailable: report it, then split a
+    multi-combination batch whose output never validated (0 counted) or count
+    the batch unavailable (returned)."""
+    _report_failure(user_id, document_id, course_id, out.reason)
+    if out.reason in _CONCEPT_FAILURE_REASONS and len(batch) > 1:
+        queue.extendleft(([t], True) for t in reversed(batch))
+        return 0
+    if len(batch) == 1 and out.reason in _CONCEPT_FAILURE_REASONS:
+        ledger.failed(batch[0][0], _source_fingerprint(batch[0][2], combo=True))
+    return len(batch)
+
+
+def _combo_drafts_by_key(batch: list, out, labels: dict[str, str]) -> dict[str, list[CheckItemDraft]]:
+    """A combination call's drafts by combination key; a draft naming no
+    combination of the call, or off MULTI_CONCEPT_DIFFICULTY, is dropped (logged)."""
+    by_label = {concept_key(label): key for label, key in labels.items()}
+    drafts_by_key: dict[str, list[CheckItemDraft]] = {key: [] for key, _, _ in batch}
+    for draft in out.items:
+        key = by_label.get(concept_key(draft.concept))
+        if key is None or draft.difficulty != MULTI_CONCEPT_DIFFICULTY:
+            logger.warning(
+                "multi-concept draft for %r at difficulty %r is not one of the call's "
+                "combinations at %d; dropped",
+                draft.concept,
+                draft.difficulty,
+                MULTI_CONCEPT_DIFFICULTY,
+            )
+            continue
+        drafts_by_key[key].append(draft)
+    return drafts_by_key
+
+
+def _settle_combos(batch: list, write, ledger: _DraftFailures) -> None:
+    """Record each written combination's pass in the A41 ledger."""
+    for key, _, ranked in batch:
+        if key not in write.stored:
+            continue
+        fp = _source_fingerprint(ranked, combo=True)
+        if write.stored[key].ids:
+            ledger.succeeded(key, fp)
+        elif not write.stored[key].unverified:
+            ledger.failed(key, fp)
+
+
 def generate_combos_for_document(
     *,
     user_id: str,
@@ -3523,21 +3739,7 @@ def generate_combos_for_document(
             exc_info=True,
         )
         return _NOTHING
-    apexes = list(dict.fromkeys(k for k in (concept_key(n) for n in concept_names) if k))
-    apexes = apexes[:CHECK_ITEM_MAX_CONCEPTS_PER_DOC]
-    skipped = unmatched = 0
-    todo: list[tuple[str, list[str], list[dict]]] = []
-    for comps in combinations([a for a in apexes if a in names], parents):
-        key = combo_key(comps)
-        if count_items(course_id, key) >= MULTI_CONCEPT_ITEMS_PER_COMBO:
-            skipped += 1
-            continue
-        comp_names = [names[k] for k in comps]
-        ranked = _combo_passages(comp_names, chunks)
-        if ranked is None:
-            unmatched += 1
-            continue
-        todo.append((key, comp_names, ranked))
+    todo, skipped, unmatched = _combos_to_draft(course_id, concept_names, names, parents, chunks)
     ledger = _DraftFailures(course_id, [key for key, _, _ in todo])
     stalled = {
         key for key, _, ranked in todo if ledger.stalled(key, _source_fingerprint(ranked, combo=True))
@@ -3548,8 +3750,8 @@ def generate_combos_for_document(
         user_id=user_id,
         course_id=course_id,
         supabase=None,
-        request_id=current_request_id() or f"check_items:{document_id or course_id}",
-        feature="check_items",
+        request_id=current_request_id() or f"{_FEATURE}:{document_id or course_id}",
+        feature=_FEATURE,
     )
     created = attempted = unavailable = 0
     gone: set[str] = set()
@@ -3569,30 +3771,12 @@ def generate_combos_for_document(
         if not split:
             attempted += len(batch)
         if isinstance(out, CheckItemsUnavailable):
-            _report_failure(user_id, document_id, course_id, out.reason)
-            if out.reason in _CONCEPT_FAILURE_REASONS and len(batch) > 1:
-                queue.extendleft(([t], True) for t in reversed(batch))
-                continue
-            unavailable += len(batch)
-            if len(batch) == 1 and out.reason in _CONCEPT_FAILURE_REASONS:
-                ledger.failed(batch[0][0], _source_fingerprint(batch[0][2], combo=True))
+            unavailable += _after_combo_unavailable(
+                out, batch, queue, ledger, user_id=user_id, document_id=document_id, course_id=course_id
+            )
             continue
-        by_label = {concept_key(label): key for label, key in labels.items()}
-        drafts_by_key: dict[str, list[CheckItemDraft]] = {key: [] for key, _, _ in batch}
-        for draft in out.items:
-            key = by_label.get(concept_key(draft.concept))
-            if key is None or draft.difficulty != MULTI_CONCEPT_DIFFICULTY:
-                logger.warning(
-                    "multi-concept draft for %r at difficulty %r is not one of the call's "
-                    "combinations at %d; dropped",
-                    draft.concept,
-                    draft.difficulty,
-                    MULTI_CONCEPT_DIFFICULTY,
-                )
-                continue
-            drafts_by_key[key].append(draft)
         write = _write_checked(
-            drafts_by_key,
+            _combo_drafts_by_key(batch, out, labels),
             sources,
             gone=gone,
             user_id=user_id,
@@ -3609,14 +3793,7 @@ def generate_combos_for_document(
         created += sum(len(w.ids) for w in write.stored.values())
         if write.withdrawn:
             continue
-        for key, _, ranked in batch:
-            if key not in write.stored:
-                continue
-            fp = _source_fingerprint(ranked, combo=True)
-            if write.stored[key].ids:
-                ledger.succeeded(key, fp)
-            elif not write.stored[key].unverified:
-                ledger.failed(key, fp)
+        _settle_combos(batch, write, ledger)
     outcome = GenerationOutcome(created, attempted, unavailable, skipped, unmatched)
     logger.info(
         "multi-concept items: course=%s document=%s items=%d attempted=%d unavailable=%d "

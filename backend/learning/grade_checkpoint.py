@@ -25,8 +25,11 @@ from learning.evidence import (
     stated_confidence,
 )
 from learning.misconceptions import Attempt, is_key
-from learning.params import LADDER_MAX_RUNG
+from learning.fsrs import Rating
+from learning.params import CHECK_ITEM_DIFFICULTIES, LADDER_MAX_RUNG
 from services.encryption import decrypt, encrypt, nested_bind
+
+_GRADED_AT_TOLERANCE_S = 1e-6  # seconds a checkpoint's graded_at may differ from its evidence's observed_at (float round-trip)
 
 KEY = "grade_checkpoint"
 
@@ -48,7 +51,7 @@ class _Answer(_Metadata):
 class _Observation(_Metadata):
     node_id: str = Field(min_length=1)
     question_hash: str = Field(min_length=1)
-    difficulty: int = Field(ge=1, le=3)
+    difficulty: int = Field(ge=min(CHECK_ITEM_DIFFICULTIES), le=max(CHECK_ITEM_DIFFICULTIES))
     channel: Channel
     correct: bool
     idk: bool
@@ -72,7 +75,7 @@ class _Graded(_Metadata):
     channel: Channel
     confidence: float | None = Field(ge=0, le=1, allow_inf_nan=False)
     grader_backend: GraderBackend | None
-    fsrs_rating: int = Field(ge=1, le=4)
+    fsrs_rating: int = Field(ge=int(Rating.AGAIN), le=int(Rating.EASY))
     p_before: float = Field(ge=0, le=1, allow_inf_nan=False)
     feedback_given: bool
 
@@ -209,7 +212,7 @@ def _continuation(kind: str, raw: dict, evidences: list[Evidence]) -> dict:
         or value.graded.channel != ev.channel or value.graded.max_rung != ev.max_rung
         or value.graded.assisted != ev.assisted or value.graded.confidence != ev.confidence
         or value.graded.grader_backend != ev.grader_backend
-        or not math.isclose(value.graded.graded_at, ev.observed_at.timestamp(), rel_tol=0, abs_tol=.000001)
+        or not math.isclose(value.graded.graded_at, ev.observed_at.timestamp(), rel_tol=0, abs_tol=_GRADED_AT_TOLERANCE_S)
         or (value.genuine and ev.idk) or (value.refused and not ev.idk)):
         raise ValueError("Check continuation outcome disagrees with evidence")
     if ev.planning_provenance is not None and value.refused != ev.planning_provenance.synthetic_idk:

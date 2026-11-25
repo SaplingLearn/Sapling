@@ -140,14 +140,43 @@ def ceiling_with_reason(
     failed-attempt count. The shown-work floor comes last and never applies in
     exam mode: exam mode is the strictest row and wins (A4)."""
     fails = step.genuine_attempts
-    if fails < 0:
-        raise ValueError(f"genuine_attempts must be >= 0, got {fails}")
-    if learner.band not in _BANDS:
-        raise ValueError(f"unknown band {learner.band!r}")
-    if isinstance(band_delta, bool) or band_delta not in _CEILING_DELTAS:
-        raise ValueError(f"band_delta must be one of {sorted(_CEILING_DELTAS)}, got {band_delta!r}")
+    _check_ceiling_args(fails, learner.band, band_delta)
     if step.exam_mode:
         return Rung.H1, CeilingReason.EXAM
+    rung, reason = _band_row(learner, fails)
+    if band_delta:
+        moved = Rung(min(max(int(rung) + band_delta, int(Rung.H0)), int(Rung.H6)))
+        if moved != rung:
+            rung, reason = moved, CeilingReason.BAND_CONTROL
+    if step.showed_work and rung < Rung.H3:
+        return Rung.H3, CeilingReason.SHOWED_WORK_FLOOR
+    if teach_attempt:
+        raised = _teach_attempt_raised(rung, learner.band)
+        if raised > rung:
+            return raised, CeilingReason.TEACH_ATTEMPT
+    return rung, reason
+
+
+def _check_ceiling_args(fails: int, band: str, band_delta: int) -> None:
+    """`ceiling_with_reason`'s argument rules, in order."""
+    if fails < 0:
+        raise ValueError(f"genuine_attempts must be >= 0, got {fails}")
+    if band not in _BANDS:
+        raise ValueError(f"unknown band {band!r}")
+    if isinstance(band_delta, bool) or band_delta not in _CEILING_DELTAS:
+        raise ValueError(f"band_delta must be one of {sorted(_CEILING_DELTAS)}, got {band_delta!r}")
+
+
+def _develop_rung(fails: int) -> Rung:
+    """The develop row's rung: H3 plus a rung per failed attempt, H6 at
+    CEILING_DEVELOP_H6_FAILS."""
+    if fails >= params.CEILING_DEVELOP_H6_FAILS:
+        return Rung.H6
+    return Rung(min(int(Rung.H3) + fails, int(Rung.H6)))
+
+
+def _band_row(learner: LearnerView, fails: int) -> tuple[Rung, CeilingReason]:
+    """The §3.3 table's row for the learner's band, before band control."""
     unconfirmed = (
         learner.band == "profic"
         and learner.n_strong_unassisted is not None
@@ -159,45 +188,31 @@ def ceiling_with_reason(
         # row. Help is asymmetric (Tetzlaff et al. 2025): withholding it from a
         # novice who only looks proficient costs more than offering it to an
         # expert, so uncertainty resolves toward help.
-        if fails >= params.CEILING_DEVELOP_H6_FAILS:
-            rung = Rung.H6
-        else:
-            rung = Rung(min(int(Rung.H3) + fails, int(Rung.H6)))
-        reason = CeilingReason.PROFIC_UNCONFIRMED
-    elif learner.band == "profic":
+        return _develop_rung(fails), CeilingReason.PROFIC_UNCONFIRMED
+    if learner.band == "profic":
         if fails >= params.CEILING_PROFIC_ESCALATE_FAILS:
-            rung, reason = Rung.H3, CeilingReason.PROFIC_ESCALATED
-        else:
-            rung, reason = Rung.H1, CeilingReason.PROFIC
-    elif learner.band == "develop":
+            return Rung.H3, CeilingReason.PROFIC_ESCALATED
+        return Rung.H1, CeilingReason.PROFIC
+    if learner.band == "develop":
         if fails >= params.CEILING_DEVELOP_H6_FAILS:
-            rung, reason = Rung.H6, CeilingReason.DEVELOP_H6
-        else:
-            rung = Rung(min(int(Rung.H3) + fails, int(Rung.H6)))
-            reason = CeilingReason.DEVELOP
-    elif learner.prereq_proficient:
-        rung, reason = Rung.H5, CeilingReason.NOVICE_PREREQ_OK
-    elif fails == 0:
-        rung, reason = Rung.H4, CeilingReason.NOVICE_WORKED_FIRST
-    else:
-        rung, reason = Rung.H5, CeilingReason.NOVICE_PREREQ_GAP
-    if band_delta:
-        moved = Rung(min(max(int(rung) + band_delta, int(Rung.H0)), int(Rung.H6)))
-        if moved != rung:
-            rung, reason = moved, CeilingReason.BAND_CONTROL
-    if step.showed_work and rung < Rung.H3:
-        return Rung.H3, CeilingReason.SHOWED_WORK_FLOOR
-    if teach_attempt:
-        cap = TEACH_ATTEMPT_CEILING_CAP[learner.band]
-        step_up = (
-            params.TEACH_ATTEMPT_CEILING_RAISE_PROFIC
-            if learner.band == "profic"
-            else params.TEACH_ATTEMPT_CEILING_RAISE
-        )
-        raised = Rung(min(int(rung) + step_up, int(cap)))
-        if raised > rung:
-            return raised, CeilingReason.TEACH_ATTEMPT
-    return rung, reason
+            return Rung.H6, CeilingReason.DEVELOP_H6
+        return _develop_rung(fails), CeilingReason.DEVELOP
+    if learner.prereq_proficient:
+        return Rung.H5, CeilingReason.NOVICE_PREREQ_OK
+    if fails == 0:
+        return Rung.H4, CeilingReason.NOVICE_WORKED_FIRST
+    return Rung.H5, CeilingReason.NOVICE_PREREQ_GAP
+
+
+def _teach_attempt_raised(rung: Rung, band: str) -> Rung:
+    """PKG-14 (A85): the ceiling a teach attempt raises `rung` to, capped for the band."""
+    cap = TEACH_ATTEMPT_CEILING_CAP[band]
+    step_up = (
+        params.TEACH_ATTEMPT_CEILING_RAISE_PROFIC
+        if band == "profic"
+        else params.TEACH_ATTEMPT_CEILING_RAISE
+    )
+    return Rung(min(int(rung) + step_up, int(cap)))
 
 
 def ceiling(learner: LearnerView, step: StepState, *, band_delta: int = 0) -> Rung:
