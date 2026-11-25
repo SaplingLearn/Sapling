@@ -1,0 +1,37 @@
+/* The product-analytics card on Settings → Data (AnalyticsPreference.tsx). */
+
+.card {
+  padding: var(--pad-lg);
+  margin-top: var(--sp-8);
+}
+
+.row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--sp-10);
+}
+
+.title {
+  font-weight: 600;
+  margin-bottom: var(--sp-2);
+}
+
+.body {
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+}
+
+/* Underlined: a link inside running text must not rely on colour alone (WCAG 1.4.1). */
+.link {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.note {
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  margin-top: var(--sp-3);
+}
+
+.noteAction { margin-left: var(--sp-2); }
